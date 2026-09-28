@@ -1,8 +1,10 @@
 # Configuration
 
 Marina reads process environment values first, then Bun's `.env` files in the instance's
-working directory. `.env.example` is the annotated catalog used by both the dashboard
-and CLI tooling; copying every optional setting is unnecessary.
+working directory. Every setting is optional. [`.env.example`](../../.env.example) is a short
+starter to copy; [`config/environment.reference`](../../config/environment.reference) is the
+complete annotated catalog that the dashboard settings editor (Admin → Settings) and the
+generated [environment reference](../reference/environment.md) are built from.
 
 ```bash
 bun run init --yes --preset minimal --directory /path/to/instance
@@ -33,9 +35,11 @@ No configuration needed for local development. Just run:
 bun run start
 ```
 
-This starts the dashboard and default Workbench on loopback. Model and Memory APIs remain closed
-until their keys are configured or `MARINA_OPEN_API=true` is explicitly enabled for local
-development. Telnet is off by default because it is plaintext and unauthenticated; enable it with
+This starts the dashboard and default Workbench on loopback under the `local` trust profile. The
+model API accepts a key Marina generates into `<DB_PATH>.local-api-key` and prints at boot; the
+Memory API (`/mem`) stays closed until `MEM_API_KEYS` is set. Agents need one provider key (or a
+local model) to think, and the seeded Workbench agents start at boot only with
+`AGENT_AUTORESPAWN=true`. Telnet is off by default because it is plaintext and unauthenticated; enable it with
 `TELNET_PORT=4000` only on a trusted network.
 
 ---
@@ -66,8 +70,10 @@ run a host command without a prompt, and the exec audit is how you find out.
 MARINA_ADMINS=YourName bun run start
 ```
 
-When `YourName` logs in, it is bootstrapped as a sovereign and receives the rank-tiered operator
-gates. Arbitrary unrestricted host execution remains separately governed and is not granted by
+When `YourName` logs in from a loopback connection, it is bootstrapped as a sovereign and receives
+the rank-tiered operator gates. Remote connections claiming the name are refused, and the list is
+redundant under the `local` profile, where every loopback login is already sovereign; with sign-in
+on, use `MARINA_AUTH_ADMIN_EMAILS` instead. Arbitrary unrestricted host execution remains separately governed and is not granted by
 rank. Multiple admins:
 
 ```bash
@@ -112,7 +118,9 @@ WS_PORT=8080 TELNET_PORT=4001 MCP_PORT=8081 bun run start
 MODEL_API_KEYS=sk-my-secret-key-1,sk-my-secret-key-2 bun run start
 ```
 
-Now API requests need `Authorization: Bearer sk-my-secret-key-1`. Without this variable, the API is open to anyone.
+Now API requests need `Authorization: Bearer sk-my-secret-key-1` (the same keys guard MCP). Without
+this variable the model API accepts only the generated local key under the `local` profile and is
+closed otherwise.
 
 ### Connect Discord or Telegram
 
@@ -127,77 +135,12 @@ See [Discord & Telegram](chat-adapters.md) for bot setup.
 
 ## All Environment Variables
 
-### Network
-
-| Variable | Default | What It Does |
-|----------|---------|-------------|
-| `WS_PORT` | `3300` | WebSocket, web chat, dashboard, and model API |
-| `TELNET_PORT` | `0` (off) | Telnet server — plaintext/unauthenticated; set a port to enable |
-| `MCP_PORT` | `3301` | MCP server (for Claude Desktop etc.) |
-| `LOG_PORT` | `3302` | Real-time event viewer |
-
-### Engine
-
-| Variable | Default | What It Does |
-|----------|---------|-------------|
-| `TICK_MS` | `1000` | How often rooms tick (ms). Lower = more responsive. |
-| `START_ROOM` | World's default | Room where new players spawn |
-| `DB_PATH` | `marina.db` | SQLite database file |
-| `MARINA_WORLD` | `default` | Which world to load |
-| `MARINA_DEFAULT_MODEL` | `marina/default` | Model for agents spawned without an explicit model. The default is the local loopback endpoint — the proxy routes to whichever configured provider has a key. Set a concrete `provider/model-id` to pin it. |
-| `ASSETS_DIR` | `data/assets` | Where uploaded files are stored |
-
-### Logging
-
-| Variable | Default | What It Does |
-|----------|---------|-------------|
-| `LOG_FORMAT` | `text` | `text` for humans, `json` for machines |
-| `LOG_LEVEL` | `info` | Minimum level: `debug`, `info`, `warn`, `error` |
-
-### Auth
-
-| Variable | Default | What It Does |
-|----------|---------|-------------|
-| `MODEL_API_KEYS` | *(none; API closed)* | Comma-separated bearer tokens for the model API |
-| `MEM_API_KEYS` | *(none; API closed)* | Comma-separated `secret:agent` pairs for Memory API (`/mem`) |
-| `MARINA_OPEN_API` | `false` | Set to `true` to disable API authentication checks. **Dev only** — never use in production. Useful for local testing without configuring API keys. |
-| `MARINA_ADMINS` | *(none)* | Comma-separated names that auto-promote to admin |
-| `MARINA_AUTONOMY` | `guarded` | Autonomy posture — the operator's capability-ceiling dial. `guarded`: supervised gate attempts need a witness-granted window. `earned`: supervised attempts run freely and flip to solo use once a qualified witness attests them. `open`: every safety gate auto-passes except the destructive core (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`, `world.code`). Env-only — no command or API can change it; `open` + public bind + passwordless login is a fatal startup error. |
-
-#### Room Agent Authentication
-
-Room agents spawned by a world authenticate to Marina using an internal token generated at startup;
-they do not require an inbound `MODEL_API_KEYS` token. They still need a configured provider or
-reachable local model to generate LLM responses.
-
-### OpenTelemetry trace export
-
-Collector push is additive and off by default. Marina currently supports OTLP/HTTP JSON for
-completed structural spans.
-
-| Variable | Default | What It Does |
-|---|---|---|
-| `MARINA_OTLP_ENABLED` | `false` | Enables collector push only when explicitly `true` |
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | *(none)* | Exact signal endpoint, normally ending in `/v1/traces` |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | *(none)* | Shared base endpoint; Marina appends `/v1/traces` |
-| `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` | `http/json` | Supported transport; other values are rejected explicitly |
-| `OTEL_EXPORTER_OTLP_TRACES_HEADERS` | *(none)* | Percent-encoded comma-separated `key=value` headers; never displayed |
-| `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT` | `10s` | Per-attempt timeout, bounded by Marina |
-| `OTEL_SERVICE_NAME` | `marina` | OpenTelemetry resource service name |
-| `OTEL_RESOURCE_ATTRIBUTES` | *(none)* | Additional comma-separated resource attributes |
-| `MARINA_OTLP_ALLOW_INSECURE` | `false` | Allows plaintext HTTP to a non-loopback collector when explicitly `true` |
-
-Use `trace otel` or Dashboard → Traces to inspect delivery without revealing credentials. See
-[Execution Traces and Evaluations](observability.md) for payload, retry, retention, and privacy
-boundaries.
-
-### Adapters
-
-| Variable | Default | What It Does |
-|----------|---------|-------------|
-| `TELEGRAM_TOKEN` | *(off)* | Telegram bot token |
-| `DISCORD_TOKEN` | *(off)* | Discord bot token |
-| `DISCORD_CHANNEL_IDS` | *(all)* | Restrict Discord bot to these channel IDs |
+The complete list, with defaults and which settings the dashboard may not edit, is the
+[environment reference](../reference/environment.md), generated from
+[`config/environment.reference`](../../config/environment.reference). Room agents spawned by a
+world authenticate with an internal token generated at startup, so they need no `MODEL_API_KEYS`
+entry, only a configured provider or reachable local model. For collector export, see
+[Execution Traces and Evaluations](observability.md).
 
 ### Flywheel isolated execution (optional)
 
@@ -211,13 +154,10 @@ endpoint from its own process or container.
 | `FLYWHEEL_TOKEN` | *(off)* | Server-side Flywheel operator credential. Enables the integration; never returned to entities or persisted in Marina. |
 | `FLYWHEEL_RPC_URL` | `http://localhost:8088/rpc` | Flywheel Connect RPC base URL as seen by Marina. In Docker, `localhost` means the Marina container, so use a reachable service or host address. |
 | `FLYWHEEL_IMAGE` | `localhost/h2oai/flywheel-agentd:latest` | Default image for `code sandbox start` and MCP `flywheel create`. The image must be resolvable by the configured Flywheel backend. |
-| `MARINA_FLYWHEEL_LIVE_REQUIRED` | `false` | Make `bun run qualify:flywheel` fail when live configuration or required checks are unavailable. |
-| `MARINA_FLYWHEEL_LIVE_FULL` | `false` | Require clone, service/probe, screenshot, publish/revoke, and hibernate/resume in live qualification. |
-| `MARINA_FLYWHEEL_LIVE_CLONE_URL` | *(off)* | Credential-free public fixture cloned only by the full live qualification. |
-| `MARINA_FLYWHEEL_LIVE_ALLOW_PUBLISH` | `false` | Explicitly permit temporary public exposure during live qualification. |
-| `MARINA_FLYWHEEL_EVIDENCE_DIR` | `artifacts/flywheel` | Destination for redacted M5e qualification evidence. |
 
-Start with `code doctor`, then `code sandbox status`. Configuration alone never changes a coding
+The live qualification knobs (`MARINA_FLYWHEEL_LIVE_*`) are in
+[Release qualification](release-qualification.md#script-knobs). Start with `code doctor`, then
+`code sandbox status`. Configuration alone never changes a coding
 session from local to Flywheel, and a Flywheel failure never retries a sandbox command on the host.
 See [Coding](coding.md) and [Flywheel integration](../integrations/flywheel.md).
 
@@ -285,7 +225,6 @@ TELEGRAM_TOKEN=123:ABC...
 docker build -t marina .
 docker run -p 3300:3300 -p 4000:4000 -p 3301:3301 \
   -e MARINA_WORLD=default \
-  -e MARINA_ADMINS=YourName \
   marina
 ```
 
@@ -293,11 +232,11 @@ docker run -p 3300:3300 -p 4000:4000 -p 3301:3301 \
 
 ## Hard-Coded Limits
 
-These aren't configurable via env vars but are good to know:
+These aren't configurable via env vars but are good to know (the per-IP WebSocket connection cap
+is: `WS_MAX_CONNECTIONS_PER_IP`, default 100):
 
 | What | Value |
 |------|-------|
-| Max WebSocket connections per IP | 10 |
 | Max total WebSocket connections | 1000 |
 | WebSocket idle timeout | 255 seconds |
 | Max commands processed per tick | 1000 |

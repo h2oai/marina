@@ -519,7 +519,7 @@ export class AgentRuntime {
         const tiers = table ? undefined : routeTiersFromEnv();
         if (!table && !tiers) {
           throw new Error(
-            "model:route needs MARINA_ROUTES (a route table) or MARINA_ROUTE_FAST_MODEL and MARINA_ROUTE_POWERFUL_MODEL (see .env.example).",
+            "model:route needs MARINA_ROUTES (a route table) or MARINA_ROUTE_FAST_MODEL and MARINA_ROUTE_POWERFUL_MODEL (see config/environment.reference).",
           );
         }
         const routed = table

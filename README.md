@@ -104,8 +104,9 @@ through login, `look`, `brief`, and `next` without requiring you to learn the co
 The world, commands, persistence, and dashboard work without a model provider. Autonomous agents
 need a provider key or a reachable local model. On a local install, startup prints a ready-to-paste
 `OPENAI_BASE_URL=… OPENAI_API_KEY=mk_local_…` line: Marina creates that local key once (kept next to
-the database, mode 600), so any OpenAI-compatible client works against it immediately. Copy `.env.example` to `.env` for source-based
-configuration, or use the dashboard for supported operator settings. `MARINA_OPEN_API=true` is an
+the database, mode 600), so any OpenAI-compatible client works against it immediately. Copy `.env.example` (a short
+starter) to `.env` for source-based configuration, or use the dashboard for supported operator
+settings; every setting is in [`config/environment.reference`](config/environment.reference). `MARINA_OPEN_API=true` is an
 explicit local-development bypass, not a production default. Prefer containers? See [Docker](#docker).
 
 Using a packaged desktop build instead? Open Marina and follow **Start Here**; provider setup and
@@ -161,7 +162,7 @@ lazy room agents that start when their rooms are entered. Three ways to operate 
 ANTHROPIC_API_KEY=sk-ant-... bun run start
 ```
 (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, and others work too — see
-`.env.example`.) To start the seeded Workbench population on boot, also set
+the [environment reference](docs/reference/environment.md#model-provider-keys).) To start the seeded Workbench population on boot, also set
 `AGENT_AUTORESPAWN=true`. Verify actual state with `readiness`, `agent list`, and `who`.
 
 **2. From the dashboard** — open `http://localhost:3300/`:
@@ -369,62 +370,24 @@ conversation. Full canvas reference: [SKILL.md](SKILL.md#canvas--assets).
 
 ## Configuration
 
-Copy `.env.example` to `.env` and customize as needed. All variables are optional.
+Every setting is optional. Copy [`.env.example`](.env.example), a short starter, to `.env` and
+uncomment what you need, or use `bun run init`. The complete annotated catalog is
+[`config/environment.reference`](config/environment.reference), also browsable as the generated
+[environment reference](docs/reference/environment.md) and editable (except protected keys) in
+Admin → Settings. The settings most people touch:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| **Core** | | |
-| `WS_PORT` | `3300` | WebSocket + web chat port |
-| `TELNET_PORT` | `0` (off) | Telnet port — plaintext/unauthenticated; set to enable |
-| `MCP_PORT` | `3301` | MCP server port |
-| `LOG_PORT` | `3302` | Log server port (real-time event viewer) |
-| `TICK_MS` | `1000` | Engine tick interval (ms) |
-| `DB_PATH` | `marina.db` | SQLite database path |
-| `LOG_FORMAT` | `text` | Log format: `text` or `json` |
-| `LOG_LEVEL` | `info` | Minimum log level (debug, info, warn, error) |
-| `MARINA_LOG_RETENTION` | `10000` | Newest durable structured-log rows retained in SQLite |
+| `OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / … | *(none)* | One provider key lets agents think. OpenRouter also enables `forecast`. |
+| `AGENT_AUTORESPAWN` | `false` | Start saved and world-seeded agents (the Workbench population) at boot |
+| `MARINA_DAILY_SPEND_CAP_USD` | *(no cap)* | Daily USD ceiling on everything the world pays upstream |
 | `MARINA_WORLD` | `default` | World definition to load (see `worlds/`) |
-| `MARINA_DEFAULT_MODEL` | `marina/default` | Model for agents spawned without one — the loopback default routes to whichever configured provider has a key |
-| `START_ROOM` | *(world default)* | Override spawn room for new entities |
-| `ASSETS_DIR` | `data/assets` | Directory for uploaded asset files |
-| **Bind & trust profile** | | |
-| `WS_HOST` / `MARINA_PUBLIC` | `127.0.0.1` / `false` | Bind interface — SECURE BY DEFAULT: loopback-only, so a fresh node is reachable only from the local machine. Public exposure is a deliberate opt-in: `WS_HOST=0.0.0.0` (an explicit host wins over PUBLIC) or `MARINA_PUBLIC=true` |
-| `MARINA_ALLOW_INSECURE_PUBLIC` | *(unset)* | A non-loopback bind is a FATAL startup error when passwordless login is in effect (no `MARINA_AUTH=better-auth`) or `MARINA_OPEN_API=true`. Set to `true` to explicitly accept that risk instead of enabling auth |
-| `MARINA_PROFILE` | *(derived)* | WHO this Marina is for: `local` (derived when every listener binds loopback and `MARINA_AUTH` is off — ungated: gates auto-pass, loopback logins are sovereign, no `MARINA_ADMINS` needed, limits off; audit stays on), `shared` (gates, ranks and limits enforced; sign-in identifies people), `public` (everything enforced; passwordless names carry no authority). `local` + a non-loopback bind + passwordless login is fatal unless `MARINA_ALLOW_INSECURE_PUBLIC=true` |
-| **Security** | | |
-| `MARINA_OPEN_API` | `false` | Set to `true` to disable API auth (dev only) |
-| `MODEL_API_KEYS` | *(none)* | Comma-separated bearer tokens for `/v1/*` and `/api/*` |
-| `MEM_API_KEYS` | *(none)* | Comma-separated `secret:agent` pairs for Memory API |
-| `ALLOWED_ORIGINS` | *(none)* | Comma-separated CORS origins |
-| `MARINA_ADMINS` | *(none)* | Comma-separated names to auto-promote to admin |
-| `MARINA_AUTONOMY` | `guarded` | Autonomy posture dial: `guarded` / `earned` / `open` — see [Rank System](#rank-system) |
-| `GATEWAY_SECRET` | *(none)* | Shared secret for gateway federation auth |
-| **Agents** | | |
-| `MAX_AGENTS` | `30` | Maximum concurrent spawned agents |
-| `MAX_AGENT_UPTIME_MS` | `86400000` | Max agent uptime before auto-stop (24h) |
-| `AGENT_AUTORESPAWN` | `false` | Auto-respawn saved agents on server boot |
-| `MARINA_TASK_LEASE_MS` | `900000` | Renewable task-claim lease; expired ordinary work reopens automatically |
-| **LLM Providers** | | |
-| `ANTHROPIC_API_KEY` | *(none)* | Anthropic API key |
-| `OPENAI_API_KEY` | *(none)* | OpenAI API key |
-| `GEMINI_API_KEY` | *(none)* | Google Gemini API key |
-| `GOOGLE_API_KEY` | *(none)* | Google API key (alternative to Gemini) |
-| `GROQ_API_KEY` | *(none)* | Groq API key |
-| `OPENROUTER_API_KEY` | *(none)* | OpenRouter API key |
-| `CEREBRAS_API_KEY` | *(none)* | Cerebras API key |
-| `XAI_API_KEY` | *(none)* | xAI (Grok) API key |
-| `MISTRAL_API_KEY` | *(none)* | Mistral API key |
-| `DEEPSEEK_API_KEY` | *(none)* | DeepSeek API key |
-| **Tabular Foundation Model** | | |
-| `TABH2O_API_KEY` | *(none)* | Bearer token for H2O.ai TabH2O predictions (used by `market forecast`) |
-| `TABH2O_ENDPOINT` | `https://tabh2o.h2oai.com/api/v1/predict` | Override for self-hosted TabH2O |
-| **Search** | | |
-| `TAVILY_API_KEY` | *(none)* | Tavily search API key |
-| `SEARXNG_URL` | *(none)* | Self-hosted SearXNG instance URL |
-| **Platform Adapters** | | |
-| `TELEGRAM_TOKEN` | *(none)* | Telegram bot token |
-| `DISCORD_TOKEN` | *(none)* | Discord bot token |
-| `DISCORD_CHANNEL_IDS` | *(none)* | Comma-separated Discord channel IDs |
+| `WS_PORT` | `3300` | Web chat, dashboard, HTTP and model API; MCP and the log viewer default to the next two ports |
+| `DB_PATH` | `marina.db` | SQLite world database |
+| `WS_HOST` | `127.0.0.1` | Bind address. A non-loopback bind needs `MARINA_AUTH=better-auth` (or an explicit `MARINA_ALLOW_INSECURE_PUBLIC=true`) |
+| `MARINA_PROFILE` | *(derived)* | `local` (loopback, no sign-in: ungated, audit on), `shared` (sign-in on), `public` (non-loopback) |
+| `MARINA_AUTONOMY` | `guarded` | `guarded` / `earned` / `open`; under `local`, unset means ungated. See [Rank System](#rank-system) |
+| `MODEL_API_KEYS` | *(generated locally)* | Bearer tokens for `/v1` and MCP. The `local` profile generates one at boot |
 
 ## Development
 
@@ -497,7 +460,7 @@ passwordless login refuses to boot.
 ## Docker
 
 ```bash
-cp .env.example .env       # add provider keys + API secrets
+cp .env.example .env       # uncomment a provider key (and secrets for a shared deploy)
 docker compose up -d --build  # Build and run
 docker compose logs -f     # View logs
 docker compose down        # Stop (add -v to wipe the world)

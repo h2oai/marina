@@ -191,8 +191,8 @@ export const LOCAL_MAX_OUTPUT_TOKENS_CAP = (() => {
 })();
 
 /** Completion-token budget for a self-hosted local model (llama.cpp / Ollama),
- *  and the `marina/default` self-proxy when it routes to one. Half the context
- *  window by default (see LOCAL_OUTPUT_BUDGET_FRACTION), floored at 512 and
+ *  and the `marina/default` self-proxy when it routes to one. A quarter of the
+ *  context window by default (see LOCAL_OUTPUT_BUDGET_FRACTION), floored at 512 and
  *  bounded by the optional hard cap. Reasoning models (e.g. Qwen3) spend output
  *  tokens on `<think>` before the tool call, so too small a budget truncates
  *  mid-reasoning and the agent returns no action ("connected but nothing

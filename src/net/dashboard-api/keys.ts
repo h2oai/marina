@@ -13,6 +13,8 @@ import {
   environmentCatalog,
   isSecretKey,
   parseEnvironment,
+  readEnvironmentReference,
+  type SettingDescriptor,
   writeEnvironment,
 } from "../../config/environment";
 import { testKeyConnectivity } from "../../engine/commands/key";
@@ -259,9 +261,12 @@ async function handleKeyTest(name: string, db: MarinaDB): Promise<Response> {
  * spend caps, and where (and with what credential) the decision gate asks. A
  * misapplied edit here could silently escalate privilege, loosen the operator's
  * bounds or open the instance, so changing them is kept to out-of-band
- * .env / shell provisioning only.
+ * .env / shell provisioning only. This hard-coded set is the floor: keys the
+ * reference tags `@protected` or `@internal` are refused as well
+ * ({@link isProtectedEnvKey}), so a catalog edit can add protection but never
+ * remove it.
  */
-const PROTECTED_ENV_KEYS = new Set([
+export const PROTECTED_ENV_KEYS = new Set([
   "MARINA_ADMINS",
   "MARINA_AUTONOMY",
   "MARINA_CODE_EXEC_UNRESTRICTED",
@@ -298,10 +303,15 @@ function isAgentDrivenCaller(
   return Boolean(name && db?.getAgentConfig(name));
 }
 
-/** True for keys whose plaintext must never leave the server (any secret, or a
- * protected security knob). */
-function isProtectedEnvKey(key: string): boolean {
-  return PROTECTED_ENV_KEYS.has(key) || key.endsWith("_API_KEYS");
+/** True for keys the dashboard must never write: the hard-coded floor, every
+ * `*_API_KEYS` list, and anything the reference tags `@protected`/`@internal`. */
+export function isProtectedEnvKey(
+  key: string,
+  catalog: readonly SettingDescriptor[] = envCatalog(),
+): boolean {
+  if (PROTECTED_ENV_KEYS.has(key) || key.endsWith("_API_KEYS")) return true;
+  const entry = catalog.find((s) => s.key === key);
+  return !!entry && (entry.protected || entry.internal);
 }
 
 /** Coarse length bucket for a secret value — a "how long is it" hint that leaks
@@ -344,18 +354,15 @@ interface EnvEntry {
    * rather than our managed .env file — editing it here can't override it. */
   editable: boolean;
   source: "env" | "file" | "unset";
+  /** Never writable here (hard-coded floor or `@protected` in the reference). */
+  protected: boolean;
+  /** Read once at startup (`@restart`): a saved change applies after a restart. */
+  restart: boolean;
 }
 
-function parseEnvExample(): Array<{ key: string; description: string; category: string }> {
-  const examplePath = join(PROJECT_ROOT, ".env.example");
-  let content: string;
-  try {
-    content = require("node:fs").readFileSync(examplePath, "utf-8");
-  } catch {
-    return [];
-  }
-
-  return environmentCatalog(content);
+/** The settings catalog: config/environment.reference, parsed. */
+function envCatalog(): SettingDescriptor[] {
+  return environmentCatalog(readEnvironmentReference(PROJECT_ROOT));
 }
 
 function parseEnvFile(): Map<string, string> {
@@ -371,7 +378,9 @@ function parseEnvFile(): Map<string, string> {
 }
 
 function handleEnvGet(): Response {
-  const schema = parseEnvExample();
+  // `@internal` keys are set by Marina itself or read only by a client: never listed.
+  const catalog = envCatalog();
+  const schema = catalog.filter((s) => !s.internal);
   const fileVars = parseEnvFile();
 
   const entries: EnvEntry[] = schema.map((s) => {
@@ -395,22 +404,27 @@ function handleEnvGet(): Response {
       category: s.category,
       isSecret: isSecretKey(s.key),
       isSet,
-      editable: !externallySet,
+      editable: !externallySet && !isProtectedEnvKey(s.key, catalog),
       source: externallySet ? "env" : inFile ? "file" : "unset",
+      protected: isProtectedEnvKey(s.key, catalog),
+      restart: s.restart,
     };
   });
 
   return json(entries);
 }
 
-// Env vars that are read live from process.env on each access (safe to hot-reload)
-const HOT_RELOADABLE_VARS = new Set([
+/**
+ * Env vars read live from process.env on each access (safe to hot-reload). A
+ * key the reference tags `@restart` is never reported as applied live, even if
+ * it is listed here.
+ */
+export const HOT_RELOADABLE_VARS = new Set([
   "ALLOWED_ORIGINS",
   "MODEL_API_KEYS",
   "MEM_API_KEYS",
   "DASHBOARD_PASSWORD",
   "MARINA_ADMINS",
-  "START_ROOM",
   "ANTHROPIC_API_KEY",
   "OPENAI_API_KEY",
   "GEMINI_API_KEY",
@@ -426,11 +440,6 @@ const HOT_RELOADABLE_VARS = new Set([
   "TELEGRAM_TOKEN",
   "DISCORD_TOKEN",
   "DISCORD_CHANNEL_IDS",
-  "TAVILY_API_KEY",
-  "SEARXNG_URL",
-  "AGENT_AUTORESPAWN",
-  "MAX_AGENTS",
-  "MAX_AGENT_UPTIME_MS",
 ]);
 
 async function handleEnvPut(req: Request): Promise<Response> {
@@ -452,7 +461,8 @@ async function handleEnvPut(req: Request): Promise<Response> {
   // regardless of whether they appear in the schema. Editing who is an admin /
   // the auth mode / the API bearer tokens through a dashboard route is a
   // privilege-escalation footgun; keep them .env-only.
-  const protectedEdits = Object.keys(body.vars).filter((k) => isProtectedEnvKey(k));
+  const catalog = envCatalog();
+  const protectedEdits = Object.keys(body.vars).filter((k) => isProtectedEnvKey(k, catalog));
   if (protectedEdits.length > 0) {
     return json(
       {
@@ -462,9 +472,9 @@ async function handleEnvPut(req: Request): Promise<Response> {
     );
   }
 
-  // Validate against .env.example schema
-  const schema = parseEnvExample();
-  const allowedKeys = new Set(schema.map((s) => s.key));
+  // Validate against the environment reference.
+  const allowedKeys = new Set(catalog.map((s) => s.key));
+  const restartOnly = new Set(catalog.filter((s) => s.restart).map((s) => s.key));
   const invalid = Object.keys(body.vars).filter((k) => !allowedKeys.has(k));
   if (invalid.length > 0) {
     return json({ error: `Unknown env vars: ${invalid.join(", ")}` }, 400);
@@ -501,7 +511,7 @@ async function handleEnvPut(req: Request): Promise<Response> {
     if (value === oldValue) continue; // No change
 
     changes[key] = value === "" ? null : value;
-    if (HOT_RELOADABLE_VARS.has(key)) {
+    if (HOT_RELOADABLE_VARS.has(key) && !restartOnly.has(key)) {
       reloaded.push(key);
     } else {
       restartRequired.push(key);

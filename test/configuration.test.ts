@@ -5,7 +5,13 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { environmentCatalog, parseEnvironment, writeEnvironment } from "../src/config/environment";
+import {
+  ENVIRONMENT_REFERENCE_PATH,
+  environmentCatalog,
+  isSecretKey,
+  parseEnvironment,
+  writeEnvironment,
+} from "../src/config/environment";
 import { configurationPreset, validateConfiguration } from "../src/config/presets";
 
 const directories: string[] = [];
@@ -78,6 +84,103 @@ test("settings metadata includes commented defaults and presets are validated", 
   expect(validateConfiguration(configurationPreset("shared-team"))).toContain(
     "BETTER_AUTH_SECRET must contain at least 32 characters when sign-in is enabled",
   );
+});
+
+test("catalog sections: one-line and three-line headers; bare rules never become a category", () => {
+  const catalog = environmentCatalog(
+    [
+      "# ─────────────",
+      "# Agent reasoning",
+      "# ─────────────",
+      "# Thinking level.",
+      "# MARINA_AGENT_THINKING=off",
+      "",
+      "# ── Examples ──",
+      "# Shared URL.",
+      "# WS_URL=ws://localhost:3300",
+      "# ─────────────",
+      "",
+      "# Orphan description.",
+      "# LATER=1",
+    ].join("\n"),
+  );
+  expect(catalog.map((s) => [s.key, s.category])).toEqual([
+    ["MARINA_AGENT_THINKING", "Agent reasoning"],
+    ["WS_URL", "Examples"],
+    ["LATER", "Examples"],
+  ]);
+  expect(catalog.some((s) => /^─+$/.test(s.category))).toBe(false);
+});
+
+test("catalog blocks: groups share a description, a bare # resets, tags and inline notes parse", () => {
+  const catalog = environmentCatalog(
+    [
+      "# ── Group ──",
+      "# Shared text for both.",
+      "# @protected @restart",
+      "# ONE=1",
+      "# TWO=true   # second one",
+      "# Next block.",
+      "# THREE=",
+      "",
+      "# Dropped paragraph.",
+      "#",
+      "# Kept paragraph.",
+      "# @internal",
+      "# FOUR=x",
+    ].join("\n"),
+  );
+  const byKey = Object.fromEntries(catalog.map((s) => [s.key, s]));
+  expect(byKey.ONE).toMatchObject({
+    description: "Shared text for both.",
+    protected: true,
+    restart: true,
+    internal: false,
+    type: "integer",
+    example: "1",
+  });
+  expect(byKey.TWO).toMatchObject({
+    description: "Shared text for both. — second one",
+    protected: true,
+    type: "boolean",
+  });
+  expect(byKey.THREE).toMatchObject({ description: "Next block.", protected: false });
+  expect(byKey.FOUR).toMatchObject({ description: "Kept paragraph.", internal: true });
+});
+
+test("secret detection treats TOKEN as a trailing word only", () => {
+  for (const key of ["HF_TOKEN", "MARINA_TOKEN", "MODEL_API_KEYS", "GATEWAY_SECRET"])
+    expect(isSecretKey(key)).toBe(true);
+  for (const key of ["MARINA_FEDERATION_SIGNING_KEY", "OTEL_EXPORTER_OTLP_HEADERS"])
+    expect(isSecretKey(key)).toBe(true);
+  for (const key of [
+    "AGENT_CREW_MAX_TOKENS",
+    "MARINA_LOCAL_MAX_OUTPUT_TOKENS",
+    "MARINA_TOKEN_CHARS_PER_TOKEN",
+    "MARINA_ARENA_KEY_FILE",
+  ])
+    expect(isSecretKey(key)).toBe(false);
+});
+
+test("the environment reference describes every key under a real section", () => {
+  const catalog = environmentCatalog(readFileSync(ENVIRONMENT_REFERENCE_PATH, "utf8"));
+  expect(catalog.length).toBeGreaterThan(200);
+  expect(catalog.filter((s) => !s.description.trim()).map((s) => s.key)).toEqual([]);
+  expect(catalog.filter((s) => s.category === "General").map((s) => s.key)).toEqual([]);
+  // The dashboard must refuse writes to these (see src/net/dashboard-api/keys.ts).
+  const protectedKeys = new Set(catalog.filter((s) => s.protected).map((s) => s.key));
+  for (const key of [
+    "MARINA_URL_GUARD_DNS_FAIL_OPEN",
+    "MARINA_OTLP_ALLOW_INSECURE",
+    "MARINA_MCP_ALLOWED_HOSTS",
+    "MARINA_KEY_SECRET",
+    "WS_HOST",
+    "MARINA_DASHBOARD_CSP",
+    "MARINA_EVOLVE_TRIALS",
+    "MARINA_COLLECTIVE_CHILD",
+    "MARINA_LOCAL_API_KEY",
+  ])
+    expect(protectedKeys.has(key)).toBe(true);
 });
 
 test("explicit removals clear duplicate assignments without rewriting unrelated expressions", () => {
