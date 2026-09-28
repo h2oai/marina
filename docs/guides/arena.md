@@ -210,7 +210,9 @@ the Civiqs nowcast, automatically (`src/arena/discovery/`):
 1. A family's clean resolved rounds are split **by time**: the older 60 % are *discovery*, the rest
    *holdout*.
 2. A proposer model sees the family, a sample of its history, the **signal language** (a menu of
-   centres — `last`, `nowcast`, `ewma:α`, `mean:k`, `median:k`, `trend:k`, `nowcast-shrink:w` — and
+   centres — `last`, `nowcast`, `ewma:α`, `mean:k`, `median:k`, `trend:k`, `nowcast-shrink:w` (last
+   weekly value + w × (nowcast − it)), `nowcast-mean:k` (mean of the last k daily readings in the
+   nowcast's snapshot, i.e. Civiqs's revised values as published before the lock) — and
    spreads — `arena`, `baseline`, `rms:w`, `mad:w`, `scale:k`), and the incumbent's and every earlier
    attempt's **discovery** score. It never sees a holdout score. Signals are data, never code.
 3. Each new proposal is scored on both halves. It is **promoted** only if it beats the incumbent
@@ -220,6 +222,9 @@ the Civiqs nowcast, automatically (`src/arena/discovery/`):
    `bun run arena signals`) lists them, and the next discovery round is told not to repeat them.
 
 The same loop runs in the world: `arena discover [tracker:T]` (see [Operate](#operate)).
+`bun run arena discover --tracker T --signal <centre>/<spread> [--signal …]` scores signals an
+operator proposes, with no model call, under the same split, margin and record — each one still
+counts as a try.
 
 `MARINA_ARENA_FORECASTER=discovered` uses each family's best promoted signal and the nowcast
 elsewhere. Promotion is necessary, not sufficient — record a promoted signal in shadow before it
@@ -227,6 +232,39 @@ files. First run (2026-09-26, Claude Sonnet 5 proposing, $0.02): 18 proposals ac
 and Morning Consult, **none promoted** — the closest (`nowcast-shrink:0.5` on Civiqs) beat the
 incumbent's holdout 0.212 vs 0.181 but not the margin, and lost on discovery; every smoothing idea
 lost on the holdout. AAII has too few clean rounds to split yet.
+
+**Nowcast variants, measured 2026-09-28 (none adopted).** On the 20 clean resolved Civiqs rounds
+(7 weeks, w33–w39; the loop's split: 12 discovery rounds through w36, 8 holdout rounds w37–w39),
+with every input read as it stood at the lock:
+
+| Variant | All 20 | Discovery | Holdout | Beats / loses to nowcast | Δ vs nowcast, 90 % week bootstrap |
+|---|---|---|---|---|---|
+| `nowcast` (incumbent) | +0.213 | +0.235 | +0.181 | — | — |
+| `nowcast-shrink:0.7` | +0.242 | +0.246 | +0.235 | 10 / 9 | [−0.013, +0.133] |
+| `nowcast-shrink:0.75` | +0.243 | +0.248 | +0.234 | 10 / 9 | [−0.005, +0.116] |
+| `nowcast-shrink:0.8` | +0.241 | +0.249 | +0.229 | 10 / 9 | [−0.000, +0.096] |
+| `nowcast-mean:3` | +0.262 | +0.311 | +0.189 | 11 / 8 | [−0.023, +0.118] |
+| revision drift (walk-forward, per series) | +0.165 | +0.148 | +0.190 | 6 / 9 | [−0.112, +0.022] |
+| shrink weight fitted walk-forward on archive pseudo-rounds | +0.224 | +0.219 | +0.231 | 8 / 9 | [−0.075, +0.199] |
+| nowcast, per-series sd from archive pseudo-rounds | +0.196 | +0.198 | +0.195 | 7 / 8 | [−0.041, +0.039] |
+| nowcast, per-series sd from its own earlier round errors | +0.226 | +0.238 | +0.208 | 3 / 1 | [+0.001, +0.042] |
+
+The fixed shrink weights were chosen after seeing all 20 rounds, so their "All 20" column is
+in-sample. Run through the loop on a copy of the discovery record (six earlier Civiqs tries), shrink
+0.7 and 0.75 clear the promotion margin and shrink 0.8 and `nowcast-mean` do not. They were not
+promoted in the live record, for three reasons. First, the whole holdout gain comes from one round:
+w37 approval, where the nowcast scored −2.14 and shrinking cut the loss. On w38–w39 the change is
+flat or slightly negative. Second, the week bootstrap on the holdout spans zero (P(Δ > 0) is 0.72
+for shrink 0.7 and 0.86 for 0.8). Third, about 25 variants were scored offline before these went
+through the loop, and the loop's fishing count does not see those tries. `nowcast-mean:k` wins
+discovery clearly but ties on the holdout.
+
+Correcting the nowcast by its average past revision hurts. A larger sample of archive pseudo-rounds
+(361 across all 22 series and 6 weeks) backs the direction of shrinking: mean absolute error falls
+about 9 % at w 0.6–0.75. Those pseudo-rounds share weeks with the real ones. The honest test is
+forward. Promote `nowcast-shrink:0.8` in a separate discovery record (`DB_PATH=<scratch> bun run
+arena discover --tracker civiqs --signal nowcast-shrink:0.8/baseline`), then shadow `discovered`
+from that record against the nowcast for several weeks before filing it.
 
 ## Integrity: what the backtest numbers can and cannot claim
 

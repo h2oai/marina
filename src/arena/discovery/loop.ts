@@ -177,7 +177,7 @@ export function buildProposal(
     `A recent history of one series in this family (oldest first): ${sample.map((x) => Math.round(x * 100) / 100).join(", ")}`,
     "",
     "The signal language (choose one centre and one spread):",
-    "  centre: last | nowcast (freshest daily reading where the source publishes one) | ewma:<alpha 0.05-1> | mean:<k 2-12> | median:<k 3-12> | trend:<k 3-12> | nowcast-shrink:<w 0-1>",
+    "  centre: last | nowcast (freshest daily reading where the source publishes one) | ewma:<alpha 0.05-1> | mean:<k 2-12> | median:<k 3-12> | trend:<k 3-12> | nowcast-shrink:<w 0-1> (last weekly value + w x (nowcast - it)) | nowcast-mean:<k 2-7> (mean of the last k daily readings in the nowcast's snapshot)",
     "  spread: arena (fixed 1.5) | baseline (calibrated from the series) | rms:<window 6-52> | mad:<window 6-52> | scale:<k 0.3-3> (times baseline)",
     "",
     `The incumbent (centre nowcast, spread baseline) scores ${incumbentDiscovery.skill.toFixed(3)} on the discovery rounds.`,

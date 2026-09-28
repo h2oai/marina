@@ -19,6 +19,9 @@
  *   bun run arena research <round_id>           run the research agent once; print dossier + forecast
  *   bun run arena discover [--tracker T] [--proposer provider/model] [--n N]
  *                                               propose → backtest (time-split) → promote signals
+ *   bun run arena discover --tracker T --signal <centre>/<spread> [--signal …]
+ *                                               score operator-proposed signals by the same rule
+ *                                               (no model call; each still counts as a try)
  *   bun run arena signals [--tracker T]         every discovery attempt and its verdict
  *   bun run arena shadow run <round_id|due> | list | score
  *                                               record / list / score shadow forecasts (never filed)
@@ -74,6 +77,7 @@ const { positionals, values } = parseArgs({
     "no-learn": { type: "boolean" },
     proposer: { type: "string" },
     n: { type: "string" },
+    signal: { type: "string", multiple: true },
   },
 });
 const [cmd = "status", arg] = positionals;
@@ -424,8 +428,17 @@ async function main(): Promise<number> {
           import("../src/arena/discovery/loop"),
           import("../src/arena/model-backend"),
         ]);
-        const proposer = values.proposer ?? loop.proposerModel();
-        const { complete, usage } = modelComplete(proposer);
+        // Operator-proposed signals take the proposer's place: the same split,
+        // margin and record, with no model call.
+        const operator = values.signal?.map((s) => {
+          const [centre = "", spread = "baseline"] = s.split("/");
+          return { centre, spread, rationale: "operator-proposed" };
+        });
+        if (operator && !values.tracker) throw new Error("--signal needs --tracker");
+        const proposer = operator ? "operator" : (values.proposer ?? loop.proposerModel());
+        const { complete, usage } = operator
+          ? { complete: undefined, usage: { calls: 0, costUsd: 0 } }
+          : modelComplete(proposer);
         const trackers = values.tracker ? [values.tracker] : loop.DISCOVERY_TRACKERS;
         for (const tracker of trackers) {
           const out = await loop.discover({
@@ -433,7 +446,9 @@ async function main(): Promise<number> {
             notes: db,
             tracker,
             n: values.n ? Number(values.n) : 5,
-            propose: (prompt) => complete(loop.PROPOSER_SYSTEM, prompt),
+            propose: operator
+              ? async () => JSON.stringify({ signals: operator })
+              : (prompt) => complete!(loop.PROPOSER_SYSTEM, prompt),
           });
           console.log(`\n== ${tracker}`);
           if (out.note) console.log(`  ${out.note}`);

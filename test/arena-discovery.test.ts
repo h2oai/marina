@@ -65,6 +65,70 @@ describe("signal language", () => {
   });
 });
 
+describe("nowcast centres", () => {
+  // Weekly history ends Friday 2026-09-25 at -26; the snapshot fetched before the
+  // Wednesday lock has daily readings up to Monday, the last one -22.
+  const history = weekly([-25, -26, -25, -26], "2026-09-04");
+  const round = {
+    round_id: "civiqs-2026-w40-approval",
+    tracker: "civiqs",
+    series: "civiqs_net_approval",
+    question: "?",
+    target_type: "continuous_normal",
+    lock_at: "2026-09-30T14:00:00Z",
+    release_at: "2026-10-02T14:00:00Z",
+  } as ArenaRound;
+  const lock = { round_id: round.round_id, answer_history: history };
+  const snap = (fetchedAt: string, days: Array<[string, number]>) => ({
+    choices: ["Approve", "Disapprove", "Neither approve nor disapprove"],
+    fetched_at: fetchedAt,
+    points: days.map(([d, net]) => [d, 40, 40 - net, 20]),
+  });
+  const files: Record<string, unknown> = {
+    "civiqs/approve_president_trump_2025/2026-09-29.json": snap("2026-09-29T16:00:00Z", [
+      ["2026-09-24", -27],
+      ["2026-09-25", -26],
+      ["2026-09-26", -25],
+      ["2026-09-27", -24],
+      ["2026-09-28", -22],
+    ]),
+    // Fetched after the lock: never read.
+    "civiqs/approve_president_trump_2025/2026-09-30.json": snap("2026-09-30T16:00:00Z", [
+      ["2026-09-29", -10],
+    ]),
+  };
+  const data = new ArenaData("https://example.test", async (url) => {
+    const path = url.replace("https://example.test/", "");
+    return path in files ? Response.json(files[path]) : new Response("", { status: 404 });
+  });
+  const centre = async (c: string) =>
+    (await applySignal({ centre: c, spread: "baseline" }, round, lock, data)).mean;
+
+  it("validates the nowcast-mean window", () => {
+    expect(validateSignal({ centre: "nowcast-mean:3", spread: "baseline" })).toBeUndefined();
+    expect(validateSignal({ centre: "nowcast-mean:1", spread: "baseline" })).toContain("2–7");
+    expect(validateSignal({ centre: "nowcast-mean:8", spread: "baseline" })).toContain("2–7");
+  });
+
+  it("reads only the snapshot fetched before the lock", async () => {
+    expect(await centre("nowcast")).toBe(-22);
+    // shrink: last weekly value + w × (nowcast − it)
+    expect(await centre("nowcast-shrink:0.75")).toBe(-23);
+    // mean of the snapshot's last k daily readings (revised values, newest last)
+    expect(await centre("nowcast-mean:3")).toBeCloseTo(-23.667, 3);
+    expect(await centre("nowcast-mean:7")).toBe(-24.8);
+  });
+
+  it("falls back to the last weekly value when no fresher reading exists", async () => {
+    const empty = new ArenaData(
+      "https://example.test",
+      async () => new Response("", { status: 404 }),
+    );
+    const f = await applySignal({ centre: "nowcast-mean:3", spread: "arena" }, round, lock, empty);
+    expect(f.mean).toBe(-26);
+  });
+});
+
 describe("discovery loop", () => {
   const DB = `test_arena_discovery_${process.pid}.db`;
   let db: MarinaDB;
