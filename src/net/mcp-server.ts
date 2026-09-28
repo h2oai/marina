@@ -386,7 +386,11 @@ async function cmdTool(
     )
       result.isError = true;
     const options = session.context;
-    if (options?.mode === "auto" && !cmd.startsWith("context ") && !result.isError) {
+    if (
+      options?.mode === "auto" &&
+      !cmd.replace(/^\//, "").startsWith("context ") &&
+      !result.isError
+    ) {
       try {
         const entity = engine.entities.get(resolved.entityId);
         if (entity && engine.db && engine.getConnectionEntity(session.connId) === entity.id) {
@@ -725,7 +729,22 @@ export class McpServerAdapter {
       inspection?: "capabilities" | "context",
       prepare?: (id: EntityId) => string | McpResult,
     ): Promise<McpResult> {
-      return cmdTool(engine, sessions, extra, command, rateLimiter, context, inspection, prepare);
+      const worldCommand = command.startsWith("/") ? command : `/${command}`;
+      return cmdTool(
+        engine,
+        sessions,
+        extra,
+        worldCommand,
+        rateLimiter,
+        context,
+        inspection,
+        prepare,
+      );
+    }
+
+    /** Free text escape hatches intentionally keep the resident's current modal grammar. */
+    function runInput(extra: { sessionId?: string }, command: string): Promise<McpResult> {
+      return runCmd(extra, "", undefined, undefined, () => command);
     }
 
     async function initializeContext(
@@ -768,7 +787,7 @@ export class McpServerAdapter {
     }
 
     registerMemoryTools(mcp, async (request, extra) => {
-      const result = await runCmd(extra, `memory api ${JSON.stringify(request)}`);
+      const result = await runCmd(extra, `/memory api ${JSON.stringify(request)}`);
       // Missing persistence or a failed world session must not look like a
       // successful memory write to a coding agent.
       return result.structuredContent ? result : { ...result, isError: true };
@@ -811,7 +830,8 @@ export class McpServerAdapter {
           })
         )
           return errorText("Enable the parent group before its nested options.");
-        return composed.command;
+        // The selected schema names a world action even while a modal is active.
+        return `/${composed.command}`;
       });
     }
 
@@ -1364,7 +1384,7 @@ export class McpServerAdapter {
         "Type 'help' to see all available commands.",
       { input: z.string().describe("Raw command string to send") },
       { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-      async ({ input }, extra) => runCmd(extra, input),
+      async ({ input }, extra) => runInput(extra, input),
     );
 
     mcp.tool(
@@ -1374,7 +1394,7 @@ export class McpServerAdapter {
         input: z.string().describe("Commands separated by semicolons, e.g. 'look ; north ; look'"),
       },
       { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-      async ({ input }, extra) => runCmd(extra, `batch ${input}`),
+      async ({ input }, extra) => runInput(extra, `batch ${input}`),
     );
 
     // ── Resolver / watch (point-in-time observation primitive) ────────────

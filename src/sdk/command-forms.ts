@@ -115,6 +115,7 @@ export function parseCommandForm(syntax: string): CommandForm {
         /content|diff|old text|new text/.test(placeholder),
       multiline:
         REST.test(placeholder) &&
+        !alternatives.every((choice) => /(?:^|[-_])id$/i.test(choice)) &&
         !numeric &&
         !(syntax.startsWith("experiment record ") && placeholder === "value"),
     });
@@ -270,20 +271,41 @@ export function commandFormPrefix(form: CommandForm): string {
 
 /** Prefer the typed action, then its least restrictive complete form. */
 export function matchCommandForm(forms: CommandForm[], input: string): CommandForm | undefined {
-  const query = input.trimStart();
+  const words = input.trim().split(/\s+/);
+  const score = (form: CommandForm): number => {
+    let cursor = 0;
+    let matched = 0;
+    for (const part of form.parts) {
+      if (cursor >= words.length || part.group) return matched;
+      if (part.literal !== undefined) {
+        const word = words[cursor]!;
+        if (word !== part.literal) {
+          // An unfinished final token can identify an action without inventing arguments.
+          return cursor === words.length - 1 && !/\s$/.test(input) && part.literal.startsWith(word)
+            ? matched + word.length
+            : -1;
+        }
+        matched += part.literal.length + 1;
+      } else {
+        const field = form.fields.find((field) => field.id === part.field);
+        // Free text and JSON have no unambiguous token boundary; leave them to the form.
+        if (!field || field.multiline || field.kind === "json") return matched;
+      }
+      cursor++;
+    }
+    return cursor === words.length ? matched : -1;
+  };
   const required = (form: CommandForm) =>
     form.fields.filter((field) => !field.optionalGroup && field.default === undefined).length;
   return forms
-    .filter((form) => {
-      const prefix = commandFormPrefix(form);
-      return query === prefix || query.startsWith(`${prefix} `);
-    })
+    .map((form) => ({ form, score: score(form) }))
+    .filter((entry) => entry.score > 0)
     .sort(
       (a, b) =>
-        commandFormPrefix(b).length - commandFormPrefix(a).length ||
-        required(a) - required(b) ||
-        b.groups.length - a.groups.length,
-    )[0];
+        b.score - a.score ||
+        required(a.form) - required(b.form) ||
+        b.form.groups.length - a.form.groups.length,
+    )[0]?.form;
 }
 
 export function composeCommand(

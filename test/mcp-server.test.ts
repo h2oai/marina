@@ -305,6 +305,78 @@ describe("MCP Server", () => {
   });
 
   describe("shared participation", () => {
+    it("keeps typed world tools bound to their declared action while Code Mode is active", async () => {
+      const sid = await initSession(url);
+      await toolCall(url, sid, "login", { name: "ModalFormBot" });
+      let worldCalls = 0;
+      let codeCalls = 0;
+      engine.commands.registerOwned("modal-form", {
+        name: "world-inspect",
+        help: "Inspect the world",
+        usage: [{ syntax: "world-inspect", effect: "read" }],
+        handler: (ctx, input) => {
+          worldCalls++;
+          ctx.send(input.entity, "World inspected");
+        },
+      });
+      engine.commands.registerOwned(
+        "builtin",
+        {
+          name: "code",
+          help: "Capture modal routing",
+          handler: () => {
+            codeCalls++;
+          },
+        },
+        true,
+      );
+      const exposed = await toolCallRaw(url, sid, "capabilities", {
+        command: "world-inspect",
+        syntax: "world-inspect",
+        expose: true,
+      });
+      const entity = engine.entities.findAgentByName("ModalFormBot")!;
+      entity.properties.active_modal = "code";
+      expect(await toolCall(url, sid, exposed.structuredContent!.tool as string, {})).toContain(
+        "World inspected",
+      );
+      expect(
+        await toolCall(url, sid, "invoke", { command: "world-inspect", syntax: "world-inspect" }),
+      ).toContain("World inspected");
+      expect(worldCalls).toBe(2);
+      expect(codeCalls).toBe(0);
+      const memory = await toolCallRaw(url, sid, "memory_service", { operation: "me" });
+      expect(memory.isError).not.toBe(true);
+      expect(memory.structuredContent).toBeDefined();
+      expect(await toolCall(url, sid, "look", {})).toContain("Starting Room");
+      const saved = await toolCall(url, sid, "memory", {
+        action: "set",
+        key: "expertise",
+        value: "quartz",
+      });
+      expect(saved).toContain('Memory "expertise" set.');
+      expect(db.getCoreMemory("ModalFormBot", "expertise")?.value).toBe("quartz");
+      expect(codeCalls).toBe(0);
+      engine.commands.registerOwned("modal-form", {
+        name: "world-gated",
+        help: "Inspect a gated capability",
+        minRank: 4,
+        usage: ["world-gated"],
+        handler: () => {
+          worldCalls++;
+        },
+      });
+      const denied = await toolCall(url, sid, "invoke", {
+        command: "world-gated",
+        syntax: "world-gated",
+      });
+      expect(denied).toContain("rank 4");
+      expect(worldCalls).toBe(2);
+      expect(entity.properties.active_modal).toBe("code");
+      await toolCall(url, sid, "command", { input: "modal prompt" });
+      expect(codeCalls).toBe(1);
+    });
+
     it("preserves a completed action when automatic goal retrieval fails", async () => {
       const sid = await initSession(url);
       await toolCall(url, sid, "login", { name: "ContextFaultBot" });

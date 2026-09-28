@@ -68,4 +68,11 @@ test("execution routes modals through the same permissions and awaits async hand
   await phase.execute(entity.id, "look", { bypassModal: true });
   expect(calls).toEqual(["code help", "look", "look"]);
   expect(events.filter((event) => event.type === "command")).toHaveLength(3);
+  entity.properties.active_modal = undefined;
+  await phase.execute(entity.id, "/look");
+  expect(calls).toEqual(["code help", "look", "look", "look"]);
+  entity.properties.rank = 0;
+  await phase.execute(entity.id, "/code run forbidden");
+  expect(messages.at(-1)).toContain("rank 3");
+  expect(calls).toHaveLength(4);
 });

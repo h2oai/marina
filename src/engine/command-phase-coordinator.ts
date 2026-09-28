@@ -205,14 +205,14 @@ export class CommandPhaseCoordinator {
   }
 
   private routeModalCommand(entity: Entity, raw: string): string {
-    const activeModal = entity.properties.active_modal;
-    if (activeModal !== "code") return raw;
-
     const trimmed = raw.trim();
     if (!trimmed) return raw;
-    // Explicit world command while preserving the current modal and its streams.
-    // Normal command permissions still run after routing.
+    // Explicit world input has the same meaning before, during and after a modal.
+    // Normal command permissions still run after routing; this only chooses the grammar.
     if (trimmed.startsWith("/") && trimmed.length > 1) return trimmed.slice(1).trim();
+
+    const activeModal = entity.properties.active_modal;
+    if (activeModal !== "code") return raw;
 
     const verb = trimmed.split(/\s+/, 1)[0]?.toLowerCase();
     if (!verb || verb === "code") return raw;

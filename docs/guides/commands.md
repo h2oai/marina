@@ -846,6 +846,11 @@ In world chat, type `/` for starter commands or two characters for suggestions, 
 press Tab to complete. Action prefixes such as `note cl` complete to `note claim` and
 open that action's parameter helper. **Fill command** prepares a draft for review;
 Enter sends it. Code Mode keeps its own input behavior.
+An explicit `/command` also addresses the world from other interfaces, including while
+Code Mode is open. It keeps the mode active and applies the command's normal permissions.
+Helpers also recognize actions after an identifier, such as `note verify 51 verified`.
+Discovery refreshes discard older replies; unchanged command metadata is reused only
+after the server confirms its current room, rank and registry key.
 
 `context <query>` previews your own memory context in the same provenance tiers used for
 agent retrieval. It does not award recall credit. In the dashboard, choose **Memory context**

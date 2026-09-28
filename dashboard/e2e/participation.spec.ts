@@ -1,17 +1,26 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
+import { writeFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 
 test("slash discovery and note-claim helpers work inline, with context visible in the sidebar", async ({
   page,
 }) => {
   const commands: string[] = [];
-  page.on("websocket", (socket) =>
+  let manifestBytes = 0;
+  let confirmedBytes = 0;
+  page.on("websocket", (socket) => {
     socket.on("framesent", (frame) => {
       const message = JSON.parse(String(frame.payload));
       if (message.type === "command") commands.push(message.command);
-    }),
-  );
+    });
+    socket.on("framereceived", (frame) => {
+      const message = JSON.parse(String(frame.payload));
+      const catalog = message.data?.capabilities;
+      if (catalog?.commands) manifestBytes = Buffer.byteLength(String(frame.payload));
+      if (catalog?.unchanged) confirmedBytes = Buffer.byteLength(String(frame.payload));
+    });
+  });
   await page.goto("/dashboard");
   await page.getByRole("button", { name: "Dismiss getting-started guide" }).click();
   await page.getByPlaceholder("Enter your name...").fill("InlineAuditBrowser");
@@ -38,9 +47,23 @@ test("slash discovery and note-claim helpers work inline, with context visible i
   await sidebar.getByText(/\[unverified\] 1 items/).click();
   await expect(sidebar.getByText("opal inline observation", { exact: true })).toBeVisible();
   await page.screenshot({ path: "/tmp/marina-sidebar-context.png", fullPage: true });
+  await input.fill("note verify 51 verified");
+  await expect(page.getByLabel("Command action")).toHaveValue(/note verify .* verified /);
+  // Choosing a helper changes the draft only; no verification is submitted here.
+  expect(commands).toHaveLength(1);
   await input.fill("/look");
   await input.press("Enter");
   await expect.poll(() => commands.at(-1)).toBe("look");
+  await expect.poll(() => confirmedBytes).toBeGreaterThan(0);
+  expect(confirmedBytes).toBeLessThan(manifestBytes / 10);
+  writeFileSync(
+    "/tmp/marina-followup-discovery-bytes.json",
+    JSON.stringify({ manifestBytes, confirmedBytes }),
+  );
+  await test.info().attach("discovery-payload-sizes", {
+    body: JSON.stringify({ manifestBytes, confirmedBytes }),
+    contentType: "application/json",
+  });
 });
 
 test("inline completion drafts a command and the resident previews, corrects and refreshes memory", async ({

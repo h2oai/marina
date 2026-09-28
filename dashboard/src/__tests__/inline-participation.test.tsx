@@ -7,6 +7,7 @@ import { compileCommandForms } from "../../../src/sdk/command-forms";
 import { CommandInputAssistance } from "../components/CommandInputAssistance";
 import { MemoryContextCard } from "../components/MemoryContextCard";
 import { useChatState } from "../hooks/use-chat-state";
+import { useWorldState } from "../hooks/use-world-state";
 import { requestParticipant } from "../lib/memory-service";
 
 vi.mock("../lib/memory-service", () => ({ requestParticipant: vi.fn() }));
@@ -53,12 +54,14 @@ function Input({ codeMode = false }: { codeMode?: boolean }) {
   );
 }
 beforeEach(() => {
+  useWorldState.setState({ entities: [] });
   useChatState.getState().setLoggedIn(true, "Ada");
   request.mockReset();
   request.mockResolvedValue({ commands: catalog });
 });
 afterEach(() => {
   useChatState.getState().setLoggedIn(false);
+  useWorldState.setState({ entities: [] });
 });
 
 it("completes slash commands and action prefixes, then shows the selected action's fields", async () => {
@@ -106,6 +109,88 @@ it("keeps world completion and parameter helpers out of Code Mode", async () => 
   fireEvent.input(screen.getByLabelText("Command"), { target: { value: "note claim " } });
   expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Command action")).not.toBeInTheDocument();
+});
+
+it("ignores a stale discovery response after a newer refresh", async () => {
+  let stale!: (result: unknown) => void;
+  request.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        stale = resolve;
+      }),
+  );
+  request.mockResolvedValue({ commands: [catalog[0]] });
+  render(<Input />);
+  const input = screen.getByLabelText("Command");
+  fireEvent.focus(input);
+  fireEvent.input(input, { target: { value: "/me" } });
+  await screen.findByRole("option", { name: /memory/ });
+  await act(async () => stale({ commands: [catalog[2]] }));
+  expect(screen.getByRole("option", { name: /memory/ })).toBeInTheDocument();
+  expect(screen.queryByRole("option", { name: /emote/ })).not.toBeInTheDocument();
+});
+
+it("resets keyboard selection when a catalog refresh shrinks the suggestions", async () => {
+  const draft = vi.fn();
+  window.addEventListener("marina:draft-command", draft);
+  try {
+    render(<Input />);
+    const input = screen.getByLabelText("Command");
+    fireEvent.input(input, { target: { value: "/me" } });
+    await screen.findByRole("option", { name: /memory/ });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    request.mockResolvedValue({ commands: [catalog[2]] });
+    fireEvent.focus(input);
+    await waitFor(() =>
+      expect(screen.queryByRole("option", { name: /memory/ })).not.toBeInTheDocument(),
+    );
+    fireEvent.keyDown(input, { key: "Tab" });
+    expect((draft.mock.calls[0]![0] as CustomEvent).detail.command).toBe("emote ");
+  } finally {
+    window.removeEventListener("marina:draft-command", draft);
+  }
+});
+
+it("keeps the selected command when a refresh reorders the catalog", async () => {
+  render(<Input />);
+  const input = screen.getByLabelText("Command");
+  fireEvent.input(input, { target: { value: "/me" } });
+  await screen.findByRole("option", { name: /memory/ });
+  fireEvent.keyDown(input, { key: "ArrowDown" });
+  fireEvent.keyDown(input, { key: "ArrowDown" });
+  request.mockResolvedValue({ commands: [catalog[0]] });
+  fireEvent.focus(input);
+  await waitFor(() =>
+    expect(screen.queryByRole("option", { name: /emote/ })).not.toBeInTheDocument(),
+  );
+  expect(screen.getByRole("option", { name: /memory/ })).toHaveAttribute("aria-selected", "true");
+});
+
+it("refreshes room-specific discovery without requiring the resident to blur the input", async () => {
+  render(<Input />);
+  const input = screen.getByLabelText("Command");
+  fireEvent.input(input, { target: { value: "/me" } });
+  await screen.findByRole("option", { name: /memory/ });
+  request.mockResolvedValue({ commands: [catalog[2]] });
+  act(() =>
+    useWorldState.setState({
+      entities: [
+        {
+          id: "ada",
+          name: "Ada",
+          kind: "agent",
+          room: "new-room",
+          properties: { rank: 1 },
+        },
+      ],
+    }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("option", { name: /memory/ })).not.toBeInTheDocument(),
+  );
+  expect(await screen.findByRole("option", { name: /emote/ })).toBeInTheDocument();
+  expect(request).toHaveBeenCalledTimes(2);
 });
 
 it("shows only the resident's preview in the sidebar and clears it on logout", async () => {

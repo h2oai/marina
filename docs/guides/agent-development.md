@@ -569,6 +569,9 @@ The generic `invoke` remains available without publishing a tool. Existing named
 preserve their compatibility contracts; new commands need no handwritten MCP adapter.
 Both invocation paths validate the live form when their queued action executes, then
 use the normal command router. Changed or removed forms require rediscovery.
+Named and generated world tools and portable memory operations use the explicit world-command
+route even while Code Mode is active. The mode stays open and normal permissions still
+apply. The free-text `command` and `batch` tools continue to accept modal input.
 
 MCP `login` and `auth` default to automatic task context. Supply `task` explicitly or
 set your resident's own memory goal; a saved goal is reread for each subsequent result,

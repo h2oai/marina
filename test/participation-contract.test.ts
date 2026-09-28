@@ -104,6 +104,13 @@ describe("shared participation contracts", () => {
     const verify = matchCommandForm(forms, `note verify ${id}`)!;
     const verified = forms.find((form) => form.syntax.includes(" verified "))!;
     expect(verify).toBeDefined();
+    expect(matchCommandForm(forms, `note verify ${id} verified`)?.syntax).toBe(verified.syntax);
+    expect(matchCommandForm(forms, `note verify ${id} ver`)?.syntax).toBe(verified.syntax);
+    expect(matchCommandForm(forms, `note verify ${id} unverified `)?.syntax).toContain(
+      " unverified ",
+    );
+    expect(matchCommandForm(forms, `note verify ${id} disputed `)?.syntax).toContain(" disputed ");
+    expect(verified.fields.find((field) => field.label === "your-note-id")?.multiline).toBe(false);
     const values = Object.fromEntries(
       verified.fields.map((field) => [
         field.id,

@@ -5,9 +5,18 @@ import type { CapabilityManifest, CommandCatalogEntry } from "../../../src/sdk/c
 import { commandFormPrefix, matchCommandForm } from "../../../src/sdk/command-forms";
 import { ORIENTATION_COMMANDS } from "../../../src/sdk/onboarding";
 import { useChatState } from "../hooks/use-chat-state";
+import { useWorldState } from "../hooks/use-world-state";
 import { draftCommand, matchCommands } from "../lib/command-discovery";
 import { requestParticipant } from "../lib/memory-service";
 import { CommandFields } from "./CommandFields";
+
+function discoveryContextKey(
+  state: ReturnType<typeof useWorldState.getState>,
+  name: string | null,
+) {
+  const self = state.entities.find((entity) => entity.name === name);
+  return JSON.stringify([self?.room, self?.properties?.rank, self?.properties?.active_modal]);
+}
 
 /** Selection only fills a draft. Enter retains send semantics until an option is selected. */
 export function CommandInputAssistance({
@@ -19,10 +28,11 @@ export function CommandInputAssistance({
 }) {
   const [catalog, setCatalog] = useState<CommandCatalogEntry[]>([]);
   const [value, setValue] = useState("");
-  const [selected, setSelected] = useState(-1);
+  const [selectedName, setSelectedName] = useState<string | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const [error, setError] = useState("");
   const identity = useChatState((s) => s.entityName);
+  const discoveryContext = useWorldState((state) => discoveryContextKey(state, identity));
   const history = useChatState((s) => s.commandHistory);
   const query = value.replace(/^\//, "").trimStart();
   const current = codeMode
@@ -57,20 +67,28 @@ export function CommandInputAssistance({
                 : starters.flatMap((name) => catalog.filter((entry) => entry.name === name))
               ).slice(0, 6)
             : [];
+  const activeSelection = options.findIndex((option) => option.name === selectedName);
   const insert = (command: string) => {
     draftCommand(`${command} `);
     setValue(`${command} `);
-    setSelected(-1);
+    setSelectedName(null);
   };
   useEffect(() => {
     setCatalog([]);
     setError("");
     if (!identity) return;
-    const controller = new AbortController();
+    let active: AbortController | undefined;
     const refresh = () => {
+      active?.abort();
+      const controller = new AbortController();
+      active = controller;
       void requestParticipant<CapabilityManifest>("capabilities", {}, controller.signal)
         .then((result) => {
-          if (controller.signal.aborted) return;
+          if (
+            controller.signal.aborted ||
+            discoveryContextKey(useWorldState.getState(), identity) !== discoveryContext
+          )
+            return;
           setCatalog(result.commands);
           setError("");
         })
@@ -83,12 +101,12 @@ export function CommandInputAssistance({
     const element = input.current;
     const changed = () => {
       setValue(element?.value ?? "");
-      setSelected(-1);
+      setSelectedName(null);
       setDismissed(false);
     };
     const drafted = (event: Event) => {
       setValue((event as CustomEvent<{ command: string }>).detail.command);
-      setSelected(-1);
+      setSelectedName(null);
     };
     const keyup = () => {
       setValue((current) => (element?.value === current ? current : (element?.value ?? "")));
@@ -98,31 +116,33 @@ export function CommandInputAssistance({
     element?.addEventListener("input", changed);
     element?.addEventListener("focus", refresh);
     return () => {
-      controller.abort();
+      active?.abort();
       window.removeEventListener("marina:draft-command", drafted);
       element?.removeEventListener("keyup", keyup);
       element?.removeEventListener("input", changed);
       element?.removeEventListener("focus", refresh);
     };
-  }, [identity, input]);
+  }, [identity, input, discoveryContext]);
   useEffect(() => {
     const element = input.current;
     if (!element) return;
     element.setAttribute("aria-controls", "chat-command-options");
     element.setAttribute("aria-expanded", String(options.length > 0));
-    if (selected >= 0) element.setAttribute("aria-activedescendant", `chat-command-${selected}`);
+    if (activeSelection >= 0)
+      element.setAttribute("aria-activedescendant", `chat-command-${activeSelection}`);
     else element.removeAttribute("aria-activedescendant");
     const key = (event: KeyboardEvent) => {
       if (event.isComposing || !options.length || event.shiftKey || event.ctrlKey || event.metaKey)
         return;
       if (event.key === "Escape") {
         setDismissed(true);
-        setSelected(-1);
-      } else if (event.key === "ArrowDown") setSelected((i) => (i + 1) % options.length);
-      else if (event.key === "ArrowUp" && selected >= 0)
-        setSelected((i) => (i - 1 + options.length) % options.length);
-      else if (event.key === "Tab" || (event.key === "Enter" && selected >= 0))
-        insert(options[Math.max(0, selected)]!.name);
+        setSelectedName(null);
+      } else if (event.key === "ArrowDown")
+        setSelectedName(options[(activeSelection + 1) % options.length]!.name);
+      else if (event.key === "ArrowUp" && activeSelection >= 0)
+        setSelectedName(options[(activeSelection - 1 + options.length) % options.length]!.name);
+      else if (event.key === "Tab" || (event.key === "Enter" && activeSelection >= 0))
+        insert(options[Math.max(0, activeSelection)]!.name);
       else return;
       event.preventDefault();
       event.stopPropagation();
@@ -160,8 +180,8 @@ export function CommandInputAssistance({
               id={`chat-command-${i}`}
               type="button"
               role="option"
-              aria-selected={selected === i}
-              className={`block w-full px-2 py-1 text-left ${selected === i ? "bg-primary/20" : ""}`}
+              aria-selected={activeSelection === i}
+              className={`block w-full px-2 py-1 text-left ${activeSelection === i ? "bg-primary/20" : ""}`}
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => insert(option.name)}
             >
