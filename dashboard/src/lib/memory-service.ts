@@ -14,17 +14,39 @@ function matchesResident(ws: WebSocket, name: string | null): boolean {
   return getChatWs() === ws && current.loggedIn && current.entityName === name;
 }
 
-// Only public command metadata is cached. The server validates its room/rank/revision key
-// on every request; memory previews always fetch fresh content for the bound connection.
+// This is a discovery hint, never authority to execute. Observed registry/room/rank/modal
+// changes invalidate immediately; the TTL bounds unobserved changes and older servers.
+export const CAPABILITY_MAX_AGE_MS = 5_000;
 const capabilityCache = new WeakMap<
   WebSocket,
   {
     name: string | null;
     sequence: number;
+    binding: string;
+    validatedAt: number;
     manifest: CapabilityManifest;
   }
 >();
 let capabilitySequence = 0;
+useChatState.subscribe((state, previous) => {
+  if (state.loggedIn !== previous.loggedIn || state.entityName !== previous.entityName) {
+    const socket = getChatWs();
+    if (socket) capabilityCache.delete(socket);
+  }
+});
+
+function capabilityBinding() {
+  const name = useChatState.getState().entityName;
+  const state = useWorldState.getState();
+  const self = state.entities.find((entity) => entity.name === name);
+  return JSON.stringify([
+    name,
+    state.capabilityRevision,
+    self?.room,
+    self?.properties?.rank,
+    self?.properties?.active_modal,
+  ]);
+}
 
 interface CatalogRequest {
   promise: Promise<unknown>;
@@ -39,6 +61,7 @@ export function requestParticipant<T>(
   kind: "capabilities" | "context_preview",
   options: Record<string, unknown> = {},
   signal?: AbortSignal,
+  cachePolicy: "revalidate" | "prefer-cache" = "revalidate",
 ): Promise<T> {
   if (kind !== "capabilities") return sendParticipantRequest(kind, options, signal);
   const ws = getChatWs();
@@ -46,13 +69,25 @@ export function requestParticipant<T>(
   if (!ws || ws.readyState !== WebSocket.OPEN || !identity.loggedIn)
     return Promise.reject(new Error("Sign in to world chat first."));
   if (signal?.aborted) return Promise.reject(new Error("Participant request cancelled."));
-  const self = useWorldState.getState().entities.find((e) => e.name === identity.entityName);
-  const key = JSON.stringify([
-    identity.entityName,
-    self?.room,
-    self?.properties?.rank,
-    self?.properties?.active_modal,
-  ]);
+  const key = capabilityBinding();
+  const cached = capabilityCache.get(ws);
+  const age = cached ? Date.now() - cached.validatedAt : Infinity;
+  if (
+    cachePolicy === "prefer-cache" &&
+    cached?.binding === key &&
+    age >= 0 &&
+    age < CAPABILITY_MAX_AGE_MS
+  )
+    return Promise.resolve().then(() => {
+      if (
+        signal?.aborted ||
+        !matchesResident(ws, identity.entityName) ||
+        capabilityBinding() !== key ||
+        capabilityCache.get(ws) !== cached
+      )
+        throw new Error("Participant request cancelled or discovery context changed.");
+      return structuredClone(cached.manifest) as T;
+    });
   let requests = catalogRequests.get(ws);
   if (!requests) {
     requests = new Map();
@@ -183,6 +218,7 @@ function sendParticipantRequest<T>(
   const cached = capabilityCache.get(ws);
   const manifest = cached?.name === identity.entityName ? cached.manifest : undefined;
   const sequence = ++capabilitySequence;
+  const binding = capabilityBinding();
   return new Promise((resolve, reject) => {
     const cleanup = () => {
       clearTimeout(timer);
@@ -213,6 +249,10 @@ function sendParticipantRequest<T>(
       cleanup();
       if (result.error) reject(new Error(result.error));
       else if (kind === "capabilities") {
+        if (capabilityBinding() !== binding) {
+          reject(new Error("Command discovery context changed; refresh capabilities."));
+          return;
+        }
         const next =
           result.unchanged && manifest?.key && result.key === manifest.key
             ? { ...manifest, request_id }
@@ -225,6 +265,8 @@ function sendParticipantRequest<T>(
           capabilityCache.set(ws, {
             name: identity.entityName,
             sequence,
+            binding,
+            validatedAt: Date.now(),
             manifest: next as CapabilityManifest,
           });
         resolve(next as T);

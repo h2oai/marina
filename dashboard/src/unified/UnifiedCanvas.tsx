@@ -557,6 +557,10 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const el = document.activeElement as HTMLElement | null;
+      // Native dialogs own focus; native controls own activation. Tab must keep
+      // its browser focus order instead of hiding the panel a user is entering.
+      if (e.defaultPrevented || e.key === "Tab" || el?.closest("dialog, .nokey")) return;
+      if (["Enter", " "].includes(e.key) && el?.closest("button, a")) return;
       const tag = el?.tagName ?? "";
       const inInput = tag === "INPUT" || tag === "TEXTAREA";
       // Check if focus is inside a panel (command bar, entity panel, context panel)
@@ -710,19 +714,6 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
             const type = isCanvasContentNode(targetNode.type) ? "canvas" : "room";
             openContext(type as ContextType, bestId);
           }
-        }
-        return;
-      }
-
-      // Tab to cycle between panels
-      if (e.key === "Tab" && !inInput) {
-        e.preventDefault();
-        // Cycle: entities -> feed -> command bar -> entities
-        if (showEntities && !showCommandBar) {
-          setShowCommandBar(true);
-          setTimeout(() => commandBarRef.current?.focus(), 50);
-        } else {
-          setShowEntities((v) => !v);
         }
         return;
       }
@@ -1651,8 +1642,8 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
   );
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: root canvas container; handlers are drag-and-drop (onDragOver/Leave/Drop), not click activation
-    <div
+    <section
+      aria-label="World canvas"
       className={`uc-scanlines uc-pixel-grid${clearView ? " uc-clear-view" : ""}${entitiesExpanded ? " uc-entities-expanded" : ""}${worldNavExpanded ? " uc-worldnav-expanded" : ""}`}
       style={{
         background: "var(--color-bg)",
@@ -1841,6 +1832,15 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
           aria-pressed={showCommandBar}
         >
           /
+        </button>
+
+        <button
+          type="button"
+          aria-label="Keyboard shortcuts"
+          onClick={() => setShowHelp(true)}
+          className="uc-panel-btn"
+        >
+          ?
         </button>
 
         {/* LIVE indicator */}
@@ -2097,12 +2097,12 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
 
       {/* ═══ RIGHT-CLICK CONTEXT MENU ═══ */}
       {contextMenu && (
-        // biome-ignore lint/a11y/useSemanticElements: a floating right-click menu of plain <button>s; <fieldset> would add layout and legend semantics that don't fit a popover
-        <div
+        <fieldset
           className="uc-node-context-menu"
-          role="group"
           aria-label="Node actions"
           style={{
+            margin: 0,
+            minWidth: 0,
             position: "fixed",
             left: contextMenu.x,
             top: contextMenu.y,
@@ -2556,7 +2556,7 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
               </button>
             </>
           )}
-        </div>
+        </fieldset>
       )}
 
       {/* ═══ VIEWER OVERLAY ═══ */}
@@ -2570,7 +2570,7 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
 
       {/* Keyboard shortcut help overlay */}
       {showHelp && <ShortcutHelp onClose={() => setShowHelp(false)} />}
-    </div>
+    </section>
   );
 }
 

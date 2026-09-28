@@ -22,7 +22,6 @@ interface GlassPanelProps {
   backContent?: ReactNode;
   className?: string;
   isFocused?: boolean;
-  onDoubleClick?: () => void;
   /** When provided, renders an explicit pop-out/restore button in the header. */
   onToggleFocus?: () => void;
   headerExtra?: ReactNode;
@@ -48,7 +47,6 @@ export function GlassPanel({
   backContent,
   className,
   isFocused,
-  onDoubleClick,
   onToggleFocus,
   headerExtra,
   bodyScroll = true,
@@ -57,7 +55,7 @@ export function GlassPanel({
   const [isFlipped, setIsFlipped] = useState(false);
 
   return (
-    <motion.div
+    <motion.section
       // Visible-safe base state: a stalled animation clock must never erase a
       // dashboard panel (the same invariant that protects Canvas nodes).
       initial={{ opacity: 1, y: 8 }}
@@ -70,11 +68,7 @@ export function GlassPanel({
       )}
     >
       {title && (
-        // biome-ignore lint/a11y/noStaticElementInteractions: react-grid-layout drag handle; double-click toggles focus and it wraps a nested flip button
-        <div
-          className="drag-handle flex cursor-grab items-center gap-1.5 border-b border-border px-2 py-1"
-          onDoubleClick={onDoubleClick}
-        >
+        <header className="drag-handle flex cursor-grab items-center gap-1.5 border-b border-border px-2 py-1">
           {icon && <span className="text-primary">{icon}</span>}
           <h2 className="flex-1 font-display text-[11px] font-semibold tracking-wider text-primary uppercase">
             {title}
@@ -126,7 +120,7 @@ export function GlassPanel({
               {isFocused ? <Minimize2 size={10} /> : <Maximize2 size={10} />}
             </button>
           )}
-        </div>
+        </header>
       )}
       {/* Body — 3D card flip on isFlipped toggle. Perspective on the
           parent gives the rotation depth. min-h-0 lets the flex children
@@ -163,6 +157,6 @@ export function GlassPanel({
           )}
         </AnimatePresence>
       </div>
-    </motion.div>
+    </motion.section>
   );
 }

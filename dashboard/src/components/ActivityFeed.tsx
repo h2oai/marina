@@ -30,7 +30,7 @@ export function ActivityFeed({ backContent }: { backContent?: React.ReactNode })
   const events = useWorldState((s) => s.eventFeed);
   const entities = useWorldState((s) => s.entities);
   const selectEntity = useWorldState((s) => s.selectEntity);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLElement>(null);
 
   // Keep scroll pinned to the top so the newest event is always visible.
   useEffect(() => {
@@ -68,11 +68,11 @@ export function ActivityFeed({ backContent }: { backContent?: React.ReactNode })
 
   return (
     <GlassPanel title="Activity" icon={<ScrollText size={14} />} backContent={backContent}>
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: scroll container with roving keyboard nav over child rows, not click-activation */}
-      <div
+      <section
+        aria-label="Activity history"
         ref={(el) => {
-          (scrollRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
-          (containerRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+          (scrollRef as React.MutableRefObject<HTMLElement | null>).current = el;
+          (containerRef as React.MutableRefObject<HTMLElement | null>).current = el;
         }}
         onKeyDown={onKeyDown}
         className="flex flex-col overflow-auto outline-none"
@@ -90,7 +90,7 @@ export function ActivityFeed({ backContent }: { backContent?: React.ReactNode })
             highlighted={highlightedIndex === i}
           />
         ))}
-      </div>
+      </section>
     </GlassPanel>
   );
 }

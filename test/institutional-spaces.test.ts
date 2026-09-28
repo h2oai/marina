@@ -25,6 +25,7 @@ import { MarinaMemoryClient } from "../src/sdk/memory-client";
 import type { MemoryRecord } from "../src/sdk/memory-types";
 import { type Entity, entityId } from "../src/types";
 import { seedGuidePool } from "../src/world/seed-guide";
+import { scopeProcessState } from "./process-state";
 
 let directory: string, db: MarinaDB, service: MemoryService;
 let workerId: string, worker: MarinaMemoryClient;
@@ -116,7 +117,6 @@ beforeEach(() => {
   seedGuidePool(db, []);
 });
 afterEach(() => {
-  resetTrustProfileForTests();
   db.close();
   rmSync(directory, { recursive: true });
 });
@@ -157,6 +157,8 @@ it("refuses a low-standing ratification naming the threshold and the caller's st
 });
 
 it("ratifies with standing, as a sovereign, or as the ungated local operator — stamping ratified_by", async () => {
+  using _processState = scopeProcessState();
+
   const guide = institutionalSpaceFor(db, "guide")!;
   // Standing path.
   const alice = user("alice");
@@ -210,6 +212,8 @@ it("ratifies with standing, as a sovereign, or as the ungated local operator —
 });
 
 it("caps `pool guide add` as a proposal on a shared instance and leaves it alone locally", () => {
+  using _processState = scopeProcessState();
+
   const alice = actor("alice");
   db.createUser({ id: "u_alice", name: "alice" });
   const { run } = pool([alice]);

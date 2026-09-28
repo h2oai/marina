@@ -794,7 +794,7 @@ Gated operations (shell, agent spawn, keys, adapters, gateways, admin, code exec
 > gate revoke Scout world.lineage    (sovereign) Take a gate back
 ```
 
-A grant never escalates: you grant only a gate you hold solo, the destructive core (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`) is granted by sovereigns only, nobody grants themselves, and a non-sovereign never grants to an agent they spawned.
+A grant never escalates: you grant only a gate you hold solo, the destructive core (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`, `world.code`) is granted by sovereigns only, nobody grants themselves, and a non-sovereign never grants to an agent they spawned.
 
 ## API Keys (`key.manage` Gate)
 

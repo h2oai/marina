@@ -15,6 +15,7 @@
 
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { OPEN_POSTURE_CORE } from "../src/engine/autonomy";
 import { resetChallengesForTests } from "../src/engine/challenges";
 import { Engine } from "../src/engine/engine";
 import {
@@ -23,7 +24,12 @@ import {
   resetGateContextForTests,
 } from "../src/engine/gate-context";
 import { rankFloorRefusal } from "../src/engine/rank-floor";
-import { checkUnattendedGate, grant, SAFETY_GATES } from "../src/engine/safety-gates";
+import {
+  checkGateForExecution,
+  checkUnattendedGate,
+  grant,
+  SAFETY_GATES,
+} from "../src/engine/safety-gates";
 import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
 import { MarinaDB } from "../src/persistence/database";
 import { FORWARD_MIGRATIONS } from "../src/persistence/schema";
@@ -204,6 +210,32 @@ describe("gates are the authority", () => {
     await send(bob, "gate list");
     expect(text(bob)).toContain("world.lineage");
     expect(text(bob)).toContain("world.code");
+
+    // Every grant and revoke is an immutable chronicle event.
+    const audit = db
+      .queryChronicle({ kind: "event" })
+      .filter((e) => e.source === "gate")
+      .map((e) => e.title);
+    expect(audit).toContain("Alice granted agent.spawn to Bob");
+    expect(audit).toContain("Root granted shell.exec to Bob");
+    expect(audit).toContain("Root revoked agent.spawn from Bob");
+    expect(audit.some((t) => t.includes("Builder"))).toBe(false); // refusals leave no entry
+  });
+
+  it("world.code is core: open posture does not pass it, and only a sovereign grants it", async () => {
+    expect(OPEN_POSTURE_CORE.has("world.code")).toBe(true);
+    const saved = process.env.MARINA_AUTONOMY;
+    process.env.MARINA_AUTONOMY = "open";
+    try {
+      expect(checkGateForExecution(db, id(bob), "world.lineage").ok).toBe(true);
+      expect(checkGateForExecution(db, id(bob), "world.code").ok).toBe(false);
+    } finally {
+      if (saved === undefined) delete process.env.MARINA_AUTONOMY;
+      else process.env.MARINA_AUTONOMY = saved;
+    }
+    grant(db, id(alice), "world.code");
+    await send(alice, "gate grant Bob world.code");
+    expect(text(alice)).toContain("core gate");
   });
 });
 

@@ -103,8 +103,8 @@ export function AudioNode({ data, selected }: NodeProps) {
             height={60}
             className={`w-full rounded mb-2 ${playing ? "" : "opacity-40"}`}
           />
-          {/* biome-ignore lint/a11y/useMediaCaption: user-uploaded audio has no caption track */}
           <audio
+            aria-label={filename}
             ref={audioRef}
             controls
             className="nodrag w-full"

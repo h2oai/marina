@@ -62,7 +62,7 @@ witness attested — runs `decision settings set gate off` like anyone else. Und
 pinned.
 
 **Improving means spawning a successor.** No one changes the role they are running on: to do
-better, an agent creates a new role (`role create scout-v2 …` — free, nothing runs on it yet) and
+better, an agent creates a new role (`role create scout-v2 …` — organizer rank 3, no safety gate, since nothing runs on it yet) and
 spawns an improved iteration bound to it (`agent spawn … role scout-v2`, behind `agent.spawn`).
 Changing an existing role or trait that other agents run on takes `role.edit`.
 
@@ -108,7 +108,7 @@ witness reject 12 <reason>       # rejected runs never count — keep practicing
   demonstration; a qualified witness attests it afterwards, and only attested runs advance the
   flip to solo use.
 - **`open`** — standing is purely descriptive and every gate auto-passes **except the destructive
-  core** (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`). For radical,
+  core** (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`, `world.code`). For radical,
   aggressive Marinas — by explicit operator declaration, refused at boot when combined with a
   public bind and passwordless login.
 

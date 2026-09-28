@@ -14,7 +14,7 @@
   --color-secondary: #ffb800;
   --color-accent: #ff9500;
   --color-text: #d4d4d4;
-  --color-text-dim: #666666;
+  --color-text-dim: #888888;
   --color-text-bright: #f0f0f0;
   --color-success: #22c55e;
   --color-warning: #ffdd00;
@@ -470,4 +470,28 @@ select.mission-field { padding-right: 24px; }
 .workspace-shell header { font-size: 12px; }
 @media (max-width: 799px) {
   .workspace-shell #marina-command-input { font-size: 16px; }
+}
+
+/* Native hit targets over SVG artwork retain keyboard focus without covering it. */
+.svg-action {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.svg-action:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.shortcut-dialog::backdrop { background: rgb(0 0 0 / 70%); backdrop-filter: blur(4px); }
+
+/* Compact controls still need a usable pointer target (WCAG 2.2 AA). SVG hit
+   targets are sized in their own viewBox coordinate system. */
+button:not(.svg-action), select, input:not([type="checkbox"]):not([type="radio"]) {
+  min-height: 24px;
+  min-width: 24px;
 }

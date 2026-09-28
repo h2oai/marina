@@ -130,77 +130,57 @@ describe("Command Permissions", () => {
     });
   });
 
-  // ─── Activity-driven Promotion ────────────────────────────────────────────
+  // ─── No activity-driven promotion ─────────────────────────────────────────
+  // Rank is a pure threshold lookup over standing (rank-progression.ts):
+  // creating / claiming a task or creating a project must never be a rank side
+  // channel. Standing (and therefore rank) comes from completed contribution.
 
-  describe("Activity-driven Promotion", () => {
-    it("should promote newcomer to coordinator on task create", () => {
+  describe("No activity-driven promotion", () => {
+    it("task create does not change rank", () => {
       const entity = engine.entities.get(conn1.entity!)!;
       expect(getRank(entity)).toBe(0);
 
       engine.processCommand(conn1.entity!, "task create Test task | A test");
-      expect(getRank(entity)).toBe(2);
-
-      // Should see promotion message
-      const all = conn1.allTextJoined();
-      expect(all).toContain("coordinator");
-      expect(all).toContain("rank is now");
+      expect(conn1.allTextJoined()).toContain("Created task #");
+      expect(getRank(entity)).toBe(0);
+      expect(conn1.allTextJoined()).not.toContain("rank is now");
     });
 
-    it("should promote newcomer to coordinator on task claim", () => {
-      // First create a task as a second entity
+    it("task goal and task claim do not change rank", () => {
       const conn2 = new MockConnection("c2");
       engine.addConnection(conn2);
       engine.spawnEntity("c2", "Bob");
       conn2.clear();
 
       engine.processCommand(conn2.entity!, "task create Claimable task | Do this");
-      const taskText = conn2.lastText();
-      const taskId = taskText.match(/#(\d+)/)?.[1];
+      const taskId = conn2.lastText().match(/#(\d+)/)?.[1];
 
-      // Now claim as Alice (guest)
       const entity = engine.entities.get(conn1.entity!)!;
-      expect(getRank(entity)).toBe(0);
-
       engine.processCommand(conn1.entity!, `task claim ${taskId}`);
-      expect(getRank(entity)).toBe(2);
-    });
-
-    it("should promote newcomer to coordinator on project create", () => {
-      const entity = engine.entities.get(conn1.entity!)!;
+      expect(conn1.allTextJoined()).toContain(`Claimed task #${taskId}`);
       expect(getRank(entity)).toBe(0);
 
-      engine.processCommand(conn1.entity!, "project create MyProject | A test project");
-      expect(getRank(entity)).toBe(2);
+      engine.processCommand(conn1.entity!, "task goal Ship the thing");
+      expect(conn1.allTextJoined()).toContain("Goal set:");
+      expect(getRank(entity)).toBe(0);
     });
 
-    it("should not re-promote already-promoted entity", () => {
+    it("project create does not change rank", () => {
       const entity = engine.entities.get(conn1.entity!)!;
-      setRank(entity, 3 as EntityRank); // organizer
-
-      engine.processCommand(conn1.entity!, "task create Another task | Test");
-
-      // Should still be architect, not downgraded to builder
-      expect(getRank(entity)).toBe(3);
-
-      // Should not have a promotion message
-      const all = conn1.allTextJoined();
-      expect(all).not.toContain("rank is now");
+      engine.processCommand(conn1.entity!, "project create MyProject | A test project");
+      expect(conn1.allTextJoined()).toContain('Project "MyProject" created');
+      expect(getRank(entity)).toBe(0);
     });
 
-    it("should persist promotion to database", () => {
-      // Use login() so a user record is created in the DB
+    it("does not touch the persisted user rank", () => {
       const conn2 = new MockConnection("c_persist");
       engine.addConnection(conn2);
       const result = engine.login("c_persist", "Persister");
       expect("entityId" in result).toBe(true);
       if (!("entityId" in result)) return;
-      conn2.clear();
 
       engine.processCommand(result.entityId, "task create Persist test | Test");
-
-      const user = db.getUserByName("Persister");
-      expect(user).toBeTruthy();
-      expect(user!.rank).toBe(2);
+      expect(db.getUserByName("Persister")!.rank).toBe(0);
     });
   });
 

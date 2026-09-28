@@ -100,6 +100,13 @@ export function CoordinationCard({
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      if (
+        e.defaultPrevented ||
+        (e.target instanceof Element &&
+          (e.target.closest("input, textarea, select, [contenteditable=true]") ||
+            (["Enter", " "].includes(e.key) && e.target.closest("button, a"))))
+      )
+        return;
       if (detail) {
         if (e.key === "Escape" || e.key === "Backspace") {
           e.preventDefault();
@@ -160,8 +167,8 @@ export function CoordinationCard({
       isFocused={isFocused}
       onToggleFocus={onToggleFocus}
     >
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: scroll container with roving keyboard nav over child section rows, not click-activation */}
-      <div
+      <section
+        aria-label="Coordination"
         onKeyDown={onKeyDown}
         className="flex flex-col text-[11px] outline-none overflow-y-auto flex-1"
       >
@@ -250,7 +257,7 @@ export function CoordinationCard({
             </SectionRow>
           </>
         )}
-      </div>
+      </section>
     </GlassPanel>
   );
 }

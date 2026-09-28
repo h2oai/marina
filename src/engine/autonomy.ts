@@ -16,9 +16,12 @@
  *   RUN a supervised operation unattended; the demonstration is recorded as
  *   pending, and the flip to unsupervised competence happens only when a
  *   qualified witness attests the recorded demonstration afterwards.
- *   Practice is free; capability is confirmed by review.
+ *   Practice is free; capability is confirmed by review. The core below gets
+ *   NO optimistic mode — it still needs a witness window (or a grant).
  * - `open` — the operator declares standing purely descriptive: every gate
- *   auto-passes EXCEPT the irreducible destructive core below. For radical,
+ *   auto-passes EXCEPT the irreducible destructive core below. That includes
+ *   `code.exec` — allowlisted, workspace-pinned host execution (`code run`,
+ *   `code test`, `code apply` …) — which `open` passes by design. For radical,
  *   aggressive Marinas — by explicit operator declaration only.
  *
  * SECURITY INVARIANTS (do not weaken):
@@ -27,10 +30,13 @@
  *    able to open its own cage.
  * 2. `open` + a non-loopback bind + passwordless login is a FATAL startup
  *    error (enforced in main.ts alongside the existing ingress gate).
- * 3. The irreducible core stays gated under every posture: credential
- *    exfiltration (`key.manage`), world erasure (`admin.destructive`), and
- *    raw host execution (`shell.exec`, `code.exec.unrestricted` — the latter
- *    also keeps its independent exec-approver chain).
+ * 3. The irreducible core stays gated under every posture — no `open`
+ *    auto-pass and no `earned` optimistic run: credential exfiltration
+ *    (`key.manage`), world erasure (`admin.destructive`), raw shell
+ *    (`shell.exec`) and arbitrary non-allowlisted host commands
+ *    (`code.exec.unrestricted`, which also keeps its independent
+ *    exec-approver chain). Allowlisted workspace execution (`code.exec`) is
+ *    NOT in the core: `open` passes it.
  */
 
 export type AutonomyPosture = "guarded" | "earned" | "open";
@@ -42,6 +48,9 @@ export const OPEN_POSTURE_CORE: ReadonlySet<string> = new Set([
   "admin.destructive",
   "shell.exec",
   "code.exec.unrestricted",
+  // Room and command code runs inside the engine (a static denylist, not a
+  // process boundary), so authoring it stays gated even under `open`.
+  "world.code",
 ]);
 
 export function getAutonomyPosture(env: NodeJS.ProcessEnv = process.env): AutonomyPosture {
@@ -54,7 +63,7 @@ export function getAutonomyPosture(env: NodeJS.ProcessEnv = process.env): Autono
 export function describeAutonomyPosture(posture: AutonomyPosture = getAutonomyPosture()): string {
   switch (posture) {
     case "open":
-      return "OPEN — standing is descriptive; every gate auto-passes except the destructive core (keys, world erasure, raw host exec)";
+      return "OPEN — standing is descriptive; every gate auto-passes (incl. allowlisted code.exec) except the core (keys, world erasure, shell, unrestricted exec)";
     case "earned":
       return "EARNED — supervised operations run freely; unattended capability flips when a qualified witness attests recorded demonstrations";
     default:

@@ -1,12 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/**
- * ShortcutHelp — the `?` keyboard-shortcut overlay. Extracted mechanically
- * from UnifiedCanvas.tsx; the dialog is now a labelled modal (`role="dialog"`,
- * `aria-modal`, `aria-labelledby`) that takes focus on open and closes on
- * Escape, backdrop click, or the explicit close button.
- */
+/** Native modal focus containment, Escape handling and focus restoration. */
 
 import { memo, useEffect, useId, useRef } from "react";
 
@@ -20,41 +15,45 @@ const SHORTCUTS: ReadonlyArray<[key: string, what: string]> = [
   ["Escape", "Close overlay / panel"],
   ["Arrows", "Navigate to nearest room"],
   ["?", "This help"],
-  ["Tab", "Cycle panels"],
+  ["Tab", "Move between controls"],
   ["Dbl-click", "Home / view detail"],
 ];
 
 export const ShortcutHelp = memo(function ShortcutHelp({ onClose }: ShortcutHelpProps) {
   const headingId = useId();
-  const dialogRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
   useEffect(() => {
-    dialogRef.current?.focus();
+    const dialog = dialogRef.current;
+    const opener = document.activeElement;
+    dialog?.showModal();
+    return () => {
+      dialog?.close();
+      // React may remove the modal before the browser's close restoration runs.
+      if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+    };
   }, []);
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: backdrop click-to-close; the dialog inside is the interactive element and Escape is handled there
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 200,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "rgba(0,0,0,0.7)",
-        backdropFilter: "blur(4px)",
+    <dialog
+      ref={dialogRef}
+      className="shortcut-dialog"
+      aria-modal="true"
+      aria-labelledby={headingId}
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
       }}
-      onClick={onClose}
-      onKeyDown={(e) => {
-        if (e.key === "Escape") onClose();
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
       }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.stopPropagation();
+          onClose();
+        }
+      }}
+      style={{ padding: 0, border: 0, background: "transparent", maxWidth: "calc(100vw - 24px)" }}
     >
       <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={headingId}
-        tabIndex={-1}
-        className="focus-ring-custom"
         style={{
           background: "rgba(8,8,14,0.97)",
           border: "2px solid var(--color-border)",
@@ -66,13 +65,6 @@ export const ShortcutHelp = memo(function ShortcutHelp({ onClose }: ShortcutHelp
           lineHeight: 2,
           minWidth: "320px",
           outline: "none",
-        }}
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") {
-            e.stopPropagation();
-            onClose();
-          }
         }}
       >
         <div
@@ -92,8 +84,8 @@ export const ShortcutHelp = memo(function ShortcutHelp({ onClose }: ShortcutHelp
             <span style={{ color: "var(--color-primary)" }}>{key}</span> — {what}
           </div>
         ))}
-        <div style={{ marginTop: "12px", color: "#666", fontSize: "14px" }}>
-          Click anywhere to close
+        <div style={{ marginTop: "12px", color: "#aaa", fontSize: "14px" }}>
+          Press Escape or Close to return
         </div>
         <button
           type="button"
@@ -105,13 +97,13 @@ export const ShortcutHelp = memo(function ShortcutHelp({ onClose }: ShortcutHelp
             background: "none",
             fontFamily: "'Press Start 2P', monospace",
             fontSize: "8px",
-            color: "#888",
+            color: "#aaa",
             cursor: "pointer",
           }}
         >
           CLOSE
         </button>
       </div>
-    </div>
+    </dialog>
   );
 });

@@ -1,0 +1,12 @@
+[
+  {
+    "file": "dashboard/src/canvas/nodes/AudioNode.tsx",
+    "rule": "useMediaCaption",
+    "reason": "Canvas audio is participant-supplied content. The asset contract does not supply a transcript or caption track; the renderer must not invent one. Review the recording and provide a text node transcript when publishing a canvas."
+  },
+  {
+    "file": "dashboard/src/canvas/nodes/VideoNode.tsx",
+    "rule": "useMediaCaption",
+    "reason": "Canvas video is participant-supplied content. The asset contract does not supply a caption track; the renderer must not claim an empty track provides captions. Publish captioned video and a text node transcript or equivalent description."
+  }
+]

@@ -510,10 +510,11 @@ export class AuthCoordinator {
     if (this.host.config.authRequired) return;
 
     // LOCAL trust profile: this instance is one operator's own machine and
-    // binds loopback only (main.ts refuses `local` on a public bind). Every
-    // loopback login — the human and the agents they run — is the operator,
-    // so it is sovereign without MARINA_ADMINS. Remote connections cannot
-    // exist here by construction; if one does, it gets nothing.
+    // binds loopback only (main.ts refuses `local` on ANY non-loopback bind —
+    // sign-in does not lift that — unless MARINA_ALLOW_INSECURE_PUBLIC=true).
+    // Every loopback login — the human and the agents they run — is the
+    // operator, so it is sovereign without MARINA_ADMINS. A remote connection
+    // (only possible under that explicit insecure ack) gets nothing here.
     if (isLocalUngated()) {
       if (isLoopbackConnection(this.host.connections.get(connId))) this.grantSovereign(entity);
       return;

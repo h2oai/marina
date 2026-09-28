@@ -1,6 +1,6 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { Engine } from "../src/engine/engine";
@@ -143,4 +143,31 @@ test("admission limits include all sessions and release is idempotent", () => {
   a.release();
   b.release();
   expect(admission.snapshot()).toMatchObject({ pending: 0, highWater: 2, rejected: 2, expired: 1 });
+});
+
+test("queue expiry is inclusive at the exact deadline and counts elapsed time from admission", () => {
+  let now = 1000;
+  const clock = spyOn(performance, "now").mockImplementation(() => now);
+  try {
+    const admission = new McpAdmission(5, 3, 20);
+    const session = {};
+    const a = admission.enter(session)!;
+    const b = admission.enter(session)!;
+    expect(a.canStart()).toBe(true);
+    now = 1020;
+    expect(a.canStart()).toBe(true);
+    now++;
+    expect(a.canStart()).toBe(false);
+    a.release();
+    // Releasing one of two slots must leave one counted in this session.
+    const c = admission.enter(session)!;
+    const d = admission.enter(session)!;
+    expect(admission.enter(session)).toBeUndefined();
+    b.release();
+    c.release();
+    d.release();
+    expect(admission.snapshot().pending).toBe(0);
+  } finally {
+    clock.mockRestore();
+  }
 });

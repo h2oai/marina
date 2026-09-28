@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { EntityRoster } from "../components/EntityRoster";
 import { useEntityActivity } from "../hooks/use-entity-activity";
@@ -13,6 +13,22 @@ beforeEach(() => {
 });
 
 describe("EntityRoster", () => {
+  it("keeps row selection separate from profile and removal controls", () => {
+    useWorldState.setState({
+      entities: [{ id: "e_1", name: "Alice", kind: "human", room: "zone/lobby" }],
+    });
+    const { container } = renderWithProviders(<EntityRoster />);
+    const select = screen.getByRole("button", { name: "Alice" });
+    expect(select.tagName).toBe("BUTTON");
+    expect(fireEvent.keyDown(select, { key: "Enter" })).toBe(true);
+    fireEvent.click(select);
+    expect(useWorldState.getState().selectedEntity).toBe("Alice");
+    const remove = screen.getByRole("button", { name: "Remove Alice" });
+    expect(fireEvent.keyDown(remove, { key: " " })).toBe(true);
+    expect(useWorldState.getState().selectedEntity).toBe("Alice");
+    expect(container.querySelector("button button, button a, [role=button] button")).toBeNull();
+  });
+
   it("renders without crashing with empty entity list", () => {
     const { container } = renderWithProviders(<EntityRoster />);
     expect(container).toBeTruthy();

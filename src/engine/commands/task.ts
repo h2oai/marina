@@ -24,14 +24,7 @@ import {
   separator,
 } from "../../net/ansi";
 import type { JudgeObservationInput } from "../../persistence/db-decisions";
-import type {
-  CommandDef,
-  EngineEvent,
-  Entity,
-  EntityId,
-  EntityRank,
-  RoomContext,
-} from "../../types";
+import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
 import { canonicalSub, parseModifiers, unknownSubcommand } from "../parse-input";
 
 const TASK_SUBS = [
@@ -69,7 +62,6 @@ export function taskCommand(
   tasks: TaskManager,
   findEntity: (name: string) => Entity | undefined,
   logEvent?: (event: EngineEvent) => void,
-  promote?: (entityId: EntityId, rank: EntityRank) => void,
   resolveEvidence?: (actor: { name: string; id: string }, text: string) => Evidence[],
   /** Durable judge opinions for `decision agreement` (db-decisions.ts). */
   recordObservation?: (row: JudgeObservationInput) => void,
@@ -266,7 +258,6 @@ export function taskCommand(
             validationMode: isBounty ? "bounty" : undefined,
             standing: standing > 0 ? standing : undefined,
           });
-          promote?.(input.entity, 2);
           const bountyLabel = isBounty ? ` [bounty !${standing}]` : "";
           ctx.send(input.entity, `Created task #${task.id}: "${title}"${bountyLabel}.`);
           return;
@@ -311,7 +302,6 @@ export function taskCommand(
           });
           // Auto-claim
           tasks.claim(task.id, input.entity, self.name);
-          promote?.(input.entity, 2);
           ctx.send(input.entity, `Goal set: ${fmtId(task.id)} "${title}" (priority ${priority}).`);
           return;
         }
@@ -381,7 +371,6 @@ export function taskCommand(
             );
             return;
           }
-          promote?.(input.entity, 2);
           ctx.send(input.entity, `Claimed task #${id}.`);
           logEvent?.({
             type: "task_claimed",

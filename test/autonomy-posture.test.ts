@@ -153,6 +153,46 @@ describe("autonomy posture", () => {
     expect(second.ok).toBe(false);
   });
 
+  it("earned: the destructive core gets NO optimistic mode — window, grant or local profile only", () => {
+    process.env.MARINA_AUTONOMY = "earned";
+    const learner = makeEntity("e_core_learner", "CoreLearner");
+    const mentor = makeEntity("e_core_mentor", "CoreMentor");
+    db.saveEntity(learner);
+    db.saveEntity(mentor);
+    giveStanding(db, learner, 400); // above every core gate's minStanding
+    for (const gateId of OPEN_POSTURE_CORE) {
+      expect(400).toBeGreaterThanOrEqual(SAFETY_GATES[gateId]!.minStanding);
+      const refused = checkGateForExecution(db, learner.id, gateId);
+      expect(refused.ok).toBe(false);
+      expect(refused.mode).toBeUndefined();
+      expect(refused.reason).toContain(`witness request ${gateId}`);
+      // No "set MARINA_AUTONOMY=earned" hint for a gate earned cannot open.
+      expect(refused.reason).not.toContain("MARINA_AUTONOMY=earned");
+
+      // A live witness window still authorizes a supervised run.
+      grant(db, mentor.id, gateId);
+      db.createWitnessRow({
+        entityId: learner.id,
+        gate: gateId,
+        kind: "window",
+        witnessId: mentor.id,
+        expiresAt: Date.now() + 60_000,
+      });
+      const windowed = checkGateForExecution(db, learner.id, gateId);
+      expect(windowed.ok).toBe(true);
+      expect(windowed.mode).toBe("windowed");
+      recordGateExecution(db, learner.id, gateId, windowed, "core demo");
+    }
+    // Non-core gates keep optimistic supervision under earned.
+    const spawn = checkGateForExecution(db, learner.id, "agent.spawn");
+    expect(spawn.ok).toBe(true);
+    expect(spawn.mode).toBe("optimistic");
+    // A grant holder passes unattended.
+    const granted = checkGateForExecution(db, mentor.id, "shell.exec");
+    expect(granted.ok).toBe(true);
+    expect(granted.mode).toBe("unattended");
+  });
+
   it("earned: runs optimistically, records a pending attestation, and only external attestation advances the flip", () => {
     process.env.MARINA_AUTONOMY = "earned";
     const learner = makeEntity("e_learner", "Learner");

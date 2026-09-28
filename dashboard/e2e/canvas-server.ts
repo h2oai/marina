@@ -22,6 +22,7 @@ Object.assign(process.env, {
   MARINA_OPEN_API: "true",
   MARINA_ENDPOINTS: "none",
   MARINA_WORLD: "default",
+  MARINA_UNIFIED_CANVAS: "true",
   AGENT_AUTORESPAWN: "false",
 });
 

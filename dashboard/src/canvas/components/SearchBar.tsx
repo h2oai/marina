@@ -69,6 +69,7 @@ export function SearchBar({ nodes, onFilterChange }: SearchBarProps) {
     <div className="flex items-center gap-2">
       <input
         type="text"
+        aria-label="Search canvas nodes"
         placeholder="Search nodes..."
         value={query}
         onChange={(e) => {
@@ -78,6 +79,7 @@ export function SearchBar({ nodes, onFilterChange }: SearchBarProps) {
         className="bg-bg-hover text-text text-xs rounded px-2 py-1 border border-border focus:outline-none focus:border-primary w-40"
       />
       <select
+        aria-label="Filter canvas node type"
         value={typeFilter}
         onChange={(e) => {
           setTypeFilter(e.target.value);
@@ -93,6 +95,7 @@ export function SearchBar({ nodes, onFilterChange }: SearchBarProps) {
         ))}
       </select>
       <select
+        aria-label="Filter canvas intent status"
         value={intentFilter}
         onChange={(e) => {
           setIntentFilter(e.target.value);

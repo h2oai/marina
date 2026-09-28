@@ -3540,7 +3540,7 @@ Usage:
   gate list [entity]            — every gate and its status for you (or <entity>)
   gate grant <entity> <gate>    — grant a gate you hold solo (sovereigns: any gate)
   gate revoke <entity> <gate>   — (sovereign) take a gate back
-Core gates (key.manage, admin.destructive, shell.exec, code.exec.unrestricted) are granted by sovereigns only; nobody grants themselves.
+Core gates (key.manage, admin.destructive, shell.exec, code.exec.unrestricted, world.code) are granted by sovereigns only; nobody grants themselves.
 Earning a gate instead: `witness request <gate>`. Your ladder: `standing`.
 
 Category: Civic. Minimum rank: 0.

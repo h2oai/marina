@@ -4,11 +4,14 @@
 import { resolve } from "node:path";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
+import dashboardPackage from "./package.json" with { type: "json" };
 
-// Vitest's VM environment requires Node's vm semantics. Bun is the package manager,
-// but forcing its runtime with --bun breaks jsdom before test modules can load.
+// Bun 1.4.2 fails jsdom's EventTarget receiver check in both VM and thread pools,
+// before setupFiles run. Use Vitest's supported Node runtime; Bun manages packages.
 if (process.versions.bun)
-  throw new Error("Run dashboard tests with `bun run test` (without --bun), using Node >=22.12.");
+  throw new Error(
+    `Run dashboard tests with \`bun run test\` (without --bun), using Node ${dashboardPackage.engines.node}.`,
+  );
 
 export default defineConfig({
   plugins: [react()],

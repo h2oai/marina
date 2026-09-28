@@ -18,8 +18,12 @@ import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId } from "../../types";
 import { OPEN_POSTURE_CORE } from "../autonomy";
 import { sanitizeEntityName } from "../entity-name";
+import { getErrorMessage } from "../errors";
+import { Logger } from "../logger";
 import { getRank } from "../permissions";
 import { checkUnattendedGate, getGateProgress, grant, revoke, SAFETY_GATES } from "../safety-gates";
+
+const logger = new Logger();
 
 const SOVEREIGN_RANK = 9;
 
@@ -83,6 +87,7 @@ export function gateCommand(deps: {
       if (sub === "revoke") {
         if (!sovereign) return reply("Revoking a gate takes a sovereign (rank 9).");
         revoke(deps.db, String(target.id), gateId);
+        audit(deps.db, "revoke", actor.name, target.name, gateId);
         return reply(`Revoked ${gateId} from ${target.name}.`);
       }
 
@@ -108,8 +113,38 @@ export function gateCommand(deps: {
         }
       }
       grant(deps.db, String(target.id), gateId);
+      audit(deps.db, "grant", actor.name, target.name, gateId);
       ctx.send(target.id as EntityId, `${actor.name} granted you the ${gateId} gate.`);
       return reply(`Granted ${gateId} to ${target.name}.`);
     },
   };
+}
+
+/**
+ * Every grant and revoke is civic history: an immutable chronicle `event`
+ * (engine-emitted, never corrected away). No standing flows from it — being
+ * granted a gate is not a contribution.
+ */
+function audit(
+  db: MarinaDB,
+  action: "grant" | "revoke",
+  actor: string,
+  target: string,
+  gateId: string,
+): void {
+  try {
+    db.appendChronicle({
+      kind: "event",
+      source: "gate",
+      title: `${actor} ${action === "grant" ? "granted" : "revoked"} ${gateId} ${action === "grant" ? "to" : "from"} ${target}`,
+      participants: [actor, target],
+      refs: [`gate:${gateId}`],
+    });
+  } catch (error) {
+    logger.warn("gate", "Gate audit entry failed", {
+      action,
+      gateId,
+      error: getErrorMessage(error),
+    });
+  }
 }

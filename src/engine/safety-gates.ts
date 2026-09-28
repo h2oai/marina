@@ -9,9 +9,12 @@
  * for an entity once they've accumulated enough supervised demonstrations
  * — a witness-able proof that they can do the thing without breaking it.
  *
- * The gate registry below is the source of truth. A command opts in by
- * declaring `gate: '<id>'` on its `CommandDef`; the engine permission
- * check calls `checkGate()` after the standard `minRank` check.
+ * The gate registry below is the source of truth (11 gates). A command opts
+ * in by declaring `gate: '<id>'` on its `CommandDef`; the command phase calls
+ * `checkGateForExecution()` after the standard `minRank` check and
+ * `recordGateExecution()` on a pass. `agent.spawn` and `code.exec` are
+ * enforced imperatively inside their commands with the same pair. Under the
+ * `local` trust profile (`isLocalUngated()`) every gate auto-passes.
  *
  * Standing is necessary but not sufficient. Even an agent with 1000
  * standing cannot execute shell commands until they've performed N
@@ -25,10 +28,11 @@
  * (`grant()`, `grantGatesForRank`) are admin overrides and are exempt from
  * the re-check; `revoke()` is their revocation path.
  *
- * Witness rules: a witness must themselves have `supervised_only=0` on
- * the same gate. Per the user's locked-in policy: rank-8+ agents can
- * witness once they've demonstrated. Humans (rank 9 sovereigns) bootstrap
- * the chain. New entities can grow the chain organically.
+ * Witness rules: a witness must be a different entity that itself has
+ * `supervised_only=0` on the same gate (`canWitness`) — there is no rank
+ * requirement. Operators bootstrap the chain through grants (`grant()`,
+ * `grantGatesForRank` on promotion to rank ≥ 5); new entities can grow the
+ * chain organically once they have demonstrated.
  */
 
 import { getStanding } from "../agent/standing";
@@ -380,9 +384,11 @@ export interface GateExecutionResult {
  * - sufficient standing + a live witness-granted supervision window →
  *   `windowed`: run it; the pre-attesting witness gets the demonstration
  *   credit (all postures — the window IS the guarded path).
- * - sufficient standing, no window, `earned` posture → `optimistic`: run it;
- *   the demonstration is recorded as pending and counts toward the flip only
- *   when a qualified witness attests it afterwards.
+ * - sufficient standing, no window, `earned` posture, gate outside the
+ *   destructive core → `optimistic`: run it; the demonstration is recorded as
+ *   pending and counts toward the flip only when a qualified witness attests
+ *   it afterwards. Core gates (`OPEN_POSTURE_CORE`) get no optimistic mode —
+ *   "the irreducible core stays gated under every posture".
  * - otherwise → a refusal whose text names the path forward, because a
  *   refusal an agent can't act on is a wall, not a gate.
  *
@@ -429,8 +435,10 @@ function evaluateGateForExecution(
     };
   }
 
-  // LOCAL trust profile: the single operator's own machine, loopback-only.
-  // Every gate — including the OPEN_POSTURE_CORE four — auto-passes and the
+  // LOCAL trust profile: the single operator's own machine, loopback-only
+  // (main.ts refuses `local` on any non-loopback bind unless the operator sets
+  // MARINA_ALLOW_INSECURE_PUBLIC=true — sign-in alone does not lift that).
+  // Every gate — including OPEN_POSTURE_CORE — auto-passes and the
   // caller still records the execution (audit). An admin who wants the gates
   // back on a personal instance sets MARINA_AUTONOMY=guarded explicitly, which
   // makes isLocalUngated() false while local performance defaults stay on.
@@ -463,15 +471,23 @@ function evaluateGateForExecution(
   const window = db.getOpenSupervisionWindow(entityId, gateId, now);
   if (window) return { ok: true, mode: "windowed", witnessId: window.witness_id ?? undefined };
 
-  if (posture === "earned") return { ok: true, mode: "optimistic" };
+  // The irreducible core never runs ahead of review, under any posture.
+  if (posture === "earned" && !OPEN_POSTURE_CORE.has(gateId)) {
+    return { ok: true, mode: "optimistic" };
+  }
 
+  // Only suggest `earned` where it would actually help (never for the core).
+  const operatorHint =
+    posture === "earned" || OPEN_POSTURE_CORE.has(gateId)
+      ? " (Operators can also grant it directly.)"
+      : " (Operators can also grant it directly, or set MARINA_AUTONOMY=earned to let you practice ahead of review.)";
   return {
     ok: false,
     reason:
       `You have the standing to ${gate.description} — what's missing is a witness. ` +
       `Run \`witness request ${gateId}\` to ask a qualified holder to supervise a demonstration; ` +
-      `${gate.demoThreshold} attested demonstration(s) unlock solo use. ` +
-      `(Operators can also grant it directly, or set MARINA_AUTONOMY=earned to let you practice ahead of review.)`,
+      `${gate.demoThreshold} attested demonstration(s) unlock solo use.` +
+      operatorHint,
   };
 }
 
@@ -511,8 +527,9 @@ export function recordGateExecution(
  * Determine whether an entity is qualified to witness a supervised
  * demonstration of a particular gate. They must themselves be unsupervised
  * on the same gate (closing the bootstrapping loop). Sovereigns (rank 9)
- * trivially qualify because grandfathering gave them every gate at
- * unsupervised level.
+ * qualify for every gate in `RANK_GATES` because promotion granted them at
+ * unsupervised level — but not `code.exec.unrestricted`, which is never
+ * granted by rank.
  */
 export function canWitness(db: MarinaDB, witnessId: string, gateId: string): boolean {
   const competence = db.getCompetence(witnessId, gateId);

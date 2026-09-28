@@ -54,8 +54,9 @@ Marina decides who it is for from how it is bound, and removes friction accordin
 
 A fresh `bun run start` on your own machine is therefore `local` with nothing to configure. To keep
 the gates on a personal instance anyway, set `MARINA_AUTONOMY=guarded` or `MARINA_PROFILE=shared`.
-Forcing `MARINA_PROFILE=local` on a public bind is a fatal startup error unless you also enable
-sign-in or set `MARINA_ALLOW_INSECURE_PUBLIC=true`. The boot log prints the resolved profile and
+Forcing `MARINA_PROFILE=local` on a public bind is a fatal startup error unless you set
+`MARINA_ALLOW_INSECURE_PUBLIC=true` — enabling sign-in does not help, because `local` ungates every
+gate for every signed-in user. The boot log prints the resolved profile and
 why; in `local` it also prints the one real risk: a poisoned shared-pool note can lead an agent to
 run a host command without a prompt, and the exec audit is how you find out.
 
@@ -161,7 +162,7 @@ See [Discord & Telegram](chat-adapters.md) for bot setup.
 | `MEM_API_KEYS` | *(none; API closed)* | Comma-separated `secret:agent` pairs for Memory API (`/mem`) |
 | `MARINA_OPEN_API` | `false` | Set to `true` to disable API authentication checks. **Dev only** — never use in production. Useful for local testing without configuring API keys. |
 | `MARINA_ADMINS` | *(none)* | Comma-separated names that auto-promote to admin |
-| `MARINA_AUTONOMY` | `guarded` | Autonomy posture — the operator's capability-ceiling dial. `guarded`: supervised gate attempts need a witness-granted window. `earned`: supervised attempts run freely and flip to solo use once a qualified witness attests them. `open`: every safety gate auto-passes except the destructive core (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`). Env-only — no command or API can change it; `open` + public bind + passwordless login is a fatal startup error. |
+| `MARINA_AUTONOMY` | `guarded` | Autonomy posture — the operator's capability-ceiling dial. `guarded`: supervised gate attempts need a witness-granted window. `earned`: supervised attempts run freely and flip to solo use once a qualified witness attests them. `open`: every safety gate auto-passes except the destructive core (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`, `world.code`). Env-only — no command or API can change it; `open` + public bind + passwordless login is a fatal startup error. |
 
 #### Room Agent Authentication
 
