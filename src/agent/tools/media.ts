@@ -12,7 +12,7 @@ const imageGenerateSchema = Type.Object({
   prompt: Type.String({ description: "Describe the image to generate" }),
   model: Type.Optional(
     Type.String({
-      description: "Provider/model ID (default openai/gpt-image-1)",
+      description: "Provider/model ID (default openai/gpt-image-2)",
     }),
   ),
   style: Type.Optional(Type.String({ description: "Style hint (e.g. synthwave, watercolor)" })),

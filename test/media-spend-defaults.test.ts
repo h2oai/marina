@@ -91,3 +91,24 @@ describe("media and the daily spend cap", () => {
     expect(spentTodayUsd()).toBeCloseTo(0.042, 3);
   });
 });
+
+import {
+  DEFAULT_IMAGE_MODEL,
+  defaultImageModel,
+  isImageModel,
+} from "../src/engine/media/providers/image-registry";
+
+describe("default image model", () => {
+  it("never falls back to the chat default", () => {
+    expect(DEFAULT_IMAGE_MODEL).toBe("openai/gpt-image-2");
+    expect(defaultImageModel(undefined)).toBe(DEFAULT_IMAGE_MODEL);
+    expect(defaultImageModel("marina/default")).toBe(DEFAULT_IMAGE_MODEL);
+    expect(defaultImageModel("anthropic/claude-sonnet-5")).toBe(DEFAULT_IMAGE_MODEL);
+    expect(defaultImageModel("openai/gpt-6-luna")).toBe(DEFAULT_IMAGE_MODEL);
+    // An instance default that IS an image model is honoured.
+    expect(defaultImageModel("stability/sd3.5-large")).toBe("stability/sd3.5-large");
+    expect(defaultImageModel("openai/dall-e-3")).toBe("openai/dall-e-3");
+    expect(isImageModel("google/imagen-4")).toBe(true);
+    expect(isImageModel("google/gemini-3.1-flash-lite")).toBe(false);
+  });
+});

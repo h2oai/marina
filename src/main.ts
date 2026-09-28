@@ -37,7 +37,7 @@ import { loadOrCreateLocalApiKey, localApiKeyPath } from "./net/local-api-key";
 import { LogServer } from "./net/log-server";
 import { McpServerAdapter } from "./net/mcp-server";
 import { describeDefaultUpstream } from "./net/model-api";
-import { detectLocalContextWindow } from "./net/model-discovery";
+import { detectLocalContextWindow, detectOllamaDefaultModel } from "./net/model-discovery";
 import { TelnetServer } from "./net/telnet-server";
 import { isLoopbackHostname, resolveWsBindHostname, WebSocketServer } from "./net/websocket-server";
 import { MarinaDB } from "./persistence/database";
@@ -654,6 +654,12 @@ await Promise.all(
     if (n) logger.info("model", `Detected ${provider} context window: ${n} tokens`);
   }),
 );
+// Ollama's default model is whatever is installed (first of /api/tags) unless
+// MARINA_DEFAULT_OLLAMA_MODEL pins one.
+{
+  const detected = await detectOllamaDefaultModel();
+  if (detected) logger.info("model", `Ollama default model: ${detected} (first installed model)`);
+}
 
 // Initialize agent runtime (auto-respawns saved configs, requires WS server ready)
 await engine.initAgents(boundWsPort);

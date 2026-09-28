@@ -101,7 +101,9 @@ export const LOCAL_PROVIDERS: Record<string, LocalProviderSpec> = {
     baseUrlEnv: "OLLAMA_BASE_URL",
     defaultBaseUrl: "http://localhost:11434/v1",
     keyEnv: "OLLAMA_API_KEY",
-    defaultModel: "llama3",
+    // Used only when /api/tags cannot be read at boot (see
+    // detectOllamaDefaultModel); the first installed model wins otherwise.
+    defaultModel: "qwen3:4b",
     contextWindowEnv: "OLLAMA_CONTEXT_WINDOW",
     defaultContextWindow: 8192,
   },
@@ -194,6 +196,59 @@ export async function detectLocalContextWindow(provider: string): Promise<number
     // Server down / not llama.cpp / unexpected shape — default stands.
   }
   return undefined;
+}
+
+/** Default models read from a live local server at startup (Ollama `/api/tags`). */
+const detectedDefaultModel = new Map<string, string>();
+
+/**
+ * The local provider's default model id: `MARINA_DEFAULT_<PROVIDER>_MODEL`
+ * wins, then a model detected on the running server, then the static default.
+ */
+export function localProviderDefaultModel(provider: string): string | undefined {
+  const spec = LOCAL_PROVIDERS[provider];
+  if (!spec) return undefined;
+  const override = process.env[`MARINA_DEFAULT_${provider.toUpperCase()}_MODEL`]?.trim();
+  if (override) return override;
+  return detectedDefaultModel.get(provider) ?? spec.defaultModel;
+}
+
+/**
+ * Pick Ollama's default model from what is actually installed: the first
+ * entry of `GET /api/tags`, so `marina/default` never asks a server for a
+ * model it does not have (`llama3` was a stale guess). Runs only when Ollama
+ * is configured (OLLAMA_BASE_URL or OLLAMA_API_KEY) and
+ * MARINA_DEFAULT_OLLAMA_MODEL is unset; any failure keeps the static default.
+ */
+export async function detectOllamaDefaultModel(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string | undefined> {
+  const spec = LOCAL_PROVIDERS.ollama!;
+  if (env.MARINA_DEFAULT_OLLAMA_MODEL?.trim()) return undefined;
+  if (!env[spec.baseUrlEnv] && !env[spec.keyEnv]) return undefined;
+  const base = (env[spec.baseUrlEnv] ?? spec.defaultBaseUrl).replace(/\/+$/, "");
+  const url = `${base.replace(/\/v\d+$/, "")}/api/tags`;
+  try {
+    const key = env[spec.keyEnv];
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(3000),
+      ...(key ? { headers: { Authorization: `Bearer ${key}` } } : {}),
+    });
+    if (!res.ok) return undefined;
+    const data = (await res.json()) as { models?: { name?: unknown; model?: unknown }[] };
+    const first = data.models?.find((m) => typeof (m.name ?? m.model) === "string");
+    const name = first ? String(first.name ?? first.model).trim() : "";
+    if (!name) return undefined;
+    detectedDefaultModel.set("ollama", name);
+    return name;
+  } catch {
+    // allow-empty-catch: Ollama down or not Ollama — the static default stands.
+  }
+  return undefined;
+}
+
+export function resetDetectedDefaultModelsForTests(): void {
+  detectedDefaultModel.clear();
 }
 
 const PROVIDERS: ProviderSpec[] = [

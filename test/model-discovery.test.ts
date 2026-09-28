@@ -181,3 +181,57 @@ describe("detectLocalContextWindow", () => {
     expect(await detectLocalContextWindow("ollama")).toBeUndefined();
   });
 });
+
+import {
+  detectOllamaDefaultModel,
+  localProviderDefaultModel,
+  resetDetectedDefaultModelsForTests,
+} from "../src/net/model-discovery";
+
+describe("detectOllamaDefaultModel", () => {
+  const realFetch = globalThis.fetch;
+  let prev: string | undefined;
+  beforeEach(() => {
+    prev = process.env.MARINA_DEFAULT_OLLAMA_MODEL;
+    delete process.env.MARINA_DEFAULT_OLLAMA_MODEL;
+    resetDetectedDefaultModelsForTests();
+  });
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    if (prev === undefined) delete process.env.MARINA_DEFAULT_OLLAMA_MODEL;
+    else process.env.MARINA_DEFAULT_OLLAMA_MODEL = prev;
+    resetDetectedDefaultModelsForTests();
+  });
+
+  it("uses the first installed model from /api/tags (never the stale llama3)", async () => {
+    let asked = "";
+    globalThis.fetch = (async (url: string | URL) => {
+      asked = String(url);
+      return Response.json({ models: [{ name: "gemma4:2b" }, { name: "qwen3:8b" }] });
+    }) as unknown as typeof fetch;
+    const env = { OLLAMA_BASE_URL: "http://127.0.0.1:11434/v1" };
+    expect(await detectOllamaDefaultModel(env)).toBe("gemma4:2b");
+    expect(asked).toBe("http://127.0.0.1:11434/api/tags");
+    expect(localProviderDefaultModel("ollama")).toBe("gemma4:2b");
+  });
+
+  it("skips when Ollama is not configured or a model is pinned; falls back on failure", async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls++;
+      throw new Error("down");
+    }) as unknown as typeof fetch;
+    expect(await detectOllamaDefaultModel({})).toBeUndefined();
+    expect(
+      await detectOllamaDefaultModel({
+        OLLAMA_BASE_URL: "http://x:11434",
+        MARINA_DEFAULT_OLLAMA_MODEL: "mine",
+      }),
+    ).toBeUndefined();
+    expect(calls).toBe(0);
+    expect(await detectOllamaDefaultModel({ OLLAMA_BASE_URL: "http://x:11434" })).toBeUndefined();
+    expect(localProviderDefaultModel("ollama")).toBe("qwen3:4b");
+    process.env.MARINA_DEFAULT_OLLAMA_MODEL = "pinned:1b";
+    expect(localProviderDefaultModel("ollama")).toBe("pinned:1b");
+  });
+});
