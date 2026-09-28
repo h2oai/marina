@@ -1,0 +1,52 @@
+---
+import reference from "../../../docs/reference/api.json";
+const home = import.meta.env.BASE_URL;
+const payload = JSON.stringify(reference).replaceAll("<", "\\u003c");
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>API explorer · Marina</title>
+    <meta name="description" content="Search Marina's generated command, MCP, HTTP and SDK reference." />
+  </head>
+  <body>
+    <header><a href={home}>← Marina</a><span>Developer reference</span></header>
+    <main>
+      <h1>Explore Marina’s API</h1>
+      <p class="intro">Find a command, inspect a tool schema, or look up a client method.</p>
+      <p class="notice">This reference describes the shipped builtins. Use live capabilities for your world’s plugins and permissions. Examples are editable templates; this page sends no API requests and needs no credentials.</p>
+      <div class="controls">
+        <div class="interface"><label for="surface">Interface</label><select id="surface"><option value="mcp">MCP tools</option><option value="commands">World commands</option><option value="http">HTTP dispatch</option><option value="sdk">TypeScript SDK</option></select></div>
+        <label class="search">Search<input id="search" type="search" placeholder="Try memory, context, or look" autocomplete="off" /></label>
+      </div>
+      <p id="count" role="status" aria-live="polite"></p>
+      <div class="workspace">
+        <nav id="results" aria-label="API entries"></nav>
+        <article id="detail" aria-label="Selected API entry" tabindex="-1"><p>Select an entry to inspect its contract.</p></article>
+      </div>
+      <noscript>Enable JavaScript to filter the explorer, or read the <a href="https://github.com/h2oai/marina/tree/main/docs/reference">generated Markdown reference</a>.</noscript>
+    </main>
+    <script type="application/json" id="api-data" set:html={payload}></script>
+    <script src="../scripts/api-explorer.ts"></script>
+  </body>
+</html>
+<style>
+  :global(*){box-sizing:border-box} :global(body){margin:0;background:#10151b;color:#e5edf4;font:16px/1.6 system-ui,sans-serif}
+  header{display:flex;justify-content:space-between;padding:1.2rem 3vw;border-bottom:1px solid #30404c;color:#acbdcb} a{color:#76d9ce}
+  main{max-width:1350px;margin:auto;padding:2rem 3vw} h1{font-size:clamp(2rem,5vw,3rem);line-height:1.15;margin:0 0 .6rem;letter-spacing:-.04em}
+  .intro{font-size:1.15rem;color:#bdcbd6}.notice{max-width:900px;color:#9caebd;font-size:.9rem}
+  .controls{display:flex;gap:1rem;margin-top:2rem} label,.interface{display:grid;gap:.4rem;color:#bdcbd6;font-size:.85rem}.search{flex:1}
+  input,select{width:100%;padding:.7rem;border:1px solid #455865;background:#18212a;color:#e5edf4;border-radius:.4rem;font:inherit}
+  #count{color:#9caebd;font-size:.85rem}.workspace{display:grid;grid-template-columns:minmax(210px,30%) minmax(0,1fr);gap:1.5rem}
+  nav{max-height:70vh;overflow:auto;border:1px solid #30404c;border-radius:.5rem}article{min-width:0;padding:1.2rem 1.5rem;background:#18212a;border:1px solid #30404c;border-radius:.5rem}
+  :global(#results button){display:block;width:100%;text-align:left;padding:.65rem .85rem;border:0;border-bottom:1px solid #30404c;background:transparent;color:#bdcbd6;font:inherit;cursor:pointer;overflow-wrap:anywhere}
+  :global(#results button[aria-current=true]){color:#10151b;background:#76d9ce}:global(button:focus-visible),input:focus-visible,select:focus-visible{outline:2px solid #76d9ce;outline-offset:2px}
+  :global(#detail h2){margin:0;font-size:1.35rem;overflow-wrap:anywhere}:global(#detail h3){font-size:1rem;margin-top:1.6rem}
+  :global(#detail pre){white-space:pre-wrap;overflow-wrap:anywhere;max-height:50vh;overflow:auto;font-size:.8rem;padding:1rem;background:#10151b;border-radius:.4rem}
+  :global(#detail summary){cursor:pointer;color:#76d9ce}:global(#detail details){padding:.45rem 0;border-top:1px solid #30404c}
+  :global(#detail button){padding:.5rem .8rem;border:1px solid #76d9ce;border-radius:.3rem;background:transparent;color:#76d9ce;cursor:pointer}
+  :global(#detail textarea){width:100%;min-height:10rem;background:#10151b;color:#e5edf4;border:1px solid #455865;border-radius:.4rem;padding:.8rem;font:13px/1.6 monospace}
+  @media(max-width:650px){.workspace{grid-template-columns:1fr}nav{max-height:14rem}.controls{flex-direction:column}article{padding:1rem}}
+</style>

@@ -1,0 +1,689 @@
+{
+  "memory_workflow": {
+    "type": "object",
+    "properties": {
+      "space_id": {
+        "description": "Space ID; omit to use your configured private space",
+        "type": "string"
+      },
+      "action": {
+        "type": "string",
+        "enum": [
+          "help",
+          "start",
+          "tasks",
+          "run",
+          "finish",
+          "feedback",
+          "resume",
+          "export_episode",
+          "import_episode",
+          "save_recipe",
+          "recipes",
+          "use_recipe",
+          "changes",
+          "watch",
+          "poll",
+          "ack",
+          "unwatch"
+        ]
+      },
+      "journal_space_id": {
+        "description": "Explicitly shared task journal; requires its existing grants, separate from the corpus",
+        "type": "string"
+      },
+      "task_id": {
+        "type": "string"
+      },
+      "goal": {
+        "type": "string"
+      },
+      "expected_version": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+      },
+      "status": {
+        "type": "string",
+        "enum": ["completed", "interrupted", "failed"]
+      },
+      "next_action": {
+        "type": "string"
+      },
+      "name": {
+        "type": "string"
+      },
+      "input": {
+        "description": "Advanced fields: retrieval options, recipe, rubric/result/explanation, ids, cursor, or id/version/task for use_recipe",
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {}
+      },
+      "key": {
+        "description": "Stable idempotency key for retries of mutations",
+        "type": "string"
+      }
+    },
+    "required": ["action"],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "memory_retrieve": {
+    "type": "object",
+    "properties": {
+      "space_id": {
+        "description": "Space ID; omit to use your configured private space",
+        "type": "string"
+      },
+      "task": {
+        "type": "string",
+        "description": "Question or task; use distinctive terms from the evidence"
+      },
+      "max_results": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 20
+      },
+      "max_bytes": {
+        "description": "Evidence JSON budget; metadata is separate",
+        "type": "integer",
+        "minimum": 256,
+        "maximum": 65536
+      },
+      "source_bytes": {
+        "type": "integer",
+        "minimum": 64,
+        "maximum": 8192
+      },
+      "valid_at": {
+        "description": "UTC milliseconds for versioned records; original documents may contain historical assertions",
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "selection": {
+        "description": "Explicit ordering: balanced reserves early room for a record and a source",
+        "type": "string",
+        "enum": ["sources_first", "balanced", "records_first"]
+      },
+      "expansion": {
+        "description": "Explicit lexical query alternatives; see memory guide",
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {}
+      },
+      "requirements": {
+        "description": "Structural coverage: claim subject/predicate or source id/start/end",
+        "maxItems": 8,
+        "type": "array",
+        "items": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "broaden": {
+        "description": "Supplement sparse all-term source matches once with any-term matches; default true",
+        "type": "boolean"
+      }
+    },
+    "required": ["task"],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "memory_service": {
+    "type": "object",
+    "properties": {
+      "operation": {
+        "type": "string",
+        "enum": [
+          "workflow",
+          "federated_retrieve",
+          "retrieve_cached",
+          "assist_create",
+          "assist_jobs",
+          "assist_get",
+          "assist_claim",
+          "assist_heartbeat",
+          "assist_read",
+          "assist_finish",
+          "assist_cancel",
+          "assist_delegate",
+          "adopt",
+          "capabilities",
+          "usage",
+          "federation_mounts",
+          "federated_search",
+          "federated_read",
+          "export_bundle",
+          "import_bundle",
+          "knowledge_graph",
+          "export_page",
+          "transfer_begin",
+          "transfer_status",
+          "transfers",
+          "transfer_page",
+          "transfer_commit",
+          "transfer_abort",
+          "acknowledge",
+          "review",
+          "reaffirm",
+          "resolve",
+          "cache_delete",
+          "cache_get",
+          "cache_put",
+          "me",
+          "spaces",
+          "create_space",
+          "space",
+          "remember",
+          "get",
+          "revise",
+          "query",
+          "join",
+          "json_store",
+          "save_rule",
+          "run_rule",
+          "materialize_rule",
+          "graph",
+          "search",
+          "context",
+          "capture",
+          "capture_batch",
+          "sources",
+          "source_headers",
+          "source_search",
+          "source_range",
+          "vocabulary",
+          "save_vocabulary",
+          "plan",
+          "execute_plan",
+          "retrieve",
+          "checkpoint",
+          "save_checkpoint",
+          "grant",
+          "forget",
+          "export",
+          "job",
+          "reindex"
+        ]
+      },
+      "space_id": {
+        "description": "Space ID; omit to use your configured private space",
+        "type": "string"
+      },
+      "id": {
+        "type": "string"
+      },
+      "input": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {}
+      },
+      "key": {
+        "description": "Reuse the same key and payload to retry a mutation",
+        "type": "string"
+      }
+    },
+    "required": ["operation"],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "memory_assist": {
+    "type": "object",
+    "properties": {
+      "space_id": {
+        "description": "Space ID; omit to use your configured private space",
+        "type": "string"
+      },
+      "worker_id": {
+        "type": "string",
+        "description": "The helper's memory principal ID"
+      },
+      "role": {
+        "type": "string",
+        "enum": ["librarian", "reflector", "evaluator"]
+      },
+      "task": {
+        "type": "string"
+      },
+      "max_operations": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 128
+      },
+      "timeout_ms": {
+        "type": "integer",
+        "minimum": 1000,
+        "maximum": 3600000
+      },
+      "key": {
+        "type": "string"
+      }
+    },
+    "required": ["worker_id", "role", "task"],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "memory_remember": {
+    "type": "object",
+    "properties": {
+      "space_id": {
+        "description": "Space ID; omit to use your configured private space",
+        "type": "string"
+      },
+      "content": {
+        "type": "string"
+      },
+      "claim": {
+        "type": "object",
+        "properties": {
+          "subject": {
+            "type": "string"
+          },
+          "predicate": {
+            "type": "string"
+          },
+          "object": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "entity"
+                  },
+                  "id": {
+                    "type": "string"
+                  }
+                },
+                "required": ["kind", "id"]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "literal"
+                  },
+                  "value": {
+                    "type": ["string", "number", "boolean", "null"]
+                  }
+                },
+                "required": ["kind", "value"]
+              }
+            ]
+          }
+        },
+        "required": ["subject", "predicate", "object"]
+      },
+      "valid_time": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "from": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "until": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": ["from", "until"]
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "expected_vocabulary_version": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "source_ids": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "depends_on": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "dependency_versions": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "type": {
+        "type": "string",
+        "enum": ["fact", "observation", "decision", "inference", "skill", "episode"]
+      },
+      "metadata": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {}
+      },
+      "key": {
+        "type": "string"
+      }
+    },
+    "required": ["content"],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "memory_query": {
+    "type": "object",
+    "properties": {
+      "space_id": {
+        "description": "Space ID; omit to use your configured private space",
+        "type": "string"
+      },
+      "subject": {
+        "type": "string"
+      },
+      "predicate": {
+        "type": "string"
+      },
+      "object": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "entity"
+              },
+              "id": {
+                "type": "string"
+              }
+            },
+            "required": ["kind", "id"]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "literal"
+              },
+              "value": {
+                "type": ["string", "number", "boolean", "null"]
+              }
+            },
+            "required": ["kind", "value"]
+          }
+        ]
+      },
+      "type": {
+        "type": "string"
+      },
+      "tier": {
+        "type": "string"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100
+      },
+      "cursor": {
+        "type": "string"
+      },
+      "valid_at": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "include_stale": {
+        "description": "Include unchanged authored conclusions whose premises need review",
+        "type": "boolean"
+      }
+    },
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "memory_graph": {
+    "type": "object",
+    "properties": {
+      "space_id": {
+        "description": "Space ID; omit to use your configured private space",
+        "type": "string"
+      },
+      "subject": {
+        "type": "string"
+      },
+      "predicates": {
+        "maxItems": 16,
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "direction": {
+        "type": "string",
+        "enum": ["out", "in", "both"]
+      },
+      "max_depth": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 5
+      },
+      "valid_at": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "include_stale": {
+        "description": "Include unchanged authored conclusions whose premises need review",
+        "type": "boolean"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 200
+      }
+    },
+    "required": ["subject"],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "create_entities": {
+    "type": "object",
+    "properties": {
+      "entities": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "entityType": {
+              "type": "string"
+            },
+            "observations": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": ["name", "entityType", "observations"]
+        }
+      }
+    },
+    "required": ["entities"],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "create_relations": {
+    "type": "object",
+    "properties": {
+      "relations": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "from": {
+              "type": "string"
+            },
+            "to": {
+              "type": "string"
+            },
+            "relationType": {
+              "type": "string"
+            }
+          },
+          "required": ["from", "to", "relationType"]
+        }
+      }
+    },
+    "required": ["relations"],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "add_observations": {
+    "type": "object",
+    "properties": {
+      "observations": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "entityName": {
+              "type": "string"
+            },
+            "contents": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": ["entityName", "contents"]
+        }
+      }
+    },
+    "required": ["observations"],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "delete_entities": {
+    "type": "object",
+    "properties": {
+      "entityNames": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "required": ["entityNames"],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "delete_observations": {
+    "type": "object",
+    "properties": {
+      "deletions": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "entityName": {
+              "type": "string"
+            },
+            "observations": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": ["entityName", "observations"]
+        }
+      }
+    },
+    "required": ["deletions"],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "delete_relations": {
+    "type": "object",
+    "properties": {
+      "relations": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "from": {
+              "type": "string"
+            },
+            "to": {
+              "type": "string"
+            },
+            "relationType": {
+              "type": "string"
+            }
+          },
+          "required": ["from", "to", "relationType"]
+        }
+      }
+    },
+    "required": ["relations"],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "read_graph": {
+    "type": "object",
+    "properties": {},
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "search_nodes": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string"
+      }
+    },
+    "required": ["query"],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "open_nodes": {
+    "type": "object",
+    "properties": {
+      "names": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "required": ["names"],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

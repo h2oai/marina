@@ -15,7 +15,6 @@ import {
   describeTrustProfile,
   getTrustProfile,
   isLocalProfile,
-  resetTrustProfileForTests,
   resolveTrustProfile,
   setTrustProfile,
 } from "../src/engine/trust-profile";
@@ -23,12 +22,11 @@ import { MarinaDB } from "../src/persistence/database";
 import { memoryLimitsFromEnv } from "../src/persistence/db-memory-storage";
 import { roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 const TEST_DB = "test_trust_profile.db";
 
 describe("trust profile — resolution", () => {
-  afterEach(() => resetTrustProfileForTests());
-
   it("derives LOCAL on a loopback-only bind without sign-in", () => {
     const r = resolveTrustProfile({ env: {}, loopbackOnlyBind: true, authEnabled: false });
     expect(r).toMatchObject({ profile: "local", derived: true });
@@ -60,16 +58,30 @@ describe("trust profile — resolution", () => {
     ).toThrow(/MARINA_PROFILE must be/);
   });
 
-  it("explicit LOCAL on a public bind is fatal unless auth or the insecure ack is set", () => {
+  it("explicit LOCAL on a public bind is fatal unless the insecure ack is set — auth alone is not enough", () => {
     const base = { profile: "local" as const, loopbackOnlyBind: false, bindHost: "0.0.0.0" };
     expect(() =>
       assertTrustProfileSafe({ ...base, authEnabled: false, insecurePublicAck: false }),
     ).toThrow(/FATAL: MARINA_PROFILE=local/);
+    // Sign-in does not make `local` safe: it would ungate every remote account.
     expect(() =>
       assertTrustProfileSafe({ ...base, authEnabled: true, insecurePublicAck: false }),
-    ).not.toThrow();
+    ).toThrow(/does not help[\s\S]*MARINA_ALLOW_INSECURE_PUBLIC=true/);
     expect(() =>
       assertTrustProfileSafe({ ...base, authEnabled: false, insecurePublicAck: true }),
+    ).not.toThrow();
+    expect(() =>
+      assertTrustProfileSafe({ ...base, authEnabled: true, insecurePublicAck: true }),
+    ).not.toThrow();
+    // Loopback-only local is always fine.
+    expect(() =>
+      assertTrustProfileSafe({
+        ...base,
+        loopbackOnlyBind: true,
+        bindHost: "127.0.0.1",
+        authEnabled: true,
+        insecurePublicAck: false,
+      }),
     ).not.toThrow();
     expect(() =>
       assertTrustProfileSafe({
@@ -83,6 +95,8 @@ describe("trust profile — resolution", () => {
   });
 
   it("process default is SHARED (legacy enforcement) until main resolves the profile", () => {
+    using _processState = scopeProcessState();
+
     expect(getTrustProfile({})).toBe("shared");
     expect(isLocalProfile({})).toBe(false);
     setTrustProfile("local");
@@ -105,13 +119,13 @@ describe("trust profile — LOCAL removes friction, SHARED keeps it", () => {
   });
 
   afterEach(() => {
-    resetTrustProfileForTests();
-    RateLimiter.bypass = false;
     db.close();
     cleanupDb(TEST_DB);
   });
 
   it("every safety gate auto-passes under LOCAL, including the open-posture core four", () => {
+    using _processState = scopeProcessState();
+
     setTrustProfile("shared");
     for (const gate of [
       "shell.exec",
@@ -137,6 +151,8 @@ describe("trust profile — LOCAL removes friction, SHARED keeps it", () => {
   });
 
   it("MARINA_AUTONOMY=guarded re-enforces gates on a LOCAL instance (the admin's one-line switch)", () => {
+    using _processState = scopeProcessState();
+
     setTrustProfile("local");
     const previous = process.env.MARINA_AUTONOMY;
     process.env.MARINA_AUTONOMY = "guarded";
@@ -151,6 +167,8 @@ describe("trust profile — LOCAL removes friction, SHARED keeps it", () => {
 
   it("a loopback login is sovereign under LOCAL and rank floors are off; SHARED keeps rank 0", () => {
     const run = (profile: "local" | "shared") => {
+      using _processState = scopeProcessState();
+
       setTrustProfile(profile);
       const engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
       engine.registerRoom(roomId("test/start"), makeTestRoom({ short: "Start" }));
@@ -175,6 +193,8 @@ describe("trust profile — LOCAL removes friction, SHARED keeps it", () => {
   });
 
   it("rate limiters pass everything under the LOCAL bypass", () => {
+    using _processState = scopeProcessState();
+
     const limiter = new RateLimiter({ maxTokens: 1, refillRate: 1, refillInterval: 60_000 });
     expect(limiter.consume("k")).toBe(true);
     expect(limiter.consume("k")).toBe(false);

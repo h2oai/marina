@@ -1,5 +1,54 @@
 # Testing
 
+## Isolated integration worlds
+
+`createTestEngine()` from `test/engine-fixture.ts` supplies an independent in-memory
+database, command registry and room without starting listeners or the tick timer:
+
+```ts
+const world = createTestEngine();
+try {
+  const { entityId, connection } = world.login("Ada");
+  await world.engine.processCommand(entityId, "look");
+  expect(connection.lastText()).toContain("Test Room");
+} finally {
+  await world.dispose();
+}
+```
+
+Disposal stops agents, drains commands, closes service resources, then closes storage;
+it is idempotent. Two fixtures can coexist in one process, including identical names
+and command registrations. Use `{ storage: "disk" }` for WAL, reopen, external writer
+and durability tests. An in-memory fixture shares one SQLite handle and is not a disk
+durability test. Tests changing process-wide environment, trust profiles, provider
+registries or clocks still need isolation; the helper never silently resets globals.
+
+## Reproducible property and security tests
+
+`bun run test:properties` runs fast-check histories for context invalidation,
+asynchronous command ordering and hostile context JSON. CI also runs these files in
+the normal backend shards. Failures include a seed and shrink path. To expand a pass:
+
+```sh
+FC_SEED=20260928 FC_RUNS=1000 bun run test:properties
+```
+
+Replay a single failing property with its printed seed and path:
+
+```sh
+FC_SEED=123 FC_PATH='0:1:2' bun test test/context-cache-property.test.ts
+```
+
+The cache oracle models access decisions independently from cache internals; the
+scheduler varies interleavings and checks per-resident FIFO even after failures.
+Security generation covers malformed JSON, nested values, identity overrides and
+budget boundaries. A clean fuzz run is evidence for these properties, not proof of
+exhaustive security. `test:fast --check` is enforced in CI against the committed timing
+snapshot and selection rule; new files need measurement before joining that fast list.
+
+The public API explorer has a separate browser check: `bun run test:explorer`. It builds
+the site and exercises schema expansion, templates, deep links, search and mobile layout.
+
 Use `bun run test` for the backend and `bun run test:ui` for the dashboard.
 The backend contains more than 4,500 tests and can take several minutes, depending
 on available CPU and storage. A 120-second external cutoff is not a leak detector. This
@@ -48,11 +97,20 @@ It remains Bun's native runner, without the full-suite wrapper's progress watchd
 
 ## Dashboard runtime and browser tests
 
-Vitest requires Node >=22.12. Bun manages packages; `bun run test:ui` runs Vitest on
-Node. Do not use `bun --bun run test` or `bun test` inside the dashboard: those force
-the wrong runtime/runner. The config rejects the unsupported VM runtime before tests
-load, rather than surfacing misleading missing-window errors. See the
-[Vitest runtime requirements](https://vitest.dev/guide/).
+Install current Node 24 LTS alongside Bun for dashboard development. The dashboard's
+`.node-version` selects Node 24 locally and in CI; `dashboard/package.json` declares
+the supported range: Node 22.22.2+, 24.15.0+, or 26+ (excluding 23 and 25).
+The installed JSDOM requires this newer baseline than Vitest's Node 22.12 minimum.
+Bun manages packages; `bun run test:ui` (or `cd dashboard && bun run test`) explicitly
+launches Vitest with Node. CI installs that runtime instead of relying on the runner
+image's preinstalled version. See the [Vitest runtime requirements](https://vitest.dev/guide/).
+
+Do not use `bun --bun run test` or `bun test` inside the dashboard: those force the
+wrong runtime/runner. With Bun 1.4.2, Vitest 5.0.1 and JSDOM 30.1.1, both `vmThreads`
+and `threads` fail JSDOM's EventTarget receiver check before setup files can run.
+The config gives an actionable error before this initialization failure. Revisit
+native Bun support when this integration passes the complete suite with the same
+DOM assertions and mock isolation.
 
 The dashboard uses four isolated VM workers with JSDOM and cleanup after every test.
 Tests of lazy chunks should await `vi.dynamicImportSettled()` inside `act`, rather
@@ -65,6 +123,34 @@ present, or Playwright's installed Chromium. `bun run test:browser` builds first
 CI runs the same six journeys and retains traces/screenshots on failure.
 
 ## Shutdown and generated adversarial cases
+
+Use `scopeProcessState()` from `test/process-state.ts` for temporary trust profiles,
+rate-limit bypass and environment overrides:
+
+```ts
+using state = scopeProcessState({
+  trustProfile: "local",
+  rateLimitBypass: true,
+  env: { WS_HOST: "127.0.0.1" },
+});
+// Create the fixture, run the scenario, and await teardown inside this scope.
+```
+
+The scope restores the previous resolved profile (including an unresolved,
+environment-derived profile), bypass flag, and the specified environment keys on
+return or throw. An `undefined` environment value temporarily removes that key;
+`trustProfile: null` temporarily clears the resolved profile. Other environment keys
+are not captured. Nested scopes dispose in reverse order. These are still process-wide
+overrides: run such tests serially within a worker, and use separate workers for
+concurrent scenarios with different profiles.
+
+For a fixture spanning `beforeEach`/`afterEach`, create a `using pending` scope at the
+start of setup and transfer it with `pending.move()` only after setup succeeds.
+In teardown, bind that transferred stack with `using` before any fallible cleanup.
+This restores state on setup and teardown failures as well as failed assertions.
+Do not reset to an assumed `shared` profile or `false` bypass in cleanup; that can
+overwrite a caller's configuration. The participation load qualifier uses the same
+scope, with asynchronous disposal of clients, adapter, engine and database.
 
 Always await asynchronous adapter `stop()`, then stop/drain the engine before closing
 SQLite. Await `processCommand()` even for a synchronous handler: completion can still
@@ -81,7 +167,7 @@ in place even when generated cases pass.
 
 ## The fast loop
 
-`scripts/test-fast.ts` runs an explicit list of 140 files that are
+`scripts/test-fast.ts` runs an explicit list of 139 files that are
 cheap (≤ 1.5 s measured) and self-contained (no engine boot, no listening
 server). It is the loop to run before every commit; the full suite and the
 shards run in CI.
@@ -267,3 +353,50 @@ assertion (no notification after revocation) and stays. The `setTimeout(resolve,
 Causes, in order of weight: per-test engine/DB boot in `beforeEach`, real-time
 waits (multi-second sleeps and interval-driven loops such as staleness timers,
 lease expiry and rate-limit refill), and end-to-end HTTP/WebSocket round trips.
+
+## Mutation testing and session model checks
+
+`bun run test:mutation` uses pinned Stryker with its [command test runner](https://stryker-mutator.io/docs/stryker-js/configuration/#testrunner-string)
+to mutate `context-cache.ts` and `mcp-admission.ts`, running the actual Bun/SQLite contract
+and integration tests for each variant. The dedicated CI job requires a 100% score;
+`/tmp/marina-mutation/mutation.json` identifies surviving mutants. The scope is these two
+modules, not repository-wide mutation coverage. Investigate survivors; do not lower the
+threshold to make a broken test suite pass. Stryker operates on sandbox copies, never the
+working sources. Typechecking runs separately because TypeScript 7 no longer provides
+the legacy JavaScript compiler API that Stryker's config rewriter expects.
+
+`bun run check:model` checks the bounded [MCP session model](../../specs/README.md), then
+requires deliberately broken models to produce the expected counterexamples. It needs
+Java 21 and downloads a checksum-pinned TLC release unless `--jar` is supplied. Both
+commands have dedicated Make targets. These checks complement implementation tests;
+finite-state model checking is not a proof of the entire running application.
+
+## Context latency regression gate
+
+`bun run bench:participation-context --output /tmp/context.json` measures the complete
+`buildUnifiedContext` call at 1,000 and 10,000 seeded background records across eight
+tenants, plus a five-tier fixture. One in 100 background records matches the task terms.
+Each scale warms up 20 times, then records 250 cold
+retrievals and 1,000 cache hits. Cold runs invalidate through a real SQLite write outside
+the timed section. The harness asserts cache hit/miss behavior, byte budgets, expected
+evidence, tenant isolation and post-withdrawal visibility. Token-rate throttling is
+bypassed only inside this disposable benchmark process. Unique fixture writes skip dedup;
+write throughput is not measured. Disk SQLite uses the test helper's NORMAL setting;
+production FULL durability remains unchanged. See the [operator runbook](operator-runbook.md#compare-checkpoint-thresholds-on-representative-storage)
+for concurrent MCP/FULL-durability WAL qualification.
+
+CI prepares the PR base (or previous pushed commit) and runs the **same candidate workload**
+against both source trees and the candidate's installed dependencies. Three rounds alternate
+base/candidate order. `bun run check:context-performance --baseline /path/to/base` compares
+the median of their per-run p99s; each must stay below base × 1.5 plus 2 ms for cold reads
+or 0.5 ms for warm reads, and below independent budgets of 250/20 ms respectively. These
+allowances tolerate shared-runner noise while gating material regressions. JSON artifacts
+retain each run's p50/p95/p99 and sample counts for historical comparison. Inspect noisy
+failures on a quiet runner before changing limits. This is a retrieval regression test,
+not a universal capacity SLA, write benchmark or representative production load test.
+
+The benchmark script accepts `--root`, `--records`, `--samples` and `--match-every` for diagnosis. CI's
+comparison uses fixed scales/sample counts and rejects missing or malformed measurements.
+A separate candidate run makes all 10,000 records match and requires cold/warm p99 below
+500/20 ms. This catches broad-query regressions without repeatedly running an already-slow
+historical query plan. An independent load test still exercises admission and FULL SQLite writes.

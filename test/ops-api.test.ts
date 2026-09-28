@@ -38,6 +38,9 @@ import type { OpsAgentStopResponse, OpsOverview } from "../src/net/ops-types";
 import { MarinaDB } from "../src/persistence/database";
 import { type EngineEvent, type EntityId, roomId } from "../src/types";
 import { MockConnection, makeTestRoom } from "./helpers";
+import { scopeProcessState } from "./process-state";
+
+let processState: DisposableStack | undefined;
 
 const OWNER = "Owner";
 const STRANGER = "Stranger";
@@ -163,6 +166,8 @@ async function api(
 }
 
 beforeEach(() => {
+  using pendingProcessState = scopeProcessState();
+
   // Retention keeps the last pass in module state; another test file's pass
 
   // must not leak into this file's `lastReport: null` assertion.
@@ -200,10 +205,14 @@ beforeEach(() => {
     fakeHandle("Worker", { costLastHourUsd: 0.25, role: "mathematician", paused: true }),
   );
   inject("Solo", "system", fakeHandle("Solo", { costLastHourUsd: 1 }));
+
+  processState = pendingProcessState.move();
 });
 
 afterEach(() => {
-  resetTrustProfileForTests();
+  using _processState = processState;
+  processState = undefined;
+
   for (const key of ENV_KEYS) {
     const v = prevEnv[key];
     if (v === undefined) delete process.env[key];

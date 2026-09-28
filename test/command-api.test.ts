@@ -8,6 +8,7 @@ import { handleDashboardApi } from "../src/net/dashboard-api";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 const TEST_DB = "test_command_api.db";
 
@@ -61,6 +62,8 @@ describe("Command API", () => {
   }
 
   it("recognizes a loopback caller by its REAL socket peer, like a loopback WebSocket login", async () => {
+    using _processState = scopeProcessState();
+
     const rankOf = (name: string) => {
       const e = [...engine.entities.all()].find((x) => x.name === name);
       return (e?.properties as { rank?: number } | undefined)?.rank ?? 0;

@@ -6,7 +6,7 @@
  * env parsing behind the caps, and the adapter's pause/resume/notify paths.
  */
 
-import { afterEach, describe, expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { spendLimitsFromEnv } from "../src/agent/agent-runtime";
 import {
   formatUsd,
@@ -22,7 +22,8 @@ import {
   upstreamErrorPauseMsFromEnv,
 } from "../src/engine/constants";
 import { settleProxyCall } from "../src/engine/proxy-settlement";
-import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
+import { setTrustProfile } from "../src/engine/trust-profile";
+import { scopeProcessState } from "./process-state";
 
 // ─── Rolling window ───────────────────────────────────────────────────────────
 
@@ -146,8 +147,6 @@ function makeAdapter(
 }
 
 describe("LeanAgentAdapter spend guard", () => {
-  afterEach(() => resetTrustProfileForTests());
-
   it("reports zeroed operator status before the first turn", () => {
     const { adapter } = makeAdapter({ perAgentUsdPerHour: 1 });
     const ops = operatorStatusOf(adapter);
@@ -264,9 +263,9 @@ describe("LeanAgentAdapter consecutive-failure breaker", () => {
 });
 
 describe("LeanAgentAdapter remote-target guard", () => {
-  afterEach(() => resetTrustProfileForTests());
-
   it("start() refuses a metadata-IP marina@ target without connecting", async () => {
+    using _processState = scopeProcessState();
+
     setTrustProfile("shared");
     const { adapter, internals } = makeAdapter(undefined, "marina@169.254.169.254:3300");
     let connected = false;
@@ -279,6 +278,8 @@ describe("LeanAgentAdapter remote-target guard", () => {
   });
 
   it("reconfigure() refuses a blocked target and leaves the model unchanged", async () => {
+    using _processState = scopeProcessState();
+
     setTrustProfile("shared");
     const { adapter } = makeAdapter();
     await expect(adapter.reconfigure({ model: "marina@localhost:3300" })).rejects.toThrow(
@@ -363,8 +364,6 @@ describe("readProxyResponseHeaders", () => {
 });
 
 describe("LeanAgentAdapter proxy cost headers", () => {
-  afterEach(() => resetTrustProfileForTests());
-
   it("a fake fetch returning the headers makes header cost accrue when the model's own cost is 0", async () => {
     const { adapter, internals, requests } = makeProxyAdapter();
     const options = internals.providerStreamOptions(internals.model, undefined);

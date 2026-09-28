@@ -39,7 +39,6 @@ export function registerCoordinationCommands(engine: Engine): void {
         db: engine.db,
         taskManager: engine.taskManager,
         groupManager: engine.groupManager,
-        promote: (eid, rank) => engine.maybePromote(eid, rank),
       }),
     );
   }
@@ -236,7 +235,6 @@ export function registerCoordinationCommands(engine: Engine): void {
         engine.taskManager,
         (name) => engine.findEntityGlobal(name),
         (event) => engine.logEvent(event),
-        (eid, rank) => engine.maybePromote(eid, rank),
         resolveCitedEvidence,
         (row) =>
           tryLog(engine.logger, "decisions", "Judge observation not recorded", () => {

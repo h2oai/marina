@@ -1,6 +1,6 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
-import { type RefObject, useEffect, useState } from "react";
+import { type RefObject, useEffect, useLayoutEffect, useState } from "react";
 import type { CapabilityManifest, CommandCatalogEntry } from "../../../src/sdk/capabilities";
 import { commandFormPrefix, matchCommandForm } from "../../../src/sdk/command-forms";
 import { ORIENTATION_COMMANDS } from "../../../src/sdk/onboarding";
@@ -15,7 +15,12 @@ function discoveryContextKey(
   name: string | null,
 ) {
   const self = state.entities.find((entity) => entity.name === name);
-  return JSON.stringify([self?.room, self?.properties?.rank, self?.properties?.active_modal]);
+  return JSON.stringify([
+    state.capabilityRevision,
+    self?.room,
+    self?.properties?.rank,
+    self?.properties?.active_modal,
+  ]);
 }
 
 /** Selection only fills a draft. Enter retains send semantics until an option is selected. */
@@ -89,7 +94,12 @@ export function CommandInputAssistance({
       active?.abort();
       const controller = new AbortController();
       active = controller;
-      void requestParticipant<CapabilityManifest>("capabilities", {}, controller.signal)
+      void requestParticipant<CapabilityManifest>(
+        "capabilities",
+        {},
+        controller.signal,
+        "prefer-cache",
+      )
         .then((result) => {
           if (
             controller.signal.aborted ||
@@ -136,9 +146,11 @@ export function CommandInputAssistance({
       element?.removeEventListener("focus", refreshOnFocus);
     };
   }, [identity, input, discoveryContext]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const element = input.current;
     if (!element) return;
+    // Keep the native key handler and ARIA state in the same commit as the visible
+    // suggestions. A passive effect can leave Tab using the previous catalog.
     element.setAttribute("aria-controls", "chat-command-options");
     element.setAttribute("aria-expanded", String(options.length > 0));
     if (activeSelection >= 0)

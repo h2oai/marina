@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -36,7 +37,6 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { RateLimiter } from "../../src/auth/rate-limiter";
 import { computeHygieneRatios } from "../../src/memory/hygiene-ratios";
 import { worldMemoryService } from "../../src/memory/world-service";
 import type { MemoryRatio } from "../../src/net/memory-observability-types";
@@ -50,6 +50,7 @@ import {
 import { COMPETING_RECORD_PREDICATE } from "../../src/persistence/db-memory-review";
 import { MarinaMemoryClient } from "../../src/sdk/memory-client";
 import type { MemoryRecord } from "../../src/sdk/memory-types";
+import { scopeProcessState } from "../../test/process-state";
 import { type Interval, stableHash, wilson95 } from "./genbench";
 
 // ─── Public constants ───────────────────────────────────────────────────────
@@ -1185,8 +1186,7 @@ export async function runContradictionBenchmark(
 ): Promise<ContradictionReport> {
   const r = resolveOptions(options);
   const guard = installOfflineGuard();
-  const priorBypass = RateLimiter.bypass;
-  RateLimiter.bypass = true;
+  using _processState = scopeProcessState({ rateLimitBypass: true });
   const log = (line: string) => {
     if (!r.quiet) console.log(line);
   };
@@ -1268,7 +1268,6 @@ export async function runContradictionBenchmark(
     log(`\n${summaryMarkdown}`);
     return { result, file, summaryPath, summaryMarkdown };
   } finally {
-    RateLimiter.bypass = priorBypass;
     guard.restore();
   }
 }

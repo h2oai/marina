@@ -56,6 +56,9 @@ import { MEMORY_HELPER_INSTRUCTIONS } from "../src/sdk/memory-assistance";
 import type { MemoryOperationRequest } from "../src/sdk/memory-operations";
 import { type EntityId, roomId } from "../src/types";
 import { MockConnection, makeTestRoom } from "./helpers";
+import { scopeProcessState } from "./process-state";
+
+let processState: DisposableStack | undefined;
 
 const OWNER = "Owner";
 const OWNER_ID = "e_owner" as EntityId;
@@ -128,6 +131,8 @@ function seedAccumulation(n: number, topic = "amber deploy") {
 }
 
 beforeEach(() => {
+  using pendingProcessState = scopeProcessState();
+
   directory = mkdtempSync(join(tmpdir(), "marina-dispatch-"));
   db = new MarinaDB(join(directory, "world.db"));
   db.createUser({ id: crypto.randomUUID(), name: OWNER });
@@ -144,10 +149,14 @@ beforeEach(() => {
   delete process.env.MARINA_PROFILE;
   delete process.env.MARINA_AUTONOMY;
   resetTrustProfileForTests();
+
+  processState = pendingProcessState.move();
 });
 
 afterEach(() => {
-  resetTrustProfileForTests();
+  using _processState = processState;
+  processState = undefined;
+
   if (prevProfile === undefined) delete process.env.MARINA_PROFILE;
   else process.env.MARINA_PROFILE = prevProfile;
   if (prevAutonomy === undefined) delete process.env.MARINA_AUTONOMY;
@@ -266,6 +275,8 @@ describe("accumulation → reflector", () => {
   });
 
   it("with no reflector running notifies once per day with the spawn command (files nothing)", async () => {
+    using _processState = scopeProcessState();
+
     setTrustProfile("shared");
     seedAccumulation(ACCUMULATION_TRIGGER_NOTES);
     const now = Date.now();
@@ -298,6 +309,8 @@ describe("accumulation → reflector", () => {
   });
 
   it("the once-a-day notification survives a restart (durable stamp, cache read-through)", async () => {
+    using _processState = scopeProcessState();
+
     setTrustProfile("shared");
     seedAccumulation(ACCUMULATION_TRIGGER_NOTES);
     const now = Date.now();
@@ -394,6 +407,8 @@ describe("low-standing shared write → evaluator", () => {
   });
 
   it("files ONE silent evaluator job against the writer's own space; visible and cancellable", async () => {
+    using _processState = scopeProcessState();
+
     setTrustProfile("shared");
     expect(LOW_STANDING_WRITE_THRESHOLD).toBe(5);
     standings.set(OWNER_ID, 2); // below rank 1
@@ -423,6 +438,8 @@ describe("low-standing shared write → evaluator", () => {
   });
 
   it("skips a writer with sufficient standing", async () => {
+    using _processState = scopeProcessState();
+
     setTrustProfile("shared");
     standings.set(OWNER_ID, LOW_STANDING_WRITE_THRESHOLD);
     const report = await dispatchSharedWriteReview(db, deps(), state, write(), Date.now());
@@ -431,6 +448,8 @@ describe("low-standing shared write → evaluator", () => {
   });
 
   it("debounces to one review per writer per hour, then re-files for a new deposit", async () => {
+    using _processState = scopeProcessState();
+
     setTrustProfile("shared");
     standings.set(OWNER_ID, 0);
     const now = Date.now();
@@ -460,6 +479,8 @@ describe("low-standing shared write → evaluator", () => {
   });
 
   it("the per-writer hour debounce survives a restart (durable stamp, cache read-through)", async () => {
+    using _processState = scopeProcessState();
+
     setTrustProfile("shared");
     standings.set(OWNER_ID, 0);
     const now = Date.now();
@@ -497,6 +518,8 @@ describe("low-standing shared write → evaluator", () => {
   });
 
   it("is skipped entirely under the local profile; public behaves like shared", async () => {
+    using _processState = scopeProcessState();
+
     standings.set(OWNER_ID, 0);
     setTrustProfile("local");
     const local = await dispatchSharedWriteReview(db, deps(), state, write(), Date.now());
@@ -509,6 +532,8 @@ describe("low-standing shared write → evaluator", () => {
   });
 
   it("stays silent with no evaluator, an unknown pool, or a writer without a world account", async () => {
+    using _processState = scopeProcessState();
+
     setTrustProfile("shared");
     standings.set(OWNER_ID, 0);
     const noHelper = await dispatchSharedWriteReview(
@@ -540,6 +565,8 @@ describe("low-standing shared write → evaluator", () => {
   });
 
   it("engine hook returns synchronously from logEvent and files the job in the background", async () => {
+    using _processState = scopeProcessState();
+
     setTrustProfile("shared");
     const engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
     engine.registerRoom(roomId("test/start"), makeTestRoom({ short: "Start" }));

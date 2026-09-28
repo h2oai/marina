@@ -6,7 +6,7 @@ import type { GroupManager } from "../../coordination/group-manager";
 import type { TaskManager } from "../../coordination/task-manager";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
-import type { CommandDef, Entity, EntityId, EntityRank, RoomContext } from "../../types";
+import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import { checkGateForExecution, recordGateExecution } from "../safety-gates";
 
 /**
@@ -1149,7 +1149,6 @@ export interface UseCaseCommandDeps {
     timestamp: number;
     [k: string]: unknown;
   }) => void;
-  promote?: (entityId: EntityId, rank: EntityRank) => void;
 }
 
 export function usecaseCommand(deps: UseCaseCommandDeps): CommandDef {
@@ -1445,8 +1444,6 @@ Examples:
             }
           }
         }
-
-        deps.promote?.(input.entity, 2);
 
         // 8. Report
         const lines = [

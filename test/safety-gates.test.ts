@@ -20,6 +20,7 @@ import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-
 import { MarinaDB } from "../src/persistence/database";
 import { GRANTED_DEMONSTRATIONS, isGrantedCompetence } from "../src/persistence/db-competence";
 import { cleanupDb } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 const TEST_DB = "test_safety_gates.db";
 
@@ -311,6 +312,8 @@ describe("Safety gates", () => {
 
   // ── Standing re-check on unsupervised holders (decay never un-flips competence) ──
   describe("standing re-check on demonstrated (flipped) holders", () => {
+    let processState: DisposableStack | undefined;
+
     const DAY = 24 * 60 * 60 * 1000;
     /** Four half-lives later: standing / 16 — well below every gate's bar. */
     const LATER = Date.now() + 240 * DAY;
@@ -326,13 +329,19 @@ describe("Safety gates", () => {
 
     const prevAutonomy = process.env.MARINA_AUTONOMY;
     beforeEach(() => {
+      using pendingProcessState = scopeProcessState();
+
       delete process.env.MARINA_AUTONOMY;
       resetTrustProfileForTests();
+
+      processState = pendingProcessState.move();
     });
     afterEach(() => {
+      using _processState = processState;
+      processState = undefined;
+
       if (prevAutonomy === undefined) delete process.env.MARINA_AUTONOMY;
       else process.env.MARINA_AUTONOMY = prevAutonomy;
-      resetTrustProfileForTests();
     });
 
     it("a flipped holder with standing at or above the bar passes solo", () => {
@@ -399,6 +408,8 @@ describe("Safety gates", () => {
     });
 
     it("operator grants are distinguishable (sentinel) and exempt from the re-check in every profile", () => {
+      using _processState = scopeProcessState();
+
       grant(db, "e_operator", "shell.exec");
       const row = db.getCompetence("e_operator", "shell.exec")!;
       expect(row.demonstrations).toBe(GRANTED_DEMONSTRATIONS);
@@ -427,6 +438,8 @@ describe("Safety gates", () => {
     });
 
     it("under the local ungated profile a decayed holder still executes (profile-local), but checkGate stays honest", () => {
+      using _processState = scopeProcessState();
+
       flipShellExec("e_alice", "Alice");
       setTrustProfile("local");
       const exec = checkGateForExecution(db, "e_alice", "shell.exec", LATER);

@@ -33,8 +33,12 @@ jobs:
         run: bun run lint
       - name: Typecheck
         run: bun run typecheck
+      - name: Typecheck verification tools
+        run: bunx tsc --ignoreConfig --noEmit --target ESNext --module ESNext --moduleResolution bundler --types bun --strict --skipLibCheck scripts/check-session-model.ts scripts/check-context-benchmark.ts benchmarks/participation-context.ts
       - name: Check workspace versions
         run: bun run check:versions
+      - name: Check fast-test selection drift
+        run: bun run test:fast --check
       - name: Check generated API references
         run: bun run docs:api --check
       - name: Qualify concurrent MCP participation and admission recovery
@@ -78,6 +82,11 @@ jobs:
         working-directory: dashboard
     steps:
       - uses: actions/checkout@v7.0.1
+      - name: Set up dashboard test runtime
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version-file: dashboard/.node-version
+          package-manager-cache: false
       - uses: oven-sh/setup-bun@v2.2.0
         with:
           bun-version-file: .bun-version
@@ -125,9 +134,73 @@ jobs:
         run: bunx playwright install --with-deps chromium
       - name: Run participation journeys
         run: bun run test:browser
+      - name: Run API explorer journeys
+        run: bun run test:explorer
       - name: Preserve browser failure evidence
         if: failure()
         uses: actions/upload-artifact@v7.0.1
         with:
           name: participation-browser-failures
-          path: /tmp/marina-dashboard-browser-results
+          path: |
+            /tmp/marina-dashboard-browser-results
+            /tmp/marina-explorer-browser-results
+
+  participation-invariants:
+    name: Participation mutation and model checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version-file: .bun-version
+      - uses: actions/setup-java@v6.0.1
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: bun install --frozen-lockfile
+      - name: Check session model and negative controls
+        run: bun run check:model
+      - name: Mutation test cache and MCP admission contracts
+        run: bun run test:mutation
+      - name: Preserve model traces and mutation evidence
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: participation-invariants
+          path: |
+            /tmp/marina-session-model/report.json
+            /tmp/marina-session-model/*/tlc.log
+            /tmp/marina-mutation/mutation.json
+
+  context-performance:
+    name: Context p99 regression (1k and 10k records)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 2
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version-file: .bun-version
+      - run: bun install --frozen-lockfile
+      - name: Prepare comparison checkout
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -z "$BASE_REF" ] || [ "$BASE_REF" = "0000000000000000000000000000000000000000" ]; then
+            BASE_REF=$(git rev-parse HEAD^)
+          fi
+          git fetch --no-tags --depth=1 origin "$BASE_REF"
+          mkdir -p "$RUNNER_TEMP/marina-context-base"
+          git archive "$BASE_REF" | tar -x -C "$RUNNER_TEMP/marina-context-base"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/marina-context-base/node_modules"
+      - name: Compare three alternating base/candidate runs
+        run: bun run check:context-performance --baseline "$RUNNER_TEMP/marina-context-base"
+      - name: Preserve latency samples and comparison
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: context-performance
+          path: /tmp/marina-context-regression/

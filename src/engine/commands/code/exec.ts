@@ -17,7 +17,7 @@ import { dim, error as fmtError, header, separator, success } from "../../../net
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Connection, Entity, EntityId, RoomContext } from "../../../types";
 import { getRank } from "../../permissions";
-import { recordDemonstration } from "../../safety-gates";
+import { recordWitnessedDemonstration } from "../../safety-gates";
 import { isLocalUngated } from "../../trust-profile";
 import {
   findStoredRecipe,
@@ -605,9 +605,21 @@ function makeExecAudit(
     // the unsupervised competence the headless path later requires. ONLY a
     // genuine per-command human prompt approval qualifies: auto-mode approvals
     // and session-allow-set replays set humanApproved=false and never mint
-    // competence toward the highest-blast-radius gate.
+    // competence toward the highest-blast-radius gate. The approver (the
+    // session creator) is the witness, through the same witnessed path as the
+    // rest of the substrate: a creator approving their OWN command is
+    // self-attestation and credits nothing, and the approver must itself hold
+    // the gate unsupervised (`canWitness`).
     if (meta.humanApproved) {
-      recordDemonstration(deps.db, req.entityId, "code.exec.unrestricted");
+      const approver = resolveCreatorExact(deps, session);
+      if (approver) {
+        recordWitnessedDemonstration(
+          deps.db,
+          req.entityId,
+          "code.exec.unrestricted",
+          String(approver.id),
+        );
+      }
     }
   };
 }

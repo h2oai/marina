@@ -18,6 +18,7 @@ import {
 import { testKeyConnectivity } from "../../engine/commands/key";
 import type { Engine } from "../../engine/engine";
 import type { MarinaDB } from "../../persistence/database";
+import type { EntityId } from "../../types";
 import { discoverModels } from "../model-discovery";
 import { type EndpointConfig, getEndpointConfig, setEndpointConfig } from "../model-endpoint";
 import {
@@ -253,12 +254,25 @@ async function handleKeyTest(name: string, db: MarinaDB): Promise<Response> {
 /**
  * Security-relevant env keys that must never be edited through this route, even
  * by an operator: they control who is an admin, the dashboard password, the API
- * bearer tokens, and the auth mode / dev-open bypass. A misapplied edit here
- * could silently escalate privilege or open the instance, so changing them is
- * kept to out-of-band .env / shell provisioning only.
+ * bearer tokens, the auth mode / dev-open bypass, and the env-only operator
+ * bounds — autonomy posture, trust profile, unrestricted exec, live trading,
+ * spend caps, and where (and with what credential) the decision gate asks. A
+ * misapplied edit here could silently escalate privilege, loosen the operator's
+ * bounds or open the instance, so changing them is kept to out-of-band
+ * .env / shell provisioning only.
  */
 const PROTECTED_ENV_KEYS = new Set([
   "MARINA_ADMINS",
+  "MARINA_AUTONOMY",
+  "MARINA_CODE_EXEC_UNRESTRICTED",
+  "MARINA_TRADING_ENABLED",
+  "MARINA_DAILY_SPEND_CAP_USD",
+  "MARINA_CHILD_DAILY_SPEND_CAP_USD",
+  "MARINA_MAX_COST_USD_PER_HOUR",
+  "MARINA_MAX_AGENT_COST_USD_PER_HOUR",
+  "MARINA_DECISION_BASE_URL",
+  "MARINA_DECISION_PATH",
+  "MARINA_DECISION_API_KEY",
   "MARINA_AUTH",
   "MARINA_AUTH_ADMIN_EMAILS",
   "MARINA_PROFILE",
@@ -271,6 +285,18 @@ const PROTECTED_ENV_KEYS = new Set([
   "MARINA_DESKTOP_API_TOKEN",
   "GATEWAY_SECRET",
 ]);
+
+/** True when the caller is an agent (an internal room/crew connection, or an
+ * entity with a persisted agent config) rather than a human operator. */
+function isAgentDrivenCaller(
+  engine: Engine,
+  db: MarinaDB | undefined,
+  callerId: EntityId,
+): boolean {
+  if (engine.getConnectionForEntity(callerId)?.internal) return true;
+  const name = engine.entities.get(callerId)?.name;
+  return Boolean(name && db?.getAgentConfig(name));
+}
 
 /** True for keys whose plaintext must never leave the server (any secret, or a
  * protected security knob). */
@@ -430,7 +456,7 @@ async function handleEnvPut(req: Request): Promise<Response> {
   if (protectedEdits.length > 0) {
     return json(
       {
-        error: `These keys can only be changed by editing .env directly: ${protectedEdits.join(", ")}`,
+        error: `These keys are operator bounds and can only be changed by editing the environment (.env or the process environment) directly: ${protectedEdits.join(", ")}`,
       },
       403,
     );
@@ -634,6 +660,17 @@ export async function handleKeyRoutes(ctx: DashboardRouteContext): Promise<Respo
     return authorizePrivileged(engine, db, callerId, "key.manage") ?? handleEnvGet();
   }
   if (url.pathname === "/api/env" && method === "PUT") {
+    // An agent never rewrites the operator's environment, whatever gates it
+    // holds: the env file sets the bounds agents run inside.
+    if (isAgentDrivenCaller(engine, db, callerId)) {
+      return json(
+        {
+          error:
+            "Agents cannot edit the environment. An operator must change .env or the process environment directly.",
+        },
+        403,
+      );
+    }
     return authorizePrivileged(engine, db, callerId, "admin.destructive") ?? handleEnvPut(req);
   }
 

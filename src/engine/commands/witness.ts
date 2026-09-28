@@ -19,7 +19,7 @@
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId } from "../../types";
-import { getAutonomyPosture } from "../autonomy";
+import { getAutonomyPosture, OPEN_POSTURE_CORE } from "../autonomy";
 import {
   canWitness,
   getGateProgress,
@@ -273,7 +273,7 @@ export function witnessCommand(deps: {
             : gate.status === "supervised"
               ? posture === "open"
                 ? "open posture — usable now (unless destructive-core)"
-                : posture === "earned"
+                : posture === "earned" && !OPEN_POSTURE_CORE.has(gate.id)
                   ? `run it — a witness attests afterwards (${gate.demonstrations}/${gate.demoThreshold} attested)`
                   : `witness request ${gate.id} (${gate.demonstrations}/${gate.demoThreshold} demos)`
               : `standing ${gate.standing.toFixed(0)}/${gate.minStanding} — contribute to grow`;

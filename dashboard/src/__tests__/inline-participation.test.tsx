@@ -167,6 +167,40 @@ it("keeps the selected command when a refresh reorders the catalog", async () =>
   expect(screen.getByRole("option", { name: /memory/ })).toHaveAttribute("aria-selected", "true");
 });
 
+it("uses the visible catalog for a native key event immediately after a refresh commit", async () => {
+  const draft = vi.fn();
+  window.addEventListener("marina:draft-command", draft);
+  const observer = new MutationObserver(() => {
+    const options = [...document.querySelectorAll('[role="option"]')];
+    if (options.length === 1 && options[0]!.textContent?.includes("emote")) {
+      observer.disconnect();
+      // Deliver before React's passive effects: this is the browser event boundary,
+      // not fireEvent's act wrapper (which can flush the stale listener first).
+      screen
+        .getByLabelText("Command")
+        .dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }),
+        );
+    }
+  });
+  try {
+    render(<Input />);
+    const input = screen.getByLabelText("Command");
+    fireEvent.input(input, { target: { value: "/me" } });
+    await screen.findByRole("option", { name: /memory/ });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    observer.observe(document.body, { childList: true, subtree: true });
+    request.mockResolvedValue({ commands: [catalog[2]] });
+    fireEvent.focus(input);
+    await waitFor(() => expect(draft).toHaveBeenCalledTimes(1));
+    expect((draft.mock.calls[0]![0] as CustomEvent).detail.command).toBe("emote ");
+  } finally {
+    observer.disconnect();
+    window.removeEventListener("marina:draft-command", draft);
+  }
+});
+
 it("refreshes room-specific discovery without requiring the resident to blur the input", async () => {
   render(<Input />);
   const input = screen.getByLabelText("Command");

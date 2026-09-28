@@ -756,6 +756,7 @@ export interface ContradictionCase {
 }
 
 export interface WorldSnapshot {
+  capabilityRevision?: string;
   timestamp: number;
   instanceName?: string;
   worldName?: string;

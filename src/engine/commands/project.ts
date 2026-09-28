@@ -13,7 +13,7 @@ import {
   separator,
 } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
-import type { CommandDef, Entity, EntityId, EntityRank, RoomContext } from "../../types";
+import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import { requiresPersistence } from "./command-messages";
 
 /** Emit a coordination_change so the dashboard's Projects list refreshes live. */
@@ -181,7 +181,6 @@ export function projectCommand(deps: {
   db?: MarinaDB;
   taskManager?: TaskManager;
   groupManager?: GroupManager;
-  promote?: (entityId: EntityId, rank: EntityRank) => void;
 }): CommandDef {
   return {
     category: "Coordination",
@@ -344,8 +343,6 @@ export function projectCommand(deps: {
           9,
           "fact",
         );
-
-        deps.promote?.(input.entity, 2);
 
         const lines = [
           header(`Project "${name}" created`),
