@@ -22,6 +22,9 @@ import { setEndpointConfig } from "../src/net/model-endpoint";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { makeTestRoom } from "./helpers";
+import { scopeProcessState } from "./process-state";
+
+let processState: DisposableStack | undefined;
 
 const ENV = [
   "ANTHROPIC_API_KEY",
@@ -70,6 +73,8 @@ const ANTHROPIC_MESSAGE = (overrides: Record<string, unknown> = {}) =>
   });
 
 beforeEach(() => {
+  using pendingProcessState = scopeProcessState();
+
   saved = new Map(ENV.map((k) => [k, process.env[k]]));
   for (const k of ENV) delete process.env[k];
   process.env.ANTHROPIC_API_KEY = "sk-ant-test";
@@ -93,15 +98,20 @@ beforeEach(() => {
   engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
   engine.registerRoom(roomId("test/start"), makeTestRoom({ short: "Start" }));
   setEndpointConfig(db, { mode: "passthru", passthruModel: "anthropic/claude-sonnet-5" });
+
+  processState = pendingProcessState.move();
 });
 
 afterEach(() => {
+  using _processState = processState;
+  processState = undefined;
+
   globalThis.fetch = originalFetch;
   for (const [k, v] of saved) {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
   }
-  resetTrustProfileForTests();
+
   engine.shutdown();
   db.close();
   rmSync(dir, { recursive: true, force: true });
@@ -478,6 +488,8 @@ describe("Anthropic passthru: prompt caching", () => {
   });
 
   it("auto-cache defaults on under the local trust profile and off otherwise", () => {
+    using _processState = scopeProcessState();
+
     expect(anthropicAutoCacheEnabled({ MARINA_PROFILE: "shared" })).toBe(false);
     expect(anthropicAutoCacheEnabled({ MARINA_PROFILE: "public" })).toBe(false);
     setTrustProfile("local");

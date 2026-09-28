@@ -31,6 +31,7 @@ import { setEndpointConfig } from "../src/net/model-endpoint";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { makeTestRoom } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 const ENV = [
   "ANTHROPIC_API_KEY",
@@ -103,6 +104,8 @@ describe("spend ledger", () => {
 });
 
 describe("enforcement", () => {
+  let processState: DisposableStack | undefined;
+
   let originalFetch: typeof fetch;
   let dir: string;
   let db: MarinaDB;
@@ -110,6 +113,8 @@ describe("enforcement", () => {
   let upstreamCalls: number;
 
   beforeEach(() => {
+    using pendingProcessState = scopeProcessState();
+
     process.env.ANTHROPIC_API_KEY = "sk-ant-test";
     process.env.MARINA_OPEN_API = "true";
     process.env.MARINA_ANTHROPIC_AUTO_CACHE = "false";
@@ -132,10 +137,15 @@ describe("enforcement", () => {
     engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
     engine.registerRoom(roomId("test/start"), makeTestRoom({ short: "Start" }));
     setEndpointConfig(db, { mode: "passthru", passthruModel: "anthropic/claude-sonnet-5" });
+
+    processState = pendingProcessState.move();
   });
   afterEach(() => {
+    using _processState = processState;
+    processState = undefined;
+
     globalThis.fetch = originalFetch;
-    resetTrustProfileForTests();
+
     engine.shutdown();
     db.close();
     rmSync(dir, { recursive: true, force: true });

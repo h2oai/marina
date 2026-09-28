@@ -29,6 +29,7 @@ import { MarinaDB } from "../src/persistence/database";
 import { type EngineEvent, roomId } from "../src/types";
 import { FIXTURE_QUERY, seedUnifiedFixture } from "./fixtures/unified-memory-fixture";
 import { makeTestRoom } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 const EPHEMERAL = { type: "ephemeral" };
 const TOOL = {
@@ -171,6 +172,8 @@ const ENV = [
 type LifecycleEvent = Extract<EngineEvent, { type: "model_request_lifecycle" }>;
 
 describe("Anthropic passthru: cache breakpoints end to end", () => {
+  let processState: DisposableStack | undefined;
+
   let saved: Map<string, string | undefined>;
   let originalFetch: typeof fetch;
   let dir: string;
@@ -198,6 +201,8 @@ describe("Anthropic passthru: cache breakpoints end to end", () => {
     });
 
   beforeEach(async () => {
+    using pendingProcessState = scopeProcessState();
+
     saved = new Map(ENV.map((k) => [k, process.env[k]]));
     for (const k of ENV) delete process.env[k];
     process.env.ANTHROPIC_API_KEY = "sk-ant-test";
@@ -219,15 +224,20 @@ describe("Anthropic passthru: cache breakpoints end to end", () => {
     setEndpointConfig(db, { mode: "passthru", passthruModel: "anthropic/claude-sonnet-5" });
     fx = await seedUnifiedFixture(engine, db);
     engine.entities.get(fx.ownerEntityId)!.properties.passthruContext = true;
+
+    processState = pendingProcessState.move();
   });
 
   afterEach(() => {
+    using _processState = processState;
+    processState = undefined;
+
     globalThis.fetch = originalFetch;
     for (const [k, v] of saved) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
-    resetTrustProfileForTests();
+
     engine.shutdown();
     db.close();
     rmSync(dir, { recursive: true, force: true });

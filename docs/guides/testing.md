@@ -124,6 +124,34 @@ CI runs the same six journeys and retains traces/screenshots on failure.
 
 ## Shutdown and generated adversarial cases
 
+Use `scopeProcessState()` from `test/process-state.ts` for temporary trust profiles,
+rate-limit bypass and environment overrides:
+
+```ts
+using state = scopeProcessState({
+  trustProfile: "local",
+  rateLimitBypass: true,
+  env: { WS_HOST: "127.0.0.1" },
+});
+// Create the fixture, run the scenario, and await teardown inside this scope.
+```
+
+The scope restores the previous resolved profile (including an unresolved,
+environment-derived profile), bypass flag, and the specified environment keys on
+return or throw. An `undefined` environment value temporarily removes that key;
+`trustProfile: null` temporarily clears the resolved profile. Other environment keys
+are not captured. Nested scopes dispose in reverse order. These are still process-wide
+overrides: run such tests serially within a worker, and use separate workers for
+concurrent scenarios with different profiles.
+
+For a fixture spanning `beforeEach`/`afterEach`, create a `using pending` scope at the
+start of setup and transfer it with `pending.move()` only after setup succeeds.
+In teardown, bind that transferred stack with `using` before any fallible cleanup.
+This restores state on setup and teardown failures as well as failed assertions.
+Do not reset to an assumed `shared` profile or `false` bypass in cleanup; that can
+overwrite a caller's configuration. The participation load qualifier uses the same
+scope, with asynchronous disposal of clients, adapter, engine and database.
+
 Always await asynchronous adapter `stop()`, then stop/drain the engine before closing
 SQLite. Await `processCommand()` even for a synchronous handler: completion can still
 record activity and telemetry after the handler returns. The MCP suite exercises
@@ -139,7 +167,7 @@ in place even when generated cases pass.
 
 ## The fast loop
 
-`scripts/test-fast.ts` runs an explicit list of 140 files that are
+`scripts/test-fast.ts` runs an explicit list of 139 files that are
 cheap (≤ 1.5 s measured) and self-contained (no engine boot, no listening
 server). It is the loop to run before every commit; the full suite and the
 shards run in CI.

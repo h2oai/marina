@@ -9,7 +9,7 @@ bun run test           # Run all backend tests (parallel workers; `test:serial` 
 bun run typecheck      # TypeScript strict check
 bun run lint           # Biome lint
 bun run format         # Biome auto-format (run before committing)
-bun run test:fast      # pre-commit loop: 138 engine-free files, ~10 s parallel (scripts/test-fast.ts --check reports drift; --serial opts out)
+bun run test:fast      # pre-commit loop: 139 engine-free files, ~10 s parallel (scripts/test-fast.ts --check reports drift; --serial opts out)
 bun run test:shard I N # time-balanced shard I of N from test/timing.json (CI runs 3); regenerate timings per docs/guides/testing.md
 bun run test:coverage  # full suite + coverage (text + coverage/lcov.info); opt-in, never in PR CI
 bun run check:coverage # per-directory line coverage from lcov (--strict gates on MARINA_COVERAGE_MIN_LINES, default 75)
@@ -35,7 +35,7 @@ WebChat is a composition root: `ChatInputBar` owns drafts/history/login, `ChatMe
 - **DB table**: `groups_` not `groups` (SQL keyword)
 - **Memory tiers** (migration 37): every note has `tier ENUM('fact','reflection','skill','core','process')`. `recall*` helpers default to fact-like tiers; `process` is excluded unless `includeProcess: true`. `[compaction]`-prefixed notes auto-infer to `process`. `createNote` dedups on exact `(entity, note_type, content)` within fact-like tiers through `numeric_notes` so native revisions participate in deduplication. Per-entity `process` cap = `PROCESS_TIER_QUOTA` (500), evicted on write when over cap.
 - **FTS5**: add insert/update/delete triggers when creating FTS tables
-- **Tests**: use helpers from `test/helpers.ts` (MockConnection, stripAnsi, cleanupDb). `createTestEngine()` in `test/engine-fixture.ts` owns an isolated in-memory world; always await `dispose()`. Use disk storage for WAL/reopen tests. It does not isolate process-wide env/profile changes. Property tests support `FC_SEED`, `FC_RUNS`, `FC_PATH`; see docs/guides/testing.md.
+- **Tests**: use helpers from `test/helpers.ts` (MockConnection, stripAnsi, cleanupDb). `createTestEngine()` in `test/engine-fixture.ts` owns an isolated in-memory world; always await `dispose()`. Use disk storage for WAL/reopen tests. Scope profile, rate-limit bypass and selected environment overrides with `using state = scopeProcessState(...)` from `test/process-state.ts`; restore prior state, not assumed defaults. Keep scopes serial or nested within each worker; an engine fixture does not isolate process-wide state. Property tests support `FC_SEED`, `FC_RUNS`, `FC_PATH`; see docs/guides/testing.md.
 - **Dashboard animations**: motion (`motion/react`) — use `<AnimatePresence>` for mount/exit, `motion.*` for declarative anims, `useMotionValue` + `useTransform` for realtime-driven values without React re-renders, `layoutId` for shared element transitions. See `dashboard/src/components/AnimatedNumber.tsx` for the count-up pattern.
 
 ## Architecture Rules

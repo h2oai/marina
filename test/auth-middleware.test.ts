@@ -15,6 +15,7 @@ import { clientIp } from "../src/net/http-utils";
 import { MarinaDB } from "../src/persistence/database";
 import { type EntityId, roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 describe("authenticateRequest — dashboard auth gate", () => {
   let db: MarinaDB;
@@ -128,6 +129,8 @@ describe("refuseOpenApiWrite — dev-open sentinel is read-only", () => {
   });
 
   it("allows sentinel writes under the local trust profile (the sentinel IS the operator)", () => {
+    using _processState = scopeProcessState();
+
     // MARINA_OPEN_API=true on a loopback bind with no auth is the single-operator
     // dev posture; the Canvas UI writes without a session token there. shared/
     // public keep the sentinel read-only (the default in-process profile).

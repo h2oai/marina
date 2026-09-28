@@ -5,6 +5,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { scopeProperty } from "../test/process-state";
 
 const { values } = parseArgs({
   args: process.argv.slice(2),
@@ -44,7 +45,7 @@ const percentile = (values: number[], p: number) =>
   [...values].sort((a, b) => a - b)[Math.ceil(values.length * p) - 1]!;
 // Isolated benchmark process: measure retrieval, not the token-rate rejection path.
 const { RateLimiter } = await load("src/auth/rate-limiter.ts");
-RateLimiter.bypass = true;
+using _rateLimits = scopeProperty(RateLimiter, "bypass", true);
 const rows = [];
 for (const records of scales) {
   const world = createTestEngine({ storage: "disk" });
