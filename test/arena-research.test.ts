@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { parseForecasterSpec } from "../src/arena/config";
 import { ArenaData } from "../src/arena/data";
 import { scoreShadow } from "../src/arena/evaluate";
+import { forecastRound } from "../src/arena/forecast";
 import { buildResearchBrief, familyOf } from "../src/arena/research/briefs";
 import { researchForecastRound } from "../src/arena/research/forecaster";
 import {
@@ -345,6 +346,148 @@ describe("research agent pipeline", () => {
       pageText: async () => "a page without that figure",
     });
     expect(prompt).toContain("[unverified: 38, 36 not on the cited page]");
+  });
+
+  const civiqsRound: ArenaRound = {
+    ...round,
+    round_id: "civiqs-2026-w40-approval",
+    tracker: "civiqs",
+    series: "civiqs_net_approval",
+    release_at: "2026-10-02T14:00:00Z",
+  };
+  const nowcastStart = async () => ({
+    ...forecastRound(civiqsRound, lock),
+    topline: { mean: 34.2, sd: 1.2 },
+    nowcast: { civiqs_net_approval: { date: "2026-09-26", value: 34.2 } },
+    daily: {
+      series: "civiqs_net_approval",
+      source: "civiqs/approve_president_trump_2025/2026-09-27.json",
+      points: [
+        { date: "2026-09-25", value: 34.6 },
+        { date: "2026-09-26", value: 34.2 },
+      ],
+    },
+  });
+
+  it("the judge grounds rationales in the series data too, and its cost and identity are recorded", async () => {
+    const seen: Array<Array<{ ref: string; text: string }>> = [];
+    const costly: DecisionProvider = {
+      kind: "decisions-api",
+      model: "typesafe/jev-1.13",
+      ask: async (req) => {
+        seen.push((req.state as { evidence: Array<{ ref: string; text: string }> }).evidence);
+        return {
+          answers: {
+            quality: { type: "score", score: 2, confidence: 0.9 },
+            grounded: { type: "noul", noul: 0.8 },
+          },
+          model: "typesafe/jev-1.13",
+          provider: "decisions-api",
+          latencyMs: 40,
+          costUsd: 0.002,
+        };
+      },
+    };
+    const f = await researchForecastRound(civiqsRound, lock, {
+      retriever,
+      analysts: [
+        { name: "a", complete: analyst(34) },
+        { name: "b", complete: analyst(34.4) },
+      ],
+      judge: costly,
+      pageText: async () => "unrelated page",
+      base: nowcastStart,
+    });
+    expect(seen).toHaveLength(2);
+    const refs = seen[0]!.map((e) => e.ref);
+    expect(refs).toEqual(
+      expect.arrayContaining(["series:history", "series:start", "series:daily"]),
+    );
+    const byRef = Object.fromEntries(seen[0]!.map((e) => [e.ref, e.text]));
+    expect(byRef["series:start"]).toContain("STRUCTURED SOURCE DATA");
+    expect(byRef["series:start"]).toContain("not web research");
+    expect(byRef["series:start"]).toContain("dated 2026-09-26");
+    expect(byRef["series:history"]).toContain(`${history.at(-1)!.date} ${history.at(-1)!.value}`);
+    expect(byRef["series:daily"]).toContain("2026-09-25 34.6");
+    // Nothing verified in the dossier — the series data is still there to ground on.
+    expect(refs).toContain("dossier:1");
+    expect(f.judge).toEqual({
+      provider: "decisions-api",
+      model: "typesafe/jev-1.13",
+      calls: 2,
+      latencyMs: 40,
+      costUsd: 0.004,
+      errors: 0,
+    });
+    expect(f.proposals?.a).toMatchObject({ judgeCostUsd: 0.002, judgeLatencyMs: 40 });
+    expect(f.dailySource).toContain("2026-09-27.json");
+    expect("daily" in f).toBe(false);
+    expect(f.note).toContain("over the Civiqs nowcast");
+  });
+
+  it("records a judge outage in the judge summary", async () => {
+    const down: DecisionProvider = {
+      kind: "decisions-api",
+      model: "typesafe/jev-1.13",
+      ask: async () => {
+        throw new Error("judge timeout");
+      },
+    };
+    const f = await researchForecastRound(round, lock, {
+      retriever,
+      analysts: [{ name: "a", complete: analyst(last + 1) }],
+      judge: down,
+    });
+    expect(f.judge).toMatchObject({
+      provider: "decisions-api",
+      model: "typesafe/jev-1.13",
+      calls: 1,
+      errors: 1,
+      error: expect.stringContaining("judge timeout"),
+    });
+  });
+
+  it("tells analysts what the start forecast is, the resolution rule, and the daily tracker", async () => {
+    let system = "";
+    let prompt = "";
+    await researchForecastRound(civiqsRound, lock, {
+      retriever,
+      analysts: [
+        {
+          name: "a",
+          complete: async (s, user) => {
+            system = s;
+            prompt = user;
+            return "{}";
+          },
+        },
+      ],
+      base: nowcastStart,
+    });
+    expect(prompt).toContain(
+      "the NOWCAST — the freshest daily Civiqs reading (34.2, dated 2026-09-26)",
+    );
+    expect(prompt).toContain("Civiqs dashboard shows for this series on Friday 2026-10-02");
+    expect(prompt).toContain("every night");
+    expect(prompt).toContain("skill = 1 − CRPS / CRPS(persistence)");
+    expect(prompt).toContain("DAILY TRACKER");
+    expect(prompt).toContain("2026-09-25 34.6");
+    expect(`${system} ${prompt}`).not.toMatch(/authoritative|latest wave|calibrated baseline/);
+    // A non-Civiqs round names persistence and gets no daily block.
+    await researchForecastRound(round, lock, {
+      retriever,
+      analysts: [
+        {
+          name: "a",
+          complete: async (_s, user) => {
+            prompt = user;
+            return "{}";
+          },
+        },
+      ],
+    });
+    expect(prompt).toContain("the persistence baseline");
+    expect(prompt).not.toContain("DAILY TRACKER");
   });
 });
 

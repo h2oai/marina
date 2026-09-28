@@ -6,11 +6,18 @@
  * multi-vendor run, its own vendor), over the calibrated baseline — plus a
  * memory of its own misses that it recalls per series.
  *
- *   statistician — reads the series; proposes a distribution from its shape
+ *   statistician — the quant: reads only numbers — the weekly history and, for
+ *                  Civiqs, the DAILY tracker the round resolves on (as the
+ *                  newest snapshot fetched by the lock showed it)
  *   analyst      — reads the question and the crew's LESSONS for this series;
  *                  proposes from pollster behaviour and what past misses taught
- *   skeptic      — sees the baseline and both proposals; says how much of their
- *                  move to trust (0 = stay on the baseline) and why
+ *   skeptic      — sees the start forecast, both proposals and the LESSONS (the
+ *                  crew's track record here); says how much of their move to
+ *                  trust (0 = stay on the start forecast) and why
+ *
+ * Every role is told the same true account of the round (prompt-context.ts):
+ * what the start forecast is (the nowcast, with its date, or persistence),
+ * the resolution and scoring rules, and every value with its date.
  *
  * Aggregation is deterministic code, not a fourth model: the proposals' mean
  * move from the baseline, scaled by the skeptic's trust, clamped, with the
@@ -30,6 +37,15 @@ import type { RoundForecast } from "./forecast";
 import { forecastRound } from "./forecast";
 import type { Complete } from "./model-forecaster";
 import { parseReply } from "./model-forecaster";
+import {
+  dailyBlock,
+  dailyOf,
+  freshestReading,
+  historyBlock,
+  rulesLines,
+  startLine,
+  withoutDaily,
+} from "./prompt-context";
 import { crpsNormal } from "./score";
 import type { ArenaLock, ArenaRound, Distribution } from "./types";
 
@@ -50,24 +66,27 @@ export interface CrewForecast extends RoundForecast {
   critique?: string;
   lessonsUsed?: number;
   fallback?: string;
+  /** The daily series the quant read, when there was one. */
+  dailySource?: string;
   /** Per role: ok, or why it dropped out (invalid reply, error, a move too wild). */
   roles?: Record<string, string>;
 }
 
 const ROLE_SYSTEM = {
   statistician: [
-    "You are the statistician on a forecasting crew for a live public benchmark scored by CRPS against persistence (the last published value).",
-    "Read only the numbers. Judge trend, mean reversion after outliers, volatility and calendar effects, and propose a normal distribution for the next release.",
+    "You are the quant on a forecasting crew for a live public benchmark scored by CRPS skill against persistence (the last published value).",
+    "Read only the numbers: the start forecast, the weekly history and, when given, the DAILY tracker the round resolves on. The start forecast is the default.",
+    "Move from it only for a concrete pattern in the data (for example, daily readings after the start reading, or a consistent revision); extrapolating a short trend or betting on mean reversion usually loses at a horizon of a few days.",
     'Reply with ONE JSON object: {"mean": number, "sd": number > 0, "reason": "<one sentence>"}.',
   ].join(" "),
   analyst: [
-    "You are the analyst on a forecasting crew for a live public benchmark scored by CRPS against persistence (the last published value).",
-    "Use what you know about this pollster or source (house effects, fielding, publication schedule, typical week-to-week noise) and the crew's LESSONS from its own past misses on this series.",
+    "You are the analyst on a forecasting crew for a live public benchmark scored by CRPS skill against persistence (the last published value).",
+    "Use what you know about this pollster or source (house effects, fielding, publication schedule, typical week-to-week noise) and the crew's LESSONS from its own past misses on this series. The start forecast is the default.",
     'Reply with ONE JSON object: {"mean": number, "sd": number > 0, "reason": "<one sentence>"}.',
   ].join(" "),
   skeptic: [
     "You are the skeptic on a forecasting crew. Most forecasters on this benchmark lose to persistence by moving too far on weak evidence.",
-    "Given the baseline and two proposals, decide how much of their average move away from the baseline is justified: trust 0 means file the baseline, 1 means take the full move.",
+    "Given the start forecast, two proposals and the crew's track record on this series (its LESSONS: when it beat or lost to persistence, and which way it leaned), decide how much of the proposals' average move away from the start forecast is justified: trust 0 means file the start forecast, 1 means take the full move. Let the track record set your trust: a crew that has leaned the wrong way here has earned less.",
     'Reply with ONE JSON object: {"trust": number between 0 and 1, "sd_scale": number between 0.5 and 2, "critique": "<one sentence>"}.',
   ].join(" "),
 };
@@ -124,15 +143,6 @@ export function learn(
   });
 }
 
-/** The nowcast's reading for this round's series, when the start forecast carries one. */
-function freshestReading(
-  start: RoundForecast,
-  series: string | undefined,
-): { date: string; value: number } | undefined {
-  const used = (start as { nowcast?: Record<string, { date: string; value: number }> }).nowcast;
-  return series ? used?.[series] : undefined;
-}
-
 export async function crewForecastRound(
   round: ArenaRound,
   lock: ArenaLock,
@@ -145,7 +155,9 @@ export async function crewForecastRound(
    */
   start?: RoundForecast,
 ): Promise<CrewForecast> {
-  const baseline = start ?? forecastRound(round, lock);
+  const given = start ?? forecastRound(round, lock);
+  const daily = dailyOf(given);
+  const baseline = withoutDaily(given);
   if (round.target_type !== "continuous_normal" || !baseline.topline) {
     return { ...baseline, fallback: "crew answers numeric rounds; baseline for this shape" };
   }
@@ -154,15 +166,17 @@ export async function crewForecastRound(
   const series = round.series ?? round.round_id;
   const lessons = notes ? recallLessons(notes, series) : [];
   const fresh = freshestReading(baseline, round.series);
-  const head = `Question: ${round.question}\nUnit: ${round.unit ?? "(see question)"}\nPublished around ${round.release_at}; forecasts lock ${round.lock_at}.${
-    fresh
-      ? `\nFreshest reading: ${fresh.value} on ${fresh.date} (newer than the weekly history below; the baseline already starts from it).`
-      : ""
-  }`;
-  const hist = history
-    .slice(-30)
-    .map((p) => `${p.date} ${p.value}`)
-    .join("\n");
+  const head = [
+    `Question: ${round.question}`,
+    `Unit: ${round.unit ?? "(see question)"}`,
+    `Published around ${round.release_at}; forecasts lock ${round.lock_at}.`,
+    ...rulesLines(round),
+    startLine(round, baseline, history),
+  ].join("\n");
+  const lessonText = `LESSONS (newest first):\n${lessons.length ? lessons.map((l) => `- ${l}`).join("\n") : "- none yet"}`;
+  const quantInput = [historyBlock(round, history, 30), dailyBlock(daily)]
+    .filter(Boolean)
+    .join("\n\n");
   const roles: Record<string, string> = {};
   const ask = async (role: string, c: Complete, system: string, user: string) => {
     try {
@@ -176,22 +190,12 @@ export async function crewForecastRound(
   };
 
   const [stat, analyst] = await Promise.all([
-    ask(
-      "statistician",
-      members.statistician,
-      ROLE_SYSTEM.statistician,
-      `${head}\n\nHistory (date value), oldest first:\n${hist}\n\nBaseline: ${JSON.stringify(base)}`,
-    ),
+    ask("statistician", members.statistician, ROLE_SYSTEM.statistician, `${head}\n\n${quantInput}`),
     ask(
       "analyst",
       members.analyst,
       ROLE_SYSTEM.analyst,
-      `${head}\n\nLast 8 values: ${history
-        .slice(-8)
-        .map((p) => p.value)
-        .join(
-          ", ",
-        )}\nBaseline: ${JSON.stringify(base)}\n\nLESSONS (newest first):\n${lessons.length ? lessons.map((l) => `- ${l}`).join("\n") : "- none yet"}`,
+      `${head}\n\n${historyBlock(round, history, 8)}\n\n${lessonText}`,
     ),
   ]);
   const proposals: Record<string, Distribution & { reason?: string }> = {};
@@ -218,10 +222,7 @@ export async function crewForecastRound(
     "skeptic",
     members.skeptic,
     ROLE_SYSTEM.skeptic,
-    `${head}\n\nLast 8 values: ${history
-      .slice(-8)
-      .map((p) => p.value)
-      .join(", ")}\nBaseline: ${JSON.stringify(base)}\nProposals: ${JSON.stringify(proposals)}`,
+    `${head}\n\n${historyBlock(round, history, 8)}\n\nProposals: ${JSON.stringify(proposals)}\n\n${lessonText}`,
   );
   const trustRaw = Number(verdict?.trust);
   // A missing or broken skeptic trusts the proposals half-way, like the default blend.
@@ -240,7 +241,8 @@ export async function crewForecastRound(
     trust,
     ...(typeof verdict?.critique === "string" ? { critique: verdict.critique.slice(0, 300) } : {}),
     lessonsUsed: lessons.length,
+    ...(daily ? { dailySource: daily.source } : {}),
     roles,
-    note: `marina crew (statistician, analyst, skeptic; ${lessons.length} lessons recalled) over ${fresh ? `the nowcast (${fresh.date})` : "the calibrated baseline"}`,
+    note: `marina crew (quant, analyst, skeptic; ${lessons.length} lessons recalled) over ${fresh ? `the nowcast (${fresh.date})` : "the calibrated baseline"}`,
   };
 }

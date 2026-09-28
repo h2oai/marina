@@ -58,12 +58,57 @@ describe("model forecaster", () => {
   const lock: ArenaLock = { round_id: round.round_id, answer_history: history };
   const base = forecastRound(round, lock);
 
-  it("shows the model the question, the history and the baseline, and asks for JSON", () => {
+  it("shows the model the question, the dated history and the start forecast, and asks for JSON", () => {
     const prompt = buildPrompt(round, lock, base);
     expect(prompt).toContain("Approve?");
-    expect(prompt).toContain(history.at(-1)!.date);
-    expect(prompt).toContain("Baseline:");
+    expect(prompt).toContain(`${history.at(-1)!.date} ${history.at(-1)!.value}`);
+    expect(prompt).toContain("Start forecast");
+    expect(prompt).toContain("the persistence baseline");
+    expect(prompt).toContain("Resolution: the next value this source publishes");
+    expect(prompt).toContain("CRPS");
+    expect(prompt).not.toContain("nowcast");
     expect(prompt).toContain('"mean"');
+  });
+
+  it("names a Civiqs nowcast with its date, the Friday resolution and the daily tracker", () => {
+    const civiqs: ArenaRound = {
+      ...round,
+      tracker: "civiqs",
+      series: "civiqs_net_approval",
+      release_at: "2026-10-02T14:00:00Z",
+    };
+    const start = {
+      ...base,
+      topline: { mean: 38.5, sd: base.topline!.sd },
+      nowcast: { civiqs_net_approval: { date: "2026-09-28", value: 38.5 } },
+      daily: {
+        series: "civiqs_net_approval",
+        source: "civiqs/approve_president_trump_2025/2026-09-29.json",
+        points: [
+          { date: "2026-09-27", value: 38.9 },
+          { date: "2026-09-28", value: 38.5 },
+        ],
+      },
+    };
+    const prompt = buildPrompt(civiqs, lock, start);
+    expect(prompt).toContain(
+      "the NOWCAST — the freshest daily Civiqs reading (38.5, dated 2026-09-28)",
+    );
+    expect(prompt).toContain("4 day(s) from that reading to the resolution date");
+    expect(prompt).toContain("Civiqs dashboard shows for this series on Friday 2026-10-02");
+    expect(prompt).toContain("revised");
+    expect(prompt).toContain("DAILY TRACKER");
+    expect(prompt).toContain("2026-09-27 38.9");
+    expect(prompt).toContain("one per week");
+  });
+
+  it("keeps the daily series out of what it files", async () => {
+    const start = {
+      ...base,
+      daily: { series: "x", source: "s", points: [{ date: "2026-09-28", value: 1 }] },
+    };
+    const f = await modelForecastRound(round, lock, start, async () => '{"mean": 41, "sd": 2}');
+    expect("daily" in f).toBe(false);
   });
 
   it("shrinks the model's move toward the baseline", async () => {

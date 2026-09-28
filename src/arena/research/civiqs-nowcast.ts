@@ -172,22 +172,77 @@ async function archivedNowcast(
   asOf: string,
   maxLookbackDays: number,
 ): Promise<Nowcast | undefined> {
+  const found = await latestArchivedSnapshot(data, series, asOf, maxLookbackDays);
+  const point = found?.snap.points.at(-1);
+  if (!found || !point) return undefined;
+  const value = seriesValue(found.snap, point, series);
+  if (value === undefined) return undefined;
+  return { series: round.series!, date: point[0], value, snapshot: found.path };
+}
+
+/** The newest archived snapshot FETCHED by `asOf` (a lock-day file may postdate the lock). */
+async function latestArchivedSnapshot(
+  data: ArenaData,
+  series: CiviqsSeries,
+  asOf: string,
+  maxLookbackDays: number,
+): Promise<{ snap: Snapshot; path: string } | undefined> {
   const dir = civiqsDir(series);
   const start = Date.parse(asOf.slice(0, 10));
   for (let back = 0; back <= maxLookbackDays; back++) {
     const day = new Date(start - back * 86_400_000).toISOString().slice(0, 10);
     const snap = await data.civiqsSnapshot(dir, day).catch(() => undefined);
-    const point = snap?.points.at(-1);
-    if (!snap || !point) continue;
-    // A snapshot dated the lock day may have been taken after the lock: only
-    // what had been fetched by `asOf` counts.
+    if (!snap?.points.at(-1)) continue;
     const fetchedAt = (snap as { fetched_at?: string }).fetched_at;
     if (fetchedAt && Date.parse(fetchedAt) > Date.parse(asOf)) continue;
-    const value = seriesValue(snap as Snapshot, point, series);
-    if (value === undefined) return undefined;
-    return { series: round.series!, date: point[0], value, snapshot: `civiqs/${dir}/${day}.json` };
+    return { snap: snap as Snapshot, path: `civiqs/${dir}/${day}.json` };
   }
   return undefined;
+}
+
+/** A Civiqs tracker's recent DAILY readings, as one snapshot showed them. */
+export interface CiviqsDaily {
+  series: string;
+  /** The snapshot the points come from (`civiqs/…json` or `live:<url>`). */
+  source: string;
+  /** Oldest first; the last point is the nowcast's reading. */
+  points: Array<{ date: string; value: number }>;
+}
+
+/**
+ * The last `days` daily readings of a round's Civiqs series, from the same
+ * snapshot the nowcast reads: the newest archived one FETCHED by the lock —
+ * so a backtest sees exactly what existed then — or, for a round that is still
+ * OPEN, the live dashboard when it is at least as fresh. Civiqs re-estimates
+ * its whole daily history nightly, so these values are as that snapshot showed
+ * them, not as the resolution will. Undefined for non-Civiqs series.
+ */
+export async function civiqsDailySeries(
+  data: ArenaData,
+  round: ArenaRound,
+  opts: { days?: number; asOf?: string; maxLookbackDays?: number; live?: LiveCiviqs } = {},
+): Promise<CiviqsDaily | undefined> {
+  const series = round.series ? CIVIQS_SERIES[round.series] : undefined;
+  if (!series) return undefined;
+  const days = opts.days ?? 21;
+  const asOf = opts.asOf ?? round.lock_at;
+  const pick = (snap: Snapshot, source: string): CiviqsDaily | undefined => {
+    const points: CiviqsDaily["points"] = [];
+    for (const p of snap.points.slice(-days)) {
+      const value = seriesValue(snap, p, series);
+      if (value !== undefined) points.push({ date: p[0], value });
+    }
+    return points.length ? { series: round.series!, source, points } : undefined;
+  };
+  const found = await latestArchivedSnapshot(data, series, asOf, opts.maxLookbackDays ?? 6);
+  const archived = found ? pick(found.snap, found.path) : undefined;
+  // As for the nowcast: only an open round may read the dashboard itself.
+  if (!opts.live || Date.parse(round.lock_at) <= Date.now()) return archived;
+  const snap = await opts.live(series.name, series.filters).catch(() => undefined);
+  const last = snap?.points.at(-1);
+  if (!snap || !last) return archived;
+  if (archived && archived.points.at(-1)!.date > last[0]) return archived;
+  return pick(snap as Snapshot, `live:${snap.url}`) ?? archived;
 }
 
 /**
@@ -202,7 +257,11 @@ export function nowcastForecaster(
     round: ArenaRound,
     lock: import("../types").ArenaLock,
   ) => import("../forecast").RoundForecast,
-  opts: { live?: LiveCiviqs } = {},
+  /**
+   * `daily`: also attach the last N daily readings (`daily` on the forecast,
+   * topline rounds only) for model roles to read — never part of a filing.
+   */
+  opts: { live?: LiveCiviqs; daily?: number } = {},
 ) {
   // One live read per tracker per forecast call — a profile's cells share it.
   const live = opts.live;
@@ -247,17 +306,23 @@ export function nowcastForecaster(
     const used: Record<string, { date: string; value: number }> = {};
     if (f.topline && round.series) {
       const history = lock.answer_history ?? lock.history ?? [];
-      const n = await fresher(round.series, history.at(-1)?.date);
+      const [n, daily] = await Promise.all([
+        fresher(round.series, history.at(-1)?.date),
+        opts.daily
+          ? civiqsDailySeries(data, round, { days: opts.daily, live: cachedLive })
+          : undefined,
+      ]);
+      const withDaily = daily ? { ...f, daily } : f;
       if (n) {
         used[round.series] = { date: n.date, value: n.value };
         return {
-          ...f,
+          ...withDaily,
           topline: { mean: n.value, sd: f.topline.sd },
           note: `${f.note}; Civiqs daily nowcast ${n.date}`,
           nowcast: used,
         };
       }
-      return f;
+      return withDaily;
     }
     if (f.profile) {
       const profile = { ...f.profile };
