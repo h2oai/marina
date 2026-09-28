@@ -21,6 +21,7 @@ import {
 } from "./connect-api";
 import { isTrustedBrowserOrigin } from "./cors";
 import { consumeHttpRate, rateLimitedResponse, securityHeaders } from "./http-utils";
+import { recordListenPort } from "./listen-ports";
 import { mcpAdmission } from "./mcp-admission";
 import type { McpSession } from "./mcp-types";
 import { createWorldMcpServer } from "./mcp-world-tools";
@@ -399,6 +400,7 @@ export class McpServerAdapter {
 
     this.port = this.server.port ?? this.port;
     registerConnectEndpoint(this.engine, "mcp", this.port);
+    recordListenPort("mcp", this.port);
     logger.info("mcp", `MCP server listening on http://localhost:${this.port}/mcp`, {
       port: this.port,
     });

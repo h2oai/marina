@@ -32,6 +32,7 @@ import { AdapterManager } from "./net/adapter-manager";
 import { DashboardBroadcaster } from "./net/dashboard-ws";
 import { FeedPublisher } from "./net/feed-publisher";
 import { formatPerception } from "./net/formatter";
+import { recordListenPort } from "./net/listen-ports";
 import { loadOrCreateLocalApiKey, localApiKeyPath } from "./net/local-api-key";
 import { LogServer } from "./net/log-server";
 import { McpServerAdapter } from "./net/mcp-server";
@@ -64,14 +65,24 @@ function parsePort(name: string, fallback: number): number {
   return Number.isFinite(n) ? Math.trunc(n) : fallback;
 }
 
+/** An explicitly configured numeric port (0/negative = disabled), else undefined. */
+function explicitPort(name: string): number | undefined {
+  const raw = process.env[name]?.trim();
+  if (!raw) return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) ? Math.trunc(n) : undefined;
+}
+
 const WS_PORT = Math.max(0, parsePort("WS_PORT", 3300));
 // Telnet is plaintext and unauthenticated — off by default. Set TELNET_PORT
 // explicitly (e.g. 4000) to enable it, and only on a trusted network.
 const TELNET_PORT = parsePort("TELNET_PORT", 0);
 // The auxiliary listeners follow WS_PORT unless set explicitly, so a second
 // instance started with only WS_PORT=3400 does not collide on 3301/3302.
-const MCP_PORT = parsePort("MCP_PORT", WS_PORT > 0 ? WS_PORT + 1 : 3301);
-const LOG_PORT = parsePort("LOG_PORT", WS_PORT > 0 ? WS_PORT + 2 : 3302);
+// With WS_PORT=0 (ephemeral) they follow the port the WebSocket server actually
+// bound, resolved once it has started (see startAuxiliaryListeners below).
+const MCP_PORT_SETTING = explicitPort("MCP_PORT");
+const LOG_PORT_SETTING = explicitPort("LOG_PORT");
 const TICK_MS = Number(process.env.TICK_MS) || 1000;
 const DB_PATH = process.env.DB_PATH || "marina.db";
 
@@ -467,34 +478,6 @@ const sessionCleanupInterval = setInterval(() => {
   if (removed > 0) logger.info("auth", `Cleaned up ${removed} expired session(s)`);
 }, SESSION_CLEANUP_INTERVAL_MS);
 
-// ─── Live Log Server ────────────────────────────────────────────────────────
-
-const logServer =
-  LOG_PORT > 0
-    ? new LogServer({
-        port: LOG_PORT,
-        hostname: RESOLVED_WS_HOST,
-        resolveEntity: (id) => engine.entities.get(id)?.name,
-      })
-    : undefined;
-if (logServer) {
-  try {
-    logServer.start();
-    engine.addEventListener((event) => logServer.handleEvent(event));
-  } catch (err) {
-    // The live log view is auxiliary: a taken port disables it, it never takes
-    // the whole server down (it used to, before the WebSocket even bound).
-    const e = err as NodeJS.ErrnoException;
-    if (e?.code !== "EADDRINUSE" && !/EADDRINUSE|in use/i.test(e?.message ?? "")) throw err;
-    logger.warn(
-      "main",
-      `Log server disabled: port ${LOG_PORT} is in use (set LOG_PORT to move it)`,
-    );
-  }
-} else {
-  logger.info("engine", "Log server disabled (LOG_PORT <= 0)");
-}
-
 // ─── Network Layer ────────────────────────────────────────────────────────────
 
 const wsServer = new WebSocketServer(engine, WS_PORT, rateLimiter);
@@ -582,9 +565,7 @@ wsServer.setOnNodeCreated((event) => {
 
 const telnetServer =
   TELNET_PORT > 0 ? new TelnetServer(engine, TELNET_PORT, rateLimiter) : undefined;
-const mcpServer = MCP_PORT > 0 ? new McpServerAdapter(engine, MCP_PORT, rateLimiter) : undefined;
 if (!telnetServer) logger.info("engine", "Telnet server disabled (TELNET_PORT <= 0)");
-if (!mcpServer) logger.info("engine", "MCP server disabled (MCP_PORT <= 0)");
 
 // Adapter manager (hot-reloadable external platform adapters)
 const adapterCtx = { engine, rateLimiter, db, formatPerception };
@@ -614,10 +595,45 @@ function startListener(label: string, envVar: string, port: number, start: () =>
 }
 
 startListener("WebSocket/HTTP", "WS_PORT", WS_PORT, () => wsServer.start());
-if (telnetServer) startListener("telnet", "TELNET_PORT", TELNET_PORT, () => telnetServer.start());
-if (mcpServer) startListener("MCP", "MCP_PORT", MCP_PORT, () => mcpServer.start());
-// Real bound port — differs from WS_PORT when WS_PORT=0 (ephemeral).
+// Real bound port — differs from WS_PORT when WS_PORT=0 (ephemeral). MCP and the
+// log server default to it +1 / +2, so a custom or ephemeral WS_PORT never
+// collides on a hard-coded 3301/3302.
 const boundWsPort = wsServer.getPort();
+const MCP_PORT = MCP_PORT_SETTING ?? boundWsPort + 1;
+const LOG_PORT = LOG_PORT_SETTING ?? boundWsPort + 2;
+if (telnetServer) startListener("telnet", "TELNET_PORT", TELNET_PORT, () => telnetServer.start());
+const mcpServer = MCP_PORT > 0 ? new McpServerAdapter(engine, MCP_PORT, rateLimiter) : undefined;
+if (!mcpServer) logger.info("engine", "MCP server disabled (MCP_PORT <= 0)");
+if (mcpServer) startListener("MCP", "MCP_PORT", MCP_PORT, () => mcpServer.start());
+
+// ─── Live Log Server ────────────────────────────────────────────────────────
+
+const logServer =
+  LOG_PORT > 0
+    ? new LogServer({
+        port: LOG_PORT,
+        hostname: RESOLVED_WS_HOST,
+        resolveEntity: (id) => engine.entities.get(id)?.name,
+      })
+    : undefined;
+if (logServer) {
+  try {
+    logServer.start();
+    recordListenPort("log", LOG_PORT);
+    engine.addEventListener((event) => logServer.handleEvent(event));
+  } catch (err) {
+    // The live log view is auxiliary: a taken port disables it, it never takes
+    // the whole server down (it used to, before the WebSocket even bound).
+    const e = err as NodeJS.ErrnoException;
+    if (e?.code !== "EADDRINUSE" && !/EADDRINUSE|in use/i.test(e?.message ?? "")) throw err;
+    logger.warn(
+      "main",
+      `Log server disabled: port ${LOG_PORT} is in use (set LOG_PORT to move it)`,
+    );
+  }
+} else {
+  logger.info("engine", "Log server disabled (LOG_PORT <= 0)");
+}
 
 // Auto-start adapters from env vars
 for (const platform of ["telegram", "discord"] as const) {

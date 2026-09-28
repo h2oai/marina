@@ -57,6 +57,7 @@ import {
   serverMaxRequestBodyBytes,
   withSecurityHeaders,
 } from "./http-utils";
+import { recordListenPort } from "./listen-ports";
 import { handleMemApi } from "./mem-api";
 import { handleMemoryServiceApi } from "./memory-service-api";
 import { handleModelApi, isModelApiPath } from "./model-api";
@@ -1064,6 +1065,7 @@ export class WebSocketServer {
 
     this.port = this.server.port ?? this.port;
     registerConnectEndpoint(this.engine, "websocket", this.port);
+    recordListenPort("websocket", this.port);
     logger.info("ws", `WebSocket server listening on ws://localhost:${this.port}/ws`, {
       port: this.port,
     });

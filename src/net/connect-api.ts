@@ -6,6 +6,7 @@ import { getLeanSystemPrompt, getPromptVersion } from "../agent/prompts/lean-sys
 import type { Engine } from "../engine/engine";
 import { MARINA_ROOT } from "../runtime-paths";
 import { corsHeaders } from "./cors";
+import { localMcpPort, localWsPort } from "./listen-ports";
 
 const CONNECT_CORS = corsHeaders(null, { methods: "GET, OPTIONS" });
 
@@ -37,8 +38,8 @@ export function buildConnectManifest(req: Request, engine: Engine): Response {
   const host = req.headers.get("Host") ?? "localhost:3300";
   const bare = host.replace(/:\d+$/, "");
   const endpoints = endpointsByEngine.get(engine) ?? {};
-  const wsPort = endpoints.websocket ?? (Number(process.env.WS_PORT) || 3300);
-  const mcpPort = endpoints.mcp ?? (Number(process.env.MCP_PORT) || 3301);
+  const wsPort = endpoints.websocket ?? localWsPort();
+  const mcpPort = endpoints.mcp ?? localMcpPort();
   const telnetPort = endpoints.telnet ?? (Number(process.env.TELNET_PORT) || 4000);
 
   const manifest = {

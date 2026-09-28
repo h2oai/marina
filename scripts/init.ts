@@ -366,7 +366,7 @@ export async function runInit(args: string[] = []): Promise<void> {
   // list its port when the operator has actually enabled it.
   const providerLabel = providerOk && chosenProvider ? `${chosenProvider.name} ✓` : "none";
   const wsPort = process.env.WS_PORT?.trim() || "3300";
-  const mcpPort = process.env.MCP_PORT?.trim() || "3301";
+  const mcpPort = process.env.MCP_PORT?.trim() || String((Number(wsPort) || 3300) + 1);
   const telnetPort = process.env.TELNET_PORT?.trim();
   const ports = `${wsPort} (ws) / ${mcpPort} (mcp)`;
   const row = (label: string, value: string) => `│ ${label.padEnd(10)}${value.padEnd(21)}│`;

@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { localWsPort } from "../net/listen-ports";
 import { receiptForUnifiedContext } from "../net/memory-receipt";
 import type { CommandCatalogEntry } from "../sdk/capabilities";
 import type { UnifiedContextResult as ParticipantContext } from "../sdk/memory-context";
@@ -839,7 +840,7 @@ export function resolveModel(modelStr: string, localPort?: number): Model<Api> {
   if (provider === "marina") {
     const baseUrl = remote
       ? normalizeMarinaBaseUrl(remote)
-      : `http://localhost:${localPort ?? (Number(process.env.WS_PORT) || 3300)}/v1`;
+      : `http://localhost:${localPort ?? localWsPort()}/v1`;
     return {
       id: modelId || "default",
       name: remote

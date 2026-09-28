@@ -1,3 +1,4 @@
+import { localHttpBase } from "../net/listen-ports";
 import { MARINA_ROOT } from "../runtime-paths";
 import { AuthCoordinator, type LoginIdentity, type LoginResult } from "./auth-coordinator";
 import { autoRespawnEnabled } from "./auto-respawn";
@@ -269,7 +270,7 @@ export class Engine {
         this.db,
         (event) => this.logEvent(event),
         () => ({
-          endpoint: `http://localhost:${Number(process.env.WS_PORT) || 3300}`,
+          endpoint: localHttpBase(),
           apiKey: getInternalModelToken(),
         }),
       );
