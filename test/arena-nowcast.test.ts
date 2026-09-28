@@ -6,6 +6,7 @@ import { ArenaData } from "../src/arena/data";
 import { forecastRound } from "../src/arena/forecast";
 import {
   CIVIQS_SERIES,
+  civiqsDailySeries,
   civiqsDir,
   civiqsNowcast,
   nowcastForecaster,
@@ -125,5 +126,85 @@ describe("Civiqs nowcast", () => {
       lock,
     );
     expect(other.topline).toEqual(forecastRound(round, lock).topline);
+  });
+
+  it("returns the recent daily series from the archive only, for a lock that has passed", async () => {
+    const past: ArenaRound = { ...round, lock_at: "2026-09-27T14:00:00Z" };
+    const data = dataWith({
+      "civiqs/approve_president_trump_2025/2026-09-26.json": approvalSnap(
+        "2026-09-25",
+        37,
+        61,
+        "2026-09-26T10:00:00Z",
+      ),
+      // Fetched after the lock: a backtest must not see it.
+      "civiqs/approve_president_trump_2025/2026-09-27.json": approvalSnap(
+        "2026-09-26",
+        40,
+        55,
+        "2026-09-27T16:00:00Z",
+      ),
+    });
+    let liveCalls = 0;
+    const live = async () => {
+      liveCalls++;
+      return {
+        choices: ["Approve", "Disapprove"],
+        url: "https://civiqs.test",
+        points: [["2026-09-30", 50, 40]] as Array<[string, ...number[]]>,
+      };
+    };
+    const d = await civiqsDailySeries(data, past, { live });
+    expect(liveCalls).toBe(0); // lock in the past ⇒ archive only
+    expect(d).toEqual({
+      series: "civiqs_net_approval",
+      source: "civiqs/approve_president_trump_2025/2026-09-26.json",
+      points: [
+        { date: "2026-09-20", value: -24 },
+        { date: "2026-09-25", value: -24 },
+      ],
+    });
+    expect((await civiqsDailySeries(data, past, { days: 1 }))?.points).toEqual([
+      { date: "2026-09-25", value: -24 },
+    ]);
+    expect(await civiqsDailySeries(data, { ...past, series: "yougov_x" })).toBeUndefined();
+  });
+
+  it("reads the live dashboard for an open round when it is at least as fresh", async () => {
+    const open: ArenaRound = {
+      ...round,
+      lock_at: new Date(Date.now() + 86_400_000).toISOString(),
+    };
+    const today = new Date().toISOString().slice(0, 10);
+    const data = dataWith({});
+    const d = await civiqsDailySeries(data, open, {
+      live: async () => ({
+        choices: ["Approve", "Disapprove"],
+        url: "https://civiqs.test/x",
+        points: [[today, 41, 55]] as Array<[string, ...number[]]>,
+      }),
+    });
+    expect(d?.source).toBe("live:https://civiqs.test/x");
+    expect(d?.points).toEqual([{ date: today, value: -14 }]);
+  });
+
+  it("the nowcast forecaster attaches the daily series only when asked", async () => {
+    const past: ArenaRound = { ...round, lock_at: "2026-09-30T14:00:00Z" };
+    const data = dataWith({
+      "civiqs/approve_president_trump_2025/2026-09-29.json": approvalSnap(
+        "2026-09-28",
+        37,
+        62,
+        "2026-09-29T10:00:00Z",
+      ),
+    });
+    const plain = await nowcastForecaster(data, forecastRound)(past, lock);
+    expect("daily" in plain).toBe(false);
+    const withDaily = (await nowcastForecaster(data, forecastRound, { daily: 21 })(past, lock)) as {
+      daily?: { points: unknown[] };
+      topline?: { mean: number };
+    };
+    expect(withDaily.topline!.mean).toBe(-25);
+    expect(withDaily.daily?.points).toHaveLength(2);
   });
 });

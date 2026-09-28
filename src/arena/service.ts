@@ -25,6 +25,8 @@ import {
 } from "./submit";
 
 const logger = new Logger();
+/** Days of the Civiqs daily tracker the model roles read (the quant input). */
+const DAILY_POINTS = 21;
 
 export interface ArenaStatus {
   configured: boolean;
@@ -159,7 +161,10 @@ export async function forecasterFor(
     // Start from the nowcast (fresher than the weekly history for Civiqs; the
     // baseline elsewhere), exactly as the research agent does.
     const { nowcastForecaster } = await import("./research/civiqs-nowcast");
-    const start = nowcastForecaster(arenaData(env), forecastRound, await liveCiviqs(env));
+    const start = nowcastForecaster(arenaData(env), forecastRound, {
+      ...(await liveCiviqs(env)),
+      daily: DAILY_POINTS,
+    });
     return {
       usage,
       forecaster: async (round, lock) =>
@@ -182,7 +187,10 @@ export async function forecasterFor(
   const options = { ...DEFAULT_MODEL_OPTIONS, weight: opts.raw ? 1 : (opts.weight ?? 0.5) };
   if (opts.raw) options.maxSdMove = Number.POSITIVE_INFINITY;
   const { nowcastForecaster } = await import("./research/civiqs-nowcast");
-  const start = nowcastForecaster(arenaData(env), forecastRound, await liveCiviqs(env));
+  const start = nowcastForecaster(arenaData(env), forecastRound, {
+    ...(await liveCiviqs(env)),
+    daily: DAILY_POINTS,
+  });
   return {
     usage,
     forecaster: async (round, lock) =>
@@ -363,11 +371,15 @@ async function researchForecasterFor(
   const trustCap = Number(env.MARINA_ARENA_RESEARCH_TRUST ?? 0.5);
   // Structured evidence first: the research agent starts from the Civiqs nowcast.
   const { nowcastForecaster } = await import("./research/civiqs-nowcast");
-  const nowcast = nowcastForecaster(arenaData(env), forecastRound, await liveCiviqs(env));
+  const nowcast = nowcastForecaster(arenaData(env), forecastRound, {
+    ...(await liveCiviqs(env)),
+    daily: DAILY_POINTS,
+  });
   let researchCost = 0;
+  let judgeCalls = 0;
   const usage: Usage = {
     get calls() {
-      return made.reduce((s, m) => s + m.usage.calls, 0);
+      return judgeCalls + made.reduce((s, m) => s + m.usage.calls, 0);
     },
     get inputTokens() {
       return made.reduce((s, m) => s + m.usage.inputTokens, 0);
@@ -375,6 +387,9 @@ async function researchForecasterFor(
     get outputTokens() {
       return made.reduce((s, m) => s + m.usage.outputTokens, 0);
     },
+    // Retrieval + analysts + the judge. The judge's dollars also reach the
+    // daily spend ledger (its metered provider records them); this is the
+    // shadow ledger's per-round cost, a separate account — not a second charge.
     get costUsd() {
       return researchCost + made.reduce((s, m) => s + m.usage.costUsd, 0);
     },
@@ -390,7 +405,8 @@ async function researchForecasterFor(
         pageText,
         base: nowcast,
       });
-      researchCost += f.dossier?.costUsd ?? 0;
+      researchCost += (f.dossier?.costUsd ?? 0) + (f.judge?.costUsd ?? 0);
+      judgeCalls += f.judge?.calls ?? 0;
       return f;
     },
   };

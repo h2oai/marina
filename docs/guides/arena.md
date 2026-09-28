@@ -58,9 +58,16 @@ role its own vendor — runs three roles per numeric round over the baseline (`s
 
 | Role | Sees | Does |
 |---|---|---|
-| statistician | the series | proposes a distribution from its shape |
-| analyst | the question, recent values, the crew's **lessons** for this series | proposes from pollster behaviour and past misses |
-| skeptic | the baseline and both proposals | decides how much of their move to trust (0 = stay on the baseline) |
+| statistician (the quant) | the dated weekly history and, for Civiqs, the last 21 **daily** tracker readings (from the newest snapshot fetched by the lock — archive only once the lock has passed, the live dashboard for an open round) | proposes a distribution; told that the start forecast is the default and that trend or reversion stories usually lose at this horizon |
+| analyst | the question, the last 8 dated values, the crew's **lessons** for this series | proposes from pollster behaviour and past misses |
+| skeptic | the start forecast, both proposals and the **lessons** (the crew's track record here) | decides how much of their move to trust (0 = stay on the start forecast) |
+
+Every role — and the research analysts and the `model:` forecaster — is told the same true account
+of the round (`src/arena/prompt-context.ts`): what the start forecast is (the **nowcast** — the
+freshest daily Civiqs reading, with its date and the days left to resolution — or the persistence
+baseline), the resolution rule (Civiqs: the dashboard value on the release day, i.e. the daily
+readings after the lock, and Civiqs re-estimates its daily history nightly), the scoring rule
+(CRPS skill vs persistence; moving on weak evidence loses), and every value with its date.
 
 Aggregation is deterministic code: the proposals' mean move, scaled by the skeptic's trust, with
 wild or broken proposals dropped — the skeptic can shrink a move, never enlarge it. After a filed
@@ -172,12 +179,18 @@ against the arena's recorded persistence loss for each round.
    truncated, not rejected). Publishers whose terms bar bots (`NO_FETCH_DOMAINS`: YouGov, AAII,
    Conference Board, CivicScience) are never read by either route, so their lines stay
    `[unreachable]`. It caught, live, a researcher reporting a poll "at 39%" whose source said 35%.
-4. **Analysts** — forecast from history + the nowcast-adjusted baseline + the tagged dossier, told
-   that the benchmark's own history is authoritative for its dates and to use other sources for
-   **changes**, never levels (pollsters differ in population and house effect).
+4. **Analysts** — forecast from the dated history, the start forecast (named: the nowcast with its
+   date, or persistence), for Civiqs the recent **daily** tracker, the resolution and scoring
+   rules, and the tagged dossier; told to use other sources for **changes**, never levels
+   (pollsters differ in population and house effect), and only changes the start reading does not
+   already include.
 5. **Judge** — `MARINA_ARENA_RESEARCH_JUDGE` (default `jev`: jev-1.13 via OpenRouter's Decisions
-   API) scores each rationale's quality and grounding in the *verified* lines only; ungrounded ⇒
-   no weight.
+   API) scores each rationale's quality and grounding in the evidence the analysts were given:
+   the series' own recent history, the start forecast and the daily tracker (labeled as
+   structured source data, not web research) plus the *verified* dossier lines; ungrounded, or a
+   judge outage ⇒ no weight. The record keeps `judge {provider, model, calls, latencyMs, costUsd,
+   errors}` (and each proposal's judge latency and cost), and the judge's cost is in the shadow
+   row's `cost_usd` (the daily spend cap already sees it through the metered provider).
 6. **Aggregate** — judge-weighted mean move × confidence × `MARINA_ARENA_RESEARCH_TRUST` (0.5).
 
 Web research cannot be backtested (a search run later finds the answer), so it is measured in
