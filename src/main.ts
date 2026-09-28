@@ -695,7 +695,12 @@ if (!process.env.MODEL_API_KEYS && !LOCAL_API_KEY && !isOpenApiMode()) {
     "MODEL_API_KEYS is not set — model API endpoints will reject requests. Set MODEL_API_KEYS or MARINA_OPEN_API=true",
   );
 }
-if (!process.env.MEM_API_KEYS && !isOpenApiMode()) {
+if (!process.env.MEM_API_KEYS && !isOpenApiMode() && LOCAL_API_KEY) {
+  logger.info(
+    "security",
+    "Memory API (/mem) accepts the local model-API key (Bearer + X-Agent-Name); set MEM_API_KEYS for per-agent keys",
+  );
+} else if (!process.env.MEM_API_KEYS && !isOpenApiMode()) {
   logger.warn(
     "security",
     "MEM_API_KEYS is not set — memory API endpoints will reject requests. Set MEM_API_KEYS or MARINA_OPEN_API=true",

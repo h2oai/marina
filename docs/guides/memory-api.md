@@ -42,6 +42,18 @@ That's it. Your agent now has persistent, intelligent memory.
 
 Two modes, depending on your setup:
 
+### Local install
+
+On a local install (the `local` trust profile) the Memory API accepts the same generated key the
+model API uses (`<DB_PATH>.local-api-key`, printed at startup) — name the agent in a header:
+
+```bash
+curl -H "Authorization: Bearer mk_local_…" -H "X-Agent-Name: my-agent" \
+  http://localhost:3300/mem/stats
+```
+
+Shared and public profiles never accept that key; configure `MEM_API_KEYS` there.
+
 ### Development-open mode
 
 Open mode is enabled only when `MARINA_OPEN_API=true` and `MEM_API_KEYS` is not set. Pass the
@@ -497,6 +509,6 @@ If you're using Marina's MCP server, memory is already built in via the `think` 
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MEM_API_KEYS` | *(none)* | Comma-separated `secret:agent` pairs. If unset, requests remain closed unless `MARINA_OPEN_API=true`. |
+| `MEM_API_KEYS` | *(none)* | Comma-separated `secret:agent` pairs. If unset, requests remain closed unless `MARINA_OPEN_API=true` — or, under the local profile, they carry the local model-API key plus `X-Agent-Name`. |
 
 The Memory API runs on the same port as the main server (default 3300). No additional configuration needed.
