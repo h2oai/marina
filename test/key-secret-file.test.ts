@@ -87,7 +87,9 @@ describe("keys across the switch to a default secret", () => {
       db.saveApiKey({ name: "new", provider: "openai", encryptedValue: "sk-new", setBy: "t" });
       expect(db.getApiKey("old")?.encrypted_value).toBe("sk-old");
       expect(db.getApiKey("new")?.encrypted_value).toBe("sk-new");
-      const raw = db.db.query("SELECT name, encrypted_value FROM api_keys ORDER BY name").all() as {
+      const raw = (db as unknown as { db: import("bun:sqlite").Database }).db
+        .query("SELECT name, encrypted_value FROM api_keys ORDER BY name")
+        .all() as {
         name: string;
         encrypted_value: string;
       }[];
