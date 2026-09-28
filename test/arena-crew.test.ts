@@ -77,7 +77,61 @@ describe("forecasting crew", () => {
     // Trust 0 files the START (the nowcast), not last Friday's value.
     expect(f.topline!.mean).toBeCloseTo(fresh, 3);
     expect(f.note).toContain("over the nowcast (2026-07-30)");
-    expect(prompts.every((p) => p.includes(`Freshest reading: ${fresh} on 2026-07-30`))).toBe(true);
+    expect(
+      prompts.every((p) =>
+        p.includes(`the NOWCAST — the freshest daily Civiqs reading (${fresh}, dated 2026-07-30)`),
+      ),
+    ).toBe(true);
+  });
+
+  it("tells every role the rules and dates every value; the quant gets the daily tracker", async () => {
+    const start = {
+      ...forecastRound(round, lock),
+      daily: {
+        series: "civiqs_net_approval",
+        source: "civiqs/approve_president_trump_2025/2026-07-31.json",
+        points: [
+          { date: "2026-07-29", value: 40.4 },
+          { date: "2026-07-30", value: 40.1 },
+        ],
+      },
+    };
+    const seen: Record<string, { system: string; user: string }> = {};
+    const role =
+      (name: string, text: string): Complete =>
+      async (system, user) => {
+        seen[name] = { system, user };
+        return text;
+      };
+    const f = await crewForecastRound(
+      round,
+      lock,
+      {
+        statistician: role("statistician", '{"mean": 41, "sd": 1}'),
+        analyst: role("analyst", '{"mean": 41, "sd": 1}'),
+        skeptic: role("skeptic", '{"trust": 0.2}'),
+      },
+      undefined,
+      start,
+    );
+    const last = history.at(-1)!;
+    for (const r of Object.values(seen)) {
+      expect(r.user).toContain("Resolution: the value the Civiqs dashboard shows");
+      expect(r.user).toContain("re-estimates its whole daily history every night");
+      expect(r.user).toContain("skill = 1 − CRPS / CRPS(persistence)");
+      expect(r.user).toContain("the persistence baseline");
+      expect(r.user).toContain(`${last.date} ${last.value}`);
+      expect(r.user).not.toContain("Last 8 values");
+      expect(`${r.system} ${r.user}`).not.toMatch(/authoritative|latest wave|8-day mean/);
+    }
+    expect(seen.statistician!.system).toContain("quant");
+    expect(seen.statistician!.user).toContain("DAILY TRACKER");
+    expect(seen.statistician!.user).toContain("2026-07-29 40.4");
+    expect(seen.analyst!.user).not.toContain("DAILY TRACKER");
+    // The skeptic weighs the proposals against the crew's track record.
+    expect(seen.skeptic!.user).toContain("LESSONS");
+    expect(f.dailySource).toContain("2026-07-31.json");
+    expect("daily" in f).toBe(false);
   });
 
   it("drops a broken or wild role, and files the baseline when nothing usable is left", async () => {

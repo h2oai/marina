@@ -4,8 +4,10 @@
 /**
  * A model as the arena forecaster's backend (`MARINA_ARENA_FORECASTER=model:<provider/model>`).
  *
- * The model never forecasts from nothing: it is shown the question, the frozen
- * history and the calibrated baseline, and asked for a distribution. Its answer
+ * The model never forecasts from nothing: it is shown the question, the dated
+ * frozen history, the resolution and scoring rules, and the start forecast —
+ * the Civiqs nowcast (with its date, and the recent daily series) where there
+ * is one, else the calibrated baseline — and asked for a distribution. Its answer
  * is then SHRUNK toward the baseline (`MARINA_ARENA_MODEL_WEIGHT`, default 0.5)
  * and discarded outright when it is malformed or implausibly far from it — the
  * arena shows that raw model forecasts lose to persistence mostly through a few
@@ -14,7 +16,16 @@
  */
 
 import type { RoundForecast } from "./forecast";
-import type { ArenaLock, ArenaPoint, ArenaRound, Distribution } from "./types";
+import {
+  dailyBlock,
+  dailyOf,
+  freshestReading,
+  historyBlock,
+  rulesLines,
+  startLine,
+  withoutDaily,
+} from "./prompt-context";
+import type { ArenaLock, ArenaRound, Distribution } from "./types";
 
 export type Complete = (system: string, user: string) => Promise<string>;
 
@@ -32,19 +43,12 @@ const CELL_POINTS = 12;
 
 export const SYSTEM_PROMPT = [
   "You forecast published statistics for a live, public forecasting benchmark.",
-  "Each forecast is a normal distribution {mean, sd} scored by CRPS against the number when it is published.",
-  "The reference is persistence (the last published value). A baseline is given: persistence's mean with a spread sized to how this series moves.",
-  "Start from the baseline. Move the mean only for a concrete reason visible in the data: a sustained trend, mean reversion after an outlier, a seasonal or calendar pattern, or a scheduled event you are confident about.",
+  "Each forecast is a normal distribution {mean, sd} scored by CRPS against the number when it is published; skill is measured against persistence (the last published value, sd 1.5).",
+  "A start forecast is given and the prompt says what it is: the nowcast (the freshest daily reading of the tracker, with its date) or the persistence baseline (the last published value with a spread sized to how the series moves).",
+  "Start from it. Move the mean only for a concrete reason visible in the data or a scheduled event you are confident about; extrapolating a short trend or betting on mean reversion usually loses at a horizon of a few days.",
   "Size sd to the error you would honestly expect at this horizon — too narrow is punished hard, too wide wastes skill.",
   "Reply with ONE JSON object and nothing else.",
 ].join(" ");
-
-function formatHistory(points: ArenaPoint[], n: number): string {
-  return points
-    .slice(-n)
-    .map((p) => `${p.date} ${p.value}`)
-    .join("\n");
-}
 
 export function buildPrompt(round: ArenaRound, lock: ArenaLock, baseline: RoundForecast): string {
   const head = [
@@ -56,25 +60,30 @@ export function buildPrompt(round: ArenaRound, lock: ArenaLock, baseline: RoundF
     const history = lock.answer_history ?? lock.history ?? [];
     return [
       ...head,
+      ...rulesLines(round),
       "",
-      `Recent history (date value), oldest first:\n${formatHistory(history, HISTORY_POINTS)}`,
+      historyBlock(round, history, HISTORY_POINTS),
+      ...(dailyOf(baseline) ? ["", dailyBlock(dailyOf(baseline))] : []),
       "",
-      `Baseline: ${JSON.stringify(baseline.topline)}`,
+      startLine(round, baseline, history),
       'Reply: {"mean": <number>, "sd": <number > 0>, "reason": "<one sentence>"}',
     ].join("\n");
   }
   if (round.target_type === "profile_energy") {
     const cells = (round.cells ?? []).map((c) => {
       const h = lock.answer_history_by_cell?.[c] ?? [];
+      const fresh = freshestReading(baseline, c);
       return `${c}: ${h
         .slice(-CELL_POINTS)
-        .map((p) => p.value)
-        .join(", ")} | baseline ${JSON.stringify(baseline.profile?.[c])}`;
+        .map((p) => `${p.date} ${p.value}`)
+        .join(", ")} | start ${JSON.stringify(baseline.profile?.[c])}${
+        fresh ? ` (nowcast: daily reading ${fresh.value} on ${fresh.date})` : ""
+      }`;
     });
     return [
       ...head,
       "",
-      `Each cell's last ${CELL_POINTS} values, oldest first, then its baseline:`,
+      `Each cell's last ${CELL_POINTS} published values (date value), oldest first, then its start forecast (the nowcast where one is noted, else the persistence baseline):`,
       ...cells,
       "",
       'Reply: {"profile": {"<cell>": {"mean": <number>, "sd": <number > 0>}, …every cell…}, "reason": "<one sentence>"}',
@@ -142,21 +151,28 @@ export interface ModelRoundForecast extends RoundForecast {
 export async function modelForecastRound(
   round: ArenaRound,
   lock: ArenaLock,
-  baseline: RoundForecast,
+  start: RoundForecast,
   complete: Complete,
   opts: ModelForecasterOptions = DEFAULT_MODEL_OPTIONS,
   label = "model",
 ): Promise<ModelRoundForecast> {
+  const prompt = buildPrompt(round, lock, start);
+  const baseline = withoutDaily(start);
   const keep = (why: string): ModelRoundForecast => ({ ...baseline, fallback: why });
   let reply: Record<string, unknown> | undefined;
   try {
-    reply = parseReply(await complete(SYSTEM_PROMPT, buildPrompt(round, lock, baseline)));
+    reply = parseReply(await complete(SYSTEM_PROMPT, prompt));
   } catch (err) {
     return keep(`model call failed: ${err instanceof Error ? err.message : String(err)}`);
   }
   if (!reply) return keep("model reply had no JSON object");
   const reason = typeof reply.reason === "string" ? reply.reason.slice(0, 300) : undefined;
-  const note = `marina ${label}, weight ${opts.weight} on its move from the calibrated baseline`;
+  const from = freshestReading(baseline, round.series)
+    ? "the Civiqs nowcast"
+    : (baseline as { nowcast?: unknown }).nowcast
+      ? "the Civiqs nowcast profile"
+      : "the calibrated baseline";
+  const note = `marina ${label}, weight ${opts.weight} on its move from ${from}`;
 
   if (round.target_type === "continuous_normal") {
     const raw = asDist(reply);

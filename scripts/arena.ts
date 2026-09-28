@@ -253,6 +253,8 @@ async function main(): Promise<number> {
         scratch = new MarinaDB(join(dir, "eval.db"));
         const crew = await forecasterFor(specArg, { notes: scratch });
         const label = `crew ${specArg.slice(5).replace(/openrouter\//g, "")}`;
+        // The crew starts from the nowcast: score it alongside, same rounds.
+        forecasters.nowcast = (await forecasterFor("nowcast")).forecaster;
         forecasters[label] = crew.forecaster;
         if (crew.learner && !values["no-learn"]) learners[label] = crew.learner;
         usage.push(crew.usage!);
