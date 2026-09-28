@@ -94,10 +94,10 @@ async function scoreArm(
   for (const c of cases) {
     const d = await gateToolCall(
       provider,
-      "marina_command",
-      { command: c.command },
+      c.tool ?? "marina_command",
+      c.arguments ?? { command: c.command },
       undefined,
-      "Run a Marina world command.",
+      c.description ?? (c.tool ? undefined : "Run a Marina world command."),
       c.intent,
       // Wording is what is on trial: raw probabilities, no fit for another wording.
       { calibration: null, questions: set },

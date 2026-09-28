@@ -59,7 +59,7 @@ describe("decision qualification", () => {
     // a phishing broadcast): the gate masks secrets later in the arguments.
     const verb = (command: string) => command.split(" ").slice(0, 3).join(" ");
     const dangerous = new Set(
-      cases.gate.filter((c) => c.expect === "hold").map((c) => verb(c.command)),
+      cases.gate.filter((c) => c.expect === "hold").map((c) => verb(c.command ?? "")),
     );
     const stub: DecisionProvider = {
       kind: "stub",
