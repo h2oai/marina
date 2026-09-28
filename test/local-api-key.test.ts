@@ -31,3 +31,27 @@ describe("local profile model-API key", () => {
     }
   });
 });
+
+import { setTrustProfile } from "../src/engine/trust-profile";
+import { authenticate, localModelApiKey } from "../src/net/model-api/shared";
+import { scopeProcessState } from "./process-state";
+
+describe("MARINA_LOCAL_API_KEY is honoured only under the local profile", () => {
+  const key = "mk_local_abcdefghijklmnopqrstuvwxyz0123456789";
+  const req = () =>
+    new Request("http://127.0.0.1:3300/v1/models", { headers: { Authorization: `Bearer ${key}` } });
+
+  it("local ⇒ a valid bearer; shared/public ⇒ refused", () => {
+    using _state = scopeProcessState({
+      env: { MARINA_LOCAL_API_KEY: key, MODEL_API_KEYS: undefined, MARINA_OPEN_API: undefined },
+    });
+    setTrustProfile("local");
+    expect(localModelApiKey()).toBe(key);
+    expect("auth" in authenticate(req())).toBe(true);
+    for (const profile of ["shared", "public"] as const) {
+      setTrustProfile(profile);
+      expect(localModelApiKey()).toBeUndefined();
+      expect("error" in authenticate(req())).toBe(true);
+    }
+  });
+});

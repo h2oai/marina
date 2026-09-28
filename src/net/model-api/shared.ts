@@ -9,7 +9,7 @@
 import { getInternalModelToken } from "../../agent/agent-runtime";
 import { secretsEqual } from "../../auth/secret-compare";
 import type { Engine } from "../../engine/engine";
-import { isOpenApiMode } from "../../engine/trust-profile";
+import { isLocalProfile, isOpenApiMode } from "../../engine/trust-profile";
 import { buildAliasMap } from "../compat-profiles";
 import { corsHeaders } from "../cors";
 import { MEMORY_RECEIPT_HEADER } from "../memory-receipt";
@@ -131,11 +131,18 @@ function parseKeyEntry(entry: string): KeyEntry {
   return { secret, entity: rest };
 }
 
+/**
+ * The local profile's generated key (src/net/local-api-key.ts), honoured ONLY
+ * under the `local` trust profile: an inherited or hand-set
+ * `MARINA_LOCAL_API_KEY` in a shared/public deployment is never a bearer.
+ */
+export function localModelApiKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const key = env.MARINA_LOCAL_API_KEY?.trim();
+  return key && isLocalProfile(env) ? key : undefined;
+}
+
 function getApiKeyEntries(): KeyEntry[] | null {
-  // MARINA_LOCAL_API_KEY: the local profile's generated key (src/net/local-api-key.ts).
-  const raw = [process.env.MODEL_API_KEYS, process.env.MARINA_LOCAL_API_KEY]
-    .filter(Boolean)
-    .join(",");
+  const raw = [process.env.MODEL_API_KEYS, localModelApiKey()].filter(Boolean).join(",");
   if (!raw) return null;
   const entries = raw
     .split(",")

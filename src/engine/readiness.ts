@@ -14,6 +14,7 @@ import {
 import { activeGateQuestions, BASELINE_GATE_QUESTIONS } from "../decisions/gate-questions";
 import { decisionHealth } from "../decisions/health";
 import { describeDecisionSettings } from "../decisions/settings";
+import { localModelApiKey } from "../net/model-api/shared";
 import { describeDefaultUpstream } from "../net/model-api/upstream";
 import { autoRespawnEnabled } from "./auto-respawn";
 import { type AutonomyPosture, getAutonomyPosture } from "./autonomy";
@@ -313,7 +314,7 @@ export function computeReadiness(engine: Engine): ReadinessReport {
   }
 
   // ── Model API (/v1) — Marina-as-an-LLM for external clients ───────────────
-  const apiAuth = !!env.MODEL_API_KEYS || !!env.MARINA_LOCAL_API_KEY || isOpenApiMode(env);
+  const apiAuth = !!env.MODEL_API_KEYS || !!localModelApiKey(env) || isOpenApiMode(env);
   if (apiAuth && hasKey) {
     checks.push({
       id: "model-api",

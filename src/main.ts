@@ -666,6 +666,16 @@ if (isOpenApiMode()) {
   );
 }
 // Local profile: a generated, persisted key instead of a closed API (see local-api-key.ts).
+// Outside it an inherited or hand-set MARINA_LOCAL_API_KEY is dropped, so it
+// can never become a bearer in a shared/public deployment (the model API also
+// refuses it outside `local`).
+if (TRUST.profile !== "local" && process.env.MARINA_LOCAL_API_KEY) {
+  delete process.env.MARINA_LOCAL_API_KEY;
+  logger.warn(
+    "security",
+    `MARINA_LOCAL_API_KEY ignored under the ${TRUST.profile} profile — set MODEL_API_KEYS for model-API callers`,
+  );
+}
 let LOCAL_API_KEY: string | undefined;
 if (!process.env.MODEL_API_KEYS && !isOpenApiMode() && TRUST.profile === "local") {
   const { key, created } = loadOrCreateLocalApiKey(localApiKeyPath(DB_PATH));

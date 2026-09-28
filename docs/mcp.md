@@ -267,7 +267,7 @@ The MCP server reads these environment variables at startup:
 | `START_ROOM`                 | `hub/nexus`    | Room where new players spawn                                       |
 | `TICK_MS`                    | `1000`         | Engine tick interval (ms)                                          |
 | `MARINA_MCP_SESSIONS_PER_MIN`| `10`           | New sessions + `login`/`auth` calls per client IP per minute (0 = off) |
-| `MARINA_MCP_ALLOWED_HOSTS`   | *(unset)*      | Extra `Host` values accepted by the transport (DNS-rebinding guard) |
+| `MARINA_MCP_ALLOWED_HOSTS`   | *(unset)*      | `Host` values accepted by the transport (DNS-rebinding guard); unset on a public bind = loopback names + bind address + hostname + `BETTER_AUTH_URL`/`ALLOWED_ORIGINS` hosts |
 
 ### Transport security
 
@@ -280,8 +280,10 @@ The MCP server reads these environment variables at startup:
 - **DNS-rebinding protection.** The transport validates the `Host` header. On a
   loopback bind, `localhost`, `127.0.0.1` and `[::1]` on the live port are
   accepted automatically; on a public bind list your hostname(s) in
-  `MARINA_MCP_ALLOWED_HOSTS` (validation stays off — with a boot warning — until
-  you do). Browser `Origin` headers are checked with the same rule as the
+  `MARINA_MCP_ALLOWED_HOSTS`. Until you do, validation fails closed to the loopback
+  names, a specific bind address, this machine's hostname and the hosts of
+  `BETTER_AUTH_URL` / `ALLOWED_ORIGINS` (the first MCP session logs the list); any other
+  `Host` is refused. Browser `Origin` headers are checked with the same rule as the
   WebSocket upgrades (same-origin, `ALLOWED_ORIGINS`, or loopback on a loopback bind).
 - **Argument hygiene.** Tool parameters that occupy a single command token
   (`key`, `target`, `kind`, probe/watch `args` keys and values, `reason`, …) must

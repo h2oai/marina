@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { hostname } from "node:os";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { getInternalModelToken } from "../agent/agent-runtime";
@@ -103,16 +104,18 @@ export function authenticateMcpTransport(
 /**
  * `Host` header values the streamable-HTTP transport accepts (DNS-rebinding
  * protection). On a loopback bind: every loopback spelling on the live port plus
- * `MARINA_MCP_ALLOWED_HOSTS`. On a non-loopback bind: only the env list (bearer
- * auth is mandatory there) — `undefined` disables host validation when the
- * operator has not declared the public hostnames.
+ * `MARINA_MCP_ALLOWED_HOSTS`. On a non-loopback bind: the env list when the
+ * operator declared one; otherwise it FAILS CLOSED to names Marina can vouch
+ * for — the loopback spellings, a specific (non-wildcard) bind address, this
+ * machine's hostname, and the hosts of the configured public URLs
+ * (`BETTER_AUTH_URL`, `ALLOWED_ORIGINS`). Host validation is never off.
  */
 export function mcpAllowedHosts(
   bindHost: string,
   port: number,
   loopbackBind: boolean,
   env: NodeJS.ProcessEnv = process.env,
-): string[] | undefined {
+): string[] {
   const extra = (env.MARINA_MCP_ALLOWED_HOSTS ?? "")
     .split(",")
     .map((h) => h.trim().toLowerCase())
@@ -128,10 +131,37 @@ export function mcpAllowedHosts(
     for (const h of ["localhost", "127.0.0.1", "[::1]"]) add(h);
     add(bindHost.toLowerCase());
   } else if (extra.length === 0) {
-    return undefined;
+    for (const h of derivedPublicHosts(bindHost, env)) add(h);
   }
   for (const h of extra) add(h);
   return [...hosts];
+}
+
+/** Hostnames a non-loopback bind accepts when MARINA_MCP_ALLOWED_HOSTS is unset. */
+function derivedPublicHosts(bindHost: string, env: NodeJS.ProcessEnv): string[] {
+  const out = ["localhost", "127.0.0.1", "[::1]"];
+  const bind = bindHost.trim().toLowerCase();
+  if (bind && bind !== "0.0.0.0" && bind !== "::" && bind !== "[::]") {
+    out.push(bind.includes(":") && !bind.startsWith("[") ? `[${bind}]` : bind);
+  }
+  try {
+    const name = hostname().trim().toLowerCase();
+    if (name) out.push(name);
+  } catch {
+    // allow-empty-catch: no hostname is simply one fewer allowed name.
+  }
+  const urls = [env.BETTER_AUTH_URL, ...(env.ALLOWED_ORIGINS ?? "").split(",")];
+  for (const raw of urls) {
+    const value = raw?.trim();
+    if (!value) continue;
+    try {
+      const url = new URL(value);
+      if (url.hostname) out.push(url.hostname.toLowerCase());
+    } catch {
+      // allow-empty-catch: a malformed origin contributes no host.
+    }
+  }
+  return out;
 }
 
 // ─── McpServerAdapter ─────────────────────────────────────────────────────────
@@ -270,19 +300,23 @@ export class McpServerAdapter {
               server.port ?? self.port,
               loopbackBind,
             );
-            if (!allowedHosts && !warnedNoAllowedHosts) {
+            if (
+              !loopbackBind &&
+              !process.env.MARINA_MCP_ALLOWED_HOSTS?.trim() &&
+              !warnedNoAllowedHosts
+            ) {
               warnedNoAllowedHosts = true;
               logger.warn(
                 "mcp",
-                "Non-loopback bind without MARINA_MCP_ALLOWED_HOSTS — Host validation is off; " +
-                  "set MARINA_MCP_ALLOWED_HOSTS=mcp.example.com[:port] to enable it.",
+                `Non-loopback bind without MARINA_MCP_ALLOWED_HOSTS — MCP accepts only these Host names: ${allowedHosts.join(", ")}. ` +
+                  "Set MARINA_MCP_ALLOWED_HOSTS=mcp.example.com[:port] to add the names clients use.",
               );
             }
 
             // New session
             const transport = new WebStandardStreamableHTTPServerTransport({
               sessionIdGenerator: () => crypto.randomUUID(),
-              enableDnsRebindingProtection: allowedHosts !== undefined,
+              enableDnsRebindingProtection: true,
               allowedHosts,
               onsessioninitialized(newSessionId: string) {
                 const connId = `mcp_${++mcpIdCounter}`;
