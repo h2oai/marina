@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { fireEvent, screen } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
@@ -100,6 +100,7 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Admin" }));
     fireEvent.click(screen.getByRole("button", { name: "traces" }));
     // The trace explorer is a lazy chunk (components/lazy-tabs.tsx).
+    await act(() => vi.dynamicImportSettled());
     expect(await screen.findByText("Recent execution traces")).toBeInTheDocument();
     expect(screen.getByTestId("grid-layout")).toBeInTheDocument();
   });

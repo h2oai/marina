@@ -242,8 +242,8 @@ describe("MCP Server", () => {
     engine.start();
   });
 
-  afterEach(() => {
-    adapter.stop();
+  afterEach(async () => {
+    await adapter.stop();
     engine.stop();
     db.close();
     cleanupDb(dbPath);
@@ -653,6 +653,21 @@ describe("MCP Server", () => {
       expect(
         (await toolCallRaw(url, sid, names[12]!, { values: { "field-0": 1 } })).isError,
       ).not.toBe(true);
+      expect(executions).toBe(1);
+      const current = engine.commands.getDef("focus-check")!;
+      engine.commands.registerOwned(
+        "focus-test",
+        {
+          ...current,
+          handler: () => {
+            executions++;
+          },
+        },
+        true,
+      );
+      const replaced = await toolCallRaw(url, sid, names[12]!, { values: { "field-0": 1 } });
+      expect(replaced.isError).toBe(true);
+      expect(replaced.text).toContain("changed form");
       expect(executions).toBe(1);
     });
     it("negotiates task context, refreshes after deletion, and preserves manual/off modes", async () => {
@@ -1324,8 +1339,8 @@ describe("MCP Server with rate limiting", () => {
     engine.start();
   });
 
-  afterEach(() => {
-    adapter.stop();
+  afterEach(async () => {
+    await adapter.stop();
     engine.stop();
     db.close();
     cleanupDb(dbPath);
@@ -1422,8 +1437,8 @@ describe("MCP transport hardening", () => {
     engine.start();
   });
 
-  afterEach(() => {
-    adapter.stop();
+  afterEach(async () => {
+    await adapter.stop();
     engine.stop();
     db.close();
     cleanupDb(dbPath);

@@ -65,6 +65,7 @@ export function contextCommand(deps: {
     handler: async (ctx, input) => {
       let requestId: string | undefined;
       try {
+        if (input.args.length > 32768) throw new Error("Context request exceeds 32768 characters.");
         const request = input.args.startsWith("api ")
           ? JSON.parse(input.args.slice(4))
           : { query: input.args };

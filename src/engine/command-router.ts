@@ -3,6 +3,13 @@
 
 import type { CommandDef, CommandHandler, CommandInput, EntityId, RoomId } from "../types";
 
+function freezeMetadata(value: unknown, seen = new Set<object>()): void {
+  if (!value || typeof value !== "object" || seen.has(value)) return;
+  seen.add(value);
+  for (const child of Object.values(value)) freezeMetadata(child, seen);
+  Object.freeze(value);
+}
+
 export class CommandRouter {
   readonly epoch = crypto.randomUUID();
   private registryRevision = 0;
@@ -58,6 +65,9 @@ export class CommandRouter {
     )
       throw new Error("Command usage must start with its registered name");
     const owned = { ...def, usage, aliases: def.aliases ? [...def.aliases] : undefined };
+    freezeMetadata(usage);
+    if (owned.aliases) Object.freeze(owned.aliases);
+    Object.freeze(owned);
     if (previous) this.unregisterOwned(owner, previous.name);
     this.registryRevision++;
     for (const name of names) {
@@ -101,7 +111,7 @@ export class CommandRouter {
       }
     }
 
-    const spaceIdx = trimmed.indexOf(" ");
+    const spaceIdx = trimmed.search(/\s/);
     const verb = spaceIdx === -1 ? trimmed.toLowerCase() : trimmed.slice(0, spaceIdx).toLowerCase();
     const args = spaceIdx === -1 ? "" : trimmed.slice(spaceIdx + 1).trim();
     const tokens = args ? args.split(/\s+/) : [];

@@ -3,10 +3,11 @@
 import { writeFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 
-test("slash discovery and note-claim helpers work inline, with context visible in the sidebar", async ({
+test("login orients the resident before inline discovery, note helpers and sidebar context", async ({
   page,
 }) => {
   const commands: string[] = [];
+  const arrival: string[] = [];
   let manifestBytes = 0;
   let confirmedBytes = 0;
   page.on("websocket", (socket) => {
@@ -16,6 +17,12 @@ test("slash discovery and note-claim helpers work inline, with context visible i
     });
     socket.on("framereceived", (frame) => {
       const message = JSON.parse(String(frame.payload));
+      const output = String(message.data?.text ?? "");
+      if (output.includes("Workbench") && output.includes("Exits:")) arrival.push("look");
+      if (output.includes("You think, therefore you are here.")) {
+        arrival.push("brief");
+      }
+      if (message.data?.onboarding?.schema === "marina.onboarding.v1") arrival.push("onboarding");
       const catalog = message.data?.capabilities;
       if (catalog?.commands) manifestBytes = Buffer.byteLength(String(frame.payload));
       if (catalog?.unchanged) confirmedBytes = Buffer.byteLength(String(frame.payload));
@@ -26,6 +33,10 @@ test("slash discovery and note-claim helpers work inline, with context visible i
   await page.getByPlaceholder("Enter your name...").fill("InlineAuditBrowser");
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   const input = page.locator("#marina-command-input");
+  await expect.poll(() => arrival).toContain("onboarding");
+  expect(arrival.indexOf("look")).toBeGreaterThanOrEqual(0);
+  expect(arrival.indexOf("brief")).toBeGreaterThan(arrival.indexOf("look"));
+  expect(arrival.indexOf("onboarding")).toBeGreaterThan(arrival.indexOf("brief"));
   await input.fill("/mem");
   await expect(page.getByRole("listbox", { name: "Command suggestions" })).toContainText("memory");
   await input.press("Tab");

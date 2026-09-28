@@ -30,34 +30,37 @@ describe("journey command", () => {
     bob.clear();
   });
 
-  afterEach(() => {
-    engine.stop();
+  afterEach(async () => {
+    await engine.shutdown();
     db.close();
     cleanupDb(TEST_DB);
   });
 
-  it("preserves the exact desire and starts in expressed state", () => {
-    engine.processCommand(alice.entity!, "journey create Understand whether Spain fits my family");
+  it("preserves the exact desire and starts in expressed state", async () => {
+    await engine.processCommand(
+      alice.entity!,
+      "journey create Understand whether Spain fits my family",
+    );
 
     const journey = db.getLatestJourneyForRequester(alice.entity!);
     expect(journey?.expression).toBe("Understand whether Spain fits my family");
     expect(stripAnsi(alice.lastText())).toContain("Journey expressed");
 
     alice.clear();
-    engine.processCommand(alice.entity!, "journey show latest");
+    await engine.processCommand(alice.entity!, "journey show latest");
     const output = stripAnsi(alice.lastText());
     expect(output).toContain("State: [expressed]");
     expect(output).toContain("Spain fits my family");
   });
 
-  it("rejects an empty desire", () => {
-    engine.processCommand(alice.entity!, "journey create");
+  it("rejects an empty desire", async () => {
+    await engine.processCommand(alice.entity!, "journey create");
     expect(stripAnsi(alice.lastText())).toContain("Usage: journey create <desire>");
     expect(db.listJourneys({ requesterId: alice.entity! })).toHaveLength(0);
   });
 
-  it("correlates existing work without copying it", () => {
-    engine.processCommand(alice.entity!, "journey create Investigate a durable question");
+  it("correlates existing work without copying it", async () => {
+    await engine.processCommand(alice.entity!, "journey create Investigate a durable question");
     const journey = db.getLatestJourneyForRequester(alice.entity!)!;
     const taskId = db.createTask({
       title: "Inspect the evidence",
@@ -66,29 +69,29 @@ describe("journey command", () => {
     });
 
     alice.clear();
-    engine.processCommand(alice.entity!, `journey link latest task ${taskId} pursues`);
+    await engine.processCommand(alice.entity!, `journey link latest task ${taskId} pursues`);
     expect(db.getTask(taskId)?.title).toBe("Inspect the evidence");
     expect(db.listJourneyLinks(journey.id)).toHaveLength(1);
 
     alice.clear();
-    engine.processCommand(alice.entity!, "journey show latest");
+    await engine.processCommand(alice.entity!, "journey show latest");
     const output = stripAnsi(alice.lastText());
     expect(output).toContain("State: [ready]");
     expect(output).toContain(`task:${taskId}`);
   });
 
-  it("makes identical correlations idempotent", () => {
-    engine.processCommand(alice.entity!, "journey create Preserve one correlation");
+  it("makes identical correlations idempotent", async () => {
+    await engine.processCommand(alice.entity!, "journey create Preserve one correlation");
     const journey = db.getLatestJourneyForRequester(alice.entity!)!;
 
-    engine.processCommand(alice.entity!, "journey link latest trace req-1 evidence_for");
-    engine.processCommand(alice.entity!, "journey link latest trace req-1 evidence_for");
+    await engine.processCommand(alice.entity!, "journey link latest trace req-1 evidence_for");
+    await engine.processCommand(alice.entity!, "journey link latest trace req-1 evidence_for");
 
     expect(db.listJourneyLinks(journey.id)).toHaveLength(1);
   });
 
-  it("projects state from append-only evidence", () => {
-    engine.processCommand(alice.entity!, "journey create Compare three directions");
+  it("projects state from append-only evidence", async () => {
+    await engine.processCommand(alice.entity!, "journey create Compare three directions");
 
     const transitions = [
       ["grounding", "The criteria are being clarified", "grounding"],
@@ -102,7 +105,7 @@ describe("journey command", () => {
 
     for (const [kind, summary, expected] of transitions) {
       alice.clear();
-      engine.processCommand(alice.entity!, `journey record latest ${kind} | ${summary}`);
+      await engine.processCommand(alice.entity!, `journey record latest ${kind} | ${summary}`);
       expect(stripAnsi(alice.lastText())).toContain(`Current state: ${expected}`);
     }
 
@@ -113,11 +116,11 @@ describe("journey command", () => {
     );
   });
 
-  it("records attributed evidence from another participant", () => {
-    engine.processCommand(alice.entity!, "journey create Understand a shared question");
+  it("records attributed evidence from another participant", async () => {
+    await engine.processCommand(alice.entity!, "journey create Understand a shared question");
     const journey = db.getLatestJourneyForRequester(alice.entity!)!;
 
-    engine.processCommand(
+    await engine.processCommand(
       bob.entity!,
       `journey record ${journey.id} evidence | Bob found a relevant source | trace:req-7`,
     );
@@ -130,34 +133,34 @@ describe("journey command", () => {
     expect(db.listJourneyLinks(journey.id)[0]?.relationship).toBe("evidence_for");
   });
 
-  it("rejects malformed evidence without appending a partial event", () => {
-    engine.processCommand(alice.entity!, "journey create Validate evidence input");
+  it("rejects malformed evidence without appending a partial event", async () => {
+    await engine.processCommand(alice.entity!, "journey create Validate evidence input");
     const journey = db.getLatestJourneyForRequester(alice.entity!)!;
 
     alice.clear();
-    engine.processCommand(alice.entity!, "journey record latest evidence extra | malformed");
+    await engine.processCommand(alice.entity!, "journey record latest evidence extra | malformed");
 
     expect(stripAnsi(alice.lastText())).toContain("Usage: journey record");
     expect(db.listJourneyEvents(journey.id)).toHaveLength(0);
   });
 
-  it("lists a participant's journeys by default and all journeys explicitly", () => {
-    engine.processCommand(alice.entity!, "journey create Alice desire");
-    engine.processCommand(bob.entity!, "journey create Bob desire");
+  it("lists a participant's journeys by default and all journeys explicitly", async () => {
+    await engine.processCommand(alice.entity!, "journey create Alice desire");
+    await engine.processCommand(bob.entity!, "journey create Bob desire");
 
     alice.clear();
-    engine.processCommand(alice.entity!, "journey list");
+    await engine.processCommand(alice.entity!, "journey list");
     expect(stripAnsi(alice.lastText())).toContain("Alice desire");
     expect(stripAnsi(alice.lastText())).not.toContain("Bob desire");
 
     alice.clear();
-    engine.processCommand(alice.entity!, "journey list all");
+    await engine.processCommand(alice.entity!, "journey list all");
     expect(stripAnsi(alice.lastText())).toContain("Alice desire");
     expect(stripAnsi(alice.lastText())).toContain("Bob desire");
   });
 
-  it("begins from one ordinary-language desire without claiming activity", () => {
-    engine.processCommand(alice.entity!, "desire Decide whether to relocate next year");
+  it("begins from one ordinary-language desire without claiming activity", async () => {
+    await engine.processCommand(alice.entity!, "desire Decide whether to relocate next year");
 
     const journey = db.getLatestJourneyForRequester(alice.entity!)!;
     expect(journey.expression).toBe("Decide whether to relocate next year");
@@ -238,11 +241,11 @@ describe("journey command", () => {
     );
   });
 
-  it("records steering without rewriting the original desire", () => {
-    engine.processCommand(alice.entity!, "desire Explore a possible relocation");
+  it("records steering without rewriting the original desire", async () => {
+    await engine.processCommand(alice.entity!, "desire Explore a possible relocation");
     const journey = db.getLatestJourneyForRequester(alice.entity!)!;
 
-    engine.processCommand(
+    await engine.processCommand(
       alice.entity!,
       "journey steer latest Prioritize school access over commute time",
     );
@@ -252,36 +255,36 @@ describe("journey command", () => {
     expect(stripAnsi(alice.lastText())).toContain("original desire remains unchanged");
   });
 
-  it("projects meaningful progress with attributed evidence", () => {
-    engine.processCommand(alice.entity!, "desire Compare two strategies");
-    engine.processCommand(
+  it("projects meaningful progress with attributed evidence", async () => {
+    await engine.processCommand(alice.entity!, "desire Compare two strategies");
+    await engine.processCommand(
       bob.entity!,
       `journey record ${db.getLatestJourneyForRequester(alice.entity!)!.id} challenge | The cost assumption is disputed`,
     );
 
     alice.clear();
-    engine.processCommand(alice.entity!, "journey progress latest");
+    await engine.processCommand(alice.entity!, "journey progress latest");
     const output = stripAnsi(alice.lastText());
     expect(output).toContain("The cost assumption is disputed");
     expect(output).toContain("Bob · journey_event:");
   });
 
-  it("projects the current result with its canonical record and dissent", () => {
-    engine.processCommand(alice.entity!, "desire Reach an evidence-backed recommendation");
+  it("projects the current result with its canonical record and dissent", async () => {
+    await engine.processCommand(alice.entity!, "desire Reach an evidence-backed recommendation");
     const noteId = db.createNote("Alice", "Choose the reversible path", "test/start", {
       verificationStatus: "verified",
     });
-    engine.processCommand(
+    await engine.processCommand(
       alice.entity!,
       `journey record latest result | Choose the reversible path | note:${noteId}`,
     );
-    engine.processCommand(
+    await engine.processCommand(
       bob.entity!,
       `journey record ${db.getLatestJourneyForRequester(alice.entity!)!.id} challenge | The evidence covers only one quarter`,
     );
 
     alice.clear();
-    engine.processCommand(alice.entity!, "journey result latest");
+    await engine.processCommand(alice.entity!, "journey result latest");
     const output = stripAnsi(alice.lastText());
     expect(output).toContain("Result: Choose the reversible path");
     expect(output).toContain(`Canonical record: note:${noteId}`);
@@ -289,68 +292,68 @@ describe("journey command", () => {
     expect(output).toContain("The evidence covers only one quarter");
   });
 
-  it("reports the absence of a result without inventing failure", () => {
-    engine.processCommand(alice.entity!, "desire Investigate an unanswered question");
+  it("reports the absence of a result without inventing failure", async () => {
+    await engine.processCommand(alice.entity!, "desire Investigate an unanswered question");
     alice.clear();
-    engine.processCommand(alice.entity!, "journey result latest");
+    await engine.processCommand(alice.entity!, "journey result latest");
 
     const output = stripAnsi(alice.lastText());
     expect(output).toContain("No result has been recorded or submitted yet");
     expect(output).toContain("not a failure claim");
   });
 
-  it("reports only changes since each participant last looked", () => {
-    engine.processCommand(alice.entity!, "desire Track a changing question");
+  it("reports only changes since each participant last looked", async () => {
+    await engine.processCommand(alice.entity!, "desire Track a changing question");
     const journey = db.getLatestJourneyForRequester(alice.entity!)!;
-    engine.processCommand(
+    await engine.processCommand(
       bob.entity!,
       `journey record ${journey.id} evidence | The first source arrived`,
     );
 
     alice.clear();
-    engine.processCommand(alice.entity!, "journey changes latest");
+    await engine.processCommand(alice.entity!, "journey changes latest");
     expect(stripAnsi(alice.lastText())).toContain("The first source arrived");
 
     alice.clear();
-    engine.processCommand(alice.entity!, "journey changes latest");
+    await engine.processCommand(alice.entity!, "journey changes latest");
     expect(stripAnsi(alice.lastText())).toContain("Nothing meaningfully changed");
 
-    engine.processCommand(
+    await engine.processCommand(
       bob.entity!,
       `journey record ${journey.id} result | A provisional answer now exists`,
     );
     alice.clear();
-    engine.processCommand(alice.entity!, "journey changes latest");
+    await engine.processCommand(alice.entity!, "journey changes latest");
     const output = stripAnsi(alice.lastText());
     expect(output).toContain("A provisional answer now exists");
     expect(output).toContain("Current result: A provisional answer now exists");
   });
 
-  it("exposes cognitive provenance status and chain verification", () => {
+  it("exposes cognitive provenance status and chain verification", async () => {
     db.appendCognitiveEvent({
       kind: "creation",
       actorId: alice.entity!,
       payload: { ref: "artifact:test" },
     });
 
-    engine.processCommand(alice.entity!, "provenance status");
+    await engine.processCommand(alice.entity!, "provenance status");
     expect(stripAnsi(alice.lastText())).toContain("Cognitive provenance");
     expect(stripAnsi(alice.lastText())).toContain("Events: 1");
 
     alice.clear();
-    engine.processCommand(alice.entity!, "provenance verify");
+    await engine.processCommand(alice.entity!, "provenance verify");
     expect(stripAnsi(alice.lastText())).toContain("Verified 1 cognitive events");
   });
 
-  it("captures canonical command actions only when cognitive provenance is enabled", () => {
+  it("captures canonical command actions only when cognitive provenance is enabled", async () => {
     const previous = process.env.MARINA_COGNITIVE_PROVENANCE;
     try {
       delete process.env.MARINA_COGNITIVE_PROVENANCE;
-      engine.processCommand(alice.entity!, "look");
+      await engine.processCommand(alice.entity!, "look");
       expect(db.listCognitiveEvents()).toHaveLength(0);
 
       process.env.MARINA_COGNITIVE_PROVENANCE = "true";
-      engine.processCommand(alice.entity!, "recall evidence");
+      await engine.processCommand(alice.entity!, "recall evidence");
       expect(db.listCognitiveEvents().map((event) => event.kind)).toEqual([
         "memory_influence",
         "input",

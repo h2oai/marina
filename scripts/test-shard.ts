@@ -29,6 +29,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { runTestProcess } from "./test-backend";
 
 const ROOT = resolve(import.meta.dir, "..");
 const TIMING_PATH = resolve(ROOT, "test/timing.json");
@@ -228,15 +229,15 @@ async function main(): Promise<void> {
     )}s estimated`,
   );
   const started = performance.now();
-  const proc = Bun.spawn(
-    ["bun", "test", ...IGNORE, ...parallelArgs(own, passthrough), ...passthrough, ...bucket.files],
-    {
-      cwd: ROOT,
-      stdio: ["inherit", "inherit", "inherit"],
-      env: process.env,
-    },
-  );
-  const code = await proc.exited;
+  process.chdir(ROOT);
+  const code = await runTestProcess([
+    process.execPath,
+    "test",
+    ...IGNORE,
+    ...parallelArgs(own, passthrough),
+    ...passthrough,
+    ...bucket.files,
+  ]);
   console.log(
     `shard ${index}/${total}: exit ${code} after ${((performance.now() - started) / 1000).toFixed(
       1,

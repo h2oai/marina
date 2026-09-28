@@ -35,6 +35,8 @@ jobs:
         run: bun run typecheck
       - name: Check workspace versions
         run: bun run check:versions
+      - name: Check generated command reference
+        run: bun run docs:api --check
 
   backend:
     name: Test (backend, shard ${{ matrix.shard }} of 3)
@@ -98,3 +100,25 @@ jobs:
         run: cd marina-desktop && bun run typecheck
       - name: Test native SDK boundaries
         run: cd marina-desktop && bun run test
+
+  participation-browser:
+    name: Participation browser journeys
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version-file: .bun-version
+      - run: bun install --frozen-lockfile
+      - name: Install Chromium
+        working-directory: dashboard
+        run: bunx playwright install --with-deps chromium
+      - name: Run participation journeys
+        run: bun run test:browser
+      - name: Preserve browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: participation-browser-failures
+          path: /tmp/marina-dashboard-browser-results

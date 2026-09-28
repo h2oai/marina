@@ -568,7 +568,9 @@ its generated parameter schema. At most twelve focused tools are retained per se
 The generic `invoke` remains available without publishing a tool. Existing named tools
 preserve their compatibility contracts; new commands need no handwritten MCP adapter.
 Both invocation paths validate the live form when their queued action executes, then
-use the normal command router. Changed or removed forms require rediscovery.
+use the normal command router. Registry changes require rediscovery of an exposed tool,
+including handler replacements whose schema is identical. Definitions are immutable
+after registration; updates go through the registry's revisioned replacement path.
 Named and generated world tools and portable memory operations use the explicit world-command
 route even while Code Mode is active. The mode stays open and normal permissions still
 apply. The free-text `command` and `batch` tools continue to accept modal input.

@@ -52,7 +52,10 @@ export function adminCommand(deps: AdminDeps): CommandDef {
     usage: [
       "admin <kick|ban|unban|stats|announce|reload|export> [args]",
       "admin announce <message>",
-      "admin decisions [set <setting> <value> | unset <setting> | history]",
+      "admin decisions",
+      "admin decisions set <setting> <value>",
+      "admin decisions unset <setting>",
+      "admin decisions history",
       "admin ban <entity> [reason]",
       "admin bans",
       "admin export",

@@ -1,5 +1,6 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { CommandForm } from "../sdk/command-forms";
 
@@ -30,4 +31,12 @@ export function mcpCommandSchema(form: CommandForm) {
       : z.array(z.never())
     ).optional(),
   };
+}
+/** A handler replacement invalidates an exposed tool even if its form is identical. */
+export function commandFormFingerprint(
+  form: CommandForm,
+  revision: number,
+  owner?: string,
+): string {
+  return createHash("sha256").update(JSON.stringify({ revision, owner, form })).digest("hex");
 }

@@ -85,5 +85,8 @@ degraded, or off and gives the next concrete action without exposing secrets.
 | [Execution Traces and Evaluations](observability.md) | Inspect request, agent-turn, and tool evidence in the dashboard, commands, or HTTP API |
 | [Cross-world Inheritance](inheritance.md) | Export shared guide/tradition evidence and import it into a quarantined, reviewable pool |
 | [Deployment](deployment.md) | Ship to AWS or any cloud: Docker, TLS, persistence, backups, example setups |
+| [Operator runbook](operator-runbook.md) | Readiness, slow ticks, SQLite pressure, shutdown and reload/restart decisions |
+| [Adding a protocol](adding-a-protocol.md) | Identity, discovery, execution, context and lifecycle checklist for transport authors |
+| [Generated command API](../reference/commands.md) | Builtin syntax, parameter types, limits, groups and permission metadata |
 | [Troubleshooting](troubleshooting.md) | Common issues and how to fix them |
 | [Demo Scenarios](../demos/README.md) | Guided walkthroughs for coordination, content, and deep research demos |

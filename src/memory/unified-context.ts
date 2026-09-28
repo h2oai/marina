@@ -125,8 +125,9 @@ export function queryTerms(query: string): string[] {
  * measured that the plain overlap gate left such notes in the prompt (78 %
  * hit rate on simple-qa, still a net loss). A term is distinctive when it
  * appears in ≤ `DISTINCT_TERM_MAX_SHARE` of the entity's notes (and at most
- * `DISTINCT_TERM_MAX_NOTES` when the corpus is small). One indexed LIKE count
- * per query term, once per context build — never per candidate.
+ * `DISTINCT_TERM_MAX_NOTES` when the corpus is small). One LIKE count
+ * per query term used to rescan the projection. Batched aggregate counts now
+ * share a scan without caching content or weakening revocation/erasure checks.
  */
 export const DISTINCT_TERM_MAX_SHARE = 0.2;
 export const DISTINCT_TERM_MAX_NOTES = 3;
@@ -140,24 +141,28 @@ export function distinctiveTerms(
   if (terms.length === 0) return out;
   try {
     const raw = db.memoryRepository().raw;
-    const total = (
-      raw
+    // Bound SQL columns/parameters even for unusually long internal queries.
+    for (let offset = 0; offset < terms.length; offset += 32) {
+      const batch = terms.slice(offset, offset + 32);
+      const counts = raw
         .query(
-          `SELECT count(*) AS n FROM numeric_notes WHERE entity_name=? COLLATE NOCASE AND pool_id IS NULL
-           AND tier IN ('fact','reflection','skill')`,
+          `SELECT count(*) AS n, ${batch
+            .map(
+              (_, i) =>
+                `sum(CASE WHEN lower(content) LIKE ? ESCAPE '\\' THEN 1 ELSE 0 END) AS t${i}`,
+            )
+            .join(", ")} FROM numeric_notes WHERE entity_name=? COLLATE NOCASE AND pool_id IS NULL
+         AND tier IN ('fact','reflection','skill')`,
         )
-        .get(entityName) as { n: number }
-    ).n;
-    if (total === 0) return new Set(terms);
-    const cap = Math.max(DISTINCT_TERM_MAX_NOTES, Math.floor(total * DISTINCT_TERM_MAX_SHARE));
-    const count = raw.query(
-      `SELECT count(*) AS n FROM numeric_notes WHERE entity_name=? COLLATE NOCASE AND pool_id IS NULL
-       AND tier IN ('fact','reflection','skill') AND lower(content) LIKE ? ESCAPE '\\'`,
-    );
-    for (const term of terms) {
-      const pattern = `%${term.toLowerCase().replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
-      const n = (count.get(entityName, pattern) as { n: number }).n;
-      if (n <= cap) out.add(term);
+        .get(
+          ...batch.map((term) => `%${term.toLowerCase().replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`),
+          entityName,
+        ) as Record<string, number | null>;
+      if (!counts.n) return new Set(terms);
+      const cap = Math.max(DISTINCT_TERM_MAX_NOTES, Math.floor(counts.n * DISTINCT_TERM_MAX_SHARE));
+      batch.forEach((term, i) => {
+        if ((counts[`t${i}`] ?? 0) <= cap) out.add(term);
+      });
     }
   } catch {
     // Distinctiveness is an optimisation over the overlap gate — on any

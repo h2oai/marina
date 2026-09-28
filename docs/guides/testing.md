@@ -1,7 +1,8 @@
 # Testing
 
-Marina's backend suite is `bun test` over `test/*.test.ts` (302
-files, ~4,000 tests). Run serially it takes about 340 s; this
+Use `bun run test` for the backend and `bun run test:ui` for the dashboard.
+The backend contains more than 4,500 tests and can take several minutes, depending
+on available CPU and storage. A 120-second external cutoff is not a leak detector. This
 guide covers the shorter loops and the conventions that keep them short. The
 reference for file layout and rules is `test/README.md`.
 
@@ -9,26 +10,74 @@ reference for file layout and rules is `test/README.md`.
 
 ```bash
 bun run test:fast              # pre-commit subset, ~10 s (parallel)
-bun run test                   # full backend suite, parallel (~100 s on 16 cores)
+bun run test                   # full backend suite, four workers, progress + 15-minute watchdog
+bun run test --parallel=2      # reduce contention on a small/shared machine
 bun run test:serial            # full suite in one process (debugging order-dependent failures)
 bun run test:shard 0 3         # one of three time-balanced CI buckets
 bun run test:coverage          # full suite + coverage (text + coverage/lcov.info)
 bun run check:coverage         # per-directory report from coverage/lcov.info
 bun run typecheck && bun run lint
-cd dashboard && bun run test   # frontend (vitest)
+bun run test:ui                # frontend (Vitest on Node)
+bun run test:browser           # build + six real discovery/memory/participation journeys
+bun run docs:api --check       # generated builtin API reference matches current definitions
+make help                     # optional task shortcuts, all delegate to package scripts
 ```
 
-Both wrappers forward everything after `--` to `bun test`
+The test wrappers forward everything after `--` to `bun test`
 (`bun run test:fast -- --bail`, `bun run test:shard 1 3 -- --only-failures`).
 
-**Parallel by default.** `test`, `test:fast` and `test:shard` run files in
-`bun test --parallel` worker processes (one per core) with the per-test
+**Parallel by default.** `test` uses four workers; `test:fast` and `test:shard` use
+`bun test --parallel` worker processes with the per-test
 timeout raised from 5 s to 15 s, because contended workers run slower than a
 lone process. Measured 2026-09-24: `test:fast` 49.5 s → 8.9 s; full suite
 ~400 s → ~100 s; three consecutive full parallel runs 4083/4083. Pass
-`--serial` to either wrapper (or use `test:serial`) to run in one process; an
+`--serial` to the fast/shard wrappers (or use `test:serial`) to run in one process; an
 explicit `-- --parallel=N` or `-- --timeout=MS` wins. Tests that spawn a child
 `bun` process should set their own generous timeout.
+
+The full-suite wrapper prints progress every 30 seconds and a diagnostic naming
+the last observed file if its 15-minute wall-clock deadline expires (exit 124).
+This bounds a stuck runner; it does not assert which resource leaked. Debug the named
+file separately and inspect awaited teardown. Keep large build/browser jobs separate
+from the SQLite-heavy backend run on constrained machines.
+The full-suite and CI shard wrappers also fail when known closed-database activity, telemetry or event-log
+warnings appear, even if Bun reports passing assertions.
+
+Plain root `bun test` also excludes frontend/desktop test workspaces via `bunfig.toml`.
+It remains Bun's native runner, without the full-suite wrapper's progress watchdog.
+
+## Dashboard runtime and browser tests
+
+Vitest requires Node >=22.12. Bun manages packages; `bun run test:ui` runs Vitest on
+Node. Do not use `bun --bun run test` or `bun test` inside the dashboard: those force
+the wrong runtime/runner. The config rejects the unsupported VM runtime before tests
+load, rather than surfacing misleading missing-window errors. See the
+[Vitest runtime requirements](https://vitest.dev/guide/).
+
+The dashboard uses four isolated VM workers with JSDOM and cleanup after every test.
+Tests of lazy chunks should await `vi.dynamicImportSettled()` inside `act`, rather
+than relying on import speed to beat a DOM query's timeout. Browser tests exercise
+real focus, WebSockets, login/onboarding, autocomplete and memory correction.
+
+Install a browser once with `cd dashboard && bunx playwright install --with-deps chromium`.
+The config uses `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`, local `/usr/bin/chromium` when
+present, or Playwright's installed Chromium. `bun run test:browser` builds first.
+CI runs the same six journeys and retains traces/screenshots on failure.
+
+## Shutdown and generated adversarial cases
+
+Always await asynchronous adapter `stop()`, then stop/drain the engine before closing
+SQLite. Await `processCommand()` even for a synchronous handler: completion can still
+record activity and telemetry after the handler returns. The MCP suite exercises
+that ordering; `shutdown-drain.test.ts` starts a real
+server, sends SIGTERM during a command, and checks committed state after restart.
+Do not suppress closed-database warnings to make teardown appear clean.
+
+`participation-fuzz.test.ts` uses fixed-seed generated inputs for whitespace and
+modifier equivalence, command composition/schema bounds and hostile context JSON.
+Failures are reproducible by case. These are bounded property-style checks, not a
+claim of exhaustive fuzzing. Keep network input limits and execution authorization
+in place even when generated cases pass.
 
 ## The fast loop
 

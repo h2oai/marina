@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [test]
+# Keep plain `bun test` on the backend; the other workspaces own their runners.
+pathIgnorePatterns = ["**/dashboard/**", "**/examples/coding-agent-demo/**", "**/marina-desktop/**"]
 # Coverage is OPT-IN: plain `bun test` is unchanged and unaffected. Everything
 # below only takes effect when `--coverage` is passed (`bun run test:coverage`).
 # Coverage of a test file measures the test, not the code under test.
