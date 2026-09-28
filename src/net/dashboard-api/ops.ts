@@ -7,13 +7,16 @@
 // `handleDashboardApi` as before.
 
 import {
+  authorizeSettingsWrite,
   changeDecisionSetting,
+  DECISIONS_CONFIGURE_GATE,
   DecisionSettingError,
   decisionSettingsHistory,
   describeDecisionSettings,
   isAgentDriven,
 } from "../../decisions/settings";
 import { getErrorMessage } from "../../engine/errors";
+import { checkGateForExecution, recordGateExecution } from "../../engine/safety-gates";
 import { buildOpsOverview, opsObserverScope, stopAgentCascade } from "../ops-api";
 import { authorizePrivileged, type DashboardRouteContext, json } from "./shared";
 
@@ -56,19 +59,29 @@ export async function handleOpsRoutes(ctx: DashboardRouteContext): Promise<Respo
   }
   if (url.pathname === "/api/ops/decisions/settings" && method === "PUT") {
     if (!db) return json({ error: "Runtime settings need a database." }, 503);
-    const denied = authorizePrivileged(engine, db, callerId, "admin.destructive");
-    if (denied) return denied;
     const caller = engine.entities.get(callerId);
-    if (
-      isAgentDriven({
-        internalConnection: !!engine.getConnectionForEntity(callerId)?.internal,
-        hasAgentConfig: !!(caller && db.getAgentConfig(caller.name)),
-      })
-    ) {
-      return json(
-        { error: "An agent never changes the decision settings that supervise it." },
-        403,
+    const agent = isAgentDriven({
+      internalConnection: !!engine.getConnectionForEntity(callerId)?.internal,
+      hasAgentConfig: !!(caller && db.getAgentConfig(caller.name)),
+    });
+    if (agent) {
+      // An agent needs the earned decisions.configure gate — never admin.destructive alone.
+      const auth = authorizeSettingsWrite(
+        {
+          check: (id, gate) => checkGateForExecution(db, id, gate),
+          record: (id, gate, result, evidence) =>
+            recordGateExecution(db, id, gate, result, evidence),
+        },
+        callerId,
+        true,
       );
+      if (!auth.ok) return json({ error: auth.reason }, 403);
+    } else {
+      // A person: admin.destructive, or the decisions.configure gate on its own.
+      const denied = authorizePrivileged(engine, db, callerId, "admin.destructive");
+      if (denied && authorizePrivileged(engine, db, callerId, DECISIONS_CONFIGURE_GATE)) {
+        return denied;
+      }
     }
     let body: { setting?: unknown; value?: unknown };
     try {
@@ -88,6 +101,7 @@ export async function handleOpsRoutes(ctx: DashboardRouteContext): Promise<Respo
         body.setting,
         body.value,
         caller?.name ?? "operator",
+        { agent },
       );
       return json({ setting });
     } catch (error) {

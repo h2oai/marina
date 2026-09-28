@@ -213,6 +213,15 @@ export function registerCoordinationCommands(engine: Engine): void {
       get store() {
         return engine.db;
       },
+      get settings() {
+        const db = engine.db;
+        return db
+          ? {
+              db,
+              isInternal: (id: string) => !!engine.getConnectionForEntity(id as never)?.internal,
+            }
+          : undefined;
+      },
     }),
   );
 

@@ -19,13 +19,18 @@ import {
   describeDecisionSettings,
   resetDecisionSettingsForTests,
 } from "../src/decisions/settings";
-import { adminDecisions } from "../src/engine/commands/admin-decisions";
+import {
+  adminDecisions,
+  DECISION_SETTINGS_USAGE,
+  runDecisionSettings,
+} from "../src/engine/commands/admin-decisions";
 import { Engine } from "../src/engine/engine";
+import { grant } from "../src/engine/safety-gates";
 import { resetTrustProfileForTests } from "../src/engine/trust-profile";
 import { handleDashboardApi } from "../src/net/dashboard-api";
 import { resetHttpRateLimitersForTests } from "../src/net/http-utils";
 import { MarinaDB } from "../src/persistence/database";
-import type { Connection, Entity, EntityId } from "../src/types";
+import type { Entity, EntityId } from "../src/types";
 import { roomId } from "../src/types";
 import { MockConnection, makeTestRoom } from "./helpers";
 import { scopeProcessState } from "./process-state";
@@ -127,43 +132,90 @@ describe("boot", () => {
   });
 });
 
-describe("console / CLI: admin decisions", () => {
+describe("console / CLI: admin decisions and decision settings", () => {
   const person = { id: "e_op" as EntityId, name: "Operator" } as Entity;
-  const conns = (internal = false) =>
-    new Map<string, Connection>([["c1", { entity: person.id, internal } as unknown as Connection]]);
-
-  it("shows every setting and where it comes from, then changes one", () => {
-    const deps = { db, getConnections: () => conns() };
-    const show = adminDecisions(deps, person, []);
-    for (const s of DECISION_SETTINGS) expect(show).toContain(s.name);
-    expect(show).toContain("never set at runtime");
-    expect(adminDecisions(deps, person, ["set", "gate", "on"])).toContain(
-      "gate (MARINA_DECISION_GATE) = on",
-    );
-    expect(adminDecisions(deps, person, ["history"])).toContain("Operator  gate: (default) → on");
-    expect(adminDecisions(deps, person, ["unset", "gate"])).toContain("= (default)");
-    expect(adminDecisions(deps, person, ["set", "gate", "maybe"])).toContain("one of: on, off");
+  const agentEntity = { id: "e_scout" as EntityId, name: "Scout" } as Entity;
+  const deps = (internal = false) => ({ db, isInternal: () => internal });
+  const savedAutonomy = process.env.MARINA_AUTONOMY;
+  afterEach(() => {
+    if (savedAutonomy === undefined) delete process.env.MARINA_AUTONOMY;
+    else process.env.MARINA_AUTONOMY = savedAutonomy;
   });
 
-  it("refuses an agent: internal connection or a spawned agent's config", () => {
-    const viaInternal = adminDecisions({ db, getConnections: () => conns(true) }, person, [
-      "set",
-      "gate",
-      "off",
-    ]);
-    expect(viaInternal).toContain("Refused: an agent never changes");
-    db.saveAgentConfig({ name: "Operator", model: "marina/default", spawnedBy: "system" });
-    const viaConfig = adminDecisions({ db, getConnections: () => conns() }, person, [
-      "set",
-      "gate",
-      "off",
-    ]);
-    expect(viaConfig).toContain("Refused: an agent never changes");
-    expect(process.env.MARINA_DECISION_GATE).toBeUndefined();
-    // Reading is fine.
-    expect(adminDecisions({ db, getConnections: () => conns(true) }, person, [])).toContain(
-      "Decision settings",
+  it("shows every setting and where it comes from, then changes one", () => {
+    const show = adminDecisions(deps(), person, []);
+    for (const s of DECISION_SETTINGS) expect(show).toContain(s.name);
+    expect(show).toContain("never set at runtime");
+    expect(adminDecisions(deps(), person, ["set", "gate", "on"])).toContain(
+      "gate (MARINA_DECISION_GATE) = on",
     );
+    expect(adminDecisions(deps(), person, ["history"])).toContain("Operator  gate: (default) → on");
+    expect(adminDecisions(deps(), person, ["unset", "gate"])).toContain("= (default)");
+    expect(adminDecisions(deps(), person, ["set", "gate", "maybe"])).toContain("one of: on, off");
+  });
+
+  it("an agent without the earned gate is told how to earn it, not refused forever", () => {
+    const viaInternal = adminDecisions(deps(true), agentEntity, ["set", "gate", "off"]);
+    expect(viaInternal).toContain("once it has earned the decisions.configure gate");
+    expect(viaInternal).toContain("witness request decisions.configure");
+    db.saveAgentConfig({ name: "Scout", model: "marina/default", spawnedBy: "system" });
+    const viaConfig = runDecisionSettings(deps(), agentEntity, ["set", "gate", "off"], {
+      personAuthorized: false,
+      usage: DECISION_SETTINGS_USAGE,
+    });
+    expect(viaConfig).toContain("decisions.configure");
+    expect(process.env.MARINA_DECISION_GATE).toBeUndefined();
+    // Reading is open to everyone.
+    expect(
+      runDecisionSettings(deps(true), agentEntity, [], { personAuthorized: false, usage: "" }),
+    ).toContain("Decision settings");
+  });
+
+  it("an agent that holds decisions.configure changes settings, and the history says it was an agent", () => {
+    db.saveAgentConfig({ name: "Scout", model: "marina/default", spawnedBy: "system" });
+    grant(db, agentEntity.id, "decisions.configure");
+    const out = runDecisionSettings(deps(true), agentEntity, ["set", "gate", "on"], {
+      personAuthorized: false,
+      usage: DECISION_SETTINGS_USAGE,
+    });
+    expect(out).toContain("gate (MARINA_DECISION_GATE) = on");
+    expect(process.env.MARINA_DECISION_GATE).toBe("on");
+    expect(decisionSettingsHistory(db)[0]).toMatchObject({ by: "Scout", agent: true, to: "on" });
+    expect(
+      runDecisionSettings(deps(true), agentEntity, ["history"], {
+        personAuthorized: false,
+        usage: "",
+      }),
+    ).toContain("Scout (agent)  gate");
+  });
+
+  it("admin.destructive alone never lets an AGENT through — only the specific gate does", () => {
+    db.saveAgentConfig({ name: "Scout", model: "marina/default", spawnedBy: "system" });
+    grant(db, agentEntity.id, "admin.destructive");
+    expect(adminDecisions(deps(true), agentEntity, ["set", "gate", "on"])).toContain(
+      "once it has earned the decisions.configure gate",
+    );
+  });
+
+  it("under MARINA_AUTONOMY=open the gate passes for agents (it is not a core gate)", () => {
+    process.env.MARINA_AUTONOMY = "open";
+    db.saveAgentConfig({ name: "Scout", model: "marina/default", spawnedBy: "system" });
+    const out = runDecisionSettings(deps(true), agentEntity, ["set", "verify", "observe"], {
+      personAuthorized: false,
+      usage: DECISION_SETTINGS_USAGE,
+    });
+    expect(out).toContain("verify (MARINA_DECISION_VERIFY) = observe");
+  });
+
+  it("a person on `decision settings` needs admin.destructive or decisions.configure", () => {
+    const run = () =>
+      runDecisionSettings(deps(), person, ["set", "gate", "on"], {
+        personAuthorized: false,
+        usage: DECISION_SETTINGS_USAGE,
+      });
+    expect(run()).toContain("needs admin.destructive or decisions.configure");
+    grant(db, person.id, "decisions.configure");
+    expect(run()).toContain("= on");
   });
 });
 
@@ -231,7 +283,7 @@ describe("dashboard: /api/ops/decisions/settings", () => {
     expect(process.env.MARINA_DECISION_GATE).toBeUndefined();
   });
 
-  it("a sovereign-rank AGENT is still refused: it never reconfigures its own supervision", async () => {
+  it("a sovereign-rank agent still needs the earned gate; with it, the change is made and marked", async () => {
     const conn = new MockConnection("dset-bot");
     engine.addConnection(conn);
     const r = engine.login(conn.id, "Bot");
@@ -241,8 +293,13 @@ describe("dashboard: /api/ops/decisions/settings", () => {
     db.saveAgentConfig({ name: "Bot", model: "marina/default", spawnedBy: "system" });
     const res = await api("PUT", { setting: "gate", value: "off" }, { token: r.token });
     expect(res.status).toBe(403);
-    expect(String(res.body.error)).toContain("An agent never changes");
+    expect(String(res.body.error)).toContain("decisions.configure");
     expect(process.env.MARINA_DECISION_GATE).toBeUndefined();
+    grant(db, bot.id, "decisions.configure");
+    const ok = await api("PUT", { setting: "gate", value: "off" }, { token: r.token });
+    expect(ok.status).toBe(200);
+    expect(process.env.MARINA_DECISION_GATE).toBe("off");
+    expect(decisionSettingsHistory(db)[0]).toMatchObject({ by: "Bot", agent: true });
   });
 
   it("locked settings are 409, bad values 400, and nothing else is settable", async () => {
