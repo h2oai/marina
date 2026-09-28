@@ -27,9 +27,9 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
   {
     content:
       "Navigation: type a direction to move — north, south, east, west " +
-      "(or n, s, e, w). Type 'look' to see where you are. Type 'map' for nearby rooms. " +
-      "The world is a 5x5 grid of sectors. You start at Sector 2-2 (The Hearth). " +
-      "Several sectors have themed rooms already applied — explore to find them.",
+      "(or n, s, e, w, plus ne/nw/se/sw). Type 'look' to see where you are and 'map' for nearby " +
+      "rooms. The world is a 5x5 grid of 25 themed rooms; you start at the Crossroads " +
+      "(hub/crossroads) in the middle — explore outward to find the rest.",
     importance: 9,
     type: "skill",
   },
@@ -37,7 +37,7 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
     content:
       "Communication: 'say Hello' speaks to everyone in your room. " +
       "'tell Alice Check the archives' sends a private message. " +
-      "'shout Everyone come to the Hearth!' broadcasts everywhere. " +
+      "'shout Everyone come to the Crossroads!' broadcasts everywhere. " +
       "Channels are persistent group conversations: 'channel join research', " +
       "'channel send research Found something interesting'.",
     importance: 9,
@@ -56,7 +56,7 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
   {
     content:
       "Room templates: themed room blueprints available via 'build template list'. " +
-      "'build template apply <name> <room-id>' applies a template to a sector. " +
+      "'build template apply <name> <new-room-id>' builds a new room from a template. " +
       "Templates: hearth, library, forum, workshop, observatory, lab, yard, frontier. " +
       "At Builder rank (2) or above, you can also create custom rooms with 'build room'.",
     importance: 8,
@@ -112,11 +112,11 @@ function seed(db: MarinaDB): void {
 
   seedProject(db, {
     name: "Exploration",
-    description: "Map the grid, discover interesting sectors, document findings",
+    description: "Map the grid, discover interesting rooms, document findings",
     orchestration: "swarm",
     tasks: [
-      { title: "Map the grid", description: "Visit all 25 sectors and note what you find" },
-      { title: "Name 5 sectors", description: "Apply room templates to 5 blank sectors" },
+      { title: "Map the grid", description: "Visit all 25 rooms and note what you find" },
+      { title: "Build 5 rooms", description: "Build 5 new rooms from room templates" },
       {
         title: "Document all exits",
         description: "Record the exit layout of the grid in a pool note",
@@ -125,11 +125,11 @@ function seed(db: MarinaDB): void {
     poolNotes: [
       {
         content:
-          "Exploration project: map the entire 5x5 grid. Each sector can be themed with a room template.",
+          "Exploration project: map the entire 5x5 grid of rooms. New rooms can be built from room templates.",
       },
       {
         content:
-          "Exploration tips: use 'map' to see nearby sectors, 'look' for detail, 'note' to record findings.",
+          "Exploration tips: use 'map' to see nearby rooms, 'look' for detail, 'note' to record findings.",
       },
     ],
   });
@@ -183,7 +183,7 @@ function seed(db: MarinaDB): void {
 
 const commonsWorld: WorldDefinition = {
   name: "Commons",
-  startRoom: "world/2-2" as RoomId,
+  startRoom: "hub/crossroads" as RoomId,
   rooms: {},
   roomsDir: join(import.meta.dir, "default"),
   quests: [],

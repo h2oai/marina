@@ -32,24 +32,16 @@ export const PLATFORM_GUIDE_NOTES: GuideNote[] = [
       "limited per entity; needs a provider key.",
   },
   {
-    type: "fact",
-    importance: 6,
-    content:
-      "arena — Marina in the Social Simulation Arena, a live forecasting benchmark: `arena` " +
-      "(status), `arena rounds` (open questions), `arena show <round_id>` (what Marina would " +
-      "file and why). Run the measurement loop yourself: `arena discover` proposes and " +
-      "backtests signals, `arena evaluate discovered` scores them on resolved rounds, `arena " +
-      "shadow run due forecaster:discovered` records forecasts, `arena shadow score` grades " +
-      "them once resolved. Filing a submission is an operator step outside the world.",
-  },
-  {
     type: "skill",
-    importance: 7,
+    importance: 8,
     content:
-      "decision — cheap second opinions on your own work: `decision check <request> | <draft>` " +
-      "scores a draft's grounding (cite `note:N` or `task:N` so it can check against them); " +
-      "`decision choose <question> | <a> | <b>` picks an option. Numbers only, fast; use before " +
-      "submitting a task or posting a claim. Needs `MARINA_DECISIONS` configured.",
+      "arena — improve, do better, climb the leaderboard in the Social Simulation Arena (a live " +
+      "forecasting benchmark, CRPS / per-round skill). Works in EVERY world; do not switch worlds " +
+      "(a new DB splits the submission ledger). `arena`, `arena rounds`, `arena show <round_id>` " +
+      "read; `arena discover` backtests signals, `arena evaluate discovered` scores them, `arena " +
+      "shadow run due forecaster:discovered` records forecasts, `arena shadow score` grades them. " +
+      "Operator loop: `bun run arena evaluate`, `bun run arena shadow`, then `bun run arena " +
+      "submit due` files the submission. See docs/guides/arena.md.",
   },
   {
     type: "skill",
@@ -138,12 +130,12 @@ export const PLATFORM_GUIDE_NOTES: GuideNote[] = [
     type: "skill",
     importance: 7,
     content:
-      "decision check / choose — cheap second opinions, when the world has a decision backend. " +
-      "Before you submit or publish, `decision check <request> | <draft>` scores your draft's " +
-      "quality; cite evidence as note:N, task:N or chronicle:N and it also checks the claims are " +
-      "grounded in it. `decision choose <question> | <option> | <option>` picks among options. " +
-      "Advisory only — you decide what to do with the numbers. Cited evidence also counts at " +
-      "`task submit`.",
+      "decision check / choose — cheap second opinions on your own work, when the world has a " +
+      "decision backend (`MARINA_DECISIONS`). Before you submit or publish, `decision check " +
+      "<request> | <draft>` scores your draft's quality; cite evidence as note:N, task:N or " +
+      "chronicle:N and it also checks the claims are grounded in it. `decision choose <question> " +
+      "| <option> | <option>` picks among options. Numbers only, fast and advisory — you decide " +
+      "what to do with them. Cited evidence also counts at `task submit`.",
   },
 ];
 

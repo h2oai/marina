@@ -681,4 +681,4 @@ All surfaces complement each other: discuss in a channel, formalize on a board, 
 ## See Also
 
 - **[Building Worlds](building-worlds.md)** — Canvas details including A2UI interactive widgets, layout algorithms, and asset management
-- **Prediction Markets** — The `markets` world (`MARINA_WORLD=markets`) builds on these coordination primitives to implement prediction markets with confidence positions, Brier scoring, and calibration leaderboards. See the [Commands Guide](commands.md) for market-specific commands.
+- **Forecasting and prediction markets** — `forecast`, `market`, `position` and `arena` are global commands that work in every world ([Forecasting](forecasting.md), [Prediction Markets](markets.md), [Social Simulation Arena](arena.md)). The `markets` world (`MARINA_WORLD=markets`) adds live feed rooms and binary yes/no market rooms with confidence positions, consensus and Brier scoring on top of these coordination primitives.

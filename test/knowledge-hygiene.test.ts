@@ -83,6 +83,7 @@ describe("auditKnowledgeNotes — command-reference detection", () => {
           "Mistakes land in `benchmark:<name>` pools; your code receives `input` and `input.entity`.",
         ),
         note("Set `MARINA_AUTONOMY` to `guarded`."),
+        note("Operators file with `bun run arena submit due` and review `git log`."),
       ],
       { knownCommands: known },
     );

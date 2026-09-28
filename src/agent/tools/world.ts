@@ -206,7 +206,7 @@ const marketSchema = Type.Object({
     ],
     {
       description:
-        "list (open markets), info (market detail), position (place a position), forecast (TabH2O-calibrated prediction), leaderboard",
+        "list (open markets), info (market detail), position (runs the `position` command: list, open, pnl, close), forecast (TabH2O-calibrated prediction), leaderboard",
     },
   ),
   args: Type.Optional(Type.String({ description: "Arguments for the action" })),
@@ -616,7 +616,9 @@ export function createWorldTools(ctx: ToolContext): AgentTool[] {
       "Market",
       "Prediction markets. forecast <id> runs TabH2O-calibrated inference on historical markets in the same category and writes the prediction as a pool note. Use for confidence-weighted estimates.",
       marketSchema,
-      (p) => `market ${p.action as string}${p.args ? ` ${p.args as string}` : ""}`,
+      // Positions are their own command (`position open …`), not a `market` subcommand.
+      (p) =>
+        `${p.action === "position" ? "position" : `market ${p.action as string}`}${p.args ? ` ${p.args as string}` : ""}`,
       ctx,
     ),
     wrap(

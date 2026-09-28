@@ -9,7 +9,7 @@ bun run test           # Run all backend tests (parallel workers; `test:serial` 
 bun run typecheck      # TypeScript strict check
 bun run lint           # Biome lint
 bun run format         # Biome auto-format (run before committing)
-bun run test:fast      # pre-commit loop: 139 engine-free files, ~10 s parallel (scripts/test-fast.ts --check reports drift; --serial opts out)
+bun run test:fast      # pre-commit loop: 138 engine-free files, ~10 s parallel (scripts/test-fast.ts --check reports drift; --serial opts out)
 bun run test:shard I N # time-balanced shard I of N from test/timing.json (CI runs 3); regenerate timings per docs/guides/testing.md
 bun run test:coverage  # full suite + coverage (text + coverage/lcov.info); opt-in, never in PR CI
 bun run check:coverage # per-directory line coverage from lcov (--strict gates on MARINA_COVERAGE_MIN_LINES, default 75)
@@ -196,7 +196,7 @@ Compat profiles (`src/net/compat-profiles.ts`) are self-contained — they only 
 
 The canonical reference is **[`.env.example`](.env.example)** — annotated, treated as authoritative, and updated alongside code. The code reads ~100+ env vars across logging, ports, rate limits, per-pattern coordinator/judge/temperature overrides, and venue credentials. The handful below is the *load-bearing subset for understanding world shape*; treat it as a hand-curated overview, not a comprehensive list. If anything below conflicts with `.env.example`, `.env.example` wins.
 
-- `MARINA_WORLD` — which world definition to load (`default` / `commons` / `research` / `markets` / `craft` / `evolve` / `personal` / `demos` / `empty`).
+- `MARINA_WORLD` — which world definition to load (`default` / `showcase` / `commons` / `research` / `markets` / `prediction-lab` / `craft` / `evolve` / `personal` / `demos` / `deep-research` / `red-team` / `due-diligence` / `data-investigation` / `empty`). Forecasting, `arena` and `market`/`position` are global commands in every world; never switch worlds (and split the `DB_PATH` ledger) for arena work.
 - `MARINA_COMPAT` — comma-separated compat-profile allow-list, or `none` to disable. Default: all registered profiles (e.g. the `assistant` alias) surface in `/v1/models`.
 - `MARINA_NAME` — instance name, scopes tour dismissal + seen flags per-world.
 - `MARINA_ROOM_AGENTS` — `false` suppresses all room-agent auto-spawn. Use for cost-controlled demos or explicit-only populations.

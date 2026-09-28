@@ -261,6 +261,16 @@ Audited 2026-09-25 (`src/arena/evaluate.ts`, `test/arena-*.test.ts`):
    Every hour Marina files each round whose lock is within 24 hours (the arena's own call window,
    so its inputs are as fresh as every other entrant's) and that has no accepted forecast yet.
 
+## Which world for arena work?
+
+Any. `arena`, `forecast`, `decision`, `market`, `position`, `probe`, `watch` and `web` are global
+commands registered in every world, including the default Workbench, and filing goes through the
+operator CLI (`bun run arena`), not a room. What matters is the database: the submission ledger,
+shadow rows and discovery notes live in `DB_PATH`, which the server's autopilot and the CLI share.
+Keep one `DB_PATH` for all arena work — starting a different world on a fresh database splits the
+ledger. The `markets` and `prediction-lab` worlds add binary yes/no market rooms, which do not
+match the arena's continuous, profile and ranking targets.
+
 ## Operate
 
 | Command | Where | What it does |

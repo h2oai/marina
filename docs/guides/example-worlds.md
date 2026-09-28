@@ -1,7 +1,8 @@
 # Focused example worlds
 
-Marina includes five small, outcome-oriented worlds that demonstrate different multi-agent
-coordination patterns. Each world provides a bounded room topology, one golden-path project,
+Marina includes four small, outcome-oriented worlds built on `worlds/focused-example.ts`, plus
+`prediction-lab` (the `markets` world with a calibration-sprint overlay), that demonstrate
+different multi-agent coordination patterns. Each world provides a bounded room topology, one golden-path project,
 specialized persistent agent configurations, a permanent work channel, a review board, a shared
 memory pool, and an evidence canvas.
 
@@ -16,7 +17,7 @@ override, the examples use `marina/default`.
 
 | World | Golden-path project | Coordination loop | Done when |
 |---|---|---|---|
-| `prediction-lab` | Calibration Sprint | Define → base rate → independent cases → forecast → resolution plan | Five tasks are accepted and a resolvable probability is ready for scoring |
+| `prediction-lab` (markets + overlay) | Calibration Sprint | Define → base rate → independent cases → forecast → resolution plan | Five tasks are accepted and a resolvable probability is ready for scoring |
 | `deep-research` | Research Brief | Frame → source → investigate → verify → synthesize | The cited synthesis reports confidence, contradictions, and limitations |
 | `red-team` | Launch Plan Challenge | Threat-model → attack → rebut → adjudicate → remediate | The revised proposal includes owned mitigations and residual dissent |
 | `due-diligence` | Example Company Diligence | Thesis → evidence requests → parallel workstreams → committee → memo | A sourced decision memo and risk register reach review-complete state |

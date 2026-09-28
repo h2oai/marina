@@ -4,10 +4,10 @@
 import type { RoomId, RoomModule } from "../../../src/types";
 import { tradingFloor } from "../../markets";
 
-// Compose: grid room exits + trading floor handlers (market feeds, commands, onTick)
+// Compose: grid room exits + trading floor items and host (onEnter/onTick)
 const room: RoomModule = {
   short: "Trade Floor",
-  long: "Prediction markets and live data feeds. Monitor markets, stake positions, track Brier scores. Use 'market list' to browse, 'market watch <feed>' for live data, 'market position <claim>' to stake.",
+  long: "Prediction markets and live data feeds. Monitor markets, stake positions, track Brier scores. Use 'market list' to browse, 'market live' for Kalshi/Polymarket data, 'market leaderboard' for calibration, and 'position open <venue> <ticker> <yes|no> <count>' for a paper position.",
   exits: {
     north: "markets/desk" as RoomId,
     east: "bench/arena" as RoomId,
@@ -19,7 +19,6 @@ const room: RoomModule = {
   items: tradingFloor.items,
   onEnter: tradingFloor.onEnter,
   onTick: tradingFloor.onTick,
-  commands: tradingFloor.commands,
 };
 
 export default room;

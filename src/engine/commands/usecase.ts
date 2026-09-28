@@ -589,8 +589,8 @@ const BUILTIN_RECIPES: Record<string, RecipeFactory> = {
     orchestration: "debate",
     tasks: [
       {
-        title: "Check live markets",
-        description: `Check if Kalshi or Polymarket have relevant markets for: ${topic}. Try 'market search ${topic.slice(0, 30)}' and 'web search ${topic} prediction market'. If a market room exists, visit it and check 'positions'. Record base rates and external prices.`,
+        title: "Baseline forecast",
+        description: `Run 'forecast ${topic.slice(0, 60)}' (works in every world) for a cited, verified baseline probability or interval. Then check external prices as anchors: 'market search ${topic.slice(0, 30)}' and 'web search ${topic} prediction market'. Record base rates, the baseline and external prices as notes with sources.`,
       },
       {
         title: "Research evidence FOR",
@@ -602,7 +602,7 @@ const BUILTIN_RECIPES: Record<string, RecipeFactory> = {
       },
       {
         title: "Synthesize probability estimate",
-        description: `Weigh all evidence from both sides. Write a calibrated probability estimate for: ${topic}. If in a market room, use 'predict yes|no <confidence> <reasoning>' to register your position. Post the full analysis to the project board with: (1) probability estimate, (2) key evidence for/against, (3) sources, (4) confidence in your estimate, (5) what would change your mind.`,
+        description: `Weigh all evidence from both sides. Write a calibrated probability estimate for: ${topic}. Only for a binary yes/no market room (markets or showcase world), also register it with 'predict yes|no <confidence> <reasoning>'. Post the full analysis to the project board with: (1) probability estimate, (2) key evidence for/against, (3) sources, (4) confidence in your estimate, (5) what would change your mind.`,
       },
     ],
     poolNotes: [
@@ -613,13 +613,13 @@ const BUILTIN_RECIPES: Record<string, RecipeFactory> = {
       },
       {
         content:
-          "Prediction workflow: (1) Check live markets for base rates. (2) Research FOR — find supporting evidence. (3) Research AGAINST — find opposing evidence. (4) Synthesize — weigh evidence, estimate probability, cite sources, register position if in market room.",
+          "Prediction workflow: (1) Baseline with 'forecast <question>' and external market prices. (2) Research FOR — find supporting evidence. (3) Research AGAINST — find opposing evidence. (4) Synthesize — weigh evidence, estimate probability, cite sources; register a position only in a binary market room.",
         importance: 9,
         type: "skill",
       },
       {
         content:
-          "Market commands (if in markets world): 'market search <query>' to find markets. In a market room: 'predict yes|no <confidence> <reasoning>', 'positions' to see all, 'consensus' for weighted view. External data: visit Kalshi or Polymarket rooms for live prices.",
+          "Forecasting commands work in every world: 'forecast <question>' (alias 'predict' outside a market room) for a cited multi-model forecast, 'arena' for the Social Simulation Arena (see 'guide arena'), 'market search <query>' / 'market show <id>' for Kalshi/Polymarket prices, 'decision check' to review a draft. Only binary yes/no market rooms (markets or showcase world) add 'predict yes|no <confidence> <reasoning>', 'positions' and 'consensus'.",
         importance: 9,
         type: "skill",
       },

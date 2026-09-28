@@ -118,9 +118,12 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
   },
   {
     content:
-      "The full Marina capability landscape remains available in the `showcase` world. Start it with " +
-      "`MARINA_WORLD=showcase bun run start` when you want the 25-room grid, pre-seeded projects, benchmark " +
-      "crews, forecasting, markets, and specialist population.",
+      "Forecasting works in every world, including this one: `forecast <question>`, `arena` (Social " +
+      "Simulation Arena status; operators file with `bun run arena`), `decision`, `market`, `position`, " +
+      "`probe`, `watch` and `web` are global commands, and `guide arena` explains the improvement loop. Do " +
+      "not switch worlds for arena work — a new world usually means a new database, which splits the arena " +
+      "ledger. The `showcase` and `markets` worlds only add rooms for binary yes/no markets, pre-seeded " +
+      "projects, benchmark crews and a specialist population (`MARINA_WORLD=showcase bun run start`).",
     importance: 7,
     type: "fact",
   },

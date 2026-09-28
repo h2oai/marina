@@ -98,7 +98,9 @@ const predictionLab: WorldDefinition = {
     {
       content:
         "Prediction Lab golden path: 'project Calibration Sprint join', complete its five tasks, " +
-        "publish one probability with 'predict', and preserve its resolution plan.",
+        "publish one probability with 'predict yes|no <confidence> <reasoning>' inside a market " +
+        "room (outside one, 'predict' is the paid 'forecast' pipeline), and preserve its " +
+        "resolution plan.",
       importance: 10,
       type: "skill",
     },

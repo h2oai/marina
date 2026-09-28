@@ -256,7 +256,7 @@ Commands span communication, knowledge management, memory, coordination, buildin
 | **Forecasting** | `forecast <question>` (alias `predict`), `usecase predict <topic>` | Any question → a probability or a number with cited, checked evidence from several models ([guide](docs/guides/forecasting.md)); `usecase predict` runs a full multi-agent research project instead |
 | **Decisions** | `decision check`, `decision choose`, `decision approve/deny` | Cheap judgement calls agents use on their own work; owner approval of gated tool calls ([decisions](docs/architecture/decisions.md)) |
 | **Arena** | `arena`, `arena rounds`, `arena show`, `arena backtest` | Marina in MIT's Social Simulation Arena: open questions, what Marina would file, its record ([guide](docs/guides/arena.md)) |
-| **Markets** | `market`, `market forecast`, `consensus`, `resolve` | Prediction markets, confidence positions, TabH2O-backed calibrated forecasts, Brier scoring |
+| **Markets** | `market`, `market forecast`, `position` (global); `predict`, `consensus`, `resolve` (market rooms) | Prediction markets, confidence positions, TabH2O-backed calibrated forecasts, Brier scoring. The global commands work in every world; the `markets` world adds live feed and binary market rooms |
 | **Feed** | `feed`, `feed list --kind X --entity Y --since 30m` | Queryable activity timeline across all surfaces; persisted in `feed_events` |
 | **Knowledge Graph** | `note`, `note link`, `note unlink`, `note graph`, `note conflicts`, `note resolve` | Typed relationships plus durable, provenance-aware contradiction review |
 | **Outcome Learning** | `productivity`, `productivity agent`, `productivity leaderboard`, `productivity trend` | Success, latency, effort, handoffs, throughput, trends, and automatic attention adaptation |
@@ -317,16 +317,16 @@ Marina uses a **WorldDefinition** system that separates world configuration from
 | `personal` | Self-evolving agent | 5 focused rooms, mindroom/workspace templates, self-evolution objectives |
 | `evolve` | Capability benchmarks | 8 benchmark objectives (navigation, retrieval, code-gen, coordination, adaptation, memory, self-modification, collaboration), hub + 8 rooms, bench-facts/bench-memory pools |
 | `craft` | Spec-driven dev | Workshop + review holdout rooms, interview/spec/verify/ship workflow, exportable via `craftRooms()` |
-| `markets` | Prediction markets | Live Kalshi/Polymarket market data, confidence positions, Brier scoring, market discovery, calibration leaderboard, auto-digests to canvas. Trading defaults to paper mode; Kalshi supports live orders, Polymarket is **paper-mode only** (live CLOB signing unimplemented). |
+| `markets` | Prediction market rooms | Live Kalshi/Polymarket feed rooms and binary yes/no market rooms (forecasting, `market`, `position` and `arena` work in every world), confidence positions, Brier scoring, market discovery, calibration leaderboard, auto-digests to canvas. Trading defaults to paper mode; Kalshi supports live orders, Polymarket is **paper-mode only** (live CLOB signing unimplemented). |
 | `demos` | Interactive demonstrations | Lobby, workshop, and bridge rooms for guided tours and live customer walkthroughs |
-| `prediction-lab` | Calibration sprint | Focused single-outcome world: forecast, research, calibrate on one live question |
+| `prediction-lab` | Calibration sprint | The `markets` world plus a Calibration Sprint project, forecast channel and three forecasting agents |
 | `deep-research` | Research brief | Focused world for producing one evidence-backed research brief |
 | `red-team` | Adversarial review | Focused world stress-testing a plan through structured challenge |
 | `due-diligence` | Company diligence | Focused world for an evidence-gathering diligence workup |
 | `data-investigation` | Anomaly investigation | Focused world for root-causing a data anomaly |
 | `empty` | Minimal | Single room, nothing else |
 
-The five *focused worlds* are built on a shared `focusedExampleWorld()` factory (`worlds/focused-example.ts`) — single-outcome scenarios that demonstrate one workflow end to end.
+The four *focused worlds* (`deep-research`, `red-team`, `due-diligence`, `data-investigation`) are built on a shared `focusedExampleWorld()` factory (`worlds/focused-example.ts`) — single-outcome scenarios that demonstrate one workflow end to end. `prediction-lab` is the `markets` world with a calibration-sprint overlay.
 
 Rooms are programs, not data. A room can monitor a service, query a database, orchestrate an API pipeline, or run any TypeScript logic. Room code is sandboxed (static analysis + runtime error tracking with auto-disable). Rooms can be created from within the platform with `build room` and hot-reloaded with `build reload`. Rooms also have access to `ctx.brief` to push compass signals to entities.
 
@@ -338,9 +338,9 @@ MARINA_WORLD=research bun run src/main.ts   # research lab
 MARINA_WORLD=personal bun run src/main.ts   # self-evolving agent
 MARINA_WORLD=evolve bun run src/main.ts     # capability benchmarks (8 objectives)
 MARINA_WORLD=craft bun run src/main.ts      # spec-driven development
-MARINA_WORLD=markets bun run src/main.ts    # prediction markets (live Kalshi/Polymarket)
+MARINA_WORLD=markets bun run src/main.ts    # prediction-market rooms (live Kalshi/Polymarket)
 MARINA_WORLD=demos bun run src/main.ts      # guided tours / customer walkthroughs
-MARINA_WORLD=prediction-lab bun run src/main.ts   # focused: calibration sprint
+MARINA_WORLD=prediction-lab bun run src/main.ts   # markets + calibration sprint
 MARINA_WORLD=deep-research bun run src/main.ts    # focused: research brief
 MARINA_WORLD=red-team bun run src/main.ts         # focused: adversarial plan review
 MARINA_WORLD=due-diligence bun run src/main.ts    # focused: company diligence
