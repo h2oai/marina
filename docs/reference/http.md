@@ -534,28 +534,28 @@ Fields read here: `Number.parseInt(url.searchParams.get("limit") ?? "", 10)`, `u
 
 ### `url.pathname === "/api/ops/overview"`
 
-[Source](../../src/net/dashboard-api/ops.ts#L28)
+[Source](../../src/net/dashboard-api/ops.ts#L31)
 
 - Guard: `url.pathname === "/api/ops/overview" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname.match(/^\/api\/ops\/agents\/([^/]+)\/stop$/)`
 
-[Source](../../src/net/dashboard-api/ops.ts#L31)
+[Source](../../src/net/dashboard-api/ops.ts#L34)
 
 - Guard: `opsAgentStopMatch && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `url.pathname === "/api/ops/decisions/settings"`
 
-[Source](../../src/net/dashboard-api/ops.ts#L47)
+[Source](../../src/net/dashboard-api/ops.ts#L50)
 
 - Guard: `url.pathname === "/api/ops/decisions/settings" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/ops/decisions/settings"`
 
-[Source](../../src/net/dashboard-api/ops.ts#L57)
+[Source](../../src/net/dashboard-api/ops.ts#L60)
 
 - Guard: `url.pathname === "/api/ops/decisions/settings" && method === "PUT"`
 - Guard: `method === "PUT"`
