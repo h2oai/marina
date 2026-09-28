@@ -71,10 +71,10 @@ a missing variant directory is recreated, and first boot may take up to
 ## Spend
 
 Every child world starts with its own daily spend cap — $50 unless the parent sets
-`MARINA_CHILD_DAILY_SPEND_CAP_USD` — enforced inside the child on everything it pays upstream
-(model calls, benchmark runs, decisions, forecasts). The child's `readiness` shows today's spend;
-at the cap its model calls are refused until 00:00 UTC. The parent's own budget
-(`MARINA_DAILY_SPEND_CAP_USD`) is separate.
+`MARINA_CHILD_DAILY_SPEND_CAP_USD`, and never more than the parent's own cap — enforced inside the
+child on everything it pays upstream (model calls, benchmark runs, decisions, forecasts, media).
+The child's `readiness` shows today's spend; at the cap its model calls are refused until
+00:00 UTC. The parent's own budget (`MARINA_DAILY_SPEND_CAP_USD`, default $25) is separate.
 
 ## Boundaries
 

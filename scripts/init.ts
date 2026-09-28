@@ -9,6 +9,7 @@ import { Writable } from "node:stream";
 import { parseArgs } from "node:util";
 import { isSecretKey, parseEnvironment, writeEnvironment } from "../src/config/environment";
 import { configurationPreset, validateConfiguration } from "../src/config/presets";
+import { dailySpendCapUsd } from "../src/engine/spend-ledger";
 
 const ROOT = `${import.meta.dirname}/..`;
 const WORLDS_DIR = `${ROOT}/worlds`;
@@ -162,6 +163,21 @@ async function testKey(provider: (typeof PROVIDERS)[number], key: string): Promi
   }
 }
 
+/**
+ * What agents may spend, said once at setup: the default world starts its
+ * seeded agents on a local install once a provider key exists, bounded by the
+ * daily spend cap.
+ */
+export function spendCapNotice(cfg: Record<string, string>): string {
+  const raw = (cfg.MARINA_DAILY_SPEND_CAP_USD ?? process.env.MARINA_DAILY_SPEND_CAP_USD)?.trim();
+  const cap = dailySpendCapUsd({ MARINA_DAILY_SPEND_CAP_USD: raw });
+  const limit =
+    cap === undefined
+      ? "Upstream model spend is UNCAPPED (MARINA_DAILY_SPEND_CAP_USD=0)."
+      : `Upstream model spend is capped at $${cap} per UTC day${raw ? "" : " (default)"}; at the cap model calls are refused and agents pause until 00:00 UTC.`;
+  return `${limit} Change it with MARINA_DAILY_SPEND_CAP_USD=<usd> in .env (0 = no cap). Seeded agents start on boot on a local install with a provider key; set AGENT_AUTORESPAWN=false to keep them off.`;
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 export async function runInit(args: string[] = []): Promise<void> {
@@ -210,6 +226,7 @@ export async function runInit(args: string[] = []): Promise<void> {
     } else {
       saveChanges(cfg);
       console.log(`Wrote ${ENV_PATH}. Run marina start from ${directory}.`);
+      console.log(spendCapNotice(cfg));
     }
     return;
   }
@@ -364,6 +381,7 @@ export async function runInit(args: string[] = []): Promise<void> {
   if (telnetPort && Number(telnetPort) > 0) summary.push(row("Telnet:", telnetPort));
   summary.push("└─────────────────────────────────┘");
   console.log(`\n${summary.join("\n")}`);
+  if (providerOk) console.log(`\n${spendCapNotice(cfg)}`);
 
   // 6. Preserve unrelated configuration; never print or make secrets world-readable.
   const problems = validateConfiguration(cfg);

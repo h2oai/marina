@@ -152,8 +152,9 @@ curl -X POST http://localhost:3300/mem/notes \
 ## Populate the World
 
 Marina remains usable without an LLM, but autonomous agents need a provider key or reachable local
-model. The default Workbench seeds Host, Builder, Critic, and Chronicler configurations; saved
-agents start automatically only when `AGENT_AUTORESPAWN=true`. The Showcase world also contains
+model. The default Workbench seeds Host, Builder, Critic, and Chronicler configurations; on a
+local install they start on boot once a provider is configured (elsewhere only with
+`AGENT_AUTORESPAWN=true`), bounded by a $25/day default spend cap (`MARINA_DAILY_SPEND_CAP_USD`). The Showcase world also contains
 lazy room agents that start when their rooms are entered. Three ways to operate agents:
 
 **1. Environment variable** — set any one provider key and start:
@@ -161,8 +162,8 @@ lazy room agents that start when their rooms are entered. Three ways to operate 
 ANTHROPIC_API_KEY=sk-ant-... bun run start
 ```
 (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, and others work too — see
-`.env.example`.) To start the seeded Workbench population on boot, also set
-`AGENT_AUTORESPAWN=true`. Verify actual state with `readiness`, `agent list`, and `who`.
+`.env.example`.) A local install starts the seeded Workbench population on boot
+(`AGENT_AUTORESPAWN=false` keeps it off; shared/public deployments need `AGENT_AUTORESPAWN=true`). Verify actual state with `readiness`, `agent list`, and `who`.
 
 **2. From the dashboard** — open `http://localhost:3300/`:
 - **Admin → Keys**: click **+ Add**, choose a provider, paste the key, and click **Save Key**. Use **Test** to verify connectivity; no restart is required.
@@ -402,7 +403,8 @@ Copy `.env.example` to `.env` and customize as needed. All variables are optiona
 | **Agents** | | |
 | `MAX_AGENTS` | `30` | Maximum concurrent spawned agents |
 | `MAX_AGENT_UPTIME_MS` | `86400000` | Max agent uptime before auto-stop (24h) |
-| `AGENT_AUTORESPAWN` | `false` | Auto-respawn saved agents on server boot |
+| `AGENT_AUTORESPAWN` | local + provider: on; else off | Auto-respawn saved agents on server boot (`true`/`false` override) |
+| `MARINA_DAILY_SPEND_CAP_USD` | `25` | World-wide upstream spend cap per UTC day (`0` = no cap) |
 | `MARINA_TASK_LEASE_MS` | `900000` | Renewable task-claim lease; expired ordinary work reopens automatically |
 | **LLM Providers** | | |
 | `ANTHROPIC_API_KEY` | *(none)* | Anthropic API key |

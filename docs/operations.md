@@ -81,17 +81,21 @@ Marina's abilities fall into three tiers. **Only the third needs operator action
    - **room agents** (guide, market-oracle, …)
    - **crews** / orchestration specialists
 
-The confusion this doc resolves: a seeded agent **config** does not auto-run.
-`AGENT_AUTORESPAWN` defaults to **off** (`engine.ts:initAgents`), so seeded/saved
-agents only start on boot when `AGENT_AUTORESPAWN=true`, or when an operator spawns
-them manually with `agent spawn`.
+The confusion this doc resolves: a seeded agent **config** does not always auto-run.
+When `AGENT_AUTORESPAWN` is unset, seeded/saved agents start on boot only on a **local
+install** (the `local` trust profile) that has a usable provider (a key, a stored key or a
+local runtime) — `src/engine/auto-respawn.ts`. Shared and public deployments start them only
+with `AGENT_AUTORESPAWN=true`, or when an operator spawns them with `agent spawn`;
+`AGENT_AUTORESPAWN=false` keeps them off everywhere. Spend is bounded by the daily cap
+(`MARINA_DAILY_SPEND_CAP_USD`, default $25 per UTC day; `0` = no cap).
 
 ## Load-bearing env vars
 
 | Var | Effect | Default |
 | --- | --- | --- |
 | `ANTHROPIC_API_KEY` (or `OPENAI_API_KEY`, `GEMINI_API_KEY`, …) | Upstream provider key — **gates whether any agent can call a model** | unset |
-| `AGENT_AUTORESPAWN` | `true` → seeded/saved agents respawn on boot | off |
+| `AGENT_AUTORESPAWN` | `true` → seeded/saved agents respawn on boot; `false` → never | unset = on for a local install with a provider, else off |
+| `MARINA_DAILY_SPEND_CAP_USD` | USD per UTC day for the whole world; at the cap model calls, decisions, forecasts and media are refused and agents pause | `25` (`0` = no cap) |
 | `MARINA_ROOM_AGENTS` | `false` → rooms never spawn their agents | enabled |
 | `MODEL_API_KEYS` | Bearer token(s) for external `/v1` callers (Marina-as-LLM). Caller auth, **not** an upstream key | unset |
 | `MARINA_OPEN_API` | `true` → dev-only: skip `/v1` + dashboard caller auth | off |

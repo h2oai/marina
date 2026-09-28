@@ -83,11 +83,15 @@ silently. See [Model API](model-api.md) for endpoint configuration.
 
 ## Start the Workbench agents
 
-The default world seeds Host, Builder, Critic, and Chronicler configurations. Saved agents do not
-automatically start unless you opt in:
+The default world seeds Host, Builder, Critic, and Chronicler configurations. On a local install
+(loopback bind, no external sign-in) they start on boot as soon as a provider key or local runtime
+is configured. Spend is capped at $25 per UTC day by default; change it with
+`MARINA_DAILY_SPEND_CAP_USD=<usd>` (`0` removes the cap). To keep them off, or to start them on a
+shared or public deployment:
 
 ```bash
-AGENT_AUTORESPAWN=true bun run start
+AGENT_AUTORESPAWN=false bun run start   # never start saved agents on boot
+AGENT_AUTORESPAWN=true bun run start    # always start them (shared/public deployments)
 ```
 
 For an existing server, an authorized operator can launch agents from the **Agents** panel. Direct
@@ -241,8 +245,9 @@ capabilities that need providers or agents.
 
 ### The world has no active agents
 
-Add or test a provider key, then enable `AGENT_AUTORESPAWN=true` before restart or ask an authorized
-operator to launch the seeded agents. `agent list` reports runtime state; `who` reports connected
+Add or test a provider key and restart (a local install starts the seeded agents on its own), set
+`AGENT_AUTORESPAWN=true` on a shared or public deployment, or ask an authorized operator to launch
+the seeded agents. Check `readiness` for the daily spend cap — at the cap agents pause until 00:00 UTC. `agent list` reports runtime state; `who` reports connected
 participants.
 
 ### Agent launch is refused

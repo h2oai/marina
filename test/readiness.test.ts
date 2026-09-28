@@ -124,6 +124,23 @@ describe("computeReadiness", () => {
     expect(find("auto-respawn").status).toBe("ok");
   });
 
+  it("auto-respawn defaults on only for a local install with a provider", () => {
+    using _state = scopeProcessState();
+    setTrustProfile("local");
+    // Local, no provider: every call would fail, so agents stay off.
+    expect(find("auto-respawn").status).toBe("off");
+    process.env.OPENROUTER_API_KEY = "sk-or-test";
+    expect(find("auto-respawn").status).toBe("ok");
+    expect(find("auto-respawn").detail).toContain("local-install default");
+    // An explicit opt-out wins.
+    process.env.AGENT_AUTORESPAWN = "false";
+    expect(find("auto-respawn").status).toBe("off");
+    delete process.env.AGENT_AUTORESPAWN;
+    // Shared/public deployments keep agents off unless the operator opts in.
+    setTrustProfile("shared");
+    expect(find("auto-respawn").status).toBe("off");
+  });
+
   it("Chronicler is degraded (not off) once a config is seeded but no agent runs", () => {
     db.saveAgentConfig({
       name: "Chronicler",
