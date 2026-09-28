@@ -177,7 +177,11 @@ describe("continuation prompt — unified Relevant Memory (§4)", () => {
     await internals.buildContinuationPrompt();
     internals.effectiveContextWindow = 16_384;
     await internals.buildContinuationPrompt();
-    expect(unifiedCalls[0]!.budget).toBeGreaterThan(3500);
+    // The large window buys well above the 2048-byte floor (the exact figure
+    // depends on the output reservation, MARINA_DEFAULT_MAX_TOKENS); the small
+    // window stays at the floor.
+    expect(unifiedCalls[0]!.budget).toBeGreaterThan(3000);
+    expect(unifiedCalls[0]!.budget).toBeGreaterThan(unifiedCalls[1]!.budget);
     expect(unifiedCalls[1]!.budget).toBe(2048);
 
     const content = "evidence ".repeat(1000);
