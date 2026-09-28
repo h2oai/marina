@@ -41,7 +41,7 @@ The terminal client is `bun run scripts/connect.ts <name>` (`-c "<command>"` for
 | `test` | Full backend suite, four workers, progress heartbeat and a 15-minute process deadline. |
 | `test:ui` | Full dashboard suite on Node/Vitest, with four JSDOM workers. |
 | `test:browser` | Build and run the six discovery, memory and participation browser journeys. |
-| `docs:api [--check]` | Generate the builtin command reference and JSON schemas, or check the committed reference for drift. |
+| `docs:api [--check]` | Generate builtin commands, live MCP tool schemas, published SDK declarations and HTTP dispatch references, or check them for drift. |
 | `test:serial` | The same suite in one process (for order-dependent debugging). |
 | `test:fast` | Engine-free subset, ~10 s — the pre-commit loop (`--check` reports drift). |
 | `test:shard I N` | Time-balanced shard I of N (CI runs 3). See [Testing](testing.md). |
@@ -59,6 +59,7 @@ budget flag. Write their reports outside the public checkout.
 | Script | What it does |
 |---|---|
 | `bench` / `bench:ui` | Academic benchmark harness; web UI on port 3303. See [Benchmarks](../../benchmarks/README.md). |
+| `qualify:participation:load --directory PATH [--participants 16 --records 64 --operations 30]` | Real local MCP HTTP concurrency, private automatic context, FULL SQLite durability, bounded overflow and recovery; emits report.json without model calls. |
 | `bench:context` | Offline old/new term-statistics comparison on 1,000 canonical records; verifies equal results and reports median/p95, without caching retrieved memory. |
 | `eval-prompt` / `qualify:prompt` | Fast 15-item prompt A/B against a running model endpoint; `qualify:prompt` gates the answerer at ≥ 13. In-world: `benchmark run smoke`. See [Prompt architecture](agent-prompt-architecture.md). |
 | `qualify:decisions` | Compare decision backends on labeled gate and route cases. In-world (the world's own backend): `decision qualify`. See [decisions](../architecture/decisions.md). |

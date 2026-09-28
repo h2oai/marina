@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { namedFormsForCommand } from "../sdk/named-command-forms";
 import type { CommandDef, CommandHandler, CommandInput, EntityId, RoomId } from "../types";
 
 function freezeMetadata(value: unknown, seen = new Set<object>()): void {
@@ -24,7 +25,7 @@ export class CommandRouter {
 
   /** Register a built-in command (available in every room) */
   registerBuiltin(def: CommandDef): void {
-    this.registerOwned("builtin", def, true);
+    this.registerOwned("builtin", { ...def, namedTools: namedFormsForCommand(def.name) }, true);
   }
 
   /** Validate the complete name/alias set before changing any live registration. */
@@ -64,7 +65,14 @@ export class CommandRouter {
         }))
     )
       throw new Error("Command usage must start with its registered name");
-    const owned = { ...def, usage, aliases: def.aliases ? [...def.aliases] : undefined };
+    const namedTools = def.namedTools ? structuredClone(def.namedTools) : undefined;
+    const owned = {
+      ...def,
+      usage,
+      namedTools,
+      aliases: def.aliases ? [...def.aliases] : undefined,
+    };
+    freezeMetadata(namedTools);
     freezeMetadata(usage);
     if (owned.aliases) Object.freeze(owned.aliases);
     Object.freeze(owned);

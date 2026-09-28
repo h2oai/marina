@@ -13,6 +13,10 @@ identity, permissions, command execution, onboarding and memory retrieval. Start
    for your presentation. Treat descriptions as metadata, not execution permission.
    Room overrides without metadata must remain opaque. The [generated builtin
    reference](../reference/commands.md) is a baseline, not a deployed-world snapshot.
+   Named MCP compatibility payloads are also `CommandForm` metadata; their adapter
+   translates arguments without maintaining another Zod schema. Protocol-only session
+   and credential contracts remain separate from world commands. See the generated
+   [MCP](../reference/mcp.md), [SDK](../reference/sdk.md) and [HTTP](../reference/http.md) references.
 3. **Route execution centrally.** Use the engine command path and preserve FIFO for
    a participant. Structured world actions use `/command` so Code Mode cannot change
    their meaning. Free-text input retains its modal grammar. Revalidate exposed forms
@@ -30,7 +34,9 @@ identity, permissions, command execution, onboarding and memory retrieval. Start
 6. **Handle cancellation honestly.** A queued, unstarted action can be cancelled.
    Do not release its FIFO slot while an executing write is still running. A client
    timeout is an uncertain outcome; preserve receipts and avoid automatic duplicate
-   writes. Optional context failure must not rewrite a successful action as a failure.
+   writes. Bound active plus queued work, reject excess work before execution, and
+   report whether an action executed. Keep admission slots until active work settles.
+   Optional context failure must not rewrite a successful action as a failure.
 7. **Own lifecycle resources.** Track admitted requests with `RequestDrain`, stop new
    admission, drain pending work, remove connections, await adapter/server close,
    then allow database close. Track timers and spawned processes at their owner.

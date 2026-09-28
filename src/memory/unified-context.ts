@@ -55,6 +55,7 @@ import { ftsTerms } from "../persistence/fts";
 import type { MemoryAssistanceJob, MemoryAssistancePage } from "../sdk/memory-assistance";
 import { MemoryClientError } from "../sdk/memory-client";
 import type { MemorySearchResult, MemorySourceSearchResult } from "../sdk/memory-types";
+import { cachedContext } from "./context-cache";
 import {
   findDurableTwin,
   findLegacyNotesForRecord,
@@ -730,6 +731,19 @@ export async function buildUnifiedContext(
   query: string,
   opts: UnifiedContextOptions = {},
 ): Promise<UnifiedContextResult> {
+  const result = await cachedContext(db, entityName, query, opts, () =>
+    retrieveUnifiedContext(db, entityName, query, opts),
+  );
+  if (opts.creditReflections !== false) creditUnifiedReflections(db, result);
+  return result;
+}
+
+async function retrieveUnifiedContext(
+  db: MarinaDB,
+  entityName: string,
+  query: string,
+  opts: UnifiedContextOptions,
+): Promise<UnifiedContextResult> {
   const scope = opts.scope ?? "all";
   const budgetBytes = Math.max(0, Math.floor(opts.budgetBytes ?? DEFAULT_UNIFIED_BUDGET_BYTES));
   const itemMaxBytes = Math.max(MIN_ITEM_BYTES, opts.itemMaxBytes ?? DEFAULT_ITEM_MAX_BYTES);
@@ -792,7 +806,6 @@ export async function buildUnifiedContext(
     tiers: budgeted.tiers,
     degraded,
   };
-  if (opts.creditReflections !== false) creditUnifiedReflections(db, result);
   return result;
 }
 

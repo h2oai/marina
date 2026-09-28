@@ -4,6 +4,7 @@ import { expect, test } from "bun:test";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { Engine } from "../src/engine/engine";
+import { MCP_MAX_SESSION_PENDING, McpAdmission, mcpAdmission } from "../src/net/mcp-admission";
 import { cmdTool } from "../src/net/mcp-session";
 import type { McpSession } from "../src/net/mcp-types";
 import { roomId } from "../src/types";
@@ -78,4 +79,68 @@ test("cancelling queued work skips its mutation without releasing an executing c
     await mcp.close();
     await engine.shutdown();
   }
+});
+
+test("MCP rejects excess queued mutations before execution and recovers its capacity", async () => {
+  const engine = new Engine({ startRoom: roomId("test/bounded") });
+  engine.registerRoom(roomId("test/bounded"), makeTestRoom());
+  const conn = new MockConnection("mcp-bounded");
+  engine.addConnection(conn);
+  engine.spawnEntity(conn.id, "BoundedResident");
+  const mcp = new McpServer({ name: "bounded-test", version: "1" });
+  const session: McpSession = {
+    connId: conn.id,
+    entityId: conn.entity!,
+    throttleKey: "test",
+    perceptionBuffer: [],
+    commandTail: Promise.resolve(),
+    mcp,
+    transport: new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined }),
+  };
+  const sessions = new Map([["bounded", session]]);
+  const release = Promise.withResolvers<void>();
+  let executed = 0;
+  engine.commands.registerOwned("fixture", {
+    name: "hold",
+    help: "Hold",
+    async handler() {
+      await release.promise;
+      executed++;
+    },
+  });
+  try {
+    const admitted = Array.from({ length: MCP_MAX_SESSION_PENDING }, () =>
+      cmdTool(engine, sessions, { sessionId: "bounded" }, "/hold"),
+    );
+    const rejected = await cmdTool(engine, sessions, { sessionId: "bounded" }, "/hold");
+    expect(rejected.structuredContent).toMatchObject({
+      error: { code: "mcp_overloaded", executed: false, retryable: true },
+    });
+    expect(mcpAdmission(engine).snapshot().pending).toBe(MCP_MAX_SESSION_PENDING);
+    release.resolve();
+    await Promise.all(admitted);
+    expect(executed).toBe(MCP_MAX_SESSION_PENDING);
+    expect(mcpAdmission(engine).snapshot().pending).toBe(0);
+    await cmdTool(engine, sessions, { sessionId: "bounded" }, "/hold");
+    expect(executed).toBe(MCP_MAX_SESSION_PENDING + 1);
+  } finally {
+    release.resolve();
+    await session.commandTail;
+    await mcp.close();
+    await engine.shutdown();
+  }
+});
+
+test("admission limits include all sessions and release is idempotent", () => {
+  const admission = new McpAdmission(2, 1, -1);
+  const first = {};
+  const a = admission.enter(first)!;
+  expect(admission.enter(first)).toBeUndefined();
+  const b = admission.enter({})!;
+  expect(admission.enter({})).toBeUndefined();
+  expect(a.canStart()).toBe(false);
+  a.release();
+  a.release();
+  b.release();
+  expect(admission.snapshot()).toMatchObject({ pending: 0, highWater: 2, rejected: 2, expired: 1 });
 });

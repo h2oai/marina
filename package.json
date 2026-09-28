@@ -130,9 +130,11 @@
     "recovery": "bun scripts/recovery.ts",
     "qualify:image": "bun scripts/qualify-image.ts",
     "memory:compatibility": "bun scripts/memory-compatibility.ts",
-    "qualify:server": "bun scripts/qualify-server.ts"
+    "qualify:server": "bun scripts/qualify-server.ts",
+    "qualify:participation:load": "bun --env-file=/dev/null scripts/qualify-participation-load.ts"
   },
   "devDependencies": {
+    "@babel/parser": "^7.29.9",
     "@biomejs/biome": "^2.5.13",
     "@types/bun": "^1.4.2",
     "typescript": "^7.0.2"

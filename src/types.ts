@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { CommandUsage } from "./sdk/command-forms";
+import type { CommandForm, CommandUsage } from "./sdk/command-forms";
 import type { DurableMemoryAPI } from "./sdk/memory-operations";
 
 import type { Entity, EntityId, EntityRank, Perception, RoomId } from "./sdk/protocol";
@@ -39,6 +39,8 @@ export interface CommandInput {
 export type CommandHandler = (ctx: RoomContext, input: CommandInput) => void | Promise<void>;
 
 export interface CommandDef {
+  /** Published compatibility payloads; ordinary usage is the command-line grammar. */
+  namedTools?: CommandForm[];
   name: string;
   aliases?: string[];
   help: string;

@@ -229,3 +229,66 @@ it("shows only the resident's preview in the sidebar and clears it on logout", a
   expect(screen.queryByText("opal own observation")).not.toBeInTheDocument();
   expect(screen.getByText(/Sign in to world chat/)).toBeVisible();
 });
+
+it("debounces focus bursts and cancels the scheduled refresh on unmount", async () => {
+  vi.useFakeTimers();
+  try {
+    const view = render(<Input />);
+    await act(async () => {});
+    expect(request).toHaveBeenCalledTimes(1);
+    const input = screen.getByLabelText("Command");
+    for (let i = 0; i < 10; i++) fireEvent.focus(input);
+    await act(async () => vi.advanceTimersByTime(149));
+    expect(request).toHaveBeenCalledTimes(1);
+    await act(async () => vi.advanceTimersByTime(1));
+    expect(request).toHaveBeenCalledTimes(2);
+    fireEvent.focus(input);
+    view.unmount();
+    await act(async () => vi.advanceTimersByTime(500));
+    expect(request).toHaveBeenCalledTimes(2);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("preserves an edited form while a late world snapshot revalidates an unchanged schema", async () => {
+  render(<Input />);
+  const input = screen.getByLabelText("Command");
+  fireEvent.input(input, { target: { value: "note claim " } });
+  const text = await screen.findByLabelText("Text");
+  fireEvent.change(text, { target: { value: "Keep this draft" } });
+  fireEvent.click(screen.getByLabelText("Include confidence:0..1"));
+  fireEvent.change(screen.getByRole("spinbutton", { name: /^Confidence/ }), {
+    target: { value: "0.8" },
+  });
+  let resolveRefresh!: (value: { commands: typeof catalog }) => void;
+  const refresh = new Promise<{ commands: typeof catalog }>((resolve) => {
+    resolveRefresh = resolve;
+  });
+  request.mockReturnValueOnce(refresh);
+  act(() =>
+    useWorldState.setState({
+      entities: [
+        { id: "ada", name: "Ada", kind: "agent", room: "initial-room", properties: { rank: 1 } },
+      ],
+    }),
+  );
+  expect(screen.getByLabelText("Text")).toHaveValue("Keep this draft");
+  expect(screen.getByRole("button", { name: "Fill command" })).toBeDisabled();
+  await act(async () => resolveRefresh({ commands: structuredClone(catalog) }));
+  expect(screen.getByLabelText("Text")).toHaveValue("Keep this draft");
+  expect(screen.getByRole("spinbutton", { name: /^Confidence/ })).toHaveValue(0.8);
+  expect(screen.getByRole("button", { name: "Fill command" })).toBeEnabled();
+});
+
+it("clears parameter values when a refresh changes the field contract under the same syntax", async () => {
+  render(<Input />);
+  const input = screen.getByLabelText("Command");
+  fireEvent.input(input, { target: { value: "note claim " } });
+  fireEvent.change(await screen.findByLabelText("Text"), { target: { value: "Old meaning" } });
+  const changed = structuredClone(catalog);
+  changed[1]!.forms[1]!.fields[0]!.label = "New meaning";
+  request.mockResolvedValue({ commands: changed });
+  fireEvent.focus(input);
+  expect(await screen.findByLabelText("New meaning")).toHaveValue("");
+});

@@ -13,14 +13,31 @@ export class CommandCoordinator {
   private queue: QueuedCommand[] = [];
   private chains = new Map<EntityId, Promise<void>>();
   private active = new Set<Promise<unknown>>();
+  private admitted = 0;
+  private rejected = 0;
 
   constructor(
     private readonly execute: (entity: EntityId, raw: string) => Promise<void>,
     private readonly onError: (error: unknown) => void,
   ) {}
 
-  enqueue(entity: EntityId, raw: string): void {
-    if (this.queue.length < MAX_COMMAND_QUEUE_SIZE) this.queue.push({ entity, raw });
+  enqueue(entity: EntityId, raw: string): boolean {
+    // Moving work into a per-entity promise chain must not bypass the bound.
+    if (this.admitted >= MAX_COMMAND_QUEUE_SIZE) {
+      this.rejected++;
+      return false;
+    }
+    this.admitted++;
+    this.queue.push({ entity, raw });
+    return true;
+  }
+  snapshot() {
+    return {
+      pending: this.admitted,
+      queued: this.queue.length,
+      rejected: this.rejected,
+      limit: MAX_COMMAND_QUEUE_SIZE,
+    };
   }
   get queuedCount(): number {
     return this.queue.length;
@@ -39,7 +56,11 @@ export class CommandCoordinator {
     const previous = this.chains.get(entity);
     const run = (
       previous ? previous.then(() => this.execute(entity, raw)) : this.execute(entity, raw)
-    ).catch(this.onError);
+    )
+      .catch(this.onError)
+      .finally(() => {
+        this.admitted--;
+      });
     this.chains.set(entity, run);
     void run.then(() => {
       if (this.chains.get(entity) === run) this.chains.delete(entity);

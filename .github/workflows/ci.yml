@@ -35,8 +35,17 @@ jobs:
         run: bun run typecheck
       - name: Check workspace versions
         run: bun run check:versions
-      - name: Check generated command reference
+      - name: Check generated API references
         run: bun run docs:api --check
+      - name: Qualify concurrent MCP participation and admission recovery
+        run: bun run qualify:participation:load --directory "$RUNNER_TEMP/participation-load" --participants 4 --records 8 --operations 4
+      - name: Preserve participation qualification report
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: participation-load-report
+          path: ${{ runner.temp }}/participation-load/report.json
+          if-no-files-found: ignore
 
   backend:
     name: Test (backend, shard ${{ matrix.shard }} of 3)

@@ -21,6 +21,7 @@ export function describeCommand(def: CommandDef): CommandCatalogEntry {
     gate: def.gate,
     structured: !!def.usage?.length,
     forms: compileCommandForms(def.usage ?? []),
+    namedTools: def.namedTools,
     scope: "world",
   };
   descriptions.set(def, result);

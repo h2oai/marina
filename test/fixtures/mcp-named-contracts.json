@@ -1,0 +1,443 @@
+{
+  "think": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": ["note", "recall", "reflect", "context"],
+        "description": "Cognitive action to perform"
+      },
+      "text": {
+        "type": "string",
+        "description": "For note: what you observed. For recall/context: search query. For reflect: optional topic."
+      },
+      "scope": {
+        "description": "For context: 'all' (default) or 'evidence' (durable tiers only)",
+        "type": "string",
+        "enum": ["all", "evidence"]
+      },
+      "budget": {
+        "description": "For context: total content byte budget (default 4096)",
+        "type": "integer",
+        "minimum": 256,
+        "maximum": 65536
+      },
+      "importance": {
+        "description": "Note importance 1-10 (default 5)",
+        "type": "number",
+        "minimum": 1,
+        "maximum": 10
+      },
+      "type": {
+        "description": "Note type (default: observation)",
+        "type": "string",
+        "enum": ["observation", "fact", "decision", "inference", "skill", "episode", "principle"]
+      },
+      "modifier": {
+        "description": "Recall modifier \u2014 weight recent or important notes",
+        "type": "string",
+        "enum": ["recent", "important"]
+      }
+    },
+    "required": ["action", "text"],
+    "additionalProperties": false
+  },
+  "memory": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": ["set", "get", "list", "delete", "history"],
+        "description": "Memory operation"
+      },
+      "key": {
+        "description": "Memory key (e.g. 'goal', 'ally', 'plan')",
+        "type": "string"
+      },
+      "value": {
+        "description": "Value to store (required for 'set')",
+        "type": "string"
+      }
+    },
+    "required": ["action"],
+    "additionalProperties": false
+  },
+  "next": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "brief": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "mode": {
+        "description": "Briefing depth (default: compass)",
+        "type": "string",
+        "enum": ["compass", "full"]
+      }
+    },
+    "additionalProperties": false
+  },
+  "quest": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "action": {
+        "description": "Quest action (default: status)",
+        "type": "string",
+        "enum": ["status", "list", "start", "complete", "abandon"]
+      },
+      "name": {
+        "description": "Quest name (for 'start' action)",
+        "type": "string"
+      }
+    },
+    "additionalProperties": false
+  },
+  "look": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "target": {
+        "description": "Optional target to look at",
+        "type": "string"
+      }
+    },
+    "additionalProperties": false
+  },
+  "move": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "direction": {
+        "type": "string",
+        "description": "Direction to move"
+      }
+    },
+    "required": ["direction"],
+    "additionalProperties": false
+  },
+  "say": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "message": {
+        "type": "string",
+        "description": "Message to say"
+      }
+    },
+    "required": ["message"],
+    "additionalProperties": false
+  },
+  "tell": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "target": {
+        "type": "string",
+        "description": "Name of the entity to message"
+      },
+      "message": {
+        "type": "string",
+        "description": "Private message to send"
+      }
+    },
+    "required": ["target", "message"],
+    "additionalProperties": false
+  },
+  "who": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "examine": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "target": {
+        "type": "string",
+        "description": "Name of the entity or item to examine"
+      }
+    },
+    "required": ["target"],
+    "additionalProperties": false
+  },
+  "channel": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "input": {
+        "type": "string",
+        "description": "Channel subcommand and arguments, e.g. 'send general Hello!'"
+      }
+    },
+    "required": ["input"],
+    "additionalProperties": false
+  },
+  "board": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "input": {
+        "type": "string",
+        "description": "Board subcommand and arguments, e.g. 'post general My Title | Body text'"
+      }
+    },
+    "required": ["input"],
+    "additionalProperties": false
+  },
+  "group": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "input": {
+        "type": "string",
+        "description": "Group subcommand and arguments, e.g. 'create mygroup My Group Name'"
+      }
+    },
+    "required": ["input"],
+    "additionalProperties": false
+  },
+  "task": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "input": {
+        "type": "string",
+        "description": "Task subcommand and arguments, e.g. 'create Fix the bug | Detailed description'"
+      }
+    },
+    "required": ["input"],
+    "additionalProperties": false
+  },
+  "crew": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "input": {
+        "type": "string",
+        "description": "Crew subcommand and arguments, e.g. 'create alpha alice,bob formation=pipeline -- ship phase'"
+      }
+    },
+    "required": ["input"],
+    "additionalProperties": false
+  },
+  "evolve": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "input": {
+        "type": "string",
+        "description": "Evolution subcommand and arguments, e.g. 'propose PromptTrial | hypothesis | note:7'"
+      }
+    },
+    "required": ["input"],
+    "additionalProperties": false
+  },
+  "market": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "input": {
+        "type": "string",
+        "description": "Market subcommand and arguments, e.g. 'forecast market:tech' or 'list resolved'"
+      }
+    },
+    "required": ["input"],
+    "additionalProperties": false
+  },
+  "canvas": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "input": {
+        "type": "string",
+        "description": "Canvas subcommand and arguments, e.g. 'publish text <asset_id> feed' or 'asset upload https://example.com/image.png' or 'layout feed feed'"
+      }
+    },
+    "required": ["input"],
+    "additionalProperties": false
+  },
+  "build": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "input": {
+        "type": "string",
+        "description": "Build subcommand and arguments, e.g. 'space my/room A Custom Room'"
+      }
+    },
+    "required": ["input"],
+    "additionalProperties": false
+  },
+  "flywheel": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": ["create", "exec", "publish", "status", "hibernate", "resume", "stop"]
+      },
+      "image": {
+        "description": "Sandbox image override for create",
+        "type": "string"
+      },
+      "command": {
+        "description": "Command for exec (runs `code run <command>`)",
+        "type": "string"
+      },
+      "args": {
+        "description": "Arguments for exec",
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "service": {
+        "description": "Declared `code service` name to publish (for action=publish)",
+        "type": "string"
+      }
+    },
+    "required": ["action"],
+    "additionalProperties": false
+  },
+  "command": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "input": {
+        "type": "string",
+        "description": "Raw command string to send"
+      }
+    },
+    "required": ["input"],
+    "additionalProperties": false
+  },
+  "batch": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "input": {
+        "type": "string",
+        "description": "Commands separated by semicolons, e.g. 'look ; north ; look'"
+      }
+    },
+    "required": ["input"],
+    "additionalProperties": false
+  },
+  "probe": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "kind": {
+        "type": "string",
+        "description": "Resolver kind (e.g. 'resolving', 'echoing')"
+      },
+      "args": {
+        "description": "Resolver-specific args as key:value pairs (e.g. {venue:'kalshi', ticker:'KXFED-26MAR'})",
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {
+          "type": "string"
+        }
+      },
+      "watch": {
+        "description": "Watch spec note id to link this sample to (for cadenced probes)",
+        "type": "number"
+      }
+    },
+    "required": ["kind"],
+    "additionalProperties": false
+  },
+  "watch_create": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "kind": {
+        "type": "string",
+        "description": "Resolver kind to invoke on cadence"
+      },
+      "args": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {
+          "type": "string"
+        },
+        "description": "Resolver args (passed to probe each cycle)"
+      },
+      "cadence": {
+        "description": "How often to probe: 30s, 5m, 1h, 7d, or 'once' for one-shot. Default: once.",
+        "type": "string"
+      },
+      "retirement": {
+        "description": "When to retire: 'resolved' (default), 'forever', '5' (after N samples), '7d' (after duration)",
+        "type": "string"
+      },
+      "notify": {
+        "description": "Entity or channel to notify on closure (tell or post)",
+        "type": "string"
+      }
+    },
+    "required": ["kind", "args"],
+    "additionalProperties": false
+  },
+  "watch_list": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "watch_due": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "limit": {
+        "description": "Maximum entries to return (default 10, max 50)",
+        "type": "number"
+      }
+    },
+    "additionalProperties": false
+  },
+  "watch_retire": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "number",
+        "description": "Watch spec note id (from watch_list)"
+      },
+      "reason": {
+        "description": "Why retiring \u2014 recorded in audit trail",
+        "type": "string"
+      }
+    },
+    "required": ["id"],
+    "additionalProperties": false
+  },
+  "help": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "command": {
+        "description": "Specific command to get help for",
+        "type": "string"
+      }
+    },
+    "additionalProperties": false
+  },
+  "quit": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  }
+}

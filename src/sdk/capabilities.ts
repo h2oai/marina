@@ -4,6 +4,8 @@ import type { CommandForm } from "./command-forms";
 
 export interface CommandCatalogEntry {
   forms?: CommandForm[];
+  /** Stable named MCP payloads, separate from executable command-line forms. */
+  namedTools?: CommandForm[];
   description?: string;
   owner?: string;
   revision?: number;

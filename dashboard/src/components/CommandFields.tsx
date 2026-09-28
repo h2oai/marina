@@ -52,7 +52,7 @@ export function CommandFields({
         </select>
       </label>
       <ParameterFields
-        key={selected.syntax}
+        key={JSON.stringify([selected.syntax, selected.fields, selected.groups, selected.parts])}
         form={selected}
         onCompose={(command) => onCompose(command.slice(name.length).trim())}
       />

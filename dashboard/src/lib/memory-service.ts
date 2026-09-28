@@ -7,6 +7,7 @@ import type {
   MemoryOperationResult,
 } from "../../../src/sdk/memory-operations";
 import { getChatWs, useChatState } from "../hooks/use-chat-state";
+import { useWorldState } from "../hooks/use-world-state";
 
 function matchesResident(ws: WebSocket, name: string | null): boolean {
   const current = useChatState.getState();
@@ -24,6 +25,79 @@ const capabilityCache = new WeakMap<
   }
 >();
 let capabilitySequence = 0;
+
+interface CatalogRequest {
+  promise: Promise<unknown>;
+  controller: AbortController;
+  consumers: number;
+}
+const catalogRequests = new WeakMap<WebSocket, Map<string, CatalogRequest>>();
+
+/** Coalesce concurrent discovery only. Cancellation belongs to each subscriber;
+ * context previews and writes are never memoized or shared. */
+export function requestParticipant<T>(
+  kind: "capabilities" | "context_preview",
+  options: Record<string, unknown> = {},
+  signal?: AbortSignal,
+): Promise<T> {
+  if (kind !== "capabilities") return sendParticipantRequest(kind, options, signal);
+  const ws = getChatWs();
+  const identity = useChatState.getState();
+  if (!ws || ws.readyState !== WebSocket.OPEN || !identity.loggedIn)
+    return Promise.reject(new Error("Sign in to world chat first."));
+  if (signal?.aborted) return Promise.reject(new Error("Participant request cancelled."));
+  const self = useWorldState.getState().entities.find((e) => e.name === identity.entityName);
+  const key = JSON.stringify([
+    identity.entityName,
+    self?.room,
+    self?.properties?.rank,
+    self?.properties?.active_modal,
+  ]);
+  let requests = catalogRequests.get(ws);
+  if (!requests) {
+    requests = new Map();
+    catalogRequests.set(ws, requests);
+  }
+  let pending = requests.get(key);
+  if (!pending) {
+    const controller = new AbortController();
+    pending = {
+      controller,
+      consumers: 0,
+      promise: sendParticipantRequest(kind, options, controller.signal),
+    };
+    requests.set(key, pending);
+    const entry = pending;
+    const clear = () => {
+      if (requests.get(key) === entry) requests.delete(key);
+    };
+    void entry.promise.then(clear, clear);
+  }
+  const entry = pending;
+  entry.consumers++;
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const finish = (error?: unknown, value?: unknown) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", abort);
+      entry.consumers--;
+      if (entry.consumers === 0 && requests.get(key) === entry) {
+        requests.delete(key);
+        entry.controller.abort();
+      }
+      if (error) reject(error);
+      else resolve(structuredClone(value) as T);
+    };
+    const abort = () => finish(new Error("Participant request cancelled."));
+    signal?.addEventListener("abort", abort, { once: true });
+    void entry.promise.then(
+      (value) => finish(undefined, value),
+      (error) => finish(error),
+    );
+    if (signal?.aborted) abort();
+  });
+}
 
 /** Reuse the authenticated resident connection. Service credentials never reach the browser. */
 export function requestResidentMemory<T>(
@@ -95,7 +169,7 @@ export function requestResidentMemory<T>(
 }
 
 /** Read-only participant request using the resident session, independent of dashboard admin auth. */
-export function requestParticipant<T>(
+function sendParticipantRequest<T>(
   kind: "capabilities" | "context_preview",
   options: Record<string, unknown> = {},
   signal?: AbortSignal,

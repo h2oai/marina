@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
 import type { RateLimiter } from "../auth/rate-limiter";
 import type { Engine } from "../engine/engine";
+import { NAMED_COMMAND_FORMS } from "../sdk/named-command-forms";
 import { guarded, quoteArg, textArg } from "./mcp-arguments";
+import { mcpNamedCommandSchema } from "./mcp-command-schema";
 import { errorText, type McpResult, type McpSession, text } from "./mcp-types";
 
 /** Compatibility contracts only. New commands use generated capabilities/invoke forms. */
@@ -37,36 +38,7 @@ export function registerNamedWorldTools(
       "'context' for the unified, budgeted view across canonical memory tiers (skills, [trusted], " +
       "[evidence] durable records + sources, [proposal] assistance answers, [unverified] own notes) " +
       "returned as structuredContent.context (schema marina.memory.context.v1).",
-    {
-      action: z
-        .enum(["note", "recall", "reflect", "context"])
-        .describe("Cognitive action to perform"),
-      text: z
-        .string()
-        .describe(
-          "For note: what you observed. For recall/context: search query. For reflect: optional topic.",
-        ),
-      scope: z
-        .enum(["all", "evidence"])
-        .optional()
-        .describe("For context: 'all' (default) or 'evidence' (durable tiers only)"),
-      budget: z
-        .number()
-        .int()
-        .min(256)
-        .max(65536)
-        .optional()
-        .describe("For context: total content byte budget (default 4096)"),
-      importance: z.number().min(1).max(10).optional().describe("Note importance 1-10 (default 5)"),
-      type: z
-        .enum(["observation", "fact", "decision", "inference", "skill", "episode", "principle"])
-        .optional()
-        .describe("Note type (default: observation)"),
-      modifier: z
-        .enum(["recent", "important"])
-        .optional()
-        .describe("Recall modifier — weight recent or important notes"),
-    },
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.think),
     async (
       { action, text: content, importance, type: noteType, modifier, scope, budget },
       extra,
@@ -102,11 +74,7 @@ export function registerNamedWorldTools(
     "memory",
     "Manage your core memory — mutable key-value beliefs, goals, and working state. " +
       "Always set a goal first. Update as your understanding evolves.",
-    {
-      action: z.enum(["set", "get", "list", "delete", "history"]).describe("Memory operation"),
-      key: z.string().optional().describe("Memory key (e.g. 'goal', 'ally', 'plan')"),
-      value: z.string().optional().describe("Value to store (required for 'set')"),
-    },
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.memory),
     async ({ action, key, value }, extra) =>
       guarded(() => {
         switch (action) {
@@ -132,14 +100,17 @@ export function registerNamedWorldTools(
       }),
   );
 
-  mcp.tool("next", describeTool("next"), {}, async (_args, extra) => runCmd(extra, "next"));
+  mcp.tool(
+    "next",
+    describeTool("next"),
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.next),
+    async (_args, extra) => runCmd(extra, "next"),
+  );
 
   mcp.tool(
     "brief",
     describeTool("brief"),
-    {
-      mode: z.enum(["compass", "full"]).optional().describe("Briefing depth (default: compass)"),
-    },
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.brief),
     async ({ mode }, extra) => {
       const cmd = mode === "full" ? "brief full" : "brief";
       return runCmd(extra, cmd);
@@ -149,13 +120,7 @@ export function registerNamedWorldTools(
   mcp.tool(
     "quest",
     describeTool("quest"),
-    {
-      action: z
-        .enum(["status", "list", "start", "complete", "abandon"])
-        .optional()
-        .describe("Quest action (default: status)"),
-      name: z.string().optional().describe("Quest name (for 'start' action)"),
-    },
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.quest),
     async ({ action, name }, extra) => {
       const sub = action ?? "status";
       const cmd = sub === "start" && name ? `quest start ${name}` : `quest ${sub}`;
@@ -168,7 +133,7 @@ export function registerNamedWorldTools(
   mcp.tool(
     "look",
     describeTool("look"),
-    { target: z.string().optional().describe("Optional target to look at") },
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.look),
     { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     async ({ target }, extra) => {
       const cmd = target ? `look ${target}` : "look";
@@ -179,14 +144,14 @@ export function registerNamedWorldTools(
   mcp.tool(
     "move",
     describeTool("move"),
-    { direction: z.string().describe("Direction to move") },
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.move),
     async ({ direction }, extra) => runCmd(extra, direction),
   );
 
   mcp.tool(
     "say",
     describeTool("say"),
-    { message: z.string().describe("Message to say") },
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.say),
     { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     async ({ message }, extra) => runCmd(extra, `say ${message}`),
   );
@@ -194,22 +159,24 @@ export function registerNamedWorldTools(
   mcp.tool(
     "tell",
     describeTool("tell"),
-    {
-      target: z.string().describe("Name of the entity to message"),
-      message: z.string().describe("Private message to send"),
-    },
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.tell),
     async ({ target, message }, extra) =>
       guarded(() =>
         runCmd(extra, `tell ${quoteArg(target, "target")} ${textArg(message, "message")}`),
       ),
   );
 
-  mcp.tool("who", describeTool("who"), {}, async (_args, extra) => runCmd(extra, "who"));
+  mcp.tool(
+    "who",
+    describeTool("who"),
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.who),
+    async (_args, extra) => runCmd(extra, "who"),
+  );
 
   mcp.tool(
     "examine",
     "Examine an entity or item in detail.",
-    { target: z.string().describe("Name of the entity or item to examine") },
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.examine),
     async ({ target }, extra) =>
       guarded(() => runCmd(extra, `examine ${quoteArg(target, "target")}`)),
   );
@@ -219,44 +186,28 @@ export function registerNamedWorldTools(
   mcp.tool(
     "channel",
     describeTool("channel"),
-    {
-      input: z.string().describe("Channel subcommand and arguments, e.g. 'send general Hello!'"),
-    },
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.channel),
     async ({ input }, extra) => runCmd(extra, `channel ${input}`),
   );
 
   mcp.tool(
     "board",
     describeTool("board"),
-    {
-      input: z
-        .string()
-        .describe("Board subcommand and arguments, e.g. 'post general My Title | Body text'"),
-    },
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.board),
     async ({ input }, extra) => runCmd(extra, `board ${input}`),
   );
 
   mcp.tool(
     "group",
     describeTool("group"),
-    {
-      input: z
-        .string()
-        .describe("Group subcommand and arguments, e.g. 'create mygroup My Group Name'"),
-    },
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.group),
     async ({ input }, extra) => runCmd(extra, `group ${input}`),
   );
 
   mcp.tool(
     "task",
     describeTool("task"),
-    {
-      input: z
-        .string()
-        .describe(
-          "Task subcommand and arguments, e.g. 'create Fix the bug | Detailed description'",
-        ),
-    },
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.task),
     { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     async ({ input }, extra) => runCmd(extra, `task ${input}`),
   );
@@ -264,26 +215,14 @@ export function registerNamedWorldTools(
   mcp.tool(
     "crew",
     describeTool("crew"),
-    {
-      input: z
-        .string()
-        .describe(
-          "Crew subcommand and arguments, e.g. 'create alpha alice,bob formation=pipeline -- ship phase'",
-        ),
-    },
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.crew),
     async ({ input }, extra) => runCmd(extra, `crew ${input}`),
   );
 
   mcp.tool(
     "evolve",
     describeTool("evolve"),
-    {
-      input: z
-        .string()
-        .describe(
-          "Evolution subcommand and arguments, e.g. 'propose PromptTrial | hypothesis | note:7'",
-        ),
-    },
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.evolve),
     { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     async ({ input }, extra) => runCmd(extra, `evolve ${input}`),
   );
@@ -291,13 +230,7 @@ export function registerNamedWorldTools(
   mcp.tool(
     "market",
     describeTool("market"),
-    {
-      input: z
-        .string()
-        .describe(
-          "Market subcommand and arguments, e.g. 'forecast market:tech' or 'list resolved'",
-        ),
-    },
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.market),
     async ({ input }, extra) => runCmd(extra, `market ${input}`),
   );
 
@@ -306,14 +239,7 @@ export function registerNamedWorldTools(
   mcp.tool(
     "canvas",
     describeTool("canvas"),
-    {
-      input: z
-        .string()
-        .describe(
-          "Canvas subcommand and arguments, e.g. 'publish text <asset_id> feed' " +
-            "or 'asset upload https://example.com/image.png' or 'layout feed feed'",
-        ),
-    },
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.canvas),
     { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     async ({ input }, extra) => runCmd(extra, `canvas ${input}`),
   );
@@ -323,11 +249,7 @@ export function registerNamedWorldTools(
   mcp.tool(
     "build",
     describeTool("build"),
-    {
-      input: z
-        .string()
-        .describe("Build subcommand and arguments, e.g. 'space my/room A Custom Room'"),
-    },
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.build),
     { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     async ({ input }, extra) => runCmd(extra, `build ${input}`),
   );
@@ -340,16 +262,7 @@ export function registerNamedWorldTools(
       "command (`code sandbox …`, `code run …`, `code service publish …`), so the same " +
       "rank, transport and `code.exec` competence gates apply as for any other client. " +
       "Actions: create, exec, publish, status, hibernate, resume, stop.",
-    {
-      action: z.enum(["create", "exec", "publish", "status", "hibernate", "resume", "stop"]),
-      image: z.string().optional().describe("Sandbox image override for create"),
-      command: z.string().optional().describe("Command for exec (runs `code run <command>`)"),
-      args: z.array(z.string()).optional().describe("Arguments for exec"),
-      service: z
-        .string()
-        .optional()
-        .describe("Declared `code service` name to publish (for action=publish)"),
-    },
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.flywheel),
     { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     async ({ action, image, command, args, service }, extra) =>
       guarded(() => {
@@ -388,7 +301,7 @@ export function registerNamedWorldTools(
     "Send any raw command to the engine. Use for commands without a dedicated tool " +
       "(e.g. pool, project, orient, score, map, inventory, macro, connect, experiment). " +
       "Type 'help' to see all available commands.",
-    { input: z.string().describe("Raw command string to send") },
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.command),
     { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     async ({ input }, extra) => runInput(extra, input),
   );
@@ -396,9 +309,7 @@ export function registerNamedWorldTools(
   mcp.tool(
     "batch",
     describeTool("batch"),
-    {
-      input: z.string().describe("Commands separated by semicolons, e.g. 'look ; north ; look'"),
-    },
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.batch),
     { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     async ({ input }, extra) => runInput(extra, `batch ${input}`),
   );
@@ -412,19 +323,7 @@ export function registerNamedWorldTools(
       "current value of X?' into a uniform Sample. resolved/changed Samples auto-fire " +
       "the calibration loop. Use kind='resolving' for Kalshi/Polymarket markets; pass " +
       "watch:<note-id> to link the sample to a watch spec.",
-    {
-      kind: z.string().describe("Resolver kind (e.g. 'resolving', 'echoing')"),
-      args: z
-        .record(z.string(), z.string())
-        .optional()
-        .describe(
-          "Resolver-specific args as key:value pairs (e.g. {venue:'kalshi', ticker:'KXFED-26MAR'})",
-        ),
-      watch: z
-        .number()
-        .optional()
-        .describe("Watch spec note id to link this sample to (for cadenced probes)"),
-    },
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.probe),
     async ({ kind, args, watch }, extra) =>
       guarded(() => {
         const argTokens = args
@@ -442,24 +341,7 @@ export function registerNamedWorldTools(
     "Create a declarative watch spec. The watching role probes it on cadence; the " +
       "framework auto-retires on closure. Use this for any 'tell me when X' need: " +
       "market resolution intake, time-series sampling, citation tracing, web monitoring.",
-    {
-      kind: z.string().describe("Resolver kind to invoke on cadence"),
-      args: z.record(z.string(), z.string()).describe("Resolver args (passed to probe each cycle)"),
-      cadence: z
-        .string()
-        .optional()
-        .describe("How often to probe: 30s, 5m, 1h, 7d, or 'once' for one-shot. Default: once."),
-      retirement: z
-        .string()
-        .optional()
-        .describe(
-          "When to retire: 'resolved' (default), 'forever', '5' (after N samples), '7d' (after duration)",
-        ),
-      notify: z
-        .string()
-        .optional()
-        .describe("Entity or channel to notify on closure (tell or post)"),
-    },
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.watch_create),
     async ({ kind, args, cadence, retirement, notify }, extra) =>
       guarded(() => {
         const argTokens = Object.entries(args)
@@ -479,16 +361,14 @@ export function registerNamedWorldTools(
   mcp.tool(
     "watch_list",
     "List all active watch specs (cadence + last sample + due status).",
-    {},
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.watch_list),
     async (_args, extra) => runCmd(extra, "watch list"),
   );
 
   mcp.tool(
     "watch_due",
     "List watches whose cadence has elapsed. Each line is a ready-to-paste probe command.",
-    {
-      limit: z.number().optional().describe("Maximum entries to return (default 10, max 50)"),
-    },
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.watch_due),
     async ({ limit }, extra) => {
       const cmd = limit !== undefined ? `watch due limit:${limit}` : "watch due";
       return runCmd(extra, cmd);
@@ -499,10 +379,7 @@ export function registerNamedWorldTools(
     "watch_retire",
     "Retire a watch spec — future probes skip it. Use when a watch is duplicate, " +
       "stale, or persistently failing.",
-    {
-      id: z.number().describe("Watch spec note id (from watch_list)"),
-      reason: z.string().optional().describe("Why retiring — recorded in audit trail"),
-    },
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.watch_retire),
     async ({ id, reason }, extra) =>
       guarded(() => {
         const cmd = reason
@@ -517,24 +394,29 @@ export function registerNamedWorldTools(
   mcp.tool(
     "help",
     describeTool("help"),
-    { command: z.string().optional().describe("Specific command to get help for") },
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.help),
     async ({ command }, extra) => {
       const cmd = command ? `help ${command}` : "help";
       return runCmd(extra, cmd);
     },
   );
 
-  mcp.tool("quit", describeTool("quit"), {}, async (_args, extra) => {
-    const session = getSession(extra);
-    if (!session) return text("Error: no active MCP session.");
-    if (!session.entityId) return text("Not logged in.");
-    if (rateLimiter && !rateLimiter.consume(`mcp:${session.entityId}`)) {
-      return errorText("Rate limited. Please slow down.");
-    }
-    const entityId = session.entityId;
-    session.entityId = null;
-    session.context = undefined;
-    engine.removeConnection(session.connId);
-    return text(`Disconnected entity ${entityId}. Session ended.`);
-  });
+  mcp.tool(
+    "quit",
+    describeTool("quit"),
+    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.quit),
+    async (_args, extra) => {
+      const session = getSession(extra);
+      if (!session) return text("Error: no active MCP session.");
+      if (!session.entityId) return text("Not logged in.");
+      if (rateLimiter && !rateLimiter.consume(`mcp:${session.entityId}`)) {
+        return errorText("Rate limited. Please slow down.");
+      }
+      const entityId = session.entityId;
+      session.entityId = null;
+      session.context = undefined;
+      engine.removeConnection(session.connId);
+      return text(`Disconnected entity ${entityId}. Session ended.`);
+    },
+  );
 }

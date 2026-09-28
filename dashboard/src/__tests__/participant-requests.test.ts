@@ -98,3 +98,44 @@ it("updates cached metadata when the server changes its room or permission key",
   socket.reply("capabilities", { key: "room-b", unchanged: true });
   expect((await confirmed).commands).toEqual([{ name: "new-room-action" }]);
 });
+
+it("coalesces catalog discovery while keeping each subscriber's cancellation independent", async () => {
+  const cancelled = new AbortController();
+  const first = requestParticipant("capabilities", {}, cancelled.signal);
+  const rejection = expect(first).rejects.toThrow(/cancelled/);
+  const second = requestParticipant<{ commands: unknown[] }>("capabilities");
+  expect(socket.send).toHaveBeenCalledTimes(1);
+  cancelled.abort();
+  await rejection;
+  socket.reply("capabilities", { key: "same", commands: [{ name: "look" }] });
+  expect((await second).commands).toEqual([{ name: "look" }]);
+});
+
+it("releases a catalog request when every subscriber cancels", async () => {
+  const controller = new AbortController();
+  const first = requestParticipant("capabilities", {}, controller.signal);
+  const rejection = expect(first).rejects.toThrow(/cancelled/);
+  controller.abort();
+  await rejection;
+  const next = requestParticipant("capabilities");
+  expect(socket.send).toHaveBeenCalledTimes(2);
+  socket.reply("capabilities", { key: "new", commands: [] });
+  await next;
+});
+
+it("does not coalesce memory context requests", async () => {
+  const first = requestParticipant("context_preview");
+  const firstId = socket.request().request_id;
+  const second = requestParticipant("context_preview");
+  expect(socket.send).toHaveBeenCalledTimes(2);
+  socket.reply("context_preview", { text: "second" });
+  socket.dispatchEvent(
+    new MessageEvent("message", {
+      data: JSON.stringify({
+        data: { context_preview: { request_id: firstId, text: "first" } },
+      }),
+    }),
+  );
+  expect(await first).toMatchObject({ text: "first" });
+  expect(await second).toMatchObject({ text: "second" });
+});

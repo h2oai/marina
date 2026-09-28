@@ -11,6 +11,7 @@ import { buildUnifiedContext, renderUnifiedContext } from "../memory/unified-con
 import type { MemoryOperationResult } from "../sdk/memory-operations";
 import type { EntityId } from "../types";
 import { formatPerception } from "./formatter";
+import { mcpAdmission } from "./mcp-admission";
 import { memoryMcpResult } from "./mcp-memory-tools";
 import { errorText, type McpResult, type McpSession, text } from "./mcp-types";
 import { receiptForUnifiedContext } from "./memory-receipt";
@@ -55,10 +56,23 @@ export async function cmdTool(
     return { ...text("Rate limited. Please slow down."), isError: true };
   }
   const session = resolved.session;
+  const admission = mcpAdmission(engine).enter(session);
+  const busy = (message: string): McpResult => ({
+    ...errorText(message),
+    structuredContent: {
+      error: { code: "mcp_overloaded", retryable: true, retryAfterMs: 1000, executed: false },
+    },
+  });
+  if (!admission)
+    return busy(
+      "World command capacity reached. Retry after one second; this command did not execute.",
+    );
   const pending = session.commandTail.then(async () => {
     // Cancellation before admission must not execute a queued mutation. Once a
     // handler starts, its completion still owns the FIFO slot (no Promise.race).
     if (extra.signal?.aborted) return errorText("Request cancelled before execution.");
+    if (!admission.canStart())
+      return busy("Queue wait expired. Retry this command; it did not execute.");
     // Revoked/evicted sessions cannot use either command output or context.
     if (
       engine.getConnectionEntity(session.connId) !== resolved.entityId ||
@@ -170,7 +184,7 @@ export async function cmdTool(
               ? engine.db.getCoreMemory(entity.name, "goal")?.value?.trim().slice(0, 4000)
               : options.query;
           if (!query) return result;
-          // Deliberately rebuild: time-based caches alone cannot honor revocation, edits and erasure.
+          // Shared retrieval checks data/authority revisions and temporal expiry on every reuse.
           const context = await buildUnifiedContext(engine.db, entity.name, query, {
             ...options,
             creditReflections: false,
@@ -194,6 +208,7 @@ export async function cmdTool(
     }
     return result;
   });
-  session.commandTail = pending.catch(() => undefined);
-  return pending;
+  const completion = pending.finally(admission.release);
+  session.commandTail = completion.catch(() => undefined);
+  return completion;
 }

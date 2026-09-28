@@ -10,6 +10,7 @@ import { WS_IDLE_TIMEOUT_SECONDS } from "../engine/constants";
 import type { Engine } from "../engine/engine";
 import { Logger } from "../engine/logger";
 import type { FlywheelToolBackend } from "../integrations/flywheel-manager";
+import { contextCacheStats } from "../memory/context-cache";
 import type { Connection, Perception } from "../types";
 import {
   buildConnectManifest,
@@ -19,6 +20,7 @@ import {
 } from "./connect-api";
 import { isTrustedBrowserOrigin } from "./cors";
 import { consumeHttpRate, rateLimitedResponse, securityHeaders } from "./http-utils";
+import { mcpAdmission } from "./mcp-admission";
 import type { McpSession } from "./mcp-types";
 import { createWorldMcpServer } from "./mcp-world-tools";
 import { RequestDrain } from "./request-drain";
@@ -200,6 +202,9 @@ export class McpServerAdapter {
             return Response.json({
               status: "ok",
               protocol: "mcp",
+              admission: mcpAdmission(engine).snapshot(),
+              commands: engine.commandAdmission,
+              contextCache: engine.db ? contextCacheStats(engine.db) : undefined,
               sessions: sessions.size,
               rooms: engine.rooms.size,
               entities: engine.entities.size,

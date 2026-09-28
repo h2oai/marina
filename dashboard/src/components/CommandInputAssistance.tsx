@@ -27,19 +27,23 @@ export function CommandInputAssistance({
   codeMode: boolean;
 }) {
   const [catalog, setCatalog] = useState<CommandCatalogEntry[]>([]);
+  const [catalogBinding, setCatalogBinding] = useState({ identity: "", context: "" });
   const [value, setValue] = useState("");
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const [error, setError] = useState("");
   const identity = useChatState((s) => s.entityName);
   const discoveryContext = useWorldState((state) => discoveryContextKey(state, identity));
+  const catalogReady =
+    catalogBinding.identity === identity && catalogBinding.context === discoveryContext;
   const history = useChatState((s) => s.commandHistory);
   const query = value.replace(/^\//, "").trimStart();
-  const current = codeMode
-    ? undefined
-    : catalog.find(
-        (c) => c.name === query.split(/\s/)[0] || c.aliases.includes(query.split(/\s/)[0]!),
-      );
+  const current =
+    codeMode || catalogBinding.identity !== identity
+      ? undefined
+      : catalog.find(
+          (c) => c.name === query.split(/\s/)[0] || c.aliases.includes(query.split(/\s/)[0]!),
+        );
   const canonical = current ? current.name + query.slice(query.split(/\s/)[0]!.length) : query;
   const matchingForm = current ? matchCommandForm(current.forms ?? [], canonical) : undefined;
   const actionOptions =
@@ -53,7 +57,7 @@ export function CommandInputAssistance({
       ) ?? [];
   const starters = [...ORIENTATION_COMMANDS, "memory", "context", "help"];
   const options =
-    codeMode || dismissed || !value || value.includes("\n")
+    !catalogReady || codeMode || dismissed || !value || value.includes("\n")
       ? []
       : value === "?"
         ? [...new Set(history)]
@@ -74,10 +78,13 @@ export function CommandInputAssistance({
     setSelectedName(null);
   };
   useEffect(() => {
-    setCatalog([]);
     setError("");
-    if (!identity) return;
+    if (!identity) {
+      setCatalog([]);
+      return;
+    }
     let active: AbortController | undefined;
+    let focusRefresh: ReturnType<typeof setTimeout> | undefined;
     const refresh = () => {
       active?.abort();
       const controller = new AbortController();
@@ -90,6 +97,7 @@ export function CommandInputAssistance({
           )
             return;
           setCatalog(result.commands);
+          setCatalogBinding({ identity, context: discoveryContext });
           setError("");
         })
         .catch((e) => {
@@ -98,6 +106,10 @@ export function CommandInputAssistance({
         });
     };
     refresh();
+    const refreshOnFocus = () => {
+      clearTimeout(focusRefresh);
+      focusRefresh = setTimeout(refresh, 150);
+    };
     const element = input.current;
     const changed = () => {
       setValue(element?.value ?? "");
@@ -114,13 +126,14 @@ export function CommandInputAssistance({
     window.addEventListener("marina:draft-command", drafted);
     element?.addEventListener("keyup", keyup);
     element?.addEventListener("input", changed);
-    element?.addEventListener("focus", refresh);
+    element?.addEventListener("focus", refreshOnFocus);
     return () => {
       active?.abort();
+      clearTimeout(focusRefresh);
       window.removeEventListener("marina:draft-command", drafted);
       element?.removeEventListener("keyup", keyup);
       element?.removeEventListener("input", changed);
-      element?.removeEventListener("focus", refresh);
+      element?.removeEventListener("focus", refreshOnFocus);
     };
   }, [identity, input, discoveryContext]);
   useEffect(() => {
@@ -199,13 +212,17 @@ export function CommandInputAssistance({
           <summary className="cursor-pointer text-text-dim">
             {matchingForm?.syntax ?? `help ${current.name}`} · Parameter helper
           </summary>
-          <CommandFields
-            name={current.name}
-            help={current.help}
-            forms={current.forms}
-            initialSyntax={matchingForm?.syntax}
-            onCompose={(args) => insert(`${current.name} ${args}`)}
-          />
+          {/* Keep the draft mounted during a room/rank refresh, but don't compose
+              against the previous context until the server confirms the contract. */}
+          <fieldset disabled={!catalogReady}>
+            <CommandFields
+              name={current.name}
+              help={current.help}
+              forms={current.forms}
+              initialSyntax={matchingForm?.syntax}
+              onCompose={(args) => insert(`${current.name} ${args}`)}
+            />
+          </fieldset>
         </details>
       )}
     </div>

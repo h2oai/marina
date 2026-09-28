@@ -41,6 +41,52 @@ the action from execution, while a started mutation retains its FIFO slot until 
 finishes. A disconnected client must check the operation receipt/state before retrying
 a write. A timeout is not proof that a write did not commit.
 
+## Bounded admission and context reuse
+
+World input admission counts waiting commands **and** commands moved into per-entity
+promise chains against the 5,000-command limit. A rejected command emits
+`command_overloaded`, `retryable: true`, `executed: false`; it is never silently dropped.
+MCP additionally admits at most 256 active/queued calls per engine and 16 per session.
+A queued call older than 30 seconds is rejected before starting. `mcp_overloaded`
+includes `retryAfterMs: 1000` and `executed: false`. Retry with jitter; do not retry an
+already-started mutation solely because the client disconnected. These resource bounds
+apply to local deployments too, independently of token rate-limit bypass.
+
+The MCP listener's `GET /health` exposes aggregate `admission` (pending, high-water,
+rejected, expired, limits), world `commands` and `contextCache` counters. No identities,
+queries or memory contents are exposed. Growing rejection counts mean clients should
+reduce concurrency; high pending counts that never drain indicate a stuck handler.
+Admission does not interrupt a running SQLite statement or a started write.
+
+Unified context uses at most 128 entries per database and a maximum five-second age.
+Every reuse checks connection-local revisions for canonical memory, identity and
+ranking changes plus SQLite `data_version` for external commits. Entries also expire
+at the next credential, evidence or delegation time boundary. Transactions and
+retrieval failures are not cached; concurrent withdrawals trigger a fresh retrieval.
+If the evidence keeps changing through three attempts, optional context fails explicitly
+and the preceding tool result remains intact. Provenance and recall-credit policy are
+unchanged. High mutation rates can legitimately produce few cache hits.
+
+Dashboard command discovery coalesces concurrent requests on the same resident,
+connection, room, rank and mode; focus refreshes debounce for 150 ms. The server still
+validates the catalog revision. Memory previews and writes are never coalesced in the
+browser, and changing identity invalidates pending responses.
+
+To measure a deployment-shaped local workload without model calls:
+
+```sh
+bun run qualify:participation:load --directory /tmp/marina-participation-load --participants 16 --records 64 --operations 30
+bun run qualify:memory:load --directory /tmp/marina-memory-load --tenants 16 --operations 40
+```
+
+Use a new temporary directory for each run. The first exercises real MCP HTTP clients,
+FULL SQLite durability, automatic private context, bounded overflow and recovery.
+It intentionally bypasses token rate throttles to measure admission capacity. The
+second exercises memory HTTP writes, throttling, cancellation and same-key retry.
+Both emit latency percentiles and fail on correctness violations. These are reproducible
+local qualifications, not universal throughput or power-loss guarantees. Measure on
+representative storage and corpus sizes before choosing production concurrency.
+
 ## SQLite pressure and WAL
 
 Marina uses one writer connection and one read-only connection per `MarinaDB`.

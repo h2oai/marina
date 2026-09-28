@@ -14,6 +14,9 @@ export interface CommandField {
   allowNewlines: boolean;
   min?: number;
   max?: number;
+  integer?: boolean;
+  /** Typed named-tool payloads; ordinary command forms keep text/JSON text. */
+  wireType?: "string-array" | "string-record";
   default?: string;
 }
 interface Part {
@@ -23,6 +26,7 @@ interface Part {
   children?: Part[];
 }
 export interface CommandForm {
+  encoding?: "command" | "named";
   /** Input for MCP invoke and any client that consumes JSON Schema. */
   inputSchema?: Record<string, unknown>;
   effect?: "read" | "write" | "delete" | "execute" | "unknown";
@@ -313,6 +317,11 @@ export function composeCommand(
   values: Record<string, string>,
   enabled: Record<string, boolean>,
 ): { command: string; errors: Record<string, string> } {
+  if (form.encoding === "named")
+    return {
+      command: "",
+      errors: { form: "Use this form's named tool, or choose a command form" },
+    };
   const errors: Record<string, string> = {};
   const emit = (parts: Part[]): Array<{ text: string; join: boolean }> =>
     parts.flatMap((part): Array<{ text: string; join: boolean }> => {
@@ -331,6 +340,8 @@ export function composeCommand(
         errors[f.id] = "Use one value without spaces";
       else if (f.kind === "number" && !Number.isFinite(Number(value)))
         errors[f.id] = "Enter a number";
+      else if (f.kind === "number" && f.integer && !Number.isSafeInteger(Number(value)))
+        errors[f.id] = "Enter an integer";
       else if (
         f.kind === "number" &&
         ((f.min !== undefined && Number(value) < f.min) ||

@@ -226,9 +226,10 @@ export function createWorldMcpServer(
         ...(toolName ? { tool: toolName } : {}),
         commands: command
           ? commands
-          : commands.map(({ forms, ...entry }) => ({
+          : commands.map(({ forms, namedTools, ...entry }) => ({
               ...entry,
               actions: forms?.map((form: { syntax: string }) => form.syntax),
+              namedToolNames: namedTools?.map((form: { syntax: string }) => form.syntax),
             })),
       };
       return {

@@ -1,6 +1,45 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
-import type { CommandForm } from "./command-forms";
+import type { CommandField, CommandForm } from "./command-forms";
+
+/** One portable field contract for structured commands and stable named tools. */
+export function commandFieldSchema(field: CommandField): Record<string, unknown> {
+  return {
+    ...(field.placeholder ? { description: field.placeholder } : {}),
+    type:
+      field.wireType === "string-array"
+        ? "array"
+        : field.wireType === "string-record"
+          ? "object"
+          : field.kind === "number"
+            ? field.integer
+              ? "integer"
+              : "number"
+            : "string",
+    ...(field.wireType === "string-array" ? { items: { type: "string" } } : {}),
+    ...(field.wireType === "string-record" ? { additionalProperties: { type: "string" } } : {}),
+    ...(field.kind === "choice" ? { enum: field.choices } : {}),
+    ...(field.kind === "json" && !field.wireType ? { contentMediaType: "application/json" } : {}),
+    ...(field.min !== undefined ? { minimum: field.min } : {}),
+    ...(field.max !== undefined ? { maximum: field.max } : {}),
+    ...(field.default !== undefined
+      ? { default: field.kind === "number" ? Number(field.default) : field.default }
+      : {}),
+  };
+}
+
+export function namedInputSchema(form: CommandForm): Record<string, unknown> {
+  return {
+    type: "object",
+    properties: Object.fromEntries(
+      form.fields.map((field) => [field.id, commandFieldSchema(field)]),
+    ),
+    required: form.fields
+      .filter((field) => !field.optionalGroup && field.default === undefined)
+      .map((field) => field.id),
+    additionalProperties: false,
+  };
+}
 
 /** Portable invocation schema generated from the same fields the human builder uses. */
 export function commandInputSchema(form: CommandForm): Record<string, unknown> {
@@ -9,15 +48,7 @@ export function commandInputSchema(form: CommandForm): Record<string, unknown> {
       field.id,
       {
         title: field.label,
-        description: field.placeholder,
-        type: field.kind === "number" ? "number" : "string",
-        ...(field.kind === "choice" ? { enum: field.choices } : {}),
-        ...(field.kind === "json" ? { contentMediaType: "application/json" } : {}),
-        ...(field.min !== undefined ? { minimum: field.min } : {}),
-        ...(field.max !== undefined ? { maximum: field.max } : {}),
-        ...(field.default !== undefined
-          ? { default: field.kind === "number" ? Number(field.default) : field.default }
-          : {}),
+        ...commandFieldSchema(field),
       },
     ]),
   );

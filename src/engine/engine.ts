@@ -524,7 +524,20 @@ export class Engine {
 
   /** Queue a command from a connected entity. */
   queueCommand(entity: EntityId, raw: string): void {
-    this.commandCoordinator.enqueue(entity, raw);
+    if (!this.commandCoordinator.enqueue(entity, raw))
+      this._connections.sendToEntity(entity, {
+        kind: "error",
+        timestamp: Date.now(),
+        data: {
+          text: "World command capacity reached. Retry shortly; this command did not execute.",
+          code: "command_overloaded",
+          retryable: true,
+          executed: false,
+        },
+      });
+  }
+  get commandAdmission() {
+    return this.commandCoordinator.snapshot();
   }
   /** Settle queued and directly admitted commands before persistence closes. */
   async drainCommands(): Promise<void> {
