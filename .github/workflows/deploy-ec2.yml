@@ -99,6 +99,17 @@ jobs:
         run: |
           bunx playwright install --with-deps chromium
           bun -e 'import { chromium } from "@playwright/test"; console.log("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=" + chromium.executablePath())' >> "$GITHUB_ENV"
+      # Rollbacks may check out a revision predating the local setup action.
+      - uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        id: syft
+        if: steps.target.outputs.sha != ''
+        with:
+          syft-version: v1.52.0
+      - name: Select the pinned SBOM scanner
+        if: steps.target.outputs.sha != ''
+        env:
+          SYFT_COMMAND: ${{ steps.syft.outputs.cmd }}
+        run: echo "SYFT_BIN=$SYFT_COMMAND" >> "$GITHUB_ENV"
       - name: Qualify release from selected revision before deployment credentials
         if: steps.target.outputs.sha != ''
         run: bun run qualify:release
@@ -145,6 +156,7 @@ jobs:
       contents: read
       actions: read
       id-token: write
+      attestations: write
 
     steps:
       - uses: actions/checkout@v7.0.1
@@ -250,7 +262,33 @@ jobs:
           digest=$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE")
           [[ "$digest" == *@sha256:* ]] || { echo "::error::Missing image digest"; exit 1; }
           echo "ref=$digest" >> "$GITHUB_OUTPUT"
+          echo "name=${digest%@*}" >> "$GITHUB_OUTPUT"
+          echo "digest=${digest##*@}" >> "$GITHUB_OUTPUT"
           echo "Qualified deployment artifact: $digest" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Inventory the exact deployment image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ steps.image.outputs.ref }}
+          format: cyclonedx
+          output: deployed-image.cdx.json
+      # A workflow_run can select an older CI revision. Attest the scanned image,
+      # not build provenance falsely identifying this workflow's default-branch SHA.
+      - name: Attest the deployment image inventory
+        id: image-sbom
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          sbom-path: deployed-image.cdx.json
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: deployed-image-sbom-${{ needs.qualify.outputs.sha }}
+          path: |
+            deployed-image.cdx.json
+            ${{ steps.image-sbom.outputs.bundle-path }}
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Recheck main before changing production
         id: current

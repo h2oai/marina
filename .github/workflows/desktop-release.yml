@@ -16,10 +16,15 @@ on:
           - stable
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-macos:
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/desktop-v')
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     strategy:
       matrix:
         include:
@@ -52,13 +57,40 @@ jobs:
           ENV="${{ github.event.inputs.env || 'stable' }}"
           bash marina-desktop/scripts/build.sh "$ENV"
 
-      - name: Upload artifact
+      - uses: ./.github/actions/setup-syft
+      - name: Inventory build inputs
+        run: bun run sbom marina-desktop/build/source-macos-${{ matrix.arch }}.cdx.json
+      - uses: ./.github/actions/attest-release
+        id: attest
+        with:
+          subject-path: marina-desktop/build/*.dmg
+          sbom-path: marina-desktop/build/source-macos-${{ matrix.arch }}.cdx.json
+      - name: Preserve verification bundles
+        shell: bash
+        env:
+          PROVENANCE_BUNDLE: ${{ steps.attest.outputs.provenance-bundle }}
+          SBOM_BUNDLE: ${{ steps.attest.outputs.sbom-bundle }}
+          ARTIFACT_PLATFORM: macos-${{ matrix.arch }}
+        run: |
+          cp "$PROVENANCE_BUNDLE" "marina-desktop/build/provenance-$ARTIFACT_PLATFORM.sigstore.json"
+          cp "$SBOM_BUNDLE" "marina-desktop/build/sbom-$ARTIFACT_PLATFORM.sigstore.json"
+      - name: Upload attested artifact
         uses: actions/upload-artifact@v7.0.1
         with:
           name: marina-macos-${{ matrix.arch }}
-          path: marina-desktop/build/*.dmg
+          path: |
+            marina-desktop/build/*.dmg
+            marina-desktop/build/source-macos-${{ matrix.arch }}.cdx.json
+            marina-desktop/build/provenance-macos-${{ matrix.arch }}.sigstore.json
+            marina-desktop/build/sbom-macos-${{ matrix.arch }}.sigstore.json
+          if-no-files-found: error
 
   build-windows:
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/desktop-v')
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7.0.1
@@ -73,13 +105,40 @@ jobs:
       - name: Build desktop app
         run: bash marina-desktop/scripts/build.sh ${{ github.event.inputs.env || 'stable' }}
 
-      - name: Upload artifact
+      - uses: ./.github/actions/setup-syft
+      - name: Inventory build inputs
+        run: bun run sbom marina-desktop/build/source-windows-x64.cdx.json
+      - uses: ./.github/actions/attest-release
+        id: attest
+        with:
+          subject-path: marina-desktop/build/*.exe
+          sbom-path: marina-desktop/build/source-windows-x64.cdx.json
+      - name: Preserve verification bundles
+        shell: bash
+        env:
+          PROVENANCE_BUNDLE: ${{ steps.attest.outputs.provenance-bundle }}
+          SBOM_BUNDLE: ${{ steps.attest.outputs.sbom-bundle }}
+          ARTIFACT_PLATFORM: windows-x64
+        run: |
+          cp "$PROVENANCE_BUNDLE" "marina-desktop/build/provenance-$ARTIFACT_PLATFORM.sigstore.json"
+          cp "$SBOM_BUNDLE" "marina-desktop/build/sbom-$ARTIFACT_PLATFORM.sigstore.json"
+      - name: Upload attested artifact
         uses: actions/upload-artifact@v7.0.1
         with:
           name: marina-windows-x64
-          path: marina-desktop/build/*.exe
+          path: |
+            marina-desktop/build/*.exe
+            marina-desktop/build/source-windows-x64.cdx.json
+            marina-desktop/build/provenance-windows-x64.sigstore.json
+            marina-desktop/build/sbom-windows-x64.sigstore.json
+          if-no-files-found: error
 
   build-linux:
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/desktop-v')
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7.0.1
@@ -99,13 +158,37 @@ jobs:
       - name: Build desktop app
         run: bash marina-desktop/scripts/build.sh ${{ github.event.inputs.env || 'stable' }}
 
-      - name: Upload artifact
+      - uses: ./.github/actions/setup-syft
+      - name: Inventory build inputs
+        run: bun run sbom marina-desktop/build/source-linux-x64.cdx.json
+      - uses: ./.github/actions/attest-release
+        id: attest
+        with:
+          subject-path: marina-desktop/build/*.deb
+          sbom-path: marina-desktop/build/source-linux-x64.cdx.json
+      - name: Preserve verification bundles
+        shell: bash
+        env:
+          PROVENANCE_BUNDLE: ${{ steps.attest.outputs.provenance-bundle }}
+          SBOM_BUNDLE: ${{ steps.attest.outputs.sbom-bundle }}
+          ARTIFACT_PLATFORM: linux-x64
+        run: |
+          cp "$PROVENANCE_BUNDLE" "marina-desktop/build/provenance-$ARTIFACT_PLATFORM.sigstore.json"
+          cp "$SBOM_BUNDLE" "marina-desktop/build/sbom-$ARTIFACT_PLATFORM.sigstore.json"
+      - name: Upload attested artifact
         uses: actions/upload-artifact@v7.0.1
         with:
           name: marina-linux-x64
-          path: marina-desktop/build/*.deb
+          path: |
+            marina-desktop/build/*.deb
+            marina-desktop/build/source-linux-x64.cdx.json
+            marina-desktop/build/provenance-linux-x64.sigstore.json
+            marina-desktop/build/sbom-linux-x64.sigstore.json
+          if-no-files-found: error
 
   release:
+    permissions:
+      contents: write
     needs: [build-macos, build-windows, build-linux]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')

@@ -68,7 +68,8 @@ budget flag. Write their reports outside the public checkout.
 | `qualify:autonomy` / `qualify:evolution` | Autonomy and native-evolution qualification from readiness evidence. In-world views: `readiness autonomy`, `evolve qualify`. See [Autonomous quality loops](autonomous-quality-loops.md). |
 | `trial:evolution` / `trial:evolution:local` | Run an evolution trial against a server, or against a disposable local one. See [Native evolution](native-evolution.md). |
 | `qualify:flywheel` | Live Flywheel sandbox qualification. See [Flywheel live qualification](../integrations/flywheel-live-qualification.md). |
-| `qualify:release` | The whole local release gate: versions, typecheck, lint, tests, dashboard, browser, site, audit. See [Release qualification](release-qualification.md). |
+| `qualify:release` | The whole local release gate: SBOM, versions, typecheck, lint, tests, dashboard, browser, site, audit. See [Release qualification](release-qualification.md). |
+| `sbom [path]` | Generate and check the CycloneDX repository dependency inventory with pinned Syft. See [Supply-chain verification](supply-chain.md). |
 | `qualify:memory` | Black-box memory service proof over public HTTP and scoped keys. |
 | `qualify:memory:benchmark` | Memory-delta benchmark (offline stub by default). |
 | `qualify:paraphrase` | Paraphrase retrieval gate (hit@3 across lexical variants). |

@@ -1,0 +1,70 @@
+name: Supply Chain
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version-file: .bun-version
+      - uses: ./.github/actions/setup-syft
+      - run: bun install --frozen-lockfile
+      - name: Generate and check complete repository inventory
+        run: bun run sbom
+      - name: Build the distributable package
+        run: |
+          bun run dashboard:build
+          bun run build:memory
+          bun pm pack --ignore-scripts --filename dist/supply-chain/marina.tgz
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: marina-package-${{ github.sha }}
+          path: dist/supply-chain/
+          if-no-files-found: error
+          retention-days: 90
+
+  attest:
+    needs: build
+    # No OIDC/signing authority is granted to a job executing pull-request code.
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: marina-package-${{ github.sha }}
+          path: dist/supply-chain/
+      - name: Sign package build provenance
+        id: provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: dist/supply-chain/marina.tgz
+      - name: Bind the build-input inventory to the package digest
+        id: sbom
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: dist/supply-chain/marina.tgz
+          sbom-path: dist/supply-chain/source.cdx.json
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: marina-attestations-${{ github.sha }}
+          path: |
+            ${{ steps.provenance.outputs.bundle-path }}
+            ${{ steps.sbom.outputs.bundle-path }}
+          if-no-files-found: error
+          retention-days: 90

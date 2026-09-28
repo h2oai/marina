@@ -23,6 +23,17 @@ and durability tests. An in-memory fixture shares one SQLite handle and is not a
 durability test. Tests changing process-wide environment, trust profiles, provider
 registries or clocks still need isolation; the helper never silently resets globals.
 
+`Engine` is instanced, not a singleton. `test/engine-isolation.test.ts` also holds one
+engine's asynchronous command open while another executes and shuts down, then checks
+that the first remains usable. Sharding isolates ambient process configuration and
+distributes work; it is not required to construct multiple engines. This does not make
+arbitrary tests that change globals safe to run concurrently in one process.
+Some built-in services also retain process-wide hosts, notably the challenge service
+and its gate-refusal hook. The fixture tests prove world storage, command execution
+and teardown isolation; they do not establish independent security/service policies
+for multiple fully configured production worlds. Keep tests using those services in
+separate workers until those hosts are explicitly owned by each engine.
+
 ## Reproducible property and security tests
 
 `bun run test:properties` runs fast-check histories for context invalidation,

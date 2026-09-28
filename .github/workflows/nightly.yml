@@ -127,6 +127,7 @@ jobs:
           CHROME="$(find "$HOME/.cache/ms-playwright" -type f -name chrome -path '*chrome-linux*' | head -n 1)"
           test -n "$CHROME" || { echo "chromium not found under ~/.cache/ms-playwright"; exit 1; }
           echo "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=$CHROME" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/setup-syft
       - name: Qualify release
         continue-on-error: false
         run: bun run qualify:release

@@ -45,6 +45,13 @@ jobs:
           exit-code: "1"
           vuln-type: os,library
 
+      - name: Inventory the built image (CycloneDX)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}
+          format: cyclonedx
+          output: image.cdx.json
+
       # Machine-readable scan output to feed the job summary + report artifact.
       - name: Trivy scan (JSON for summary)
         if: always()
@@ -120,6 +127,8 @@ jobs:
         uses: actions/upload-artifact@v7.0.1
         with:
           name: trivy-report
-          path: trivy-results.json
+          path: |
+            trivy-results.json
+            image.cdx.json
           if-no-files-found: warn
           retention-days: 30

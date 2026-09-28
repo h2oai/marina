@@ -1,0 +1,13 @@
+name: Install pinned SBOM scanner
+description: Use the same Syft version for local qualification and release inventories
+runs:
+  using: composite
+  steps:
+    - uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
+      id: syft
+      with:
+        syft-version: v1.52.0
+    - shell: bash
+      env:
+        SYFT_COMMAND: ${{ steps.syft.outputs.cmd }}
+      run: echo "SYFT_BIN=$SYFT_COMMAND" >> "$GITHUB_ENV"

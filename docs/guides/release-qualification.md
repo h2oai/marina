@@ -2,13 +2,16 @@
 
 Run the deterministic public-release gate from the repository root:
 
+Install the pinned Syft scanner described in [Supply-chain verification](supply-chain.md)
+before running the gate; the dependency inventory must cover every tracked Bun lockfile.
+
 ```bash
 bun run qualify:release
 ```
 
 It must complete TypeScript checking, Biome, all backend tests, all dashboard unit tests, the
 production dashboard build, the production-browser Canvas/dashboard suite, the public documentation
-site build, and the Bun dependency audit. A missing browser is a failed prerequisite, not a skipped
+site build, the CycloneDX dependency inventory, and the Bun dependency audit. A missing browser is a failed prerequisite, not a skipped
 success; set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` when the environment supplies Chromium outside
 Playwright.
 

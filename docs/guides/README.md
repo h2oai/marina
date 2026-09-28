@@ -53,6 +53,7 @@ degraded, or off and gives the next concrete action without exposing secrets.
 | [World Collective](world-collective.md) | Local child worlds, isolated A/B variants, readiness, and explicit promotion |
 | [Federation discovery](federation-discovery.md) | Passive peer manifests, local trust decisions, and current cryptographic boundaries |
 | [Release qualification](release-qualification.md) | Deterministic local gate plus explicit provider-backed qualification boundaries |
+| [Supply-chain verification](supply-chain.md) | CycloneDX inventories, signed artifacts and verification commands |
 | [Connecting](connecting.md) | Dashboard, WebSocket, Telnet, MCP, SDK, CLI, and REST boundaries |
 | [Commands Quick Reference](commands.md) | Every command organized by category |
 | [Scripts reference](scripts.md) | Every `bun run` script: run, CLI, forecasting, tests, qualification, soak |

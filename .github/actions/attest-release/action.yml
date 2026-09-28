@@ -1,0 +1,28 @@
+name: Attest release artifact
+description: Sign build provenance and bind a repository dependency inventory to exact artifact bytes
+inputs:
+  subject-path:
+    description: Built files to sign (glob allowed)
+    required: true
+  sbom-path:
+    description: CycloneDX build-input inventory
+    required: true
+outputs:
+  provenance-bundle:
+    description: Signed build provenance bundle
+    value: ${{ steps.provenance.outputs.bundle-path }}
+  sbom-bundle:
+    description: Signed SBOM bundle
+    value: ${{ steps.sbom.outputs.bundle-path }}
+runs:
+  using: composite
+  steps:
+    - id: provenance
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+      with:
+        subject-path: ${{ inputs.subject-path }}
+    - id: sbom
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+      with:
+        subject-path: ${{ inputs.subject-path }}
+        sbom-path: ${{ inputs.sbom-path }}
