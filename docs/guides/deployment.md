@@ -73,6 +73,21 @@ Then open `http://localhost:3300`. State lives in the named volume `marina-data`
 
 The image builds the dashboard SPA, runs as an unprivileged `bun` user, and ships a `HEALTHCHECK` that polls `/health`. `docker compose up` waits for it to report healthy.
 
+Inside the container Marina binds `0.0.0.0`, so it derives the **`public`** trust profile: the
+OpenAI-compatible API stays closed until you set `MODEL_API_KEYS`, safety gates are enforced, and
+seeded agents do not start on their own. That is the right default for a server. For a personal
+instance on your own machine, add the local overlay, which declares `MARINA_PROFILE=local` and so
+behaves like a native `bun run start` (generated model-API key in `docker compose logs`, seeded
+agents start once a provider key is set, $25/day default spend cap):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+```
+
+The overlay is safe only because `docker-compose.yml` publishes the ports on the host's
+`127.0.0.1`. Never use it with widened `ports:`, a reverse proxy in front of the host, or the
+EC2/server deploy (`scripts/deploy.sh` does not use it).
+
 ### Without Compose
 
 ```bash

@@ -44,4 +44,5 @@ examples
 .dockerignore
 Dockerfile
 docker-compose.yml
+docker-compose.local.yml
 biome.json

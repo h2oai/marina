@@ -1,0 +1,21 @@
+# Single-user overlay for a container on YOUR machine:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+#
+# The container binds 0.0.0.0 internally, so Marina would derive the `public`
+# trust profile: the model API stays closed (no local key), safety gates are
+# enforced and the dashboard is empty until someone signs in. This overlay
+# declares the `local` profile instead — the same experience as a native
+# `bun run start`: a generated model-API key (printed in `docker compose logs`
+# and kept in the volume as marina.db.local-api-key), ungated single-operator
+# permissions, and the Workbench agents starting once a provider key is set
+# (bounded by the $25/day default spend cap, MARINA_DAILY_SPEND_CAP_USD).
+#
+# SAFE ONLY while docker-compose.yml publishes the ports on the host's
+# 127.0.0.1 (it does). `local` ungates every permission for anyone who can
+# reach the port, so never combine this overlay with a widened `ports:`, a
+# host reverse proxy, or a server deployment — use MARINA_AUTH=better-auth there.
+services:
+  marina:
+    environment:
+      - MARINA_PROFILE=local
