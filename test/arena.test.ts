@@ -11,6 +11,7 @@ import { ArenaData } from "../src/arena/data";
 import {
   backtestSeries,
   forecastRanking,
+  forecastRound,
   forecastScalar,
   horizonSteps,
   PERSISTENCE_SD,
@@ -310,6 +311,37 @@ describe("filing a round", () => {
     const again = await submitRound(deps(), round.round_id);
     expect(again).toMatchObject({ kind: "accepted", already: true });
     expect(posts).toHaveLength(1);
+  });
+
+  it("--replace files a newer version (the arena scores the newest on time), never an unchanged one", async () => {
+    expect((await submitRound(deps(), round.round_id)).kind).toBe("accepted");
+    // Unchanged forecast: nothing is re-sent.
+    const same = await submitRound(deps(), round.round_id, { replace: true });
+    expect(same).toMatchObject({ kind: "accepted", already: true });
+    expect(posts).toHaveLength(1);
+    // A fresher forecast is a NEW signed request (new request id), recorded in the ledger.
+    const fresher = {
+      ...deps(),
+      forecaster: async (r: typeof round, l: Parameters<typeof forecastRound>[1]) => {
+        const f = forecastRound(r, l);
+        return { ...f, topline: { mean: f.topline!.mean + 0.5, sd: f.topline!.sd } };
+      },
+    };
+    const replaced = await submitRound(fresher, round.round_id, { replace: true });
+    expect(replaced.kind).toBe("accepted");
+    expect(posts).toHaveLength(2);
+    expect(posts[1]!.headers["X-SSA-request-id"]).not.toBe(posts[0]!.headers["X-SSA-request-id"]);
+    expect(JSON.parse(posts[1]!.body).topline.mean).toBe(
+      JSON.parse(posts[0]!.body).topline.mean + 0.5,
+    );
+    expect(db.listArenaSubmissions().filter((r) => r.round_id === round.round_id)).toHaveLength(2);
+    // Without --replace an accepted round stays filed once; due rounds include it only on request.
+    expect((await submitRound(fresher, round.round_id)).kind).toBe("accepted");
+    expect(posts).toHaveLength(2);
+    expect(await dueRounds(deps())).toEqual([]);
+    expect((await dueRounds(deps(), { includeAccepted: true })).map((r) => r.round_id)).toEqual([
+      round.round_id,
+    ]);
   });
 
   it("re-sends the SAME signed request after a transport failure, and records a 4xx as final", async () => {

@@ -103,13 +103,22 @@ per tracker, paced) and uses whichever reading is fresher, including a revised v
 history's last day. A round whose lock has passed never reads live data, so every backtest number
 above is unchanged. `MARINA_ARENA_CIVIQS_LIVE=off` turns it off.
 
-**File Civiqs rounds late.** The dashboard runs a day behind and rolls over around 01:40 UTC, so on
-a Wednesday lock the freshest reading (Tuesday's) is public from about 02:00 UTC. File after that
-and before 14:00 UTC — `bun run arena submit due` inside the last hours (the autopilot's
-`MARINA_ARENA_WINDOW_HOURS` window does this when set to a few hours). Filing days early gives up
-the nowcast's whole edge: it can only be as fresh as the moment it is computed. Spread is not a
+**File early, then replace late.** The arena's signed intake keeps every version and scores the
+newest one accepted before the lock (up to 120 per round), so file as soon as a round is open —
+insurance against an outage — and file again near the lock with `bun run arena submit <round|due>
+--replace`; an unchanged forecast is not re-sent, and the autopilot never replaces. For Civiqs the
+late version is the one that matters: the dashboard runs a day behind and rolls over around 01:40
+UTC, so on a Wednesday lock Tuesday's reading is public from about 02:00 UTC. Spread is not a
 lever: on the resolved rounds every sharper sd scored worse than the baseline's (Civiqs revisions
 move a value 1–2 points by Friday).
+
+**How the board ranks (checked against the live `data.json`, 2026-09-28).** An entrant's row is
+its mean skill over the rounds it answered — unanswered rounds are not counted — and skill is
+`1 − CRPS / persistence CRPS` against a persistence null frozen when the round's call window opens
+(the round's weekly history, so for Civiqs last Friday's value). Every model-based entrant was
+negative (best −0.153); the leader (`apodex-futureflow`, +0.517 over 8 rounds) answered the Civiqs
+w39 rounds with a daily-reading forecast like the nowcast, which backtests at comparable skill on
+those same rounds. Answer the rounds where Marina has measured evidence of an edge.
 
 ### Profile and ranking rounds
 

@@ -11,8 +11,10 @@
  *   bun run arena status                        config, key, filed record
  *   bun run arena rounds                        open rounds, soonest lock first
  *   bun run arena show <round_id>               what Marina would file, and why
- *   bun run arena submit <round_id|due> [--dry-run]
- *                                               sign + file (due = every round inside the window)
+ *   bun run arena submit <round_id|due> [--dry-run] [--replace]
+ *                                               sign + file (due = every round inside the window);
+ *                                               --replace files a newer version of an accepted
+ *                                               round (the arena scores the newest on-time one)
  *   bun run arena backtest                      baseline skill vs the arena's persistence
  *   bun run arena research <round_id>           run the research agent once; print dossier + forecast
  *   bun run arena discover [--tracker T] [--proposer provider/model] [--n N]
@@ -64,6 +66,7 @@ const { positionals, values } = parseArgs({
     homepage: { type: "string" },
     out: { type: "string" },
     "dry-run": { type: "boolean" },
+    replace: { type: "boolean" },
     forecaster: { type: "string" },
     limit: { type: "string" },
     tracker: { type: "string" },
@@ -170,7 +173,9 @@ async function main(): Promise<number> {
       return 0;
     }
     case "submit": {
-      if (!arg) throw new Error("usage: bun run arena submit <round_id|due> [--dry-run]");
+      if (!arg) {
+        throw new Error("usage: bun run arena submit <round_id|due> [--dry-run] [--replace]");
+      }
       const db = openDb();
       try {
         const deps = await arenaDepsWithForecaster(
@@ -180,15 +185,21 @@ async function main(): Promise<number> {
           weightFlag(),
         );
         if ("error" in deps) throw new Error(deps.error);
-        const ids = arg === "due" ? (await dueRounds(deps)).map((r) => r.round_id) : [arg];
+        const replace = values.replace === true;
+        const ids =
+          arg === "due"
+            ? (await dueRounds(deps, { includeAccepted: replace })).map((r) => r.round_id)
+            : [arg];
         if (ids.length === 0) console.log("Nothing due.");
         let failed = 0;
         for (const id of ids) {
-          const outcome = await submitRound(deps, id, { dryRun: values["dry-run"] });
+          const outcome = await submitRound(deps, id, { dryRun: values["dry-run"], replace });
           if (outcome.kind === "dry-run") {
             console.log(`${id}: would file ${JSON.stringify(outcome.body)}`);
           } else if (outcome.kind === "accepted") {
-            console.log(`${id}: accepted${outcome.already ? " (already filed)" : ""}`);
+            console.log(
+              `${id}: accepted${outcome.already ? (replace ? " (unchanged, not re-sent)" : " (already filed; --replace files a newer version)") : ""}`,
+            );
           } else {
             failed++;
             console.log(`${id}: ${outcome.kind} — ${outcome.reason}`);
