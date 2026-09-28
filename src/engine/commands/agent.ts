@@ -542,7 +542,8 @@ async function handleSpawn(
   //
   // This gate is enforced imperatively here rather than via the declarative
   // `CommandDef.gate` field, by design: `spawn` is a subcommand of `agent`
-  // (whose other subcommands — list/stop — must stay rank 0).
+  // (whose read-only subcommands — list/status/diagnose — stay rank 0; the
+  // lifecycle ones such as stop/restart/config check builder rank 4).
   //
   // Posture-aware gate check (see src/engine/safety-gates.ts). Self-
   // certification stays closed — spawning is authorized by unsupervised

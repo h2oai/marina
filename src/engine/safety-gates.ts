@@ -9,9 +9,12 @@
  * for an entity once they've accumulated enough supervised demonstrations
  * — a witness-able proof that they can do the thing without breaking it.
  *
- * The gate registry below is the source of truth. A command opts in by
- * declaring `gate: '<id>'` on its `CommandDef`; the engine permission
- * check calls `checkGate()` after the standard `minRank` check.
+ * The gate registry below is the source of truth (11 gates). A command opts
+ * in by declaring `gate: '<id>'` on its `CommandDef`; the command phase calls
+ * `checkGateForExecution()` after the standard `minRank` check and
+ * `recordGateExecution()` on a pass. `agent.spawn` and `code.exec` are
+ * enforced imperatively inside their commands with the same pair. Under the
+ * `local` trust profile (`isLocalUngated()`) every gate auto-passes.
  *
  * Standing is necessary but not sufficient. Even an agent with 1000
  * standing cannot execute shell commands until they've performed N
@@ -25,10 +28,11 @@
  * (`grant()`, `grantGatesForRank`) are admin overrides and are exempt from
  * the re-check; `revoke()` is their revocation path.
  *
- * Witness rules: a witness must themselves have `supervised_only=0` on
- * the same gate. Per the user's locked-in policy: rank-8+ agents can
- * witness once they've demonstrated. Humans (rank 9 sovereigns) bootstrap
- * the chain. New entities can grow the chain organically.
+ * Witness rules: a witness must be a different entity that itself has
+ * `supervised_only=0` on the same gate (`canWitness`) — there is no rank
+ * requirement. Operators bootstrap the chain through grants (`grant()`,
+ * `grantGatesForRank` on promotion to rank ≥ 5); new entities can grow the
+ * chain organically once they have demonstrated.
  */
 
 import { getStanding } from "../agent/standing";
@@ -464,8 +468,9 @@ export function recordGateExecution(
  * Determine whether an entity is qualified to witness a supervised
  * demonstration of a particular gate. They must themselves be unsupervised
  * on the same gate (closing the bootstrapping loop). Sovereigns (rank 9)
- * trivially qualify because grandfathering gave them every gate at
- * unsupervised level.
+ * qualify for every gate in `RANK_GATES` because promotion granted them at
+ * unsupervised level — but not `code.exec.unrestricted`, which is never
+ * granted by rank.
  */
 export function canWitness(db: MarinaDB, witnessId: string, gateId: string): boolean {
   const competence = db.getCompetence(witnessId, gateId);

@@ -2,9 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Env-only decision configuration. OFF by default: a decision backend receives
- * tool arguments and request text, so sending them to a third party is an
- * explicit operator choice, never an in-world setting.
+ * Decision configuration, read from `process.env` on every call. OFF by
+ * default: a decision backend receives tool arguments and request text, so
+ * sending them to a third party is an explicit operator choice. Besides the
+ * environment, an OPERATOR can change most of these at runtime through
+ * `settings.ts` (`admin decisions set …` / Admin → Ops → Decisions: rank 5 +
+ * `admin.destructive`, refused for any agent-driven entity, audited), which
+ * writes the variable into `process.env`. A variable set in the boot
+ * environment locks that setting; base URLs, paths and API keys
+ * (`MARINA_DECISION_BASE_URL`, `_PATH`, `_API_KEY`) are env-only.
  *
  *   MARINA_DECISIONS           off (default) | decisions-api (alias jev) |
  *                              typesafe (TypeSafe's direct API) |
