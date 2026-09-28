@@ -1,11 +1,12 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { setApprovalNotifier } from "../../decisions/approvals";
 import { resolveEvidence } from "../../decisions/evidence";
 import type { EntityId } from "../../types";
+import { setChallengeHost } from "../challenges";
 import { arenaCommand } from "../commands/arena";
 import { boardCommand } from "../commands/board";
+import { challengeCommand } from "../commands/challenge";
 import { channelCommand } from "../commands/channel";
 import { conductCommand } from "../commands/conduct";
 import { crewCommand } from "../commands/crew";
@@ -175,23 +176,26 @@ export function registerCoordinationCommands(engine: Engine): void {
       groupCommand(engine.groupManager, (name) => engine.findEntityGlobal(name)),
     );
   }
-  // Decision-gate approvals: deliver `ask` holds to the agent's owner, and let
-  // the owner settle them (src/decisions/approvals.ts). Unreachable owner ⇒
-  // the waiting call fails closed at once instead of waiting out the timeout.
-  setApprovalNotifier((request) => {
-    const owner = engine.findEntityGlobal(request.ownerName);
-    if (!owner || !engine._connections.isEntityConnected(owner.id)) return false;
-    engine.sendToEntity(
-      owner.id,
-      `${request.agentName} wants to run ${request.summary}
-` +
-        `  ${request.reason}
-` +
-        `  decision approve ${request.token}  ·  decision deny ${request.token}  (expires in ${Math.round((request.expiresAt - request.createdAt) / 1000)}s)`,
-      "decision",
-    );
-    return true;
+  // Challenges: a refusal asks the requester's creator and the admins, and an
+  // approval re-runs the held action (src/engine/challenges.ts). Nothing waits.
+  setChallengeHost({
+    get db() {
+      return engine.db;
+    },
+    getEntity: (id) => engine.entities.get(id as EntityId),
+    findEntity: (name) => engine.findEntityGlobal(name),
+    connectedEntities: () =>
+      engine.entities.all().filter((e) => engine._connections.isEntityConnected(e.id)),
+    isConnected: (id) => engine._connections.isEntityConnected(id as EntityId),
+    send: (id, text) => engine.sendToEntity(id as EntityId, text, "challenge"),
+    // The leading "/" is explicit world input, so an active modal (Code Mode)
+    // never rewrites the held command on its way back in.
+    redispatch: (id, raw) => engine.processCommand(id as EntityId, `/${raw}`),
+    creatorOf: (entity) => engine.db?.getAgentConfig(entity.name)?.spawned_by || undefined,
   });
+  engine.commands.registerBuiltin(
+    challengeCommand({ getEntity: (id) => engine.entities.get(id as EntityId) }),
+  );
   engine.commands.registerBuiltin(forecastCommand());
   engine.commands.registerBuiltin(
     arenaCommand({

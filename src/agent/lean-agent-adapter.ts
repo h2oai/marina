@@ -30,10 +30,10 @@ import {
   type SimpleStreamOptions,
   type TextContent,
 } from "@earendil-works/pi-ai";
-import { DEFAULT_APPROVAL_TIMEOUT_MS, requestApproval } from "../decisions/approvals";
 import { decisionGateContextEnabled } from "../decisions/config";
 import { harnessDecisionProvider, harnessGateEnabled } from "../decisions/engines";
 import { type GateIntent, gateToolCall, redactToolCall } from "../decisions/gate";
+import { raiseForTool } from "../engine/challenges";
 import {
   ACTIVE_CODING_TASK_MAX_CHARS,
   CONTEXT_PRUNE_TARGET,
@@ -283,6 +283,28 @@ export function formatUsd(usd: number): string {
  * cheap: one `{t, usd}` per paid call, pruned past the window on every append
  * and read, so the per-cycle cap check is O(calls in the last hour).
  */
+/**
+ * Replay a tool call a challenge held, once someone approves it. Runs outside
+ * the loop that asked (which has moved on); the text goes back to the agent as
+ * an ordinary message.
+ */
+async function runHeldTool(
+  tool: { execute: (id: string, params: never) => Promise<{ content: unknown[] }> },
+  toolCallId: string,
+  args: Record<string, unknown>,
+): Promise<string> {
+  const result = await tool.execute(`${toolCallId}:approved`, args as never);
+  const text = result.content
+    .map((part) =>
+      part && typeof part === "object" && "text" in part
+        ? String((part as { text: unknown }).text)
+        : "",
+    )
+    .filter(Boolean)
+    .join("\n");
+  return text.slice(0, 2000) || "done";
+}
+
 export class SpendWindow {
   private samples: Array<{ t: number; usd: number }> = [];
 
@@ -1452,10 +1474,13 @@ export class LeanAgentAdapter implements AgentHandle {
         // deterministic monitor, score calls that change things. Reads and
         // messages never leave the process for scoring.
         if (policy.risk === "mutate" || policy.risk === "consequential") {
-          const description = context.context.tools?.find(
-            (tool) => tool.name === context.toolCall.name,
-          )?.description;
-          const held = await this.decisionGate(context.toolCall.name, args, description);
+          const tool = context.context.tools?.find((t) => t.name === context.toolCall.name);
+          const held = await this.decisionGate(
+            context.toolCall.name,
+            args,
+            tool?.description,
+            tool ? () => runHeldTool(tool, context.toolCall.id, args) : undefined,
+          );
           if (held) return { block: true, reason: held };
         }
         const command = typeof args.command === "string" ? args.command.trim().toLowerCase() : "";
@@ -1494,13 +1519,16 @@ export class LeanAgentAdapter implements AgentHandle {
   /**
    * Score a mutating tool call with the configured decision backend. Returns a
    * block reason, or undefined to let the call run. Fails closed: a backend
-   * error blocks. `ask` also blocks — autonomous calls have no approver
-   * attached yet — and says so, so the agent can choose another route.
+   * error blocks. `ask` never waits: it opens a challenge for the agent's
+   * creator and the admins (src/engine/challenges.ts) and blocks the call
+   * NOW, telling the agent it will run automatically if approved — the loop
+   * carries on with other work meanwhile.
    */
   private async decisionGate(
     toolName: string,
     args: Record<string, unknown>,
     description?: string,
+    rerun?: () => Promise<string>,
   ): Promise<string | undefined> {
     if (!harnessGateEnabled()) return undefined;
     const provider = harnessDecisionProvider();
@@ -1530,38 +1558,25 @@ export class LeanAgentAdapter implements AgentHandle {
     });
     if (decision.action === "allow") return undefined;
     if (decision.action === "ask") {
-      // Hold the call for the agent's owner (src/decisions/approvals.ts).
-      // Fails closed: no approvable owner, unreachable, deny or timeout ⇒ block.
       const state = redactToolCall(toolName, args);
-      const approval = await requestApproval(
-        {
-          agentName: this.name,
-          ownerName: this.config.spawnedBy ?? "",
-          toolName,
-          summary: `${toolName} ${JSON.stringify(state.arguments).slice(0, 240)}`,
-          reason: decision.reason,
-          signals: decision.signals,
-        },
-        positiveNumberFromEnv("MARINA_DECISION_APPROVAL_TIMEOUT_MS") ?? DEFAULT_APPROVAL_TIMEOUT_MS,
-      );
+      const held = raiseForTool({
+        requesterId: this.gameState.getState().connection.entityId ?? "",
+        requesterName: this.name,
+        toolName,
+        summary: `${toolName} ${JSON.stringify(state.arguments).slice(0, 240)}`,
+        reason: decision.reason,
+        rerun: rerun ?? (async () => "the held call could not be replayed; issue it again"),
+        ttlMs: positiveNumberFromEnv("MARINA_DECISION_APPROVAL_TIMEOUT_MS"),
+      });
       this.emitEvent({
         type: "decision",
         stage: "gate",
-        verdict: approval.outcome,
+        verdict: "ask",
         subject: toolName,
-        reason:
-          approval.outcome === "approved"
-            ? `approved by ${approval.by}`
-            : approval.outcome === "denied"
-              ? `denied by ${approval.by}${approval.note ? `: ${approval.note}` : ""}`
-              : "no approval before the deadline (or no approvable owner)",
+        reason: held.token ? `challenge ${held.token} opened` : "no challenge could be opened",
         signals: decision.signals,
       });
-      if (approval.outcome === "approved") return undefined;
-      if (approval.outcome === "denied") {
-        return `${decision.reason} Your owner denied it${approval.note ? `: ${approval.note}` : "."} Choose another step.`;
-      }
-      return `${decision.reason} No approval arrived, so it did not run; choose a less destructive step or ask a person.`;
+      return held.message;
     }
     return decision.reason;
   }

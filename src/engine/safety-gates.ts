@@ -39,6 +39,7 @@ import { getStanding } from "../agent/standing";
 import type { MarinaDB } from "../persistence/database";
 import { isGrantedCompetence } from "../persistence/db-competence";
 import { getAutonomyPosture, OPEN_POSTURE_CORE } from "./autonomy";
+import { onGateRefused, takeArmedGatePass } from "./gate-context";
 import { isLocalUngated } from "./trust-profile";
 
 /**
@@ -329,14 +330,18 @@ export type GateExecutionMode =
   | "windowed"
   | "optimistic"
   | "posture-open"
-  | "profile-local";
+  | "profile-local"
+  | "approved";
 
 export interface GateExecutionResult {
   ok: boolean;
   reason?: string;
   mode?: GateExecutionMode;
-  /** The witness whose supervision window authorized this run (windowed mode). */
+  /** The witness whose supervision window authorized this run (windowed
+   *  mode), or the approver of an answered challenge (approved mode). */
   witnessId?: string;
+  /** Who answered the challenge that authorized this run (approved mode). */
+  approvedBy?: string;
   /** Refused because a demonstrated holder's standing decayed below the bar. */
   standingDecayed?: boolean;
 }
@@ -375,12 +380,37 @@ export function checkGateForExecution(
   gateId: string,
   now = Date.now(),
 ): GateExecutionResult {
+  const result = evaluateGateForExecution(db, entityId, gateId, now);
+  if (result.ok || !result.reason) return result;
+  // A refusal inside a command raises a challenge (src/engine/challenges.ts):
+  // the creator and admins are asked, the caller is told it will run once
+  // approved, and nothing waits — the refusal returns now.
+  return { ...result, reason: onGateRefused(entityId, gateId, result.reason) };
+}
+
+function evaluateGateForExecution(
+  db: MarinaDB,
+  entityId: string,
+  gateId: string,
+  now: number,
+): GateExecutionResult {
   const gate = SAFETY_GATES[gateId];
   if (!gate) return { ok: false, reason: `Unknown safety gate: ${gateId}` };
 
   const holder = unsupervisedHolder(db, entityId, gate, now);
   if (holder.kind === "granted") return { ok: true, mode: "unattended" };
   if (holder.kind === "demonstrated" && holder.standingOk) return { ok: true, mode: "unattended" };
+
+  // An answered challenge: the creator or an admin approved THIS run.
+  const pass = takeArmedGatePass(entityId, gateId);
+  if (pass) {
+    return {
+      ok: true,
+      mode: "approved",
+      approvedBy: pass.approverName,
+      ...(pass.approverId ? { witnessId: pass.approverId } : {}),
+    };
+  }
 
   // LOCAL trust profile: the single operator's own machine, loopback-only
   // (main.ts refuses `local` on any non-loopback bind unless the operator sets
@@ -461,6 +491,12 @@ export function recordGateExecution(
   }
   if (result.mode === "optimistic") {
     db.createWitnessRow({ entityId, gate: gateId, kind: "pending", evidence, now });
+    return;
+  }
+  // An approval by someone who holds the gate is a supervised demonstration
+  // they witnessed; an admin or judge approval without the gate is not.
+  if (result.mode === "approved" && result.witnessId) {
+    recordWitnessedDemonstration(db, entityId, gateId, result.witnessId, now);
   }
 }
 

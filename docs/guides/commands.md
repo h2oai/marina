@@ -732,13 +732,22 @@ When the world has a decision backend (`MARINA_DECISIONS`, see [docs/architectur
 | `decision agreement` | How often each judge's opinion of a task submission matched the creator's approve/reject, per backend (needs `MARINA_DECISION_VERIFY=observe` or `on`) |
 | `decision qualify` | Run the labeled gate and route cases against this world's backend: gate accuracy, hold recall, false holds, route accuracy, latency, cost (~20 billed calls; rate limited) |
 
-When the decision gate (`MARINA_DECISION_GATE=on`, see [docs/architecture/decisions.md](../architecture/decisions.md)) scores an agent's tool call in the "ask a person" band, the call waits and the agent's **owner** — whoever spawned it — gets a notice with a token. Only the owner can settle it, an agent can never approve its own call, and no answer before the deadline blocks the call.
+When the decision gate (`MARINA_DECISION_GATE=on`, see [docs/architecture/decisions.md](../architecture/decisions.md)) scores an agent's tool call in the "ask a person" band, it opens a **challenge**: the agent's creator and the admins get a token, the agent is told at once and keeps working, and an approval replays the call automatically. The same happens when any command meets a rank floor or a safety gate — see `challenge` below. Nobody answers their own ask.
 
 | Command | Description |
 |---------|-------------|
-| `decision list` | Tool calls from your agents waiting for your approval (token, agent, redacted call, reason, time left). Alias: `decisions` |
-| `decision approve <token>` | Let the held call run |
-| `decision deny <token> [reason]` | Block it; the reason is passed back to the agent |
+| `challenge` | Held actions you can answer, and the ones you asked. Alias: `challenges` |
+| `challenge approve <token> [once\|always] [note]` | Run it now; `always` also grants its gate (you must hold it; core gates need an admin) |
+| `challenge deny <token> [reason]` | Decline; the requester is told why |
+| `challenge stats` | The judge's record per gate against people's answers (`MARINA_CHALLENGE_JUDGE`) |
+
+The `decision` verbs below answer the same challenges:
+
+| Command | Description |
+|---------|-------------|
+| `decision list` | Same as `challenge`. Alias: `decisions` |
+| `decision approve <token>` | Same as `challenge approve <token>` |
+| `decision deny <token> [reason]` | Same as `challenge deny <token> [reason]` |
 | `decision settings` | The runtime decision settings, their values and sources (anyone may read) |
 | `decision settings set <setting> <value>` / `unset <setting>` | Change one: a person with `admin.destructive` or `decisions.configure`; an agent with the earned `decisions.configure` gate |
 | `decision settings history` | Who changed what, when — agent changes are marked |
