@@ -146,9 +146,16 @@ export function isOpenApiMode(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.MARINA_OPEN_API === "true";
 }
 
-export function describeTrustProfile(profile: TrustProfile = getTrustProfile()): string {
+export function describeTrustProfile(
+  profile: TrustProfile = getTrustProfile(),
+  env: NodeJS.ProcessEnv = process.env,
+): string {
   switch (profile) {
     case "local":
+      // `MARINA_AUTONOMY=guarded` re-enables every permission check (isLocalUngated).
+      if (env.MARINA_AUTONOMY?.trim().toLowerCase() === "guarded") {
+        return "LOCAL (gated) — MARINA_AUTONOMY=guarded: gates, witnesses and rank floors are enforced; local performance defaults (rate limits, budgets, durability) stay";
+      }
       return "LOCAL — ungated: gates, witnesses, rank floors, rate limits and budgets are off for this operator; audit stays on (set MARINA_AUTONOMY=guarded or MARINA_PROFILE=shared to re-enable gates)";
     case "shared":
       return "SHARED — gates, ranks and limits enforced; sign-in identifies people";

@@ -123,7 +123,15 @@ export function OpsTab({ confirm }: { confirm?: (text: string) => boolean } = {}
       </Section>
 
       <Section title="Decisions" icon={<Scale size={12} />}>
-        {data ? <DecisionsSection decisions={data.decisions} /> : <Placeholder />}
+        {data ? (
+          <DecisionsSection
+            decisions={data.decisions}
+            privileged={privileged}
+            onSettingsChanged={() => void overview.refetch()}
+          />
+        ) : (
+          <Placeholder />
+        )}
       </Section>
 
       <Section title="Security posture" icon={<ShieldCheck size={12} />}>

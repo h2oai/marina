@@ -328,7 +328,7 @@ Select any of them for details in the inspector; its action link opens Admin →
 
 **Admin → Ops** (`dashboard/src/components/ops/`) is the operator's runtime view, fed by
 `GET /api/ops/overview` every 10 s and on `agent_spawn` / `agent_stop` / `agent_error` /
-`agent_state_change` events (streaming deltas never trigger a refetch). Six sections:
+`agent_state_change` events (streaming deltas never trigger a refetch). Seven sections:
 
 - **Agents** — one row per running agent: name (health, who spawned it, uptime), role and model,
   inferred tool profile (`full` / `crew` / `minimal`), tokens in / out, cost lifetime / rolling hour
@@ -360,6 +360,14 @@ Select any of them for details in the inspector; its action link opens Admin →
   (`ok`, `fallback` when another provider answered, `tools` when text passed but the tool call did
   not, `text`, `error`), the three checks (text, second system message, tool call — `toolCallOk`),
   who served it, latency and the failure detail. Operators only; the empty state names the command.
+- **Decisions** — the backend and its calibration, gate / verifier switches, counts and the newest
+  route / gate / verify verdicts with their top signals, and a banner when the backend is failing.
+  Operators also get **Settings**: every runtime decision setting (backend, model, gate, verifier,
+  engines, method, ensemble, the harness engine, calibration and gate-question files) with its value
+  and source — `default`, `runtime` or `env · locked` (a variable set in the environment wins and
+  cannot be edited here) — a Save / Reset per row, the server's reason when a change is refused, and
+  the recent changes. It is shown even while decisions are off, so this is where an operator turns
+  them on. Base URLs and API keys are never editable here. Same settings as `admin decisions`.
 - **Security posture** — trust profile (with `ungated`), autonomy posture, loopback vs public bind,
   sign-in requirement, MCP transport auth, the `MARINA_OPEN_API` dev flag, `MARINA_TRUST_PROXY`,
   whether the in-world command limiter is bypassed (local profile), and every named HTTP limiter with

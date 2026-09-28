@@ -384,7 +384,8 @@ export function loadCalibration(env: NodeJS.ProcessEnv = process.env): Calibrati
   } catch (err) {
     logger.warn("decisions", "calibration file invalid; gate stays uncalibrated", {
       path,
-      error: (err as Error).message,
+      // A parse error can quote the file; never echo its content.
+      error: err instanceof SyntaxError ? "not valid JSON" : (err as Error).message,
     });
   }
   cache = { key, file };
