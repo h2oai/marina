@@ -93,6 +93,33 @@ Deterministic and leakage-free, so it backtests: on the 53 resolved rounds whose
 already public at lock (2026-09-25) it scores **+0.111** overall and **+0.213 on Civiqs (15 of 20
 rounds beat persistence)**, vs the baseline's +0.046 — see *Integrity* below. Structured sources like this beat web search wherever they exist.
 
+**Live reading for open rounds (2026-09-28).** The arena's archive is pushed irregularly (a
+"residential courier"), so two days before a lock its newest snapshot can be several days old —
+and Civiqs republishes its whole daily history every night, so even an already-archived day's
+number moves. For a round whose lock has NOT passed, the nowcast therefore also reads the Civiqs
+dashboard itself (`src/arena/research/civiqs-live.ts`, a port of the arena's own reader: the
+page's loader payload, fractions → points, subgroup filters verified to have applied; one request
+per tracker, paced) and uses whichever reading is fresher, including a revised value for the
+history's last day. A round whose lock has passed never reads live data, so every backtest number
+above is unchanged. `MARINA_ARENA_CIVIQS_LIVE=off` turns it off.
+
+**File early, then replace late.** The arena's signed intake keeps every version and scores the
+newest one accepted before the lock (up to 120 per round), so file as soon as a round is open —
+insurance against an outage — and file again near the lock with `bun run arena submit <round|due>
+--replace`; an unchanged forecast is not re-sent, and the autopilot never replaces. For Civiqs the
+late version is the one that matters: the dashboard runs a day behind and rolls over around 01:40
+UTC, so on a Wednesday lock Tuesday's reading is public from about 02:00 UTC. Spread is not a
+lever: on the resolved rounds every sharper sd scored worse than the baseline's (Civiqs revisions
+move a value 1–2 points by Friday).
+
+**How the board ranks (checked against the live `data.json`, 2026-09-28).** An entrant's row is
+its mean skill over the rounds it answered — unanswered rounds are not counted — and skill is
+`1 − CRPS / persistence CRPS` against a persistence null frozen when the round's call window opens
+(the round's weekly history, so for Civiqs last Friday's value). Every model-based entrant was
+negative (best −0.153); the leader (`apodex-futureflow`, +0.517 over 8 rounds) answered the Civiqs
+w39 rounds with a daily-reading forecast like the nowcast, which backtests at comparable skill on
+those same rounds. Answer the rounds where Marina has measured evidence of an edge.
+
 ### Profile and ranking rounds
 
 About a third of the rounds are not single numbers. `arena evaluate` scores them exactly as the
@@ -303,6 +330,7 @@ is missing or readable by other users.
 | `MARINA_ARENA_MODEL_WEIGHT` | `0.5` | share of the model's move from the baseline that is kept |
 | `MARINA_ARENA_SHADOW` | unset | a forecaster spec to record hourly in shadow (never filed) |
 | `MARINA_ARENA_TRENDS_PARTIAL` | off | `on` counts a Trends basket's partial current week |
+| `MARINA_ARENA_CIVIQS_LIVE` | on | `off` stops the nowcast reading the live Civiqs dashboard for open rounds |
 | `MARINA_ARENA_RESEARCH_RETRIEVER` | `openrouter-web:openai/gpt-6-luna` | the research agent's search backend |
 | `MARINA_ARENA_RESEARCH_JUDGE` | `jev` (with an OpenRouter key) | `jev`, `decisions` (the configured `MARINA_DECISIONS` backend; falls back to `jev`) or `none` |
 | `MARINA_ARENA_RESEARCH_TRUST` | `0.5` | most of the judged move the research agent takes |

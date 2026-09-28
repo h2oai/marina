@@ -110,7 +110,17 @@ export async function buildForecastBody(
 export async function submitRound(
   deps: SubmitDeps,
   roundId: string,
-  opts: { dryRun?: boolean } = {},
+  opts: {
+    dryRun?: boolean;
+    /**
+     * File a NEW version even though one was accepted. The arena scores the
+     * newest version accepted before the lock (signed intake, "reveal": up to
+     * 120 writes per round), so filing early as insurance and replacing it
+     * with a fresher forecast near the lock is intended. An unchanged forecast
+     * is not re-sent. Operator-only: the autopilot files once.
+     */
+    replace?: boolean;
+  } = {},
 ): Promise<SubmitOutcome> {
   const now = deps.now?.() ?? Date.now();
   const { config, store } = deps;
@@ -120,15 +130,17 @@ export async function submitRound(
     return { kind: "skipped", roundId, reason: `locked (or locking) at ${round.lock_at}` };
   }
   const latest = store.latestArenaSubmission(config.entrant, roundId);
-  if (latest?.status === "accepted" && !opts.dryRun) {
+  if (latest?.status === "accepted" && !opts.dryRun && !opts.replace) {
     return { kind: "accepted", roundId, row: latest, already: true };
   }
+  const accepted = latest?.status === "accepted" ? latest : undefined;
 
   let row: ArenaSubmissionRow;
   if (
     latest &&
     !opts.dryRun &&
     latest.status !== "rejected" &&
+    latest.status !== "accepted" &&
     Date.now() - latest.created_at < RESEND_WITHIN_MS // the ledger's own clock
   ) {
     row = latest; // an unconfirmed send: re-send the SAME signed request
@@ -141,6 +153,9 @@ export async function submitRound(
     }
     if (opts.dryRun) return { kind: "dry-run", roundId, body };
     const raw = Buffer.from(JSON.stringify(body));
+    if (opts.replace && accepted && accepted.body === raw.toString("utf8")) {
+      return { kind: "accepted", roundId, row: accepted, already: true };
+    }
     if (raw.length > MAX_BODY_BYTES) return { kind: "skipped", roundId, reason: "body too large" };
     const meta: SignedMeta = {
       entrant: config.entrant,
@@ -203,9 +218,10 @@ async function send(deps: SubmitDeps, row: ArenaSubmissionRow): Promise<SubmitOu
   }
 }
 
-/** Rounds whose lock falls inside the filing window and that have no accepted submission. */
+/** Rounds whose lock falls inside the filing window and (unless `includeAccepted`) have no accepted submission. */
 export async function dueRounds(
   deps: Pick<SubmitDeps, "config" | "data" | "store" | "now">,
+  opts: { includeAccepted?: boolean } = {},
 ): Promise<ArenaRound[]> {
   const now = deps.now?.() ?? Date.now();
   const horizon = now + deps.config.windowHours * 3_600_000;
@@ -214,7 +230,8 @@ export async function dueRounds(
     return (
       lock <= horizon &&
       lock - now >= LOCK_MARGIN_MS &&
-      deps.store.latestArenaSubmission(deps.config.entrant, r.round_id)?.status !== "accepted"
+      (opts.includeAccepted ||
+        deps.store.latestArenaSubmission(deps.config.entrant, r.round_id)?.status !== "accepted")
     );
   });
 }

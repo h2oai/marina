@@ -77,6 +77,14 @@ export function arenaStatus(env: NodeJS.ProcessEnv = process.env): ArenaStatus {
  * it. The model stack is imported only when a model is actually asked for.
  * `raw: true` returns the model's own answer (for shadow scoring), not the blend.
  */
+/** Live Civiqs reads for open rounds (on unless MARINA_ARENA_CIVIQS_LIVE=off). */
+async function liveCiviqs(env: NodeJS.ProcessEnv = process.env) {
+  const { civiqsLiveEnabled, fetchCiviqsLive } = await import("./research/civiqs-live");
+  return civiqsLiveEnabled(env)
+    ? { live: (n: string, f?: Record<string, string>) => fetchCiviqsLive(n, f) }
+    : {};
+}
+
 export async function forecasterFor(
   spec: string,
   opts: { weight?: number; raw?: boolean; env?: NodeJS.ProcessEnv; notes?: NotesStore } = {},
@@ -90,7 +98,7 @@ export async function forecasterFor(
       import("./discovery/signals"),
     ]);
     const data = arenaData(opts.env ?? process.env);
-    const fallback = nowcastForecaster(data, forecastRound);
+    const fallback = nowcastForecaster(data, forecastRound, await liveCiviqs(opts.env));
     const promoted = opts.notes ? loop.promotedSignals(opts.notes) : new Map();
     return {
       forecaster: async (round, lock) => {
@@ -108,7 +116,13 @@ export async function forecasterFor(
   }
   if (spec === "nowcast") {
     const { nowcastForecaster } = await import("./research/civiqs-nowcast");
-    return { forecaster: nowcastForecaster(arenaData(opts.env ?? process.env), forecastRound) };
+    return {
+      forecaster: nowcastForecaster(
+        arenaData(opts.env ?? process.env),
+        forecastRound,
+        await liveCiviqs(opts.env),
+      ),
+    };
   }
   if (spec.startsWith("research:")) {
     return researchForecasterFor(spec, opts.env ?? process.env);
@@ -334,7 +348,7 @@ async function researchForecasterFor(
   const pageText = defaultPageText();
   // Structured evidence first: the research agent starts from the Civiqs nowcast.
   const { nowcastForecaster } = await import("./research/civiqs-nowcast");
-  const nowcast = nowcastForecaster(arenaData(env), forecastRound);
+  const nowcast = nowcastForecaster(arenaData(env), forecastRound, await liveCiviqs(env));
   let researchCost = 0;
   const usage: Usage = {
     get calls() {

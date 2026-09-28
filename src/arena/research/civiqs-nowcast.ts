@@ -100,7 +100,7 @@ function seriesValue(
   const share = (label: string) => {
     const i = snap.choices.indexOf(label);
     const v = i < 0 ? undefined : point[i + 1];
-    return typeof v === "number" ? v : undefined;
+    return typeof v === "number" && Number.isFinite(v) ? v : undefined;
   };
   const sum = (labels: string[]) => {
     let total = 0;
@@ -140,9 +140,38 @@ export async function civiqsNowcast(
   round: ArenaRound,
   asOf: string = round.lock_at,
   maxLookbackDays = 6,
+  live?: LiveCiviqs,
 ): Promise<Nowcast | undefined> {
   const series = round.series ? CIVIQS_SERIES[round.series] : undefined;
   if (!series) return undefined;
+  const archived = await archivedNowcast(data, round, series, asOf, maxLookbackDays);
+  // An OPEN round may also read the dashboard itself (civiqs-live.ts): the
+  // archive is pushed irregularly, and Civiqs revises its history nightly, so
+  // a live reading of the same or a later day is the fresher evidence. A
+  // round whose lock has passed never does — a backtest sees the archive only.
+  if (!live || Date.parse(round.lock_at) <= Date.now()) return archived;
+  const snap = await live(series.name, series.filters).catch(() => undefined);
+  const point = snap?.points.at(-1);
+  if (!snap || !point) return archived;
+  if (archived && archived.date > point[0]) return archived;
+  const value = seriesValue(snap as Snapshot, point, series);
+  if (value === undefined) return archived;
+  return { series: round.series!, date: point[0], value, snapshot: `live:${snap.url}` };
+}
+
+/** Fetch one tracker from the live dashboard (see civiqs-live.ts). */
+export type LiveCiviqs = (
+  name: string,
+  filters?: Record<string, string>,
+) => Promise<{ points: Array<[string, ...number[]]>; url: string } & Omit<Snapshot, "points">>;
+
+async function archivedNowcast(
+  data: ArenaData,
+  round: ArenaRound,
+  series: CiviqsSeries,
+  asOf: string,
+  maxLookbackDays: number,
+): Promise<Nowcast | undefined> {
   const dir = civiqsDir(series);
   const start = Date.parse(asOf.slice(0, 10));
   for (let back = 0; back <= maxLookbackDays; back++) {
@@ -173,8 +202,19 @@ export function nowcastForecaster(
     round: ArenaRound,
     lock: import("../types").ArenaLock,
   ) => import("../forecast").RoundForecast,
+  opts: { live?: LiveCiviqs } = {},
 ) {
+  // One live read per tracker per forecast call — a profile's cells share it.
+  const live = opts.live;
   return async (round: ArenaRound, lock: import("../types").ArenaLock) => {
+    const cache = new Map<string, ReturnType<LiveCiviqs>>();
+    const cachedLive: LiveCiviqs | undefined = live
+      ? (name, filters) => {
+          const key = `${name}?${JSON.stringify(filters ?? {})}`;
+          if (!cache.has(key)) cache.set(key, live(name, filters));
+          return cache.get(key)!;
+        }
+      : undefined;
     if (round.target_type === "ranking_list" && round.tracker === "wikipedia") {
       // Fuller, fresher inputs than the lock carries: the archived daily lists
       // fetched before the lock, three weeks back.
@@ -195,8 +235,14 @@ export function nowcastForecaster(
     const f = base(round, lock);
     if (round.tracker !== "civiqs") return f;
     const fresher = async (seriesId: string, lastDate: string | undefined) => {
-      const n = await civiqsNowcast(data, { ...round, series: seriesId });
-      return n && (!lastDate || n.date > lastDate) ? n : undefined;
+      const n = await civiqsNowcast(
+        data,
+        { ...round, series: seriesId },
+        round.lock_at,
+        6,
+        cachedLive,
+      );
+      return n && (!lastDate || n.date >= lastDate) ? n : undefined;
     };
     const used: Record<string, { date: string; value: number }> = {};
     if (f.topline && round.series) {
