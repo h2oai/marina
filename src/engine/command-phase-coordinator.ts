@@ -8,6 +8,7 @@ import type { CommandContext, EngineEvent, Entity, EntityId, RoomContext, RoomId
 import type { EntityManager } from "../world/entity-manager";
 import type { RoomManager } from "../world/room-manager";
 import { raiseForCommand } from "./challenges";
+import { failCommandResponse } from "./command-response";
 import type { CommandRouter } from "./command-router";
 import { trackQuestProgress } from "./commands/quest";
 import { getErrorMessage, tryLog } from "./errors";
@@ -105,12 +106,13 @@ export class CommandPhaseCoordinator {
             .map((c) => c.trim())
             .filter(Boolean);
           for (const cmd of commands) {
-            this.host.processCommand(entityId, cmd);
+            await this.host.processCommand(entityId, cmd);
           }
           return;
         }
       }
       this.host.sendToEntity(entityId, `Unknown command: ${input.verb}. Type "help" for commands.`);
+      failCommandResponse(`Unknown command: ${input.verb}`);
       recordUsage(false);
       return;
     }
@@ -136,6 +138,7 @@ export class CommandPhaseCoordinator {
       // LOCAL profile: rank floors are off for the operator's own instance
       // (loopback logins are also promoted to sovereign at login).
       if (rank < def.minRank && !gateIsAuthority && !isLocalUngated()) {
+        failCommandResponse(`Rank ${def.minRank} required for ${def.name}`);
         this.host.sendToEntity(
           entityId,
           `You must be at least ${rankName(def.minRank)} (rank ${def.minRank}) to use "${def.name}".` +
@@ -164,6 +167,7 @@ export class CommandPhaseCoordinator {
     if (def?.gate && this.host.db) {
       const result = checkGateForExecution(this.host.db, entityId, def.gate);
       if (!result.ok) {
+        failCommandResponse(result.reason ?? `Gate "${def.gate}" denied.`);
         this.host.sendToEntity(entityId, result.reason ?? `Gate "${def.gate}" denied.`);
         recordUsage(false);
         return;
@@ -187,12 +191,14 @@ export class CommandPhaseCoordinator {
         } catch (err) {
           handlerThrew = true;
           const msg = getErrorMessage(err);
+          failCommandResponse(msg);
           this.host.logger.error("command", `Async error in "${input.verb}"`, { error: msg });
           this.host.sendToEntity(entityId, `Command error: ${msg}`);
         }
       }
     } catch (err) {
       const msg = getErrorMessage(err);
+      failCommandResponse(msg);
       this.host.logger.error("command", `Error in "${input.verb}"`, { error: msg });
       this.host.sendToEntity(entityId, `Command error: ${msg}`);
       // Track failed command

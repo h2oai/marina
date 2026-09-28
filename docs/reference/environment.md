@@ -130,6 +130,7 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 | `MARINA_LOCAL_OUTPUT_FRACTION=0.25` | Share of a local model's context window reserved for output (0 &lt; f ≤ 0.5; higher values are clamped). It scales with the configured window, so pin a real window above for large local servers. |  |
 | `MARINA_LOCAL_MAX_OUTPUT_TOKENS=32768` | Optional hard cap in tokens on local-model output. Unset applies the fraction alone. |  |
 | `MARINA_TOKEN_CHARS_PER_TOKEN=3` | Characters per token in the compactor's prompt-size estimate. Lower compacts earlier; raising it risks oversized prompts the upstream rejects. |  |
+| `MARINA_MAX_TOOL_RESULT_TOKENS=2000` | Tool-result text block cap. Unset: max(2000, 15% of the effective prompt window), recalculated after model changes and overflow recovery. A positive integer sets a fixed cap. Truncation is labeled; originals are archived before compaction. Prefer narrower retrievals when a result exceeds the cap. |  |
 
 ## Default and fallback models
 
@@ -151,8 +152,8 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 | `MAX_AGENT_UPTIME_MS=86400000` | Maximum agent uptime in milliseconds before the runtime stops it (default 24 hours). | restart |
 | `MARINA_DISABLED_AGENTS=` | Comma-separated agent names that seeders, autorespawn and room-agent spawning must not bring back. `agent disable <name>` does the same in-world and persists. |  |
 | `MARINA_TASK_LEASE_MS=900000` | Renewable lease on a newly claimed task, in milliseconds. Workers renew with `task heartbeat <id>`; expired ordinary work reopens. |  |
-| `AGENT_CREW_MAX_TOKENS=2048` | Output-token budget for request-driven (crew) agents. |  |
-| `AGENT_COMPACT_MAX_TOKENS=4096` | Output-token budget for context compaction summaries. |  |
+| `AGENT_CREW_MAX_TOKENS=2048` | Output-token cap for request-driven (crew) agents. Unset: 2048 with thinking off; with thinking enabled, pi-ai's thinking budget + 2048 answer/tool tokens, bounded by the provider output limit and half the context window. An explicit insufficient cap is honored with a warning; reasoning depth may be reduced. |  |
+| `AGENT_COMPACT_MAX_TOKENS=4096` | Output-token cap for cloud agents using the compact tool profile. Unset: 4096 with thinking off; with thinking enabled, pi-ai's thinking budget + 2048 answer/tool tokens, bounded by the provider output limit and half the context window. An explicit insufficient cap is honored with a warning. |  |
 | `AGENT_MAX_TOOL_CALLS_PER_RUN=16` | Tool calls one agent run may make before it yields. Unset: 8 for crew responders, 16 for autonomous agents. A value applies to both. |  |
 | `MARINA_MAX_TURNS_PER_PROMPT=24` | Model calls one prompt may take before the loop yields to the next cycle. |  |
 | `MARINA_CHANNEL_SENDS_PER_RUN=3` | Ceiling on public channel sends per agent run. Each agent's own budget defaults to 1 and may be set up to this ceiling with `memory set channel_sends <n>`; 0 disables agent channel sends. Tells are never capped. |  |
@@ -164,8 +165,8 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 | `MARINA_AGENT_PROMPT_CACHE=on` | `off` stops agents' marina/* requests carrying prompt-cache markers and a per-agent session id. On by default; Marina's proxy strips the markers for upstreams that reject them. |  |
 | `MARINA_STRICT_TOOLS=on` | `off` sends tools without `strict: true`. On by default for closed, all-required schemas; upstreams that do not implement strict mode ignore it. |  |
 | `MARINA_SYSTEM_TOOLS_PROSE=on` | `off` omits the tools prose section from the lean agent system prompt. |  |
-| `MARINA_CONTINUATION_BUDGET_BYTES=6000` | Byte ceiling for the per-cycle continuation prompt (minimum 1000). Lowest-priority sections are deferred with a note. |  |
-| `MARINA_PERCEPTION_MODEL_REQUEST_MAX_CHARS=2000` | Clamp in characters for a model_request perception line (minimum 400). |  |
+| `MARINA_CONTINUATION_BUDGET_BYTES=6000` | Byte allowance for per-cycle context. Unset: effective prompt tokens / 8, clamped to 6000–16000 bytes. Automatic memory gets 2048–4096 content bytes. A fixed override has a minimum of 1000; mandatory sections can exceed it. Optional sections are deferred and remain eligible on the next scheduled cycle. |  |
+| `MARINA_PERCEPTION_MODEL_REQUEST_MAX_CHARS=2000` | Clamp in characters for a model_request perception line (minimum 400). Its content is the caller's question. Other addressed requests and JSON results get 1200 chars; ambient chatter gets 400. |  |
 | `MARINA_PROVIDER_MAX_RETRIES=2` | Provider-level retries inside one request (transient 5xx, short 429) before the loop's own backoff. 0 disables. |  |
 | `MARINA_PERCEIVE_SELF_ECHO=off` | `on` keeps an agent's own command echoes (memory-service acknowledgements, its `You tell …` receipts) in its world-event buffer. Off by default; messages from others are never filtered. |  |
 | `MARINA_REFLECTOR_IDLE_STOP_MS=600000` | Stop a `reflect`-spawned memory reflector after this many idle milliseconds with no assistance job. 0 disables. |  |

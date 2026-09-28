@@ -8,6 +8,7 @@ import { MemoryClientError } from "../sdk/memory-client";
 import type { MemoryOperationRequest } from "../sdk/memory-operations";
 import { retryMemoryOperation } from "../sdk/memory-retry";
 import type { MemoryCheckpoint, MemoryReceipt } from "../sdk/memory-types";
+import { type OutstandingRequest, updateRequestLedger } from "./outstanding-requests";
 
 type Archive = { source_ids: string[]; manifest_source_id?: string; sha256: string };
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
@@ -88,9 +89,25 @@ export class DurableResidentMemory {
   }
   save(data: Record<string, unknown>, signal?: AbortSignal): Promise<void> {
     const snapshot = JSON.parse(JSON.stringify(data));
+    return this.updateCheckpoint((previous) => ({ ...previous, ...snapshot }), signal);
+  }
+  saveRequests(requests: OutstandingRequest[], signal?: AbortSignal): Promise<void> {
+    const snapshot = requests.map((r) => ({ ...r }));
+    return this.updateCheckpoint(
+      (previous) => ({
+        ...previous,
+        outstandingRequests: updateRequestLedger(previous?.outstandingRequests, snapshot),
+      }),
+      signal,
+    );
+  }
+  private updateCheckpoint(
+    update: (previous: Record<string, unknown> | undefined) => Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<void> {
     return this.serialize(async () => {
       const previous = await this.writableCheckpoint(signal);
-      const merged = { ...previous?.data, ...snapshot };
+      const merged = update(previous?.data);
       await this.call(
         {
           operation: "save_checkpoint",
@@ -114,9 +131,17 @@ export class DurableResidentMemory {
       count = messages.length;
     return this.serialize(() => this.persist(originals, count, summary, "archive", signal), signal);
   }
-  journal(message: unknown, signal?: AbortSignal): Promise<void> {
+  journal(
+    message: unknown,
+    signal?: AbortSignal,
+    completedRequests: readonly string[] = [],
+  ): Promise<void> {
     const original = JSON.stringify([message]);
-    return this.serialize(() => this.persist(original, 1, "", "journal", signal), signal);
+    const completed = [...completedRequests];
+    return this.serialize(
+      () => this.persist(original, 1, "", "journal", signal, completed),
+      signal,
+    );
   }
   private async persist(
     original: string,
@@ -124,6 +149,7 @@ export class DurableResidentMemory {
     summary: string,
     kind: "archive" | "journal",
     signal?: AbortSignal,
+    completedRequests: readonly string[] = [],
   ): Promise<void> {
     const hash = digest(original);
     const previous = await this.writableCheckpoint(signal);
@@ -205,6 +231,15 @@ export class DurableResidentMemory {
     const data = {
       lastIntent: "Resume the preserved conversation",
       ...previous?.data,
+      ...(completedRequests.length
+        ? {
+            outstandingRequests: updateRequestLedger(
+              previous?.data.outstandingRequests,
+              [],
+              completedRequests,
+            ),
+          }
+        : {}),
       [kind]: {
         format: "json-utf8-parts-v1",
         source_ids: sourceIds,

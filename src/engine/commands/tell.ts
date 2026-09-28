@@ -66,6 +66,7 @@ export function deliverTell(
 
   deps.sendGlobal(target.id, tell(sender.name, message, "from"), senderId, "tell", {
     senderName: sender.name,
+    to: target.name,
     message,
     messageId: receipt?.id,
     correlationId: receipt?.correlation_id,
@@ -83,6 +84,7 @@ export function deliverTell(
     senderId,
     `${tell(target.name, message, "to")}${receipt ? ` [delivered #${receipt.id}]` : ""}`,
     "tell",
+    { delivery: { kind: "tell", target: target.name, message } },
   );
   return receipt?.id;
 }

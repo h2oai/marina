@@ -10,8 +10,9 @@
  * unless `MARINA_TOOL_EXECUTION` says otherwise.
  */
 
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { Api, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import {
   defaultAgentThinkingLevel,
   parseAgentThinkingLevel,
@@ -31,6 +32,8 @@ import {
   toolExecutionPolicy,
 } from "../src/agent/tools";
 import { parseSpawnOptions } from "../src/engine/commands/agent";
+import { Logger } from "../src/engine/logger";
+import { scopeProcessState } from "./process-state";
 
 const ENV_KEYS = ["MARINA_AGENT_THINKING", "MARINA_TOOL_EXECUTION"] as const;
 const saved = new Map(ENV_KEYS.map((k) => [k, process.env[k]] as const));
@@ -131,6 +134,139 @@ describe("agent spawn / config option parsing", () => {
 });
 
 describe("thinking level — model shaping and request body", () => {
+  it("reserves pi-ai's medium thinking allowance plus room for the tool call on the wire", async () => {
+    using _state = scopeProcessState({ env: { AGENT_CREW_MAX_TOKENS: undefined } });
+    const seen: Record<string, unknown>[] = [];
+    const fetchImpl = (async (_input: unknown, init?: RequestInit) => {
+      seen.push(JSON.parse(String(init?.body)));
+      return new Response(
+        'data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+        {
+          headers: { "Content-Type": "text/event-stream" },
+        },
+      );
+    }) as typeof fetch;
+    const adapter = new LeanAgentAdapter(
+      {
+        name: "thinking-output",
+        model: "marina/default",
+        crewResponder: true,
+        thinkingLevel: "medium",
+      },
+      "ws://127.0.0.1:3300",
+      null,
+      undefined,
+      undefined,
+      undefined,
+      fetchImpl,
+    );
+    const internals = adapter as unknown as {
+      model: Model<Api>;
+      providerStreamOptions(model: Model<Api>, options: SimpleStreamOptions): SimpleStreamOptions;
+    };
+    expect(adapter.getStatus().maxOutputTokens).toBe(8192 + 2048);
+    const options = internals.providerStreamOptions(internals.model, {
+      reasoning: "medium",
+      apiKey: "test",
+      fetch: fetchImpl,
+    });
+    const stream = piModels.streamSimple(
+      internals.model,
+      {
+        messages: [{ role: "user", content: "hi", timestamp: 1 }],
+      },
+      options,
+    );
+    const response = await stream.result();
+    expect(response.stopReason).not.toBe("error");
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.max_tokens ?? seen[0]!.max_completion_tokens).toBe(10240);
+    expect(seen[0]!.reasoning_effort).toBe("medium");
+  });
+
+  it("uses custom thinking budgets for compact agents", () => {
+    using _state = scopeProcessState({ env: { AGENT_COMPACT_MAX_TOKENS: undefined } });
+    const adapter = new LeanAgentAdapter(
+      {
+        name: "custom-thinking-output",
+        model: "marina/default",
+        toolProfile: "crew",
+        thinkingLevel: "high",
+        thinkingBudgets: { high: 12000 },
+      },
+      "ws://127.0.0.1:3300",
+      null,
+    );
+    expect(adapter.getStatus().maxOutputTokens).toBe(14048);
+  });
+
+  it("honors operator caps and warns when thinking and a tool call cannot fit", () => {
+    using _state = scopeProcessState({ env: { AGENT_CREW_MAX_TOKENS: "3000" } });
+    const warn = spyOn(Logger.prototype, "warn").mockImplementation(() => {});
+    try {
+      const config = {
+        name: "capped-thinking",
+        model: "marina/default",
+        crewResponder: true,
+        thinkingLevel: "medium" as const,
+      };
+      const explicit = new LeanAgentAdapter(
+        { ...config, maxTokens: 2048 },
+        "ws://127.0.0.1:3300",
+        null,
+      );
+      const env = new LeanAgentAdapter(config, "ws://127.0.0.1:3300", null);
+      expect(explicit.getStatus().maxOutputTokens).toBe(2048);
+      expect(env.getStatus().maxOutputTokens).toBe(3000);
+      expect(warn).toHaveBeenCalledTimes(2);
+      expect(warn.mock.calls[0]![1]).toContain("thinking budget 8192 plus 2048");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("bounds automatic output to leave prompt room and recalculates it when thinking changes", async () => {
+    using _state = scopeProcessState({ env: { AGENT_CREW_MAX_TOKENS: undefined } });
+    const adapter = new LeanAgentAdapter(
+      {
+        name: "reconfigured-thinking",
+        model: "anthropic/claude-sonnet-4-6",
+        crewResponder: true,
+        thinkingLevel: "off",
+      },
+      "ws://127.0.0.1:3300",
+      null,
+    );
+    const internals = adapter as unknown as { effectiveContextWindow: number; model: Model<Api> };
+    internals.effectiveContextWindow = 32000;
+    expect(adapter.getStatus().maxOutputTokens).toBe(2048);
+    await adapter.reconfigure({ thinkingLevel: "medium" });
+    expect(adapter.getStatus().maxOutputTokens).toBe(10240);
+    expect(internals.model.reasoning).toBe(true);
+    expect(internals.effectiveContextWindow).toBe(32000);
+    await adapter.reconfigure({ thinkingLevel: "off" });
+    expect(adapter.getStatus().maxOutputTokens).toBe(2048);
+
+    const warn = spyOn(Logger.prototype, "warn").mockImplementation(() => {});
+    try {
+      const small = new LeanAgentAdapter(
+        {
+          name: "small-thinking",
+          model: "marina/default",
+          contextWindow: 16384,
+          crewResponder: true,
+          thinkingLevel: "high",
+        },
+        "ws://127.0.0.1:3300",
+        null,
+      );
+      expect(small.getStatus().maxOutputTokens).toBe(8192);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("marks the marina proxy model reasoning-capable only when thinking is on", () => {
     const off = applyThinkingLevel(resolveModel("marina/default"), "off");
     expect(off.reasoning).toBe(false);

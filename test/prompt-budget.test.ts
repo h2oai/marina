@@ -51,11 +51,14 @@ import {
 import {
   CONTEXT_PRUNE_THRESHOLD,
   CONTINUATION_PROMPT_BUDGET_BYTES,
+  continuationPromptBudgetBytes,
   DEFAULT_CLOUD_MAX_TOKENS,
   localOutputBudget,
+  PERCEPTION_DETAIL_MAX_CHARS,
   PERCEPTION_LINE_MAX_CHARS,
   PERCEPTION_MODEL_REQUEST_MAX_CHARS,
 } from "../src/engine/constants";
+import { scopeProcessState } from "./process-state";
 
 const bytes = (s: string) => Buffer.byteLength(s, "utf8");
 
@@ -143,6 +146,17 @@ describe("system prompt byte budget", () => {
 });
 
 describe("continuation prompt clamps", () => {
+  it("preserves useful detail in addressed requests and structured results", () => {
+    const addressed = clampPerceptionLine(`[message] ${"detail ".repeat(300)} [re:abc123]`, true);
+    const structured = clampPerceptionLine(
+      `[message] ${JSON.stringify({ evidence: "x".repeat(3000) })}`,
+    );
+    for (const line of [addressed, structured]) {
+      expect(line.length).toBeGreaterThan(1000);
+      expect(line.length).toBeLessThan(PERCEPTION_DETAIL_MAX_CHARS + 60);
+    }
+    expect(addressed).toContain("[re:abc123]");
+  });
   it("clamps ordinary perception lines to PERCEPTION_LINE_MAX_CHARS", () => {
     const line = clampPerceptionLine(`[broadcast] ${"x".repeat(5000)}`);
     expect(line.length).toBeLessThan(PERCEPTION_LINE_MAX_CHARS + 40);
@@ -200,6 +214,7 @@ type Internals = {
   }>;
   platformMemory: Record<string, unknown>;
   actionHistory: { createSummary: () => unknown };
+  effectiveContextWindow: number;
 };
 
 function makeAdapter(
@@ -220,6 +235,7 @@ function makeAdapter(
 
 describe("continuation prompt budget (adapter)", () => {
   it("at cycle 300 with 20 large perceptions stays within budget and keeps the directive", async () => {
+    using _state = scopeProcessState({ env: { MARINA_CONTINUATION_BUDGET_BYTES: "6000" } });
     const { i } = makeAdapter("budget-cycle-300", 299);
     for (let n = 0; n < 20; n++) {
       i.pendingPerceptions.push({
@@ -238,6 +254,41 @@ describe("continuation prompt budget (adapter)", () => {
     // Events that did not fit were deferred, not dropped.
     expect(prompt).toContain("events deferred to the next cycle");
     expect(i.pendingPerceptions.length).toBeGreaterThan(0);
+  });
+
+  it("serves more events at 128k, requeues overflow, and shrinks with the effective window", async () => {
+    using _state = scopeProcessState({ env: { MARINA_CONTINUATION_BUDGET_BYTES: undefined } });
+    const { i, adapter } = makeAdapter("budget-adaptive", 1);
+    adapter.setActiveCodingTask("Keep the assigned coding task visible.");
+    const events = Array.from({ length: 50 }, (_, n) => ({
+      text: `[broadcast] event ${n} ${"context ".repeat(300)}`,
+      priority: 50,
+      shouldRespond: false,
+    }));
+    i.effectiveContextWindow = 128_000;
+    i.pendingPerceptions = [...events];
+    const large = await i.buildContinuationPrompt();
+    const largePending = i.pendingPerceptions.length;
+    expect(bytes(large)).toBeGreaterThan(6000);
+    expect(bytes(large)).toBeLessThanOrEqual(16000);
+    expect(largePending).toBeGreaterThan(0);
+    i.effectiveContextWindow = 16_384;
+    i.pendingPerceptions = [...events];
+    const small = await i.buildContinuationPrompt();
+    expect(bytes(small)).toBeLessThanOrEqual(6000);
+    expect(i.pendingPerceptions.length).toBeGreaterThan(largePending);
+    for (const prompt of [large, small])
+      expect(prompt).toContain("Keep the assigned coding task visible.");
+  });
+
+  it("bounds automatic scaling while honoring an explicit continuation ceiling", () => {
+    expect(continuationPromptBudgetBytes(1_000_000, {})).toBe(16000);
+    expect(
+      continuationPromptBudgetBytes(128_000, { MARINA_CONTINUATION_BUDGET_BYTES: "9000" }),
+    ).toBe(9000);
+    expect(continuationPromptBudgetBytes(8000, { MARINA_CONTINUATION_BUDGET_BYTES: "bad" })).toBe(
+      6000,
+    );
   });
 
   it("tells the responder to echo a tellAndAwait correlation tag", async () => {

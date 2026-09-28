@@ -18,6 +18,8 @@ import {
   estimateToolSchemaTokens,
   truncateOversizedToolResults,
 } from "../src/agent/context-manager";
+import { maxToolResultTokensForWindow } from "../src/engine/constants";
+import { scopeProcessState } from "./process-state";
 
 function fakeTools(totalBytes: number, count = 12): AgentTool[] {
   const per = Math.floor(totalBytes / count);
@@ -140,6 +142,71 @@ describe("truncation cut consistency", () => {
     // Re-estimating the truncated result lands at the budget (+ suffix), not
     // ~20 % over it as with the old `*4/1.1` cut.
     expect(estimateMessageTokens(out!)).toBeLessThanOrEqual(100 + 40);
+    expect(text).toContain("incomplete output");
+    expect(truncateOversizedToolResults([out!], 100)[0]).toBe(out);
+  });
+});
+
+describe("model-aware tool result allowance", () => {
+  const evidence = JSON.stringify({
+    records: Array.from({ length: 8 }, (_, i) => ({
+      id: `record_${i}`,
+      version: 1,
+      content: "Verified deployment evidence with a reproducible check. ".repeat(25),
+      sources: [{ id: `source_${i}`, range: { start: i * 100, end: i * 100 + 99 } }],
+    })),
+  });
+  const result: AgentMessage = {
+    role: "toolResult",
+    toolCallId: "retrieve_1",
+    toolName: "memory_retrieve",
+    content: [{ type: "text", text: evidence }],
+    isError: false,
+    timestamp: 1,
+  };
+  const resultText = (message: AgentMessage) =>
+    (message as { content: Array<{ text: string }> }).content[0]!.text;
+
+  it("keeps realistic retrieval evidence intact at 128k and adapts when the live window shrinks", async () => {
+    using _state = scopeProcessState({ env: { MARINA_MAX_TOOL_RESULT_TOKENS: undefined } });
+    let window = 128_000;
+    const archived: AgentMessage[][] = [];
+    const transform = createContextManager({
+      getModel: () => ({ contextWindow: window, maxTokens: 0 }) as never,
+      getSystemPrompt: () => "sys",
+      onBeforeCompact: (messages) => {
+        archived.push(messages);
+      },
+    });
+    expect(estimateMessageTokens(result)).toBeGreaterThan(2000);
+    const large = await transform([result]);
+    expect(JSON.parse(resultText(large[0]!))).toEqual(JSON.parse(evidence));
+    expect(archived).toHaveLength(0);
+    window = 8448;
+    const small = await transform([result]);
+    expect(resultText(small[0]!)).toContain("incomplete output");
+    expect(estimateMessageTokens(small[0]!)).toBeLessThanOrEqual(2020);
+    expect(resultText(archived[0]![0]!)).toBe(evidence);
+    expect(resultText(result)).toBe(evidence);
+  });
+
+  it("honors the env override, with explicit per-manager configuration taking precedence", async () => {
+    using _state = scopeProcessState({ env: { MARINA_MAX_TOOL_RESULT_TOKENS: "2500" } });
+    const options = {
+      getModel: () => ({ contextWindow: 128_000, maxTokens: 0 }) as never,
+      getSystemPrompt: () => "sys",
+    };
+    expect(resultText((await createContextManager(options)([result]))[0]!)).toContain("truncated");
+    const explicit = createContextManager({ ...options, maxToolResultTokens: 8000 });
+    expect(resultText((await explicit([result]))[0]!)).toBe(evidence);
+  });
+
+  it("rejects invalid environment caps instead of disabling truncation", () => {
+    for (const value of ["0", "-4", "NaN", "Infinity", "invalid"]) {
+      expect(maxToolResultTokensForWindow(8000, { MARINA_MAX_TOOL_RESULT_TOKENS: value })).toBe(
+        2000,
+      );
+    }
   });
 });
 

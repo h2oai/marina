@@ -306,11 +306,25 @@ export function createWorldTools(ctx: ToolContext): AgentTool[] {
           return execCommand(ctx, `tell ${p.target} ${p.message}`, signal);
         }
         const timeoutMs = p.timeoutMs ?? 30_000;
+        const deliveries: unknown[] = [];
         try {
-          const reply = await ctx.client.tellAndAwait(p.target, p.message, timeoutMs);
+          const reply = await ctx.client.tellAndAwait(p.target, p.message, timeoutMs, {
+            signal,
+            onDelivered: (perceptions) => {
+              deliveries.push(
+                ...perceptions.flatMap((perception) =>
+                  perception.data.delivery ? [perception.data.delivery] : [],
+                ),
+              );
+            },
+          });
           return {
             content: [{ type: "text" as const, text: `${p.target} replied: ${reply}` }],
-            details: { command: `tell ${p.target} (await ${timeoutMs}ms)`, awaited: true },
+            details: {
+              command: `tell ${p.target} (await ${timeoutMs}ms)`,
+              awaited: true,
+              deliveries,
+            },
           };
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);

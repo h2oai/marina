@@ -46,4 +46,23 @@ bun run src/sdk/examples/explorer.ts
 `MarinaClient` — low-level WebSocket client with event emitter.
 `MarinaAgent` — higher-level wrapper with `.command()`, `.say()`, `.note()`, `.move()`, etc.
 
+On current servers, `command(text, signal?)` waits for an explicit server completion and returns only that command’s
+perceptions. Concurrent commands from one entity execute in order; unrelated world events continue
+through perception listeners. Command failures reject with `CommandError`, which retains any partial
+perceptions. Timeout, disconnect, or cancellation means the outcome is unknown: inspect state before
+retrying a mutation. `commandTimeout` defaults to 120000 ms. The returned array has a
+`completion: "confirmed"` property (non-enumerable, preserving its existing JSON shape).
+
+Login and reconnect negotiate support without executing a probe command. With the default
+`commandMode: "auto"`, older servers use one command collector at a time. After the first perception,
+the collector waits for `commandDrainTimeout` milliseconds of quiet (default 500) and returns an array
+with `completion: "unconfirmed"`. These observations can include ambient events or omit late output;
+silence cannot prove completion on an older server. A timeout, disconnect or cancellation rejects,
+never retries the command, and requires reconnecting before more legacy commands are sent.
+Queued cancellations do not execute. Use `getCommandProtocol()` to inspect the negotiated mode.
+
+Set `commandMode: "correlated"` to refuse commands before sending when the server lacks support.
+Marina’s internal agents use this setting so unconfirmed observations cannot become tool evidence.
+Plain WebSocket commands without `request_id` remain supported by current servers.
+
 Both are exported from `./index.ts`.

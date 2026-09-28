@@ -6,7 +6,7 @@ import type { CommandDef, EntityId } from "../../types";
 const MAX_BATCH = 20;
 
 export function batchCommand(deps: {
-  processCommand: (entityId: EntityId, raw: string) => void;
+  processCommand: (entityId: EntityId, raw: string) => void | Promise<void>;
   /** Optional rate-limit check. When present, each subcommand consumes
    * one token; batching N commands costs the same as N individual
    * commands — no amplification. */
@@ -18,7 +18,7 @@ export function batchCommand(deps: {
     name: "batch",
     aliases: [],
     help: "Execute multiple commands in sequence, separated by semicolons.\nUsage: batch look ; north ; look ; note Found something\n\nUp to 20 commands per batch. Each subcommand consumes one rate-limit token.",
-    handler(ctx, input) {
+    async handler(ctx, input) {
       const commands = input.args
         .split(";")
         .map((s) => s.trim())
@@ -45,7 +45,7 @@ export function batchCommand(deps: {
           rateBlocked++;
           continue;
         }
-        deps.processCommand(input.entity, cmd);
+        await deps.processCommand(input.entity, cmd);
         executed++;
       }
 

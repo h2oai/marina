@@ -156,7 +156,9 @@ export function channelCommand(
             content: message,
             timestamp: Date.now(),
           });
-          ctx.send(input.entity, channelSelf(name, message), name);
+          ctx.send(input.entity, channelSelf(name, message), name, {
+            delivery: { kind: "channel", target: name, message },
+          });
           return;
         }
 

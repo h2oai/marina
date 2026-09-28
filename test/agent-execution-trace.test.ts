@@ -163,6 +163,7 @@ describe("adapter trace-parent integration (perception → agent_turn_start)", (
     autonomousMode: boolean;
     loopIterationCount: number;
     client: { emit(event: "perception", p: Perception): void };
+    platformMemory: { saveOutstandingRequests(): Promise<void> };
     agent: { listeners: Set<(event: { type: string }, signal: AbortSignal) => unknown> };
     buildContinuationPrompt(): Promise<string>;
     setupActionTracking(): void;
@@ -172,6 +173,7 @@ describe("adapter trace-parent integration (perception → agent_turn_start)", (
   function makeAdapter(name: string): { adapter: LeanAgentAdapter; internals: AdapterInternals } {
     const adapter = new LeanAgentAdapter({ name }, "ws://127.0.0.1:3300", null);
     const internals = adapter as unknown as AdapterInternals;
+    internals.platformMemory.saveOutstandingRequests = async () => {};
     internals.autonomousMode = true; // perception buffering only happens in autonomous mode
     internals.setupActionTracking(); // normally registered by start(); start() would do I/O
     return { adapter, internals };

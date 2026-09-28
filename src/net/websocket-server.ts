@@ -9,6 +9,12 @@ import type { MarinaAuthProvider } from "../auth/better-auth-provider";
 import type { RateLimiter } from "../auth/rate-limiter";
 import { secretsEqual } from "../auth/secret-compare";
 import { commandManifest } from "../engine/command-manifest";
+import {
+  commandCompletion,
+  completeCommandResponse,
+  correlateCommandPerception,
+  withCommandResponse,
+} from "../engine/command-response";
 import { previewParticipantContext } from "../engine/commands/context";
 import {
   WS_IDLE_TIMEOUT_SECONDS,
@@ -741,10 +747,13 @@ export class WebSocketServer {
             peerIp: ws.data.peerIp,
             send(perception: Perception) {
               if (ws.readyState === 1) {
-                ws.send(JSON.stringify(perception));
+                ws.send(JSON.stringify(correlateCommandPerception(connId, perception)));
               }
             },
             close() {
+              completeCommandResponse(connId, (p) => {
+                if (ws.readyState === 1) ws.send(JSON.stringify(p));
+              });
               ws.close();
             },
           };
@@ -766,16 +775,6 @@ export class WebSocketServer {
         },
 
         message(ws, message) {
-          if (self.draining && !engine.getConnections().get(ws.data.connId)?.internal) {
-            ws.send(
-              JSON.stringify({
-                kind: "error",
-                timestamp: Date.now(),
-                data: { text: "Instance is draining; reconnect shortly." },
-              }),
-            );
-            return;
-          }
           // Dashboard WS clients don't send game commands
           if (ws.data.isDashboard) return;
 
@@ -799,6 +798,18 @@ export class WebSocketServer {
           } catch {
             // Treat plain text as a command
             parsed = { type: "command", command: raw };
+          }
+
+          if (self.draining && !engine.getConnections().get(connId)?.internal) {
+            const message = "Instance is draining; reconnect shortly.";
+            ws.send(
+              JSON.stringify(
+                parsed.type === "command" && typeof parsed.request_id === "string"
+                  ? commandCompletion(parsed.request_id, message)
+                  : { kind: "error", timestamp: Date.now(), data: { text: message } },
+              ),
+            );
+            return;
           }
 
           // Gateway shared-secret authentication
@@ -875,6 +886,7 @@ export class WebSocketServer {
                   entityId: result.entityId,
                   name: result.name,
                   token: result.token,
+                  commandProtocol: "correlated-v1",
                   activeEvolutionSessions: engine.getActiveEvolutionSessions(result.name),
                 },
               }),
@@ -904,6 +916,7 @@ export class WebSocketServer {
                   entityId: result.entityId,
                   name: result.name,
                   token: result.token,
+                  commandProtocol: "correlated-v1",
                   activeEvolutionSessions: engine.getActiveEvolutionSessions(result.name),
                 },
               }),
@@ -999,31 +1012,40 @@ export class WebSocketServer {
             return;
           }
 
-          if (parsed.type === "command" && parsed.command) {
+          if (parsed.type === "command" && typeof parsed.command === "string") {
+            const requestId = typeof parsed.request_id === "string" ? parsed.request_id : undefined;
+            const send = (p: Perception) => {
+              if (ws.readyState === 1) ws.send(JSON.stringify(p));
+            };
+            const refuse = (message: string) => {
+              if (requestId) send(commandCompletion(requestId, message));
+              else send({ kind: "error", timestamp: Date.now(), data: { text: message } });
+            };
+            if (requestId && requestId.length > 100) {
+              refuse("Command request ID exceeds 100 characters.");
+              return;
+            }
             const entityId = engine.getConnectionEntity(connId);
             if (entityId) {
               // Rate limit check
               if (rateLimiter && !rateLimiter.consume(entityId)) {
-                ws.send(
-                  JSON.stringify({
-                    kind: "error",
-                    timestamp: Date.now(),
-                    data: { text: "Rate limited. Please slow down." },
-                  }),
-                );
+                refuse("Rate limited. Please slow down.");
                 return;
               }
-              engine.processCommand(entityId, parsed.command);
+              const command = parsed.command;
+              const admitted = engine.submitCommand(entityId, command, async () => {
+                // A queued command must never execute under a replaced/disconnected session.
+                const execute = async () => {
+                  if (engine.getConnectionEntity(connId) !== entityId || ws.readyState !== 1)
+                    throw new Error("Command connection closed before execution.");
+                  await engine.processCommand(entityId, command);
+                };
+                if (requestId) await withCommandResponse(connId, requestId, execute, send);
+                else await execute();
+              });
+              if (!admitted) refuse("World command capacity reached; command did not execute.");
             } else {
-              ws.send(
-                JSON.stringify({
-                  kind: "error",
-                  timestamp: Date.now(),
-                  data: {
-                    text: "You're not logged in. Enter your name to begin.",
-                  },
-                }),
-              );
+              refuse("You're not logged in. Enter your name to begin.");
             }
           }
         },

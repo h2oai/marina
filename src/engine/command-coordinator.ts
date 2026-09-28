@@ -6,6 +6,7 @@ import { MAX_COMMAND_QUEUE_SIZE, MAX_COMMANDS_PER_TICK } from "./constants";
 interface QueuedCommand {
   entity: EntityId;
   raw: string;
+  execute?: () => Promise<void>;
 }
 
 /** Bounded fair admission, per-entity FIFO execution and complete shutdown drain. */
@@ -31,6 +32,20 @@ export class CommandCoordinator {
     this.queue.push({ entity, raw });
     return true;
   }
+  /** Immediate transports use the same capacity bound and per-entity FIFO as ticks. */
+  submit(entity: EntityId, raw: string, execute: () => Promise<void>): boolean {
+    if (this.admitted >= MAX_COMMAND_QUEUE_SIZE) {
+      this.rejected++;
+      return false;
+    }
+    this.admitted++;
+    // Flush earlier queued work for this entity before admitting the immediate command.
+    const earlier = this.queue.filter((command) => command.entity === entity);
+    this.queue = this.queue.filter((command) => command.entity !== entity);
+    for (const command of earlier) this.dispatch(command);
+    this.dispatch({ entity, raw, execute });
+    return true;
+  }
   snapshot() {
     return {
       pending: this.admitted,
@@ -52,15 +67,12 @@ export class CommandCoordinator {
     return promise;
   }
 
-  private dispatch({ entity, raw }: QueuedCommand): void {
+  private dispatch({ entity, raw, execute }: QueuedCommand): void {
     const previous = this.chains.get(entity);
-    const run = (
-      previous ? previous.then(() => this.execute(entity, raw)) : this.execute(entity, raw)
-    )
-      .catch(this.onError)
-      .finally(() => {
-        this.admitted--;
-      });
+    const invoke = execute ?? (() => this.execute(entity, raw));
+    const run = (previous ? previous.then(invoke) : invoke()).catch(this.onError).finally(() => {
+      this.admitted--;
+    });
     this.chains.set(entity, run);
     void run.then(() => {
       if (this.chains.get(entity) === run) this.chains.delete(entity);

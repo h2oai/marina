@@ -41,8 +41,12 @@ export interface ClientOptions {
   maxReconnectAttempts?: number;
   /** Max delay between reconnect attempts in ms (default: 30000) */
   maxReconnectDelay?: number;
-  /** Command response buffer window in ms (default: 500) */
+  /** Quiet interval for legacy servers only (default: 500). Silence is not completion. */
   commandDrainTimeout?: number;
+  /** Auto negotiates legacy compatibility; correlated refuses legacy commands before sending. */
+  commandMode?: "auto" | "correlated";
+  /** Command completion timeout in ms (default: 120000). A timeout never implies success. */
+  commandTimeout?: number;
   /** Callback fired immediately after WebSocket opens, before any login message is sent. */
   onOpen?: (ws: WebSocket) => void;
   /** Internal-agent token. Sent with login/auth messages so the engine can
@@ -51,6 +55,35 @@ export interface ClientOptions {
 }
 
 type PerceptionHandler = (p: Perception) => void;
+
+/** Legacy results are observations, without guaranteed attribution or completion. */
+export type CommandResult = Perception[] & { readonly completion: "confirmed" | "unconfirmed" };
+
+function commandResult(
+  perceptions: Perception[],
+  completion: CommandResult["completion"],
+): CommandResult {
+  // Preserve the array's existing iteration/JSON shape for SDK consumers.
+  return Object.defineProperty(perceptions, "completion", { value: completion }) as CommandResult;
+}
+
+export class CommandError extends Error {
+  constructor(
+    message: string,
+    readonly perceptions: Perception[] = [],
+  ) {
+    const partial = perceptions
+      .map((p) => p.data.text ?? p.data.message)
+      .filter((text): text is string => typeof text === "string")
+      .join("\n\n");
+    super(
+      partial
+        ? `${message}\n\nPartial command output (completed actions are not rolled back):\n${partial}`
+        : message,
+    );
+    this.name = "CommandError";
+  }
+}
 
 export type ClientEventMap = {
   connect: [SessionInfo];
@@ -128,6 +161,8 @@ export function stripCorrelationTag(text: string, id: string): string {
 
 export interface TellAndAwaitOptions {
   signal?: AbortSignal;
+  /** Observe the correlated send receipt (distinct from the peer's reply). */
+  onDelivered?: (perceptions: Perception[]) => void;
   /** Refuse untagged replies; required to isolate concurrent machine requests. */
   strictCorrelation?: boolean;
   /**
@@ -156,15 +191,14 @@ export class MarinaClient {
     Pick<ClientOptions, "onOpen" | "internalToken">;
   private session: SessionInfo | null = null;
   private handlers: PerceptionHandler[] = [];
-  private commandResolvers: Array<{
-    resolve: (perceptions: Perception[]) => void;
-    buffer: Perception[];
-    timeout: ReturnType<typeof setTimeout>;
-  }> = [];
   private connected = false;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempts = 0;
+  private commandProtocol: "correlated" | "legacy" | undefined;
+  private commandSession = 0;
+  private legacyCommands: Promise<void> = Promise.resolve();
+  private legacyCommandUncertain = false;
   private eventListeners = new Map<ClientEventName, Array<(...args: unknown[]) => void>>();
 
   constructor(url: string, options?: ClientOptions) {
@@ -177,6 +211,8 @@ export class MarinaClient {
       maxReconnectAttempts: options?.maxReconnectAttempts ?? 10,
       maxReconnectDelay: options?.maxReconnectDelay ?? 30000,
       commandDrainTimeout: options?.commandDrainTimeout ?? 500,
+      commandMode: options?.commandMode ?? "auto",
+      commandTimeout: options?.commandTimeout ?? 120_000,
       onOpen: options?.onOpen ?? undefined,
       internalToken: options?.internalToken ?? undefined,
     };
@@ -190,6 +226,17 @@ export class MarinaClient {
   /** Get the server URL. */
   getUrl(): string {
     return this.url;
+  }
+
+  /** Negotiated when login/auth succeeds; no commands are replayed to detect support. */
+  getCommandProtocol(): "correlated" | "legacy" | undefined {
+    return this.commandProtocol;
+  }
+
+  private negotiateCommands(p: Perception): void {
+    this.commandProtocol = p.data.commandProtocol === "correlated-v1" ? "correlated" : "legacy";
+    this.commandSession++;
+    this.legacyCommandUncertain = false;
   }
 
   // ─── Event Emitter ─────────────────────────────────────────────────────
@@ -236,6 +283,7 @@ export class MarinaClient {
           clearTimeout(timer);
           this.removeInternalHandler(handler);
           this.reconnectAttempts = 0;
+          this.negotiateCommands(p);
           this.session = {
             entityId: p.data.entityId as EntityId,
             token: (p.data.token as string) ?? "",
@@ -273,6 +321,7 @@ export class MarinaClient {
           clearTimeout(timer);
           this.removeInternalHandler(handler);
           this.reconnectAttempts = 0;
+          this.negotiateCommands(p);
           this.session = {
             entityId: p.data.entityId as EntityId,
             // The engine rotates the session token on every reconnect (revokes
@@ -300,22 +349,154 @@ export class MarinaClient {
     });
   }
 
-  /** Send a command and collect resulting perceptions. */
-  async command(cmd: string): Promise<Perception[]> {
+  /** Confirmed results on current servers; explicitly unconfirmed observations on legacy servers. */
+  async command(cmd: string, signal?: AbortSignal): Promise<CommandResult> {
+    signal?.throwIfAborted();
     if (!this.session) throw new Error("Not connected. Call connect() first.");
-    this.send({ type: "command", command: cmd });
-
-    return new Promise((resolve) => {
-      const entry = {
-        resolve,
-        buffer: [] as Perception[],
-        timeout: setTimeout(() => {
-          const idx = this.commandResolvers.indexOf(entry);
-          if (idx !== -1) this.commandResolvers.splice(idx, 1);
-          resolve(entry.buffer);
-        }, this.options.commandDrainTimeout),
+    if (!this.connected) throw new Error("Disconnected before command execution.");
+    if (this.commandProtocol !== "correlated") {
+      if (this.options.commandMode === "correlated")
+        throw new CommandError(
+          "Server does not advertise correlated commands; command was not sent. Upgrade the server or explicitly use legacy compatibility.",
+        );
+      return this.legacyCommand(cmd, signal);
+    }
+    const requestId = crypto.randomUUID();
+    return new Promise((resolve, reject) => {
+      const buffer: Perception[] = [];
+      const handler = (p: Perception) => {
+        if (p.command_request_id === requestId) buffer.push(p);
+        const result = p.data.command_result as
+          | { request_id: string; ok: boolean; error?: string }
+          | undefined;
+        if (result?.request_id !== requestId) return;
+        cleanup();
+        if (result.ok) resolve(commandResult(buffer, "confirmed"));
+        else reject(new CommandError(result.error ?? "Command failed", buffer));
       };
-      this.commandResolvers.push(entry);
+      const fail = (message: string) => {
+        cleanup();
+        reject(new CommandError(message, buffer));
+      };
+      const disconnected = () =>
+        fail("Disconnected before command completion; execution outcome is unknown.");
+      const aborted = () =>
+        fail("Stopped waiting for command completion; execution outcome is unknown.");
+      const timer = setTimeout(
+        () =>
+          fail(
+            "Command completion timed out; execution outcome is unknown. Inspect state before retrying.",
+          ),
+        this.options.commandTimeout,
+      );
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.removeInternalHandler(handler);
+        this.off("disconnect", disconnected);
+        signal?.removeEventListener("abort", aborted);
+      };
+      this.addInternalHandler(handler);
+      this.on("disconnect", disconnected);
+      signal?.addEventListener("abort", aborted, { once: true });
+      try {
+        this.send({ type: "command", command: cmd, request_id: requestId });
+      } catch (error) {
+        cleanup();
+        reject(error);
+      }
+    });
+  }
+
+  private legacyCommand(cmd: string, signal?: AbortSignal): Promise<CommandResult> {
+    const session = this.commandSession;
+    // One legacy collector per connection. Queued cancellations never send a command.
+    return new Promise((resolve, reject) => {
+      let cancelled = false;
+      const cancel = () => {
+        cancelled = true;
+        cleanup();
+        reject(new CommandError("Legacy command cancelled before dispatch; command was not sent."));
+      };
+      const cleanup = () => {
+        signal?.removeEventListener("abort", cancel);
+        this.off("disconnect", cancel);
+      };
+      signal?.addEventListener("abort", cancel, { once: true });
+      this.on("disconnect", cancel);
+      const job = this.legacyCommands.then(async () => {
+        cleanup();
+        if (cancelled) return;
+        if (session !== this.commandSession || !this.connected || this.legacyCommandUncertain)
+          throw new CommandError(
+            "Legacy command was not sent: reconnect after an unknown command outcome.",
+          );
+        resolve(await this.collectLegacyCommand(cmd, signal));
+      });
+      this.legacyCommands = job.catch(reject);
+    });
+  }
+
+  private collectLegacyCommand(cmd: string, signal?: AbortSignal): Promise<CommandResult> {
+    signal?.throwIfAborted();
+    return new Promise((resolve, reject) => {
+      const buffer: Perception[] = [];
+      let quiet: ReturnType<typeof setTimeout> | undefined;
+      const cleanup = () => {
+        clearTimeout(quiet);
+        clearTimeout(deadline);
+        this.removeInternalHandler(receive);
+        this.off("disconnect", disconnected);
+        signal?.removeEventListener("abort", aborted);
+      };
+      const fail = (message: string) => {
+        this.legacyCommandUncertain = true;
+        cleanup();
+        reject(
+          new CommandError(
+            `${message}; execution outcome is unknown. Inspect state and reconnect before sending another command.`,
+            buffer,
+          ),
+        );
+      };
+      const disconnected = () => fail("Disconnected during legacy command");
+      const aborted = () => fail("Stopped waiting for legacy command");
+      const receive = (p: Perception) => {
+        if (
+          p.data.capabilities ||
+          p.data.context_preview ||
+          p.data.memory_service ||
+          p.data.command_result ||
+          p.command_request_id
+        )
+          return;
+        buffer.push(p);
+        clearTimeout(quiet);
+        quiet = setTimeout(() => {
+          cleanup();
+          if (buffer.some((item) => item.kind === "error" || item.kind === "auth_error"))
+            reject(
+              new CommandError(
+                "Error observed during legacy command; attribution and outcome are unconfirmed.",
+                buffer,
+              ),
+            );
+          else resolve(commandResult(buffer, "unconfirmed"));
+        }, this.options.commandDrainTimeout);
+      };
+      const deadline = setTimeout(
+        () => fail("Legacy command observation timed out"),
+        this.options.commandTimeout,
+      );
+      this.addInternalHandler(receive);
+      this.on("disconnect", disconnected);
+      signal?.addEventListener("abort", aborted, { once: true });
+      try {
+        this.send({ type: "command", command: cmd });
+      } catch (error) {
+        cleanup();
+        this.legacyCommandUncertain = true;
+        reject(error);
+      }
     });
   }
 
@@ -636,14 +817,10 @@ export class MarinaClient {
 
     if (
       p.data?.capabilities ||
+      p.data?.command_result ||
       (p.data?.context_preview as { request_id?: string } | undefined)?.request_id
     )
       return;
-
-    // Command resolvers (buffer perceptions for command responses)
-    for (const resolver of this.commandResolvers) {
-      resolver.buffer.push(p);
-    }
 
     // User handlers
     for (const h of this.handlers) {
@@ -822,21 +999,20 @@ export class MarinaClient {
     opts.signal?.addEventListener("abort", onAbort, { once: true });
     if (opts.signal?.aborted) onAbort();
 
-    // Fire the tell. command() resolves on perception drain — if the engine
-    // refuses (e.g. target offline) the immediate ack carries the error
-    // and the listener simply never matches; caller times out with the
-    // explanatory message above. Don't fail-fast on the ack here because
-    // an `Online (...)` notification from elsewhere can race the actual
-    // tell error and we'd false-negative.
-    if (!settled) {
-      // Do not await the command drain before returning the cancellable waiter.
-      void this.command(`tell ${target} ${outgoing}`).catch((error) => {
-        if (settled) return;
-        cleanup();
-        rejectReply(error instanceof Error ? error : new Error(String(error)));
-      });
-    }
-    return replyPromise;
+    // Await delivery and the separately correlated reply concurrently. Ambient
+    // traffic cannot satisfy command completion or turn a refusal into success.
+    const delivered = !settled
+      ? this.command(`tell ${target} ${outgoing}`, opts.signal).then((perceptions) => {
+          opts.onDelivered?.(perceptions);
+        })
+      : Promise.resolve();
+    void delivered.catch((error) => {
+      if (settled) return;
+      cleanup();
+      rejectReply(error instanceof Error ? error : new Error(String(error)));
+    });
+    const [reply] = await Promise.all([replyPromise, delivered]);
+    return reply;
   }
 }
 
