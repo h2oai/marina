@@ -5,7 +5,7 @@ import { record as recordStanding } from "../../agent/standing";
 import { bold, dim, id as fmtId, status as fmtStatus, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
-import { requireRank } from "../permissions";
+import { rankFloorRefusal } from "../rank-floor";
 import { requiresPersistence } from "./command-messages";
 
 interface ExperimentConfig {
@@ -153,8 +153,13 @@ Examples:
         }
 
         case "create": {
-          if (!requireRank(entity, 2)) {
-            ctx.send(input.entity, "Requires coordinator rank (2+) to create experiments.");
+          const floor = rankFloorRefusal(
+            entity,
+            2,
+            "Requires coordinator rank (2+) to create experiments.",
+          );
+          if (floor) {
+            ctx.send(input.entity, floor);
             return;
           }
           const name = tokens[1];

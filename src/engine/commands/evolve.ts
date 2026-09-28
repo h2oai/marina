@@ -7,6 +7,7 @@ import { getStanding } from "../../agent/standing";
 import { bold, category, dim, header, separator, status, stripAnsi } from "../../net/ansi";
 import type { EvolutionSessionRow, MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { MAX_REPLICAS_PER_RUN } from "../constants";
 import { sanitizeEntityName } from "../entity-name";
 import { tryLog } from "../errors";
 import { analyzeEvolutionEvidence } from "../evolution-analysis";
@@ -31,7 +32,7 @@ import {
 import { promotionMargin } from "../fishing-margin";
 import { Logger } from "../logger";
 import { type ModifierSpec, parseModifiers } from "../parse-input";
-import { getRank } from "../permissions";
+import { rankFloorRefusal } from "../rank-floor";
 import { checkGateForExecution, recordGateExecution, SAFETY_GATES } from "../safety-gates";
 import { dailyCapRefusal } from "../spend-ledger";
 import { spawnBudget } from "./agent";
@@ -795,10 +796,13 @@ function handleTrial(
     );
     return;
   }
-  if (getRank(entity) < 4) {
-    say(
-      "evolve trial needs rank 4 (builder): it spawns agents and runs benchmarks, which cost real tokens.",
-    );
+  const trialFloor = rankFloorRefusal(
+    entity,
+    4,
+    "evolve trial needs rank 4 (builder): it spawns agents and runs benchmarks, which cost real tokens.",
+  );
+  if (trialFloor) {
+    say(trialFloor);
     return;
   }
   if (run.status !== "proposed") {
@@ -958,8 +962,8 @@ export interface ReplicateDeps {
   agentsLeft(): number;
 }
 
-/** A run can seed at most this many copies in total, however often it is asked. */
-export const MAX_REPLICAS_PER_RUN = 5;
+/** A run can seed at most this many copies in total (MARINA_MAX_REPLICAS_PER_RUN). */
+export { MAX_REPLICAS_PER_RUN };
 
 const REPLICATE_MODS: ModifierSpec = {
   n: { type: "int" },
@@ -991,8 +995,13 @@ async function handleReplicate(
     );
     return;
   }
-  if (getRank(entity) < 4) {
-    say("evolve replicate needs rank 4 (builder): copies are agents that spend real tokens.");
+  const replicateFloor = rankFloorRefusal(
+    entity,
+    4,
+    "evolve replicate needs rank 4 (builder): copies are agents that spend real tokens.",
+  );
+  if (replicateFloor) {
+    say(replicateFloor);
     return;
   }
   if (run.status !== "accepted") {

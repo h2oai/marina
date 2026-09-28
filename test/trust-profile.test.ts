@@ -168,10 +168,11 @@ describe("trust profile — LOCAL removes friction, SHARED keeps it", () => {
     };
     const shared = run("shared");
     expect(shared.rank).toBe(0);
-    expect(shared.out).toMatch(/must be at least/);
+    // SHARED: the admin.destructive gate is the authority and refuses rank 0.
+    expect(shared.out).toMatch(/Not yet/);
     const local = run("local");
     expect(local.rank).toBe(9);
-    expect(local.out).not.toMatch(/must be at least/);
+    expect(local.out).not.toMatch(/must be at least|Not yet/);
   });
 
   it("rate limiters pass everything under the LOCAL bypass", () => {

@@ -7,7 +7,6 @@ import { classifyPrimitive } from "../telemetry/primitive-usage";
 import type { CommandContext, EngineEvent, Entity, EntityId, RoomContext, RoomId } from "../types";
 import type { EntityManager } from "../world/entity-manager";
 import type { RoomManager } from "../world/room-manager";
-import { getAutonomyPosture } from "./autonomy";
 import { raiseForCommand } from "./challenges";
 import type { CommandRouter } from "./command-router";
 import { trackQuestProgress } from "./commands/quest";
@@ -116,13 +115,13 @@ export class CommandPhaseCoordinator {
       return;
     }
 
-    // Enforce minRank on built-in commands. Under the `earned` / `open`
-    // autonomy postures, a command that declares a safety gate defers its
-    // rank check to the gate — auto-derived rank caps at 4 while gated
-    // commands historically demanded 5, which double-locked the ladder the
-    // gate registry promised. The gate (with its standing floor, witness
-    // path, and destructive-core carve-out) is the real authority; the rank
-    // gate remains for ungated commands and for the default guarded posture.
+    // Enforce minRank on UNGATED built-in commands. A command that declares a
+    // safety gate defers its rank floor to the gate in every posture: the gate
+    // (standing floor, competence row, witness window, challenge approval and
+    // the destructive-core carve-out under `open`) is the single authority.
+    // Keeping minRank in front of it double-locked the ladder — auto-derived
+    // rank caps at 4 while gated commands demand 5+, so a gate holder below
+    // rank 5 could never reach the gate it had earned.
     // The input a refusal would hold: a challenge (src/engine/challenges.ts)
     // re-dispatches exactly this, and its approval leaves a single-use pass
     // for it. The pass arms the approved gates for this run only, so gate
@@ -133,9 +132,7 @@ export class CommandPhaseCoordinator {
 
     if (def?.minRank && def.minRank > 0 && !pass?.rankWaived) {
       const rank = getRank(entity);
-      const gateIsAuthority = Boolean(
-        def.gate && this.host.db && getAutonomyPosture() !== "guarded",
-      );
+      const gateIsAuthority = Boolean(def.gate && this.host.db);
       // LOCAL profile: rank floors are off for the operator's own instance
       // (loopback logins are also promoted to sovereign at login).
       if (rank < def.minRank && !gateIsAuthority && !isLocalUngated()) {

@@ -3,6 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
+import { grant } from "../src/engine/safety-gates";
 import {
   compileCommandModule,
   DEFAULT_COMMAND_SOURCE,
@@ -31,6 +32,7 @@ describe("Dynamic Commands", () => {
     // Give Alice architect rank (5) for build command
     const entity = engine.entities.get(conn1.entity!);
     if (entity) entity.properties.rank = 5;
+    grant(db, conn1.entity!, "world.code"); // command code is the world.code gate
 
     conn1.clear();
   });

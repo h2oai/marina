@@ -40,9 +40,9 @@ describe("Command Permissions", () => {
       expect(getRank(entity!)).toBe(0);
 
       engine.processCommand(conn1.entity!, "admin stats");
-      // P3: high-tier commands gate at rank 5 (safety threshold) + a
-      // per-operation competence proof. The rank check fires first.
-      expect(conn1.lastText()).toContain("rank 5");
+      // A gated command's gate is the single authority (no rank floor on top):
+      // zero standing and no admin.destructive competence ⇒ the gate refuses.
+      expect(conn1.lastText()).toContain("Not yet");
       expect(conn1.lastText()).toContain("admin");
       // Verify no state change — rank unchanged
       expect(getRank(entity!)).toBe(0);
@@ -69,8 +69,9 @@ describe("Command Permissions", () => {
       setRank(entity, 4 as EntityRank);
 
       engine.processCommand(conn1.entity!, "admin stats");
-      // P3: rank 4 still blocks because admin gates at rank 5 (safety threshold).
-      expect(conn1.lastText()).toContain("rank 5");
+      // Rank 4 still blocks — not on rank, but because the admin.destructive
+      // gate is not held (rank grants nothing below 5).
+      expect(conn1.lastText()).toContain("Not yet");
       // Verify rank was not changed by the failed command
       expect(getRank(entity)).toBe(4);
     });
@@ -326,8 +327,8 @@ describe("Command Permissions", () => {
       expect(getRank(entity!)).toBe(0);
 
       engine.processCommand(conn1.entity!, "connect list");
-      // P3: connect now gates at rank 5 + connect.manage gate.
-      expect(conn1.lastText()).toContain("rank 5");
+      // The connect.manage gate is the authority: zero standing ⇒ refused.
+      expect(conn1.lastText()).toContain("Not yet");
       expect(conn1.lastText()).toContain("connect");
       expect(getRank(entity!)).toBe(0);
     });
@@ -356,10 +357,10 @@ describe("Command Permissions", () => {
       // Verify room was actually created
       expect(engine.rooms.get(roomId("test/sub"))).toBeDefined();
 
-      // Builder cannot set code (requires architect, rank 5)
+      // Builder cannot set code (requires the world.code gate)
       conn1.clear();
       engine.processCommand(conn1.entity!, "build code test/sub export default {}");
-      expect(conn1.lastText()).toContain("architect");
+      expect(conn1.lastText()).toContain("Cannot set room code");
       // Verify rank wasn't changed by the denied sub-command
       expect(getRank(entity)).toBe(4);
     });
@@ -367,12 +368,13 @@ describe("Command Permissions", () => {
     it("should allow architect to set code", () => {
       const entity = engine.entities.get(conn1.entity!)!;
       setRank(entity, 5 as EntityRank);
+      grantAllGates(db, conn1.entity!);
 
       engine.processCommand(conn1.entity!, "build room test/arch A test");
       conn1.clear();
       engine.processCommand(conn1.entity!, "build code test/arch export default {}");
-      // Should not get a rank error (may get a validation error, that's fine)
-      expect(conn1.lastText()).not.toContain("architect");
+      // Should not get a gate error (may get a validation error, that's fine)
+      expect(conn1.lastText()).not.toContain("Cannot set room code");
     });
   });
 

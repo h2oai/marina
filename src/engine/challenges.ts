@@ -574,6 +574,7 @@ export function settleChallenge(
     grantCommandPass(challenge.requesterId, challenge.command, {
       gateIds: challenge.gateId ? [challenge.gateId] : [],
       rankWaived: challenge.minRank !== undefined,
+      ...(challenge.minRank !== undefined ? { waivedRank: challenge.minRank } : {}),
       ...(approverId ? { approverId } : {}),
       approverName,
       token: challenge.token,

@@ -779,7 +779,7 @@ See [Behavior Surfaces](behavior-surfaces.md) for when to use roles, traits, ski
 
 ## Witness Ladder (Earning Capability Gates)
 
-Gated operations (shell, agent spawn, keys, adapters, gateways, admin, code exec) are earned, not conferred. The ladder: build `standing` → `witness request <gate>` → a qualified holder opens a supervised window with `witness grant` → perform the operation as a demonstration → the holder `witness attest`s it → enough attested demonstrations unlock the gate solo. `MARINA_AUTONOMY` sets the posture: `guarded` (default, rank + gate both enforced), `earned` (gate is the authority for gated commands), `open` (non-core gates auto-pass; the destructive core stays gated).
+Gated operations (shell, agent spawn, keys, adapters, gateways, admin, code exec, child worlds, world code) are earned, not conferred. The ladder: build `standing` → `witness request <gate>` → a qualified holder opens a supervised window with `witness grant` → perform the operation as a demonstration → the holder `witness attest`s it → enough attested demonstrations unlock the gate solo. For a gated command the gate is the single authority — its legacy rank floor is not checked on top. `MARINA_AUTONOMY` sets the posture: `guarded` (default: solo holders, witness windows and approved challenges pass), `earned` (supervised holders also run optimistically, attested afterwards), `open` (non-core gates auto-pass; the destructive core stays gated).
 
 ```
 > witness                            Your gate ladder + open items you can act on
@@ -789,7 +789,12 @@ Gated operations (shell, agent spawn, keys, adapters, gateways, admin, code exec
 > witness attest 12                  (qualified) Attest a recorded demonstration
 > witness reject 12 too risky        (qualified) Reject a recorded demonstration
 > standing                           Your standing, gate progress, and the path forward
+> gate list [entity]                 Every gate and its status for you (or someone else)
+> gate grant Scout world.lineage     Pass on a gate you hold solo (sovereigns: any gate)
+> gate revoke Scout world.lineage    (sovereign) Take a gate back
 ```
+
+A grant never escalates: you grant only a gate you hold solo, the destructive core (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`) is granted by sovereigns only, nobody grants themselves, and a non-sovereign never grants to an agent they spawned.
 
 ## API Keys (`key.manage` Gate)
 

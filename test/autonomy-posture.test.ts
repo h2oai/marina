@@ -14,8 +14,8 @@
  * - `earned` posture runs optimistically and records a pending attestation;
  *   only a qualified external witness's attestation advances the flip.
  * - Self-witnessing and unqualified witnessing are refused everywhere.
- * - The engine router defers minRank to the gate for gated commands under
- *   earned/open, and does NOT under guarded.
+ * - The engine router defers minRank to the gate for gated commands in EVERY
+ *   posture: the gate is the single authority (no guarded double-lock).
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
@@ -256,7 +256,7 @@ describe("autonomy posture", () => {
     expect(db.getOpenSupervisionWindow(learner.id, "agent.spawn")).toBeUndefined();
   });
 
-  it("router defers minRank to the gate for gated commands under open, not under guarded", async () => {
+  it("router defers minRank to the gate for gated commands in every posture", async () => {
     process.env.MARINA_AUTONOMY = "open";
     const engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
     engine.registerRoom(roomId("test/start"), makeTestRoom());
@@ -278,9 +278,19 @@ describe("autonomy posture", () => {
       await engine.processCommand(conn.entity!, "posture-probe");
       expect(executed).toBe(1); // gate is the authority; posture-open passes it
 
+      // guarded: the gate still decides — a rank-0 caller without it is refused
+      // by the gate (not by minRank) ...
       process.env.MARINA_AUTONOMY = "guarded";
+      conn.clear();
       await engine.processCommand(conn.entity!, "posture-probe");
-      expect(executed).toBe(1); // guarded: minRank 5 blocks a rank-0 caller again
+      expect(executed).toBe(1);
+      expect(conn.allTextJoined()).toContain("Not yet");
+      expect(conn.allTextJoined()).not.toContain("rank 5");
+
+      // ... and the same rank-0 caller holding the gate runs it: no double-lock.
+      grant(db, conn.entity!, "gateway.connect");
+      await engine.processCommand(conn.entity!, "posture-probe");
+      expect(executed).toBe(2);
     } finally {
       engine.stop();
     }

@@ -4,7 +4,7 @@
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB, TraitCapabilities, TraitRow } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
-import { getRank } from "../permissions";
+import { rankFloorRefusal } from "../rank-floor";
 import { boundRoleOf, checkRoleEdit, successorHint } from "../role-guard";
 import { requiresPersistence } from "./command-messages";
 import {
@@ -292,8 +292,10 @@ export function traitCommand(deps: {
 
         case "create": {
           const entity = deps.getEntity?.(input.entity);
-          if (entity && getRank(entity) < 3) {
-            ctx.send(input.entity, "Requires organizer rank (3) or higher.");
+          const floor =
+            entity && rankFloorRefusal(entity, 3, "Requires organizer rank (3) or higher.");
+          if (floor) {
+            ctx.send(input.entity, floor);
             return;
           }
           const name = tokens[1];
@@ -329,11 +331,8 @@ export function traitCommand(deps: {
         }
 
         case "delete": {
+          // role.edit (below) is the authority for deleting a trait.
           const entity = deps.getEntity?.(input.entity);
-          if (entity && getRank(entity) < 3) {
-            ctx.send(input.entity, "Requires organizer rank (3) or higher.");
-            return;
-          }
           const name = tokens[1];
           if (!name) {
             ctx.send(input.entity, "Usage: trait delete <name>");

@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, rmSync } from "node:fs";
 import { Engine } from "../src/engine/engine";
+import { revoke } from "../src/engine/safety-gates";
 import { ShellRuntime } from "../src/engine/shell-runtime";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
@@ -210,12 +211,17 @@ describe("Shell", () => {
       expect(text).toContain("exit 0");
     });
 
-    it("should reject guest rank", () => {
+    it("the agent.run gate decides, not the rank floor", () => {
       const entity = engine.entities.get(conn.entity!);
       if (entity) entity.properties.rank = 0;
+      // A rank-0 holder of the gate is not double-locked by minRank ...
+      engine.processCommand(conn.entity!, "run echo test");
+      expect(stripAnsi(conn.lastText())).not.toContain("at least");
+      // ... and without the gate the gate itself refuses.
+      revoke(db, conn.entity!, "agent.run");
       engine.processCommand(conn.entity!, "run echo test");
       const text = stripAnsi(conn.lastText());
-      expect(text).toContain("at least");
+      expect(text).toContain("Not yet");
     });
 
     it("should show help with no args", () => {

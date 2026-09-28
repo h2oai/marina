@@ -22,6 +22,8 @@ export interface GatePass {
   gateIds: string[];
   /** The command's rank floor is waived for this run. */
   rankWaived: boolean;
+  /** The highest rank floor the approval covers (the challenge's minRank). */
+  waivedRank?: number;
   /** Entity id of the approver, or undefined for the judge. */
   approverId?: string;
   approverName: string;
@@ -75,6 +77,16 @@ export function takeArmedGatePass(entityId: string, gateId: string): GatePass | 
   if (!pass?.gateIds.includes(gateId)) return undefined;
   pass.gateIds = pass.gateIds.filter((id) => id !== gateId);
   return pass;
+}
+
+/**
+ * True when the command running now was approved past a rank floor of at
+ * least `min` — an inline floor (src/engine/rank-floor.ts) honours the same
+ * approval the router does, but never above the rank the approver vouched for.
+ */
+export function isRankWaivedForRun(entityId: string, min: number): boolean {
+  const pass = armed.get(entityId);
+  return !!pass?.rankWaived && (pass.waivedRank ?? 0) >= min;
 }
 
 export function setGateRefusalHook(hook: GateRefusalHook | undefined): void {

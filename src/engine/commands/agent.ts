@@ -18,6 +18,7 @@ import { MARINA_DEFAULT_MODEL, MAX_SPAWN_DEPTH, STANDING_PER_SPAWNED_CHILD } fro
 import { sanitizeEntityName } from "../entity-name";
 import { type ModifierSpec, parseModifiers } from "../parse-input";
 import { getRank } from "../permissions";
+import { rankFloorRefusal } from "../rank-floor";
 import { successorHint } from "../role-guard";
 import { checkGateForExecution, recordGateExecution, SAFETY_GATES } from "../safety-gates";
 
@@ -177,8 +178,9 @@ Usage:
           return handleSpawn(ctx, input.entity, entity, rank, tokens.slice(1), deps);
 
         case "stop": {
-          if (rank < 4) {
-            ctx.send(input.entity, REQUIRES_BUILDER_RANK);
+          const floor = rankFloorRefusal(entity, 4, REQUIRES_BUILDER_RANK);
+          if (floor) {
+            ctx.send(input.entity, floor);
             return;
           }
           return handleStop(ctx, input.entity, tokens[1], deps, {
@@ -189,8 +191,9 @@ Usage:
         }
 
         case "restart": {
-          if (rank < 4) {
-            ctx.send(input.entity, REQUIRES_BUILDER_RANK);
+          const floor = rankFloorRefusal(entity, 4, REQUIRES_BUILDER_RANK);
+          if (floor) {
+            ctx.send(input.entity, floor);
             return;
           }
           const name = tokens[1];
@@ -214,8 +217,9 @@ Usage:
         }
 
         case "failover": {
-          if (rank < 4) {
-            ctx.send(input.entity, REQUIRES_BUILDER_RANK);
+          const floor = rankFloorRefusal(entity, 4, REQUIRES_BUILDER_RANK);
+          if (floor) {
+            ctx.send(input.entity, floor);
             return;
           }
           const name = tokens[1];
@@ -240,8 +244,9 @@ Usage:
         }
 
         case "attention-mode": {
-          if (rank < 4) {
-            ctx.send(input.entity, REQUIRES_BUILDER_RANK);
+          const floor = rankFloorRefusal(entity, 4, REQUIRES_BUILDER_RANK);
+          if (floor) {
+            ctx.send(input.entity, floor);
             return;
           }
           const name = tokens[1];
@@ -263,8 +268,9 @@ Usage:
         }
 
         case "attention-feedback": {
-          if (rank < 4) {
-            ctx.send(input.entity, REQUIRES_BUILDER_RANK);
+          const floor = rankFloorRefusal(entity, 4, REQUIRES_BUILDER_RANK);
+          if (floor) {
+            ctx.send(input.entity, floor);
             return;
           }
           const name = tokens[1];
@@ -289,24 +295,27 @@ Usage:
         }
 
         case "disable": {
-          if (rank < 4) {
-            ctx.send(input.entity, REQUIRES_BUILDER_RANK);
+          const floor = rankFloorRefusal(entity, 4, REQUIRES_BUILDER_RANK);
+          if (floor) {
+            ctx.send(input.entity, floor);
             return;
           }
           return handleDisable(ctx, input.entity, tokens[1], deps);
         }
 
         case "enable": {
-          if (rank < 4) {
-            ctx.send(input.entity, REQUIRES_BUILDER_RANK);
+          const floor = rankFloorRefusal(entity, 4, REQUIRES_BUILDER_RANK);
+          if (floor) {
+            ctx.send(input.entity, floor);
             return;
           }
           return handleEnable(ctx, input.entity, tokens[1], deps);
         }
 
         case "attention": {
-          if (rank < 4) {
-            ctx.send(input.entity, REQUIRES_BUILDER_RANK);
+          const floor = rankFloorRefusal(entity, 4, REQUIRES_BUILDER_RANK);
+          if (floor) {
+            ctx.send(input.entity, floor);
             return;
           }
           const name = tokens[1];
@@ -319,8 +328,9 @@ Usage:
         }
 
         case "focus": {
-          if (rank < 4) {
-            ctx.send(input.entity, REQUIRES_BUILDER_RANK);
+          const floor = rankFloorRefusal(entity, 4, REQUIRES_BUILDER_RANK);
+          if (floor) {
+            ctx.send(input.entity, floor);
             return;
           }
           const name = tokens[1];
@@ -333,8 +343,9 @@ Usage:
         }
 
         case "config": {
-          if (rank < 4) {
-            ctx.send(input.entity, REQUIRES_BUILDER_RANK);
+          const floor = rankFloorRefusal(entity, 4, REQUIRES_BUILDER_RANK);
+          if (floor) {
+            ctx.send(input.entity, floor);
             return;
           }
           // Never rebind yourself to another role: improve by spawning an

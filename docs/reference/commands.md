@@ -964,7 +964,7 @@ Effect: unknown.
 In-game building for rooms, templates, and dynamic commands.
 Usage: build room|modify|link|unlink|code|validate|reload|diff|audit|revert|destroy|template|command
 
-Rank notes: most subcommands need rank 4; `build code`, `build reload`, `build revert`, `build destroy`, and the matching `build command code|reload|destroy` variants need rank 5.
+Rank notes: most subcommands need rank 4; `build code`, `build reload`, `build revert`, `build destroy`, and the matching `build command code|reload|destroy` variants also need the `world.code` gate (earn it via `witness request world.code` or an operator grant).
 
 Examples:
   build room my/garden A Quiet Garden
@@ -3533,6 +3533,40 @@ Effect: unknown.
 
 - `field-0` (`question`): text, required.
 
+## gate
+
+gate — safety-gate competence: who holds what, and passing it on.
+Usage:
+  gate list [entity]            — every gate and its status for you (or <entity>)
+  gate grant <entity> <gate>    — grant a gate you hold solo (sovereigns: any gate)
+  gate revoke <entity> <gate>   — (sovereign) take a gate back
+Core gates (key.manage, admin.destructive, shell.exec, code.exec.unrestricted) are granted by sovereigns only; nobody grants themselves.
+Earning a gate instead: `witness request <gate>`. Your ladder: `standing`.
+
+Category: Civic. Minimum rank: 0.
+Aliases: `gates`.
+
+### `gate list [entity]`
+
+Effect: unknown.
+
+- `field-0` (`entity`): text, optional group `option-0`.
+- Group `option-0`: `entity`.
+
+### `gate grant <entity> <gate>`
+
+Effect: unknown.
+
+- `field-0` (`entity`): text, required.
+- `field-1` (`gate`): text, required.
+
+### `gate revoke <entity> <gate>`
+
+Effect: unknown.
+
+- `field-0` (`entity`): text, required.
+- `field-1` (`gate`): text, required.
+
 ## gateway
 
 Bridge to peer Marina instances. Gated capability: earn it via `witness request gateway.connect` or an operator grant (see `standing`). Usage: gateway add <name> <ws-url> | gateway remove <name> | gateway list | gateway status <name> | gateway bridge <name> <channel> | gateway unbridge <name> <channel> | gateway send <name> <entity> <message>
@@ -4310,14 +4344,14 @@ Effect: unknown.
 ## marina-descend
 
 Create and operate sovereign Marina descendants through World Collective.
-Gated capability: earn it via `witness request admin.destructive` or an operator grant (see `standing`).
+Gated capability: earn it via `witness request world.lineage` or an operator grant (see `standing`).
 Usage:
   marina-descend create <genome-hash> | <name> | <parents csv> | <mode> | <hypothesis> [| mutations csv]
   marina-descend start <descendant-id>
   marina-descend stop <descendant-id>
   marina-descend list
 
-Category: Lineage. Minimum rank: 5. Gate: `admin.destructive`.
+Category: Lineage. Minimum rank: 5. Gate: `world.lineage`.
 Aliases: none.
 
 ### `marina-descend create <genome-hash> | <name> | <parents csv> | <mode> | <hypothesis> [| mutations csv]`
@@ -7601,7 +7635,7 @@ Usage: world list
        world adopt <child> <role> [into:<existing>]      — request bringing a role that EARNED its win home
        world adopt approve|reject <id> [reason] · world adopt rollback <id> · world adopt list
 
-Category: Lineage. Minimum rank: 5. Gate: `admin.destructive`.
+Category: Lineage. Minimum rank: 5. Gate: `world.lineage`.
 Aliases: `worlds`.
 
 ### `world adopt <child> <role> [into:<existing>]`
