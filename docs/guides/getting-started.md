@@ -85,7 +85,7 @@ silently. See [Model API](model-api.md) for endpoint configuration.
 
 The default world seeds Host, Builder, Critic, and Chronicler configurations. On a local install
 (loopback bind, no external sign-in) they start on boot as soon as a provider key or local runtime
-is configured. Spend is capped at $25 per UTC day by default; change it with
+is configured. Spend is capped at $50 per UTC day by default; change it with
 `MARINA_DAILY_SPEND_CAP_USD=<usd>` (`0` removes the cap). To keep them off, or to start them on a
 shared or public deployment:
 

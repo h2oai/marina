@@ -339,7 +339,7 @@ Select any of them for details in the inspector; its action link opens Admin →
   was stopped. Residents see only their own agents and no stop buttons.
 - **Spend** — rolling-hour and lifetime USD across the visible agents, the global and per-agent caps
   (`MARINA_MAX_COST_USD_PER_HOUR`, `MARINA_MAX_AGENT_COST_USD_PER_HOUR`, "unlimited" when unset; the
-  per-world daily cap `MARINA_DAILY_SPEND_CAP_USD`, default $25, is reported by `readiness` as "Daily spend"), a
+  per-world daily cap `MARINA_DAILY_SPEND_CAP_USD`, default $50, is reported by `readiness` as "Daily spend"), a
   runtime-vs-cap bar, and the top spenders with a bar each (against the per-agent cap when there is
   one). The empty state names the two env vars.
 - **Retention** — when the last hourly pass ran, how long it took, rows deleted per table and the

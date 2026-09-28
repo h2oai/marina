@@ -4,7 +4,7 @@
 /**
  * Per-world daily spend: every dollar a world pays upstream, recorded ONCE,
  * where it leaves Marina, and a cap on the day's total
- * (`MARINA_DAILY_SPEND_CAP_USD`, UTC days; unset = $25, `0` or `off` = no
+ * (`MARINA_DAILY_SPEND_CAP_USD`, UTC days; unset = $50, `0` or `off` = no
  * cap). Child worlds get `MARINA_CHILD_DAILY_SPEND_CAP_USD` (default $50),
  * never more than the parent's own cap.
  *
@@ -76,7 +76,7 @@ export function spentTodayUsd(now = Date.now()): number {
 }
 
 /** The cap when `MARINA_DAILY_SPEND_CAP_USD` is unset (USD per UTC day, per world). */
-export const DEFAULT_DAILY_SPEND_CAP_USD = 25;
+export const DEFAULT_DAILY_SPEND_CAP_USD = 50;
 /** A child world's cap when `MARINA_CHILD_DAILY_SPEND_CAP_USD` is unset. */
 export const DEFAULT_CHILD_DAILY_SPEND_CAP_USD = 50;
 

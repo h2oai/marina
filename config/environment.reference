@@ -428,9 +428,9 @@
 
 # ── Spend limits and failure breaker ─────────────────────────────────────────
 
-# Daily USD cap (UTC day, persisted) on everything this world pays upstream: /v1 passthru, agent turns, decision backends, forecasts and priced media jobs. At the cap /v1 returns 429 spend_cap_reached, decisions, forecasts and priced media jobs are refused and agents pause until 00:00 UTC. Default 25; 0 or off = no cap; an invalid value keeps the default. `readiness` shows today's spend.
+# Daily USD cap (UTC day, persisted) on everything this world pays upstream: /v1 passthru, agent turns, decision backends, forecasts and priced media jobs. At the cap /v1 returns 429 spend_cap_reached, decisions, forecasts and priced media jobs are refused and agents pause until 00:00 UTC. Default 50; 0 or off = no cap; an invalid value keeps the default. `readiness` shows today's spend.
 # @protected
-# MARINA_DAILY_SPEND_CAP_USD=25
+# MARINA_DAILY_SPEND_CAP_USD=50
 
 # Daily cap a World Collective child world starts with (default 50, never above the parent's cap; 0 or off = the parent's cap).
 # @protected

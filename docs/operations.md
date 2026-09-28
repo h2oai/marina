@@ -87,7 +87,7 @@ install** (the `local` trust profile) that has a usable provider (a key, a store
 local runtime) — `src/engine/auto-respawn.ts`. Shared and public deployments start them only
 with `AGENT_AUTORESPAWN=true`, or when an operator spawns them with `agent spawn`;
 `AGENT_AUTORESPAWN=false` keeps them off everywhere. Spend is bounded by the daily cap
-(`MARINA_DAILY_SPEND_CAP_USD`, default $25 per UTC day; `0` = no cap).
+(`MARINA_DAILY_SPEND_CAP_USD`, default $50 per UTC day; `0` = no cap).
 
 ## Load-bearing env vars
 

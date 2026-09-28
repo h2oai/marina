@@ -18,7 +18,7 @@ export function configurationPreset(name: string): Record<string, string> {
   // Cost-controlled presets pin agents off explicitly. The workbench preset
   // leaves them to the runtime defaults: room agents on, and seeded agents
   // auto-respawn under the local profile once a provider is configured —
-  // bounded by the default daily spend cap (MARINA_DAILY_SPEND_CAP_USD, $25).
+  // bounded by the default daily spend cap (MARINA_DAILY_SPEND_CAP_USD, $50).
   const agentsOff = { MARINA_ROOM_AGENTS: "false", AGENT_AUTORESPAWN: "false" };
   if (name === "minimal")
     return { ...local, ...agentsOff, MARINA_WORLD: "empty", MCP_PORT: "0", LOG_PORT: "0" };

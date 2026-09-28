@@ -175,7 +175,7 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 
 | Variable | Description | Flags |
 |---|---|---|
-| `MARINA_DAILY_SPEND_CAP_USD=25` | Daily USD cap (UTC day, persisted) on everything this world pays upstream: /v1 passthru, agent turns, decision backends, forecasts and priced media jobs. At the cap /v1 returns 429 spend_cap_reached, decisions, forecasts and priced media jobs are refused and agents pause until 00:00 UTC. Default 25; 0 or off = no cap; an invalid value keeps the default. `readiness` shows today's spend. | protected |
+| `MARINA_DAILY_SPEND_CAP_USD=50` | Daily USD cap (UTC day, persisted) on everything this world pays upstream: /v1 passthru, agent turns, decision backends, forecasts and priced media jobs. At the cap /v1 returns 429 spend_cap_reached, decisions, forecasts and priced media jobs are refused and agents pause until 00:00 UTC. Default 50; 0 or off = no cap; an invalid value keeps the default. `readiness` shows today's spend. | protected |
 | `MARINA_CHILD_DAILY_SPEND_CAP_USD=50` | Daily cap a World Collective child world starts with (default 50, never above the parent's cap; 0 or off = the parent's cap). | protected |
 | `MARINA_MAX_COST_USD_PER_HOUR=5`<br>`MARINA_MAX_AGENT_COST_USD_PER_HOUR=1` | Rolling one-hour USD caps on agent model spend, across all agents and per agent. Unset or 0 is unlimited. At a cap the agent pauses, tells its spawner, and resumes once last-hour spend drops. Local models count as $0. | protected |
 | `MARINA_MAX_CONSECUTIVE_UPSTREAM_ERRORS=20`<br>`MARINA_UPSTREAM_ERROR_PAUSE_MS=600000` | Consecutive upstream or loop errors (429, 5xx, timeouts) before an agent pauses for MARINA_UPSTREAM_ERROR_PAUSE_MS milliseconds and tells its spawner once. |  |

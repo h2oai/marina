@@ -76,8 +76,8 @@ describe("spend ledger", () => {
     recordSpend("forecast", 20, day1);
     expect(dailySpend(env, day1)).toMatchObject({ reached: true, capUsd: 50 });
     expect(dailyCapRefusal(env, day1)).toContain("daily spend cap reached ($50.50 today ≥ $50.00");
-    // Unset ⇒ the $25 default cap applies (30.5 + 20 already spent).
-    expect(dailyCapRefusal({}, day1)).toContain("≥ $25.00");
+    // Unset ⇒ the $50 default cap applies (30.5 + 20 already spent).
+    expect(dailyCapRefusal({}, day1)).toContain("≥ $50.00");
     expect(dailyCapRefusal({ MARINA_DAILY_SPEND_CAP_USD: "0" }, day1)).toBeUndefined();
     expect(dailyCapRefusal({ MARINA_DAILY_SPEND_CAP_USD: "off" }, day1)).toBeUndefined();
     // The refusal says which variable raises it.
@@ -87,19 +87,20 @@ describe("spend ledger", () => {
     expect(formatSpendUsd(50.5)).toBe("$50.50");
   });
 
-  it("defaults to $25/day; 0 or off uncaps; junk never lifts the cap", () => {
-    expect(DEFAULT_DAILY_SPEND_CAP_USD).toBe(25);
-    expect(dailySpendCapUsd({})).toBe(25);
-    expect(dailySpendCapUsd({ MARINA_DAILY_SPEND_CAP_USD: "" })).toBe(25);
-    expect(dailySpendCapUsd({ MARINA_DAILY_SPEND_CAP_USD: "abc" })).toBe(25);
-    expect(dailySpendCapUsd({ MARINA_DAILY_SPEND_CAP_USD: "-3" })).toBe(25);
+  it("defaults to $50/day; 0 or off uncaps; junk never lifts the cap", () => {
+    expect(DEFAULT_DAILY_SPEND_CAP_USD).toBe(50);
+    expect(dailySpendCapUsd({})).toBe(50);
+    expect(dailySpendCapUsd({ MARINA_DAILY_SPEND_CAP_USD: "" })).toBe(50);
+    expect(dailySpendCapUsd({ MARINA_DAILY_SPEND_CAP_USD: "abc" })).toBe(50);
+    expect(dailySpendCapUsd({ MARINA_DAILY_SPEND_CAP_USD: "-3" })).toBe(50);
     expect(dailySpendCapUsd({ MARINA_DAILY_SPEND_CAP_USD: "7.5" })).toBe(7.5);
     expect(dailySpendCapUsd({ MARINA_DAILY_SPEND_CAP_USD: "0" })).toBeUndefined();
     expect(dailySpendCapUsd({ MARINA_DAILY_SPEND_CAP_USD: "OFF" })).toBeUndefined();
   });
 
   it("a child world's cap is min(child cap, parent cap)", () => {
-    expect(childDailySpendCapEnv({})).toBe("25"); // default child 50, parent default 25
+    expect(childDailySpendCapEnv({})).toBe("50"); // default child 50, parent default 50
+    expect(childDailySpendCapEnv({ MARINA_DAILY_SPEND_CAP_USD: "30" })).toBe("30"); // never above the parent
     expect(childDailySpendCapEnv({ MARINA_DAILY_SPEND_CAP_USD: "100" })).toBe("50");
     expect(
       childDailySpendCapEnv({

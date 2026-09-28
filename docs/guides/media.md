@@ -49,7 +49,7 @@ MAX_VIDEO_JOBS_PER_DAY=5
 ```
 
 Priced cloud jobs also count toward the world's daily spend cap
-(`MARINA_DAILY_SPEND_CAP_USD`, default $25, `0` = no cap) at their estimated price, and are
+(`MARINA_DAILY_SPEND_CAP_USD`, default $50, `0` = no cap) at their estimated price, and are
 refused once it is reached. Local endpoints with no known price are not refused by it.
 
 Notes:

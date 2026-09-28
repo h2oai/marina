@@ -78,7 +78,7 @@ OpenAI-compatible API stays closed until you set `MODEL_API_KEYS`, safety gates 
 seeded agents do not start on their own. That is the right default for a server. For a personal
 instance on your own machine, add the local overlay, which declares `MARINA_PROFILE=local` and so
 behaves like a native `bun run start` (generated model-API key in `docker compose logs`, seeded
-agents start once a provider key is set, $25/day default spend cap):
+agents start once a provider key is set, $50/day default spend cap):
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build

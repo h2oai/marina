@@ -48,7 +48,7 @@ describe("presets", () => {
   });
 
   it("init tells the operator about the spend cap", () => {
-    expect(spendCapNotice({})).toContain("$25 per UTC day (default)");
+    expect(spendCapNotice({})).toContain("$50 per UTC day (default)");
     expect(spendCapNotice({ MARINA_DAILY_SPEND_CAP_USD: "5" })).toContain("$5 per UTC day;");
     expect(spendCapNotice({ MARINA_DAILY_SPEND_CAP_USD: "0" })).toContain("UNCAPPED");
     expect(spendCapNotice({})).toContain("AGENT_AUTORESPAWN=false");
