@@ -103,7 +103,10 @@ describe("links() / sources() batch their note lookups", () => {
 
 describe("getNotes", () => {
   it("dedupes ids, skips missing ones, and chunks past 500 ids", () => {
-    const ids = Array.from({ length: 1_200 }, (_, i) => db.createNote("Bob", `bulk-${i}`));
+    // This exercises chunked reads, so batch fixture writes into one commit.
+    const ids = db.transaction(() =>
+      Array.from({ length: 1_200 }, (_, i) => db.createNote("Bob", `bulk-${i}`)),
+    );
     const rows = db.getNotes([...ids, ...ids.slice(0, 50), 999_999]);
     expect(rows).toHaveLength(1_200);
     expect(new Set(rows.map((r) => r.id))).toEqual(new Set(ids));

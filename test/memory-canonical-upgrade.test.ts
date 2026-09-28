@@ -23,8 +23,22 @@ function fixture() {
   directories.push(dir);
   const path = join(dir, "old.db"),
     old = new Database(path);
-  old.exec(SCHEMA_BASELINE);
   old.exec("PRAGMA foreign_keys=ON");
+  try {
+    // Match production initialization: one durable commit, not one fsync per DDL
+    // statement. Autocommit setup can exhaust the test timeout on CI storage.
+    old.transaction(() => {
+      old.exec(SCHEMA_BASELINE);
+      seedLegacyFixture(old);
+    })();
+  } catch (error) {
+    old.close();
+    throw error;
+  }
+  return { path, old };
+}
+
+function seedLegacyFixture(old: Database) {
   old.run("INSERT INTO users(id,name,created_at,last_login) VALUES ('alice','Alice',1,1)");
   old.run(
     "INSERT INTO principals(principal_id,principal_type,display_name,created_at) VALUES ('alice','human','Alice',1)",
@@ -93,7 +107,6 @@ function fixture() {
   old.run(
     "INSERT INTO notes(id,entity_name,content,created_at) VALUES (50,'Anonymous','namespace assertion',1)",
   );
-  return { path, old };
 }
 
 test("version 137 upgrades pending corrections, reviews, sources and deletions atomically", async () => {
