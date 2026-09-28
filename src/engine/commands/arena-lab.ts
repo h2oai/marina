@@ -16,6 +16,7 @@
  * per entity and runs one at a time. Filing a submission is never in-world.
  */
 
+import { arenaWindowHours } from "../../arena/config";
 import type { ArenaData } from "../../arena/data";
 import {
   DISCOVERY_TRACKERS,
@@ -182,7 +183,7 @@ export async function arenaShadow(
         `"${named}" is not free to run here (${FREE_FORECASTERS.join(", ")}).\n${dim(PAID)}`,
       );
     const data = deps.data();
-    const hours = Number(process.env.MARINA_ARENA_WINDOW_HOURS ?? 24) || 24;
+    const hours = arenaWindowHours();
     const ids =
       target === "due"
         ? (await data.openRounds())

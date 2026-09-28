@@ -31,7 +31,11 @@ export interface ArenaConfig {
   autopilot: boolean;
   /** `MARINA_ARENA_WINDOW_HOURS` — file when a round's lock is this close (default 24, the arena's call window). */
   windowHours: number;
-  /** `MARINA_ARENA_FORECASTER` — `baseline` (default) or `model:<provider/model>`. */
+  /**
+   * `MARINA_ARENA_FORECASTER` — `nowcast` (default: no model calls; falls back
+   * to the baseline per round), `baseline`, `discovered`, `model:<provider/model>`,
+   * `crew:<model>[,…]` or `research:<model>[,…]`.
+   */
   forecaster: string;
   /** `MARINA_ARENA_MODEL_WEIGHT` — share of a model's move from the baseline kept (default 0.5). */
   modelWeight: number;
@@ -43,16 +47,37 @@ const FORECASTER_SPEC = new RegExp(
   "i",
 );
 
+/** The forecaster when `MARINA_ARENA_FORECASTER` is unset: free (no model calls). */
+export const DEFAULT_ARENA_FORECASTER = "nowcast";
+
 /**
- * `baseline`, `model:<provider/model>`, or `crew:<model>` / `crew:<statistician>,<analyst>,<skeptic>`
- * (one vendor per role). Validated here; model ids are resolved at use.
+ * `nowcast` (default), `baseline`, `discovered`, `model:<provider/model>`, or
+ * `crew:<model>` / `crew:<statistician>,<analyst>,<skeptic>` (one vendor per
+ * role), or `research:<model>[,…]`. Validated here; model ids are resolved at use.
  */
 export function parseForecasterSpec(raw: string | undefined): string {
-  const spec = raw?.trim() || "baseline";
+  const spec = raw?.trim() || DEFAULT_ARENA_FORECASTER;
   if (FORECASTER_SPEC.test(spec)) return spec;
   throw new Error(
-    `MARINA_ARENA_FORECASTER "${spec}" must be baseline, model:<provider/model>, crew:<model>[,…] or research:<model>[,…]`,
+    `MARINA_ARENA_FORECASTER "${spec}" must be nowcast, baseline, discovered, model:<provider/model>, crew:<model>[,…] or research:<model>[,…]`,
   );
+}
+
+/** Default filing window, and its cap (one week), for `MARINA_ARENA_WINDOW_HOURS`. */
+export const DEFAULT_ARENA_WINDOW_HOURS = 24;
+export const MAX_ARENA_WINDOW_HOURS = 168;
+
+/**
+ * `MARINA_ARENA_WINDOW_HOURS`: file when a round's lock is this close. One
+ * parser for every caller; unset, non-numeric, ≤ 0 or above the one-week cap
+ * is the 24 h default.
+ */
+export function arenaWindowHours(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.MARINA_ARENA_WINDOW_HOURS?.trim();
+  const hours = raw ? Number(raw) : Number.NaN;
+  return Number.isFinite(hours) && hours > 0 && hours <= MAX_ARENA_WINDOW_HOURS
+    ? hours
+    : DEFAULT_ARENA_WINDOW_HOURS;
 }
 
 export function arenaConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ArenaConfig | undefined {
@@ -63,7 +88,6 @@ export function arenaConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ArenaC
   }
   const origin = env.MARINA_ARENA_URL?.trim() || DEFAULT_ORIGIN;
   if (!origin.startsWith("https://")) throw new Error("MARINA_ARENA_URL must be https");
-  const hours = Number(env.MARINA_ARENA_WINDOW_HOURS ?? 24);
   return {
     entrant,
     ...(env.MARINA_ARENA_KEY_FILE?.trim() ? { keyFile: env.MARINA_ARENA_KEY_FILE.trim() } : {}),
@@ -72,7 +96,7 @@ export function arenaConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ArenaC
     audience: env.MARINA_ARENA_AUDIENCE?.trim() || DEFAULT_AUDIENCE,
     dataUrl: env.MARINA_ARENA_DATA_URL?.trim() || DEFAULT_ARENA_DATA_URL,
     autopilot: /^(1|on|true)$/i.test(env.MARINA_ARENA_AUTOPILOT ?? ""),
-    windowHours: Number.isFinite(hours) && hours > 0 && hours <= 168 ? hours : 24,
+    windowHours: arenaWindowHours(env),
     forecaster: parseForecasterSpec(env.MARINA_ARENA_FORECASTER),
     modelWeight: clampWeight(env.MARINA_ARENA_MODEL_WEIGHT),
   };
