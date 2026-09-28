@@ -82,7 +82,10 @@ export function resolveTrustProfile(input: {
 
 /**
  * Startup safety: a `local` profile only makes sense when nobody but the
- * operator can reach the process. Throws a descriptive error otherwise.
+ * operator can reach the process. `local` ungates every permission check for
+ * every signed-in principal, so sign-in (MARINA_AUTH) does NOT make a
+ * non-loopback bind safe — only an explicit MARINA_ALLOW_INSECURE_PUBLIC=true
+ * does. Throws a descriptive error otherwise.
  */
 export function assertTrustProfileSafe(input: {
   profile: TrustProfile;
@@ -92,14 +95,17 @@ export function assertTrustProfileSafe(input: {
   bindHost: string;
 }): void {
   if (input.profile !== "local") return;
-  if (input.loopbackOnlyBind || input.authEnabled || input.insecurePublicAck) return;
+  if (input.loopbackOnlyBind || input.insecurePublicAck) return;
+  const authNote = input.authEnabled
+    ? `Sign-in (MARINA_AUTH) is on, but it does not help: \`local\` ungates every gate for ` +
+      `every signed-in user, so any remote account would get every capability.\n`
+    : `With passwordless login, anyone who can reach this host would get every capability.\n`;
   throw new Error(
     `FATAL: MARINA_PROFILE=local (ungated) combined with a NON-LOOPBACK bind ` +
-      `("${input.bindHost}") and passwordless login would hand every capability to anyone ` +
-      `who can reach this host. Fix ONE of:\n` +
+      `("${input.bindHost}"). ${authNote}` +
+      `Fix ONE of:\n` +
       `  • keep it local: unset WS_HOST/MARINA_HOST/MARINA_PUBLIC, or\n` +
-      `  • use a gated profile: set MARINA_PROFILE=shared or public, or\n` +
-      `  • require sign-in: set MARINA_AUTH=better-auth, or\n` +
+      `  • use a gated profile: set MARINA_PROFILE=shared (with MARINA_AUTH=better-auth) or public, or\n` +
       `  • accept the risk explicitly: set MARINA_ALLOW_INSECURE_PUBLIC=true.`,
   );
 }

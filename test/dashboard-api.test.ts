@@ -267,6 +267,18 @@ describe("dashboard-api HTTP authorization hardening", () => {
     "MARINA_PROFILE",
     "MARINA_ALLOW_INSECURE_PUBLIC",
     "BETTER_AUTH_SECRET",
+    // Env-only operator bounds: posture, unrestricted exec, live trading,
+    // spend caps, and the decision gate's endpoint / credential.
+    "MARINA_AUTONOMY",
+    "MARINA_CODE_EXEC_UNRESTRICTED",
+    "MARINA_TRADING_ENABLED",
+    "MARINA_DAILY_SPEND_CAP_USD",
+    "MARINA_CHILD_DAILY_SPEND_CAP_USD",
+    "MARINA_MAX_COST_USD_PER_HOUR",
+    "MARINA_MAX_AGENT_COST_USD_PER_HOUR",
+    "MARINA_DECISION_BASE_URL",
+    "MARINA_DECISION_PATH",
+    "MARINA_DECISION_API_KEY",
   ])("rejects editing %s even for the desktop operator", async (key) => {
     const desktopToken = "desktop-capability-token-at-least-32-chars";
     process.env.MARINA_DESKTOP_API_TOKEN = desktopToken;
@@ -278,6 +290,44 @@ describe("dashboard-api HTTP authorization hardening", () => {
     expect(resp?.status).toBe(403);
     // Never applied to the live process.
     expect(process.env[key]).not.toBe("attacker");
+  });
+
+  it("refuses PUT /api/env from an agent (persisted agent config) even at sovereign rank", async () => {
+    const conn = new MockConnection(`api-agent-${connCounter++}`);
+    engine.addConnection(conn);
+    const login = engine.login(conn.id, "EnvAgent");
+    if ("error" in login) throw new Error(login.error);
+    const token = login.token;
+    engine.entities.get(conn.entity!)!.properties.rank = 9; // would pass authorizePrivileged
+    db.saveAgentConfig({ name: "EnvAgent", model: "x/y", spawnedBy: "Operator" });
+    const [req, url, method] = jsonReq("/api/env", "PUT", {
+      token,
+      body: { vars: { START_ROOM: "hub/x" } },
+    });
+    const resp = await handleDashboardApi(req, url, method, engine, db);
+    expect(resp?.status).toBe(403);
+    expect(((await resp!.json()) as { error: string }).error).toContain(
+      "Agents cannot edit the environment",
+    );
+  });
+
+  it("refuses PUT /api/env from an internal (room/crew agent) connection", async () => {
+    const conn = new MockConnection(`api-internal-${connCounter++}`);
+    conn.internal = true;
+    engine.addConnection(conn);
+    const login = engine.login(conn.id, "RoomBot");
+    if ("error" in login) throw new Error(login.error);
+    const entity = engine.entities.get(conn.entity!)!;
+    entity.properties.rank = 9;
+    const [req, url, method] = jsonReq("/api/env", "PUT", {
+      token: login.token,
+      body: { vars: { START_ROOM: "hub/x" } },
+    });
+    const resp = await handleDashboardApi(req, url, method, engine, db);
+    expect(resp?.status).toBe(403);
+    expect(((await resp!.json()) as { error: string }).error).toContain(
+      "Agents cannot edit the environment",
+    );
   });
 
   it("denies /api/env GET under the dev-open bypass (privileged, not read-open)", async () => {

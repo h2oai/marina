@@ -337,9 +337,11 @@ export interface GateExecutionResult {
  * - sufficient standing + a live witness-granted supervision window →
  *   `windowed`: run it; the pre-attesting witness gets the demonstration
  *   credit (all postures — the window IS the guarded path).
- * - sufficient standing, no window, `earned` posture → `optimistic`: run it;
- *   the demonstration is recorded as pending and counts toward the flip only
- *   when a qualified witness attests it afterwards.
+ * - sufficient standing, no window, `earned` posture, gate outside the
+ *   destructive core → `optimistic`: run it; the demonstration is recorded as
+ *   pending and counts toward the flip only when a qualified witness attests
+ *   it afterwards. Core gates (`OPEN_POSTURE_CORE`) get no optimistic mode —
+ *   "the irreducible core stays gated under every posture".
  * - otherwise → a refusal whose text names the path forward, because a
  *   refusal an agent can't act on is a wall, not a gate.
  *
@@ -361,7 +363,9 @@ export function checkGateForExecution(
   if (holder.kind === "granted") return { ok: true, mode: "unattended" };
   if (holder.kind === "demonstrated" && holder.standingOk) return { ok: true, mode: "unattended" };
 
-  // LOCAL trust profile: the single operator's own machine, loopback-only.
+  // LOCAL trust profile: the single operator's own machine, loopback-only
+  // (main.ts refuses `local` on any non-loopback bind unless the operator sets
+  // MARINA_ALLOW_INSECURE_PUBLIC=true — sign-in alone does not lift that).
   // Every gate — including the OPEN_POSTURE_CORE four — auto-passes and the
   // caller still records the execution (audit). An admin who wants the gates
   // back on a personal instance sets MARINA_AUTONOMY=guarded explicitly, which
@@ -395,15 +399,23 @@ export function checkGateForExecution(
   const window = db.getOpenSupervisionWindow(entityId, gateId, now);
   if (window) return { ok: true, mode: "windowed", witnessId: window.witness_id ?? undefined };
 
-  if (posture === "earned") return { ok: true, mode: "optimistic" };
+  // The irreducible core never runs ahead of review, under any posture.
+  if (posture === "earned" && !OPEN_POSTURE_CORE.has(gateId)) {
+    return { ok: true, mode: "optimistic" };
+  }
 
+  // Only suggest `earned` where it would actually help (never for the core).
+  const operatorHint =
+    posture === "earned" || OPEN_POSTURE_CORE.has(gateId)
+      ? " (Operators can also grant it directly.)"
+      : " (Operators can also grant it directly, or set MARINA_AUTONOMY=earned to let you practice ahead of review.)";
   return {
     ok: false,
     reason:
       `You have the standing to ${gate.description} — what's missing is a witness. ` +
       `Run \`witness request ${gateId}\` to ask a qualified holder to supervise a demonstration; ` +
-      `${gate.demoThreshold} attested demonstration(s) unlock solo use. ` +
-      `(Operators can also grant it directly, or set MARINA_AUTONOMY=earned to let you practice ahead of review.)`,
+      `${gate.demoThreshold} attested demonstration(s) unlock solo use.` +
+      operatorHint,
   };
 }
 
