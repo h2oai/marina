@@ -42,8 +42,8 @@ export interface ArenaConfig {
 }
 
 const MODEL_ID = "[a-z0-9-]+\\/[\\w.:/-]+";
-/** A research retriever entry (`openrouter-web:<model>` / `sonar:<model>`). */
-const RETRIEVER = "(openrouter-web|sonar):[A-Za-z0-9._/:-]+";
+/** A research retriever entry (`openrouter-web:<model>` / `sonar:<model>` / `tavily:<depth>`). */
+const RETRIEVER = "((openrouter-web|sonar):[A-Za-z0-9._/:-]+|tavily:(basic|advanced))";
 const FORECASTER_SPEC = new RegExp(
   `^(baseline|nowcast|discovered|model:${MODEL_ID}|crew:${MODEL_ID}(,${MODEL_ID}){0,2}` +
     // Research takes up to eight analysts, and optionally its own retrievers
