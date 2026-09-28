@@ -31,7 +31,7 @@ Single Bun workspace: one root `bun install` covers `dashboard`, `site`, `marina
 - **DB table**: `groups_` not `groups` (SQL keyword)
 - **Memory tiers** (migration 37): every note has `tier ENUM('fact','reflection','skill','core','process')`. `recall*` helpers default to fact-like tiers; `process` is excluded unless `includeProcess: true`. `[compaction]`-prefixed notes auto-infer to `process`. `createNote` dedups on exact `(entity, note_type, content)` within fact-like tiers through `numeric_notes` so native revisions participate in deduplication. Per-entity `process` cap = `PROCESS_TIER_QUOTA` (500), evicted on write when over cap.
 - **FTS5**: add insert/update/delete triggers when creating FTS tables
-- **Tests**: use helpers from `test/helpers.ts` (MockConnection, stripAnsi, cleanupDb)
+- **Tests**: use helpers from `test/helpers.ts` (MockConnection, stripAnsi, cleanupDb). `createTestEngine()` in `test/engine-fixture.ts` owns an isolated in-memory world; always await `dispose()`. Use disk storage for WAL/reopen tests. It does not isolate process-wide env/profile changes. Property tests support `FC_SEED`, `FC_RUNS`, `FC_PATH`; see docs/guides/testing.md.
 - **Dashboard animations**: motion (`motion/react`) — use `<AnimatePresence>` for mount/exit, `motion.*` for declarative anims, `useMotionValue` + `useTransform` for realtime-driven values without React re-renders, `layoutId` for shared element transitions. See `dashboard/src/components/AnimatedNumber.tsx` for the count-up pattern.
 
 ## Architecture Rules

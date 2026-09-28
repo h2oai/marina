@@ -15,7 +15,12 @@ function discoveryContextKey(
   name: string | null,
 ) {
   const self = state.entities.find((entity) => entity.name === name);
-  return JSON.stringify([self?.room, self?.properties?.rank, self?.properties?.active_modal]);
+  return JSON.stringify([
+    state.capabilityRevision,
+    self?.room,
+    self?.properties?.rank,
+    self?.properties?.active_modal,
+  ]);
 }
 
 /** Selection only fills a draft. Enter retains send semantics until an option is selected. */
@@ -89,7 +94,12 @@ export function CommandInputAssistance({
       active?.abort();
       const controller = new AbortController();
       active = controller;
-      void requestParticipant<CapabilityManifest>("capabilities", {}, controller.signal)
+      void requestParticipant<CapabilityManifest>(
+        "capabilities",
+        {},
+        controller.signal,
+        "prefer-cache",
+      )
         .then((result) => {
           if (
             controller.signal.aborted ||

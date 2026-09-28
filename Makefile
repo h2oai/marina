@@ -1,7 +1,7 @@
-.PHONY: help dev dashboard check test test-fast test-ui test-browser reference
+.PHONY: help dev dashboard check test test-fast test-ui test-browser test-properties test-explorer reference
 
 help:
-	@echo "dev dashboard check test test-fast test-ui test-browser reference"
+	@echo "dev dashboard check test test-fast test-ui test-browser test-properties test-explorer reference"
 	@echo "Each target delegates to the documented package scripts. make test runs backend tests."
 dev:
 	bun run dev
@@ -18,5 +18,9 @@ test-ui:
 	bun run test:ui
 test-browser:
 	bun run test:browser
+test-properties:
+	bun run test:properties
+test-explorer:
+	bun run test:explorer
 reference:
 	bun run docs:api

@@ -12,7 +12,7 @@
  * deterministic and reviewable in diffs):
  *   1. measured total time <= FAST_MAX_MS (1500 ms) in test/timing.json, AND
  *   2. the file does not boot a full engine or server — heuristic: the source
- *      contains none of `new Engine(`, `startServer`, `Bun.serve`, `WebSocket`.
+ *      contains none of `new Engine(`, `createTestEngine(`, `startServer`, `Bun.serve`, `WebSocket`.
  *
  * Regenerate the list after re-measuring (see test/README.md):
  *   bun run test -- --timings test/timing.json --update-timings
@@ -32,7 +32,7 @@ import { resolve } from "node:path";
 const ROOT = resolve(import.meta.dir, "..");
 const TIMING_PATH = resolve(ROOT, "test/timing.json");
 export const FAST_MAX_MS = 1500;
-const HEAVY_MARKERS = ["new Engine(", "startServer", "Bun.serve", "WebSocket"];
+const HEAVY_MARKERS = ["new Engine(", "createTestEngine(", "startServer", "Bun.serve", "WebSocket"];
 const IGNORE = [
   "--path-ignore-patterns",
   "**/dashboard/**",

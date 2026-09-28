@@ -367,12 +367,14 @@ export class MarinaDB implements MarinaStores {
       // Checkpoint so the readonly reader can see all schema/migration changes
       this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
 
-      reader = new Database(path, { readonly: true });
+      // A second :memory: connection is a different, empty database. Ephemeral
+      // callers share the writer; durable databases retain their read-only handle.
+      reader = path === ":memory:" ? this.db : new Database(path, { readonly: true });
       reader.exec("PRAGMA mmap_size=268435456");
       reader.exec("PRAGMA cache_size=-64000");
       this.reader = reader;
     } catch (error) {
-      reader?.close();
+      if (reader && reader !== this.db) reader.close();
       this.db.close();
       throw error;
     }
@@ -3799,7 +3801,7 @@ export class MarinaDB implements MarinaStores {
 
   close(): void {
     try {
-      this.reader.close();
+      if (this.reader !== this.db) this.reader.close();
     } catch {
       /* already closed */
     }

@@ -35,6 +35,8 @@ jobs:
         run: bun run typecheck
       - name: Check workspace versions
         run: bun run check:versions
+      - name: Check fast-test selection drift
+        run: bun run test:fast --check
       - name: Check generated API references
         run: bun run docs:api --check
       - name: Qualify concurrent MCP participation and admission recovery
@@ -125,9 +127,13 @@ jobs:
         run: bunx playwright install --with-deps chromium
       - name: Run participation journeys
         run: bun run test:browser
+      - name: Run API explorer journeys
+        run: bun run test:explorer
       - name: Preserve browser failure evidence
         if: failure()
         uses: actions/upload-artifact@v7.0.1
         with:
           name: participation-browser-failures
-          path: /tmp/marina-dashboard-browser-results
+          path: |
+            /tmp/marina-dashboard-browser-results
+            /tmp/marina-explorer-browser-results

@@ -564,8 +564,8 @@ Ask another participant to read one owned memory space and return a cited propos
   "type": "object",
   "properties": {
     "space_id": {
-      "description": "Space ID; omit to use your configured private space",
-      "type": "string"
+      "type": "string",
+      "description": "Space ID; omit to use your configured private space"
     },
     "worker_id": {
       "type": "string",
@@ -614,8 +614,8 @@ Bounded traversal of asserted relations. Each edge includes a full record and th
   "type": "object",
   "properties": {
     "space_id": {
-      "description": "Space ID; omit to use your configured private space",
-      "type": "string"
+      "type": "string",
+      "description": "Space ID; omit to use your configured private space"
     },
     "subject": {
       "type": "string"
@@ -646,8 +646,8 @@ Bounded traversal of asserted relations. Each edge includes a full record and th
       "maximum": 9007199254740991
     },
     "include_stale": {
-      "description": "Include unchanged authored conclusions whose premises need review",
-      "type": "boolean"
+      "type": "boolean",
+      "description": "Include unchanged authored conclusions whose premises need review"
     },
     "limit": {
       "type": "integer",
@@ -671,8 +671,8 @@ Exact symbolic query. Symbols and literal types match exactly; no vectors, model
   "type": "object",
   "properties": {
     "space_id": {
-      "description": "Space ID; omit to use your configured private space",
-      "type": "string"
+      "type": "string",
+      "description": "Space ID; omit to use your configured private space"
     },
     "subject": {
       "type": "string"
@@ -741,8 +741,8 @@ Exact symbolic query. Symbols and literal types match exactly; no vectors, model
       "maximum": 9007199254740991
     },
     "include_stale": {
-      "description": "Include unchanged authored conclusions whose premises need review",
-      "type": "boolean"
+      "type": "boolean",
+      "description": "Include unchanged authored conclusions whose premises need review"
     }
   },
   "$schema": "http://json-schema.org/draft-07/schema#"
@@ -758,8 +758,8 @@ Store portable text, optional typed claim and evidence references. No embedding 
   "type": "object",
   "properties": {
     "space_id": {
-      "description": "Space ID; omit to use your configured private space",
-      "type": "string"
+      "type": "string",
+      "description": "Space ID; omit to use your configured private space"
     },
     "content": {
       "type": "string"
@@ -927,8 +927,8 @@ Find and read evidence for a task in one bounded request. Returns original sourc
   "type": "object",
   "properties": {
     "space_id": {
-      "description": "Space ID; omit to use your configured private space",
-      "type": "string"
+      "type": "string",
+      "description": "Space ID; omit to use your configured private space"
     },
     "task": {
       "type": "string",
@@ -940,10 +940,10 @@ Find and read evidence for a task in one bounded request. Returns original sourc
       "maximum": 20
     },
     "max_bytes": {
-      "description": "Evidence JSON budget; metadata is separate",
       "type": "integer",
       "minimum": 256,
-      "maximum": 65536
+      "maximum": 65536,
+      "description": "Evidence JSON budget; metadata is separate"
     },
     "source_bytes": {
       "type": "integer",
@@ -951,30 +951,29 @@ Find and read evidence for a task in one bounded request. Returns original sourc
       "maximum": 8192
     },
     "valid_at": {
-      "description": "UTC milliseconds for versioned records; original documents may contain historical assertions",
       "type": "integer",
       "minimum": 0,
-      "maximum": 9007199254740991
+      "maximum": 9007199254740991,
+      "description": "UTC milliseconds for versioned records; original documents may contain historical assertions"
     },
     "selection": {
-      "description": "Explicit ordering: balanced reserves early room for a record and a source",
       "type": "string",
       "enum": [
         "sources_first",
         "balanced",
         "records_first"
-      ]
+      ],
+      "description": "Explicit ordering: balanced reserves early room for a record and a source"
     },
     "expansion": {
-      "description": "Explicit lexical query alternatives; see memory guide",
       "type": "object",
       "propertyNames": {
         "type": "string"
       },
-      "additionalProperties": {}
+      "additionalProperties": {},
+      "description": "Explicit lexical query alternatives; see memory guide"
     },
     "requirements": {
-      "description": "Structural coverage: claim subject/predicate or source id/start/end",
       "maxItems": 8,
       "type": "array",
       "items": {
@@ -983,11 +982,12 @@ Find and read evidence for a task in one bounded request. Returns original sourc
           "type": "string"
         },
         "additionalProperties": {}
-      }
+      },
+      "description": "Structural coverage: claim subject/predicate or source id/start/end"
     },
     "broaden": {
-      "description": "Supplement sparse all-term source matches once with any-term matches; default true",
-      "type": "boolean"
+      "type": "boolean",
+      "description": "Supplement sparse all-term source matches once with any-term matches; default true"
     }
   },
   "required": [
@@ -1080,8 +1080,8 @@ Portable memory service: retrieve with input {task} finds and reads citable evid
       ]
     },
     "space_id": {
-      "description": "Space ID; omit to use your configured private space",
-      "type": "string"
+      "type": "string",
+      "description": "Space ID; omit to use your configured private space"
     },
     "id": {
       "type": "string"
@@ -1094,8 +1094,8 @@ Portable memory service: retrieve with input {task} finds and reads citable evid
       "additionalProperties": {}
     },
     "key": {
-      "description": "Reuse the same key and payload to retry a mutation",
-      "type": "string"
+      "type": "string",
+      "description": "Reuse the same key and payload to retry a mutation"
     }
   },
   "required": [
@@ -1114,8 +1114,8 @@ Preserve and resume useful work. Start with action=help for examples. start(goal
   "type": "object",
   "properties": {
     "space_id": {
-      "description": "Space ID; omit to use your configured private space",
-      "type": "string"
+      "type": "string",
+      "description": "Space ID; omit to use your configured private space"
     },
     "action": {
       "type": "string",
@@ -1140,8 +1140,8 @@ Preserve and resume useful work. Start with action=help for examples. start(goal
       ]
     },
     "journal_space_id": {
-      "description": "Explicitly shared task journal; requires its existing grants, separate from the corpus",
-      "type": "string"
+      "type": "string",
+      "description": "Explicitly shared task journal; requires its existing grants, separate from the corpus"
     },
     "task_id": {
       "type": "string"
@@ -1169,16 +1169,16 @@ Preserve and resume useful work. Start with action=help for examples. start(goal
       "type": "string"
     },
     "input": {
-      "description": "Advanced fields: retrieval options, recipe, rubric/result/explanation, ids, cursor, or id/version/task for use_recipe",
       "type": "object",
       "propertyNames": {
         "type": "string"
       },
-      "additionalProperties": {}
+      "additionalProperties": {},
+      "description": "Advanced fields: retrieval options, recipe, rubric/result/explanation, ids, cursor, or id/version/task for use_recipe"
     },
     "key": {
-      "description": "Stable idempotency key for retries of mutations",
-      "type": "string"
+      "type": "string",
+      "description": "Stable idempotency key for retries of mutations"
     }
   },
   "required": [

@@ -41,7 +41,9 @@ The terminal client is `bun run scripts/connect.ts <name>` (`-c "<command>"` for
 | `test` | Full backend suite, four workers, progress heartbeat and a 15-minute process deadline. |
 | `test:ui` | Full dashboard suite on Node/Vitest, with four JSDOM workers. |
 | `test:browser` | Build and run the six discovery, memory and participation browser journeys. |
-| `docs:api [--check]` | Generate builtin commands, live MCP tool schemas, published SDK declarations and HTTP dispatch references, or check them for drift. |
+| `test:explorer` | Build the documentation site and verify API explorer search, schemas, deep links and mobile layout in Chromium. |
+| `test:properties` | Run shrinking, seeded cache invalidation, command scheduling/cancellation and context security properties (`FC_SEED`, `FC_RUNS`, `FC_PATH`). |
+| `docs:api [--check]` | Generate builtin commands, live MCP tool schemas, published SDK declarations, HTTP dispatch references and API explorer data, or check them for drift. |
 | `test:serial` | The same suite in one process (for order-dependent debugging). |
 | `test:fast` | Engine-free subset, ~10 s — the pre-commit loop (`--check` reports drift). |
 | `test:shard I N` | Time-balanced shard I of N (CI runs 3). See [Testing](testing.md). |

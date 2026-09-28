@@ -1,5 +1,54 @@
 # Testing
 
+## Isolated integration worlds
+
+`createTestEngine()` from `test/engine-fixture.ts` supplies an independent in-memory
+database, command registry and room without starting listeners or the tick timer:
+
+```ts
+const world = createTestEngine();
+try {
+  const { entityId, connection } = world.login("Ada");
+  await world.engine.processCommand(entityId, "look");
+  expect(connection.lastText()).toContain("Test Room");
+} finally {
+  await world.dispose();
+}
+```
+
+Disposal stops agents, drains commands, closes service resources, then closes storage;
+it is idempotent. Two fixtures can coexist in one process, including identical names
+and command registrations. Use `{ storage: "disk" }` for WAL, reopen, external writer
+and durability tests. An in-memory fixture shares one SQLite handle and is not a disk
+durability test. Tests changing process-wide environment, trust profiles, provider
+registries or clocks still need isolation; the helper never silently resets globals.
+
+## Reproducible property and security tests
+
+`bun run test:properties` runs fast-check histories for context invalidation,
+asynchronous command ordering and hostile context JSON. CI also runs these files in
+the normal backend shards. Failures include a seed and shrink path. To expand a pass:
+
+```sh
+FC_SEED=20260928 FC_RUNS=1000 bun run test:properties
+```
+
+Replay a single failing property with its printed seed and path:
+
+```sh
+FC_SEED=123 FC_PATH='0:1:2' bun test test/context-cache-property.test.ts
+```
+
+The cache oracle models access decisions independently from cache internals; the
+scheduler varies interleavings and checks per-resident FIFO even after failures.
+Security generation covers malformed JSON, nested values, identity overrides and
+budget boundaries. A clean fuzz run is evidence for these properties, not proof of
+exhaustive security. `test:fast --check` is enforced in CI against the committed timing
+snapshot and selection rule; new files need measurement before joining that fast list.
+
+The public API explorer has a separate browser check: `bun run test:explorer`. It builds
+the site and exercises schema expansion, templates, deep links, search and mobile layout.
+
 Use `bun run test` for the backend and `bun run test:ui` for the dashboard.
 The backend contains more than 4,500 tests and can take several minutes, depending
 on available CPU and storage. A 120-second external cutoff is not a leak detector. This
