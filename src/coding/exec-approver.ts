@@ -25,6 +25,8 @@
  * durable audit record.
  */
 
+import { redispatchHeldCommand } from "../engine/challenges";
+import { getCurrentCommand } from "../engine/gate-context";
 import { checkGate } from "../engine/safety-gates";
 import type { MarinaDB } from "../persistence/database";
 
@@ -101,6 +103,8 @@ interface PendingApproval {
 // re-prompt) and the per-session allow-set (arbitrary exec re-prompts).
 const pendingApprovals = new Map<string, PendingApproval>();
 const sessionAllowSets = new Map<string, Set<string>>();
+// Approved-once argvs waiting for their held command to be re-run (single use).
+const approvedReplays = new Map<string, Set<string>>();
 
 export interface InteractiveApproverDeps {
   sessionId: string;
@@ -146,9 +150,77 @@ export class InteractiveApprover implements ExecApprover {
       return decision;
     }
 
-    // Prompt mode: mint a token, notify the creator, await a reply or time out.
+    // The re-run of a command a human approved while it was held (below).
+    const replays = approvedReplays.get(this.deps.sessionId);
+    if (replays?.delete(key)) {
+      this.deps.audit(
+        req,
+        { approved: true, reason: "approved-replay" },
+        { mode: "prompt", interactive: true, humanApproved: false },
+      );
+      return { approved: true };
+    }
+
     const token = crypto.randomUUID().slice(0, 12);
     const rendered = renderArgv(req.argv);
+
+    // Inside a command: never wait on the human. Hold it, answer NOW, and
+    // re-run the held command automatically when the creator approves — the
+    // requester's loop (and its command queue) carries on meanwhile.
+    const heldCommand = getCurrentCommand(req.entityId);
+    if (heldCommand !== undefined) {
+      const timer = setTimeout(
+        () => pendingApprovals.delete(token),
+        this.deps.timeoutMs ?? DEFAULT_EXEC_APPROVAL_TIMEOUT_MS,
+      );
+      (timer as { unref?: () => void }).unref?.();
+      pendingApprovals.set(token, {
+        token,
+        sessionId: this.deps.sessionId,
+        creatorName: this.deps.creatorName,
+        argv: req.argv,
+        settle: (d) => {
+          clearTimeout(timer);
+          pendingApprovals.delete(token);
+          this.deps.audit(req, d, {
+            mode: "prompt",
+            interactive: true,
+            humanApproved: d.approved && d.reason === OPERATOR_APPROVED_REASON,
+          });
+          if (!d.approved) {
+            this.deps.notify(
+              req.entityId,
+              `Held command was declined (${token})${d.reason ? `: ${d.reason}` : "."} Choose another route.`,
+            );
+            return;
+          }
+          const target = d.scope === "session" ? sessionAllowSets : approvedReplays;
+          const set = target.get(this.deps.sessionId) ?? new Set<string>();
+          set.add(key);
+          target.set(this.deps.sessionId, set);
+          if (!redispatchHeldCommand(req.entityId, heldCommand)) {
+            this.deps.notify(req.entityId, `Approved (${token}) — run it again: ${rendered}`);
+          }
+        },
+      });
+      this.deps.notify(
+        this.deps.creatorEntityId,
+        [
+          `Code exec approval requested (session ${this.deps.sessionId}):`,
+          `  ${rendered}`,
+          `  cwd: ${req.cwd}`,
+          `Approve: code exec-approve ${token}`,
+          `Deny:    code exec-deny ${token} [reason]`,
+        ].join("\n"),
+        { execApproval: { token, argv: req.argv, cwd: req.cwd, rendered } },
+      );
+      return {
+        approved: false,
+        reason: `held for the session creator's approval (${token}) — it runs automatically if approved; nothing is waiting on it, so carry on meanwhile`,
+      };
+    }
+
+    // Outside a command (direct workspace use): wait for a reply or time out.
     const decision = await new Promise<ExecApprovalDecision>((resolve) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
       const settle = (d: ExecApprovalDecision): void => {
@@ -216,6 +288,7 @@ export function settleExecApproval(token: string, decision: ExecApprovalDecision
 /** Drop a session's allow-set and deny any of its still-pending prompts. */
 export function clearSessionExecState(sessionId: string): void {
   sessionAllowSets.delete(sessionId);
+  approvedReplays.delete(sessionId);
   for (const [token, pending] of [...pendingApprovals.entries()]) {
     if (pending.sessionId === sessionId) {
       pendingApprovals.delete(token);

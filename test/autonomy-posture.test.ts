@@ -14,8 +14,8 @@
  * - `earned` posture runs optimistically and records a pending attestation;
  *   only a qualified external witness's attestation advances the flip.
  * - Self-witnessing and unqualified witnessing are refused everywhere.
- * - The engine router defers minRank to the gate for gated commands under
- *   earned/open, and does NOT under guarded.
+ * - The engine router defers minRank to the gate for gated commands in EVERY
+ *   posture: the gate is the single authority (no guarded double-lock).
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
@@ -153,6 +153,46 @@ describe("autonomy posture", () => {
     expect(second.ok).toBe(false);
   });
 
+  it("earned: the destructive core gets NO optimistic mode — window, grant or local profile only", () => {
+    process.env.MARINA_AUTONOMY = "earned";
+    const learner = makeEntity("e_core_learner", "CoreLearner");
+    const mentor = makeEntity("e_core_mentor", "CoreMentor");
+    db.saveEntity(learner);
+    db.saveEntity(mentor);
+    giveStanding(db, learner, 400); // above every core gate's minStanding
+    for (const gateId of OPEN_POSTURE_CORE) {
+      expect(400).toBeGreaterThanOrEqual(SAFETY_GATES[gateId]!.minStanding);
+      const refused = checkGateForExecution(db, learner.id, gateId);
+      expect(refused.ok).toBe(false);
+      expect(refused.mode).toBeUndefined();
+      expect(refused.reason).toContain(`witness request ${gateId}`);
+      // No "set MARINA_AUTONOMY=earned" hint for a gate earned cannot open.
+      expect(refused.reason).not.toContain("MARINA_AUTONOMY=earned");
+
+      // A live witness window still authorizes a supervised run.
+      grant(db, mentor.id, gateId);
+      db.createWitnessRow({
+        entityId: learner.id,
+        gate: gateId,
+        kind: "window",
+        witnessId: mentor.id,
+        expiresAt: Date.now() + 60_000,
+      });
+      const windowed = checkGateForExecution(db, learner.id, gateId);
+      expect(windowed.ok).toBe(true);
+      expect(windowed.mode).toBe("windowed");
+      recordGateExecution(db, learner.id, gateId, windowed, "core demo");
+    }
+    // Non-core gates keep optimistic supervision under earned.
+    const spawn = checkGateForExecution(db, learner.id, "agent.spawn");
+    expect(spawn.ok).toBe(true);
+    expect(spawn.mode).toBe("optimistic");
+    // A grant holder passes unattended.
+    const granted = checkGateForExecution(db, mentor.id, "shell.exec");
+    expect(granted.ok).toBe(true);
+    expect(granted.mode).toBe("unattended");
+  });
+
   it("earned: runs optimistically, records a pending attestation, and only external attestation advances the flip", () => {
     process.env.MARINA_AUTONOMY = "earned";
     const learner = makeEntity("e_learner", "Learner");
@@ -256,7 +296,7 @@ describe("autonomy posture", () => {
     expect(db.getOpenSupervisionWindow(learner.id, "agent.spawn")).toBeUndefined();
   });
 
-  it("router defers minRank to the gate for gated commands under open, not under guarded", async () => {
+  it("router defers minRank to the gate for gated commands in every posture", async () => {
     process.env.MARINA_AUTONOMY = "open";
     const engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
     engine.registerRoom(roomId("test/start"), makeTestRoom());
@@ -278,9 +318,19 @@ describe("autonomy posture", () => {
       await engine.processCommand(conn.entity!, "posture-probe");
       expect(executed).toBe(1); // gate is the authority; posture-open passes it
 
+      // guarded: the gate still decides — a rank-0 caller without it is refused
+      // by the gate (not by minRank) ...
       process.env.MARINA_AUTONOMY = "guarded";
+      conn.clear();
       await engine.processCommand(conn.entity!, "posture-probe");
-      expect(executed).toBe(1); // guarded: minRank 5 blocks a rank-0 caller again
+      expect(executed).toBe(1);
+      expect(conn.allTextJoined()).toContain("Not yet");
+      expect(conn.allTextJoined()).not.toContain("rank 5");
+
+      // ... and the same rank-0 caller holding the gate runs it: no double-lock.
+      grant(db, conn.entity!, "gateway.connect");
+      await engine.processCommand(conn.entity!, "posture-probe");
+      expect(executed).toBe(2);
     } finally {
       engine.stop();
     }

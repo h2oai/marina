@@ -134,8 +134,8 @@ export function RoomDetail({
       isFocused={isFocused}
       onToggleFocus={onToggleFocus}
     >
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: scroll container with roving keyboard nav over child rows, not click-activation */}
-      <div
+      <section
+        aria-label="Room contents"
         ref={navContainerRef}
         onKeyDown={navKeyDown}
         className="flex flex-1 flex-col overflow-hidden text-[11px] outline-none"
@@ -300,7 +300,7 @@ export function RoomDetail({
             </div>
           </>
         )}
-      </div>
+      </section>
     </GlassPanel>
   );
 }

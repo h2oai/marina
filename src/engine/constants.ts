@@ -229,9 +229,11 @@ export const DEFAULT_NOTE_IMPORTANCE = 5;
 /**
  * Standing required per concurrent child an agent may keep alive. Budget =
  * floor(standing / this). Reputation sizes the team: standing 40 → 1 child,
- * 100 → 4, 250 → 10. Clamped by the global MAX_AGENTS cap.
+ * 100 → 4, 250 → 10. Clamped by the global MAX_AGENTS cap. Operator knob:
+ * MARINA_STANDING_PER_SPAWNED_CHILD (env only, never settable in-world).
  */
-export const STANDING_PER_SPAWNED_CHILD = 25;
+export const STANDING_PER_SPAWNED_CHILD =
+  positiveNumberFromEnv("MARINA_STANDING_PER_SPAWNED_CHILD") ?? 25;
 
 /**
  * Standing (rank 2, "contributor") required to recruit idle agents into a
@@ -246,9 +248,28 @@ export const RECRUIT_MIN_STANDING = 15;
  * Maximum lineage depth for agent-spawned agents. An agent at or beyond this
  * depth may not spawn further, capping recursive team-building (lead →
  * sub-lead → specialist). Operators/humans sit at depth 0 (not in the
- * spawned_by chain) and are unaffected.
+ * spawned_by chain) and are unaffected. Operator knob: MARINA_MAX_SPAWN_DEPTH.
  */
-export const MAX_SPAWN_DEPTH = 3;
+export const MAX_SPAWN_DEPTH = envCount("MARINA_MAX_SPAWN_DEPTH", 3);
+
+/**
+ * A run can seed at most this many copies in total, however often it is asked
+ * (`evolve replicate`). Operator knob: MARINA_MAX_REPLICAS_PER_RUN.
+ */
+export const MAX_REPLICAS_PER_RUN = envCount("MARINA_MAX_REPLICAS_PER_RUN", 5);
+
+/**
+ * Federation relay hop limit: a bridged channel message or tell that has
+ * already crossed this many instances is dropped (loop guard,
+ * src/engine/gateway-runtime.ts). Operator knob: MARINA_MAX_RELAY_HOPS.
+ */
+export const MAX_RELAY_HOPS = envCount("MARINA_MAX_RELAY_HOPS", 3);
+
+/** A whole-number operator knob: a positive env value (floored, ≥ 1) or the default. */
+function envCount(name: string, fallback: number): number {
+  const n = positiveNumberFromEnv(name);
+  return n === undefined ? fallback : Math.max(1, Math.floor(n));
+}
 
 // ─── Agent Spend Ceiling & Upstream-Error Guards ─────────────────────────────
 // Rolling-window cost caps and the consecutive-failure circuit breaker for the

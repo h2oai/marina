@@ -219,23 +219,7 @@ export const WorldNav = memo(function WorldNav({
   const showMinimap = tab === "world";
 
   return (
-    // biome-ignore lint/a11y/useSemanticElements: contains nested interactive tab buttons — cannot use <button>
-    <div
-      className={`uc-worldnav${expanded ? " expanded" : ""}`}
-      role="button"
-      tabIndex={0}
-      onClick={() => {
-        if (expanded) return;
-        setExpandedSync(true);
-      }}
-      onKeyDown={(e) => {
-        if (expanded || e.target !== e.currentTarget) return;
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          setExpandedSync(true);
-        }
-      }}
-    >
+    <section aria-label="World navigation" className={`uc-worldnav${expanded ? " expanded" : ""}`}>
       {/* Header with WORLD | LEGEND tabs */}
       <div
         style={{
@@ -499,15 +483,10 @@ export const WorldNav = memo(function WorldNav({
       )}
 
       {expanded && tab === "legend" && (
-        // biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation guard so the panel doesn't collapse on inner clicks; no key behavior needed
-        // biome-ignore lint/a11y/noStaticElementInteractions: onClick is only a stopPropagation guard, not an action; keyboard handled by inner LegendContent controls
-        <div
-          style={{ flex: 1, overflow: "auto", padding: "8px" }}
-          onClick={(e) => e.stopPropagation()}
-        >
+        <div style={{ flex: 1, overflow: "auto", padding: "8px" }}>
           <LegendContent onReplayTour={onReplayTour} />
         </div>
       )}
-    </div>
+    </section>
   );
 });

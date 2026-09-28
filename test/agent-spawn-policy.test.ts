@@ -215,11 +215,12 @@ describe("agent spawn policy — per-entity budget enforcement (cost-DoS cap)", 
   it("refuses spawning once live children reach the earned standing budget", async () => {
     const acting = entity("u_org", "Organizer");
     db.saveEntity(acting);
-    // Unsupervised agent.spawn (grant) + standing 60 → an EARNED spawner (not a
-    // below-threshold granted operator), so budget = floor(60 / 25) = 2.
+    // Unsupervised agent.spawn by DEMONSTRATION (not an operator grant) +
+    // standing 60 → an EARNED spawner, so budget = floor(60 / 25) = 2.
     const taskId = db.createTask({ title: "t", creatorId: acting.id, creatorName: "Organizer" });
     db.recordStandingEarned(acting.id, "Organizer", taskId, 60);
-    grant(db, acting.id, "agent.spawn");
+    db.recordDemonstration(acting.id, "agent.spawn", 1, Date.now());
+    expect(db.getCompetence(acting.id, "agent.spawn")?.supervised_only).toBe(0);
 
     // Two live children already spawned by Organizer → at the budget of 2.
     db.saveAgentConfig({ name: "kid1", model: "x/y", spawnedBy: "Organizer" });
@@ -244,5 +245,39 @@ describe("agent spawn policy — per-entity budget enforcement (cost-DoS cap)", 
     await command.handler(ctx, inputFor(acting, "agent spawn helper"));
     expect(sent.join("\n")).toContain("Spawn budget reached");
     expect(db.getAgentConfig("helper")).toBeUndefined();
+  });
+  it("keeps an operator GRANT exempt from the budget even once standing passes minStanding", async () => {
+    const acting = entity("u_op", "Operator");
+    db.saveEntity(acting);
+    const taskId = db.createTask({ title: "t", creatorId: acting.id, creatorName: "Operator" });
+    // Standing 60 ≥ agent.spawn minStanding 40: the old `standing < minStanding`
+    // heuristic dropped the grant exemption here and capped the operator at 2.
+    db.recordStandingEarned(acting.id, "Operator", taskId, 60);
+    grant(db, acting.id, "agent.spawn");
+    db.saveAgentConfig({ name: "op1", model: "x/y", spawnedBy: "Operator" });
+    db.saveAgentConfig({ name: "op2", model: "x/y", spawnedBy: "Operator" });
+
+    const runtime = {
+      list: () => [{ name: "op1" }, { name: "op2" }],
+      isAvailable: () => true,
+      spawn: async () => {
+        throw new Error("spawn reached");
+      },
+    } as unknown as AgentRuntime;
+    const sent: string[] = [];
+    const ctx = {
+      send: (_t: EntityId, m: string) => sent.push(stripAnsi(m)),
+    } as unknown as RoomContext;
+    const command = agentCommand({
+      agentRuntime: runtime,
+      db,
+      getEntity: (id) => (id === acting.id ? acting : undefined),
+      logEvent: () => {},
+    });
+
+    await command.handler(ctx, inputFor(acting, "agent spawn helper"));
+    // Past the budget check: the (stub) runtime spawn was reached.
+    expect(sent.join("\n")).not.toContain("Spawn budget reached");
+    expect(sent.join("\n")).toContain("spawn reached");
   });
 });

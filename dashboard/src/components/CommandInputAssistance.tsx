@@ -152,7 +152,8 @@ export function CommandInputAssistance({
     // Keep the native key handler and ARIA state in the same commit as the visible
     // suggestions. A passive effect can leave Tab using the previous catalog.
     element.setAttribute("aria-controls", "chat-command-options");
-    element.setAttribute("aria-expanded", String(options.length > 0));
+    element.setAttribute("aria-autocomplete", "list");
+    element.setAttribute("aria-haspopup", "listbox");
     if (activeSelection >= 0)
       element.setAttribute("aria-activedescendant", `chat-command-${activeSelection}`);
     else element.removeAttribute("aria-activedescendant");

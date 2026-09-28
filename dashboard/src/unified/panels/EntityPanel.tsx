@@ -359,9 +359,7 @@ const AgentRow = memo(function AgentRow({
       }}
     >
       {/* Header row */}
-      <button
-        type="button"
-        onClick={() => setExpanded(!expanded)}
+      <div
         style={{
           display: "flex",
           alignItems: "center",
@@ -389,10 +387,14 @@ const AgentRow = memo(function AgentRow({
           }}
         />
         <span className="visually-hidden">{agent.state}</span>
-        {/* biome-ignore lint/a11y/useKeyWithClickEvents: nested inside a parent button; outer button handles keyboard */}
-        {/* biome-ignore lint/a11y/noStaticElementInteractions: nested inside a parent <button> — cannot be a button itself; outer button handles keyboard */}
-        <span
+        <button
+          type="button"
           style={{
+            background: "none",
+            border: 0,
+            padding: 0,
+            color: "inherit",
+            font: "inherit",
             flex: 1,
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -422,7 +424,7 @@ const AgentRow = memo(function AgentRow({
               room
             </span>
           )}
-        </span>
+        </button>
         <span style={{ fontSize: "clamp(10px, 0.7vw, 14px)", color: stateColor, flexShrink: 0 }}>
           {agent.state}
         </span>
@@ -447,7 +449,16 @@ const AgentRow = memo(function AgentRow({
         >
           &#x25A0;
         </button>
-      </button>
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-label={`${expanded ? "Collapse" : "Expand"} ${agent.name} details`}
+          onClick={() => setExpanded(!expanded)}
+          style={{ background: "none", border: 0, color: "inherit" }}
+        >
+          {expanded ? "−" : "+"}
+        </button>
+      </div>
 
       {/* Error reason — always shown when in error state */}
       {agent.state === "error" && agent.errorReason && (
@@ -900,97 +911,60 @@ export const EntityPanel = memo(function EntityPanel({
   if (!visible) return null;
 
   return (
-    // biome-ignore lint/a11y/useSemanticElements: contains nested interactive controls (tab/stop buttons) — cannot use <button>
-    <div
+    <section
+      aria-label="Entity panel"
       className={`uc-entity-sidebar${expanded ? " expanded" : ""}`}
-      role="button"
-      tabIndex={0}
-      onClick={() => {
-        if (expanded) return;
-        setExpanded(true);
-        onExpandChange?.(true);
-      }}
-      onKeyDown={(e) => {
-        if (expanded || e.target !== e.currentTarget) return;
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          setExpanded(true);
-          onExpandChange?.(true);
-        }
-      }}
     >
       {/* Header — click to toggle expand/collapse */}
-      {/* biome-ignore lint/a11y/useSemanticElements: contains nested interactive controls — cannot use <button> */}
       <div
         style={{
           display: "flex",
           alignItems: "center",
-          padding: expanded ? "4px 10px" : "4px 8px",
+          padding: "4px 8px",
           borderBottom: "1px solid var(--color-border)",
           flexShrink: 0,
-          cursor: "pointer",
-        }}
-        role="button"
-        tabIndex={0}
-        onClick={(e) => {
-          if (!expanded) return;
-          e.stopPropagation();
-          setExpanded(false);
-          onExpandChange?.(false);
-        }}
-        onKeyDown={(e) => {
-          if (!expanded || e.target !== e.currentTarget) return;
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            e.stopPropagation();
-            setExpanded(false);
-            onExpandChange?.(false);
-          }
         }}
       >
-        <span
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-label={`${expanded ? "Collapse" : "Expand"} entity panel`}
+          onClick={() => {
+            setExpanded(!expanded);
+            onExpandChange?.(!expanded);
+          }}
           style={{
-            fontFamily: "'Press Start 2P', monospace",
-            fontSize: "clamp(6px, 0.48vw, 8px)",
-            color: "var(--color-primary)",
-            letterSpacing: "1px",
+            display: "flex",
+            alignItems: "center",
+            flex: 1,
+            background: "none",
+            border: 0,
+            color: "inherit",
+            textAlign: "left",
           }}
         >
-          ENTITIES
-        </span>
-        <span
-          style={{
-            marginLeft: "6px",
-            color: "#999",
-            fontFamily: "'VT323', monospace",
-            fontSize: "clamp(14px, 0.95vw, 18px)",
-          }}
-        >
-          {entities.length}
-        </span>
-        <span style={{ flex: 1 }} />
-        {expanded && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setExpanded(false);
-              onExpandChange?.(false);
-            }}
+          <span
             style={{
-              background: "none",
-              border: "none",
-              color: "#888",
-              cursor: "pointer",
-              fontFamily: "'VT323', monospace",
-              fontSize: "14px",
-              padding: "0 4px",
+              fontFamily: "'Press Start 2P', monospace",
+              fontSize: "clamp(6px, 0.48vw, 8px)",
+              color: "var(--color-primary)",
+              letterSpacing: "1px",
             }}
-            aria-label="Collapse entity panel"
           >
-            <span aria-hidden="true">_</span>
-          </button>
-        )}
+            ENTITIES
+          </span>
+          <span
+            style={{
+              marginLeft: "6px",
+              color: "#999",
+              fontFamily: "'VT323', monospace",
+              fontSize: "clamp(14px, 0.95vw, 18px)",
+            }}
+          >
+            {entities.length}
+          </span>
+        </button>
+
         <button
           type="button"
           onClick={(e) => {
@@ -1123,6 +1097,6 @@ export const EntityPanel = memo(function EntityPanel({
         {tab === "launch" && <LaunchTab sendCommand={sendCommand} />}
         {tab === "roles" && <RolesTab />}
       </div>
-    </div>
+    </section>
   );
 });

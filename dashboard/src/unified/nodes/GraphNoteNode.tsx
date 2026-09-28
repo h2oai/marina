@@ -77,30 +77,16 @@ export const GraphNoteNode = memo(function GraphNoteNode({ data }: NodeProps) {
   const size = baseR * 2 + 6;
 
   return (
-    // biome-ignore lint/a11y/useSemanticElements: React Flow node wrapper hosts drag Handles + SVG; a <button> swallows the node's pointer/drag model
     <div
-      role="button"
-      tabIndex={note.onClick ? 0 : undefined}
+      className="uc-graph-note"
       style={{
+        position: "relative",
         width: size,
         height: size,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         cursor: note.onClick ? "pointer" : undefined,
-      }}
-      onClick={(e) => {
-        if (note.onClick) {
-          e.stopPropagation();
-          note.onClick(note.id, e.clientX, e.clientY);
-        }
-      }}
-      onKeyDown={(e) => {
-        if ((e.key === "Enter" || e.key === " ") && note.onClick) {
-          e.preventDefault();
-          const rect = (e.target as HTMLElement).getBoundingClientRect();
-          note.onClick(note.id, rect.left, rect.top);
-        }
       }}
     >
       <Handle type="source" position={Position.Top} id="t" className="!bg-transparent !border-0" />
@@ -180,6 +166,23 @@ export const GraphNoteNode = memo(function GraphNoteNode({ data }: NodeProps) {
           </text>
         )}
       </svg>
+      {note.onClick && (
+        <button
+          type="button"
+          className="svg-action nokey"
+          style={{ position: "absolute", inset: 0 }}
+          aria-label={`Inspect note #${note.id}: ${preview}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            const rect = event.currentTarget.getBoundingClientRect();
+            note.onClick?.(
+              note.id,
+              event.detail === 0 ? rect.left + rect.width / 2 : event.clientX,
+              event.detail === 0 ? rect.top + rect.height / 2 : event.clientY,
+            );
+          }}
+        />
+      )}
     </div>
   );
 });

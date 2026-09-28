@@ -213,6 +213,12 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     note: "a decision backend's opinion of task submissions, for agreement with human verdicts",
   },
   {
+    table: "challenge_outcomes",
+    timeColumn: "answered_at",
+    kind: "ledger",
+    note: "answered challenges: human verdicts on held actions + the judge's shadow opinion",
+  },
+  {
     table: "arena_submissions",
     kind: "append-only",
     note: "signed public forecasts; the audit record behind the arena's reveal",

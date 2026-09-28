@@ -15,7 +15,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Engine } from "../src/engine/engine";
-import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
+import { setTrustProfile } from "../src/engine/trust-profile";
 import { institutionalOwnerActor } from "../src/memory/institutional";
 
 import {
@@ -31,6 +31,7 @@ import type { MemoryGraphResult, MemoryRecord, MemorySource } from "../src/sdk/m
 import { type EntityId, roomId } from "../src/types";
 import { MockConnection, makeTestRoom, stripAnsi } from "./helpers";
 import { findDurableRelation } from "./memory-numeric-helpers";
+import { scopeProcessState } from "./process-state";
 
 describe("legacy verbs ↔ durable twin bridge", () => {
   let directory: string;
@@ -71,7 +72,6 @@ describe("legacy verbs ↔ durable twin bridge", () => {
   });
 
   afterEach(() => {
-    resetTrustProfileForTests();
     db.close();
     rmSync(directory, { recursive: true });
   });
@@ -424,6 +424,8 @@ describe("legacy verbs ↔ durable twin bridge", () => {
   });
 
   it("`pool add` twins the deposit in the author's resident space tagged with the pool; `ratify` adds the institutional mirror beside it", async () => {
+    using _processState = scopeProcessState();
+
     setTrustProfile("local");
     db.createMemoryPool("pool_guide", "guide", "system");
     const reply = await run(

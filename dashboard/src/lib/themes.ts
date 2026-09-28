@@ -58,7 +58,7 @@ export const themes: Record<string, ThemeDefinition> = {
       secondary: "#FFB800",
       accent: "#FF9500",
       text: "#d4d4d4",
-      "text-dim": "#666666",
+      "text-dim": "#888888",
       "text-bright": "#f0f0f0",
       success: "#22c55e",
       warning: "#FFDD00",
@@ -252,15 +252,15 @@ export const themes: Record<string, ThemeDefinition> = {
       "bg-card": "#ffffff",
       "bg-hover": "#e6eaf2",
       border: "#d2d8e3",
-      "border-glow": "#7d600040",
-      primary: "#7d6000", // ochre — the gold, grounded
+      "border-glow": "#75590040",
+      primary: "#755900", // ochre — the gold, grounded
       secondary: "#9a4f00", // burnt amber
       accent: "#ad4209", // rust
       text: "#1f2430",
       "text-dim": "#5a6376",
       "text-bright": "#0b0f19",
       success: "#177536",
-      warning: "#7d6000",
+      warning: "#755900",
       danger: "#c62828",
       coral: "#b63a0a",
       teal: "#0f766e",
@@ -268,9 +268,9 @@ export const themes: Record<string, ThemeDefinition> = {
     },
     glass: ["rgba(255, 255, 255, 0.92)", "rgba(244, 246, 250, 0.96)"],
     glowRgba: "rgba(125, 96, 0, 0.18)",
-    gradientStops: "#7d6000, #9a4f00, #ad4209",
+    gradientStops: "#755900, #9a4f00, #ad4209",
     districtPalette: [
-      "#7d6000", // ochre
+      "#755900", // ochre
       "#ad4209", // rust
       "#177536", // green
       "#c62828", // red

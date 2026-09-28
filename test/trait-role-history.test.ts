@@ -289,18 +289,19 @@ describe("Trait/role edit history (audit trail)", () => {
       expect(stripAnsi(get())).toContain("No running agents");
     });
 
-    it("requires rank 3", async () => {
+    it("is behind the role.edit gate, not a rank floor", async () => {
       db.saveRole({ name: "scout", traits: [], createdBy: "ada" });
       const cmd = roleCommand({
         db,
         // biome-ignore lint/suspicious/noExplicitAny: test stub
-        getEntity: () => ({ properties: { rank: 0 } }) as any,
+        getEntity: () => ({ id: "e_rookie", name: "rookie", properties: { rank: 0 } }) as any,
         listAgents: () => [{ name: "alice", role: "scout", state: "autonomous" }],
         reconfigureAgent: async () => {},
       });
       const { ctx, get } = rank3Ctx();
       await cmd.handler(ctx, inp(["reload", "scout"]));
-      expect(stripAnsi(get())).toContain("organizer rank");
+      expect(stripAnsi(get())).toContain("Not yet");
+      expect(stripAnsi(get())).not.toContain("organizer rank");
     });
   });
 

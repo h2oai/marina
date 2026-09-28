@@ -26,12 +26,13 @@ import {
 } from "../src/engine/commands/reflect";
 import { MEMORY_REFLECTOR_ROLE, reflectorIdleStopMs } from "../src/engine/constants";
 import { Engine } from "../src/engine/engine";
-import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
+import { setTrustProfile } from "../src/engine/trust-profile";
 import { residentMemoryOperation } from "../src/memory/resident-service";
 import { MarinaDB } from "../src/persistence/database";
 import type { MemoryAssistancePage } from "../src/sdk/memory-assistance";
 import { type EntityId, roomId } from "../src/types";
 import { MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 // ─── Adapter: stop() never issues a spawning reflect ─────────────────────────
 
@@ -89,6 +90,8 @@ describe("LeanAgentAdapter.stop() session-end reflection", () => {
 // ─── reflect command: --no-spawn and single-flight auto-spawn ────────────────
 
 describe("reflect --no-spawn and shared auto-spawn", () => {
+  let processState: DisposableStack | undefined;
+
   let directory: string;
   let db: MarinaDB;
   let engine: Engine;
@@ -138,6 +141,8 @@ describe("reflect --no-spawn and shared auto-spawn", () => {
   }
 
   beforeEach(() => {
+    using pendingProcessState = scopeProcessState();
+
     directory = mkdtempSync(join(tmpdir(), "marina-shutdown-reflect-"));
     db = new MarinaDB(join(directory, "world.db"));
     engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
@@ -153,10 +158,14 @@ describe("reflect --no-spawn and shared auto-spawn", () => {
       engine.spawnEntity(connection.id, name);
     }
     setTrustProfile("local");
+
+    processState = pendingProcessState.move();
   });
 
   afterEach(() => {
-    resetTrustProfileForTests();
+    using _processState = processState;
+    processState = undefined;
+
     resetHelperSpawnsForTests();
     db.close();
     rmSync(directory, { recursive: true });

@@ -3,7 +3,6 @@
 
 import { RateLimiter } from "../../auth/rate-limiter";
 import { judgeAgreement } from "../../decisions/agreement";
-import { listApprovals, settleApproval } from "../../decisions/approvals";
 import { harnessDecisionProvider } from "../../decisions/engines";
 import type { Evidence } from "../../decisions/evidence";
 import { loadDecisionCases, qualifyBackend, renderBackendReport } from "../../decisions/qualify";
@@ -13,6 +12,12 @@ import { bold, dim, header, separator } from "../../net/ansi";
 import type { DecisionsStore } from "../../persistence/interfaces/decisions-store";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
 import { canonicalSub, unknownSubcommand } from "../parse-input";
+import {
+  DECISION_SETTINGS_USAGE,
+  type DecisionSettingsDeps,
+  runDecisionSettings,
+} from "./admin-decisions";
+import { challengeCommand } from "./challenge";
 
 const USAGE = [
   "Usage: decision check [<request> |] <draft>   — score your own draft before you use it",
@@ -20,6 +25,7 @@ const USAGE = [
   "       decision list | decision approve <token> | decision deny <token> [reason]",
   "       decision qualify   — run the labeled gate + route cases against this world's backend",
   "       decision agreement — how often each judge agreed with task creators' verdicts",
+  "       decision settings  — the decision settings; change one with the earned decisions.configure gate",
 ].join("\n");
 
 /** Judge calls cost money: a per-entity budget (burst 10, then one every 6 s). */
@@ -41,11 +47,11 @@ export function resetDecisionQualifyForTests(entities: string[]): void {
 
 /**
  * `decision` — the harness-decision primitive as a TOOL any entity can reach
- * for (`check`, `choose`), plus settling gate `ask` holds for agents you
- * spawned (src/decisions/approvals.ts). Rank 0 by design: the numbers only
+ * for (`check`, `choose`), plus answering gate `ask` holds (they are
+ * challenges — src/engine/challenges.ts — so `decision approve|deny|list` and
+ * `challenge …` are the same thing). Rank 0 by design: the numbers only
  * inform — nothing here blocks, records or rewards on the caller's behalf, so
- * autonomy stays with the agent. Authorization for approvals is ownership,
- * checked per request, and an agent can never approve its own call.
+ * autonomy stays with the agent. Nobody answers their own ask.
  */
 export function decisionCommand(deps: {
   getEntity: (id: EntityId) => Entity | undefined;
@@ -56,6 +62,8 @@ export function decisionCommand(deps: {
   provider?: () => DecisionProvider | undefined;
   /** Recorded judge opinions (`MARINA_DECISION_VERIFY=observe|on`) for `decision agreement`. */
   store?: DecisionsStore;
+  /** Runtime decision settings (`decision settings`); absent without a database. */
+  settings?: DecisionSettingsDeps;
 }): CommandDef {
   const providerOf = deps.provider ?? (() => harnessDecisionProvider());
   return {
@@ -68,6 +76,7 @@ export function decisionCommand(deps: {
       "decision deny <token> [reason]",
       "decision list",
       "decision qualify",
+      "decision settings [set <setting> <value> | unset <setting> | history]",
     ],
     name: "decision",
     aliases: ["decisions"],
@@ -85,7 +94,26 @@ export function decisionCommand(deps: {
         "choose",
         "qualify",
         "agreement",
+        "settings",
       ]);
+
+      // Decision settings: anyone reads; changing one takes admin.destructive
+      // (a person) or the earned decisions.configure gate (anyone, agents too).
+      if (sub === "settings") {
+        const s = deps.settings;
+        if (!s) {
+          ctx.send(input.entity, "Decision settings need a database on this instance.");
+          return;
+        }
+        ctx.send(
+          input.entity,
+          runDecisionSettings(s, me, tokens.slice(1), {
+            personAuthorized: false,
+            usage: DECISION_SETTINGS_USAGE,
+          }),
+        );
+        return;
+      }
 
       if (sub === "agreement") {
         const configured = providerOf();
@@ -286,55 +314,13 @@ export function decisionCommand(deps: {
         });
       }
 
-      if (sub === "list") {
-        const mine = listApprovals(me.name);
-        if (mine.length === 0) {
-          ctx.send(input.entity, "No tool calls are waiting for your approval.");
-          return;
-        }
-        const now = Date.now();
-        ctx.send(
-          input.entity,
-          [
-            header("Held for your approval"),
-            separator(),
-            ...mine.map(
-              (r) =>
-                `  ${bold(r.token)} ${r.agentName} → ${r.summary}\n    ${dim(`${r.reason} · expires in ${Math.max(0, Math.round((r.expiresAt - now) / 1000))}s`)}`,
-            ),
-          ].join("\n"),
+      // Held gate `ask`s are challenges now (src/engine/challenges.ts); the
+      // old verbs answer them too.
+      if (sub === "list" || sub === "approve" || sub === "deny") {
+        return challengeCommand({ getEntity: (id) => deps.getEntity(id as EntityId) }).handler(
+          ctx,
+          { ...input, tokens: sub === "list" ? ["list"] : tokens },
         );
-        return;
-      }
-
-      if (sub === "approve" || sub === "deny") {
-        const token = tokens[1];
-        if (!token) {
-          ctx.send(input.entity, USAGE);
-          return;
-        }
-        const note = tokens.slice(2).join(" ") || undefined;
-        const result = settleApproval(
-          token,
-          me.name,
-          sub === "approve" ? "approved" : "denied",
-          note,
-        );
-        if (!result.ok) {
-          const why =
-            result.error === "self"
-              ? "An agent cannot approve its own tool call."
-              : result.error === "not_owner"
-                ? "Only the principal that spawned this agent can settle its request."
-                : `No pending request ${token} (it may have expired).`;
-          ctx.send(input.entity, why);
-          return;
-        }
-        ctx.send(
-          input.entity,
-          `${sub === "approve" ? "Approved" : "Denied"} ${result.request.agentName}'s ${result.request.toolName} call (${token}).`,
-        );
-        return;
       }
 
       ctx.send(input.entity, unknownSubcommand("decision", sub, USAGE));

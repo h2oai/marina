@@ -13,7 +13,7 @@ import {
   type SpawnedHelper,
 } from "../src/engine/commands/reflect";
 import { Engine } from "../src/engine/engine";
-import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
+import { setTrustProfile } from "../src/engine/trust-profile";
 import {
   assistanceAdoptionUrl,
   findDurableTwin,
@@ -25,6 +25,7 @@ import type { MemoryAssistanceJob, MemoryAssistancePage } from "../src/sdk/memor
 import type { MemoryRecord } from "../src/sdk/memory-types";
 import { type EntityId, roomId } from "../src/types";
 import { MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 describe("reflect as a thin verb over the memory-reflector helper", () => {
   let directory: string;
@@ -115,7 +116,6 @@ describe("reflect as a thin verb over the memory-reflector helper", () => {
   });
 
   afterEach(() => {
-    resetTrustProfileForTests();
     delete process.env.MARINA_AUTONOMY;
     db.close();
     rmSync(directory, { recursive: true });
@@ -462,6 +462,8 @@ describe("reflect as a thin verb over the memory-reflector helper", () => {
   });
 
   it("LOCAL ungated: auto-spawns a memory-reflector when none runs and files the job against it", async () => {
+    using _processState = scopeProcessState();
+
     setTrustProfile("local");
     for (let i = 0; i < 2; i++) await run(alice, `note Signal tower reading ${i} !8`);
     const { calls, spawnHelper } = fakeSpawner();
@@ -482,6 +484,8 @@ describe("reflect as a thin verb over the memory-reflector helper", () => {
   });
 
   it("LOCAL ungated without a serving runtime (no keys) keeps the synchronous template + hint", async () => {
+    using _processState = scopeProcessState();
+
     setTrustProfile("local");
     for (let i = 0; i < 2; i++) await run(alice, `note Signal tower reading ${i} !8`);
     const { calls, spawnHelper } = fakeSpawner();
@@ -494,6 +498,8 @@ describe("reflect as a thin verb over the memory-reflector helper", () => {
   });
 
   it("LOCAL with MARINA_AUTONOMY=guarded, and shared/public, never auto-spawn", async () => {
+    using _processState = scopeProcessState();
+
     for (let i = 0; i < 2; i++) await run(alice, `note Signal tower reading ${i} !8`);
     const { calls, spawnHelper } = fakeSpawner();
     wireReflect({ listAgents: () => [], helpersAvailable: () => true, spawnHelper });
@@ -512,6 +518,8 @@ describe("reflect as a thin verb over the memory-reflector helper", () => {
   });
 
   it("LOCAL ungated: a failed auto-spawn degrades to the template with the hint", async () => {
+    using _processState = scopeProcessState();
+
     setTrustProfile("local");
     for (let i = 0; i < 2; i++) await run(alice, `note Signal tower reading ${i} !8`);
     wireReflect({

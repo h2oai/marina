@@ -47,3 +47,8 @@ coverage/
 
 # Cooperative runtime/offline-maintenance leases
 *.instance-lock*
+
+# Mutation testing sandboxes and reports
+.stryker-tmp/
+reports/mutation/
+stryker.log

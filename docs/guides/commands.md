@@ -732,13 +732,25 @@ When the world has a decision backend (`MARINA_DECISIONS`, see [docs/architectur
 | `decision agreement` | How often each judge's opinion of a task submission matched the creator's approve/reject, per backend (needs `MARINA_DECISION_VERIFY=observe` or `on`) |
 | `decision qualify` | Run the labeled gate and route cases against this world's backend: gate accuracy, hold recall, false holds, route accuracy, latency, cost (~20 billed calls; rate limited) |
 
-When the decision gate (`MARINA_DECISION_GATE=on`, see [docs/architecture/decisions.md](../architecture/decisions.md)) scores an agent's tool call in the "ask a person" band, the call waits and the agent's **owner** — whoever spawned it — gets a notice with a token. Only the owner can settle it, an agent can never approve its own call, and no answer before the deadline blocks the call.
+When the decision gate (`MARINA_DECISION_GATE=on`, see [docs/architecture/decisions.md](../architecture/decisions.md)) scores an agent's tool call in the "ask a person" band, it opens a **challenge**: the agent's creator and the admins get a token, the agent is told at once and keeps working, and an approval replays the call automatically. The same happens when any command meets a rank floor or a safety gate — see `challenge` below. Nobody answers their own ask.
 
 | Command | Description |
 |---------|-------------|
-| `decision list` | Tool calls from your agents waiting for your approval (token, agent, redacted call, reason, time left). Alias: `decisions` |
-| `decision approve <token>` | Let the held call run |
-| `decision deny <token> [reason]` | Block it; the reason is passed back to the agent |
+| `challenge` | Held actions you can answer, and the ones you asked. Alias: `challenges` |
+| `challenge approve <token> [once\|always] [note]` | Run it now; `always` also grants its gate (you must hold it; core gates need an admin) |
+| `challenge deny <token> [reason]` | Decline; the requester is told why |
+| `challenge stats` | The judge's record per gate against people's answers (`MARINA_CHALLENGE_JUDGE`) |
+
+The `decision` verbs below answer the same challenges:
+
+| Command | Description |
+|---------|-------------|
+| `decision list` | Same as `challenge`. Alias: `decisions` |
+| `decision approve <token>` | Same as `challenge approve <token>` |
+| `decision deny <token> [reason]` | Same as `challenge deny <token> [reason]` |
+| `decision settings` | The runtime decision settings, their values and sources (anyone may read) |
+| `decision settings set <setting> <value>` / `unset <setting>` | Change one: a person with `admin.destructive` or `decisions.configure`; an agent with the earned `decisions.configure` gate |
+| `decision settings history` | Who changed what, when — agent changes are marked |
 
 ## Roles & Traits
 
@@ -767,7 +779,7 @@ See [Behavior Surfaces](behavior-surfaces.md) for when to use roles, traits, ski
 
 ## Witness Ladder (Earning Capability Gates)
 
-Gated operations (shell, agent spawn, keys, adapters, gateways, admin, code exec) are earned, not conferred. The ladder: build `standing` → `witness request <gate>` → a qualified holder opens a supervised window with `witness grant` → perform the operation as a demonstration → the holder `witness attest`s it → enough attested demonstrations unlock the gate solo. `MARINA_AUTONOMY` sets the posture: `guarded` (default, rank + gate both enforced), `earned` (gate is the authority for gated commands), `open` (non-core gates auto-pass; the destructive core stays gated).
+Gated operations (shell, agent spawn, keys, adapters, gateways, admin, code exec, child worlds, world code) are earned, not conferred. The ladder: build `standing` → `witness request <gate>` → a qualified holder opens a supervised window with `witness grant` → perform the operation as a demonstration → the holder `witness attest`s it → enough attested demonstrations unlock the gate solo. For a gated command the gate is the single authority — its legacy rank floor is not checked on top. `MARINA_AUTONOMY` sets the posture: `guarded` (default: solo holders, witness windows and approved challenges pass), `earned` (supervised holders also run optimistically, attested afterwards), `open` (non-core gates auto-pass; the destructive core stays gated).
 
 ```
 > witness                            Your gate ladder + open items you can act on
@@ -777,7 +789,12 @@ Gated operations (shell, agent spawn, keys, adapters, gateways, admin, code exec
 > witness attest 12                  (qualified) Attest a recorded demonstration
 > witness reject 12 too risky        (qualified) Reject a recorded demonstration
 > standing                           Your standing, gate progress, and the path forward
+> gate list [entity]                 Every gate and its status for you (or someone else)
+> gate grant Scout world.lineage     Pass on a gate you hold solo (sovereigns: any gate)
+> gate revoke Scout world.lineage    (sovereign) Take a gate back
 ```
+
+A grant never escalates: you grant only a gate you hold solo, the destructive core (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`, `world.code`) is granted by sovereigns only, nobody grants themselves, and a non-sovereign never grants to an agent they spawned.
 
 ## API Keys (`key.manage` Gate)
 
@@ -815,7 +832,7 @@ Platforms: telegram, discord, slack, signal. Also auto-detected from `TELEGRAM_T
 > admin snapshot default-v1          Clone live DB → seeds/default-v1.db
 > admin snapshots                    List saved seed snapshots
 > admin decisions                    Decision settings: value, source (default / runtime / env, locked)
-> admin decisions set gate on        Change one at runtime (operator only; never an agent)
+> admin decisions set gate on        Change one at runtime (people: admin.destructive or decisions.configure)
 > admin decisions set backend jev    Turn the decision backend on without a restart
 > admin decisions unset gate         Back to the built-in default
 > admin decisions history            Who changed what, when

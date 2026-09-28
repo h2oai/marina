@@ -1521,3 +1521,12 @@
   color: var(--color-primary);
   background: rgba(255, 221, 0, 0.08);
 }
+
+/* Keyboard users receive the same visibility as pointer activation. */
+.uc-entity-sidebar:focus-within,
+.uc-worldnav:focus-within,
+.uc-floating-panel.faded:focus-within { opacity: 1; }
+
+/* Connection handles must remain above the independent native inspect control. */
+.uc-memory-node > .react-flow__handle,
+.uc-graph-note > .react-flow__handle { z-index: 2; }

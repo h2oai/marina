@@ -7,12 +7,15 @@
  * the dashboard (Admin → Ops → Decisions), the console and the `marina` CLI
  * (`admin decisions …`), without a restart.
  *
- *   Operator only    writes need rank 5 + the `admin.destructive` gate (the
- *                    `admin` command; `authorizePrivileged` on the dashboard —
- *                    a gate `MARINA_AUTONOMY=open` never auto-passes), and are
- *                    REFUSED for any agent-driven entity (internal/workload
- *                    connection, or a spawned agent with an agent config): an
- *                    agent never reconfigures its own supervision.
+ *   Who may write    a person: `admin.destructive` (the `admin` command's
+ *                    rank 5 + gate; `authorizePrivileged` on the dashboard) or
+ *                    `decisions.configure`. An AGENT (internal/workload
+ *                    connection, or a spawned agent's config): only
+ *                    `decisions.configure` — earned with standing and
+ *                    witnessed demonstrations (never self-witnessed), granted,
+ *                    or passed by the operator's posture (`open`). Supervision
+ *                    is a default an agent outgrows by earning trust
+ *                    (`authorizeSettingsWrite`).
  *   Environment wins a variable set in the environment at boot LOCKS that
  *                    setting: it is shown as locked and cannot be changed at
  *                    runtime, so a deployment's pinned config survives even a
@@ -123,8 +126,8 @@ export const DECISION_SETTINGS: readonly DecisionSettingSpec[] = [
   {
     name: "approval-timeout",
     env: "MARINA_DECISION_APPROVAL_TIMEOUT_MS",
-    describe: "how long a held call waits for its owner, ms",
-    parse: int(1_000, 3_600_000),
+    describe: "how long a held call's challenge stays open for an answer (nothing waits on it), ms",
+    parse: int(1_000, 86_400_000),
   },
   {
     name: "verify",
@@ -207,6 +210,8 @@ const HISTORY_LIMIT = 100;
 export interface DecisionSettingChange {
   at: string;
   by: string;
+  /** True when an agent made the change (through an earned or granted gate). */
+  agent?: boolean;
   setting: string;
   env: string;
   from: string | null;
@@ -228,6 +233,7 @@ function recordChange(db: SettingsStore, change: DecisionSettingChange): void {
   const history = [change, ...decisionSettingsHistory(db)].slice(0, HISTORY_LIMIT);
   db.setSetting(HISTORY_KEY, JSON.stringify(history));
   logger.info("decisions", `decision setting ${change.setting} changed by ${change.by}`, {
+    agent: change.agent === true,
     env: change.env,
     from: change.from,
     to: change.to,
@@ -287,6 +293,7 @@ export function changeDecisionSetting(
   nameOrEnv: string,
   value: string | null,
   by: string,
+  opts: { agent?: boolean } = {},
 ): DecisionSettingView {
   const spec = findDecisionSetting(nameOrEnv);
   if (!spec) {
@@ -321,6 +328,7 @@ export function changeDecisionSetting(
   recordChange(db, {
     at: new Date().toISOString(),
     by,
+    ...(opts.agent ? { agent: true } : {}),
     setting: spec.name,
     env: spec.env,
     from,
@@ -366,15 +374,59 @@ export function applyStoredDecisionSettings(db: SettingsStore): {
 // ─── Who may write ───────────────────────────────────────────────────────────
 
 /**
- * Agent-driven entities may never change decision settings: an agent must not
- * reconfigure the gate or backend that supervises it. An entity is
- * agent-driven when its connection is internal (room / crew / runtime agents,
- * workload credentials) or it has an agent config (spawned agents). An
- * external client using a person's own credentials acts as that person.
+ * An entity is agent-driven when its connection is internal (room / crew /
+ * runtime agents, workload credentials) or it has an agent config (spawned
+ * agents). An external client using a person's own credentials acts as that
+ * person.
  */
 export function isAgentDriven(opts: {
   internalConnection?: boolean;
   hasAgentConfig?: boolean;
 }): boolean {
   return !!opts.internalConnection || !!opts.hasAgentConfig;
+}
+
+/** The gate an agent must hold to change decision settings. */
+export const DECISIONS_CONFIGURE_GATE = "decisions.configure";
+
+export type SettingsAuthorization = { ok: true; gate: string } | { ok: false; reason: string };
+
+/**
+ * May this entity change decision settings? A person may with
+ * `admin.destructive` or `decisions.configure`; an agent only with
+ * `decisions.configure` — earned (standing + witnessed demonstrations, never
+ * self-witnessed), granted, or passed by the operator's posture (it is not
+ * an open-posture core gate). Records the gate execution it relied on.
+ * Pure over its dependency, so every surface (console, CLI, dashboard,
+ * agents' tools) applies the same rule.
+ */
+export interface GateAccess<R extends { ok: boolean; reason?: string }> {
+  check(entityId: string, gateId: string): R;
+  /** Record the execution the check authorized (it receives that check's result). */
+  record(entityId: string, gateId: string, result: R, evidence: string): void;
+}
+
+export function authorizeSettingsWrite<R extends { ok: boolean; reason?: string }>(
+  gates: GateAccess<R>,
+  entityId: string,
+  agentDriven: boolean,
+): SettingsAuthorization {
+  const configure = gates.check(entityId, DECISIONS_CONFIGURE_GATE);
+  if (configure.ok) {
+    gates.record(entityId, DECISIONS_CONFIGURE_GATE, configure, "decision settings");
+    return { ok: true, gate: DECISIONS_CONFIGURE_GATE };
+  }
+  if (!agentDriven) {
+    const admin = gates.check(entityId, "admin.destructive");
+    if (admin.ok) {
+      gates.record(entityId, "admin.destructive", admin, "decision settings");
+      return { ok: true, gate: "admin.destructive" };
+    }
+  }
+  return {
+    ok: false,
+    reason: agentDriven
+      ? `An agent changes decision settings once it has earned the ${DECISIONS_CONFIGURE_GATE} gate (${configure.reason ?? "not yet"}). \`standing\` shows the ladder; \`witness request ${DECISIONS_CONFIGURE_GATE}\` opens a witnessed window.`
+      : `Changing decision settings needs admin.destructive or ${DECISIONS_CONFIGURE_GATE} (${configure.reason ?? "not held"}).`,
+  };
 }

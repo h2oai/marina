@@ -964,7 +964,7 @@ Effect: unknown.
 In-game building for rooms, templates, and dynamic commands.
 Usage: build room|modify|link|unlink|code|validate|reload|diff|audit|revert|destroy|template|command
 
-Rank notes: most subcommands need rank 4; `build code`, `build reload`, `build revert`, `build destroy`, and the matching `build command code|reload|destroy` variants need rank 5.
+Rank notes: most subcommands need rank 4; `build code`, `build reload`, `build revert`, `build destroy`, and the matching `build command code|reload|destroy` variants also need the `world.code` gate (earn it via `witness request world.code` or an operator grant).
 
 Examples:
   build room my/garden A Quiet Garden
@@ -1436,6 +1436,49 @@ Effect: unknown.
 Effect: unknown.
 
 - `field-0` (`self|entity|name`): text, required, choices `self`, `entity`, `name`.
+
+## challenge
+
+challenge — held actions waiting on an answer.
+Usage:
+  challenge                               — what you can answer + what you asked
+  challenge approve <token> [once|always] [note]
+                                          — run it now; always also grants its gate
+  challenge deny <token> [reason]         — decline; the requester is told why
+  challenge stats                         — the judge's record per gate vs people's answers
+Creators answer for the agents they spawned, admins for anyone — only for what
+they could do themselves. Nobody answers their own ask.
+
+Category: Civic. Minimum rank: 0.
+Aliases: `challenges`.
+
+### `challenge`
+
+Effect: unknown.
+
+
+### `challenge approve <token> [once|always] [note]`
+
+Effect: unknown.
+
+- `field-0` (`token`): text, required.
+- `field-1` (`once|always`): choice, optional group `option-0`, choices `once`, `always`.
+- `field-2` (`note`): text, optional group `option-1`.
+- Group `option-0`: `once|always`.
+- Group `option-1`: `note`.
+
+### `challenge deny <token> [reason]`
+
+Effect: unknown.
+
+- `field-0` (`token`): text, required.
+- `field-1` (`reason`): text, optional group `option-0`.
+- Group `option-0`: `reason`.
+
+### `challenge stats`
+
+Effect: unknown.
+
 
 ## channel
 
@@ -3063,6 +3106,7 @@ Usage: decision check [<request> |] <draft>   — score your own draft before yo
        decision list | decision approve <token> | decision deny <token> [reason]
        decision qualify   — run the labeled gate + route cases against this world's backend
        decision agreement — how often each judge agreed with task creators' verdicts
+       decision settings  — the decision settings; change one with the earned decisions.configure gate
 
 Category: Agents. Minimum rank: 0.
 Aliases: `decisions`.
@@ -3113,6 +3157,15 @@ Effect: unknown.
 
 Effect: unknown.
 
+
+### `decision settings [set <setting> <value> | unset <setting> | history]`
+
+Effect: unknown.
+
+- `field-0` (`setting`): text, optional group `option-0`.
+- `field-1` (`value`): text, optional group `option-0`.
+- `field-2` (`setting`): text, optional group `option-0`.
+- Group `option-0`: `set setting value | unset setting | history`.
 
 ## demo
 
@@ -3479,6 +3532,40 @@ Aliases: `predict`.
 Effect: unknown.
 
 - `field-0` (`question`): text, required.
+
+## gate
+
+gate — safety-gate competence: who holds what, and passing it on.
+Usage:
+  gate list [entity]            — every gate and its status for you (or <entity>)
+  gate grant <entity> <gate>    — grant a gate you hold solo (sovereigns: any gate)
+  gate revoke <entity> <gate>   — (sovereign) take a gate back
+Core gates (key.manage, admin.destructive, shell.exec, code.exec.unrestricted, world.code) are granted by sovereigns only; nobody grants themselves.
+Earning a gate instead: `witness request <gate>`. Your ladder: `standing`.
+
+Category: Civic. Minimum rank: 0.
+Aliases: `gates`.
+
+### `gate list [entity]`
+
+Effect: unknown.
+
+- `field-0` (`entity`): text, optional group `option-0`.
+- Group `option-0`: `entity`.
+
+### `gate grant <entity> <gate>`
+
+Effect: unknown.
+
+- `field-0` (`entity`): text, required.
+- `field-1` (`gate`): text, required.
+
+### `gate revoke <entity> <gate>`
+
+Effect: unknown.
+
+- `field-0` (`entity`): text, required.
+- `field-1` (`gate`): text, required.
 
 ## gateway
 
@@ -4257,14 +4344,14 @@ Effect: unknown.
 ## marina-descend
 
 Create and operate sovereign Marina descendants through World Collective.
-Gated capability: earn it via `witness request admin.destructive` or an operator grant (see `standing`).
+Gated capability: earn it via `witness request world.lineage` or an operator grant (see `standing`).
 Usage:
   marina-descend create <genome-hash> | <name> | <parents csv> | <mode> | <hypothesis> [| mutations csv]
   marina-descend start <descendant-id>
   marina-descend stop <descendant-id>
   marina-descend list
 
-Category: Lineage. Minimum rank: 5. Gate: `admin.destructive`.
+Category: Lineage. Minimum rank: 5. Gate: `world.lineage`.
 Aliases: none.
 
 ### `marina-descend create <genome-hash> | <name> | <parents csv> | <mode> | <hypothesis> [| mutations csv]`
@@ -7548,7 +7635,7 @@ Usage: world list
        world adopt <child> <role> [into:<existing>]      — request bringing a role that EARNED its win home
        world adopt approve|reject <id> [reason] · world adopt rollback <id> · world adopt list
 
-Category: Lineage. Minimum rank: 5. Gate: `admin.destructive`.
+Category: Lineage. Minimum rank: 5. Gate: `world.lineage`.
 Aliases: `worlds`.
 
 ### `world adopt <child> <role> [into:<existing>]`

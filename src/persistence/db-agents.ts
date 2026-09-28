@@ -565,7 +565,7 @@ export interface RoleRow {
   focus: string;
   tone: string;
   origin: string;
-  /** JSON {@link RoleLoopSections} (migration 139). */
+  /** JSON {@link RoleLoopSections} (migration 141). */
   loop?: string;
   created_by: string;
   created_at: number;

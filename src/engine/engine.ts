@@ -37,7 +37,6 @@ import type {
   EngineEvent,
   Entity,
   EntityId,
-  EntityRank,
   Perception,
   RoomBoardAPI,
   RoomChannelAPI,
@@ -64,10 +63,9 @@ import { GatewayRuntime } from "./gateway-runtime";
 import { Logger } from "./logger";
 import { MediaManager } from "./media/manager";
 import { engineSharedWriteHook } from "./memory-dispatch";
-import { getRank, rankName, setRank } from "./permissions";
+import { getRank, rankName } from "./permissions";
 import { computeReadiness } from "./readiness";
 import { RoomSandbox } from "./room-sandbox";
-import { grantGatesForRank } from "./safety-gates";
 import { compileCommandModule, compileRoomModule } from "./sandbox";
 import { ShellRuntime } from "./shell-runtime";
 import { attachSpendLedger } from "./spend-ledger";
@@ -1001,22 +999,6 @@ export class Engine {
     }
 
     return { ok: true, name };
-  }
-
-  /** Promote an entity to a rank if they are below it */
-  /** @internal */ maybePromote(entityId: EntityId, toRank: EntityRank): void {
-    const entity = this.entities.get(entityId);
-    if (!entity || getRank(entity) >= toRank) return;
-    setRank(entity, toRank);
-    this.sendToEntity(entityId, `Your rank is now ${rankName(toRank)} (${toRank}).`);
-    if (this.db) {
-      const user = this.db.getUserByName(entity.name);
-      if (user) this.db.updateUserRank(user.id, toRank);
-      // Promotions to rank ≥ 5 grant the corresponding safety-gate set.
-      // No-op below the safety threshold — the rank-0..4 tiers are
-      // descriptive only and don't unlock gates.
-      if (toRank >= 5) grantGatesForRank(this.db, entityId, toRank);
-    }
   }
 
   /** Hot-reload a room module from the filesystem. */

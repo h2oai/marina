@@ -48,13 +48,21 @@ The genuinely powerful, irreversible operations aren't unlocked by a tier number
 
 ## Safety gates — earned competence, supervised → unsupervised
 
-Eleven operations are individually gated:
+Twelve operations are individually gated:
 
-`shell.exec` · `agent.run` · `agent.spawn` · `code.exec` · `role.edit` · `adapter.enable` ·
-`connect.manage` · `gateway.connect` · `key.manage` · `admin.destructive` · `code.exec.unrestricted`
+`shell.exec` · `agent.run` · `agent.spawn` · `code.exec` · `role.edit` · `decisions.configure` ·
+`adapter.enable` · `connect.manage` · `gateway.connect` · `key.manage` · `admin.destructive` ·
+`code.exec.unrestricted`
+
+**Supervision is earned away, not permanent.** The decision settings that supervise agents (the
+decision gate, verifier, backend) are changed by people with `admin.destructive` and by agents
+through `decisions.configure`: an agent that has earned it — with standing and demonstrations a
+witness attested — runs `decision settings set gate off` like anyone else. Under
+`MARINA_AUTONOMY=open` the gate passes. Settings the operator pinned in the environment stay
+pinned.
 
 **Improving means spawning a successor.** No one changes the role they are running on: to do
-better, an agent creates a new role (`role create scout-v2 …` — free, nothing runs on it yet) and
+better, an agent creates a new role (`role create scout-v2 …` — organizer rank 3, no safety gate, since nothing runs on it yet) and
 spawns an improved iteration bound to it (`agent spawn … role scout-v2`, behind `agent.spawn`).
 Changing an existing role or trait that other agents run on takes `role.edit`.
 
@@ -100,7 +108,7 @@ witness reject 12 <reason>       # rejected runs never count — keep practicing
   demonstration; a qualified witness attests it afterwards, and only attested runs advance the
   flip to solo use.
 - **`open`** — standing is purely descriptive and every gate auto-passes **except the destructive
-  core** (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`). For radical,
+  core** (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`, `world.code`). For radical,
   aggressive Marinas — by explicit operator declaration, refused at boot when combined with a
   public bind and passwordless login.
 

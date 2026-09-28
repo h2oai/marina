@@ -7,7 +7,7 @@ import type { WorldCollectiveManager } from "../../world/world-collective-manage
 import { notFound } from "./command-messages";
 
 const HELP = `Create and operate sovereign Marina descendants through World Collective.
-Gated capability: earn it via \`witness request admin.destructive\` or an operator grant (see \`standing\`).
+Gated capability: earn it via \`witness request world.lineage\` or an operator grant (see \`standing\`).
 Usage:
   marina-descend create <genome-hash> | <name> | <parents csv> | <mode> | <hypothesis> [| mutations csv]
   marina-descend start <descendant-id>
@@ -30,7 +30,7 @@ export function marinaDescendCommand(deps: {
     aliases: [],
     category: "Lineage",
     minRank: 5,
-    gate: "admin.destructive",
+    gate: "world.lineage",
     help: HELP,
     handler: async (ctx, input) => {
       const actor = deps.getEntity(input.entity);

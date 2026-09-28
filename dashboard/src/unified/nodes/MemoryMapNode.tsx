@@ -487,13 +487,11 @@ export const MemoryMapNode = memo(function MemoryMapNode({ data }: NodeProps) {
   }
 
   return (
-    // biome-ignore lint/a11y/useSemanticElements: React Flow node wrapper hosts drag Handles + SVG; a <button> swallows the node's pointer/drag model
     <div
-      role="button"
-      tabIndex={clickable ? 0 : undefined}
       className={`uc-memory-node uc-memory-${node.kind}`}
       data-memory-id={node.id}
       style={{
+        position: "relative",
         width: size,
         height: size,
         display: "flex",
@@ -501,22 +499,26 @@ export const MemoryMapNode = memo(function MemoryMapNode({ data }: NodeProps) {
         justifyContent: "center",
         cursor: clickable ? "pointer" : undefined,
       }}
-      onClick={(e) => {
-        if (d.onClick) {
-          e.stopPropagation();
-          d.onClick(node.id, e.clientX, e.clientY);
-        }
-      }}
-      onKeyDown={(e) => {
-        if ((e.key === "Enter" || e.key === " ") && d.onClick) {
-          e.preventDefault();
-          const rect = (e.target as HTMLElement).getBoundingClientRect();
-          d.onClick(node.id, rect.left, rect.top);
-        }
-      }}
     >
       <NodeHandles />
       {glyph}
+      {d.onClick && (
+        <button
+          type="button"
+          className="svg-action nokey"
+          style={{ position: "absolute", inset: 0 }}
+          aria-label={`Inspect ${node.kind}: ${node.id}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            const rect = event.currentTarget.getBoundingClientRect();
+            d.onClick?.(
+              node.id,
+              event.detail === 0 ? rect.left + rect.width / 2 : event.clientX,
+              event.detail === 0 ? rect.top + rect.height / 2 : event.clientY,
+            );
+          }}
+        />
+      )}
     </div>
   );
 });

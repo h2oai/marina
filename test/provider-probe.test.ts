@@ -31,6 +31,9 @@ import {
 import { MarinaDB } from "../src/persistence/database";
 import { type EntityId, roomId } from "../src/types";
 import { makeTestRoom } from "./helpers";
+import { scopeProcessState } from "./process-state";
+
+let processState: DisposableStack | undefined;
 
 const PROVIDER_ENV = [
   "ANTHROPIC_API_KEY",
@@ -54,6 +57,8 @@ let db: MarinaDB;
 let engine: Engine;
 
 beforeEach(() => {
+  using pendingProcessState = scopeProcessState();
+
   saved = new Map(PROVIDER_ENV.map((k) => [k, process.env[k]]));
   for (const k of PROVIDER_ENV) delete process.env[k];
   originalFetch = globalThis.fetch;
@@ -62,15 +67,20 @@ beforeEach(() => {
   db = new MarinaDB(join(dir, "w.db"));
   engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
   engine.registerRoom(roomId("test/start"), makeTestRoom({ short: "Start" }));
+
+  processState = pendingProcessState.move();
 });
 
 afterEach(() => {
+  using _processState = processState;
+  processState = undefined;
+
   globalThis.fetch = originalFetch;
   for (const [k, v] of saved) {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
   }
-  resetTrustProfileForTests();
+
   db.close();
   rmSync(dir, { recursive: true, force: true });
 });
@@ -402,6 +412,8 @@ describe("readiness providers command", () => {
   }
 
   it("renders the probe for an operator and refuses low rank on a gated instance", async () => {
+    using _processState = scopeProcessState();
+
     setTrustProfile("shared");
     expect(await run(0, "providers")).toContain(`rank ${PROVIDER_PROBE_MIN_RANK}+`);
     expect(await run(PROVIDER_PROBE_MIN_RANK, "providers")).toContain(

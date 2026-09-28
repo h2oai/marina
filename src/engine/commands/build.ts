@@ -15,6 +15,7 @@ import type {
 import { getErrorMessage } from "../errors";
 import { int, rest, token } from "../parse-input";
 import { getRank } from "../permissions";
+import { checkGateForExecution, recordGateExecution } from "../safety-gates";
 import {
   compileCommandModule,
   compileRoomModule,
@@ -43,6 +44,27 @@ type SubHandler = (
   rank: number,
   deps: BuildDeps,
 ) => void | Promise<void>;
+
+/**
+ * Room and command code runs inside the engine, so writing, reloading,
+ * reverting or destroying it is the `world.code` safety gate — earned
+ * (standing + witnessed demonstrations), granted, or passed by the operator's
+ * posture; a refusal raises a challenge. Returns true when refused.
+ */
+function worldCodeRefused(
+  ctx: RoomContext,
+  input: CommandInput,
+  deps: BuildDeps,
+  what: string,
+): boolean {
+  const result = checkGateForExecution(deps.db, input.entity, "world.code");
+  if (!result.ok) {
+    ctx.send(input.entity, `Cannot ${what}: ${result.reason ?? "world.code gate denied."}`);
+    return true;
+  }
+  recordGateExecution(deps.db, input.entity, "world.code", result, `build:${what}`);
+  return false;
+}
 
 /** Emit a coordination_change so the dashboard's Commands list refreshes live. */
 function emitCommandChange(
@@ -266,13 +288,10 @@ function handleCode(
   ctx: RoomContext,
   input: CommandInput,
   entity: Entity,
-  rank: number,
+  _rank: number,
   deps: BuildDeps,
 ): void {
-  if (rank < 5) {
-    ctx.send(input.entity, "You must be at least an architect (rank 5) to set room code.");
-    return;
-  }
+  if (worldCodeRefused(ctx, input, deps, "set room code")) return;
 
   const roomIdStr = token(input, 1);
   if (!roomIdStr) {
@@ -343,13 +362,10 @@ async function handleReload(
   ctx: RoomContext,
   input: CommandInput,
   entity: Entity,
-  rank: number,
+  _rank: number,
   deps: BuildDeps,
 ): Promise<void> {
-  if (rank < 5) {
-    ctx.send(input.entity, "You must be at least an architect (rank 5) to reload rooms.");
-    return;
-  }
+  if (worldCodeRefused(ctx, input, deps, "reload rooms")) return;
 
   const roomIdStr = token(input, 1) ?? (entity.room as string);
   const source = deps.db.getRoomSource(roomIdStr);
@@ -461,13 +477,10 @@ async function handleRevert(
   ctx: RoomContext,
   input: CommandInput,
   entity: Entity,
-  rank: number,
+  _rank: number,
   deps: BuildDeps,
 ): Promise<void> {
-  if (rank < 5) {
-    ctx.send(input.entity, "You must be at least an architect (rank 5) to revert rooms.");
-    return;
-  }
+  if (worldCodeRefused(ctx, input, deps, "revert rooms")) return;
 
   const roomIdStr = token(input, 1);
   if (!roomIdStr) {
@@ -524,13 +537,10 @@ function handleDestroy(
   ctx: RoomContext,
   input: CommandInput,
   _entity: Entity,
-  rank: number,
+  _rank: number,
   deps: BuildDeps,
 ): void {
-  if (rank < 5) {
-    ctx.send(input.entity, "You must be at least an architect (rank 5) to destroy rooms.");
-    return;
-  }
+  if (worldCodeRefused(ctx, input, deps, "destroy rooms")) return;
 
   const roomIdStr = token(input, 1);
   if (!roomIdStr) {
@@ -736,13 +746,10 @@ function handleCommandCode(
   ctx: RoomContext,
   input: CommandInput,
   entity: Entity,
-  rank: number,
+  _rank: number,
   deps: BuildDeps,
 ): void {
-  if (rank < 5) {
-    ctx.send(input.entity, "You must be at least an architect (rank 5) to set command code.");
-    return;
-  }
+  if (worldCodeRefused(ctx, input, deps, "set command code")) return;
   const name = input.tokens[2]?.toLowerCase();
   if (!name) {
     ctx.send(input.entity, "Usage: build command code <name> [source]");
@@ -812,13 +819,10 @@ async function handleCommandReload(
   ctx: RoomContext,
   input: CommandInput,
   _entity: Entity,
-  rank: number,
+  _rank: number,
   deps: BuildDeps,
 ): Promise<void> {
-  if (rank < 5) {
-    ctx.send(input.entity, "You must be at least an architect (rank 5) to reload commands.");
-    return;
-  }
+  if (worldCodeRefused(ctx, input, deps, "reload commands")) return;
   const name = input.tokens[2]?.toLowerCase();
   if (!name) {
     ctx.send(input.entity, "Usage: build command reload <name>");
@@ -914,13 +918,10 @@ function handleCommandDestroy(
   ctx: RoomContext,
   input: CommandInput,
   _entity: Entity,
-  rank: number,
+  _rank: number,
   deps: BuildDeps,
 ): void {
-  if (rank < 5) {
-    ctx.send(input.entity, "You must be at least an architect (rank 5) to destroy commands.");
-    return;
-  }
+  if (worldCodeRefused(ctx, input, deps, "destroy commands")) return;
   const name = input.tokens[2]?.toLowerCase();
   if (!name) {
     ctx.send(input.entity, "Usage: build command destroy <name>");
@@ -1023,7 +1024,7 @@ export function buildCommand(deps: BuildDeps): CommandDef {
     name: "build",
     aliases: [],
     minRank: 4,
-    help: "In-game building for rooms, templates, and dynamic commands.\nUsage: build room|modify|link|unlink|code|validate|reload|diff|audit|revert|destroy|template|command\n\nRank notes: most subcommands need rank 4; `build code`, `build reload`, `build revert`, `build destroy`, and the matching `build command code|reload|destroy` variants need rank 5.\n\nExamples:\n  build room my/garden A Quiet Garden\n  build modify my/garden long Flowers bloom in every direction.\n  build link my/garden north hub/crossroads\n  build command create weather\n  build command reload weather",
+    help: "In-game building for rooms, templates, and dynamic commands.\nUsage: build room|modify|link|unlink|code|validate|reload|diff|audit|revert|destroy|template|command\n\nRank notes: most subcommands need rank 4; `build code`, `build reload`, `build revert`, `build destroy`, and the matching `build command code|reload|destroy` variants also need the `world.code` gate (earn it via `witness request world.code` or an operator grant).\n\nExamples:\n  build room my/garden A Quiet Garden\n  build modify my/garden long Flowers bloom in every direction.\n  build link my/garden north hub/crossroads\n  build command create weather\n  build command reload weather",
     handler: async (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;

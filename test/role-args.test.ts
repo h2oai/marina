@@ -59,7 +59,7 @@ describe("role loop sections", () => {
     });
   });
 
-  it("stores them (migration 139) and resolves them into the composed role", () => {
+  it("stores them (migration 141) and resolves them into the composed role", () => {
     const db = new MarinaDB(DB);
     try {
       db.saveRole({

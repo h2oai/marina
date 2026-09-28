@@ -88,8 +88,12 @@ export function EntityRoster({
       isFocused={isFocused}
       onToggleFocus={onToggleFocus}
     >
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: list container with roving keyboard nav over child roster rows, not click-activation */}
-      <div ref={containerRef} onKeyDown={onKeyDown} className="flex flex-col outline-none">
+      <section
+        aria-label="Entities"
+        ref={containerRef}
+        onKeyDown={onKeyDown}
+        className="flex flex-col outline-none"
+      >
         <EntitySymmetryBar />
         {sorted.length === 0 && (
           <div className="p-2 text-text-dim text-[11px]">No entities online</div>
@@ -114,18 +118,8 @@ export function EntityRoster({
                 exit={{ opacity: 0, y: -6 }}
                 transition={{ type: "spring", stiffness: 320, damping: 30 }}
               >
-                {/* biome-ignore lint/a11y/useSemanticElements: contains nested interactive elements — cannot use <button> */}
                 <div
-                  role="button"
                   data-entity-preview={e.name}
-                  tabIndex={0}
-                  onClick={() => selectEntity(isSelected ? null : e.name)}
-                  onKeyDown={(ev) => {
-                    if (ev.key === "Enter" || ev.key === " ") {
-                      ev.preventDefault();
-                      selectEntity(isSelected ? null : e.name);
-                    }
-                  }}
                   className={cn(
                     "flex w-full cursor-pointer items-center gap-2 px-2 py-1 text-left text-[12px] transition-colors hover:bg-bg-hover",
                     isSelected && "bg-bg-hover",
@@ -143,7 +137,14 @@ export function EntityRoster({
                       style={{ backgroundColor: originMeta.color }}
                     />
                   )}
-                  <span className="flex-1 truncate text-text-bright">{e.name}</span>
+                  <button
+                    type="button"
+                    aria-expanded={isSelected}
+                    onClick={() => selectEntity(isSelected ? null : e.name)}
+                    className="flex-1 truncate text-left text-text-bright"
+                  >
+                    {e.name}
+                  </button>
                   <span
                     className="shrink-0 rounded px-1 text-[8px] uppercase leading-tight tracking-wide"
                     title={originMeta.title}
@@ -242,7 +243,7 @@ export function EntityRoster({
             );
           })}
         </AnimatePresence>
-      </div>
+      </section>
     </GlassPanel>
   );
 }

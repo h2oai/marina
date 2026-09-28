@@ -34,15 +34,15 @@
             "useExhaustiveDependencies": "warn"
           },
           "a11y": {
-            "useKeyWithClickEvents": "warn",
-            "useButtonType": "warn",
-            "noAutofocus": "warn",
-            "useSemanticElements": "warn",
-            "noNoninteractiveTabindex": "warn",
-            "useMediaCaption": "warn",
-            "noSvgWithoutTitle": "warn",
-            "noLabelWithoutControl": "warn",
-            "noStaticElementInteractions": "warn"
+            "useKeyWithClickEvents": "error",
+            "useButtonType": "error",
+            "noAutofocus": "error",
+            "useSemanticElements": "error",
+            "noNoninteractiveTabindex": "error",
+            "useMediaCaption": "error",
+            "noSvgWithoutTitle": "error",
+            "noLabelWithoutControl": "error",
+            "noStaticElementInteractions": "error"
           },
           "suspicious": {
             "noArrayIndexKey": "warn"
@@ -52,6 +52,19 @@
           },
           "style": {
             "useSingleVarDeclarator": "warn"
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "dashboard/src/canvas/nodes/AudioNode.tsx",
+        "dashboard/src/canvas/nodes/VideoNode.tsx"
+      ],
+      "linter": {
+        "rules": {
+          "a11y": {
+            "useMediaCaption": "off"
           }
         }
       }

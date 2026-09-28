@@ -13,7 +13,7 @@ export interface UseKeyboardNavResult {
   highlightedIndex: number | null;
   setHighlightedIndex: (index: number | null) => void;
   onKeyDown: (e: React.KeyboardEvent) => void;
-  containerRef: React.RefObject<HTMLDivElement | null>;
+  containerRef: React.RefObject<HTMLElement | null>;
 }
 
 export function useKeyboardNav<T>({
@@ -22,7 +22,7 @@ export function useKeyboardNav<T>({
   wrap = true,
 }: UseKeyboardNavOptions<T>): UseKeyboardNavResult {
   const [highlightedIndex, setHighlightedIndex] = useState<number | null>(null);
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  const containerRef = useRef<HTMLElement | null>(null);
 
   const scrollToIndex = useCallback((index: number) => {
     const container = containerRef.current;
@@ -58,6 +58,14 @@ export function useKeyboardNav<T>({
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      // A nested button, link or editor owns its activation and editing keys.
+      if (
+        e.defaultPrevented ||
+        (e.target instanceof Element &&
+          (e.target.closest("input, textarea, select, [contenteditable=true]") ||
+            (["Enter", " "].includes(e.key) && e.target.closest("button, a"))))
+      )
+        return;
       switch (e.key) {
         case "ArrowDown":
         case "j":

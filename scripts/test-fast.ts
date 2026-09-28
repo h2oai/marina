@@ -139,6 +139,7 @@ export const FAST_FILES: string[] = [
   "test/pi-models.test.ts",
   "test/position.test.ts",
   "test/probe-api.test.ts",
+  "test/process-state.test.ts",
   "test/production-smoke.test.ts",
   "test/prompt-sections-metric.test.ts",
   "test/prune-channel.test.ts",

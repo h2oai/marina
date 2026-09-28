@@ -4,9 +4,10 @@
 /**
  * marina-descend gate smoke test.
  *
- * `marina-descend` declares `minRank: 5` + `gate: "admin.destructive"`. Under
- * the default guarded posture the engine router is the authority: a rank-0
- * caller is refused before the handler runs, and no descendant row is created.
+ * `marina-descend` declares `minRank: 5` + `gate: "world.lineage"`. The gate
+ * is the single authority in every posture (no rank floor on top): a rank-0
+ * caller without standing or competence is refused before the handler runs,
+ * and no descendant row is created.
  * Mirrors the style of test/spawn-gate-sites.test.ts (observable contract:
  * refusal + zero side effects), driven through a real Engine so the router's
  * minRank/gate check is what does the refusing.
@@ -21,7 +22,7 @@ import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
 const DB_PATH = `/tmp/marina-descend-gate-${process.pid}.db`;
 const savedPosture = process.env.MARINA_AUTONOMY;
 
-describe("marina-descend is fenced by rank + the admin.destructive gate", () => {
+describe("marina-descend is fenced by the world.lineage gate", () => {
   let db: MarinaDB;
   let engine: Engine;
 
@@ -49,8 +50,9 @@ describe("marina-descend is fenced by rank + the admin.destructive gate", () => 
     await engine.processCommand(conn.entity!, "marina-descend create sha256:abc | Sprout");
 
     const sent = conn.messages.map((p) => (p.data as { text?: string }).text ?? "").join("\n");
-    // Router refusal (minRank is the authority under guarded), not the handler.
-    expect(sent).toContain("rank 5");
+    // Router refusal (the gate is the authority), not the handler.
+    expect(sent).toContain("Not yet");
+    expect(sent).not.toContain("rank 5");
     expect(sent).not.toContain("Declared sovereign descendant");
     // Nothing was created.
     expect(db.listMarinaDescendants()).toHaveLength(0);
@@ -65,7 +67,7 @@ describe("marina-descend is fenced by rank + the admin.destructive gate", () => 
     await engine.processCommand(conn.entity!, "marina-descend create sha256:abc | Sprout");
 
     const sent = conn.messages.map((p) => (p.data as { text?: string }).text ?? "").join("\n");
-    // The gate check refuses (zero standing, no competence, destructive core).
+    // The gate check refuses (zero standing, no competence).
     expect(sent).not.toContain("Declared sovereign descendant");
     expect(db.listMarinaDescendants()).toHaveLength(0);
   });

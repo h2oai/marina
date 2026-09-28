@@ -22,6 +22,7 @@ import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 const SIX_VERBS = ["note", "recall", "reflect", "memory", "pool", "skill"] as const;
 const MEMORY_HELP_COMMANDS = [...SIX_VERBS, "orient", "debrief", "recap"];
@@ -31,17 +32,25 @@ const CAVEAT = "need rank or a witness";
 const approxTokens = (text: string) => Math.ceil(text.length / 4);
 
 describe("MEMORY contract in the system prompt", () => {
+  let processState: DisposableStack | undefined;
+
   let prevAutonomy: string | undefined;
   let prevProfile: string | undefined;
   beforeEach(() => {
+    using pendingProcessState = scopeProcessState();
+
     prevAutonomy = process.env.MARINA_AUTONOMY;
     prevProfile = process.env.MARINA_PROFILE;
     delete process.env.MARINA_AUTONOMY;
     delete process.env.MARINA_PROFILE;
     resetTrustProfileForTests();
+
+    processState = pendingProcessState.move();
   });
   afterEach(() => {
-    resetTrustProfileForTests();
+    using _processState = processState;
+    processState = undefined;
+
     if (prevAutonomy === undefined) delete process.env.MARINA_AUTONOMY;
     else process.env.MARINA_AUTONOMY = prevAutonomy;
     if (prevProfile === undefined) delete process.env.MARINA_PROFILE;
@@ -93,6 +102,8 @@ describe("MEMORY contract in the system prompt", () => {
   });
 
   it("stays within the token cap in both the gated and ungated renderings", () => {
+    using _processState = scopeProcessState();
+
     setTrustProfile("shared");
     const gated = getMemoryContract();
     setTrustProfile("local");
@@ -106,6 +117,8 @@ describe("MEMORY contract in the system prompt", () => {
   });
 
   it("omits the rank/witness caveat only on a LOCAL ungated instance", () => {
+    using _processState = scopeProcessState();
+
     // Process default (shared, legacy enforcement) keeps the caveat.
     expect(getMemoryContract()).toContain(CAVEAT);
     setTrustProfile("public");

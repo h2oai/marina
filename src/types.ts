@@ -55,13 +55,16 @@ export interface CommandDef {
   category?: string;
   /**
    * Safety gate id (see src/engine/safety-gates.ts SAFETY_GATES). When set, the
-   * command-router checks `checkUnattendedGate(db, entityId, gate)` after the
-   * standard `minRank` check — every declaratively-gated command is an
-   * unattended dangerous op, so a standing-only (supervisedOnly) holder is
-   * REFUSED. Unsupervised competence is earned only via operator grant, rank
-   * promotion (`grantGatesForRank`), or a witnessed demonstration — never by the
-   * router self-recording a demonstration (that self-certification path is
-   * closed).
+   * command phase (`CommandPhaseCoordinator`) calls
+   * `checkGateForExecution(db, entityId, gate)` after the standard `minRank`
+   * check and `recordGateExecution` on a pass. It authorizes unsupervised
+   * competence, the `local` trust profile, `open` posture for non-core gates,
+   * a live witness-granted supervision window, or (under `earned` posture) an
+   * optimistic run recorded as a pending attestation; otherwise a standing-only
+   * holder is REFUSED. Unsupervised competence is earned only via operator
+   * grant, rank promotion (`grantGatesForRank`), or a witnessed demonstration —
+   * never by the router self-recording a demonstration (that self-certification
+   * path is closed).
    */
   gate?: string;
 }

@@ -88,7 +88,7 @@ function CanvasInner({ embedded = false, active = true }: CanvasPageProps) {
   const requestedNodeIdRef = useRef(initialSelectionRef.current.nodeId);
   const [filteredIds, setFilteredIds] = useState<Set<string> | null>(null);
   const [dropping, setDropping] = useState(false);
-  const reactFlowWrapper = useRef<HTMLDivElement>(null);
+  const reactFlowWrapper = useRef<HTMLElement>(null);
   const { fitView, screenToFlowPosition, setViewport } = useReactFlow();
   const nodesInitialized = useNodesInitialized();
   const prevNodeIdsRef = useRef<Set<string>>(new Set());
@@ -861,8 +861,8 @@ function CanvasInner({ embedded = false, active = true }: CanvasPageProps) {
       </div>
 
       {/* Canvas area */}
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: file drop zone — drag/drop handlers, not click-activation */}
-      <div
+      <section
+        aria-label="Canvas workspace"
         ref={reactFlowWrapper}
         className="flex-1 relative"
         onDragOver={onDragOver}
@@ -1039,7 +1039,7 @@ function CanvasInner({ embedded = false, active = true }: CanvasPageProps) {
             </button>
           </div>
         )}
-      </div>
+      </section>
 
       {/* Detail panel — double-click a node to inspect */}
       {embedded && !fullscreen && document.getElementById("canvas-inspector") ? (

@@ -14,6 +14,7 @@ import { MarinaDB } from "../src/persistence/database";
 import type { CommandInput, EntityId, RoomContext, RoomId, RoomModule } from "../src/types";
 import { roomId } from "../src/types";
 import { cleanupDb, grantAllGates, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 // ─── RoomSandbox ─────────────────────────────────────────────────────────────
 
@@ -304,9 +305,6 @@ describe("Link Command", () => {
       now = 1_000_000;
       resetLinkRateLimitsForTests(() => now);
     });
-    afterEach(() => {
-      RateLimiter.bypass = false;
-    });
 
     it("stops checking codes from one account after 5 attempts, then refills", () => {
       const code = newCode();
@@ -333,6 +331,8 @@ describe("Link Command", () => {
     });
 
     it("is enforced even when the local profile bypasses rate limits", () => {
+      using _processState = scopeProcessState();
+
       RateLimiter.bypass = true;
       for (let i = 0; i < 5; i++) redeemLinkCode(db, "telegram", "666", "ZZZZZZ");
       expect(redeemLinkCode(db, "telegram", "666", newCode())).toBeNull();
@@ -396,7 +396,8 @@ describe("Admin Commands", () => {
     userConn.clear();
     engine.processCommand(userId, "admin stats");
     // Civic-substrate P3: admin gates at rank 5 + admin.destructive competence.
-    expect(userConn.lastText()).toContain("rank 5");
+    // The admin.destructive gate is the authority (no rank floor on top).
+    expect(userConn.lastText()).toContain("Not yet");
   });
 
   it("shows usage without subcommand", () => {

@@ -13,6 +13,7 @@
  */
 
 import { memo, useEffect, useMemo, useState } from "react";
+import { SvgAction } from "../../components/SvgAction";
 import { useFeedState } from "../../hooks/use-feed-state";
 import type { FeedEvent } from "../../lib/types";
 
@@ -281,27 +282,23 @@ export const TimelineStrip = memo(function TimelineStrip({
             }
           };
           return (
-            // biome-ignore lint/a11y/noStaticElementInteractions: SVG dot; role/tabIndex/keyboard are conditionally wired when interactive
-            <g
-              key={e.id}
-              role={interactive ? "button" : undefined}
-              tabIndex={interactive ? 0 : undefined}
-              aria-label={interactive ? `${e.kind}: ${e.summary}` : undefined}
-              style={{ cursor: interactive ? "pointer" : undefined }}
-              onClick={activate}
-              onKeyDown={(ke) => {
-                if ((ke.key === "Enter" || ke.key === " ") && interactive) {
-                  ke.preventDefault();
-                  activate();
-                }
-              }}
-            >
+            <g key={e.id}>
               <title>
                 {e.summary}
                 {"\n"}({e.kind} · {new Date(e.timestamp).toLocaleTimeString()})
               </title>
               <line x1={x} y1={20} x2={x} y2={28} stroke={color} strokeWidth={1.5} opacity={0.9} />
               <circle cx={x} cy={28} r={3} fill={color} opacity={0.95} />
+              {interactive && (
+                <SvgAction
+                  x={x - 6}
+                  y={16}
+                  width={12}
+                  height={18}
+                  label={`${e.kind}: ${e.summary}`}
+                  onActivate={activate}
+                />
+              )}
             </g>
           );
         })}

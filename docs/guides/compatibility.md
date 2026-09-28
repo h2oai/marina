@@ -3,6 +3,7 @@
 | Surface | Supported contract | Qualification |
 | --- | --- | --- |
 | Server | Bun ≥ 1.4.2; SQLite and Bun networking | Backend tests, dashboard/browser build and image smoke |
+| Dashboard unit tests | Node 24 selected by `dashboard/.node-version`; supported versions in `dashboard/package.json` | Vitest/JSDOM suite via `bun run test:ui`; see [testing](testing.md#dashboard-runtime-and-browser-tests) |
 | JavaScript clients | ESM in Bun and Node with native fetch/WebSocket | Packed archive imports, authenticated memory request and strict NodeNext declarations |
 | Memory API | `/v1/memory` and `@marina/agent-sdk/memory` are the canonical durable interface | Memory API/client tests and recovery qualification |
 | Deprecated numeric memory | `/mem/*`, `note`, `recall`, numeric references, tiers and pool ACLs remain supported | Cross-interface lifecycle and restart tests |

@@ -62,7 +62,7 @@ export function worldCommand(deps: {
     aliases: ["worlds"],
     category: "Lineage",
     minRank: 5,
-    gate: "admin.destructive",
+    gate: "world.lineage",
     help: `Child and parallel worlds: create, start, stop, run a command inside one, seed a role into it.\n${USAGE}`,
     handler: async (ctx, input) => {
       const actor = deps.getEntity(input.entity);

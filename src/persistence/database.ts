@@ -2136,6 +2136,16 @@ export class MarinaDB implements MarinaStores {
     return decisionsDb.listJudgeObservations(this.reader, opts);
   }
 
+  recordChallengeOutcome(row: decisionsDb.ChallengeOutcomeInput): number {
+    return decisionsDb.recordChallengeOutcome(this.db, row);
+  }
+
+  listChallengeOutcomes(
+    opts: { class?: string; limit?: number } = {},
+  ): decisionsDb.ChallengeOutcomeRow[] {
+    return decisionsDb.listChallengeOutcomes(this.reader, opts);
+  }
+
   // ─── Social Simulation Arena (delegated to db-arena.ts) ─────────────────
 
   insertArenaSubmission(row: arenaDb.InsertArenaSubmission): number {

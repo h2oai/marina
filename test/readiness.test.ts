@@ -5,11 +5,12 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { readinessCommand, renderTrustProfileLine } from "../src/engine/commands/readiness";
 import { Engine } from "../src/engine/engine";
 import { computeReadiness, computeTrustProfile } from "../src/engine/readiness";
-import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
+import { setTrustProfile } from "../src/engine/trust-profile";
 import { MarinaDB } from "../src/persistence/database";
 import type { CommandInput, EntityId, RoomContext } from "../src/types";
 import { roomId } from "../src/types";
 import { cleanupDb } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 const TEST_DB = "test_readiness.db";
 
@@ -58,7 +59,6 @@ describe("computeReadiness", () => {
   });
 
   afterEach(() => {
-    resetTrustProfileForTests();
     db.close();
     cleanupDb(TEST_DB);
     for (const [k, v] of Object.entries(saved)) {
@@ -165,6 +165,8 @@ describe("computeReadiness", () => {
   });
 
   it("LOCAL is ungated unless MARINA_AUTONOMY=guarded re-enforces gates", () => {
+    using _processState = scopeProcessState();
+
     setTrustProfile("local");
     const local = computeReadiness(engine).trustProfile;
     expect(local).toEqual({ profile: "local", ungated: true, autonomy: "guarded" });

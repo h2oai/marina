@@ -12,7 +12,8 @@ healthy.
 
 ## From inside the world
 
-Operators (rank 5 with `admin.destructive`) can do the same without the dashboard, and use a child
+Anyone holding the `world.lineage` gate (earned via `witness request world.lineage`, or granted) can
+do the same without the dashboard, and use a child
 once it runs:
 
 ```text

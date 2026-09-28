@@ -49,8 +49,9 @@ describe("Admin Commands", () => {
 
     conn.clear();
     engine.processCommand(result.entityId, "admin stats");
+    // The admin.destructive gate is the authority (no rank floor on top).
     // P3: admin gates at rank 5 + admin.destructive competence proof.
-    expect(conn.lastText()).toContain("rank 5");
+    expect(conn.lastText()).toContain("Not yet");
   });
 
   it("should show stats", () => {

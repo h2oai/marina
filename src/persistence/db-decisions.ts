@@ -82,3 +82,85 @@ export function listJudgeObservations(
     )
     .all(...params) as JudgeObservationRow[];
 }
+
+// ─── Challenge outcomes (migration 139) ─────────────────────────────────
+
+export type ChallengeOutcomeAnswer = "once" | "always" | "deny" | "expired";
+
+export interface ChallengeOutcomeInput {
+  token: string;
+  kind: "gate" | "rank" | "tool";
+  /** What the judge's agreement is measured per: the gate id, `rank:<n>`, or `tool:<name>`. */
+  class: string;
+  requesterName: string;
+  creatorName?: string;
+  toolName?: string;
+  summary: string;
+  reason: string;
+  answer: ChallengeOutcomeAnswer;
+  answeredBy?: string;
+  answeredRole?: "creator" | "admin" | "judge";
+  judgeOpinion?: "allow" | "hold" | "none";
+  judgeSignals?: Record<string, number>;
+  createdAt: number;
+}
+
+export interface ChallengeOutcomeRow {
+  id: number;
+  token: string;
+  kind: string;
+  class: string;
+  requester_name: string;
+  creator_name: string | null;
+  tool_name: string | null;
+  summary: string;
+  reason: string;
+  answer: ChallengeOutcomeAnswer;
+  answered_by: string | null;
+  answered_role: string | null;
+  judge_opinion: string | null;
+  judge_signals: string | null;
+  created_at: number;
+  answered_at: number;
+}
+
+export function recordChallengeOutcome(db: Database, row: ChallengeOutcomeInput): number {
+  const result = db
+    .query(
+      `INSERT INTO challenge_outcomes
+         (token, kind, class, requester_name, creator_name, tool_name, summary, reason, answer,
+          answered_by, answered_role, judge_opinion, judge_signals, created_at, answered_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      row.token,
+      row.kind,
+      row.class,
+      row.requesterName,
+      row.creatorName ?? null,
+      row.toolName ?? null,
+      row.summary,
+      row.reason,
+      row.answer,
+      row.answeredBy ?? null,
+      row.answeredRole ?? null,
+      row.judgeOpinion ?? null,
+      row.judgeSignals ? JSON.stringify(row.judgeSignals) : null,
+      row.createdAt,
+      Date.now(),
+    );
+  return Number(result.lastInsertRowid);
+}
+
+/** Outcomes newest first, optionally for one class. */
+export function listChallengeOutcomes(
+  reader: Database,
+  opts: { class?: string; limit?: number } = {},
+): ChallengeOutcomeRow[] {
+  const limit = Math.min(Math.max(opts.limit ?? 2_000, 1), 10_000);
+  const where = opts.class ? "WHERE class = ?" : "";
+  const params: (string | number)[] = opts.class ? [opts.class, limit] : [limit];
+  return reader
+    .query(`SELECT * FROM challenge_outcomes ${where} ORDER BY id DESC LIMIT ?`)
+    .all(...params) as ChallengeOutcomeRow[];
+}
