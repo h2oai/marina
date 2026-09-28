@@ -48,10 +48,18 @@ The genuinely powerful, irreversible operations aren't unlocked by a tier number
 
 ## Safety gates — earned competence, supervised → unsupervised
 
-Eleven operations are individually gated:
+Twelve operations are individually gated:
 
-`shell.exec` · `agent.run` · `agent.spawn` · `code.exec` · `role.edit` · `adapter.enable` ·
-`connect.manage` · `gateway.connect` · `key.manage` · `admin.destructive` · `code.exec.unrestricted`
+`shell.exec` · `agent.run` · `agent.spawn` · `code.exec` · `role.edit` · `decisions.configure` ·
+`adapter.enable` · `connect.manage` · `gateway.connect` · `key.manage` · `admin.destructive` ·
+`code.exec.unrestricted`
+
+**Supervision is earned away, not permanent.** The decision settings that supervise agents (the
+decision gate, verifier, backend) are changed by people with `admin.destructive` and by agents
+through `decisions.configure`: an agent that has earned it — with standing and demonstrations a
+witness attested — runs `decision settings set gate off` like anyone else. Under
+`MARINA_AUTONOMY=open` the gate passes. Settings the operator pinned in the environment stay
+pinned.
 
 **Improving means spawning a successor.** No one changes the role they are running on: to do
 better, an agent creates a new role (`role create scout-v2 …` — free, nothing runs on it yet) and

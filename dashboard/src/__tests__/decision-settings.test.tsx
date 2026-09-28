@@ -107,7 +107,8 @@ describe("Ops → Decisions → settings", () => {
       () =>
         new Response(
           JSON.stringify({
-            error: "An agent never changes the decision settings that supervise it.",
+            error:
+              "An agent changes decision settings once it has earned the decisions.configure gate.",
           }),
           {
             status: 403,
@@ -117,7 +118,7 @@ describe("Ops → Decisions → settings", () => {
     render(<DecisionSettings />);
     await changeAndSave("backend", "MARINA_DECISIONS", "jev");
     expect(await screen.findByRole("alert", undefined, SLOW)).toHaveTextContent(
-      "An agent never changes",
+      "earned the decisions.configure gate",
     );
   });
 

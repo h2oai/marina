@@ -739,6 +739,9 @@ When the decision gate (`MARINA_DECISION_GATE=on`, see [docs/architecture/decisi
 | `decision list` | Tool calls from your agents waiting for your approval (token, agent, redacted call, reason, time left). Alias: `decisions` |
 | `decision approve <token>` | Let the held call run |
 | `decision deny <token> [reason]` | Block it; the reason is passed back to the agent |
+| `decision settings` | The runtime decision settings, their values and sources (anyone may read) |
+| `decision settings set <setting> <value>` / `unset <setting>` | Change one: a person with `admin.destructive` or `decisions.configure`; an agent with the earned `decisions.configure` gate |
+| `decision settings history` | Who changed what, when — agent changes are marked |
 
 ## Roles & Traits
 
@@ -815,7 +818,7 @@ Platforms: telegram, discord, slack, signal. Also auto-detected from `TELEGRAM_T
 > admin snapshot default-v1          Clone live DB → seeds/default-v1.db
 > admin snapshots                    List saved seed snapshots
 > admin decisions                    Decision settings: value, source (default / runtime / env, locked)
-> admin decisions set gate on        Change one at runtime (operator only; never an agent)
+> admin decisions set gate on        Change one at runtime (people: admin.destructive or decisions.configure)
 > admin decisions set backend jev    Turn the decision backend on without a restart
 > admin decisions unset gate         Back to the built-in default
 > admin decisions history            Who changed what, when

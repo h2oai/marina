@@ -82,7 +82,12 @@ export function adminCommand(deps: AdminDeps): CommandDef {
 
       switch (sub) {
         case "decisions": {
-          ctx.send(input.entity, adminDecisions(deps, entity, input.tokens.slice(1)));
+          const isInternal = (id: string) =>
+            [...deps.getConnections().values()].some((c) => c.entity === id && c.internal);
+          ctx.send(
+            input.entity,
+            adminDecisions({ db: deps.db, isInternal }, entity, input.tokens.slice(1)),
+          );
           return;
         }
         case "kick": {
