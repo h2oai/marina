@@ -3,6 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
+import { revoke } from "../src/engine/safety-gates";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { cleanupDb, grantAllGates, MockConnection, makeTestRoom } from "./helpers";
@@ -170,13 +171,17 @@ describe("Connectors", () => {
   // ─── Rank Requirements ────────────────────────────────────────────────
 
   describe("Rank Requirements", () => {
-    it("should require steward rank for connect", () => {
+    it("the connect.manage gate decides, not the rank floor", () => {
       const entity = engine.entities.get(conn1.entity!);
       if (entity) entity.properties.rank = 1; // canvas
       conn1.clear();
+      // A rank-1 holder of the gate is not double-locked by minRank ...
       engine.processCommand(conn1.entity!, "connect list");
-      // P3: connect gates at rank 5 (safety threshold) + connect.manage gate.
-      expect(conn1.lastText()).toContain("rank 5");
+      expect(conn1.lastText()).not.toContain("rank 5");
+      // ... and without the gate the gate itself refuses.
+      revoke(db, conn1.entity!, "connect.manage");
+      engine.processCommand(conn1.entity!, "connect list");
+      expect(conn1.lastText()).toContain("Not yet");
     });
   });
 

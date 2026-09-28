@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
 import { setRank } from "../src/engine/permissions";
+import { grant } from "../src/engine/safety-gates";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
@@ -157,7 +158,7 @@ describe("Building System", () => {
       conn1.entity!,
       'build code test/start export default { short: "X", long: "Y" }',
     );
-    expect(conn1.lastText()).toContain("architect (rank 5)");
+    expect(conn1.lastText()).toContain("Cannot set room code");
   });
 
   it("validates room source via validate command", () => {
@@ -178,12 +179,13 @@ describe("Building System", () => {
 
   it("requires architect rank for destroy", () => {
     engine.processCommand(conn1.entity!, "build destroy test/north");
-    expect(conn1.lastText()).toContain("architect (rank 5)");
+    expect(conn1.lastText()).toContain("Cannot destroy rooms");
   });
 
   it("refuses to destroy occupied room", () => {
     const entity = engine.entities.get(conn1.entity!)!;
     setRank(entity, 5);
+    grant(db, conn1.entity!, "world.code"); // room code is the world.code gate
 
     engine.processCommand(conn1.entity!, "build destroy test/start");
     expect(conn1.lastText()).toContain("entities are inside");
@@ -192,6 +194,7 @@ describe("Building System", () => {
   it("destroys empty room", () => {
     const entity = engine.entities.get(conn1.entity!)!;
     setRank(entity, 5);
+    grant(db, conn1.entity!, "world.code"); // room code is the world.code gate
 
     // First save source for test/north
     db.saveRoomSource({

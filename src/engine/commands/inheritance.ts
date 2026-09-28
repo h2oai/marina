@@ -11,7 +11,7 @@ import {
   inheritanceDigest,
   isExportableInheritancePool,
 } from "../inheritance-bundle";
-import { getRank } from "../permissions";
+import { rankFloorRefusal } from "../rank-floor";
 import { requiresPersistence } from "./command-messages";
 
 /**
@@ -138,8 +138,9 @@ function importBundle(
     return;
   }
   // Import writes a new pool — kept at the old `inherit` command's rank floor.
-  if (getRank(entity) < 2) {
-    ctx.send(input.entity, "Importing an inheritance bundle requires rank 2+.");
+  const floor = rankFloorRefusal(entity, 2, "Importing an inheritance bundle requires rank 2+.");
+  if (floor) {
+    ctx.send(input.entity, floor);
     return;
   }
   try {

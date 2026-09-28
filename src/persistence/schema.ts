@@ -48,6 +48,23 @@ CREATE TABLE challenge_outcomes (
 CREATE INDEX idx_challenge_outcomes_class ON challenge_outcomes(class, id);
 `,
   },
+  // Migration 140: two new safety gates replace hard-coded checks — the
+  // `world` / `marina-descend` lineage commands moved from admin.destructive to
+  // `world.lineage`, and `build` room/command code moved from an inline rank-5
+  // check to `world.code`. Carry existing capability across so an upgrade
+  // takes nothing away: every unsupervised admin.destructive holder keeps
+  // lineage (row copied as-is, so a grant stays a grant), and every account
+  // already at rank 5+ is granted world.code. Existing rows are never touched.
+  {
+    version: 140,
+    sql: `
+INSERT OR IGNORE INTO entity_competence (entity_id, gate, demonstrations, last_demo_at, supervised_only)
+  SELECT entity_id, 'world.lineage', demonstrations, last_demo_at, supervised_only
+  FROM entity_competence WHERE gate = 'admin.destructive' AND supervised_only = 0;
+INSERT OR IGNORE INTO entity_competence (entity_id, gate, demonstrations, supervised_only)
+  SELECT id, 'world.code', 999, 0 FROM users WHERE rank >= 5;
+`,
+  },
 ];
 export const SCHEMA_VERSION = FORWARD_MIGRATIONS.at(-1)?.version ?? SCHEMA_BASELINE_VERSION;
 

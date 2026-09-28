@@ -11,6 +11,7 @@ import type { StorageProvider } from "../../storage/provider";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import { getErrorMessage } from "../errors";
 import { Logger } from "../logger";
+import { rankFloorRefusal } from "../rank-floor";
 import { requiresPersistence } from "./command-messages";
 
 /** Module logger. */
@@ -113,12 +114,13 @@ export function canvasCommand(deps: {
         case "delete": {
           // Deleting a whole canvas (and its nodes) is destructive and shared —
           // gate it above newcomer rank while leaving posting open to all.
-          const rank = (entity.properties.rank as number) ?? 0;
-          if (rank < 1) {
-            ctx.send(
-              eid,
-              "Deleting a canvas requires rank 1+. Create, publish, and post are open to all.",
-            );
+          const floor = rankFloorRefusal(
+            entity,
+            1,
+            "Deleting a canvas requires rank 1+. Create, publish, and post are open to all.",
+          );
+          if (floor) {
+            ctx.send(eid, floor);
             return;
           }
           handleDelete(ctx, eid, db, deps.logEvent, tokens.slice(1));

@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { Engine } from "../src/engine/engine";
 import { validateGatewayUrl } from "../src/engine/gateway-runtime";
+import { revoke } from "../src/engine/safety-gates";
 import { setTrustProfile } from "../src/engine/trust-profile";
 import { __setDnsResolverForTest } from "../src/net/url-guard";
 import { MarinaDB } from "../src/persistence/database";
@@ -318,7 +319,7 @@ describe("Gateway Command", () => {
   // ─── Permission Checks ────────────────────────────────────────────────
 
   describe("Permissions", async () => {
-    it("should require steward rank", async () => {
+    it("the gateway.connect gate decides, not the rank floor", async () => {
       using _processState = scopeProcessState();
 
       // Rank floors are enforced only under a gated profile (local is ungated).
@@ -326,8 +327,13 @@ describe("Gateway Command", () => {
       const entity = engine.entities.get(conn1.entity!);
       if (entity) entity.properties.rank = 0; // newcomer
       conn1.clear();
+      // A rank-0 holder of the gate is not double-locked by minRank ...
       await engine.processCommand(conn1.entity!, "gateway list");
-      expect(conn1.lastText()).toContain("rank");
+      expect(conn1.lastText()).not.toContain("rank");
+      // ... and without the gate the gate itself refuses.
+      revoke(db, conn1.entity!, "gateway.connect");
+      await engine.processCommand(conn1.entity!, "gateway list");
+      expect(conn1.lastText()).toContain("Not yet");
     });
 
     it("should allow steward rank", async () => {

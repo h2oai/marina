@@ -108,7 +108,7 @@ witness reject 12 <reason>       # rejected runs never count — keep practicing
   demonstration; a qualified witness attests it afterwards, and only attested runs advance the
   flip to solo use.
 - **`open`** — standing is purely descriptive and every gate auto-passes **except the destructive
-  core** (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`). For radical,
+  core** (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`, `world.code`). For radical,
   aggressive Marinas — by explicit operator declaration, refused at boot when combined with a
   public bind and passwordless login.
 

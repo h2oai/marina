@@ -19,7 +19,7 @@ import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB, RoleRow, TraitCapabilities, TraitRow } from "../../persistence/database";
 import type { EditHistoryRow } from "../../persistence/db-agents";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
-import { getRank } from "../permissions";
+import { rankFloorRefusal } from "../rank-floor";
 import { checkRoleEdit, refuseOwnRole } from "../role-guard";
 import { requiresPersistence } from "./command-messages";
 
@@ -359,8 +359,10 @@ export function roleCommand(deps: {
           // Creating is free (Phase 0): import only ever creates — an existing
           // role, or a same-named trait with different content, is refused.
           const entity = deps.getEntity?.(input.entity);
-          if (entity && getRank(entity) < 3) {
-            ctx.send(input.entity, "Requires organizer rank (3) or higher.");
+          const floor =
+            entity && rankFloorRefusal(entity, 3, "Requires organizer rank (3) or higher.");
+          if (floor) {
+            ctx.send(input.entity, floor);
             return;
           }
           const bundle = decodeRoleBundle(tokens[1] ?? "");
@@ -386,12 +388,8 @@ export function roleCommand(deps: {
         case "reload": {
           // Propagate an edited role into agents already running it — reuses the
           // agent reconfigure path, which re-derives the system prompt from the
-          // (now-edited) DB role. Gated like edit, since it changes live behavior.
-          const entity = deps.getEntity?.(input.entity);
-          if (entity && getRank(entity) < 3) {
-            ctx.send(input.entity, "Requires organizer rank (3) or higher.");
-            return;
-          }
+          // (now-edited) DB role. Gated like edit (role.edit, below), since it
+          // changes live behavior — the gate is the authority, no rank floor.
           const name = tokens[1];
           if (!name) {
             ctx.send(input.entity, "Usage: role reload <name>");
@@ -434,9 +432,15 @@ export function roleCommand(deps: {
 
         case "create":
         case "edit": {
+          // Creating a role is ungated (nothing runs on it until `agent spawn`)
+          // behind the organizer floor; editing an existing one is role.edit.
           const entity = deps.getEntity?.(input.entity);
-          if (entity && getRank(entity) < 3) {
-            ctx.send(input.entity, "Requires organizer rank (3) or higher.");
+          const floor =
+            sub === "create" &&
+            entity &&
+            rankFloorRefusal(entity, 3, "Requires organizer rank (3) or higher.");
+          if (floor) {
+            ctx.send(input.entity, floor);
             return;
           }
           const name = tokens[1];
@@ -478,11 +482,7 @@ export function roleCommand(deps: {
         }
 
         case "delete": {
-          const entity = deps.getEntity?.(input.entity);
-          if (entity && getRank(entity) < 3) {
-            ctx.send(input.entity, "Requires organizer rank (3) or higher.");
-            return;
-          }
+          // role.edit (below) is the authority for deleting an existing role.
           const name = tokens[1];
           if (!name) {
             ctx.send(input.entity, "Usage: role delete <name>");

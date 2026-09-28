@@ -162,7 +162,7 @@ See [Discord & Telegram](chat-adapters.md) for bot setup.
 | `MEM_API_KEYS` | *(none; API closed)* | Comma-separated `secret:agent` pairs for Memory API (`/mem`) |
 | `MARINA_OPEN_API` | `false` | Set to `true` to disable API authentication checks. **Dev only** — never use in production. Useful for local testing without configuring API keys. |
 | `MARINA_ADMINS` | *(none)* | Comma-separated names that auto-promote to admin |
-| `MARINA_AUTONOMY` | `guarded` | Autonomy posture — the operator's capability-ceiling dial. `guarded`: supervised gate attempts need a witness-granted window. `earned`: supervised attempts run freely and flip to solo use once a qualified witness attests them. `open`: every safety gate auto-passes except the destructive core (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`). Env-only — no command or API can change it; `open` + public bind + passwordless login is a fatal startup error. |
+| `MARINA_AUTONOMY` | `guarded` | Autonomy posture — the operator's capability-ceiling dial. `guarded`: supervised gate attempts need a witness-granted window. `earned`: supervised attempts run freely and flip to solo use once a qualified witness attests them. `open`: every safety gate auto-passes except the destructive core (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`, `world.code`). Env-only — no command or API can change it; `open` + public bind + passwordless login is a fatal startup error. |
 
 #### Room Agent Authentication
 

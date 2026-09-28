@@ -6,6 +6,7 @@ import { isLoopbackOriginHost } from "../net/cors";
 import { validateFetchUrl, validateOperatorLanUrl } from "../net/url-guard";
 import type { MarinaDB } from "../persistence/database";
 import { MarinaClient, type Perception } from "../sdk/client";
+import { MAX_RELAY_HOPS } from "./constants";
 import { getErrorMessage } from "./errors";
 import { Logger } from "./logger";
 import { isLocalProfile } from "./trust-profile";
@@ -163,7 +164,7 @@ const RELAY_MIN_MS = 1000;
  * content. The legacy `[from ` substring count is retained only as a
  * fallback for messages from older peers that predate the envelope.
  */
-const MAX_RELAY_HOPS = 3;
+// MAX_RELAY_HOPS (default 3, MARINA_MAX_RELAY_HOPS) lives in constants.ts.
 
 /**
  * Structured relay framing carried across gateway hops.

@@ -396,7 +396,8 @@ describe("Admin Commands", () => {
     userConn.clear();
     engine.processCommand(userId, "admin stats");
     // Civic-substrate P3: admin gates at rank 5 + admin.destructive competence.
-    expect(userConn.lastText()).toContain("rank 5");
+    // The admin.destructive gate is the authority (no rank floor on top).
+    expect(userConn.lastText()).toContain("Not yet");
   });
 
   it("shows usage without subcommand", () => {

@@ -116,6 +116,29 @@ export const SAFETY_GATES: Record<string, GateDef> = {
     demoThreshold: 3,
     description: "change an existing role or trait that agents run on",
   },
+  "world.lineage": {
+    id: "world.lineage",
+    // Create, run and adopt from child worlds (`world`, `marina-descend`).
+    // This is the self-improvement loop — trials run in a child, winners come
+    // home by `world adopt` (which still needs someone else's approval, and
+    // `role.edit` to replace an existing role) — not destruction, so it sits
+    // beside agent.spawn rather than behind admin.destructive. Each child is
+    // its own process with its own daily spend cap
+    // (MARINA_CHILD_DAILY_SPEND_CAP_USD); the first launches are witnessed.
+    minStanding: 40,
+    demoThreshold: 3,
+    description: "create, run and adopt from child worlds",
+  },
+  "world.code": {
+    id: "world.code",
+    // Author and hot-reload world room code (`build` code/reload paths). Room
+    // code runs inside the engine process, so this is rank-5-level trust;
+    // unlike shell.exec it is not in the open-posture core — an operator who
+    // declares `open` lets builders shape the world's code.
+    minStanding: 100,
+    demoThreshold: 3,
+    description: "author and hot-reload world room code",
+  },
   "decisions.configure": {
     id: "decisions.configure",
     // Change the runtime decision settings (src/decisions/settings.ts): the
@@ -415,7 +438,7 @@ function evaluateGateForExecution(
   // LOCAL trust profile: the single operator's own machine, loopback-only
   // (main.ts refuses `local` on any non-loopback bind unless the operator sets
   // MARINA_ALLOW_INSECURE_PUBLIC=true — sign-in alone does not lift that).
-  // Every gate — including the OPEN_POSTURE_CORE four — auto-passes and the
+  // Every gate — including OPEN_POSTURE_CORE — auto-passes and the
   // caller still records the execution (audit). An admin who wants the gates
   // back on a personal instance sets MARINA_AUTONOMY=guarded explicitly, which
   // makes isLocalUngated() false while local performance defaults stay on.
@@ -631,7 +654,7 @@ export function getGateProgress(db: MarinaDB, entityId: string, now = Date.now()
  * of the historical rank ladder without the runtime short-circuit.
  */
 const RANK_GATES: Record<number, string[]> = {
-  5: ["shell.exec", "agent.spawn", "code.exec", "role.edit"],
+  5: ["shell.exec", "agent.spawn", "code.exec", "role.edit", "world.lineage", "world.code"],
   6: ["agent.run"],
   7: ["adapter.enable", "connect.manage", "gateway.connect"],
   8: ["key.manage"],

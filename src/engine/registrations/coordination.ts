@@ -14,6 +14,7 @@ import { decisionCommand } from "../commands/decision";
 import { experimentCommand } from "../commands/experiment";
 import { exportCommand } from "../commands/export-cmd";
 import { forecastCommand } from "../commands/forecast";
+import { gateCommand } from "../commands/gate";
 import { groupCommand } from "../commands/group";
 import { inheritanceCommand } from "../commands/inheritance";
 import { intellectCommand } from "../commands/intellect";
@@ -151,6 +152,16 @@ export function registerCoordinationCommands(engine: Engine): void {
         resolveEntityIdByName: (name) =>
           engine.entities.findAgentByName(name)?.id ??
           engine.entities.all().find((e) => e.name.toLowerCase() === name.toLowerCase())?.id,
+      }),
+    );
+    engine.commands.registerBuiltin(
+      gateCommand({
+        db: engine.db,
+        getEntity: (id) => engine.entities.get(id as EntityId),
+        resolveEntity: (name) =>
+          engine.entities.findAgentByName(name) ??
+          engine.entities.all().find((e) => e.name.toLowerCase() === name.toLowerCase()),
+        spawnedBy: (name) => engine.db?.getAgentConfig(name)?.spawned_by || undefined,
       }),
     );
     engine.commands.registerBuiltin(

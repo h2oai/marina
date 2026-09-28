@@ -5,6 +5,7 @@ import { header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext, RoomId } from "../../types";
 import { getRank, requireRank } from "../permissions";
+import { rankFloorRefusal } from "../rank-floor";
 
 export function observeCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
@@ -34,8 +35,9 @@ export function observeCommand(deps: {
 
       switch (sub) {
         case "stats": {
-          if (!requireRank(entity, 2)) {
-            ctx.send(input.entity, "Requires coordinator rank (2+).");
+          const floor = rankFloorRefusal(entity, 2, "Requires coordinator rank (2+).");
+          if (floor) {
+            ctx.send(input.entity, floor);
             return;
           }
           const agents = deps.getOnlineAgents();
@@ -115,8 +117,9 @@ export function observeCommand(deps: {
 
         default: {
           // observe <entity> — requires rank 3+
-          if (!requireRank(entity, 3)) {
-            ctx.send(input.entity, "Requires organizer rank (3+).");
+          const floor = rankFloorRefusal(entity, 3, "Requires organizer rank (3+).");
+          if (floor) {
+            ctx.send(input.entity, floor);
             return;
           }
           const target = deps.findEntity(sub);

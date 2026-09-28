@@ -48,6 +48,9 @@ export const OPEN_POSTURE_CORE: ReadonlySet<string> = new Set([
   "admin.destructive",
   "shell.exec",
   "code.exec.unrestricted",
+  // Room and command code runs inside the engine (a static denylist, not a
+  // process boundary), so authoring it stays gated even under `open`.
+  "world.code",
 ]);
 
 export function getAutonomyPosture(env: NodeJS.ProcessEnv = process.env): AutonomyPosture {
