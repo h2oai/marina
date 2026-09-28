@@ -24,16 +24,24 @@ export interface TokenPrice {
 }
 
 /**
- * List prices for the models Marina itself defaults to when pi-ai's bundled
- * catalog does not list them yet (OpenRouter list price, checked 2026-09-28).
- * Keyed by the bare model id (the provider prefix is stripped, so
- * `openai/gpt-6-luna` and `openrouter/openai/gpt-6-luna` share a row). Only
- * ids Marina chooses by default belong here — anything else is priced by the
- * catalog or by the provider's reported `usage.cost`, never guessed.
+ * List prices for current models that pi-ai's bundled catalog does not list
+ * yet (OpenRouter list prices, checked 2026-09-28) — Marina's own defaults
+ * plus the current frontier and arena models, so the daily spend cap sees
+ * them. Keyed by the bare model id (the provider prefix is stripped, so
+ * `openai/gpt-6-luna` and `openrouter/openai/gpt-6-luna` share a row). Other
+ * ids are priced by the catalog, by the provider's reported `usage.cost`, or
+ * by {@link openRouterModelPrice} — never guessed.
  */
 const DEFAULT_MODEL_PRICES: Record<string, TokenPrice> = {
   "gpt-6-luna": { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
+  "gpt-6-sol": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+  "gpt-6-astra": { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
   "glm-5.3-flash": { input: 0.15, output: 0.5, cacheRead: 0.03, cacheWrite: 0 },
+  "claude-sonnet-5.5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+  "claude-opus-5.5": { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
+  "claude-fable-5.1": { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
+  "deepseek-v4-pro-0813": { input: 0.3942, output: 4.2, cacheRead: 0.3153, cacheWrite: 0 },
+  "deepseek-v4.1-flash": { input: 0.3, output: 1.2, cacheRead: 0.006, cacheWrite: 0 },
 };
 
 /** A default model's list price, or undefined (never a fabricated $0). */
@@ -43,6 +51,82 @@ export function defaultModelPrice(modelId: string): TokenPrice | undefined {
 }
 
 type PricedModel = { cost?: { input?: number; output?: number } };
+
+/** Token counts as pi-ai reports them on a completion. */
+export interface TokenUsage {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+}
+
+/** USD for `usage` at `price` (per million tokens). */
+export function costFromTokens(price: TokenPrice, usage: TokenUsage): number {
+  return (
+    ((usage.input ?? 0) * price.input +
+      (usage.output ?? 0) * price.output +
+      (usage.cacheRead ?? 0) * price.cacheRead +
+      (usage.cacheWrite ?? 0) * price.cacheWrite) /
+    1_000_000
+  );
+}
+
+const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";
+const OPENROUTER_PRICES_TTL_MS = 6 * 60 * 60_000;
+let openRouterPrices: { at: number; prices: Promise<Map<string, TokenPrice>> } | undefined;
+
+/**
+ * OpenRouter's own list price for a model (`provider/model`, with or without
+ * an `openrouter/` prefix), from its public catalog — fetched once and cached
+ * for six hours through the SSRF guard. Undefined when the catalog cannot be
+ * read or does not list the model; callers then keep whatever they had.
+ */
+export async function openRouterModelPrice(
+  modelId: string,
+  fetcher: (url: string) => Promise<Response> = async (url) => {
+    const { guardedFetch } = await import("../net/url-guard");
+    return guardedFetch(url, { signal: AbortSignal.timeout(20_000) });
+  },
+  now = Date.now(),
+): Promise<TokenPrice | undefined> {
+  if (!openRouterPrices || now - openRouterPrices.at > OPENROUTER_PRICES_TTL_MS) {
+    const prices = (async () => {
+      const map = new Map<string, TokenPrice>();
+      try {
+        const res = await fetcher(OPENROUTER_MODELS_URL);
+        if (!res.ok) return map;
+        const body = (await res.json()) as {
+          data?: Array<{ id?: string; pricing?: Record<string, string | undefined> }>;
+        };
+        const perM = (v: string | undefined) => {
+          const n = Number(v ?? 0);
+          return Number.isFinite(n) && n > 0 ? n * 1_000_000 : 0;
+        };
+        for (const m of body.data ?? []) {
+          if (!m.id || !m.pricing) continue;
+          map.set(m.id.toLowerCase(), {
+            input: perM(m.pricing.prompt),
+            output: perM(m.pricing.completion),
+            cacheRead: perM(m.pricing.input_cache_read),
+            cacheWrite: perM(m.pricing.input_cache_write),
+          });
+        }
+      } catch {
+        // Pricing is best effort: an unreachable catalog leaves the map empty.
+      }
+      return map;
+    })();
+    openRouterPrices = { at: now, prices };
+  }
+  const id = modelId.toLowerCase().replace(/^openrouter\//, "");
+  const price = (await openRouterPrices.prices).get(id);
+  return price && (price.input > 0 || price.output > 0) ? price : undefined;
+}
+
+/** Test seam. */
+export function resetOpenRouterPricesForTests(): void {
+  openRouterPrices = undefined;
+}
 
 /** True when the model's own catalog price is zero (synthesized or unlisted). */
 export function isUnpricedModel(model: PricedModel | undefined): boolean {

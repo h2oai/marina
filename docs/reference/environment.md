@@ -270,7 +270,7 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 
 | Variable | Description | Flags |
 |---|---|---|
-| `MARINA_FORECAST_ANALYSTS=openrouter/deepseek/deepseek-v4-pro,openrouter/anthropic/claude-sonnet-5,openrouter/openai/gpt-6-luna`<br>`MARINA_FORECAST_RETRIEVER=openrouter-web:openai/gpt-6-luna`<br>`MARINA_FORECAST_JUDGE=jev` | `forecast`, `bun run forecast` and POST /v1/forecast (docs/guides/forecasting.md). The defaults need OPENROUTER_API_KEY. Analysts are a comma list of models (defaults: DeepSeek V4 Pro, Claude Sonnet 5 and GPT-6 Luna via OpenRouter); the retriever defaults to OpenRouter web search on GPT-6 Luna; the judge is jev, decisions (the MARINA_DECISIONS backend, falling back to jev) or none. |  |
+| `MARINA_FORECAST_ANALYSTS=openrouter/deepseek/deepseek-v4-pro,openrouter/anthropic/claude-opus-5.5,openrouter/openai/gpt-6-luna`<br>`MARINA_FORECAST_RETRIEVER=openrouter-web:openai/gpt-6-luna`<br>`MARINA_FORECAST_JUDGE=jev` | `forecast`, `bun run forecast` and POST /v1/forecast (docs/guides/forecasting.md). The defaults need OPENROUTER_API_KEY. Analysts are a comma list of models (defaults: DeepSeek V4 Pro, Claude Sonnet 5 and GPT-6 Luna via OpenRouter); the retriever defaults to OpenRouter web search on GPT-6 Luna; the judge is jev, decisions (the MARINA_DECISIONS backend, falling back to jev) or none. |  |
 
 ## Social Simulation Arena
 
@@ -283,7 +283,7 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 | `MARINA_ARENA_TRENDS_PARTIAL=off` | `on` counts a Google Trends basket's partial current week as its latest reading. |  |
 | `MARINA_ARENA_RESEARCH_RETRIEVER=openrouter-web:openai/gpt-6-luna`<br>`MARINA_ARENA_RESEARCH_JUDGE=jev`<br>`MARINA_ARENA_RESEARCH_TRUST=0.5` | Research forecaster: retriever, judge (jev, decisions or none; default jev, or none without OPENROUTER_API_KEY) and the trust given to verified research lines. |  |
 | `MARINA_ARENA_SHADOW=` | Record a candidate forecaster hourly in shadow, never filed (`bun run arena shadow score`). |  |
-| `MARINA_ARENA_PROPOSER=openrouter/anthropic/claude-sonnet-5` | Model that proposes signals for `arena discover`. |  |
+| `MARINA_ARENA_PROPOSER=openrouter/anthropic/claude-opus-5.5` | Model that proposes signals for `arena discover`. |  |
 | `MARINA_ARENA_URL=https://social-simulation-arena.com`<br>`MARINA_ARENA_AUDIENCE=ssa-production-v1`<br>`MARINA_ARENA_DATA_URL=https://raw.githubusercontent.com/Social-Atoms/social-sim-arena/main` | Rehearsal overrides for the arena endpoint, audience and data repository. Production is the default. |  |
 
 ## TabH2O

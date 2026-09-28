@@ -156,9 +156,14 @@ export async function forecasterFor(
       skeptic: made[2]!.complete,
     };
     const notes = opts.notes;
+    // Start from the nowcast (fresher than the weekly history for Civiqs; the
+    // baseline elsewhere), exactly as the research agent does.
+    const { nowcastForecaster } = await import("./research/civiqs-nowcast");
+    const start = nowcastForecaster(arenaData(env), forecastRound, await liveCiviqs(env));
     return {
       usage,
-      forecaster: (round, lock) => crew.crewForecastRound(round, lock, members, notes),
+      forecaster: async (round, lock) =>
+        crew.crewForecastRound(round, lock, members, notes, await start(round, lock)),
       ...(notes
         ? {
             learner: (round, lock, filed, outcome) =>
@@ -172,13 +177,16 @@ export async function forecasterFor(
     import("./model-backend"),
     import("./model-forecaster"),
   ]);
-  const { complete, usage } = modelComplete(modelSpec, opts.env ?? process.env);
+  const env = opts.env ?? process.env;
+  const { complete, usage } = modelComplete(modelSpec, env);
   const options = { ...DEFAULT_MODEL_OPTIONS, weight: opts.raw ? 1 : (opts.weight ?? 0.5) };
   if (opts.raw) options.maxSdMove = Number.POSITIVE_INFINITY;
+  const { nowcastForecaster } = await import("./research/civiqs-nowcast");
+  const start = nowcastForecaster(arenaData(env), forecastRound, await liveCiviqs(env));
   return {
     usage,
-    forecaster: (round, lock) =>
-      modelForecastRound(round, lock, forecastRound(round, lock), complete, options, modelSpec),
+    forecaster: async (round, lock) =>
+      modelForecastRound(round, lock, await start(round, lock), complete, options, modelSpec),
   };
 }
 

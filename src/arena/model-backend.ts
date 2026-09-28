@@ -11,6 +11,13 @@
 import type { Message, TextContent } from "@earendil-works/pi-ai";
 import { resolveModel } from "../agent/lean-agent-adapter";
 import { piModels } from "../agent/pi-models";
+import {
+  costFromTokens,
+  defaultModelPrice,
+  isUnpricedModel,
+  openRouterModelPrice,
+  type TokenUsage,
+} from "../agent/provider-cost";
 import { dailyCapRefusal, recordSpend } from "../engine/spend-ledger";
 import { HUGGINGFACE_ENV_KEYS } from "../net/model-discovery";
 import type { Complete } from "./model-forecaster";
@@ -32,6 +39,27 @@ export interface Usage {
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
+}
+
+/**
+ * What one call cost. pi-ai prices from its bundled catalog; a model newer
+ * than the catalog is synthesized at $0, which would hide its spend from the
+ * daily cap. Such a call is priced from its token counts at the known list
+ * price — the built-in table first, then OpenRouter's live catalog for
+ * `openrouter/…` ids. Unknown and unreachable stay at pi-ai's figure.
+ */
+async function callCost(
+  spec: string,
+  model: { cost?: { input?: number; output?: number } },
+  used: (TokenUsage & { cost?: { total?: number } }) | undefined,
+): Promise<number> {
+  const reported = used?.cost?.total ?? 0;
+  if (reported > 0 || !used || !isUnpricedModel(model)) return reported;
+  const bare = spec.split("/").slice(1).join("/");
+  const price =
+    defaultModelPrice(bare) ??
+    (spec.startsWith("openrouter/") ? await openRouterModelPrice(bare) : undefined);
+  return price ? costFromTokens(price, used) : reported;
 }
 
 /** A `Complete` for `provider/model`, plus the running usage it has accumulated. */
@@ -65,8 +93,9 @@ export function modelComplete(
     usage.calls++;
     usage.inputTokens += result.usage?.input ?? 0;
     usage.outputTokens += result.usage?.output ?? 0;
-    usage.costUsd += result.usage?.cost?.total ?? 0;
-    recordSpend("forecast", result.usage?.cost?.total);
+    const cost = await callCost(spec, model, result.usage);
+    usage.costUsd += cost;
+    recordSpend("forecast", cost);
     if (result.stopReason === "error") throw new Error(result.errorMessage ?? "model error");
     return (Array.isArray(result.content) ? result.content : [])
       .filter((b): b is TextContent => b.type === "text")

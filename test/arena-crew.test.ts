@@ -6,6 +6,7 @@ import { arenaConfigFromEnv, parseForecasterSpec } from "../src/arena/config";
 import { CREW_ENTITY, crewForecastRound, learn, recallLessons } from "../src/arena/crew";
 import { ArenaData } from "../src/arena/data";
 import { evaluateResolved } from "../src/arena/evaluate";
+import { forecastRound } from "../src/arena/forecast";
 import type { Complete } from "../src/arena/model-forecaster";
 import { learnFromResolutions } from "../src/arena/service";
 import type { ArenaLock, ArenaPoint, ArenaRound } from "../src/arena/types";
@@ -45,6 +46,38 @@ describe("forecasting crew", () => {
     expect(f.trust).toBe(0.5);
     expect(Object.keys(f.proposals!)).toEqual(["statistician", "analyst"]);
     expect(f.critique).toBe("half");
+  });
+
+  it("starts from a nowcast when given one, and tells the roles about the fresher reading", async () => {
+    const baseline = forecastRound(round, lock);
+    const fresh = baseline.topline!.mean - 1.5;
+    const start = {
+      ...baseline,
+      topline: { mean: fresh, sd: baseline.topline!.sd },
+      nowcast: { civiqs_net_approval: { date: "2026-07-30", value: fresh } },
+    };
+    const prompts: string[] = [];
+    const seeing =
+      (text: string): Complete =>
+      async (_system, user) => {
+        prompts.push(user);
+        return text;
+      };
+    const f = await crewForecastRound(
+      round,
+      lock,
+      {
+        statistician: seeing(`{"mean": ${fresh}, "sd": 1}`),
+        analyst: seeing(`{"mean": ${fresh}, "sd": 1}`),
+        skeptic: seeing('{"trust": 0, "sd_scale": 1}'),
+      },
+      undefined,
+      start,
+    );
+    // Trust 0 files the START (the nowcast), not last Friday's value.
+    expect(f.topline!.mean).toBeCloseTo(fresh, 3);
+    expect(f.note).toContain("over the nowcast (2026-07-30)");
+    expect(prompts.every((p) => p.includes(`Freshest reading: ${fresh} on 2026-07-30`))).toBe(true);
   });
 
   it("drops a broken or wild role, and files the baseline when nothing usable is left", async () => {
