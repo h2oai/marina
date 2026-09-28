@@ -137,10 +137,10 @@ describe("Macros", () => {
     expect(texts.some((t) => stripAnsi(t).includes("You say: from entity"))).toBe(true);
   });
 
-  it("should chain semicolon-separated macro commands", () => {
-    engine.processCommand(conn1.entity!, "macro create combo say first ; say second");
+  it("should chain semicolon-separated macro commands", async () => {
+    await engine.processCommand(conn1.entity!, "macro create combo say first ; say second");
     conn1.clear();
-    engine.processCommand(conn1.entity!, "combo");
+    await engine.processCommand(conn1.entity!, "combo");
     const texts = conn1.allText();
     expect(texts.some((t) => stripAnsi(t).includes("You say: first"))).toBe(true);
     expect(texts.some((t) => stripAnsi(t).includes("You say: second"))).toBe(true);

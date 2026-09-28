@@ -36,6 +36,7 @@ import {
   type UnifiedContextResult,
   type UnifiedTier,
 } from "../src/memory/unified-context";
+import { scopeProcessState } from "./process-state";
 
 const HEADER = UNIFIED_CONTEXT_HEADER;
 const FOCUS = "deploy the pipeline";
@@ -47,6 +48,9 @@ type AdapterInternals = {
   focus: { description: string; startedAt: number } | null;
   platformMemory: PlatformMemoryBackend;
   currentTrustSources: Set<string>;
+  effectiveContextWindow: number;
+  idleCycles: number;
+  shouldIncludeSection(name: string, content: string): boolean;
 };
 
 function note(id: string, content: string, importance = 5): PlatformNoteResult {
@@ -166,6 +170,24 @@ describe("renderRelevantNoteTiers (legacy fallback renderer)", () => {
 });
 
 describe("continuation prompt — unified Relevant Memory (§4)", () => {
+  it("grows automatic retrieval with the effective window and retries deferred memory", async () => {
+    using _state = scopeProcessState({ env: { MARINA_CONTINUATION_BUDGET_BYTES: undefined } });
+    const { internals, unifiedCalls } = makeFocusedAdapter("adaptive-memory", unified([]));
+    internals.effectiveContextWindow = 128_000;
+    await internals.buildContinuationPrompt();
+    internals.effectiveContextWindow = 16_384;
+    await internals.buildContinuationPrompt();
+    expect(unifiedCalls[0]!.budget).toBeGreaterThan(3500);
+    expect(unifiedCalls[1]!.budget).toBe(2048);
+
+    const content = "evidence ".repeat(1000);
+    expect(internals.shouldIncludeSection("relevant_notes", content)).toBe(true);
+    const sections = new PromptSections();
+    sections.push(content, 70, "relevant_notes");
+    expect(internals.finishPrompt(sections)).toContain("sections deferred");
+    // Same content, immediately eligible again because it was not delivered.
+    expect(internals.shouldIncludeSection("relevant_notes", content)).toBe(true);
+  });
   it("records delivered references, but does not issue a receipt for deferred memory", async () => {
     const payload = unified([
       {
@@ -190,6 +212,7 @@ describe("continuation prompt — unified Relevant Memory (§4)", () => {
   });
 
   it("renders all five tier labels, in order, from the server payload — without legacy recalls", async () => {
+    using _state = scopeProcessState({ env: { MARINA_CONTINUATION_BUDGET_BYTES: "6000" } });
     const payload = unified([
       {
         tier: "skill",

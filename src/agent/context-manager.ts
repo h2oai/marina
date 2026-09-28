@@ -17,6 +17,7 @@ import type {
   UserMessage,
 } from "@earendil-works/pi-ai";
 import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
+import { maxToolResultTokensForWindow } from "../engine/constants";
 import { Logger } from "../engine/logger";
 
 import { withMemoryAbort } from "../sdk/memory-abort";
@@ -96,7 +97,9 @@ export function estimateToolSchemaTokens(tools: readonly (Tool | AgentTool)[] | 
  * on a small server. Exported so tests and the adapter's diagnostics agree
  * with the transform on what "fits".
  */
-export function effectivePromptWindow(model: Model<string>): number {
+export function effectivePromptWindow(
+  model: Pick<Model<string>, "contextWindow" | "maxTokens">,
+): number {
   const rawWindow = model.contextWindow;
   if (!rawWindow || rawWindow <= 0 || !Number.isFinite(rawWindow)) return 0;
   const reserved = Math.min(Math.floor(rawWindow / 2), reservedTokens(model, rawWindow));
@@ -203,7 +206,7 @@ export interface ContextManagerOptions {
  * real request over the edge — exactly the small-context-server failure mode.
  * Reserve = the model's output budget + a 2% (min 256-token) safety margin.
  */
-function reservedTokens(model: Model<string>, contextWindow: number): number {
+function reservedTokens(model: Pick<Model<string>, "maxTokens">, contextWindow: number): number {
   const output = Number.isFinite(model.maxTokens) && model.maxTokens > 0 ? model.maxTokens : 0;
   const margin = Math.max(256, Math.floor(contextWindow * 0.02));
   return output + margin;
@@ -220,7 +223,7 @@ export function createContextManager(options: ContextManagerOptions) {
     getTools,
     pruneThreshold = 0.8,
     pruneTarget = 0.6,
-    maxToolResultTokens = 2000,
+    maxToolResultTokens: configuredToolResultTokens,
     minRecentMessages = 10,
     onBeforeCompact,
     summarizeWithLLM,
@@ -267,6 +270,8 @@ export function createContextManager(options: ContextManagerOptions) {
       // prompt PLUS the serialized tool schemas — both ride on every request.
       const contextWindow = effectivePromptWindow(model);
       if (contextWindow <= 0) return messages;
+      const maxToolResultTokens =
+        configuredToolResultTokens ?? maxToolResultTokensForWindow(contextWindow);
 
       // Tier selection needs the ratio first; the message budget is recomputed
       // below once the tier's target ratio is known.
@@ -600,14 +605,19 @@ export function truncateOversizedToolResults(
         // Cut where the estimate says the budget ends — the old `*4/1.1` cut
         // assumed ~3.6 chars/token while the estimate counted 3, so a
         // "truncated" block still measured over budget on the next pass.
-        const maxChars = charsForTokens(maxTokens);
+        const suffix = `\n\n[...truncated, ~${blockTokens} tokens total; incomplete output. Request narrower results to retrieve omitted content.]`;
+        // Include the notice in the allowance so repeated transforms don't
+        // truncate the same result again just to replace its own suffix.
+        const maxChars = Math.max(0, charsForTokens(maxTokens) - suffix.length);
         return {
           ...block,
-          text: `${block.text.slice(0, maxChars)}\n\n[...truncated, ${blockTokens} tokens total]`,
+          text: `${block.text.slice(0, maxChars)}${suffix}`,
         };
       });
 
-      return { ...toolResult, content: truncatedContent } as AgentMessage;
+      return truncatedContent.every((block, i) => block === toolResult.content[i])
+        ? msg
+        : ({ ...toolResult, content: truncatedContent } as AgentMessage);
     });
   } catch {
     return messages;

@@ -31,6 +31,7 @@ import {
   type SimpleStreamOptions,
   type TextContent,
 } from "@earendil-works/pi-ai";
+import { thinkingBudgetForLevel } from "@earendil-works/pi-ai/api/simple-options";
 import { decisionGateContextEnabled } from "../decisions/config";
 import { harnessDecisionProvider, harnessGateEnabled } from "../decisions/engines";
 import { type GateIntent, gateToolCall, redactToolCall } from "../decisions/gate";
@@ -40,16 +41,19 @@ import {
   CONTEXT_PRUNE_TARGET,
   CONTEXT_PRUNE_THRESHOLD,
   CONTINUATION_PROMPT_BUDGET_BYTES,
+  continuationPromptBudgetBytes,
   DEFAULT_CLOUD_MAX_TOKENS,
   localOutputBudget,
   MARINA_DEFAULT_MODEL,
   MAX_CONSECUTIVE_UPSTREAM_ERRORS,
   MAX_TURNS_PER_PROMPT,
+  PERCEPTION_DETAIL_MAX_CHARS,
   PERCEPTION_LINE_MAX_CHARS,
   PERCEPTION_MODEL_REQUEST_MAX_CHARS,
   PROVIDER_MAX_RETRIES,
   perceiveSelfEcho,
   positiveNumberFromEnv,
+  relevantMemoryBudgetBytes,
   SPEND_CAP_POLL_MS,
   SPEND_WINDOW_MS,
   UPSTREAM_ERROR_PAUSE_MS,
@@ -86,7 +90,11 @@ import {
   resolveAgentThinkingLevel,
 } from "./agent-types";
 
-import { computeContextBudget, createContextManager } from "./context-manager";
+import {
+  computeContextBudget,
+  createContextManager,
+  effectivePromptWindow,
+} from "./context-manager";
 import {
   type PromptMetrics,
   type PromptSectionMetric,
@@ -108,6 +116,7 @@ import {
 } from "./loop-preferences";
 import { PlatformMemoryBackend, type PlatformNoteResult } from "./memory-platform";
 import { assertMarinaRemoteTargetAllowed, normalizeMarinaBaseUrl } from "./model-probe";
+import { type OutstandingRequest, OutstandingRequests } from "./outstanding-requests";
 import { piModels } from "./pi-models";
 import {
   getLeanDiscoveryPrompt,
@@ -461,11 +470,17 @@ export function runCapWarningAt(cap: number): number {
   return Math.max(1, Math.ceil(cap * 0.75));
 }
 
-export function clampPerceptionLine(text: string): string {
+export function clampPerceptionLine(text: string, addressed = false): string {
   const isModelRequest = text.includes('"type":"model_request"');
+  const body = text.replace(/^\[(?:message|broadcast|movement)\]\s*/, "");
+  const detailed = addressed || body.startsWith("{") || body.startsWith("[");
   const clamped = clampText(
     text,
-    isModelRequest ? PERCEPTION_MODEL_REQUEST_MAX_CHARS : PERCEPTION_LINE_MAX_CHARS,
+    isModelRequest
+      ? PERCEPTION_MODEL_REQUEST_MAX_CHARS
+      : detailed
+        ? PERCEPTION_DETAIL_MAX_CHARS
+        : PERCEPTION_LINE_MAX_CHARS,
   );
   if (clamped === text) return clamped;
   // A tellAndAwait tag rides at the END of the ask — keep it visible so the
@@ -646,8 +661,6 @@ const RELEVANT_NOTES_MAX = 5;
 export const RELEVANT_NOTES_TRUSTED_LABEL = UNIFIED_TIER_LABELS.trusted;
 export const RELEVANT_NOTES_UNVERIFIED_LABEL = UNIFIED_TIER_LABELS.unverified;
 
-/** Content budget for the unified Relevant Memory section (~600 tokens). */
-const RELEVANT_MEMORY_BUDGET_BYTES = 2048;
 /** Bound on the archive summary / preserved excerpt shown at boot resume. */
 const BOOT_ARCHIVE_SUMMARY_BYTES = 600;
 
@@ -1050,6 +1063,7 @@ export class LeanAgentAdapter implements AgentHandle {
   private pendingPerceptions: Array<{
     /** Monotonic per-adapter id — the key of `deliveredViaSteer`. */
     id?: number;
+    requestId?: string;
     text: string;
     priority: number;
     shouldRespond?: boolean;
@@ -1060,6 +1074,12 @@ export class LeanAgentAdapter implements AgentHandle {
     untrusted?: boolean;
   }> = [];
   private perceptionSeq = 0;
+  private readonly outstandingRequests = new OutstandingRequests();
+  private unsavedRequests = new Map<string, OutstandingRequest>();
+  private requestSave: Promise<void> | undefined;
+  private readonly toolRequestEligibility = new Map<string, Set<string>>();
+  private currentRunAdmittedTools = 0;
+  private runYielded = false;
   /**
    * Ids of buffered perceptions already delivered to the model through
    * `agent.steer()` while a run was in flight. pi-agent-core drains the
@@ -1293,6 +1313,7 @@ export class LeanAgentAdapter implements AgentHandle {
       reconnectDelay: 3000,
       pingInterval: 30000,
       internalToken,
+      commandMode: "correlated",
     });
 
     // Platform memory (sole backend — no local storage)
@@ -1494,6 +1515,14 @@ export class LeanAgentAdapter implements AgentHandle {
           : () => apiKey
         : undefined,
       beforeToolCall: async (context) => {
+        // Reserve before any await: parallel preparation must share the same limit.
+        if (this.currentRunAdmittedTools >= this.runToolCallCap()) {
+          return {
+            block: true,
+            reason: "Run tool budget reached; this tool did not execute. Continue next cycle.",
+          };
+        }
+        this.currentRunAdmittedTools++;
         const args = (context.args ?? {}) as Record<string, unknown>;
         const policy = mediateToolCall(context.toolCall.name, args, [...this.currentTrustSources]);
         if (policy.block) return { block: true, reason: policy.block };
@@ -1634,6 +1663,23 @@ export class LeanAgentAdapter implements AgentHandle {
 
   // ─── Perception Handling ──────────────────────────────────────────────
 
+  private flushOutstandingRequests(): Promise<void> {
+    if (this.requestSave) return this.requestSave;
+    if (!this.unsavedRequests.size) return Promise.resolve();
+    this.requestSave = (async () => {
+      while (this.unsavedRequests.size) {
+        const batch = [...this.unsavedRequests.values()];
+        await this.platformMemory.saveOutstandingRequests(batch);
+        for (const request of batch)
+          if (this.unsavedRequests.get(request.id) === request)
+            this.unsavedRequests.delete(request.id);
+      }
+    })().finally(() => {
+      this.requestSave = undefined;
+    });
+    return this.requestSave;
+  }
+
   private setupPerceptionHandlers(): void {
     this.client.on("perception", (p: Perception) => {
       const evolutionState = evolutionControlState(p);
@@ -1666,7 +1712,13 @@ export class LeanAgentAdapter implements AgentHandle {
             }
             // Perception dedup — skip identical text seen recently
             const percHash = Bun.hash(text).toString();
-            if (this.recentPerceptionHashes.has(percHash)) return;
+            // New addressed requests must not disappear just because their text repeats.
+            const addressed =
+              p.tag === "tell" ||
+              p.data.to ||
+              isAddressedOrCrewMessage(events[events.length - 1], text, this.name) ||
+              text.includes('"type":"model_request"');
+            if (!addressed && this.recentPerceptionHashes.has(percHash)) return;
             this.recentPerceptionHashes.add(percHash);
             if (this.recentPerceptionHashes.size > 200) {
               this.recentPerceptionHashes.clear();
@@ -1680,6 +1732,10 @@ export class LeanAgentAdapter implements AgentHandle {
               priority >= 80 ||
               (this.config.role === "guide" && lastEvent?.type === "player_entered_room") ||
               (lastEvent ? this.socialAwareness.shouldRespond(lastEvent, this.name) : false);
+            if (p.tag === "tell" && typeof p.data.senderName === "string") {
+              priority = 100;
+              respond = true;
+            }
             // Gateway/cross-instance relayed content is untrusted. It stays
             // VISIBLE (federation is a feature) but must never drive auto-action:
             // force it off the high-priority path (no `steer` interrupt, no
@@ -1743,8 +1799,29 @@ export class LeanAgentAdapter implements AgentHandle {
               }
             }
             const perceptionId = ++this.perceptionSeq;
+            const requestCountBefore = this.outstandingRequests.size;
+            const requestId =
+              !untrusted && (respond || priority >= 80)
+                ? this.outstandingRequests.add(p, perceptionId, text)
+                : undefined;
+            // Repeated delivery of the same message/model-request ID is already tracked.
+            // Re-enqueueing its upsert during settlement could resurrect it after the commit.
+            if (requestId && this.outstandingRequests.size === requestCountBefore) return;
+            if (requestId) {
+              const request = this.outstandingRequests.entries().find((r) => r.id === requestId)!;
+              this.unsavedRequests.set(requestId, { ...request });
+              // Intake is durable without waiting for a model turn or periodic checkpoint.
+              // Failed writes remain queued; prompt/journal boundaries retry and fail closed.
+              void this.flushOutstandingRequests().catch((error) => {
+                this.log.warn(LEAN_AGENT_LOG_CATEGORY, "request checkpoint failed", {
+                  agent: this.name,
+                  error: getErrorMessage(error),
+                });
+              });
+            }
             this.pendingPerceptions.push({
               id: perceptionId,
+              requestId,
               text: `[${p.kind}] ${text}`,
               priority,
               shouldRespond: respond,
@@ -1777,6 +1854,7 @@ export class LeanAgentAdapter implements AgentHandle {
                 role: "user",
                 content: `**${speaker}** is speaking to you:\n\n${text}\n\nIntegrate this into your current plan.`,
                 timestamp: Date.now(),
+                ...(requestId ? { marinaRequestId: requestId } : {}),
               });
               this.markDeliveredViaSteer(perceptionId);
             }
@@ -1862,10 +1940,15 @@ export class LeanAgentAdapter implements AgentHandle {
   }
 
   private shouldStopAfterTurn(): boolean {
-    if (this.currentPromptTurns < MAX_TURNS_PER_PROMPT) return false;
+    if (
+      this.currentPromptTurns < MAX_TURNS_PER_PROMPT &&
+      this.currentRunToolCalls < this.runToolCallCap()
+    )
+      return false;
+    this.runYielded = true;
     this.log.warn(
       LEAN_AGENT_LOG_CATEGORY,
-      `reached the ${MAX_TURNS_PER_PROMPT}-turn per-prompt cap; yielding until the next cycle`,
+      `reached a per-run cap (${this.currentPromptTurns} turns, ${this.currentRunToolCalls} tools); results journaled, yielding until the next cycle`,
       { agent: this.name },
     );
     return true;
@@ -1930,6 +2013,10 @@ export class LeanAgentAdapter implements AgentHandle {
     // from stop() mid-discovery is swallowed (autonomousMode is false by then).
     this.bootstrapPromise = this.bootstrap().catch((err) => {
       if (!this.autonomousMode) return;
+      this.autonomousMode = false;
+      this.consecutiveLoopErrors = 3;
+      this.lastErrorReason = getErrorMessage(err);
+      this.emitStatusChange("error");
       this.emitEvent({
         type: "error",
         error: err instanceof Error ? err.message : String(err),
@@ -1991,7 +2078,8 @@ export class LeanAgentAdapter implements AgentHandle {
       { agent: this.name },
     );
     await this.agent.prompt(
-      `${discoveryPrompt}${wisdomPart}${checkpointPart}${ownContextPart}${focusPart}\n\nBegin.`,
+      `${discoveryPrompt}${wisdomPart}${checkpointPart}${ownContextPart}${focusPart}\n\n` +
+        (this.outstandingRequests.size ? await this.buildContinuationPrompt() : "Begin."),
     );
     this.log.info(LEAN_AGENT_LOG_CATEGORY, `discovery prompt completed, starting autonomous loop`, {
       agent: this.name,
@@ -2156,7 +2244,7 @@ export class LeanAgentAdapter implements AgentHandle {
               perception.priority >= 80 ||
               isAddressedOrCrewMessage(undefined, perception.text, this.name),
           );
-          if (!actionable) {
+          if (!actionable && this.outstandingRequests.size === 0) {
             // Service agents perceive ambient activity without waking the LLM.
             // Direct tells and model requests remain edge-triggered below.
             this.pendingPerceptions = [];
@@ -2361,7 +2449,7 @@ export class LeanAgentAdapter implements AgentHandle {
    * the streamFn injects, resets the adaptive window, and clears the usage peak.
    * Run at construction and whenever the model changes.
    */
-  private applyModelLimits(modelStr: string): void {
+  private applyModelLimits(modelStr: string, resetContext = true): void {
     const provider = (modelStr.split("@")[0] ?? modelStr).split("/")[0] ?? "";
     const isLocal = isLocalProvider(provider);
     if (this.config.contextWindow && this.config.contextWindow > 0) {
@@ -2370,32 +2458,48 @@ export class LeanAgentAdapter implements AgentHandle {
         contextWindow: this.config.contextWindow,
       } as Model<Api>;
     }
-    // Output cap: explicit config wins; otherwise local models get half the
-    // window (see localOutputBudget) so a reasoning model (Qwen3) can finish
-    // `<think>` AND emit a tool call — the prior 4096 ceiling truncated them
-    // mid-reasoning, so the agent connected but never acted. The compactor
-    // already reserves at most half the window for output, so half is the
-    // natural split. Request-driven cloud agents use a deliberately compact
-    // ceiling: endpoint answers and specialist handoffs should not spend tens
-    // of thousands of tokens before acting. Autonomous cloud agents keep the
-    // provider default unless explicitly configured.
-    const crewCloudMaxTokens = Number(process.env.AGENT_CREW_MAX_TOKENS) || 2048;
-    const compactCloudMaxTokens = Number(process.env.AGENT_COMPACT_MAX_TOKENS) || 4096;
+    // Explicit operator caps win. Compact cloud defaults grow when thinking
+    // is enabled; share pi-ai's level mapping (including xhigh → high) so the
+    // provider and compactor reserve the same reasoning + answer allowance.
+    const crewOverride = positiveNumberFromEnv("AGENT_CREW_MAX_TOKENS");
+    const compactOverride = positiveNumberFromEnv("AGENT_COMPACT_MAX_TOKENS");
+    const thinkingBudget =
+      this.thinkingLevel !== "off" && this.model.reasoning
+        ? thinkingBudgetForLevel(this.thinkingLevel, this.config.thinkingBudgets)
+        : 0;
+    const requiredOutput = thinkingBudget > 0 ? thinkingBudget + 2048 : 0;
+    // A synthesized proxy's maxTokens is our default, not a provider ceiling.
+    const automaticCeiling = Math.min(
+      Math.floor(this.model.contextWindow / 2),
+      isMarinaProxyModel(this.model) ? Number.POSITIVE_INFINITY : this.model.maxTokens,
+    );
+    const cloudDefault = (base: number) =>
+      Math.min(automaticCeiling, Math.max(base, requiredOutput));
     this.outputMaxTokens =
       this.config.maxTokens && this.config.maxTokens > 0
         ? this.config.maxTokens
         : isLocal
           ? localOutputBudget(this.model.contextWindow)
           : this.config.crewResponder
-            ? crewCloudMaxTokens
+            ? (crewOverride ?? cloudDefault(2048))
             : this.config.toolProfile === "crew"
-              ? compactCloudMaxTokens
+              ? (compactOverride ?? cloudDefault(4096))
               : undefined;
+    const actualOutput = this.outputMaxTokens ?? this.model.maxTokens;
+    if (requiredOutput > actualOutput) {
+      this.log.warn(
+        LEAN_AGENT_LOG_CATEGORY,
+        `output cap ${actualOutput} cannot fit thinking budget ${thinkingBudget} plus 2048 answer/tool tokens; raise the output cap or lower thinking`,
+        { agent: this.name, model: modelStr, thinkingLevel: this.thinkingLevel },
+      );
+    }
     if (this.outputMaxTokens) {
       this.model = { ...this.model, maxTokens: this.outputMaxTokens } as Model<Api>;
     }
-    this.effectiveContextWindow = this.model.contextWindow;
-    this.peakAcceptedInputTokens = 0;
+    if (resetContext) {
+      this.effectiveContextWindow = this.model.contextWindow;
+      this.peakAcceptedInputTokens = 0;
+    }
   }
 
   /**
@@ -2476,7 +2580,8 @@ export class LeanAgentAdapter implements AgentHandle {
 
     // Declared rest: idle cadence unless someone addresses the agent.
     if (this.loopPrefs.rest !== null) {
-      return this.pendingPerceptions.some((perception) => perception.shouldRespond)
+      return this.outstandingRequests.size > 0 ||
+        this.pendingPerceptions.some((perception) => perception.shouldRespond)
         ? rate.min
         : rate.idle;
     }
@@ -2486,7 +2591,7 @@ export class LeanAgentAdapter implements AgentHandle {
     );
 
     // Events incoming — fast tick
-    if (hasActionablePerceptions) return rate.min;
+    if (hasActionablePerceptions || this.outstandingRequests.size > 0) return rate.min;
 
     // Actively working on a focus with recent actions
     const recentToolCalls = this.actionHistory
@@ -2637,16 +2742,18 @@ export class LeanAgentAdapter implements AgentHandle {
   // ─── Continuation Prompt ──────────────────────────────────────────────
 
   private async buildContinuationPrompt(): Promise<string> {
+    await this.flushOutstandingRequests();
     this.loopIterationCount++;
     this.sectionHashCycle++;
     this.currentPromptActionable = false;
     this.currentPromptAddressed = false;
+    const previouslyPresented = this.outstandingRequests.presentedIds();
     this.currentPromptTraceParent = undefined;
     this.currentTrustSources.clear();
     this.retrievedContext = undefined;
     const cycle = this.loopIterationCount;
-    // Sections carry a priority; `render` fits them to
-    // CONTINUATION_PROMPT_BUDGET_BYTES and defers the lowest-priority ones.
+    // Use the same effective-window allowance for events, memory, and assembly.
+    const continuationBudget = this.continuationBudgetBytes();
     const parts = new PromptSections();
 
     // Track idle state for consolidation
@@ -2667,7 +2774,12 @@ export class LeanAgentAdapter implements AgentHandle {
     // on memory work the coordinator never asked for. Also skipped while a
     // coding task is active — a bound coder that goes quiet needs the task
     // restated, not a detour into memory housekeeping.
-    if (this.idleCycles >= 3 && !this.crewResponderMode && !this.activeCodingTask) {
+    if (
+      this.idleCycles >= 3 &&
+      !this.crewResponderMode &&
+      !this.activeCodingTask &&
+      this.outstandingRequests.size === 0
+    ) {
       parts.push(
         "[Quiet — nothing needs your attention]\n\n" +
           "Options, if they improve future decisions: resolve a known contradiction, link evidence, evolve a stale belief, or store a genuinely reusable procedure. Notes that only record quiet, repeated orientation, or status broadcasts add noise. If memory is already sharp, run `brief` for new work, or rest (`memory set rest <why>`) and end the turn.",
@@ -2695,13 +2807,13 @@ export class LeanAgentAdapter implements AgentHandle {
       // section takes at most WORLD_EVENTS_BUDGET_SHARE of the prompt budget.
       // Events that do not fit are NOT dropped — they return to the front of
       // the buffer for the next cycle (the burst trim still bounds growth).
-      const eventBudget = Math.floor(CONTINUATION_PROMPT_BUDGET_BYTES * WORLD_EVENTS_BUDGET_SHARE);
+      const eventBudget = Math.floor(continuationBudget * WORLD_EVENTS_BUDGET_SHARE);
       const topEvents: typeof batch = [];
       let eventBytes = 0;
       let firstOverflow = batch.length;
       for (let i = 0; i < batch.length; i++) {
         const event = batch[i]!;
-        const clamped = clampPerceptionLine(event.text);
+        const clamped = clampPerceptionLine(event.text, event.shouldRespond);
         const cost = Buffer.byteLength(clamped, "utf8") + 5;
         if (topEvents.length >= this.perceptionBufferCap || eventBytes + cost > eventBudget) {
           // Always surface at least one event, even a huge one, so nothing
@@ -2723,6 +2835,9 @@ export class LeanAgentAdapter implements AgentHandle {
       // directive §11 and fast-tick), never contributes an endpoint response
       // mandate, and never seeds a trace parent.
       const trustedEvents = topEvents.filter((perception) => !perception.untrusted);
+      for (const event of trustedEvents) {
+        if (event.requestId) this.outstandingRequests.present(event.requestId);
+      }
       const untrustedEvents = topEvents.filter((perception) => perception.untrusted);
 
       this.currentPromptTraceParent = unambiguousTraceParent(
@@ -2794,6 +2909,30 @@ export class LeanAgentAdapter implements AgentHandle {
       }
     }
 
+    const awaiting = this.outstandingRequests
+      .entries()
+      .filter((request) => previouslyPresented.has(request.id));
+    if (awaiting.length) {
+      this.currentTrustSources.add("world_event");
+      const request = awaiting[0]!;
+      const correlation = request.modelRequestId
+        ? `model_response id=${request.modelRequestId}`
+        : request.correlation
+          ? `[re:${request.correlation}]`
+          : "";
+      parts.push(
+        `[Reply still owed — ${awaiting.length} pending]\n` +
+          `Respond via ${request.kind} to ${request.target}${correlation ? ` with ${correlation}` : ""}. ` +
+          `Observations and private prose do not deliver an answer.\n${clampPerceptionLine(request.text, true)}`,
+        MANDATORY_SECTION_PRIORITY,
+        "outstanding_request",
+      );
+    }
+    if (this.outstandingRequests.presentedIds().size > 0) {
+      this.currentPromptActionable = true;
+      this.currentPromptAddressed = true;
+    }
+
     // ── 1b. Active coding task (EVERY cycle while assigned — no dedup) ──
     // A session-bound coder is in task mode: the cognitive-loop sections
     // (novelty, memory health, learning signal, reflection, idle
@@ -2805,7 +2944,7 @@ export class LeanAgentAdapter implements AgentHandle {
           "The task comes first: work through marina_code actions (read/search/edit/write/patch/verify). " +
           "Finish with a marina_code summary citing changed paths and passing checks. " +
           "Using memory, pool or focus tools along the way is your call.",
-        90,
+        MANDATORY_SECTION_PRIORITY,
         "active_coding_task",
       );
     }
@@ -2822,7 +2961,7 @@ export class LeanAgentAdapter implements AgentHandle {
         socialCtx !== "No recent social activity" &&
         this.shouldIncludeSection("nearby_context", socialCtx)
       ) {
-        parts.push(`[Nearby]\n${socialCtx}`);
+        parts.push(`[Nearby]\n${socialCtx}`, 50, "nearby_context");
       }
     }
 
@@ -2958,7 +3097,7 @@ export class LeanAgentAdapter implements AgentHandle {
     // `[evidence]` durable records + captured sources, `[proposal]` finished
     // assistance answers, and finally `[unverified — own notes, verify before
     // relying]` — trusted-first so a wall of unverified notes can't crowd out
-    // sourced evidence. The 2048-byte budget keeps the section ≲600 tokens.
+    // sourced evidence. Its content budget grows with the continuation allowance.
     // Fallback: a server without the unified payload (context === null) gets
     // the previous two-tier legacy render so older worlds keep working.
     if (this.focus) {
@@ -2967,7 +3106,7 @@ export class LeanAgentAdapter implements AgentHandle {
         // Reauthorize each retrieval; a cycle-count cache cannot honor revoked or erased memory.
         {
           const unified = await this.platformMemory
-            .unifiedContext(focusDesc, RELEVANT_MEMORY_BUDGET_BYTES)
+            .unifiedContext(focusDesc, relevantMemoryBudgetBytes(continuationBudget))
             .catch(() => ({ success: false, text: "", context: null }));
           this.retrievedContext = unified.context ?? undefined;
           if (unified.context) {
@@ -2991,7 +3130,13 @@ export class LeanAgentAdapter implements AgentHandle {
                 );
               blocks.push(exampleBlocks.join("\n"));
             }
-            blocks.push(...renderRelevantNoteTiers(tiers.trusted, tiers.ordinary));
+            const noteLimit = Math.min(
+              10,
+              Math.floor(
+                (RELEVANT_NOTES_MAX * relevantMemoryBudgetBytes(continuationBudget)) / 2048,
+              ),
+            );
+            blocks.push(...renderRelevantNoteTiers(tiers.trusted, tiers.ordinary, noteLimit));
             const body = blocks.join("\n\n");
             this.cachedNotes = body ? `${UNIFIED_CONTEXT_HEADER}\n${body}` : "";
           }
@@ -3196,7 +3341,12 @@ The goal is a smaller, sharper memory — not more notes.`;
    * `prompt()` this text opens carries it (`pendingPromptMetrics`).
    */
   private finishPrompt(parts: PromptSections): string {
-    const assembled = parts.assemble();
+    const assembled = parts.assemble(this.continuationBudgetBytes());
+    // A deferred section was never delivered. Don't let dedup suppress it
+    // when room becomes available on the next eligible cycle.
+    for (const section of assembled.sections) {
+      if (section.deferred) this.sectionHashes.delete(section.name);
+    }
     this.pendingPromptMetrics = {
       promptBytes: assembled.promptBytes,
       promptSections: assembled.sections,
@@ -3212,6 +3362,12 @@ The goal is a smaller, sharper memory — not more notes.`;
       residentSchemaBytes: this.residentSchemaBytes(),
     };
     return assembled.text;
+  }
+
+  private continuationBudgetBytes(): number {
+    return continuationPromptBudgetBytes(
+      effectivePromptWindow({ ...this.model, contextWindow: this.effectiveContextWindow }),
+    );
   }
 
   /** Bytes of the serialized resident tool schemas (what rides on every request). */
@@ -3387,7 +3543,34 @@ The goal is a smaller, sharper memory — not more notes.`;
           // advance the durable checkpoint past the original, uncommitted message
           // or retry storage with an already-aborted signal during error cleanup.
           try {
-            await this.platformMemory.journalMessage(event.message, signal);
+            await this.flushOutstandingRequests();
+            const eligible =
+              event.message.role === "toolResult"
+                ? this.toolRequestEligibility.get(event.message.toolCallId)
+                : undefined;
+            const completed =
+              event.message.role === "toolResult" && !event.message.isError && eligible?.size
+                ? this.outstandingRequests.completedIds(event.message.details, eligible)
+                : [];
+            // Journal and removals share one CAS checkpoint commit, so a crash
+            // after it cannot revive already delivered replies on the next boot.
+            await this.platformMemory.journalMessage(event.message, signal, completed);
+            this.outstandingRequests.complete(completed);
+            if (event.message.role === "user") {
+              const requestId = (event.message as { marinaRequestId?: string }).marinaRequestId;
+              if (requestId) {
+                this.outstandingRequests.present(requestId);
+                this.currentPromptActionable = true;
+                this.currentPromptAddressed = true;
+              }
+            }
+            if (event.message.role === "toolResult") {
+              if (!event.message.isError && eligible?.size) {
+                this.currentPromptActionable = this.outstandingRequests.presentedIds().size > 0;
+                this.currentPromptAddressed = this.currentPromptActionable;
+              }
+              this.toolRequestEligibility.delete(event.message.toolCallId);
+            }
           } catch (error) {
             journalFailed = true;
             throw error;
@@ -3398,6 +3581,9 @@ The goal is a smaller, sharper memory — not more notes.`;
       if (event.type === "agent_start") {
         this.inRunRecoveries = 0;
         this.currentRunToolCalls = 0;
+        this.currentRunAdmittedTools = 0;
+        this.runYielded = false;
+        this.toolRequestEligibility.clear();
         this.currentRunChannelSends = 0;
         this.currentPromptTurns = 0;
         this.runCapWarned = { tools: false, turns: false };
@@ -3521,6 +3707,7 @@ The goal is a smaller, sharper memory — not more notes.`;
           // a nudge; graceful fallback when it didn't.
           if (
             this.currentPromptActionable &&
+            !this.runYielded &&
             this.inRunRecoveries < LeanAgentAdapter.MAX_IN_RUN_RECOVERIES
           ) {
             this.inRunRecoveries++;
@@ -3534,11 +3721,12 @@ The goal is a smaller, sharper memory — not more notes.`;
         } else {
           this.silentTurns = 0;
           this.metrics.silentTurns = 0;
-          this.currentPromptActionable = false;
+          this.currentPromptActionable = this.outstandingRequests.presentedIds().size > 0;
         }
       }
 
       if (event.type === "tool_execution_start") {
+        this.toolRequestEligibility.set(event.toolCallId, this.outstandingRequests.presentedIds());
         // beforeToolCall hook runs via the framework (AgentOptions.beforeToolCall),
         // so we don't fire hookRegistry here — would double-fire.
         this.metrics.toolCalls++;
@@ -3591,14 +3779,7 @@ The goal is a smaller, sharper memory — not more notes.`;
           this.runCapWarned.tools = true;
           this.warnRunCap(`${this.currentRunToolCalls} of ${runCap} tool calls`, runCap);
         }
-        if (this.currentRunToolCalls >= runCap) {
-          this.log.warn(
-            LEAN_AGENT_LOG_CATEGORY,
-            `reached the ${runCap}-tool per-run safety budget; yielding until the next perception/cycle`,
-            { agent: this.name },
-          );
-          this.agent.abort();
-        }
+        // finishTurn yields after every result in this batch has been journaled.
 
         this.actionHistory.addAction({
           timestamp: Date.now(),
@@ -3651,6 +3832,7 @@ The goal is a smaller, sharper memory — not more notes.`;
   // ─── Checkpoints ──────────────────────────────────────────────────────
 
   private async saveCurrentCheckpoint(): Promise<void> {
+    await this.flushOutstandingRequests();
     const room = this.gameState.getCurrentRoom();
     const location = room ? `${room.short} (${room.id})` : "Unknown";
     const recentActions = this.actionHistory
@@ -3707,8 +3889,22 @@ The goal is a smaller, sharper memory — not more notes.`;
   }
 
   private async loadCheckpointSummary(): Promise<string> {
+    // Reply obligations are required state; a failed read must not look like an empty ledger.
+    const checkpoint = await this.platformMemory.getCheckpoint();
+    const liveIds = new Set(this.outstandingRequests.entries().map((r) => r.id));
+    this.outstandingRequests.restore(checkpoint?.outstandingRequests);
+    for (const request of this.outstandingRequests.entries()) {
+      if (liveIds.has(request.id)) continue;
+      this.pendingPerceptions.push({
+        id: ++this.perceptionSeq,
+        requestId: request.id,
+        text: `[Recovered peer request — ${request.kind} to ${request.target}] ${request.text}`,
+        priority: 100,
+        shouldRespond: true,
+        untrusted: false,
+      });
+    }
     try {
-      const checkpoint = await this.platformMemory.getCheckpoint();
       if (!checkpoint?.lastIntent) return "";
 
       const age = checkpoint.timestamp
@@ -4102,10 +4298,14 @@ The goal is a smaller, sharper memory — not more notes.`;
       this.applyModelLimits(opts.model);
       this.agent.state.model = this.model;
     } else if (opts.thinkingLevel !== undefined) {
-      // Same model, new depth: re-shape the model in place (keeps the window
-      // and output-cap overrides applyModelLimits already applied) so the next
-      // request carries — or drops — the reasoning directive.
-      this.model = applyThinkingLevel(this.model, this.thinkingLevel);
+      // Resolve provider capabilities afresh: the previous 'off' state clears
+      // reasoning, and the previous output policy overwrites maxTokens.
+      const modelStr = this.config.model ?? MARINA_DEFAULT_MODEL;
+      this.model = applyThinkingLevel(
+        { ...resolveModel(modelStr, this.wsPort), contextWindow: this.model.contextWindow },
+        this.thinkingLevel,
+      );
+      this.applyModelLimits(modelStr, false);
       this.agent.state.model = this.model;
     }
     if (opts.role !== undefined) {

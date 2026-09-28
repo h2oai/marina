@@ -15,9 +15,14 @@ import { residentMemoryOperation } from "../src/memory/resident-service";
 import { MarinaDB } from "../src/persistence/database";
 import type { MarinaClient } from "../src/sdk/client";
 import type { MemoryOperationRequest } from "../src/sdk/memory-operations";
+import { scopeProcessState } from "./process-state";
 
-for (const failResult of [false, true])
-  it(`resident tool-result persistence ${failResult ? "halts continuation on storage failure" : "precedes the next model call"}`, async () => {
+for (const mode of ["continue", "storage-failure", "yield"] as const)
+  it(`resident tool-result persistence: ${mode}`, async () => {
+    using _state = scopeProcessState({
+      env: { AGENT_MAX_TOOL_CALLS_PER_RUN: mode === "yield" ? "1" : undefined },
+    });
+    const failResult = mode === "storage-failure";
     const directory = mkdtempSync(join(tmpdir(), "marina-tool-journal-"));
     const db = new MarinaDB(join(directory, "memory.db"), { durability: "full" });
     try {
@@ -104,8 +109,20 @@ for (const failResult of [false, true])
       await agent.prompt("run the test tool");
       await agent.waitForIdle();
       expect(effects).toBe(1);
-      expect(calls).toBe(failResult ? 1 : 2);
-      expect((await durable.checkpoint())!.version).toBe(failResult ? 2 : 4);
+      expect(calls).toBe(mode === "continue" ? 2 : 1);
+      expect((await durable.checkpoint())!.version).toBe(failResult ? 2 : mode === "yield" ? 3 : 4);
+      if (mode === "yield") {
+        const checkpoint = (await durable.checkpoint())!;
+        const journal = checkpoint.data.journal as { source_ids: string[] };
+        let original = "";
+        for (const id of journal.source_ids)
+          original += (
+            (await residentMemoryOperation(db, "ToolResident", { operation: "source_range", id }))
+              .result as { text: string }
+          ).text;
+        expect(JSON.parse(original)[0]).toMatchObject({ role: "toolResult", toolName: "probe" });
+        expect(agent.state.errorMessage).toBeUndefined();
+      }
       if (failResult) {
         expect(agent.state.errorMessage).toContain("result storage failed");
         expect(agent.state.messages.some((message) => message.role === "toolResult")).toBe(true);

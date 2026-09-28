@@ -129,6 +129,8 @@ export type PerceptionKind =
 export interface Perception {
   kind: PerceptionKind;
   timestamp: number;
+  /** Output of one explicitly correlated WebSocket command. Ambient events omit this. */
+  command_request_id?: string;
   tag?: string;
   data: Record<string, unknown>;
 }

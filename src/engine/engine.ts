@@ -550,6 +550,11 @@ export class Engine {
     return this.commandCoordinator.track(this.commandPhaseCoordinator.execute(entityId, raw, opts));
   }
 
+  /** Transport admission; nested commands continue through processCommand to avoid deadlock. */
+  submitCommand(entityId: EntityId, raw: string, execute: () => Promise<void>): boolean {
+    return this.commandCoordinator.submit(entityId, raw, execute);
+  }
+
   // ─── Tick Loop ──────────────────────────────────────────────────────────
 
   start(): void {

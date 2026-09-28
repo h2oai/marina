@@ -46,14 +46,20 @@ export async function execCommand(
   }
   if (signal?.aborted) throw new Error("Command aborted");
 
-  const perceptions = await ctx.client.command(command);
+  const perceptions = await ctx.client.command(command, signal);
   for (const p of perceptions) {
     ctx.gameState.handlePerception(p);
   }
+  const failures = perceptions.filter((p) => p.kind === "error");
+  if (failures.length) throw new Error(formatPerceptions(failures));
 
   return {
     content: [{ type: "text", text: formatPerceptions(perceptions) }],
-    details: { command, perceptionCount: perceptions.length },
+    details: {
+      command,
+      perceptionCount: perceptions.length,
+      deliveries: perceptions.flatMap((p) => (p.data.delivery ? [p.data.delivery] : [])),
+    },
   };
 }
 

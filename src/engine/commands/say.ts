@@ -20,8 +20,10 @@ export function sayCommand(getEntity: (id: EntityId) => Entity | undefined): Com
         return;
       }
 
-      ctx.send(input.entity, saySelf(input.args), "say");
       ctx.broadcastExcept(input.entity, say(entity.name, input.args), "say");
+      ctx.send(input.entity, saySelf(input.args), "say", {
+        delivery: { kind: "say", target: entity.room, message: input.args },
+      });
     },
   };
 }

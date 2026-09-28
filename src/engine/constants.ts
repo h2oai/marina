@@ -328,18 +328,45 @@ export const UPSTREAM_ERROR_PAUSE_MS = upstreamErrorPauseMsFromEnv();
 
 // ─── Agent Prompt Budget ─────────────────────────────────────────────────────
 
+/** Per-text-block tool-result allowance, recomputed from the effective prompt
+ *  window on every transform. An explicit override keeps a fixed token cap. */
+export function maxToolResultTokensForWindow(
+  promptWindow: number,
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const override = positiveNumberFromEnv("MARINA_MAX_TOOL_RESULT_TOKENS", env);
+  if (override !== undefined) return Math.max(1, Math.floor(override));
+  return Math.max(2000, Math.floor((Number.isFinite(promptWindow) ? promptWindow : 0) * 0.15));
+}
+
 /** Byte ceiling for the assembled continuation prompt (the per-cycle dynamic
  *  context). Sections are added in priority order and the lowest-priority
  *  ones that would overflow are deferred with a `[+N sections deferred]` note.
  *  Override: MARINA_CONTINUATION_BUDGET_BYTES. */
-export const CONTINUATION_PROMPT_BUDGET_BYTES = (() => {
-  const n = positiveNumberFromEnv("MARINA_CONTINUATION_BUDGET_BYTES");
-  return n === undefined ? 6000 : Math.max(1000, Math.floor(n));
-})();
+export function continuationPromptBudgetBytes(
+  promptWindow: number,
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const n = positiveNumberFromEnv("MARINA_CONTINUATION_BUDGET_BYTES", env);
+  if (n !== undefined) return Math.max(1000, Math.floor(n));
+  // Bytes, not tokens: keep dynamic context a small part of the prompt. Bound
+  // automatic growth so million-token windows don't buy huge background turns.
+  return Math.max(6000, Math.min(16000, Math.floor(promptWindow / 8) || 0));
+}
+export const CONTINUATION_PROMPT_BUDGET_BYTES = continuationPromptBudgetBytes(0);
+
+/** Automatic memory grows with the continuation allowance; explicit retrieval
+ *  tools remain available for research beyond this per-cycle preview. */
+export function relevantMemoryBudgetBytes(continuationBytes: number): number {
+  return Math.max(2048, Math.min(4096, Math.floor(continuationBytes / 4)));
+}
 
 /** Max characters of one World Events perception line in the continuation
  *  prompt (room chatter, movement, channel posts). */
 export const PERCEPTION_LINE_MAX_CHARS = 400;
+
+/** Direct requests and structured results need more room than ambient chatter. */
+export const PERCEPTION_DETAIL_MAX_CHARS = 1200;
 
 /** Max characters of a `model_request` perception line. Larger than the
  *  general clamp because the payload's `content` IS the caller's question — a

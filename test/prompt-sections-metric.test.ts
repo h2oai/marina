@@ -17,6 +17,7 @@ import {
   promptSectionName,
 } from "../src/agent/lean-agent-adapter";
 import type { EngineEvent } from "../src/types";
+import { scopeProcessState } from "./process-state";
 
 const bytes = (s: string) => Buffer.byteLength(s, "utf8");
 
@@ -118,6 +119,7 @@ function fireTurnStart(i: Internals): void {
 
 describe("agent_turn_start prompt metrics (adapter → runtime relay)", () => {
   it("at a coincidence cycle with a tight budget reports deferred sections and exact bytes", async () => {
+    using _state = scopeProcessState({ env: { MARINA_CONTINUATION_BUDGET_BYTES: "6000" } });
     // Cycle 300 fires Nearby/Novelty (%5), Memory Health (%20) and Learning Signal (%15).
     const { adapter, i } = makeAdapter("metrics-cycle-300", 299);
     for (let n = 0; n < 12; n++) {

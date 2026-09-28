@@ -4,7 +4,7 @@
 import { describe, expect, it } from "bun:test";
 import { PassThrough } from "node:stream";
 import { AcpServer } from "../src/net/acp-server";
-import type { MarinaAgent } from "../src/sdk/client";
+import type { CommandResult, MarinaAgent } from "../src/sdk/client";
 import type { Perception } from "../src/types";
 
 interface StubAgentOptions {
@@ -15,17 +15,18 @@ interface StubAgentOptions {
 
 function makeStubAgent(opts: StubAgentOptions = {}): MarinaAgent {
   const stub: Partial<MarinaAgent> = {
-    async command(cmd: string): Promise<Perception[]> {
+    async command(cmd: string): Promise<CommandResult> {
       if (opts.throwOn && cmd.includes(opts.throwOn)) throw new Error("simulated failure");
       if (opts.delayMs) await new Promise((resolve) => setTimeout(resolve, opts.delayMs));
-      return (
+      return Object.assign(
         opts.responses?.[cmd] ?? [
           {
             kind: "system",
             timestamp: Date.now(),
             data: { message: `echo: ${cmd}` },
           } as Perception,
-        ]
+        ],
+        { completion: "confirmed" as const },
       );
     },
   };

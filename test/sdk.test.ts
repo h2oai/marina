@@ -7,7 +7,7 @@ import { WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
 import { MarinaAgent, MarinaClient } from "../src/sdk/client";
 import { roomId } from "../src/types";
-import { cleanupDb, makeTestRoom } from "./helpers";
+import { cleanupDb, makeTestRoom, until } from "./helpers";
 
 const TEST_PORT = 13399;
 const TEST_URL = `ws://localhost:${TEST_PORT}`;
@@ -90,6 +90,14 @@ describe("MarinaClient SDK", () => {
     client.disconnect();
   });
 
+  it("acknowledges an explicit quit before closing the session", async () => {
+    const client = new MarinaAgent(TEST_URL, { autoReconnect: false });
+    const session = await client.connect("QuitSDK");
+    await client.quit();
+    expect(engine.entities.get(session.entityId)).toBeUndefined();
+    expect(client.isConnected()).toBe(false);
+  });
+
   it("should send commands and receive perceptions", async () => {
     const client = new MarinaClient(TEST_URL, { autoReconnect: false });
     await client.connect("CmdUser");
@@ -103,6 +111,101 @@ describe("MarinaClient SDK", () => {
     );
     expect(hasRoom).toBe(true);
 
+    client.disconnect();
+  });
+
+  it("correlates concurrent commands, excludes ambient traffic, and awaits async completion", async () => {
+    const client = new MarinaClient(TEST_URL, { autoReconnect: false, commandDrainTimeout: 1 });
+    const peer = new MarinaClient(TEST_URL, { autoReconnect: false });
+    const session = await client.connect("CorrelatedSDK");
+    await peer.connect("IndependentSDK");
+    const release = Promise.withResolvers<void>();
+    const started: string[] = [];
+    engine.commands.registerBuiltin({
+      name: "held-result",
+      help: "test",
+      async handler(ctx, input) {
+        started.push(input.args);
+        if (input.args === "first") await release.promise;
+        ctx.send(input.entity, `RESULT:${input.args}`);
+      },
+    });
+    let finished = false;
+    const first = client.command("held-result first").then((result) => {
+      finished = true;
+      return result;
+    });
+    const second = client.command("held-result second");
+    try {
+      await until(() => started.length === 1);
+      engine.sendToEntity(session.entityId, "AMBIENT");
+      await Bun.sleep(10);
+      expect(finished).toBe(false);
+      expect(started).toEqual(["first"]);
+      expect((await peer.command("held-result independent")).map((p) => p.data.text)).toEqual([
+        "RESULT:independent",
+      ]);
+      expect(finished).toBe(false);
+      release.resolve();
+      const [a, b] = await Promise.all([first, second]);
+      expect(a.map((p) => p.data.text)).toEqual(["RESULT:first"]);
+      expect(b.map((p) => p.data.text)).toEqual(["RESULT:second"]);
+      expect(a[0]!.command_request_id).not.toBe(b[0]!.command_request_id);
+    } finally {
+      release.resolve();
+      await engine.drainCommands();
+      await Promise.allSettled([first, second]);
+      client.disconnect();
+      peer.disconnect();
+    }
+  });
+
+  it("rejects command failures and awaits every command in an async batch", async () => {
+    const client = new MarinaClient(TEST_URL, { autoReconnect: false });
+    await client.connect("FailedSDK");
+    engine.commands.registerBuiltin({
+      name: "explode",
+      help: "test",
+      async handler() {
+        await Promise.resolve();
+        throw new Error("intentional failure");
+      },
+    });
+    engine.commands.registerBuiltin({
+      name: "echo-async",
+      help: "test",
+      async handler(ctx, input) {
+        await Promise.resolve();
+        ctx.send(input.entity, input.args);
+      },
+    });
+    expect(await client.command("explode").catch((error) => error.message)).toContain(
+      "intentional failure",
+    );
+    expect(await client.command("nonexistent-command").catch((error) => error.message)).toContain(
+      "Unknown command",
+    );
+    expect(
+      (await client.command("batch echo-async first ; echo-async second")).map((p) => p.data.text),
+    ).toEqual(["first", "second"]);
+    client.disconnect();
+  });
+
+  it("returns delivery receipts only for successful sends", async () => {
+    const client = new MarinaClient(TEST_URL, { autoReconnect: false });
+    const peer = new MarinaClient(TEST_URL, { autoReconnect: false });
+    await client.connect("ReceiptSDK");
+    await peer.connect("ReceiptPeer");
+    const sent = await client.command("tell ReceiptPeer answer [re:abcdef]");
+    expect(sent.find((p) => p.data.delivery)?.data.delivery).toEqual({
+      kind: "tell",
+      target: "ReceiptPeer",
+      message: "answer [re:abcdef]",
+    });
+    expect((await client.command("tell MissingPeer answer")).some((p) => p.data.delivery)).toBe(
+      false,
+    );
+    peer.disconnect();
     client.disconnect();
   });
 

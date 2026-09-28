@@ -11,6 +11,7 @@ import type { MemoryOperationResult } from "../sdk/memory-operations";
 import type { MemorySourceRange } from "../sdk/memory-types";
 import type { Perception } from "../types";
 import { DurableResidentMemory } from "./durable-memory";
+import type { OutstandingRequest } from "./outstanding-requests";
 
 /** Module logger. */
 const logger = new Logger();
@@ -321,8 +322,19 @@ export class PlatformMemoryBackend {
     }
   }
 
-  async journalMessage(message: unknown, signal?: AbortSignal): Promise<void> {
-    await this.durable.journal(message, signal);
+  async journalMessage(
+    message: unknown,
+    signal?: AbortSignal,
+    completedRequests?: readonly string[],
+  ): Promise<void> {
+    await this.durable.journal(message, signal, completedRequests);
+  }
+
+  async saveOutstandingRequests(
+    requests: OutstandingRequest[],
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await this.durable.saveRequests(requests, signal);
   }
 
   async saveCheckpoint(data: Record<string, unknown>): Promise<PlatformMemoryResult> {

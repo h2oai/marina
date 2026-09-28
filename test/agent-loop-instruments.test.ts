@@ -216,7 +216,7 @@ describe("per-run cap warnings", () => {
     else process.env.AGENT_MAX_TOOL_CALLS_PER_RUN = prev;
   });
 
-  it("warns once at 75% of the tool-call cap, before the abort", async () => {
+  it("warns once at 75% of the tool-call cap, before yielding", async () => {
     const { i, steered } = makeAdapter("tool-cap");
     i.setupActionTracking();
     await emit(i, { type: "agent_start" });

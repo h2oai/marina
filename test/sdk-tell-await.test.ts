@@ -46,13 +46,23 @@ function fakeClient(): FakeClient {
   const c = client as unknown as {
     session: unknown;
     connected: boolean;
+    commandProtocol: string;
     send: (d: Record<string, unknown>) => void;
     dispatchPerception: (p: Perception) => void;
   };
   c.session = { entityId: "e_alice", token: "t", name: "Alice" };
   c.connected = true;
+  c.commandProtocol = "correlated";
   c.send = (d) => {
     if (typeof d.command === "string") sent.push(d.command);
+    if (typeof d.request_id === "string")
+      queueMicrotask(() =>
+        c.dispatchPerception({
+          kind: "system",
+          timestamp: Date.now(),
+          data: { command_result: { request_id: d.request_id, ok: true } },
+        }),
+      );
   };
   const lastTag = (): string | null => {
     const last = sent[sent.length - 1] ?? "";
