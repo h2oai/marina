@@ -42,6 +42,7 @@ import { isLoopbackHostname, resolveWsBindHostname, WebSocketServer } from "./ne
 import { MarinaDB } from "./persistence/database";
 import { acquireDatabaseLease } from "./persistence/database-lease";
 import { isKeyEncryptionEnabled } from "./persistence/key-crypto";
+import { ensureKeySecret, type KeySecretSource } from "./persistence/key-secret-file";
 import { LocalStorageProvider } from "./storage/local-provider";
 import { loadOtlpExporterConfig, MarinaOtlpExporter } from "./telemetry/otlp-exporter";
 import { loadOtlpLogExporterConfig, MarinaOtlpLogExporter } from "./telemetry/otlp-log-exporter";
@@ -250,12 +251,35 @@ logger.addSink((entry) => {
   structuredLogWrites++;
   if (structuredLogWrites % 250 === 0) db.pruneStructuredLogs(structuredLogRetention);
 });
-// Encrypt any plaintext API keys at rest once MARINA_KEY_SECRET is configured,
-// then surface the "encrypted but can't decrypt" misconfiguration loudly —
-// otherwise those keys silently read as missing.
+// Key-encryption secret by default: without MARINA_KEY_SECRET, a random
+// secret lives next to the database (<DB_PATH>.key-secret, 0600) so keys saved
+// from now on are encrypted at rest. Existing plaintext rows are left as they
+// are (they keep working); only an explicit MARINA_KEY_SECRET migrates them.
+let keySecret: KeySecretSource = { source: "env" };
 try {
-  const migrated = db.migrateApiKeysToEncrypted();
-  if (migrated > 0) logger.info("security", `Encrypted ${migrated} API key(s) at rest`);
+  keySecret = ensureKeySecret(DB_PATH, () => db.auditEncryptedKeys().encrypted);
+  if (keySecret.source === "created" || keySecret.source === "file") {
+    logger.info(
+      "security",
+      `${keySecret.source === "created" ? "Created" : "Using"} the key-encryption secret ${keySecret.path} (mode 600) — stored provider keys are encrypted with it; back it up with the database, or set MARINA_KEY_SECRET`,
+    );
+  } else if (keySecret.source === "none" && keySecret.reason === "orphaned") {
+    logger.warn(
+      "security",
+      `${keySecret.encrypted} API key(s) are encrypted at rest but neither MARINA_KEY_SECRET nor ${keySecret.path} exists — restore the secret they were encrypted with (no new secret was generated, so nothing is overwritten).`,
+    );
+  }
+} catch (err) {
+  logger.error("security", "Key-encryption secret could not be prepared", { err });
+}
+// Encrypt any plaintext API keys at rest once MARINA_KEY_SECRET is configured
+// explicitly, then surface the "encrypted but can't decrypt" misconfiguration
+// loudly — otherwise those keys silently read as missing.
+try {
+  if (keySecret.source === "env") {
+    const migrated = db.migrateApiKeysToEncrypted();
+    if (migrated > 0) logger.info("security", `Encrypted ${migrated} API key(s) at rest`);
+  }
 
   const audit = db.auditEncryptedKeys();
   if (audit.encrypted > 0 && !isKeyEncryptionEnabled()) {
