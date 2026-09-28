@@ -25,6 +25,7 @@ import {
 } from "../lib/world-graph";
 import { TimelineStrip } from "../unified/overlays/TimelineStrip";
 import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
+import { SvgAction } from "./SvgAction";
 
 const DEFAULT_VIEWBOX = { x: 50, y: 10, w: 900, h: 730 };
 
@@ -63,17 +64,7 @@ const RoomNode = React.memo(function RoomNode({
   const radius = baseRadius + Math.min(pop * 2.5, 10);
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: SVG <g> cannot be a button; pointer-only room node, keyboard nav via room tree panel
-    <g
-      data-room-id={room.id}
-      onClick={(e) => {
-        e.stopPropagation();
-        onSelect(room.id, isSelected);
-      }}
-      onMouseEnter={() => onHover(room, radius, shortName, entityNames)}
-      onMouseLeave={onLeave}
-      className="cursor-pointer"
-    >
+    <g data-room-id={room.id} className="cursor-pointer">
       {/* Ambient halo */}
       <circle
         data-room-halo={room.id}
@@ -213,6 +204,16 @@ const RoomNode = React.memo(function RoomNode({
       >
         {shortName}
       </text>
+      <SvgAction
+        x={room.x - radius - 8}
+        y={room.y - radius - 8}
+        width={(radius + 8) * 2}
+        height={(radius + 8) * 2}
+        onEnter={() => onHover(room, radius, shortName, entityNames)}
+        onLeave={onLeave}
+        label={`Inspect room ${shortName}`}
+        onActivate={() => onSelect(room.id, isSelected)}
+      />
     </g>
   );
 });
@@ -250,18 +251,7 @@ const EntityDots = React.memo(function EntityDots({
 
         return (
           <g key={ent.id}>
-            {/* biome-ignore lint/a11y/useSemanticElements: SVG circles need a button role to expose keyboard activation */}
             <circle
-              data-entity-preview={ent.name}
-              tabIndex={0}
-              role="button"
-              aria-label={`Inspect ${ent.name}`}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  onSelectEntity(ent.name);
-                }
-              }}
               cx={ex}
               cy={ey}
               r={3.5}
@@ -269,10 +259,6 @@ const EntityDots = React.memo(function EntityDots({
               opacity={0.9}
               filter="url(#glow-sm)"
               className="cursor-pointer"
-              onClick={(e) => {
-                e.stopPropagation();
-                onSelectEntity(ent.name);
-              }}
             />
             <circle
               cx={ex}
@@ -281,6 +267,15 @@ const EntityDots = React.memo(function EntityDots({
               fill="white"
               opacity={0.8}
               style={{ pointerEvents: "none" }}
+            />
+            <SvgAction
+              x={ex - 7}
+              y={ey - 7}
+              width={14}
+              height={14}
+              entityName={ent.name}
+              label={`Inspect ${ent.name}`}
+              onActivate={() => onSelectEntity(ent.name)}
             />
           </g>
         );
@@ -840,7 +835,6 @@ export function WorldMap({
             ref={svgRef}
             viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`}
             className="h-full w-full cursor-grab outline-none focus:ring-1 focus:ring-primary/40 active:cursor-grabbing"
-            role="img"
             aria-label="World map"
             onWheel={handleWheel}
             onMouseDown={handleMouseDown}
@@ -1166,15 +1160,7 @@ export function WorldMap({
                 if (!pos) return null;
                 const color = alert.critical ? "var(--color-danger)" : "var(--color-warning)";
                 return (
-                  // biome-ignore lint/a11y/noStaticElementInteractions: SVG group marker mirrors room-node pointer interaction; keyboard room navigation remains available
-                  <g
-                    key={`alert-${roomId}`}
-                    className="cursor-pointer"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      selectRoom(roomId);
-                    }}
-                  >
+                  <g key={`alert-${roomId}`} className="cursor-pointer">
                     <circle
                       cx={pos.x + 18}
                       cy={pos.y - 18}
@@ -1204,6 +1190,14 @@ export function WorldMap({
                       {alert.count}
                     </text>
                     <title>{alert.titles.join(" · ")}</title>
+                    <SvgAction
+                      x={pos.x + 6}
+                      y={pos.y - 30}
+                      width={24}
+                      height={24}
+                      label={`Inspect alerts in ${roomId}: ${alert.titles.join(" · ")}`}
+                      onActivate={() => selectRoom(roomId)}
+                    />
                   </g>
                 );
               })}

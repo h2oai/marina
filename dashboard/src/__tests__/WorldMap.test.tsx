@@ -38,6 +38,18 @@ const SAMPLE_WORLD_DATA: WorldData = {
 };
 
 describe("WorldMap", () => {
+  it("exposes independent native room and entity controls", () => {
+    useWorldState.setState({ entities: SAMPLE_WORLD_DATA.entities });
+    renderWithProviders(<WorldMap worldData={SAMPLE_WORLD_DATA} />);
+    const room = screen.getByRole("button", { name: "Inspect room The Lobby" });
+    expect(room.tagName).toBe("BUTTON");
+    fireEvent.click(room);
+    expect(useWorldState.getState().selectedRoom).toBe("zone/lobby");
+    const entity = screen.getByRole("button", { name: "Inspect Alice" });
+    fireEvent.click(entity);
+    expect(useWorldState.getState().selectedEntity).toBe("Alice");
+  });
+
   it("renders without crashing with no data", () => {
     const { container } = renderWithProviders(<WorldMap />);
     expect(container).toBeTruthy();
@@ -51,7 +63,7 @@ describe("WorldMap", () => {
   it("renders with sample world data", () => {
     renderWithProviders(<WorldMap worldData={SAMPLE_WORLD_DATA} />);
     // When worldData has a worldName, the title includes it
-    expect(screen.getByRole("img", { name: "World map" })).toBeInTheDocument();
+    expect(screen.getByLabelText("World map")).toBeInTheDocument();
   });
 
   it("renders with world state populated from store", () => {
@@ -66,7 +78,7 @@ describe("WorldMap", () => {
 
     renderWithProviders(<WorldMap worldData={SAMPLE_WORLD_DATA} />);
     // The SVG map should be present
-    expect(screen.getByRole("img", { name: "World map" })).toBeInTheDocument();
+    expect(screen.getByLabelText("World map")).toBeInTheDocument();
   });
 
   it("handles missing population data gracefully", () => {
@@ -82,7 +94,7 @@ describe("WorldMap", () => {
 
   it("exposes a reset-view control that restores the default viewBox", () => {
     renderWithProviders(<WorldMap worldData={SAMPLE_WORLD_DATA} />);
-    const svg = screen.getByRole("img", { name: "World map" });
+    const svg = screen.getByLabelText("World map");
     const defaultViewBox = svg.getAttribute("viewBox");
     expect(defaultViewBox).toBe("50 10 900 730");
 

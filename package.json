@@ -137,7 +137,9 @@
     "test:mutation": "node node_modules/@stryker-mutator/core/bin/stryker.js run",
     "check:model": "bun --env-file=/dev/null scripts/check-session-model.ts",
     "bench:participation-context": "bun --env-file=/dev/null benchmarks/participation-context.ts",
-    "check:context-performance": "bun --env-file=/dev/null scripts/check-context-benchmark.ts"
+    "check:context-performance": "bun --env-file=/dev/null scripts/check-context-benchmark.ts",
+    "check:a11y": "bun run scripts/check-dashboard-accessibility.ts && biome lint --only=a11y dashboard/src --error-on-warnings",
+    "test:a11y": "bun run check:a11y && bun run dashboard:build && cd dashboard && bun run test:browser e2e/accessibility.spec.ts"
   },
   "devDependencies": {
     "@babel/parser": "^7.29.9",

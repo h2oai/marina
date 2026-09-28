@@ -145,6 +145,30 @@ jobs:
             /tmp/marina-dashboard-browser-results
             /tmp/marina-explorer-browser-results
 
+  accessibility:
+    name: Dashboard accessibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      MARINA_BROWSER_ARTIFACTS: /tmp/marina-accessibility-results
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version-file: .bun-version
+      - run: bun install --frozen-lockfile
+      - name: Install Chromium
+        working-directory: dashboard
+        run: bunx playwright install --with-deps chromium
+      - name: Check accessibility contracts and browser journeys
+        run: bun run test:a11y
+      - name: Preserve accessibility evidence
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: dashboard-accessibility
+          path: /tmp/marina-accessibility-results
+
   participation-invariants:
     name: Participation mutation and model checks
     runs-on: ubuntu-latest

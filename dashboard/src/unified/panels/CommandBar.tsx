@@ -559,59 +559,29 @@ export const CommandBar = memo(
     if (!visible) return null;
 
     return (
-      // biome-ignore lint/a11y/useSemanticElements: contains nested interactive elements (input + tab buttons) — cannot use <button>
-      <div
-        ref={barRef}
-        className={`uc-command-bar${cmdExpanded ? " cmd-expanded" : ""}`}
-        role="button"
-        tabIndex={0}
-        onClick={(e) => {
-          // Click on the bar itself (not a child button/input) toggles expand
-          if (
-            e.target === e.currentTarget ||
-            (e.target as HTMLElement).classList?.contains("uc-cmd-msgs")
-          ) {
-            setCmdExpanded((v) => !v);
-          } else if (!cmdExpanded) {
-            setCmdExpanded(true);
-          }
-        }}
-        onKeyDown={(e) => {
-          if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
-            e.preventDefault();
-            setCmdExpanded((v) => !v);
-          }
-        }}
-      >
+      <div ref={barRef} className={`uc-command-bar${cmdExpanded ? " cmd-expanded" : ""}`}>
         {/* Drag handle — removed to prevent position corruption */}
         <div className="uc-cmd-drag" />
 
-        {/* Tabs — click empty space to collapse */}
-        {/* biome-ignore lint/a11y/useSemanticElements: contains nested interactive tab buttons — cannot use <button> */}
-        <div
-          className="uc-cmd-tabs"
-          role="button"
-          tabIndex={0}
-          onClick={(e) => {
-            if (cmdExpanded && e.target === e.currentTarget) setCmdExpanded(false);
-          }}
-          onKeyDown={(e) => {
-            if (
-              cmdExpanded &&
-              e.target === e.currentTarget &&
-              (e.key === "Enter" || e.key === " ")
-            ) {
-              e.preventDefault();
-              setCmdExpanded(false);
-            }
-          }}
-        >
+        {/* Tabs and the explicit expand/collapse control */}
+        <div className="uc-cmd-tabs">
+          <button
+            type="button"
+            aria-label={`${cmdExpanded ? "Collapse" : "Expand"} command bar`}
+            aria-expanded={cmdExpanded}
+            onClick={() => setCmdExpanded((v) => !v)}
+          >
+            {cmdExpanded ? "−" : "+"}
+          </button>
           {MESSAGE_TABS.map((tab) => (
             <CmdTabButton
               key={tab.key}
               label={tab.label}
               active={activeTab === tab.key}
-              onClick={() => setActiveTab(tab.key)}
+              onClick={() => {
+                setActiveTab(tab.key);
+                setCmdExpanded(true);
+              }}
             />
           ))}
           {/* Divider — coordination data tabs (teal accent) */}
@@ -631,6 +601,7 @@ export const CommandBar = memo(
               label={tab.label}
               active={activeTab === tab.key}
               onClick={() => {
+                setCmdExpanded(true);
                 setActiveTab(tab.key);
                 setCoordDetail(null);
               }}
@@ -654,6 +625,7 @@ export const CommandBar = memo(
               label={tab.label}
               active={activeTab === tab.key}
               onClick={() => {
+                setCmdExpanded(true);
                 setActiveTab(tab.key);
                 setCoordDetail(null);
               }}
@@ -998,6 +970,7 @@ export const CommandBar = memo(
               {chatConnected ? "name:" : "offline"}
             </span>
             <input
+              onFocus={() => setCmdExpanded(true)}
               ref={loginRef}
               type="text"
               value={loginName}
@@ -1042,6 +1015,7 @@ export const CommandBar = memo(
               {entityName ? `${entityName}>` : ">"}
             </span>
             <input
+              onFocus={() => setCmdExpanded(true)}
               ref={inputRef}
               type="text"
               value={inputValue}

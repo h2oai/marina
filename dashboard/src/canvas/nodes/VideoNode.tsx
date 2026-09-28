@@ -23,8 +23,8 @@ export function VideoNode({ data, selected }: NodeProps) {
       />
       <Handle type="target" position={Position.Top} className="!bg-purple-500" />
       {url && !errored ? (
-        // biome-ignore lint/a11y/useMediaCaption: user-uploaded video has no caption track
         <video
+          aria-label={filename}
           controls
           className="nodrag w-full flex-1 object-contain bg-black"
           preload="metadata"

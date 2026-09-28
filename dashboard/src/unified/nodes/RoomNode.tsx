@@ -21,6 +21,7 @@
 
 import { Handle, type NodeProps, Position } from "@xyflow/react";
 import { memo, useEffect, useMemo, useState } from "react";
+import { SvgAction } from "../../components/SvgAction";
 import { useActivity } from "../hooks/use-activity";
 import { useZoom } from "../hooks/use-zoom";
 import { getDistrictColor } from "../lib/crown-shapes";
@@ -703,17 +704,7 @@ export const RoomNode = memo(function RoomNode({ data }: NodeProps) {
                 const bodyOp = isIdle ? 0.55 : 0.92;
 
                 return (
-                  // biome-ignore lint/a11y/noStaticElementInteractions: SVG <g> sprite; cannot be a <button>, keyboard nav is via the entity panel
-                  <g
-                    key={ent.name}
-                    style={{ cursor: onEntityClick ? "pointer" : undefined }}
-                    onClick={(e) => {
-                      if (onEntityClick) {
-                        e.stopPropagation();
-                        onEntityClick(ent.name, e.clientX, e.clientY);
-                      }
-                    }}
-                  >
+                  <g key={ent.name} style={{ cursor: onEntityClick ? "pointer" : undefined }}>
                     {/* Orbit animation */}
                     <animateMotion
                       dur={`${orbitDur}s`}
@@ -902,6 +893,16 @@ export const RoomNode = memo(function RoomNode({ data }: NodeProps) {
                     >
                       {ent.state}
                     </text>
+                    {onEntityClick && (
+                      <SvgAction
+                        x={-sprW}
+                        y={-sprH - 20}
+                        width={sprW * 2}
+                        height={sprH + 50}
+                        label={`Inspect ${ent.name}`}
+                        onActivate={(x, y) => onEntityClick(ent.name, x, y)}
+                      />
+                    )}
                   </g>
                 );
               },
@@ -934,16 +935,9 @@ export const RoomNode = memo(function RoomNode({ data }: NodeProps) {
 
           {/* ═══ LAYER 3: STATUS NODE (clickable intent/action point) ═══ */}
 
-          {/* biome-ignore lint/a11y/noStaticElementInteractions: SVG <g> status node; cannot be a <button>, keyboard nav is via the room action menu */}
           <g
             transform={`translate(0,${-h})`}
             style={{ cursor: onRoomAction ? "pointer" : undefined }}
-            onClick={(e) => {
-              if (onRoomAction) {
-                e.stopPropagation();
-                onRoomAction(roomId, e.clientX, e.clientY);
-              }
-            }}
           >
             {/* Outer ring — activity indicator, bolder */}
             <circle
@@ -1054,6 +1048,16 @@ export const RoomNode = memo(function RoomNode({ data }: NodeProps) {
                 dur={`${breathDur}s`}
                 repeatCount="indefinite"
                 additive="sum"
+              />
+            )}
+            {onRoomAction && (
+              <SvgAction
+                x={-cr}
+                y={-cr}
+                width={cr * 2}
+                height={cr * 2}
+                label={`Actions for ${roomId}`}
+                onActivate={(x, y) => onRoomAction(roomId, x, y)}
               />
             )}
           </g>

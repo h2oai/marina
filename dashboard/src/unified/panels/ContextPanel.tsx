@@ -1466,10 +1466,41 @@ export const ContextPanel = memo(function ContextPanel({
   return (
     <div ref={panelRef} className="uc-context-panel" style={posStyle}>
       {/* Header — draggable */}
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: drag handle — onMouseDown initiates pointer drag, not a click action */}
-      <div className="uc-panel-header" style={{ cursor: "grab" }} onMouseDown={onDragStart}>
-        <div className="uc-blink-dot" aria-hidden="true" />
-        <span>{title}</span>
+      <div className="uc-panel-header">
+        <button
+          type="button"
+          aria-label={`Move ${title}; use arrow keys`}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            flex: 1,
+            cursor: "grab",
+            background: "none",
+            color: "inherit",
+            border: 0,
+          }}
+          onMouseDown={onDragStart}
+          onKeyDown={(event) => {
+            const delta = {
+              ArrowLeft: [-20, 0],
+              ArrowRight: [20, 0],
+              ArrowUp: [0, -20],
+              ArrowDown: [0, 20],
+            }[event.key];
+            const panel = panelRef.current;
+            if (!delta || !panel) return;
+            event.preventDefault();
+            event.stopPropagation();
+            const rect = panel.getBoundingClientRect();
+            panel.style.left = `${Math.max(0, Math.min(window.innerWidth - rect.width, rect.left + delta[0]!))}px`;
+            panel.style.top = `${Math.max(0, Math.min(window.innerHeight - rect.height, rect.top + delta[1]!))}px`;
+            panel.style.right = "auto";
+          }}
+        >
+          <div className="uc-blink-dot" aria-hidden="true" />
+          <span>{title}</span>
+        </button>
         <span className="uc-spacer" />
         <button
           type="button"

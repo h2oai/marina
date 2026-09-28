@@ -400,3 +400,9 @@ comparison uses fixed scales/sample counts and rejects missing or malformed meas
 A separate candidate run makes all 10,000 records match and requires cold/warm p99 below
 500/20 ms. This catches broad-query regressions without repeatedly running an already-slow
 historical query plan. An independent load test still exercises admission and FULL SQLite writes.
+
+## Accessibility
+
+Run `bun run test:a11y` for the dashboard lint contract and axe-core browser checks.
+See [dashboard accessibility](dashboard-accessibility.md) for coverage, content-dependent
+media exceptions, and the manual keyboard and screen-reader checklist.
