@@ -41,6 +41,9 @@ vi.mock("../lib/api", () => ({
   putApi: vi.fn(),
   patchApi: vi.fn(),
   describeApiError: (err: unknown) => (err instanceof Error ? err.message : String(err)),
+  // Admin → Ops → Decisions → Settings (operators only) reads its own route.
+  authFetch: async () =>
+    new Response(JSON.stringify({ settings: [], history: [], runtime: true }), { status: 200 }),
 }));
 
 const NOW = Date.now();
@@ -287,6 +290,8 @@ describe("OpsTab", () => {
     expect(within(worker).getByText(/429 rate limited/)).toBeInTheDocument();
     expect(within(worker).getByText("crew")).toBeInTheDocument();
     expect(screen.getByText("operator scope")).toBeInTheDocument();
+    // Operators get the runtime decision settings inside the Decisions section.
+    expect(await screen.findByLabelText("Decision settings")).toBeInTheDocument();
 
     // Spend: caps + top spenders.
     expect(screen.getByTestId("ops-spender-Lead")).toBeInTheDocument();

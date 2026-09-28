@@ -63,8 +63,9 @@ function SettingRow({
   busy: boolean;
   onSave: (setting: string, value: string | null) => void;
 }) {
+  // No effect syncs the draft from props: that raced a quick first edit and
+  // reset it. The row is keyed by its value instead, so a new value remounts it.
   const [draft, setDraft] = useState(row.value ?? "");
-  useEffect(() => setDraft(row.value ?? ""), [row.value]);
   const changed = draft.trim() !== (row.value ?? "");
   const label = `${row.name} (${row.env})`;
   return (
@@ -139,13 +140,18 @@ export function DecisionSettings({ onChanged }: { onChanged?: () => void }) {
   const [saved, setSaved] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const res = await authFetch(SETTINGS_PATH);
-    if (!res.ok) {
-      setError(await errorText(res));
-      return;
+    // A network failure shows as an error, never an unhandled rejection.
+    try {
+      const res = await authFetch(SETTINGS_PATH);
+      if (!res.ok) {
+        setError(await errorText(res));
+        return;
+      }
+      setData((await res.json()) as SettingsResponse);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     }
-    setData((await res.json()) as SettingsResponse);
-    setError(null);
   }, []);
 
   useEffect(() => {
@@ -169,6 +175,8 @@ export function DecisionSettings({ onChanged }: { onChanged?: () => void }) {
       setSaved(setting);
       await load();
       onChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
@@ -195,7 +203,12 @@ export function DecisionSettings({ onChanged }: { onChanged?: () => void }) {
           </thead>
           <tbody>
             {data.settings.map((row) => (
-              <SettingRow key={row.env} row={row} busy={busy} onSave={save} />
+              <SettingRow
+                key={`${row.env}=${row.value ?? ""}`}
+                row={row}
+                busy={busy}
+                onSave={save}
+              />
             ))}
           </tbody>
         </table>

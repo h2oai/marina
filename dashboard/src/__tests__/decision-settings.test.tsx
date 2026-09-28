@@ -52,6 +52,18 @@ function mockApi(put: (body: unknown) => Response) {
 
 afterEach(() => vi.unstubAllGlobals());
 
+/** Under a loaded full-suite run each async step needs more than the default 1 s. */
+const SLOW = { timeout: 5_000 };
+
+/** Pick a value for a setting and press its Save once the button is enabled. */
+async function changeAndSave(name: string, env: string, value: string) {
+  const select = await screen.findByLabelText(`${name} (${env})`, undefined, SLOW);
+  fireEvent.change(select, { target: { value } });
+  const save = screen.getByLabelText(`Save ${name} (${env})`);
+  await waitFor(() => expect(save).not.toBeDisabled(), SLOW);
+  fireEvent.click(save);
+}
+
 describe("Ops → Decisions → settings", () => {
   it("lists every setting; an environment value is locked, not editable", async () => {
     mockApi(() => new Response("{}"));
@@ -67,10 +79,9 @@ describe("Ops → Decisions → settings", () => {
     const calls = mockApi(() => new Response(JSON.stringify({ setting: rows[0] })));
     const onChanged = vi.fn();
     render(<DecisionSettings onChanged={onChanged} />);
-    const select = await screen.findByLabelText("backend (MARINA_DECISIONS)");
-    fireEvent.change(select, { target: { value: "jev" } });
-    fireEvent.click(screen.getByLabelText("Save backend (MARINA_DECISIONS)"));
-    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+    await changeAndSave("backend", "MARINA_DECISIONS", "jev");
+    expect(await screen.findByText("✓ backend updated", undefined, SLOW)).toBeInTheDocument();
+    expect(onChanged).toHaveBeenCalled();
     expect(calls.find((c) => c.method === "PUT")?.body).toEqual({
       setting: "backend",
       value: "jev",
@@ -81,9 +92,13 @@ describe("Ops → Decisions → settings", () => {
     const calls = mockApi(() => new Response(JSON.stringify({ setting: rows[2] })));
     render(<DecisionSettings />);
     fireEvent.click(
-      await screen.findByLabelText("Reset gate (MARINA_DECISION_GATE) to its default"),
+      await screen.findByLabelText(
+        "Reset gate (MARINA_DECISION_GATE) to its default",
+        undefined,
+        SLOW,
+      ),
     );
-    await waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
+    await waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true), SLOW);
     expect(calls.find((c) => c.method === "PUT")?.body).toEqual({ setting: "gate", value: null });
   });
 
@@ -100,10 +115,21 @@ describe("Ops → Decisions → settings", () => {
         ),
     );
     render(<DecisionSettings />);
-    const select = await screen.findByLabelText("backend (MARINA_DECISIONS)");
-    fireEvent.change(select, { target: { value: "jev" } });
-    fireEvent.click(screen.getByLabelText("Save backend (MARINA_DECISIONS)"));
-    expect(await screen.findByRole("alert")).toHaveTextContent("An agent never changes");
+    await changeAndSave("backend", "MARINA_DECISIONS", "jev");
+    expect(await screen.findByRole("alert", undefined, SLOW)).toHaveTextContent(
+      "An agent never changes",
+    );
+  });
+
+  it("a network failure is shown, never thrown", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("network down");
+      }),
+    );
+    render(<DecisionSettings />);
+    expect(await screen.findByText("network down", undefined, SLOW)).toBeInTheDocument();
   });
 
   it("operators can turn decisions on from the section even while they are off", async () => {
