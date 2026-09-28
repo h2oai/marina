@@ -37,7 +37,7 @@ afterEach(() => {
 
 describe("ensureKeySecret", () => {
   it("an explicit MARINA_KEY_SECRET wins and no file is written", () => {
-    const env = { MARINA_KEY_SECRET: "explicit-secret-0123456789" };
+    const env = { MARINA_KEY_SECRET: "x".repeat(32) };
     const db = join(dir, "w.db");
     expect(ensureKeySecret(db, () => 0, env)).toEqual({ source: "env" });
     expect(existsSync(keySecretPath(db))).toBe(false);
