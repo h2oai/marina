@@ -4,6 +4,7 @@
 import type { MediaJobRow } from "../../persistence/database";
 import type { CommandDef, EntityId, RoomContext } from "../../types";
 import type { Engine } from "../engine";
+import { defaultImageModel } from "../media/providers/image-registry";
 import { type ModifierSpec, parseModifiers } from "../parse-input";
 
 interface GenerateOptions {
@@ -65,7 +66,7 @@ export function imageCommand(engine: Engine): CommandDef {
         return;
       }
 
-      const defaultModel = engine.db?.getDefaultModel() ?? "openai/gpt-image-1";
+      const defaultModel = defaultImageModel(engine.db?.getDefaultModel());
       const model = parsed.model ?? defaultModel;
       const canvas = resolveCanvas(engine, parsed.canvas);
 
@@ -115,7 +116,7 @@ export function sendMediaJobStatus(ctx: RoomContext, entityId: EntityId, job: Me
   ctx.send(entityId, statusMessage);
 }
 
-/** `image generate` modifiers: `model:openai/gpt-image-1 style:synthwave width:1024 canvas:x`. */
+/** `image generate` modifiers: `model:openai/gpt-image-2 style:synthwave width:1024 canvas:x`. */
 const IMAGE_GENERATE_SPEC: ModifierSpec = {
   model: { type: "string" },
   style: { type: "string" },

@@ -15,6 +15,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { localHttpBase } from "../net/listen-ports";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent, EntityId } from "../types";
 
@@ -229,7 +230,7 @@ export class BenchmarkRunner {
     private db: MarinaDB,
     private emitFeed: BenchmarkFeedEmitter,
     private target: () => HarnessTarget = () => ({
-      endpoint: `http://localhost:${Number(process.env.WS_PORT) || 3300}`,
+      endpoint: localHttpBase(),
     }),
   ) {}
 

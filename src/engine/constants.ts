@@ -172,14 +172,18 @@ export const LOCAL_OUTPUT_BUDGET_FRACTION = (() => {
 })();
 
 /** Completion cap for the `marina/default` self-proxy model (and any other
- *  cloud-routed model without a registry entry). The proxy enforces the real
- *  local-upstream budget in `prepareLlamaBody`, so the agent-side value only
- *  needs to be an honest output reservation for the compactor — NOT a fraction
- *  of a 128k window (that reserved 64k of a cloud window for output and left
- *  agents an effective 64k prompt). Override with MARINA_DEFAULT_MAX_TOKENS. */
+ *  cloud-routed model without a registry entry). It is the compactor's output
+ *  reservation AND the `max_tokens` the agent sends upstream, which also bounds
+ *  a thinking model's `budget_tokens` on the Anthropic bridge — so 16384 leaves
+ *  a thinking turn room to reason and still answer (4096 truncated long tool
+ *  calls and clamped thinking to 3k). The proxy enforces the real
+ *  local-upstream budget in `prepareLlamaBody`. It is NOT a fraction of the
+ *  window (that reserved 64k of a 128k cloud window); a 128k agent keeps
+ *  ~109k for its prompt. Override with MARINA_DEFAULT_MAX_TOKENS. */
+export const DEFAULT_CLOUD_MAX_TOKENS_FALLBACK = 16_384;
 export const DEFAULT_CLOUD_MAX_TOKENS = (() => {
   const raw = Number.parseInt(process.env.MARINA_DEFAULT_MAX_TOKENS ?? "", 10);
-  return Number.isFinite(raw) && raw > 0 ? raw : 4096;
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_CLOUD_MAX_TOKENS_FALLBACK;
 })();
 
 /** Optional hard cap (tokens) on the local-model completion budget. Unset by

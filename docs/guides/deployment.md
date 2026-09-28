@@ -73,6 +73,21 @@ Then open `http://localhost:3300`. State lives in the named volume `marina-data`
 
 The image builds the dashboard SPA, runs as an unprivileged `bun` user, and ships a `HEALTHCHECK` that polls `/health`. `docker compose up` waits for it to report healthy.
 
+Inside the container Marina binds `0.0.0.0`, so it derives the **`public`** trust profile: the
+OpenAI-compatible API stays closed until you set `MODEL_API_KEYS`, safety gates are enforced, and
+seeded agents do not start on their own. That is the right default for a server. For a personal
+instance on your own machine, add the local overlay, which declares `MARINA_PROFILE=local` and so
+behaves like a native `bun run start` (generated model-API key in `docker compose logs`, seeded
+agents start once a provider key is set, $50/day default spend cap):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+```
+
+The overlay is safe only because `docker-compose.yml` publishes the ports on the host's
+`127.0.0.1`. Never use it with widened `ports:`, a reverse proxy in front of the host, or the
+EC2/server deploy (`scripts/deploy.sh` does not use it).
+
 ### Without Compose
 
 ```bash
@@ -111,13 +126,13 @@ Marina's HTTP API requires authentication **by default** — but it's easy to we
 - [ ] **Set `MEM_API_KEYS`** (comma-separated `secret:agent` pairs) if you expose the `/mem` Memory API.
 - [ ] **Never set `MARINA_OPEN_API=true`** on a public host — it disables API auth entirely. It's a local-dev convenience only.
 - [ ] **Enable dashboard sign-in** with `MARINA_AUTH=better-auth` (+ `BETTER_AUTH_SECRET`) for any human-facing public host — see [authentication.md](../authentication.md). Without it the dashboard is open to anyone who can reach it.
-- [ ] **Encrypt API keys at rest** with `MARINA_KEY_SECRET` (≥ 16 chars; `openssl rand -base64 32`) if you store provider keys in the Admin → Keys panel — values are then AES-256-GCM encrypted in the DB. Without it they're plaintext; either set the secret, or prefer the provider **env vars** (`ANTHROPIC_API_KEY`, …, `LLAMA_API_KEY`), which are read live and never persisted. Admin → Security shows the live state. (Back up the secret — losing it orphans stored keys.)
+- [ ] **Encrypt API keys at rest.** Provider keys saved in the Admin → Keys panel are AES-256-GCM encrypted in the DB. Without `MARINA_KEY_SECRET`, Marina generates the secret itself in `<DB_PATH>.key-secret` (mode 0600) and encrypts keys saved from then on (keys stored as plaintext before keep working until you re-save them or set an explicit secret). For a managed deployment set `MARINA_KEY_SECRET` (≥ 16 chars; `openssl rand -base64 32`) from your secret manager — an explicit secret also encrypts existing plaintext rows in place — or prefer the provider **env vars** (`ANTHROPIC_API_KEY`, …, `LLAMA_API_KEY`), which are read live and never persisted. Admin → Security shows the live state. (Back up the secret or the `.key-secret` file with the database — losing it orphans stored keys.)
 - [ ] **Set `ALLOWED_ORIGINS`** to your real dashboard origin(s) if clients run cross-origin. Unset = same-origin only (no CORS header), which is the safe default.
 - [ ] **Don't publish ports 4000 (telnet) and 3302 (log viewer)** — neither is authenticated. Telnet is off by default (`TELNET_PORT=0`), and both listeners now bind the resolved `WS_HOST` (loopback unless you opt into exposure), but the publish spec is still your boundary: keep them off your public load balancer / security group. The default docker-compose publishes all ports to the host's `127.0.0.1` only.
 - [ ] **Set `GATEWAY_SECRET`** if (and only if) you use [federation](federation.md). Otherwise leave it unset.
 - [ ] **Terminate TLS at a reverse proxy** (next section). Marina speaks plain HTTP/WS; never expose `3300` directly to the internet.
 - [ ] Rate limits are built in (WS 5/s, MCP 5/s, Model API 2/s per IP, Memory API 10/s per agent, dashboard REST 60/10 s per principal, canvas + asset writes 30/10 s per principal, public `/api/entity/*` 30/10 s per IP, MCP sessions 10/min per IP) but a proxy-level limit is still wise. Per-IP limits key on the TCP peer; set `MARINA_TRUST_PROXY=true` behind your reverse proxy so they key on `X-Forwarded-For` instead.
-- [ ] **MCP behind a public hostname**: set `MARINA_MCP_ALLOWED_HOSTS=mcp.example.com` (DNS-rebinding guard) — the transport already requires a `MODEL_API_KEYS` bearer on any non-loopback bind. See [mcp.md](../mcp.md#transport-security).
+- [ ] **MCP behind a public hostname**: set `MARINA_MCP_ALLOWED_HOSTS=mcp.example.com` (DNS-rebinding guard; unset, a public bind accepts only loopback names, the bind address, the machine hostname and the `BETTER_AUTH_URL`/`ALLOWED_ORIGINS` hosts) — the transport already requires a `MODEL_API_KEYS` bearer on any non-loopback bind. See [mcp.md](../mcp.md#transport-security).
 - [ ] **Request bodies** are capped at 8 MiB (`MARINA_MAX_REQUEST_BODY_BYTES`); asset uploads at 50 MiB (`MARINA_MAX_UPLOAD_BYTES`). Uploaded assets are MIME-allowlisted and served with `nosniff` + a no-script CSP; every HTML page gets `X-Frame-Options: SAMEORIGIN` and the dashboard Content-Security-Policy below.
 
 ### Dashboard Content-Security-Policy

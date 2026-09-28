@@ -8,6 +8,7 @@
 
 import { calculateCost, type Usage as PiUsage } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import { defaultModelPrice } from "../../agent/provider-cost";
 import { localOutputBudget } from "../../engine/constants";
 import type { Engine } from "../../engine/engine";
 import { getErrorMessage } from "../../engine/errors";
@@ -26,6 +27,7 @@ import {
   LOCAL_PROVIDERS,
   localProviderBaseUrl,
   localProviderContextWindow,
+  localProviderDefaultModel,
 } from "../model-discovery";
 import { openaiErrorBody, UnsupportedParameterError } from "../openai-errors";
 import type { InjectionFormat } from "../passthru-context";
@@ -70,8 +72,18 @@ const BUILTIN_DEFAULT_MODELS: Record<string, string> = {
   OPENROUTER_API_KEY: "openai/gpt-6-luna",
   GROQ_API_KEY: "openai/gpt-oss-120b",
   HUGGINGFACE_API_KEY: "zai-org/GLM-5.3-Flash",
-  LLAMA_API_KEY: LOCAL_PROVIDERS.llama!.defaultModel,
-  OLLAMA_API_KEY: LOCAL_PROVIDERS.ollama!.defaultModel,
+  // Ids from pi-ai's bundled catalog (native ids, priced there).
+  CEREBRAS_API_KEY: "gpt-oss-120b",
+  DEEPSEEK_API_KEY: "deepseek-flash",
+  MISTRAL_API_KEY: "mistral-small-latest",
+  XAI_API_KEY: "grok-4.7",
+};
+
+/** Local runtimes resolve their default at call time (Ollama's is detected at boot). */
+const LOCAL_DEFAULT_MODEL_KEYS: Record<string, string> = {
+  LLAMA_API_KEY: "llama",
+  OLLAMA_API_KEY: "ollama",
+  VIBETHINKER_API_KEY: "vibethinker",
 };
 
 /** OpenAI's Luna tier, current and previous generation (optionally `-pro`). */
@@ -83,6 +95,8 @@ function getDefaultUpstreamModel(envKey: string): string {
   const overrideKey = `MARINA_DEFAULT_${providerName}_MODEL`;
   const override = process.env[overrideKey];
   if (override && override.trim().length > 0) return override.trim();
+  const local = LOCAL_DEFAULT_MODEL_KEYS[envKey];
+  if (local) return localProviderDefaultModel(local) ?? "default";
   return BUILTIN_DEFAULT_MODELS[envKey] ?? "gpt-6-luna";
 }
 
@@ -99,6 +113,13 @@ const PROVIDER_UPSTREAM: Record<string, { url: string; envKeys: string[]; anthro
     envKeys: ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
   },
   groq: { url: "https://api.groq.com/openai/v1/chat/completions", envKeys: ["GROQ_API_KEY"] },
+  // OpenAI-compatible first-party APIs. Their keys used to count as "a
+  // provider is configured" while marina/default had no route to them, so
+  // every call 503'd; they are routable now.
+  cerebras: { url: "https://api.cerebras.ai/v1/chat/completions", envKeys: ["CEREBRAS_API_KEY"] },
+  deepseek: { url: "https://api.deepseek.com/chat/completions", envKeys: ["DEEPSEEK_API_KEY"] },
+  mistral: { url: "https://api.mistral.ai/v1/chat/completions", envKeys: ["MISTRAL_API_KEY"] },
+  xai: { url: "https://api.x.ai/v1/chat/completions", envKeys: ["XAI_API_KEY"] },
   openrouter: {
     url: "https://openrouter.ai/api/v1/chat/completions",
     envKeys: ["OPENROUTER_API_KEY"],
@@ -142,6 +163,10 @@ const FALLBACK_PRIORITY = [
   "openai",
   "google",
   "groq",
+  "cerebras",
+  "deepseek",
+  "mistral",
+  "xai",
   "huggingface",
   "openrouter",
 ];
@@ -1132,7 +1157,16 @@ export function upstreamCostUsd(
   if (metrics.inputTokens === undefined && metrics.outputTokens === undefined) return undefined;
   try {
     costCatalog ??= builtinModels();
-    const model = costCatalog.getModel(target.slice(0, slash), target.slice(slash + 1));
+    const modelId = target.slice(slash + 1);
+    const listed = costCatalog.getModel(target.slice(0, slash), modelId);
+    // Marina's own default ids (e.g. gpt-6-luna) carry their list price even
+    // before pi-ai's catalog lists them, so the daily cap sees their spend.
+    const fallbackPrice = listed ? undefined : defaultModelPrice(modelId);
+    const model =
+      listed ??
+      (fallbackPrice
+        ? ({ cost: fallbackPrice } as unknown as NonNullable<typeof listed>)
+        : undefined);
     if (!model) return undefined;
     const cacheRead = metrics.cacheReadTokens ?? 0;
     const cacheWrite = metrics.cacheWriteTokens ?? 0;

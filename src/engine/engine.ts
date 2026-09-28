@@ -1,5 +1,7 @@
+import { localHttpBase } from "../net/listen-ports";
 import { MARINA_ROOT } from "../runtime-paths";
 import { AuthCoordinator, type LoginIdentity, type LoginResult } from "./auth-coordinator";
+import { autoRespawnEnabled } from "./auto-respawn";
 import { CommandCoordinator } from "./command-coordinator";
 import { CommandPhaseCoordinator } from "./command-phase-coordinator";
 import { RoomTickCoordinator } from "./room-tick-coordinator";
@@ -268,7 +270,7 @@ export class Engine {
         this.db,
         (event) => this.logEvent(event),
         () => ({
-          endpoint: `http://localhost:${Number(process.env.WS_PORT) || 3300}`,
+          endpoint: localHttpBase(),
           apiKey: getInternalModelToken(),
         }),
       );
@@ -1652,18 +1654,24 @@ export class Engine {
     }
   }
 
-  /** Initialize the agent runtime. Auto-respawns saved agents only if AGENT_AUTORESPAWN=true. */
+  /**
+   * Initialize the agent runtime. Auto-respawns saved agents when
+   * AGENT_AUTORESPAWN=true, or — unset — on a local install with a usable
+   * provider ({@link autoRespawnEnabled}).
+   */
   async initAgents(wsPort?: number): Promise<void> {
     if (wsPort) {
       // Keep the original runtime object: command handlers, media resolution,
       // and other engine services already hold references to it.
       this.agentRuntime.setWsPort(wsPort);
     }
-    const autoRespawn = process.env.AGENT_AUTORESPAWN === "true";
+    const autoRespawn = autoRespawnEnabled(this.agentRuntime.isAvailable());
     if (!autoRespawn) {
       this.logger.info(
         "agents",
-        "Agent auto-respawn disabled (set AGENT_AUTORESPAWN=true to enable)",
+        process.env.AGENT_AUTORESPAWN?.trim()
+          ? "Agent auto-respawn disabled (AGENT_AUTORESPAWN)"
+          : "Agent auto-respawn off (no usable provider, or not a local install; set AGENT_AUTORESPAWN=true to enable)",
       );
       return;
     }

@@ -34,6 +34,19 @@ const LOG_LEVELS: Record<LogLevel, number> = {
   error: 3,
 };
 
+let warnedInvalidLevel = false;
+
+/**
+ * `LOG_LEVEL`, case-insensitive. An unknown value is `info` — never
+ * `undefined`, which made every comparison false and logged everything.
+ */
+export function parseLogLevel(raw: string | undefined): { level: LogLevel; invalid: boolean } {
+  const value = raw?.trim().toLowerCase();
+  if (!value) return { level: "info", invalid: false };
+  if (value in LOG_LEVELS) return { level: value as LogLevel, invalid: false };
+  return { level: "info", invalid: true };
+}
+
 export class Logger {
   private minLevel: number;
   private jsonFormat: boolean;
@@ -41,10 +54,17 @@ export class Logger {
   private context = new AsyncLocalStorage<LogContext>();
 
   constructor(config?: LoggerConfig) {
-    const envLevel = process.env.LOG_LEVEL as LogLevel | undefined;
+    const envLevel = parseLogLevel(process.env.LOG_LEVEL);
     const envFormat = process.env.LOG_FORMAT;
-    this.minLevel = LOG_LEVELS[config?.level ?? envLevel ?? "info"];
+    this.minLevel = LOG_LEVELS[config?.level ?? envLevel.level];
     this.jsonFormat = (config?.format ?? envFormat) === "json";
+    if (envLevel.invalid && !config?.level && !warnedInvalidLevel) {
+      warnedInvalidLevel = true;
+      this.warn(
+        "main",
+        `LOG_LEVEL "${process.env.LOG_LEVEL}" is not debug, info, warn or error — using info`,
+      );
+    }
   }
 
   log(level: LogLevel, category: string, message: string, data?: Record<string, unknown>): void {

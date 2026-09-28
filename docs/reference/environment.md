@@ -18,8 +18,8 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 | `MARINA_PUBLIC=false` | true binds 0.0.0.0 without naming an interface. An explicit WS_HOST wins. | protected, restart |
 | `MARINA_ALLOW_INSECURE_PUBLIC=false` | Acknowledge an unauthenticated non-loopback bind (see WS_HOST). Only for a network you control; prefer MARINA_AUTH=better-auth. | protected, restart |
 | `TELNET_PORT=0` | Telnet port. 0 (the default) is off. Telnet is plaintext and unauthenticated, and telnet sessions can never run host commands. | restart |
-| `MCP_PORT=3301` | MCP (Model Context Protocol) port. Default WS_PORT+1 (3301 when WS_PORT is 0). 0 disables. | restart |
-| `LOG_PORT=3302` | Real-time log viewer port. Default WS_PORT+2 (3302 when WS_PORT is 0). 0 disables. | restart |
+| `MCP_PORT=3301` | MCP (Model Context Protocol) port. Default: the bound WebSocket port + 1 (also with WS_PORT=0). 0 disables. | restart |
+| `LOG_PORT=3302` | Real-time log viewer port. Default: the bound WebSocket port + 2 (also with WS_PORT=0). 0 disables. | restart |
 | `WS_MAX_CONNECTIONS_PER_IP=100` | Maximum concurrent WebSocket connections per client IP. | restart |
 | `MARINA_TRUST_PROXY=false` | Trust X-Forwarded-For when resolving the client IP for every per-IP rate limiter. Enable only behind a trusted reverse proxy. | protected |
 | `NODE_ENV=production`<br>`REVERSE_PROXY=1`<br>`HTTPS_PROXY=` | When NODE_ENV=production and neither HTTPS_PROXY nor REVERSE_PROXY is set, Marina logs a hint that no TLS proxy was detected. Only presence matters. Bun's fetch also honours HTTPS_PROXY, HTTP_PROXY and NO_PROXY for outbound requests. | restart |
@@ -30,8 +30,8 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 | Variable | Description | Flags |
 |---|---|---|
 | `MODEL_API_KEYS=sk-marina-change-me` | Comma-separated bearer tokens accepted on /v1, the Ollama-compatible /api routes and MCP. Under the local profile Marina also generates a key into &lt;DB_PATH&gt;.local-api-key (mode 600) and prints it at boot, so local clients need nothing here. | secret |
-| `MEM_API_KEYS=sk-agent-1:scout` | Comma-separated secret:agent pairs for the /mem REST API and /api/probe. Unset keeps /mem closed unless a key is stored in the database. | secret |
-| `MARINA_KEY_SECRET=` | Encrypts provider keys stored through Admin → Keys (AES-256-GCM, 16+ characters; generate with `openssl rand -base64 32`). Without it stored keys are plaintext in the database. Changing or losing it orphans stored keys, which must then be re-entered. Environment provider keys are never stored. | secret, protected, restart |
+| `MEM_API_KEYS=sk-agent-1:scout` | Comma-separated secret:agent pairs for the /mem REST API and /api/probe. Unset keeps /mem closed, except with MARINA_OPEN_API=true or, under the local profile, the local model-API key plus an X-Agent-Name header. | secret |
+| `MARINA_KEY_SECRET=` | Encrypts provider keys stored through Admin → Keys (AES-256-GCM, 16+ characters; generate with `openssl rand -base64 32`). Unset: Marina generates one in &lt;DB_PATH&gt;.key-secret (0600) and encrypts keys saved from then on; existing plaintext rows keep working, and an explicit value also migrates them. Back the secret (or that file) up with the database: changing or losing it orphans stored keys, which must then be re-entered. Environment provider keys are never stored. | secret, protected, restart |
 | `MARINA_OPEN_API=false` | Development only: accept unauthenticated requests on the model, memory and dashboard read APIs. It does not grant operator actions: key and settings management, spawning and deletion still need an operator, and writes are refused outside the local profile. Fatal with a non-loopback bind unless MARINA_ALLOW_INSECURE_PUBLIC=true. | protected |
 | `ALLOWED_ORIGINS=http://localhost:5173` | Comma-separated origins allowed for CORS. Unset sends no Access-Control-Allow-Origin header (same-origin only). |  |
 | `MARINA_DASHBOARD_CSP=` | Content-Security-Policy for the dashboard HTML. Unset uses the built-in policy; `off` drops the header; any other value replaces the policy verbatim. | protected |
@@ -74,7 +74,7 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 | `MARINA_STANDING_PER_SPAWNED_CHILD=25` | Standing per concurrent child an earned spawner may keep alive (budget = floor(standing / this), capped by MAX_AGENTS). |  |
 | `MARINA_MAX_REPLICAS_PER_RUN=5` | Total copies `evolve replicate` may seed from one accepted run. |  |
 | `MARINA_EVOLVE_TRIALS=` | `here` lets a dedicated parallel world run `evolve trial` itself. Trials otherwise run only in a World Collective child. Never set it on a world you care about. | protected |
-| `STANDING_HALF_LIFE_DAYS=60` | Standing decay half-life in days (minimum 1). Shorter means rank derived from standing demotes faster. | restart |
+| `STANDING_HALF_LIFE_DAYS=60` | Standing decay half-life in days (minimum 1; a non-numeric value falls back to 60). Shorter means rank derived from standing demotes faster. | restart |
 
 ## World
 
@@ -113,7 +113,7 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 | `GROQ_API_KEY=` | Groq API key. | secret |
 | `OPENROUTER_API_KEY=` | OpenRouter API key. Also required by the `forecast` command and POST /v1/forecast. | secret |
 | `HUGGINGFACE_API_KEY=`<br>`HF_TOKEN=` | Hugging Face Inference Providers key (router.huggingface.co). Address models as `huggingface/<org>/<model>`, optionally suffixed `:fastest`, `:cheapest` or `:<provider>`. HF_TOKEN is accepted as well. | secret |
-| `CEREBRAS_API_KEY=`<br>`XAI_API_KEY=`<br>`MISTRAL_API_KEY=`<br>`DEEPSEEK_API_KEY=` | Providers usable only by agents spawned on an explicit `<provider>/<model>`. They are not upstreams for marina/default, so a world keyed with only one of these has agents on marina/default fail with 503. | secret |
+| `CEREBRAS_API_KEY=`<br>`XAI_API_KEY=`<br>`MISTRAL_API_KEY=`<br>`DEEPSEEK_API_KEY=` | More OpenAI-compatible providers. Each is also an upstream for marina/default (defaults: gpt-oss-120b, deepseek-flash, mistral-small-latest, grok-4.7; override with MARINA_DEFAULT_&lt;PROVIDER&gt;_MODEL). | secret |
 
 ## Local model runtimes
 
@@ -137,16 +137,17 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 | Variable | Description | Flags |
 |---|---|---|
 | `MARINA_DEFAULT_MODEL=marina/default` | Model for agents spawned without one, and the fallback for unrecognized models. marina/default calls this instance's own /v1, which routes to whichever provider has a key. A default model set at runtime (dashboard or `admin`) wins. |  |
-| `MARINA_DEFAULT_ANTHROPIC_MODEL=claude-sonnet-5`<br>`MARINA_DEFAULT_OPENAI_MODEL=gpt-6-luna`<br>`MARINA_DEFAULT_GEMINI_MODEL=gemini-3.1-flash-lite`<br>`MARINA_DEFAULT_OPENROUTER_MODEL=openai/gpt-6-luna`<br>`MARINA_DEFAULT_GROQ_MODEL=openai/gpt-oss-120b`<br>`MARINA_DEFAULT_HUGGINGFACE_MODEL=zai-org/GLM-5.3-Flash`<br>`MARINA_DEFAULT_LLAMA_MODEL=local-model`<br>`MARINA_DEFAULT_OLLAMA_MODEL=llama3` | Model /v1 uses on each provider when it proxies directly upstream (no model agent is online for the requested channel). The variable name is MARINA_DEFAULT_&lt;PROVIDER&gt;_MODEL. |  |
+| `MARINA_DEFAULT_ANTHROPIC_MODEL=claude-sonnet-5`<br>`MARINA_DEFAULT_OPENAI_MODEL=gpt-6-luna`<br>`MARINA_DEFAULT_GEMINI_MODEL=gemini-3.1-flash-lite`<br>`MARINA_DEFAULT_OPENROUTER_MODEL=openai/gpt-6-luna`<br>`MARINA_DEFAULT_GROQ_MODEL=openai/gpt-oss-120b`<br>`MARINA_DEFAULT_HUGGINGFACE_MODEL=zai-org/GLM-5.3-Flash`<br>`MARINA_DEFAULT_LLAMA_MODEL=local-model` | Model /v1 uses on each provider when it proxies directly upstream (no model agent is online for the requested channel). The variable name is MARINA_DEFAULT_&lt;PROVIDER&gt;_MODEL. |  |
+| `MARINA_DEFAULT_OLLAMA_MODEL=qwen3:4b` | Ollama default: the first model in Ollama's /api/tags (read at boot), else qwen3:4b. |  |
 | `MODEL_REQUEST_TIMEOUT_MS=600000` | Upstream timeout for /v1 requests in milliseconds. Non-streaming client connections also close at Bun's 255-second idle limit. |  |
 | `MODEL_REQUEST_REMINDERS=1` | `0` stops re-posting an unanswered routed model_request as a reminder at 25% and 60% of the timeout. |  |
-| `MARINA_DEFAULT_MAX_TOKENS=4096` | Output-token cap marina/default sends upstream per completion (also the compactor's output reservation). Extended thinking on this path is clamped to this value minus 1024. |  |
+| `MARINA_DEFAULT_MAX_TOKENS=16384` | Output-token cap marina/default sends upstream per completion (also the compactor's output reservation). Extended thinking on this path is clamped to this value minus 1024. |  |
 
 ## Agent runtime
 
 | Variable | Description | Flags |
 |---|---|---|
-| `AGENT_AUTORESPAWN=false` | `true` restarts saved agents at boot, including world-seeded ones such as the Workbench population and the Chronicler. Otherwise start them with `agent spawn`. `readiness` shows what is live. | restart |
+| `AGENT_AUTORESPAWN=false` | Restart saved agents at boot, including world-seeded ones such as the Workbench population and the Chronicler. Unset: on for a local install (local profile) with a usable provider, off otherwise; `true`/`false` overrides. `readiness` shows what is live. | restart |
 | `MAX_AGENTS=30` | Maximum concurrently running agents. | restart |
 | `MAX_AGENT_UPTIME_MS=86400000` | Maximum agent uptime in milliseconds before the runtime stops it (default 24 hours). | restart |
 | `MARINA_DISABLED_AGENTS=` | Comma-separated agent names that seeders, autorespawn and room-agent spawning must not bring back. `agent disable <name>` does the same in-world and persists. |  |
@@ -175,8 +176,8 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 
 | Variable | Description | Flags |
 |---|---|---|
-| `MARINA_DAILY_SPEND_CAP_USD=10` | Daily USD cap (UTC day, persisted) on everything this world pays upstream: /v1 passthru, agent turns, decision backends and forecasts. At the cap /v1 returns 429 spend_cap_reached, decisions and forecasts are refused and agents pause until 00:00 UTC. Unset or 0 is no cap. Media generation is not counted. `readiness` shows the state. | protected |
-| `MARINA_CHILD_DAILY_SPEND_CAP_USD=50` | Daily cap a World Collective child world starts with. | protected |
+| `MARINA_DAILY_SPEND_CAP_USD=50` | Daily USD cap (UTC day, persisted) on everything this world pays upstream: /v1 passthru, agent turns, decision backends, forecasts and priced media jobs. At the cap /v1 returns 429 spend_cap_reached, decisions, forecasts and priced media jobs are refused and agents pause until 00:00 UTC. Default 50; 0 or off = no cap; an invalid value keeps the default. `readiness` shows today's spend. | protected |
+| `MARINA_CHILD_DAILY_SPEND_CAP_USD=50` | Daily cap a World Collective child world starts with (default 50, never above the parent's cap; 0 or off = the parent's cap). | protected |
 | `MARINA_MAX_COST_USD_PER_HOUR=5`<br>`MARINA_MAX_AGENT_COST_USD_PER_HOUR=1` | Rolling one-hour USD caps on agent model spend, across all agents and per agent. Unset or 0 is unlimited. At a cap the agent pauses, tells its spawner, and resumes once last-hour spend drops. Local models count as $0. | protected |
 | `MARINA_MAX_CONSECUTIVE_UPSTREAM_ERRORS=20`<br>`MARINA_UPSTREAM_ERROR_PAUSE_MS=600000` | Consecutive upstream or loop errors (429, 5xx, timeouts) before an agent pauses for MARINA_UPSTREAM_ERROR_PAUSE_MS milliseconds and tells its spawner once. |  |
 
@@ -209,7 +210,7 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 | `A1111_API_KEY=` | Automatic1111 or SD.Next web UI for `automatic1111/<checkpoint>` images (AUTOMATIC1111_BASE_URL is accepted as an alias). Keyless unless the server requires one. | secret |
 | `TOGETHER_IMAGE_BASE_URL=https://api.together.xyz/v1` | Any OpenAI-compatible image server: set &lt;PROVIDER&gt;_IMAGE_BASE_URL and &lt;PROVIDER&gt;_API_KEY, then use `<provider>/<model>`. Together is shown as an example. |  |
 | `TOGETHER_API_KEY=` | Any OpenAI-compatible image server: set &lt;PROVIDER&gt;_IMAGE_BASE_URL and &lt;PROVIDER&gt;_API_KEY, then use `<provider>/<model>`. Together is shown as an example. | secret |
-| `MAX_IMAGE_JOBS_PER_DAY=0`<br>`MAX_VIDEO_JOBS_PER_DAY=0` | Daily image and video jobs per entity. 0 is unlimited. |  |
+| `MAX_IMAGE_JOBS_PER_DAY=50`<br>`MAX_VIDEO_JOBS_PER_DAY=5` | Image and video jobs per entity per rolling 24 h (defaults 50 and 5). 0 is unlimited. |  |
 
 ## Search
 
@@ -239,8 +240,8 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 
 | Variable | Description | Flags |
 |---|---|---|
-| `MARINA_DECISIONS=off` | Decision backend for cheap per-step judgements (off by default; it receives tool names and redacted arguments). `decisions-api` (alias `jev`): a Jev-family model over the Decisions API on OpenRouter, or a self-hosted OpenJev. `typesafe`: TypeSafe's API. `chat-classifier` (aliases `classifier`, `llm`): any chat model, which then requires MARINA_DECISION_MODEL. Every MARINA_DECISION* setting except base URLs, paths and API keys can also be changed at runtime (`admin decisions set …`, Admin → Ops → Decisions); a value set here wins and locks it. |  |
-| `MARINA_DECISION_MODEL=typesafe/jev-1.13` | Backend model. Defaults: typesafe/jev-1.13 for decisions-api, jev-latest for typesafe; chat-classifier has no default and stays off without one. |  |
+| `MARINA_DECISIONS=off` | Decision backend for cheap per-step judgements (off by default; it receives tool names and redacted arguments). `decisions-api` (alias `jev`): a Jev-family model over the Decisions API on OpenRouter, or a self-hosted OpenJev. `typesafe`: TypeSafe's API. `chat-classifier` (aliases `classifier`, `llm`): any chat model (see MARINA_DECISION_MODEL). Every MARINA_DECISION* setting except base URLs, paths and API keys can also be changed at runtime (`admin decisions set …`, Admin → Ops → Decisions); a value set here wins and locks it. |  |
+| `MARINA_DECISION_MODEL=typesafe/jev-1.13` | Backend model. Defaults: typesafe/jev-1.13 for decisions-api, jev-latest for typesafe; chat-classifier uses openai/gpt-6-luna on OpenRouter or zai-org/GLM-5.3-Flash on the Hugging Face router, and any other base URL must name a model. |  |
 | `MARINA_DECISION_BASE_URL=https://openrouter.ai/api/alpha` | Backend endpoint. Defaults: https://openrouter.ai/api/alpha (decisions-api), https://api.typesafe.ai (typesafe), https://openrouter.ai/api/v1 (chat-classifier). | protected |
 | `MARINA_DECISION_API_KEY=` | Backend key. Unset falls back by host: OPENROUTER_API_KEY for openrouter.ai, TYPESAFE_API_KEY for api.typesafe.ai, HUGGINGFACE_API_KEY or HF_TOKEN for router.huggingface.co. | secret, protected |
 | `MARINA_DECISION_PATH=/decisions` | Decisions API path (typesafe uses /v1/systemone). | protected |
@@ -276,8 +277,8 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 | Variable | Description | Flags |
 |---|---|---|
 | `MARINA_ARENA_ENTRANT=<your-entrant-id>`<br>`MARINA_ARENA_KEY_FILE=/srv/marina/arena-key.pem`<br>`MARINA_ARENA_KEY_ID=k1` | Signed participation in the MIT Social Simulation Arena (docs/guides/arena.md). Off unless an entrant id is set. The key file holds the Ed25519 private key (mode 0600, `bun run arena keygen <path>`). | restart |
-| `MARINA_ARENA_AUTOPILOT=off`<br>`MARINA_ARENA_WINDOW_HOURS=24` | File each round automatically during its last MARINA_ARENA_WINDOW_HOURS hours (0–168). |  |
-| `MARINA_ARENA_FORECASTER=baseline`<br>`MARINA_ARENA_MODEL_WEIGHT=0.5` | What answers: baseline, nowcast (freshest Civiqs reading), discovered (best promoted signal, else nowcast), model:&lt;provider/model&gt;, crew:&lt;m&gt;[,&lt;m&gt;,&lt;m&gt;] (statistician, analyst, skeptic) or research:&lt;m&gt;[,&lt;m&gt;,&lt;m&gt;]. A model's answer is shrunk toward the baseline by MARINA_ARENA_MODEL_WEIGHT. Measure with `bun run arena evaluate` before switching. |  |
+| `MARINA_ARENA_AUTOPILOT=off`<br>`MARINA_ARENA_WINDOW_HOURS=24` | File each round automatically during its last MARINA_ARENA_WINDOW_HOURS hours (default 24, max 168; an invalid value falls back to 24). |  |
+| `MARINA_ARENA_FORECASTER=nowcast`<br>`MARINA_ARENA_MODEL_WEIGHT=0.5` | What answers (default nowcast — no model calls; the baseline for non-Civiqs rounds): nowcast (freshest Civiqs reading), baseline, discovered (best promoted signal, else nowcast), model:&lt;provider/model&gt;, crew:&lt;m&gt;[,&lt;m&gt;,&lt;m&gt;] (statistician, analyst, skeptic) or research:&lt;m&gt;[,&lt;m&gt;,&lt;m&gt;]. A model's answer is shrunk toward the baseline by MARINA_ARENA_MODEL_WEIGHT. Measure with `bun run arena evaluate` before switching. |  |
 | `MARINA_ARENA_CIVIQS_LIVE=on` | `off` stops the nowcast reading the live Civiqs dashboard for open rounds (rounds past their lock never do). |  |
 | `MARINA_ARENA_TRENDS_PARTIAL=off` | `on` counts a Google Trends basket's partial current week as its latest reading. |  |
 | `MARINA_ARENA_RESEARCH_RETRIEVER=openrouter-web:openai/gpt-6-luna`<br>`MARINA_ARENA_RESEARCH_JUDGE=jev`<br>`MARINA_ARENA_RESEARCH_TRUST=0.5` | Research forecaster: retriever, judge (jev, decisions or none; default jev, or none without OPENROUTER_API_KEY) and the trust given to verified research lines. |  |
@@ -328,7 +329,7 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 |---|---|---|
 | `MARINA_MAX_REQUEST_BODY_BYTES=8388608`<br>`MARINA_MAX_UPLOAD_BYTES=52428800` | Request body ceiling for the HTTP port, and the separate cap on one asset upload (uploads are MIME-allowlisted and magic-byte checked). | restart |
 | `MARINA_MCP_SESSIONS_PER_MIN=10` | MCP session creations and login/auth tool calls per client IP per minute. 0 disables. |  |
-| `MARINA_MCP_ALLOWED_HOSTS=mcp.example.com` | Extra Host header values /mcp accepts (DNS-rebinding protection). Loopback spellings are always allowed; on a non-loopback bind Host validation is off until you list your public hostnames here. | protected |
+| `MARINA_MCP_ALLOWED_HOSTS=mcp.example.com` | Extra Host header values /mcp accepts (DNS-rebinding protection; validation is never off). Unset on a non-loopback bind: only loopback names, a specific bind address, the machine hostname and the BETTER_AUTH_URL / ALLOWED_ORIGINS hosts. List LAN IPs or other names clients use here. | protected |
 | `MARINA_URL_GUARD_DNS_FAIL_OPEN=false` | `true` lets outbound fetches proceed when DNS resolution fails, instead of refusing them (fail open). Only for restricted-DNS environments. | protected |
 
 ## Retention
@@ -343,7 +344,7 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 
 | Variable | Description | Flags |
 |---|---|---|
-| `LOG_FORMAT=text`<br>`LOG_LEVEL=info` | Log format (text or json) and minimum level (debug, info, warn, error). | restart |
+| `LOG_FORMAT=text`<br>`LOG_LEVEL=info` | Log format (text or json) and minimum level (debug, info, warn, error; case-insensitive — an invalid level warns once and uses info). | restart |
 | `MARINA_OTLP_ENABLED=false` | `true` pushes completed structural spans to an OTLP/HTTP JSON collector. Prompts, outputs, tool arguments and credentials are excluded; a collector outage never blocks agents. | restart |
 | `MARINA_OTLP_LOGS_ENABLED=false` | `true` pushes logs over OTLP/HTTP JSON, independently of traces. | restart |
 | `OTEL_EXPORTER_OTLP_ENDPOINT=https://collector.example` | Shared OTLP base endpoint (Marina appends /v1/traces or /v1/logs), headers (comma-separated, percent-encoded key=value, never displayed), timeout (default 10s, clamped 100ms–60s) and protocol (only http/json is supported). Each has a per-signal OTEL_EXPORTER_OTLP_TRACES_* or OTEL_EXPORTER_OTLP_LOGS_* variant that wins; per-signal endpoints are used exactly as written. | restart |
@@ -381,5 +382,5 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 
 | Variable | Description | Flags |
 |---|---|---|
-| `MARINA_LOCAL_API_KEY=` | The local profile's generated model-API key, loaded from &lt;DB_PATH&gt;.local-api-key at boot. Do not set it yourself. | secret, protected, internal |
+| `MARINA_LOCAL_API_KEY=` | The local profile's generated model-API key, loaded from &lt;DB_PATH&gt;.local-api-key at boot; ignored and dropped under shared/public. It also opens /mem with an X-Agent-Name header. Do not set it yourself. | secret, protected, internal |
 | `MARINA_COLLECTIVE_CHILD=` | Marks a World Collective child world, which lets `evolve trial` run there. Set by the collective manager; setting it on a parent world bypasses the trial fence. | protected, internal |

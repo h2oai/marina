@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "bun:test";
-import { arenaConfigFromEnv, parseForecasterSpec } from "../src/arena/config";
+import { arenaConfigFromEnv, arenaWindowHours, parseForecasterSpec } from "../src/arena/config";
 import { ArenaData } from "../src/arena/data";
 import { evaluateResolved } from "../src/arena/evaluate";
 import { forecastRound, forecastScalar, PERSISTENCE_SD } from "../src/arena/forecast";
@@ -147,8 +147,13 @@ describe("model forecaster", () => {
 });
 
 describe("forecaster configuration", () => {
-  it("accepts baseline or model:<provider/model> and nothing else", () => {
-    expect(parseForecasterSpec(undefined)).toBe("baseline");
+  it("defaults to nowcast; accepts the documented grammar and nothing else", () => {
+    expect(parseForecasterSpec(undefined)).toBe("nowcast");
+    expect(parseForecasterSpec("  ")).toBe("nowcast");
+    expect(parseForecasterSpec("baseline")).toBe("baseline");
+    expect(parseForecasterSpec("discovered")).toBe("discovered");
+    expect(() => parseForecasterSpec("gpt")).toThrow(/nowcast, baseline, discovered/);
+    expect(arenaConfigFromEnv({ MARINA_ARENA_ENTRANT: "x-y" })?.forecaster).toBe("nowcast");
     expect(parseForecasterSpec("model:openrouter/deepseek/deepseek-v4-pro")).toBe(
       "model:openrouter/deepseek/deepseek-v4-pro",
     );
@@ -195,5 +200,20 @@ describe("evaluation on resolved rounds", () => {
     expect(r.results.perfect!.skill).toBeGreaterThan(0.9);
     expect(report.overall.perfect).toBeGreaterThan(report.overall.baseline!);
     expect(PERSISTENCE_SD).toBe(1.5);
+  });
+});
+
+describe("MARINA_ARENA_WINDOW_HOURS", () => {
+  it("one parser: default 24, capped at one week, junk ⇒ default", () => {
+    expect(arenaWindowHours({})).toBe(24);
+    expect(arenaWindowHours({ MARINA_ARENA_WINDOW_HOURS: "48" })).toBe(48);
+    expect(arenaWindowHours({ MARINA_ARENA_WINDOW_HOURS: "168" })).toBe(168);
+    expect(arenaWindowHours({ MARINA_ARENA_WINDOW_HOURS: "500" })).toBe(24);
+    expect(arenaWindowHours({ MARINA_ARENA_WINDOW_HOURS: "-1" })).toBe(24);
+    expect(arenaWindowHours({ MARINA_ARENA_WINDOW_HOURS: "soon" })).toBe(24);
+    expect(
+      arenaConfigFromEnv({ MARINA_ARENA_ENTRANT: "x-y", MARINA_ARENA_WINDOW_HOURS: "500" })
+        ?.windowHours,
+    ).toBe(24);
   });
 });

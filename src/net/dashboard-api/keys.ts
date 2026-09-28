@@ -21,6 +21,7 @@ import { testKeyConnectivity } from "../../engine/commands/key";
 import type { Engine } from "../../engine/engine";
 import type { MarinaDB } from "../../persistence/database";
 import type { EntityId } from "../../types";
+import { localMcpPort } from "../listen-ports";
 import { discoverModels } from "../model-discovery";
 import { type EndpointConfig, getEndpointConfig, setEndpointConfig } from "../model-endpoint";
 import {
@@ -53,7 +54,7 @@ async function handleKeyAdd(req: Request, db: MarinaDB): Promise<Response> {
 function getMcpInfo(req: Request): object {
   const host = req.headers.get("Host") ?? "localhost:3300";
   const bare = host.replace(/:\d+$/, "");
-  const mcpPort = Number(process.env.MCP_PORT) || 3301;
+  const mcpPort = localMcpPort();
 
   return {
     url: `http://${bare}:${mcpPort}/mcp`,
@@ -415,11 +416,14 @@ function handleEnvGet(): Response {
 }
 
 /**
- * Env vars read live from process.env on each access (safe to hot-reload). A
- * key the reference tags `@restart` is never reported as applied live, even if
- * it is listed here.
+ * Variables read at call time, so a dashboard edit takes effect without a
+ * restart. Anything read once at boot (START_ROOM, the search providers'
+ * TAVILY_API_KEY / SEARXNG_URL, AGENT_AUTORESPAWN, MAX_AGENTS,
+ * MAX_AGENT_UPTIME_MS) is NOT listed: it is written to .env and reported
+ * as restart-required instead of pretending to apply live. A key the
+ * reference tags `@restart` is never reported as applied live either.
  */
-export const HOT_RELOADABLE_VARS = new Set([
+export const HOT_RELOADABLE_VARS: ReadonlySet<string> = new Set([
   "ALLOWED_ORIGINS",
   "MODEL_API_KEYS",
   "MEM_API_KEYS",

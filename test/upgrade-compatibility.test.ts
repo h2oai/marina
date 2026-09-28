@@ -14,6 +14,10 @@ test("a schema-131 database upgrades with stable note IDs; newer schemas fail cl
   const path = join(dir, "world.db");
   try {
     const old = new Database(path);
+    // A throwaway fixture: skip per-commit fsyncs while replaying ~130
+    // historical migrations, or a busy CI disk turns seconds into a timeout.
+    // The upgrade under test (new MarinaDB below) runs with normal durability.
+    old.exec("PRAGMA synchronous = OFF");
     old.exec(BASE_SCHEMA);
     for (const migration of MIGRATIONS.filter((m) => m.version <= 131)) {
       old.transaction(() => {
@@ -51,6 +55,10 @@ test("schema-132 twins and adopted reflections acquire owner-bound projections o
   const path = join(dir, "world.db");
   try {
     const old = new Database(path);
+    // A throwaway fixture: skip per-commit fsyncs while replaying ~130
+    // historical migrations, or a busy CI disk turns seconds into a timeout.
+    // The upgrade under test (new MarinaDB below) runs with normal durability.
+    old.exec("PRAGMA synchronous = OFF");
     old.exec(BASE_SCHEMA);
     for (const migration of MIGRATIONS.filter((m) => m.version <= 132)) {
       old.exec(migration.sql);

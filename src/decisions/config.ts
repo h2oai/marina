@@ -17,7 +17,10 @@
  *                              chat-classifier (alias classifier, llm)
  *   MARINA_DECISION_MODEL      backend model id. decisions-api default
  *                              `typesafe/jev-1.13` (pin a version; any Jev-family
- *                              or OpenJev id works). chat-classifier: required.
+ *                              or OpenJev id works). chat-classifier: default
+ *                              openai/gpt-6-luna on OpenRouter,
+ *                              zai-org/GLM-5.3-Flash on the Hugging Face router;
+ *                              required for any other base URL.
  *   MARINA_DECISION_BASE_URL   decisions-api default https://openrouter.ai/api/alpha
  *                              chat-classifier default https://openrouter.ai/api/v1
  *   MARINA_DECISION_API_KEY    bearer for the backend; falls back to
@@ -113,6 +116,17 @@ function preset(raw: string | undefined): Preset | undefined {
   }
 }
 
+/**
+ * A current, cheap chat model for a chat-classifier backend with no
+ * MARINA_DECISION_MODEL, on the hosts whose model ids Marina knows; any other
+ * base URL still needs the model named (undefined = decisions stay off).
+ */
+export function defaultClassifierModel(baseUrl: string): string | undefined {
+  if (/^https:\/\/openrouter\.ai\//.test(baseUrl)) return "openai/gpt-6-luna";
+  if (/^https:\/\/router\.huggingface\.co(\/|$)/.test(baseUrl)) return "zai-org/GLM-5.3-Flash";
+  return undefined;
+}
+
 /** Parse the decision config, or undefined when decisions are off / incomplete. */
 export function decisionConfigFromEnv(
   env: NodeJS.ProcessEnv = process.env,
@@ -121,9 +135,12 @@ export function decisionConfigFromEnv(
   if (!name) return undefined;
   const d = PRESETS[name];
   const kind = d.kind;
-  const model = env.MARINA_DECISION_MODEL?.trim() || d.model;
-  if (!model) return undefined;
   const baseUrl = env.MARINA_DECISION_BASE_URL?.trim() || d.baseUrl;
+  const model =
+    env.MARINA_DECISION_MODEL?.trim() ||
+    d.model ||
+    (kind === "chat-classifier" ? defaultClassifierModel(baseUrl) : undefined);
+  if (!model) return undefined;
   const path = kind === "decisions-api" ? env.MARINA_DECISION_PATH?.trim() || d.path : undefined;
   // A vendor key only ever goes to that vendor's host.
   const vendorKey = /^https:\/\/openrouter\.ai\//.test(baseUrl)

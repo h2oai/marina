@@ -67,8 +67,11 @@ describe("output reservation", () => {
     const model = resolveModel("marina/default");
     expect(model.maxTokens).toBe(DEFAULT_CLOUD_MAX_TOKENS);
     if (!process.env.MARINA_DEFAULT_CONTEXT_WINDOW && !process.env.MARINA_DEFAULT_MAX_TOKENS) {
+      // 16384 output tokens by default: room for a thinking turn's budget and its answer.
+      expect(model.maxTokens).toBe(16_384);
       expect(model.contextWindow).toBe(128_000);
-      expect(effectivePromptWindow(model)).toBeGreaterThanOrEqual(120_000);
+      // 128k − (16384 + 2 % margin) ⇒ the prompt keeps ≥ 108k, never half the window.
+      expect(effectivePromptWindow(model)).toBeGreaterThanOrEqual(108_000);
     }
   });
 
@@ -385,6 +388,10 @@ describe("mid-run compaction (prepareNextTurn)", () => {
     );
     const i = adapter as unknown as CompactionInternals;
     expect(i.effectiveContextWindow).toBe(20_000);
+    // The turn arithmetic above assumes a 4096-token output reservation; pin it
+    // so the fixture does not move with the cloud default (16384 would reserve
+    // half of this 20k window).
+    (i as unknown as { model: { maxTokens: number } }).model.maxTokens = 4096;
     let archives = 0;
     i.platformMemory.archiveContext = async () => {
       archives++;

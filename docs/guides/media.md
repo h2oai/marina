@@ -40,13 +40,17 @@ You can use **any** image model, including local ones — no code change:
   `http://localhost:<port>/v1`.
 
 Pick a provider per request with `--model` (default image model is
-`openai/gpt-image-1`; override the instance default in Admin → Model). Optional
-daily caps (0 = unlimited):
+`openai/gpt-image-1`; override the instance default in Admin → Model). Each participant may start at most
+50 image and 5 video jobs in any 24 hours by default (`0` = unlimited):
 
 ```bash
-MAX_IMAGE_JOBS_PER_DAY=0
-MAX_VIDEO_JOBS_PER_DAY=0
+MAX_IMAGE_JOBS_PER_DAY=50
+MAX_VIDEO_JOBS_PER_DAY=5
 ```
+
+Priced cloud jobs also count toward the world's daily spend cap
+(`MARINA_DAILY_SPEND_CAP_USD`, default $50, `0` = no cap) at their estimated price, and are
+refused once it is reached. Local endpoints with no known price are not refused by it.
 
 Notes:
 - **Prompt moderation** runs against OpenAI when an `OPENAI_API_KEY` is present,

@@ -153,8 +153,9 @@ curl -X POST http://localhost:3300/mem/notes \
 ## Populate the World
 
 Marina remains usable without an LLM, but autonomous agents need a provider key or reachable local
-model. The default Workbench seeds Host, Builder, Critic, and Chronicler configurations; saved
-agents start automatically only when `AGENT_AUTORESPAWN=true`. The Showcase world also contains
+model. The default Workbench seeds Host, Builder, Critic, and Chronicler configurations; on a
+local install they start on boot once a provider is configured (elsewhere only with
+`AGENT_AUTORESPAWN=true`), bounded by a $50/day default spend cap (`MARINA_DAILY_SPEND_CAP_USD`). The Showcase world also contains
 lazy room agents that start when their rooms are entered. Three ways to operate agents:
 
 **1. Environment variable** — set any one provider key and start:
@@ -162,8 +163,8 @@ lazy room agents that start when their rooms are entered. Three ways to operate 
 ANTHROPIC_API_KEY=sk-ant-... bun run start
 ```
 (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, and others work too — see
-the [environment reference](docs/reference/environment.md#model-provider-keys).) To start the seeded Workbench population on boot, also set
-`AGENT_AUTORESPAWN=true`. Verify actual state with `readiness`, `agent list`, and `who`.
+the [environment reference](docs/reference/environment.md#model-provider-keys).) A local install starts the seeded Workbench population on boot
+(`AGENT_AUTORESPAWN=false` keeps it off; shared/public deployments need `AGENT_AUTORESPAWN=true`). Verify actual state with `readiness`, `agent list`, and `who`.
 
 **2. From the dashboard** — open `http://localhost:3300/`:
 - **Admin → Keys**: click **+ Add**, choose a provider, paste the key, and click **Save Key**. Use **Test** to verify connectivity; no restart is required.
@@ -379,8 +380,8 @@ Admin → Settings. The settings most people touch:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / … | *(none)* | One provider key lets agents think. OpenRouter also enables `forecast`. |
-| `AGENT_AUTORESPAWN` | `false` | Start saved and world-seeded agents (the Workbench population) at boot |
-| `MARINA_DAILY_SPEND_CAP_USD` | *(no cap)* | Daily USD ceiling on everything the world pays upstream |
+| `AGENT_AUTORESPAWN` | *(local: on with a provider)* | Start saved and world-seeded agents (the Workbench population) at boot; `false` keeps them off |
+| `MARINA_DAILY_SPEND_CAP_USD` | `50` | Daily USD ceiling on everything the world pays upstream; `0` = no cap |
 | `MARINA_WORLD` | `default` | World definition to load (see `worlds/`) |
 | `WS_PORT` | `3300` | Web chat, dashboard, HTTP and model API; MCP and the log viewer default to the next two ports |
 | `DB_PATH` | `marina.db` | SQLite world database |

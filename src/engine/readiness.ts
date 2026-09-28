@@ -14,7 +14,9 @@ import {
 import { activeGateQuestions, BASELINE_GATE_QUESTIONS } from "../decisions/gate-questions";
 import { decisionHealth } from "../decisions/health";
 import { describeDecisionSettings } from "../decisions/settings";
+import { localModelApiKey } from "../net/model-api/shared";
 import { describeDefaultUpstream } from "../net/model-api/upstream";
+import { autoRespawnEnabled } from "./auto-respawn";
 import { type AutonomyPosture, getAutonomyPosture } from "./autonomy";
 import type { Engine } from "./engine";
 import { dailySpend, formatSpendUsd } from "./spend-ledger";
@@ -144,19 +146,25 @@ export function computeReadiness(engine: Engine): ReadinessReport {
   );
 
   // ── Agent auto-respawn — whether seeded/saved agents start on boot ────────
+  const autoRespawn = autoRespawnEnabled(engine.agentRuntime.isAvailable(), env);
+  const autoRespawnExplicit = !!env.AGENT_AUTORESPAWN?.trim();
   checks.push(
-    env.AGENT_AUTORESPAWN === "true"
+    autoRespawn
       ? {
           id: "auto-respawn",
           label: "Agent auto-respawn",
           status: "ok",
-          detail: "saved agents (e.g. the Chronicler) respawn on boot",
+          detail: autoRespawnExplicit
+            ? "saved agents (e.g. the Chronicler) respawn on boot"
+            : "saved agents (e.g. the Chronicler) respawn on boot (local-install default; AGENT_AUTORESPAWN=false turns it off)",
         }
       : {
           id: "auto-respawn",
           label: "Agent auto-respawn",
           status: "off",
-          detail: "saved agents do NOT auto-spawn on boot",
+          detail: autoRespawnExplicit
+            ? "saved agents do NOT auto-spawn on boot (AGENT_AUTORESPAWN)"
+            : "saved agents do NOT auto-spawn on boot (default: on only for a local install with a provider)",
           remediation:
             "Set AGENT_AUTORESPAWN=true to auto-spawn seeded/saved agents, or spawn them manually with `agent spawn`.",
         },
@@ -281,22 +289,32 @@ export function computeReadiness(engine: Engine): ReadinessReport {
   const spend = dailySpend(env);
   if (spend.capUsd !== undefined) {
     const share = spend.spentUsd / spend.capUsd;
+    const source = env.MARINA_DAILY_SPEND_CAP_USD?.trim()
+      ? "MARINA_DAILY_SPEND_CAP_USD"
+      : "default cap; set MARINA_DAILY_SPEND_CAP_USD to change it";
     checks.push({
       id: "daily-spend",
       label: "Daily spend",
       status: spend.reached ? "off" : share >= 0.8 ? "degraded" : "ok",
-      detail: `${formatSpendUsd(spend.spentUsd)} of ${formatSpendUsd(spend.capUsd)} today (UTC)${spend.reached ? " — model calls, decisions and forecasts are refused; agents paused" : ""}`,
+      detail: `${formatSpendUsd(spend.spentUsd)} of ${formatSpendUsd(spend.capUsd)} today (UTC, ${source})${spend.reached ? " — model calls, decisions, forecasts and media generation are refused; agents paused" : ""}`,
       ...(spend.reached || share >= 0.8
         ? {
             remediation:
-              "Wait for 00:00 UTC, or raise MARINA_DAILY_SPEND_CAP_USD (operator env) if the spend is intended.",
+              "Wait for 00:00 UTC, or raise MARINA_DAILY_SPEND_CAP_USD=<usd> (operator env, restart; 0 = no cap) if the spend is intended.",
           }
         : {}),
+    });
+  } else {
+    checks.push({
+      id: "daily-spend",
+      label: "Daily spend",
+      status: "ok",
+      detail: `${formatSpendUsd(spend.spentUsd)} today (UTC) — uncapped (MARINA_DAILY_SPEND_CAP_USD=${env.MARINA_DAILY_SPEND_CAP_USD?.trim() ?? "0"})`,
     });
   }
 
   // ── Model API (/v1) — Marina-as-an-LLM for external clients ───────────────
-  const apiAuth = !!env.MODEL_API_KEYS || !!env.MARINA_LOCAL_API_KEY || isOpenApiMode(env);
+  const apiAuth = !!env.MODEL_API_KEYS || !!localModelApiKey(env) || isOpenApiMode(env);
   if (apiAuth && hasKey) {
     checks.push({
       id: "model-api",
@@ -541,7 +559,7 @@ export function computeReadiness(engine: Engine): ReadinessReport {
     (medianResponseMs === undefined || medianResponseMs < req.maximumMedianResponseMs);
   const score = Math.round(
     (hasKey ? 20 : 0) +
-      (env.AGENT_AUTORESPAWN === "true" ? 10 : 0) +
+      (autoRespawnEnabled(engine.agentRuntime.isAvailable(), env) ? 10 : 0) +
       warmRatio * 30 +
       Math.min(20, recentMeaningfulEvents * 4) +
       (medianResponseMs === undefined

@@ -109,6 +109,7 @@ populated older databases, FTS writes/deletion, and reopening.
 New changes belong in `FORWARD_MIGRATIONS`, after its last version. Migration 138
 converts numeric memory inside the same transaction as its DDL and version marker. Migration 139
 adds `challenge_outcomes` (answered challenges, see civic-substrate.md), migration 140 carries
-capability across to the `world.lineage` / `world.code` gates, and migration 141 adds `roles.loop`
-(JSON role-owned loop sections, see agent-cognition.md). Do not edit the baseline
+capability across to the `world.lineage` / `world.code` gates, migration 141 adds `roles.loop`
+(JSON role-owned loop sections, see agent-cognition.md), and migration 142 rebuilds `spend_daily`
+so image/video generation (`media`) joins the daily spend ledger. Do not edit the baseline
 or archived migrations to implement a new feature.

@@ -93,8 +93,12 @@ export interface ClientOptions {
     maxReconnectAttempts?: number;
     /** Max delay between reconnect attempts in ms (default: 30000) */
     maxReconnectDelay?: number;
-    /** Command response buffer window in ms (default: 500) */
+    /** Quiet interval for legacy servers only (default: 500). Silence is not completion. */
     commandDrainTimeout?: number;
+    /** Auto negotiates legacy compatibility; correlated refuses legacy commands before sending. */
+    commandMode?: "auto" | "correlated";
+    /** Command completion timeout in ms (default: 120000). A timeout never implies success. */
+    commandTimeout?: number;
     /** Callback fired immediately after WebSocket opens, before any login message is sent. */
     onOpen?: (ws: WebSocket) => void;
     /** Internal-agent token. Sent with login/auth messages so the engine can
@@ -102,6 +106,14 @@ export interface ClientOptions {
     internalToken?: string;
 }
 type PerceptionHandler = (p: Perception) => void;
+/** Legacy results are observations, without guaranteed attribution or completion. */
+export type CommandResult = Perception[] & {
+    readonly completion: "confirmed" | "unconfirmed";
+};
+export declare class CommandError extends Error {
+    readonly perceptions: Perception[];
+    constructor(message: string, perceptions?: Perception[]);
+}
 export type ClientEventMap = {
     connect: [SessionInfo];
     disconnect: [];
@@ -139,6 +151,8 @@ export declare function hasCorrelationTag(text: string, id: string): boolean;
 export declare function stripCorrelationTag(text: string, id: string): string;
 export interface TellAndAwaitOptions {
     signal?: AbortSignal;
+    /** Observe the correlated send receipt (distinct from the peer's reply). */
+    onDelivered?: (perceptions: Perception[]) => void;
     /** Refuse untagged replies; required to isolate concurrent machine requests. */
     strictCorrelation?: boolean;
     /**
@@ -163,17 +177,23 @@ export declare class MarinaClient {
     private options;
     private session;
     private handlers;
-    private commandResolvers;
     private connected;
     private pingTimer;
     private reconnectTimer;
     private reconnectAttempts;
+    private commandProtocol;
+    private commandSession;
+    private legacyCommands;
+    private legacyCommandUncertain;
     private eventListeners;
     constructor(url: string, options?: ClientOptions);
     /** Check if connected to the server. */
     isConnected(): boolean;
     /** Get the server URL. */
     getUrl(): string;
+    /** Negotiated when login/auth succeeds; no commands are replayed to detect support. */
+    getCommandProtocol(): "correlated" | "legacy" | undefined;
+    private negotiateCommands;
     /** Subscribe to a client event. */
     on<K extends ClientEventName>(event: K, handler: (...args: ClientEventMap[K]) => void): void;
     /** Unsubscribe from a client event. */
@@ -183,8 +203,10 @@ export declare class MarinaClient {
     connect(name: string): Promise<SessionInfo>;
     /** Reconnect using a previously issued session token. */
     reconnect(token: string): Promise<SessionInfo>;
-    /** Send a command and collect resulting perceptions. */
-    command(cmd: string): Promise<Perception[]>;
+    /** Confirmed results on current servers; explicitly unconfirmed observations on legacy servers. */
+    command(cmd: string, signal?: AbortSignal): Promise<CommandResult>;
+    private legacyCommand;
+    private collectLegacyCommand;
     private capabilityCache?;
     /** Query the authenticated live command registry, including room overrides. */
     capabilities(timeoutMs?: number): Promise<CapabilityManifest>;
@@ -596,8 +618,8 @@ export interface MarinaExtension {
 ```typescript
 export type { CapabilityManifest, CommandCatalogEntry } from "./capabilities.js";
 export { renderCapabilityRoster } from "./capabilities.js";
-export type { ClientOptions, RoomView, SessionInfo } from "./client.js";
-export { MarinaAgent, MarinaClient } from "./client.js";
+export type { ClientOptions, CommandResult, RoomView, SessionInfo } from "./client.js";
+export { CommandError, MarinaAgent, MarinaClient } from "./client.js";
 export type { CommandField, CommandForm, CommandUsage } from "./command-forms.js";
 export { commandFormPrefix, compileCommandForms, composeCommand, matchCommandForm, } from "./command-forms.js";
 export { commandInputSchema } from "./command-schema.js";
@@ -2512,6 +2534,8 @@ export type PerceptionKind = "room" | "message" | "broadcast" | "movement" | "er
 export interface Perception {
     kind: PerceptionKind;
     timestamp: number;
+    /** Output of one explicitly correlated WebSocket command. Ambient events omit this. */
+    command_request_id?: string;
     tag?: string;
     data: Record<string, unknown>;
 }

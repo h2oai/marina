@@ -7,6 +7,7 @@ import {
   CODE_MODE_SYSTEM_PROMPT,
   formatUntrustedContext,
 } from "../../agent/prompts/support-prompts";
+import { localWsPort } from "../../net/listen-ports";
 
 export function parseExecApprovalTimeout(value: string | undefined): number | undefined {
   const parsed = Number.parseInt((value ?? "").trim(), 10);
@@ -17,7 +18,7 @@ export async function answerViaLocalModel(
   query: string,
   context: string,
 ): Promise<string | undefined> {
-  const port = Number(process.env.WS_PORT) || 3300;
+  const port = localWsPort();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 45_000);
 
@@ -71,7 +72,7 @@ export async function answerCodeViaLocalModel(request: {
   sessionId: string;
   workspaceRoot: string;
 }): Promise<string | undefined> {
-  const port = Number(process.env.WS_PORT) || 3300;
+  const port = localWsPort();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 90_000);
 

@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { localWsPort } from "../net/listen-ports";
 import { receiptForUnifiedContext } from "../net/memory-receipt";
 import type { CommandCatalogEntry } from "../sdk/capabilities";
 import type { UnifiedContextResult as ParticipantContext } from "../sdk/memory-context";
@@ -124,6 +125,7 @@ import {
   getPromptVersion,
 } from "./prompts/lean-system";
 import { COMPACTION_SYSTEM_PROMPT, formatUntrustedContext } from "./prompts/support-prompts";
+import { defaultModelPrice, isUnpricedModel, sniffProviderCost } from "./provider-cost";
 import { SocialAwareness } from "./social";
 import { mediateToolCall, POLICY_LANGUAGE_LABEL } from "./tool-policy";
 import {
@@ -782,7 +784,9 @@ function synthesizeModel(provider: string, modelId: string): Model<Api> | undefi
     // params the model may reject; the upstream still honors a real reasoning
     // model's defaults.
     reasoning: false,
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    // Marina's own default ids carry their list price; any other unlisted id
+    // is $0 here and priced from the provider's reported `usage.cost`.
+    cost: defaultModelPrice(modelId) ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
   };
 }
 
@@ -849,7 +853,7 @@ export function resolveModel(modelStr: string, localPort?: number): Model<Api> {
   if (provider === "marina") {
     const baseUrl = remote
       ? normalizeMarinaBaseUrl(remote)
-      : `http://localhost:${localPort ?? (Number(process.env.WS_PORT) || 3300)}/v1`;
+      : `http://localhost:${localPort ?? localWsPort()}/v1`;
     return {
       id: modelId || "default",
       name: remote
@@ -1157,6 +1161,8 @@ export class LeanAgentAdapter implements AgentHandle {
   };
   /** Accounting headers of the most recent provider response, consumed by the next turn_end. */
   private pendingProxyMeta: ProxyResponseMeta | null = null;
+  /** `usage.cost` the provider billed for the last reply of an unpriced model. */
+  private pendingProviderCostUsd: number | null = null;
   /** Last `x-marina-upstream-model` seen — what the proxy actually routed this agent to. */
   private lastUpstreamModel: string | null = null;
   /** Injected fetch for provider HTTP (tests / embedders); undefined = globalThis.fetch. */
@@ -4074,7 +4080,13 @@ The goal is a smaller, sharper memory — not more notes.`;
       maxRetries: PROVIDER_MAX_RETRIES,
       ...(this.outputMaxTokens ? { maxTokens: this.outputMaxTokens } : {}),
     };
-    if (!this.providerFetch && !isMarinaProxyModel(model)) return base;
+    const proxied = isMarinaProxyModel(model);
+    // A direct-provider model pi-ai cannot price (synthesized at $0, e.g. a new
+    // OpenRouter id) reads the provider's own `usage.cost` off the reply so the
+    // daily spend ledger sees the real charge. A proxied call is already
+    // recorded by the passthru, so it is never sniffed (no double count).
+    const sniffCost = !proxied && isUnpricedModel(model);
+    if (!this.providerFetch && !proxied && !sniffCost) return base;
     const inner = options?.onResponse;
     const upstream = this.providerFetch ?? globalThis.fetch;
     // Bun's `typeof fetch` carries a static `preconnect`; the wrapper only needs
@@ -4085,7 +4097,10 @@ The goal is a smaller, sharper memory — not more notes.`;
     ) => {
       const response = await upstream(input, init);
       this.noteProviderResponse(response.headers);
-      return response;
+      if (!sniffCost) return response;
+      return sniffProviderCost(response, (usd) => {
+        this.pendingProviderCostUsd = usd;
+      });
     }) as typeof fetch;
     return {
       ...base,
@@ -4115,10 +4130,14 @@ The goal is a smaller, sharper memory — not more notes.`;
   private recordTurnUsage(usage: TurnUsageMetrics, endedAt: number): TurnUsageMetrics {
     const proxy = this.pendingProxyMeta;
     this.pendingProxyMeta = null;
-    // The daily ledger counts a turn only when its own provider priced it; a
-    // cost from the proxy header was already recorded by the passthru.
-    recordSpend("agent", usage.costUsd, endedAt);
-    const merged: TurnUsageMetrics = { ...usage };
+    const providerCost = this.pendingProviderCostUsd;
+    this.pendingProviderCostUsd = null;
+    // The daily ledger counts a turn only when its own provider priced it —
+    // from the catalog, else the provider-reported `usage.cost` of an unpriced
+    // model; a cost from the proxy header was already recorded by the passthru.
+    const ownCost = usage.costUsd || providerCost || undefined;
+    recordSpend("agent", ownCost, endedAt);
+    const merged: TurnUsageMetrics = { ...usage, ...(ownCost ? { costUsd: ownCost } : {}) };
     if (proxy) {
       if (merged.cacheWriteTokens === undefined && proxy.cacheWriteTokens !== undefined)
         merged.cacheWriteTokens = proxy.cacheWriteTokens;

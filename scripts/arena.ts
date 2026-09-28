@@ -36,7 +36,7 @@ import { closeSync, mkdtempSync, openSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { parseForecasterSpec } from "../src/arena/config";
+import { arenaWindowHours, parseForecasterSpec } from "../src/arena/config";
 import {
   evaluateResolved,
   evaluateShapes,
@@ -363,7 +363,7 @@ async function main(): Promise<number> {
             throw new Error("usage: bun run arena shadow run <round_id|due> [--forecaster …]");
           const spec = parseForecasterSpec(values.forecaster ?? DEFAULT_RESEARCH);
           const data = arenaData();
-          const hours = Number(process.env.MARINA_ARENA_WINDOW_HOURS ?? 24);
+          const hours = arenaWindowHours();
           const ids =
             target === "due"
               ? (await data.openRounds())

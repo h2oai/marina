@@ -14,6 +14,7 @@
  */
 
 import type { RateLimiter } from "../auth/rate-limiter";
+import { secretsEqual } from "../auth/secret-compare";
 import { sanitizeEntityName } from "../engine/entity-name";
 import { isOpenApiMode } from "../engine/trust-profile";
 import { memoryAccess } from "../memory/access";
@@ -22,6 +23,7 @@ import { expandMemoryRecall } from "../memory/retrieval";
 import { buildUnifiedContext, type UnifiedScope } from "../memory/unified-context";
 import type { MarinaDB } from "../persistence/database";
 import { corsHeaders } from "./cors";
+import { localModelApiKey } from "./model-api/shared";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -267,6 +269,12 @@ function authenticate(req: Request, db: MarinaDB): { agent: string } | { error: 
       if (agent) return { agent };
     }
 
+    // The local profile's generated model-API key opens /mem too, exactly
+    // as it opens /v1 (never outside `local` — see localModelApiKey). The
+    // key names no agent, so the caller says which one with X-Agent-Name.
+    const localKey = localModelApiKey();
+    if (localKey && secretsEqual(token, localKey)) return agentFromHeader(req, "local API key");
+
     // Check DB keys
     const dbKey = db.validateMemApiKey(token);
     if (dbKey) return { agent: dbKey.agent_name };
@@ -290,13 +298,23 @@ function authenticate(req: Request, db: MarinaDB): { agent: string } | { error: 
     };
   }
 
-  // Open mode: get agent name from header. Normalized with the same rule as a
-  // world login so a header like `memory:<principal>` cannot name the durable
-  // service silo (`isServiceMemoryNote`) or any other reserved namespace.
+  return agentFromHeader(req, "open mode");
+}
+
+/**
+ * The agent named by `X-Agent-Name` (open mode, or the local profile's key).
+ * Normalized with the same rule as a world login so a header like
+ * `memory:<principal>` cannot name the durable service silo
+ * (`isServiceMemoryNote`) or any other reserved namespace.
+ */
+function agentFromHeader(req: Request, via: string): { agent: string } | { error: Response } {
   const rawAgentName = req.headers.get("X-Agent-Name");
   if (!rawAgentName) {
     return {
-      error: error(400, "X-Agent-Name header required (or set MEM_API_KEYS and use Bearer auth)"),
+      error: error(
+        400,
+        `X-Agent-Name header required with the ${via} (or set MEM_API_KEYS and use Bearer auth)`,
+      ),
     };
   }
   const agentName = sanitizeEntityName(rawAgentName);

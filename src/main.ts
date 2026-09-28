@@ -32,16 +32,18 @@ import { AdapterManager } from "./net/adapter-manager";
 import { DashboardBroadcaster } from "./net/dashboard-ws";
 import { FeedPublisher } from "./net/feed-publisher";
 import { formatPerception } from "./net/formatter";
+import { recordListenPort } from "./net/listen-ports";
 import { loadOrCreateLocalApiKey, localApiKeyPath } from "./net/local-api-key";
 import { LogServer } from "./net/log-server";
 import { McpServerAdapter } from "./net/mcp-server";
 import { describeDefaultUpstream } from "./net/model-api";
-import { detectLocalContextWindow } from "./net/model-discovery";
+import { detectLocalContextWindow, detectOllamaDefaultModel } from "./net/model-discovery";
 import { TelnetServer } from "./net/telnet-server";
 import { isLoopbackHostname, resolveWsBindHostname, WebSocketServer } from "./net/websocket-server";
 import { MarinaDB } from "./persistence/database";
 import { acquireDatabaseLease } from "./persistence/database-lease";
 import { isKeyEncryptionEnabled } from "./persistence/key-crypto";
+import { ensureKeySecret, type KeySecretSource } from "./persistence/key-secret-file";
 import { LocalStorageProvider } from "./storage/local-provider";
 import { loadOtlpExporterConfig, MarinaOtlpExporter } from "./telemetry/otlp-exporter";
 import { loadOtlpLogExporterConfig, MarinaOtlpLogExporter } from "./telemetry/otlp-log-exporter";
@@ -63,14 +65,24 @@ function parsePort(name: string, fallback: number): number {
   return Number.isFinite(n) ? Math.trunc(n) : fallback;
 }
 
+/** An explicitly configured numeric port (0/negative = disabled), else undefined. */
+function explicitPort(name: string): number | undefined {
+  const raw = process.env[name]?.trim();
+  if (!raw) return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) ? Math.trunc(n) : undefined;
+}
+
 const WS_PORT = Math.max(0, parsePort("WS_PORT", 3300));
 // Telnet is plaintext and unauthenticated — off by default. Set TELNET_PORT
 // explicitly (e.g. 4000) to enable it, and only on a trusted network.
 const TELNET_PORT = parsePort("TELNET_PORT", 0);
 // The auxiliary listeners follow WS_PORT unless set explicitly, so a second
 // instance started with only WS_PORT=3400 does not collide on 3301/3302.
-const MCP_PORT = parsePort("MCP_PORT", WS_PORT > 0 ? WS_PORT + 1 : 3301);
-const LOG_PORT = parsePort("LOG_PORT", WS_PORT > 0 ? WS_PORT + 2 : 3302);
+// With WS_PORT=0 (ephemeral) they follow the port the WebSocket server actually
+// bound, resolved once it has started (see startAuxiliaryListeners below).
+const MCP_PORT_SETTING = explicitPort("MCP_PORT");
+const LOG_PORT_SETTING = explicitPort("LOG_PORT");
 const TICK_MS = Number(process.env.TICK_MS) || 1000;
 const DB_PATH = process.env.DB_PATH || "marina.db";
 
@@ -250,12 +262,35 @@ logger.addSink((entry) => {
   structuredLogWrites++;
   if (structuredLogWrites % 250 === 0) db.pruneStructuredLogs(structuredLogRetention);
 });
-// Encrypt any plaintext API keys at rest once MARINA_KEY_SECRET is configured,
-// then surface the "encrypted but can't decrypt" misconfiguration loudly —
-// otherwise those keys silently read as missing.
+// Key-encryption secret by default: without MARINA_KEY_SECRET, a random
+// secret lives next to the database (<DB_PATH>.key-secret, 0600) so keys saved
+// from now on are encrypted at rest. Existing plaintext rows are left as they
+// are (they keep working); only an explicit MARINA_KEY_SECRET migrates them.
+let keySecret: KeySecretSource = { source: "env" };
 try {
-  const migrated = db.migrateApiKeysToEncrypted();
-  if (migrated > 0) logger.info("security", `Encrypted ${migrated} API key(s) at rest`);
+  keySecret = ensureKeySecret(DB_PATH, () => db.auditEncryptedKeys().encrypted);
+  if (keySecret.source === "created" || keySecret.source === "file") {
+    logger.info(
+      "security",
+      `${keySecret.source === "created" ? "Created" : "Using"} the key-encryption secret ${keySecret.path} (mode 600) — stored provider keys are encrypted with it; back it up with the database, or set MARINA_KEY_SECRET`,
+    );
+  } else if (keySecret.source === "none" && keySecret.reason === "orphaned") {
+    logger.warn(
+      "security",
+      `${keySecret.encrypted} API key(s) are encrypted at rest but neither MARINA_KEY_SECRET nor ${keySecret.path} exists — restore the secret they were encrypted with (no new secret was generated, so nothing is overwritten).`,
+    );
+  }
+} catch (err) {
+  logger.error("security", "Key-encryption secret could not be prepared", { err });
+}
+// Encrypt any plaintext API keys at rest once MARINA_KEY_SECRET is configured
+// explicitly, then surface the "encrypted but can't decrypt" misconfiguration
+// loudly — otherwise those keys silently read as missing.
+try {
+  if (keySecret.source === "env") {
+    const migrated = db.migrateApiKeysToEncrypted();
+    if (migrated > 0) logger.info("security", `Encrypted ${migrated} API key(s) at rest`);
+  }
 
   const audit = db.auditEncryptedKeys();
   if (audit.encrypted > 0 && !isKeyEncryptionEnabled()) {
@@ -443,34 +478,6 @@ const sessionCleanupInterval = setInterval(() => {
   if (removed > 0) logger.info("auth", `Cleaned up ${removed} expired session(s)`);
 }, SESSION_CLEANUP_INTERVAL_MS);
 
-// ─── Live Log Server ────────────────────────────────────────────────────────
-
-const logServer =
-  LOG_PORT > 0
-    ? new LogServer({
-        port: LOG_PORT,
-        hostname: RESOLVED_WS_HOST,
-        resolveEntity: (id) => engine.entities.get(id)?.name,
-      })
-    : undefined;
-if (logServer) {
-  try {
-    logServer.start();
-    engine.addEventListener((event) => logServer.handleEvent(event));
-  } catch (err) {
-    // The live log view is auxiliary: a taken port disables it, it never takes
-    // the whole server down (it used to, before the WebSocket even bound).
-    const e = err as NodeJS.ErrnoException;
-    if (e?.code !== "EADDRINUSE" && !/EADDRINUSE|in use/i.test(e?.message ?? "")) throw err;
-    logger.warn(
-      "main",
-      `Log server disabled: port ${LOG_PORT} is in use (set LOG_PORT to move it)`,
-    );
-  }
-} else {
-  logger.info("engine", "Log server disabled (LOG_PORT <= 0)");
-}
-
 // ─── Network Layer ────────────────────────────────────────────────────────────
 
 const wsServer = new WebSocketServer(engine, WS_PORT, rateLimiter);
@@ -558,9 +565,7 @@ wsServer.setOnNodeCreated((event) => {
 
 const telnetServer =
   TELNET_PORT > 0 ? new TelnetServer(engine, TELNET_PORT, rateLimiter) : undefined;
-const mcpServer = MCP_PORT > 0 ? new McpServerAdapter(engine, MCP_PORT, rateLimiter) : undefined;
 if (!telnetServer) logger.info("engine", "Telnet server disabled (TELNET_PORT <= 0)");
-if (!mcpServer) logger.info("engine", "MCP server disabled (MCP_PORT <= 0)");
 
 // Adapter manager (hot-reloadable external platform adapters)
 const adapterCtx = { engine, rateLimiter, db, formatPerception };
@@ -590,10 +595,45 @@ function startListener(label: string, envVar: string, port: number, start: () =>
 }
 
 startListener("WebSocket/HTTP", "WS_PORT", WS_PORT, () => wsServer.start());
-if (telnetServer) startListener("telnet", "TELNET_PORT", TELNET_PORT, () => telnetServer.start());
-if (mcpServer) startListener("MCP", "MCP_PORT", MCP_PORT, () => mcpServer.start());
-// Real bound port — differs from WS_PORT when WS_PORT=0 (ephemeral).
+// Real bound port — differs from WS_PORT when WS_PORT=0 (ephemeral). MCP and the
+// log server default to it +1 / +2, so a custom or ephemeral WS_PORT never
+// collides on a hard-coded 3301/3302.
 const boundWsPort = wsServer.getPort();
+const MCP_PORT = MCP_PORT_SETTING ?? boundWsPort + 1;
+const LOG_PORT = LOG_PORT_SETTING ?? boundWsPort + 2;
+if (telnetServer) startListener("telnet", "TELNET_PORT", TELNET_PORT, () => telnetServer.start());
+const mcpServer = MCP_PORT > 0 ? new McpServerAdapter(engine, MCP_PORT, rateLimiter) : undefined;
+if (!mcpServer) logger.info("engine", "MCP server disabled (MCP_PORT <= 0)");
+if (mcpServer) startListener("MCP", "MCP_PORT", MCP_PORT, () => mcpServer.start());
+
+// ─── Live Log Server ────────────────────────────────────────────────────────
+
+const logServer =
+  LOG_PORT > 0
+    ? new LogServer({
+        port: LOG_PORT,
+        hostname: RESOLVED_WS_HOST,
+        resolveEntity: (id) => engine.entities.get(id)?.name,
+      })
+    : undefined;
+if (logServer) {
+  try {
+    logServer.start();
+    recordListenPort("log", LOG_PORT);
+    engine.addEventListener((event) => logServer.handleEvent(event));
+  } catch (err) {
+    // The live log view is auxiliary: a taken port disables it, it never takes
+    // the whole server down (it used to, before the WebSocket even bound).
+    const e = err as NodeJS.ErrnoException;
+    if (e?.code !== "EADDRINUSE" && !/EADDRINUSE|in use/i.test(e?.message ?? "")) throw err;
+    logger.warn(
+      "main",
+      `Log server disabled: port ${LOG_PORT} is in use (set LOG_PORT to move it)`,
+    );
+  }
+} else {
+  logger.info("engine", "Log server disabled (LOG_PORT <= 0)");
+}
 
 // Auto-start adapters from env vars
 for (const platform of ["telegram", "discord"] as const) {
@@ -614,6 +654,12 @@ await Promise.all(
     if (n) logger.info("model", `Detected ${provider} context window: ${n} tokens`);
   }),
 );
+// Ollama's default model is whatever is installed (first of /api/tags) unless
+// MARINA_DEFAULT_OLLAMA_MODEL pins one.
+{
+  const detected = await detectOllamaDefaultModel();
+  if (detected) logger.info("model", `Ollama default model: ${detected} (first installed model)`);
+}
 
 // Initialize agent runtime (auto-respawns saved configs, requires WS server ready)
 await engine.initAgents(boundWsPort);
@@ -642,6 +688,16 @@ if (isOpenApiMode()) {
   );
 }
 // Local profile: a generated, persisted key instead of a closed API (see local-api-key.ts).
+// Outside it an inherited or hand-set MARINA_LOCAL_API_KEY is dropped, so it
+// can never become a bearer in a shared/public deployment (the model API also
+// refuses it outside `local`).
+if (TRUST.profile !== "local" && process.env.MARINA_LOCAL_API_KEY) {
+  delete process.env.MARINA_LOCAL_API_KEY;
+  logger.warn(
+    "security",
+    `MARINA_LOCAL_API_KEY ignored under the ${TRUST.profile} profile — set MODEL_API_KEYS for model-API callers`,
+  );
+}
 let LOCAL_API_KEY: string | undefined;
 if (!process.env.MODEL_API_KEYS && !isOpenApiMode() && TRUST.profile === "local") {
   const { key, created } = loadOrCreateLocalApiKey(localApiKeyPath(DB_PATH));
@@ -661,7 +717,12 @@ if (!process.env.MODEL_API_KEYS && !LOCAL_API_KEY && !isOpenApiMode()) {
     "MODEL_API_KEYS is not set — model API endpoints will reject requests. Set MODEL_API_KEYS or MARINA_OPEN_API=true",
   );
 }
-if (!process.env.MEM_API_KEYS && !isOpenApiMode()) {
+if (!process.env.MEM_API_KEYS && !isOpenApiMode() && LOCAL_API_KEY) {
+  logger.info(
+    "security",
+    "Memory API (/mem) accepts the local model-API key (Bearer + X-Agent-Name); set MEM_API_KEYS for per-agent keys",
+  );
+} else if (!process.env.MEM_API_KEYS && !isOpenApiMode()) {
   logger.warn(
     "security",
     "MEM_API_KEYS is not set — memory API endpoints will reject requests. Set MEM_API_KEYS or MARINA_OPEN_API=true",

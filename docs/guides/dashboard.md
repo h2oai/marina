@@ -269,7 +269,7 @@ raw logs.
 
 The Admin panel has these tabs:
 
-- **Keys** — manage LLM API keys. Click "+ Add" to store a key by selecting a provider from the dropdown and pasting the key value. Keys are shown masked. **Note: DB-stored keys are kept in plaintext** unless key encryption is enabled (Admin → Security shows the state). For sensitive deployments, prefer the environment-variable fallback (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `CEREBRAS_API_KEY`, `XAI_API_KEY`, `MISTRAL_API_KEY`, `DEEPSEEK_API_KEY`, `LLAMA_API_KEY`) — env keys are read live and never written to the database.
+- **Keys** — manage LLM API keys. Click "+ Add" to store a key by selecting a provider from the dropdown and pasting the key value. Keys are shown masked. DB-stored keys are encrypted at rest — with `MARINA_KEY_SECRET`, or else the secret Marina keeps in `<DB_PATH>.key-secret`; keys stored before that file existed stay plaintext until re-saved (Admin → Security shows the state). For sensitive deployments, prefer the environment-variable fallback (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `CEREBRAS_API_KEY`, `XAI_API_KEY`, `MISTRAL_API_KEY`, `DEEPSEEK_API_KEY`, `LLAMA_API_KEY`) — env keys are read live and never written to the database.
 - **Endpoint** — configure the runtime default model and model endpoint.
 - **Adapters** — view platform adapter status (Telegram, Discord, etc.)
 - **Roles** — browse defined roles and their traits
@@ -339,7 +339,7 @@ Select any of them for details in the inspector; its action link opens Admin →
   was stopped. Residents see only their own agents and no stop buttons.
 - **Spend** — rolling-hour and lifetime USD across the visible agents, the global and per-agent caps
   (`MARINA_MAX_COST_USD_PER_HOUR`, `MARINA_MAX_AGENT_COST_USD_PER_HOUR`, "unlimited" when unset; the
-  per-world daily cap `MARINA_DAILY_SPEND_CAP_USD` is reported by `readiness` as "Daily spend"), a
+  per-world daily cap `MARINA_DAILY_SPEND_CAP_USD`, default $50, is reported by `readiness` as "Daily spend"), a
   runtime-vs-cap bar, and the top spenders with a bar each (against the per-agent cap when there is
   one). The empty state names the two env vars.
 - **Retention** — when the last hourly pass ran, how long it took, rows deleted per table and the

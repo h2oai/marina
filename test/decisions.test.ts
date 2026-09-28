@@ -300,8 +300,21 @@ describe("config", () => {
       apiKey: "or",
       timeoutMs: 2000,
     });
-    // chat-classifier has no default model — any chat model, but you name it.
-    expect(decisionConfigFromEnv({ MARINA_DECISIONS: "llm" })).toBeUndefined();
+    // chat-classifier defaults to a current cheap model on the hosts Marina
+    // knows (OpenRouter, the HF router); any other base URL must name one.
+    expect(decisionConfigFromEnv({ MARINA_DECISIONS: "llm" })?.model).toBe("openai/gpt-6-luna");
+    expect(
+      decisionConfigFromEnv({
+        MARINA_DECISIONS: "llm",
+        MARINA_DECISION_BASE_URL: "https://router.huggingface.co/v1",
+      })?.model,
+    ).toBe("zai-org/GLM-5.3-Flash");
+    expect(
+      decisionConfigFromEnv({
+        MARINA_DECISIONS: "llm",
+        MARINA_DECISION_BASE_URL: "http://localhost:11434/v1",
+      }),
+    ).toBeUndefined();
     // The OpenRouter key never leaks to another host.
     const local = decisionConfigFromEnv({
       MARINA_DECISIONS: "chat-classifier",

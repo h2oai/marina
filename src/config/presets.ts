@@ -11,16 +11,21 @@ export function configurationPreset(name: string): Record<string, string> {
   const local = {
     WS_HOST: "127.0.0.1",
     TELNET_PORT: "0",
-    MARINA_ROOM_AGENTS: "false",
-    AGENT_AUTORESPAWN: "false",
     MARINA_TRADING_ENABLED: "false",
     MARINA_OPEN_API: "false",
     MARINA_ALLOW_INSECURE_PUBLIC: "false",
   };
-  if (name === "minimal") return { ...local, MARINA_WORLD: "empty", MCP_PORT: "0", LOG_PORT: "0" };
+  // Cost-controlled presets pin agents off explicitly. The workbench preset
+  // leaves them to the runtime defaults: room agents on, and seeded agents
+  // auto-respawn under the local profile once a provider is configured —
+  // bounded by the default daily spend cap (MARINA_DAILY_SPEND_CAP_USD, $50).
+  const agentsOff = { MARINA_ROOM_AGENTS: "false", AGENT_AUTORESPAWN: "false" };
+  if (name === "minimal")
+    return { ...local, ...agentsOff, MARINA_WORLD: "empty", MCP_PORT: "0", LOG_PORT: "0" };
   if (name === "workbench") return { ...local, MARINA_WORLD: "default" };
   return {
     ...local,
+    ...agentsOff,
     MARINA_WORLD: "commons",
     MARINA_PROFILE: "shared",
     MARINA_AUTH: "better-auth",

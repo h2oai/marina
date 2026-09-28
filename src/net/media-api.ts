@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Engine } from "../engine/engine";
+import { defaultImageModel } from "../engine/media/providers/image-registry";
 import type { MediaJobRow } from "../persistence/database";
 import type { EntityId } from "../types";
 import { buildCanvasPrincipal, resolveCanvasHttpPrincipal } from "./canvas-principal";
@@ -100,7 +101,7 @@ export async function handleMediaApi(
               entityId,
               entityName,
               prompt: body.prompt,
-              model: body.model ?? "openai/gpt-image-1",
+              model: body.model ?? defaultImageModel(engine.db?.getDefaultModel()),
               width: body.width ?? undefined,
               height: body.height ?? undefined,
               style: body.style ?? undefined,

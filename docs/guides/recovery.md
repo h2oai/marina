@@ -22,8 +22,12 @@ Paths resolve relative to the specification. Remove `auth` if sign-in is disable
 list additional code roots, custom worlds and separately managed credential files
 explicitly. Missing inputs fail the operation. Environment-injected secrets such as
 `MARINA_KEY_SECRET` and `BETTER_AUTH_SECRET` must be retained in your secret manager
-or supplied as a private listed file. Without the original encryption secret, stored
-provider keys cannot be decrypted.
+or supplied as a private listed file. When `MARINA_KEY_SECRET` is unset, Marina keeps its
+key-encryption secret in `<DB_PATH>.key-secret` (mode 0600) and encrypts provider keys saved
+from then on with it — list that file too (for example `"key-secret": "data/marina.db.key-secret"`)
+and copy it with any database-only backup. Without the original encryption secret, stored
+provider keys cannot be decrypted; Marina then warns at boot and never generates a replacement
+secret over them.
 
 ```bash
 bun run recovery create recovery.json /backups/marina-2026-09-26

@@ -1526,8 +1526,18 @@ describe("MCP transport hardening", () => {
     expect(hosts).toContain("mcp.example.com");
     expect(hosts).toContain("mcp.example.com:3301");
     expect(hosts).toContain("other.example:9000");
-    // Public bind without a declared list ⇒ validation off (bearer is mandatory there).
-    expect(mcpAllowedHosts("0.0.0.0", 3301, false, {})).toBeUndefined();
+    // Public bind without a declared list ⇒ fails CLOSED to names Marina can vouch
+    // for: loopback spellings, a specific bind address, the public URLs' hosts.
+    const derived = mcpAllowedHosts("0.0.0.0", 3301, false, {
+      BETTER_AUTH_URL: "https://marina.example.com",
+      ALLOWED_ORIGINS: "https://app.example.org, not a url",
+    });
+    expect(derived).toContain("localhost:3301");
+    expect(derived).toContain("marina.example.com");
+    expect(derived).toContain("app.example.org:3301");
+    expect(derived).not.toContain("0.0.0.0");
+    expect(derived).not.toContain("evil.example");
+    expect(mcpAllowedHosts("10.0.0.5", 3301, false, {})).toContain("10.0.0.5:3301");
     expect(
       mcpAllowedHosts("0.0.0.0", 3301, false, { MARINA_MCP_ALLOWED_HOSTS: "m.example" }),
     ).toEqual(["m.example", "m.example:3301"]);

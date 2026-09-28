@@ -25,10 +25,18 @@ import { createHash } from "node:crypto";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent } from "../types";
 
+/**
+ * `STANDING_HALF_LIFE_DAYS`: at least 1; unset or non-numeric is the 60-day
+ * default (a NaN half-life would turn every decayed standing into NaN).
+ */
+export function parseStandingHalfLifeDays(raw: string | undefined): number {
+  const days = Number.parseFloat(raw ?? "");
+  return Number.isFinite(days) ? Math.max(1, days) : 60;
+}
+
 /** Half-life in days. Tunable via STANDING_HALF_LIFE_DAYS env var. */
-export const STANDING_HALF_LIFE_DAYS = Math.max(
-  1,
-  Number.parseFloat(process.env.STANDING_HALF_LIFE_DAYS ?? "60"),
+export const STANDING_HALF_LIFE_DAYS = parseStandingHalfLifeDays(
+  process.env.STANDING_HALF_LIFE_DAYS,
 );
 
 const HALF_LIFE_MS = STANDING_HALF_LIFE_DAYS * 24 * 60 * 60 * 1000;

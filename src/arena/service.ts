@@ -455,11 +455,10 @@ export async function runArenaShadow(
   if (!raw || shadowRunning) return 0;
   shadowRunning = true;
   try {
-    const { parseForecasterSpec } = await import("./config");
+    const { arenaWindowHours, parseForecasterSpec } = await import("./config");
     const spec = parseForecasterSpec(raw);
     const data = arenaData(env);
-    const hours = Number(env.MARINA_ARENA_WINDOW_HOURS ?? 24);
-    const horizon = Date.now() + (Number.isFinite(hours) && hours > 0 ? hours : 24) * 3_600_000;
+    const horizon = Date.now() + arenaWindowHours(env) * 3_600_000;
     const due = (await data.openRounds())
       .filter((r) => Date.parse(r.lock_at) <= horizon)
       .map((r) => r.round_id);
