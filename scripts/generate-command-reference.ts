@@ -7,6 +7,7 @@ import { join, resolve } from "node:path";
 import { commandManifest } from "../src/engine/command-manifest";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
+import { generateEnvironmentReference } from "./generate-environment-reference";
 import { generateSurfaceReference } from "./generate-surface-reference";
 
 const directory = mkdtempSync(join(tmpdir(), "marina-reference-"));
@@ -72,6 +73,7 @@ try {
     console.log(`Generated reference for ${commands.length} builtin commands.`);
   }
   await generateSurfaceReference(engine, process.argv.includes("--check"));
+  generateEnvironmentReference(process.argv.includes("--check"));
 } finally {
   await engine.shutdown();
   db.close();

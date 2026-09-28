@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { renderEnvironmentReference } from "../scripts/generate-environment-reference";
+import { ENVIRONMENT_REFERENCE_PATH, environmentCatalog } from "../src/config/environment";
 import { Engine } from "../src/engine/engine";
 import { SAFETY_GATES } from "../src/engine/safety-gates";
 import { MarinaDB } from "../src/persistence/database";
@@ -144,8 +146,8 @@ const COMMANDS_DOCUMENTED_ONLY_IN_HELP = new Set<string>([
 ]);
 
 /**
- * `MARINA_*` names that `.env.example` documents but no source file spells out
- * literally, because the code composes them at runtime. Keep the composing site
+ * `MARINA_*` names that `config/environment.reference` documents but no source
+ * file spells out literally, because the code composes them at runtime. Keep the composing site
  * in the comment so the allowlist stays auditable.
  */
 const ENV_VARS_COMPOSED_AT_RUNTIME = new Set([
@@ -159,6 +161,73 @@ const ENV_VARS_COMPOSED_AT_RUNTIME = new Set([
   "MARINA_DEFAULT_OPENAI_MODEL",
   "MARINA_DEFAULT_OPENROUTER_MODEL",
 ]);
+
+/**
+ * `MARINA_*` variables read in `src/`, `scripts/` or `worlds/` that are NOT
+ * server settings, so they are deliberately absent from
+ * `config/environment.reference`. Each needs a reason and a home where it IS
+ * documented (or a statement that nobody should set it).
+ */
+const ENV_VARS_OUTSIDE_SERVER_CATALOG = new Map<string, string>([
+  // Set per run by src/engine/benchmark-runner.ts for the harness child process.
+  ["MARINA_BENCH_API_KEY", "internal: benchmark runner → harness child"],
+  ["MARINA_BENCH_RESULT_FILE", "internal: benchmark runner → harness child"],
+  // Minted per boot by marina-desktop; never set by hand (still protected in keys.ts).
+  ["MARINA_DESKTOP_API_TOKEN", "internal: desktop app capability token"],
+  // docs/guides/testing.md → Script and load-test knobs.
+  ["MARINA_CHURN_CLIENTS", "script: soak:churn:local"],
+  ["MARINA_CHURN_CYCLES", "script: soak:churn:local"],
+  ["MARINA_CHURN_MAX_ERRORS", "script: soak:churn:local"],
+  ["MARINA_CHURN_MAX_P95_MS", "script: soak:churn:local"],
+  ["MARINA_COVERAGE_MIN_LINES", "script: check:coverage"],
+  // docs/guides/release-qualification.md → Script knobs.
+  ["MARINA_QUALIFY_POLL_MS", "script: qualify:autonomy / qualify:evolution"],
+  ["MARINA_QUALIFY_TIMEOUT_MS", "script: qualify:autonomy / qualify:evolution"],
+  ["MARINA_FLYWHEEL_LIVE_REQUIRED", "script: qualify:flywheel"],
+  ["MARINA_FLYWHEEL_LIVE_FULL", "script: qualify:flywheel"],
+  ["MARINA_FLYWHEEL_LIVE_CLONE_URL", "script: qualify:flywheel"],
+  ["MARINA_FLYWHEEL_LIVE_ALLOW_PUBLISH", "script: qualify:flywheel"],
+  ["MARINA_FLYWHEEL_EVIDENCE_DIR", "script: qualify:flywheel"],
+  ["MARINA_FLYWHEEL_DEPLOYMENT_MODE", "script: qualify:flywheel"],
+  ["MARINA_TRIAL_MODEL", "script: trial:evolution"],
+  ["MARINA_TRIAL_TIMEOUT_MS", "script: trial:evolution"],
+  ["MARINA_SMOKE_URL", "script: smoke-production (docs/operations.md)"],
+  ["MARINA_SMOKE_TOKEN", "script: smoke-production (docs/operations.md)"],
+  // Memory-service clients: examples/memory-service/.env.example.
+  ["MARINA_MEMORY_URL", "client: scripts/memory-mcp.ts and memory-service examples"],
+  ["MARINA_MEMORY_TOKEN", "client: scripts/memory-mcp.ts and memory-service examples"],
+  ["MARINA_MEMORY_SPACE", "client: scripts/memory-mcp.ts and memory-service examples"],
+  // Research harnesses under scripts/research/ document their knobs in the file header.
+  ["MARINA_EVAL_UPSTREAM", "research: memory-agent-ablation.ts"],
+  ["MARINA_QUALIFICATION_KEY", "research: written into a child client config"],
+  ["MARINA_RESIDENT_URL", "research: memory-resident-qualification.ts"],
+  ["MARINA_RESIDENT_TOKEN", "research: memory-resident-qualification.ts"],
+  // Written into the external-agent template that scripts/create-agent.ts generates.
+  ["MARINA_SESSION_TOKEN", "generated project: create-agent template"],
+]);
+
+/** Every `MARINA_*` variable read in shipped server/script/world code. */
+async function marinaVarsRead(): Promise<Map<string, string>> {
+  const read =
+    /(?:process\.env|Bun\.env|\benv)\.(MARINA_[A-Z0-9_]+)|["'`](MARINA_[A-Z0-9_]+)["'`]/g;
+  const found = new Map<string, string>();
+  const glob = new Bun.Glob("**/*.ts");
+  for (const root of ["src", "scripts", "worlds"]) {
+    for await (const file of glob.scan({ cwd: root })) {
+      if (root === "src" && file.startsWith("sdk/examples/")) continue;
+      const text = await Bun.file(`${root}/${file}`).text();
+      for (const match of text.matchAll(read)) {
+        const name = (match[1] ?? match[2])!;
+        if (!found.has(name)) found.set(name, `${root}/${file}`);
+      }
+    }
+  }
+  return found;
+}
+
+/** `MARINA_*` tokens a document mentions (a trailing `_` is a prefix, not a name). */
+const marinaTokens = (text: string): string[] =>
+  [...new Set(text.match(/MARINA_[A-Z0-9_]*[A-Z0-9]/g) ?? [])].sort();
 
 const TEST_DB = "test_docs_contract.db";
 
@@ -265,9 +334,9 @@ describe("documentation contract — structure", () => {
     expect(broken).toEqual([]);
   });
 
-  it("reads every MARINA_* variable documented in .env.example", async () => {
-    const example = await readDoc(".env.example");
-    const documented = [...new Set(example.match(/MARINA_[A-Z0-9_]+/g) ?? [])].sort();
+  it("reads every MARINA_* variable documented in the environment reference", async () => {
+    const reference = await readDoc(ENVIRONMENT_REFERENCE_PATH);
+    const documented = marinaTokens(reference);
     expect(documented.length).toBeGreaterThan(50);
 
     // World definitions in worlds/ are shipped code that reads env directly
@@ -287,16 +356,54 @@ describe("documentation contract — structure", () => {
     expect(unread).toEqual([]);
 
     // Keep the composed-name allowlist honest: each entry must still be
-    // documented in .env.example.
+    // documented in the reference.
     expect([...ENV_VARS_COMPOSED_AT_RUNTIME].filter((n) => !documented.includes(n))).toEqual([]);
+  });
+
+  it("documents every MARINA_* variable the server, scripts or worlds read", async () => {
+    const reference = new Set(
+      environmentCatalog(await readDoc(ENVIRONMENT_REFERENCE_PATH)).map((s) => s.key),
+    );
+    const read = await marinaVarsRead();
+
+    const undocumented = [...read]
+      .filter(([name]) => !reference.has(name) && !ENV_VARS_OUTSIDE_SERVER_CATALOG.has(name))
+      .map(([name, file]) => `${name} (${file})`);
+    expect(undocumented).toEqual([]);
+
+    // The allowlist is not a second catalog: its entries must still be read and
+    // must not also be server settings.
+    const allowlisted = [...ENV_VARS_OUTSIDE_SERVER_CATALOG.keys()];
+    expect(allowlisted.filter((name) => !read.has(name))).toEqual([]);
+    expect(allowlisted.filter((name) => reference.has(name))).toEqual([]);
+  });
+
+  it("keeps .env.example a subset of the environment reference", async () => {
+    const example = await readDoc(".env.example");
+    const reference = await readDoc(ENVIRONMENT_REFERENCE_PATH);
+    const keys = new Set(environmentCatalog(reference).map((s) => s.key));
+
+    const starter = environmentCatalog(example).map((s) => s.key);
+    expect(starter.length).toBeGreaterThan(10);
+    expect(starter.filter((key) => !keys.has(key))).toEqual([]);
+    expect(marinaTokens(example).filter((name) => !keys.has(name))).toEqual([]);
+    // A starter, not a second catalog, and never an active assignment.
+    expect(example.split("\n").length).toBeLessThanOrEqual(80);
+    expect(example.split("\n").filter((line) => /^[A-Z_][A-Z0-9_]*=/.test(line))).toEqual([]);
+  });
+
+  it("keeps docs/reference/environment.md generated from the reference", async () => {
+    const reference = await readDoc(ENVIRONMENT_REFERENCE_PATH);
+    expect(await readDoc("docs/reference/environment.md")).toBe(
+      renderEnvironmentReference(reference),
+    );
   });
 
   it("explains every MARINA_* variable that only a world definition reads", async () => {
     // A var read solely in worlds/ appears nowhere in src/, so an operator
     // grepping the server finds nothing. docs/architecture/worlds.md is where
     // those per-world overrides are explained; keep the two in step.
-    const example = await readDoc(".env.example");
-    const documented = [...new Set(example.match(/MARINA_[A-Z0-9_]+/g) ?? [])].sort();
+    const documented = marinaTokens(await readDoc(ENVIRONMENT_REFERENCE_PATH));
 
     const read = async (roots: string[]): Promise<string> => {
       const glob = new Bun.Glob("**/*.ts");

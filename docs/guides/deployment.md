@@ -64,7 +64,7 @@ Put a single durable volume at `/app/data` and your entire world persists across
 The repo ships a multi-stage `Dockerfile` and a `docker-compose.yml`. From a clean checkout:
 
 ```bash
-cp .env.example .env        # fill in keys + secrets (see Security below)
+cp .env.example .env        # uncomment keys + secrets (see Security below)
 docker compose up -d --build
 docker compose logs -f
 ```
@@ -91,7 +91,7 @@ docker run -d --name marina \
 
 ## Configuration essentials
 
-All variables are optional with sane defaults — the canonical, annotated list is [`.env.example`](https://github.com/h2oai/Marina/blob/main/.env.example). The load-bearing ones for a deployment:
+All variables are optional with sane defaults. [`.env.example`](https://github.com/h2oai/Marina/blob/main/.env.example) is a short starter; the complete annotated catalog is [`config/environment.reference`](https://github.com/h2oai/Marina/blob/main/config/environment.reference) (rendered as the [environment reference](../reference/environment.md)). The load-bearing ones for a deployment:
 
 ```bash
 MARINA_WORLD=default          # which world to load

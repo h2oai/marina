@@ -31,7 +31,7 @@ export interface ArenaConfig {
   autopilot: boolean;
   /** `MARINA_ARENA_WINDOW_HOURS` — file when a round's lock is this close (default 24, the arena's call window). */
   windowHours: number;
-  /** `MARINA_ARENA_FORECASTER` — `baseline` (default) or `model:<provider/model>`. */
+  /** `MARINA_ARENA_FORECASTER` — `baseline` (default), `nowcast`, `discovered`, `model:<provider/model>`, `crew:<m>[,…]` or `research:<m>[,…]`. */
   forecaster: string;
   /** `MARINA_ARENA_MODEL_WEIGHT` — share of a model's move from the baseline kept (default 0.5). */
   modelWeight: number;
@@ -44,14 +44,14 @@ const FORECASTER_SPEC = new RegExp(
 );
 
 /**
- * `baseline`, `model:<provider/model>`, or `crew:<model>` / `crew:<statistician>,<analyst>,<skeptic>`
- * (one vendor per role). Validated here; model ids are resolved at use.
+ * `baseline`, `nowcast`, `discovered`, `model:<provider/model>`, `crew:<model>` /
+ * `crew:<statistician>,<analyst>,<skeptic>` (one vendor per role), or `research:<model>[,…]`. Validated here; model ids are resolved at use.
  */
 export function parseForecasterSpec(raw: string | undefined): string {
   const spec = raw?.trim() || "baseline";
   if (FORECASTER_SPEC.test(spec)) return spec;
   throw new Error(
-    `MARINA_ARENA_FORECASTER "${spec}" must be baseline, model:<provider/model>, crew:<model>[,…] or research:<model>[,…]`,
+    `MARINA_ARENA_FORECASTER "${spec}" must be baseline, nowcast, discovered, model:<provider/model>, crew:<model>[,…] or research:<model>[,…]`,
   );
 }
 

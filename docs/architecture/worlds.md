@@ -26,7 +26,7 @@ See also: `docs/guides/building-worlds.md`, `docs/guides/example-worlds.md`.
 ## Per-world model overrides (read only in `worlds/`)
 
 World definitions read a handful of `MARINA_*` variables directly, so they never
-appear in `src/` and are easy to miss. `.env.example` lists them; this is where
+appear in `src/` and are easy to miss. `config/environment.reference` lists them; this is where
 they are explained. All are optional — unset means the world's own default.
 
 | Variable | Read by | Effect | Default |

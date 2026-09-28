@@ -30,6 +30,25 @@ IDs, artifacts, environment prerequisites (never secret values), source commit, 
 checkpoint with the release record. World Collective comparisons should cite the exact baseline and
 candidate variant IDs and retain the promotion rationale and evidence references.
 
+## Script knobs
+
+These are read by the qualification scripts, not by the Marina server, so they are not in
+[`config/environment.reference`](../../config/environment.reference).
+
+| Variable | Default | Read by |
+|---|---|---|
+| `MARINA_QUALIFY_TIMEOUT_MS`, `MARINA_QUALIFY_POLL_MS` | `120000`, `2000` (min 500) | `qualify:autonomy`, `qualify:evolution`: overall wait and poll interval |
+| `MARINA_FLYWHEEL_LIVE_REQUIRED` | `false` | `qualify:flywheel`: fail, instead of skip, when live configuration or a required check is unavailable |
+| `MARINA_FLYWHEEL_LIVE_FULL` | `false` | `qualify:flywheel`: also require clone, service/probe, screenshot, publish/revoke and hibernate/resume |
+| `MARINA_FLYWHEEL_LIVE_CLONE_URL` | unset | `qualify:flywheel`: credential-free public fixture repository for the full run |
+| `MARINA_FLYWHEEL_LIVE_ALLOW_PUBLISH` | `false` | `qualify:flywheel`: permit temporary public exposure during the run |
+| `MARINA_FLYWHEEL_EVIDENCE_DIR` | `artifacts/flywheel` | `qualify:flywheel`: where redacted evidence is written |
+| `MARINA_FLYWHEEL_DEPLOYMENT_MODE` | `separate` | `qualify:flywheel`: deployment-mode label recorded in the evidence |
+| `MARINA_TRIAL_MODEL`, `MARINA_TRIAL_TIMEOUT_MS` | `openai/gpt-6-luna`, `180000` | `trial:evolution`, `trial:evolution:local` |
+| `CONTAINER_RUNTIME` | `docker` | `scripts/qualify-image.ts` (`podman` also works) |
+| `EVAL_TIMEOUT_MS` | `120000` | `scripts/eval-prompt.ts` (`qualify:prompt`): per-case timeout |
+| `MARINA_SMOKE_URL`, `MARINA_SMOKE_TOKEN` | local address, generated key | `scripts/smoke-production.ts` (see [Operations](../operations.md)) |
+
 ## Memory-delta benchmark
 
 `bun run qualify:memory:benchmark` runs the memory-delta harness (`benchmarks/memory/genbench.ts`)

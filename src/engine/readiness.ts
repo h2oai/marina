@@ -336,7 +336,7 @@ export function computeReadiness(engine: Engine): ReadinessReport {
         ? "MARINA_DECISIONS unset — no configured backend; Marina's own engines still answer /v1/systemone (see decision-engines)"
         : "MARINA_DECISIONS unset — no decision backend; /v1/decisions returns 404",
       remediation:
-        "Turn a backend on at runtime (operator): `admin decisions set backend jev` or Admin → Ops → Decisions; or set MARINA_DECISIONS=decisions-api (Jev family / OpenJev) / chat-classifier (any chat model) in the environment — see .env.example.",
+        "Turn a backend on at runtime (operator): `admin decisions set backend jev` or Admin → Ops → Decisions; or set MARINA_DECISIONS=decisions-api (Jev family / OpenJev) / chat-classifier (any chat model) in the environment — see config/environment.reference.",
     });
   } else if (!decisions.apiKey && /^https:\/\//.test(decisions.baseUrl)) {
     checks.push({
@@ -433,7 +433,7 @@ export function computeReadiness(engine: Engine): ReadinessReport {
         status: "off",
         detail: `no decision engines — nothing answers /v1/systemone${runtimeNote}`,
         remediation:
-          "Set MARINA_DECISIONS (Jev) and/or MARINA_DECISION_ENGINES (any model Marina routes) — see .env.example.",
+          "Set MARINA_DECISIONS (Jev) and/or MARINA_DECISION_ENGINES (any model Marina routes) — see config/environment.reference.",
       });
     } else {
       checks.push({

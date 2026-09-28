@@ -281,13 +281,34 @@ live registries and fails when something new lands **undocumented**.
   ascending array order (migrations are append-only)
 - every `docs/architecture/*.md` is linked from `docs/architecture/README.md`,
   and every `docs/architecture/...` pointer in `CLAUDE.md` resolves
-- every `MARINA_*` name in `.env.example` is read somewhere in `src/`,
-  `scripts/` or `worlds/`
+- every `MARINA_*` name in `config/environment.reference` is read somewhere in
+  `src/`, `scripts/` or `worlds/`, and every key in `.env.example` is also in the
+  reference
+- the reverse: every `MARINA_*` variable read in `src/`, `scripts/` or `worlds/`
+  (outside `src/sdk/examples/`) is in the reference, or in
+  `ENV_VARS_OUTSIDE_SERVER_CATALOG` with the reason it is not a server setting
+- `docs/reference/environment.md` matches what
+  `scripts/generate-environment-reference.ts` renders from the reference
 
 Each has a named allowlist next to it (`COMMANDS_DOCUMENTED_ONLY_IN_HELP`,
-`ENV_VARS_COMPOSED_AT_RUNTIME`) carrying the reason. When one of these fails,
+`ENV_VARS_COMPOSED_AT_RUNTIME`, `ENV_VARS_OUTSIDE_SERVER_CATALOG`) carrying the
+reason. When one of these fails,
 fix the doc or add an allowlist entry with a reason — do not loosen the
 assertion.
+
+## Script and load-test knobs
+
+Read by scripts, never by the server (so not in `config/environment.reference`):
+
+| Variable | Default | Read by |
+|---|---|---|
+| `MARINA_CHURN_CLIENTS`, `MARINA_CHURN_CYCLES` | `12`, `20` | `bun run soak:churn:local`: concurrent clients and connect/disconnect cycles |
+| `MARINA_CHURN_MAX_ERRORS`, `MARINA_CHURN_MAX_P95_MS` | `0`, `2000` | `bun run soak:churn:local`: failure thresholds |
+| `MARINA_COVERAGE_MIN_LINES` | `75` | `bun run check:coverage -- --strict` (see [Coverage](#coverage)) |
+
+Release-gate knobs (`MARINA_QUALIFY_*`, `MARINA_FLYWHEEL_LIVE_*`, `MARINA_TRIAL_*`,
+`CONTAINER_RUNTIME`, `EVAL_TIMEOUT_MS`) are listed in
+[Release qualification](release-qualification.md#script-knobs).
 
 ## Logging fences
 
