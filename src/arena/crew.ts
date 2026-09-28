@@ -124,13 +124,28 @@ export function learn(
   });
 }
 
+/** The nowcast's reading for this round's series, when the start forecast carries one. */
+function freshestReading(
+  start: RoundForecast,
+  series: string | undefined,
+): { date: string; value: number } | undefined {
+  const used = (start as { nowcast?: Record<string, { date: string; value: number }> }).nowcast;
+  return series ? used?.[series] : undefined;
+}
+
 export async function crewForecastRound(
   round: ArenaRound,
   lock: ArenaLock,
   members: CrewMembers,
   notes?: NotesStore,
+  /**
+   * The forecast the crew starts from and shrinks toward — the nowcast when
+   * the caller has one (a fresher daily reading than the weekly history), else
+   * the calibrated baseline. Every move is measured from it.
+   */
+  start?: RoundForecast,
 ): Promise<CrewForecast> {
-  const baseline = forecastRound(round, lock);
+  const baseline = start ?? forecastRound(round, lock);
   if (round.target_type !== "continuous_normal" || !baseline.topline) {
     return { ...baseline, fallback: "crew answers numeric rounds; baseline for this shape" };
   }
@@ -138,7 +153,12 @@ export async function crewForecastRound(
   const history = historyOf(lock);
   const series = round.series ?? round.round_id;
   const lessons = notes ? recallLessons(notes, series) : [];
-  const head = `Question: ${round.question}\nUnit: ${round.unit ?? "(see question)"}\nPublished around ${round.release_at}; forecasts lock ${round.lock_at}.`;
+  const fresh = freshestReading(baseline, round.series);
+  const head = `Question: ${round.question}\nUnit: ${round.unit ?? "(see question)"}\nPublished around ${round.release_at}; forecasts lock ${round.lock_at}.${
+    fresh
+      ? `\nFreshest reading: ${fresh.value} on ${fresh.date} (newer than the weekly history below; the baseline already starts from it).`
+      : ""
+  }`;
   const hist = history
     .slice(-30)
     .map((p) => `${p.date} ${p.value}`)
@@ -221,6 +241,6 @@ export async function crewForecastRound(
     ...(typeof verdict?.critique === "string" ? { critique: verdict.critique.slice(0, 300) } : {}),
     lessonsUsed: lessons.length,
     roles,
-    note: `marina crew (statistician, analyst, skeptic; ${lessons.length} lessons recalled) over the calibrated baseline`,
+    note: `marina crew (statistician, analyst, skeptic; ${lessons.length} lessons recalled) over ${fresh ? `the nowcast (${fresh.date})` : "the calibrated baseline"}`,
   };
 }

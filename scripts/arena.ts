@@ -80,7 +80,7 @@ const [cmd = "status", arg] = positionals;
 
 /** The default research crew: one analyst per vendor. */
 const DEFAULT_RESEARCH =
-  "research:openrouter/deepseek/deepseek-v4-pro,openrouter/anthropic/claude-sonnet-5,openrouter/openai/gpt-6-luna";
+  "research:openrouter/deepseek/deepseek-v4-pro,openrouter/anthropic/claude-opus-5.5,openrouter/openai/gpt-6-luna";
 
 function weightFlag(): number | undefined {
   if (values.weight === undefined) return undefined;

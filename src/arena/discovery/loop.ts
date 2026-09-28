@@ -45,7 +45,7 @@ export const SIGNAL_TRACKERS = [
 
 /** The proposer model: `MARINA_ARENA_PROPOSER`, else Claude Sonnet 5 via OpenRouter. */
 export function proposerModel(env: NodeJS.ProcessEnv = process.env): string {
-  return env.MARINA_ARENA_PROPOSER?.trim() || "openrouter/anthropic/claude-sonnet-5";
+  return env.MARINA_ARENA_PROPOSER?.trim() || "openrouter/anthropic/claude-opus-5.5";
 }
 
 export const PROPOSER_SYSTEM = "You design forecasting signals. Reply with one JSON object only.";

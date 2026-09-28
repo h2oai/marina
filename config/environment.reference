@@ -612,7 +612,7 @@
 # ── Forecasting ──────────────────────────────────────────────────────────────
 
 # `forecast`, `bun run forecast` and POST /v1/forecast (docs/guides/forecasting.md). The defaults need OPENROUTER_API_KEY. Analysts are a comma list of models (defaults: DeepSeek V4 Pro, Claude Sonnet 5 and GPT-6 Luna via OpenRouter); the retriever defaults to OpenRouter web search on GPT-6 Luna; the judge is jev, decisions (the MARINA_DECISIONS backend, falling back to jev) or none.
-# MARINA_FORECAST_ANALYSTS=openrouter/deepseek/deepseek-v4-pro,openrouter/anthropic/claude-sonnet-5,openrouter/openai/gpt-6-luna
+# MARINA_FORECAST_ANALYSTS=openrouter/deepseek/deepseek-v4-pro,openrouter/anthropic/claude-opus-5.5,openrouter/openai/gpt-6-luna
 # MARINA_FORECAST_RETRIEVER=openrouter-web:openai/gpt-6-luna
 # MARINA_FORECAST_JUDGE=jev
 
@@ -647,7 +647,7 @@
 # MARINA_ARENA_SHADOW=
 
 # Model that proposes signals for `arena discover`.
-# MARINA_ARENA_PROPOSER=openrouter/anthropic/claude-sonnet-5
+# MARINA_ARENA_PROPOSER=openrouter/anthropic/claude-opus-5.5
 
 # Rehearsal overrides for the arena endpoint, audience and data repository. Production is the default.
 # MARINA_ARENA_URL=https://social-simulation-arena.com
