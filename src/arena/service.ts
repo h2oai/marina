@@ -314,8 +314,10 @@ export async function learnFromResolutions(
 // ─── Research agent + shadow mode ────────────────────────────────────────────
 
 /**
- * `research:<analyst>[,<analyst>,<analyst>]`. Retrieval is
- * `MARINA_ARENA_RESEARCH_RETRIEVER` (default `openrouter-web:openai/gpt-6-luna`),
+ * `research:<analyst>[,<analyst>…][@<retriever>[,<retriever>…]]` (up to eight
+ * analysts, one vendor each). Retrieval is the spec's `@` list, else
+ * `MARINA_ARENA_RESEARCH_RETRIEVER` (default `openrouter-web:openai/gpt-6-luna`;
+ * `sonar:<perplexity model>` too, several comma-separated and merged),
  * the judge `MARINA_ARENA_RESEARCH_JUDGE` (`jev` — jev-1.13 through OpenRouter's
  * Decisions API — by default when an OpenRouter key is set; `decisions` for the
  * world's configured backend, falling back to `jev`; `none` for equal weights), the cap on the move taken `MARINA_ARENA_RESEARCH_TRUST` (0.5).
@@ -331,17 +333,15 @@ async function researchForecasterFor(
     import("../decisions/config"),
   ]);
   const orKey = env.OPENROUTER_API_KEY;
+  // `research:<analysts>[@<retrievers>]` — retrievers in the spec win over the env.
+  const [analystsPart = "", specRetrievers] = spec.slice("research:".length).split("@");
   const retrieverSpec =
-    env.MARINA_ARENA_RESEARCH_RETRIEVER?.trim() || "openrouter-web:openai/gpt-6-luna";
-  if (!retrieverSpec.startsWith("openrouter-web:")) {
-    throw new Error(`unknown MARINA_ARENA_RESEARCH_RETRIEVER ${retrieverSpec}`);
-  }
-  if (!orKey) throw new Error("the openrouter-web retriever needs OPENROUTER_API_KEY");
-  const retriever = retrieve.openRouterWebRetriever({
-    model: retrieverSpec.slice("openrouter-web:".length),
-    apiKey: orKey,
-  });
-  const models = spec.slice("research:".length).split(",");
+    specRetrievers?.trim() ||
+    env.MARINA_ARENA_RESEARCH_RETRIEVER?.trim() ||
+    "openrouter-web:openai/gpt-6-luna";
+  if (!orKey) throw new Error("the research retrievers need OPENROUTER_API_KEY");
+  const retriever = retrieve.retrieverFromSpec(retrieverSpec, orKey);
+  const models = analystsPart.split(",");
   const made = models.map((m) => ({
     name: m.replace(/^openrouter\//, ""),
     ...modelComplete(m, env),

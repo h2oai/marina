@@ -52,6 +52,8 @@ export interface JudgedProposal extends Distribution {
   reason?: string;
   quality?: number;
   grounded?: number;
+  /** The judge failed on this proposal; it then carries no weight. */
+  judgeError?: string;
   weight: number;
 }
 
@@ -175,6 +177,7 @@ export async function researchForecastRound(
       let weight = 1;
       let quality: number | undefined;
       let grounded: number | undefined;
+      let judgeError: string | undefined;
       if (deps.judge) {
         const verdict = await checkDraft(
           deps.judge,
@@ -190,6 +193,11 @@ export async function researchForecastRound(
           grounded = verdict.signals.grounded;
           // No grounding ⇒ no weight; a fully grounded, high-quality rationale ⇒ weight 1.
           weight = Math.max(0, Math.min(1, (grounded ?? 0) * ((quality ?? 0) / 2)));
+        } else {
+          // A judge outage is no opinion, never a pass: an unjudged proposal
+          // gets no weight (it used to keep weight 1 — ~10× a judged run).
+          weight = 0;
+          judgeError = String(verdict.error).slice(0, 200);
         }
       }
       proposals[name] = {
@@ -199,6 +207,7 @@ export async function researchForecastRound(
         ...(reason ? { reason: reason.slice(0, 400) } : {}),
         ...(quality === undefined ? {} : { quality }),
         ...(grounded === undefined ? {} : { grounded }),
+        ...(judgeError ? { judgeError } : {}),
       };
     }),
   );

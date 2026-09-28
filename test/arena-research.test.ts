@@ -2,11 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { parseForecasterSpec } from "../src/arena/config";
 import { ArenaData } from "../src/arena/data";
 import { scoreShadow } from "../src/arena/evaluate";
 import { buildResearchBrief, familyOf } from "../src/arena/research/briefs";
 import { researchForecastRound } from "../src/arena/research/forecaster";
-import { openRouterWebRetriever, type Retriever } from "../src/arena/research/retrieve";
+import {
+  combineRetrievers,
+  inlineFootnotes,
+  openRouterWebRetriever,
+  type Retriever,
+  retrieverFromSpec,
+  sonarRetriever,
+} from "../src/arena/research/retrieve";
 import { figuresIn, verifyDossier } from "../src/arena/research/verify";
 import type { ArenaLock, ArenaPoint, ArenaRound } from "../src/arena/types";
 import type { DecisionProvider } from "../src/decisions/types";
@@ -89,6 +97,111 @@ describe("OpenRouter web retriever", () => {
       fetcher: async () => Response.json({ choices: [{ message: { content: "" } }] }),
     });
     await expect(retriever({ roundId: "r", since: "d", request: "q" })).rejects.toThrow("empty");
+  });
+});
+
+describe("Perplexity Sonar and combined retrievers", () => {
+  const reply = (content: string, url: string, cost: number) =>
+    Response.json({
+      choices: [{ message: { content, annotations: [{ url_citation: { url, title: url } }] } }],
+      usage: { cost },
+    });
+
+  it("calls Sonar with native search: no web plugin, no reasoning knob", async () => {
+    let sent: Record<string, unknown> = {};
+    const retriever = sonarRetriever({
+      model: "sonar-pro",
+      apiKey: "k",
+      fetcher: async (_url, init) => {
+        sent = JSON.parse(String(init.body));
+        return reply("Poll Y: 40% [1]", "https://y.com", 0.011);
+      },
+    });
+    const r = await retriever({ roundId: "r", since: "2026-09-25", request: "polls" });
+    expect(sent.model).toBe("perplexity/sonar-pro");
+    expect(sent.plugins).toBeUndefined();
+    expect(sent.reasoning).toBeUndefined();
+    expect(r).toMatchObject({ retriever: "sonar:perplexity/sonar-pro", costUsd: 0.011 });
+    expect(r.sources).toEqual([{ url: "https://y.com", title: "https://y.com" }]);
+  });
+
+  it("turns Sonar's numbered footnotes into links the verifier can check", async () => {
+    expect(
+      inlineFootnotes("A 35%.[2] B 40%.[1][3] C [9] D [1](https://keep)", [
+        { url_citation: { url: "https://one" } },
+        { url_citation: { url: "https://two" } },
+        { url_citation: { url: "ftp://nope" } },
+      ]),
+    ).toBe("A 35%.[2](https://two) B 40%.[1](https://one)[3] C [9] D [1](https://keep)");
+    const retriever = sonarRetriever({
+      model: "sonar",
+      apiKey: "k",
+      fetcher: async () =>
+        Response.json({
+          choices: [
+            {
+              message: {
+                content: "Poll Z: 41% approve.[1]",
+                annotations: [{ url_citation: { url: "https://z.com/p" } }],
+              },
+            },
+          ],
+        }),
+    });
+    const r = await retriever({ roundId: "r", since: "d", request: "q" });
+    expect(r.report).toBe("Poll Z: 41% approve.[1](https://z.com/p)");
+  });
+
+  it("merges several engines: headed reports, source union, summed cost; survives one failure", async () => {
+    const a: Retriever = async () => ({
+      report: "fact A",
+      sources: [{ url: "https://a" }, { url: "https://shared" }],
+      costUsd: 0.02,
+      searches: 3,
+      retriever: "openrouter-web:m",
+    });
+    const b: Retriever = async () => ({
+      report: "fact B",
+      sources: [{ url: "https://shared" }, { url: "https://b" }],
+      costUsd: 0.01,
+      searches: 0,
+      retriever: "sonar:perplexity/sonar",
+    });
+    const broken: Retriever = async () => {
+      throw new Error("down");
+    };
+    const r = await combineRetrievers([a, b, broken])({ roundId: "r", since: "d", request: "q" });
+    expect(r.report).toBe("## openrouter-web:m\nfact A\n\n## sonar:perplexity/sonar\nfact B");
+    expect(r.sources.map((s) => s.url)).toEqual(["https://a", "https://shared", "https://b"]);
+    expect(r).toMatchObject({
+      costUsd: 0.03,
+      searches: 3,
+      retriever: "openrouter-web:m+sonar:perplexity/sonar",
+    });
+    await expect(
+      combineRetrievers([broken, broken])({ roundId: "r", since: "d", request: "q" }),
+    ).rejects.toThrow("every research retriever failed");
+  });
+
+  it("research specs take up to eight analysts and their own retrievers after @", () => {
+    const eight = Array.from({ length: 8 }, (_, i) => `openrouter/v${i}/m`).join(",");
+    expect(parseForecasterSpec(`research:${eight}`)).toBe(`research:${eight}`);
+    expect(() => parseForecasterSpec(`research:${eight},openrouter/v9/m`)).toThrow();
+    const withRetrievers =
+      "research:openrouter/deepseek/deepseek-v4-pro,openrouter/anthropic/claude-opus-5.5@sonar:sonar-pro,openrouter-web:openai/gpt-6-luna";
+    expect(parseForecasterSpec(withRetrievers)).toBe(withRetrievers);
+    expect(() => parseForecasterSpec("research:a/b@tavily:basic")).toThrow();
+    // The crew keeps its three roles.
+    expect(() => parseForecasterSpec("crew:a/b,c/d,e/f,g/h")).toThrow();
+  });
+
+  it("parses one or several retrievers from the setting", () => {
+    expect(() => retrieverFromSpec("openrouter-web:openai/gpt-6-luna", "k")).not.toThrow();
+    expect(() =>
+      retrieverFromSpec("openrouter-web:openai/gpt-6-luna, sonar:sonar-pro", "k"),
+    ).not.toThrow();
+    expect(() => retrieverFromSpec("tavily:basic", "k")).toThrow("unknown");
+    expect(() => retrieverFromSpec("sonar:", "k")).toThrow("names no model");
   });
 });
 
@@ -177,6 +290,26 @@ describe("research agent pipeline", () => {
     expect(f.topline!.mean).toBeCloseTo(last + 1, 3);
     expect(f.dossier?.verification?.verified).toBe(1);
     expect(f.proposals?.a?.grounded).toBe(1);
+  });
+
+  it("a judge outage gives a proposal no weight (never a free pass)", async () => {
+    const down: DecisionProvider = {
+      kind: "fake",
+      model: "fake-jev",
+      ask: async () => {
+        throw new Error("judge timeout");
+      },
+    };
+    const f = await researchForecastRound(round, lock, {
+      retriever,
+      analysts: [{ name: "a", complete: analyst(last + 3) }],
+      judge: down,
+      pageText: async () => "Echelon: 38% approve, up from 36%",
+    });
+    expect(f.fallback).toContain("no grounded proposal");
+    expect(f.topline!.mean).toBe(last);
+    expect(f.proposals?.a?.weight).toBe(0);
+    expect(f.proposals?.a?.judgeError).toBeDefined();
   });
 
   it("an ungrounded rationale earns no weight, and research failure keeps the baseline", async () => {
