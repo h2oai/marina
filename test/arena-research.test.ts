@@ -190,7 +190,8 @@ describe("Perplexity Sonar and combined retrievers", () => {
     const withRetrievers =
       "research:openrouter/deepseek/deepseek-v4-pro,openrouter/anthropic/claude-opus-5.5@sonar:sonar-pro,openrouter-web:openai/gpt-6-luna";
     expect(parseForecasterSpec(withRetrievers)).toBe(withRetrievers);
-    expect(() => parseForecasterSpec("research:a/b@tavily:basic")).toThrow();
+    expect(parseForecasterSpec("research:a/b@tavily:basic")).toBe("research:a/b@tavily:basic");
+    expect(() => parseForecasterSpec("research:a/b@tavily:deep")).toThrow();
     // The crew keeps its three roles.
     expect(() => parseForecasterSpec("crew:a/b,c/d,e/f,g/h")).toThrow();
   });
@@ -200,7 +201,7 @@ describe("Perplexity Sonar and combined retrievers", () => {
     expect(() =>
       retrieverFromSpec("openrouter-web:openai/gpt-6-luna, sonar:sonar-pro", "k"),
     ).not.toThrow();
-    expect(() => retrieverFromSpec("tavily:basic", "k")).toThrow("unknown");
+    expect(() => retrieverFromSpec("bing:web", "k")).toThrow("unknown");
     expect(() => retrieverFromSpec("sonar:", "k")).toThrow("names no model");
   });
 });

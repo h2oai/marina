@@ -317,7 +317,9 @@ export async function learnFromResolutions(
  * `research:<analyst>[,<analyst>…][@<retriever>[,<retriever>…]]` (up to eight
  * analysts, one vendor each). Retrieval is the spec's `@` list, else
  * `MARINA_ARENA_RESEARCH_RETRIEVER` (default `openrouter-web:openai/gpt-6-luna`;
- * `sonar:<perplexity model>` too, several comma-separated and merged),
+ * `sonar:<perplexity model>` and `tavily:<basic|advanced>` too, several
+ * comma-separated and merged; page text a retriever fetched is used for the
+ * citation check instead of re-fetching),
  * the judge `MARINA_ARENA_RESEARCH_JUDGE` (`jev` — jev-1.13 through OpenRouter's
  * Decisions API — by default when an OpenRouter key is set; `decisions` for the
  * world's configured backend, falling back to `jev`; `none` for equal weights), the cap on the move taken `MARINA_ARENA_RESEARCH_TRUST` (0.5).
@@ -339,8 +341,15 @@ async function researchForecasterFor(
     specRetrievers?.trim() ||
     env.MARINA_ARENA_RESEARCH_RETRIEVER?.trim() ||
     "openrouter-web:openai/gpt-6-luna";
-  if (!orKey) throw new Error("the research retrievers need OPENROUTER_API_KEY");
-  const retriever = retrieve.retrieverFromSpec(retrieverSpec, orKey);
+  const { defaultPageText } = await import("./research/verify");
+  // Page text a retriever already fetched (Tavily) is checked in place of a fetch.
+  const { retriever, pageText } = retrieve.withProvidedText(
+    retrieve.retrieverFromSpec(retrieverSpec, {
+      ...(orKey ? { openrouter: orKey } : {}),
+      ...(env.TAVILY_API_KEY?.trim() ? { tavily: env.TAVILY_API_KEY.trim() } : {}),
+    }),
+    defaultPageText(),
+  );
   const models = analystsPart.split(",");
   const made = models.map((m) => ({
     name: m.replace(/^openrouter\//, ""),
@@ -352,8 +361,6 @@ async function researchForecasterFor(
     orKey,
   );
   const trustCap = Number(env.MARINA_ARENA_RESEARCH_TRUST ?? 0.5);
-  const { defaultPageText } = await import("./research/verify");
-  const pageText = defaultPageText();
   // Structured evidence first: the research agent starts from the Civiqs nowcast.
   const { nowcastForecaster } = await import("./research/civiqs-nowcast");
   const nowcast = nowcastForecaster(arenaData(env), forecastRound, await liveCiviqs(env));

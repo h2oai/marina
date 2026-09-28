@@ -148,16 +148,29 @@ against the arena's recorded persistence loss for each round.
 
 1. **Brief** — a playbook per family (other pollsters' readings *with their previous reading*,
    S&P moves for AAII, prices and inflation prints for consumer surveys, scheduled events for
-   attention), bounded to facts after the series' last value, which is stated as already known.
+   attention), bounded to facts after the series' latest known reading, which is stated as already
+   known. `buildResearchBrief(round, lock, { nowcast })` starts that window at the daily nowcast's
+   date when one is newer than the history (Civiqs); without it, the last weekly value's date. Each
+   brief also carries short keyword `queries` (one per playbook item) for search APIs.
 2. **Retrieve** — `MARINA_ARENA_RESEARCH_RETRIEVER` (default `openrouter-web:openai/gpt-6-luna`,
    OpenRouter's web search with URL citations; ~$0.03 per round). `sonar:<model>` uses Perplexity
    Sonar through OpenRouter (native search; `sonar`, `sonar-pro`, `sonar-pro-search`,
    `sonar-reasoning-pro`, `sonar-deep-research`), and a comma-separated list runs several engines
    on the same brief and merges their reports (each under its own heading, sources de-duplicated),
-   e.g. `openrouter-web:openai/gpt-6-luna,sonar:sonar-pro`. New retrievers are shadow-only until
-   they have resolved rounds to their name.
+   e.g. `openrouter-web:openai/gpt-6-luna,sonar:sonar-pro`. `tavily:basic` / `tavily:advanced`
+   calls Tavily's search API directly (`TAVILY_API_KEY`): one news search per brief query, dated
+   from the brief's window, up to 8 results each; no model writes the report — each result (best
+   12 by score, anything published before the window dropped) becomes one line
+   `- <date> — <snippet> [<title>](<url>)`. Tavily also returns each page's text, which the citation
+   check reads instead of fetching the page. Cost is estimated at Tavily's pay-as-you-go $0.008 per
+   credit (basic 1, advanced 2 per query; ~$0.05 per brief at `advanced`). New retrievers are
+   shadow-only until they have resolved rounds to their name.
 3. **Verify citations** — every dossier line that cites a page has its figures looked up in that
-   page (fetched through the SSRF guard) and is tagged `[verified]`, `[unverified]` or
+   page and is tagged `[verified]`, `[unverified]` or `[unreachable]`. The page text is the one the
+   retriever already fetched when it carries one (Tavily), else a fetch through the SSRF guard (up
+   to 12 pages, 15 s each, a descriptive User-Agent, the first 16 MB read — larger pages are
+   truncated, not rejected). Publishers whose terms bar bots (`NO_FETCH_DOMAINS`: YouGov, AAII,
+   Conference Board, CivicScience) are never read by either route, so their lines stay
    `[unreachable]`. It caught, live, a researcher reporting a poll "at 39%" whose source said 35%.
 4. **Analysts** — forecast from history + the nowcast-adjusted baseline + the tagged dossier, told
    that the benchmark's own history is authoritative for its dates and to use other sources for
@@ -347,7 +360,7 @@ is missing or readable by other users.
 | `MARINA_ARENA_SHADOW` | unset | a forecaster spec to record hourly in shadow (never filed) |
 | `MARINA_ARENA_TRENDS_PARTIAL` | off | `on` counts a Trends basket's partial current week |
 | `MARINA_ARENA_CIVIQS_LIVE` | on | `off` stops the nowcast reading the live Civiqs dashboard for open rounds |
-| `MARINA_ARENA_RESEARCH_RETRIEVER` | `openrouter-web:openai/gpt-6-luna` | the research agent's search backend(s): `openrouter-web:<model>`, `sonar:<model>`, comma-separated to merge |
+| `MARINA_ARENA_RESEARCH_RETRIEVER` | `openrouter-web:openai/gpt-6-luna` | the research agent's search backend(s): `openrouter-web:<model>`, `sonar:<model>`, `tavily:basic` / `tavily:advanced` (needs `TAVILY_API_KEY`), comma-separated to merge |
 | `MARINA_ARENA_RESEARCH_JUDGE` | `jev` (with an OpenRouter key) | `jev`, `decisions` (the configured `MARINA_DECISIONS` backend; falls back to `jev`) or `none` |
 | `MARINA_ARENA_RESEARCH_TRUST` | `0.5` | most of the judged move the research agent takes |
 

@@ -7,17 +7,26 @@
  * number — other pollsters' readings of the same quantity, market moves for
  * investor sentiment, prices for inflation expectations, scheduled events for
  * search and pageview attention. Every brief is bounded to the window since
- * the series' last published value: older news is already in that value.
+ * the series' latest known reading — the daily nowcast's date when one exists
+ * (Civiqs), else the last published value: older news is already in it.
  */
 
 import type { ArenaLock, ArenaRound } from "../types";
 
 export interface ResearchBrief {
   roundId: string;
-  /** ISO date of the last published value — evidence must be newer. */
+  /** ISO date of the latest known reading (nowcast, else last published value) — evidence must be newer. */
   since: string;
   /** The research request, for a search-capable model. */
   request: string;
+  /** Short keyword queries, one per playbook item, for a search API (Tavily). */
+  queries?: string[];
+}
+
+/** The freshest reading known before the round (the Civiqs daily nowcast). */
+export interface BriefNowcast {
+  date: string;
+  value: number;
 }
 
 const PLAYBOOKS: Record<string, string[]> = {
@@ -48,6 +57,31 @@ const PLAYBOOKS: Record<string, string[]> = {
   ],
 };
 
+/** Search-API queries per playbook (keywords, not prose; dated by the request's `since`). */
+const QUERIES: Record<string, string[]> = {
+  approval: [
+    "new presidential job approval poll",
+    "presidential approval rating polling average",
+    "news affecting presidential approval",
+  ],
+  generic: [
+    "generic congressional ballot poll",
+    "generic ballot polling average",
+    "midterm election news partisan preference",
+  ],
+  aaii: [
+    "S&P 500 Nasdaq weekly performance",
+    "stock market news Fed inflation jobs",
+    "investor sentiment Fear Greed index",
+  ],
+  consumer: [
+    "national average gas prices AAA EIA",
+    "CPI inflation report",
+    "consumer sentiment survey stock market jobs",
+  ],
+  attention: ["trending news this week", "most viewed Wikipedia articles this week"],
+};
+
 /** The playbook for a round, from its tracker and series (never the question prose). */
 export function familyOf(round: ArenaRound): keyof typeof PLAYBOOKS {
   const tracker = round.tracker.toLowerCase();
@@ -61,17 +95,32 @@ export function familyOf(round: ArenaRound): keyof typeof PLAYBOOKS {
   return "approval";
 }
 
-export function buildResearchBrief(round: ArenaRound, lock: ArenaLock): ResearchBrief {
+/**
+ * `opts.nowcast` — the base forecast's daily reading for this series (the
+ * Civiqs nowcast, `RoundForecast.nowcast[round.series]`): when it is newer than
+ * the last published value, the search window starts at ITS date, not the
+ * week-old history point.
+ */
+export function buildResearchBrief(
+  round: ArenaRound,
+  lock: ArenaLock,
+  opts: { nowcast?: BriefNowcast } = {},
+): ResearchBrief {
   const history = lock.answer_history ?? lock.history ?? [];
   const last = history.at(-1);
   const obsDay = lock.answer_obs?.at(-1)?.date;
-  const since = last?.date ?? obsDay ?? round.lock_at.slice(0, 10);
-  const lastLine = last
-    ? `The benchmark's own reading of the latest wave (dated ${last.date}, the field start) is ${last.value} ${round.unit ?? ""}; that wave is ALREADY known — the question is about the next one.`.trim()
-    : obsDay
-      ? `The latest observed list is from ${obsDay}.`
-      : "";
-  const asks = PLAYBOOKS[familyOf(round)]!.map((a, i) => `${i + 1}. ${a}`);
+  const nowcast =
+    opts.nowcast && (!last || opts.nowcast.date > last.date) ? opts.nowcast : undefined;
+  const since = nowcast?.date ?? last?.date ?? obsDay ?? round.lock_at.slice(0, 10);
+  const lastLine = nowcast
+    ? `The benchmark is a smoothed daily tracker; its reading on ${nowcast.date} is ${nowcast.value} ${round.unit ?? ""} and is ALREADY known — the question is where it stands on the release day.`.trim()
+    : last
+      ? `The benchmark's own reading of the latest wave (dated ${last.date}, the field start) is ${last.value} ${round.unit ?? ""}; that wave is ALREADY known — the question is about the next one.`.trim()
+      : obsDay
+        ? `The latest observed list is from ${obsDay}.`
+        : "";
+  const family = familyOf(round);
+  const asks = PLAYBOOKS[family]!.map((a, i) => `${i + 1}. ${a}`);
   const request = [
     `A forecaster must predict: ${round.question}`,
     `The answer is published around ${round.release_at.slice(0, 10)}. ${lastLine}`,
@@ -81,5 +130,10 @@ export function buildResearchBrief(round: ArenaRound, lock: ArenaLock): Research
     "",
     "Rules: every fact needs its date and its source; give numbers exactly as published; say plainly when you found nothing for an item; do not forecast or give opinions.",
   ].join("\n");
-  return { roundId: round.round_id, since, request };
+  // Attention rounds are about the items the question names; search for them.
+  const queries =
+    family === "attention"
+      ? [round.question, ...(QUERIES.attention ?? [])]
+      : [...(QUERIES[family] ?? [])];
+  return { roundId: round.round_id, since, request, queries };
 }

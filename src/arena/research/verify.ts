@@ -7,7 +7,8 @@
  * said 35%). A model judge cannot catch that — it checks a rationale against
  * the dossier, not the dossier against the web. This does it mechanically:
  * every dossier line that cites a page has its figures looked up IN that page
- * (fetched through the SSRF guard). Lines are tagged
+ * (fetched through the SSRF guard, or the text the search engine already
+ * fetched when a source carries it — see `PageText.provided`). Lines are tagged
  *
  *   [verified]    every figure found on a cited page
  *   [unverified]  a cited page was read and a figure is not on it
@@ -59,13 +60,32 @@ export interface VerifiedDossier {
   verifiedText: string;
   lines: VerifiedLine[];
   stats: Record<LineStatus, number>;
+  /** Where the cited pages' text came from: the retriever, a fetch, or nowhere. */
+  reads: { provided: number; fetched: number; failed: number };
 }
 
-export type PageText = (url: string) => Promise<string | undefined>;
+/**
+ * Reads a cited page. `provided` (optional) answers synchronously from text a
+ * retriever already fetched; those pages do not count toward the fetch cap.
+ */
+export type PageText = ((url: string) => Promise<string | undefined>) & {
+  provided?: (url: string) => string | undefined;
+};
 
 const LINK = /\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g;
+/** Pages fetched per dossier (provided texts are free and uncapped). */
 const MAX_PAGES = 12;
-const MAX_PAGE_BYTES = 2_000_000;
+/**
+ * Bytes read per fetched page. Larger pages are truncated, not rejected: the
+ * figures a report cites are near the top (Civiqs results pages are 2–12 MB,
+ * almost all of it chart data after the headline numbers).
+ */
+export const MAX_PAGE_BYTES = 16 * 1024 * 1024;
+/** Per-page timeout: slow government sites (EIA, FRED) need more than 8 s. */
+export const PAGE_TIMEOUT_MS = 15_000;
+/** A descriptive agent with a contact URL; some sites (BLS) still refuse any bot. */
+export const VERIFY_USER_AGENT =
+  "Mozilla/5.0 (compatible; MarinaResearch/1.1; citation check; +https://github.com/h2oai/marina)";
 
 /** Figures worth checking: percentages, decimals, and numbers of 3+ digits that are not years. */
 export function figuresIn(line: string): string[] {
@@ -92,20 +112,44 @@ function hasFigure(page: string, figure: string): boolean {
   return new RegExp(`(?<![\\d.])${escaped}(?![\\d]|\\.\\d)`).test(page);
 }
 
-export function defaultPageText(timeoutMs = 8_000): PageText {
+/** Up to `maxBytes` of a response body as text; the rest is cancelled, not read. */
+export async function readCapped(res: Response, maxBytes = MAX_PAGE_BYTES): Promise<string> {
+  if (!res.body) return "";
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let read = 0;
+  let out = "";
+  try {
+    while (read < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = value.byteLength > maxBytes - read ? value.subarray(0, maxBytes - read) : value;
+      read += chunk.byteLength;
+      out += decoder.decode(chunk, { stream: true });
+    }
+    out += decoder.decode();
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  return out;
+}
+
+export function defaultPageText(timeoutMs = PAGE_TIMEOUT_MS, maxBytes = MAX_PAGE_BYTES): PageText {
   return async (url) => {
     try {
       const res = await guardedFetch(
         url,
         {
           signal: AbortSignal.timeout(timeoutMs),
-          headers: { "User-Agent": "Mozilla/5.0 (compatible; MarinaResearch/1.0)" },
+          headers: { "User-Agent": VERIFY_USER_AGENT },
         },
         { maxHops: 3 },
       );
-      if (!res.ok) return undefined;
-      const body = await res.text();
-      if (body.length > MAX_PAGE_BYTES) return undefined;
+      if (!res.ok) {
+        await res.body?.cancel().catch(() => undefined);
+        return undefined;
+      }
+      const body = await readCapped(res, maxBytes);
       return /<html|<body/i.test(body) ? extractReadableText(body).text : body;
     } catch {
       return undefined;
@@ -113,16 +157,40 @@ export function defaultPageText(timeoutMs = 8_000): PageText {
   };
 }
 
-export async function verifyDossier(report: string, pageText: PageText): Promise<VerifiedDossier> {
+/**
+ * Tag every cited line of `report`. A page's text comes, in order, from
+ * `sources` (a retriever's `Source.text`), `pageText.provided`, or a fetch
+ * (the first `MAX_PAGES` remaining URLs). `NO_FETCH_DOMAINS` pages are never
+ * read by any route.
+ */
+export async function verifyDossier(
+  report: string,
+  pageText: PageText,
+  sources: ReadonlyArray<{ url: string; text?: string }> = [],
+): Promise<VerifiedDossier> {
   const rawLines = report.split("\n");
   const urls = new Set<string>();
   for (const line of rawLines) for (const m of line.matchAll(LINK)) urls.add(m[2]!);
+  const given = new Map<string, string>();
+  for (const s of sources) if (s.text && !given.has(s.url)) given.set(s.url, s.text);
   const pages = new Map<string, string | undefined>();
+  const reads = { provided: 0, fetched: 0, failed: 0 };
+  const toFetch: string[] = [];
+  for (const u of urls) {
+    if (!fetchAllowed(u)) continue;
+    const text = given.get(u) ?? pageText.provided?.(u);
+    if (text) {
+      pages.set(u, text);
+      reads.provided++;
+    } else toFetch.push(u);
+  }
   await Promise.all(
-    [...urls]
-      .filter(fetchAllowed)
-      .slice(0, MAX_PAGES)
-      .map(async (u) => pages.set(u, await pageText(u))),
+    toFetch.slice(0, MAX_PAGES).map(async (u) => {
+      const text = await pageText(u);
+      pages.set(u, text);
+      if (text) reads.fetched++;
+      else reads.failed++;
+    }),
   );
 
   const lines: VerifiedLine[] = [];
@@ -164,5 +232,11 @@ export async function verifyDossier(report: string, pageText: PageText): Promise
     );
     if (status === "verified") verified.push(text);
   }
-  return { annotated: annotated.join("\n"), verifiedText: verified.join("\n"), lines, stats };
+  return {
+    annotated: annotated.join("\n"),
+    verifiedText: verified.join("\n"),
+    lines,
+    stats,
+    reads,
+  };
 }
