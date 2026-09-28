@@ -165,7 +165,12 @@ export async function researchForecastRound(
     return keep("research agent answers numeric rounds; baseline for this shape");
   }
   const base = baseline.topline;
-  const brief = buildResearchBrief(round, lock);
+  // Search from the nowcast's own date when it is fresher than the weekly history.
+  const nowcastUsed = (baseline as { nowcast?: Record<string, { date: string; value: number }> })
+    .nowcast;
+  const brief = buildResearchBrief(round, lock, {
+    ...(round.series && nowcastUsed?.[round.series] ? { nowcast: nowcastUsed[round.series] } : {}),
+  });
 
   let research: ResearchReport;
   try {
