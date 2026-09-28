@@ -65,6 +65,9 @@ INSERT OR IGNORE INTO entity_competence (entity_id, gate, demonstrations, superv
   SELECT id, 'world.code', 999, 0 FROM users WHERE rank >= 5;
 `,
   },
+  // Migration 141: role-owned loop sections (operating loop / how to be / every turn) as a
+  // JSON object; honored only under earned/open posture or local-ungated.
+  { version: 141, sql: "ALTER TABLE roles ADD COLUMN loop TEXT NOT NULL DEFAULT '{}';" },
 ];
 export const SCHEMA_VERSION = FORWARD_MIGRATIONS.at(-1)?.version ?? SCHEMA_BASELINE_VERSION;
 

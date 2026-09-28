@@ -383,6 +383,12 @@ export class PlatformMemoryBackend {
     return null;
   }
 
+  /** Raw core-memory value for `key`, or undefined when unset. */
+  async getCoreValue(key: string): Promise<string | undefined> {
+    const perceptions = await this.client.command(`memory get ${key}`);
+    return coreValue(perceptions);
+  }
+
   async orient(): Promise<PlatformMemoryResult> {
     const perceptions = await this.client.command("orient");
     const text = extractText(perceptions);

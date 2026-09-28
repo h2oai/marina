@@ -156,7 +156,8 @@ reaches accepted members only.
 
 Agent tool provenance records a risk class and evidence-source classes such as `world_event`,
 `memory`, or `external_tool`, never the underlying content. A deterministic reference monitor blocks
-untrusted requests to bypass governing policy and forces consequential raw operations through one
+requests to bypass governing policy on consequential calls made while untrusted content (external
+tool results, federated relays) is in context — elsewhere such language is labeled, not blocked — and forces consequential raw operations through one
 auditable command at a time. Normal autonomous action remains governed by Marina's existing ranks,
 safety gates, and shared human/agent command layer.
 

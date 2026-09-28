@@ -174,10 +174,12 @@ export function saveRole(
     focus?: string[];
     tone?: string;
     origin?: string;
+    loop?: RoleLoopSections;
     createdBy: string;
   },
 ): void {
   const previous = getRole(db, opts.name);
+  const loop = serializeRoleLoop(opts.loop);
   recordEditHistory(db, "role_history", opts.name, opts.createdBy, {
     old: previous
       ? JSON.stringify({
@@ -186,6 +188,7 @@ export function saveRole(
           guidelines: previous.guidelines,
           focus: previous.focus,
           tone: previous.tone,
+          ...(previous.loop && previous.loop !== "{}" ? { loop: previous.loop } : {}),
         })
       : "",
     new: JSON.stringify({
@@ -194,11 +197,12 @@ export function saveRole(
       guidelines: JSON.stringify(opts.guidelines ?? []),
       focus: JSON.stringify(opts.focus ?? []),
       tone: opts.tone ?? "",
+      ...(loop !== "{}" ? { loop } : {}),
     }),
   });
   db.run(
-    `INSERT OR REPLACE INTO roles (name, description, traits, guidelines, focus, tone, origin, created_by, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO roles (name, description, traits, guidelines, focus, tone, origin, loop, created_by, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       opts.name,
       opts.description ?? "",
@@ -207,6 +211,7 @@ export function saveRole(
       JSON.stringify(opts.focus ?? []),
       opts.tone ?? "",
       opts.origin ?? "",
+      loop,
       opts.createdBy,
       Date.now(),
     ],
@@ -516,6 +521,42 @@ export interface TraitRow {
   created_at: number;
 }
 
+/** Role-owned replacements for the non-security loop sections of the system
+ *  prompt. Keys match the `role create|edit` field names. */
+export interface RoleLoopSections {
+  operating_loop?: string;
+  how_to_be?: string;
+  every_turn?: string;
+}
+
+export const ROLE_LOOP_KEYS = ["operating_loop", "how_to_be", "every_turn"] as const;
+
+/** Canonical JSON for a role's loop sections: known keys only, empty values dropped. */
+export function serializeRoleLoop(loop: RoleLoopSections | undefined): string {
+  const out: RoleLoopSections = {};
+  for (const key of ROLE_LOOP_KEYS) {
+    const value = loop?.[key]?.trim();
+    if (value) out[key] = value;
+  }
+  return JSON.stringify(out);
+}
+
+/** Parse a stored `roles.loop` value; malformed JSON reads as no overrides. */
+export function parseRoleLoop(raw: string | undefined): RoleLoopSections {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const out: RoleLoopSections = {};
+    for (const key of ROLE_LOOP_KEYS) {
+      const value = parsed?.[key];
+      if (typeof value === "string" && value.trim()) out[key] = value.trim();
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 export interface RoleRow {
   name: string;
   description: string;
@@ -524,6 +565,8 @@ export interface RoleRow {
   focus: string;
   tone: string;
   origin: string;
+  /** JSON {@link RoleLoopSections} (migration 141). */
+  loop?: string;
   created_by: string;
   created_at: number;
 }

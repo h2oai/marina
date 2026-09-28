@@ -18,6 +18,7 @@
  */
 
 import type { MarinaDB, TraitCapabilities } from "../persistence/database";
+import { parseRoleLoop, ROLE_LOOP_KEYS, type RoleLoopSections } from "../persistence/db-agents";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -32,6 +33,8 @@ export interface ResolvedRole {
   focus: string[];
   tone: string;
   origin: string;
+  /** Optional replacements for the system prompt's non-security loop sections. */
+  loop?: RoleLoopSections;
 }
 
 interface ComposedCapabilities {
@@ -328,6 +331,7 @@ export function resolveRole(db: MarinaDB, roleName: string): ResolvedRole | null
     focus: JSON.parse(row.focus),
     tone: row.tone,
     origin: row.origin,
+    loop: parseRoleLoop(row.loop),
   };
 }
 
@@ -463,7 +467,44 @@ export function composeRolePrompt(role: ResolvedRole, taskCategory?: string): st
     sections.push(`## Tone\n${role.tone}`);
   }
 
+  const loopBlocks = renderRoleLoopBlocks(role.loop);
+  if (loopBlocks) sections.push(loopBlocks);
+
   return sections.join("\n\n");
+}
+
+// ─── Role-owned loop sections ───────────────────────────────────────────────
+
+const ROLE_LOOP_BLOCK_RE =
+  /<role-loop section="(operating_loop|how_to_be|every_turn)">\n([\s\S]*?)\n<\/role-loop>/g;
+
+/**
+ * A role may REPLACE the system prompt's OPERATING LOOP, HOW TO BE and EVERY
+ * TURN sections. They ride inside the composed role prompt as tagged blocks so
+ * every consumer of the role string (spawn, reconfigure, `system-prompt`
+ * preview) carries them; `getLeanSystemPrompt` lifts them out and decides
+ * whether they are honored. AUTHORITY AND TRUST is never replaceable.
+ */
+export function renderRoleLoopBlocks(loop: RoleLoopSections | undefined): string {
+  if (!loop) return "";
+  return ROLE_LOOP_KEYS.filter((key) => loop[key]?.trim())
+    .map((key) => `<role-loop section="${key}">\n${loop[key]!.trim()}\n</role-loop>`)
+    .join("\n\n");
+}
+
+/** Split a composed role prompt into its prose and its loop-section blocks. */
+export function splitRoleLoopBlocks(rolePrompt: string): {
+  prose: string;
+  loop: RoleLoopSections;
+} {
+  const loop: RoleLoopSections = {};
+  const prose = rolePrompt
+    .replace(ROLE_LOOP_BLOCK_RE, (_match, key: keyof RoleLoopSections, body: string) => {
+      if (body.trim()) loop[key] = body.trim();
+      return "";
+    })
+    .trimEnd();
+  return { prose, loop };
 }
 
 /**
