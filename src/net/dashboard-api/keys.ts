@@ -405,13 +405,19 @@ function handleEnvGet(): Response {
 }
 
 // Env vars that are read live from process.env on each access (safe to hot-reload)
-const HOT_RELOADABLE_VARS = new Set([
+/**
+ * Variables read at call time, so a dashboard edit takes effect without a
+ * restart. Anything read once at boot (START_ROOM, the search providers'
+ * TAVILY_API_KEY / SEARXNG_URL, AGENT_AUTORESPAWN, MAX_AGENTS,
+ * MAX_AGENT_UPTIME_MS) is NOT listed: it is written to .env and reported
+ * as restart-required instead of pretending to apply live.
+ */
+export const HOT_RELOADABLE_VARS: ReadonlySet<string> = new Set([
   "ALLOWED_ORIGINS",
   "MODEL_API_KEYS",
   "MEM_API_KEYS",
   "DASHBOARD_PASSWORD",
   "MARINA_ADMINS",
-  "START_ROOM",
   "ANTHROPIC_API_KEY",
   "OPENAI_API_KEY",
   "GEMINI_API_KEY",
@@ -427,11 +433,6 @@ const HOT_RELOADABLE_VARS = new Set([
   "TELEGRAM_TOKEN",
   "DISCORD_TOKEN",
   "DISCORD_CHANNEL_IDS",
-  "TAVILY_API_KEY",
-  "SEARXNG_URL",
-  "AGENT_AUTORESPAWN",
-  "MAX_AGENTS",
-  "MAX_AGENT_UPTIME_MS",
 ]);
 
 async function handleEnvPut(req: Request): Promise<Response> {
