@@ -9,8 +9,13 @@
  * archives as they stood at the lock, so any signal is leakage-free by
  * construction and backtestable.
  *
+ * `nowcast-shrink:w` = last weekly value + w × (freshest daily reading − it).
+ * `nowcast-mean:k` = the mean of the last k daily readings in that same
+ * snapshot (Civiqs revises earlier days nightly, so these are the revised
+ * values as published at that fetch; the newest reading is the least settled).
+ *
  *   centre:  last | nowcast | ewma:<α 0.05–1> | mean:<k 2–12> | median:<k 3–12>
- *            | trend:<k 3–12> | nowcast-shrink:<w 0–1>
+ *            | trend:<k 3–12> | nowcast-shrink:<w 0–1> | nowcast-mean:<k 2–7>
  *   spread:  arena | baseline | rms:<window 6–52> | mad:<window 6–52> | scale:<k 0.3–3>
  */
 
@@ -27,7 +32,7 @@ export interface SignalSpec {
 }
 
 const CENTRE =
-  /^(last|nowcast|ewma:(0?\.\d+|1(\.0+)?)|mean:\d+|median:\d+|trend:\d+|nowcast-shrink:(0?\.\d+|0|1(\.0+)?))$/;
+  /^(last|nowcast|ewma:(0?\.\d+|1(\.0+)?)|mean:\d+|median:\d+|trend:\d+|nowcast-shrink:(0?\.\d+|0|1(\.0+)?)|nowcast-mean:\d+)$/;
 const SPREAD = /^(arena|baseline|rms:\d+|mad:\d+|scale:\d+(\.\d+)?)$/;
 
 function param(s: string): number {
@@ -47,6 +52,7 @@ export function validateSignal(spec: SignalSpec): string | undefined {
   ) {
     return `${c} window out of range`;
   }
+  if (c === "nowcast-mean" && !(cp >= 2 && cp <= 7)) return "nowcast-mean window must be 2–7";
   const s = spec.spread.split(":")[0]!;
   const sp = param(spec.spread);
   if ((s === "rms" || s === "mad") && !(sp >= 6 && sp <= 52)) return `${s} window must be 6–52`;
@@ -120,13 +126,19 @@ export async function applySignal(
   const [ck, cpRaw] = spec.centre.split(":") as [string, string | undefined];
   const cp = Number(cpRaw);
   let mean: number;
-  if (ck === "nowcast" || ck === "nowcast-shrink") {
+  if (ck === "nowcast" || ck === "nowcast-shrink" || ck === "nowcast-mean") {
     const n =
       round.tracker === "civiqs"
         ? await civiqsNowcast(data, round).catch(() => undefined)
         : undefined;
-    const fresher = n && n.date > (history.at(-1)?.date ?? "") ? n.value : v.at(-1)!;
-    mean = ck === "nowcast" ? fresher : v.at(-1)! + cp * (fresher - v.at(-1)!);
+    const isFresher = !!n && n.date > (history.at(-1)?.date ?? "");
+    const fresher = isFresher ? n!.value : v.at(-1)!;
+    if (ck === "nowcast") mean = fresher;
+    else if (ck === "nowcast-shrink") mean = v.at(-1)! + cp * (fresher - v.at(-1)!);
+    else {
+      const tail = isFresher ? n!.recent.slice(-cp).map((p) => p.value) : [];
+      mean = tail.length ? tail.reduce((a, b) => a + b, 0) / tail.length : fresher;
+    }
   } else {
     mean = centreOf(ck, cp, v, steps);
   }

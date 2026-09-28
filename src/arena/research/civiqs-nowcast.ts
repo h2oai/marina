@@ -132,6 +132,27 @@ export interface Nowcast {
   value: number;
   /** The snapshot file it came from (dated on or before the lock). */
   snapshot: string;
+  /**
+   * The same snapshot's last few daily readings, oldest first, ending with
+   * `date`/`value` — revised values for the earlier days, as published at
+   * that fetch (for the `nowcast-mean:k` signal).
+   */
+  recent: Array<{ date: string; value: number }>;
+}
+
+/** Readings kept in `Nowcast.recent`. */
+export const NOWCAST_RECENT_DAYS = 7;
+
+function recentReadings(
+  snap: Snapshot,
+  series: CiviqsSeries,
+): Array<{ date: string; value: number }> {
+  const out: Array<{ date: string; value: number }> = [];
+  for (const point of snap.points.slice(-NOWCAST_RECENT_DAYS)) {
+    const value = seriesValue(snap, point, series);
+    if (value !== undefined) out.push({ date: point[0], value });
+  }
+  return out;
 }
 
 /** The freshest daily reading any entrant could have seen at `asOf` (default: the round's lock). */
@@ -156,7 +177,13 @@ export async function civiqsNowcast(
   if (archived && archived.date > point[0]) return archived;
   const value = seriesValue(snap as Snapshot, point, series);
   if (value === undefined) return archived;
-  return { series: round.series!, date: point[0], value, snapshot: `live:${snap.url}` };
+  return {
+    series: round.series!,
+    date: point[0],
+    value,
+    snapshot: `live:${snap.url}`,
+    recent: recentReadings(snap as Snapshot, series),
+  };
 }
 
 /** Fetch one tracker from the live dashboard (see civiqs-live.ts). */
@@ -185,7 +212,13 @@ async function archivedNowcast(
     if (fetchedAt && Date.parse(fetchedAt) > Date.parse(asOf)) continue;
     const value = seriesValue(snap as Snapshot, point, series);
     if (value === undefined) return undefined;
-    return { series: round.series!, date: point[0], value, snapshot: `civiqs/${dir}/${day}.json` };
+    return {
+      series: round.series!,
+      date: point[0],
+      value,
+      snapshot: `civiqs/${dir}/${day}.json`,
+      recent: recentReadings(snap as Snapshot, series),
+    };
   }
   return undefined;
 }

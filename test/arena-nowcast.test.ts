@@ -80,6 +80,11 @@ describe("Civiqs nowcast", () => {
       value: -24,
       snapshot: expect.stringContaining("2026-09-29"),
     });
+    // The same snapshot's recent daily readings, oldest first, ending at the nowcast.
+    expect(n?.recent).toEqual([
+      { date: "2026-09-20", value: -24 },
+      { date: "2026-09-28", value: -24 },
+    ]);
   });
 
   it("computes declared nets and single-choice shares", async () => {
