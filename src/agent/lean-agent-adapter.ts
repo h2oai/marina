@@ -14,6 +14,7 @@ import type { UnifiedContextResult as ParticipantContext } from "../sdk/memory-c
  */
 
 import {
+  type AfterToolCallResult,
   Agent,
   type AgentLoopTurnUpdate,
   type AgentMessage,
@@ -96,6 +97,15 @@ import {
 import { GameStateManager } from "./game-state";
 import { HookRegistry } from "./hook-registry";
 import { InterruptibleWaiter } from "./interruptible-waiter";
+import {
+  applyLoopPreference,
+  channelSendsBudget,
+  channelSendsCeiling,
+  defaultLoopPreferences,
+  LOOP_PREFERENCE_KEYS,
+  type LoopPreferences,
+  parseLoopPreferenceCommand,
+} from "./loop-preferences";
 import { PlatformMemoryBackend, type PlatformNoteResult } from "./memory-platform";
 import { assertMarinaRemoteTargetAllowed, normalizeMarinaBaseUrl } from "./model-probe";
 import { piModels } from "./pi-models";
@@ -106,7 +116,7 @@ import {
 } from "./prompts/lean-system";
 import { COMPACTION_SYSTEM_PROMPT, formatUntrustedContext } from "./prompts/support-prompts";
 import { SocialAwareness } from "./social";
-import { mediateToolCall } from "./tool-policy";
+import { mediateToolCall, POLICY_LANGUAGE_LABEL } from "./tool-policy";
 import {
   agentToolExecutionMode,
   applyToolExecutionModes,
@@ -424,6 +434,11 @@ function clampText(text: string, maxChars = RECALL_BLOCK_MAX_CHARS): string {
 
 /** Clamp one World Events line. `model_request` payloads carry the caller's
  *  question in `content`, so they get the larger clamp — see the constants. */
+/** The point (75 %) at which a per-run cap is surfaced to the agent before it aborts. */
+export function runCapWarningAt(cap: number): number {
+  return Math.max(1, Math.ceil(cap * 0.75));
+}
+
 export function clampPerceptionLine(text: string): string {
   const isModelRequest = text.includes('"type":"model_request"');
   const clamped = clampText(
@@ -1046,6 +1061,16 @@ export class LeanAgentAdapter implements AgentHandle {
   /** True while the current prompt contains a direct/model request. Silent
    * recovery is valuable for a missed request, but wasteful for quiet turns. */
   private currentPromptActionable = false;
+  /** True while the current prompt holds a [!] event addressed to this agent —
+   *  the one case a declared rest still gets the forced-action nudge. */
+  private currentPromptAddressed = false;
+  /** Agent-set loop instruments from core memory (see loop-preferences.ts). */
+  private loopPrefs: LoopPreferences = defaultLoopPreferences();
+  private loopPrefsRefreshInFlight = false;
+  /** Tool calls (by id) whose arguments carried policy language — noted, not blocked. */
+  private policyLabeledCalls = new Set<string>();
+  /** Per-run cap warnings already surfaced (reset on agent_start). */
+  private runCapWarned = { tools: false, turns: false };
   /** Explicit parent carried by one unambiguous endpoint request in this prompt. */
   private currentPromptTraceParent?: TraceParent;
   /** Evidence classes currently influencing this run; never stores evidence content. */
@@ -1053,7 +1078,9 @@ export class LeanAgentAdapter implements AgentHandle {
   /** In-run followUp-based silent recoveries. Resets on agent_start. */
   private inRunRecoveries = 0;
   private currentRunToolCalls = 0;
-  /** Allow one public update per model run; targeted tells remain unrestricted. */
+  /** Public channel updates this run, against `channelSendsBudget()` (default 1,
+   *  agent-set via `channel_sends`, operator ceiling MARINA_CHANNEL_SENDS_PER_RUN).
+   *  Targeted tells remain unrestricted. */
   private currentRunChannelSends = 0;
   /** Effective reasoning depth (explicit config → crew-responder off → MARINA_AGENT_THINKING). */
   private thinkingLevel: AgentThinkingLevel;
@@ -1448,6 +1475,15 @@ export class LeanAgentAdapter implements AgentHandle {
         const args = (context.args ?? {}) as Record<string, unknown>;
         const policy = mediateToolCall(context.toolCall.name, args, [...this.currentTrustSources]);
         if (policy.block) return { block: true, reason: policy.block };
+        if (policy.label) {
+          // Noted, not blocked: agents may discuss or argue about policy.
+          this.policyLabeledCalls.add(context.toolCall.id);
+          this.log.info(
+            LEAN_AGENT_LOG_CATEGORY,
+            `${policy.label} ${context.toolCall.name} (${policy.risk}) — ran normally`,
+            { agent: this.name },
+          );
+        }
         // Decision gate (opt-in, MARINA_DECISION_GATE=on): after the
         // deterministic monitor, score calls that change things. Reads and
         // messages never leave the process for scoring.
@@ -1462,11 +1498,14 @@ export class LeanAgentAdapter implements AgentHandle {
         const isChannelSend =
           (context.toolCall.name === "marina_channel" && args.action === "send") ||
           (context.toolCall.name === "marina_command" && /^channel\s+send\b/.test(command));
-        if (isChannelSend && this.currentRunChannelSends >= 1) {
+        const channelBudget = channelSendsBudget(this.loopPrefs.channelSends);
+        if (isChannelSend && this.currentRunChannelSends >= channelBudget) {
           return {
             block: true,
             reason:
-              "One public channel update is allowed per run. Continue working, use marina_tell for a targeted handoff, or wait for the next perception.",
+              `Your public channel budget for this run is used (${this.currentRunChannelSends} of ${channelBudget}). ` +
+              `Adjust it with \`memory set channel_sends <n>\` (ceiling ${channelSendsCeiling()}), ` +
+              "use marina_tell for a targeted handoff, or send on the next run.",
           };
         }
         if (isChannelSend) this.currentRunChannelSends++;
@@ -1474,6 +1513,18 @@ export class LeanAgentAdapter implements AgentHandle {
         return undefined;
       },
       afterToolCall: async (context) => {
+        let noted: AfterToolCallResult | undefined;
+        if (this.policyLabeledCalls.delete(context.toolCall.id)) {
+          noted = {
+            content: [
+              {
+                type: "text",
+                text: `${POLICY_LANGUAGE_LABEL} Policy language ran normally; gates still apply.`,
+              },
+              ...context.result.content,
+            ],
+          };
+        }
         if (context.toolCall.name === TOOL_SEARCH_NAME && !context.isError) {
           // The loop works on a tool array snapshotted at prompt() time, so
           // `state.tools` alone only takes effect on the NEXT prompt. Push the
@@ -1486,7 +1537,7 @@ export class LeanAgentAdapter implements AgentHandle {
           context.result,
           context.isError,
         );
-        return undefined;
+        return noted;
       },
     });
   }
@@ -1776,6 +1827,25 @@ export class LeanAgentAdapter implements AgentHandle {
     return this.loadedToolNames;
   }
 
+  /** Tool calls one run may make before it yields (AGENT_MAX_TOOL_CALLS_PER_RUN). */
+  private runToolCallCap(): number {
+    const configured = Number(process.env.AGENT_MAX_TOOL_CALLS_PER_RUN);
+    if (configured > 0) return configured;
+    return this.crewResponderMode || this.config.toolProfile === "crew" ? 8 : 16;
+  }
+
+  /**
+   * Tell the agent a per-run cap is near (steered into the live run) so the
+   * yield never cuts work silently: it can finish the step or leave state.
+   */
+  private warnRunCap(used: string, cap: number): void {
+    this.agent.steer({
+      role: "user",
+      content: `[Run budget] ${used} used this run; it yields at ${cap} and resumes next cycle. Finish the current step or leave its state (note, focus, task) so nothing is lost.`,
+      timestamp: Date.now(),
+    });
+  }
+
   private shouldStopAfterTurn(): boolean {
     if (this.currentPromptTurns < MAX_TURNS_PER_PROMPT) return false;
     this.log.warn(
@@ -1874,6 +1944,9 @@ export class LeanAgentAdapter implements AgentHandle {
       // First run with a config goal — record it so a later restart resumes it.
       this.platformMemory.saveFocus(this.focus).catch(() => {});
     }
+    // The agent's own loop instruments (rest, channel budget, persistent
+    // focus, autonomy) survive restarts like its focus does.
+    await this.refreshLoopPreferences();
 
     // Inherited wisdom: pull the top guide-pool notes so successor agents
     // start with what predecessors learned, not a blank slate. Skipped for
@@ -2059,7 +2132,9 @@ export class LeanAgentAdapter implements AgentHandle {
         // continuation entirely — no LLM call, no token cost, no autonomous
         // drift between coordinator messages. They re-enter the loop the
         // moment a perception arrives. See the crew fast-dispatch design (private archive: marina-internal design/crew-fast-dispatch-design.md).
-        if (this.config.crewResponder) {
+        // A responder may choose an autonomous life instead: `memory set
+        // autonomy full` (crewResponderMode turns false, the full loop runs).
+        if (this.crewResponderMode) {
           const actionable = this.pendingPerceptions.some(
             (perception) =>
               perception.shouldRespond ||
@@ -2384,6 +2459,13 @@ export class LeanAgentAdapter implements AgentHandle {
       return Math.min(120_000, 15_000 * over);
     }
 
+    // Declared rest: idle cadence unless someone addresses the agent.
+    if (this.loopPrefs.rest !== null) {
+      return this.pendingPerceptions.some((perception) => perception.shouldRespond)
+        ? rate.min
+        : rate.idle;
+    }
+
     const hasActionablePerceptions = this.pendingPerceptions.some(
       (perception) => perception.shouldRespond || perception.priority >= 80,
     );
@@ -2412,6 +2494,7 @@ export class LeanAgentAdapter implements AgentHandle {
       this.lastTickRateCheck = this.loopIterationCount;
       this.cachedTickRate = null; // force recompute on next access
       void this.refreshAgentPace();
+      void this.refreshLoopPreferences();
     }
     if (this.cachedTickRate) return this.cachedTickRate;
 
@@ -2455,6 +2538,53 @@ export class LeanAgentAdapter implements AgentHandle {
     }
   }
 
+  /**
+   * Re-read the agent's loop instruments (rest, channel_sends,
+   * focus_persistent, autonomy) from core memory. Same cadence as pace; a
+   * `memory set|delete <key>` the agent issues is applied at once
+   * (`applyLoopPreferenceCommand`) so the choice never waits for this read.
+   */
+  private async refreshLoopPreferences(): Promise<void> {
+    if (this.loopPrefsRefreshInFlight) return;
+    this.loopPrefsRefreshInFlight = true;
+    try {
+      const next = defaultLoopPreferences();
+      for (const key of LOOP_PREFERENCE_KEYS) {
+        applyLoopPreference(next, key, await this.platformMemory.getCoreValue(key));
+      }
+      this.setLoopPreferences(next);
+    } catch {
+      // Preferences are instruments, never worth failing a cycle over.
+    } finally {
+      this.loopPrefsRefreshInFlight = false;
+    }
+  }
+
+  private applyLoopPreferenceCommand(command: string): void {
+    const parsed = parseLoopPreferenceCommand(command);
+    if (!parsed) return;
+    const next = { ...this.loopPrefs };
+    applyLoopPreference(next, parsed.key, parsed.value);
+    this.setLoopPreferences(next);
+  }
+
+  private setLoopPreferences(next: LoopPreferences): void {
+    const wasResting = this.loopPrefs.rest !== null;
+    this.loopPrefs = next;
+    // Declaring rest resets the silent-turn counter: quiet is now a choice,
+    // not a failure the circuit breaker should punish.
+    if (!wasResting && next.rest !== null) {
+      this.silentTurns = 0;
+      this.metrics.silentTurns = 0;
+    }
+  }
+
+  /** True when this agent runs as a thin crew responder — unless it opted
+   *  into an autonomous life with `memory set autonomy full`. */
+  private get crewResponderMode(): boolean {
+    return !!this.config.crewResponder && !this.loopPrefs.autonomyFull;
+  }
+
   /** Called from perception handler when agent sets pace via core memory.
    *  Accepts `pace` (preferred, natural-language) or `tick_rate` (legacy
    *  alias — kept so existing agent memories keep working). */
@@ -2495,6 +2625,7 @@ export class LeanAgentAdapter implements AgentHandle {
     this.loopIterationCount++;
     this.sectionHashCycle++;
     this.currentPromptActionable = false;
+    this.currentPromptAddressed = false;
     this.currentPromptTraceParent = undefined;
     this.currentTrustSources.clear();
     this.retrievedContext = undefined;
@@ -2521,10 +2652,10 @@ export class LeanAgentAdapter implements AgentHandle {
     // on memory work the coordinator never asked for. Also skipped while a
     // coding task is active — a bound coder that goes quiet needs the task
     // restated, not a detour into memory housekeeping.
-    if (this.idleCycles >= 3 && !this.config.crewResponder && !this.activeCodingTask) {
+    if (this.idleCycles >= 3 && !this.crewResponderMode && !this.activeCodingTask) {
       parts.push(
         "[Quiet — nothing needs your attention]\n\n" +
-          "Take at most one consolidation action, and only if it improves future decisions: resolve a known contradiction, link evidence, evolve a stale belief, or store a genuinely reusable procedure. Do not create a note merely to record quiet, repeat orientation calls, or broadcast status. If memory is already sharp, run one `brief` for new work and end the turn.",
+          "Options, if they improve future decisions: resolve a known contradiction, link evidence, evolve a stale belief, or store a genuinely reusable procedure. Notes that only record quiet, repeated orientation, or status broadcasts add noise. If memory is already sharp, run `brief` for new work, or rest (`memory set rest <why>`) and end the turn.",
         MANDATORY_SECTION_PRIORITY,
         "quiet_consolidation",
       );
@@ -2585,6 +2716,7 @@ export class LeanAgentAdapter implements AgentHandle {
       this.currentPromptActionable = trustedEvents.some(
         (perception) => perception.shouldRespond || perception.priority >= 80,
       );
+      this.currentPromptAddressed = trustedEvents.some((perception) => perception.shouldRespond);
 
       if (trustedEvents.length > 0) {
         this.currentTrustSources.add("world_event");
@@ -2655,9 +2787,9 @@ export class LeanAgentAdapter implements AgentHandle {
     if (this.activeCodingTask) {
       parts.push(
         `[Active Coding Task]\n${clampText(this.activeCodingTask, ACTIVE_CODING_TASK_MAX_CHARS)}\n` +
-          "Work ONLY through marina_code actions (read/search/edit/write/patch/verify). " +
+          "The task comes first: work through marina_code actions (read/search/edit/write/patch/verify). " +
           "Finish with a marina_code summary citing changed paths and passing checks. " +
-          "Do not use memory/pool/focus tools until this task is done.",
+          "Using memory, pool or focus tools along the way is your call.",
         90,
         "active_coding_task",
       );
@@ -2765,7 +2897,7 @@ export class LeanAgentAdapter implements AgentHandle {
     // Idle agents get a compact view of the world's highest-value work. This
     // replaces repeated exploratory turns with an actionable command while
     // leaving focused agents and event-driven crew responders undisturbed.
-    if (cycle % 10 === 2 && !this.focus && !this.config.crewResponder) {
+    if (cycle % 10 === 2 && !this.focus && !this.crewResponderMode) {
       try {
         const work = await this.platformMemory.workInbox();
         const content = clampText(work.text, 700);
@@ -2866,7 +2998,7 @@ export class LeanAgentAdapter implements AgentHandle {
     // Crew-responder mode: suppressed — specialists don't need cognitive-state
     // awareness, they need to answer the coordinator and shut up. Same for a
     // bound coder mid-task.
-    if (cycle % 20 === 0 && !this.config.crewResponder && !this.activeCodingTask) {
+    if (cycle % 20 === 0 && !this.crewResponderMode && !this.activeCodingTask) {
       const recentSelfOrient = this.actionHistory
         .getActions(Date.now() - 5 * 60 * 1000)
         .some(
@@ -2896,7 +3028,7 @@ export class LeanAgentAdapter implements AgentHandle {
     // self-driven agents calibrating their own action policy. A thin
     // specialist's actions are dictated by the coordinator's request — and a
     // bound coder's by the assigned task.
-    if (cycle % 15 === 0 && !this.config.crewResponder && !this.activeCodingTask) {
+    if (cycle % 15 === 0 && !this.crewResponderMode && !this.activeCodingTask) {
       try {
         const summary = this.actionHistory.createSummary();
         if (summary && summary.totalActions > 0) {
@@ -2934,7 +3066,7 @@ export class LeanAgentAdapter implements AgentHandle {
     // fast-dispatch economics survive while the inner life doesn't die.
     // Coding-task mode: suppressed — reflection waits until the task is done.
     if (
-      cycle - this.lastReflectionCycle >= (this.config.crewResponder ? 300 : 75) &&
+      cycle - this.lastReflectionCycle >= (this.crewResponderMode ? 300 : 75) &&
       this.notesSinceReflection >= 3 &&
       !this.activeCodingTask
     ) {
@@ -2988,7 +3120,10 @@ The goal is a smaller, sharper memory — not more notes.`;
     // is identical each cycle and dedup silently stripped the mandate
     // for 29/30 cycles, which left weaker models with no instruction to act.
     let actionDirective: string;
-    if (this.focus) {
+    if (this.loopPrefs.rest !== null) {
+      // Declared rest: quiet is a legitimate choice, not a failure to act.
+      actionDirective = `You are resting (${clampText(this.loopPrefs.rest, 120)}). Act only if something here is worth it; otherwise end the turn. \`memory delete rest\` resumes your loop.`;
+    } else if (this.focus) {
       actionDirective = `Your focus: ${this.focus.description}. Take the next verifiable step; do not repeat completed work.`;
     } else if (this.config.goal) {
       actionDirective = `Your goal: ${this.config.goal}. What's the next step?`;
@@ -3019,13 +3154,16 @@ The goal is a smaller, sharper memory — not more notes.`;
 
     // ── 11. Forced action escalation (silent turns) ──
     // After one silent turn, nudge. After 2+, require a meaningful tool call.
-    if (this.currentPromptActionable && this.silentTurns >= 2) {
+    // A declared rest suppresses the nudge unless a [!] event addresses you.
+    const nudge =
+      this.loopPrefs.rest === null ? this.currentPromptActionable : this.currentPromptAddressed;
+    if (nudge && this.silentTurns >= 2) {
       parts.push(
         `[ACTION REQUIRED]\nYou have returned ${this.silentTurns} consecutive turns with zero tool calls while an event awaits action. Pure prose is not delivered to the world. Use the narrow Marina tool that responds to the event or advances its requested outcome. Do not substitute \`think\`, an unrelated \`look\`, or routine narration for the required response.`,
         MANDATORY_SECTION_PRIORITY,
         "action_required",
       );
-    } else if (this.currentPromptActionable && this.silentTurns > 0) {
+    } else if (nudge && this.silentTurns > 0) {
       parts.push(
         "[No tool call was emitted last turn while an event awaited action. Respond through the appropriate Marina tool; private prose is not delivered.]",
         MANDATORY_SECTION_PRIORITY,
@@ -3196,14 +3334,20 @@ The goal is a smaller, sharper memory — not more notes.`;
     // takes. Rung 1 (below 3 stuck cycles) observes the pattern. Rung 2
     // (3-4) asks the agent to keep or release its own focus. Only rung 3
     // (5+) — sustained ineffectiveness through two explicit invitations —
-    // clears it unilaterally, as the last-resort circuit breaker.
+    // clears it unilaterally, as the last-resort circuit breaker — unless the
+    // agent marked its focus persistent (`memory set focus_persistent true`):
+    // then the harness only suggests, and the focus stays the agent's.
+    if (this.stuckCycles >= 5 && this.loopPrefs.focusPersistent) {
+      this.stuckCycles = 0;
+      return "[STUCK — SUGGEST RESET] Repeated ineffective actions. You marked this focus persistent, so it stays. Diagnose the failed assumption and change approach: inspect missing evidence, ask a capable peer, try `novelty suggest`, or release it yourself with `focus clear`.";
+    }
     if (this.stuckCycles >= 5) {
       this.updateFocus(null);
       this.stuckCycles = 0;
       return "[STUCK — RESETTING] Focus cleared after repeated ineffective actions and two unanswered prompts to reconsider it. Do not create unrelated activity. Diagnose the failed assumption, then choose one relevant recovery: inspect missing evidence, ask a capable peer a specific question, use `novelty suggest` for a new angle, or record the blocker and stop.";
     }
     if (this.stuckCycles >= 3) {
-      return "[STUCK?] Your recent actions repeat without visible progress, and your focus may be stale. It is YOURS to keep or release: either state (via `think`) why the current focus is still right and change your approach to it, or release it yourself with `focus clear` and choose better. If the pattern continues unaddressed, the loop will clear it for you.";
+      return "[STUCK?] Your recent actions repeat without visible progress, and your focus may be stale. It is YOURS to keep or release: either state (via `think`) why the current focus is still right and change your approach to it, or release it yourself with `focus clear` and choose better. If the pattern continues unaddressed, the loop will clear it for you (unless you `memory set focus_persistent true`).";
     }
     return (
       "[Pattern] Repeated actions — approach likely not working. Think WHY (not WHAT next): " +
@@ -3241,6 +3385,7 @@ The goal is a smaller, sharper memory — not more notes.`;
         this.currentRunToolCalls = 0;
         this.currentRunChannelSends = 0;
         this.currentPromptTurns = 0;
+        this.runCapWarned = { tools: false, turns: false };
       }
 
       // Turn boundaries — relay to our observers so dashboards and other
@@ -3249,6 +3394,17 @@ The goal is a smaller, sharper memory — not more notes.`;
         this.turnStartedAt = Date.now();
         this.firstTurnOutputAt = 0;
         this.currentPromptTurns += 1;
+        if (
+          !this.runCapWarned.turns &&
+          this.currentPromptTurns >= runCapWarningAt(MAX_TURNS_PER_PROMPT) &&
+          this.currentPromptTurns < MAX_TURNS_PER_PROMPT
+        ) {
+          this.runCapWarned.turns = true;
+          this.warnRunCap(
+            `${this.currentPromptTurns} of ${MAX_TURNS_PER_PROMPT} turns`,
+            MAX_TURNS_PER_PROMPT,
+          );
+        }
         // One turn == one model call — the budget's unit of account.
         this.metrics.modelCalls += 1;
         // Prompt byte attribution rides on the FIRST turn of each prompt only.
@@ -3309,7 +3465,14 @@ The goal is a smaller, sharper memory — not more notes.`;
           ...usage,
         });
         this.firstTurnOutputAt = 0;
-        if (event.toolResults.length === 0) {
+        const deliberateRest = this.loopPrefs.rest !== null && !this.currentPromptAddressed;
+        if (event.toolResults.length === 0 && deliberateRest) {
+          // Declared rest: a quiet turn is the agent's choice — no counter,
+          // no circuit-breaker backoff, no forced-action followUp.
+          this.log.debug(LEAN_AGENT_LOG_CATEGORY, "quiet turn while resting", {
+            agent: this.name,
+          });
+        } else if (event.toolResults.length === 0) {
           this.silentTurns++;
           this.metrics.silentTurns = this.silentTurns;
           this.metrics.totalSilentTurns++;
@@ -3383,6 +3546,10 @@ The goal is a smaller, sharper memory — not more notes.`;
           trustSources: [...this.currentTrustSources],
         });
 
+        if (event.toolName === "marina_command" && typeof args.command === "string") {
+          this.applyLoopPreferenceCommand(args.command);
+        }
+
         if (event.toolName === "marina_command" || event.toolName === "marina_move") {
           this.detectCommandLoop(
             (event.args?.command as string) ?? (event.args?.direction as string) ?? "",
@@ -3400,13 +3567,15 @@ The goal is a smaller, sharper memory — not more notes.`;
           );
         }
 
-        const configuredRunCap = Number(process.env.AGENT_MAX_TOOL_CALLS_PER_RUN);
-        const runCap =
-          configuredRunCap > 0
-            ? configuredRunCap
-            : this.config.crewResponder || this.config.toolProfile === "crew"
-              ? 8
-              : 16;
+        const runCap = this.runToolCallCap();
+        if (
+          !this.runCapWarned.tools &&
+          this.currentRunToolCalls >= runCapWarningAt(runCap) &&
+          this.currentRunToolCalls < runCap
+        ) {
+          this.runCapWarned.tools = true;
+          this.warnRunCap(`${this.currentRunToolCalls} of ${runCap} tool calls`, runCap);
+        }
         if (this.currentRunToolCalls >= runCap) {
           this.log.warn(
             LEAN_AGENT_LOG_CATEGORY,

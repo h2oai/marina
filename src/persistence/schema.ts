@@ -20,6 +20,9 @@ export interface Migration extends HistoricalMigration {
 }
 export const FORWARD_MIGRATIONS: Migration[] = [
   { version: 138, sql: MEMORY_UNIFICATION_SCHEMA, apply: upgradeNumericMemory },
+  // Role-owned loop sections (operating loop / how to be / every turn) as a
+  // JSON object; honored only under earned/open posture or local-ungated.
+  { version: 139, sql: "ALTER TABLE roles ADD COLUMN loop TEXT NOT NULL DEFAULT '{}';" },
 ];
 export const SCHEMA_VERSION = FORWARD_MIGRATIONS.at(-1)?.version ?? SCHEMA_BASELINE_VERSION;
 

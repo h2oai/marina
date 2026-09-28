@@ -79,6 +79,7 @@ export type {
   AgentConfigRow,
   ApiKeyRow,
   EditHistoryRow,
+  RoleLoopSections,
   RoleRow,
   TraitCapabilities,
   TraitRow,
@@ -112,6 +113,7 @@ import type {
   AgentConfigRow,
   ApiKeyRow,
   EditHistoryRow,
+  RoleLoopSections,
   RoleRow,
   TraitRow,
 } from "./db-agents";
@@ -3478,6 +3480,7 @@ export class MarinaDB implements MarinaStores {
     focus?: string[];
     tone?: string;
     origin?: string;
+    loop?: RoleLoopSections;
     createdBy: string;
   }): void {
     agentsDb.saveRole(this.db, opts);

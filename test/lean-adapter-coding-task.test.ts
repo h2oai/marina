@@ -81,9 +81,9 @@ describe("coding-task mode — continuation prompt assembly", () => {
     expect(prompt).not.toContain("[Reflection Due]");
     expect(prompt).toContain("[Active Coding Task]");
     expect(prompt).toContain("fix the off-by-one in the tokenizer");
-    // The directive keeps the coder on marina_code and off the memory tools.
+    // The directive puts the task first; memory use stays the coder's call.
     expect(prompt).toContain("marina_code");
-    expect(prompt).toContain("Do not use memory/pool/focus tools until this task is done.");
+    expect(prompt).toContain("Using memory, pool or focus tools along the way is your call.");
   });
 
   it("injects the task section EVERY cycle — no dedup, no TTL", async () => {

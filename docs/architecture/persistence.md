@@ -107,5 +107,6 @@ tests compare the baseline's schema and seed data with historical replay and tes
 populated older databases, FTS writes/deletion, and reopening.
 
 New changes belong in `FORWARD_MIGRATIONS`, after its last version. Migration 138
-converts numeric memory inside the same transaction as its DDL and version marker. Do not edit the baseline
+converts numeric memory inside the same transaction as its DDL and version marker. Migration 139
+adds `roles.loop` (JSON role-owned loop sections, see agent-cognition.md). Do not edit the baseline
 or archived migrations to implement a new feature.

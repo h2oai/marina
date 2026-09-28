@@ -7,6 +7,7 @@ import type {
   AgentConfigRow,
   ApiKeyRow,
   EditHistoryRow,
+  RoleLoopSections,
   RoleRow,
   TraitCapabilities,
   TraitRow,
@@ -34,6 +35,7 @@ export interface AgentsStore {
     focus?: string[];
     tone?: string;
     origin?: string;
+    loop?: RoleLoopSections;
     createdBy: string;
   }): void;
   getRole(name: string): RoleRow | undefined;

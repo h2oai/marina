@@ -3,7 +3,7 @@
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { decideVerify } from "../src/decisions/policy";
-import { TASK_VERIFY_QUESTIONS } from "../src/decisions/verify";
+import { decisionVerifyMode, TASK_VERIFY_QUESTIONS } from "../src/decisions/verify";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import type { EngineEvent } from "../src/types";
@@ -31,6 +31,7 @@ describe("task submit verifier", () => {
     "MARINA_DECISION_BASE_URL",
     "MARINA_DECISION_MODEL",
     "MARINA_DECISION_VERIFY",
+    "MARINA_AUTONOMY",
   ];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   let backend: ReturnType<typeof Bun.serve>;
@@ -117,6 +118,22 @@ describe("task submit verifier", () => {
     await until(() => bob.allText().some((t) => t.includes("Submitted work")));
     expect(claimStatus(id)).toBe("submitted");
     expect(asked).toHaveLength(2);
+  });
+
+  it("under earned/open posture, `on` observes: records the submission and the verdict, never bounces", async () => {
+    for (const posture of ["earned", "open"]) {
+      process.env.MARINA_AUTONOMY = posture;
+      expect(decisionVerifyMode()).toBe("observe");
+      quality = 0.5; // the judge would bounce this under `guarded`
+      const before = db.listJudgeObservations().length;
+      const id = claimTask();
+      engine.processCommand(bob.entity!, `task submit ${id} Rough notes for the east sectors`);
+      expect(claimStatus(id)).toBe("submitted");
+      await until(() => db.listJudgeObservations().length === before + 1);
+      expect(bob.allText().some((t) => t.includes("Not submitted yet"))).toBe(false);
+    }
+    process.env.MARINA_AUTONOMY = "guarded";
+    expect(decisionVerifyMode()).toBe("on");
   });
 
   it("records a good submission immediately", async () => {

@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { roleLoopOverridesAllowed } from "../../agent/prompts/lean-system";
 import {
   decodeRoleBundle,
   encodeRoleBundle,
@@ -17,7 +18,11 @@ import {
 } from "../../agent/roles";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB, RoleRow, TraitCapabilities, TraitRow } from "../../persistence/database";
-import type { EditHistoryRow } from "../../persistence/db-agents";
+import {
+  type EditHistoryRow,
+  ROLE_LOOP_KEYS,
+  type RoleLoopSections,
+} from "../../persistence/db-agents";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import { getRank } from "../permissions";
 import { checkRoleEdit, refuseOwnRole } from "../role-guard";
@@ -274,6 +279,19 @@ export function roleCommand(deps: {
           }
           if (resolved.tone) lines.push(`\n${bold("Tone:")} ${resolved.tone}`);
           if (resolved.origin) lines.push(`${bold("Origin:")} ${resolved.origin}`);
+          for (const key of ROLE_LOOP_KEYS) {
+            const text = resolved.loop?.[key];
+            if (text) lines.push(`${bold(`Loop ${key}:`)} ${text}`);
+          }
+          if (resolved.loop && Object.keys(resolved.loop).length > 0) {
+            lines.push(
+              dim(
+                roleLoopOverridesAllowed()
+                  ? "Loop sections replace the system prompt defaults in this world."
+                  : "Loop sections are stored but not honored here (needs MARINA_AUTONOMY=earned|open or a local ungated profile).",
+              ),
+            );
+          }
 
           if (resolved.traitPrompts.length > 0) {
             lines.push(`\n${separator()}\n${bold("Composed Prompt:")}`);
@@ -443,7 +461,7 @@ export function roleCommand(deps: {
           if (!name) {
             ctx.send(
               input.entity,
-              `Usage: role ${sub} <name> [traits <t1,t2,...>] [guidelines <g1> | <g2> ...] [focus <f1,f2,...>] [tone <text>]`,
+              `Usage: role ${sub} <name> [traits <t1,t2,...>] [guidelines <g1> | <g2> ...] [focus <f1,f2,...>] [tone <text>] [operating_loop|how_to_be|every_turn <text>]`,
             );
             return;
           }
@@ -470,6 +488,7 @@ export function roleCommand(deps: {
             focus: opts.focus,
             tone: opts.tone,
             origin: opts.origin,
+            loop: opts.loop,
             createdBy: deps.getEntity?.(input.entity)?.name ?? "unknown",
           });
           editGate();
@@ -755,7 +774,15 @@ export function renderEditHistory(label: string, rows: EditHistoryRow[]): string
   return lines.join("\n");
 }
 
-const ROLE_FIELDS = ["description", "traits", "guidelines", "focus", "tone", "origin"] as const;
+const ROLE_FIELDS = [
+  "description",
+  "traits",
+  "guidelines",
+  "focus",
+  "tone",
+  "origin",
+  ...ROLE_LOOP_KEYS,
+] as const;
 type RoleField = (typeof ROLE_FIELDS)[number];
 
 /**
@@ -772,6 +799,7 @@ export function parseRoleArgs(tokens: string[]): {
   focus?: string[];
   tone?: string;
   origin?: string;
+  loop?: RoleLoopSections;
 } {
   const isField = (t: string | undefined, first: boolean): t is string =>
     !!t &&
@@ -815,5 +843,11 @@ export function parseRoleArgs(tokens: string[]): {
   if (description) result.description = description;
   const origin = values.get("origin");
   if (origin) result.origin = origin.split(/\s+/)[0];
+  const loop: RoleLoopSections = {};
+  for (const key of ROLE_LOOP_KEYS) {
+    const value = values.get(key);
+    if (value) loop[key] = value;
+  }
+  if (Object.keys(loop).length > 0) result.loop = loop;
   return result;
 }

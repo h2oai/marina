@@ -10,6 +10,7 @@
  * still flows only through approval. An outage accepts (never blocks work).
  */
 
+import { getAutonomyPosture } from "../engine/autonomy";
 import { getErrorMessage } from "../engine/errors";
 import type { Evidence } from "./evidence";
 import { maskSensitiveText } from "./gate";
@@ -198,10 +199,14 @@ export function decisionVerifyEnabled(env: NodeJS.ProcessEnv = process.env): boo
  * weak submission once; `observe` — score every submission and record the
  * judge's opinion, never act on it, so its agreement with the creators'
  * verdicts can be measured (`decision agreement`) before anyone trusts it.
+ * Under autonomy posture `earned`/`open`, `on` behaves as `observe`: the
+ * verdict is recorded beside the submission and the submission is never
+ * bounced — decision tools inform, approval still decides.
  */
 export function decisionVerifyMode(env: NodeJS.ProcessEnv = process.env): "off" | "on" | "observe" {
   const v = env.MARINA_DECISION_VERIFY?.trim().toLowerCase();
-  return v === "on" || v === "observe" ? v : "off";
+  if (v === "on") return getAutonomyPosture(env) === "guarded" ? "on" : "observe";
+  return v === "observe" ? v : "off";
 }
 
 /** The support questions a submission is judged on (grounded only when evidence was cited). */

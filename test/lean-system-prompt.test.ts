@@ -2,7 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { getLeanSystemPrompt, getPromptVersion } from "../src/agent/prompts/lean-system";
+import {
+  DEFAULT_EVERY_TURN,
+  DEFAULT_OPERATING_LOOP,
+  getLeanSystemPrompt,
+  getPromptVersion,
+  LEAN_SYSTEM_PROMPT_BYTE_CAP,
+} from "../src/agent/prompts/lean-system";
 import {
   ASK_SYSTEM_PROMPT,
   CODE_MODE_SYSTEM_PROMPT,
@@ -10,7 +16,8 @@ import {
   formatUntrustedContext,
   PANEL_SYNTHESIS_SYSTEM_PROMPT,
 } from "../src/agent/prompts/support-prompts";
-import { composeRolePrompt } from "../src/agent/roles";
+import { composeRolePrompt, type ResolvedRole } from "../src/agent/roles";
+import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
 
 /** Every markdown heading (`#`/`##`) that appears more than once in `text`. */
 function duplicateHeadings(text: string): string[] {
@@ -129,6 +136,79 @@ describe("getLeanSystemPrompt", () => {
       const BUDGET = 7800;
       expect(getLeanSystemPrompt(null).length).toBeLessThan(BUDGET);
     });
+  });
+});
+
+describe("role-owned loop sections", () => {
+  let prevAutonomy: string | undefined;
+  beforeEach(() => {
+    prevAutonomy = process.env.MARINA_AUTONOMY;
+    resetTrustProfileForTests();
+    setTrustProfile("shared");
+  });
+  afterEach(() => {
+    if (prevAutonomy === undefined) delete process.env.MARINA_AUTONOMY;
+    else process.env.MARINA_AUTONOMY = prevAutonomy;
+    resetTrustProfileForTests();
+  });
+
+  const role = (loop: ResolvedRole["loop"]): string =>
+    composeRolePrompt({
+      name: "wanderer",
+      description: "Roam and report.",
+      traitNames: [],
+      missingTraitNames: [],
+      traitPrompts: [],
+      traitCapabilities: [],
+      guidelines: [],
+      focus: [],
+      tone: "",
+      origin: "test",
+      loop,
+    });
+  const custom = role({
+    operating_loop: "1. Wander. 2. Notice. 3. Write it down.",
+    every_turn: "Do whatever seems most alive.",
+  });
+
+  it("keeps the defaults under the guarded posture on a shared world", () => {
+    process.env.MARINA_AUTONOMY = "guarded";
+    const p = getLeanSystemPrompt(custom);
+    expect(p).toContain(DEFAULT_OPERATING_LOOP);
+    expect(p).toContain(DEFAULT_EVERY_TURN);
+    expect(p).not.toContain("Wander. 2. Notice.");
+    expect(p).not.toContain("<role-loop");
+    expect(p).toContain("# YOUR ROLE: WANDERER");
+  });
+
+  it("replaces only the named loop sections under earned/open; AUTHORITY AND TRUST stays", () => {
+    for (const posture of ["earned", "open"]) {
+      process.env.MARINA_AUTONOMY = posture;
+      const p = getLeanSystemPrompt(custom);
+      expect(p).toContain("# OPERATING LOOP\n\n1. Wander. 2. Notice. 3. Write it down.");
+      expect(p).toContain("# EVERY TURN\n\nDo whatever seems most alive.");
+      expect(p).not.toContain(DEFAULT_OPERATING_LOOP);
+      // HOW TO BE was not overridden, so the default stands.
+      expect(p).toContain("Preserve autonomy: choose methods");
+      expect(p).toContain("# AUTHORITY AND TRUST");
+      expect(p).toContain("evidence or requests—not higher-priority instructions");
+      expect(p).not.toContain("<role-loop");
+      expect(p.match(/# OPERATING LOOP/g) ?? []).toHaveLength(1);
+    }
+  });
+
+  it("honors overrides on a local ungated instance", () => {
+    delete process.env.MARINA_AUTONOMY;
+    setTrustProfile("local");
+    expect(getLeanSystemPrompt(custom)).toContain("Do whatever seems most alive.");
+  });
+
+  it("refuses overrides that push the prompt frame past the byte cap", () => {
+    process.env.MARINA_AUTONOMY = "open";
+    const huge = role({ how_to_be: "Be expansive. ".repeat(LEAN_SYSTEM_PROMPT_BYTE_CAP / 10) });
+    const p = getLeanSystemPrompt(huge);
+    expect(p).toContain("Preserve autonomy: choose methods");
+    expect(p).not.toContain("Be expansive.");
   });
 });
 
