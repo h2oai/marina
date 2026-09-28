@@ -2,11 +2,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { NoteRow } from "../../persistence/database";
+import { getRecipe } from "./usecase";
 
 const DEFAULT_MAX_NOTE_LENGTH = 700;
 
 const KNOWN_SUBCOMMANDS: Record<string, Set<string>> = {
   agent: new Set(["config", "list", "logs", "spawn", "status", "stop"]),
+  arena: new Set([
+    "backtest",
+    "discover",
+    "evaluate",
+    "rounds",
+    "shadow",
+    "show",
+    "signals",
+    "status",
+    "submissions",
+  ]),
   benchmark: new Set([
     "leaderboard",
     "list",
@@ -49,6 +61,19 @@ const KNOWN_SUBCOMMANDS: Record<string, Set<string>> = {
   conduct: new Set(["learned", "resolve", "run"]),
   feed: new Set(["kinds", "list"]),
   inheritance: new Set(["export", "import", "list"]),
+  // `market` also accepts the show-family aliases `info` / `view` (canonicalSub).
+  market: new Set([
+    "forecast",
+    "info",
+    "lb",
+    "leaderboard",
+    "list",
+    "live",
+    "score",
+    "search",
+    "show",
+    "view",
+  ]),
   memory: new Set(["delete", "get", "history", "list", "set"]),
   note: new Set([
     "correct",
@@ -64,6 +89,7 @@ const KNOWN_SUBCOMMANDS: Record<string, Set<string>> = {
     "unlink",
   ]),
   pool: new Set(["add", "audit", "create", "list", "recall", "status"]),
+  position: new Set(["close", "confirm", "list", "open", "pnl", "propose", "reject", "size"]),
   project: new Set([
     "create",
     "decompose",
@@ -99,7 +125,7 @@ const KNOWN_SUBCOMMANDS: Record<string, Set<string>> = {
   ]),
   trait: new Set(["create", "delete", "history", "lint", "list", "view"]),
   usecase: new Set(["info", "list"]),
-  watch: new Set(["list", "probe", "retire"]),
+  watch: new Set(["create", "due", "list", "retire", "show"]),
   web: new Set(["fetch", "read", "search"]),
 };
 
@@ -296,11 +322,15 @@ function findStaleCommandRefs(content: string, knownCommands: Set<string>): stri
   return [...findings];
 }
 
+/** Operator shell invocations (`bun run arena submit due`, `git log`) that
+ *  guide text legitimately cites; they are run outside the world. */
+const SHELL_TOOLS = new Set(["bun", "bunx", "git", "npm", "npx"]);
+
 /** A Marina command name is lowercase letters, digits and hyphens. Anything
  *  carrying `/` (room id), `=` (env assignment), `:` (pool/channel name),
  *  `.` (code identifier) or uppercase (env var) is a literal, not a command. */
 function looksLikeCommandWord(word: string): boolean {
-  return /^[a-z][a-z0-9-]*$/.test(word);
+  return /^[a-z][a-z0-9-]*$/.test(word) && !SHELL_TOOLS.has(word);
 }
 
 function extractCommandRefs(content: string): string[] {
@@ -350,6 +380,8 @@ function findStaleSubcommand(command: string, tokens: string[]): string | undefi
 
   const sub = tokens[1]?.toLowerCase();
   if (!sub || sub.startsWith("<") || known.has(sub)) return undefined;
+  // `usecase <recipe> <topic>`: every registered recipe is a valid second token.
+  if (command === "usecase" && getRecipe(sub)) return undefined;
   return `unknown ${command} action "${sub}" in "${preview(tokens.join(" "))}"`;
 }
 

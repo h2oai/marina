@@ -5,7 +5,8 @@
 ## World templates
 - World definitions live in `worlds/` — each is a TypeScript file exporting a `WorldDefinition`
 - `MARINA_WORLD` env var selects which world to load (default: `default`)
-- Available worlds: `default` (intent-first Workbench), `showcase` (full 25-room launchpad — projects, templates, markets, benchmarks, craft, specialist crews), `commons` (coordination-ready), `research` (research lab), `personal` (self-evolving agent), `evolve` (8 capability benchmarks), `craft` (spec-driven dev — interview/spec/verify/ship), `markets` (prediction markets — confidence forecasting, Brier scoring, research-driven positions), `demos` (interactive demonstrations — lobby, workshop, bridge), five focused single-outcome worlds built on `worlds/focused-example.ts` (`prediction-lab`, `deep-research`, `red-team`, `due-diligence`, `data-investigation`), `empty` (minimal)
+- Available worlds: `default` (intent-first Workbench), `showcase` (full 25-room launchpad — projects, templates, markets, benchmarks, craft, specialist crews), `commons` (coordination-ready), `research` (research lab), `personal` (self-evolving agent), `evolve` (8 capability benchmarks), `craft` (spec-driven dev — interview/spec/verify/ship), `markets` (live Kalshi/Polymarket feed rooms and binary yes/no market rooms — confidence positions, Brier scoring), `prediction-lab` (the `markets` world plus a Calibration Sprint overlay), `demos` (interactive demonstrations — lobby, workshop, bridge), four focused single-outcome worlds built on `worlds/focused-example.ts` (`deep-research`, `red-team`, `due-diligence`, `data-investigation`), `empty` (minimal)
+- Forecasting is not a world feature: `forecast`, `arena`, `decision`, `market`, `position`, `probe`, `watch` and `web` are global builtins registered for every world. Arena work stays in whatever world holds its database (`DB_PATH`) — see `docs/guides/arena.md`
 - `WorldDefinition.seed?(db)` runs once on first boot, seeds DB with templates/projects/tasks (must be idempotent)
 - `RoomContext.brief?(entityId)` lets rooms push compass signals to entities
 - `brief watch [N]` / `brief unwatch` — periodic compass subscription (30-600 ticks)
@@ -30,8 +31,8 @@ they are explained. All are optional — unset means the world's own default.
 
 | Variable | Read by | Effect | Default |
 |---|---|---|---|
-| `MARINA_CREW_MODEL` | `default`, `showcase`, focused worlds | Shared model for every seeded crew. Per-crew overrides below win over it. | `marina/default` |
-| `MARINA_WORKBENCH_MODEL` | `default` | Model for the Workbench agent; wins over `MARINA_CREW_MODEL`. | falls back to `MARINA_CREW_MODEL`, then `marina/default` |
+| `MARINA_CREW_MODEL` | `default`, `showcase`, `prediction-lab`, focused worlds | Shared model for every seeded crew. Per-crew overrides below win over it. | `marina/default` |
+| `MARINA_WORKBENCH_MODEL` | `default` | Model for the Workbench agent; wins over `MARINA_CREW_MODEL`. | falls back to `MARINA_CREW_MODEL`, then `openai/gpt-6-luna` when `OPENAI_API_KEY` is set, `openrouter/openai/gpt-6-luna` when `OPENROUTER_API_KEY` is set, `huggingface/zai-org/GLM-5.3-Flash` when `HUGGINGFACE_API_KEY`/`HF_TOKEN` is set, else `marina/default` |
 | `MARINA_ANSWERER_MODEL` | `showcase` | Model for the answerer crew. | `MARINA_CREW_MODEL` |
 | `MARINA_ANSWERER_COUNT` | `showcase` | Size of the answerer crew. | `4` |
 | `MARINA_MATH_MODEL` | `showcase` | Model for the mathematician specialist. | `MARINA_CREW_MODEL` |

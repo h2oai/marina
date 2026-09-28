@@ -7,7 +7,7 @@ import { craftWorkshop } from "../../craft";
 // Compose: grid room exits + craft workshop handlers (spec workflow, interview→spec→implement→ship)
 const room: RoomModule = {
   short: "Spec Studio",
-  long: "Specification and design workspace. The craft workflow: interview → spec → implement → ship. Use 'task goal' to set objectives, 'craft start' to begin a workflow.",
+  long: "Specification and design workspace. The craft workflow: interview → spec → implement → ship. Use 'task goal' to set objectives; the craft world (MARINA_WORLD=craft) runs the full workflow.",
   exits: {
     north: "research/lab" as RoomId,
     east: "hub/crossroads" as RoomId,

@@ -5,7 +5,7 @@ import type { RoomId, RoomModule } from "../../../src/types";
 
 const room: RoomModule = {
   short: "Channels Hub",
-  long: "Communication channels and messaging. Create channels, subscribe, send messages, manage broadcasts. Use 'channel create <name>', 'channel send <name> <msg>', 'channel sub <name>'.",
+  long: "Communication channels and messaging. Create, join and send to channels. Use 'channel create <name>', 'channel join <name>', 'channel send <name> <msg>', 'channel history <name>'.",
   exits: {
     north: "strategy/room" as RoomId,
     east: "integration/bay" as RoomId,

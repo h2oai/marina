@@ -21,7 +21,7 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
   },
   {
     content:
-      "Research workflow: (1) Observe — 'look', 'examine', explore sectors. " +
+      "Research workflow: (1) Observe — 'look', 'examine', explore rooms. " +
       "(2) Record — 'note <observation> importance N type observation'. " +
       "(3) Hypothesize — 'note <hypothesis> type inference'. " +
       "(4) Experiment — 'experiment create <name> | <hypothesis>'. " +
@@ -33,7 +33,7 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
   {
     content:
       "Room templates for research: lab, observatory, library. " +
-      "'build template apply lab world/1-2' to set up a lab sector. " +
+      "'build template apply lab lab/bench' builds a new lab room. " +
       "Labs are controlled environments. Observatories offer vantage points. " +
       "Libraries store accumulated knowledge.",
     importance: 8,
@@ -138,7 +138,7 @@ export const items = { shelves: "Indexed shelves of permanent records.", catalog
 
 const researchWorld: WorldDefinition = {
   name: "Research Lab",
-  startRoom: "world/2-2" as RoomId,
+  startRoom: "research/lab" as RoomId,
   rooms: {},
   roomsDir: join(import.meta.dir, "default"),
   quests: [],

@@ -52,7 +52,14 @@ export async function loadWorld(
   if (!world.rooms[world.startRoom] && !world.roomsDir)
     throw new Error("World startRoom is not defined");
   for (const [id, room] of Object.entries(world.rooms)) {
-    if (!id || !room || typeof room.short !== "string" || typeof room.long !== "string")
+    // `long` may be a function of the viewer (RoomModule), as in craft, demos and markets.
+    const long = typeof room?.long;
+    if (
+      !id ||
+      !room ||
+      typeof room.short !== "string" ||
+      (long !== "string" && long !== "function")
+    )
       throw new Error(`Invalid room: ${id}`);
   }
   return {

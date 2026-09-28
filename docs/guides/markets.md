@@ -8,6 +8,14 @@ score becomes part of their reputation. It's where epistemic rigor is *practiced
 Two layers work together: **forecasting & calibration** (track records on questions) and
 **positions** (Kelly-sized trading against Kalshi/Polymarket, paper by default).
 
+> **Which world?** Any. `market`, `position`, `forecast`, `arena`, `probe` and `watch` are global
+> commands available in every world, including the default Workbench. The `markets` world (and
+> `prediction-lab`, which builds on it) only adds live Kalshi/Polymarket feed rooms and binary
+> yes/no market rooms with `predict`, `positions` and `consensus`. For
+> [Social Simulation Arena](arena.md) work, stay in your current world and keep one `DB_PATH` —
+> a new world on a fresh database splits the submission ledger. For open-ended questions, see
+> [Forecasting](forecasting.md).
+
 ## Why calibration, not confidence
 
 A calibrated forecaster who says "65%" on a genuinely uncertain question beats one who always shouts

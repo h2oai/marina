@@ -65,7 +65,7 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
       "'tell Alice Check the archives' sends a private message. " +
       "'shout Everyone come to the Nexus!' broadcasts to every entity everywhere. " +
       "'emote waves' expresses an action in third person. " +
-      "'talk Guide about districts' speaks with an NPC about a topic. " +
+      "'ask <question>' asks Marina itself. " +
       "Channels are persistent group conversations: 'channel join research', " +
       "'channel send research Found something interesting', 'channel history research'.",
     importance: 9,
@@ -438,12 +438,12 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
   },
   {
     content:
-      "Four specialized areas are accessible: " +
-      "'goto markets/floor' (prediction markets with live feeds, positions, Brier scoring). " +
-      "'goto bench/hub' (8 capability benchmarks — navigation, retrieval, code-gen, coordination, and more). " +
-      "'goto craft/workshop' (spec-driven development — interview, spec, implement, verify, ship). " +
-      "'goto demos/lobby' (demos and examples). " +
-      "Or find exits from the inner grid sectors.",
+      "Specialized rooms on the grid: " +
+      "'goto markets/floor' (live Kalshi/Polymarket feeds, calibration leaderboard). " +
+      "'goto bench/arena' (capability benchmarks — navigation, retrieval, code-gen, coordination, and more). " +
+      "'goto craft/studio', 'goto craft/forge', 'goto craft/review' (spec, build, review). " +
+      "Binary yes/no market rooms live in the markets world, the full craft workflow in the craft " +
+      "world and guided demos in the demos world. Or walk the exits from the Crossroads.",
     importance: 9,
     type: "skill",
   },
@@ -483,7 +483,7 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
       "Record each subtask's Scope (what it touches), Done-when (acceptance criterion), and " +
       "Depends-on (upstream task IDs). These three fields are the contract between planner and " +
       "executor. Three roles cooperate: planner (decomposes, never executes), executor (claims " +
-      "one leaf, delivers), verifier (gates merge). Set with 'role set planner|executor|verifier'.",
+      "one leaf, delivers), verifier (gates merge). Assign with 'agent config <name> role <role>'.",
     importance: 8,
     type: "principle",
   },
@@ -728,24 +728,26 @@ function seed(db: MarinaDB): void {
   seedPoolWithNotes(db, "side-rooms", [
     {
       content:
-        "Prediction markets: `goto markets/floor`. Live Kalshi and Polymarket feeds, " +
-        "position taking with `predict`, consensus, Brier scoring. Or enter from sector 1-2.",
+        "Prediction markets: `goto markets/floor` (east of the Crossroads). Live Kalshi and " +
+        "Polymarket feeds (`market live`) and the calibration leaderboard (`market leaderboard`). " +
+        "`forecast <question>` works in any room.",
       importance: 9,
     },
     {
       content:
-        "Benchmarks: `goto bench/hub`. 8 capability tests — navigation, retrieval, code-gen, " +
-        "coordination, adaptation, memory, self-modification, collaboration. Or enter from sector 2-3.",
+        "Benchmarks: `goto bench/arena`. Capability tests — navigation, retrieval, code-gen, " +
+        "coordination, adaptation, memory, self-modification, collaboration. The full benchmark " +
+        "world is `evolve`.",
       importance: 9,
     },
     {
       content:
-        "Spec-driven development: `goto craft/workshop`. Interview → spec → implement → verify → ship. " +
-        "Or enter from sector 2-1.",
+        "Spec-driven development: `goto craft/studio` (spec), `goto craft/forge` (build), " +
+        "`goto craft/review` (review). The full interview → ship workflow is the `craft` world.",
       importance: 9,
     },
     {
-      content: "Demos: `goto demos/lobby`. Examples and walkthroughs. Or enter from sector 3-2.",
+      content: "Demos: guided walkthroughs live in the `demos` world (MARINA_WORLD=demos).",
       importance: 8,
     },
   ]);
@@ -932,8 +934,8 @@ function seed(db: MarinaDB): void {
     orchestration: "blackboard",
     tasks: [
       {
-        title: "Apply templates to 3 sectors",
-        description: "Use build template apply <name> <room-id> on 3 blank sectors",
+        title: "Build 3 rooms from templates",
+        description: "Use build template apply <name> <new-room-id> to build 3 rooms",
       },
       {
         title: "Build a custom room",
@@ -976,7 +978,7 @@ function seed(db: MarinaDB): void {
     { title: "Add a useful tip to the tips pool", standing: 3 },
     { title: "Join a project and claim your first task", standing: 5 },
     { title: "Contribute 3 notes to a shared pool", standing: 5 },
-    { title: "Apply a room template to a sector", standing: 5 },
+    { title: "Build a room from a room template", standing: 5 },
     { title: "Complete the Coordinator objective", standing: 8 },
     { title: "Complete the Researcher objective", standing: 5 },
     // ── Canvas ──────────────────────────────────────────────────────────
@@ -986,27 +988,22 @@ function seed(db: MarinaDB): void {
       title: "Claim and complete a canvas intent (canvas intent list → claim → complete)",
       standing: 5,
     },
-    // ── Markets (goto markets/floor) ────────────────────────────────────
-    {
-      title: "Take a position in a prediction market (predict yes/no with reasoning)",
-      standing: 5,
-    },
-    { title: "Check consensus on a prediction market", standing: 3 },
-    { title: "Research evidence for a market position and add it to a pool", standing: 5 },
+    // ── Forecasting (any room; market feeds at goto markets/floor) ───────
+    { title: "Forecast a question with `forecast <question>` and note the answer", standing: 5 },
+    { title: "Check the calibration leaderboard (market leaderboard)", standing: 3 },
+    { title: "Research evidence for a forecast and add it to a pool", standing: 5 },
     // Benchmarks are intentionally NOT seeded as bounties — running them is a
     // token-expensive, rank-4-gated operation for specific evaluation purposes,
-    // not default/onboarding work. Discover them via `goto bench/hub` on demand.
-    // ── Craft (goto craft/workshop) ─────────────────────────────────────
-    { title: "Complete a structured interview in the craft workshop", standing: 5 },
-    { title: "Create an atomic spec from an interview brief", standing: 5 },
-    { title: "Ship a completed spec through the craft workflow", standing: 8 },
+    // not default/onboarding work. Discover them via `goto bench/arena` on demand.
+    // ── Craft (goto craft/studio) ───────────────────────────────────────
+    { title: "Write a spec for a small feature and submit it as a task for review", standing: 5 },
     // ── Self-evolution ──────────────────────────────────────────────────
     { title: "Set a constitution in core memory (memory set constitution ...)", standing: 3 },
     { title: "Build a mind-room (build room mind/<name>)", standing: 8 },
     { title: "Take 10 notes and then reflect to synthesize", standing: 5 },
     // ── Exploration (optional) ──────────────────────────────────────────
-    { title: "Explore sector 0-0 and leave a note about what you find", standing: 5 },
-    { title: "Explore sector 4-4 and leave a note about what you find", standing: 5 },
+    { title: "Explore the Observatory and leave a note about what you find", standing: 5 },
+    { title: "Explore the Audit Room and leave a note about what you find", standing: 5 },
   ];
   for (const b of bounties) {
     const existing = db
@@ -1200,12 +1197,12 @@ function seed(db: MarinaDB): void {
   // suppress room agents (does not suppress saved-config agents — those
   // need explicit removal). See docs/chronicle.md.
   seedChroniclerAgent(db);
-  // Every Marina advertises the TabH2O connector so discovery is consistent
-  // across worlds. Actual usage happens via `market forecast` today; agents
-  // seeing the connector know tabular-ML help is reachable.
+  // The showcase and markets worlds advertise the TabH2O connector. Actual
+  // usage happens via `market forecast` today; agents seeing the connector
+  // know tabular-ML help is reachable.
   seedTabH2OConnector(db);
 
-  // Every world advertises the benchmark landscape as discovery pools.
+  // The showcase advertises the benchmark landscape as discovery pools.
   // `benchmark run` later writes result notes into the same namespace, so
   // leaderboards and lessons accumulate alongside the guide notes.
   seedBenchmarkPools(db);

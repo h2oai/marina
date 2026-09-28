@@ -1,12 +1,16 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "bun:test";
-import { relative } from "node:path";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { readdirSync } from "node:fs";
+import { join, relative } from "node:path";
 import { Glob } from "bun";
-import { MarinaDB } from "../src/persistence/database";
+import { auditKnowledgeNotes } from "../src/engine/commands/knowledge-hygiene";
+import { MarinaDB, type NoteRow } from "../src/persistence/database";
 import type { RoomModule } from "../src/types";
+import { PLATFORM_GUIDE_NOTES } from "../src/world/seed-guide";
 import type { WorldDefinition } from "../src/world/world-definition";
+import { loadWorld } from "../src/world/world-loader";
 import dataInvestigationWorld from "../worlds/data-investigation";
 import deepResearchWorld from "../worlds/deep-research";
 import defaultWorld from "../worlds/default";
@@ -14,6 +18,7 @@ import dueDiligenceWorld from "../worlds/due-diligence";
 import predictionLabWorld from "../worlds/prediction-lab";
 import redTeamWorld from "../worlds/red-team";
 import showcaseWorld from "../worlds/showcase";
+import { createTestEngine } from "./engine-fixture";
 import { cleanupDb } from "./helpers";
 
 async function loadWorldRooms(world: WorldDefinition): Promise<Map<string, RoomModule>> {
@@ -142,4 +147,80 @@ describe.each(focusedWorlds)("%s example world", (slug, world, project) => {
       cleanupDb(dbPath);
     }
   });
+});
+
+/** Every builtin world under worlds/ (helper modules export no WorldDefinition). */
+const WORLDS_DIR = join(import.meta.dir, "..", "worlds");
+const HELPER_MODULES = new Set(["seed", "focused-example"]);
+/** Single-quoted phrases in world text that are names or values, not commands. */
+const QUOTED_NON_COMMANDS = new Set([
+  "anomaly investigation",
+  "example company diligence",
+  "launch plan challenge",
+  "not configured",
+]);
+const builtinWorldSlugs = readdirSync(WORLDS_DIR)
+  .filter((file) => file.endsWith(".ts"))
+  .map((file) => file.replace(/\.ts$/, ""))
+  .filter((slug) => !HELPER_MODULES.has(slug))
+  .sort();
+
+describe("every builtin world", () => {
+  let fixture: ReturnType<typeof createTestEngine>;
+  let commandNames: string[];
+
+  beforeAll(() => {
+    fixture = createTestEngine();
+    commandNames = fixture.engine.commands
+      .allBuiltins()
+      .flatMap((cmd) => [cmd.name, ...(cmd.aliases ?? [])]);
+  });
+  afterAll(() => fixture.dispose());
+
+  it("finds the shipped worlds", () => {
+    expect(builtinWorldSlugs).toContain("default");
+    expect(builtinWorldSlugs.length).toBeGreaterThanOrEqual(15);
+  });
+
+  it.each(builtinWorldSlugs)(
+    "%s starts in a room that exists after its rooms load",
+    async (slug) => {
+      const world = await loadWorld(slug, process.cwd(), WORLDS_DIR);
+      const rooms = await loadWorldRooms(world);
+      expect(rooms.has(world.startRoom), `${slug} startRoom ${world.startRoom} is missing`).toBe(
+        true,
+      );
+    },
+  );
+
+  it.each(builtinWorldSlugs)(
+    "%s guide notes and room descriptions reference only real commands",
+    async (slug) => {
+      const world = await loadWorld(slug, process.cwd(), WORLDS_DIR);
+      const rooms = await loadWorldRooms(world);
+      const texts = [
+        ...[...PLATFORM_GUIDE_NOTES, ...world.guideNotes].map((note) => note.content),
+        ...[...rooms.values()].map((room) => (typeof room.long === "string" ? room.long : "")),
+      ];
+      // World text quotes commands both as `code` and as 'single quotes'; the auditor reads
+      // backticks, so lift single-quoted spans (not apostrophes) into backticks first.
+      const notes = texts.map(
+        (content, index) =>
+          ({
+            id: index + 1,
+            content: content.replace(
+              /(^|[\s(:,])'([a-z][^'\n]{2,80})'(?=[\s.,;:)!?]|$)/g,
+              (_m, lead: string, ref: string) =>
+                QUOTED_NON_COMMANDS.has(ref) ? `${lead}"${ref}"` : `${lead}\`${ref}\``,
+            ),
+          }) as NoteRow,
+      );
+      // A world's own room commands (evolve's `forge`, a market room's `predict`) are real too.
+      const roomCommands = [...rooms.values()].flatMap((room) => Object.keys(room.commands ?? {}));
+      const report = auditKnowledgeNotes(notes, {
+        knownCommands: [...commandNames, ...roomCommands],
+      });
+      expect(report.staleCommands.map((finding) => finding.detail)).toEqual([]);
+    },
+  );
 });

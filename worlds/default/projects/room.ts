@@ -23,7 +23,7 @@ const room: RoomModule = {
     "decompose-desk":
       'A framed card reads: "Complex goal? Two paths. (1) Quick: `usecase decompose <your goal>` auto-scaffolds a project + planner agent + htdag pattern. (2) Manual: `project create <name> | <goal>` then `project <name> decompose <pattern>`, then break the bundle into children with `task create` + `task assign`."',
     roles:
-      "Three decomposition roles available via 'role set <name>': planner (decomposes goals, never executes), executor (claims one leaf at a time, delivers results), verifier (reviews submissions against done-criteria, gates merges).",
+      "Three decomposition roles (give an agent one with 'agent config <name> role <role>'): planner (decomposes goals, never executes), executor (claims one leaf at a time, delivers results), verifier (reviews submissions against done-criteria, gates merges).",
   },
 };
 

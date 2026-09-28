@@ -10,6 +10,7 @@ import {
   seedTabH2OConnector,
   seedTabH2OForecasting,
   seedTraitsAndRoles,
+  seedWatchingRole,
 } from "./seed";
 
 // ─── External API Config ────────────────────────────────────────────────────
@@ -758,7 +759,7 @@ const POLYMARKET_FEED: RoomModule = {
 
 const TRADING_FLOOR: RoomModule = {
   short: "The Trading Floor",
-  long: "A vast open hall buzzing with energy. Screens display live market data — confidence levels shifting in real time. Corridors branch off in every direction.\n\n  NORTH → Research Center (deep analysis, MCP connectors)\n  EAST  → Kalshi Live Feed (regulated US markets, real-time prices)\n  SOUTH → Technology Markets (AI, platforms, adoption)\n  WEST  → Polymarket Live Feed (decentralized markets, real-time prices)\n  UP    → Meta-Market Observatory (cross-market analysis)\n  DOWN  → Geopolitical Markets (elections, treaties, conflicts)\n\nThe calibration leaderboard dominates one wall. Help terminals line the entrance.",
+  long: "A vast open hall buzzing with energy. Screens display live market data — confidence levels shifting in real time. Corridors branch off in every direction.\n\n  NORTH → Research Center (deep analysis, MCP connectors)\n  EAST  → Kalshi Live Feed (regulated US markets, real-time prices)\n  SOUTH → Technology Markets (AI, platforms, adoption)\n  WEST  → Polymarket Live Feed (decentralized markets, real-time prices)\n  UP    → Meta-Market Observatory (cross-market analysis)\n  DOWN  → Geopolitical Markets (elections, treaties, conflicts)\n\nThe calibration leaderboard dominates one wall ('market leaderboard'). Help terminals line the entrance.",
   exits: {
     north: "markets/research" as RoomId,
     east: "markets/kalshi" as RoomId,
@@ -769,7 +770,7 @@ const TRADING_FLOOR: RoomModule = {
   },
   items: {
     leaderboard:
-      "A massive display showing the all-time calibration leaderboard. Entities with the lowest average Brier scores across resolved markets rank highest.",
+      "A massive display showing the all-time calibration leaderboard. Entities with the lowest average Brier scores across resolved markets rank highest. Type 'market leaderboard' to read it.",
     screens(ctx: RoomContext) {
       // Show a summary from both feeds if available
       const kalshi = ctx.store.get("kalshi_summary") as string | undefined;
@@ -784,35 +785,6 @@ const TRADING_FLOOR: RoomModule = {
     },
     "help-terminal":
       "An interactive terminal. It reads: \"Enter any market room and use 'predict yes|no <confidence> <reasoning>' to take a position. Use 'consensus' to see the current weighted view. Use 'positions' to see all positions. Visit Kalshi (east) or Polymarket (west) for live external data. Research evidence goes into pools — 'pool <market> add <finding>'.\"",
-  },
-  commands: {
-    leaderboard(ctx: RoomContext, input: CommandInput) {
-      const entities = ctx.entities.filter((e) => e.kind !== "npc");
-      const scored = entities
-        .filter((e) => ((e.properties.markets_resolved as number) ?? 0) > 0)
-        .map((e) => ({
-          name: e.name,
-          avgBrier: (e.properties.avg_brier as number) ?? 1,
-          resolved: (e.properties.markets_resolved as number) ?? 0,
-          traded: (e.properties.markets_traded as number) ?? 0,
-        }))
-        .sort((a, b) => a.avgBrier - b.avgBrier);
-
-      if (scored.length === 0) {
-        ctx.send(
-          input.entity,
-          "No resolved markets yet. Take positions and resolve markets to build calibration scores.",
-        );
-        return;
-      }
-      const board = scored
-        .map(
-          (s, i) =>
-            `  ${String(i + 1).padStart(2)}. ${s.name.padEnd(16)} Brier: ${s.avgBrier.toFixed(3)}  Resolved: ${s.resolved}  Traded: ${s.traded}`,
-        )
-        .join("\n");
-      ctx.send(input.entity, `Calibration Leaderboard\n${"─".repeat(60)}\n${board}`);
-    },
   },
   onEnter(ctx: RoomContext, entityId: EntityId) {
     const hasHost = ctx.entities.some((e) => e.name === "Meridian");
@@ -884,9 +856,9 @@ const META_ROOM: RoomModule = {
 const MARKET_GEO = marketRoom({
   short: "Geopolitical Markets",
   long: "A room dedicated to geopolitical prediction markets. Maps and timelines cover the walls. Every major international event, election, treaty, and conflict has a market here.",
-  question: "Will the current geopolitical landscape shift significantly by Q3 2026?",
+  question: "Will the European Union admit a new member state before 2030-01-01?",
   category: "Geopolitics",
-  resolveBy: "2026-09-30",
+  resolveBy: "2029-12-31",
   exitDir: "up",
   marketId: "market:geo",
 });
@@ -1032,7 +1004,7 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
     content:
       "The calibration leaderboard tracks long-term accuracy. Every resolved market " +
       "updates your Brier score. Consistent, well-calibrated forecasters build standing. " +
-      "Type 'leaderboard' on the trading floor to see rankings.",
+      "Type 'market leaderboard' (any room, any world) to see rankings.",
     importance: 8,
     type: "fact",
   },
@@ -1086,6 +1058,16 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
     importance: 9,
     type: "skill",
   },
+  {
+    content:
+      "Beyond these rooms, forecasting is global: 'forecast <question>' (cited multi-model " +
+      "forecast), 'arena' (Social Simulation Arena; 'guide arena' for the improvement loop) and " +
+      "'position open <venue> <ticker> <yes|no> <count>' (Kelly-sized, paper by default) work in " +
+      "every world. Opening a position starts a resolving watch; an agent in the 'watcher' role " +
+      "drives 'watch due' so it closes.",
+    importance: 8,
+    type: "fact",
+  },
 ];
 
 // ─── Seed Function ──────────────────────────────────────────────────────────
@@ -1097,6 +1079,8 @@ function seed(db: MarinaDB): void {
   // role modifications are idempotent.
   seedTabH2OForecasting(db);
   seedTabH2OConnector(db);
+  // `position open` spawns a resolving watch; the watcher role closes it.
+  seedWatchingRole(db);
 
   // Seed boards for market discussion
   for (const name of ["kalshi-digest", "polymarket-digest", "market-alpha", "resolution-log"]) {
@@ -1135,7 +1119,7 @@ function seed(db: MarinaDB): void {
     {
       id: "market:geo",
       roomId: "markets/geo",
-      question: "Will the current geopolitical landscape shift significantly by Q3 2026?",
+      question: "Will the European Union admit a new member state before 2030-01-01?",
       category: "Geopolitics",
     },
     {
