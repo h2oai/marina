@@ -5,49 +5,24 @@
  *
  * Fonts: VT323 (body), Orbitron (headings/numbers), Press Start 2P (labels)
  * Colors: derived from CSS custom properties (--color-primary, etc.)
- * Glass: backdrop-filter blur + semi-transparent backgrounds
- * Pixel: hard shadows (no blur radius), pixel grid overlay, scanlines
+ * Panels: opaque theme surfaces keep text readable above the moving world
+ * Pixel: hard shadows (no blur radius), map geometry and pixel typography
  */
 
 /* ── Google Fonts (if not already loaded) ────────────────────── */
 @import url("https://fonts.googleapis.com/css2?family=VT323&family=Orbitron:wght@400;700&family=Press+Start+2P&display=swap");
 
-/* ── Scanline overlay on unified canvas ──────────────────────── */
-/* `absolute` (not `fixed`) so overlays anchor to the canvas root,
-   not the window. The root is sized 100vw/100vh at /?unified and
-   100%/100% when embedded in a dashboard panel — both work. */
-.uc-scanlines::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 2px,
-    rgba(0, 0, 0, 0.04) 2px,
-    rgba(0, 0, 0, 0.04) 4px
-  );
-  z-index: 9999;
-}
-
-/* ── Pixel grid micro-overlay ────────────────────────────────── */
-.uc-pixel-grid::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background-image:
-    linear-gradient(rgba(255, 221, 0, 0.005) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 221, 0, 0.005) 1px, transparent 1px);
-  background-size: 3px 3px;
-  z-index: 9998;
+/* Text and controls stay opaque. Full-canvas scanline/pixel pseudo-elements
+   obscured every label and prevented reliable contrast measurement. Keep the
+   pixel aesthetic in map geometry, borders and typography instead. */
+.uc-canvas {
+  --uc-text-muted: color-mix(in srgb, var(--color-text) 85%, var(--color-bg-card));
 }
 
 /* ── Topbar (compass bar) ────────────────────────────────────── */
 .uc-topbar {
   font-family: "VT323", monospace;
-  background: rgba(8, 8, 14, 0.96);
+  background: var(--color-bg-card);
   border-bottom: 2px solid var(--color-border);
   height: clamp(38px, 2.62vw, 56px);
   padding: 0 16px;
@@ -60,15 +35,7 @@
   font-family: "Orbitron", sans-serif;
   font-size: clamp(13px, 1.12vw, 20px);
   font-weight: 700;
-  background: linear-gradient(
-    135deg,
-    var(--color-primary),
-    var(--color-secondary),
-    var(--color-accent)
-  );
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  color: var(--color-primary);
 }
 
 .uc-topbar .uc-stat-value {
@@ -81,7 +48,7 @@
 
 .uc-topbar .uc-stat-label {
   font-size: clamp(13px, 0.9vw, 18px);
-  color: #444;
+  color: var(--uc-text-muted);
 }
 
 .uc-topbar .uc-divider {
@@ -100,7 +67,7 @@
   text-transform: uppercase;
   letter-spacing: 0.5px;
   cursor: pointer;
-  color: #888;
+  color: var(--uc-text-muted);
 }
 
 .uc-topbar .uc-topbtn:hover {
@@ -171,7 +138,7 @@
 /* ── Floating panels (glass card style, matches .fpanel) ─────── */
 .uc-floating-panel {
   position: absolute;
-  background: rgba(8, 8, 14, 0.96);
+  background: var(--color-bg-card);
   border: 2px solid var(--color-border);
   box-shadow:
     6px 6px 0 rgba(0, 0, 0, 0.5),
@@ -197,12 +164,10 @@
 }
 
 .uc-floating-panel.faded {
-  opacity: 0.25;
   pointer-events: auto;
 }
 
 .uc-floating-panel.faded:hover {
-  opacity: 0.9;
   transition: opacity 0.15s ease;
 }
 
@@ -215,7 +180,6 @@
 .uc-floating-panel.rolled {
   min-height: 0;
   height: auto;
-  opacity: 0.85;
 }
 
 .uc-floating-panel.rolled .uc-panel-header {
@@ -228,7 +192,7 @@
   font-size: clamp(7px, 0.6vw, 10px);
   text-transform: uppercase;
   letter-spacing: 1.5px;
-  color: color-mix(in srgb, var(--color-primary) 50%, transparent);
+  color: var(--color-primary);
   padding: clamp(6px, 0.45vw, 8px) 12px;
   border-bottom: 1px solid var(--color-border);
   display: flex;
@@ -240,7 +204,7 @@
 }
 
 .uc-panel-header:hover {
-  color: color-mix(in srgb, var(--color-primary) 80%, transparent);
+  color: var(--color-primary);
 }
 
 .uc-panel-header .uc-spacer {
@@ -249,7 +213,7 @@
 
 /* Panel header buttons (matches .fp-hdr .btn) */
 .uc-panel-btn {
-  color: #444;
+  color: var(--uc-text-muted);
   font-family: "VT323", monospace;
   font-size: clamp(16px, 1.05vw, 22px);
   cursor: pointer;
@@ -304,7 +268,7 @@
   font-size: clamp(7px, 0.56vw, 9px);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: #333;
+  color: var(--uc-text-muted);
   cursor: pointer;
   border: none;
   background: none;
@@ -313,7 +277,7 @@
 }
 
 .uc-tab:hover:not(.active) {
-  color: #666;
+  color: var(--uc-text-muted);
 }
 
 .uc-tab.active {
@@ -359,9 +323,6 @@
   border-left: 3px solid var(--color-primary);
 }
 
-.uc-entity-item:active {
-  opacity: 0.7;
-}
 
 /* Entity dot (matches .ei-d) */
 .uc-entity-dot {
@@ -396,7 +357,7 @@
 
 .uc-entity-meta {
   font-size: clamp(13px, 0.98vw, 18px);
-  color: #555;
+  color: var(--uc-text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -420,7 +381,7 @@
   z-index: 86;
   display: flex;
   flex-direction: column;
-  background: rgba(8, 8, 14, 0.92);
+  background: var(--color-bg-card);
   border: 2px solid var(--color-border);
   box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.4);
   backdrop-filter: blur(12px);
@@ -428,7 +389,6 @@
   overflow: hidden;
   font-family: "VT323", monospace;
   cursor: pointer;
-  opacity: 0.2;
   transition:
     width 0.25s ease,
     height 0.25s ease,
@@ -436,10 +396,6 @@
     opacity 0.6s ease;
 }
 
-/* Subtle hover hint only — click to fully activate */
-.uc-entity-sidebar:hover:not(.expanded) {
-  opacity: 0.5;
-}
 
 .uc-entity-sidebar.expanded {
   opacity: 1;
@@ -476,14 +432,13 @@
   height: 80px;
   display: flex;
   flex-direction: column;
-  background: rgba(8, 8, 14, 0.92);
+  background: var(--color-bg-card);
   border: 2px solid var(--color-border);
   box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.4);
   backdrop-filter: blur(12px);
   border-radius: 4px;
   overflow: hidden;
   font-family: "VT323", monospace;
-  opacity: 0.2;
   cursor: pointer;
   transition:
     width 0.25s ease,
@@ -494,10 +449,6 @@
     bottom 0.25s ease;
 }
 
-/* Hover hint */
-.uc-command-bar:hover:not(.cmd-expanded) {
-  opacity: 0.5;
-}
 
 /* Expanded state — matches entity/world panel expanded pattern */
 .uc-command-bar.cmd-expanded {
@@ -605,13 +556,13 @@
 }
 
 .uc-cmd-message .uc-cm-sys {
-  color: #999;
+  color: var(--uc-text-muted);
   font-style: italic;
   font-size: clamp(13px, 0.83vw, 18px);
 }
 
 .uc-cmd-message .uc-cm-cmd {
-  color: #888;
+  color: var(--uc-text-muted);
   font-size: clamp(12px, 0.75vw, 16px);
 }
 
@@ -627,7 +578,7 @@
 }
 
 .uc-cmd-message-tell .uc-tell-arrow {
-  color: #888;
+  color: var(--uc-text-muted);
   padding: 0 3px;
 }
 
@@ -665,7 +616,7 @@
 }
 
 .uc-cmd-input::placeholder {
-  color: #777;
+  color: var(--uc-text-muted);
 }
 
 /* Command bar resize handle — top-right corner for upward resize */
@@ -719,7 +670,7 @@
   width: clamp(280px, 20vw, 380px);
   /* Size to content, capped to avoid overlapping bottom panels */
   max-height: calc(100vh - 52px - 200px);
-  background: rgba(8, 8, 14, 0.96);
+  background: var(--color-bg-card);
   border: 2px solid var(--color-border);
   box-shadow:
     6px 6px 0 rgba(0, 0, 0, 0.5),
@@ -759,7 +710,7 @@
   font-size: clamp(7px, 0.6vw, 10px);
   text-transform: uppercase;
   letter-spacing: 1.5px;
-  color: color-mix(in srgb, var(--color-primary) 45%, transparent);
+  color: var(--color-primary);
   padding: clamp(6px, 0.6vw, 10px) 12px clamp(6px, 0.3vw, 8px);
   cursor: pointer;
   display: flex;
@@ -768,13 +719,13 @@
 }
 
 .uc-cascade-header:hover {
-  color: color-mix(in srgb, var(--color-primary) 70%, transparent);
+  color: var(--color-primary);
 }
 
 .uc-cascade-arrow {
   font-family: "VT323", monospace;
   font-size: clamp(14px, 0.98vw, 20px);
-  color: #444;
+  color: var(--uc-text-muted);
   transition: transform 0.15s;
 }
 
@@ -798,7 +749,7 @@
 
 .uc-context-desc {
   font-size: clamp(15px, 1.05vw, 22px);
-  color: #666;
+  color: var(--uc-text-muted);
   padding: 0 14px 8px;
 }
 
@@ -812,7 +763,7 @@
   font-size: clamp(7px, 0.56vw, 9px);
   text-transform: uppercase;
   letter-spacing: 1.5px;
-  color: color-mix(in srgb, var(--color-primary) 45%, transparent);
+  color: var(--color-primary);
   margin-bottom: 5px;
 }
 
@@ -826,11 +777,11 @@
 }
 
 .uc-context-key {
-  color: #555;
+  color: var(--uc-text-muted);
 }
 
 .uc-context-value {
-  color: #aaa;
+  color: var(--uc-text-muted);
 }
 
 .uc-context-value.gold {
@@ -848,7 +799,7 @@
 /* Clickable items in context (matches .ctx-item) */
 .uc-context-item {
   font-size: clamp(15px, 1.05vw, 22px);
-  color: #777;
+  color: var(--uc-text-muted);
   padding: clamp(6px, 0.3vw, 8px) 0;
   cursor: pointer;
   font-family: "VT323", monospace;
@@ -873,9 +824,9 @@
 /* Source code block (matches .ctx-src) */
 .uc-source-code {
   font-size: clamp(13px, 0.9vw, 18px);
-  color: #aaa;
+  color: var(--uc-text-muted);
   padding: 8px 10px;
-  background: rgba(17, 17, 24, 0.6);
+  background: var(--color-bg-card);
   white-space: pre-wrap;
   word-break: break-word;
   font-family: "VT323", monospace;
@@ -901,7 +852,7 @@
 
 .uc-context-mem-value {
   font-size: clamp(15px, 1.05vw, 20px);
-  color: #888;
+  color: var(--uc-text-muted);
   margin-top: 2px;
 }
 
@@ -949,7 +900,7 @@
 
 .uc-coord-meta {
   font-size: clamp(13px, 0.9vw, 18px);
-  color: #aaa;
+  color: var(--uc-text-muted);
   word-break: break-word;
 }
 
@@ -966,7 +917,7 @@
 }
 
 .uc-feed-time {
-  color: #444;
+  color: var(--uc-text-muted);
   font-size: clamp(12px, 0.83vw, 16px);
   width: clamp(50px, 3.38vw, 74px);
   flex-shrink: 0;
@@ -984,7 +935,7 @@
 }
 
 .uc-feed-action {
-  color: #666;
+  color: var(--uc-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1028,7 +979,7 @@
 
 .uc-channel-preview {
   font-size: clamp(12px, 0.75vw, 16px);
-  color: #555;
+  color: var(--uc-text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1040,7 +991,7 @@
   position: absolute;
   inset: 0;
   z-index: 100;
-  background: rgba(3, 3, 6, 0.92);
+  background: var(--color-bg-card);
   backdrop-filter: blur(12px);
   display: flex;
   flex-direction: column;
@@ -1075,7 +1026,7 @@
 .uc-viewer-close {
   background: none;
   border: 2px solid var(--color-border);
-  color: #666;
+  color: var(--uc-text-muted);
   font-family: "VT323", monospace;
   font-size: clamp(18px, 1.12vw, 24px);
   cursor: pointer;
@@ -1143,7 +1094,7 @@
 
 .uc-clear-view .uc-command-bar,
 .uc-clear-view .uc-entity-sidebar {
-  opacity: 0.15;
+  visibility: hidden;
   pointer-events: none;
 }
 
@@ -1161,7 +1112,7 @@
   z-index: 85;
   font-family: "Press Start 2P", monospace;
   font-size: clamp(6px, 0.52vw, 8px);
-  color: color-mix(in srgb, var(--color-primary) 30%, transparent);
+  color: var(--color-primary);
   letter-spacing: 2px;
 }
 
@@ -1191,9 +1142,9 @@
 .uc-mapc {
   width: clamp(30px, 1.88vw, 40px);
   height: clamp(30px, 1.88vw, 40px);
-  background: rgba(8, 8, 14, 0.96);
+  background: var(--color-bg-card);
   border: 2px solid var(--color-border);
-  color: #666;
+  color: var(--uc-text-muted);
   font-family: "VT323", monospace;
   font-size: clamp(18px, 1.2vw, 24px);
   cursor: pointer;
@@ -1228,7 +1179,7 @@
   z-index: 86;
   display: flex;
   flex-direction: column;
-  background: rgba(8, 8, 14, 0.92);
+  background: var(--color-bg-card);
   border: 2px solid var(--color-border);
   box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.4);
   backdrop-filter: blur(12px);
@@ -1236,16 +1187,12 @@
   overflow: hidden;
   font-family: "VT323", monospace;
   cursor: pointer;
-  opacity: 0.2;
   transition:
     width 0.25s ease,
     height 0.25s ease,
     opacity 0.6s ease;
 }
 
-.uc-worldnav:hover:not(.expanded) {
-  opacity: 0.5;
-}
 
 .uc-worldnav.expanded {
   opacity: 1;
@@ -1257,7 +1204,7 @@
 }
 
 .uc-clear-view .uc-worldnav {
-  opacity: 0.15;
+  visibility: hidden;
   pointer-events: none;
 }
 
@@ -1284,10 +1231,10 @@
 }
 
 .react-flow__controls button {
-  background: rgba(8, 8, 14, 0.94);
+  background: var(--color-bg-card);
   border-bottom: none;
   border-right: 1px solid var(--color-border);
-  color: #999;
+  color: var(--uc-text-muted);
   width: 28px;
   height: 28px;
 }
@@ -1298,7 +1245,7 @@
 
 .react-flow__controls button:hover {
   color: var(--color-primary);
-  background: rgba(8, 8, 14, 1);
+  background: var(--color-bg-card);
 }
 
 /* ── Touch/mobile ────────────────────────────────────────────── */
@@ -1350,7 +1297,7 @@
 .uc-channel-item:active,
 .uc-tab:active,
 .uc-cascade-header:active {
-  opacity: 0.7;
+  background: var(--color-bg-hover);
 }
 
 /* ── Message perception tag styles (matches WebChat msgStyle) ── */
@@ -1407,7 +1354,7 @@
 
 .uc-msg-movement .uc-cm-text {
   font-style: italic;
-  color: #666;
+  color: var(--uc-text-muted);
   font-size: clamp(13px, 0.83vw, 18px);
 }
 
@@ -1449,7 +1396,7 @@
 
 /* ── Right-click context menu (Fix 4) ────────────────────────── */
 .uc-node-context-menu {
-  background: rgba(8, 8, 14, 0.98);
+  background: var(--color-bg-card);
   border: 2px solid var(--color-border);
   box-shadow: 6px 6px 0 rgba(0, 0, 0, 0.6);
   backdrop-filter: blur(12px);
@@ -1530,3 +1477,28 @@
 /* Connection handles must remain above the independent native inspect control. */
 .uc-memory-node > .react-flow__handle,
 .uc-graph-note > .react-flow__handle { z-index: 2; }
+
+/* A solid outline isolates map labels from moving graphics underneath. */
+.uc-map-label {
+  fill: var(--color-text);
+  fill-opacity: 1;
+  opacity: 1;
+  stroke: var(--color-bg);
+  stroke-opacity: 1;
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  paint-order: stroke;
+}
+
+/* Keep the timeline between, rather than underneath, the side panels. */
+.uc-timeline {
+  position: absolute;
+  left: 220px;
+  right: 224px;
+  bottom: 92px;
+}
+.uc-entities-expanded .uc-timeline { left: 380px; }
+.uc-worldnav-expanded .uc-timeline { right: 360px; }
+.uc-canvas:has(.cmd-expanded) .uc-timeline {
+  bottom: calc(clamp(240px, 35vh, 50vh) + 32px);
+}

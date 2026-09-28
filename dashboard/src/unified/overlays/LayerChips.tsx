@@ -52,7 +52,7 @@ export const LayerChips = memo(function LayerChips({ hidden, onToggle, onApply }
         display: "flex",
         gap: 4,
         padding: "4px 6px",
-        background: "rgba(8, 8, 12, 0.82)",
+        background: "var(--color-bg-card)",
         border: "1px solid rgba(255,221,0,0.25)",
         borderRadius: 4,
         fontFamily: "'Press Start 2P', monospace",
@@ -83,7 +83,6 @@ export const LayerChips = memo(function LayerChips({ hidden, onToggle, onApply }
             animate={{
               background: isHidden ? "transparent" : `${color}22`,
               borderColor: isHidden ? "#333" : color,
-              color: isHidden ? "#666" : color,
             }}
             transition={{ duration: 0.18, ease: "easeOut" }}
             style={{
@@ -95,13 +94,14 @@ export const LayerChips = memo(function LayerChips({ hidden, onToggle, onApply }
               fontSize: "inherit",
               letterSpacing: "inherit",
               borderRadius: 2,
+              color: "var(--color-text)",
               display: "flex",
               alignItems: "center",
               gap: 5,
             }}
             title={`${label} layer — click to toggle (key ${num}), shift-click to solo`}
           >
-            <span style={{ opacity: 0.5, fontSize: "0.75em" }} aria-hidden="true">
+            <span style={{ fontSize: "0.75em" }} aria-hidden="true">
               {num}
             </span>
             <span>{label}</span>

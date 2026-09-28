@@ -208,6 +208,7 @@ function RoomDotLOD({
           );
         })}
         <text
+          className="uc-map-label"
           x={0}
           y={32}
           textAnchor="middle"
@@ -621,6 +622,7 @@ export const RoomNode = memo(function RoomNode({ data }: NodeProps) {
               <circle cx={port.cx} cy={port.cy} r={5} fill="#fff" opacity={0.6} />
               {/* Direction label near port */}
               <text
+                className="uc-map-label"
                 x={port.cx + (port.cx > 0 ? 14 : port.cx < 0 ? -14 : 0)}
                 y={port.cy + (port.cy > 0 ? 14 : port.cy < 0 ? -8 : 0)}
                 textAnchor="middle"
@@ -638,6 +640,7 @@ export const RoomNode = memo(function RoomNode({ data }: NodeProps) {
           {/* Exit count badge */}
           {exitCount > 0 && (
             <text
+              className="uc-map-label"
               x={rr + 12}
               y={-6}
               textAnchor="start"
@@ -870,6 +873,7 @@ export const RoomNode = memo(function RoomNode({ data }: NodeProps) {
 
                     {/* Entity name below — bolder */}
                     <text
+                      className="uc-map-label"
                       y={14}
                       textAnchor="middle"
                       fontFamily="'Press Start 2P'"
@@ -884,6 +888,7 @@ export const RoomNode = memo(function RoomNode({ data }: NodeProps) {
 
                     {/* State label — more visible */}
                     <text
+                      className="uc-map-label"
                       y={25}
                       textAnchor="middle"
                       fontFamily="'VT323'"
@@ -973,6 +978,7 @@ export const RoomNode = memo(function RoomNode({ data }: NodeProps) {
               <>
                 {/* Entity count number */}
                 <text
+                  className="uc-map-label"
                   textAnchor="middle"
                   y={-3}
                   fontSize={cr * 0.55}
@@ -985,6 +991,7 @@ export const RoomNode = memo(function RoomNode({ data }: NodeProps) {
                 </text>
                 {/* Label */}
                 <text
+                  className="uc-map-label"
                   textAnchor="middle"
                   y={cr * 0.35}
                   fontSize={Math.max(5, cr * 0.2)}
@@ -999,6 +1006,7 @@ export const RoomNode = memo(function RoomNode({ data }: NodeProps) {
             ) : taskCount && taskCount > 0 ? (
               <>
                 <text
+                  className="uc-map-label"
                   textAnchor="middle"
                   y={-3}
                   fontSize={cr * 0.55}
@@ -1010,6 +1018,7 @@ export const RoomNode = memo(function RoomNode({ data }: NodeProps) {
                   {taskCount}
                 </text>
                 <text
+                  className="uc-map-label"
                   textAnchor="middle"
                   y={cr * 0.35}
                   fontSize={Math.max(5, cr * 0.2)}
@@ -1066,6 +1075,7 @@ export const RoomNode = memo(function RoomNode({ data }: NodeProps) {
 
           {/* Room name */}
           <text
+            className="uc-map-label"
             y={-h - cr - 28}
             textAnchor="middle"
             fontSize={15}
@@ -1080,13 +1090,13 @@ export const RoomNode = memo(function RoomNode({ data }: NodeProps) {
           {/* Entity count — only when populated */}
           {entities.length > 0 && (
             <text
+              className="uc-map-label"
               y={-h - cr - 10}
               textAnchor="middle"
               fontSize={18}
               fontFamily="Orbitron"
               fontWeight={700}
               fill={color}
-              filter={`url(#g-${roomId})`}
               opacity={0.85}
             >
               {entities.length} {entities.length === 1 ? "entity" : "entities"}

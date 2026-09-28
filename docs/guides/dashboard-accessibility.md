@@ -8,6 +8,19 @@ the discovery dialog, the canvas workspace, and unified-canvas panels and shortc
 or page regions are excluded. Full axe results (including checks needing manual
 review), screenshots, and failure traces are preserved as CI artifacts.
 
+The unified canvas is checked in all six themes, including collapsed and expanded
+controls and shortcut help. Panels stay opaque, and map labels have an opaque
+outline so moving graphics cannot wash out their text. Full-screen scanline and
+pixel overlays are removed from the reading surface.
+
+Axe can still report incomplete contrast results for SVG text or overlapping
+layers. The browser suite supplements these with resolved foreground/background
+measurements (minimum 4.5:1), including the map-label outline. Unknown backgrounds
+or translucent ancestors fail this check. The measurements are attached as
+`*-contrast-paints` artifacts; they do not prove layout visibility, so inspect the
+screenshots for clipping and occlusion. An incomplete axe result alone is never
+evidence that contrast passes.
+
 Keyboard actions use native controls. Entity inspection, stopping an agent, and
 removing an entity are separate controls. SVG map actions are native buttons over
 the artwork. Canvas connection handles remain outside those buttons. The context
@@ -42,8 +55,8 @@ interaction, also verify:
   dropping files still work. Test zoom and reduced motion as well as pointer input.
 - A screen reader announces names, selected/expanded state, command suggestions,
   and memory tiers accurately. Review uploaded media and axe's incomplete results.
-  In particular, the unified canvas's decorative scanline overlay makes automated
-  contrast measurements inconclusive; inspect that surface manually.
+  Inspect text at different zoom levels and check that floating panels do not
+  obscure labels or focused controls.
 
 The [Playwright accessibility guide](https://playwright.dev/docs/accessibility-testing)
 explains the automated checks and their limits.

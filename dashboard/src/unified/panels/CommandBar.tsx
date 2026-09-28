@@ -219,7 +219,7 @@ const CmdTabButton = memo(function CmdTabButton({
       whileHover={{ y: -1 }}
       whileTap={{ scale: 0.96 }}
       transition={{ duration: 0.12 }}
-      style={!active && color ? { color, opacity: 0.6 } : undefined}
+      style={!active && color ? { color: "var(--color-text)" } : undefined}
     >
       {label}
     </motion.button>
@@ -659,13 +659,13 @@ export const CommandBar = memo(
               flexShrink: 0,
             }}
           />
-          <span style={{ color: chatConnected ? "#22c55e" : "#ef4444" }}>
+          <span style={{ color: chatConnected ? "var(--color-success)" : "var(--color-danger)" }}>
             {chatConnected ? "CONNECTED" : "OFFLINE"}
           </span>
 
           {loggedIn && entityName && (
             <>
-              <span style={{ color: "#666" }}>|</span>
+              <span style={{ color: "var(--uc-text-muted)" }}>|</span>
               <span style={{ color: "var(--color-primary, #FFDD00)" }}>{entityName}</span>
               <button
                 type="button"
@@ -677,7 +677,7 @@ export const CommandBar = memo(
                 style={{
                   background: "transparent",
                   border: "none",
-                  color: "#888",
+                  color: "var(--uc-text-muted)",
                   cursor: "pointer",
                   fontFamily: "inherit",
                   fontSize: "inherit",
@@ -692,8 +692,10 @@ export const CommandBar = memo(
 
           {!loggedIn && chatConnected && (
             <>
-              <span style={{ color: "#666" }}>|</span>
-              <span style={{ color: "#aaa" }}>Not logged in — enter your name below</span>
+              <span style={{ color: "var(--uc-text-muted)" }}>|</span>
+              <span style={{ color: "var(--uc-text-muted)" }}>
+                Not logged in — enter your name below
+              </span>
             </>
           )}
 
@@ -710,7 +712,7 @@ export const CommandBar = memo(
               style={{
                 background: "none",
                 border: "none",
-                color: "#888",
+                color: "var(--uc-text-muted)",
                 cursor: "pointer",
                 fontFamily: "'VT323', monospace",
                 fontSize: "14px",
@@ -732,7 +734,7 @@ export const CommandBar = memo(
                 style={{
                   textAlign: "center",
                   padding: "16px",
-                  color: "#999",
+                  color: "var(--uc-text-muted)",
                   fontSize: "clamp(15px, 1.05vw, 22px)",
                 }}
               >

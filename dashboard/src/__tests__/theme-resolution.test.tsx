@@ -155,6 +155,17 @@ describe("theme resolution", () => {
     }
   });
 
+  it("keeps muted text readable on every theme surface", () => {
+    for (const { id, colors } of Object.values(themes)) {
+      for (const ground of [colors.bg, colors["bg-card"], colors["bg-hover"]]) {
+        expect(
+          contrast(colors["text-dim"], ground),
+          `${id}: muted text on ${ground}`,
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+
   it("keeps the semantic status colours distinguishable on both grounds", () => {
     for (const id of ["h2o", "light"]) {
       const { colors } = themes[id]!;

@@ -113,6 +113,7 @@ export const WorldRing = memo(function WorldRing({
       {/* World name label at top */}
       {screenOuterR > 60 && (
         <text
+          className="uc-map-label"
           x={screenCx}
           y={screenCy - screenOuterR - 18 * zoom}
           textAnchor="middle"
@@ -130,6 +131,7 @@ export const WorldRing = memo(function WorldRing({
       {/* Stats label at bottom — live counts */}
       {screenOuterR > 60 && (
         <text
+          className="uc-map-label"
           x={screenCx}
           y={screenCy + screenOuterR + 22 * zoom}
           textAnchor="middle"

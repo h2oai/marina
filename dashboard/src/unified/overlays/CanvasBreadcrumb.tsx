@@ -37,10 +37,10 @@ export const CanvasBreadcrumb = memo(function CanvasBreadcrumb({
         top: 48,
         left: 12,
         padding: "4px 8px",
-        background: "rgba(8, 8, 12, 0.82)",
+        background: "var(--color-bg-card)",
         border: "1px solid rgba(168,85,247,0.4)",
         borderRadius: 3,
-        color: "#ccc",
+        color: "var(--color-text)",
         fontFamily: "'VT323', monospace",
         fontSize: 12,
         zIndex: 35,
@@ -49,8 +49,8 @@ export const CanvasBreadcrumb = memo(function CanvasBreadcrumb({
         gap: 6,
       }}
     >
-      <span style={{ color: "#a855f7", fontSize: 11 }}>viewing</span>
-      <span style={{ color: "#FFDD00" }}>{active.name}</span>
+      <span style={{ color: "var(--uc-text-muted)", fontSize: 11 }}>viewing</span>
+      <span style={{ color: "var(--color-primary)" }}>{active.name}</span>
       <button
         type="button"
         onClick={() => {
@@ -60,7 +60,7 @@ export const CanvasBreadcrumb = memo(function CanvasBreadcrumb({
         style={{
           background: "transparent",
           border: "1px solid #444",
-          color: "#888",
+          color: "var(--uc-text-muted)",
           cursor: "pointer",
           fontFamily: "inherit",
           fontSize: 11,

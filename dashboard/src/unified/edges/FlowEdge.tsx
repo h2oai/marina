@@ -148,6 +148,7 @@ export const FlowEdge = memo(function FlowEdge({
       {/* Cardinal direction label at midpoint */}
       {dirLabel && (
         <text
+          className="uc-map-label"
           x={(sourceX + targetX) / 2}
           y={(sourceY + targetY) / 2 - 8}
           textAnchor="middle"

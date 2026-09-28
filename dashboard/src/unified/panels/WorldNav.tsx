@@ -12,6 +12,7 @@
  * panel into legend mode. Clicking the active tab collapses.
  */
 
+import { Home } from "lucide-react";
 import { motion } from "motion/react";
 import { memo, useMemo, useState } from "react";
 import { DISTRICT_COLORS, getDistrictColor } from "../lib/crown-shapes";
@@ -141,12 +142,12 @@ function TabButton({
       style={{
         position: "relative",
         padding: "2px 6px",
-        background: active ? `${accent}20` : "transparent",
+        background: active ? "var(--color-bg-hover)" : "transparent",
         border: "none",
         // The accent underline is rendered as a layoutId motion.div below so
         // it slides between tabs when the active one changes.
         borderBottom: "1px solid transparent",
-        color: active ? accent : "#666",
+        color: active ? accent : "var(--uc-text-muted)",
         fontFamily: "'Press Start 2P', monospace",
         fontSize: "clamp(6px, 0.48vw, 8px)",
         letterSpacing: "1px",
@@ -240,7 +241,7 @@ export const WorldNav = memo(function WorldNav({
         <TabButton
           label="LEGEND"
           active={tab === "legend"}
-          accent="#FFDD00"
+          accent="var(--color-primary)"
           onClick={handleTabClick("legend")}
         />
 
@@ -249,9 +250,10 @@ export const WorldNav = memo(function WorldNav({
             <span
               style={{
                 marginLeft: "4px",
-                color: "#999",
+                whiteSpace: "nowrap",
+                color: "var(--uc-text-muted)",
                 fontFamily: "'VT323', monospace",
-                fontSize: "clamp(14px, 0.95vw, 18px)",
+                fontSize: "12px",
               }}
             >
               {roomCount}r {entityCount}e
@@ -266,7 +268,7 @@ export const WorldNav = memo(function WorldNav({
               style={{
                 background: "none",
                 border: "none",
-                color: "#999",
+                color: "var(--uc-text-muted)",
                 cursor: "pointer",
                 fontSize: "14px",
                 padding: "0 3px",
@@ -293,7 +295,7 @@ export const WorldNav = memo(function WorldNav({
               title="Home"
               aria-label="Home view"
             >
-              <span aria-hidden="true">&#8962;</span>
+              <Home size={14} aria-hidden="true" />
             </button>
             <button
               type="button"
@@ -304,7 +306,7 @@ export const WorldNav = memo(function WorldNav({
               style={{
                 background: "none",
                 border: "none",
-                color: "#999",
+                color: "var(--uc-text-muted)",
                 cursor: "pointer",
                 fontSize: "14px",
                 padding: "0 3px",
@@ -345,7 +347,7 @@ export const WorldNav = memo(function WorldNav({
               style={{
                 fontFamily: "'Press Start 2P', monospace",
                 fontSize: "clamp(5px, 0.4vw, 7px)",
-                color: "#888",
+                color: "var(--uc-text-muted)",
                 marginBottom: "4px",
                 letterSpacing: "0.5px",
               }}
@@ -371,9 +373,8 @@ export const WorldNav = memo(function WorldNav({
                       fontFamily: "'VT323', monospace",
                       fontSize: "clamp(13px, 0.9vw, 17px)",
                       cursor: "pointer",
-                      color: hidden ? "#555" : color,
+                      color: "var(--color-text)",
                       textDecoration: hidden ? "line-through" : "none",
-                      opacity: hidden ? 0.5 : 1,
                     }}
                   >
                     {d}
@@ -400,7 +401,7 @@ export const WorldNav = memo(function WorldNav({
               fontFamily: "'VT323', monospace",
               fontSize: "clamp(13px, 0.9vw, 17px)",
               cursor: "pointer",
-              color: hideEmptyRooms ? "#aaa" : "#888",
+              color: "var(--uc-text-muted)",
               textAlign: "left",
             }}
           >
@@ -414,7 +415,7 @@ export const WorldNav = memo(function WorldNav({
                 style={{
                   fontFamily: "'Press Start 2P', monospace",
                   fontSize: "clamp(5px, 0.4vw, 7px)",
-                  color: "#888",
+                  color: "var(--uc-text-muted)",
                   marginBottom: "4px",
                   letterSpacing: "0.5px",
                 }}
@@ -422,6 +423,7 @@ export const WorldNav = memo(function WorldNav({
                 CANVAS
               </div>
               <select
+                aria-label="Active canvas"
                 value={activeCanvasId ?? ""}
                 onChange={(e) => {
                   e.stopPropagation();
@@ -430,7 +432,7 @@ export const WorldNav = memo(function WorldNav({
                 style={{
                   width: "100%",
                   padding: "4px 8px",
-                  background: "rgba(17,17,24,0.6)",
+                  background: "var(--color-bg-card)",
                   border: "1px solid var(--color-border)",
                   color: "var(--color-teal)",
                   fontFamily: "'VT323', monospace",
@@ -453,7 +455,7 @@ export const WorldNav = memo(function WorldNav({
               display: "flex",
               gap: "12px",
               fontSize: "clamp(13px, 0.9vw, 17px)",
-              color: "#999",
+              color: "var(--uc-text-muted)",
             }}
           >
             <span>
@@ -473,7 +475,9 @@ export const WorldNav = memo(function WorldNav({
               ent
             </span>
             <span>
-              <span style={{ color: "#888", fontFamily: "Orbitron", fontWeight: 700 }}>
+              <span
+                style={{ color: "var(--uc-text-muted)", fontFamily: "Orbitron", fontWeight: 700 }}
+              >
                 {connectionCount}
               </span>{" "}
               conn

@@ -1644,7 +1644,7 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
   return (
     <section
       aria-label="World canvas"
-      className={`uc-scanlines uc-pixel-grid${clearView ? " uc-clear-view" : ""}${entitiesExpanded ? " uc-entities-expanded" : ""}${worldNavExpanded ? " uc-worldnav-expanded" : ""}`}
+      className={`uc-canvas${clearView ? " uc-clear-view" : ""}${entitiesExpanded ? " uc-entities-expanded" : ""}${worldNavExpanded ? " uc-worldnav-expanded" : ""}`}
       style={{
         background: "var(--color-bg)",
         color: "var(--color-text)",
@@ -1691,13 +1691,13 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
           <span className="visually-hidden">
             {setupStatus?.hasLlmKey ? "LLM configured" : "no LLM key"}
           </span>
-          <span style={{ color: "#888", fontFamily: "'VT323', monospace" }}>
+          <span style={{ color: "var(--uc-text-muted)", fontFamily: "'VT323', monospace" }}>
             {instanceName || setupStatus?.instanceName || worldName || "Marina"}
           </span>
           {setupStatus && !setupStatus.hasLlmKey && (
             <span
               style={{
-                color: "#f59e0b",
+                color: "var(--color-warning)",
                 fontSize: "clamp(8px, 0.6vw, 11px)",
                 fontFamily: "'VT323', monospace",
               }}
@@ -1787,7 +1787,7 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
             background: "none",
             fontFamily: "'Press Start 2P', monospace",
             fontSize: "clamp(6px, 0.52vw, 8px)",
-            color: "#666",
+            color: "var(--uc-text-muted)",
             cursor: "pointer",
           }}
           title="Reset all panels to defaults"
@@ -1805,7 +1805,7 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
             background: "none",
             fontFamily: "'Press Start 2P', monospace",
             fontSize: "clamp(6px, 0.52vw, 8px)",
-            color: clearView ? "var(--color-primary)" : "#555",
+            color: clearView ? "var(--color-primary)" : "var(--uc-text-muted)",
             cursor: "pointer",
           }}
           title="Clear view (Space)"
@@ -2162,9 +2162,9 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
                 placeholder="Type note..."
                 style={{
                   flex: 1,
-                  background: "rgba(17,17,24,0.8)",
+                  background: "var(--color-bg-card)",
                   border: "1px solid var(--color-border)",
-                  color: "#ddd",
+                  color: "var(--color-text)",
                   fontFamily: "'VT323', monospace",
                   fontSize: "14px",
                   padding: "3px 6px",
@@ -2285,9 +2285,9 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
                     placeholder="What should be done with this?"
                     style={{
                       flex: 1,
-                      background: "rgba(17,17,24,0.8)",
+                      background: "var(--color-bg-card)",
                       border: "1px solid var(--color-teal)",
-                      color: "#ddd",
+                      color: "var(--color-text)",
                       fontFamily: "'VT323', monospace",
                       fontSize: "14px",
                       padding: "3px 6px",
@@ -2393,9 +2393,9 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
                                 placeholder="Result text..."
                                 style={{
                                   flex: 1,
-                                  background: "rgba(17,17,24,0.8)",
+                                  background: "var(--color-bg-card)",
                                   border: "1px solid #22c55e",
-                                  color: "#ddd",
+                                  color: "var(--color-text)",
                                   fontFamily: "'VT323', monospace",
                                   fontSize: "14px",
                                   padding: "3px 6px",
@@ -2463,9 +2463,9 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
                                 placeholder="Failure reason..."
                                 style={{
                                   flex: 1,
-                                  background: "rgba(17,17,24,0.8)",
+                                  background: "var(--color-bg-card)",
                                   border: "1px solid #ef4444",
-                                  color: "#ddd",
+                                  color: "var(--color-text)",
                                   fontFamily: "'VT323', monospace",
                                   fontSize: "14px",
                                   padding: "3px 6px",

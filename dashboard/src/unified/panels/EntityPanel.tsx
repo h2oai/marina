@@ -113,14 +113,14 @@ const DEFAULT_MODEL =
   MODEL_GROUPS[0]!.models[0]!.value;
 
 const STATE_COLORS: Record<string, string> = {
-  thinking: "#FFDD00",
-  working: "#22c55e",
-  speaking: "#06b6d4",
-  idle: "#666",
-  error: "#ef4444",
-  online: "#f0f0f0",
-  running: "#22c55e",
-  stopped: "#666",
+  thinking: "var(--color-primary)",
+  working: "var(--color-success)",
+  speaking: "var(--color-teal)",
+  idle: "var(--uc-text-muted)",
+  error: "var(--color-danger)",
+  online: "var(--color-text)",
+  running: "var(--color-success)",
+  stopped: "var(--uc-text-muted)",
 };
 
 const KIND_DOTS: Record<string, string> = {
@@ -148,7 +148,7 @@ function TabButton({
         background: "none",
         border: "none",
         borderBottom: active ? "2px solid var(--color-primary)" : "2px solid transparent",
-        color: active ? "var(--color-primary)" : "#888",
+        color: active ? "var(--color-primary)" : "var(--uc-text-muted)",
         cursor: "pointer",
         fontFamily: "'Press Start 2P', monospace",
         fontSize: "clamp(6px, 0.48vw, 8px)",
@@ -184,7 +184,7 @@ const OnlineTab = memo(function OnlineTab({
       <div
         style={{
           padding: "12px",
-          color: "#888",
+          color: "var(--uc-text-muted)",
           textAlign: "center",
           fontSize: "clamp(14px, 0.95vw, 18px)",
         }}
@@ -215,7 +215,7 @@ const OnlineTab = memo(function OnlineTab({
               fontFamily: "'VT323', monospace",
               fontSize: "clamp(15px, 1vw, 20px)",
               textAlign: "left",
-              color: "#ddd",
+              color: "var(--color-text)",
             }}
             onClick={() => onEntityClick?.(entity.name)}
           >
@@ -256,7 +256,7 @@ const OnlineTab = memo(function OnlineTab({
             <span
               style={{
                 fontSize: "clamp(10px, 0.7vw, 14px)",
-                color: "#666",
+                color: "var(--uc-text-muted)",
                 flexShrink: 0,
                 maxWidth: "80px",
                 overflow: "hidden",
@@ -287,7 +287,7 @@ const AgentsTab = memo(function AgentsTab({
       <div
         style={{
           padding: "12px",
-          color: "#888",
+          color: "var(--uc-text-muted)",
           textAlign: "center",
           fontSize: "clamp(14px, 0.95vw, 18px)",
         }}
@@ -371,7 +371,7 @@ const AgentRow = memo(function AgentRow({
           fontFamily: "'VT323', monospace",
           fontSize: "clamp(15px, 1vw, 20px)",
           textAlign: "left",
-          color: "#ddd",
+          color: "var(--color-text)",
           padding: 0,
         }}
       >
@@ -428,7 +428,13 @@ const AgentRow = memo(function AgentRow({
         <span style={{ fontSize: "clamp(10px, 0.7vw, 14px)", color: stateColor, flexShrink: 0 }}>
           {agent.state}
         </span>
-        <span style={{ fontSize: "clamp(10px, 0.7vw, 14px)", color: "#666", flexShrink: 0 }}>
+        <span
+          style={{
+            fontSize: "clamp(10px, 0.7vw, 14px)",
+            color: "var(--uc-text-muted)",
+            flexShrink: 0,
+          }}
+        >
           {upMin}m
         </span>
         <button
@@ -440,7 +446,7 @@ const AgentRow = memo(function AgentRow({
           style={{
             background: "none",
             border: "none",
-            color: "#666",
+            color: "var(--uc-text-muted)",
             cursor: "pointer",
             fontFamily: "'VT323', monospace",
             fontSize: "clamp(12px, 0.8vw, 16px)",
@@ -491,7 +497,7 @@ const AgentRow = memo(function AgentRow({
               display: "flex",
               gap: "8px",
               fontSize: "clamp(10px, 0.7vw, 14px)",
-              color: "#888",
+              color: "var(--uc-text-muted)",
             }}
           >
             <span>{modelShort}</span>
@@ -506,7 +512,7 @@ const AgentRow = memo(function AgentRow({
                 display: "flex",
                 gap: "8px",
                 fontSize: "clamp(10px, 0.7vw, 14px)",
-                color: "#888",
+                color: "var(--uc-text-muted)",
               }}
               title="Effective / nominal context window · output cap · peak accepted prompt"
             >
@@ -533,7 +539,7 @@ const AgentRow = memo(function AgentRow({
             <div
               style={{
                 fontSize: "clamp(10px, 0.7vw, 14px)",
-                color: "#888",
+                color: "var(--uc-text-muted)",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
@@ -546,7 +552,7 @@ const AgentRow = memo(function AgentRow({
             <div
               style={{
                 fontSize: "clamp(10px, 0.7vw, 14px)",
-                color: "#888",
+                color: "var(--uc-text-muted)",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
@@ -565,9 +571,9 @@ const AgentRow = memo(function AgentRow({
               onKeyDown={(e) => e.key === "Enter" && handleAttention()}
               style={{
                 flex: 1,
-                background: "rgba(17,17,24,0.6)",
+                background: "var(--color-bg-card)",
                 border: "1px solid var(--color-border)",
-                color: "#ddd",
+                color: "var(--color-text)",
                 fontFamily: "'VT323', monospace",
                 fontSize: "clamp(12px, 0.8vw, 16px)",
                 padding: "2px 6px",
@@ -581,7 +587,7 @@ const AgentRow = memo(function AgentRow({
               style={{
                 background: "none",
                 border: "1px solid var(--color-border)",
-                color: attention.trim() ? "var(--color-primary)" : "#555",
+                color: attention.trim() ? "var(--color-primary)" : "var(--uc-text-muted)",
                 cursor: attention.trim() ? "pointer" : "default",
                 fontFamily: "'VT323', monospace",
                 fontSize: "clamp(12px, 0.8vw, 16px)",
@@ -636,9 +642,9 @@ const LaunchTab = memo(function LaunchTab(_props: { sendCommand?: (cmd: string) 
   }, [name, effectiveModel, role, goal, keyName]);
 
   const inputStyle = {
-    background: "rgba(17,17,24,0.6)",
+    background: "var(--color-bg-card)",
     border: "1px solid var(--color-border)",
-    color: "#ddd",
+    color: "var(--color-text)",
     fontFamily: "'VT323', monospace",
     fontSize: "clamp(14px, 0.95vw, 18px)",
     padding: "4px 8px",
@@ -649,7 +655,7 @@ const LaunchTab = memo(function LaunchTab(_props: { sendCommand?: (cmd: string) 
   const labelStyle = {
     fontFamily: "'Press Start 2P', monospace",
     fontSize: "clamp(6px, 0.45vw, 7px)",
-    color: "#888",
+    color: "var(--uc-text-muted)",
     marginBottom: "2px",
     letterSpacing: "0.5px",
   } as const;
@@ -713,7 +719,7 @@ const LaunchTab = memo(function LaunchTab(_props: { sendCommand?: (cmd: string) 
         <div
           style={{
             fontSize: "clamp(9px, 0.55vw, 10px)",
-            color: "#888",
+            color: "var(--uc-text-muted)",
             marginTop: "3px",
             lineHeight: 1.35,
           }}
@@ -778,7 +784,8 @@ const LaunchTab = memo(function LaunchTab(_props: { sendCommand?: (cmd: string) 
           padding: "6px 10px",
           background: name.trim() && effectiveModel.trim() ? "rgba(255,221,0,0.1)" : "none",
           border: `1px solid ${name.trim() && effectiveModel.trim() ? "var(--color-primary)" : "var(--color-border)"}`,
-          color: name.trim() && effectiveModel.trim() ? "var(--color-primary)" : "#555",
+          color:
+            name.trim() && effectiveModel.trim() ? "var(--color-primary)" : "var(--uc-text-muted)",
           cursor: name.trim() && effectiveModel.trim() ? "pointer" : "default",
           marginTop: "4px",
         }}
@@ -809,7 +816,7 @@ const RolesTab = memo(function RolesTab() {
           type="button"
           style={{
             fontSize: "clamp(13px, 0.83vw, 16px)",
-            color: "#bbb",
+            color: "var(--color-text)",
             cursor: "pointer",
             padding: "6px 10px",
             borderBottom: "1px solid var(--color-border)",
@@ -838,7 +845,7 @@ const RolesTab = memo(function RolesTab() {
           {role.guidelines && (
             <div
               style={{
-                color: "#bbb",
+                color: "var(--color-text)",
                 fontSize: "clamp(13px, 0.9vw, 17px)",
                 fontFamily: "'VT323', monospace",
                 marginBottom: "6px",
@@ -849,12 +856,12 @@ const RolesTab = memo(function RolesTab() {
             </div>
           )}
           {role.focus && (
-            <div style={{ color: "#888", fontSize: "clamp(12px, 0.8vw, 15px)" }}>
+            <div style={{ color: "var(--uc-text-muted)", fontSize: "clamp(12px, 0.8vw, 15px)" }}>
               Focus: {role.focus}
             </div>
           )}
           {role.tone && (
-            <div style={{ color: "#888", fontSize: "clamp(12px, 0.8vw, 15px)" }}>
+            <div style={{ color: "var(--uc-text-muted)", fontSize: "clamp(12px, 0.8vw, 15px)" }}>
               Tone: {role.tone}
             </div>
           )}
@@ -880,7 +887,7 @@ const RolesTab = memo(function RolesTab() {
             cursor: "pointer",
             fontFamily: "'VT323', monospace",
             fontSize: "clamp(15px, 1vw, 20px)",
-            color: "#ddd",
+            color: "var(--color-text)",
           }}
           onClick={() => setSelectedRole(r.name)}
         >
@@ -956,7 +963,7 @@ export const EntityPanel = memo(function EntityPanel({
           <span
             style={{
               marginLeft: "6px",
-              color: "#999",
+              color: "var(--uc-text-muted)",
               fontFamily: "'VT323', monospace",
               fontSize: "clamp(14px, 0.95vw, 18px)",
             }}
@@ -974,7 +981,7 @@ export const EntityPanel = memo(function EntityPanel({
           style={{
             background: "none",
             border: "none",
-            color: "#666",
+            color: "var(--uc-text-muted)",
             cursor: "pointer",
             fontFamily: "'VT323', monospace",
             fontSize: "14px",
@@ -1012,7 +1019,7 @@ export const EntityPanel = memo(function EntityPanel({
                 />
                 <span
                   style={{
-                    color: "#FFDD00",
+                    color: "var(--color-primary)",
                     fontFamily: "Orbitron",
                     fontSize: "16px",
                     fontWeight: 700,
@@ -1020,7 +1027,7 @@ export const EntityPanel = memo(function EntityPanel({
                 >
                   {agentCount}
                 </span>
-                <span style={{ color: "#888", fontSize: "11px" }}>agent</span>
+                <span style={{ color: "var(--uc-text-muted)", fontSize: "11px" }}>agent</span>
               </div>
             )}
             {humanCount > 0 && (
@@ -1043,7 +1050,7 @@ export const EntityPanel = memo(function EntityPanel({
                 >
                   {humanCount}
                 </span>
-                <span style={{ color: "#888", fontSize: "11px" }}>human</span>
+                <span style={{ color: "var(--uc-text-muted)", fontSize: "11px" }}>human</span>
               </div>
             )}
             {npcCount > 0 && (
@@ -1066,11 +1073,11 @@ export const EntityPanel = memo(function EntityPanel({
                 >
                   {npcCount}
                 </span>
-                <span style={{ color: "#888", fontSize: "11px" }}>npc</span>
+                <span style={{ color: "var(--uc-text-muted)", fontSize: "11px" }}>npc</span>
               </div>
             )}
             {entities.length === 0 && (
-              <span style={{ color: "#666", fontSize: "13px" }}>none online</span>
+              <span style={{ color: "var(--uc-text-muted)", fontSize: "13px" }}>none online</span>
             )}
           </div>
         </div>

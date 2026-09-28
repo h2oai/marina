@@ -110,25 +110,20 @@ export const TimelineStrip = memo(function TimelineStrip({
     ? {
         width: "100%",
         height: "100%",
-        background: "rgba(8, 8, 12, 0.4)",
+        background: "var(--color-bg-card)",
         padding: "10px 14px",
         fontFamily: "'VT323', monospace",
-        color: "#ccc",
+        color: "var(--color-text)",
         fontSize: 13,
         overflow: "auto",
       }
     : {
-        position: "absolute",
-        left: "50%",
-        transform: "translateX(-50%)",
-        bottom: 80,
-        width: "min(90%, 1200px)",
-        background: "rgba(8, 8, 12, 0.82)",
+        background: "var(--color-bg-card)",
         border: "1px solid rgba(255,221,0,0.2)",
         borderRadius: 4,
         padding: "6px 10px",
         fontFamily: "'VT323', monospace",
-        color: "#ccc",
+        color: "var(--color-text)",
         fontSize: 13,
         zIndex: 50,
         pointerEvents: "auto",
@@ -145,7 +140,7 @@ export const TimelineStrip = memo(function TimelineStrip({
   }
 
   return (
-    <div style={containerStyle}>
+    <div className={inline ? undefined : "uc-timeline"} style={containerStyle}>
       {/* Filter chips */}
       <div
         style={{
@@ -156,8 +151,10 @@ export const TimelineStrip = memo(function TimelineStrip({
           alignItems: "center",
         }}
       >
-        <span style={{ color: "#FFDD00", letterSpacing: 1, fontSize: 11 }}>TIMELINE</span>
-        <span style={{ color: "#666", fontSize: 11 }}>
+        <span style={{ color: "var(--color-primary)", letterSpacing: 1, fontSize: 11 }}>
+          TIMELINE
+        </span>
+        <span style={{ color: "var(--uc-text-muted)", fontSize: 11 }}>
           last {WINDOW_MINUTES}m · {visible.length} event{visible.length === 1 ? "" : "s"}
         </span>
         {kindFilter && (
@@ -170,7 +167,7 @@ export const TimelineStrip = memo(function TimelineStrip({
               background: "transparent",
               border: "1px solid #ef4444",
               borderRadius: 2,
-              color: "#ef4444",
+              color: "var(--color-danger)",
               fontFamily: "inherit",
               cursor: "pointer",
               fontSize: 10,
@@ -192,11 +189,10 @@ export const TimelineStrip = memo(function TimelineStrip({
                 background: "transparent",
                 border: `1px solid ${kindColor(kind)}`,
                 borderRadius: 2,
-                color: kindColor(kind),
+                color: "var(--color-text)",
                 fontFamily: "inherit",
                 cursor: "pointer",
                 fontSize: 10,
-                opacity: 0.75,
               }}
             >
               {kind}·{count}
@@ -204,6 +200,19 @@ export const TimelineStrip = memo(function TimelineStrip({
           ))}
         </div>
       )}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          color: "var(--uc-text-muted)",
+          fontSize: 11,
+        }}
+      >
+        {Array.from({ length: WINDOW_MINUTES / 5 + 1 }, (_, i) => {
+          const minutesAgo = WINDOW_MINUTES - i * 5;
+          return <span key={minutesAgo}>{minutesAgo === 0 ? "NOW" : `−${minutesAgo}m`}</span>;
+        })}
+      </div>
       {/* Dot track — 36px tall */}
       <svg
         width="100%"
@@ -222,31 +231,11 @@ export const TimelineStrip = memo(function TimelineStrip({
           return (
             <g key={`tick-${minutesAgo}`}>
               <line x1={x} y1={24} x2={x} y2={32} stroke="#555" strokeWidth={1} />
-              <text
-                x={x}
-                y={14}
-                textAnchor="middle"
-                fontSize={9}
-                fill="#666"
-                fontFamily="'VT323', monospace"
-              >
-                -{minutesAgo}m
-              </text>
             </g>
           );
         })}
         {/* "now" marker on the right */}
         <line x1={1000} y1={0} x2={1000} y2={36} stroke="#FFDD00" strokeWidth={1} opacity={0.5} />
-        <text
-          x={992}
-          y={12}
-          textAnchor="end"
-          fontSize={9}
-          fill="#FFDD00"
-          fontFamily="'VT323', monospace"
-        >
-          NOW
-        </text>
         {/* Causal request arcs */}
         {[...requestArcs.entries()].map(([ref, grouped]) => {
           if (grouped.length < 2) return null;

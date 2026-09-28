@@ -55,12 +55,12 @@ export const ShortcutHelp = memo(function ShortcutHelp({ onClose }: ShortcutHelp
     >
       <div
         style={{
-          background: "rgba(8,8,14,0.97)",
+          background: "var(--color-bg-card)",
           border: "2px solid var(--color-border)",
           borderRadius: "6px",
           padding: "24px 32px",
           fontFamily: "'VT323', monospace",
-          color: "#ccc",
+          color: "var(--color-text)",
           fontSize: "18px",
           lineHeight: 2,
           minWidth: "320px",
@@ -84,7 +84,7 @@ export const ShortcutHelp = memo(function ShortcutHelp({ onClose }: ShortcutHelp
             <span style={{ color: "var(--color-primary)" }}>{key}</span> — {what}
           </div>
         ))}
-        <div style={{ marginTop: "12px", color: "#aaa", fontSize: "14px" }}>
+        <div style={{ marginTop: "12px", color: "var(--uc-text-muted)", fontSize: "14px" }}>
           Press Escape or Close to return
         </div>
         <button
@@ -97,7 +97,7 @@ export const ShortcutHelp = memo(function ShortcutHelp({ onClose }: ShortcutHelp
             background: "none",
             fontFamily: "'Press Start 2P', monospace",
             fontSize: "8px",
-            color: "#aaa",
+            color: "var(--uc-text-muted)",
             cursor: "pointer",
           }}
         >

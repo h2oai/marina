@@ -98,13 +98,13 @@ export const WelcomeTour = memo(function WelcomeTour({
             top: 82,
             left: 12,
             width: "min(390px, calc(100vw - 24px))",
-            background: "rgba(10, 10, 16, 0.94)",
+            background: "var(--color-bg-card)",
             border: "1px solid rgba(255,221,0,0.4)",
             borderRadius: 4,
             boxShadow: "0 4px 16px rgba(0,0,0,0.5)",
             padding: "10px 12px",
             fontFamily: "'VT323', monospace",
-            color: "#ddd",
+            color: "var(--color-text)",
             fontSize: 13,
             lineHeight: 1.4,
             zIndex: 35,
@@ -114,7 +114,7 @@ export const WelcomeTour = memo(function WelcomeTour({
           <div style={{ display: "flex", alignItems: "center", marginBottom: 6 }}>
             <span
               style={{
-                color: "#FFDD00",
+                color: "var(--color-primary)",
                 fontFamily: "'Press Start 2P', monospace",
                 fontSize: 9,
                 letterSpacing: 1.2,
@@ -130,7 +130,7 @@ export const WelcomeTour = memo(function WelcomeTour({
                 padding: "1px 6px",
                 background: "transparent",
                 border: "1px solid #444",
-                color: "#888",
+                color: "var(--uc-text-muted)",
                 cursor: "pointer",
                 fontFamily: "inherit",
                 fontSize: 11,
@@ -145,18 +145,18 @@ export const WelcomeTour = memo(function WelcomeTour({
 
           {!loggedIn ? (
             <>
-              <p style={{ margin: "0 0 8px", color: "#ccc" }}>
+              <p style={{ margin: "0 0 8px", color: "var(--color-text)" }}>
                 Join the world first. Choose a name in the command bar; no account is required on
                 the default local setup.
               </p>
               <TourButton label="1 · CHOOSE A NAME" onClick={onOpenTerminal} />
-              <p style={{ margin: "8px 0 0", color: "#777", fontSize: 11 }}>
+              <p style={{ margin: "8px 0 0", color: "var(--uc-text-muted)", fontSize: 11 }}>
                 If login is disabled, ask the instance operator which authentication method to use.
               </p>
             </>
           ) : (
             <>
-              <p style={{ margin: "0 0 8px", color: "#ccc" }}>
+              <p style={{ margin: "0 0 8px", color: "var(--color-text)" }}>
                 You're in{entityName ? ` as ${entityName}` : ""}. These safe commands provide a
                 complete first orientation; their results appear in the command bar.
               </p>
@@ -165,7 +165,14 @@ export const WelcomeTour = memo(function WelcomeTour({
                 <TourButton label="2 · READ YOUR BRIEF" onClick={() => run("brief")} />
                 <TourButton label="3 · FIND THE NEXT ACTION" onClick={() => run("next")} />
               </div>
-              <p style={{ margin: "8px 0 0", color: "#888", fontSize: 11, lineHeight: 1.35 }}>
+              <p
+                style={{
+                  margin: "8px 0 0",
+                  color: "var(--uc-text-muted)",
+                  fontSize: 11,
+                  lineHeight: 1.35,
+                }}
+              >
                 WORLD, CANVAS, GRAPH, and FEED chips toggle the live layers. Replay this guide from
                 LEGEND.
               </p>
@@ -187,7 +194,7 @@ function TourButton({ label, onClick }: { label: string; onClick?: () => void })
         padding: "6px 8px",
         background: "rgba(255,221,0,0.08)",
         border: "1px solid rgba(255,221,0,0.45)",
-        color: "#FFDD00",
+        color: "var(--color-primary)",
         cursor: "pointer",
         fontFamily: "'Press Start 2P', monospace",
         fontSize: 8,
