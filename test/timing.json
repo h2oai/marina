@@ -228,6 +228,7 @@
     "test/local-workspace-edit.test.ts": 48,
     "test/pi-models.test.ts": 46,
     "test/url-guard.test.ts": 31,
+    "test/process-state.test.ts": 26,
     "test/canvas-ws-auth.test.ts": 14,
     "test/resolver-registry.test.ts": 13,
     "test/docs-contract.test.ts": 12,

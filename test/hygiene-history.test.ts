@@ -38,6 +38,9 @@ import { MarinaDB } from "../src/persistence/database";
 import { EXPORT_TABLES } from "../src/persistence/export-import";
 import { roomId } from "../src/types";
 import { MockConnection, makeTestRoom } from "./helpers";
+import { scopeProcessState } from "./process-state";
+
+let processState: DisposableStack | undefined;
 
 const RESIDENT = "Resident";
 const DESKTOP_TOKEN = "desktop-capability-token-at-least-32-chars";
@@ -75,6 +78,8 @@ const rowCount = () =>
   (raw().query("SELECT count(*) AS n FROM memory_hygiene_snapshots").get() as { n: number }).n;
 
 beforeEach(() => {
+  using pendingProcessState = scopeProcessState();
+
   delete process.env.MARINA_OPEN_API;
   process.env.MARINA_DESKTOP_API_TOKEN = DESKTOP_TOKEN;
   resetTrustProfileForTests();
@@ -88,10 +93,14 @@ beforeEach(() => {
   const result = engine.login(conn.id, RESIDENT);
   if ("error" in result) throw new Error(result.error);
   residentToken = result.token;
+
+  processState = pendingProcessState.move();
 });
 
 afterEach(() => {
-  resetTrustProfileForTests();
+  using _processState = processState;
+  processState = undefined;
+
   if (prevOpenApi === undefined) delete process.env.MARINA_OPEN_API;
   else process.env.MARINA_OPEN_API = prevOpenApi;
   if (prevDesktop === undefined) delete process.env.MARINA_DESKTOP_API_TOKEN;

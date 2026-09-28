@@ -28,6 +28,7 @@ import { MarinaDB } from "../src/persistence/database";
 import type { Connection, Entity, EntityId } from "../src/types";
 import { roomId } from "../src/types";
 import { MockConnection, makeTestRoom } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 const DESKTOP_TOKEN = "desktop-capability-token-at-least-32-chars";
 const ENV = [
@@ -167,9 +168,13 @@ describe("console / CLI: admin decisions", () => {
 });
 
 describe("dashboard: /api/ops/decisions/settings", () => {
+  let processState: DisposableStack | undefined;
+
   let engine: Engine;
   let resident: string;
   beforeEach(() => {
+    using pendingProcessState = scopeProcessState();
+
     process.env.MARINA_DESKTOP_API_TOKEN = DESKTOP_TOKEN;
     resetTrustProfileForTests();
     resetHttpRateLimitersForTests();
@@ -180,8 +185,13 @@ describe("dashboard: /api/ops/decisions/settings", () => {
     const r = engine.login(conn.id, "Resident");
     if ("error" in r) throw new Error(r.error);
     resident = r.token;
+
+    processState = pendingProcessState.move();
   });
-  afterEach(() => resetTrustProfileForTests());
+  afterEach(() => {
+    using _processState = processState;
+    processState = undefined;
+  });
 
   async function api(
     method: string,

@@ -32,6 +32,9 @@ import { MarinaDB } from "../src/persistence/database";
 import type { MemoryOperationRequest } from "../src/sdk/memory-operations";
 import { type EntityId, roomId } from "../src/types";
 import { MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { scopeProcessState } from "./process-state";
+
+let processState: DisposableStack | undefined;
 
 const OWNER = "Owner";
 const HELPER = "Evaluator";
@@ -111,6 +114,8 @@ const ownerOpenJobs = async () =>
   ).jobs;
 
 beforeEach(() => {
+  using pendingProcessState = scopeProcessState();
+
   directory = mkdtempSync(join(tmpdir(), "marina-hygiene-"));
   db = new MarinaDB(join(directory, "world.db"));
   db.createUser({ id: crypto.randomUUID(), name: OWNER });
@@ -122,10 +127,14 @@ beforeEach(() => {
   delete process.env.MARINA_PROFILE;
   delete process.env.MARINA_AUTONOMY;
   resetTrustProfileForTests();
+
+  processState = pendingProcessState.move();
 });
 
 afterEach(() => {
-  resetTrustProfileForTests();
+  using _processState = processState;
+  processState = undefined;
+
   if (prevProfile === undefined) delete process.env.MARINA_PROFILE;
   else process.env.MARINA_PROFILE = prevProfile;
   if (prevAutonomy === undefined) delete process.env.MARINA_AUTONOMY;
@@ -167,6 +176,8 @@ describe("runMemoryHygiene", () => {
   });
 
   it("on a LOCAL profile files exactly one evaluator job and records its id", async () => {
+    using _processState = scopeProcessState();
+
     setTrustProfile("local");
     await seedReviewQueue(4); // 4 stale + 2 competing = 6 ≥ threshold
     expect(HYGIENE_DISPATCH_THRESHOLD).toBe(5);
@@ -222,6 +233,8 @@ describe("runMemoryHygiene", () => {
   });
 
   it("counts contradictions parked under await_confirmation (pending) toward the threshold", async () => {
+    using _processState = scopeProcessState();
+
     setTrustProfile("local");
     await seedReviewQueue(2); // 2 stale + 2 competing = 4 < threshold on their own
     const [before] = await runMemoryHygiene(db, deps(), T0);
@@ -270,6 +283,8 @@ describe("runMemoryHygiene", () => {
   });
 
   it("on a SHARED profile never files the job — it tells the owner the exact command", async () => {
+    using _processState = scopeProcessState();
+
     // Process default is `shared`; make it explicit for the reader.
     setTrustProfile("shared");
     await seedReviewQueue(4);
@@ -300,6 +315,8 @@ describe("runMemoryHygiene", () => {
   });
 
   it("with no evaluator running, notifies with the spawn command instead (any profile)", async () => {
+    using _processState = scopeProcessState();
+
     setTrustProfile("local");
     await seedReviewQueue(4);
     const [report] = await runMemoryHygiene(db, deps({ findRunningHelper: () => undefined }), T0);

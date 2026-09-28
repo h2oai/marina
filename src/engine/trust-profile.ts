@@ -120,6 +120,20 @@ export function resetTrustProfileForTests(): void {
   resolved = undefined;
 }
 
+/** Preserve the resolved override, including the unset/env-derived state.
+ * Test scopes must run serially within a process and dispose in reverse order. */
+export function preserveTrustProfileForTests(): Disposable {
+  const previous = resolved;
+  let disposed = false;
+  return {
+    [Symbol.dispose]() {
+      if (disposed) return;
+      disposed = true;
+      resolved = previous;
+    },
+  };
+}
+
 export function getTrustProfile(env: NodeJS.ProcessEnv = process.env): TrustProfile {
   if (resolved) return resolved;
   try {

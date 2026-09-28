@@ -4,16 +4,19 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { Engine } from "../src/engine/engine";
 import { validateGatewayUrl } from "../src/engine/gateway-runtime";
-import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
+import { setTrustProfile } from "../src/engine/trust-profile";
 import { __setDnsResolverForTest } from "../src/net/url-guard";
 import { MarinaDB } from "../src/persistence/database";
 import { MarinaClient } from "../src/sdk/client";
 import { roomId } from "../src/types";
 import { cleanupDb, grantAllGates, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 const TEST_DB = "test_gateway.db";
 
 describe("Gateway Command", () => {
+  let processState: DisposableStack | undefined;
+
   let db: MarinaDB;
   let engine: Engine;
   let conn1: MockConnection;
@@ -21,6 +24,8 @@ describe("Gateway Command", () => {
   let dial: ReturnType<typeof spyOn<MarinaClient, "connect">>;
 
   beforeEach(() => {
+    using pendingProcessState = scopeProcessState();
+
     // Command/persistence tests must not dial services on the developer's ports.
     // Real federation transport behavior is covered by the gateway wire tests.
     dial = spyOn(MarinaClient.prototype, "connect").mockRejectedValue(
@@ -43,13 +48,18 @@ describe("Gateway Command", () => {
     grantAllGates(db, conn1.entity!);
 
     conn1.clear();
+
+    processState = pendingProcessState.move();
   });
 
   afterEach(async () => {
+    using _processState = processState;
+    processState = undefined;
+
     await engine.drainCommands();
     await engine.gatewayRuntime?.close();
     dial.mockRestore();
-    resetTrustProfileForTests();
+
     __setDnsResolverForTest(null);
     db.close();
     cleanupDb(TEST_DB);
@@ -109,6 +119,8 @@ describe("Gateway Command", () => {
     // ─── SSRF guard on peer URLs ─────────────────────────────────────────
 
     it("refuses a loopback peer outside the local trust profile (nothing persisted)", async () => {
+      using _processState = scopeProcessState();
+
       setTrustProfile("shared");
       await engine.processCommand(conn1.entity!, "gateway add lab ws://localhost:3301");
       expect(conn1.lastText()).toContain("Refused gateway URL");
@@ -117,6 +129,8 @@ describe("Gateway Command", () => {
     });
 
     it("refuses private-range and cloud-metadata peers outside the local profile", async () => {
+      using _processState = scopeProcessState();
+
       setTrustProfile("shared");
       for (const url of [
         "ws://10.0.0.5:3301",
@@ -132,6 +146,8 @@ describe("Gateway Command", () => {
     });
 
     it("refuses cloud-metadata peers even under the local profile", async () => {
+      using _processState = scopeProcessState();
+
       setTrustProfile("local");
       await engine.processCommand(conn1.entity!, "gateway add meta ws://169.254.169.254/latest");
       expect(conn1.lastText()).toContain("Refused gateway URL");
@@ -139,6 +155,8 @@ describe("Gateway Command", () => {
     });
 
     it("refuses a public-looking peer that resolves to a private IP (DNS rebinding)", async () => {
+      using _processState = scopeProcessState();
+
       setTrustProfile("shared");
       __setDnsResolverForTest(async () => ["127.0.0.1"]);
       await engine.processCommand(conn1.entity!, "gateway add rebind wss://peer.example.com");
@@ -301,6 +319,8 @@ describe("Gateway Command", () => {
 
   describe("Permissions", async () => {
     it("should require steward rank", async () => {
+      using _processState = scopeProcessState();
+
       // Rank floors are enforced only under a gated profile (local is ungated).
       setTrustProfile("shared");
       const entity = engine.entities.get(conn1.entity!);
@@ -536,6 +556,8 @@ describe("Gateway Command", () => {
     });
 
     it("allows loopback only under the local profile", async () => {
+      using _processState = scopeProcessState();
+
       setTrustProfile("local");
       expect(await validateGatewayUrl("ws://localhost:3301")).toBeNull();
       expect(await validateGatewayUrl("ws://127.0.0.1:3301")).toBeNull();
@@ -546,6 +568,8 @@ describe("Gateway Command", () => {
     });
 
     it("runtime refuses to dial (and never sends the secret to) a blocked peer", async () => {
+      using _processState = scopeProcessState();
+
       setTrustProfile("shared");
       const runtime = engine.gatewayRuntime!;
       await expect(runtime.addGateway("bad", "ws://169.254.169.254")).rejects.toThrow(
