@@ -88,6 +88,11 @@ describe("trust profile — resolution", () => {
     setTrustProfile("local");
     expect(isLocalProfile()).toBe(true);
     expect(describeTrustProfile()).toContain("LOCAL");
+    // Guarded re-enables the gates, and the description must say so.
+    expect(describeTrustProfile("local", { MARINA_AUTONOMY: "guarded" })).toContain(
+      "LOCAL (gated)",
+    );
+    expect(describeTrustProfile("local", {})).toContain("LOCAL — ungated");
   });
 });
 

@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { OpsDecisions } from "../../lib/ops-types";
+import { DecisionSettings } from "./DecisionSettings";
 import { formatAgo } from "./format";
 import { Chip, Metric } from "./primitives";
 
 export const DECISIONS_OFF_TEXT =
-  "No decision backend is configured (MARINA_DECISIONS). Route, gate and verify decisions appear here once one is.";
+  "No decision backend is configured. Route, gate and verify decisions appear here once one is.";
 export const DECISIONS_EMPTY_TEXT = "No decisions in the last 24 h.";
 
 const VERDICT_CLASS: Record<string, string> = {
@@ -34,8 +35,28 @@ export function signalSummary(signals: Record<string, number | string>, max = 3)
     .join(" · ");
 }
 
-export function DecisionsSection({ decisions }: { decisions: OpsDecisions }) {
-  if (!decisions.configured) return <div className="text-text-dim">{DECISIONS_OFF_TEXT}</div>;
+export function DecisionsSection({
+  decisions,
+  privileged = false,
+  onSettingsChanged,
+}: {
+  decisions: OpsDecisions;
+  /** Operators see (and may edit) the runtime settings — even while decisions are off. */
+  privileged?: boolean;
+  onSettingsChanged?: () => void;
+}) {
+  const settings = privileged ? <DecisionSettings onChanged={onSettingsChanged} /> : null;
+  if (!decisions.configured) {
+    return (
+      <div className="space-y-2">
+        <div className="text-text-dim">
+          {DECISIONS_OFF_TEXT}
+          {privileged ? " Turn one on below." : ""}
+        </div>
+        {settings}
+      </div>
+    );
+  }
   const total = (stage: string) =>
     Object.values(decisions.counts[stage] ?? {}).reduce((sum, n) => sum + n, 0);
   const held = (decisions.counts.gate?.ask ?? 0) + (decisions.counts.gate?.block ?? 0);
@@ -115,6 +136,7 @@ export function DecisionsSection({ decisions }: { decisions: OpsDecisions }) {
           </table>
         </div>
       )}
+      {settings}
     </div>
   );
 }

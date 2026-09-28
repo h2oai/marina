@@ -13,6 +13,7 @@ import {
 } from "../decisions/engines";
 import { activeGateQuestions, BASELINE_GATE_QUESTIONS } from "../decisions/gate-questions";
 import { decisionHealth } from "../decisions/health";
+import { describeDecisionSettings } from "../decisions/settings";
 import { describeDefaultUpstream } from "../net/model-api/upstream";
 import { type AutonomyPosture, getAutonomyPosture } from "./autonomy";
 import type { Engine } from "./engine";
@@ -335,7 +336,7 @@ export function computeReadiness(engine: Engine): ReadinessReport {
         ? "MARINA_DECISIONS unset — no configured backend; Marina's own engines still answer /v1/systemone (see decision-engines)"
         : "MARINA_DECISIONS unset — no decision backend; /v1/decisions returns 404",
       remediation:
-        "Set MARINA_DECISIONS=decisions-api (Jev family / OpenJev) or chat-classifier (any chat model) — see .env.example.",
+        "Turn a backend on at runtime (operator): `admin decisions set backend jev` or Admin → Ops → Decisions; or set MARINA_DECISIONS=decisions-api (Jev family / OpenJev) / chat-classifier (any chat model) in the environment — see .env.example.",
     });
   } else if (!decisions.apiKey && /^https:\/\//.test(decisions.baseUrl)) {
     checks.push({
@@ -405,6 +406,14 @@ export function computeReadiness(engine: Engine): ReadinessReport {
       );
     }
     const engines = listEngines(env);
+    const runtimeSet = engine.db
+      ? describeDecisionSettings(engine.db)
+          .filter((v) => v.source === "runtime")
+          .map((v) => `${v.name}=${v.value}`)
+      : [];
+    const runtimeNote = runtimeSet.length
+      ? `; set at runtime: ${runtimeSet.join(", ")} (admin decisions history)`
+      : "";
     const earned = calibration
       ? Object.keys(calibration.engines).filter((m) => earnedGateCalibration(m, env))
       : [];
@@ -422,7 +431,7 @@ export function computeReadiness(engine: Engine): ReadinessReport {
         id: "decision-engines",
         label: "Decision engines (/v1/systemone, harness)",
         status: "off",
-        detail: "no decision engines — nothing answers /v1/systemone",
+        detail: `no decision engines — nothing answers /v1/systemone${runtimeNote}`,
         remediation:
           "Set MARINA_DECISIONS (Jev) and/or MARINA_DECISION_ENGINES (any model Marina routes) — see .env.example.",
       });
@@ -436,7 +445,8 @@ export function computeReadiness(engine: Engine): ReadinessReport {
           (calibrationPath
             ? `; gate calibration earned for ${earned.length ? earned.join(", ") : "no model"}`
             : "") +
-          (questionsPath ? `; gate questions: ${questions.name} (adopted)` : ""),
+          (questionsPath ? `; gate questions: ${questions.name} (adopted)` : "") +
+          runtimeNote,
       });
     }
   }

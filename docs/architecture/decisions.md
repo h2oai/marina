@@ -32,7 +32,7 @@ These are TypeSafe's published limits (docs.typesafe.ai/api): a `null` option de
 
 **Research judges.** The forecast and arena pipelines judge with jev-1.13 on OpenRouter by default; `MARINA_FORECAST_JUDGE=decisions` / `MARINA_ARENA_RESEARCH_JUDGE=decisions` use the world's configured backend instead (`researchJudge` in `config.ts`) and fall back to jev when none is configured — opt-in, never removing the judge.
 
-Configuration is env-only (`.env.example` → *Harness Decisions*): the backend receives tool names and redacted arguments, so sending them to a third party is an operator decision, never an in-world one. Endpoints are operator configuration and are fetched directly (like provider upstreams), so a localhost classifier works. `MARINA_DECISION_API_KEY` falls back to `OPENROUTER_API_KEY` only for `openrouter.ai` URLs. `readiness` reports the `decisions` capability.
+Configuration is operator-only (`.env.example` → *Harness Decisions*, or runtime settings below): the backend receives tool names and redacted arguments, so sending them to a third party is an operator decision, never an agent's. Endpoints are operator configuration and are fetched directly (like provider upstreams), so a localhost classifier works. `MARINA_DECISION_API_KEY` falls back to `OPENROUTER_API_KEY` only for `openrouter.ai` URLs. `readiness` reports the `decisions` capability.
 
 ## Marina as a Jev-compatible engine (`src/decisions/engines.ts`)
 
@@ -86,6 +86,22 @@ The gate's wording is data (`GateQuestionSet`), improved by succession like role
 
 With 50 tracked cases about 25 are held out, so only a large effect can earn; the harness says so rather than promoting noise. Grow the case set — ideally with labels written by someone other than the variant's author — before expecting adoptions.
 
+## Runtime settings (`src/decisions/settings.ts`)
+
+Everything above can also be set on a RUNNING Marina, without a restart, from three places that share one implementation:
+
+| Surface | How |
+|---|---|
+| Console | `admin decisions` (show) · `admin decisions set <setting> <value>` · `unset <setting>` · `history` |
+| CLI | the same command: `marina -c "admin decisions set backend jev"` |
+| Dashboard | Admin → Ops → Decisions → **Settings** (`GET`/`PUT /api/ops/decisions/settings`) |
+
+- **Settable** (`DECISION_SETTINGS`, each validated): `backend` (`MARINA_DECISIONS`), `model`, `timeout`, `gate`, `gate-context`, `approval-timeout`, `verify`, `engines`, `method`, `samples`, `ensemble`, `engine`, `calibration`, `gate-questions` (absolute `.json` paths). **Never runtime**: `MARINA_DECISION_BASE_URL`, `_PATH`, `_API_KEY` and vendor keys — a runtime base URL would let whoever sets it receive every agent's tool calls; keys live in the environment or Admin → Keys.
+- **Operator only**: the `admin` command's gate (rank 5 + `admin.destructive`, which `MARINA_AUTONOMY=open` never auto-passes) and, on the dashboard, `authorizePrivileged(…, "admin.destructive")`; reads are privileged-observer only. Writes are **refused for any agent-driven entity** — an internal / workload connection or an entity with an agent config — even at sovereign rank: an agent never reconfigures the gate that supervises it. An external client using a person's own credentials acts as that person.
+- **Environment wins**: a variable set in the environment at boot locks its setting (`409` / "set in the environment, which wins"); the view marks it `env · locked`.
+- **Applied live**: a setting writes the variable into `process.env`, which every decision reader reads per call, so it takes effect on the next decision. Stored values (the `settings` table, `decision_setting:<ENV>`) are re-applied at boot by `applyStoredDecisionSettings` — env still winning, invalid stored values skipped with a warning.
+- **Audited**: every change is written to the durable structured log and to a bounded history (`admin decisions history`, the dashboard's recent changes): who, when, from, to. `readiness` lists runtime-set values under `decision-engines`.
+
 ## Policies (`src/decisions/policy.ts`)
 
 Pure functions — same numbers, same verdict, testable without a model. Thresholds live here and nowhere else.
@@ -120,7 +136,7 @@ Route once per request (a task claim, job, `model_request` or session start), ne
 ## Invariants
 
 - Deterministic checks first: safety gates, `mediateToolCall`, exec approval and path confinement run in code; decisions only cover judgement calls code cannot make. A decision can only further restrict, never widen, what the deterministic layer allows.
-- Off by default; env-only; nothing in-world can enable it or change the backend.
+- Off by default. Configured by the operator only — the environment, or runtime settings (`admin decisions`, the dashboard) that require `admin.destructive` and are refused for any agent-driven entity; a boot env var locks its setting; base URLs, paths and API keys are env-only. No agent can enable decisions, change the backend or loosen the gate.
 - Autonomy first: the agent-facing tools (`decision check` / `choose`) and cited evidence only inform. Imposed uses stay narrow — the gate only restricts world-mutating calls, the verifier bounces at most once and never decides approval, routing happens once at spawn.
 - Scores are advisory until measured: tune thresholds from recorded `agent_decision` events and benchmark A/B runs, not by intuition.
 

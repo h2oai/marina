@@ -153,7 +153,8 @@ export function activeGateQuestions(env: NodeJS.ProcessEnv = process.env): GateQ
   } catch (err) {
     logger.warn("decisions", "gate question file refused; the gate keeps its baseline questions", {
       path,
-      error: (err as Error).message,
+      // A parse error can quote the file; never echo its content.
+      error: err instanceof SyntaxError ? "not valid JSON" : (err as Error).message,
     });
   }
   cache = { key, set };

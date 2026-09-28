@@ -814,7 +814,16 @@ Platforms: telegram, discord, slack, signal. Also auto-detected from `TELEGRAM_T
 > admin export                       Export world data
 > admin snapshot default-v1          Clone live DB → seeds/default-v1.db
 > admin snapshots                    List saved seed snapshots
+> admin decisions                    Decision settings: value, source (default / runtime / env, locked)
+> admin decisions set gate on        Change one at runtime (operator only; never an agent)
+> admin decisions set backend jev    Turn the decision backend on without a restart
+> admin decisions unset gate         Back to the built-in default
+> admin decisions history            Who changed what, when
 ```
+
+`admin decisions` also works from the CLI: `marina -c "admin decisions set engine marina/auto"`.
+A variable set in the environment wins and is locked; base URLs, paths and API keys are never
+runtime settings.
 
 Snapshots use SQLite `VACUUM INTO` — they produce a self-contained DB file
 under `seeds/<name>.db` with a sidecar `seeds/<name>.json` recording counts

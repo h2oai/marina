@@ -7,6 +7,7 @@ import { getInternalModelToken } from "./agent/agent-runtime";
 import { RateLimiter } from "./auth/rate-limiter";
 import { parseExecUnrestricted } from "./coding/exec-approver";
 import { ensureConfiguredRoots } from "./coding/workspace-registry";
+import { applyStoredDecisionSettings } from "./decisions/settings";
 import { describeAutonomyPosture, getAutonomyPosture } from "./engine/autonomy";
 import {
   DASHBOARD_BROADCAST_INTERVAL_MS,
@@ -19,6 +20,7 @@ import { projectTraces } from "./engine/trace-projection";
 import {
   assertTrustProfileSafe,
   describeTrustProfile,
+  isLocalUngated,
   isOpenApiMode,
   resolveTrustProfile,
   setTrustProfile,
@@ -215,7 +217,7 @@ logger.info(
   "trust",
   `Trust profile: ${describeTrustProfile(TRUST.profile)} (${TRUST.derived ? "derived: " : ""}${TRUST.reason})`,
 );
-if (TRUST.profile === "local") {
+if (TRUST.profile === "local" && isLocalUngated()) {
   logger.warn(
     "trust",
     "LOCAL profile: agents can run host commands and manage keys without a prompt. " +
@@ -232,6 +234,9 @@ if (durability !== "full" && durability !== "normal")
   throw new Error("MARINA_DB_DURABILITY must be full or normal");
 const releaseDatabaseLease = acquireDatabaseLease(DB_PATH);
 const db = new MarinaDB(DB_PATH, { durability });
+// Operator-set decision settings (dashboard / `admin decisions`) survive a
+// restart; the environment still wins for anything it sets.
+applyStoredDecisionSettings(db);
 // Canonical numeric writes can enqueue embeddings without an HTTP memory request.
 worldMemoryService(db);
 const structuredLogRetention = Math.max(
