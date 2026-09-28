@@ -3063,6 +3063,7 @@ Usage: decision check [<request> |] <draft>   — score your own draft before yo
        decision list | decision approve <token> | decision deny <token> [reason]
        decision qualify   — run the labeled gate + route cases against this world's backend
        decision agreement — how often each judge agreed with task creators' verdicts
+       decision settings  — the decision settings; change one with the earned decisions.configure gate
 
 Category: Agents. Minimum rank: 0.
 Aliases: `decisions`.
@@ -3113,6 +3114,15 @@ Effect: unknown.
 
 Effect: unknown.
 
+
+### `decision settings [set <setting> <value> | unset <setting> | history]`
+
+Effect: unknown.
+
+- `field-0` (`setting`): text, optional group `option-0`.
+- `field-1` (`value`): text, optional group `option-0`.
+- `field-2` (`setting`): text, optional group `option-0`.
+- Group `option-0`: `set setting value | unset setting | history`.
 
 ## demo
 

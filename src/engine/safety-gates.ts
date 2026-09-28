@@ -115,6 +115,21 @@ export const SAFETY_GATES: Record<string, GateDef> = {
     demoThreshold: 3,
     description: "change an existing role or trait that agents run on",
   },
+  "decisions.configure": {
+    id: "decisions.configure",
+    // Change the runtime decision settings (src/decisions/settings.ts): the
+    // backend, the tool gate, the verifier, engines, calibration and question
+    // files — the judgement layer that supervises every agent. People reach it
+    // with admin.destructive too; an AGENT reaches it only through this gate:
+    // earned (standing + witnessed demonstrations, never self-witnessed),
+    // granted, or passed by an operator-chosen posture (non-core, so
+    // `MARINA_AUTONOMY=open` passes it). Supervision is a default an agent can
+    // outgrow by earning trust, never one it can wave away. Environment-locked
+    // settings and env-only base URLs / keys stay out of reach regardless.
+    minStanding: 150,
+    demoThreshold: 2,
+    description: "change the decision settings that supervise agents",
+  },
   "adapter.enable": {
     id: "adapter.enable",
     minStanding: 150,
@@ -572,7 +587,7 @@ const RANK_GATES: Record<number, string[]> = {
   6: ["agent.run"],
   7: ["adapter.enable", "connect.manage", "gateway.connect"],
   8: ["key.manage"],
-  9: ["admin.destructive"],
+  9: ["admin.destructive", "decisions.configure"],
 };
 
 /**

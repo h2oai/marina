@@ -10,6 +10,7 @@ import {
 import { MarinaDB } from "../src/persistence/database";
 import { seedTabH2OForecasting } from "../worlds/seed";
 import { cleanupDb } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 const TEST_DB = "test-p7-tabh2o.db";
 
@@ -22,8 +23,14 @@ describe("tabh2o-client: configuration", () => {
   it("isTabH2OConfigured returns false with an empty key", () => {
     expect(isTabH2OConfigured("")).toBe(false);
   });
-  it("isTabH2OConfigured returns false with undefined", () => {
+  it("isTabH2OConfigured returns false without an argument or environment key", () => {
+    using _state = scopeProcessState({ env: { TABH2O_API_KEY: undefined } });
     expect(isTabH2OConfigured(undefined)).toBe(false);
+  });
+  it("isTabH2OConfigured reads the environment when the argument is omitted", () => {
+    using _state = scopeProcessState({ env: { TABH2O_API_KEY: "fixture-key" } });
+    expect(isTabH2OConfigured()).toBe(true);
+    expect(isTabH2OConfigured("")).toBe(false);
   });
 });
 

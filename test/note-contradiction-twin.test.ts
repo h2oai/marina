@@ -13,7 +13,6 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Engine } from "../src/engine/engine";
-import { resetTrustProfileForTests } from "../src/engine/trust-profile";
 import { findDurableTwin } from "../src/memory/legacy-projection";
 import { MarinaDB } from "../src/persistence/database";
 import { type EntityId, roomId } from "../src/types";
@@ -44,7 +43,6 @@ describe("contradiction cases exclude durable twins", () => {
   });
 
   afterEach(() => {
-    resetTrustProfileForTests();
     db.close();
     rmSync(directory, { recursive: true });
   });

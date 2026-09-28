@@ -53,6 +53,9 @@ import type { MemoryOperationRequest } from "../src/sdk/memory-operations";
 import type { MemoryRecord } from "../src/sdk/memory-types";
 import { type EngineEvent, type EntityId, roomId } from "../src/types";
 import { MockConnection, makeTestRoom } from "./helpers";
+import { scopeProcessState } from "./process-state";
+
+let processState: DisposableStack | undefined;
 
 const OWNER = "Owner";
 const HELPER = "Helper";
@@ -181,6 +184,8 @@ async function fileAnsweredJob(task: string): Promise<{
 }
 
 async function buildFixture(): Promise<Fixture> {
+  using _processState = scopeProcessState();
+
   const answered = await fileAnsweredJob("[accumulation] Consolidate the port notes");
   const adopted = (await op(OWNER, { operation: "adopt", id: answered.jobId, key: "adopt-own" }))
     .result as { id: string };
@@ -255,6 +260,8 @@ async function buildFixture(): Promise<Fixture> {
 }
 
 beforeEach(() => {
+  using pendingProcessState = scopeProcessState();
+
   delete process.env.MARINA_OPEN_API;
   process.env.MARINA_DESKTOP_API_TOKEN = DESKTOP_TOKEN;
   delete process.env.MARINA_PROFILE;
@@ -272,10 +279,14 @@ beforeEach(() => {
   tokens = {};
   entityIds = {};
   for (const name of [OWNER, HELPER, STRANGER]) login(name);
+
+  processState = pendingProcessState.move();
 });
 
 afterEach(() => {
-  resetTrustProfileForTests();
+  using _processState = processState;
+  processState = undefined;
+
   const restore = (k: string, v: string | undefined) => {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;

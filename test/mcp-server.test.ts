@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { RateLimiter } from "../src/auth/rate-limiter";
 import { Engine } from "../src/engine/engine";
-import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
+import { setTrustProfile } from "../src/engine/trust-profile";
 import type { FlywheelToolBackend } from "../src/integrations/flywheel-manager";
 import { buildUnifiedContext, type UnifiedContextResult } from "../src/memory/unified-context";
 import { resetHttpRateLimitersForTests } from "../src/net/http-utils";
@@ -21,6 +21,7 @@ import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { FIXTURE_QUERY, seedUnifiedFixture, tierIds } from "./fixtures/unified-memory-fixture";
 import { cleanupDb, makeTestRoom, until } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1162,8 +1163,6 @@ describe("MCP Server", () => {
   // ── Escape Hatch Tools ──────────────────────────────────────────────────
 
   describe("Flywheel tool", () => {
-    afterEach(() => resetTrustProfileForTests());
-
     it("requires login and is gated like any other client (code.exec), never a side channel", async () => {
       const sid = await initSession(url);
       expect(await toolCall(url, sid, "flywheel", { action: "create" })).toContain("Not logged in");
@@ -1178,6 +1177,8 @@ describe("MCP Server", () => {
     });
 
     it("routes create through `code sandbox start` and binds it to the logged-in entity", async () => {
+      using _processState = scopeProcessState();
+
       // Ungated local posture: the command runs and reaches the engine backend.
       setTrustProfile("local");
       const sid = await initSession(url);
@@ -1189,6 +1190,8 @@ describe("MCP Server", () => {
     });
 
     it("rejects a spaced image token instead of splicing it into the command", async () => {
+      using _processState = scopeProcessState();
+
       setTrustProfile("local");
       const sid = await initSession(url);
       await toolCall(url, sid, "login", { name: "FlyArgs" });

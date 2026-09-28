@@ -13,6 +13,11 @@ import { bold, dim, header, separator } from "../../net/ansi";
 import type { DecisionsStore } from "../../persistence/interfaces/decisions-store";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
 import { canonicalSub, unknownSubcommand } from "../parse-input";
+import {
+  DECISION_SETTINGS_USAGE,
+  type DecisionSettingsDeps,
+  runDecisionSettings,
+} from "./admin-decisions";
 
 const USAGE = [
   "Usage: decision check [<request> |] <draft>   — score your own draft before you use it",
@@ -20,6 +25,7 @@ const USAGE = [
   "       decision list | decision approve <token> | decision deny <token> [reason]",
   "       decision qualify   — run the labeled gate + route cases against this world's backend",
   "       decision agreement — how often each judge agreed with task creators' verdicts",
+  "       decision settings  — the decision settings; change one with the earned decisions.configure gate",
 ].join("\n");
 
 /** Judge calls cost money: a per-entity budget (burst 10, then one every 6 s). */
@@ -56,6 +62,8 @@ export function decisionCommand(deps: {
   provider?: () => DecisionProvider | undefined;
   /** Recorded judge opinions (`MARINA_DECISION_VERIFY=observe|on`) for `decision agreement`. */
   store?: DecisionsStore;
+  /** Runtime decision settings (`decision settings`); absent without a database. */
+  settings?: DecisionSettingsDeps;
 }): CommandDef {
   const providerOf = deps.provider ?? (() => harnessDecisionProvider());
   return {
@@ -68,6 +76,7 @@ export function decisionCommand(deps: {
       "decision deny <token> [reason]",
       "decision list",
       "decision qualify",
+      "decision settings [set <setting> <value> | unset <setting> | history]",
     ],
     name: "decision",
     aliases: ["decisions"],
@@ -85,7 +94,26 @@ export function decisionCommand(deps: {
         "choose",
         "qualify",
         "agreement",
+        "settings",
       ]);
+
+      // Decision settings: anyone reads; changing one takes admin.destructive
+      // (a person) or the earned decisions.configure gate (anyone, agents too).
+      if (sub === "settings") {
+        const s = deps.settings;
+        if (!s) {
+          ctx.send(input.entity, "Decision settings need a database on this instance.");
+          return;
+        }
+        ctx.send(
+          input.entity,
+          runDecisionSettings(s, me, tokens.slice(1), {
+            personAuthorized: false,
+            usage: DECISION_SETTINGS_USAGE,
+          }),
+        );
+        return;
+      }
 
       if (sub === "agreement") {
         const configured = providerOf();

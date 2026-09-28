@@ -14,11 +14,11 @@ import {
   normalizeMarinaBaseUrl,
   validateMarinaRemoteTarget,
 } from "../src/agent/model-probe";
-import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
+import { setTrustProfile } from "../src/engine/trust-profile";
 import { __setDnsResolverForTest } from "../src/net/url-guard";
+import { scopeProcessState } from "./process-state";
 
 afterEach(() => {
-  resetTrustProfileForTests();
   __setDnsResolverForTest(null);
 });
 
@@ -39,12 +39,16 @@ describe("marinaRemoteTarget", () => {
 
 describe("validateMarinaRemoteTarget", () => {
   it("passes non-remote model strings through", async () => {
+    using _processState = scopeProcessState();
+
     setTrustProfile("shared");
     expect(await validateMarinaRemoteTarget("marina/default")).toBeNull();
     expect(await validateMarinaRemoteTarget("anthropic/claude-haiku-4-5")).toBeNull();
   });
 
   it("blocks cloud metadata in every profile; private LAN literals only outside local", async () => {
+    using _processState = scopeProcessState();
+
     for (const profile of ["shared", "public", "local"] as const) {
       setTrustProfile(profile);
       expect(await validateMarinaRemoteTarget("marina@169.254.169.254:3300")).toMatch(/blocked/i);
@@ -61,6 +65,8 @@ describe("validateMarinaRemoteTarget", () => {
   });
 
   it("blocks loopback outside the local profile and allows it under local", async () => {
+    using _processState = scopeProcessState();
+
     setTrustProfile("shared");
     expect(await validateMarinaRemoteTarget("marina@localhost:3300")).toMatch(/loopback/i);
     expect(await validateMarinaRemoteTarget("marina@127.0.0.1:3300")).toMatch(/loopback/i);
@@ -72,18 +78,24 @@ describe("validateMarinaRemoteTarget", () => {
   });
 
   it("blocks a public-looking host that resolves to a private address (DNS rebinding)", async () => {
+    using _processState = scopeProcessState();
+
     setTrustProfile("shared");
     __setDnsResolverForTest(async () => ["127.0.0.1"]);
     expect(await validateMarinaRemoteTarget("marina@gpu.example.com:3300")).toMatch(/blocked/i);
   });
 
   it("allows a host that resolves to a public address", async () => {
+    using _processState = scopeProcessState();
+
     setTrustProfile("shared");
     __setDnsResolverForTest(async () => ["93.184.216.34"]);
     expect(await validateMarinaRemoteTarget("marina@gpu.example.com:3300")).toBeNull();
   });
 
   it("rejects non-http(s) schemes", async () => {
+    using _processState = scopeProcessState();
+
     setTrustProfile("local");
     expect(await validateMarinaRemoteTarget("marina@ftp://files.example.com")).toMatch(
       /blocked|protocol|valid/i,
@@ -91,6 +103,8 @@ describe("validateMarinaRemoteTarget", () => {
   });
 
   it("assertMarinaRemoteTargetAllowed throws with a clear reason and no-ops when safe", async () => {
+    using _processState = scopeProcessState();
+
     setTrustProfile("shared");
     await expect(assertMarinaRemoteTargetAllowed("marina@169.254.169.254")).rejects.toThrow(
       /Remote Marina target .* blocked .*not connected/i,
