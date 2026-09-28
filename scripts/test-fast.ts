@@ -182,7 +182,6 @@ export const FAST_FILES: string[] = [
   "test/workspace-gateway.test.ts",
   "test/workspace-registry.test.ts",
   "test/worktree.test.ts",
-  "test/world-definitions.test.ts",
   "test/world-variants.test.ts",
 ];
 
