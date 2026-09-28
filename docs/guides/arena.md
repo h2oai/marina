@@ -150,7 +150,12 @@ against the arena's recorded persistence loss for each round.
    S&P moves for AAII, prices and inflation prints for consumer surveys, scheduled events for
    attention), bounded to facts after the series' last value, which is stated as already known.
 2. **Retrieve** — `MARINA_ARENA_RESEARCH_RETRIEVER` (default `openrouter-web:openai/gpt-6-luna`,
-   OpenRouter's web search with URL citations; ~$0.03 per round).
+   OpenRouter's web search with URL citations; ~$0.03 per round). `sonar:<model>` uses Perplexity
+   Sonar through OpenRouter (native search; `sonar`, `sonar-pro`, `sonar-pro-search`,
+   `sonar-reasoning-pro`, `sonar-deep-research`), and a comma-separated list runs several engines
+   on the same brief and merges their reports (each under its own heading, sources de-duplicated),
+   e.g. `openrouter-web:openai/gpt-6-luna,sonar:sonar-pro`. New retrievers are shadow-only until
+   they have resolved rounds to their name.
 3. **Verify citations** — every dossier line that cites a page has its figures looked up in that
    page (fetched through the SSRF guard) and is tagged `[verified]`, `[unverified]` or
    `[unreachable]`. It caught, live, a researcher reporting a poll "at 39%" whose source said 35%.
@@ -342,7 +347,7 @@ is missing or readable by other users.
 | `MARINA_ARENA_SHADOW` | unset | a forecaster spec to record hourly in shadow (never filed) |
 | `MARINA_ARENA_TRENDS_PARTIAL` | off | `on` counts a Trends basket's partial current week |
 | `MARINA_ARENA_CIVIQS_LIVE` | on | `off` stops the nowcast reading the live Civiqs dashboard for open rounds |
-| `MARINA_ARENA_RESEARCH_RETRIEVER` | `openrouter-web:openai/gpt-6-luna` | the research agent's search backend |
+| `MARINA_ARENA_RESEARCH_RETRIEVER` | `openrouter-web:openai/gpt-6-luna` | the research agent's search backend(s): `openrouter-web:<model>`, `sonar:<model>`, comma-separated to merge |
 | `MARINA_ARENA_RESEARCH_JUDGE` | `jev` (with an OpenRouter key) | `jev`, `decisions` (the configured `MARINA_DECISIONS` backend; falls back to `jev`) or `none` |
 | `MARINA_ARENA_RESEARCH_TRUST` | `0.5` | most of the judged move the research agent takes |
 

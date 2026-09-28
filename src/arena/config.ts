@@ -42,8 +42,14 @@ export interface ArenaConfig {
 }
 
 const MODEL_ID = "[a-z0-9-]+\\/[\\w.:/-]+";
+/** A research retriever entry (`openrouter-web:<model>` / `sonar:<model>`). */
+const RETRIEVER = "(openrouter-web|sonar):[A-Za-z0-9._/:-]+";
 const FORECASTER_SPEC = new RegExp(
-  `^(baseline|nowcast|discovered|model:${MODEL_ID}|(crew|research):${MODEL_ID}(,${MODEL_ID}){0,2})$`,
+  `^(baseline|nowcast|discovered|model:${MODEL_ID}|crew:${MODEL_ID}(,${MODEL_ID}){0,2}` +
+    // Research takes up to eight analysts, and optionally its own retrievers
+    // after `@` (else MARINA_ARENA_RESEARCH_RETRIEVER), so each mix is its own
+    // shadow record.
+    `|research:${MODEL_ID}(,${MODEL_ID}){0,7}(@${RETRIEVER}(,${RETRIEVER}){0,3})?)$`,
   "i",
 );
 
@@ -59,7 +65,7 @@ export function parseForecasterSpec(raw: string | undefined): string {
   const spec = raw?.trim() || DEFAULT_ARENA_FORECASTER;
   if (FORECASTER_SPEC.test(spec)) return spec;
   throw new Error(
-    `MARINA_ARENA_FORECASTER "${spec}" must be nowcast, baseline, discovered, model:<provider/model>, crew:<model>[,…] or research:<model>[,…]`,
+    `MARINA_ARENA_FORECASTER "${spec}" must be nowcast, baseline, discovered, model:<provider/model>, crew:<model>[,…] (three roles) or research:<model>[,…][@<retriever>[,…]] (up to eight analysts)`,
   );
 }
 
