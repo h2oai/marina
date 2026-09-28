@@ -32,7 +32,7 @@ These are TypeSafe's published limits (docs.typesafe.ai/api): a `null` option de
 
 **Research judges.** The forecast and arena pipelines judge with jev-1.13 on OpenRouter by default; `MARINA_FORECAST_JUDGE=decisions` / `MARINA_ARENA_RESEARCH_JUDGE=decisions` use the world's configured backend instead (`researchJudge` in `config.ts`) and fall back to jev when none is configured — opt-in, never removing the judge.
 
-Configuration is operator-only (`.env.example` → *Harness Decisions*, or runtime settings below): the backend receives tool names and redacted arguments, so sending them to a third party is an operator decision, never an agent's. Endpoints are operator configuration and are fetched directly (like provider upstreams), so a localhost classifier works. `MARINA_DECISION_API_KEY` falls back to `OPENROUTER_API_KEY` only for `openrouter.ai` URLs. `readiness` reports the `decisions` capability.
+Configuration is operator-only (`config/environment.reference` → *Harness decisions*, or runtime settings below): the backend receives tool names and redacted arguments, so sending them to a third party is an operator decision, never an agent's. Endpoints are operator configuration and are fetched directly (like provider upstreams), so a localhost classifier works. `MARINA_DECISION_API_KEY` falls back to `OPENROUTER_API_KEY` only for `openrouter.ai` URLs. `readiness` reports the `decisions` capability.
 
 ## Marina as a Jev-compatible engine (`src/decisions/engines.ts`)
 

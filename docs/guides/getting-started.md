@@ -72,8 +72,8 @@ ANTHROPIC_API_KEY=... bun run start
 ```
 
 `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, and the other providers
-documented in [`.env.example`](../../.env.example) are also supported. Environment keys are read at
-runtime and are not written into Marina's database.
+in the [environment reference](../reference/environment.md#model-provider-keys) are also supported.
+Environment keys are read at runtime and are not written into Marina's database.
 
 ### Local models
 

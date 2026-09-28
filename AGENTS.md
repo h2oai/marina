@@ -49,6 +49,6 @@
 - Mark migrations, config changes, and new worlds clearly in the description; flag breaking changes up top.
 
 ## Environment & Configuration Tips
-- Copy `.env.example` when available; key knobs include `MARINA_WORLD`, `MARINA_NAME`, and port variables.
+- Copy `.env.example` (a short starter) to `.env`; every setting is documented in `config/environment.reference` (generated page: `docs/reference/environment.md`, regenerate with `bun run docs:api`). Key knobs include `MARINA_WORLD`, `MARINA_NAME`, and port variables.
 - Run `bun run init` to seed starter data; never commit `.env` files or generated SQLite artifacts.
 - See `SECURITY.md` for vulnerability disclosure; route secrets through environment variables, not checked-in files.

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Environment configuration split: `.env.example` is now a short commented starter, the complete
+  annotated server catalog is `config/environment.reference` (feeding Admin → Settings and the
+  generated `docs/reference/environment.md`), SDK example knobs moved to
+  `src/sdk/examples/.env.example`, memory-service example knobs to
+  `examples/memory-service/.env.example`, and script knobs to the testing and release-qualification
+  guides. The catalog parses `@protected`, `@internal` and `@restart` tags; the dashboard refuses
+  writes to protected and internal keys and no longer offers the SDK example knobs as server
+  settings. A docs-contract test now also fails when code reads an undocumented `MARINA_*`
+  variable.
 - Trial score split: each arm now shows its answer rate and its accuracy on answered items, and a
   `split:` line says whether a difference came from better answers or from answering more often
   (also in `evolve adoption` offers and `world adopt` requests). The gates still judge the overall

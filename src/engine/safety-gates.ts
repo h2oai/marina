@@ -9,7 +9,7 @@
  * for an entity once they've accumulated enough supervised demonstrations
  * — a witness-able proof that they can do the thing without breaking it.
  *
- * The gate registry below is the source of truth (11 gates). A command opts
+ * The gate registry below is the source of truth (14 gates). A command opts
  * in by declaring `gate: '<id>'` on its `CommandDef`; the command phase calls
  * `checkGateForExecution()` after the standard `minRank` check and
  * `recordGateExecution()` on a pass. `agent.spawn` and `code.exec` are

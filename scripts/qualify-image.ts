@@ -64,7 +64,7 @@ try {
     name,
     "bun",
     "-e",
-    `import {readFileSync} from "node:fs"; import {environmentCatalog} from "./src/config/environment"; if(environmentCatalog(readFileSync(".env.example","utf8")).length < 50) throw new Error("Packaged settings catalog is missing");`,
+    `import {environmentCatalog, readEnvironmentReference} from "./src/config/environment"; if(environmentCatalog(readEnvironmentReference(".")).length < 50) throw new Error("Packaged settings catalog is missing");`,
   ]);
   await run([
     "exec",

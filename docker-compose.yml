@@ -5,7 +5,8 @@ services:
     image: ${MARINA_IMAGE:-marina:local}
     build: .
     # Pull provider keys / secrets from a local .env file if present.
-    # Copy .env.example → .env and fill in what you need.
+    # Copy .env.example → .env and uncomment what you need; every setting is
+    # documented in config/environment.reference.
     env_file:
       - path: .env
         required: false

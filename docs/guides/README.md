@@ -89,5 +89,6 @@ degraded, or off and gives the next concrete action without exposing secrets.
 | [Operator runbook](operator-runbook.md) | Readiness, slow ticks, SQLite pressure, shutdown and reload/restart decisions |
 | [Adding a protocol](adding-a-protocol.md) | Identity, discovery, execution, context and lifecycle checklist for transport authors |
 | [Generated command API](../reference/commands.md) | Builtin syntax, parameter types, limits, groups and permission metadata |
+| [Generated environment reference](../reference/environment.md) | Every server environment variable, its default, and whether the dashboard may edit it |
 | [Troubleshooting](troubleshooting.md) | Common issues and how to fix them |
 | [Demo Scenarios](../demos/README.md) | Guided walkthroughs for coordination, content, and deep research demos |

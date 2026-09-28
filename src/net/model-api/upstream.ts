@@ -63,7 +63,7 @@ const logger = new Logger();
  * model agent is online on the requested channel). These are intentionally
  * conservative — production-deployed model IDs that have been curl-confirmed
  * against each provider's live API. Override per-provider with
- * `MARINA_DEFAULT_<PROVIDER>_MODEL` (see `.env.example`).
+ * `MARINA_DEFAULT_<PROVIDER>_MODEL` (see `config/environment.reference`).
  */
 const BUILTIN_DEFAULT_MODELS: Record<string, string> = {
   ANTHROPIC_API_KEY: "claude-sonnet-5",

@@ -316,7 +316,7 @@ export function resolveEngine(
       error: {
         status: 404,
         message:
-          "Decisions are disabled on this instance. Set MARINA_DECISIONS or MARINA_DECISION_ENGINES (see .env.example).",
+          "Decisions are disabled on this instance. Set MARINA_DECISIONS or MARINA_DECISION_ENGINES (see config/environment.reference).",
         code: "decisions_disabled",
       },
     };

@@ -276,42 +276,42 @@ Fields read here: `error`, `query`.
 
 ### `url.pathname === "/api/keys"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L533)
+[Source](../../src/net/dashboard-api/keys.ts#L545)
 
 - Guard: `url.pathname === "/api/keys" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/keys"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L543)
+[Source](../../src/net/dashboard-api/keys.ts#L555)
 
 - Guard: `url.pathname === "/api/keys" && method === "POST" && db`
 - Guard: `method === "POST"`
 
 ### `url.pathname.match(/^\/api\/keys\/([^/]+)$/)`
 
-[Source](../../src/net/dashboard-api/keys.ts#L546)
+[Source](../../src/net/dashboard-api/keys.ts#L558)
 
 - Guard: `keyDeleteMatch && method === "DELETE" && db`
 - Guard: `method === "DELETE"`
 
 ### `url.pathname.match(/^\/api\/keys\/([^/]+)\/test$/)`
 
-[Source](../../src/net/dashboard-api/keys.ts#L556)
+[Source](../../src/net/dashboard-api/keys.ts#L568)
 
 - Guard: `keyTestMatch && method === "POST" && db`
 - Guard: `method === "POST"`
 
 ### `url.pathname === "/api/default-model"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L570)
+[Source](../../src/net/dashboard-api/keys.ts#L582)
 
 - Guard: `url.pathname === "/api/default-model" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/default-model"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L576)
+[Source](../../src/net/dashboard-api/keys.ts#L588)
 
 - Guard: `url.pathname === "/api/default-model" && method === "PUT" && db`
 - Guard: `method === "PUT"`
@@ -320,28 +320,28 @@ Fields read here: `model`.
 
 ### `url.pathname === "/api/default-model"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L591)
+[Source](../../src/net/dashboard-api/keys.ts#L603)
 
 - Guard: `url.pathname === "/api/default-model" && method === "DELETE" && db`
 - Guard: `method === "DELETE"`
 
 ### `url.pathname === "/api/model-endpoint"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L600)
+[Source](../../src/net/dashboard-api/keys.ts#L612)
 
 - Guard: `url.pathname === "/api/model-endpoint" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/model-endpoint"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L603)
+[Source](../../src/net/dashboard-api/keys.ts#L615)
 
 - Guard: `url.pathname === "/api/model-endpoint" && method === "PUT" && db`
 - Guard: `method === "PUT"`
 
 ### `url.pathname === "/api/models"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L613)
+[Source](../../src/net/dashboard-api/keys.ts#L625)
 
 - Guard: `url.pathname === "/api/models" && method === "GET"`
 - Guard: `method === "GET"`
@@ -350,56 +350,56 @@ Fields read here: `url.searchParams.get("refresh")`.
 
 ### `url.pathname === "/api/adapters"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L620)
+[Source](../../src/net/dashboard-api/keys.ts#L632)
 
 - Guard: `url.pathname === "/api/adapters" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/adapters"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L623)
+[Source](../../src/net/dashboard-api/keys.ts#L635)
 
 - Guard: `url.pathname === "/api/adapters" && method === "POST" && db`
 - Guard: `method === "POST"`
 
 ### `url.pathname.match(/^\/api\/adapters\/([^/]+)$/)`
 
-[Source](../../src/net/dashboard-api/keys.ts#L629)
+[Source](../../src/net/dashboard-api/keys.ts#L641)
 
 - Guard: `adapterMatch && method === "PATCH" && db`
 - Guard: `method === "PATCH"`
 
 ### `url.pathname === "/api/roles"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L644)
+[Source](../../src/net/dashboard-api/keys.ts#L656)
 
 - Guard: `url.pathname === "/api/roles" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/traits"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L647)
+[Source](../../src/net/dashboard-api/keys.ts#L659)
 
 - Guard: `url.pathname === "/api/traits" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/mcp"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L652)
+[Source](../../src/net/dashboard-api/keys.ts#L664)
 
 - Guard: `url.pathname === "/api/mcp" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/env"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L661)
+[Source](../../src/net/dashboard-api/keys.ts#L673)
 
 - Guard: `url.pathname === "/api/env" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/env"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L664)
+[Source](../../src/net/dashboard-api/keys.ts#L676)
 
 - Guard: `url.pathname === "/api/env" && method === "PUT"`
 - Guard: `method === "PUT"`
