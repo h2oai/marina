@@ -254,8 +254,6 @@ export function registerOperationCommands(engine: Engine): void {
       agentRuntime: engine.agentRuntime,
       logEvent: (event: { type: string; entity: EntityId; timestamp: number }) =>
         engine.logEvent(event as import("../../types").EngineEvent),
-      promote: (eid: EntityId, rank: import("../../types").EntityRank) =>
-        engine.maybePromote(eid, rank),
     };
     engine.commands.registerBuiltin(usecaseCommand(usecaseDeps));
     for (const command of universalIntentCommands(usecaseDeps)) {

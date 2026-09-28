@@ -6,6 +6,7 @@ import { encodeRoleBundle, exportRoleBundle } from "../../agent/role-bundle";
 import { getStanding } from "../../agent/standing";
 import { bold, category, dim, header, separator, status, stripAnsi } from "../../net/ansi";
 import type { EvolutionSessionRow, MarinaDB } from "../../persistence/database";
+import { isGrantedCompetence } from "../../persistence/db-competence";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 import { sanitizeEntityName } from "../entity-name";
 import { tryLog } from "../errors";
@@ -32,7 +33,7 @@ import { promotionMargin } from "../fishing-margin";
 import { Logger } from "../logger";
 import { type ModifierSpec, parseModifiers } from "../parse-input";
 import { getRank } from "../permissions";
-import { checkGateForExecution, recordGateExecution, SAFETY_GATES } from "../safety-gates";
+import { checkGateForExecution, recordGateExecution } from "../safety-gates";
 import { dailyCapRefusal } from "../spend-ledger";
 import { spawnBudget } from "./agent";
 import { requiresPersistence } from "./command-messages";
@@ -1032,9 +1033,7 @@ async function handleReplicate(
     return;
   }
   const standing = getStanding(db, entity.id);
-  const granted =
-    db.getCompetence(entity.id, "agent.spawn")?.supervised_only === 0 &&
-    standing < SAFETY_GATES["agent.spawn"]!.minStanding;
+  const granted = isGrantedCompetence(db.getCompetence(entity.id, "agent.spawn"));
   const budgetLeft = spawnBudget(standing, granted) - r.liveChildren(entity.name);
   const mods = parseModifiers(input.tokens.slice(3), REPLICATE_MODS);
   const wanted = Math.max(1, (mods.values.n as number | undefined) ?? 1);

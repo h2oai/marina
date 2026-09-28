@@ -412,9 +412,9 @@ describe("code command", () => {
         .filter((a) => a.kind === "exec_decision")
         .some((a) => JSON.parse(a.metadata_json).approved === true);
       expect(approved).toBe(true);
-      // The witnessed (human-approved) arbitrary exec counts as one supervised
-      // demonstration toward code.exec.unrestricted.
-      expect(db.getCompetence(entity.id, "code.exec.unrestricted")?.demonstrations).toBe(1);
+      // The creator approved their OWN command: that is self-attestation, so it
+      // credits no demonstration toward code.exec.unrestricted.
+      expect(db.getCompetence(entity.id, "code.exec.unrestricted")?.demonstrations ?? 0).toBe(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -709,7 +709,7 @@ describe("code command", () => {
     }
   });
 
-  it("a genuine human prompt approval mints exactly one demo; a replay does not (BYPASS 5)", async () => {
+  it("a self-approval (creator approves own command) mints no demo, nor does its replay (BYPASS 5)", async () => {
     const root = makeTempGitWorkspace();
     try {
       const entity = engine.entities.get(conn.entity!)!;
@@ -739,19 +739,22 @@ describe("code command", () => {
       await command.handler(ctx, inputFor(entity, "code start PromptDemo"));
       await command.handler(ctx, inputFor(entity, "code exec-mode prompt"));
 
-      // First arbitrary command → genuine human approve (session scope) → 1 demo.
+      // A self-approval (creator approves the creator's own command) is a
+      // genuine human approval but self-attestation → no demo. The replay
+      // variant with a distinct, qualified approver lives in the bound-agent
+      // flow test below.
       const running = command.handler(ctx, inputFor(entity, "code run echo replay-me"));
       await new Promise((resolve) => setTimeout(resolve, 15));
       const token = (notes.at(-1)!.metadata!.execApproval as { token: string }).token;
       await command.handler(ctx, inputFor(entity, `code exec-approve ${token}`));
       await running;
-      expect(db.getCompetence(entity.id, "code.exec.unrestricted")?.demonstrations).toBe(1);
+      expect(db.getCompetence(entity.id, "code.exec.unrestricted")?.demonstrations ?? 0).toBe(0);
 
-      // Same argv again → served from the session allow-set (no prompt) → still 1.
+      // Same argv again → served from the session allow-set (no prompt) → still 0.
       const before = notes.length;
       await command.handler(ctx, inputFor(entity, "code run echo replay-me"));
       expect(notes.length).toBe(before); // no new prompt
-      expect(db.getCompetence(entity.id, "code.exec.unrestricted")?.demonstrations).toBe(1);
+      expect(db.getCompetence(entity.id, "code.exec.unrestricted")?.demonstrations ?? 0).toBe(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -887,6 +890,28 @@ describe("code command", () => {
       await command.handler(ctx, inputFor(sovereign, `code exec-approve ${token}`));
       await running;
       expect(stripAnsi(sent.join("\n"))).toContain("bound-ok");
+      // The approver does not itself hold code.exec.unrestricted unsupervised,
+      // so it is not a qualified witness: no demonstration is credited.
+      const demos = () =>
+        db.getCompetence(boundAgent.id, "code.exec.unrestricted")?.demonstrations ?? 0;
+      expect(demos()).toBe(0);
+
+      // A qualified approver (holds the gate solo) witnessing a DIFFERENT
+      // entity's command credits exactly one demonstration.
+      grant(db, sovereign.id, "code.exec.unrestricted");
+      const second = command.handler(ctx, inputFor(boundAgent, "code run echo witnessed-ok"));
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      const token2 = (notes.at(-1)!.metadata!.execApproval as { token: string }).token;
+      expect(token2).not.toBe(token);
+      await command.handler(ctx, inputFor(sovereign, `code exec-approve ${token2}`));
+      await second;
+      expect(demos()).toBe(1);
+
+      // Same argv again → session allow-set replay, no human decision → still 1.
+      const before = notes.length;
+      await command.handler(ctx, inputFor(boundAgent, "code run echo witnessed-ok"));
+      expect(notes.length).toBe(before);
+      expect(demos()).toBe(1);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

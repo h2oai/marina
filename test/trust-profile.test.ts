@@ -58,16 +58,30 @@ describe("trust profile — resolution", () => {
     ).toThrow(/MARINA_PROFILE must be/);
   });
 
-  it("explicit LOCAL on a public bind is fatal unless auth or the insecure ack is set", () => {
+  it("explicit LOCAL on a public bind is fatal unless the insecure ack is set — auth alone is not enough", () => {
     const base = { profile: "local" as const, loopbackOnlyBind: false, bindHost: "0.0.0.0" };
     expect(() =>
       assertTrustProfileSafe({ ...base, authEnabled: false, insecurePublicAck: false }),
     ).toThrow(/FATAL: MARINA_PROFILE=local/);
+    // Sign-in does not make `local` safe: it would ungate every remote account.
     expect(() =>
       assertTrustProfileSafe({ ...base, authEnabled: true, insecurePublicAck: false }),
-    ).not.toThrow();
+    ).toThrow(/does not help[\s\S]*MARINA_ALLOW_INSECURE_PUBLIC=true/);
     expect(() =>
       assertTrustProfileSafe({ ...base, authEnabled: false, insecurePublicAck: true }),
+    ).not.toThrow();
+    expect(() =>
+      assertTrustProfileSafe({ ...base, authEnabled: true, insecurePublicAck: true }),
+    ).not.toThrow();
+    // Loopback-only local is always fine.
+    expect(() =>
+      assertTrustProfileSafe({
+        ...base,
+        loopbackOnlyBind: true,
+        bindHost: "127.0.0.1",
+        authEnabled: true,
+        insecurePublicAck: false,
+      }),
     ).not.toThrow();
     expect(() =>
       assertTrustProfileSafe({

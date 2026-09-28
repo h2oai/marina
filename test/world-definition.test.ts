@@ -3,7 +3,9 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { resolve } from "node:path";
+import { getStanding } from "../src/agent/standing";
 import { Engine } from "../src/engine/engine";
+import { getRank } from "../src/engine/permissions";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { loadRooms } from "../src/world/room-loader";
@@ -197,7 +199,8 @@ describe("WorldDefinition: onComplete callback", () => {
       startRoom: roomId("hub/crossroads"),
       tickInterval: 60_000,
       db,
-      world: showcaseWorld,
+      // The default world ships the First Steps quest (showcase defines none).
+      world: defaultWorld,
     });
     engine.registerRoom(
       roomId("hub/crossroads"),
@@ -233,54 +236,25 @@ describe("WorldDefinition: onComplete callback", () => {
     cleanupDb(dbPath);
   });
 
-  it("should fire onComplete and promote to citizen on tutorial completion", () => {
-    // Seed a project and task so the tutorial steps can complete
-    const groupId = crypto.randomUUID();
-    const poolId = crypto.randomUUID();
-    const projectId = crypto.randomUUID();
-    db.createMemoryPool(poolId, "test", "system", groupId);
-    db.createGroup({
-      id: groupId,
-      name: "test",
-      description: "Test project",
-      leaderId: "system",
-    });
-    db.createProject({
-      id: projectId,
-      name: "Test",
-      description: "Test project",
-      poolId,
-      groupId,
-      orchestration: "swarm",
-      createdBy: "system",
-    });
-    db.createTask({
-      groupId,
-      title: "Test task",
-      description: "A test task",
-      creatorId: "system",
-      creatorName: "system",
-      validationMode: "bounty",
-      standing: 5,
-    });
-
+  it("fires onComplete on quest completion and credits standing — rank stays a standing lookup", () => {
     engine.login("c1", "Player");
     const entity = engine.entities.get(conn.entity!)!;
 
-    // Complete all tutorial steps: look, set goal, join project, claim task, note
+    engine.processCommand(conn.entity!, "quest start First Steps");
     engine.processCommand(conn.entity!, "look");
+    engine.processCommand(conn.entity!, "note the crossroads has a terminal");
+    engine.processCommand(conn.entity!, "recall terminal");
     engine.processCommand(conn.entity!, "memory set goal explore");
-    engine.processCommand(conn.entity!, "project Test join");
-    engine.processCommand(conn.entity!, "task claim 1");
-    engine.processCommand(conn.entity!, "note this is interesting");
-
+    engine.processCommand(conn.entity!, "say hello");
     engine.processCommand(conn.entity!, "quest complete");
-    // Should have at least rank 1 (may be higher if standing from tasks promoted further)
-    expect((entity.properties.rank as number) ?? 0).toBeGreaterThanOrEqual(1);
 
-    // DB should also reflect the rank
-    const user = db.getUserByName("Player");
-    expect(user!.rank).toBeGreaterThanOrEqual(1);
+    expect(conn.allTextJoined()).toContain("Completed: First Steps");
+    expect(entity.properties.title).toBe("Oriented");
+    expect(getStanding(db, entity.id)).toBeGreaterThan(0);
+    // Joining, claiming or completing a quest is not a rank side channel:
+    // rank derives from standing thresholds only (quest credit 3 < rank-1's 5).
+    expect(getRank(entity)).toBe(0);
+    expect(db.getUserByName("Player")!.rank).toBe(0);
   });
 });
 
