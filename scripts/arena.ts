@@ -374,10 +374,16 @@ async function main(): Promise<number> {
       const round = await data.round(arg);
       if (!round) throw new Error(`no round ${arg}`);
       const { forecaster, usage } = await forecasterFor(spec);
-      const f = (await forecaster(round, await data.lock(arg))) as unknown as Record<
-        string,
-        unknown
-      >;
+      let f: Record<string, unknown>;
+      try {
+        f = (await forecaster(round, await data.lock(arg))) as unknown as Record<string, unknown>;
+      } catch (err) {
+        // A no-history round research could not answer: print its audit trail, file nothing.
+        const detail = (err as { detail?: Record<string, unknown> }).detail;
+        if (detail) console.log(JSON.stringify({ question: round.question, ...detail }, null, 2));
+        console.error(`cost $${(usage?.costUsd ?? 0).toFixed(4)}`);
+        throw err;
+      }
       console.log(JSON.stringify({ question: round.question, ...f }, null, 2));
       console.error(`cost $${(usage?.costUsd ?? 0).toFixed(4)}`);
       return 0;

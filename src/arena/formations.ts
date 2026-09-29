@@ -28,7 +28,8 @@
  *   symbiosis    — a pair with complementary inputs (a quant with the numbers,
  *                  an analyst with the context) exchanges contributions; each
  *                  revision must credit the partner's; high disagreement ⇒
- *                  another exchange (at most two), low ⇒ finalize
+ *                  another exchange (at most two), low ⇒ finalize; with more
+ *                  than two models, independent pairs aggregated by median
  *   research     — iterative experimentation: each model states a hypothesis
  *                  and picks a small check on the history / daily series; the
  *                  check is COMPUTED here (recent mean, trend, last-k deltas,
@@ -580,16 +581,22 @@ const FIRST_REPLY =
 const EXCHANGE_REPLY =
   'Use your partner\'s contribution and CREDIT it: say what you took from it (or why it changes nothing). Reply with ONE JSON object: {"credit": "<what you used from your partner>", "contribution": "<anything new for your partner, or none>", "mean": number, "sd": number > 0}.';
 
-const symbiosis: Protocol = async (ctx, members) => {
+/** One symbiotic pair: quant + analyst, credited exchanges, mode switch on disagreement. */
+async function symbioticPair(
+  ctx: Ctx,
+  quant: FormationMember,
+  analyst: FormationMember,
+  tag: string,
+): Promise<{ proposals: Record<string, Proposal>; modes: string[] }> {
   const pair = [
-    { role: "quant" as const, m: members[0]!, input: ctx.numbers },
-    { role: "analyst" as const, m: members[1 % members.length]!, input: ctx.recent },
+    { role: "quant" as const, m: quant, input: ctx.numbers },
+    { role: "analyst" as const, m: analyst, input: ctx.recent },
   ];
   const state = await Promise.all(
     pair.map(async (p) => {
       const r = await ask(
         ctx,
-        `${p.role}:open`,
+        `${tag}${p.role}:open`,
         p.m,
         `${SYMBIOSIS_SYSTEM[p.role]} ${FIRST_REPLY}`,
         `${ctx.head}\n\n${p.input}`,
@@ -613,7 +620,7 @@ const symbiosis: Protocol = async (ctx, members) => {
         const own = state[i]!;
         const r = await ask(
           ctx,
-          `${p.role}:exchange${x}`,
+          `${tag}${p.role}:exchange${x}`,
           p.m,
           `${SYMBIOSIS_SYSTEM[p.role]} ${EXCHANGE_REPLY}`,
           `${ctx.head}\n\n${p.input}\n\nYour forecast: ${own.p ? show(own.p) : "(none yet)"}\nYour partner's contribution: ${partner.contribution || "(none)"}\nYour partner's forecast: ${partner.p ? show(partner.p) : "(none)"}`,
@@ -640,10 +647,45 @@ const symbiosis: Protocol = async (ctx, members) => {
   const proposals: Record<string, Proposal> = {};
   pair.forEach((p, i) => {
     const got = state[i]!.p;
-    if (got) proposals[`${p.role}:${p.m.name}`] = got;
+    if (got) proposals[`${tag}${p.role}:${p.m.name}`] = got;
   });
-  const out = byMedian(ctx, proposals);
-  return out && { ...out, critique: modes.join("; ") };
+  return { proposals, modes };
+}
+
+/**
+ * Symbiosis. Two models: one pair, as designed. More: consecutive pairs
+ * (an odd member out pairs with the first), run in parallel; each pair
+ * contributes ONE proposal — the mean of its halves — and the pairs are
+ * aggregated by median with the usual dispersion shrink, so a single bad
+ * exchange no longer moves the whole forecast.
+ */
+const symbiosis: Protocol = async (ctx, members) => {
+  if (members.length <= 2) {
+    const one = await symbioticPair(ctx, members[0]!, members[1 % members.length]!, "");
+    const out = byMedian(ctx, one.proposals);
+    return out && { ...out, critique: one.modes.join("; ") };
+  }
+  const pairs: Array<[FormationMember, FormationMember]> = [];
+  for (let i = 0; i < members.length; i += 2) {
+    pairs.push([members[i]!, members[i + 1] ?? members[0]!]);
+  }
+  const results = await Promise.all(
+    pairs.map(([q, a], i) => symbioticPair(ctx, q, a, `pair${i + 1}/`)),
+  );
+  const perPair: Record<string, Proposal> = {};
+  const notes: string[] = [];
+  results.forEach((r, i) => {
+    const halves = Object.values(r.proposals);
+    notes.push(`pair${i + 1}: ${r.modes.join(", ")}`);
+    if (halves.length === 0) return;
+    perPair[`pair${i + 1}`] = {
+      ...halves[0]!,
+      mean: halves.reduce((s, h) => s + h.mean, 0) / halves.length,
+      sd: halves.reduce((s, h) => s + h.sd, 0) / halves.length,
+    };
+  });
+  const out = byMedian(ctx, perPair);
+  return out && { ...out, critique: notes.join(" | ").slice(0, 1_500) };
 };
 
 /** The checks the research pattern can run; each is computed here, never by a model. */

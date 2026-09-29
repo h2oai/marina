@@ -82,6 +82,21 @@ const QUERIES: Record<string, string[]> = {
   attention: ["trending news this week", "most viewed Wikipedia articles this week"],
 };
 
+/**
+ * A round with no published value at all (no history, no observed list): the
+ * question is the LEVEL itself, not a change from a known reading, so the
+ * researcher looks for forecasts of the quantity, market prices and the base
+ * rate — whatever the family.
+ */
+const NO_HISTORY_PLAYBOOK = [
+  "The most recent published forecasts of this exact quantity — forecasting models, expert ratings, analysts' projections: the source, its date, the point estimate and any range or interval it gives.",
+  "Prediction-market or betting prices bearing on this quantity: venue, date, the contract and its price.",
+  "The latest data those forecasts rest on (polls, ratings, counts so far), and the value of this same quantity at comparable past occasions (the base rate).",
+];
+
+/** How far back a no-history brief searches (days before now, or the lock if earlier). */
+export const NO_HISTORY_LOOKBACK_DAYS = 30;
+
 /** The playbook for a round, from its tracker and series (never the question prose). */
 export function familyOf(round: ArenaRound): keyof typeof PLAYBOOKS {
   const tracker = round.tracker.toLowerCase();
@@ -104,11 +119,12 @@ export function familyOf(round: ArenaRound): keyof typeof PLAYBOOKS {
 export function buildResearchBrief(
   round: ArenaRound,
   lock: ArenaLock,
-  opts: { nowcast?: BriefNowcast } = {},
+  opts: { nowcast?: BriefNowcast; now?: number } = {},
 ): ResearchBrief {
   const history = lock.answer_history ?? lock.history ?? [];
   const last = history.at(-1);
   const obsDay = lock.answer_obs?.at(-1)?.date;
+  if (!last && !obsDay && !opts.nowcast) return noHistoryBrief(round, opts.now ?? Date.now());
   const nowcast =
     opts.nowcast && (!last || opts.nowcast.date > last.date) ? opts.nowcast : undefined;
   const since = nowcast?.date ?? last?.date ?? obsDay ?? round.lock_at.slice(0, 10);
@@ -136,4 +152,32 @@ export function buildResearchBrief(
       ? [round.question, ...(QUERIES.attention ?? [])]
       : [...(QUERIES[family] ?? [])];
   return { roundId: round.round_id, since, request, queries };
+}
+
+/**
+ * The brief for a round with nothing published yet: search the last
+ * {@link NO_HISTORY_LOOKBACK_DAYS} days (ending now, or at the lock when that
+ * is earlier) for forecasts, prices and base rates of the level itself.
+ */
+function noHistoryBrief(round: ArenaRound, now: number): ResearchBrief {
+  const lockMs = Date.parse(round.lock_at);
+  const end = Number.isFinite(lockMs) ? Math.min(now, lockMs) : now;
+  const since = new Date(end - NO_HISTORY_LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
+  const asks = NO_HISTORY_PLAYBOOK.map((a, i) => `${i + 1}. ${a}`);
+  const request = [
+    `A forecaster must predict: ${round.question}`,
+    `The answer is published around ${round.release_at.slice(0, 10)}. No value of this quantity has been published yet — there is no history and no earlier reading to start from, so the forecast rests on outside evidence of the level itself.`,
+    "",
+    `Research facts dated after ${since} (older facts only when they are still the latest of their kind), and report:`,
+    ...asks,
+    "",
+    "Rules: every fact needs its date and its source; give numbers exactly as published; say plainly when you found nothing for an item; do not forecast or give opinions.",
+  ].join("\n");
+  const q = round.question.slice(0, 300);
+  return {
+    roundId: round.round_id,
+    since,
+    request,
+    queries: [q, `${q} forecast`, `${q} prediction market odds`],
+  };
 }

@@ -15,12 +15,8 @@ the registration carries only the public key.
 
 `src/arena/forecast.ts` is the baseline every round gets. It keeps persistence's mean. The arena's
 own persistence uses a fixed `sd = 1.5` whatever the series' scale, so Marina replaces the spread
-with one sized to how the series actually moves — **but only for a series whose own history says
-that wins by 5 % or more on the leaderboard's own metric**, the mean of per-round skill. (Choosing
-by total CRPS instead is a trap: on spiky series such as pageviews a wide spread wins the spikes
-and loses nearly every ordinary week, and the leaderboard counts weeks.) Everywhere else it files
-exact persistence, which ties the reference and cannot blow up. On the 58 rounds the arena had
-resolved by 2026-09-25 it scores **+0.046**, with no family below −0.01.
+with one sized to how the series moves, but only where the series' own history supports it on
+the mean of per-round skill. Everywhere else it files exact persistence.
 
 | Round shape | Marina's answer |
 |---|---|
@@ -46,10 +42,8 @@ bun run arena evaluate --forecaster model:openrouter/deepseek/deepseek-v4-pro --
 ```
 
 prints skill per family for the baseline, the blend and the raw model on every resolved round,
-with the model's cost. First result (2026-09-25, 58 rounds, $0.05): baseline +0.046, DeepSeek V4
-Pro blended at 0.25 +0.045, raw −0.07 to −0.12 — no better than the baseline overall, consistently
-better on AAII sentiment. Run-to-run model noise is about ±0.05 at this sample size. A model whose
-training data covers a round's release could know its answer; weigh rounds after its cutoff.
+with the model's cost. Run-to-run model noise is large at the current sample size, and a model
+whose training data covers a round's release could know its answer; weigh rounds after its cutoff.
 
 ### The crew
 
@@ -77,21 +71,9 @@ only ever describe rounds already published. `arena evaluate --forecaster crew:�
 resolved rounds in lock order with the same learning, in a throwaway database (`--no-learn` to
 compare).
 
-First crew results (2026-09-25, 58 resolved rounds, DeepSeek V4 Pro in every role, ~$0.07 a run):
-+0.022 with learning, +0.036 without, vs the baseline's +0.046. The crew beats persistence on far
-more rounds (31 vs 12) but a few larger misses cost more than those wins earn — the leaderboard
-averages per-round skill, which punishes misses when persistence happens to land close. Too few
-lessons per series yet to show learning.
-
-Multi-vendor crew — DeepSeek V4 Pro (statistician), Claude Sonnet 5 (analyst), GPT-6 Luna
-(skeptic), ~$0.13 a run — two runs: **+0.059 and +0.053**, beating persistence on 34 and 32 of 58
-rounds; the first forecaster above the baseline, though the margin (~0.01) is within run-to-run
-noise. Its family pattern repeated in both runs: better on AAII, Trends, Wikipedia and Morning
-Consult; worse on Economist/YouGov (−0.08 both), where the baseline should keep filing.
-
 ### Formations — Marina's orchestration patterns as forecasters
 
-`MARINA_ARENA_FORECASTER=formation:<pattern>:<model>[,<model>…]` (up to five models) runs one of
+`MARINA_ARENA_FORECASTER=formation:<pattern>:<model>[,<model>…]` (up to twelve models) runs one of
 Marina's orchestration patterns as a small forecasting protocol (`src/arena/formations.ts`) over
 the same truthful round context as the crew, started from the nowcast:
 
@@ -120,52 +102,11 @@ retrieval, checks every cited figure against its page, and hands only the **veri
 every member of every formation. A composition with `+research@` reads today's web, so
 `arena evaluate` refuses it — record it with `arena shadow run`.
 
-**Backtest (2026-09-28)** — all 53 clean resolved scalar rounds, learning off, GPT-6 Luna,
-DeepSeek V4 Flash and GLM-5.3 Flash (all ~$0.1–0.3 per full run; `symbiosis` uses the first two).
-Mean skill vs persistence (rounds beating it):
-
-| forecaster | ALL (53) | civiqs (20) | aaii (5) | yougov (9) | morning consult (6) | umich sent. (4) | umich party (3) | trends (2) | wikipedia (2) | ny fed sce (2) |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| baseline | +0.046 (9) | +0.040 (7) | +0.000 (0) | +0.000 (0) | -0.009 (0) | +0.000 (0) | +0.000 (0) | +0.000 (0) | +0.000 (0) | +0.837 (2) |
-| nowcast | +0.111 (17) | +0.213 (15) | +0.000 (0) | +0.000 (0) | -0.009 (0) | +0.000 (0) | +0.000 (0) | +0.000 (0) | +0.000 (0) | +0.837 (2) |
-| crew (same 3 models) | +0.038 (31) | +0.139 (16) | +0.142 (5) | -0.068 (2) | -0.066 (0) | -0.296 (2) | -0.142 (2) | -0.457 (0) | +0.184 (2) | +0.837 (2) |
-| ensemble | +0.114 (20) | +0.203 (14) | +0.067 (2) | -0.006 (0) | -0.009 (0) | +0.015 (1) | +0.000 (0) | +0.016 (1) | +0.000 (0) | +0.834 (2) |
-| deliberation | +0.116 (26) | +0.216 (16) | +0.076 (2) | -0.048 (1) | -0.024 (0) | +0.035 (1) | +0.068 (2) | -0.011 (1) | +0.008 (1) | +0.829 (2) |
-| deliberation (run 2) | +0.113 (27) | +0.205 (16) | +0.060 (1) | -0.037 (3) | -0.001 (2) | -0.012 (0) | +0.000 (0) | +0.008 (1) | +0.149 (2) | +0.838 (2) |
-| debate | +0.109 (29) | +0.220 (16) | +0.122 (3) | -0.139 (2) | +0.014 (2) | +0.021 (2) | +0.000 (0) | +0.084 (1) | -0.003 (1) | +0.837 (2) |
-| chorus | +0.128 (30) | +0.206 (15) | +0.133 (4) | +0.001 (2) | -0.009 (0) | +0.012 (2) | -0.029 (2) | -0.020 (1) | +0.238 (2) | +0.835 (2) |
-| chorus (run 2) | +0.122 (30) | +0.211 (16) | +0.113 (5) | -0.013 (2) | -0.025 (0) | +0.015 (1) | +0.030 (2) | +0.014 (1) | +0.070 (1) | +0.829 (2) |
-| pipeline | +0.088 (30) | +0.174 (16) | +0.062 (4) | -0.018 (2) | -0.026 (0) | -0.008 (2) | -0.021 (2) | -0.279 (1) | +0.104 (1) | +0.825 (2) |
-| mapreduce | +0.106 (24) | +0.214 (16) | +0.020 (2) | +0.032 (1) | -0.014 (0) | -0.006 (0) | +0.044 (2) | -0.369 (0) | +0.009 (1) | +0.832 (2) |
-| blackboard | +0.081 (31) | +0.206 (16) | +0.136 (5) | -0.140 (2) | -0.009 (1) | -0.067 (2) | -0.198 (2) | -0.099 (0) | +0.100 (1) | +0.829 (2) |
-| symbiosis | +0.096 (30) | +0.206 (16) | +0.138 (4) | -0.081 (1) | -0.037 (0) | -0.044 (2) | -0.064 (2) | -0.077 (1) | +0.057 (2) | +0.824 (2) |
-| research | +0.051 (22) | +0.204 (15) | +0.013 (3) | -0.334 (1) | -0.009 (0) | +0.000 (0) | -0.021 (1) | +0.000 (0) | +0.000 (0) | +0.837 (2) |
-| mapreduce → debate | +0.119 (25) | +0.216 (16) | +0.103 (3) | -0.009 (0) | -0.009 (0) | -0.059 (1) | +0.103 (1) | +0.003 (1) | -0.073 (1) | +0.837 (2) |
-
-What it says, honestly:
-
-- **Nothing beats the nowcast on Civiqs.** Every formation lands at +0.20–0.22 against the
-  nowcast's +0.213; the two repeated runs moved by 0.005–0.011, so the differences are noise.
-  Orchestration changes how the models combine, not what they know, and on Civiqs the nowcast
-  already holds the information.
-- **Overall, chorus is the best formation** (+0.128, then +0.122 on a rerun) vs the nowcast's
-  +0.111 — a margin (+0.011…+0.017) about the size of the rerun gap. Not a promotion.
-- **AAII is the one family where models help repeatably**: chorus +0.133/+0.113, crew +0.142,
-  symbiosis +0.138, blackboard +0.136 vs 0 for the baseline, beating persistence on 4–5 of 5
-  rounds. Five rounds is thin: a shadow candidate, not a filing change.
-- **YouGov: keep the baseline.** Most formations lose there (debate −0.14, blackboard −0.14,
-  research −0.33), as the crew did before. Trends and Wikipedia swing ±0.2 on two rounds each
-  (chorus's Wikipedia +0.238 was +0.070 on the rerun) — noise.
-- **Model reliability matters more than the pattern.** GLM-5.3 Flash spent its 8k output budget
-  on reasoning and returned no JSON on 23–33 of 53 first-round prompts, so ensemble, deliberation
-  and chorus were often two-model formations, and debate's judge (the last model) failed 14 times
-  (its fallback is the advocates' median at half trust).
-
-Shadow, open Civiqs w40 rounds (research compositions, `tavily:advanced,sonar:sonar-pro`,
-~$0.07 a round): `debate+research` and `mapreduce→debate+research` stayed within 0.65 points of
-the nowcast on all six rounds (dossiers of 11–14 verified lines each); the dossier moved the
-means by at most ~0.33 points relative to the same formations without it. Unscored until the
-rounds resolve.
+Measure a formation before filing it with `bun run arena evaluate --forecaster formation:…` (all
+resolved rounds, per family, with cost); compositions with `+research@` are recorded with `arena
+shadow run`. Model reliability matters as much as the pattern: a model that spends its output
+budget on reasoning and returns no JSON silently turns a five-model formation into a smaller one,
+so check each run's failed-proposal count in the record.
 
 ### The Civiqs nowcast (`nowcast`)
 
@@ -175,55 +116,37 @@ arena archives every snapshot it fetches (`civiqs/` in its repo); `MARINA_ARENA_
 (the default when unset) moves each Civiqs mean — topline or profile cell — to the freshest daily
 reading in a snapshot **fetched before the lock**, keeping the baseline's spread; every other round
 is the baseline.
-Deterministic and leakage-free, so it backtests: on the 53 resolved rounds whose answer was not
-already public at lock (2026-09-25) it scores **+0.111** overall and **+0.213 on Civiqs (15 of 20
-rounds beat persistence)**, vs the baseline's +0.046 — see *Integrity* below. Structured sources like this beat web search wherever they exist.
+Deterministic and leakage-free, so it backtests (see *Integrity* below).
 
-**Live reading for open rounds (2026-09-28).** The arena's archive is pushed irregularly (a
-"residential courier"), so two days before a lock its newest snapshot can be several days old —
-and Civiqs republishes its whole daily history every night, so even an already-archived day's
-number moves. For a round whose lock has NOT passed, the nowcast therefore also reads the Civiqs
-dashboard itself (`src/arena/research/civiqs-live.ts`, a port of the arena's own reader: the
-page's loader payload, fractions → points, subgroup filters verified to have applied; one request
-per tracker, paced) and uses whichever reading is fresher, including a revised value for the
-history's last day. A round whose lock has passed never reads live data, so every backtest number
-above is unchanged. `MARINA_ARENA_CIVIQS_LIVE=off` turns it off.
+**Live reading for open rounds.** For a round whose lock has not passed, the nowcast also reads
+the Civiqs dashboard (`src/arena/research/civiqs-live.ts`, one paced request per tracker) and uses
+whichever reading is fresher. A round whose lock has passed never reads live data, so backtests
+are unaffected. `MARINA_ARENA_CIVIQS_LIVE=off` turns it off.
 
-**File early, then replace late.** The arena's signed intake keeps every version and scores the
-newest one accepted before the lock (up to 120 per round), so file as soon as a round is open —
-insurance against an outage — and file again near the lock with `bun run arena submit <round|due>
---replace`; an unchanged forecast is not re-sent, and the autopilot never replaces. For Civiqs the
-late version is the one that matters: the dashboard runs a day behind and rolls over around 01:40
-UTC, so on a Wednesday lock Tuesday's reading is public from about 02:00 UTC. Spread is not a
-lever: on the resolved rounds every sharper sd scored worse than the baseline's (Civiqs revisions
-move a value 1–2 points by Friday).
+**Replacing a filing.** The arena's signed intake keeps every version and scores the newest one
+accepted before the lock (up to 120 per round). `bun run arena submit <round|due> --replace` files
+a newer version of an accepted round; an unchanged forecast is not re-sent, and the autopilot never
+replaces.
 
-**How the board ranks (checked against the live `data.json`, 2026-09-28).** An entrant's row is
-its mean skill over the rounds it answered — unanswered rounds are not counted — and skill is
-`1 − CRPS / persistence CRPS` against a persistence null frozen when the round's call window opens
-(the round's weekly history, so for Civiqs last Friday's value). Every model-based entrant was
-negative (best −0.153); the leader (`apodex-futureflow`, +0.517 over 8 rounds) answered the Civiqs
-w39 rounds with a daily-reading forecast like the nowcast, which backtests at comparable skill on
-those same rounds. Answer the rounds where Marina has measured evidence of an edge.
+**How the board ranks.** An entrant's row is its mean skill over the rounds it answered —
+unanswered rounds are not counted — and skill is `1 − CRPS / persistence CRPS` against a
+persistence null frozen when the round's call window opens (the round's weekly history, so for
+Civiqs last Friday's value).
 
 ### Per-family routing (`routed`)
 
-The board scores an entrant's mean skill over the rounds it answered, and no single forecaster
-wins every family. `MARINA_ARENA_FORECASTER=routed` answers each tracker family with its own
-forecaster and leaves families where nothing beats persistence unanswered:
+No single forecaster wins every family. `MARINA_ARENA_FORECASTER=routed` answers each tracker
+family with its own forecaster, read from `MARINA_ARENA_ROUTES` (`family=spec;…;*=spec`); unset,
+every family gets the nowcast. Quote the value in `.env` (it contains `;`). Or write a spec inline:
+`route:civiqs=nowcast;aaii=formation:chorus:<m>,<m>,<m>;*=baseline`. A route of `skip` leaves a
+family unanswered: `submit` reports it as "not answered" rather than a failure, and `evaluate`
+leaves it out of the mean, as the board does. Choose routes from `arena evaluate` per family,
+then shadow them before trusting them — samples per family are small.
 
-| family | route | evidence (53 clean resolved rounds, 2026-09-29) |
-|---|---|---|
-| civiqs | `nowcast` | +0.213; every formation ties it (+0.20…+0.23), and it is free |
-| aaii | `formation:symbiosis:` Gemini 3.1 Pro + Claude Sonnet 5 | +0.12…+0.27 across patterns (5 rounds) |
-| umich_sentiment | `formation:chorus:` Gemini 3.1 Pro + Claude Sonnet 5 + GPT-5.6 Luna | +0.03…+0.08 (4 rounds) |
-| economist_yougov, umich_party, morning_consult | `skip` | every forecaster ≈ 0 or negative |
-| everything else | `nowcast` | |
-
-Samples are small and the routes were chosen after the backtest — shadow them before trusting
-them. Override the map with `MARINA_ARENA_ROUTES` (`family=spec;…;*=spec`), or write a spec
-inline: `route:civiqs=nowcast;economist_yougov=skip;*=baseline`. `submit` reports a skipped family
-as "not answered" rather than a failure; `evaluate` leaves it out of the mean, as the board does.
+The nowcast refuses rounds with no history (see [no-anchor mode](#the-research-agent-research)).
+To answer them, route their family to research, e.g. `<family>=research:<m>[,<m>…]@<retriever>`;
+routes are per family, so the family's rounds that do have history go through research too
+(anchored as usual).
 
 ### Profile and ranking rounds
 
@@ -232,13 +155,11 @@ leaderboard does — the energy score over the arena's deterministic point set f
 for rankings (`src/arena/score-shapes.ts`, matching the arena's published scores to 1e-4) —
 against the arena's recorded persistence loss for each round.
 
-- **Civiqs profiles**: the nowcast moves every cell to its freshest daily reading (+0.443 on the
-  one scoreable resolved round).
+- **Civiqs profiles**: the nowcast moves every cell to its freshest daily reading.
 - **Wikipedia top 10**: views are weighted by recency (half-life 3 days) over three weeks of the
   arena's `wikitop/` archive, using days published before the lock (a two-day lag; daily lists are
-  final once published, and the archive was partly backfilled). Over 7 archived weeks: +0.069 vs
-  the arena's persistence (a flat 7-day sum: +0.045); on the 3 resolved rounds +0.186 / +0.053 /
-  −0.032.
+  final once published, and the archive was partly backfilled); the half-life was chosen by
+  backtest over the archived weeks.
 - **Google Trends baskets**: Trends re-normalises its index in every snapshot, so the lock's own
   frozen per-cell history — what the persistence null reads — is used; the `trends/` archive only
   fills in for a lock without one, complete weeks only (`MARINA_ARENA_TRENDS_PARTIAL=on` adds the
@@ -275,7 +196,7 @@ against the arena's recorded persistence loss for each round.
    to 12 pages, 15 s each, a descriptive User-Agent, the first 16 MB read — larger pages are
    truncated, not rejected). Publishers whose terms bar bots (`NO_FETCH_DOMAINS`: YouGov, AAII,
    Conference Board, CivicScience) are never read by either route, so their lines stay
-   `[unreachable]`. It caught, live, a researcher reporting a poll "at 39%" whose source said 35%.
+   `[unreachable]`.
 4. **Analysts** — forecast from the dated history, the start forecast (named: the nowcast with its
    date, or persistence), for Civiqs the recent **daily** tracker, the resolution and scoring
    rules, and the tagged dossier; told to use other sources for **changes**, never levels
@@ -290,6 +211,27 @@ against the arena's recorded persistence loss for each round.
    row's `cost_usd` (the daily spend cap already sees it through the metered provider).
 6. **Aggregate** — judge-weighted mean move × confidence × `MARINA_ARENA_RESEARCH_TRUST` (0.5).
 
+**Rounds with no history (no-anchor mode).** A one-off numeric round (an election result, say)
+can lock with an empty `answer_history`. Every other forecaster (`baseline`, `nowcast`,
+`discovered`, `model:`, `crew:`, `formation:`) anchors on the last published value and refuses it
+with "no history to forecast from"; `research:` answers it without an anchor
+(`noAnchorForecastRound` in `src/arena/research/forecaster.ts`):
+
+- the brief asks for the **level** (published forecasts of the quantity, prediction-market prices,
+  the data they rest on, the base rate) over the 30 days before now (or the lock);
+- the analysts are told there is no history and no start forecast, and may abstain; the judge is a
+  filter — only a grounded proposal (weight > 0) counts, a judge outage counts as none;
+- sanity bounds come from the question: a named total (`all N decided`) bounds the mean to
+  [0, total], a percentage unit to [0, 100]; a proposal outside them is dropped, then any mean more
+  than 3 robust spreads (max of the median sd and 1.4826 × MAD) from the median;
+- the answer is the **median** of the remaining means, with
+  sd = max(median analyst sd, the means' sample sd, 7 % of the median) — the floor is derived from
+  the level, never set per round;
+- with nothing usable the round is **not answered**: a `NoAnchorRefusal` whose `detail` keeps the
+  dossier, proposals, roles and judge (and its cost reaches the shadow ledger); `arena research
+  <round>` prints that trail. The answer carries `anchor: "none"` and `noAnchor` (bounds, used,
+  dropped, median, medianSd, dispersion, floor).
+
 Web research cannot be backtested (a search run later finds the answer), so it is measured in
 **shadow**: `bun run arena shadow run due` records what it would file (with the whole dossier and
 judged proposals); re-running it re-records, and the forecast scored is the **last one recorded
@@ -299,7 +241,7 @@ persistence and the baseline, `shadow list` shows the record, `bun run arena res
 runs it once and prints everything. `MARINA_ARENA_SHADOW=<spec>` records hourly from the tick
 job — no entrant or key needed.
 
-## Signal discovery — Marina searching for its own edge
+## Signal discovery
 
 `bun run arena discover [--tracker T] [--proposer provider/model] [--n N]` runs the loop that found
 the Civiqs nowcast, automatically (`src/arena/discovery/`):
@@ -325,43 +267,9 @@ counts as a try.
 
 `MARINA_ARENA_FORECASTER=discovered` uses each family's best promoted signal and the nowcast
 elsewhere. Promotion is necessary, not sufficient — record a promoted signal in shadow before it
-files. First run (2026-09-26, Claude Sonnet 5 proposing, $0.02): 18 proposals across Civiqs, YouGov
-and Morning Consult, **none promoted** — the closest (`nowcast-shrink:0.5` on Civiqs) beat the
-incumbent's holdout 0.212 vs 0.181 but not the margin, and lost on discovery; every smoothing idea
-lost on the holdout. AAII has too few clean rounds to split yet.
-
-**Nowcast variants, measured 2026-09-28 (none adopted).** On the 20 clean resolved Civiqs rounds
-(7 weeks, w33–w39; the loop's split: 12 discovery rounds through w36, 8 holdout rounds w37–w39),
-with every input read as it stood at the lock:
-
-| Variant | All 20 | Discovery | Holdout | Beats / loses to nowcast | Δ vs nowcast, 90 % week bootstrap |
-|---|---|---|---|---|---|
-| `nowcast` (incumbent) | +0.213 | +0.235 | +0.181 | — | — |
-| `nowcast-shrink:0.7` | +0.242 | +0.246 | +0.235 | 10 / 9 | [−0.013, +0.133] |
-| `nowcast-shrink:0.75` | +0.243 | +0.248 | +0.234 | 10 / 9 | [−0.005, +0.116] |
-| `nowcast-shrink:0.8` | +0.241 | +0.249 | +0.229 | 10 / 9 | [−0.000, +0.096] |
-| `nowcast-mean:3` | +0.262 | +0.311 | +0.189 | 11 / 8 | [−0.023, +0.118] |
-| revision drift (walk-forward, per series) | +0.165 | +0.148 | +0.190 | 6 / 9 | [−0.112, +0.022] |
-| shrink weight fitted walk-forward on archive pseudo-rounds | +0.224 | +0.219 | +0.231 | 8 / 9 | [−0.075, +0.199] |
-| nowcast, per-series sd from archive pseudo-rounds | +0.196 | +0.198 | +0.195 | 7 / 8 | [−0.041, +0.039] |
-| nowcast, per-series sd from its own earlier round errors | +0.226 | +0.238 | +0.208 | 3 / 1 | [+0.001, +0.042] |
-
-The fixed shrink weights were chosen after seeing all 20 rounds, so their "All 20" column is
-in-sample. Run through the loop on a copy of the discovery record (six earlier Civiqs tries), shrink
-0.7 and 0.75 clear the promotion margin and shrink 0.8 and `nowcast-mean` do not. They were not
-promoted in the live record, for three reasons. First, the whole holdout gain comes from one round:
-w37 approval, where the nowcast scored −2.14 and shrinking cut the loss. On w38–w39 the change is
-flat or slightly negative. Second, the week bootstrap on the holdout spans zero (P(Δ > 0) is 0.72
-for shrink 0.7 and 0.86 for 0.8). Third, about 25 variants were scored offline before these went
-through the loop, and the loop's fishing count does not see those tries. `nowcast-mean:k` wins
-discovery clearly but ties on the holdout.
-
-Correcting the nowcast by its average past revision hurts. A larger sample of archive pseudo-rounds
-(361 across all 22 series and 6 weeks) backs the direction of shrinking: mean absolute error falls
-about 9 % at w 0.6–0.75. Those pseudo-rounds share weeks with the real ones. The honest test is
-forward. Promote `nowcast-shrink:0.8` in a separate discovery record (`DB_PATH=<scratch> bun run
-arena discover --tracker civiqs --signal nowcast-shrink:0.8/baseline`), then shadow `discovered`
-from that record against the nowcast for several weeks before filing it.
+files. To trial a signal without touching the live record, promote it in a separate discovery
+record (`DB_PATH=<scratch> bun run arena discover --tracker civiqs --signal <centre>/<spread>`),
+then shadow `discovered` from that record against the nowcast for several weeks before filing it.
 
 ## Integrity: what the backtest numbers can and cannot claim
 
@@ -371,10 +279,7 @@ Audited 2026-09-25 (`src/arena/evaluate.ts`, `test/arena-*.test.ts`):
   resolutions; every forecaster sees only a round's lock file and archives filtered to what existed
   before the lock (Civiqs snapshots *fetched* before it; Wikipedia lists *published* before it).
 - **Rounds whose answer was already public are excluded** for every forecaster
-  (`outcomePublicBeforeLock`). Found live: the five Civiqs week-38 rounds resolved on the 11 Sep
-  reading but locked on 16 Sep, because their frozen history stopped at 4 Sep — a daily tracker's
-  reading is public the next day. With them removed: nowcast **+0.111** overall, **+0.213** on
-  Civiqs (15/20), vs the baseline's +0.046.
+  (`outcomePublicBeforeLock`).
 - **Model memorisation.** Probed closed-book, DeepSeek V4 Pro, Claude Sonnet 5 and GPT-6 Luna
   claimed to know none of five resolved values. The baseline and the nowcast use no model at all.
 - **In-sample design choices.** The spread-selection metric, the Wikipedia half-life and the
@@ -511,11 +416,3 @@ is missing or readable by other users.
 | `MARINA_ARENA_RESEARCH_RETRIEVER` | `openrouter-web:openai/gpt-6-luna` | the research agent's search backend(s): `openrouter-web:<model>`, `sonar:<model>`, `tavily:basic` / `tavily:advanced` (needs `TAVILY_API_KEY`), comma-separated to merge |
 | `MARINA_ARENA_RESEARCH_JUDGE` | `jev` (with an OpenRouter key) | `jev`, `decisions` (the configured `MARINA_DECISIONS` backend; falls back to `jev`) or `none` |
 | `MARINA_ARENA_RESEARCH_TRUST` | `0.5` | most of the judged move the research agent takes |
-
-## Beyond the baseline
-
-The baseline is the floor, not the ceiling. The arena rewards consistency: on any single
-question 20–50 % of forecasts beat persistence, yet almost nobody does on average. The next step
-is a forecasting crew — researchers, respondent simulators and an aggregator that shrinks toward
-the baseline unless evidence is grounded — promoted family by family only after it beats the
-baseline in shadow mode.

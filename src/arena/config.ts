@@ -48,7 +48,7 @@ const RETRIEVER = "((openrouter-web|sonar):[A-Za-z0-9._/:-]+|tavily:(basic|advan
 /** Orchestration patterns as forecasting protocols (src/arena/formations.ts). */
 const FORMATION =
   "(ensemble|deliberation|debate|chorus|pipeline|cascade|mapreduce|blackboard|symbiosis|research)";
-const MODELS = `${MODEL_ID}(,${MODEL_ID}){0,4}`;
+const MODELS = `${MODEL_ID}(,${MODEL_ID}){0,11}`;
 const FORECASTER_SPEC = new RegExp(
   `^(baseline|nowcast|discovered|model:${MODEL_ID}|crew:${MODEL_ID}(,${MODEL_ID}){0,2}` +
     // A formation, optionally judged by a second one (`+then:`) and fed a
@@ -67,7 +67,7 @@ export const DEFAULT_ARENA_FORECASTER = "nowcast";
 /**
  * `nowcast` (default), `baseline`, `discovered`, `model:<provider/model>`, or
  * `crew:<model>` / `crew:<statistician>,<analyst>,<skeptic>` (one vendor per
- * role), `formation:<pattern>:<model>[,…]` (up to five models; pattern one of
+ * role), `formation:<pattern>:<model>[,…]` (up to twelve models; pattern one of
  * ensemble, deliberation, debate, chorus, pipeline/cascade, mapreduce,
  * blackboard, symbiosis, research; `+then:<pattern>:<models>` adds a judging
  * formation, `+research@<retrievers>` a verified research dossier), or `research:<model>[,…]`. Validated here; model ids are resolved at use.
@@ -84,7 +84,7 @@ export function parseForecasterSpec(raw: string | undefined): string {
     return spec;
   }
   throw new Error(
-    `MARINA_ARENA_FORECASTER "${spec}" must be nowcast, baseline, discovered, model:<provider/model>, crew:<model>[,…] (three roles), formation:<pattern>:<model>[,…][+then:<pattern>:<model>[,…]][+research@<retriever>[,…]] (up to five models; patterns ensemble, deliberation, debate, chorus, pipeline, mapreduce, blackboard, symbiosis, research) research:<model>[,…][@<retriever>[,…]] (up to eight analysts), route:<family>=<forecaster|skip>;…;*=<forecaster> or routed`,
+    `MARINA_ARENA_FORECASTER "${spec}" must be nowcast, baseline, discovered, model:<provider/model>, crew:<model>[,…] (three roles), formation:<pattern>:<model>[,…][+then:<pattern>:<model>[,…]][+research@<retriever>[,…]] (up to twelve models; patterns ensemble, deliberation, debate, chorus, pipeline, mapreduce, blackboard, symbiosis, research) research:<model>[,…][@<retriever>[,…]] (up to eight analysts), route:<family>=<forecaster|skip>;…;*=<forecaster> or routed`,
   );
 }
 
