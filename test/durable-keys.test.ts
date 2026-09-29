@@ -133,6 +133,38 @@ describe("durable keys survive re-login", () => {
     expect(db.getTask(task.id)?.creator_id).toBe("u_alice");
   });
 
+  it("keeps bounty standing with the account across re-login", () => {
+    db.createUser({ id: "u_bob", name: "Bob" });
+    db.saveEntity(entity("e_b", "Bob"));
+    const tasks = new TaskManager(db);
+    const task = tasks.create({
+      title: "bounty",
+      creatorId: "e_b",
+      creatorName: "Bob",
+      validationMode: "bounty",
+      standing: 12,
+    });
+    expect(tasks.claim(task.id, "e_1", "Alice")).not.toBeNull();
+    expect(tasks.submit(task.id, "e_1", "done")).toBe(true);
+    expect(tasks.approveSubmission(task.id, "e_1", "e_b")).toBe(true);
+
+    // The ledger row is keyed by the account, not the transient entity id.
+    expect(
+      (
+        raw.query("SELECT entity_id FROM entity_standing WHERE kind = 'task_complete'").get() as {
+          entity_id: string;
+        }
+      ).entity_id,
+    ).toBe("u_alice");
+    expect(tasks.getEntityStanding("e_1")).toBe(12);
+
+    const e2 = relogin();
+    expect(tasks.getEntityStanding(e2)).toBe(12);
+    // Re-recording the same task for the new id is still idempotent.
+    db.recordStandingEarned(e2, "Alice", task.id, 12);
+    expect(tasks.getEntityStanding(e2)).toBe(12);
+  });
+
   it("passes ids with no world account through unchanged", () => {
     db.createGroup({ id: "g2", name: "guests", leaderId: "e_9" });
     db.addGroupMember("g2", "e_9");

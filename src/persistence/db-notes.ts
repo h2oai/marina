@@ -1424,23 +1424,6 @@ export function getMemStats(
   return { notes, links, coreKeys, pools };
 }
 
-export function countNotes(db: Database, entityName: string, noteType?: string): number {
-  if (noteType) {
-    return (
-      db
-        .query(
-          "SELECT COUNT(*) as c FROM numeric_notes WHERE entity_name = ? AND pool_id IS NULL AND note_type = ?",
-        )
-        .get(entityName, noteType) as { c: number }
-    ).c;
-  }
-  return (
-    db
-      .query("SELECT COUNT(*) as c FROM numeric_notes WHERE entity_name = ? AND pool_id IS NULL")
-      .get(entityName) as { c: number }
-  ).c;
-}
-
 // ─── Memory quality summary ──────────────────────────────────────────────
 
 export function getMemoryQualitySummary(

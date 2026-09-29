@@ -89,10 +89,6 @@ export function saveCrew(
   );
 }
 
-export function getCrew(db: Database, id: string): CrewRow | undefined {
-  return (db.query("SELECT * FROM crews WHERE id = ?").get(id) as CrewRow | null) ?? undefined;
-}
-
 export function getCrewByName(db: Database, name: string): CrewRow | undefined {
   return (db.query("SELECT * FROM crews WHERE name = ?").get(name) as CrewRow | null) ?? undefined;
 }

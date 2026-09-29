@@ -17,7 +17,6 @@ export interface UsersStore {
   getUserByAuthSubject(subject: string): UserRow | undefined;
   /** Bind a verified identity (subject + email) to an existing named user. */
   bindAuthSubject(id: string, subject: string, email: string): void;
-  updateUserProperties(id: string, properties: Record<string, unknown>): void;
   deleteUser(id: string): void;
   addBan(name: string, bannedBy: string, reason?: string): void;
   removeBan(name: string): boolean;
@@ -47,7 +46,6 @@ export const USERS_STORE_METHODS = [
   "updateUserRank",
   "getUserByAuthSubject",
   "bindAuthSubject",
-  "updateUserProperties",
   "deleteUser",
   "addBan",
   "removeBan",

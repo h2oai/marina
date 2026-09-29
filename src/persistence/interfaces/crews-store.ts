@@ -7,7 +7,6 @@ import type { ExactKeys } from "./exact-keys";
 /** Crews (`db-crews.ts`). */
 export interface CrewsStore {
   saveCrew(c: Parameters<typeof crewsDb.saveCrew>[1]): void;
-  getCrew(id: string): import("../db-crews").CrewRow | undefined;
   getCrewByName(name: string): import("../db-crews").CrewRow | undefined;
   getAllCrews(): import("../db-crews").CrewRow[];
   deleteCrew(id: string): void;
@@ -28,7 +27,6 @@ export interface CrewsStore {
 /** Runtime mirror of `CrewsStore`'s method names — the drift test compares it to the facade. */
 export const CREWS_STORE_METHODS = [
   "saveCrew",
-  "getCrew",
   "getCrewByName",
   "getAllCrews",
   "deleteCrew",

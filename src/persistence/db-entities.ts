@@ -54,11 +54,6 @@ export function deleteEntity(db: Database, id: EntityId): void {
   db.run("DELETE FROM entities WHERE id = ?", [id]);
 }
 
-export function loadEntitiesInRoom(db: Database, room: RoomId): Entity[] {
-  const rows = db.query("SELECT * FROM entities WHERE room = ?").all(room) as EntityRow[];
-  return rows.map(rowToEntity);
-}
-
 // ─── Room Key-Value Store ───────────────────────────────────────────────
 
 export function getRoomStoreValue(reader: Database, roomId: RoomId, key: string): unknown {
@@ -547,15 +542,6 @@ export function getEventsByEntity(
     });
 }
 
-export function getEntityCommandCount(db: Database, entityId: string): number {
-  const row = db
-    .query(
-      "SELECT COUNT(*) as count FROM event_log WHERE type = 'command' AND json_extract(data, '$.entity') = ?",
-    )
-    .get(entityId) as { count: number };
-  return row.count;
-}
-
 export function getLastActivity(
   db: Database,
   entityId: string,
@@ -625,25 +611,6 @@ export function liveEntityIdSql(alias: string, column = "entity_id"): string {
 }
 
 // ─── Entity Migration ───────────────────────────────────────────────────
-
-export function migrateEntityId(db: Database, oldId: string, newId: string): void {
-  db.transaction(() => {
-    db.run("UPDATE OR REPLACE channel_members SET entity_id = ? WHERE entity_id = ?", [
-      newId,
-      oldId,
-    ]);
-    db.run("UPDATE OR REPLACE group_members SET entity_id = ? WHERE entity_id = ?", [newId, oldId]);
-    db.run("UPDATE groups_ SET leader_id = ? WHERE leader_id = ?", [newId, oldId]);
-    db.run("UPDATE task_claims SET entity_id = ? WHERE entity_id = ?", [newId, oldId]);
-    db.run("UPDATE OR REPLACE board_votes SET entity_id = ? WHERE entity_id = ?", [newId, oldId]);
-    db.run("UPDATE OR REPLACE entity_standing SET entity_id = ? WHERE entity_id = ?", [
-      newId,
-      oldId,
-    ]);
-    db.run("UPDATE board_posts SET author_id = ? WHERE author_id = ?", [newId, oldId]);
-    db.run("UPDATE macros SET author_id = ? WHERE author_id = ?", [newId, oldId]);
-  })();
-}
 
 export function migrateTaskClaimsByName(db: Database, entityName: string, newId: string): void {
   db.run(

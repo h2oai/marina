@@ -28,13 +28,6 @@ export function saveCommandSource(
   }
 }
 
-export function getCommand(db: Database, id: string): CommandSourceRow | undefined {
-  return (
-    (db.query("SELECT * FROM dynamic_commands WHERE id = ?").get(id) as CommandSourceRow | null) ??
-    undefined
-  );
-}
-
 export function getCommandByName(db: Database, name: string): CommandSourceRow | undefined {
   return (
     (db

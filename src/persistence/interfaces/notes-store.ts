@@ -160,8 +160,6 @@ export interface NotesStore {
   deleteMemApiKey(id: string): boolean;
   /** Aggregate stats for an agent's memory namespace */
   getMemStats(agentName: string): { notes: number; links: number; coreKeys: number; pools: number };
-  /** Count personal notes (excluding pool notes) for an entity, optionally filtered by type. */
-  countNotes(entityName: string, noteType?: string): number;
 }
 
 /** Runtime mirror of `NotesStore`'s method names — the drift test compares it to the facade. */
@@ -221,7 +219,6 @@ export const NOTES_STORE_METHODS = [
   "listMemApiKeys",
   "deleteMemApiKey",
   "getMemStats",
-  "countNotes",
 ] as const satisfies readonly (keyof NotesStore)[];
 
 export const NOTES_STORE_COMPLETE: ExactKeys<NotesStore, typeof NOTES_STORE_METHODS> = true;

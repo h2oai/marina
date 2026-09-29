@@ -56,14 +56,6 @@ export function bindAuthSubject(db: Database, id: string, subject: string, email
   db.run("UPDATE users SET auth_subject = ?, auth_email = ? WHERE id = ?", [subject, email, id]);
 }
 
-export function updateUserProperties(
-  db: Database,
-  id: string,
-  properties: Record<string, unknown>,
-): void {
-  db.run("UPDATE users SET properties = ? WHERE id = ?", [JSON.stringify(properties), id]);
-}
-
 export function deleteUser(db: Database, id: string): void {
   // The reputation ledgers are keyed by this durable id (migration 109) and
   // would otherwise survive as orphans nothing can resolve. Standing is
