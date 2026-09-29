@@ -14,12 +14,6 @@ export interface CrewsStore {
   removeCrewMember(crewId: string, agentName: string): void;
   getCrewMembers(crewId: string): import("../db-crews").CrewMemberRow[];
   saveCrewInvitation(row: import("../db-crews").CrewInvitationRow): void;
-  setCrewInvitationStatus(
-    crewId: string,
-    agentName: string,
-    status: import("../db-crews").CrewInvitationRow["status"],
-    respondedAt: number,
-  ): void;
   deleteCrewInvitations(crewId: string): void;
   getOpenCrewInvitations(): import("../db-crews").CrewInvitationRow[];
 }
@@ -34,7 +28,6 @@ export const CREWS_STORE_METHODS = [
   "removeCrewMember",
   "getCrewMembers",
   "saveCrewInvitation",
-  "setCrewInvitationStatus",
   "deleteCrewInvitations",
   "getOpenCrewInvitations",
 ] as const satisfies readonly (keyof CrewsStore)[];

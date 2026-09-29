@@ -1154,14 +1154,6 @@ export class MarinaDB implements MarinaStores {
   saveCrewInvitation(row: import("./db-crews").CrewInvitationRow): void {
     crewsDb.saveCrewInvitation(this.db, row);
   }
-  setCrewInvitationStatus(
-    crewId: string,
-    agentName: string,
-    status: import("./db-crews").CrewInvitationRow["status"],
-    respondedAt: number,
-  ): void {
-    crewsDb.setCrewInvitationStatus(this.db, crewId, agentName, status, respondedAt);
-  }
   deleteCrewInvitations(crewId: string): void {
     crewsDb.deleteCrewInvitations(this.db, crewId);
   }

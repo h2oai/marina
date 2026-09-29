@@ -150,21 +150,6 @@ export function saveCrewInvitation(db: Database, row: CrewInvitationRow): void {
   );
 }
 
-export function setCrewInvitationStatus(
-  db: Database,
-  crewId: string,
-  agentName: string,
-  status: CrewInvitationRow["status"],
-  respondedAt: number,
-): void {
-  db.run("UPDATE crew_invitations SET status=?,responded_at=? WHERE crew_id=? AND agent_name=?", [
-    status,
-    respondedAt,
-    crewId,
-    agentName,
-  ]);
-}
-
 export function deleteCrewInvitations(db: Database, crewId: string): void {
   db.run("DELETE FROM crew_invitations WHERE crew_id=?", [crewId]);
 }
