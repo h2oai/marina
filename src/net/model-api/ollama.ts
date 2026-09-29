@@ -35,9 +35,111 @@ import {
   ollamaStreamChunk,
   ollamaStreamEnd,
   type PassthruAuthResult,
+  readModelJsonBody,
   safeClose,
+  unsupportedParam,
 } from "./shared";
 import { describeDefaultUpstream, proxyToUpstream } from "./upstream";
+
+// --- Request validation ---
+
+/** `options` keys that map onto the OpenAI-shaped upstream body. */
+const MAPPED_OLLAMA_OPTIONS = new Set([
+  "temperature",
+  "top_p",
+  "num_predict",
+  "stop",
+  "seed",
+  "presence_penalty",
+  "frequency_penalty",
+]);
+
+/**
+ * `options` keys that only tune a LOCAL Ollama runtime (context allocation,
+ * GPU/thread layout, memory mapping). Marina runs no local weights, so they
+ * are accepted and have nothing to act on — they never change an answer.
+ */
+const RUNTIME_ONLY_OLLAMA_OPTIONS = new Set([
+  "num_ctx",
+  "num_gpu",
+  "main_gpu",
+  "num_thread",
+  "num_batch",
+  "num_keep",
+  "use_mmap",
+  "use_mlock",
+  "numa",
+  "low_vram",
+  "f16_kv",
+  "vocab_only",
+]);
+
+function present(value: unknown): boolean {
+  if (value === undefined || value === null || value === false || value === "") return false;
+  if (Array.isArray(value)) return value.length > 0;
+  return true;
+}
+
+/**
+ * Refuse Ollama request fields Marina cannot honor with `400
+ * unsupported_parameter` instead of silently dropping them: tool schemas,
+ * structured `format`, images, thinking, raw/template/suffix/context on
+ * `/api/generate`, and any `options` key without a mapping. `think: false`
+ * (Marina never returns a thinking trace) and runtime-only options pass.
+ */
+export function validateOllamaRequest(
+  kind: "chat" | "generate",
+  body: Record<string, unknown>,
+): Response | undefined {
+  if (present(body.tools)) {
+    return unsupportedParam(
+      "tools",
+      "Marina's Ollama routes return text only and cannot return tool calls; use /v1/chat/completions in passthru mode for tool calling.",
+    );
+  }
+  if (present(body.format)) {
+    return unsupportedParam("format", "Structured output formats are not supported on this route.");
+  }
+  if (present(body.think)) {
+    return unsupportedParam(
+      "think",
+      "Thinking traces are not returned on this route; omit think or send false.",
+    );
+  }
+  if (kind === "chat") {
+    if (body.messages !== undefined && !Array.isArray(body.messages)) {
+      return errorJson(400, "messages must be an array", { param: "messages" });
+    }
+    for (const message of (body.messages as unknown[] | undefined) ?? []) {
+      if (
+        message &&
+        typeof message === "object" &&
+        present((message as { images?: unknown }).images)
+      ) {
+        return unsupportedParam(
+          "messages[].images",
+          "Image inputs are not supported on this route.",
+        );
+      }
+    }
+  } else {
+    for (const param of ["images", "suffix", "template", "raw", "context"]) {
+      if (present(body[param])) {
+        return unsupportedParam(param, `'${param}' is not supported on this route.`);
+      }
+    }
+  }
+  if (body.options !== undefined && body.options !== null) {
+    if (typeof body.options !== "object" || Array.isArray(body.options)) {
+      return errorJson(400, "options must be an object", { param: "options" });
+    }
+    for (const key of Object.keys(body.options)) {
+      if (MAPPED_OLLAMA_OPTIONS.has(key) || RUNTIME_ONLY_OLLAMA_OPTIONS.has(key)) continue;
+      return unsupportedParam(`options.${key}`, "This sampling option has no upstream mapping.");
+    }
+  }
+  return undefined;
+}
 
 // --- Ollama format helpers ---
 
@@ -78,7 +180,10 @@ export function ollamaTagList(models: ModelInfo[]): unknown {
 
 /** `POST /api/show` body for a model: the Modelfile/parameters/template are
  *  empty strings (there is no local weight file), `details` and `model_info`
- *  describe the route, `capabilities` advertise what the passthru honors. */
+ *  describe the route, `capabilities` advertise what the Ollama routes honor:
+ *  plain completion only — `tools`, `format`, `images` and thinking are
+ *  refused with `unsupported_parameter` (see `validateOllamaRequest`), so
+ *  advertising them would invite requests that can only fail. */
 export function ollamaShowResponse(m: ModelInfo, engine: Engine): unknown {
   const upstream = describeDefaultUpstream(engine);
   return {
@@ -95,7 +200,7 @@ export function ollamaShowResponse(m: ModelInfo, engine: Engine): unknown {
       ...(upstream ? { "marina.default_upstream": upstream } : {}),
       "marina.version": MARINA_VERSION,
     },
-    capabilities: ["completion", "tools"],
+    capabilities: ["completion"],
     modified_at: new Date().toISOString(),
   };
 }
@@ -205,6 +310,13 @@ async function runOllamaPassthru(
       ? { max_tokens: options.num_predict }
       : {}),
     ...(Array.isArray(options.stop) ? { stop: options.stop } : {}),
+    ...(typeof options.seed === "number" ? { seed: options.seed } : {}),
+    ...(typeof options.presence_penalty === "number"
+      ? { presence_penalty: options.presence_penalty }
+      : {}),
+    ...(typeof options.frequency_penalty === "number"
+      ? { frequency_penalty: options.frequency_penalty }
+      : {}),
   };
 
   const cached = await passthruCacheLookup(engine, prep, body, ec.passthruModel);
@@ -216,7 +328,9 @@ async function runOllamaPassthru(
       ec.passthruModel || undefined,
       passthruTraceOptions(prep),
       // `/api/generate` folds the addendum into ONE system string — no separate tail.
-      isChat ? passthruUpstreamHints(prep) : undefined,
+      isChat
+        ? { ...passthruUpstreamHints(prep), clientSignal: req.signal }
+        : { clientSignal: req.signal },
     ));
   if (!resp.ok) return resp;
   if (!cached && prep.identity?.contextOptIn) {
@@ -254,8 +368,13 @@ export async function handleOllamaChat(
   engine: Engine,
   authResult?: PassthruAuthResult,
 ): Promise<Response> {
+  const read = await readModelJsonBody(req);
+  if (!read.ok) return read.response;
+  // biome-ignore lint/suspicious/noExplicitAny: Ollama request bodies are loosely shaped client JSON.
+  const body = read.body as Record<string, any>;
+  const invalid = validateOllamaRequest("chat", body);
+  if (invalid) return invalid;
   try {
-    const body = await req.json();
     const model = body.model ?? "marina";
     const messages = body.messages ?? [];
 
@@ -318,8 +437,13 @@ export async function handleOllamaGenerate(
   engine: Engine,
   authResult?: PassthruAuthResult,
 ): Promise<Response> {
+  const read = await readModelJsonBody(req);
+  if (!read.ok) return read.response;
+  // biome-ignore lint/suspicious/noExplicitAny: Ollama request bodies are loosely shaped client JSON.
+  const body = read.body as Record<string, any>;
+  const invalid = validateOllamaRequest("generate", body);
+  if (invalid) return invalid;
   try {
-    const body = await req.json();
     const model = body.model ?? "marina";
     const prompt = body.prompt;
     if (!prompt) return errorJson(400, "No prompt provided");

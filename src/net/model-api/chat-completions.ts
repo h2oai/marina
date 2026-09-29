@@ -45,6 +45,7 @@ import {
   modelToChannelName,
   openaiCompletion,
   type PassthruAuthResult,
+  readModelJsonBody,
   requestTrace,
 } from "./shared";
 import { proxyToUpstream } from "./upstream";
@@ -92,13 +93,9 @@ export async function handleOpenaiChat(
   engine: Engine,
   authResult?: PassthruAuthResult,
 ): Promise<Response> {
-  let body: Record<string, unknown>;
-  try {
-    body = await req.json();
-  } catch {
-    return errorJson(400, "Invalid JSON body");
-  }
-  return runOpenaiChat(engine, req, body, authResult);
+  const read = await readModelJsonBody(req);
+  if (!read.ok) return read.response;
+  return runOpenaiChat(engine, req, read.body, authResult);
 }
 
 /**
@@ -195,7 +192,10 @@ export async function runOpenaiChat(
         body,
         ec.passthruModel || undefined,
         passthruTraceOptions(prep),
-        passthruUpstreamHints(prep, anthropicNative ? { anthropicNative } : {}),
+        {
+          ...passthruUpstreamHints(prep, anthropicNative ? { anthropicNative } : {}),
+          clientSignal: req.signal,
+        },
       );
       if (prep.identity?.contextOptIn) {
         void capturePassthruResponse(engine, prep.identity.entityId, messages, resp);
@@ -311,9 +311,13 @@ export async function runOpenaiChat(
       // No agent answered (503): fall back to direct upstream proxy when enabled.
       // 404 (unknown model variant) remains an error — caller asked for a specific model.
       if (routeError instanceof HttpError && routeError.status === 503 && ec.fallback) {
-        return await proxyToUpstream(engine, body, ec.passthruModel || undefined, {
-          routeKind: "fallback",
-        });
+        return await proxyToUpstream(
+          engine,
+          body,
+          ec.passthruModel || undefined,
+          { routeKind: "fallback" },
+          { clientSignal: req.signal },
+        );
       }
       throw routeError;
     }

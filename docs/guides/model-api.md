@@ -439,6 +439,23 @@ curl http://localhost:3300/v1/chat/completions \
 The `digest` in `/api/tags` is a stable SHA-256 of the model id, so Ollama clients that key their
 cache on it see the same model across restarts.
 
+`/api/chat` and `/api/generate` return text only, and `/api/show` advertises exactly that
+(`capabilities: ["completion"]`). Fields they cannot honor are refused with `400
+unsupported_parameter` (`param` names the field) instead of being dropped: `tools`, `format`,
+`think` (other than `false`), message or prompt `images`, and `suffix` / `template` / `raw` /
+`context` on `/api/generate`. `options` accepts `temperature`, `top_p`, `num_predict`, `stop`,
+`seed`, `presence_penalty` and `frequency_penalty` (mapped onto the upstream call), plus the
+local-runtime hints `num_ctx`, `num_gpu`, `num_thread`, `num_batch`, `num_keep`, `main_gpu`,
+`use_mmap`, `use_mlock`, `numa`, `low_vram`, `f16_kv` and `vocab_only` (accepted; nothing
+to act on without local weights). Any other `options` key is `unsupported_parameter`.
+
+Request bodies are capped per route (`MARINA_MAX_REQUEST_BODY_BYTES`, default 8 MiB; over the cap
+is `413`). A proxied upstream call has a deadline (`MARINA_UPSTREAM_TIMEOUT_MS`, default 300 s;
+exceeded → `504 upstream_error`), and a non-streaming call is aborted when its client
+disconnects. A client address that presents 20 rejected API keys within a minute gets `429
+rate_limit_exceeded` before its credential is checked, until the budget refills; the cheap reads
+(`/v1/models`, `/api/tags`, health) are limited to 120 per minute per address.
+
 ---
 
 ## Compatibility contract

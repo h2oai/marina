@@ -20,7 +20,11 @@ import { MARINA_ROOT } from "../../runtime-paths";
 import type { EntityId } from "../../types";
 import { isOperatorPrincipal, isSentinelPrincipal } from "../auth-middleware";
 import { corsHeaders, isTrustedBrowserOrigin } from "../cors";
-import { clientIp } from "../http-utils";
+import {
+  readJsonBody as readJsonObject,
+  SMALL_JSON_BODY_BYTES,
+  withErrorCode,
+} from "../http-utils";
 import type { memoryObserver } from "../memory-visibility";
 
 /** Module logger: dashboard HTTP routes — rejected-origin and request failures. */
@@ -30,20 +34,42 @@ export const ROOMS_DIR = join(MARINA_ROOT, "rooms");
 export const PROJECT_ROOT = MARINA_ROOT;
 
 /**
- * Rate-limit key for a request: the real socket peer (`peerIp` from
- * `server.requestIP`) unless `MARINA_TRUST_PROXY=true` explicitly trusts the
- * forwarding headers — see `clientIp` in http-utils.ts. Header-derived values
- * were spoofable, letting a direct caller pick a fresh bucket per request.
+ * JSON response for every dashboard route. An error status gets a string
+ * `code` added to its body when the route did not supply one (`withErrorCode`),
+ * so each `json({ error }, 4xx)` site honours the error contract.
  */
-export function extractIp(req: Request, peerIp?: string): string {
-  return clientIp(req, peerIp);
-}
-
 export function json(data: unknown, status = 200, origin?: string | null): Response {
   // Dashboard API is same-origin — CORS headers only needed for allowed origins
-  return Response.json(data, {
+  return Response.json(withErrorCode(data, status), {
     status,
     headers: corsHeaders(origin ?? null),
+  });
+}
+
+/**
+ * Response-level backstop for the error contract: a route that built its own
+ * `Response.json({ error }, { status: 4xx })` (bypassing `json`) still leaves
+ * with a string `code`. Only JSON error responses are read; everything else
+ * passes through untouched.
+ */
+export async function ensureErrorCode(resp: Response): Promise<Response> {
+  if (resp.status < 400) return resp;
+  if (!(resp.headers.get("Content-Type") ?? "").includes("application/json")) return resp;
+  const text = await resp.clone().text();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return resp;
+  }
+  const coded = withErrorCode(parsed, resp.status);
+  if (coded === parsed) return resp;
+  const headers = new Headers(resp.headers);
+  headers.delete("Content-Length");
+  return new Response(JSON.stringify(coded), {
+    status: resp.status,
+    statusText: resp.statusText,
+    headers,
   });
 }
 
@@ -91,29 +117,32 @@ export async function readCommandBody(
     );
     return { error: json({ error: "Forbidden origin" }, 403, origin) };
   }
-  try {
-    const body = (await req.json()) as CommandApiBody;
-    if (!body || typeof body !== "object") {
-      return { error: json({ error: "Expected JSON object body" }, 400, origin) };
-    }
-    return body;
-  } catch {
-    return { error: json({ error: "Invalid JSON body" }, 400, origin) };
-  }
+  const read = await readJsonObject(req, { origin, maxBytes: SMALL_JSON_BODY_BYTES });
+  if (!read.ok) return { error: read.response };
+  return read.body as CommandApiBody;
 }
 
+/**
+ * JSON-object body for an authenticated dashboard route — the shared reader
+ * (`http-utils.readJsonBody`) with this surface's error shape. `maxBytes`
+ * defaults to `MARINA_MAX_REQUEST_BODY_BYTES`; `allowEmpty` reads an empty
+ * body as `{}` for routes whose fields are all optional.
+ */
 export async function readJsonBody<T extends object>(
   req: Request,
+  opts: { maxBytes?: number; allowEmpty?: boolean } = {},
 ): Promise<T | { error: Response }> {
-  try {
-    const body = (await req.json()) as T;
-    if (!body || typeof body !== "object") {
-      return { error: json({ error: "Expected JSON object body" }, 400) };
-    }
-    return body;
-  } catch {
-    return { error: json({ error: "Invalid JSON body" }, 400) };
-  }
+  const read = await readJsonObject(req, { origin: null, ...opts });
+  if (!read.ok) return { error: read.response };
+  return read.body as T;
+}
+
+/** `readJsonBody` for key, env and agent management: small bodies only. */
+export function readSmallJsonBody<T extends object>(
+  req: Request,
+  opts: { allowEmpty?: boolean } = {},
+): Promise<T | { error: Response }> {
+  return readJsonBody<T>(req, { ...opts, maxBytes: SMALL_JSON_BODY_BYTES });
 }
 
 export function bearerToken(req: Request): string | undefined {

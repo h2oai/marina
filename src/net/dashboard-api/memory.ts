@@ -22,7 +22,7 @@ import {
   memoryObserverScope,
   snapshotMemoryHygiene,
 } from "../memory-observability";
-import { authorizeEntityRead, type DashboardRouteContext, json } from "./shared";
+import { authorizeEntityRead, type DashboardRouteContext, json, readJsonBody } from "./shared";
 
 function getMemoryCore(db: MarinaDB, entityName: string): Response {
   return json(db.listCoreMemory(entityName));
@@ -132,10 +132,11 @@ export async function handleMemoryObservabilityRoutes(
     /^\/api\/memory\/contradictions\/(\d+)\/resolve$/,
   );
   if (contradictionResolveMatch && method === "POST" && db) {
-    const body = (await req.json().catch(() => null)) as {
-      resolution?: string;
-      rationale?: string;
-    } | null;
+    const read = await readJsonBody<{ resolution?: string; rationale?: string }>(req, {
+      allowEmpty: true,
+    });
+    if ("error" in read) return read.error;
+    const body = read;
     const resolution = body?.resolution;
     if (
       !resolution ||

@@ -51,6 +51,8 @@ import {
   requestTrace,
   SSE_HEADERS,
   UPSTREAM_MODEL_HEADER,
+  upstreamAbort,
+  upstreamTimeoutMs,
 } from "./shared";
 
 /** Module logger: upstream proxy — provider transport and HTTP-status failures. */
@@ -579,13 +581,30 @@ async function dispatchOpenAICompatible(
   body: Record<string, unknown>,
   wantStream: boolean,
   extraHeaders: Record<string, string> = {},
-): Promise<{ response: Response | null; errorStatus?: number; networkError?: boolean }> {
+  clientSignal?: AbortSignal,
+): Promise<{
+  response: Response | null;
+  errorStatus?: number;
+  networkError?: boolean;
+  timedOut?: boolean;
+}> {
+  // Deadline for the call (headers for a stream, the whole reply otherwise);
+  // a non-streaming caller that disconnects aborts it too.
+  const abort = upstreamAbort(clientSignal);
   try {
     // Omit the Authorization header entirely when keyless (local servers) — an
     // empty `Bearer ` confuses some OpenAI-compatible implementations.
     const headers: Record<string, string> = { "Content-Type": "application/json", ...extraHeaders };
     if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-    const resp = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+    const resp = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: abort.signal,
+    });
+    // A stream's lifetime belongs to its reader from here on (client cancel
+    // propagates through the ReadableStream), so the deadline disarms.
+    if (wantStream) abort.settle();
     if (!resp.ok) {
       let detail = "";
       try {
@@ -626,10 +645,17 @@ async function dispatchOpenAICompatible(
       }),
     };
   } catch (error) {
-    logger.warn("model-api", `upstream request failed: ${getErrorMessage(error)}`, {
-      error: getErrorMessage(error),
-    });
-    return { response: null, networkError: true };
+    const timedOut = abort.timedOut();
+    logger.warn(
+      "model-api",
+      timedOut
+        ? `upstream ${new URL(url).host} timed out after ${upstreamTimeoutMs()} ms`
+        : `upstream request failed: ${getErrorMessage(error)}`,
+      { error: getErrorMessage(error), timedOut },
+    );
+    return { response: null, networkError: true, timedOut };
+  } finally {
+    abort.settle();
   }
 }
 
@@ -946,6 +972,9 @@ export async function proxyToUpstream(
     surface?: InjectionFormat;
   },
   hints?: {
+    /** The client request's signal: a NON-streaming upstream call is aborted
+     *  when the client disconnects (streams keep their own cancel path). */
+    clientSignal?: AbortSignal;
     /** Native Anthropic body to forward verbatim when the upstream is Anthropic. */
     anthropicNative?: Record<string, unknown>;
     /** The LAST system block is the proxy's injected memory addendum (see
@@ -965,7 +994,9 @@ export async function proxyToUpstream(
     );
   }
   const wantStream = body.stream === true;
+  const clientSignal = wantStream ? undefined : hints?.clientSignal;
   let attemptedUpstream = false;
+  let anyTimedOut = false;
   let lastTarget: string | undefined;
   let lastErrorKind: ProxyTraceMetrics["errorKind"];
   const requestedModel = typeof body.model === "string" ? body.model : "marina";
@@ -984,6 +1015,7 @@ export async function proxyToUpstream(
     try {
       return await proxyToAnthropic(body, key, model, wantStream, hints?.anthropicNative, {
         injectedSystemTail: hints?.injectedSystemTail,
+        clientSignal,
       });
     } catch (e) {
       // A parameter Anthropic cannot honor is a 400 the CLIENT must see, not
@@ -1073,14 +1105,18 @@ export async function proxyToUpstream(
         prepareUpstreamBody({ ...body, model: upstreamModel }, provider, isDefault),
         wantStream,
         upstreamHeaders,
+        clientSignal,
       );
       if (r.response) return finish(r.response, lastTarget);
       lastErrorKind = r.networkError ? "network" : classifyProxyError(r.errorStatus ?? 0);
+      anyTimedOut ||= r.timedOut === true;
     }
   }
 
   // 2) Fallback: first-party-preferred over whatever keys exist (env or DB).
   for (const provider of FALLBACK_PRIORITY) {
+    // A caller that disconnected gets no further provider attempts.
+    if (clientSignal?.aborted) break;
     const cfg = PROVIDER_UPSTREAM[provider]!;
     const key = resolveProviderKey(engine, provider);
     // Skip cloud providers with no key, and local runtimes the operator hasn't
@@ -1100,9 +1136,22 @@ export async function proxyToUpstream(
       prepareUpstreamBody({ ...body, model: requestModel }, provider, isDefault),
       wantStream,
       upstreamHeaders,
+      clientSignal,
     );
     if (r.response) return finish(r.response, lastTarget);
     lastErrorKind = r.networkError ? "network" : classifyProxyError(r.errorStatus ?? 0);
+    anyTimedOut ||= r.timedOut === true;
+  }
+
+  if (attemptedUpstream && anyTimedOut) {
+    return finish(
+      errorJson(
+        504,
+        `Upstream LLM provider did not answer within ${upstreamTimeoutMs()} ms (MARINA_UPSTREAM_TIMEOUT_MS).`,
+      ),
+      lastTarget,
+      lastErrorKind,
+    );
   }
 
   if (attemptedUpstream) {

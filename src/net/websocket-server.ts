@@ -4,7 +4,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Server, ServerWebSocket } from "bun";
-import { getInternalModelToken } from "../agent/agent-runtime";
 import type { MarinaAuthProvider } from "../auth/better-auth-provider";
 import type { RateLimiter } from "../auth/rate-limiter";
 import { secretsEqual } from "../auth/secret-compare";
@@ -43,22 +42,19 @@ import {
 import { type CanvasNodeCreatedEvent, handleCanvasApi } from "./canvas-api";
 import { buildCanvasPrincipal, isLoopbackPeer, LOOPBACK_PRINCIPAL } from "./canvas-principal";
 import { CanvasBroadcaster, type CanvasSubscriptionPrincipal } from "./canvas-ws";
-import {
-  buildConnectManifest,
-  handleSkillRequest,
-  negotiateConnectCapabilities,
-  registerConnectEndpoint,
-} from "./connect-api";
+import { handleConnectRoutes, healthResponse, registerConnectEndpoint } from "./connect-api";
 import { corsHeaders, isTrustedBrowserOrigin } from "./cors";
 import { handleDashboardApi } from "./dashboard-api";
 import type { DashboardBroadcaster, DashboardWSData } from "./dashboard-ws";
 import { handleEntityApi } from "./entity-api";
 import {
+  badPathEncodingResponse,
   clientIp,
   consumeHttpRate,
   inlineScriptHashes,
   rateLimitedResponse,
   type SecurityHeaderOptions,
+  safeDecodeURIComponent,
   securityHeaders,
   serverMaxRequestBodyBytes,
   withSecurityHeaders,
@@ -67,6 +63,7 @@ import { recordListenPort } from "./listen-ports";
 import { handleMemApi } from "./mem-api";
 import { handleMemoryServiceApi } from "./memory-service-api";
 import { handleModelApi, isModelApiPath } from "./model-api";
+import { hasInternalBearer } from "./model-api/shared";
 import { handleOrchestrationApi } from "./orchestration-api";
 import { handleProbeApi } from "./probe-api";
 import { RequestDrain } from "./request-drain";
@@ -350,7 +347,7 @@ export class WebSocketServer {
       error(error) {
         logger.error("ws", "Unhandled HTTP request error", { error });
         return Response.json(
-          { error: "Internal server error" },
+          { error: "Internal server error", code: "internal_error" },
           { status: 500, headers: securityHeaders("api") },
         );
       },
@@ -358,15 +355,19 @@ export class WebSocketServer {
       async fetch(req, server) {
         const leave = self.requestDrain.enter();
         try {
-          if (
-            self.draining &&
-            req.headers.get("Authorization") !== `Bearer ${getInternalModelToken()}`
-          )
+          // Draining: only the internal model token (room agents finishing
+          // their turn) still gets through — compared in constant time.
+          if (self.draining && !hasInternalBearer(req))
             return Response.json(
-              { error: "Instance is draining", retryable: true },
+              { error: "Instance is draining", code: "draining", retryable: true },
               { status: 503, headers: { "Retry-After": "5" } },
             );
           const url = new URL(req.url);
+          // Every route below may percent-decode a path segment; refuse a path
+          // with a malformed escape (`%E0`) once, before any route matcher.
+          if (safeDecodeURIComponent(url.pathname) === null) {
+            return badPathEncodingResponse(req.headers.get("Origin"));
+          }
 
           // CORS preflight
           if (req.method === "OPTIONS") {
@@ -405,14 +406,10 @@ export class WebSocketServer {
             // Real, unspoofable TCP peer address — the ONLY value usable as an exec/loopback
             // trust anchor. Never mix header values into this.
             const peerIp = server.requestIP(req)?.address;
-            // Header-derived display/rate-limiting IP — SPOOFABLE (client controls the headers).
-            // Never use this as a trust anchor; see `peerIp` above.
-            const fwd = req.headers.get("x-forwarded-for");
-            const ip =
-              (fwd ? fwd.split(",")[0]!.trim() : null) ??
-              req.headers.get("x-real-ip") ??
-              peerIp ??
-              "unknown";
+            // Rate-limiting / display IP: the socket peer, or the forwarded
+            // client only behind a declared trusted proxy (MARINA_TRUST_PROXY).
+            // Never a trust anchor; see `peerIp` above.
+            const ip = clientIp(req, server);
 
             // Enforce total connection cap (all types: game + dashboard + canvas)
             if (self.totalConnections >= WS_MAX_TOTAL_CONNECTIONS) {
@@ -474,6 +471,9 @@ export class WebSocketServer {
 
           // Asset binary serving: GET /assets/*
           if (url.pathname.startsWith("/assets/") && self.storage) {
+            if (!consumeHttpRate("assetRead", clientIp(req, server))) {
+              return rateLimitedResponse(req.headers.get("Origin"));
+            }
             return await handleAssetServing(url, self.storage, self.db);
           }
 
@@ -500,22 +500,16 @@ export class WebSocketServer {
             );
           }
 
-          // Connect manifest
-          if (url.pathname === "/api/connect") {
-            return buildConnectManifest(req, engine);
-          }
-          if (url.pathname === "/api/connect/negotiate") {
-            return negotiateConnectCapabilities(req);
-          }
-
-          // Skill document
-          if (url.pathname === "/api/skill") {
-            return await handleSkillRequest();
-          }
+          // Connect manifest, capability negotiation, skill document.
+          const connectResp = await handleConnectRoutes(req, url, engine);
+          if (connectResp) return connectResp;
 
           // Memory API routes: /mem and /mem/*
           if ((url.pathname === "/mem" || url.pathname.startsWith("/mem/")) && self.db) {
-            const memResp = await handleMemApi(url, req.method, req, self.db, self.memRateLimiter);
+            const memResp = await handleMemApi(url, req.method, req, self.db, self.memRateLimiter, {
+              peer: server,
+              engine,
+            });
             if (memResp) return memResp;
           }
 
@@ -605,7 +599,7 @@ export class WebSocketServer {
             const orchestrationResp = handleOrchestrationApi(req, url);
             if (orchestrationResp) return orchestrationResp;
             return Response.json(
-              { error: "not_found" },
+              { error: "not_found", code: "not_found" },
               { status: 404, headers: { ...corsHeaders(origin), ...securityHeaders("api") } },
             );
           }
@@ -623,12 +617,9 @@ export class WebSocketServer {
 
           // Health check
           if (url.pathname === "/health") {
-            return Response.json({
-              status: "ok",
+            return healthResponse(engine, {
               uptime: engine.getUptime(),
               connections: sockets.size,
-              rooms: engine.rooms.size,
-              entities: engine.entities.size,
               agents: engine.getOnlineAgents().length,
             });
           }
