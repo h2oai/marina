@@ -2837,7 +2837,7 @@ Effect: unknown.
 
 ## connect
 
-Manage external MCP connectors. Gated capability: earn it via `witness request connect.manage` or an operator grant (see `standing`). Usage: connect add <name> <url> | connect add <name> stdio <cmd> [args] (rank 9; spawns a local process) | connect remove <name> | connect list | connect tools <name> | connect call <name> <tool> [json] | connect auth <name> bearer <token> | connect auth <name> header <key> <value>
+Manage external MCP connectors. Gated capability: earn it via `witness request connect.manage` or an operator grant (see `standing`). Usage: connect add <name> <url> | connect add <name> stdio <cmd> [args] (shell.exec gate; spawns a local process) | connect remove <name> | connect list | connect tools <name> | connect call <name> <tool> [json] | connect auth <name> bearer <token> | connect auth <name> header <key> <value>
 
 Category: Building. Minimum rank: 5. Gate: `connect.manage`.
 Aliases: `conn`.
@@ -3336,13 +3336,135 @@ Aliases: `coach`.
 
 ### `evolve`
 
-Effect: unknown.
+Effect: read.
 
 
 ### `evolve loop`
 
-Effect: unknown.
+Effect: read.
 
+
+### `evolve adoption <role>`
+
+Effect: read.
+
+- `field-0` (`role`): text, required.
+
+### `evolve sessions`
+
+Effect: read.
+
+
+### `evolve qualify`
+
+Effect: read.
+
+
+### `evolve create <experiment> | <objective>`
+
+Effect: write.
+
+- `field-0` (`experiment`): text, required.
+- `field-1` (`objective`): text, required.
+
+### `evolve start <experiment>`
+
+Effect: write.
+
+- `field-0` (`experiment`): text, required.
+
+### `evolve pause <experiment>`
+
+Effect: write.
+
+- `field-0` (`experiment`): text, required.
+
+### `evolve resume <experiment>`
+
+Effect: write.
+
+- `field-0` (`experiment`): text, required.
+
+### `evolve complete <experiment>`
+
+Effect: write.
+
+- `field-0` (`experiment`): text, required.
+
+### `evolve status <experiment>`
+
+Effect: read.
+
+- `field-0` (`experiment`): text, required.
+
+### `evolve analyze <experiment>`
+
+Effect: read.
+
+- `field-0` (`experiment`): text, required.
+
+### `evolve propose <experiment> | <hypothesis> | <candidate-reference>`
+
+Effect: write.
+
+- `field-0` (`experiment`): text, required.
+- `field-1` (`hypothesis`): text, required.
+- `field-2` (`candidate-reference`): text, required.
+
+### `evolve trial <experiment> <run-id> [incumbent:<role>] [benchmark:<name>] [limit:<n>] [seed:<n>] [model:<m>] [timeout:<duration>]`
+
+Effect: execute.
+
+- `field-0` (`experiment`): text, required.
+- `field-1` (`run-id`): text, required.
+- `field-2` (`incumbent`): text, optional group `option-0`.
+- `field-3` (`benchmark`): text, optional group `option-1`.
+- `field-4` (`limit`): number, optional group `option-2`.
+- `field-5` (`seed`): number, optional group `option-3`.
+- `field-6` (`model`): text, optional group `option-4`.
+- `field-7` (`timeout`): text, optional group `option-5`.
+- Group `option-0`: `incumbent:role`.
+- Group `option-1`: `benchmark:name`.
+- Group `option-2`: `limit:n`.
+- Group `option-3`: `seed:n`.
+- Group `option-4`: `model:m`.
+- Group `option-5`: `timeout:duration`.
+
+### `evolve trial <experiment> <run-id> result`
+
+Effect: read.
+
+- `field-0` (`experiment`): text, required.
+- `field-1` (`run-id`): text, required.
+
+### `evolve evaluate <experiment> <run-id> | <evidence>`
+
+Effect: write.
+
+- `field-0` (`experiment`): text, required.
+- `field-1` (`run-id`): text, required.
+- `field-2` (`evidence`): text, required.
+
+### `evolve decide <experiment> <run-id> <accept|reject|inconclusive>`
+
+Effect: write.
+
+- `field-0` (`experiment`): text, required.
+- `field-1` (`run-id`): text, required.
+- `field-2` (`accept|reject|inconclusive`): text, required, choices `accept`, `reject`, `inconclusive`.
+
+### `evolve replicate <experiment> <run-id> [n:<n>] [budget:<calls>] [model:<m>]`
+
+Effect: execute.
+
+- `field-0` (`experiment`): text, required.
+- `field-1` (`run-id`): text, required.
+- `field-2` (`n`): number, optional group `option-0`.
+- `field-3` (`budget`): text, optional group `option-1`.
+- `field-4` (`model`): text, optional group `option-2`.
+- Group `option-0`: `n:n`.
+- Group `option-1`: `budget:calls`.
+- Group `option-2`: `model:m`.
 
 ## experiment
 

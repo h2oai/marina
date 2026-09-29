@@ -15,7 +15,16 @@
  * - ARMED gate passes: while a passed command runs, the approved gate ids are
  *   armed for that entity so the check inside the handler passes once, with
  *   the approver recorded as witness.
+ *
+ * The current command and its armed pass are scoped to ONE execution through
+ * `runCommandScope()` (an AsyncLocalStorage frame per command). A nested
+ * command (macro expansion, `batch`) opens its own frame and the outer frame
+ * is visible again when it returns; an interleaved execution of the same
+ * entity never sees or clears another execution's pass. Outside any frame the
+ * module-level maps are used (test seams and legacy callers).
  */
+
+import { AsyncLocalStorage } from "node:async_hooks";
 
 export interface GatePass {
   /** Gate ids the approver authorized for this one run. */
@@ -40,13 +49,62 @@ let refusalHook: GateRefusalHook | undefined;
 
 const passKey = (entityId: string, raw: string) => `${entityId}\u0000${raw.trim()}`;
 
+interface CommandScope {
+  entityId: string;
+  raw?: string;
+  pass?: GatePass;
+  /** False once the execution returned: detached work it spawned sees nothing. */
+  open: boolean;
+  parent?: CommandScope;
+}
+
+const scopes = new AsyncLocalStorage<CommandScope>();
+
+/** The innermost execution frame of this entity, if the caller runs inside one. */
+function scopeFor(entityId: string): CommandScope | undefined {
+  for (let scope = scopes.getStore(); scope; scope = scope.parent) {
+    if (scope.entityId === entityId) return scope;
+  }
+  return undefined;
+}
+
+/**
+ * Run one command execution in its own frame. The frame starts with no
+ * current command and no armed pass, and closes when `fn` settles.
+ */
+export function runCommandScope<T>(entityId: string, fn: () => Promise<T>): Promise<T> {
+  const scope: CommandScope = { entityId, open: true, parent: scopes.getStore() };
+  return scopes.run(scope, async () => {
+    try {
+      return await fn();
+    } finally {
+      scope.open = false;
+      scope.raw = undefined;
+      scope.pass = undefined;
+    }
+  });
+}
+
 export function setCurrentCommand(entityId: string, raw: string | undefined): void {
+  const scope = scopeFor(entityId);
+  if (scope) {
+    if (scope.open) scope.raw = raw;
+    return;
+  }
   if (raw === undefined) currentCommand.delete(entityId);
   else currentCommand.set(entityId, raw);
 }
 
 export function getCurrentCommand(entityId: string): string | undefined {
+  const scope = scopeFor(entityId);
+  if (scope) return scope.open ? scope.raw : undefined;
   return currentCommand.get(entityId);
+}
+
+function armedPass(entityId: string): GatePass | undefined {
+  const scope = scopeFor(entityId);
+  if (scope) return scope.open ? scope.pass : undefined;
+  return armed.get(entityId);
 }
 
 export function grantCommandPass(entityId: string, raw: string, pass: GatePass, now = Date.now()) {
@@ -67,13 +125,18 @@ export function claimCommandPass(
 }
 
 export function armGatePass(entityId: string, pass: GatePass | undefined): void {
+  const scope = scopeFor(entityId);
+  if (scope) {
+    if (scope.open) scope.pass = pass;
+    return;
+  }
   if (pass) armed.set(entityId, pass);
   else armed.delete(entityId);
 }
 
 /** Consumes the armed approval for one gate check inside the passed command. */
 export function takeArmedGatePass(entityId: string, gateId: string): GatePass | undefined {
-  const pass = armed.get(entityId);
+  const pass = armedPass(entityId);
   if (!pass?.gateIds.includes(gateId)) return undefined;
   pass.gateIds = pass.gateIds.filter((id) => id !== gateId);
   return pass;
@@ -85,7 +148,7 @@ export function takeArmedGatePass(entityId: string, gateId: string): GatePass | 
  * approval the router does, but never above the rank the approver vouched for.
  */
 export function isRankWaivedForRun(entityId: string, min: number): boolean {
-  const pass = armed.get(entityId);
+  const pass = armedPass(entityId);
   return !!pass?.rankWaived && (pass.waivedRank ?? 0) >= min;
 }
 
@@ -95,7 +158,7 @@ export function setGateRefusalHook(hook: GateRefusalHook | undefined): void {
 
 /** Called by checkGateForExecution on refusal; returns the (possibly extended) reason. */
 export function onGateRefused(entityId: string, gateId: string, reason: string): string {
-  if (!refusalHook || !currentCommand.has(entityId)) return reason;
+  if (!refusalHook || getCurrentCommand(entityId) === undefined) return reason;
   try {
     return refusalHook(entityId, gateId, reason);
   } catch {

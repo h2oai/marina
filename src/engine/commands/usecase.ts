@@ -2,12 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentRuntime } from "../../agent/agent-runtime";
+import { getStanding } from "../../agent/standing";
 import type { GroupManager } from "../../coordination/group-manager";
 import type { TaskManager } from "../../coordination/task-manager";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
+import { isGrantedCompetence } from "../../persistence/db-competence";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import { checkGateForExecution, recordGateExecution } from "../safety-gates";
+import { isLocalUngated } from "../trust-profile";
+import { spawnBudget } from "./agent";
 
 /**
  * Use-case recipes — one-command scaffolding that creates a project,
@@ -1151,6 +1155,103 @@ export interface UseCaseCommandDeps {
   }) => void;
 }
 
+interface UseCaseSpawn {
+  name: string;
+  model?: string;
+  role?: string;
+  goal: string;
+}
+
+/**
+ * Spawn a use case's agents under ONE `agent.spawn` authorization for the
+ * command. Every agent is spawned BY the requester (`spawnedBy`), so the team
+ * counts against the requester's spawn budget and a later challenge has a
+ * creator to ask. Outside the local-ungated profile the team is capped at the
+ * requester's remaining budget (the same `spawnBudget` as `agent spawn`); a
+ * local operator's team is counted but not capped, as before. The execution
+ * is recorded once, and only when an agent actually started — never when the
+ * runtime is unavailable or every spawn failed.
+ */
+async function spawnUseCaseAgents(
+  ctx: RoomContext,
+  requesterId: EntityId,
+  requester: Entity,
+  deps: UseCaseCommandDeps,
+  plan: UseCaseSpawn[],
+  topic: string,
+): Promise<{ names: string[]; reason: string }> {
+  const names: string[] = [];
+  const db = deps.db;
+  if (!db || !deps.agentRuntime.isAvailable() || plan.length === 0) {
+    return { names, reason: "none (no model provider configured)" };
+  }
+  // Posture-aware spawn authorization. Self-certification stays closed
+  // (standing alone never passes in guarded posture), while witness windows,
+  // the earned posture's reviewed practice, an approved challenge and an
+  // operator-declared open posture all authorize with their consequence recorded.
+  const gate = checkGateForExecution(db, requesterId, "agent.spawn");
+  if (!gate.ok) {
+    ctx.send(
+      requesterId,
+      `Project created without new agents: ${gate.reason ?? "agent.spawn capability is not available"}. Existing agents may still join and claim its tasks.`,
+    );
+    return { names, reason: "none (spawn unavailable; project open for existing agents)" };
+  }
+  let allowed = plan.length;
+  if (!isLocalUngated()) {
+    const granted = isGrantedCompetence(db.getCompetence(requesterId, "agent.spawn"));
+    const budget = spawnBudget(getStanding(db, requesterId), granted);
+    const live = new Set(deps.agentRuntime.list().map((a) => a.name));
+    const liveChildren = db
+      .getAgentConfigsBySpawnedBy(requester.name)
+      .filter((c) => live.has(c.name)).length;
+    allowed = Math.max(0, Math.min(plan.length, budget - liveChildren));
+    if (allowed < plan.length) {
+      ctx.send(
+        requesterId,
+        `Spawn budget: ${liveChildren}/${budget} live — starting ${allowed} of ${plan.length} agents. Raise your standing or stop an agent you spawned to grow the team.`,
+      );
+    }
+    if (allowed === 0) {
+      return { names, reason: "none (spawn budget reached; project open for existing agents)" };
+    }
+  }
+  for (const spec of plan.slice(0, allowed)) {
+    try {
+      const handle = await deps.agentRuntime.spawn({
+        name: spec.name,
+        model: spec.model,
+        role: spec.role,
+        goal: spec.goal,
+        spawnedBy: requester.name,
+      });
+      handle.setFocus(`Working on: ${topic}`);
+      names.push(spec.name);
+      deps.logEvent({
+        type: "agent_spawn",
+        entity: requesterId,
+        name: spec.name,
+        model: handle.getStatus().model,
+        role: spec.role ?? "",
+        trigger: "usecase",
+        timestamp: Date.now(),
+      });
+    } catch (err) {
+      ctx.send(
+        requesterId,
+        `Warning: failed to spawn agent "${spec.name}": ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+  if (names.length > 0) {
+    recordGateExecution(db, requesterId, "agent.spawn", gate, `usecase spawn ${names.join(",")}`);
+  }
+  return {
+    names,
+    reason: "none (spawn failed; project open for existing agents)",
+  };
+}
+
 export function usecaseCommand(deps: UseCaseCommandDeps): CommandDef {
   return {
     category: "Coordination",
@@ -1360,90 +1461,25 @@ Examples:
         }
 
         // 7. Spawn agent(s) — team takes precedence over agentCount/agentRole.
-        const agentNames: string[] = [];
-        let noAgentReason = "none (no model provider configured)";
-        // Posture-aware spawn authorization. Self-certification stays closed
-        // (standing alone never passes in guarded posture), while witness
-        // windows, the earned posture's reviewed practice, and an operator-
-        // declared open posture all authorize with their consequence recorded.
-        const spawnGate = checkGateForExecution(db, input.entity, "agent.spawn");
-        if (spawnGate.ok) {
-          recordGateExecution(db, input.entity, "agent.spawn", spawnGate, "usecase spawn");
-        }
-        if (deps.agentRuntime.isAvailable() && !spawnGate.ok) {
-          noAgentReason = "none (spawn unavailable; project open for existing agents)";
-          ctx.send(
-            input.entity,
-            `Project created without new agents: ${spawnGate.reason ?? "agent.spawn capability is not available"}. Existing agents may still join and claim its tasks.`,
-          );
-        } else if (deps.agentRuntime.isAvailable()) {
-          noAgentReason = "none (spawn failed; project open for existing agents)";
-          if (recipe.team && recipe.team.length > 0) {
-            // Multi-agent team mode
-            for (let i = 0; i < recipe.team.length; i++) {
-              const member = recipe.team[i]!;
-              const prefix = member.namePrefix ?? member.role;
-              const agentName = `${prefix}-${Date.now().toString(36).slice(-4)}-${i}`;
-              // Substitute ${requester} placeholder in the member goal.
-              const goal = member.goal.replace(/\$\{requester\}/g, entity.name);
-              try {
-                const handle = await deps.agentRuntime.spawn({
-                  name: agentName,
-                  model: member.model ?? recipe.agentModel,
-                  role: member.role,
-                  goal,
-                });
-                handle.setFocus(`Working on: ${topic}`);
-                agentNames.push(agentName);
-
-                deps.logEvent({
-                  type: "agent_spawn",
-                  entity: input.entity,
-                  name: agentName,
-                  model: handle.getStatus().model,
-                  role: member.role,
-                  trigger: "usecase",
-                  timestamp: Date.now(),
-                });
-              } catch (err) {
-                ctx.send(
-                  input.entity,
-                  `Warning: failed to spawn agent "${agentName}": ${err instanceof Error ? err.message : err}`,
-                );
-              }
-            }
-          } else {
-            // Single-role mode (legacy)
-            for (let i = 0; i < recipe.agentCount; i++) {
-              const agentName = `${recipeName}-${Date.now().toString(36).slice(-4)}${i > 0 ? `-${i}` : ""}`;
-              try {
-                const handle = await deps.agentRuntime.spawn({
-                  name: agentName,
-                  model: recipe.agentModel,
-                  role: recipe.agentRole,
-                  goal: `${recipe.description}. Join project "${projectName}", claim tasks, and complete them. Use 'project ${projectName} join' first, then 'task list' to see available work. When done, tell ${entity.name} a summary of your findings.`,
-                });
-                handle.setFocus(`Working on: ${topic}`);
-                agentNames.push(agentName);
-
-                deps.logEvent({
-                  type: "agent_spawn",
-                  entity: input.entity,
-                  name: agentName,
-                  model: handle.getStatus().model,
-                  role: recipe.agentRole ?? "",
-                  trigger: "usecase",
-                  timestamp: Date.now(),
-                });
-              } catch (err) {
-                ctx.send(
-                  input.entity,
-                  `Warning: failed to spawn agent "${agentName}": ${err instanceof Error ? err.message : err}`,
-                );
-              }
-            }
-          }
-        }
+        const stamp = Date.now().toString(36).slice(-4);
+        const plan: UseCaseSpawn[] =
+          recipe.team && recipe.team.length > 0
+            ? recipe.team.map((member, i) => ({
+                name: `${member.namePrefix ?? member.role}-${stamp}-${i}`,
+                model: member.model ?? recipe.agentModel,
+                role: member.role,
+                // Substitute ${requester} placeholder in the member goal.
+                goal: member.goal.replace(/\$\{requester\}/g, entity.name),
+              }))
+            : Array.from({ length: recipe.agentCount }, (_, i) => ({
+                name: `${recipeName}-${stamp}${i > 0 ? `-${i}` : ""}`,
+                model: recipe.agentModel,
+                role: recipe.agentRole,
+                goal: `${recipe.description}. Join project "${projectName}", claim tasks, and complete them. Use 'project ${projectName} join' first, then 'task list' to see available work. When done, tell ${entity.name} a summary of your findings.`,
+              }));
+        const spawned = await spawnUseCaseAgents(ctx, input.entity, entity, deps, plan, topic);
+        const agentNames = spawned.names;
+        const noAgentReason = spawned.reason;
 
         // 8. Report
         const lines = [

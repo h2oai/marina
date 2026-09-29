@@ -233,13 +233,17 @@ describe("Shell", () => {
       expect(text).toContain("Execute shell commands");
     });
 
-    it("should reject raw mode for non-sovereign", async () => {
+    it("should reject raw mode without the shell.exec gate", async () => {
+      // `run raw` is a full `sh -c` string: it takes `shell.exec` on top of
+      // `agent.run`, and the gate — not the rank — is the authority.
       const entity = engine.entities.get(conn.entity!);
-      if (entity) entity.properties.rank = 6; // engineer — can run but not raw
+      if (entity) entity.properties.rank = 9;
+      revoke(db, conn.entity!, "shell.exec");
       engine.processCommand(conn.entity!, "run raw echo test");
       await wait();
       const text = stripAnsi(conn.allTextJoined());
-      expect(text).toContain("sovereign rank");
+      expect(text).toContain("execute shell commands");
+      expect(text).not.toContain("$ echo test");
     });
 
     it("should allow raw mode for sovereign", async () => {

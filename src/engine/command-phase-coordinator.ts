@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { MacroManager } from "../coordination/macro-manager";
 import type { MarinaDB } from "../persistence/database";
 import { classifyPrimitive } from "../telemetry/primitive-usage";
@@ -12,12 +13,7 @@ import { failCommandResponse } from "./command-response";
 import type { CommandRouter } from "./command-router";
 import { trackQuestProgress } from "./commands/quest";
 import { getErrorMessage, tryLog } from "./errors";
-import {
-  armGatePass,
-  claimCommandPass,
-  getCurrentCommand,
-  setCurrentCommand,
-} from "./gate-context";
+import { armGatePass, claimCommandPass, runCommandScope, setCurrentCommand } from "./gate-context";
 import type { Logger } from "./logger";
 import { getRank, rankName } from "./permissions";
 import { checkGateForExecution, recordGateExecution } from "./safety-gates";
@@ -27,30 +23,53 @@ import { isLocalUngated } from "./trust-profile";
 export interface CommandPhaseHost {
   readonly entities: Pick<EntityManager, "get">;
   readonly rooms: Pick<RoomManager, "get">;
-  readonly commands: Pick<CommandRouter, "parse" | "getDef" | "resolve">;
+  readonly commands: Pick<CommandRouter, "parse" | "resolveCommand">;
   readonly db?: MarinaDB;
   readonly macroManager?: Pick<MacroManager, "getByName">;
   readonly logger: Logger;
   promptVersion(name: string): string | undefined;
   sendToEntity(id: EntityId, message: string): void;
+  /**
+   * Runs a macro's expanded command INSIDE the current execution slot (never
+   * re-admitted through the per-entity FIFO, which would wait on itself).
+   */
   processCommand(id: EntityId, raw: string): Promise<void>;
+  /** One rate-limit token per expanded macro command, as `batch` charges. */
+  checkRateLimit?(id: EntityId): boolean;
   buildCommandContext(room: RoomId, entity: EntityId): CommandContext | undefined;
   buildContext(room: RoomId): RoomContext | undefined;
   logEvent(event: EngineEvent): void;
 }
 
+/** Nesting bound for macro expansion (a macro that runs a macro that runs …). */
+export const MAX_MACRO_DEPTH = 8;
+/** Commands one top-level macro invocation may expand to, across all nesting. */
+export const MAX_MACRO_EXPANSIONS = 100;
+
+interface MacroFrame {
+  /** `entity\0name` of every macro on the current expansion path. */
+  path: string[];
+  /** Shared by every frame of one top-level expansion. */
+  budget: { remaining: number };
+}
+
 export class CommandPhaseCoordinator {
+  /**
+   * The macro expansion path follows the async context, so a macro reached
+   * through `batch` (or any other in-slot nested command) still sees the
+   * frames above it and cannot recurse unbounded.
+   */
+  private readonly macroFrames = new AsyncLocalStorage<MacroFrame>();
+
   constructor(private readonly host: CommandPhaseHost) {}
 
-  /** Process a single command immediately */
-  async execute(entityId: EntityId, raw: string, opts?: { bypassModal?: boolean }): Promise<void> {
-    const previous = getCurrentCommand(entityId);
-    try {
-      await this.executeInner(entityId, raw, opts);
-    } finally {
-      setCurrentCommand(entityId, previous);
-      if (previous === undefined) armGatePass(entityId, undefined);
-    }
+  /**
+   * Process a single command immediately. Each execution runs in its own
+   * gate-context frame: its current command and armed approval are its own,
+   * and a nested or interleaved command can neither read nor clear them.
+   */
+  execute(entityId: EntityId, raw: string, opts?: { bypassModal?: boolean }): Promise<void> {
+    return runCommandScope(entityId, () => this.executeInner(entityId, raw, opts));
   }
 
   private async executeInner(
@@ -69,7 +88,13 @@ export class CommandPhaseCoordinator {
     const input = this.host.commands.parse(routedRaw, entityId, entity.room);
 
     if (!input.verb) return;
-    const def = this.host.commands.getDef(input.verb);
+    // A room command that shadows a builtin runs under its OWN (empty)
+    // definition: the builtin's rank floor and gate govern the builtin
+    // handler, and a gate execution must never be credited to a room handler.
+    const room = this.host.rooms.get(entity.room);
+    const resolved = this.host.commands.resolveCommand(input.verb, room?.module.commands);
+    const def = resolved?.def;
+    const handler = resolved?.handler;
 
     const recordUsage = (success: boolean) => {
       if (!this.host.db) return;
@@ -91,9 +116,6 @@ export class CommandPhaseCoordinator {
       });
     };
 
-    const room = this.host.rooms.get(entity.room);
-    const handler = this.host.commands.resolve(input.verb, room?.module.commands);
-
     if (!handler) {
       // Macro fallback: entity macros first, then system macros
       if (this.host.macroManager) {
@@ -101,13 +123,7 @@ export class CommandPhaseCoordinator {
           this.host.macroManager.getByName(input.verb, entityId as string) ??
           this.host.macroManager.getByName(input.verb, "system");
         if (macro) {
-          const commands = macro.command
-            .split(";")
-            .map((c) => c.trim())
-            .filter(Boolean);
-          for (const cmd of commands) {
-            await this.host.processCommand(entityId, cmd);
-          }
+          await this.expandMacro(entityId, macro, recordUsage);
           return;
         }
       }
@@ -179,23 +195,13 @@ export class CommandPhaseCoordinator {
       this.host.buildCommandContext(entity.room, entityId) ?? this.host.buildContext(entity.room);
     if (!ctx) return;
 
-    let handlerThrew = false;
     try {
       const result = handler(ctx, input);
       // Await async handlers so callers that `await processCommand` get
-      // proper sequencing. Non-awaiting callers ignore the returned Promise
-      // and behavior is unchanged for them.
-      if (result instanceof Promise) {
-        try {
-          await result;
-        } catch (err) {
-          handlerThrew = true;
-          const msg = getErrorMessage(err);
-          failCommandResponse(msg);
-          this.host.logger.error("command", `Async error in "${input.verb}"`, { error: msg });
-          this.host.sendToEntity(entityId, `Command error: ${msg}`);
-        }
-      }
+      // proper sequencing. A rejected promise is the same failure as a
+      // synchronous throw: no quest progress, a failed activity row, failed
+      // usage and no `command` event.
+      if (result instanceof Promise) await result;
     } catch (err) {
       const msg = getErrorMessage(err);
       failCommandResponse(msg);
@@ -233,7 +239,7 @@ export class CommandPhaseCoordinator {
     // demonstration on a clean run is exactly the self-certification path that
     // let a standing-only entity auto-unlock a gate. Competence is earned only
     // via operator grant / rank promotion / witnessed demonstration.
-    recordUsage(!handlerThrew);
+    recordUsage(true);
 
     this.host.logEvent({
       type: "command",
@@ -241,6 +247,72 @@ export class CommandPhaseCoordinator {
       input: routedRaw,
       timestamp: Date.now(),
     });
+  }
+
+  /**
+   * Expand a macro inside the current execution slot. Bounded three ways: a
+   * macro already on the expansion path is a cycle and is refused, nesting
+   * stops at MAX_MACRO_DEPTH, and one top-level invocation expands to at most
+   * MAX_MACRO_EXPANSIONS commands. Each expanded command costs one rate-limit
+   * token, so a macro gives no amplification over typing its commands.
+   */
+  private async expandMacro(
+    entityId: EntityId,
+    macro: { name: string; command: string },
+    recordUsage: (success: boolean) => void,
+  ): Promise<void> {
+    const key = `${entityId}\u0000${macro.name.toLowerCase()}`;
+    const parent = this.macroFrames.getStore();
+    const path = parent?.path ?? [];
+    const refuse = (reason: string) => {
+      failCommandResponse(reason);
+      this.host.sendToEntity(entityId, reason);
+      recordUsage(false);
+    };
+    if (path.includes(key)) {
+      refuse(`Macro "${macro.name}" calls itself; expansion stopped.`);
+      return;
+    }
+    if (path.length >= MAX_MACRO_DEPTH) {
+      refuse(`Macro nesting deeper than ${MAX_MACRO_DEPTH}; expansion of "${macro.name}" stopped.`);
+      return;
+    }
+    const frame: MacroFrame = {
+      path: [...path, key],
+      budget: parent?.budget ?? { remaining: MAX_MACRO_EXPANSIONS },
+    };
+    const commands = macro.command
+      .split(";")
+      .map((c) => c.trim())
+      .filter(Boolean);
+    let rateBlocked = 0;
+    let truncated = false;
+    await this.macroFrames.run(frame, async () => {
+      for (const cmd of commands) {
+        if (frame.budget.remaining <= 0) {
+          truncated = true;
+          break;
+        }
+        if (this.host.checkRateLimit && !this.host.checkRateLimit(entityId)) {
+          rateBlocked++;
+          continue;
+        }
+        frame.budget.remaining--;
+        await this.host.processCommand(entityId, cmd);
+      }
+    });
+    if (truncated) {
+      this.host.sendToEntity(
+        entityId,
+        `Macro "${macro.name}" stopped after ${MAX_MACRO_EXPANSIONS} expanded commands.`,
+      );
+    }
+    if (rateBlocked > 0) {
+      this.host.sendToEntity(
+        entityId,
+        `Macro "${macro.name}": rate-limited ${rateBlocked} command(s). Slow down.`,
+      );
+    }
   }
 
   private routeModalCommand(entity: Entity, raw: string): string {

@@ -549,14 +549,16 @@ export async function runArenaAutopilot(
 ): Promise<SubmitOutcome[]> {
   const status = arenaStatus(env);
   if (!status.autopilot || running) return [];
-  const deps = await arenaDepsWithForecaster(store, env);
-  if ("error" in deps) {
-    logger.warn("arena", "autopilot skipped", { error: deps.error });
-    return [];
-  }
+  // Claimed BEFORE the first await: two overlapping calls must never both
+  // pass the check while the first is still resolving its dependencies.
   running = true;
   const outcomes: SubmitOutcome[] = [];
   try {
+    const deps = await arenaDepsWithForecaster(store, env);
+    if ("error" in deps) {
+      logger.warn("arena", "autopilot skipped", { error: deps.error });
+      return [];
+    }
     if (deps.config.forecaster.startsWith("crew:") && "getNotesByType" in store) {
       await learnFromResolutions(store as unknown as ArenaStore & NotesStore, deps);
     }

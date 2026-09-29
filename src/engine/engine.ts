@@ -76,6 +76,8 @@ import { type TickJobStatus, TickScheduler } from "./tick-scheduler";
 
 /** Identical tick-failure messages are logged at most once per this interval. */
 const TICK_ERROR_LOG_INTERVAL_MS = 30_000;
+/** Longest `shutdown()` waits for detached work and async tick jobs (under main.ts's 30 s watchdog). */
+export const BACKGROUND_DRAIN_TIMEOUT_MS = 10_000;
 
 export type { LoginIdentity } from "./auth-coordinator";
 
@@ -143,6 +145,8 @@ export class Engine {
   private startedAt = Date.now();
   private fetchLastCall = new Map<string, number>(); // roomId -> timestamp
   private readonly briefManager = new BriefManager();
+  /** Detached DB-writing work (`trackBackground`), drained by `shutdown()`. */
+  private readonly background = new Set<Promise<unknown>>();
   /** Periodic (`tick % every === phase`) maintenance jobs; see `registerTickJobs()`. */
   private readonly tickScheduler: TickScheduler;
   /** @internal */ readonly _connections: ConnectionManager;
@@ -362,7 +366,7 @@ export class Engine {
       logger: this.logger,
       world: this.world,
       spawnEntity: (id, name) => this.spawnEntity(id, name),
-      processCommand: (id, raw) => this.processCommand(id, raw),
+      dispatchCommand: (id, raw) => this.dispatchCommand(id, raw),
       buildContext: (room) => this.buildContext(room),
       logEvent: (event) => this.logEvent(event),
     });
@@ -378,6 +382,7 @@ export class Engine {
       promptVersion: (name) => this.agentRuntime.get(name)?.getStatus().promptVersion,
       sendToEntity: (id, message) => this.sendToEntity(id, message),
       processCommand: (id, raw) => this.processCommand(id, raw),
+      checkRateLimit: (id) => this.checkRateLimit(id),
       buildCommandContext: (room, id) => this.buildCommandContext(room, id),
       buildContext: (room) => this.buildContext(room),
       logEvent: (event) => this.logEvent(event),
@@ -524,17 +529,7 @@ export class Engine {
 
   /** Queue a command from a connected entity. */
   queueCommand(entity: EntityId, raw: string): void {
-    if (!this.commandCoordinator.enqueue(entity, raw))
-      this._connections.sendToEntity(entity, {
-        kind: "error",
-        timestamp: Date.now(),
-        data: {
-          text: "World command capacity reached. Retry shortly; this command did not execute.",
-          code: "command_overloaded",
-          retryable: true,
-          executed: false,
-        },
-      });
+    if (!this.commandCoordinator.enqueue(entity, raw)) this.notifyCommandOverloaded(entity);
   }
   get commandAdmission() {
     return this.commandCoordinator.snapshot();
@@ -548,6 +543,12 @@ export class Engine {
     return this.commandCoordinator.queuedCount;
   }
 
+  /**
+   * Execute NOW, outside admission and the per-entity FIFO. Only for work that
+   * already runs inside the entity's slot (macro expansion, `batch`) or for
+   * tests; every ingress (transport, engine housekeeping, challenge re-run)
+   * goes through `dispatchCommand()`.
+   */
   processCommand(entityId: EntityId, raw: string, opts?: { bypassModal?: boolean }): Promise<void> {
     return this.commandCoordinator.track(this.commandPhaseCoordinator.execute(entityId, raw, opts));
   }
@@ -555,6 +556,59 @@ export class Engine {
   /** Transport admission; nested commands continue through processCommand to avoid deadlock. */
   submitCommand(entityId: EntityId, raw: string, execute: () => Promise<void>): boolean {
     return this.commandCoordinator.submit(entityId, raw, execute);
+  }
+
+  /**
+   * The ingress path for one command: bounded admission, then strict
+   * per-entity FIFO behind anything this entity already queued. Resolves
+   * `true` once the command has run, `false` when admission refused it
+   * (capacity) — then the entity is told unless `notify: false`.
+   *
+   * Re-entrant: a caller already running inside this entity's slot (a
+   * handler, a macro expansion, a command the slot is awaiting) executes
+   * inline, because queuing behind its own running slot would never start.
+   */
+  dispatchCommand(
+    entityId: EntityId,
+    raw: string,
+    opts?: { bypassModal?: boolean; notify?: boolean },
+  ): Promise<boolean> {
+    const run = () => this.commandPhaseCoordinator.execute(entityId, raw, opts);
+    if (this.commandCoordinator.isInSlot(entityId)) {
+      return this.commandCoordinator.track(run()).then(
+        () => true,
+        (error) => {
+          // Same destination as a slot's throw: the tick error path.
+          this.recordTickError(error);
+          return true;
+        },
+      );
+    }
+    return new Promise<boolean>((resolve) => {
+      const admitted = this.commandCoordinator.submit(entityId, raw, async () => {
+        try {
+          await run();
+        } finally {
+          resolve(true);
+        }
+      });
+      if (admitted) return;
+      if (opts?.notify !== false) this.notifyCommandOverloaded(entityId);
+      resolve(false);
+    });
+  }
+
+  private notifyCommandOverloaded(entity: EntityId): void {
+    this._connections.sendToEntity(entity, {
+      kind: "error",
+      timestamp: Date.now(),
+      data: {
+        text: "World command capacity reached. Retry shortly; this command did not execute.",
+        code: "command_overloaded",
+        retryable: true,
+        executed: false,
+      },
+    });
   }
 
   // ─── Tick Loop ──────────────────────────────────────────────────────────
@@ -907,14 +961,14 @@ export class Engine {
   sendLook(entityId: EntityId): void {
     const entity = this.entities.get(entityId);
     if (!entity) return;
-    this.processCommand(entityId, "look", { bypassModal: true });
+    void this.dispatchCommand(entityId, "look", { bypassModal: true });
   }
 
   /** Send a brief orientation to an entity (used on first login) */
   sendBrief(entityId: EntityId): void {
     const entity = this.entities.get(entityId);
     if (!entity) return;
-    this.processCommand(entityId, "brief", { bypassModal: true });
+    void this.dispatchCommand(entityId, "brief", { bypassModal: true });
   }
 
   /** Subscribe an entity to periodic brief pulses */
@@ -1818,9 +1872,54 @@ export class Engine {
         this.gatewayRuntime?.close(),
       ]).then(() => undefined);
     };
-    return this.roomTickCoordinator.pendingCount
-      ? this.roomTickCoordinator.drain().then(finish)
+    const pending =
+      this.roomTickCoordinator.pendingCount +
+      this.background.size +
+      this.tickScheduler.pendingCount;
+    return pending
+      ? Promise.all([this.roomTickCoordinator.drain(), this.drainBackground()]).then(finish)
       : finish();
+  }
+
+  /**
+   * Register detached work that may still write the database (an `evolve`
+   * trial or replication). `shutdown()` drains it — with async tick jobs —
+   * before the host closes persistence.
+   */
+  trackBackground<T>(work: Promise<T>): Promise<T> {
+    this.background.add(work);
+    const done = () => this.background.delete(work);
+    void work.then(done, done);
+    return work;
+  }
+
+  /**
+   * Settle tracked background work and in-flight async tick jobs, waiting at
+   * most `timeoutMs` (long model-backed work must not hold a restart past the
+   * host's shutdown watchdog). Resolves `true` when everything settled.
+   */
+  async drainBackground(timeoutMs = BACKGROUND_DRAIN_TIMEOUT_MS): Promise<boolean> {
+    const settle = async () => {
+      for (;;) {
+        const work = [...this.background];
+        if (work.length === 0 && this.tickScheduler.pendingCount === 0) return true;
+        await Promise.allSettled([...work, this.tickScheduler.drain()]);
+      }
+    };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => resolve(false), timeoutMs);
+      timer.unref?.();
+    });
+    const drained = await Promise.race([settle(), timeout]);
+    if (timer) clearTimeout(timer);
+    if (!drained) {
+      this.logger.warn("engine", "Background work still running at shutdown", {
+        background: this.background.size,
+        tickJobs: this.tickScheduler.pendingCount,
+      });
+    }
+    return drained;
   }
 
   // ─── Built-in Command Registration ──────────────────────────────────────

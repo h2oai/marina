@@ -5,6 +5,7 @@ import { entity as fmtEntity, rank as fmtRank, success } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityRank, RoomContext } from "../../types";
 import { getRank, setRank } from "../permissions";
+import { rankFloorRefusal } from "../rank-floor";
 import { grantGatesForRank } from "../safety-gates";
 
 interface RankDeps {
@@ -48,9 +49,14 @@ export function rankCommand(deps: RankDeps): CommandDef {
         return;
       }
 
-      // Set rank: requires sovereign (9)
-      if (getRank(self) < 9) {
-        ctx.send(input.entity, "Only sovereigns (rank 9) can set ranks.");
+      // Set rank: requires sovereign (9). Promotion grants safety gates, so the
+      // `open` posture does not lift this floor (core); local does, and a
+      // refusal raises a challenge a sovereign can approve.
+      const floor = rankFloorRefusal(self, 9, "Only sovereigns (rank 9) can set ranks.", {
+        core: true,
+      });
+      if (floor) {
+        ctx.send(input.entity, floor);
         return;
       }
 
