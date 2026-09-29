@@ -21,7 +21,6 @@ export interface ExperimentsStore {
   getExperiment(id: number): ExperimentRow | undefined;
   getExperimentByName(name: string): ExperimentRow | undefined;
   listExperiments(status?: string): ExperimentRow[];
-  updateExperimentStatus(id: number, status: string): void;
   startExperiment(id: number): void;
   completeExperiment(id: number): void;
   addParticipant(experimentId: number, entityName: string): void;
@@ -43,7 +42,6 @@ export const EXPERIMENTS_STORE_METHODS = [
   "getExperiment",
   "getExperimentByName",
   "listExperiments",
-  "updateExperimentStatus",
   "startExperiment",
   "completeExperiment",
   "addParticipant",

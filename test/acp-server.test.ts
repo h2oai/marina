@@ -232,6 +232,50 @@ describe("ACP server", () => {
     server.stop();
   });
 
+  it("answers -32600 for valid JSON that is not a request (null, batch, no method)", async () => {
+    const stdin = new PassThrough();
+    const stdout = new PassThrough();
+    const server = new AcpServer({ agent: makeStubAgent(), input: stdin, output: stdout });
+    server.start();
+
+    stdin.write("null\n");
+    stdin.write("[1,2]\n");
+    stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 7 })}\n`);
+    stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: { bad: true }, method: "initialize" })}\n`);
+    const results = (await collectOutput(stdout, 4)) as Array<{
+      id: number | null;
+      error: { code: number };
+    }>;
+    expect(results.map((r) => r.error.code)).toEqual([-32600, -32600, -32600, -32600]);
+    // The id is echoed when it is recoverable, null otherwise.
+    expect(results.map((r) => r.id)).toEqual([null, null, 7, null]);
+
+    // The server keeps serving after the invalid lines.
+    writeRpc(stdin, { jsonrpc: "2.0", id: 8, method: "initialize", params: {} });
+    const [next] = (await collectOutput(stdout, 1)) as Array<{ id: number }>;
+    expect(next!.id).toBe(8);
+    server.stop();
+  });
+
+  it("answers a JSON-RPC internal error when a handler throws outside its own try", async () => {
+    const stdin = new PassThrough();
+    const stdout = new PassThrough();
+    const server = new AcpServer({ agent: makeStubAgent(), input: stdin, output: stdout });
+    // Force a failure that escapes handleLine's own try/catch.
+    (server as unknown as { handleLine: (line: string) => Promise<void> }).handleLine =
+      async () => {
+        throw new Error("escaped");
+      };
+    server.start();
+    stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" })}\n`);
+    const [resp] = (await collectOutput(stdout, 1)) as Array<{
+      id: null;
+      error: { code: number };
+    }>;
+    expect(resp!.error.code).toBe(-32603);
+    server.stop();
+  });
+
   it("session/cancel marks in-flight prompt as cancelled", async () => {
     const stdin = new PassThrough();
     const stdout = new PassThrough();

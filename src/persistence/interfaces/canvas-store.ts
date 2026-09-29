@@ -59,7 +59,6 @@ export interface CanvasStore {
     expireActiveMs?: number;
     now?: number;
   }): CanvasIntentSummary[];
-  expireCanvasIntentClaims(timeoutMs: number, now?: number): number;
   claimCanvasIntent(
     idOrPrefix: string,
     claimantName: string,
@@ -110,7 +109,6 @@ export const CANVAS_STORE_METHODS = [
   "trimCanvasNodesWithIds",
   "updateNode",
   "listCanvasIntents",
-  "expireCanvasIntentClaims",
   "claimCanvasIntent",
   "completeCanvasIntent",
   "failCanvasIntent",

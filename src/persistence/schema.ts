@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
 import { upgradeNumericMemory } from "./db-memory-upgrade";
 import { SCHEMA_BASELINE_VERSION } from "./schema-baseline";
 import {
@@ -88,7 +89,139 @@ DROP TABLE spend_daily;
 ALTER TABLE spend_daily_v142 RENAME TO spend_daily;
 `,
   },
+  // Migration 143: memory API key secrets are stored as `sha256:<hex>` digests
+  // (src/persistence/db-notes.ts hashMemApiKeySecret) and looked up by digest.
+  // Every existing plaintext row is rewritten in place; already-hashed rows are
+  // left alone so the rewrite is safe to replay against a partial copy.
+  {
+    version: 143,
+    // The digest lookup keeps using the migration-28 index on `secret`.
+    sql: "CREATE INDEX IF NOT EXISTS idx_mem_api_keys_secret ON mem_api_keys(secret);",
+    apply: hashMemApiKeySecrets,
+  },
+  // Migration 144: `markets` gets a stable INTEGER PRIMARY KEY (`seq`) so
+  // `markets_fts` (external content, content_rowid) survives VACUUM / VACUUM
+  // INTO, which may renumber the implicit rowid of a TEXT-keyed table. `id`
+  // stays the public key (UNIQUE, the FK target). Rebuilding a referenced
+  // table with foreign_keys=ON would cascade-delete its children on DROP, so
+  // the two child tables are rebuilt alongside it: the new children reference
+  // `markets_v144` (renaming it to `markets` rewrites those references), and
+  // the old children are dropped before the old parent.
+  {
+    version: 144,
+    sql: `
+DROP TRIGGER IF EXISTS markets_fts_ai;
+DROP TRIGGER IF EXISTS markets_fts_ad;
+DROP TRIGGER IF EXISTS markets_fts_au;
+DROP TABLE IF EXISTS markets_fts;
+
+CREATE TABLE markets_v144 (
+  seq INTEGER PRIMARY KEY,
+  id TEXT NOT NULL UNIQUE,
+  room_id TEXT NOT NULL,
+  question TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'open',
+  outcome TEXT,
+  resolved_at INTEGER,
+  resolved_by TEXT,
+  created_at INTEGER NOT NULL
+);
+INSERT INTO markets_v144 (id, room_id, question, category, status, outcome, resolved_at, resolved_by, created_at)
+  SELECT id, room_id, question, category, status, outcome, resolved_at, resolved_by, created_at
+  FROM markets ORDER BY created_at, rowid;
+
+CREATE TABLE market_positions_v144 (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  market_id TEXT NOT NULL REFERENCES markets_v144(id) ON DELETE CASCADE,
+  entity_name TEXT NOT NULL,
+  direction TEXT NOT NULL,
+  confidence INTEGER NOT NULL,
+  reasoning TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+INSERT INTO market_positions_v144 SELECT id, market_id, entity_name, direction, confidence, reasoning, created_at, updated_at FROM market_positions;
+
+CREATE TABLE market_scores_v144 (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  market_id TEXT NOT NULL REFERENCES markets_v144(id) ON DELETE CASCADE,
+  entity_name TEXT NOT NULL,
+  brier_score REAL NOT NULL,
+  correct INTEGER NOT NULL DEFAULT 0,
+  scored_at INTEGER NOT NULL
+);
+INSERT INTO market_scores_v144 SELECT id, market_id, entity_name, brier_score, correct, scored_at FROM market_scores;
+
+DROP TABLE market_positions;
+DROP TABLE market_scores;
+DROP TABLE markets;
+ALTER TABLE markets_v144 RENAME TO markets;
+ALTER TABLE market_positions_v144 RENAME TO market_positions;
+ALTER TABLE market_scores_v144 RENAME TO market_scores;
+
+CREATE INDEX idx_markets_room ON markets(room_id);
+CREATE INDEX idx_markets_status ON markets(status);
+CREATE UNIQUE INDEX idx_positions_market_entity ON market_positions(market_id, entity_name);
+CREATE INDEX idx_positions_entity ON market_positions(entity_name);
+CREATE INDEX idx_scores_entity ON market_scores(entity_name);
+CREATE INDEX idx_scores_market ON market_scores(market_id);
+
+CREATE VIRTUAL TABLE markets_fts USING fts5(question, category, content=markets, content_rowid=seq);
+CREATE TRIGGER markets_fts_ai AFTER INSERT ON markets BEGIN
+  INSERT INTO markets_fts(rowid, question, category) VALUES (new.seq, new.question, new.category);
+END;
+CREATE TRIGGER markets_fts_ad AFTER DELETE ON markets BEGIN
+  INSERT INTO markets_fts(markets_fts, rowid, question, category) VALUES ('delete', old.seq, old.question, old.category);
+END;
+CREATE TRIGGER markets_fts_au AFTER UPDATE ON markets BEGIN
+  INSERT INTO markets_fts(markets_fts, rowid, question, category) VALUES ('delete', old.seq, old.question, old.category);
+  INSERT INTO markets_fts(rowid, question, category) VALUES (new.seq, new.question, new.category);
+END;
+INSERT INTO markets_fts(markets_fts) VALUES ('rebuild');
+`,
+  },
+  // Migration 145: every `forecast <question>` answer is kept (the full answer
+  // object is the audit trail), optionally linked to the resolver Sample id it
+  // resolves on; the `forecast-question` calibration finder scores it when
+  // that Sample resolves (src/resolvers/calibration.ts).
+  {
+    version: 145,
+    sql: `
+CREATE TABLE forecast_answers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_name TEXT NOT NULL,
+  question TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('probability', 'number')),
+  probability REAL,
+  mean REAL,
+  sd REAL,
+  answer_json TEXT NOT NULL,
+  sample_id TEXT,
+  created_at INTEGER NOT NULL,
+  resolved_at INTEGER,
+  outcome_json TEXT,
+  score REAL
+);
+CREATE INDEX idx_forecast_answers_open_sample ON forecast_answers(sample_id) WHERE resolved_at IS NULL;
+CREATE INDEX idx_forecast_answers_entity ON forecast_answers(entity_name, created_at);
+`,
+  },
 ];
+
+/** Migration 143 body — self-contained so later edits to db-notes never change it. */
+function hashMemApiKeySecrets(db: Database): void {
+  const rows = db.query("SELECT id, secret FROM mem_api_keys").all() as {
+    id: string;
+    secret: string;
+  }[];
+  const update = db.prepare("UPDATE mem_api_keys SET secret = ? WHERE id = ?");
+  for (const row of rows) {
+    if (row.secret.startsWith("sha256:")) continue;
+    const digest = createHash("sha256").update(row.secret, "utf8").digest("hex");
+    update.run(`sha256:${digest}`, row.id);
+  }
+}
 export const SCHEMA_VERSION = FORWARD_MIGRATIONS.at(-1)?.version ?? SCHEMA_BASELINE_VERSION;
 
 /** Full upgrade history; fresh databases use SCHEMA_BASELINE in one transaction. */

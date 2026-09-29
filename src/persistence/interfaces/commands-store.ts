@@ -7,7 +7,6 @@ import type { ExactKeys } from "./exact-keys";
 /** Dynamic commands (`db-commands.ts`). */
 export interface CommandsStore {
   saveCommandSource(opts: { id: string; name: string; source: string; createdBy: string }): void;
-  getCommand(id: string): CommandSourceRow | undefined;
   getCommandByName(name: string): CommandSourceRow | undefined;
   listCommands(): CommandSourceRow[];
   markCommandValid(name: string): void;
@@ -20,7 +19,6 @@ export interface CommandsStore {
 /** Runtime mirror of `CommandsStore`'s method names — the drift test compares it to the facade. */
 export const COMMANDS_STORE_METHODS = [
   "saveCommandSource",
-  "getCommand",
   "getCommandByName",
   "listCommands",
   "markCommandValid",

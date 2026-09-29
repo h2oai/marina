@@ -50,6 +50,7 @@ import {
   isInternalCaller,
   json,
   type PassthruAuthResult,
+  readModelJsonBody,
   SSE_HEADERS,
 } from "./shared";
 import { proxyToUpstream } from "./upstream";
@@ -120,8 +121,10 @@ export async function handleResponsesCreate(
 ): Promise<Response> {
   trimResponseIndex();
   const owner = responseOwnerKey(auth);
+  const read = await readModelJsonBody(req);
+  if (!read.ok) return read.response;
   try {
-    const body = (await req.json()) as {
+    const body = read.body as {
       model?: string;
       input?: unknown;
       instructions?: string;
@@ -371,7 +374,7 @@ async function runResponsesPassthru(
       body,
       ec.passthruModel || undefined,
       passthruTraceOptions(prep),
-      passthruUpstreamHints(prep),
+      { ...passthruUpstreamHints(prep), clientSignal: req.signal },
     ));
   if (!resp.ok) {
     let message = resp.statusText || "Upstream request failed";

@@ -111,22 +111,37 @@ function noulOf(
   return a?.type === "noul" ? a.noul : undefined;
 }
 
-/** Gate verdict from the gate answers. `answers` undefined ⇒ the backend failed ⇒ block. */
+/**
+ * Gate verdict from the gate answers. Fails CLOSED: `answers` undefined (the
+ * backend failed) or ANY asked gate question left unanswered (or answered with
+ * something other than a probability) ⇒ block. A backend that skips, say, the
+ * `unauthorized` question has not cleared the call on it.
+ */
 export function decideGate(
   answers: Record<string, DecisionAnswer> | undefined,
   policy: GatePolicy = DEFAULT_GATE_POLICY,
   questions: DecisionQuestions = GATE_QUESTIONS,
 ): GateVerdict {
   const signals: Record<string, number> = {};
+  const missing: string[] = [];
   for (const id of Object.keys(questions)) {
     const p = noulOf(answers, id);
-    if (p !== undefined) signals[id] = p;
+    if (p !== undefined && Number.isFinite(p)) signals[id] = p;
+    else missing.push(id);
   }
   const values = Object.values(signals);
   if (!answers || values.length === 0) {
     return {
       action: "block",
       reason: "Blocked: the decision gate could not score this call (fails closed).",
+      signals,
+    };
+  }
+  if (missing.length > 0) {
+    return {
+      action: "block",
+      reason: `Blocked: the decision gate left ${missing.join(", ")} unanswered (fails closed).`,
+      worst: Math.max(...values),
       signals,
     };
   }

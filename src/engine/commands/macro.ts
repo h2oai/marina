@@ -6,7 +6,12 @@ import { bold, dim, header, separator } from "../../net/ansi";
 import type { CommandDef, RoomContext } from "../../types";
 import type { CommandRouter } from "../command-router";
 
-export function macroCommand(macros: MacroManager, router: CommandRouter): CommandDef {
+export function macroCommand(
+  macros: MacroManager,
+  router: Pick<CommandRouter, "getDef">,
+  /** True when some loaded room provides a command of this name. */
+  isRoomCommand: (name: string) => boolean = () => false,
+): CommandDef {
   return {
     category: "Coordination",
     usage: ["macro create <name> <command>", "macro delete <name>", "macro list"],
@@ -42,12 +47,21 @@ export function macroCommand(macros: MacroManager, router: CommandRouter): Comma
             ctx.send(input.entity, "Usage: macro create <name> <command>");
             return;
           }
-          // Collision check — built-ins and aliases take priority
-          const existingCmd = router.getDef(name.toLowerCase());
+          // Collision check — built-ins, aliases and room commands take priority
+          // (the router resolves them first, so such a macro could never run).
+          const verb = name.toLowerCase();
+          const existingCmd = router.getDef(verb);
           if (existingCmd) {
             ctx.send(
               input.entity,
               `Cannot create macro "${name}" — conflicts with built-in command "${existingCmd.name}".`,
+            );
+            return;
+          }
+          if (isRoomCommand(verb)) {
+            ctx.send(
+              input.entity,
+              `Cannot create macro "${name}" — conflicts with a room command of the same name.`,
             );
             return;
           }
@@ -57,6 +71,13 @@ export function macroCommand(macros: MacroManager, router: CommandRouter): Comma
             return;
           }
           const command = tokens.slice(2).join(" ");
+          if (!command.split(";").some((part) => part.trim())) {
+            ctx.send(
+              input.entity,
+              "Cannot create an empty macro. Usage: macro create <name> <command>",
+            );
+            return;
+          }
           macros.create(name, input.entity, command);
           ctx.send(input.entity, `Created macro "${name}".`);
           return;

@@ -4,6 +4,7 @@
 import { category, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext, RoomId } from "../../types";
+import { getRank } from "../permissions";
 
 export function searchCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
@@ -53,7 +54,11 @@ export function searchCommand(deps: {
         );
       }
       if (deps.db) {
-        const dbResults = deps.db.globalSearch(query);
+        // Scoped to the caller: member channels and boards they can read.
+        const dbResults = deps.db.globalSearch(query, {
+          entityId: input.entity,
+          rank: getRank(entity),
+        });
         const sections: { type: string; label: string }[] = [
           { type: "board_post", label: "Board Posts" },
           { type: "channel_message", label: "Channel Messages" },

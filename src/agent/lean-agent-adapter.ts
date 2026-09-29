@@ -63,7 +63,7 @@ import {
 import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import { takeSettledProxyCall } from "../engine/proxy-settlement";
-import { dailyCapRefusal, recordSpend } from "../engine/spend-ledger";
+import { dailyCapRefusal, dailySpend, formatSpendUsd, recordSpend } from "../engine/spend-ledger";
 import { isLocalProfile } from "../engine/trust-profile";
 import {
   renderUnifiedContext,
@@ -117,7 +117,12 @@ import {
 } from "./loop-preferences";
 import { PlatformMemoryBackend, type PlatformNoteResult } from "./memory-platform";
 import { assertMarinaRemoteTargetAllowed, normalizeMarinaBaseUrl } from "./model-probe";
-import { type OutstandingRequest, OutstandingRequests } from "./outstanding-requests";
+import {
+  MAX_OUTSTANDING_REQUESTS,
+  OUTSTANDING_REQUEST_TTL_MS,
+  type OutstandingRequest,
+  OutstandingRequests,
+} from "./outstanding-requests";
 import { piModels } from "./pi-models";
 import {
   getLeanDiscoveryPrompt,
@@ -452,6 +457,12 @@ function parsePositiveInt(raw: string | undefined): number | undefined {
 
 /** Lowest context window we'll ever shrink to during overflow recovery. */
 const MIN_EFFECTIVE_CONTEXT = 4096;
+
+/**
+ * Backstop poll while the world connection is down. A reconnect wakes the
+ * cycle waiter at once; this only bounds how long a missed wake can park.
+ */
+export const DISCONNECTED_POLL_MS = 10_000;
 
 /** Per-perception hot path — read the env once, not on every channel message. */
 const CHANNEL_REPLY_COOLDOWN_MS = Number(process.env.AGENT_CHANNEL_REPLY_COOLDOWN_MS) || 30_000;
@@ -1078,8 +1089,25 @@ export class LeanAgentAdapter implements AgentHandle {
     untrusted?: boolean;
   }> = [];
   private perceptionSeq = 0;
-  private readonly outstandingRequests = new OutstandingRequests();
+  private readonly outstandingRequests = new OutstandingRequests({
+    // A lapsed obligation stops forcing the fast tick and the reply nudges;
+    // the durable ledger prunes the same entries on its next write.
+    onDrop: (request, reason) => {
+      this.unsavedRequests.delete(request.id);
+      this.log.warn(
+        LEAN_AGENT_LOG_CATEGORY,
+        reason === "expired"
+          ? `reply owed to ${request.target} (${request.kind}) went unsettled for ${Math.round(OUTSTANDING_REQUEST_TTL_MS / 60_000)}m — no longer tracked`
+          : `reply ledger full (${MAX_OUTSTANDING_REQUESTS}) — evicted the oldest request from ${request.target}`,
+        { agent: this.name, requestId: request.id },
+      );
+    },
+  });
   private unsavedRequests = new Map<string, OutstandingRequest>();
+  /** One log line per run when the per-turn spend check ends it. */
+  private spendStopLogged = false;
+  /** Set once the SDK reports `reconnect_failed`; the loop never prompts again. */
+  private connectionGaveUp = false;
   private requestSave: Promise<void> | undefined;
   private readonly toolRequestEligibility = new Map<string, Set<string>>();
   private currentRunAdmittedTools = 0;
@@ -1489,7 +1517,10 @@ export class LeanAgentAdapter implements AgentHandle {
       // pi-agent-core ≥ 0.87: `finishTurn` replaces `shouldStopAfterTurn`. It
       // runs after the turn's tool results, before `turn_end`; the per-prompt
       // counter is bumped on `turn_start`, so the cap check is unchanged.
-      finishTurn: () => (this.shouldStopAfterTurn() ? { action: "end" as const } : undefined),
+      // The spend caps are re-checked here too: one prompt can run many turns,
+      // so a once-per-cycle check alone lets a run spend well past the cap.
+      finishTurn: (turn) =>
+        this.shouldStopAfterTurn(turn?.message) ? { action: "end" as const } : undefined,
       transformContext: contextTransform,
       // Mid-run compaction: `transformContext` shapes each request but never
       // shrinks the loop's working context, so a long tool-calling run keeps
@@ -1805,14 +1836,14 @@ export class LeanAgentAdapter implements AgentHandle {
               }
             }
             const perceptionId = ++this.perceptionSeq;
-            const requestCountBefore = this.outstandingRequests.size;
-            const requestId =
+            const tracked =
               !untrusted && (respond || priority >= 80)
-                ? this.outstandingRequests.add(p, perceptionId, text)
+                ? this.outstandingRequests.track(p, perceptionId, text)
                 : undefined;
+            const requestId = tracked?.id;
             // Repeated delivery of the same message/model-request ID is already tracked.
             // Re-enqueueing its upsert during settlement could resurrect it after the commit.
-            if (requestId && this.outstandingRequests.size === requestCountBefore) return;
+            if (tracked && !tracked.isNew) return;
             if (requestId) {
               const request = this.outstandingRequests.entries().find((r) => r.id === requestId)!;
               this.unsavedRequests.set(requestId, { ...request });
@@ -1883,11 +1914,51 @@ export class LeanAgentAdapter implements AgentHandle {
         (session.activeEvolutionSessions ?? []).map((item) => item.id),
       );
       this.syncEvolutionTool();
+      this.gameState.setConnectionStatus("connected", this.client.getUrl());
+      // A loop parked on the disconnected wait resumes now, not a poll later.
+      this.cycleWaiter.wake();
     });
+
+    // The SDK stopped retrying: nothing this agent does can reach the world
+    // again, so model calls would be pure spend. Stop the loop for good.
+    this.client.on("reconnect_failed", () => this.handleConnectionGaveUp());
 
     this.client.on("error", (error: Error) => {
       this.emitEvent({ type: "error", error: error.message, context: "websocket" });
     });
+  }
+
+  /**
+   * Model calls pause while the world connection is down: a prompt could not
+   * deliver a single tool call, and a loop that keeps prompting only spends.
+   * Returns true when the cycle must be skipped.
+   */
+  private connectionUnavailable(): boolean {
+    if (this.connectionGaveUp) return true;
+    return !this.client.isConnected();
+  }
+
+  /** The SDK exhausted its reconnect attempts: stop cleanly and say why. */
+  private handleConnectionGaveUp(): void {
+    if (this.connectionGaveUp) return;
+    this.connectionGaveUp = true;
+    const reason = `world connection lost and reconnect gave up (${this.client.getUrl()}) — autonomous loop stopped; restart with \`agent restart ${this.name}\``;
+    this.gameState.setConnectionStatus("disconnected");
+    this.log.error(LEAN_AGENT_LOG_CATEGORY, reason, { agent: this.name });
+    const wasRunning = this.autonomousMode || this.autonomousLoopRunning;
+    this.autonomousLoopRunning = false;
+    this.autonomousMode = false;
+    this.stopCheckpointTimer();
+    this.cycleWaiter.wake();
+    // Cancel an in-flight prompt: its tool calls cannot reach the world.
+    this.agent.abort();
+    this.consecutiveLoopErrors = 3;
+    this.lastErrorReason = reason;
+    this.noteError(reason);
+    // The spawner cannot be told over the dead connection; the runtime relays
+    // this event as `agent_error` to every observer (dashboard, MCP, peers).
+    this.emitEvent({ type: "error", error: reason, context: "connection" });
+    if (wasRunning) this.emitStatusChange("error");
   }
 
   private syncEvolutionTool(): void {
@@ -1945,7 +2016,23 @@ export class LeanAgentAdapter implements AgentHandle {
     });
   }
 
-  private shouldStopAfterTurn(): boolean {
+  private shouldStopAfterTurn(turnMessage?: unknown): boolean {
+    const spendBreach = this.turnSpendBreach(turnMessage);
+    if (spendBreach) {
+      this.runYielded = true;
+      if (!this.spendStopLogged) {
+        this.spendStopLogged = true;
+        this.log.warn(
+          LEAN_AGENT_LOG_CATEGORY,
+          `${spendBreach} — ending the run after this turn; the loop pauses before its next model call`,
+          { agent: this.name },
+        );
+      }
+      // The next cycle's pause check enters the spend-cap pause (and tells the
+      // spawner); wake it so that happens now rather than a full delay later.
+      this.cycleWaiter.wake();
+      return true;
+    }
     if (
       this.currentPromptTurns < MAX_TURNS_PER_PROMPT &&
       this.currentRunToolCalls < this.runToolCallCap()
@@ -2174,6 +2261,15 @@ export class LeanAgentAdapter implements AgentHandle {
         await this.pauseSleep(this.computeDynamicDelay());
         if (!this.autonomousLoopRunning || !this.autonomousMode) break;
 
+        // No model call while the world connection is down: nothing the model
+        // did could be delivered. A permanent failure has already stopped the
+        // loop; a transient one waits (a reconnect wakes the waiter).
+        if (this.connectionUnavailable()) {
+          if (this.connectionGaveUp) break;
+          await this.pauseSleep(DISCONNECTED_POLL_MS);
+          continue;
+        }
+
         // Lifetime model-call budget: when spent, pause instead of prompting.
         // The agent stays connected and inspectable (`agent status`, memory,
         // notes all intact) — it just never wakes the LLM again. Cheap idle:
@@ -2268,6 +2364,10 @@ export class LeanAgentAdapter implements AgentHandle {
           this.log.warn("agent", `Capability refresh unavailable: ${getErrorMessage(error)}`);
         }
         const continuationPrompt = await this.buildContinuationPrompt();
+        // The connection can drop while the prompt was being built. Buffered
+        // events are consumed; outstanding requests stay in the ledger and are
+        // restated on the next prompt.
+        if (this.connectionUnavailable()) continue;
 
         // Hard-bound the prompt so a hung upstream can't wedge the loop.
         // When the timeout fires we call agent.abort() which propagates
@@ -3589,6 +3689,7 @@ The goal is a smaller, sharper memory — not more notes.`;
         this.currentRunToolCalls = 0;
         this.currentRunAdmittedTools = 0;
         this.runYielded = false;
+        this.spendStopLogged = false;
         this.toolRequestEligibility.clear();
         this.currentRunChannelSends = 0;
         this.currentPromptTurns = 0;
@@ -4293,9 +4394,12 @@ The goal is a smaller, sharper memory — not more notes.`;
     // leaves the running agent untouched.
     if (opts.model) await assertMarinaRemoteTargetAllowed(opts.model);
 
-    // Stop the current loop — abort in-flight prompt immediately.
+    // Stop the current loop — abort in-flight prompt immediately, and wake a
+    // parked cycle-delay sleep (as stop() does) so awaiting the loop below does
+    // not block for up to the idle delay.
     const wasAutonomous = this.autonomousMode;
     this.autonomousLoopRunning = false;
+    this.cycleWaiter.wake();
     this.agent.abort();
     await this.agent.waitForIdle().catch(() => {});
     if (this.autonomousLoopPromise) await this.autonomousLoopPromise;
@@ -4401,6 +4505,21 @@ The goal is a smaller, sharper memory — not more notes.`;
   private async pauseSleep(ms: number): Promise<void> {
     this.nextCycleAt = Date.now() + ms;
     await this.cycleWaiter.sleep(ms);
+  }
+
+  /**
+   * The per-turn spend check. `finishTurn` runs before `turn_end`, where the
+   * turn's own cost is recorded, so a direct-provider turn's cost is added to
+   * today's ledger total here; a proxied turn was already recorded by `/v1`.
+   */
+  private turnSpendBreach(turnMessage?: unknown): string | null {
+    const breach = this.checkSpendCaps();
+    if (breach) return breach;
+    const pending = extractTurnUsage(turnMessage).costUsd || this.pendingProviderCostUsd || 0;
+    if (pending <= 0) return null;
+    const today = dailySpend();
+    if (today.capUsd === undefined || today.spentUsd + pending < today.capUsd) return null;
+    return `daily spend cap reached (${formatSpendUsd(today.spentUsd + pending)} today including this turn ≥ ${formatSpendUsd(today.capUsd)}); resumes at 00:00 UTC`;
   }
 
   /** Per-agent then runtime-wide rolling-hour cap check; the breach text or null. */

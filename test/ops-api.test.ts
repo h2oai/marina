@@ -287,7 +287,16 @@ describe("GET /api/ops/overview", () => {
       mcpAuthRequired: false,
     });
     expect(body.security.limiters.map((l) => l.name).sort()).toEqual(
-      ["dashboard", "mcpSession", "mutation", "publicRead"].sort(),
+      [
+        "assetRead",
+        "authFailure",
+        "dashboard",
+        "mcpSession",
+        "modelRead",
+        "mutation",
+        "publicRead",
+        "setupStatus",
+      ].sort(),
     );
   });
 

@@ -25,7 +25,6 @@ export interface AgentsStore {
   }): void;
   getTrait(name: string): TraitRow | undefined;
   getAllTraits(): TraitRow[];
-  getTraitsByCategory(category: string): TraitRow[];
   deleteTrait(name: string): void;
   saveRole(opts: {
     name: string;
@@ -95,7 +94,6 @@ export const AGENTS_STORE_METHODS = [
   "saveTrait",
   "getTrait",
   "getAllTraits",
-  "getTraitsByCategory",
   "deleteTrait",
   "saveRole",
   "getRole",

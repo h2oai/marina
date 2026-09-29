@@ -28,10 +28,6 @@ export interface WitnessStore {
   listOpenWitnessRows(
     opts?: Parameters<typeof witnessDb.listOpenWitnessRows>[1],
   ): ReturnType<typeof witnessDb.listOpenWitnessRows>;
-  countAttestedDemonstrations(
-    entityId: string,
-    gate: string,
-  ): ReturnType<typeof witnessDb.countAttested>;
   revokeCompetence(entityId: string, gate: string): void;
 }
 
@@ -43,7 +39,6 @@ export const WITNESS_STORE_METHODS = [
   "consumeSupervisionWindow",
   "resolveWitnessRow",
   "listOpenWitnessRows",
-  "countAttestedDemonstrations",
   "revokeCompetence",
 ] as const satisfies readonly (keyof WitnessStore)[];
 

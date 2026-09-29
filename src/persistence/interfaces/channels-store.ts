@@ -110,7 +110,11 @@ export interface ChannelsStore {
   getGroupMember(groupId: string, entityId: string): GroupMemberRow | undefined;
   getEntityGroups(entityId: string): GroupRow[];
   updateGroupMemberRank(groupId: string, entityId: string, rank: number): void;
-  globalSearch(query: string): GlobalSearchResult[];
+  /** Scoped to what `viewer` can read; `null` searches public surfaces only. */
+  globalSearch(
+    query: string,
+    viewer: { entityId: string; rank: number } | null,
+  ): GlobalSearchResult[];
 }
 
 /** Runtime mirror of `ChannelsStore`'s method names — the drift test compares it to the facade. */

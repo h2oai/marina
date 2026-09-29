@@ -119,8 +119,14 @@ export type ClientEventMap = {
     disconnect: [];
     perception: [Perception];
     error: [Error];
+    /** Emitted once when automatic reconnection gives up (see `hasGivenUpReconnecting`). */
     reconnect_failed: [];
 };
+/**
+ * Transport state: `reconnecting` while automatic reconnection is still
+ * retrying, `failed` once it gave up (only a new `connect()` recovers).
+ */
+export type ConnectionState = "connected" | "reconnecting" | "failed" | "disconnected";
 type ClientEventName = keyof ClientEventMap;
 /**
  * Prefix for `tell`s that are lifecycle notices rather than conversational
@@ -181,6 +187,7 @@ export declare class MarinaClient {
     private pingTimer;
     private reconnectTimer;
     private reconnectAttempts;
+    private reconnectGaveUp;
     private commandProtocol;
     private commandSession;
     private legacyCommands;
@@ -189,6 +196,10 @@ export declare class MarinaClient {
     constructor(url: string, options?: ClientOptions);
     /** Check if connected to the server. */
     isConnected(): boolean;
+    /** True once automatic reconnection exhausted `maxReconnectAttempts`. */
+    hasGivenUpReconnecting(): boolean;
+    /** Current transport state; `failed` means reconnection gave up. */
+    getConnectionState(): ConnectionState;
     /** Get the server URL. */
     getUrl(): string;
     /** Negotiated when login/auth succeeds; no commands are replayed to detect support. */
@@ -618,7 +629,7 @@ export interface MarinaExtension {
 ```typescript
 export type { CapabilityManifest, CommandCatalogEntry } from "./capabilities.js";
 export { renderCapabilityRoster } from "./capabilities.js";
-export type { ClientOptions, CommandResult, RoomView, SessionInfo } from "./client.js";
+export type { ClientOptions, CommandResult, ConnectionState, RoomView, SessionInfo, } from "./client.js";
 export { CommandError, MarinaAgent, MarinaClient } from "./client.js";
 export type { CommandField, CommandForm, CommandUsage } from "./command-forms.js";
 export { commandFormPrefix, compileCommandForms, composeCommand, matchCommandForm, } from "./command-forms.js";

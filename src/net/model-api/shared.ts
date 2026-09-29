@@ -12,6 +12,7 @@ import type { Engine } from "../../engine/engine";
 import { isLocalProfile, isOpenApiMode } from "../../engine/trust-profile";
 import { buildAliasMap } from "../compat-profiles";
 import { corsHeaders } from "../cors";
+import { type JsonBodyResult, type PeerAddressSource, readJsonBody } from "../http-utils";
 import { MEMORY_RECEIPT_HEADER } from "../memory-receipt";
 import {
   type OpenAIErrorOptions,
@@ -152,7 +153,20 @@ function getApiKeyEntries(): KeyEntry[] | null {
   return entries.length > 0 ? entries : null;
 }
 
-type AuthOutcome = { error: Response } | { auth: PassthruAuthResult };
+type AuthOutcome = { error: Response; credentialRejected?: true } | { auth: PassthruAuthResult };
+
+/**
+ * True when the request carries the process's internal model token as its
+ * bearer. Constant-time; an unset/empty internal token never matches (so a
+ * missing token can never turn into a literal `Bearer undefined` bypass).
+ */
+export function hasInternalBearer(req: Request): boolean {
+  const internal = getInternalModelToken();
+  if (!internal) return false;
+  const auth = req.headers.get("Authorization");
+  if (!auth?.startsWith("Bearer ")) return false;
+  return secretsEqual(auth.slice(7), internal);
+}
 
 export function authenticate(req: Request): AuthOutcome {
   // Accept internal token from room agents — always valid, no config needed
@@ -190,7 +204,7 @@ export function authenticate(req: Request): AuthOutcome {
     if (secretsEqual(token, e.secret)) matched = e;
   }
   if (!matched) {
-    return { error: errorJson(401, "Invalid API key") };
+    return { error: errorJson(401, "Invalid API key"), credentialRejected: true };
   }
   return {
     auth: {
@@ -211,19 +225,8 @@ export function generateRequestId(): string {
   return `req-${crypto.randomUUID().slice(0, 8)}`;
 }
 
-export type PeerAddr = { requestIP?: (req: Request) => { address: string } | null };
-
-export function extractIp(req: Request, server?: PeerAddr): string {
-  // Trust forwarding headers only behind an explicit trusted proxy; otherwise
-  // use the real socket peer so a direct caller can't spoof X-Forwarded-For to
-  // land in a fresh rate-limit bucket and evade the per-IP throttle.
-  if (process.env.MARINA_TRUST_PROXY === "true") {
-    const fwd = req.headers.get("x-forwarded-for");
-    const hdr = (fwd ? fwd.split(",")[0]!.trim() : null) ?? req.headers.get("x-real-ip");
-    if (hdr) return hdr;
-  }
-  return server?.requestIP?.(req)?.address ?? "unknown";
-}
+/** The listener's peer-address source (Bun server); see `clientIp` in http-utils.ts. */
+export type PeerAddr = PeerAddressSource;
 
 export function json(data: unknown, status = 200, extra?: Record<string, string>): Response {
   return Response.json(data, {
@@ -238,6 +241,68 @@ export function json(data: unknown, status = 200, extra?: Record<string, string>
  *  it is inferred from status + message unless given explicitly. */
 export function errorJson(status: number, message: string, opts?: OpenAIErrorOptions): Response {
   return json(openaiErrorBody(status, message, opts), status);
+}
+
+/**
+ * JSON-object request body for a model-API route through the shared bounded
+ * reader (`http-utils.readJsonBody`), answered in the OpenAI error envelope:
+ * malformed JSON or a non-object is 400 `invalid_request_error`, a body over
+ * the cap is 413. `maxBytes` defaults to `MARINA_MAX_REQUEST_BODY_BYTES`.
+ */
+export function readModelJsonBody(req: Request, maxBytes?: number): Promise<JsonBodyResult> {
+  return readJsonBody(req, {
+    maxBytes,
+    errorResponse: (status, _code, message) => errorJson(status, message),
+  });
+}
+
+// --- Upstream deadlines ---
+
+/** Default deadline for one proxied upstream call (reasoning models can be slow). */
+export const DEFAULT_UPSTREAM_TIMEOUT_MS = 300_000;
+
+/** `MARINA_UPSTREAM_TIMEOUT_MS` (default 300 s); junk falls back to the default. */
+export function upstreamTimeoutMs(): number {
+  const raw = process.env.MARINA_UPSTREAM_TIMEOUT_MS;
+  const n = raw ? Number(raw) : Number.NaN;
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_UPSTREAM_TIMEOUT_MS;
+}
+
+/**
+ * Abort handle for one upstream call: fires on the deadline or when the
+ * client's own request signal aborts (a non-streaming caller that
+ * disconnected). `settle()` disarms both — call it once the response headers
+ * arrived for a stream (the stream's own cancel then owns its lifetime) or
+ * once a non-streaming body has been read.
+ */
+export interface UpstreamAbort {
+  signal: AbortSignal;
+  settle(): void;
+  /** True when the deadline (not the client) fired. */
+  timedOut(): boolean;
+  /** True when the client disconnected. */
+  clientGone(): boolean;
+}
+
+export function upstreamAbort(clientSignal?: AbortSignal): UpstreamAbort {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort(new DOMException("Upstream request timed out", "TimeoutError"));
+  }, upstreamTimeoutMs());
+  const onClientAbort = () => controller.abort(clientSignal?.reason);
+  if (clientSignal?.aborted) onClientAbort();
+  else clientSignal?.addEventListener("abort", onClientAbort, { once: true });
+  return {
+    signal: controller.signal,
+    settle() {
+      clearTimeout(timer);
+      clientSignal?.removeEventListener("abort", onClientAbort);
+    },
+    timedOut: () => timedOut,
+    clientGone: () => clientSignal?.aborted === true,
+  };
 }
 
 /** 400 for a request parameter this route cannot honor (never silently dropped). */

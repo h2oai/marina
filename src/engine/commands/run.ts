@@ -2,10 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { dim, error as fmtError } from "../../net/ansi";
+import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import { getErrorMessage } from "../errors";
 import { getRank } from "../permissions";
+import { checkGateForExecution, recordGateExecution } from "../safety-gates";
 import type { ShellRuntime } from "../shell-runtime";
+import { isLocalUngated } from "../trust-profile";
 
 const HELP = `Execute shell commands.
 Gated capability: earn it via \`witness request agent.run\` or an operator grant (see \`standing\`).
@@ -22,6 +25,32 @@ Examples:
 export interface RunDeps {
   getEntity: (id: string) => Entity | undefined;
   shellRuntime: ShellRuntime;
+  /** Gate ledger for `run raw`'s `shell.exec` check; absent ⇒ the sovereign rank floor. */
+  db?: MarinaDB;
+}
+
+/**
+ * The `shell.exec` gate for a raw `sh -c` string, checked imperatively and
+ * recorded on a pass. It behaves as the gate does everywhere: passes under
+ * the local-ungated profile, is part of the open-posture core (never passed
+ * by `open`), and a refusal raises a challenge rather than a wall. Without a
+ * database (no gate ledger) the sovereign rank stands in, as before — shell
+ * execution is core, so `open` does not lift it; the local profile does.
+ */
+export function shellExecRefusal(
+  db: MarinaDB | undefined,
+  entity: Entity,
+  evidence: string,
+): string | undefined {
+  if (!db) {
+    return getRank(entity) >= 9 || isLocalUngated()
+      ? undefined
+      : "Raw shell mode requires sovereign rank (9).";
+  }
+  const gate = checkGateForExecution(db, entity.id, "shell.exec");
+  if (!gate.ok) return gate.reason ?? 'Gate "shell.exec" denied.';
+  recordGateExecution(db, entity.id, "shell.exec", gate, evidence.slice(0, 200));
+  return undefined;
 }
 
 export function runCommand(deps: RunDeps): CommandDef {
@@ -67,16 +96,17 @@ export function runCommand(deps: RunDeps): CommandDef {
         return;
       }
 
-      // run raw <command string> — sovereign only
+      // run raw <command string> — a full `sh -c` string, so it takes the
+      // `shell.exec` gate on top of the command's own `agent.run` gate.
       if (sub === "raw") {
-        const rank = getRank(entity);
-        if (rank < 9) {
-          ctx.send(eid, "Raw shell mode requires sovereign rank (9).");
-          return;
-        }
         const commandString = tokens.slice(1).join(" ");
         if (!commandString) {
           ctx.send(eid, "Usage: run raw <command string>");
+          return;
+        }
+        const refusal = shellExecRefusal(deps.db, entity, `run raw ${commandString}`);
+        if (refusal) {
+          ctx.send(eid, refusal);
           return;
         }
         try {

@@ -61,8 +61,10 @@ export function commandManifest(
       aliases: [],
       category: "This room",
       help: "Command provided by this room. Ask here for usage.",
-      minRank: router.getDef(name)?.minRank ?? 0,
-      gate: router.getDef(name)?.gate,
+      // Nor its rank floor or gate: the command phase runs a room handler
+      // under its own (empty) definition.
+      minRank: 0,
+      gate: undefined,
       owner: "room",
       scope: "room",
       revision: router.revision,

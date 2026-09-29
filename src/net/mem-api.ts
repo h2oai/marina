@@ -10,11 +10,16 @@
  * Auth modes:
  *   - MARINA_OPEN_API=true and MEM_API_KEYS unset → agent name from X-Agent-Name (dev mode)
  *   - MEM_API_KEYS set → Bearer token auth, key maps to agent namespace
- *   - DB-managed keys → created via POST /mem/keys (requires admin secret)
+ *   - DB-managed keys → created via POST /mem/keys by an operator: a Marina
+ *     session (or the desktop operator credential) that passes the same
+ *     `key.manage` authorization as the dashboard key surface. The secret is
+ *     returned once and stored only as a sha256 digest (migration 143).
  */
 
+import { randomBytes } from "node:crypto";
 import type { RateLimiter } from "../auth/rate-limiter";
 import { secretsEqual } from "../auth/secret-compare";
+import type { Engine } from "../engine/engine";
 import { sanitizeEntityName } from "../engine/entity-name";
 import { isOpenApiMode } from "../engine/trust-profile";
 import { memoryAccess } from "../memory/access";
@@ -22,17 +27,46 @@ import { findDurableTwin } from "../memory/legacy-projection";
 import { expandMemoryRecall } from "../memory/retrieval";
 import { buildUnifiedContext, type UnifiedScope } from "../memory/unified-context";
 import type { MarinaDB } from "../persistence/database";
+import { authenticateRequest } from "./auth-middleware";
 import { corsHeaders } from "./cors";
+import { authorizePrivileged } from "./dashboard-api/shared";
+import {
+  authFailuresExhausted,
+  clientIp,
+  errorBody,
+  type PeerAddressSource,
+  readJsonBody,
+  recordAuthFailure,
+  safeDecodeURIComponent,
+  withErrorCode,
+} from "./http-utils";
 import { localModelApiKey } from "./model-api/shared";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function json(data: unknown, status = 200): Response {
-  return Response.json(data, { status, headers: corsHeaders(null) });
+  return Response.json(withErrorCode(data, status), { status, headers: corsHeaders(null) });
 }
 
-function error(status: number, message: string): Response {
-  return json({ error: message }, status);
+/** Error envelope `{ error, code }`; `code` defaults to the status mapping. */
+function error(status: number, message: string, code?: string): Response {
+  return json(errorBody(status, message, code), status);
+}
+
+/** JSON-object body through the shared bounded reader, in this surface's shape. */
+async function readBody(req: Request): Promise<Record<string, unknown> | Response> {
+  const read = await readJsonBody(req, {
+    errorResponse: (status, code, message) => error(status, message, code),
+  });
+  return read.ok ? read.body : read.response;
+}
+
+/** A percent-decoded path segment, or a 400 for a malformed escape (`%E0`). */
+function decodeSegment(raw: string): string | Response {
+  return (
+    safeDecodeURIComponent(raw) ??
+    error(400, "Malformed percent-encoding in request path", "invalid_path_encoding")
+  );
 }
 
 /** Shared validation for a note body (`content`, optional `importance` 1–10, `type`). */
@@ -209,6 +243,12 @@ const API_DESCRIPTION = {
       "GET /mem": { description: "This API description (no auth required)" },
       "GET /mem/health": { description: "Health check (no auth required)" },
       "GET /mem/stats": { description: "Your memory namespace stats" },
+      "POST /mem/keys": {
+        description:
+          "Operator only: mint a DB-managed key for an agent namespace. Authenticate with a " +
+          "Marina session bearer that holds key.manage (or is an admin). The secret is shown once.",
+        body: { agent: "string (required) — namespace the key maps to" },
+      },
     },
   },
   note_types: ["observation", "fact", "decision", "inference", "skill", "episode", "principle"],
@@ -227,7 +267,7 @@ const API_DESCRIPTION = {
 // ─── Auth ────────────────────────────────────────────────────────────────────
 
 interface MemApiKeySet {
-  keys: Map<string, string>; // secret → agent_name
+  keys: { secret: string; agent: string }[];
 }
 
 // Parsed once per distinct env value: the raw string is the cache key, so a
@@ -244,18 +284,31 @@ function getEnvKeys(): MemApiKeySet | null {
     cachedEnvKeys = null;
     return null;
   }
-  const keys = new Map<string, string>();
+  const keys: { secret: string; agent: string }[] = [];
   for (const pair of raw.split(",")) {
     const [secret, agent] = pair.trim().split(":");
-    if (secret && agent) {
-      keys.set(secret.trim(), agent.trim());
-    }
+    if (secret?.trim() && agent?.trim()) keys.push({ secret: secret.trim(), agent: agent.trim() });
   }
-  cachedEnvKeys = keys.size > 0 ? { keys } : null;
+  cachedEnvKeys = keys.length > 0 ? { keys } : null;
   return cachedEnvKeys;
 }
 
-function authenticate(req: Request, db: MarinaDB): { agent: string } | { error: Response } {
+/**
+ * Constant-time membership over the env key set: every configured secret is
+ * compared (no early exit), so timing reveals neither whether nor which key
+ * matched.
+ */
+function matchEnvKey(envKeys: MemApiKeySet, token: string): string | undefined {
+  let agent: string | undefined;
+  for (const entry of envKeys.keys) {
+    if (secretsEqual(token, entry.secret)) agent = entry.agent;
+  }
+  return agent;
+}
+
+type MemAuthOutcome = { agent: string } | { error: Response; credentialRejected?: true };
+
+function authenticate(req: Request, db: MarinaDB): MemAuthOutcome {
   const envKeys = getEnvKeys();
 
   // Check Bearer token first
@@ -265,7 +318,7 @@ function authenticate(req: Request, db: MarinaDB): { agent: string } | { error: 
 
     // Check env keys
     if (envKeys) {
-      const agent = envKeys.keys.get(token);
+      const agent = matchEnvKey(envKeys, token);
       if (agent) return { agent };
     }
 
@@ -280,7 +333,7 @@ function authenticate(req: Request, db: MarinaDB): { agent: string } | { error: 
     if (dbKey) return { agent: dbKey.agent_name };
 
     // Token provided but invalid
-    return { error: error(401, "Invalid API key") };
+    return { error: error(401, "Invalid API key", "invalid_api_key"), credentialRejected: true };
   }
 
   // No token — if env keys are configured, auth is required
@@ -351,12 +404,21 @@ function detectIntent(query: string): {
 
 // ─── Route Handler ───────────────────────────────────────────────────────────
 
+/** Listener context for `handleMemApi`: the socket peer and the engine. */
+export interface MemApiOptions {
+  /** Bun server (`requestIP`) or resolved peer address — keys the failed-auth throttle. */
+  peer?: PeerAddressSource | string | null;
+  /** Needed for operator key management (`POST /mem/keys`). */
+  engine?: Engine;
+}
+
 export async function handleMemApi(
   url: URL,
   method: string,
   req: Request,
   db: MarinaDB,
   rateLimiter?: RateLimiter,
+  opts: MemApiOptions = {},
 ): Promise<Response | undefined> {
   const path = url.pathname;
 
@@ -370,9 +432,23 @@ export async function handleMemApi(
     return json({ status: "ok", service: "marina-mem", version: 1 });
   }
 
-  // All other routes require auth
+  // POST /mem/keys — operator key management, gated like the dashboard key
+  // surface (`key.manage` via authorizePrivileged; never the dev-open bypass).
+  if (path === "/mem/keys" && method === "POST") {
+    return await handleMemKeyCreate(req, db, opts.engine);
+  }
+
+  // All other routes require auth. A caller that has spent its failed-
+  // credential budget is refused before its credential is compared.
+  const ip = clientIp(req, opts.peer);
+  if (authFailuresExhausted(ip)) {
+    return error(429, "Too many failed authentication attempts. Please slow down.", "rate_limited");
+  }
   const auth = authenticate(req, db);
-  if ("error" in auth) return auth.error;
+  if ("error" in auth) {
+    if (auth.credentialRejected) recordAuthFailure(ip);
+    return auth.error;
+  }
   const agent = auth.agent;
   const access = memoryAccess(db, { name: agent });
 
@@ -385,7 +461,8 @@ export async function handleMemApi(
 
   // POST /mem/notes — create note
   if (path === "/mem/notes" && method === "POST") {
-    const body = (await req.json()) as Record<string, unknown>;
+    const body = await readBody(req);
+    if (body instanceof Response) return body;
     const parsed = parseNoteBody(body);
     if (parsed instanceof Response) return parsed;
     const { content, importance, noteType } = parsed;
@@ -556,7 +633,8 @@ export async function handleMemApi(
       return error(404, "Source note not found");
     }
 
-    const body = (await req.json()) as Record<string, unknown>;
+    const body = await readBody(req);
+    if (body instanceof Response) return body;
     const targetId = body.target as number | undefined;
     if (!targetId || typeof targetId !== "number") {
       return error(400, "target (note ID) is required");
@@ -599,7 +677,8 @@ export async function handleMemApi(
   // Core key routes: /mem/core/:key
   const coreKeyMatch = path.match(/^\/mem\/core\/([^/]+)$/);
   if (coreKeyMatch) {
-    const key = decodeURIComponent(coreKeyMatch[1]!);
+    const key = decodeSegment(coreKeyMatch[1]!);
+    if (key instanceof Response) return key;
 
     // GET /mem/core/:key
     if (method === "GET") {
@@ -610,7 +689,8 @@ export async function handleMemApi(
 
     // PUT /mem/core/:key
     if (method === "PUT") {
-      const body = (await req.json()) as Record<string, unknown>;
+      const body = await readBody(req);
+      if (body instanceof Response) return body;
       const value = body.value as string | undefined;
       if (value === undefined || typeof value !== "string") {
         return error(400, "value is required (string)");
@@ -631,7 +711,8 @@ export async function handleMemApi(
   // GET /mem/core/:key/history
   const coreHistMatch = path.match(/^\/mem\/core\/([^/]+)\/history$/);
   if (coreHistMatch && method === "GET") {
-    const key = decodeURIComponent(coreHistMatch[1]!);
+    const key = decodeSegment(coreHistMatch[1]!);
+    if (key instanceof Response) return key;
     const limit = Math.min(Number(url.searchParams.get("limit")) || 10, 100);
     const history = db.getCoreMemoryHistory(agent, key, limit);
     return json({ key, history, count: history.length });
@@ -647,7 +728,8 @@ export async function handleMemApi(
 
   // POST /mem/pools — create pool
   if (path === "/mem/pools" && method === "POST") {
-    const body = (await req.json()) as Record<string, unknown>;
+    const body = await readBody(req);
+    if (body instanceof Response) return body;
     const name = body.name as string | undefined;
     if (!name || typeof name !== "string") {
       return error(400, "name is required (string)");
@@ -663,14 +745,16 @@ export async function handleMemApi(
   // Pool routes: /mem/pools/:name/*
   const poolMatch = path.match(/^\/mem\/pools\/([^/]+)(\/.*)?$/);
   if (poolMatch) {
-    const poolName = decodeURIComponent(poolMatch[1]!);
+    const poolName = decodeSegment(poolMatch[1]!);
+    if (poolName instanceof Response) return poolName;
     const sub = poolMatch[2] ?? "";
     const pool = db.getMemoryPool(poolName);
     if (!pool || !access.pool(pool)) return error(404, "Pool not found");
 
     // POST /mem/pools/:name/notes — add note to pool
     if (sub === "/notes" && method === "POST") {
-      const body = (await req.json()) as Record<string, unknown>;
+      const body = await readBody(req);
+      if (body instanceof Response) return body;
       if (!access.pool(db.getMemoryPoolById(pool.id))) return error(404, "Pool not found");
       const parsed = parseNoteBody(body);
       if (parsed instanceof Response) return parsed;
@@ -719,4 +803,35 @@ export async function handleMemApi(
 
   // Not a /mem route we handle
   return undefined;
+}
+
+/**
+ * `POST /mem/keys { agent }` — mint a DB-managed memory API key bound to
+ * `agent`'s namespace. The caller authenticates as a Marina principal (session
+ * bearer or the desktop operator credential) and must pass `key.manage`
+ * exactly as `POST /api/keys` does. The secret appears once in the response.
+ */
+async function handleMemKeyCreate(
+  req: Request,
+  db: MarinaDB,
+  engine: Engine | undefined,
+): Promise<Response> {
+  if (!engine) return error(503, "Key management is not available on this listener");
+  const principal = authenticateRequest(req, engine);
+  if ("error" in principal) return error(401, "Operator session required", "unauthorized");
+  const denied = authorizePrivileged(engine, db, principal.entityId, "key.manage");
+  if (denied) {
+    return error(
+      403,
+      'Not authorized: this action requires an admin or the "key.manage" capability.',
+    );
+  }
+  const body = await readBody(req);
+  if (body instanceof Response) return body;
+  const agent = typeof body.agent === "string" ? sanitizeEntityName(body.agent) : "";
+  if (!agent) return error(400, "agent is required (letters, digits or underscores)");
+  const id = `memkey_${crypto.randomUUID().slice(0, 8)}`;
+  const secret = `mk_${randomBytes(32).toString("base64url")}`;
+  db.createMemApiKey(id, secret, agent);
+  return json({ id, agent, secret, note: "Store this secret now; it is not shown again." }, 201);
 }

@@ -66,9 +66,9 @@ async function deliverOrientation(
 ): Promise<void> {
   const orientation = participantOrientation(engine, id, protocol, resumed);
   if (!orientation) return;
-  await engine.processCommand(id, "look", { bypassModal: true });
+  await engine.dispatchCommand(id, "look", { bypassModal: true });
   if (engine.getConnectionForEntity(id) !== connection) return;
-  await engine.processCommand(id, "brief", { bypassModal: true });
+  await engine.dispatchCommand(id, "brief", { bypassModal: true });
   if (engine.getConnectionForEntity(id) !== connection) return;
   engine.sendToEntity(
     id,

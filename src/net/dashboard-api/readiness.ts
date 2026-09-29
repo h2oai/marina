@@ -7,7 +7,7 @@
 
 import { syncOperationalAlerts } from "../../engine/commands/ops";
 import { computeReadiness } from "../../engine/readiness";
-import { authorizePrivileged, type DashboardRouteContext, json } from "./shared";
+import { authorizePrivileged, type DashboardRouteContext, json, readSmallJsonBody } from "./shared";
 
 /** Readiness + operational alerts (ack / resolve / snooze). */
 export async function handleReadinessRoutes(
@@ -43,7 +43,8 @@ export async function handleReadinessRoutes(
   if (opsAlertSnoozeMatch && method === "POST" && db) {
     const denied = authorizePrivileged(engine, db, callerId, "admin.destructive");
     if (denied) return denied;
-    const body = (await req.json().catch(() => ({}))) as { durationMs?: unknown };
+    const body = await readSmallJsonBody<{ durationMs?: unknown }>(req, { allowEmpty: true });
+    if ("error" in body) return body.error;
     const durationMs = Number(body.durationMs);
     if (!Number.isFinite(durationMs) || durationMs < 60_000 || durationMs > 30 * 86_400_000) {
       return json({ error: "durationMs must be between 1 minute and 30 days" }, 400);

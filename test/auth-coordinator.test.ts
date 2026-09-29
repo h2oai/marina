@@ -44,7 +44,7 @@ function fixture() {
         connections.bindEntity(id, entity.id);
         return entity;
       },
-      processCommand: async () => {},
+      dispatchCommand: async () => true,
       buildContext: () => undefined,
       logEvent: (event) => events.push(event),
     },

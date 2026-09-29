@@ -297,53 +297,6 @@ export function searchTasks(
     .all(...params) as (TaskRow & { score: number })[];
 }
 
-/**
- * Append a task-completion event to the standing ledger. Idempotent on
- * `(entity_id, kind='task_complete', ref=taskId)` — re-recording the same
- * (entity, task) is a no-op. Cache invalidated so the next read recomputes.
- *
- * Migration 39 reshaped the underlying table from a task-only PK to a
- * generic event ledger; this function preserves the public API but writes
- * the new schema. For non-task contributions, use `Standing.record` in
- * `src/agent/standing.ts`.
- */
-export function recordStandingEarned(
-  db: Database,
-  entityId: string,
-  entityName: string,
-  taskId: number,
-  amount: number,
-): void {
-  db.run(
-    `INSERT INTO entity_standing
-       (entity_id, entity_name, kind, ref, task_id, amount, decay_class, earned_at)
-     VALUES (?, ?, 'task_complete', ?, ?, ?, 'standard', ?)
-     ON CONFLICT(entity_id, kind, ref) DO NOTHING`,
-    [entityId, entityName, String(taskId), taskId, amount, Date.now()],
-  );
-  // Invalidate the rollup cache for this entity so the next standing read
-  // sees the new contribution.
-  db.run(
-    `INSERT INTO entity_standing_cache (entity_id, standing, last_recomputed)
-     VALUES (?, 0, 0)
-     ON CONFLICT(entity_id) DO UPDATE SET last_recomputed = 0`,
-    [entityId],
-  );
-}
-
-/**
- * Raw lifetime-sum of standing for an entity, undecayed. Kept for the
- * leaderboard/orient callers that want the cumulative ledger view; the
- * decayed civic-standing value lives in `src/agent/standing.ts` via
- * `Standing.getStanding()`.
- */
-export function getEntityStanding(db: Database, entityId: string): number {
-  const row = db
-    .query("SELECT COALESCE(SUM(amount), 0) AS total FROM entity_standing WHERE entity_id = ?")
-    .get(entityId) as { total: number };
-  return row.total;
-}
-
 export function getStandingLeaderboard(
   db: Database,
   limit = 10,
@@ -370,14 +323,6 @@ export function rejectAllOtherClaims(db: Database, taskId: number, winnerEntityI
      WHERE task_id = ? AND entity_id != ? AND status IN ('claimed', 'submitted')`,
     [now, taskId, winnerEntityId],
   );
-}
-
-export function countCompletedTasks(db: Database, entityName: string): number {
-  return (
-    db
-      .query("SELECT COUNT(*) as c FROM tasks WHERE creator_name = ? AND status = 'completed'")
-      .get(entityName) as { c: number }
-  ).c;
 }
 
 // ─── Project Persistence ──────────────────────────────────────────────

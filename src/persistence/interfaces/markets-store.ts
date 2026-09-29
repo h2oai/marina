@@ -1,7 +1,12 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { MarketPositionRow, MarketRow } from "../db-markets";
+import type {
+  ForecastAnswerRow,
+  MarketPositionRow,
+  MarketRow,
+  saveForecastAnswer,
+} from "../db-markets";
 import type { ExactKeys } from "./exact-keys";
 
 /** Markets, positions and calibration scores (`db-markets.ts`). */
@@ -32,6 +37,17 @@ export interface MarketsStore {
   getEntityMarketScore(
     entityName: string,
   ): { avg_brier: number; markets_scored: number; correct_count: number } | undefined;
+  /** Forecast answers (migration 145): the audit trail of `forecast <question>`. */
+  saveForecastAnswer(input: Parameters<typeof saveForecastAnswer>[1]): number;
+  linkForecastToSample(id: number, entityName: string, sampleId: string): boolean;
+  listForecastAnswers(entityName: string, limit?: number): ForecastAnswerRow[];
+  openForecastsForSample(sampleId: string): ForecastAnswerRow[];
+  resolveForecastAnswer(
+    id: number,
+    outcomeJson: string,
+    score: number | null,
+    now?: number,
+  ): boolean;
 }
 
 /** Runtime mirror of `MarketsStore`'s method names — the drift test compares it to the facade. */
@@ -47,6 +63,11 @@ export const MARKETS_STORE_METHODS = [
   "recordMarketScore",
   "getCalibrationLeaderboard",
   "getEntityMarketScore",
+  "saveForecastAnswer",
+  "linkForecastToSample",
+  "listForecastAnswers",
+  "openForecastsForSample",
+  "resolveForecastAnswer",
 ] as const satisfies readonly (keyof MarketsStore)[];
 
 export const MARKETS_STORE_COMPLETE: ExactKeys<MarketsStore, typeof MARKETS_STORE_METHODS> = true;

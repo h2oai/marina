@@ -30,7 +30,13 @@ import type {
   ChronicleKind,
   EntityProfile,
 } from "./entity-profile-types";
-import { consumeHttpRate, rateLimitedResponse, UNKNOWN_CLIENT_IP } from "./http-utils";
+import {
+  badPathEncodingResponse,
+  consumeHttpRate,
+  rateLimitedResponse,
+  safeDecodeURIComponent,
+  UNKNOWN_CLIENT_IP,
+} from "./http-utils";
 
 /** Standing thresholds the rank ladder uses (mirrors src/agent/rank-progression.ts). */
 const RANK_THRESHOLDS = [5, 15, 40, 100];
@@ -66,10 +72,11 @@ export async function handleEntityApi(
   if (match) {
     // Public + unauthenticated ⇒ the only handle we have is the client IP.
     if (!consumeHttpRate("publicRead", clientKey)) return rateLimitedResponse(null);
-    const name = decodeURIComponent(match[1]!);
+    const name = safeDecodeURIComponent(match[1]!);
+    if (name === null) return badPathEncodingResponse();
     const profile = buildEntityProfile(name, db, engine);
     if (!profile) {
-      return Response.json({ error: "Entity not found" }, { status: 404 });
+      return Response.json({ error: "Entity not found", code: "not_found" }, { status: 404 });
     }
     return Response.json(profile, {
       headers: {

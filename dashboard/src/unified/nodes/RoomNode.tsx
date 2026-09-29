@@ -20,12 +20,13 @@
  */
 
 import { Handle, type NodeProps, Position } from "@xyflow/react";
+import { motion } from "motion/react";
 import { memo, useEffect, useMemo, useState } from "react";
 import { SvgAction } from "../../components/SvgAction";
 import { useActivity } from "../hooks/use-activity";
 import { useZoom } from "../hooks/use-zoom";
 import { getDistrictColor } from "../lib/crown-shapes";
-import { ROOM_MESSAGE_LIFETIME_MS, type RoomMessage } from "../lib/room-messages";
+import { pillFade, type RoomMessage } from "../lib/room-messages";
 
 /** Room data passed via ReactFlow node data prop. */
 export interface RoomNodeData {
@@ -1115,8 +1116,6 @@ const ROOM_MSG_KIND_COLOR: Record<RoomMessage["kind"], string> = {
   emote: "#ec4899", // fuchsia — matches INTERACTION_COLORS.emote
 };
 
-const PILL_FADE_HOLD = 0.65; // portion of lifetime before fade starts
-
 /**
  * Glass pill floating above the room platform. Shows sender + body of
  * the most recent `say` / `emote` inside the room. Dark background for
@@ -1133,32 +1132,34 @@ const RoomMessagePill = memo(function RoomMessagePill({
   districtColor: string;
   roomKey: string;
 }) {
-  const [now, setNow] = useState(Date.now());
+  // One motion keyframe animation drives the fade and one timeout unmounts
+  // the pill at the end of its lifetime — no per-pill polling interval.
+  const fade = useMemo(() => pillFade(Date.now() - message.timestamp), [message.timestamp]);
+  const [expiredAt, setExpiredAt] = useState<number | null>(null);
   useEffect(() => {
-    const interval = setInterval(() => setNow(Date.now()), 200);
-    return () => clearInterval(interval);
-  }, []);
-
-  const age = now - message.timestamp;
-  const t = age / ROOM_MESSAGE_LIFETIME_MS;
-  if (t >= 1) return null;
-  const opacity =
-    t < PILL_FADE_HOLD ? 1 : Math.max(0, 1 - (t - PILL_FADE_HOLD) / (1 - PILL_FADE_HOLD));
+    if (!fade) return;
+    const timer = setTimeout(() => setExpiredAt(message.timestamp), fade.remainingMs);
+    return () => clearTimeout(timer);
+  }, [fade, message.timestamp]);
+  if (!fade || expiredAt === message.timestamp) return null;
 
   const color = ROOM_MSG_KIND_COLOR[message.kind];
   const bodyClipped = message.body.length > 58 ? `${message.body.slice(0, 57)}…` : message.body;
 
   return (
-    <div
+    <motion.div
+      key={message.timestamp}
+      data-testid="room-message-pill"
+      initial={{ opacity: fade.opacity[0] }}
+      animate={{ opacity: fade.opacity }}
+      transition={{ duration: fade.remainingMs / 1000, times: fade.times, ease: "linear" }}
       style={{
         position: "absolute",
         top: -46,
         left: 60, // room node width/2 so the pill centers over the platform
-        transform: "translateX(-50%)",
+        x: "-50%",
         maxWidth: 260,
         pointerEvents: "none",
-        opacity,
-        transition: "opacity 0.2s ease-out",
         zIndex: 5,
       }}
     >
@@ -1184,6 +1185,6 @@ const RoomMessagePill = memo(function RoomMessagePill({
         </span>
         <span style={{ opacity: 0.92 }}>{bodyClipped}</span>
       </div>
-    </div>
+    </motion.div>
   );
 });

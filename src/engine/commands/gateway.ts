@@ -6,7 +6,7 @@ import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 import { getErrorMessage } from "../errors";
 import { type GatewayRuntime, validateGatewayUrl } from "../gateway-runtime";
-import { getRank } from "../permissions";
+import { rankFloorRefusal } from "../rank-floor";
 import { requiresPersistence } from "./command-messages";
 
 export function gatewayCommand(deps: {
@@ -34,8 +34,6 @@ export function gatewayCommand(deps: {
     handler: async (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
-
-      const rank = getRank(entity);
 
       if (!deps.db) {
         ctx.send(input.entity, requiresPersistence("gateways"));
@@ -126,8 +124,16 @@ export function gatewayCommand(deps: {
             return;
           }
 
-          if (gw.created_by !== entity.name && rank < 9) {
-            ctx.send(input.entity, "You can only remove gateways you created, or be sovereign.");
+          const removeFloor =
+            gw.created_by === entity.name
+              ? undefined
+              : rankFloorRefusal(
+                  entity,
+                  9,
+                  "You can only remove gateways you created, or be sovereign.",
+                );
+          if (removeFloor) {
+            ctx.send(input.entity, removeFloor);
             return;
           }
 

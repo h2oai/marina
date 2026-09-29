@@ -9,42 +9,17 @@
 
 import type { Engine } from "../../engine/engine";
 import type { MarinaDB } from "../../persistence/database";
-import type { Connection, Perception } from "../../types";
+import type { Connection, EntityId, Perception } from "../../types";
 import { federationSigningAvailable, signFederationDocument } from "../federation-crypto";
 import { formatPerception } from "../formatter";
+import { clientIp, consumeHttpRate } from "../http-utils";
 import {
   bearerToken,
   type CommandApiBody,
   type DashboardApiOptions,
-  extractIp,
   json,
   readCommandBody,
 } from "./shared";
-
-/**
- * Per-IP rate limit for the pre-auth /api/setup-status endpoint. The
- * endpoint reports instance metadata (world, agent count, entity count)
- * used by the dashboard's login screen. Legitimate polling is sparse;
- * this cap is tight enough to frustrate scraping.
- *
- * 20 requests per IP per minute — two orders of magnitude above normal
- * use, two orders below a scraper.
- */
-const SETUP_STATUS_WINDOW_MS = 60_000;
-const SETUP_STATUS_LIMIT = 20;
-const setupStatusHits = new Map<string, { count: number; windowStart: number }>();
-
-function setupStatusAllowed(ip: string): boolean {
-  const now = Date.now();
-  const entry = setupStatusHits.get(ip);
-  if (!entry || now - entry.windowStart > SETUP_STATUS_WINDOW_MS) {
-    setupStatusHits.set(ip, { count: 1, windowStart: now });
-    return true;
-  }
-  if (entry.count >= SETUP_STATUS_LIMIT) return false;
-  entry.count++;
-  return true;
-}
 
 function formatCommandText(perceptions: Perception[], render: unknown): string {
   const medium = render === "text" || render === "plaintext" ? "plaintext" : "markdown";
@@ -63,11 +38,6 @@ async function handleCommandIngress(
 ): Promise<Response> {
   const origin = req.headers.get("Origin");
   if (!command.trim()) return json({ error: "Command is required" }, 400, origin);
-
-  const ip = extractIp(req, peerIp);
-  if (engine.rateLimiter && !engine.rateLimiter.consume(`api:${ip}`)) {
-    return json({ error: "Rate limited. Please slow down." }, 429, origin);
-  }
 
   const token =
     typeof body.token === "string" && body.token.trim() ? body.token.trim() : bearerToken(req);
@@ -112,7 +82,19 @@ async function handleCommandIngress(
       return json({ error: "Rate limited. Please slow down." }, 429, origin);
     }
 
-    await engine.processCommand(session.entityId, command);
+    // Same bounded admission and per-entity FIFO as a WebSocket command: the
+    // HTTP ingress never jumps ahead of the entity's queued work.
+    const ran = await submitAndAwait(engine, session.entityId, command);
+    if (!ran) {
+      return json(
+        {
+          error: "World command capacity reached; command did not execute.",
+          code: "command_capacity",
+        },
+        503,
+        origin,
+      );
+    }
 
     // Deliberately omit the session token from the response. Named sessions can
     // still be continued by re-sending `name` (passwordless login re-binds the
@@ -135,6 +117,39 @@ async function handleCommandIngress(
 }
 
 /**
+ * Admit `command` through the engine's FIFO submit path and wait until it has
+ * run. Resolves `false` when admission refused it (capacity), rethrows a
+ * failure of the command itself.
+ */
+function submitAndAwait(engine: Engine, entityId: EntityId, command: string): Promise<boolean> {
+  const done = Promise.withResolvers<boolean>();
+  const admitted = engine.submitCommand(entityId, command, async () => {
+    try {
+      await engine.processCommand(entityId, command);
+      done.resolve(true);
+    } catch (error) {
+      done.reject(error);
+    }
+  });
+  if (!admitted) done.resolve(false);
+  return done.promise;
+}
+
+/**
+ * Per-IP budget for the pre-auth command ingress, spent BEFORE the body is
+ * read so an over-budget caller costs no parse. Shares the engine's
+ * `api:<ip>` bucket with the historic limiter key.
+ */
+function ingressAllowed(req: Request, engine: Engine, peerIp: string | undefined): boolean {
+  const ip = clientIp(req, peerIp);
+  return !engine.rateLimiter || engine.rateLimiter.consume(`api:${ip}`);
+}
+
+function ingressRateLimited(req: Request): Response {
+  return json({ error: "Rate limited. Please slow down." }, 429, req.headers.get("Origin"));
+}
+
+/**
  * Pre-auth route group, dispatched first by `handleDashboardApi` and in the
  * same order as before the split. Returns `undefined` when the path is not one
  * of these, so the caller falls through to the session gate.
@@ -150,8 +165,7 @@ export async function handlePreAuthRoutes(
 ): Promise<Response | undefined> {
   // Pre-auth endpoints (no session required — used by dashboard before login)
   if (url.pathname === "/api/setup-status" && method === "GET") {
-    const ip = extractIp(req, peerIp);
-    if (!setupStatusAllowed(ip)) {
+    if (!consumeHttpRate("setupStatus", clientIp(req, peerIp))) {
       return json({ error: "Too many requests" }, 429);
     }
     const hasLlmKey = engine.agentRuntime.isAvailable();
@@ -175,6 +189,7 @@ export async function handlePreAuthRoutes(
   // or reconnects as a normal entity, executes the raw world command, captures
   // perceptions, and returns the latest session token.
   if (url.pathname === "/api/command" && method === "POST") {
+    if (!ingressAllowed(req, engine, peerIp)) return ingressRateLimited(req);
     const body = await readCommandBody(req, opts);
     if ("error" in body) return body.error;
     if (typeof body.command !== "string") {
@@ -186,6 +201,7 @@ export async function handlePreAuthRoutes(
   // Convenience wrapper for product-shaped ask surfaces. Behavior still lives
   // in the world-native `ask` word, not in this HTTP route.
   if (url.pathname === "/api/ask" && method === "POST") {
+    if (!ingressAllowed(req, engine, peerIp)) return ingressRateLimited(req);
     const body = await readCommandBody(req, opts);
     if ("error" in body) return body.error;
     if (typeof body.query !== "string") {

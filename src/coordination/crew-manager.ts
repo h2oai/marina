@@ -37,6 +37,13 @@ import {
 
 /** Ephemeral crews idle longer than this get auto-dissolved. */
 const IDLE_GC_MS = 10 * 60 * 1000;
+/**
+ * An ephemeral crew that never left `assembling` (never dispatched) is kept
+ * for the owner to act on, but not forever: once it has been idle this long
+ * AND no invitation to it is still pending, `tick()` dissolves it. One day
+ * matches the default invitation TTL.
+ */
+const ASSEMBLING_GC_MS = 24 * 60 * 60 * 1000;
 
 /** Soft cap on active ephemeral crews per owner. Higher ranks can override. */
 export const DEFAULT_EPHEMERAL_CAP = 5;
@@ -119,6 +126,11 @@ export class CrewManager {
   private readonly byName = new Map<string, CrewId>();
   private readonly byMember = new Map<string /* agentName */, Set<CrewId>>();
   private readonly byOwner = new Map<EntityId, Set<CrewId>>();
+  /**
+   * PENDING invitations only, keyed `${crewId}:${agent}`. Settled ones
+   * (accepted / declined / expired) are persisted and dropped from memory, so
+   * the per-agent scan stays bounded by what is still open.
+   */
   private readonly invitations = new Map<string, CrewInvitation>();
   /** Per-(crew,member) stall offense counter. Standing only debits at >= 3. */
   private readonly memberOffenses = new Map<string, number>();
@@ -235,18 +247,35 @@ export class CrewManager {
     return invitation;
   }
 
+  /** The agent's pending invitations, newest first (lapsed ones expire here). */
   invitationsFor(agentName: string): CrewInvitation[] {
-    const now = this.now();
+    this.expireInvitations();
     const rows: CrewInvitation[] = [];
     for (const invitation of this.invitations.values()) {
-      if (invitation.status === "pending" && invitation.expiresAt <= now) {
-        invitation.status = "expired";
-        invitation.respondedAt = now;
-        this.persistInvitation(invitation);
-      }
       if (invitation.agentName.toLowerCase() === agentName.toLowerCase()) rows.push(invitation);
     }
     return rows.sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  /** Settle an invitation: persist its final state and drop it from memory. */
+  private settleInvitation(
+    key: string,
+    invitation: CrewInvitation,
+    status: CrewInvitation["status"],
+    now: number,
+  ): void {
+    invitation.status = status;
+    invitation.respondedAt = now;
+    this.persistInvitation(invitation);
+    this.invitations.delete(key);
+  }
+
+  /** Expire every lapsed pending invitation. */
+  private expireInvitations(now = this.now()): void {
+    for (const [key, invitation] of this.invitations) {
+      if (invitation.status !== "pending") this.invitations.delete(key);
+      else if (invitation.expiresAt <= now) this.settleInvitation(key, invitation, "expired", now);
+    }
   }
 
   respondToInvitation(
@@ -261,14 +290,10 @@ export class CrewManager {
     }
     const now = this.now();
     if (invitation.expiresAt <= now) {
-      invitation.status = "expired";
-      invitation.respondedAt = now;
-      this.persistInvitation(invitation);
+      this.settleInvitation(key, invitation, "expired", now);
       throw new CrewError("Crew invitation has expired", "invitation_expired");
     }
-    invitation.status = response;
-    invitation.respondedAt = now;
-    this.persistInvitation(invitation);
+    this.settleInvitation(key, invitation, response, now);
     if (response === "accepted") this.addMember(crewId, agentName, invitation.role);
     return invitation;
   }
@@ -670,6 +695,7 @@ export class CrewManager {
     if (crew.state === "dissolved") return;
     this.clearDepositFallbacks(id);
     this.workEvidence.delete(id);
+    this.dispatchCounts.delete(id);
     // Final roster sync: the pool (and its group) outlive the crew row, and
     // the group keeps whoever was in the crew at the end.
     this.syncCrewPoolGroup(crew);
@@ -1055,17 +1081,30 @@ export class CrewManager {
    * fully drops dissolved crews from the in-memory map.
    */
   tick(now = this.now()): void {
+    this.expireInvitations(now);
     for (const [id, crew] of this.crews) {
       if (crew.state === "dissolved") {
         this.crews.delete(id);
         continue;
       }
       if (crew.lifetime !== "ephemeral") continue;
-      if (crew.state === "assembling") continue; // never dispatched — keep until owner acts
+      if (crew.state === "assembling") {
+        // Never dispatched: kept for the owner while an invitation is open,
+        // then collected once it has sat idle past ASSEMBLING_GC_MS.
+        if (now - crew.lastActivityAt > ASSEMBLING_GC_MS && !this.hasPendingInvitations(id)) {
+          this.dissolve(id, "never dispatched");
+        }
+        continue;
+      }
       if (now - crew.lastActivityAt > IDLE_GC_MS) {
         this.dissolve(id, "idle timeout");
       }
     }
+  }
+
+  private hasPendingInvitations(id: CrewId): boolean {
+    for (const key of this.invitations.keys()) if (key.startsWith(`${id}:`)) return true;
+    return false;
   }
 
   /** Engine calls this when an agent stops, so we can tag departures correctly. */

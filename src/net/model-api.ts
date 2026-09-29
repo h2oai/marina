@@ -12,6 +12,13 @@ import type { Engine } from "../engine/engine";
 import { handleAnthropicMessages } from "./anthropic-inbound";
 import { handleDecisionModels, handleDecisions } from "./decisions-api";
 import { handleForecast } from "./forecast-api";
+import {
+  authFailuresExhausted,
+  clientIp,
+  consumeHttpRate,
+  recordAuthFailure,
+  SMALL_JSON_BODY_BYTES,
+} from "./http-utils";
 import { handleMediaApi } from "./media-api";
 import { handleOpenaiChat, runOpenaiChat } from "./model-api/chat-completions";
 import { listModels, openaiModelList } from "./model-api/models";
@@ -32,11 +39,12 @@ import {
 import {
   authenticate,
   errorJson,
-  extractIp,
   forwardPassthruHeaders,
+  hasInternalBearer,
   json,
   type PassthruAuthResult,
   type PeerAddr,
+  readModelJsonBody,
 } from "./model-api/shared";
 
 // Public surface consumed by other modules, scripts and tests (main.ts,
@@ -95,27 +103,42 @@ export async function handleModelApi(
   rateLimiter?: RateLimiter,
   server?: PeerAddr,
 ): Promise<Response | undefined> {
+  const ip = clientIp(req, server);
   // Authenticate (skipped for CORS preflight). Fails closed by default — see
   // `authenticate`. The resolved outcome is threaded to passthru handlers so
   // they can map the caller to a Marina entity (identity + context injection).
+  // A rejected credential spends the per-IP failed-auth budget; once it is
+  // spent the caller is refused before its credential is compared at all.
   let authResult: PassthruAuthResult | undefined;
   if (method !== "OPTIONS") {
+    // The internal model token (room agents on loopback) is never locked out
+    // by someone else's failed guesses from the same address.
+    if (!hasInternalBearer(req) && authFailuresExhausted(ip)) {
+      return errorJson(429, "Too many failed authentication attempts. Please slow down.", {
+        code: "rate_limit_exceeded",
+      });
+    }
     const outcome = authenticate(req);
-    if ("error" in outcome) return outcome.error;
+    if ("error" in outcome) {
+      if (outcome.credentialRejected) recordAuthFailure(ip);
+      return outcome.error;
+    }
     authResult = outcome.auth;
   }
 
-  // Per-IP rate limiting. Covers POST (mutation) plus the enumerable Responses
-  // state surface (GET/DELETE /v1/responses/:id) so a caller can't brute-force
-  // response ids or hammer delete unthrottled. Static reads (models/health)
-  // stay unlimited.
+  // Per-IP rate limiting. POST (mutation) plus the enumerable Responses state
+  // surface (GET/DELETE /v1/responses/:id) spend the model limiter so a caller
+  // can't brute-force response ids or hammer delete unthrottled; the cheap
+  // reads (models, tags, version, ps, health) spend the separate, roomier
+  // `modelRead` budget.
   const isResponsesStateOp =
     url.pathname.startsWith("/v1/responses/") && (method === "GET" || method === "DELETE");
   if (rateLimiter && (method === "POST" || isResponsesStateOp)) {
-    const ip = extractIp(req, server);
     if (!rateLimiter.consume(`model:${ip}`)) {
       return errorJson(429, "Rate limited. Please slow down.");
     }
+  } else if (method === "GET" && !consumeHttpRate("modelRead", ip)) {
+    return errorJson(429, "Rate limited. Please slow down.");
   }
 
   if (url.pathname.startsWith("/v1/media")) {
@@ -239,12 +262,9 @@ export async function handleModelApi(
 
   // Ollama: POST /api/show {model|name}
   if (url.pathname === "/api/show" && method === "POST") {
-    let body: { model?: unknown; name?: unknown };
-    try {
-      body = (await req.json()) as { model?: unknown; name?: unknown };
-    } catch {
-      return errorJson(400, "Invalid JSON body");
-    }
+    const read = await readModelJsonBody(req, SMALL_JSON_BODY_BYTES);
+    if (!read.ok) return read.response;
+    const body = read.body as { model?: unknown; name?: unknown };
     const ref = body.model ?? body.name;
     const found = findOllamaModel(listModels(engine), ref);
     if (!found) {

@@ -352,12 +352,44 @@ describe("evolve replicate — earned replication", () => {
     return cmd;
   }
 
+  // Replication spawns DETACHED (the runtime's 1 s spawn spacing must not hold
+  // the entity's command queue): wait for the final report, not the ack.
   const replicate = async (cmd: ReturnType<typeof evolveCommand>, line: string) => {
     out = [];
     await cmd.handler(ctx, input(line));
-    await until(() => out.length > 0);
+    await until(() => out.some((t) => !t.startsWith("Replicating run")));
     return out.join("\n");
   };
+
+  it("replicates without holding the command, and records one gate execution per command", async () => {
+    const cmd = await trialed({ cand: 0.9, inc: 0.7 });
+    cmd.handler(ctx, input("evolve evaluate scout 1 | won its trial"));
+    cmd.handler(ctx, input("evolve decide scout 1 accept"));
+    // Earned posture, no grant: the check passes optimistically and each
+    // recorded execution leaves one pending demonstration row.
+    db.revokeCompetence("e_op", "agent.spawn");
+    const taskId = db.createTask({ title: "t", creatorId: "e_op", creatorName: "Operator" });
+    db.recordStandingEarned("e_op", "Operator", taskId, 60);
+    const prior = process.env.MARINA_AUTONOMY;
+    process.env.MARINA_AUTONOMY = "earned";
+    try {
+      out = [];
+      await cmd.handler(ctx, input("evolve replicate scout 1 n:2"));
+      // The handler returned while the second spawn still waits out its spacing.
+      expect(spawned.length).toBeLessThan(2);
+      expect(out.join("\n")).toContain("Replicating run 1");
+      // A second replicate of the same run while this one runs is refused.
+      await cmd.handler(ctx, input("evolve replicate scout 1 n:1"));
+      expect(out.join("\n")).toContain("already replicating");
+      await until(() => out.some((t) => t.includes("Replicated run 1")));
+      expect(spawned).toHaveLength(2);
+      const pending = db.listOpenWitnessRows({ kind: "pending", gate: "agent.spawn" });
+      expect(pending).toHaveLength(1);
+    } finally {
+      if (prior === undefined) delete process.env.MARINA_AUTONOMY;
+      else process.env.MARINA_AUTONOMY = prior;
+    }
+  });
 
   it("refuses until the run is accepted, then spawns copies that record their lineage, within the per-run cap", async () => {
     const cmd = await trialed({ cand: 0.9, inc: 0.7 });

@@ -2,9 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { checkNoSelfHedge, kellySize, type OrderRecord } from "../src/engine/commands/position";
+import {
+  attemptOpen,
+  checkNoSelfHedge,
+  computeRealizedPnl,
+  kellySize,
+  type OrderRecord,
+  settleResolvedPositions,
+} from "../src/engine/commands/position";
 import { MarinaDB } from "../src/persistence/database";
-import { entityId } from "../src/types";
+import {
+  clearCalibrationFinders,
+  registerBuiltinCalibrationFinders,
+  runCalibration,
+} from "../src/resolvers/calibration";
+import { type Entity, entityId } from "../src/types";
 import { cleanupDb } from "./helpers";
 
 const TEST_DB = "test_position.db";
@@ -18,6 +30,7 @@ function seedOrder(
     action: "open" | "close";
     count: number;
     venue?: "kalshi" | "polymarket";
+    price?: number;
   },
 ): void {
   let board = db.getBoardByName("paper-orders");
@@ -32,7 +45,7 @@ function seedOrder(
     side: o.side,
     action: o.action,
     count: o.count,
-    price: 50,
+    price: o.price ?? 50,
     status: "paper",
     ts: 1000,
     by: "Alice",
@@ -116,6 +129,75 @@ describe("position — risk invariants", () => {
       expect(out.capApplied).toBe(true);
       expect(out.stakeUsd).toBe(10);
       expect(out.count).toBe(20); // floor(10 / 0.5)
+    });
+  });
+
+  describe("settlement on market resolution", () => {
+    beforeEach(() => {
+      clearCalibrationFinders();
+      registerBuiltinCalibrationFinders();
+    });
+    afterEach(() => clearCalibrationFinders());
+
+    const resolve = (id: string, outcome: "yes" | "no", ts = Date.now()) =>
+      runCalibration(db, {
+        kind: "resolving",
+        id,
+        ts,
+        status: "resolved",
+        value: { outcome },
+        source: "t",
+      });
+
+    it("books a losing leg at 0¢ once, and frees the ticker", () => {
+      seedOrder(db, { ticker: "T1", side: "yes", action: "open", count: 10, price: 40 });
+      resolve("kalshi/T1", "no");
+      expect(computeRealizedPnl(db, 0)).toBeCloseTo(-4, 9);
+      // Idempotent: the leg now holds nothing, so a repeat resolution books nothing.
+      resolve("kalshi/T1", "no");
+      expect(computeRealizedPnl(db, 0)).toBeCloseTo(-4, 9);
+      expect(checkNoSelfHedge(db, "kalshi", "T1", "no")).toBeNull();
+      // Another venue's ticker of the same name is untouched.
+      seedOrder(db, {
+        ticker: "T2",
+        side: "no",
+        action: "open",
+        count: 5,
+        price: 30,
+        venue: "polymarket",
+      });
+      resolve("kalshi/T2", "yes");
+      expect(checkNoSelfHedge(db, "polymarket", "T2", "yes")).toContain("No-self-hedge");
+    });
+
+    it("books a winning leg at 100¢, net of partial closes", () => {
+      seedOrder(db, { ticker: "T3", side: "no", action: "open", count: 10, price: 30 });
+      seedOrder(db, { ticker: "T3", side: "no", action: "close", count: 4, price: 30 });
+      const written = settleResolvedPositions(db, "kalshi", "T3", "no", 2000);
+      expect(written.map((r) => [r.action, r.count, r.price])).toEqual([["settle", 6, 100]]);
+      expect(computeRealizedPnl(db, 0)).toBeCloseTo((6 * (100 - 30)) / 100, 9);
+    });
+
+    it("counts settlement losses against the daily floor", async () => {
+      for (const [key, value] of [
+        ["bankroll", "1000"],
+        ["cap", "500"],
+        ["floor", "3"],
+      ]) {
+        db.setCoreMemory("Alice", key!, value!);
+      }
+      seedOrder(db, { ticker: "T4", side: "yes", action: "open", count: 10, price: 50 });
+      resolve("kalshi/T4", "no");
+      const alice = { name: "Alice" } as Entity;
+      const refused = await attemptOpen(db, alice, {
+        venue: "kalshi",
+        ticker: "T5",
+        side: "yes",
+        count: 1,
+        priceCents: 50,
+      });
+      expect(refused.ok).toBe(false);
+      expect(refused.message).toContain("Daily loss floor reached");
     });
   });
 });

@@ -24,6 +24,9 @@ test("context term statistics share bounded scans, escape LIKE patterns and refl
     });
     const terms = ["common", "scarce", "ordinary", "%", "_", "\\", "absent"];
     const query = spyOn(db.memoryRepository().raw, "query");
+    // Count note scans only; the cache's revision probe is a cheap PRAGMA read.
+    const scans = () =>
+      query.mock.calls.filter(([sql]) => String(sql).includes("numeric_notes")).length;
     try {
       expect([...distinctiveTerms(db, "Owner", terms)]).toEqual([
         "scarce",
@@ -32,7 +35,7 @@ test("context term statistics share bounded scans, escape LIKE patterns and refl
         "\\",
         "absent",
       ]);
-      expect(query).toHaveBeenCalledTimes(1);
+      expect(scans()).toBe(1);
       query.mockClear();
       expect(
         distinctiveTerms(
@@ -41,7 +44,7 @@ test("context term statistics share bounded scans, escape LIKE patterns and refl
           Array.from({ length: 80 }, (_, i) => `absent-${i}`),
         ).size,
       ).toBe(80);
-      expect(query).toHaveBeenCalledTimes(3);
+      expect(scans()).toBe(3);
     } finally {
       query.mockRestore();
     }

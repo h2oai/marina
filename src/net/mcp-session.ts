@@ -132,8 +132,10 @@ export async function cmdTool(
       } catch (error) {
         return errorText(getErrorMessage(error));
       }
-    } else {
-      await engine.processCommand(resolved.entityId, cmd);
+    } else if (!(await engine.dispatchCommand(resolved.entityId, cmd, { notify: false }))) {
+      // The session queue orders this client's calls; the engine's per-entity
+      // FIFO also orders them against every other ingress of the same entity.
+      return busy("World command capacity reached. Retry after one second; it did not execute.");
     }
     const perceptions = session.perceptionBuffer.splice(0);
     const envelope = perceptions.map((p) => p.data?.memory_service).findLast(Boolean) as

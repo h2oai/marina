@@ -18,12 +18,11 @@
  * wires the real retriever, models and judge.
  */
 
-import { parseReply } from "../arena/model-forecaster";
 import type { ResearchReport, Retriever } from "../arena/research/retrieve";
 import { type PageText, verifyDossier } from "../arena/research/verify";
 import type { Evidence } from "../decisions/evidence";
 import type { DecisionProvider } from "../decisions/types";
-import { checkDraft } from "../decisions/verify";
+import { askAnalyst, type JudgeRecord, judgeAudit, judgeClaim, newJudgeRecord } from "./judge";
 
 export type ForecastKind = "probability" | "number";
 
@@ -44,6 +43,8 @@ export interface AnalystAnswer {
   reason?: string;
   grounded?: number;
   quality?: number;
+  /** The judge failed on this answer; it then carries no weight (never a pass). */
+  judgeError?: string;
   weight: number;
   status: string;
 }
@@ -60,6 +61,8 @@ export interface ForecastAnswer {
   sources: Array<{ url: string; title?: string }>;
   verification?: Record<string, number>;
   report: string;
+  /** The judge's identity, calls, errors, latency and cost (present whenever a judge ran). */
+  judge?: JudgeRecord;
   costUsd: number;
   latencyMs: number;
   /** Why the answer is unavailable or weak, when it is. */
@@ -164,17 +167,14 @@ export async function forecastQuestion(
     });
   }
 
+  // The judge runs only with verified evidence to score against.
+  const judge = evidence.length ? deps.judge : undefined;
+  const judgeRecord = newJudgeRecord(judge);
   const analysts = await Promise.all(
     deps.analysts.map(async (a): Promise<AnalystAnswer> => {
-      let reply: Record<string, unknown> | undefined;
-      try {
-        reply = parseReply(await a.complete(ANALYST_SYSTEM[kind], user));
-      } catch (err) {
-        return {
-          name: a.name,
-          weight: 0,
-          status: `error: ${(err as Error).message.slice(0, 100)}`,
-        };
+      const { reply, error } = await askAnalyst(a, ANALYST_SYSTEM[kind], user);
+      if (error !== undefined) {
+        return { name: a.name, weight: 0, status: `error: ${error.slice(0, 100)}` };
       }
       const reason = typeof reply?.reason === "string" ? reply.reason.slice(0, 500) : undefined;
       const answer: AnalystAnswer = {
@@ -197,22 +197,21 @@ export async function forecastQuestion(
         answer.mean = mean;
         answer.sd = sd;
       }
-      if (deps.judge && evidence.length) {
+      if (judge) {
         const claim =
           kind === "probability"
             ? `P(yes) = ${answer.probability}. ${reason ?? ""}`
             : `Forecast ${answer.mean} ± ${answer.sd}. ${reason ?? ""}`;
-        const v = await checkDraft(deps.judge, claim.slice(0, 3_000), evidence, req.question);
-        if (!v.error) {
-          answer.grounded = v.signals.grounded;
-          answer.quality = v.signals.quality;
-          // A floor keeps one weak-but-valid analyst from being erased when the
-          // dossier verified little; ungrounded answers still count for little.
-          answer.weight = Math.max(
-            0.05,
-            (v.signals.grounded ?? 0) * ((v.signals.quality ?? 0) / 2),
-          );
-        }
+        // A floor keeps one weak-but-valid analyst from being erased when the
+        // dossier verified little; ungrounded answers still count for little.
+        // A judge outage is weight 0 (no opinion, never a pass), recorded.
+        const judged = await judgeClaim(judge, judgeRecord, claim, evidence, req.question, (g, q) =>
+          Math.max(0.05, (g ?? 0) * ((q ?? 0) / 2)),
+        );
+        answer.weight = judged.weight;
+        if (judged.grounded !== undefined) answer.grounded = judged.grounded;
+        if (judged.quality !== undefined) answer.quality = judged.quality;
+        if (judged.judgeError) answer.judgeError = judged.judgeError;
       }
       return answer;
     }),
@@ -223,9 +222,18 @@ export async function forecastQuestion(
     ...empty("", research),
     analysts,
     ...(checked ? { verification: checked.stats } : {}),
+    ...judgeAudit(judgeRecord),
   };
   delete base.caveat;
-  if (usable.length === 0) return { ...base, caveat: "no analyst produced a usable answer" };
+  if (usable.length === 0) {
+    const judgeDown = analysts.some((a) => a.judgeError);
+    return {
+      ...base,
+      caveat: judgeDown
+        ? "the judge failed, so no answer could be weighed (an outage is no opinion, never a pass)"
+        : "no analyst produced a usable answer",
+    };
+  }
   const total = usable.reduce((s, a) => s + a.weight, 0);
   const lowGrounding = deps.judge && usable.every((a) => (a.grounded ?? 0) < 0.3);
   const caveat = lowGrounding

@@ -189,25 +189,38 @@ export function registerCoordinationCommands(engine: Engine): void {
   }
   // Challenges: a refusal asks the requester's creator and the admins, and an
   // approval re-runs the held action (src/engine/challenges.ts). Nothing waits.
-  setChallengeHost({
-    get db() {
-      return engine.db;
+  setChallengeHost(
+    {
+      get db() {
+        return engine.db;
+      },
+      getEntity: (id) => engine.entities.get(id as EntityId),
+      findEntity: (name) => engine.findEntityGlobal(name),
+      connectedEntities: () =>
+        engine.entities.all().filter((e) => engine._connections.isEntityConnected(e.id)),
+      isConnected: (id) => engine._connections.isEntityConnected(id as EntityId),
+      send: (id, text) => engine.sendToEntity(id as EntityId, text, "challenge"),
+      // The leading "/" is explicit world input, so an active modal (Code Mode)
+      // never rewrites the held command on its way back in.
+      // Through admission + FIFO: the re-run lines up behind anything the
+      // requester already queued instead of interleaving with it.
+      redispatch: (id, raw) =>
+        engine.dispatchCommand(id as EntityId, `/${raw}`).then(() => undefined),
+      creatorOf: (entity) => engine.db?.getAgentConfig(entity.name)?.spawned_by || undefined,
     },
-    getEntity: (id) => engine.entities.get(id as EntityId),
-    findEntity: (name) => engine.findEntityGlobal(name),
-    connectedEntities: () =>
-      engine.entities.all().filter((e) => engine._connections.isEntityConnected(e.id)),
-    isConnected: (id) => engine._connections.isEntityConnected(id as EntityId),
-    send: (id, text) => engine.sendToEntity(id as EntityId, text, "challenge"),
-    // The leading "/" is explicit world input, so an active modal (Code Mode)
-    // never rewrites the held command on its way back in.
-    redispatch: (id, raw) => engine.processCommand(id as EntityId, `/${raw}`),
-    creatorOf: (entity) => engine.db?.getAgentConfig(entity.name)?.spawned_by || undefined,
-  });
+    engine,
+  );
   engine.commands.registerBuiltin(
     challengeCommand({ getEntity: (id) => engine.entities.get(id as EntityId) }),
   );
-  engine.commands.registerBuiltin(forecastCommand());
+  engine.commands.registerBuiltin(
+    forecastCommand({
+      get db() {
+        return engine.db;
+      },
+      getEntity: (id) => engine.entities.get(id as EntityId),
+    }),
+  );
   engine.commands.registerBuiltin(
     arenaCommand({
       get store() {
@@ -255,6 +268,13 @@ export function registerCoordinationCommands(engine: Engine): void {
     );
   }
   if (engine.macroManager) {
-    engine.commands.registerBuiltin(macroCommand(engine.macroManager, engine.commands));
+    engine.commands.registerBuiltin(
+      macroCommand(engine.macroManager, engine.commands, (name) =>
+        engine.rooms.all().some((room) => {
+          const commands = room.module.commands;
+          return !!commands && Object.hasOwn(commands, name);
+        }),
+      ),
+    );
   }
 }

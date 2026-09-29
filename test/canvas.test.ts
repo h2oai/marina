@@ -340,7 +340,7 @@ describe("Canvas — Phase 1: Asset Store", () => {
       expect(stored.intent.claimedBy).toBe("Worker");
     });
 
-    it("shared intent listing expires stale active claims back to pending", () => {
+    it("intent listing reports stale claims as pending without writing; claim takes them over", () => {
       const now = Date.now();
       db.createCanvas({ id: "expiry-canvas", name: "requests", creatorName: "Requester" });
       db.createNode({
@@ -365,10 +365,60 @@ describe("Canvas — Phase 1: Asset Store", () => {
       });
 
       expect(pending.map((i) => i.nodeId)).toContain("intent-node-expired");
+      const listed = pending.find((i) => i.nodeId === "intent-node-expired")!;
+      expect(listed.intent.status).toBe("pending");
+      expect(listed.intent.claimedBy).toBeUndefined();
+      // The read is pure: the stored claim is untouched.
+      const before = db.getNode("intent-node-expired")!;
+      expect(JSON.parse(before.data).intent.status).toBe("active");
+      // A fresh claim is not stale and is not listed as pending.
+      expect(
+        db.listCanvasIntents({ statuses: ["pending"], expireActiveMs: 20 * 60 * 1000, now }),
+      ).toEqual([]);
+
+      // The write path takes the stale claim over.
+      const claim = db.claimCanvasIntent("intent-node-expired", "Second", now);
+      expect(claim.ok).toBe(true);
       const stored = JSON.parse(db.getNode("intent-node-expired")!.data);
-      expect(stored.intent.status).toBe("pending");
-      expect(stored.intent.claimedBy).toBeUndefined();
-      expect(stored.intent.claimedAt).toBeUndefined();
+      expect(stored.intent.status).toBe("active");
+      expect(stored.intent.claimedBy).toBe("Second");
+      // A live claim is not taken over.
+      expect(db.claimCanvasIntent("intent-node-expired", "Third", now + 1000).ok).toBe(false);
+    });
+
+    it("intent listing filters and limits in SQL, skipping ordinary and malformed nodes", () => {
+      db.createCanvas({ id: "many-canvas", name: "many", creatorName: "Requester" });
+      for (let i = 0; i < 450; i++) {
+        db.createNode({
+          id: `plain-${i}`,
+          canvasId: "many-canvas",
+          type: "text",
+          creatorName: "Requester",
+          data: { body: `plain ${i}` },
+        });
+      }
+      db.createNode({
+        id: "bad-json",
+        canvasId: "many-canvas",
+        type: "text",
+        creatorName: "Requester",
+        data: {},
+      });
+      db.updateNode("bad-json", { data: "{not json" });
+      for (let i = 0; i < 3; i++) {
+        db.createNode({
+          id: `want-${i}`,
+          canvasId: "many-canvas",
+          type: "text",
+          creatorName: "Requester",
+          data: { intent: { status: "pending", prompt: `do ${i}` } },
+        });
+      }
+      const listed = db.listCanvasIntents({ canvasName: "many", statuses: ["pending"], limit: 2 });
+      expect(listed.map((i) => i.nodeId)).toEqual(["want-0", "want-1"]);
+      expect(
+        db.listCanvasIntents({ canvasName: "many", statuses: ["pending"] }).map((i) => i.nodeId),
+      ).toEqual(["want-0", "want-1", "want-2"]);
     });
 
     it("notifies the requester when another entity claims their intent", async () => {

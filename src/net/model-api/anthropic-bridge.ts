@@ -14,7 +14,7 @@ import {
   type OpenAIUsage,
   translateAnthropicStream,
 } from "../anthropic-tools";
-import { errorJson, isMarinaModel, MODEL_CORS } from "./shared";
+import { errorJson, isMarinaModel, MODEL_CORS, upstreamAbort, upstreamTimeoutMs } from "./shared";
 
 /**
  * Final usage of a streamed Anthropic reply whose client did NOT ask for
@@ -101,7 +101,7 @@ export async function proxyToAnthropic(
   defaultModel: string,
   wantStream = false,
   native?: Record<string, unknown>,
-  opts: { injectedSystemTail?: boolean } = {},
+  opts: { injectedSystemTail?: boolean; clientSignal?: AbortSignal } = {},
 ): Promise<Response> {
   const requestModel = isMarinaModel(body.model as string) ? defaultModel : (body.model as string);
   const upstreamBody = buildAnthropicRequest(body, requestModel, wantStream, {
@@ -114,6 +114,9 @@ export async function proxyToAnthropic(
     typeof body.stream_options === "object" &&
     (body.stream_options as { include_usage?: unknown }).include_usage === true;
 
+  // Deadline for the call (headers for a stream, the whole reply otherwise);
+  // a non-streaming caller that disconnects aborts it too.
+  const abort = upstreamAbort(wantStream ? undefined : opts.clientSignal);
   try {
     const resp = await fetch(ANTHROPIC_MESSAGES_URL, {
       method: "POST",
@@ -123,7 +126,10 @@ export async function proxyToAnthropic(
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify(upstreamBody),
+      signal: abort.signal,
     });
+    // The stream's reader owns its lifetime from here (client cancel propagates).
+    if (wantStream) abort.settle();
 
     if (!resp.ok) {
       return errorJson(resp.status, await anthropicErrorMessage(resp));
@@ -158,6 +164,14 @@ export async function proxyToAnthropic(
       headers: { ...MODEL_CORS, "Content-Type": "application/json" },
     });
   } catch (e) {
+    if (abort.timedOut()) {
+      return errorJson(
+        504,
+        `Anthropic upstream did not answer within ${upstreamTimeoutMs()} ms (MARINA_UPSTREAM_TIMEOUT_MS).`,
+      );
+    }
     return errorJson(502, `Anthropic proxy error: ${e instanceof Error ? e.message : String(e)}`);
+  } finally {
+    abort.settle();
   }
 }

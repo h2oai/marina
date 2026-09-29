@@ -7,6 +7,7 @@ import {
   setTrustProfile,
   type TrustProfile,
 } from "../src/engine/trust-profile";
+import { preserveListenPortsForTests } from "../src/net/listen-ports";
 
 /** Scope an override on an object from either checkout in a comparison benchmark. */
 export function scopeProperty<T, K extends keyof T>(target: T, key: K, value: T[K]): Disposable {
@@ -36,6 +37,7 @@ export function scopeProcessState(
 ): DisposableStack {
   using scope = new DisposableStack();
   scope.use(preserveTrustProfileForTests());
+  scope.use(preserveListenPortsForTests());
   scope.use(scopeProperty(RateLimiter, "bypass", options.rateLimitBypass ?? RateLimiter.bypass));
   for (const [key, value] of Object.entries(options.env ?? {})) {
     const previous = process.env[key];

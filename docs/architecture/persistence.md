@@ -6,13 +6,21 @@
 - Migrations: append to `FORWARD_MIGRATIONS` in `src/persistence/schema.ts` (re-exported as `MIGRATIONS` by `database.ts`), never modify existing migrations. `MARINA_DB_DURABILITY=full` (fsync per commit) is the world default; migrations 96–109 are append-only like all others.
 
 ## Row retention
-- **Row retention** (`src/engine/retention.ts`, hourly tick phase 2100, `runRetentionPass`): declarative `RETENTION_POLICIES` per table class — telemetry 7–30 d (`primitive_usage`, `feed_events`, `memory_service_events`, `coding_events`, `event_log` by row count), ledger 90 d (`direct_messages` acknowledged/expired, `cognitive_events`, `productivity_sessions`, `core_memory_history`, `media_jobs`, `memory_assistance_actions`), audit 365 d (`witness_attestations`, `trace_judgments`, `note_verifications`, `evidence_receipts`, `association_events`, `benchmark_runs`), `shell_log` 90 d; `chronicle`, `entity_standing`, `memory_resolutions`, `economic_events` are `append-only` and are never pruned (an override cannot re-enable it). `MARINA_RETENTION_OVERRIDES="table=30d,table2=0"` (0 = never). Batched deletes ≤ 5,000 rows via `db.deleteBatch` (uses `RETURNING rowid` — bun:sqlite `.changes` counts trigger writes). Missing tables/columns are skipped, not errors. Migration 116 adds the `direct_messages(deadline_at) WHERE status='delivered'` partial index plus `notes(supersedes_id)` and `note_sources(url)`.
+- **Row retention** (`src/engine/retention.ts`, hourly tick phase 2100, `runRetentionPass`): declarative `RETENTION_POLICIES` per table class — telemetry 7–30 d (`primitive_usage`, `feed_events`, `memory_service_events`, `coding_events`, `coding_service_probes`, `event_log` by row count), ledger 30–90 d (`direct_messages` acknowledged/expired, `cognitive_events`, `productivity_sessions`, `core_memory_history`, `media_jobs`, `memory_assistance_actions`, `memory_index_jobs` settled states only), audit 365 d (`witness_attestations`, `trace_judgments`, `note_verifications`, `evidence_receipts`, `association_events`, `benchmark_runs`), `shell_log` 90 d; `chronicle`, `entity_standing`, `memory_resolutions`, `economic_events` — and the lineage/replay logs `intellect_events`, `mesh_events`, `mesh_membership_events`, `journey_events`, `simulation_events`, `arena_submissions`, `arena_shadow` — are `append-only` and are never pruned (an override cannot re-enable it). `MARINA_RETENTION_OVERRIDES="table=30d,table2=0"` (0 = never). Batched deletes ≤ 5,000 rows via `db.deleteBatch` (uses `RETURNING rowid` — bun:sqlite `.changes` counts trigger writes). Missing tables/columns are skipped, not errors. Migration 116 adds the `direct_messages(deadline_at) WHERE status='delivered'` partial index plus `notes(supersedes_id)` and `note_sources(url)`.
 
 ## Durable keys
-- **Durable keys, second pass (migration 117)**: `group_members`, `channel_members`, `board_votes`, `task_votes`, `flywheel_bindings`, `coding_projects`, `coding_services` are rekeyed to `users.id`; `MarinaDB` delegates resolve `durableEntityKey()` on write and project back to the LIVE entity id on read (`liveEntityIdSql`), so callers keep passing entity ids. `getFlywheelBinding(entityId)` replaces the linear scan; `saveEntity` re-keys task claims by name on first persist of a new id. Migrations 118 and 119 closed the remaining transient columns (see below). `approveSubmission`, `deleteNote`, and `deleteUser` (cascades standing/competence/witness rows) are transactional.
+- **Durable keys, second pass (migration 117)**: `group_members`, `channel_members`, `board_votes`, `task_votes`, `flywheel_bindings`, `coding_projects`, `coding_services` are rekeyed to `users.id`; `MarinaDB` delegates resolve `durableEntityKey()` on write and project back to the LIVE entity id on read (`liveEntityIdSql`), so callers keep passing entity ids. `getFlywheelBinding(entityId)` replaces the linear scan; `saveEntity` re-keys task claims by name on first persist of a new id. Migrations 118 and 119 closed the remaining transient columns (see below). `approveSubmission`, `deleteNote`, and `deleteUser` (account erasure, below) are transactional.
 - **Durable key, first pass (migration 109)** — the standing, competence, and witness ledgers: see `docs/architecture/civic-substrate.md` → "Standing — the single blended metric" (entity ids are transient — evicted after the 60s reconnect grace, re-minted on the next name-login — so ledgers are keyed by `users.id`; `MarinaDB.durableEntityKey()` resolves them at the delegate boundary and ids with no account pass through unchanged).
 
 See also: `docs/architecture/memory.md` (memory tables, twin lifecycle), `docs/guides/identity.md`.
+
+## Account erasure — the one exception to append-only
+`deleteUser(id)` (`src/persistence/db-users.ts`) is the single, explicit exception to the append-only ledgers: erasing a world account removes what is keyed by its durable id instead of leaving orphans nothing can resolve. One transaction:
+- **deleted** (the account's own rows): `entity_standing` and `entity_standing_cache`, `entity_competence`, `witness_attestations`, `group_members`, `channel_members`, `board_votes`, `macros`, `adapter_links`;
+- **anonymized** to `ERASED_ACCOUNT` (`"[erased]"`, rows other people depend on): `tasks.creator_id`/`creator_name`, `board_posts.author_id`/`author_name`; a group the account led passes to its highest-ranked remaining member, else `ERASED_ACCOUNT`;
+- **audited**: one chronicle `event` (source `account`, title `account erased`, ref `user:<id>`, body = per-table counts — never the name). The call returns the same counts (`AccountErasure`).
+
+No other code path deletes or rewrites `entity_standing`; the former `migrateEntityId` (which rewrote it on id changes) was removed — durable keys make it unnecessary. Retention never prunes it (`append-only` policy).
 
 ## Facade and store interfaces
 
@@ -81,6 +89,9 @@ Adding a delegate: put the query in the module, add the one-line delegate to `Ma
 
 `refreshContradictionCases` (`db-notes.ts`) excludes durable service-memory rows (`memory_record_versions`) from candidates and skips any pair where one note is the other's twin (`note_sources.url = marina-memory://record/<id>`), so `note conflicts` never lists a note against its own durable mirror.
 
+## Migration 144: a stable FTS key for `markets`
+`markets` had a TEXT primary key and `markets_fts` used `content_rowid=rowid`; VACUUM and VACUUM INTO (`snapshot`, `snapshotCompacted`, recovery bundles) may renumber the implicit rowid of such a table, silently pointing the external-content index at the wrong rows. Migration 144 rebuilds `markets` with `seq INTEGER PRIMARY KEY` (`id` stays the public key, `UNIQUE`, and the FK target), re-creates the FTS table on `content_rowid=seq` with its three triggers, and rebuilds the index. Because DROP TABLE on a referenced parent cascades with `foreign_keys=ON`, `market_positions` and `market_scores` are rebuilt alongside it, referencing the new parent before the rename. Any new external-content FTS table must use an INTEGER PRIMARY KEY as its `content_rowid` (`test/markets-fts-vacuum.test.ts`).
+
 ## Retired sources in `[evidence]`
 
 `servableSourceIds(db, spaceId, sourceIds, now)` in `unified-context.ts` drops `source_search` hits whose every deriving record is retired (superseded tombstone, current note superseded, or `valid_until` past); a source with no deriving record stays (a plain capture), and a fresh record re-deriving it makes it servable again. A query failure keeps all hits — it is a guard, not an access check.
@@ -111,5 +122,8 @@ converts numeric memory inside the same transaction as its DDL and version marke
 adds `challenge_outcomes` (answered challenges, see civic-substrate.md), migration 140 carries
 capability across to the `world.lineage` / `world.code` gates, migration 141 adds `roles.loop`
 (JSON role-owned loop sections, see agent-cognition.md), and migration 142 rebuilds `spend_daily`
-so image/video generation (`media`) joins the daily spend ledger. Do not edit the baseline
+so image/video generation (`media`) joins the daily spend ledger. Migration 143 rewrites
+`mem_api_keys.secret` as a `sha256:<hex>` digest; keys are looked up by digest and the raw
+secret is never stored. Migration 144 gives `markets` a stable INTEGER key for its FTS index, and
+migration 145 adds `forecast_answers`. Do not edit the baseline
 or archived migrations to implement a new feature.
