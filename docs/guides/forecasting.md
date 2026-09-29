@@ -34,6 +34,13 @@ The answer carries everything needed to audit it: each analyst's answer and reas
 grounding score and weight, the sources, how many facts verified, cost and time — and a `caveat`
 when the evidence was thin.
 
+## Keeping score
+
+Every in-world answer is saved with its full audit trail (`forecast list` shows yours). To have
+one scored, link it to the resolver Sample it resolves on — `forecast <question>
+resolves:kalshi/<ticker>`, or later `forecast track <id> kalshi/<ticker>`. When that market or
+watch resolves, the answer is scored once: Brier for a probability, CRPS for a number.
+
 ## Configuration
 
 | Variable | Default | Meaning |

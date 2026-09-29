@@ -4,6 +4,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
 import { MarinaDB } from "../src/persistence/database";
+import { FORWARD_MIGRATIONS } from "../src/persistence/schema";
 import { cleanupDb } from "./helpers";
 
 // Migration 143: `markets_fts` is keyed by the INTEGER PRIMARY KEY `seq`, so
@@ -54,7 +55,7 @@ describe("markets_fts survives VACUUM", () => {
 
   it("migration 143 carries markets, positions and scores over and re-indexes them", () => {
     new MarinaDB(live).close();
-    // Recreate the pre-143 shape (implicit rowid, rowid-keyed FTS) at version 142.
+    // Recreate the pre-143 shape (implicit rowid, rowid-keyed FTS) with data in it.
     const raw = new Database(live);
     raw.run("PRAGMA foreign_keys=OFF");
     raw.exec(`
@@ -75,8 +76,12 @@ describe("markets_fts survives VACUUM", () => {
         VALUES ('m_a', 'Alice', 'yes', 70, 1, 1);
       INSERT INTO market_scores (market_id, entity_name, brier_score, scored_at)
         VALUES ('m_b', 'Bob', 0.2, 3);
-      DELETE FROM schema_version WHERE version >= 143;
     `);
+    // Apply migration 143's SQL as the upgrade runner does: one transaction,
+    // foreign keys ON (so a careless parent DROP would cascade).
+    const migration = FORWARD_MIGRATIONS.find((m) => m.version === 143)!;
+    raw.run("PRAGMA foreign_keys=ON");
+    raw.transaction(() => raw.exec(migration.sql))();
     raw.close();
 
     const db = new MarinaDB(live);

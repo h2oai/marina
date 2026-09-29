@@ -3522,16 +3522,34 @@ Effect: unknown.
 ## forecast
 
 Forecast any question with cited, verified evidence and several models.
-Usage: forecast <question>   e.g. forecast Will the Fed cut rates in October 2026?
+Usage: forecast <question> [resolves:<venue>/<ticker>]   e.g. forecast Will the Fed cut rates in October 2026?
+       forecast list                     your saved forecasts and, once resolved, their scores
+       forecast track <id> <venue>/<ticker>   score forecast #id when that market/watch resolves
 
 Category: Markets & Forecasting. Minimum rank: 0.
 Aliases: `predict`.
 
-### `forecast <question>`
+### `forecast <question> [resolves:<venue>/<ticker>]`
 
 Effect: unknown.
 
 - `field-0` (`question`): text, required.
+- `field-1` (`resolves`): text, optional group `option-0`.
+- `field-2` (`ticker`): text, optional group `option-0`.
+- Group `option-0`: `resolves:venue/ticker`.
+
+### `forecast list`
+
+Effect: unknown.
+
+
+### `forecast track <id> <venue>/<ticker>`
+
+Effect: unknown.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`venue`): text, required.
+- `field-2` (`ticker`): text, required.
 
 ## gate
 

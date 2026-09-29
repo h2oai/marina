@@ -3439,6 +3439,31 @@ export class MarinaDB implements MarinaStores {
     return marketsDb.getEntityMarketScore(this.db, entityName);
   }
 
+  saveForecastAnswer(input: Parameters<typeof marketsDb.saveForecastAnswer>[1]): number {
+    return marketsDb.saveForecastAnswer(this.db, input);
+  }
+
+  linkForecastToSample(id: number, entityName: string, sampleId: string): boolean {
+    return marketsDb.linkForecastToSample(this.db, id, entityName, sampleId);
+  }
+
+  listForecastAnswers(entityName: string, limit?: number): marketsDb.ForecastAnswerRow[] {
+    return marketsDb.listForecastAnswers(this.db, entityName, limit);
+  }
+
+  openForecastsForSample(sampleId: string): marketsDb.ForecastAnswerRow[] {
+    return marketsDb.openForecastsForSample(this.db, sampleId);
+  }
+
+  resolveForecastAnswer(
+    id: number,
+    outcomeJson: string,
+    score: number | null,
+    now?: number,
+  ): boolean {
+    return marketsDb.resolveForecastAnswer(this.db, id, outcomeJson, score, now);
+  }
+
   // ─── Traits (delegated to db-agents.ts) ──────────────────────────────────
 
   saveTrait(opts: {

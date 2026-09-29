@@ -15,6 +15,7 @@
 // the closure-relevant signal. Open markets and no-change polls skip this
 // path entirely (writeSample's status check upstream).
 
+import { crpsNormal } from "../arena/score";
 import { recordScoreOutcome } from "../coordination/score-outcome";
 import { loadScore } from "../coordination/score-store";
 import { Logger } from "../engine/logger";
@@ -333,10 +334,79 @@ export const conductorScoreFinder: CalibrationFinder = {
   },
 };
 
+/** A numeric resolution: `value` itself, or its `value` / `actual` field. */
+export function extractNumericOutcome(sample: Sample): number | undefined {
+  const v = sample.value;
+  const n =
+    typeof v === "number"
+      ? v
+      : typeof v === "object" && v !== null
+        ? ((v as Record<string, unknown>).value ?? (v as Record<string, unknown>).actual)
+        : undefined;
+  return typeof n === "number" && Number.isFinite(n) ? n : undefined;
+}
+
+/**
+ * Forecast-question finder — closes the loop for `forecast <question>`
+ * (`src/forecast/`). Answers are persisted in `forecast_answers` (migration
+ * 144) with the Sample id they resolve on (`resolves:<venue>/<ticker>` or
+ * `forecast track <id> <sampleId>`). When that Sample resolves, each open
+ * answer is settled once: a probability gets its Brier score against the
+ * yes/no outcome, a number its CRPS against the numeric outcome. An answer
+ * that produced no value is settled with the outcome and no score. The row
+ * is the record — `forecast list` shows the track record.
+ */
+export const forecastQuestionFinder: CalibrationFinder = {
+  name: "forecast-question",
+  calibrate(db, sample) {
+    const open = db.openForecastsForSample(sample.id);
+    if (open.length === 0) return;
+    const outcome = extractOutcome(sample);
+    const actual = extractNumericOutcome(sample);
+    for (const f of open) {
+      if (f.kind === "probability") {
+        if (!outcome) continue;
+        const y = outcome === "yes" ? 1 : 0;
+        const brier = f.probability === null ? null : (f.probability - y) ** 2;
+        db.resolveForecastAnswer(
+          f.id,
+          JSON.stringify({
+            sampleId: sample.id,
+            outcome,
+            ...(brier === null
+              ? {}
+              : { brier, correct: (f.probability ?? 0) >= 0.5 === (outcome === "yes") }),
+          }),
+          brier,
+          sample.ts,
+        );
+      } else {
+        if (actual === undefined) continue;
+        const crps = f.mean === null || f.sd === null ? null : crpsNormal(f.mean, f.sd, actual);
+        const within80 =
+          f.mean === null || f.sd === null ? undefined : Math.abs(actual - f.mean) <= 1.2816 * f.sd;
+        db.resolveForecastAnswer(
+          f.id,
+          JSON.stringify({
+            sampleId: sample.id,
+            actual,
+            ...(crps === null
+              ? {}
+              : { crps, absError: Math.abs(actual - (f.mean ?? 0)), within80 }),
+          }),
+          crps,
+          sample.ts,
+        );
+      }
+    }
+  },
+};
+
 /** Register the built-in finders. Idempotent. */
 export function registerBuiltinCalibrationFinders(): void {
   registerCalibrationFinder(tabh2oForecastFinder);
   registerCalibrationFinder(positionThesisFinder);
   registerCalibrationFinder(inworldMarketResolverFinder);
   registerCalibrationFinder(conductorScoreFinder);
+  registerCalibrationFinder(forecastQuestionFinder);
 }

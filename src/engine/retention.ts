@@ -269,6 +269,11 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     note: "seq-ordered run record replayed for reproducibility and comparisons",
   },
   {
+    table: "forecast_answers",
+    kind: "append-only",
+    note: "forecast track record: each answer's audit trail and, once resolved, its score",
+  },
+  {
     table: "economic_events",
     kind: "append-only",
     note: "contract / settlement ledger — financial history is not aged out by default",

@@ -170,6 +170,32 @@ END;
 INSERT INTO markets_fts(markets_fts) VALUES ('rebuild');
 `,
   },
+  // Migration 144: every `forecast <question>` answer is kept (the full answer
+  // object is the audit trail), optionally linked to the resolver Sample id it
+  // resolves on; the `forecast-question` calibration finder scores it when
+  // that Sample resolves (src/resolvers/calibration.ts).
+  {
+    version: 144,
+    sql: `
+CREATE TABLE forecast_answers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_name TEXT NOT NULL,
+  question TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('probability', 'number')),
+  probability REAL,
+  mean REAL,
+  sd REAL,
+  answer_json TEXT NOT NULL,
+  sample_id TEXT,
+  created_at INTEGER NOT NULL,
+  resolved_at INTEGER,
+  outcome_json TEXT,
+  score REAL
+);
+CREATE INDEX idx_forecast_answers_open_sample ON forecast_answers(sample_id) WHERE resolved_at IS NULL;
+CREATE INDEX idx_forecast_answers_entity ON forecast_answers(entity_name, created_at);
+`,
+  },
 ];
 export const SCHEMA_VERSION = FORWARD_MIGRATIONS.at(-1)?.version ?? SCHEMA_BASELINE_VERSION;
 
