@@ -90,7 +90,12 @@ describe("formation aggregation primitives", () => {
       "pipeline",
     );
     expect(() => parseForecasterSpec("formation:swarm:openrouter/openai/gpt-6-luna")).toThrow();
-    expect(() => parseForecasterSpec("formation:ensemble:a/b,c/d,e/f,g/h,i/j,k/l")).toThrow();
+    expect(parseForecasterSpec("formation:ensemble:a/b,c/d,e/f,g/h,i/j,k/l")).toContain("k/l");
+    expect(() =>
+      parseForecasterSpec(
+        "formation:ensemble:v0/m,v1/m,v2/m,v3/m,v4/m,v5/m,v6/m,v7/m,v8/m,v9/m,v10/m,v11/m,v12/m",
+      ),
+    ).toThrow();
   });
 });
 
@@ -309,6 +314,25 @@ describe("formation protocols", () => {
     expect(calls).toHaveLength(6); // open ×2, exchange ×2 (gap 3 sd-ish ⇒ again) ×2
     expect(f.critique).toContain("exchange");
     expect(f.topline!.mean).toBeCloseTo(base.mean + 0.5, 2);
+  });
+
+  it("symbiosis with more models: independent pairs, one proposal per pair, median across pairs", async () => {
+    // Six members = three pairs. Pair 1 and 2 converge near +1; pair 3 goes wild (+3.5 sd).
+    const { members, calls } = crew(6, (i, system) => {
+      const pairIndex = Math.floor(i / 2);
+      const move = pairIndex === 2 ? 3.5 * base.sd : 1;
+      return system.includes("CREDIT")
+        ? { credit: "used it", contribution: "none", ...at(move) }
+        : { contribution: "x", ...at(move) };
+    });
+    const f = await formationForecastRound("symbiosis", round, lock, members);
+    // Every member opened (6) and exchanged at least once (6).
+    expect(calls.length).toBeGreaterThanOrEqual(12);
+    expect(Object.keys(f.proposals!).sort()).toEqual(["pair1", "pair2", "pair3"]);
+    expect(f.critique).toContain("pair3:");
+    // The median across pairs ignores the one wild pair.
+    expect(f.topline!.mean).toBeLessThan(base.mean + 1.01);
+    expect(f.topline!.mean).toBeGreaterThan(base.mean);
   });
 
   it("symbiosis: a revision that does not credit the partner is not taken", async () => {

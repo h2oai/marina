@@ -91,7 +91,7 @@ Consult; worse on Economist/YouGov (−0.08 both), where the baseline should kee
 
 ### Formations — Marina's orchestration patterns as forecasters
 
-`MARINA_ARENA_FORECASTER=formation:<pattern>:<model>[,<model>…]` (up to five models) runs one of
+`MARINA_ARENA_FORECASTER=formation:<pattern>:<model>[,<model>…]` (up to twelve models) runs one of
 Marina's orchestration patterns as a small forecasting protocol (`src/arena/formations.ts`) over
 the same truthful round context as the crew, started from the nowcast:
 
