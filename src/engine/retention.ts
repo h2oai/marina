@@ -121,6 +121,13 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     note: "Code Mode session event stream",
   },
   {
+    table: "coding_service_probes",
+    timeColumn: "created_at",
+    kind: "telemetry",
+    keepMs: 30 * DAY_MS,
+    note: "Code Mode service health probes; the service row keeps its own current state",
+  },
+  {
     table: "event_log",
     keepRows: EVENT_LOG_DB_RETENTION,
     kind: "telemetry",
@@ -158,6 +165,14 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     timeColumn: "updated_at",
     kind: "ledger",
     note: "media generation jobs; a job untouched for the window is dead regardless of status",
+  },
+  {
+    table: "memory_index_jobs",
+    timeColumn: "created_at",
+    kind: "ledger",
+    keepMs: 30 * DAY_MS,
+    where: "state IN ('ready', 'failed', 'cancelled')",
+    note: "settled embedding jobs; pending/running jobs never age out, a reindex re-queues",
   },
   {
     table: "memory_assistance_actions",
@@ -227,6 +242,31 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     table: "arena_shadow",
     kind: "append-only",
     note: "candidate forecasts scored live; the evidence a forecaster is promoted on",
+  },
+  {
+    table: "intellect_events",
+    kind: "append-only",
+    note: "signed identity lineage (continuity, descent, migration); an intellect IS its history",
+  },
+  {
+    table: "mesh_events",
+    kind: "append-only",
+    note: "hash-linked federation DAG (parent ids, per-origin sequence); peers replicate by sequence",
+  },
+  {
+    table: "mesh_membership_events",
+    kind: "append-only",
+    note: "membership + disclosure history; visibility windows are derived from it",
+  },
+  {
+    table: "journey_events",
+    kind: "append-only",
+    note: "a journey's whole content (journeys have no status to age out on)",
+  },
+  {
+    table: "simulation_events",
+    kind: "append-only",
+    note: "seq-ordered run record replayed for reproducibility and comparisons",
   },
   {
     table: "economic_events",
