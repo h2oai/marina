@@ -26,27 +26,12 @@ export class SkippedRound extends Error {
   }
 }
 
-const G = "openrouter/google/gemini-3.1-pro-preview";
-const C = "openrouter/anthropic/claude-sonnet-5";
-const L = "openrouter/openai/gpt-5.6-luna";
-
 /**
- * The routes measured on the 53 clean resolved rounds (2026-09-29, docs/guides/arena.md):
- * the nowcast ties every formation on Civiqs and costs nothing; formations with
- * the board's strongest models beat persistence on AAII (+0.12…+0.27 across
- * patterns, 5 rounds) and UMich sentiment (+0.03…+0.08, 4 rounds); YouGov,
- * UMich-by-party and Morning Consult lose or tie under every forecaster.
- * Small samples — shadow these before trusting them.
+ * The map `routed` uses when `MARINA_ARENA_ROUTES` is unset: the free nowcast for
+ * every family. Which family deserves which forecaster is an operator decision,
+ * measured with `arena evaluate` / `arena shadow` and set in the environment.
  */
-export const DEFAULT_ROUTES = [
-  "civiqs=nowcast",
-  `aaii=formation:symbiosis:${G},${C}`,
-  `umich_sentiment=formation:chorus:${G},${C},${L}`,
-  `economist_yougov=${SKIP}`,
-  `umich_party=${SKIP}`,
-  `morning_consult=${SKIP}`,
-  "*=nowcast",
-].join(";");
+export const DEFAULT_ROUTES = "*=nowcast";
 
 export interface Routes {
   byFamily: Map<string, string>;

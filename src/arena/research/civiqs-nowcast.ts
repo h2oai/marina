@@ -12,9 +12,6 @@
  * only snapshots dated ON OR BEFORE the lock, the freshest daily reading is
  * exactly what any entrant could have known — so this is backtestable with no
  * leakage, and needs no model.
- *
- * Measured on the 7 resolved Civiqs approval rounds (2026-09-25): nowcast mean
- * absolute error 1.14 vs persistence's 1.53; skill +0.153 at sd 1.5.
  */
 
 import type { ArenaData } from "../data";

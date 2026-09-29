@@ -27,11 +27,11 @@ describe("per-family routing", () => {
     expect(() => parseForecasterSpec("route:civiqs=gpt")).toThrow();
     expect(() => parseForecasterSpec("route:civiqs=routed")).toThrow("do not nest");
     expect(() => parseForecasterSpec("route:civiqs")).toThrow("<family>=<forecaster>");
-    // The default map routes Civiqs to the nowcast and skips the losing families.
+    // Unset, the map answers every family with the free nowcast.
     const d = parseRoutes("routed", {});
     expect(routeFor(d, "civiqs")).toBe("nowcast");
-    expect(routeFor(d, "economist_yougov")).toBe("skip");
-    expect(routeFor(d, "aaii")).toContain("formation:symbiosis:");
+    expect(routeFor(d, "economist_yougov")).toBe("nowcast");
+    expect(routeFor(d, "aaii")).toBe("nowcast");
     expect(parseRoutes("routed", { MARINA_ARENA_ROUTES: "*=baseline" }).fallback).toBe("baseline");
     expect(DEFAULT_ROUTES).toContain("*=nowcast");
   });
