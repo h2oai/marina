@@ -18,6 +18,7 @@
 import { crpsNormal } from "../arena/score";
 import { recordScoreOutcome } from "../coordination/score-outcome";
 import { loadScore } from "../coordination/score-store";
+import { positionSettlementFinder } from "../engine/commands/position";
 import { Logger } from "../engine/logger";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent, EntityId, RoomId } from "../types";
@@ -176,9 +177,9 @@ export const tabh2oForecastFinder: CalibrationFinder = {
  * Position-thesis finder — pairs paper-orders board posts with outcome
  * notes once the underlying market resolves. For v1, writes a calibration
  * note recording: which side we took, what the market resolved to, and
- * whether we won. Realized P&L tracking is a Phase 3 concern (per the
- * roadmap memo); this finder closes the qualitative loop today so paper
- * positions accumulate a track-record over time.
+ * whether we won. Realized P&L is booked separately by the
+ * `position-settlement` finder (settle orders on the same ledger); this one
+ * closes the qualitative loop so positions accumulate a track record.
  *
  * Looks for orders where the body's `ticker` field matches the sample's
  * ticker. Venue-aware: kalshi positions only get calibrated by kalshi
@@ -409,4 +410,5 @@ export function registerBuiltinCalibrationFinders(): void {
   registerCalibrationFinder(inworldMarketResolverFinder);
   registerCalibrationFinder(conductorScoreFinder);
   registerCalibrationFinder(forecastQuestionFinder);
+  registerCalibrationFinder(positionSettlementFinder);
 }

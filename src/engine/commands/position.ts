@@ -24,10 +24,13 @@ import { type BankrollState, readBankrollState } from "./bankroll";
  *      on the opposite side, refuse the new order. Sizing up the SAME side
  *      is allowed (increasing conviction). Different markets are independent.
  *   3. Single position size ≤ bankroll cap
- *   4. Daily realized loss ≤ bankroll floor — live for CLOSE-realized losses
- *      (average-cost basis over the order history). Settlement losses from
- *      market resolution are not yet included (resolutions are calibration
- *      outcome notes, not close orders).
+ *   4. Daily realized loss ≤ bankroll floor — close-realized AND
+ *      settlement-realized losses (average-cost basis over the order history).
+ *      When a market resolves, the resolving watch that `position open`
+ *      spawned produces a resolved Sample; the `position-settlement`
+ *      calibration finder appends one `settle` order per held side at 100¢
+ *      (winning side) or 0¢ (losing side), so the P&L replay, the position
+ *      list and the no-self-hedge net all see the settlement.
  *
  * Paper mode is the default. Live trading requires
  *   MARINA_TRADING_ENABLED=true
@@ -53,7 +56,7 @@ Usage:
   position open <venue> <ticker> <yes|no> <count> [limit-price]      — open (paper or live)
   position list [venue]                                              — show open positions
   position close <order-id> [count]                                  — close all or partial
-  position pnl [today|week|all]                                      — realized P&L summary
+  position pnl [today|week|all]                                      — realized P&L (closes + settlements)
   position propose <json>                                            — post a portfolio proposal for review
   position confirm <id>                                              — open all positions in a proposal
   position reject <id> [reason]                                      — mark a proposal rejected
@@ -83,7 +86,8 @@ export interface OrderRecord {
   venue: Venue;
   ticker: string;
   side: "yes" | "no";
-  action: "open" | "close";
+  /** `settle` = closed by market resolution at 100¢ (won) or 0¢ (lost). */
+  action: "open" | "close" | "settle";
   count: number;
   /** Per-share price in cents (0-100). */
   price: number;
@@ -352,8 +356,8 @@ interface OpenResult {
  *   1. Bankroll readiness (set/cap/floor/kelly all > 0)
  *   2. No-self-hedge invariant
  *   3. Per-position cap
- *   4. Daily floor — enforced on close-realized losses since UTC midnight
- *      (settlement/resolution P&L pending; see computeRealizedPnl).
+ *   4. Daily floor — enforced on close- and settlement-realized losses
+ *      since UTC midnight (see computeRealizedPnl).
  * Returns a structured result so callers can decide how to format output.
  */
 export async function attemptOpen(
@@ -554,9 +558,18 @@ async function handleClose(
     return;
   }
 
-  const closeCount = countRaw ? Number(countRaw) : opener.count;
-  if (!Number.isFinite(closeCount) || closeCount < 1 || closeCount > opener.count) {
-    ctx.send(eid, `count must be 1-${opener.count}`);
+  // What is still held on this leg: a settled (resolved) or already-closed
+  // position has nothing left to close, and a close past it would drive the
+  // net negative and corrupt the no-self-hedge invariant.
+  const held = heldContracts(orders, opener.venue, opener.ticker, opener.side);
+  if (held <= 0) {
+    ctx.send(eid, `Nothing left to close on ${opener.venue}/${opener.ticker} (closed or settled).`);
+    return;
+  }
+  const maxClose = Math.min(opener.count, held);
+  const closeCount = countRaw ? Number(countRaw) : maxClose;
+  if (!Number.isFinite(closeCount) || closeCount < 1 || closeCount > maxClose) {
+    ctx.send(eid, `count must be 1-${maxClose}`);
     return;
   }
 
@@ -634,12 +647,13 @@ function handlePnl(
   const orders = listAllOrders(db).filter((o) => o.ts >= cutoff);
   const opens = orders.filter((o) => o.action === "open");
   const closes = orders.filter((o) => o.action === "close");
+  const settles = orders.filter((o) => o.action === "settle");
 
   const stakeOpened = opens.reduce((s, o) => s + (o.count * o.price) / 100, 0);
   const stakeClosed = closes.reduce((s, o) => s + (o.count * o.price) / 100, 0);
-  // Close-realized P&L (average-cost basis). Settlement P&L from market
-  // resolution is still pending — resolutions land as calibration outcome
-  // notes (src/resolvers/calibration.ts), not close orders.
+  const paidOut = settles.reduce((s, o) => s + (o.count * o.price) / 100, 0);
+  // Realized P&L (average-cost basis) from closes AND settlements: a resolved
+  // market settles every held leg at 100¢ / 0¢ (`position-settlement` finder).
   const realizedPnl = computeRealizedPnl(db, cutoff);
 
   const lines = [
@@ -647,12 +661,12 @@ function handlePnl(
     separator(),
     `  ${dim("Orders opened:")}  ${opens.length} ${dim(`(${fmtUsd(stakeOpened)} staked)`)}`,
     `  ${dim("Orders closed:")}  ${closes.length} ${dim(`(${fmtUsd(stakeClosed)} closed)`)}`,
+    `  ${dim("Settled:")}        ${settles.length} ${dim(`(${fmtUsd(paidOut)} paid out on resolution)`)}`,
     `  ${dim("Realized P&L:")}   ${realizedPnl >= 0 ? bold(fmtUsd(realizedPnl)) : fmtStatus(fmtUsd(realizedPnl), "warn")}`,
     "",
     dim(
-      "  Realized P&L covers closed orders (average-cost basis). Settlement " +
-        "P&L from market resolution is not yet included — see the calibration " +
-        "finder registry (src/resolvers/calibration.ts) for forecast quality.",
+      "  Realized P&L covers closed orders and resolved-market settlements " +
+        "(average-cost basis); unresolved open positions are not marked to market.",
     ),
   ];
   ctx.send(eid, lines.join("\n"));
@@ -751,14 +765,13 @@ function computeOpenPositions(db: MarinaDB, venueFilter?: Venue): AggregatedPosi
 }
 
 /**
- * Realized P&L (USD) from CLOSE orders at-or-after `sinceTs`, computed by
- * walking the full order history chronologically with per-(venue|ticker|side)
- * average-cost tracking. Settlement P&L (market resolution) is NOT included:
- * resolutions land as calibration outcome notes, not close orders, so the
- * daily floor enforces close-realized losses only until resolution P&L is
- * integrated.
+ * Realized P&L (USD) from CLOSE and SETTLE orders at-or-after `sinceTs`,
+ * computed by walking the full order history chronologically with
+ * per-(venue|ticker|side) average-cost tracking. A settle is a close at the
+ * resolution price (100¢ won, 0¢ lost), so the daily floor sees settlement
+ * losses too.
  */
-function computeRealizedPnl(db: MarinaDB, sinceTs: number): number {
+export function computeRealizedPnl(db: MarinaDB, sinceTs: number): number {
   const orders = listAllOrders(db)
     .filter((o) => o.status !== "cancelled")
     .sort((a, b) => a.ts - b.ts);
@@ -1193,6 +1206,86 @@ function listAllOrders(db: MarinaDB): OrderRecord[] {
   }
   return out;
 }
+
+// ─── Settlement on market resolution ──────────────────────────────────────
+
+/** Contracts still held on one leg: opens minus closes minus settlements. */
+function heldContracts(
+  orders: OrderRecord[],
+  venue: Venue,
+  ticker: string,
+  side: "yes" | "no",
+): number {
+  let held = 0;
+  for (const o of orders) {
+    if (o.venue !== venue || o.ticker !== ticker || o.side !== side) continue;
+    if (o.status === "cancelled") continue;
+    held += o.action === "open" ? o.count : -o.count;
+  }
+  return held;
+}
+
+/**
+ * Settle every held leg of `venue/ticker` at its resolution price: 100¢ for
+ * the winning side, 0¢ for the losing side, one `settle` order per leg on the
+ * append-only ledger. Idempotent: once settled a leg holds 0 contracts, so a
+ * repeated resolution appends nothing. Returns the settle records written.
+ */
+export function settleResolvedPositions(
+  db: MarinaDB,
+  venue: Venue,
+  ticker: string,
+  outcome: "yes" | "no",
+  ts = Date.now(),
+): OrderRecord[] {
+  const orders = listAllOrders(db);
+  const written: OrderRecord[] = [];
+  for (const side of ["yes", "no"] as const) {
+    const held = heldContracts(orders, venue, ticker, side);
+    if (held <= 0) continue;
+    const last = orders
+      .filter((o) => o.venue === venue && o.ticker === ticker && o.side === side)
+      .filter((o) => o.action === "open")
+      .at(-1);
+    const rec: OrderRecord = {
+      order_id: `settle-${venue}-${ticker}-${side}-${ts}`,
+      venue,
+      ticker,
+      side,
+      action: "settle",
+      count: held,
+      price: side === outcome ? 100 : 0,
+      status: last?.status === "live" ? "live" : "paper",
+      ts,
+      by: "settlement",
+    };
+    recordOrder(db, SETTLEMENT_AUTHOR as EntityId, SETTLEMENT_AUTHOR, rec);
+    written.push(rec);
+  }
+  return written;
+}
+
+/** Ledger author for resolution settlements (not an entity). */
+const SETTLEMENT_AUTHOR = "settlement";
+
+/**
+ * `position-settlement` calibration finder: a resolved `kalshi/<ticker>` or
+ * `polymarket/<ticker>` Sample (from the resolving watch `position open`
+ * spawns) settles the held legs. Registered with the built-in finders.
+ */
+export const positionSettlementFinder = {
+  name: "position-settlement",
+  calibrate(db: MarinaDB, sample: { id: string; ts: number; status: string; value?: unknown }) {
+    if (sample.status !== "resolved") return;
+    const slash = sample.id.indexOf("/");
+    if (slash <= 0) return;
+    const venue = parseVenue(sample.id.slice(0, slash));
+    const ticker = sample.id.slice(slash + 1);
+    const outcome = (sample.value as { outcome?: unknown } | undefined)?.outcome;
+    if (!venue || !ticker || (outcome !== "yes" && outcome !== "no")) return;
+    settleResolvedPositions(db, venue, ticker, outcome, sample.ts);
+  },
+};
 
 // ─── Parsers / formatters ──────────────────────────────────────────────────
 

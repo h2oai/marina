@@ -5560,7 +5560,7 @@ Usage:
   position open <venue> <ticker> <yes|no> <count> [limit-price]      — open (paper or live)
   position list [venue]                                              — show open positions
   position close <order-id> [count]                                  — close all or partial
-  position pnl [today|week|all]                                      — realized P&L summary
+  position pnl [today|week|all]                                      — realized P&L (closes + settlements)
   position propose <json>                                            — post a portfolio proposal for review
   position confirm <id>                                              — open all positions in a proposal
   position reject <id> [reason]                                      — mark a proposal rejected
