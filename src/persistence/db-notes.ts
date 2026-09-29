@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Database } from "bun:sqlite";
+import { createHash, timingSafeEqual } from "node:crypto";
 import {
   DAY_MS,
   DEFAULT_WEIGHT_IMPORTANCE,
@@ -1369,23 +1370,42 @@ export function recallPoolNotes(
 
 // ─── Memory API Keys ────────────────────────────────────────────────
 
+/**
+ * At-rest form of a memory API key secret (migration 143): `sha256:<hex>`.
+ * The raw secret is shown once at creation and never stored.
+ */
+export function hashMemApiKeySecret(secret: string): string {
+  return `${MEM_API_KEY_HASH_PREFIX}${createHash("sha256").update(secret, "utf8").digest("hex")}`;
+}
+
+/** Prefix that marks a hashed `mem_api_keys.secret` value. */
+export const MEM_API_KEY_HASH_PREFIX = "sha256:";
+
 export function createMemApiKey(db: Database, id: string, secret: string, agentName: string): void {
   db.run("INSERT INTO mem_api_keys (id, secret, agent_name, created_at) VALUES (?, ?, ?, ?)", [
     id,
-    secret,
+    hashMemApiKeySecret(secret),
     agentName,
     Date.now(),
   ]);
 }
 
 export function validateMemApiKey(db: Database, secret: string): MemApiKeyRow | undefined {
+  const hash = hashMemApiKeySecret(secret);
   const row = db
     .query("SELECT * FROM mem_api_keys WHERE secret = ?")
-    .get(secret) as MemApiKeyRow | null;
-  if (row) {
-    db.run("UPDATE mem_api_keys SET last_used_at = ? WHERE id = ?", [Date.now(), row.id]);
-  }
-  return row ?? undefined;
+    .get(hash) as MemApiKeyRow | null;
+  // The indexed lookup is by hash (a mismatch reveals nothing about the raw
+  // secret); the final equality check is constant-time as well.
+  if (!row || !hashedSecretsEqual(row.secret, hash)) return undefined;
+  db.run("UPDATE mem_api_keys SET last_used_at = ? WHERE id = ?", [Date.now(), row.id]);
+  return row;
+}
+
+function hashedSecretsEqual(a: string, b: string): boolean {
+  const ab = new Uint8Array(Buffer.from(a, "utf8"));
+  const bb = new Uint8Array(Buffer.from(b, "utf8"));
+  return ab.length === bb.length && timingSafeEqual(ab, bb);
 }
 
 export function listMemApiKeys(db: Database): MemApiKeyRow[] {
