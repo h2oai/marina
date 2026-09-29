@@ -108,7 +108,7 @@ Pure functions — same numbers, same verdict, testable without a model. Thresho
 
 | Part | Asks | Verdict | Backend failure |
 |---|---|---|---|
-| **Gate** (`decideGate`) | `destructive`, `irreversible`, `outsideScope` (noul), plus `unauthorized` when intent is sent | worst ≥ `blockAt` 0.88 → block; ≥ `askAt` 0.65 → ask a person; else allow | **Block** (fail closed: an outage may cost work, never data) |
+| **Gate** (`decideGate`) | `destructive`, `irreversible`, `outsideScope` (noul), plus `unauthorized` when intent is sent | worst ≥ `blockAt` 0.88 → block; ≥ `askAt` 0.65 → ask a person; else allow | **Block** (fail closed: an outage — or ANY asked question left unanswered — may cost work, never data) |
 | **Router** (`decideRoute`) | `tier` (choice fast/powerful) + `complexity` (score 0–2) | complexity ≥ 1.0 → powerful; tier confidence < 0.6 → fallback; else the pick | **Fallback tier** (fail open: costs money only) |
 | **Verifier** (`decideVerify`) | `quality` (score 0–2) + `grounded` (noul) | quality ≥ 1.5 and grounded ≥ 0.5 → accept; else retry, at most 2 attempts in total; an unsure judge accepts | **Accept** (advisory; never loop on an outage) |
 
