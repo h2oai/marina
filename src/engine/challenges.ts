@@ -116,6 +116,7 @@ export const DEFAULT_CHALLENGE_TTL_MS = 60 * 60_000;
 
 const pending = new Map<string, Pending>();
 let host: ChallengeHost | undefined;
+let hostOwner: object | undefined;
 let earnedSeen = 0;
 
 export function challengesEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -153,8 +154,9 @@ function newToken(): string {
 }
 
 /** Engine side: wire the service and the gate-refusal hook. */
-export function setChallengeHost(next: ChallengeHost | undefined): void {
+export function setChallengeHost(next: ChallengeHost | undefined, owner?: object): void {
   host = next;
+  hostOwner = next ? owner : undefined;
   setGateRefusalHook(
     next
       ? (entityId, gateId, reason) => {
@@ -632,6 +634,11 @@ function maybeJudge(challenge: Challenge): void {
       // The judge is a shortcut, never a requirement: on failure the challenge
       // simply waits for a person.
     });
+}
+
+/** Engine shutdown: unwire the host only if `owner` is still the one that set it. */
+export function releaseChallengeHost(owner: object): void {
+  if (host && hostOwner === owner) setChallengeHost(undefined);
 }
 
 /** Test seam. */

@@ -2,6 +2,7 @@ import { localHttpBase } from "../net/listen-ports";
 import { MARINA_ROOT } from "../runtime-paths";
 import { AuthCoordinator, type LoginIdentity, type LoginResult } from "./auth-coordinator";
 import { autoRespawnEnabled } from "./auto-respawn";
+import { releaseChallengeHost } from "./challenges";
 import { CommandCoordinator } from "./command-coordinator";
 import { CommandPhaseCoordinator } from "./command-phase-coordinator";
 import { RoomTickCoordinator } from "./room-tick-coordinator";
@@ -1867,6 +1868,7 @@ export class Engine {
     this.stop();
     const finish = () => {
       this.saveWorldState();
+      releaseChallengeHost(this);
       return Promise.allSettled([
         this.connectorRuntime?.close(),
         this.gatewayRuntime?.close(),
