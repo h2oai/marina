@@ -202,6 +202,16 @@ describe("crew command (integration)", () => {
     expect(lastFor(alice)).toContain("Unknown formation");
   });
 
+  it("crew formation accepts the patterns added 2026-09", () => {
+    engine.processCommand(alice.entity!, "crew create alpha bob -- task");
+    for (const f of ["delphi", "tournament", "verification", "auction", "ledger", "sharding"]) {
+      alice.clear();
+      engine.processCommand(alice.entity!, `crew formation alpha ${f}`);
+      expect(lastFor(alice)).toContain(`formation → ${f}`);
+      expect(engine.crewManager?.getByName("alpha")?.formation).toBe(f);
+    }
+  });
+
   it("crew formation by non-owner low-rank is rejected", () => {
     engine.processCommand(alice.entity!, "crew create alpha bob -- task");
     bob.clear();

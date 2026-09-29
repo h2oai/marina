@@ -74,7 +74,8 @@ const KNOWN_SUBCOMMANDS: Record<string, Set<string>> = {
     "show",
     "view",
   ]),
-  memory: new Set(["delete", "get", "history", "list", "set"]),
+  // `memory kv <verb>` is the canonical key-value form; the bare verbs stay accepted.
+  memory: new Set(["delete", "get", "history", "kv", "list", "set"]),
   note: new Set([
     "correct",
     "delete",

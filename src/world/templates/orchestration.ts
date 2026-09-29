@@ -14,7 +14,8 @@ export interface TemplateNote {
  * here and a template export below, and nothing else.
  *
  * Order is intentional: Chorus + Foundry (Marina-native) first, then
- * the generational-memory patterns, then `custom` last.
+ * the generational-memory patterns, then the estimation / selection /
+ * allocation patterns added 2026-09, then `custom` last.
  */
 export const ORCHESTRATION_PATTERNS = [
   "deliberation",
@@ -27,6 +28,12 @@ export const ORCHESTRATION_PATTERNS = [
   "blackboard",
   "symbiosis",
   "research",
+  "delphi",
+  "tournament",
+  "verification",
+  "auction",
+  "ledger",
+  "sharding",
   "custom",
 ] as const;
 
@@ -66,7 +73,8 @@ export type TaskShape =
   | "sequential"
   | "hierarchical"
   | "shared-artifact"
-  | "open-ended";
+  | "open-ended"
+  | "verifiable";
 
 /** Which shapes each built-in pattern fits, with a one-line "why". */
 export const PATTERN_FIT: Record<
@@ -86,6 +94,24 @@ export const PATTERN_FIT: Record<
   blackboard: { shapes: ["shared-artifact"], why: "incremental refinement on one workspace" },
   symbiosis: { shapes: ["open-ended"], why: "mutual benefit, frontier scanning" },
   research: { shapes: ["open-ended"], why: "hypothesis → act → measure → record loop" },
+  delphi: {
+    shapes: ["contested", "open-ended"],
+    why: "independent estimates → anonymized summary → revision",
+  },
+  tournament: { shapes: ["contested", "parallel"], why: "pairwise elimination among candidates" },
+  verification: {
+    shapes: ["decomposable", "shared-artifact", "verifiable"],
+    why: "generate, then one verifier per aspect",
+  },
+  auction: { shapes: ["decomposable", "parallel"], why: "tasks awarded to the best-fit bid" },
+  ledger: {
+    shapes: ["hierarchical", "sequential"],
+    why: "task + progress ledgers, replan on repeated stalls",
+  },
+  sharding: {
+    shapes: ["decomposable", "parallel", "verifiable"],
+    why: "an oracle splits a failing target into claimable shards",
+  },
 };
 
 /**
@@ -146,12 +172,18 @@ export const PATTERN_VALIDATION: Record<
     status: "validated",
     evidence: "2026-09 post-fix sweep: gsm8k 70% 10/10 answered (habitat untested)",
   },
+  delphi: { status: "unvalidated", evidence: "added 2026-09; no sweep yet" },
+  tournament: { status: "unvalidated", evidence: "added 2026-09; no sweep yet" },
+  verification: { status: "unvalidated", evidence: "added 2026-09; no sweep yet" },
+  auction: { status: "unvalidated", evidence: "added 2026-09; no sweep yet" },
+  ledger: { status: "unvalidated", evidence: "added 2026-09; no sweep yet" },
+  sharding: { status: "unvalidated", evidence: "added 2026-09; no sweep yet" },
 };
 
 const SHAPE_PATTERNS: { shape: TaskShape; re: RegExp }[] = [
   {
     shape: "contested",
-    re: /\b(debate|argue|disagree|pros and cons|which is better|decide between|trade-?off|controvers|for or against)\b/,
+    re: /\b(debate|argue|disagree|pros and cons|which is better|decide between|trade-?off|controvers|for or against|compare (the )?(candidates|solutions|options)|pick the best|independent estimates)\b/,
   },
   {
     shape: "decomposable",
@@ -176,6 +208,10 @@ const SHAPE_PATTERNS: { shape: TaskShape; re: RegExp }[] = [
   {
     shape: "open-ended",
     re: /\b(explore|research|investigate|figure out|open-?ended|brainstorm|discover|experiment)\b/,
+  },
+  {
+    shape: "verifiable",
+    re: /\b(failing (tests?|cases?|checks?)|test suite|tests? (pass|fail)|verif(y|ied|ication)|fact-?check|check (it |them )?against|reference implementation|conformance)\b/,
   },
 ];
 
@@ -717,6 +753,332 @@ export const BLACKBOARD_TEMPLATE: TemplateNote[] = [
       "understanding. When the group believes a question is resolved, post the conclusion " +
       "to the board and create a task to act on it. The blackboard keeps growing — old " +
       "contributions remain as history.",
+    importance: 7,
+    type: "skill",
+  },
+];
+
+export const DELPHI_TEMPLATE: TemplateNote[] = [
+  {
+    content:
+      "This project uses Delphi orchestration — independent estimates first, then an " +
+      "anonymized summary, then revision. Each member forms a view alone before seeing anyone " +
+      "else's, a facilitator summarizes the spread without names, and members revise in light " +
+      "of the summary. The mechanism is independence before influence: the first round tends to " +
+      "be most useful when nobody has anchored on an earlier or louder voice. Consider naming one " +
+      "facilitator (not an estimator) before the first round starts.",
+    importance: 9,
+    type: "skill",
+  },
+  {
+    content:
+      "Delphi drafting: consider drafting your estimate privately first — `memory kv set " +
+      "estimate <value> because <reasons>` — before reading the board or channel. Once drafted, send it to " +
+      "the facilitator only: `tell <facilitator> [estimate] <value> | <reasons>`. Posting to the " +
+      "board before everyone has drafted tends to anchor the others. The facilitator can confirm " +
+      "on the project channel when every member has sent a draft, which opens the summary step.",
+    importance: 8,
+    type: "skill",
+  },
+  {
+    content:
+      "Delphi summary: the facilitator posts one anonymized summary per round, e.g. `board post " +
+      "project:<name> [delphi-summary] Round 1 | range=<low>..<high> median=<m> reasons: <key " +
+      "reasons>`. It lists the range, the median and the key reasons on each side, with no names " +
+      "attached. Adding the same summary to the pool with `pool <name> add [delphi-summary] " +
+      "<summary>` often helps later rounds and later projects recall it.",
+    importance: 8,
+    type: "skill",
+  },
+  {
+    content:
+      "Delphi revision: after reading the summary, each member revises once (twice at most) — " +
+      "privately first again, then by `tell <facilitator> <revision>`. A revision that moves can " +
+      "say which reason moved it; one that stays put can restate the reason that holds. " +
+      "Dissenting reasons tend to be the most valuable part of a round: rather than dropping " +
+      "them, the facilitator can keep each as a pool note and link it to the round summary with " +
+      "`note link <dissent-id> <summary-id> contradicts`.",
+    importance: 8,
+    type: "skill",
+  },
+  {
+    content:
+      "Delphi convergence & record: consider stopping when the range stops narrowing between " +
+      "rounds, or after the second revision. A spread that collapses in the first revision with " +
+      "no new reasons is a warning sign — it often means anchoring rather than agreement; asking " +
+      "one member to argue the strongest outlying reason before closing helps. Record the outcome " +
+      "in the pool tagged [delphi-ruling]: the final range and median, the dissents that survived " +
+      "(linked with `note link`), and what moved the estimates, so future rounds can cite it.",
+    importance: 7,
+    type: "skill",
+  },
+];
+
+export const TOURNAMENT_TEMPLATE: TemplateNote[] = [
+  {
+    content:
+      "This project uses Tournament orchestration — pairwise elimination among candidate " +
+      "solutions. Several members each produce a candidate independently, candidates meet in " +
+      "pairs, the stronger of each pair advances, and rounds repeat until one remains. Comparing " +
+      "two at a time tends to be easier to judge well than ranking many at once. The losing " +
+      "candidates are not wasted: their best ideas can be grafted into the winner at the end.",
+    importance: 9,
+    type: "skill",
+  },
+  {
+    content:
+      "Tournament entries: consider one task per entrant — `task create Candidate: <goal> | " +
+      "<spec>` — or a single bounty task (`task create <goal> | <spec> bounty`) so several members " +
+      "can claim and submit against the same spec. Each entrant works alone and posts the finished " +
+      "candidate with `board post project:<name> [candidate] <title> | <summary and where the work " +
+      "lives>`. Candidates tend to be most comparable when every entrant works to the same spec.",
+    importance: 8,
+    type: "skill",
+  },
+  {
+    content:
+      "Tournament bracket: the coordinator pairs the candidates (an odd one out gets a bye) and " +
+      "posts each match: `board post project:<name> [match] Round 1: <a> vs <b> | <criteria>`. " +
+      "Judges who authored neither candidate score both candidate posts with `board vote " +
+      "<postId> up [score 1-10]` and compare with `board scores <postId>`; where a decision " +
+      "backend is configured, `decision choose <question> | <candidate a> | <candidate b>` is one " +
+      "more advisory input. The winner of each match advances to the next round.",
+    importance: 8,
+    type: "skill",
+  },
+  {
+    content:
+      "Tournament rulings: consider recording each match result as a reply on the match post — " +
+      "`board reply <postId> [ruling] <winner> over <loser> because <reason>` — and in the pool " +
+      "with `pool <name> add [ruling] <match and reason>`, so the bracket stays auditable. A close " +
+      "match tends to deserve a second judge rather than a coin flip. Each ruling can also name " +
+      "the strongest idea in the losing candidate; that list feeds the graft step.",
+    importance: 8,
+    type: "skill",
+  },
+  {
+    content:
+      "Tournament final & graft: once one candidate remains, its owner considers grafting the " +
+      "named best ideas from the losers, linking each graft to its source with `note link " +
+      "<winner-note> <loser-note> supports`. The coordinator approves the winning submission " +
+      "(`task approve <id> <claimant>`) and records a [tournament-result] pool note: the bracket, " +
+      "each ruling, what was grafted, and which criteria decided close matches. Future " +
+      "tournaments can recall it to judge faster.",
+    importance: 7,
+    type: "skill",
+  },
+];
+
+export const VERIFICATION_TEMPLATE: TemplateNote[] = [
+  {
+    content:
+      "This project uses Verification orchestration — generate, then verify from several " +
+      "angles. One or more members produce candidates; separate verifiers each check ONE aspect " +
+      "of a candidate: correctness, constraints and requirements, evidence and citations, or " +
+      "safety. A candidate passes when every aspect verifier passes it. Splitting verification by " +
+      "aspect tends to catch what one generalist reviewer misses, and keeps each check small " +
+      "enough to do thoroughly.",
+    importance: 9,
+    type: "skill",
+  },
+  {
+    content:
+      "Verification generation: authors produce candidates as ordinary tasks (`task claim <id>`, " +
+      "then `task submit <id> <candidate and where it lives>`) and announce each one with `board " +
+      "post project:<name> [candidate] <title> | <summary>`. Consider stating up front which " +
+      "requirements the candidate claims to meet — that list becomes the verifiers' checklist. " +
+      "Authors usually leave the verification of their own candidates to others.",
+    importance: 8,
+    type: "skill",
+  },
+  {
+    content:
+      "Verification aspects: the coordinator creates one verification task per aspect per " +
+      "candidate, e.g. `task create Verify <candidate>: correctness | <what to check>`. Each " +
+      "verifier checks only its aspect. Verifiers from a different role lineage than the author " +
+      "tend to catch more — `role view <name>` shows a role's traits. Where a decision backend is " +
+      "configured, a verifier can self-check a draft verdict with `decision check <what was " +
+      "checked> | <draft verdict>`; the score stays advisory.",
+    importance: 8,
+    type: "skill",
+  },
+  {
+    content:
+      "Verification by execution: a claim that can be checked by running something is run " +
+      "rather than argued. For code, consider `code run <check>` (tests, typecheck, lint) and " +
+      "quoting the output in the verdict; for data, re-run the calculation; for a citation, " +
+      "fetch the source (`web fetch <url>`) and confirm the quoted line. A verdict posts as a " +
+      "reply on the candidate: `board reply <postId> [verdict] <aspect>: pass|fail | <evidence>`.",
+    importance: 8,
+    type: "skill",
+  },
+  {
+    content:
+      "Verification gate: consider treating a candidate as passed only when every aspect " +
+      "verifier has posted a pass. Each failed aspect becomes a rework task for the author — " +
+      "`task create Rework <candidate>: <aspect> | <the failing evidence>` — and only that aspect " +
+      "is re-verified afterwards. Link each verdict to the candidate with `note link <verdict-id> " +
+      "<candidate-id> supports|contradicts`, and record the gate outcome in the pool tagged " +
+      "[verification-ruling] so aspects that fail repeatedly become visible across candidates.",
+    importance: 7,
+    type: "skill",
+  },
+];
+
+export const AUCTION_TEMPLATE: TemplateNote[] = [
+  {
+    content:
+      "This project uses Auction orchestration — tasks are allocated by bids. The work is split " +
+      "into tasks or bounties, members bid by stating their fit and an expected cost, and the " +
+      "coordinator awards each task to the best fit for its cost. Afterwards the coordinator " +
+      "records whether the winner's claimed fit held up, so later awards learn from it. The " +
+      "auction is a convention over ordinary tasks and claims, not a separate mechanism.",
+    importance: 9,
+    type: "skill",
+  },
+  {
+    content:
+      "Auction lots: the coordinator creates the tasks (`task create <title> | <spec> " +
+      "standing:N`, placed in the project bundle with `task assign <id> <bundle_id>`) and opens " +
+      "bidding with one board post per lot: `board post project:<name> [lot] Task <id> | <spec " +
+      "and deadline>`. A lot tends to attract useful bids when its spec says what done looks " +
+      "like. Members usually hold off on `task claim` until the award is posted.",
+    importance: 8,
+    type: "skill",
+  },
+  {
+    content:
+      "Auction bids: bid by replying on the lot — `board reply <postId> [bid] fit: <relevant " +
+      "past results, with note or task ids> | cost: <expected effort or time>`. Evidence tends to " +
+      "count for more than self-description: cite finished tasks or pool notes. A bidder's " +
+      "standing is visible with `standing show <name>`. Consider bidding only on lots you could " +
+      "start soon; an award that sits idle tends to cost more than a lower-fit one that moves.",
+    importance: 8,
+    type: "skill",
+  },
+  {
+    content:
+      "Auction award: once bidding closes, the coordinator weighs fit against cost and posts the " +
+      "award as a reply: `board reply <postId> [award] <winner> — <why this bid>`. The winner " +
+      "claims with `task claim <id>` and renews the lease with `task heartbeat <id>` while " +
+      "working. If the lease lapses (`task recover` releases expired claims), the coordinator can " +
+      "award the lot to the runner-up rather than reopen bidding.",
+    importance: 8,
+    type: "skill",
+  },
+  {
+    content:
+      "Auction follow-up: after approval (`task approve <id> <claimant>`), the coordinator " +
+      "records whether the winner's claimed fit held up — `pool <name> add [award-check] task " +
+      "<id> winner=<name> claimed=<fit> held=yes|no | <what differed>`. Before the next award, " +
+      "`pool <name> recall award-check <name>` surfaces a bidder's track record, so fit claims " +
+      "that held up tend to count for more over time.",
+    importance: 7,
+    type: "skill",
+  },
+];
+
+export const LEDGER_TEMPLATE: TemplateNote[] = [
+  {
+    content:
+      "This project uses Ledger orchestration — one orchestrator keeps two ledgers. The task " +
+      "ledger holds the facts, the plan and the assignments; the progress ledger holds what is " +
+      "done, what is in flight and what is stuck. Both live in the pool as known notes the " +
+      "orchestrator updates, so any member can recall where the work stands without asking. The " +
+      "orchestrator steers from the ledgers rather than from its own recollection.",
+    importance: 9,
+    type: "skill",
+  },
+  {
+    content:
+      "Ledger task ledger: the orchestrator writes it at the start — `pool <name> add " +
+      "[task-ledger] facts: <verified> | guesses: <to check> | plan: <steps> | assignments: <task " +
+      "ids and members> importance:9` — and adds a new version whenever the plan changes, linking " +
+      "it to the previous one with `note link <new-id> <old-id> part_of`. Keeping verified facts " +
+      "apart from guesses tends to show which step to check first.",
+    importance: 8,
+    type: "skill",
+  },
+  {
+    content:
+      "Ledger progress ledger: after each step, the orchestrator updates it — `pool <name> add " +
+      "[progress-ledger] done: <ids> | in flight: <ids and claimants> | stuck: <ids and why> | " +
+      "next: <step>`. Members help by keeping claims live (`task heartbeat <id>`) and submitting " +
+      "promptly (`task submit <id> <report>`). `task list` and `task info <id>` show each claim " +
+      "and its lease, which is the progress ledger's ground truth.",
+    importance: 8,
+    type: "skill",
+  },
+  {
+    content:
+      "Ledger stall signal: a claim whose lease expired, or one that shows no progress between " +
+      "two ledger updates, is the stall signal. `task recover` releases expired leases back to " +
+      "open. On a first stall the orchestrator can nudge the claimant (`tell <name> <message>`) " +
+      "or reassign the task. Each stall goes into the progress ledger with its cause, so repeated " +
+      "stalls on the same step stay visible.",
+    importance: 8,
+    type: "skill",
+  },
+  {
+    content:
+      "Ledger replanning: after repeated stalls on the same step (two or three is a reasonable " +
+      "bar), consider replanning instead of retrying — revisit the task ledger's facts and " +
+      "guesses, write a new plan version, and cancel tasks only the old plan needed (`task cancel " +
+      "<id>`). The debrief is a [ledger-lesson] pool note: which guess failed, what the replan " +
+      "changed and how many stalls it took, so future orchestrators can recall it.",
+    importance: 7,
+    type: "skill",
+  },
+];
+
+export const SHARDING_TEMPLATE: TemplateNote[] = [
+  {
+    content:
+      "This project uses Sharding orchestration — an oracle splits one big failing target into " +
+      "independent, claimable pieces. The oracle is whatever decides pass or fail mechanically: a " +
+      "test suite, a reference implementation, or a checker. Each failing case or shard becomes a " +
+      "task; members fix shards in parallel and re-run the oracle to confirm. The oracle, not " +
+      "opinion, decides when a shard or the whole target is done.",
+    importance: 9,
+    type: "skill",
+  },
+  {
+    content:
+      "Sharding setup: the coordinator runs the oracle once (for code, `code run <check>`) and " +
+      "records the failing set as the baseline — `pool <name> add [oracle-baseline] <oracle " +
+      "command> | failing: <cases>`. Each failing case, or a small group sharing one cause, " +
+      "becomes a task in the project bundle: `task create Shard: <case> | <oracle command and " +
+      "expected result>`. Shards tend to parallelize well when each maps to its own files or cases.",
+    importance: 8,
+    type: "skill",
+  },
+  {
+    content:
+      "Sharding work: claim a shard with `task claim <id>`, fix it, then re-run the oracle for " +
+      "that shard and for the whole target before `task submit <id> <oracle output>`. Quoting the " +
+      "oracle output tends to beat describing it. If a fix breaks another shard, consider saying " +
+      "so on the project channel — `channel send <channel> [shard-conflict] <ids>` — rather than " +
+      "working around it silently.",
+    importance: 8,
+    type: "skill",
+  },
+  {
+    content:
+      "Sharding oracle convention: the member fixing a shard leaves the oracle alone — the tests, " +
+      "the reference implementation, the checker. A case that looks wrong in the oracle itself " +
+      "becomes a separate question for someone else to review: `board post project:<name> " +
+      "[oracle-question] <case> | <why it looks wrong>`. Keeping the oracle fixed is what lets " +
+      "each pass mean something.",
+    importance: 8,
+    type: "skill",
+  },
+  {
+    content:
+      "Sharding done: consider a shard done when the oracle passes it and nothing that passed " +
+      "before regresses; the coordinator approves with `task approve <id> <claimant>`. The target " +
+      "is done when the full oracle run passes. Record the closing run as a [sharding-result] pool " +
+      "note — the baseline, the final run, and any oracle questions and how they were settled — " +
+      "linked to the baseline with `note link <result-id> <baseline-id> supports`.",
     importance: 7,
     type: "skill",
   },

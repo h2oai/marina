@@ -244,6 +244,30 @@ describe("Project Command", () => {
       expect(notes.length).toBeGreaterThan(0);
     });
 
+    it.each([
+      ["delphi", "Delphi orchestration independent estimates"],
+      ["tournament", "Tournament orchestration pairwise elimination"],
+      ["verification", "Verification orchestration verify aspect"],
+      ["auction", "Auction orchestration bids"],
+      ["ledger", "Ledger orchestration ledgers"],
+      ["sharding", "Sharding orchestration oracle"],
+    ])("should set %s orchestration and seed its 5 notes", (pattern, query) => {
+      const name = `Orc${pattern}`;
+      engine.processCommand(conn1.entity!, `project create ${name} | ${pattern}`);
+      conn1.clear();
+      engine.processCommand(conn1.entity!, `project ${name} orchestrate ${pattern}`);
+      expect(conn1.lastText()).toContain(`Set orchestration to "${pattern}"`);
+
+      const project = db.getProjectByName(name);
+      expect(project!.orchestration).toBe(pattern);
+      expect(db.recallPoolNotes(project!.pool_id!, query).length).toBeGreaterThan(0);
+      const label = pattern.charAt(0).toUpperCase() + pattern.slice(1);
+      const seeded = db
+        .getPoolNotes(project!.pool_id!, 200)
+        .filter((note) => note.content.includes(label));
+      expect(seeded).toHaveLength(5);
+    });
+
     it("should handle custom orchestration", () => {
       engine.processCommand(conn1.entity!, "project create CustomOrch | Custom");
       conn1.clear();

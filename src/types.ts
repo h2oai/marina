@@ -335,7 +335,7 @@ export function crewId(id: string): CrewId {
 }
 
 /**
- * Crew formations are the runtime form of the 10 orchestration patterns
+ * Crew formations are the runtime form of the 16 orchestration patterns
  * (src/world/templates/orchestration.ts). `freeform` is the no-formation
  * default — bound members, no prescribed coordination shape.
  */
@@ -350,6 +350,12 @@ export type CrewFormation =
   | "blackboard"
   | "symbiosis"
   | "research"
+  | "delphi"
+  | "tournament"
+  | "verification"
+  | "auction"
+  | "ledger"
+  | "sharding"
   | "freeform";
 
 /**

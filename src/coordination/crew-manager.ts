@@ -900,7 +900,7 @@ export class CrewManager {
       }
       // Tradition pool deposit: feed the formation's collective wisdom so
       // future crews running the same shape inherit what worked here. The
-      // 10 seeded patterns are version 0; emergent patterns grow this way.
+      // 16 seeded patterns are version 0; emergent patterns grow this way.
       if (crew.formation !== "freeform") {
         try {
           const traditionPoolName = `orchestration:${crew.formation}`;

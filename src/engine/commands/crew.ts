@@ -28,6 +28,12 @@ const VALID_FORMATIONS: ReadonlySet<CrewFormation> = new Set<CrewFormation>([
   "blackboard",
   "symbiosis",
   "research",
+  "delphi",
+  "tournament",
+  "verification",
+  "auction",
+  "ledger",
+  "sharding",
   "freeform",
 ]);
 
@@ -168,7 +174,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
       "  crew stall <name> <agent> [reason]\n" +
       "  crew complete <name> -- <summary>\n" +
       "  crew dissolve <name> [reason]\n" +
-      "Formations: deliberation, chorus, foundry, swarm, pipeline, debate, mapreduce, blackboard, symbiosis, research, freeform\n" +
+      "Formations: deliberation, chorus, foundry, swarm, pipeline, debate, mapreduce, blackboard, symbiosis, research, delphi, tournament, verification, auction, ledger, sharding, freeform\n" +
       "Artifact kinds: map, reduce, synthesis, draft",
     handler: (ctx: RoomContext, input) => {
       const caller = deps.getEntity(input.entity);
