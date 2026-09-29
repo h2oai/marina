@@ -89,6 +89,9 @@ Adding a delegate: put the query in the module, add the one-line delegate to `Ma
 
 `refreshContradictionCases` (`db-notes.ts`) excludes durable service-memory rows (`memory_record_versions`) from candidates and skips any pair where one note is the other's twin (`note_sources.url = marina-memory://record/<id>`), so `note conflicts` never lists a note against its own durable mirror.
 
+## Migration 143: a stable FTS key for `markets`
+`markets` had a TEXT primary key and `markets_fts` used `content_rowid=rowid`; VACUUM and VACUUM INTO (`snapshot`, `snapshotCompacted`, recovery bundles) may renumber the implicit rowid of such a table, silently pointing the external-content index at the wrong rows. Migration 143 rebuilds `markets` with `seq INTEGER PRIMARY KEY` (`id` stays the public key, `UNIQUE`, and the FK target), re-creates the FTS table on `content_rowid=seq` with its three triggers, and rebuilds the index. Because DROP TABLE on a referenced parent cascades with `foreign_keys=ON`, `market_positions` and `market_scores` are rebuilt alongside it, referencing the new parent before the rename. Any new external-content FTS table must use an INTEGER PRIMARY KEY as its `content_rowid` (`test/markets-fts-vacuum.test.ts`).
+
 ## Retired sources in `[evidence]`
 
 `servableSourceIds(db, spaceId, sourceIds, now)` in `unified-context.ts` drops `source_search` hits whose every deriving record is retired (superseded tombstone, current note superseded, or `valid_until` past); a source with no deriving record stays (a plain capture), and a fresh record re-deriving it makes it servable again. A query failure keeps all hits — it is a guard, not an access check.

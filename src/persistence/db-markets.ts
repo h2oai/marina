@@ -50,7 +50,7 @@ export function searchMarkets(db: Database, query: string): MarketRow[] {
   return db
     .query(
       `SELECT m.* FROM markets m
-         JOIN markets_fts f ON m.rowid = f.rowid
+         JOIN markets_fts f ON m.seq = f.rowid
          WHERE markets_fts MATCH ?
          ORDER BY rank LIMIT 20`,
     )

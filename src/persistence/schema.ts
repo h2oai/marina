@@ -88,6 +88,88 @@ DROP TABLE spend_daily;
 ALTER TABLE spend_daily_v142 RENAME TO spend_daily;
 `,
   },
+  // Migration 143: `markets` gets a stable INTEGER PRIMARY KEY (`seq`) so
+  // `markets_fts` (external content, content_rowid) survives VACUUM / VACUUM
+  // INTO, which may renumber the implicit rowid of a TEXT-keyed table. `id`
+  // stays the public key (UNIQUE, the FK target). Rebuilding a referenced
+  // table with foreign_keys=ON would cascade-delete its children on DROP, so
+  // the two child tables are rebuilt alongside it: the new children reference
+  // `markets_v143` (renaming it to `markets` rewrites those references), and
+  // the old children are dropped before the old parent.
+  {
+    version: 143,
+    sql: `
+DROP TRIGGER IF EXISTS markets_fts_ai;
+DROP TRIGGER IF EXISTS markets_fts_ad;
+DROP TRIGGER IF EXISTS markets_fts_au;
+DROP TABLE IF EXISTS markets_fts;
+
+CREATE TABLE markets_v143 (
+  seq INTEGER PRIMARY KEY,
+  id TEXT NOT NULL UNIQUE,
+  room_id TEXT NOT NULL,
+  question TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'open',
+  outcome TEXT,
+  resolved_at INTEGER,
+  resolved_by TEXT,
+  created_at INTEGER NOT NULL
+);
+INSERT INTO markets_v143 (id, room_id, question, category, status, outcome, resolved_at, resolved_by, created_at)
+  SELECT id, room_id, question, category, status, outcome, resolved_at, resolved_by, created_at
+  FROM markets ORDER BY created_at, rowid;
+
+CREATE TABLE market_positions_v143 (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  market_id TEXT NOT NULL REFERENCES markets_v143(id) ON DELETE CASCADE,
+  entity_name TEXT NOT NULL,
+  direction TEXT NOT NULL,
+  confidence INTEGER NOT NULL,
+  reasoning TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+INSERT INTO market_positions_v143 SELECT id, market_id, entity_name, direction, confidence, reasoning, created_at, updated_at FROM market_positions;
+
+CREATE TABLE market_scores_v143 (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  market_id TEXT NOT NULL REFERENCES markets_v143(id) ON DELETE CASCADE,
+  entity_name TEXT NOT NULL,
+  brier_score REAL NOT NULL,
+  correct INTEGER NOT NULL DEFAULT 0,
+  scored_at INTEGER NOT NULL
+);
+INSERT INTO market_scores_v143 SELECT id, market_id, entity_name, brier_score, correct, scored_at FROM market_scores;
+
+DROP TABLE market_positions;
+DROP TABLE market_scores;
+DROP TABLE markets;
+ALTER TABLE markets_v143 RENAME TO markets;
+ALTER TABLE market_positions_v143 RENAME TO market_positions;
+ALTER TABLE market_scores_v143 RENAME TO market_scores;
+
+CREATE INDEX idx_markets_room ON markets(room_id);
+CREATE INDEX idx_markets_status ON markets(status);
+CREATE UNIQUE INDEX idx_positions_market_entity ON market_positions(market_id, entity_name);
+CREATE INDEX idx_positions_entity ON market_positions(entity_name);
+CREATE INDEX idx_scores_entity ON market_scores(entity_name);
+CREATE INDEX idx_scores_market ON market_scores(market_id);
+
+CREATE VIRTUAL TABLE markets_fts USING fts5(question, category, content=markets, content_rowid=seq);
+CREATE TRIGGER markets_fts_ai AFTER INSERT ON markets BEGIN
+  INSERT INTO markets_fts(rowid, question, category) VALUES (new.seq, new.question, new.category);
+END;
+CREATE TRIGGER markets_fts_ad AFTER DELETE ON markets BEGIN
+  INSERT INTO markets_fts(markets_fts, rowid, question, category) VALUES ('delete', old.seq, old.question, old.category);
+END;
+CREATE TRIGGER markets_fts_au AFTER UPDATE ON markets BEGIN
+  INSERT INTO markets_fts(markets_fts, rowid, question, category) VALUES ('delete', old.seq, old.question, old.category);
+  INSERT INTO markets_fts(rowid, question, category) VALUES (new.seq, new.question, new.category);
+END;
+INSERT INTO markets_fts(markets_fts) VALUES ('rebuild');
+`,
+  },
 ];
 export const SCHEMA_VERSION = FORWARD_MIGRATIONS.at(-1)?.version ?? SCHEMA_BASELINE_VERSION;
 
