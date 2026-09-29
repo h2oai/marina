@@ -25,7 +25,7 @@
  *   bun run arena signals [--tracker T]         every discovery attempt and its verdict
  *   bun run arena shadow run <round_id|due> | list | score
  *                                               record / list / score shadow forecasts (never filed)
- *   bun run arena evaluate [--forecaster model:<m>|crew:<m>[,<m>,<m>]|formation:<pattern>:<m>[,<m>…]]
+ *   bun run arena evaluate [--forecaster model:<m>|crew:<m>[,<m>,<m>]|formation:<pattern>:<m>[,<m>…]|tabh2o[:forecast][@nowcast]]
  *                          [--no-learn] [--limit N] [--tracker T] [--out FILE]
  *                                               score forecasters on already-resolved rounds (files nothing)
  *
@@ -285,6 +285,15 @@ async function main(): Promise<number> {
         forecasters.nowcast = (await forecasterFor("nowcast")).forecaster;
         forecasters[specArg.replace(/openrouter\//g, "")] = formation.forecaster;
         usage.push(formation.usage!);
+      } else if (specArg.startsWith("tabh2o")) {
+        // TabH2O starts from the baseline (or the nowcast): score both alongside,
+        // with the blend and TabH2O's own answer — they share one call per round.
+        forecasters.nowcast = (await forecasterFor("nowcast")).forecaster;
+        const blended = await forecasterFor(specArg, { weight: weightFlag() });
+        const raw = await forecasterFor(specArg, { raw: true });
+        forecasters[`${specArg} blend ${weightFlag() ?? 0.5}`] = blended.forecaster;
+        forecasters[`${specArg} raw`] = raw.forecaster;
+        usage.push(blended.usage!, raw.usage!);
       } else if (specArg === "nowcast") {
         forecasters.nowcast = (await forecasterFor("nowcast")).forecaster;
       } else if (specArg === "discovered") {

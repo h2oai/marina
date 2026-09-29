@@ -148,6 +148,26 @@ To answer them, route their family to research, e.g. `<family>=research:<m>[,<m>
 routes are per family, so the family's rounds that do have history go through research too
 (anchored as usual).
 
+### TabH2O (`tabh2o`, experimental)
+
+`MARINA_ARENA_FORECASTER=tabh2o` asks [TabH2O](https://tabh2o.h2oai.com/docs), H2O.ai's tabular
+foundation model (`TABH2O_API_KEY`), for each numeric round (`src/arena/tabh2o-forecaster.ts`).
+The training table is built only from what the round froze at its lock, the spread comes from
+the returned interval, and the answer is shrunk toward the start forecast with
+`MARINA_ARENA_MODEL_WEIGHT`, as `model:` does.
+
+| Spec | Starts from |
+|---|---|
+| `tabh2o` | the calibrated baseline |
+| `tabh2o@nowcast` | the nowcast |
+| `tabh2o:forecast[@nowcast]` | as above, using TabH2O's time-series endpoint |
+
+A missing key, an error, too little history or a malformed reply files the start forecast and
+records why; ranking rounds keep the start. Calls are paced under the API's rate limit and
+metered on the daily spend ledger. `bun run arena evaluate --forecaster tabh2o` backtests it like
+the nowcast (operator step; it costs money), and it works as a route target
+(`route:<family>=tabh2o;*=nowcast`).
+
 ### Profile and ranking rounds
 
 About a third of the rounds are not single numbers. `arena evaluate` scores them exactly as the
@@ -372,7 +392,7 @@ arena shadow score                       # once they resolve: the only test on u
 ```
 
 In-world runs are limited to forecasters that make no model calls (`baseline`, `nowcast`,
-`discovered`); `model:`, `crew:`, `formation:` and `research:` spend real money and stay operator steps
+`discovered`); `tabh2o`, `model:`, `crew:`, `formation:` and `research:` spend real money and stay operator steps
 (`bun run arena evaluate|shadow --forecaster …`). `arena discover` is rate limited per entity (2,
 then 1 an hour) and runs one at a time, because every attempt raises that family's promotion bar.
 Its proposer is `MARINA_ARENA_PROPOSER` (default Claude Sonnet 5 via OpenRouter). Discovery
@@ -408,7 +428,7 @@ is missing or readable by other users.
 | `MARINA_ARENA_WINDOW_HOURS` | `24` | how close to its lock a round is filed (max 168; invalid ⇒ 24) |
 | `MARINA_ARENA_URL` / `MARINA_ARENA_AUDIENCE` | production | a rehearsal fork's intake |
 | `MARINA_ARENA_DATA_URL` | the arena repo on GitHub | where rounds, locks and resolutions are read |
-| `MARINA_ARENA_FORECASTER` | `nowcast` | no model calls; every non-Civiqs round is the baseline. Or `baseline`, `discovered`, `model:<m>`, `crew:<m>[,<m>,<m>]`, `formation:<pattern>:<m>[,…][+then:<pattern>:<m>[,…]][+research@<retriever>[,…]]`, `research:<m>[,<m>,<m>]` |
+| `MARINA_ARENA_FORECASTER` | `nowcast` | no model calls; every non-Civiqs round is the baseline. Or `baseline`, `discovered`, `tabh2o[:forecast][@nowcast]` (experimental, `TABH2O_API_KEY`), `model:<m>`, `crew:<m>[,<m>,<m>]`, `formation:<pattern>:<m>[,…][+then:<pattern>:<m>[,…]][+research@<retriever>[,…]]`, `research:<m>[,<m>,<m>]` |
 | `MARINA_ARENA_MODEL_WEIGHT` | `0.5` | share of the model's move from the baseline that is kept |
 | `MARINA_ARENA_SHADOW` | unset | a forecaster spec to record hourly in shadow (never filed) |
 | `MARINA_ARENA_TRENDS_PARTIAL` | off | `on` counts a Trends basket's partial current week |

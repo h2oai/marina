@@ -169,6 +169,7 @@ export async function evaluateResolved(
             rounds?: unknown;
             agreement?: number;
             costUsd?: number;
+            tabh2o?: unknown;
           };
           const fallback = extra.fallback;
           // Keep what the forecaster did, not just what it filed — the diagnostics
@@ -187,6 +188,7 @@ export async function evaluateResolved(
                 "rounds",
                 "agreement",
                 "costUsd",
+                "tabh2o",
               ] as const
             )
               .filter((k) => extra[k] !== undefined)
