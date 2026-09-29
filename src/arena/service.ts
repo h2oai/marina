@@ -87,11 +87,58 @@ async function liveCiviqs(env: NodeJS.ProcessEnv = process.env) {
     : {};
 }
 
+/**
+ * `route:` / `routed`: each tracker family answered by its own forecaster
+ * (src/arena/routing.ts), built lazily on first use so an unused expensive
+ * route costs nothing; a `skip` family throws {@link SkippedRound}, which
+ * submit, shadow and evaluate all treat as "not answered".
+ */
+async function routedForecasterFor(
+  spec: string,
+  opts: Parameters<typeof forecasterFor>[1],
+): Promise<{ forecaster: Forecaster; usage?: Usage }> {
+  const { parseRoutes, routeFor, SKIP, SkippedRound } = await import("./routing");
+  const routes = parseRoutes(spec, opts?.env ?? process.env);
+  const built = new Map<string, Promise<{ forecaster: Forecaster; usage?: Usage }>>();
+  const get = (target: string) => {
+    if (!built.has(target)) built.set(target, forecasterFor(target, opts));
+    return built.get(target)!;
+  };
+  const usages: Usage[] = [];
+  const usage: Usage = {
+    get calls() {
+      return usages.reduce((s, u) => s + u.calls, 0);
+    },
+    get inputTokens() {
+      return usages.reduce((s, u) => s + u.inputTokens, 0);
+    },
+    get outputTokens() {
+      return usages.reduce((s, u) => s + u.outputTokens, 0);
+    },
+    get costUsd() {
+      return usages.reduce((s, u) => s + u.costUsd, 0);
+    },
+  };
+  return {
+    usage,
+    forecaster: async (round, lock) => {
+      const target = routeFor(routes, round.tracker);
+      if (target === SKIP) throw new SkippedRound(round.tracker);
+      const fresh = !built.has(target);
+      const made = await get(target);
+      if (fresh && made.usage) usages.push(made.usage);
+      const f = await made.forecaster(round, lock);
+      return { ...f, note: `route ${round.tracker} → ${target}; ${f.note}`.slice(0, 500) };
+    },
+  };
+}
+
 export async function forecasterFor(
   spec: string,
   opts: { weight?: number; raw?: boolean; env?: NodeJS.ProcessEnv; notes?: NotesStore } = {},
 ): Promise<{ forecaster: Forecaster; usage?: Usage; learner?: Learner }> {
   if (spec === "baseline") return { forecaster: baselineForecaster };
+  if (spec === "routed" || spec.startsWith("route:")) return routedForecasterFor(spec, opts);
   if (spec === "discovered") {
     // Each family's best PROMOTED signal (arena discover), else the nowcast.
     const [{ nowcastForecaster }, loop, signals] = await Promise.all([

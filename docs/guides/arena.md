@@ -206,6 +206,25 @@ negative (best −0.153); the leader (`apodex-futureflow`, +0.517 over 8 rounds)
 w39 rounds with a daily-reading forecast like the nowcast, which backtests at comparable skill on
 those same rounds. Answer the rounds where Marina has measured evidence of an edge.
 
+### Per-family routing (`routed`)
+
+The board scores an entrant's mean skill over the rounds it answered, and no single forecaster
+wins every family. `MARINA_ARENA_FORECASTER=routed` answers each tracker family with its own
+forecaster and leaves families where nothing beats persistence unanswered:
+
+| family | route | evidence (53 clean resolved rounds, 2026-09-29) |
+|---|---|---|
+| civiqs | `nowcast` | +0.213; every formation ties it (+0.20…+0.23), and it is free |
+| aaii | `formation:symbiosis:` Gemini 3.1 Pro + Claude Sonnet 5 | +0.12…+0.27 across patterns (5 rounds) |
+| umich_sentiment | `formation:chorus:` Gemini 3.1 Pro + Claude Sonnet 5 + GPT-5.6 Luna | +0.03…+0.08 (4 rounds) |
+| economist_yougov, umich_party, morning_consult | `skip` | every forecaster ≈ 0 or negative |
+| everything else | `nowcast` | |
+
+Samples are small and the routes were chosen after the backtest — shadow them before trusting
+them. Override the map with `MARINA_ARENA_ROUTES` (`family=spec;…;*=spec`), or write a spec
+inline: `route:civiqs=nowcast;economist_yougov=skip;*=baseline`. `submit` reports a skipped family
+as "not answered" rather than a failure; `evaluate` leaves it out of the mean, as the board does.
+
 ### Profile and ranking rounds
 
 About a third of the rounds are not single numbers. `arena evaluate` scores them exactly as the

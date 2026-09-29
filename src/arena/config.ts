@@ -11,6 +11,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { DEFAULT_ARENA_DATA_URL } from "./data";
 import { DEFAULT_AUDIENCE, DEFAULT_ORIGIN, loadPrivateKey } from "./protocol";
+import { parseRoutes, SKIP } from "./routing";
 
 export const ENTRANT_ID = /^[a-z0-9][a-z0-9_.-]{1,47}$/;
 
@@ -74,8 +75,16 @@ export const DEFAULT_ARENA_FORECASTER = "nowcast";
 export function parseForecasterSpec(raw: string | undefined): string {
   const spec = raw?.trim() || DEFAULT_ARENA_FORECASTER;
   if (FORECASTER_SPEC.test(spec)) return spec;
+  // `routed` / `route:<family>=<spec>;…` — every routed forecaster must itself parse.
+  if (spec === "routed" || spec.startsWith("route:")) {
+    const routes = parseRoutes(spec);
+    for (const target of [...routes.byFamily.values(), routes.fallback]) {
+      if (target !== SKIP) parseForecasterSpec(target);
+    }
+    return spec;
+  }
   throw new Error(
-    `MARINA_ARENA_FORECASTER "${spec}" must be nowcast, baseline, discovered, model:<provider/model>, crew:<model>[,…] (three roles), formation:<pattern>:<model>[,…][+then:<pattern>:<model>[,…]][+research@<retriever>[,…]] (up to five models; patterns ensemble, deliberation, debate, chorus, pipeline, mapreduce, blackboard, symbiosis, research) or research:<model>[,…][@<retriever>[,…]] (up to eight analysts)`,
+    `MARINA_ARENA_FORECASTER "${spec}" must be nowcast, baseline, discovered, model:<provider/model>, crew:<model>[,…] (three roles), formation:<pattern>:<model>[,…][+then:<pattern>:<model>[,…]][+research@<retriever>[,…]] (up to five models; patterns ensemble, deliberation, debate, chorus, pipeline, mapreduce, blackboard, symbiosis, research) research:<model>[,…][@<retriever>[,…]] (up to eight analysts), route:<family>=<forecaster|skip>;…;*=<forecaster> or routed`,
   );
 }
 
