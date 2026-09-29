@@ -302,7 +302,9 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 | `KALSHI_API_KEY=`<br>`KALSHI_API_SECRET=` | Kalshi credentials for live trading (the key is a UUID; the secret is a base64-encoded RSA private key in PEM form) and an API base override. | secret |
 | `KALSHI_BASE=https://api.elections.kalshi.com/trade-api/v2` | Kalshi credentials for live trading (the key is a UUID; the secret is a base64-encoded RSA private key in PEM form) and an API base override. |  |
 | `POLYMARKET_GAMMA_BASE=https://gamma-api.polymarket.com` | Polymarket market-data base override. Market data works; live Polymarket orders are not implemented. |  |
-| `POLYMARKET_API_KEY=`<br>`POLYMARKET_API_SECRET=`<br>`POLYMARKET_PRIVATE_KEY=` | Reserved Polymarket credentials for live orders, which are not implemented yet (the signing path returns an error). | secret, internal |
+| `POLYMARKET_API_KEY=`<br>`POLYMARKET_API_SECRET=` | Reserved Polymarket credentials. Live Polymarket orders are NOT supported (no CLOB order signing): with MARINA_TRADING_ENABLED=true and all four set, orders fail closed with an error and nothing is sent; otherwise orders are paper. | secret, internal |
+| `POLYMARKET_API_PASSPHRASE=` | Reserved Polymarket credentials. Live Polymarket orders are NOT supported (no CLOB order signing): with MARINA_TRADING_ENABLED=true and all four set, orders fail closed with an error and nothing is sent; otherwise orders are paper. | internal |
+| `POLYMARKET_PRIVATE_KEY=` | Reserved Polymarket credentials. Live Polymarket orders are NOT supported (no CLOB order signing): with MARINA_TRADING_ENABLED=true and all four set, orders fail closed with an error and nothing is sent; otherwise orders are paper. | secret, internal |
 
 ## Memory
 
