@@ -89,6 +89,84 @@ rounds; the first forecaster above the baseline, though the margin (~0.01) is wi
 noise. Its family pattern repeated in both runs: better on AAII, Trends, Wikipedia and Morning
 Consult; worse on Economist/YouGov (−0.08 both), where the baseline should keep filing.
 
+### Formations — Marina's orchestration patterns as forecasters
+
+`MARINA_ARENA_FORECASTER=formation:<pattern>:<model>[,<model>…]` (up to five models) runs one of
+Marina's orchestration patterns as a small forecasting protocol (`src/arena/formations.ts`) over
+the same truthful round context as the crew, started from the nowcast:
+
+| Pattern | Protocol |
+|---|---|
+| `ensemble` | independent proposals; the control for the others |
+| `deliberation` | propose → see the others' anonymized proposals and reasons → revise once |
+| `debate` | two sealed advocates (above the start / at or below it); the last model judges direction and trust |
+| `chorus` | proposals broadcast → each member critiques one peer → each revises from the critique it got |
+| `pipeline` (`cascade`) | quant → analyst (sees the quant's handoff) → skeptic (sets trust) — the crew, strictly sequential |
+| `mapreduce` | one model per driver (level/trend, calendar/publication, source quirks); reduce = sum of confidence-shrunk adjustments |
+| `blackboard` | a shared scratchpad; two passes in which each model adds or corrects evidence and a number |
+| `symbiosis` | a quant (the numbers) and an analyst (the context) exchange contributions; a revision must credit the partner's; a gap > 0.5 start-sd triggers another exchange (at most two) |
+| `research` | hypothesis → the model picks a check (recent mean, trend, last-k deltas, typical move, daily readings after the last value) → Marina COMPUTES it → keep or revert → revise (two checks) |
+
+Aggregation is deterministic with the crew's clamps: proposals beyond 4 start-sds are dropped, the
+median move is scaled by a trust (0.5 × the proposals' agreement, or the judge's/skeptic's), the
+final move is capped at 2 start-sds, and the sd blends by the same trust with a floor of half the
+start sd. Each round's calls, statuses, trust and cost are kept in the evaluate/shadow record.
+
+**Compositions.** `+then:<pattern>:<models>` adds a second formation that judges the first one's
+handoff (e.g. `formation:mapreduce:…+then:debate:…`); both shrink toward the same start, so a
+chain cannot compound a move. `+research@<retriever>[,…]` (retrievers as in `research:`) puts a
+research crew in front: it builds ONE dated dossier per round with the research agent's
+retrieval, checks every cited figure against its page, and hands only the **verified** lines to
+every member of every formation. A composition with `+research@` reads today's web, so
+`arena evaluate` refuses it — record it with `arena shadow run`.
+
+**Backtest (2026-09-28)** — all 53 clean resolved scalar rounds, learning off, GPT-6 Luna,
+DeepSeek V4 Flash and GLM-5.3 Flash (all ~$0.1–0.3 per full run; `symbiosis` uses the first two).
+Mean skill vs persistence (rounds beating it):
+
+| forecaster | ALL (53) | civiqs (20) | aaii (5) | yougov (9) | morning consult (6) | umich sent. (4) | umich party (3) | trends (2) | wikipedia (2) | ny fed sce (2) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| baseline | +0.046 (9) | +0.040 (7) | +0.000 (0) | +0.000 (0) | -0.009 (0) | +0.000 (0) | +0.000 (0) | +0.000 (0) | +0.000 (0) | +0.837 (2) |
+| nowcast | +0.111 (17) | +0.213 (15) | +0.000 (0) | +0.000 (0) | -0.009 (0) | +0.000 (0) | +0.000 (0) | +0.000 (0) | +0.000 (0) | +0.837 (2) |
+| crew (same 3 models) | +0.038 (31) | +0.139 (16) | +0.142 (5) | -0.068 (2) | -0.066 (0) | -0.296 (2) | -0.142 (2) | -0.457 (0) | +0.184 (2) | +0.837 (2) |
+| ensemble | +0.114 (20) | +0.203 (14) | +0.067 (2) | -0.006 (0) | -0.009 (0) | +0.015 (1) | +0.000 (0) | +0.016 (1) | +0.000 (0) | +0.834 (2) |
+| deliberation | +0.116 (26) | +0.216 (16) | +0.076 (2) | -0.048 (1) | -0.024 (0) | +0.035 (1) | +0.068 (2) | -0.011 (1) | +0.008 (1) | +0.829 (2) |
+| deliberation (run 2) | +0.113 (27) | +0.205 (16) | +0.060 (1) | -0.037 (3) | -0.001 (2) | -0.012 (0) | +0.000 (0) | +0.008 (1) | +0.149 (2) | +0.838 (2) |
+| debate | +0.109 (29) | +0.220 (16) | +0.122 (3) | -0.139 (2) | +0.014 (2) | +0.021 (2) | +0.000 (0) | +0.084 (1) | -0.003 (1) | +0.837 (2) |
+| chorus | +0.128 (30) | +0.206 (15) | +0.133 (4) | +0.001 (2) | -0.009 (0) | +0.012 (2) | -0.029 (2) | -0.020 (1) | +0.238 (2) | +0.835 (2) |
+| chorus (run 2) | +0.122 (30) | +0.211 (16) | +0.113 (5) | -0.013 (2) | -0.025 (0) | +0.015 (1) | +0.030 (2) | +0.014 (1) | +0.070 (1) | +0.829 (2) |
+| pipeline | +0.088 (30) | +0.174 (16) | +0.062 (4) | -0.018 (2) | -0.026 (0) | -0.008 (2) | -0.021 (2) | -0.279 (1) | +0.104 (1) | +0.825 (2) |
+| mapreduce | +0.106 (24) | +0.214 (16) | +0.020 (2) | +0.032 (1) | -0.014 (0) | -0.006 (0) | +0.044 (2) | -0.369 (0) | +0.009 (1) | +0.832 (2) |
+| blackboard | +0.081 (31) | +0.206 (16) | +0.136 (5) | -0.140 (2) | -0.009 (1) | -0.067 (2) | -0.198 (2) | -0.099 (0) | +0.100 (1) | +0.829 (2) |
+| symbiosis | +0.096 (30) | +0.206 (16) | +0.138 (4) | -0.081 (1) | -0.037 (0) | -0.044 (2) | -0.064 (2) | -0.077 (1) | +0.057 (2) | +0.824 (2) |
+| research | +0.051 (22) | +0.204 (15) | +0.013 (3) | -0.334 (1) | -0.009 (0) | +0.000 (0) | -0.021 (1) | +0.000 (0) | +0.000 (0) | +0.837 (2) |
+| mapreduce → debate | +0.119 (25) | +0.216 (16) | +0.103 (3) | -0.009 (0) | -0.009 (0) | -0.059 (1) | +0.103 (1) | +0.003 (1) | -0.073 (1) | +0.837 (2) |
+
+What it says, honestly:
+
+- **Nothing beats the nowcast on Civiqs.** Every formation lands at +0.20–0.22 against the
+  nowcast's +0.213; the two repeated runs moved by 0.005–0.011, so the differences are noise.
+  Orchestration changes how the models combine, not what they know, and on Civiqs the nowcast
+  already holds the information.
+- **Overall, chorus is the best formation** (+0.128, then +0.122 on a rerun) vs the nowcast's
+  +0.111 — a margin (+0.011…+0.017) about the size of the rerun gap. Not a promotion.
+- **AAII is the one family where models help repeatably**: chorus +0.133/+0.113, crew +0.142,
+  symbiosis +0.138, blackboard +0.136 vs 0 for the baseline, beating persistence on 4–5 of 5
+  rounds. Five rounds is thin: a shadow candidate, not a filing change.
+- **YouGov: keep the baseline.** Most formations lose there (debate −0.14, blackboard −0.14,
+  research −0.33), as the crew did before. Trends and Wikipedia swing ±0.2 on two rounds each
+  (chorus's Wikipedia +0.238 was +0.070 on the rerun) — noise.
+- **Model reliability matters more than the pattern.** GLM-5.3 Flash spent its 8k output budget
+  on reasoning and returned no JSON on 23–33 of 53 first-round prompts, so ensemble, deliberation
+  and chorus were often two-model formations, and debate's judge (the last model) failed 14 times
+  (its fallback is the advocates' median at half trust).
+
+Shadow, open Civiqs w40 rounds (research compositions, `tavily:advanced,sonar:sonar-pro`,
+~$0.07 a round): `debate+research` and `mapreduce→debate+research` stayed within 0.65 points of
+the nowcast on all six rounds (dossiers of 11–14 verified lines each); the dossier moved the
+means by at most ~0.33 points relative to the same formations without it. Unscored until the
+rounds resolve.
+
 ### The Civiqs nowcast (`nowcast`)
 
 Civiqs publishes **daily** trackers but the arena samples them on Fridays, so a round's history
@@ -370,7 +448,7 @@ arena shadow score                       # once they resolve: the only test on u
 ```
 
 In-world runs are limited to forecasters that make no model calls (`baseline`, `nowcast`,
-`discovered`); `model:`, `crew:` and `research:` spend real money and stay operator steps
+`discovered`); `model:`, `crew:`, `formation:` and `research:` spend real money and stay operator steps
 (`bun run arena evaluate|shadow --forecaster …`). `arena discover` is rate limited per entity (2,
 then 1 an hour) and runs one at a time, because every attempt raises that family's promotion bar.
 Its proposer is `MARINA_ARENA_PROPOSER` (default Claude Sonnet 5 via OpenRouter). Discovery
@@ -406,7 +484,7 @@ is missing or readable by other users.
 | `MARINA_ARENA_WINDOW_HOURS` | `24` | how close to its lock a round is filed (max 168; invalid ⇒ 24) |
 | `MARINA_ARENA_URL` / `MARINA_ARENA_AUDIENCE` | production | a rehearsal fork's intake |
 | `MARINA_ARENA_DATA_URL` | the arena repo on GitHub | where rounds, locks and resolutions are read |
-| `MARINA_ARENA_FORECASTER` | `nowcast` | no model calls; every non-Civiqs round is the baseline. Or `baseline`, `discovered`, `model:<m>`, `crew:<m>[,<m>,<m>]`, `research:<m>[,<m>,<m>]` |
+| `MARINA_ARENA_FORECASTER` | `nowcast` | no model calls; every non-Civiqs round is the baseline. Or `baseline`, `discovered`, `model:<m>`, `crew:<m>[,<m>,<m>]`, `formation:<pattern>:<m>[,…][+then:<pattern>:<m>[,…]][+research@<retriever>[,…]]`, `research:<m>[,<m>,<m>]` |
 | `MARINA_ARENA_MODEL_WEIGHT` | `0.5` | share of the model's move from the baseline that is kept |
 | `MARINA_ARENA_SHADOW` | unset | a forecaster spec to record hourly in shadow (never filed) |
 | `MARINA_ARENA_TRENDS_PARTIAL` | off | `on` counts a Trends basket's partial current week |

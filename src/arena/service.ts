@@ -129,6 +129,9 @@ export async function forecasterFor(
   if (spec.startsWith("research:")) {
     return researchForecasterFor(spec, opts.env ?? process.env);
   }
+  if (spec.startsWith("formation:")) {
+    return formationForecasterFor(spec, opts.env ?? process.env);
+  }
   if (spec.startsWith("crew:")) {
     const specs = spec.slice("crew:".length).split(",");
     const [stat, analyst = stat, skeptic = analyst] = specs as [string, string?, string?];
@@ -195,6 +198,103 @@ export async function forecasterFor(
     usage,
     forecaster: async (round, lock) =>
       modelForecastRound(round, lock, await start(round, lock), complete, options, modelSpec),
+  };
+}
+
+/**
+ * `formation:<pattern>:<model>[,<model>…][+then:<pattern>:<model>[,…]][+research@<retriever>[,…]]`
+ * — an orchestration pattern as a forecasting protocol (src/arena/formations.ts),
+ * started from the nowcast like the crew; optionally judged by a second
+ * formation (`+then:`) and fed a verified dossier built once per round by a
+ * research crew (`+research@`, retrievers as in `research:`). Each round gets
+ * its own metered completions, so its cost lands in its record; `usage` is the
+ * running total. A `+research` composition reads today's web: shadow only.
+ */
+async function formationForecasterFor(
+  spec: string,
+  env: NodeJS.ProcessEnv,
+): Promise<{ forecaster: Forecaster; usage: Usage }> {
+  const [head = "", ...parts] = spec.split("+");
+  const [{ modelComplete }, formations, { nowcastForecaster }] = await Promise.all([
+    import("./model-backend"),
+    import("./formations"),
+    import("./research/civiqs-nowcast"),
+  ]);
+  const stageOf = (text: string) => {
+    const [, name = "", list = ""] = text.match(/^(?:formation|then):([a-z]+):(.+)$/i) ?? [];
+    const pattern = formations.formationPattern(name);
+    if (!pattern) throw new Error(`unknown formation ${name}`);
+    const models = list.split(",");
+    // Fail fast on a missing provider key, before any round runs.
+    for (const m of models) modelComplete(m, env);
+    return { pattern, models };
+  };
+  const stages = [stageOf(head)];
+  const then = parts.find((p) => p.startsWith("then:"));
+  if (then) stages.push(stageOf(then));
+  const researchPart = parts.find((p) => p.startsWith("research@"));
+  let research:
+    | {
+        retriever: import("./research/retrieve").Retriever;
+        pageText: import("./research/verify").PageText;
+      }
+    | undefined;
+  if (researchPart) {
+    const [retrieve, { defaultPageText }] = await Promise.all([
+      import("./research/retrieve"),
+      import("./research/verify"),
+    ]);
+    const orKey = env.OPENROUTER_API_KEY;
+    research = retrieve.withProvidedText(
+      retrieve.retrieverFromSpec(researchPart.slice("research@".length), {
+        ...(orKey ? { openrouter: orKey } : {}),
+        ...(env.TAVILY_API_KEY?.trim() ? { tavily: env.TAVILY_API_KEY.trim() } : {}),
+      }),
+      defaultPageText(),
+    );
+  }
+  const usage: Usage = { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
+  const start = nowcastForecaster(arenaData(env), forecastRound, {
+    ...(await liveCiviqs(env)),
+    daily: DAILY_POINTS,
+  });
+  return {
+    usage,
+    forecaster: async (round, lock) => {
+      const made = stages.map((st) =>
+        st.models.map((m) => ({ name: m.replace(/^openrouter\//, ""), ...modelComplete(m, env) })),
+      );
+      const members = made.map((ms) => ms.map(({ name, complete }) => ({ name, complete })));
+      const given = await start(round, lock);
+      const f =
+        stages.length === 1 && !research
+          ? await formations.formationForecastRound(
+              stages[0]!.pattern,
+              round,
+              lock,
+              members[0]!,
+              given,
+            )
+          : await formations.composeForecastRound(
+              round,
+              lock,
+              [
+                { pattern: stages[0]!.pattern, members: members[0]! },
+                ...(stages[1] ? [{ pattern: stages[1].pattern, members: members[1]! }] : []),
+              ] as [import("./formations").FormationStage, import("./formations").FormationStage?],
+              given,
+              research,
+            );
+      let cost = (f as { dossier?: { costUsd?: number } }).dossier?.costUsd ?? 0;
+      for (const m of made.flat()) {
+        usage.calls += m.usage.calls;
+        usage.inputTokens += m.usage.inputTokens;
+        usage.outputTokens += m.usage.outputTokens;
+        cost += m.usage.costUsd;
+      }
+      usage.costUsd += cost;
+      return cost > 0 || made.flat().some((m) => m.usage.calls > 0) ? { ...f, costUsd: cost } : f;
+    },
   };
 }
 

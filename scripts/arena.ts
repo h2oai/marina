@@ -25,7 +25,8 @@
  *   bun run arena signals [--tracker T]         every discovery attempt and its verdict
  *   bun run arena shadow run <round_id|due> | list | score
  *                                               record / list / score shadow forecasts (never filed)
- *   bun run arena evaluate [--forecaster model:<m>|crew:<m>[,<m>,<m>]] [--no-learn] [--limit N] [--tracker T] [--out FILE]
+ *   bun run arena evaluate [--forecaster model:<m>|crew:<m>[,<m>,<m>]|formation:<pattern>:<m>[,<m>…]]
+ *                          [--no-learn] [--limit N] [--tracker T] [--out FILE]
  *                                               score forecasters on already-resolved rounds (files nothing)
  *
  * `--forecaster baseline|model:<provider/model>` overrides MARINA_ARENA_FORECASTER for show/submit.
@@ -262,6 +263,19 @@ async function main(): Promise<number> {
         forecasters[label] = crew.forecaster;
         if (crew.learner && !values["no-learn"]) learners[label] = crew.learner;
         usage.push(crew.usage!);
+      } else if (specArg.startsWith("formation:")) {
+        if (specArg.includes("+research@")) {
+          // Web research reads today's web — a search run after release finds
+          // the answer — so a composition with a research crew is shadow only.
+          throw new Error(
+            "a +research@ composition cannot be backtested (it reads today's web); record it with `bun run arena shadow run <round> --forecaster …`",
+          );
+        }
+        // Formations start from the nowcast: score it alongside, same rounds.
+        const formation = await forecasterFor(specArg);
+        forecasters.nowcast = (await forecasterFor("nowcast")).forecaster;
+        forecasters[specArg.replace(/openrouter\//g, "")] = formation.forecaster;
+        usage.push(formation.usage!);
       } else if (specArg === "nowcast") {
         forecasters.nowcast = (await forecasterFor("nowcast")).forecaster;
       } else if (specArg === "discovered") {

@@ -34,7 +34,7 @@ export interface ArenaConfig {
   /**
    * `MARINA_ARENA_FORECASTER` — `nowcast` (default: no model calls; falls back
    * to the baseline per round), `baseline`, `discovered`, `model:<provider/model>`,
-   * `crew:<model>[,…]` or `research:<model>[,…]`.
+   * `crew:<model>[,…]`, `formation:<pattern>:<model>[,…]` or `research:<model>[,…]`.
    */
   forecaster: string;
   /** `MARINA_ARENA_MODEL_WEIGHT` — share of a model's move from the baseline kept (default 0.5). */
@@ -44,8 +44,15 @@ export interface ArenaConfig {
 const MODEL_ID = "[a-z0-9-]+\\/[\\w.:/-]+";
 /** A research retriever entry (`openrouter-web:<model>` / `sonar:<model>` / `tavily:<depth>`). */
 const RETRIEVER = "((openrouter-web|sonar):[A-Za-z0-9._/:-]+|tavily:(basic|advanced))";
+/** Orchestration patterns as forecasting protocols (src/arena/formations.ts). */
+const FORMATION =
+  "(ensemble|deliberation|debate|chorus|pipeline|cascade|mapreduce|blackboard|symbiosis|research)";
+const MODELS = `${MODEL_ID}(,${MODEL_ID}){0,4}`;
 const FORECASTER_SPEC = new RegExp(
   `^(baseline|nowcast|discovered|model:${MODEL_ID}|crew:${MODEL_ID}(,${MODEL_ID}){0,2}` +
+    // A formation, optionally judged by a second one (`+then:`) and fed a
+    // verified dossier by a research crew (`+research@<retrievers>`).
+    `|formation:${FORMATION}:${MODELS}(\\+then:${FORMATION}:${MODELS})?(\\+research@${RETRIEVER}(,${RETRIEVER}){0,3})?` +
     // Research takes up to eight analysts, and optionally its own retrievers
     // after `@` (else MARINA_ARENA_RESEARCH_RETRIEVER), so each mix is its own
     // shadow record.
@@ -59,13 +66,16 @@ export const DEFAULT_ARENA_FORECASTER = "nowcast";
 /**
  * `nowcast` (default), `baseline`, `discovered`, `model:<provider/model>`, or
  * `crew:<model>` / `crew:<statistician>,<analyst>,<skeptic>` (one vendor per
- * role), or `research:<model>[,…]`. Validated here; model ids are resolved at use.
+ * role), `formation:<pattern>:<model>[,…]` (up to five models; pattern one of
+ * ensemble, deliberation, debate, chorus, pipeline/cascade, mapreduce,
+ * blackboard, symbiosis, research; `+then:<pattern>:<models>` adds a judging
+ * formation, `+research@<retrievers>` a verified research dossier), or `research:<model>[,…]`. Validated here; model ids are resolved at use.
  */
 export function parseForecasterSpec(raw: string | undefined): string {
   const spec = raw?.trim() || DEFAULT_ARENA_FORECASTER;
   if (FORECASTER_SPEC.test(spec)) return spec;
   throw new Error(
-    `MARINA_ARENA_FORECASTER "${spec}" must be nowcast, baseline, discovered, model:<provider/model>, crew:<model>[,…] (three roles) or research:<model>[,…][@<retriever>[,…]] (up to eight analysts)`,
+    `MARINA_ARENA_FORECASTER "${spec}" must be nowcast, baseline, discovered, model:<provider/model>, crew:<model>[,…] (three roles), formation:<pattern>:<model>[,…][+then:<pattern>:<model>[,…]][+research@<retriever>[,…]] (up to five models; patterns ensemble, deliberation, debate, chorus, pipeline, mapreduce, blackboard, symbiosis, research) or research:<model>[,…][@<retriever>[,…]] (up to eight analysts)`,
   );
 }
 
