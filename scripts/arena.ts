@@ -205,6 +205,9 @@ async function main(): Promise<number> {
             console.log(
               `${id}: accepted${outcome.already ? (replace ? " (unchanged, not re-sent)" : " (already filed; --replace files a newer version)") : ""}`,
             );
+          } else if (outcome.kind === "skipped" && outcome.reason.startsWith("routed:")) {
+            // A family routed to `skip` is deliberately unanswered, not a failure.
+            console.log(`${id}: not answered — ${outcome.reason}`);
           } else {
             failed++;
             console.log(`${id}: ${outcome.kind} — ${outcome.reason}`);

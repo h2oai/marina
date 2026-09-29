@@ -630,6 +630,9 @@
 
 # What answers (default nowcast — no model calls; the baseline for non-Civiqs rounds): nowcast (freshest Civiqs reading), baseline, discovered (best promoted signal, else nowcast), model:<provider/model>, crew:<m>[,<m>,<m>] (statistician, analyst, skeptic) or research:<m>[,<m>,<m>]. A model's answer is shrunk toward the baseline by MARINA_ARENA_MODEL_WEIGHT. Measure with `bun run arena evaluate` before switching.
 # MARINA_ARENA_FORECASTER=nowcast
+
+# Per-family routing for MARINA_ARENA_FORECASTER=routed (or a literal route:… spec): one forecaster per tracker family, `skip` to leave a family unanswered (the board averages only answered rounds), `*` for the rest. Unset uses the measured default: civiqs=nowcast; aaii and umich_sentiment on multi-model formations; economist_yougov, umich_party and morning_consult skipped; *=nowcast.
+# MARINA_ARENA_ROUTES=civiqs=nowcast;economist_yougov=skip;*=nowcast
 # MARINA_ARENA_MODEL_WEIGHT=0.5
 
 # `off` stops the nowcast reading the live Civiqs dashboard for open rounds (rounds past their lock never do).
