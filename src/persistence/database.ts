@@ -432,9 +432,13 @@ export class MarinaDB implements MarinaStores {
     // new id here — the token `reconnect()` path did this, but a plain
     // name-login after eviction minted a new id and left the claim pointing at
     // the dead one. Idempotent; a no-op when the name has no live claims.
-    const isNew = !entitiesDb.entityExists(this.db, entity.id);
-    entitiesDb.saveEntity(this.db, entity);
-    if (isNew) entitiesDb.migrateTaskClaimsByName(this.db, entity.name, entity.id);
+    // One transaction: the existence check, the upsert and the claim re-key
+    // must not interleave with another writer (or half-apply on failure).
+    this.db.transaction(() => {
+      const isNew = !entitiesDb.entityExists(this.db, entity.id);
+      entitiesDb.saveEntity(this.db, entity);
+      if (isNew) entitiesDb.migrateTaskClaimsByName(this.db, entity.name, entity.id);
+    })();
   }
 
   loadEntity(id: EntityId): Entity | undefined {
@@ -3503,16 +3507,20 @@ export class MarinaDB implements MarinaStores {
     /** Reasoning depth (migration 120). `undefined` keeps the stored value. */
     thinkingLevel?: AgentThinkingLevel;
   }): void {
-    agentsDb.saveAgentConfig(this.db, opts);
-    const parent =
-      principalsDb.getPrincipal(this.reader, "agent", opts.spawnedBy) ??
-      principalsDb.getPrincipal(this.reader, "human", opts.spawnedBy);
-    principalsDb.ensurePrincipal(this.db, {
-      type: "agent",
-      displayName: opts.name,
-      ownerPrincipalId: parent?.principal_id,
-      lineageParentId: parent?.principal_type === "agent" ? parent.principal_id : null,
-    });
+    // Config row and agent principal commit together; the parent lookup reads
+    // the writer so it sees the same snapshot.
+    this.db.transaction(() => {
+      agentsDb.saveAgentConfig(this.db, opts);
+      const parent =
+        principalsDb.getPrincipal(this.db, "agent", opts.spawnedBy) ??
+        principalsDb.getPrincipal(this.db, "human", opts.spawnedBy);
+      principalsDb.ensurePrincipal(this.db, {
+        type: "agent",
+        displayName: opts.name,
+        ownerPrincipalId: parent?.principal_id,
+        lineageParentId: parent?.principal_type === "agent" ? parent.principal_id : null,
+      });
+    })();
   }
   getAgentConfig(name: string): AgentConfigRow | undefined {
     return agentsDb.getAgentConfig(this.db, name);
@@ -3604,11 +3612,17 @@ export class MarinaDB implements MarinaStores {
   }
 
   getOrCreateWorldId(): string {
-    const existing = agentsDb.getSetting(this.db, "federation.world_id");
-    if (existing) return existing;
-    const worldId = crypto.randomUUID();
-    agentsDb.setSetting(this.db, "federation.world_id", worldId);
-    return worldId;
+    // IMMEDIATE: take the write lock before reading, so two processes opening
+    // the same file cannot both miss and mint different world ids. Nested
+    // inside an outer transaction it runs as a savepoint of that one.
+    const run = this.db.transaction((): string => {
+      const existing = agentsDb.getSetting(this.db, "federation.world_id");
+      if (existing) return existing;
+      const worldId = crypto.randomUUID();
+      agentsDb.setSetting(this.db, "federation.world_id", worldId);
+      return worldId;
+    });
+    return this.db.inTransaction ? run() : run.immediate();
   }
 
   upsertFederationPeer(
