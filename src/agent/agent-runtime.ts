@@ -31,6 +31,7 @@ import {
   MODEL_DISCOVERY_PROVIDERS,
 } from "../net/model-discovery";
 import type { MarinaDB } from "../persistence/database";
+import type { AgentConfigRow } from "../persistence/db-agents";
 import type { EngineEvent } from "../types";
 import {
   type AgentConfig,
@@ -202,6 +203,29 @@ export function inferCrewResponder(role: string | null | undefined): boolean {
 }
 
 /**
+ * The spawn config for a saved agent row — the one path boot respawn and
+ * `restart()` share, so both infer the same tool profile, crew-responder mode,
+ * supports and thinking level from what was persisted.
+ */
+export function spawnConfigFromSaved(saved: AgentConfigRow): AgentConfig {
+  return {
+    name: saved.name,
+    model: saved.model,
+    role: saved.role || undefined,
+    goal: saved.goal || undefined,
+    keyName: saved.key_name || undefined,
+    room: saved.room || undefined,
+    spawnedBy: saved.spawned_by || undefined,
+    supports: parseSupports(saved.supports),
+    toolProfile: inferToolProfile(saved.role),
+    crewResponder: inferCrewResponder(saved.role),
+    // Persisted reasoning depth (migration 120); NULL stays undefined so
+    // `resolveAgentThinkingLevel` applies the crew/env default at spawn.
+    thinkingLevel: parseAgentThinkingLevel(saved.thinking_level ?? undefined),
+  };
+}
+
+/**
  * Relay one agent's adapter events as engine events so dashboard / MCP /
  * gateway peers can observe agent cognitive lifecycle: errors, turn
  * boundaries, streaming thought, and state transitions. The tracer stamps
@@ -325,6 +349,16 @@ export class AgentRuntime {
   private db?: MarinaDB;
   private wsPort: number;
   private uptimeCheckInterval: ReturnType<typeof setInterval> | null = null;
+  /** The in-flight boot respawn; a second `init()` joins it instead of re-running. */
+  private initPromise: Promise<number> | null = null;
+  /** Bumped by `stopAll()`, so a boot still respawning knows it was cancelled. */
+  private lifecycleGeneration = 0;
+  /**
+   * The config each running agent was launched with. `restart()` keeps its
+   * launch-only knobs (explicit tool profile, crew mode, budget, caps) that the
+   * saved row does not carry.
+   */
+  private launchConfigs = new Map<string, AgentConfig>();
   private onEvent?: (event: EngineEvent) => void;
   /** Running agent → the entity that spawned it (`config.spawnedBy`, default "system"). */
   private spawnedByOf = new Map<string, string>();
@@ -393,11 +427,21 @@ export class AgentRuntime {
    */
   async init(): Promise<number> {
     if (!this.db) return 0;
+    // Idempotent: a repeated call joins the running boot (or, once it has
+    // finished, respawns nothing twice and never arms a second interval).
+    if (this.initPromise) return this.initPromise;
+    const promise = this.runInit(this.db, this.lifecycleGeneration);
+    this.initPromise = promise;
+    return promise;
+  }
+
+  private async runInit(db: MarinaDB, generation: number): Promise<number> {
+    const cancelled = () => generation !== this.lifecycleGeneration;
 
     // Skip operator-retired agents so a disable survives even if a stale config
     // row lingers in the DB (it normally won't — disable deletes it — but env
     // overlays and user-saved configs can both name a disabled agent).
-    const configs = this.db.getAllAgentConfigs().filter((c) => !isSeedDisabled(this.db, c.name));
+    const configs = db.getAllAgentConfigs().filter((c) => !isSeedDisabled(db, c.name));
 
     // Spawn in parallel with a 1.1s stagger between starts. Awaiting
     // spawn() sequentially blocks on each agent's discovery prompt (which
@@ -407,21 +451,20 @@ export class AgentRuntime {
     const STAGGER_MS = 1100;
     const spawnPromises = configs.map(async (config, i) => {
       await new Promise((r) => setTimeout(r, i * STAGGER_MS));
+      // stopAll() during boot: spawn nothing more.
+      if (cancelled()) return false;
       try {
-        await this.spawn({
-          name: config.name,
-          model: config.model,
-          role: config.role || undefined,
-          goal: config.goal || undefined,
-          keyName: config.key_name || undefined,
-          room: config.room || undefined,
-          supports: parseSupports(config.supports),
-          toolProfile: inferToolProfile(config.role),
-          crewResponder: inferCrewResponder(config.role),
-          // Persisted reasoning depth (migration 120); NULL stays undefined so
-          // `resolveAgentThinkingLevel` applies the crew/env default at spawn.
-          thinkingLevel: parseAgentThinkingLevel(config.thinking_level ?? undefined),
-        });
+        await this.spawn(spawnConfigFromSaved(config));
+        // stopAll() ran while this spawn was in flight: its snapshot missed
+        // this agent, so wind it down here (config kept for the next boot).
+        if (cancelled()) {
+          await this.stop(config.name, {
+            keepConfig: true,
+            keepChildren: true,
+            shutdown: true,
+          }).catch(() => undefined);
+          return false;
+        }
         if (config.room) {
           // Give the agent a moment to connect, then direct it to its room
           setTimeout(async () => {
@@ -451,8 +494,11 @@ export class AgentRuntime {
       logger.info("agents", `Respawned ${spawned} agent(s) from saved configs.`);
     }
 
-    // Start periodic uptime enforcement
-    this.uptimeCheckInterval = setInterval(() => this.enforceUptimeLimits(), 60_000);
+    // Start periodic uptime enforcement — unless stopAll() cancelled this
+    // boot, and never a second interval.
+    if (!cancelled() && !this.uptimeCheckInterval) {
+      this.uptimeCheckInterval = setInterval(() => this.enforceUptimeLimits(), 60_000);
+    }
 
     return spawned;
   }
@@ -697,6 +743,7 @@ export class AgentRuntime {
 
       // Track it (and its lineage, for cascade stop)
       this.agents.set(config.name, adapter);
+      this.launchConfigs.set(config.name, config);
       this.spawnedByOf.set(config.name, config.spawnedBy ?? "system");
       if (issuedCredentialId) this.workloadCredentials.set(config.name, issuedCredentialId);
 
@@ -781,6 +828,7 @@ export class AgentRuntime {
       const stopHandle = agent.stop as (opts?: { shutdown?: boolean }) => Promise<void>;
       await stopHandle.call(agent, opts?.shutdown ? { shutdown: true } : undefined);
       this.agents.delete(key);
+      this.launchConfigs.delete(key);
     }
     this.spawnedByOf.delete(key);
     const credentialId = this.workloadCredentials.get(key);
@@ -820,6 +868,9 @@ export class AgentRuntime {
    * boot. Each agent's stop() still flushes its checkpoint first.
    */
   async stopAll(): Promise<void> {
+    // Cancels a boot still respawning (see runInit); a later init() boots anew.
+    this.lifecycleGeneration++;
+    this.initPromise = null;
     if (this.uptimeCheckInterval) {
       clearInterval(this.uptimeCheckInterval);
       this.uptimeCheckInterval = null;
@@ -972,23 +1023,53 @@ export class AgentRuntime {
     if (!key || !agent) throw new Error(`Agent "${name}" is not running.`);
     const status = agent.getStatus();
     const saved = this.db?.getAgentConfig(key);
+    const config = this.restartConfig(key, status, saved, this.launchConfigs.get(key), opts?.model);
     await this.stop(key, { keepConfig: true });
     const cooldownRemaining = 1_000 - (Date.now() - this.lastSpawnAt);
     if (cooldownRemaining > 0) {
       await new Promise((resolve) => setTimeout(resolve, cooldownRemaining));
     }
-    const restarted = await this.spawn({
-      name: key,
-      model: opts?.model || saved?.model || status.model,
-      role: saved?.role || status.role || undefined,
-      goal: saved?.goal || status.goal || undefined,
-      keyName: saved?.key_name || undefined,
-      room: saved?.room || undefined,
-      spawnedBy: saved?.spawned_by || "system",
-      thinkingLevel: parseAgentThinkingLevel(saved?.thinking_level ?? undefined),
-    });
+    const restarted = await this.spawn(config);
     if (status.focus) restarted.setFocus(status.focus);
     return restarted;
+  }
+
+  /**
+   * The config a restart spawns with: the saved row through the same path as
+   * boot respawn ({@link spawnConfigFromSaved}), launch-only knobs from the
+   * original spawn, and the live status as the fallback for anything unsaved.
+   */
+  private restartConfig(
+    key: string,
+    status: AgentStatus,
+    saved: AgentConfigRow | undefined,
+    launch: AgentConfig | undefined,
+    modelOverride: string | undefined,
+  ): AgentConfig {
+    const fromSaved = saved ? spawnConfigFromSaved(saved) : undefined;
+    const previousModel = fromSaved?.model || status.model;
+    const model = modelOverride || previousModel;
+    const modelChanged = model !== previousModel;
+    const role = fromSaved?.role || status.role || undefined;
+    return {
+      // Launch-time knobs the saved row does not carry (budget, caps, profile).
+      ...launch,
+      ...fromSaved,
+      name: key,
+      model,
+      role,
+      goal: fromSaved?.goal || status.goal || undefined,
+      spawnedBy: fromSaved?.spawnedBy ?? launch?.spawnedBy ?? "system",
+      // An explicit launch profile (e.g. "minimal") wins; otherwise infer it
+      // from the role exactly as boot does.
+      toolProfile: launch?.toolProfile ?? inferToolProfile(role),
+      crewResponder: launch?.crewResponder ?? inferCrewResponder(role),
+      // A new model re-derives its modalities and context window.
+      supports: modelChanged
+        ? undefined
+        : (fromSaved?.supports ?? launch?.supports ?? status.supports),
+      contextWindow: modelChanged ? undefined : launch?.contextWindow,
+    };
   }
 
   /**
