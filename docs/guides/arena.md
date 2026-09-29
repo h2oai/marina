@@ -225,6 +225,13 @@ them. Override the map with `MARINA_ARENA_ROUTES` (`family=spec;…;*=spec`), or
 inline: `route:civiqs=nowcast;economist_yougov=skip;*=baseline`. `submit` reports a skipped family
 as "not answered" rather than a failure; `evaluate` leaves it out of the mean, as the board does.
 
+The default map sends `midterm_special` to `*=nowcast`, which refuses its no-history rounds (see
+[no-anchor mode](#the-research-agent-research)). To answer them, route the family to research in
+`MARINA_ARENA_ROUTES`, e.g.
+`civiqs=nowcast;…;midterm_special=research:<m>,<m>,<m>@<retriever>[,…];*=nowcast`. Routes are per
+family, so that also sends the family's rounds that do have history through research (anchored as
+usual).
+
 ### Profile and ranking rounds
 
 About a third of the rounds are not single numbers. `arena evaluate` scores them exactly as the
@@ -289,6 +296,27 @@ against the arena's recorded persistence loss for each round.
    errors}` (and each proposal's judge latency and cost), and the judge's cost is in the shadow
    row's `cost_usd` (the daily spend cap already sees it through the metered provider).
 6. **Aggregate** — judge-weighted mean move × confidence × `MARINA_ARENA_RESEARCH_TRUST` (0.5).
+
+**Rounds with no history (no-anchor mode).** A one-off numeric round (an election result, say)
+can lock with an empty `answer_history`. Every other forecaster (`baseline`, `nowcast`,
+`discovered`, `model:`, `crew:`, `formation:`) anchors on the last published value and refuses it
+with "no history to forecast from"; `research:` answers it without an anchor
+(`noAnchorForecastRound` in `src/arena/research/forecaster.ts`):
+
+- the brief asks for the **level** (published forecasts of the quantity, prediction-market prices,
+  the data they rest on, the base rate) over the 30 days before now (or the lock);
+- the analysts are told there is no history and no start forecast, and may abstain; the judge is a
+  filter — only a grounded proposal (weight > 0) counts, a judge outage counts as none;
+- sanity bounds come from the question: a named total (`all N decided`) bounds the mean to
+  [0, total], a percentage unit to [0, 100]; a proposal outside them is dropped, then any mean more
+  than 3 robust spreads (max of the median sd and 1.4826 × MAD) from the median;
+- the answer is the **median** of the remaining means, with
+  sd = max(median analyst sd, the means' sample sd, 7 % of the median) — the floor is derived from
+  the level, never set per round;
+- with nothing usable the round is **not answered**: a `NoAnchorRefusal` whose `detail` keeps the
+  dossier, proposals, roles and judge (and its cost reaches the shadow ledger); `arena research
+  <round>` prints that trail. The answer carries `anchor: "none"` and `noAnchor` (bounds, used,
+  dropped, median, medianSd, dispersion, floor).
 
 Web research cannot be backtested (a search run later finds the answer), so it is measured in
 **shadow**: `bun run arena shadow run due` records what it would file (with the whole dossier and

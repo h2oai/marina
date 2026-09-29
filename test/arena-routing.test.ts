@@ -78,4 +78,27 @@ describe("per-family routing", () => {
     expect(byRound["yg-r1"]).toBeUndefined();
     expect(report.families.find((x) => x.tracker === "economist_yougov")?.skill.routed).toBeNaN();
   });
+
+  it("a no-history round refuses under the nowcast and reaches research when routed there", async () => {
+    const seats: ArenaRound = {
+      round_id: "midterm-2026-house-seats",
+      tracker: "midterm_special",
+      series: "house_seats",
+      question: "Seats won by Democrats in the 2026 US House (all 435 decided)",
+      target_type: "continuous_normal",
+      lock_at: "2026-10-30T22:00:00Z",
+      release_at: "2026-12-01T00:00:00Z",
+    };
+    const empty = { round_id: seats.round_id, answer_history: [], history: [] };
+    const env = { MARINA_ARENA_CIVIQS_LIVE: "off" };
+    const plain = await forecasterFor("route:*=nowcast", { env });
+    await expect(plain.forecaster(seats, empty)).rejects.toThrow("no history to forecast from");
+    // Routed to research: the research forecaster is built (here it stops at
+    // its missing retriever key — no network in tests), proving the route reaches it.
+    const routed = await forecasterFor(
+      "route:midterm_special=research:openrouter/vendor/model-a@tavily:advanced;*=nowcast",
+      { env },
+    );
+    await expect(routed.forecaster(seats, empty)).rejects.toThrow("TAVILY_API_KEY");
+  });
 });

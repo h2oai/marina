@@ -18,6 +18,13 @@
  *                   judged confidence and capped (`trustCap`), spread blended;
  *                   wild proposals dropped; nothing usable ⇒ the baseline
  *
+ * A numeric round with NO published history (a one-off question such as an
+ * election result) has no baseline to shrink toward, so it runs NO-ANCHOR
+ * (`noAnchorForecastRound`): the analysts estimate the level from the
+ * dossier, the judge still filters, and the answer is the median of the usable
+ * means with an sd of at least {@link NO_ANCHOR_SD_FLOOR_SHARE} of that level.
+ * Nothing usable ⇒ {@link NoAnchorRefusal}: the round is not answered.
+ *
  * Every stage's output is returned (`dossier`, `proposals`, `judged`) so a
  * shadow run can be audited and the stages measured separately. Web research
  * cannot be backtested — a search run after release finds the answer — so this
@@ -46,6 +53,14 @@ import type { ResearchReport, Retriever } from "./retrieve";
 import { type PageText, type VerifiedDossier, verifyDossier } from "./verify";
 
 const MAX_SD_MOVE = 4;
+/**
+ * No-anchor sd floor, as a share of the forecast level — a conservative
+ * allowance for how far published forecasts of a one-off quantity miss.
+ * Applied to the analysts' median, never set per round.
+ */
+export const NO_ANCHOR_SD_FLOOR_SHARE = 0.07;
+/** No-anchor outlier rule: a mean this many robust spreads from the median is dropped. */
+const NO_ANCHOR_OUTLIER_K = 3;
 const EVIDENCE_CHUNK = 1_400;
 const MAX_EVIDENCE_CHUNKS = 4;
 const SERIES_EVIDENCE_POINTS = 12;
@@ -87,6 +102,48 @@ export interface ResearchForecast extends RoundForecast {
   trust?: number;
   roles?: Record<string, string>;
   fallback?: string;
+  /** `none`: the round had no published history, so no baseline was used (no-anchor mode). */
+  anchor?: "none";
+  /** How the no-anchor answer was aggregated from the proposals. */
+  noAnchor?: NoAnchorAudit;
+}
+
+/** Sanity bounds a question implies (a named total, a percentage). */
+export interface Bounds {
+  lo: number;
+  hi: number;
+  why: string;
+}
+
+/** The no-anchor aggregation, stage by stage. */
+export interface NoAnchorAudit {
+  bounds?: Bounds;
+  /** Analysts whose proposals counted. */
+  used: string[];
+  /** Proposals left out, with why. */
+  dropped: Record<string, string>;
+  median: number;
+  medianSd: number;
+  /** Sample sd of the used means (0 with one analyst). */
+  dispersion: number;
+  floor: number;
+  floorShare: number;
+}
+
+/**
+ * Thrown when a no-history round gets no usable proposal: the round is NOT
+ * answered (there is no baseline to fall back to, and a number no evidence
+ * supports is never filed). `detail` keeps the audit trail: dossier,
+ * proposals, roles, judge and cost.
+ */
+export class NoAnchorRefusal extends Error {
+  constructor(
+    message: string,
+    readonly detail: Partial<ResearchForecast>,
+  ) {
+    super(message);
+    this.name = "NoAnchorRefusal";
+  }
 }
 
 const ANALYST_SYSTEM = [
@@ -148,11 +205,114 @@ export interface JudgeRecord {
   error?: string;
 }
 
+/** Each analyst's parsed reply (undefined on an error or no JSON), with the outcome noted in `roles`. */
+async function askAnalysts(
+  analysts: ResearchDeps["analysts"],
+  system: string,
+  user: string,
+  roles: Record<string, string>,
+): Promise<Array<readonly [string, Record<string, unknown> | undefined]>> {
+  return Promise.all(
+    analysts.map(async (a) => {
+      try {
+        const reply = parseReply(await a.complete(system, user));
+        roles[a.name] = reply ? "ok" : "invalid reply (no JSON object)";
+        return [a.name, reply] as const;
+      } catch (err) {
+        roles[a.name] =
+          `error: ${(err instanceof Error ? err.message : String(err)).slice(0, 120)}`;
+        return [a.name, undefined] as const;
+      }
+    }),
+  );
+}
+
+function newJudgeRecord(judge: DecisionProvider | undefined): JudgeRecord | undefined {
+  return judge
+    ? {
+        provider: judge.kind,
+        ...(judge.model ? { model: judge.model } : {}),
+        calls: 0,
+        latencyMs: 0,
+        costUsd: 0,
+        errors: 0,
+      }
+    : undefined;
+}
+
+function judgeAudit(judgeRecord: JudgeRecord | undefined): { judge?: JudgeRecord } {
+  return judgeRecord
+    ? { judge: { ...judgeRecord, costUsd: Math.round(judgeRecord.costUsd * 1e6) / 1e6 } }
+    : {};
+}
+
+/**
+ * One proposal through the judge: weight = grounded × quality / 2, clamped to
+ * [0, 1]; no judge ⇒ weight 1; a judge outage ⇒ weight 0 (no opinion, never a
+ * pass). Totals accumulate into `judgeRecord`.
+ */
+async function judgeProposal(
+  judge: DecisionProvider | undefined,
+  judgeRecord: JudgeRecord | undefined,
+  p: { mean: number; sd: number; reason: string },
+  draft: string,
+  evidence: Evidence[],
+  question: string,
+): Promise<JudgedProposal> {
+  let weight = 1;
+  let quality: number | undefined;
+  let grounded: number | undefined;
+  let judgeError: string | undefined;
+  let judgeLatencyMs: number | undefined;
+  let judgeCostUsd: number | undefined;
+  if (judge) {
+    const verdict = await checkDraft(judge, draft.slice(0, 3_000), evidence, question);
+    if (judgeRecord) {
+      judgeRecord.calls++;
+      if (verdict.provider) judgeRecord.provider = verdict.provider;
+      if (verdict.model) judgeRecord.model = verdict.model;
+      judgeRecord.latencyMs = Math.max(judgeRecord.latencyMs, verdict.latencyMs ?? 0);
+      judgeRecord.costUsd += verdict.costUsd ?? 0;
+    }
+    judgeLatencyMs = verdict.latencyMs;
+    judgeCostUsd = verdict.costUsd;
+    if (!verdict.error) {
+      quality = verdict.signals.quality;
+      grounded = verdict.signals.grounded;
+      // No grounding ⇒ no weight; a fully grounded, high-quality rationale ⇒ weight 1.
+      weight = Math.max(0, Math.min(1, (grounded ?? 0) * ((quality ?? 0) / 2)));
+    } else {
+      // A judge outage is no opinion, never a pass: an unjudged proposal
+      // gets no weight (it used to keep weight 1 — ~10× a judged run).
+      weight = 0;
+      judgeError = String(verdict.error).slice(0, 200);
+      if (judgeRecord) {
+        judgeRecord.errors++;
+        judgeRecord.error = judgeError;
+      }
+    }
+  }
+  return {
+    mean: p.mean,
+    sd: p.sd,
+    weight,
+    ...(p.reason ? { reason: p.reason.slice(0, 400) } : {}),
+    ...(quality === undefined ? {} : { quality }),
+    ...(grounded === undefined ? {} : { grounded }),
+    ...(judgeError ? { judgeError } : {}),
+    ...(judgeLatencyMs === undefined ? {} : { judgeLatencyMs }),
+    ...(judgeCostUsd === undefined ? {} : { judgeCostUsd }),
+  };
+}
+
 export async function researchForecastRound(
   round: ArenaRound,
   lock: ArenaLock,
   deps: ResearchDeps,
 ): Promise<ResearchForecast> {
+  if (round.target_type === "continuous_normal" && !hasHistory(lock)) {
+    return noAnchorForecastRound(round, lock, deps);
+  }
   const given = deps.base ? await deps.base(round, lock) : forecastRound(round, lock);
   const daily = dailyOf(given);
   const baseline = withoutDaily(given);
@@ -212,19 +372,7 @@ export async function researchForecastRound(
   ].join("\n");
 
   const roles: Record<string, string> = {};
-  const raw = await Promise.all(
-    deps.analysts.map(async (a) => {
-      try {
-        const reply = parseReply(await a.complete(ANALYST_SYSTEM, user));
-        roles[a.name] = reply ? "ok" : "invalid reply (no JSON object)";
-        return [a.name, reply] as const;
-      } catch (err) {
-        roles[a.name] =
-          `error: ${(err instanceof Error ? err.message : String(err)).slice(0, 120)}`;
-        return [a.name, undefined] as const;
-      }
-    }),
-  );
+  const raw = await askAnalysts(deps.analysts, ANALYST_SYSTEM, user, roles);
 
   // The judge grounds rationales in the series data every analyst was given,
   // plus only the dossier lines that survived verification (when it ran).
@@ -232,16 +380,7 @@ export async function researchForecastRound(
     ...seriesEvidence(round, history, baseline, daily),
     ...chunks(checked ? checked.verifiedText || "(no verified facts)" : research.report),
   ];
-  const judgeRecord: JudgeRecord | undefined = deps.judge
-    ? {
-        provider: deps.judge.kind,
-        ...(deps.judge.model ? { model: deps.judge.model } : {}),
-        calls: 0,
-        latencyMs: 0,
-        costUsd: 0,
-        errors: 0,
-      }
-    : undefined;
+  const judgeRecord = newJudgeRecord(deps.judge);
   const proposals: Record<string, JudgedProposal> = {};
   await Promise.all(
     raw.map(async ([name, reply]) => {
@@ -259,65 +398,19 @@ export async function researchForecastRound(
       const reason = [reply.evidence, reply.reason]
         .filter((x) => typeof x === "string")
         .join(" — ");
-      let weight = 1;
-      let quality: number | undefined;
-      let grounded: number | undefined;
-      let judgeError: string | undefined;
-      let judgeLatencyMs: number | undefined;
-      let judgeCostUsd: number | undefined;
-      if (deps.judge) {
-        const verdict = await checkDraft(
-          deps.judge,
-          `Forecast ${mean} ± ${sd} (start forecast ${base.mean} ± ${base.sd}). ${reason}`.slice(
-            0,
-            3_000,
-          ),
-          evidence,
-          round.question,
-        );
-        if (judgeRecord) {
-          judgeRecord.calls++;
-          if (verdict.provider) judgeRecord.provider = verdict.provider;
-          if (verdict.model) judgeRecord.model = verdict.model;
-          judgeRecord.latencyMs = Math.max(judgeRecord.latencyMs, verdict.latencyMs ?? 0);
-          judgeRecord.costUsd += verdict.costUsd ?? 0;
-        }
-        judgeLatencyMs = verdict.latencyMs;
-        judgeCostUsd = verdict.costUsd;
-        if (!verdict.error) {
-          quality = verdict.signals.quality;
-          grounded = verdict.signals.grounded;
-          // No grounding ⇒ no weight; a fully grounded, high-quality rationale ⇒ weight 1.
-          weight = Math.max(0, Math.min(1, (grounded ?? 0) * ((quality ?? 0) / 2)));
-        } else {
-          // A judge outage is no opinion, never a pass: an unjudged proposal
-          // gets no weight (it used to keep weight 1 — ~10× a judged run).
-          weight = 0;
-          judgeError = String(verdict.error).slice(0, 200);
-          if (judgeRecord) {
-            judgeRecord.errors++;
-            judgeRecord.error = judgeError;
-          }
-        }
-      }
-      proposals[name] = {
-        mean,
-        sd,
-        weight,
-        ...(reason ? { reason: reason.slice(0, 400) } : {}),
-        ...(quality === undefined ? {} : { quality }),
-        ...(grounded === undefined ? {} : { grounded }),
-        ...(judgeError ? { judgeError } : {}),
-        ...(judgeLatencyMs === undefined ? {} : { judgeLatencyMs }),
-        ...(judgeCostUsd === undefined ? {} : { judgeCostUsd }),
-      };
+      proposals[name] = await judgeProposal(
+        deps.judge,
+        judgeRecord,
+        { mean, sd, reason },
+        `Forecast ${mean} ± ${sd} (start forecast ${base.mean} ± ${base.sd}). ${reason}`,
+        evidence,
+        round.question,
+      );
     }),
   );
 
   const audit = {
-    ...(judgeRecord
-      ? { judge: { ...judgeRecord, costUsd: Math.round(judgeRecord.costUsd * 1e6) / 1e6 } }
-      : {}),
+    ...judgeAudit(judgeRecord),
     ...(daily ? { dailySource: daily.source } : {}),
   };
   const usable = Object.values(proposals);
@@ -347,5 +440,230 @@ export async function researchForecastRound(
     trust,
     roles,
     note: `marina research agent (${research.retriever}; ${usable.length} judged analysts) over ${freshestReading(baseline, round.series) ? "the Civiqs nowcast" : "the calibrated baseline"}`,
+  };
+}
+
+// ─── No-anchor mode: a numeric round with no published history ──────────────
+
+/** Does the lock carry any published value to anchor on? */
+export function hasHistory(lock: ArenaLock): boolean {
+  return (lock.answer_history ?? lock.history ?? []).some((p) => Number.isFinite(p.value));
+}
+
+/**
+ * Sanity bounds the question itself implies: a total it names (`all 500
+ * decided`, `out of 100`) bounds a count to [0, total]; a percentage unit (not
+ * a margin, net or change) to [0, 100]. Otherwise none.
+ */
+export function questionBounds(round: ArenaRound): Bounds | undefined {
+  const total = round.question.match(/\b(?:all|out of)\s+(\d[\d,]*)\b/i)?.[1];
+  const n = total ? Number(total.replace(/,/g, "")) : Number.NaN;
+  if (Number.isFinite(n) && n > 0) {
+    return { lo: 0, hi: n, why: `the question names a total of ${n}` };
+  }
+  const unit = round.unit ?? "";
+  if (
+    /percent|%/i.test(unit) &&
+    !/margin|net|change|spread|points/i.test(`${unit} ${round.series ?? ""}`)
+  ) {
+    return { lo: 0, hi: 100, why: "a percentage" };
+  }
+  return undefined;
+}
+
+function median(xs: number[]): number {
+  const s = [...xs].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
+}
+
+/**
+ * The deterministic no-anchor aggregate. Proposals outside the question's
+ * bounds are dropped, then any mean more than {@link NO_ANCHOR_OUTLIER_K}
+ * robust spreads (the larger of the median sd and 1.4826 × MAD of the means)
+ * from the median; the answer is the median of what is left, with
+ * sd = max(median analyst sd, the means' dispersion, the floor share × |median|).
+ * Only `dropped` when nothing is left.
+ */
+export function aggregateNoAnchor(
+  proposals: Record<string, Distribution>,
+  bounds?: Bounds,
+): { topline: Distribution; audit: NoAnchorAudit } | { dropped: Record<string, string> } {
+  const dropped: Record<string, string> = {};
+  let kept = Object.entries(proposals).filter(([name, p]) => {
+    if (bounds && (p.mean < bounds.lo || p.mean > bounds.hi)) {
+      dropped[name] = `mean ${p.mean} outside [${bounds.lo}, ${bounds.hi}] (${bounds.why})`;
+      return false;
+    }
+    return true;
+  });
+  if (kept.length === 0) return { dropped };
+  const m0 = median(kept.map(([, p]) => p.mean));
+  const mad = median(kept.map(([, p]) => Math.abs(p.mean - m0)));
+  const scale = Math.max(median(kept.map(([, p]) => p.sd)), 1.4826 * mad);
+  const r2 = (x: number) => Math.round(x * 100) / 100;
+  kept = kept.filter(([name, p]) => {
+    if (Math.abs(p.mean - m0) > NO_ANCHOR_OUTLIER_K * scale) {
+      dropped[name] =
+        `mean ${p.mean} is ${r2(Math.abs(p.mean - m0))} from the median ${r2(m0)} (> ${NO_ANCHOR_OUTLIER_K} × ${r2(scale)})`;
+      return false;
+    }
+    return true;
+  });
+  const means = kept.map(([, p]) => p.mean);
+  const mid = median(means);
+  const medianSd = median(kept.map(([, p]) => p.sd));
+  const avg = means.reduce((s, x) => s + x, 0) / means.length;
+  const dispersion =
+    means.length > 1
+      ? Math.sqrt(means.reduce((s, x) => s + (x - avg) ** 2, 0) / (means.length - 1))
+      : 0;
+  const floor = NO_ANCHOR_SD_FLOOR_SHARE * Math.abs(mid);
+  const round3 = (x: number) => Math.round(x * 1000) / 1000;
+  return {
+    topline: { mean: round3(mid), sd: round3(Math.max(medianSd, dispersion, floor)) },
+    audit: {
+      ...(bounds ? { bounds } : {}),
+      used: kept.map(([name]) => name),
+      dropped,
+      median: round3(mid),
+      medianSd: round3(medianSd),
+      dispersion: round3(dispersion),
+      floor: round3(floor),
+      floorShare: NO_ANCHOR_SD_FLOOR_SHARE,
+    },
+  };
+}
+
+const NO_ANCHOR_SYSTEM = [
+  "You are an analyst forecasting a quantity for a live benchmark scored by the CRPS of your normal {mean, sd} against the value that resolves the question.",
+  "This quantity has NO published history and there is no start forecast: estimate its LEVEL from the research dossier — published forecasts of this exact quantity, prediction-market prices, the data they rest on and the base rate.",
+  "Prefer the consensus of established forecasting models and markets over any single source, and rely on [verified] dossier lines; treat [unverified] figures as likely wrong.",
+  "Size sd for the uncertainty that remains until resolution: honest, never artificially narrow (a too-narrow sd is punished hard).",
+  'If the dossier holds no evidence of the level, abstain: reply {"abstain": true, "reason": "<why>"} — never guess.',
+  'Otherwise reply with ONE JSON object: {"mean": number, "sd": number > 0, "evidence": "<the specific facts your estimate rests on>", "reason": "<one or two sentences>"}.',
+].join(" ");
+
+/**
+ * The research agent for a numeric round with no history: brief → retrieve →
+ * verify → analysts (levels, not moves) → judge (a filter: an ungrounded or
+ * unjudged proposal does not count) → {@link aggregateNoAnchor}. Throws
+ * {@link NoAnchorRefusal}, carrying the audit trail, when nothing is usable.
+ */
+export async function noAnchorForecastRound(
+  round: ArenaRound,
+  lock: ArenaLock,
+  deps: ResearchDeps,
+): Promise<ResearchForecast> {
+  const brief = buildResearchBrief(round, lock);
+  let research: ResearchReport;
+  try {
+    research = await deps.retriever(brief);
+  } catch (err) {
+    throw new NoAnchorRefusal(
+      `${round.round_id}: no history to forecast from, and research failed (${err instanceof Error ? err.message : String(err)}) — not answered`,
+      { anchor: "none" },
+    );
+  }
+  const checked: VerifiedDossier | undefined = deps.pageText
+    ? await verifyDossier(research.report, deps.pageText)
+    : undefined;
+  const dossier = {
+    since: brief.since,
+    report: research.report,
+    sources: research.sources,
+    costUsd: research.costUsd,
+    searches: research.searches,
+    retriever: research.retriever,
+    ...(checked ? { verification: checked.stats } : {}),
+  };
+  const bounds = questionBounds(round);
+  const sourceList = research.sources
+    .map((s, i) => `[${i + 1}] ${s.title ?? ""} ${s.url}`)
+    .join("\n");
+  const user = [
+    `Question: ${round.question}`,
+    `Unit: ${round.unit ?? "(see question)"}; published around ${round.release_at}; locks ${round.lock_at}.`,
+    round.resolve ? `Resolution: ${round.resolve}.` : rulesLines(round)[0]!,
+    "Scoring: CRPS of your normal {mean, sd} against the resolved value; a too-narrow sd is punished hard, a too-wide one wastes skill.",
+    ...(bounds ? [`Bounds: the answer lies in [${bounds.lo}, ${bounds.hi}] (${bounds.why}).`] : []),
+    "",
+    "History: (none — this quantity has never been published; there is no start forecast)",
+    "",
+    checked
+      ? `RESEARCH DOSSIER (facts since ${brief.since}). Each cited line is tagged by a mechanical check of its figures against the cited page: rely on [verified] lines; treat [unverified] figures as likely wrong and [unreachable] ones as unconfirmed.\n${checked.annotated}`
+      : `RESEARCH DOSSIER (facts since ${brief.since}):\n${research.report}`,
+    sourceList ? `\nSources:\n${sourceList}` : "",
+  ].join("\n");
+
+  const roles: Record<string, string> = {};
+  const raw = await askAnalysts(deps.analysts, NO_ANCHOR_SYSTEM, user, roles);
+  const evidence: Evidence[] = [
+    {
+      ref: "series:none",
+      text: "STRUCTURED SOURCE DATA: this quantity has no published history and no start forecast; the estimate must rest on the research dossier.",
+    },
+    ...chunks(checked ? checked.verifiedText || "(no verified facts)" : research.report),
+  ];
+  const judgeRecord = newJudgeRecord(deps.judge);
+  const proposals: Record<string, JudgedProposal> = {};
+  await Promise.all(
+    raw.map(async ([name, reply]) => {
+      if (reply?.abstain === true) {
+        roles[name] = `abstained: ${String(reply.reason ?? "").slice(0, 160)}`;
+        return;
+      }
+      const mean = Number(reply?.mean);
+      const sd = Number(reply?.sd);
+      if (!reply || !Number.isFinite(mean) || !Number.isFinite(sd) || sd <= 0) {
+        if (roles[name] === "ok") roles[name] = "invalid reply (no valid mean/sd)";
+        return;
+      }
+      const reason = [reply.evidence, reply.reason]
+        .filter((x) => typeof x === "string")
+        .join(" — ");
+      proposals[name] = await judgeProposal(
+        deps.judge,
+        judgeRecord,
+        { mean, sd, reason },
+        `Forecast ${mean} ± ${sd} (no published history; no start forecast). ${reason}`,
+        evidence,
+        round.question,
+      );
+    }),
+  );
+
+  // The judge is a filter here: only a grounded (weight > 0) proposal counts.
+  const judged: Record<string, Distribution> = {};
+  for (const [name, p] of Object.entries(proposals)) {
+    if (p.weight > 0) judged[name] = { mean: p.mean, sd: p.sd };
+    else roles[name] = p.judgeError ? `unjudged: ${p.judgeError}` : "dropped: judged ungrounded";
+  }
+  const agg = aggregateNoAnchor(judged, bounds);
+  const dropped = "topline" in agg ? agg.audit.dropped : agg.dropped;
+  for (const [name, why] of Object.entries(dropped)) roles[name] = `dropped: ${why}`;
+  const audit: Partial<ResearchForecast> = {
+    anchor: "none",
+    dossier,
+    proposals,
+    roles,
+    ...judgeAudit(judgeRecord),
+  };
+  if (!("topline" in agg)) {
+    const reasons = Object.entries(roles).map(([name, r]) => `${name}: ${r}`);
+    throw new NoAnchorRefusal(
+      `${round.round_id}: no history to forecast from, and no usable research proposal (${reasons.join("; ") || "no analysts"}) — not answered`.slice(
+        0,
+        600,
+      ),
+      audit,
+    );
+  }
+  return {
+    topline: agg.topline,
+    rules: {},
+    ...audit,
+    noAnchor: agg.audit,
+    note: `marina research agent, no anchor (${research.retriever}; median of ${agg.audit.used.length} judged analysts; sd ≥ ${Math.round(NO_ANCHOR_SD_FLOOR_SHARE * 100)}% of the level): the series has no published history`,
   };
 }

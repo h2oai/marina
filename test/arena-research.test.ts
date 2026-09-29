@@ -7,7 +7,12 @@ import { ArenaData } from "../src/arena/data";
 import { scoreShadow } from "../src/arena/evaluate";
 import { forecastRound } from "../src/arena/forecast";
 import { buildResearchBrief, familyOf } from "../src/arena/research/briefs";
-import { researchForecastRound } from "../src/arena/research/forecaster";
+import {
+  aggregateNoAnchor,
+  NoAnchorRefusal,
+  questionBounds,
+  researchForecastRound,
+} from "../src/arena/research/forecaster";
 import {
   combineRetrievers,
   inlineFootnotes,
@@ -489,6 +494,162 @@ describe("research agent pipeline", () => {
     });
     expect(prompt).toContain("the persistence baseline");
     expect(prompt).not.toContain("DAILY TRACKER");
+  });
+});
+
+describe("no-anchor research (a numeric round with no history)", () => {
+  const seats: ArenaRound = {
+    round_id: "special-seats",
+    tracker: "special",
+    series: "seats",
+    question: "Seats won by Party A in the chamber (all 500 decided)",
+    unit: "seats",
+    target_type: "continuous_normal",
+    lock_at: "2026-10-20T22:00:00Z",
+    release_at: "2026-11-20T00:00:00Z",
+    resolve: "provisional score from official tallies; final on certified results",
+  };
+  const empty: ArenaLock = { round_id: seats.round_id, answer_history: [], history: [] };
+  const retriever: Retriever = async () => ({
+    report: "- Model X (2026-09-20): Party A wins 306 seats ([x](https://x.example/m))",
+    sources: [{ url: "https://x.example/m" }],
+    costUsd: 0.02,
+    searches: 3,
+    retriever: "fake",
+  });
+  const judge = (grounded: number): DecisionProvider => ({
+    kind: "fake",
+    model: "fake-jev",
+    ask: async () => ({
+      answers: {
+        quality: { type: "score", score: 2, confidence: 0.9 },
+        grounded: { type: "noul", noul: grounded },
+      },
+      model: "fake-jev",
+      provider: "fake",
+      latencyMs: 1,
+      costUsd: 0.001,
+    }),
+  });
+  const analyst = (mean: number, sd: number) => async () =>
+    `{"mean": ${mean}, "sd": ${sd}, "evidence": "Model X 306", "reason": "consensus"}`;
+
+  it("the baseline, nowcast and pure-model path still refuse it", () => {
+    expect(() => forecastRound(seats, empty)).toThrow("no history to forecast from");
+  });
+
+  it("briefs a search for the level (forecasts, markets, base rate) over the last 30 days", () => {
+    const brief = buildResearchBrief(seats, empty, { now: Date.parse("2026-09-29T12:00:00Z") });
+    expect(brief.since).toBe("2026-08-30");
+    expect(brief.request).toContain("No value of this quantity has been published yet");
+    expect(brief.request).toContain("Prediction-market");
+    expect(brief.queries?.[0]).toBe(seats.question);
+  });
+
+  it("files the median of the judged analysts' means with sd ≥ median sd, dispersion, 7% floor", async () => {
+    let prompt = "";
+    let system = "";
+    const f = await researchForecastRound(seats, empty, {
+      retriever,
+      analysts: [
+        {
+          name: "a",
+          complete: async (s, u) => {
+            system = s;
+            prompt = u;
+            return analyst(300, 10)();
+          },
+        },
+        { name: "b", complete: analyst(306, 12) },
+        { name: "c", complete: analyst(308, 9) },
+      ],
+      judge: judge(1),
+      pageText: async () => "Model X (2026-09-20): Party A wins 306 seats",
+    });
+    expect(f.anchor).toBe("none");
+    expect(f.topline!.mean).toBe(306);
+    // median sd 10, dispersion ≈ 4.16, floor 0.07 × 306 = 21.42 → the floor wins.
+    expect(f.topline!.sd).toBeCloseTo(21.42, 3);
+    expect(f.noAnchor).toMatchObject({
+      used: ["a", "b", "c"],
+      median: 306,
+      medianSd: 10,
+      floor: 21.42,
+      bounds: { lo: 0, hi: 500 },
+    });
+    expect(f.dossier?.verification?.verified).toBe(1);
+    expect(f.proposals?.b).toMatchObject({ mean: 306, sd: 12, grounded: 1 });
+    expect(f.judge).toMatchObject({ calls: 3, costUsd: 0.003 });
+    expect(f.note).toContain("no anchor");
+    expect(system).toContain("NO published history");
+    expect(prompt).toContain("Bounds: the answer lies in [0, 500]");
+    expect(prompt).toContain("Resolution: provisional score from official tallies");
+    expect(prompt).not.toContain("persistence");
+  });
+
+  it("drops out-of-bounds and outlying proposals, and wide analysts widen the sd", async () => {
+    const f = await researchForecastRound(seats, empty, {
+      retriever,
+      analysts: [
+        { name: "a", complete: analyst(298, 25) },
+        { name: "b", complete: analyst(304, 20) },
+        { name: "c", complete: analyst(700, 20) },
+        { name: "d", complete: analyst(470, 20) },
+        { name: "e", complete: analyst(302, 30) },
+      ],
+    });
+    expect(f.noAnchor?.used).toEqual(["a", "b", "e"]);
+    expect(f.noAnchor?.dropped.c).toContain("outside [0, 500]");
+    expect(f.noAnchor?.dropped.d).toContain("from the median");
+    expect(f.roles?.c).toContain("dropped");
+    expect(f.topline).toEqual({ mean: 302, sd: 25 });
+  });
+
+  it("with nothing usable the round is not answered — never a fabricated number", async () => {
+    const run = (deps: Partial<Parameters<typeof researchForecastRound>[2]>) =>
+      researchForecastRound(seats, empty, {
+        retriever,
+        analysts: [{ name: "a", complete: analyst(306, 10) }],
+        ...deps,
+      });
+    // Ungrounded rationale.
+    const ungrounded = await run({ judge: judge(0) }).catch((e) => e);
+    expect(ungrounded).toBeInstanceOf(NoAnchorRefusal);
+    expect(ungrounded.message).toContain("not answered");
+    expect(ungrounded.detail.proposals.a.weight).toBe(0);
+    expect(ungrounded.detail.dossier.costUsd).toBe(0.02);
+    expect(ungrounded.detail.judge.costUsd).toBe(0.001);
+    // Every analyst abstains.
+    const abstained = await run({
+      analysts: [{ name: "a", complete: async () => '{"abstain": true, "reason": "no data"}' }],
+    }).catch((e) => e);
+    expect(abstained).toBeInstanceOf(NoAnchorRefusal);
+    expect(abstained.detail.roles.a).toContain("abstained");
+    // Research down.
+    const down = await run({
+      retriever: async () => {
+        throw new Error("503");
+      },
+    }).catch((e) => e);
+    expect(down).toBeInstanceOf(NoAnchorRefusal);
+    expect(down.message).toContain("503");
+  });
+
+  it("aggregates deterministically; bounds come from the question, never per round", () => {
+    expect(questionBounds(seats)).toMatchObject({ lo: 0, hi: 500 });
+    expect(questionBounds({ ...seats, question: "Share approving?", unit: "% approve" })).toEqual({
+      lo: 0,
+      hi: 100,
+      why: "a percentage",
+    });
+    expect(questionBounds({ ...seats, question: "Margin?", unit: "margin, points" })).toBe(
+      undefined,
+    );
+    const one = aggregateNoAnchor({ a: { mean: 10, sd: 0.1 } });
+    expect("topline" in one && one.topline).toEqual({ mean: 10, sd: 0.7 });
+    expect(aggregateNoAnchor({ a: { mean: -1, sd: 1 } }, questionBounds(seats))).toEqual({
+      dropped: { a: expect.stringContaining("outside") },
+    });
   });
 });
 
