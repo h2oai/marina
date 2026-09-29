@@ -22,6 +22,36 @@ else
 fi
 echo "[deploy] using: $DC"
 
+# Free space (in whole GB) available on the filesystem that holds the Docker /
+# containerd image store. Image layers are extracted here during a pull; if it
+# fills up the pull stalls, the SSM document-worker hits its execution ceiling
+# and is killed with an opaque "ipc messaging received timeout signal".
+free_gb() { df -BG --output=avail / | tail -1 | tr -dc '0-9'; }
+
+# Reclaim every image not used by a running container, plus build cache. The
+# `-a` is load-bearing: a bare `docker image prune -f` only removes dangling
+# (<none>) layers and leaves the tagged sha-<...> ECR images behind, which is
+# how this host accumulated 185 images / 200GB+ and ran / to 100%.
+reclaim() {
+  echo "[deploy] reclaiming unused images and build cache"
+  docker image prune -af || true
+  docker builder prune -f || true
+}
+
+# --- pre-pull disk guard ---------------------------------------------------
+# Require a floor of free space before pulling; if we are under it, reclaim
+# first and re-check, and abort with a clear error rather than stalling.
+MIN_FREE_GB="${MARINA_DEPLOY_MIN_FREE_GB:-20}"
+echo "[deploy] free on /: $(free_gb)G (floor ${MIN_FREE_GB}G)"
+if [ "$(free_gb)" -lt "$MIN_FREE_GB" ]; then
+  reclaim
+  echo "[deploy] free on /: $(free_gb)G after reclaim"
+fi
+if [ "$(free_gb)" -lt "$MIN_FREE_GB" ]; then
+  echo "[deploy] ERROR: only $(free_gb)G free on / (need ${MIN_FREE_GB}G) after reclaim; aborting before pull" >&2
+  exit 1
+fi
+
 # Authenticate to ECR (registry host = everything before the first '/').
 REGISTRY="${MARINA_IMAGE%%/*}"
 echo "[deploy] logging in to ECR: ${REGISTRY}"
@@ -37,8 +67,11 @@ $DC up -d --wait --wait-timeout 180 --remove-orphans
 echo "[deploy] checking running HTTP endpoints and configured providers"
 $DC exec -T marina bun run scripts/smoke-production.ts --providers --output /tmp/marina-production-smoke.json
 
-echo "[deploy] pruning dangling images"
-docker image prune -f
+# --- post-deploy reclaim ---------------------------------------------------
+# The new container is up and healthy, so the previous image is now unused.
+# Prune it (and the rest of the tagged backlog) so the store stays bounded.
+# `|| true` inside reclaim() keeps a prune hiccup from failing a good deploy.
+reclaim
 
 echo "[deploy] current state:"
 $DC ps
