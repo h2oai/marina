@@ -72,7 +72,9 @@ export function EndpointTab() {
     }
   };
 
-  if (!cfg) return <PanelSkeleton />;
+  if (!cfg) {
+    return err ? <div className="text-danger text-[9px]">{err}</div> : <PanelSkeleton />;
+  }
 
   const showPassthruModel = cfg.mode === "passthru" || cfg.fallback;
   const modelSel = cfg.passthruModel === "" ? "__default" : cfg.passthruModel;

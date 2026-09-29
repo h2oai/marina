@@ -105,3 +105,12 @@ describe("AdminPanel tabs", () => {
     expect(resolveAdminTab(undefined)).toBeUndefined();
   });
 });
+
+describe("EndpointTab", () => {
+  it("shows the load error instead of a skeleton that never resolves", async () => {
+    const { EndpointTab } = await import("../components/AdminEndpointTab");
+    fetchApi.mockImplementation(() => Promise.reject(new Error("API error: 503")));
+    renderWithProviders(<EndpointTab />);
+    expect(await screen.findByText(/503/)).toBeTruthy();
+  });
+});
