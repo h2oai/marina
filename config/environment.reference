@@ -628,7 +628,7 @@
 # MARINA_ARENA_AUTOPILOT=off
 # MARINA_ARENA_WINDOW_HOURS=24
 
-# What answers (default nowcast — no model calls; the baseline for non-Civiqs rounds): nowcast (freshest Civiqs reading), baseline, discovered (best promoted signal, else nowcast), model:<provider/model>, crew:<m>[,<m>,<m>] (statistician, analyst, skeptic) or research:<m>[,<m>,<m>]. A model's answer is shrunk toward the baseline by MARINA_ARENA_MODEL_WEIGHT. Measure with `bun run arena evaluate` before switching.
+# What answers (default nowcast — no model calls; the baseline for non-Civiqs rounds): nowcast (freshest Civiqs reading), baseline, discovered (best promoted signal, else nowcast), tabh2o[:forecast][@nowcast] (experimental; TabH2O on the lock's own history, needs TABH2O_API_KEY), model:<provider/model>, crew:<m>[,<m>,<m>] (statistician, analyst, skeptic) or research:<m>[,<m>,<m>]. A model's answer is shrunk toward the baseline by MARINA_ARENA_MODEL_WEIGHT. Measure with `bun run arena evaluate` before switching.
 # MARINA_ARENA_FORECASTER=nowcast
 
 # Per-family routing for MARINA_ARENA_FORECASTER=routed (or a literal route:… spec): one forecaster per tracker family, `skip` to leave a family unanswered (the board averages only answered rounds), `*` for the rest. Unset uses the measured default: civiqs=nowcast; aaii and umich_sentiment on multi-model formations; economist_yougov, umich_party and morning_consult skipped; *=nowcast.

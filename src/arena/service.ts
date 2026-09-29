@@ -227,6 +227,7 @@ export async function forecasterFor(
       ),
     };
   }
+  if (spec.startsWith("tabh2o")) return tabh2oForecasterFor(spec, opts);
   if (spec.startsWith("research:")) {
     return researchForecasterFor(spec, opts.env ?? process.env);
   }
@@ -299,6 +300,91 @@ export async function forecasterFor(
     usage,
     forecaster: async (round, lock) =>
       modelForecastRound(round, lock, await start(round, lock), complete, options, modelSpec),
+  };
+}
+
+/**
+ * `tabh2o[:forecast][@nowcast]` — TabH2O on a table built from the lock's own
+ * history (src/arena/tabh2o-forecaster.ts), shrunk toward the baseline, or with
+ * `@nowcast` toward the nowcast, learning a Civiqs round from the daily series
+ * of the snapshot the nowcast reads (fetched by the lock). Experimental: no key
+ * or an error files the start forecast with a recorded `fallback`.
+ */
+async function tabh2oForecasterFor(
+  spec: string,
+  opts: Parameters<typeof forecasterFor>[1],
+): Promise<{ forecaster: Forecaster; usage: Usage }> {
+  const [
+    tab,
+    { nowcastForecaster, civiqsDailySeries, trendsBasketHistory, TRENDS_INCLUDE_PARTIAL },
+  ] = await Promise.all([import("./tabh2o-forecaster"), import("./research/civiqs-nowcast")]);
+  const parsed = tab.parseTabH2OSpec(spec);
+  if (!parsed) throw new Error(`not a tabh2o spec: ${spec}`);
+  const env = opts?.env ?? process.env;
+  const data = arenaData(env);
+  const options = {
+    ...tab.DEFAULT_TABH2O_OPTIONS,
+    weight: opts?.raw ? 1 : (opts?.weight ?? tab.DEFAULT_TABH2O_OPTIONS.weight),
+    ...(opts?.raw ? { maxSdMove: Number.POSITIVE_INFINITY } : {}),
+  };
+  const usage: Usage = { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
+  const live = await liveCiviqs(env);
+  const start: Forecaster = parsed.nowcast
+    ? nowcastForecaster(data, forecastRound, live)
+    : async (round, lock) => forecastRound(round, lock);
+  const { horizonSteps } = await import("./forecast");
+  /** `@nowcast`: a Civiqs series learns from its daily snapshot; a bare Trends lock from the archive. */
+  const seriesFor = async (
+    round: import("./types").ArenaRound,
+    lock: import("./types").ArenaLock,
+  ) => {
+    if (!parsed.nowcast) return undefined;
+    if (round.tracker === "google_trends" && !lock.answer_history_by_cell) {
+      const byCell = await trendsBasketHistory(data, round, TRENDS_INCLUDE_PARTIAL);
+      return byCell
+        ? tab.lockSeries(round, { ...lock, answer_history_by_cell: byCell })
+        : undefined;
+    }
+    if (round.tracker !== "civiqs") return undefined;
+    const ids =
+      round.target_type === "profile_energy"
+        ? (round.cells ?? [])
+        : round.series
+          ? [round.series]
+          : [];
+    const out: import("./tabh2o-forecaster").SeriesInput[] = [];
+    for (const id of ids) {
+      const daily = await civiqsDailySeries(
+        data,
+        { ...round, series: id },
+        { days: tab.MAX_POINTS, ...live },
+      );
+      // No archived snapshot for a series: the whole round learns from the lock.
+      if (!daily || daily.points.length < 10) return undefined;
+      out.push({
+        key: id,
+        points: daily.points,
+        steps: horizonSteps(daily.points, round.release_at),
+      });
+    }
+    return out.length ? out : undefined;
+  };
+  const predict = tab.sharedTabPredict(env);
+  return {
+    usage,
+    forecaster: async (round, lock) =>
+      tab.tabh2oForecastRound(
+        round,
+        lock,
+        await start(round, lock),
+        parsed,
+        {
+          predict,
+          seriesFor,
+          usage,
+        },
+        options,
+      ),
   };
 }
 
