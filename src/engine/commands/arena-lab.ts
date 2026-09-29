@@ -77,7 +77,7 @@ function freeForecaster(name: string | undefined): string | undefined {
 }
 
 const PAID =
-  "Model-backed forecasters (model:, crew:, research:) spend real money — run them as an operator step: bun run arena evaluate|shadow --forecaster …";
+  "Model-backed forecasters (model:, crew:, formation:, research:) spend real money — run them as an operator step: bun run arena evaluate|shadow --forecaster …";
 
 export async function arenaEvaluate(
   deps: ArenaLabDeps,

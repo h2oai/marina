@@ -165,12 +165,30 @@ export async function evaluateResolved(
             reason?: string;
             raw?: unknown;
             roles?: unknown;
+            formation?: unknown;
+            rounds?: unknown;
+            agreement?: number;
+            costUsd?: number;
           };
           const fallback = extra.fallback;
           // Keep what the forecaster did, not just what it filed — the diagnostics
           // that say whether the roles and memory are actually doing their jobs.
           const detail = Object.fromEntries(
-            (["proposals", "trust", "critique", "lessonsUsed", "reason", "raw", "roles"] as const)
+            (
+              [
+                "proposals",
+                "trust",
+                "critique",
+                "lessonsUsed",
+                "reason",
+                "raw",
+                "roles",
+                "formation",
+                "rounds",
+                "agreement",
+                "costUsd",
+              ] as const
+            )
               .filter((k) => extra[k] !== undefined)
               .map((k) => [k, extra[k]]),
           );
