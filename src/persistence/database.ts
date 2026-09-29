@@ -2953,8 +2953,15 @@ export class MarinaDB implements MarinaStores {
 
   // ─── Global Search (delegated to db-channels.ts) ────────────────────────
 
-  globalSearch(query: string): GlobalSearchResult[] {
-    return channelsDb.globalSearch(this.db, query);
+  globalSearch(
+    query: string,
+    viewer: { entityId: string; rank: number } | null,
+  ): GlobalSearchResult[] {
+    return channelsDb.globalSearch(
+      this.db,
+      query,
+      viewer ? { entityKey: this.durableEntityKey(viewer.entityId), rank: viewer.rank } : null,
+    );
   }
 
   // ─── Assets ─────────────────────────────────────────────────────────────

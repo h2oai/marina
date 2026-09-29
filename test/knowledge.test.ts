@@ -678,7 +678,7 @@ describe("Global Search", () => {
       title: "Classical music theory",
       body: "Bach fugues and harmony",
     });
-    const results = db.globalSearch("quantum");
+    const results = db.globalSearch("quantum", null);
     expect(results.length).toBeGreaterThan(0);
     expect(results[0]!.type).toBe("board_post");
     // Non-matching post should NOT appear
@@ -687,12 +687,55 @@ describe("Global Search", () => {
     expect(titles.some((t) => t.includes("Classical"))).toBe(false);
   });
 
-  it("should search channel messages", () => {
+  it("should search channel messages in the viewer's channels", () => {
     db.createChannel({ id: "ch1", type: "public", name: "general" });
+    db.addChannelMember("ch1", "a1");
     db.addChannelMessage("ch1", "a1", "Alice", "Discussing neural network architectures");
-    const results = db.globalSearch("neural");
+    const results = db.globalSearch("neural", { entityId: "a1", rank: 0 });
     const channelResults = results.filter((r) => r.type === "channel_message");
     expect(channelResults.length).toBeGreaterThan(0);
+  });
+
+  it("scopes channel messages and board posts to what the viewer can read", () => {
+    db.createChannel({ id: "dm:alice-bob", type: "direct", name: "alice-bob" });
+    db.addChannelMember("dm:alice-bob", "a1");
+    db.addChannelMember("dm:alice-bob", "b1");
+    db.addChannelMessage("dm:alice-bob", "a1", "Alice", "the halcyon passphrase");
+    db.createGroup({ id: "g1", name: "crew", leaderId: "a1" });
+    db.addGroupMember("g1", "a1");
+    db.createBoard({ id: "gb", name: "crew-board", scopeType: "group", scopeId: "g1" });
+    db.createBoardPost({
+      boardId: "gb",
+      authorId: "a1",
+      authorName: "Alice",
+      title: "halcyon plan",
+      body: "x",
+    });
+    db.createBoard({ id: "hi", name: "stewards", readRank: 7 });
+    db.createBoardPost({
+      boardId: "hi",
+      authorId: "a1",
+      authorName: "Alice",
+      title: "halcyon memo",
+      body: "x",
+    });
+
+    const types = (viewer: { entityId: string; rank: number } | null) =>
+      db
+        .globalSearch("halcyon", viewer)
+        .map((r) => `${r.type}:${r.context}`)
+        .sort();
+    // An outsider (not in the DM, not in the group, rank 0) sees none of it.
+    expect(types({ entityId: "c1", rank: 0 })).toEqual([]);
+    expect(types(null)).toEqual([]);
+    // A DM participant sees the DM, not the group board.
+    expect(types({ entityId: "b1", rank: 0 })).toEqual(["channel_message:dm:alice-bob"]);
+    // A group member sees the group board; rank opens the rank-restricted board.
+    expect(types({ entityId: "a1", rank: 7 })).toEqual([
+      "board_post:gb",
+      "board_post:hi",
+      "channel_message:dm:alice-bob",
+    ]);
   });
 
   it("should search tasks", () => {
@@ -702,7 +745,7 @@ describe("Global Search", () => {
       creatorId: "a1",
       creatorName: "Alice",
     });
-    const results = db.globalSearch("telescope");
+    const results = db.globalSearch("telescope", null);
     const taskResults = results.filter((r) => r.type === "task");
     expect(taskResults.length).toBeGreaterThan(0);
     expect(taskResults[0]!.title).toContain("telescope");
@@ -710,7 +753,7 @@ describe("Global Search", () => {
 
   it("should search markets", () => {
     db.createMarket({ id: "m1", roomId: "market-floor", question: "Will the volcano erupt?" });
-    const results = db.globalSearch("volcano");
+    const results = db.globalSearch("volcano", null);
     const marketResults = results.filter((r) => r.type === "market");
     expect(marketResults.length).toBeGreaterThan(0);
     expect(marketResults[0]!.context).toBe("open");
@@ -723,7 +766,7 @@ describe("Global Search", () => {
     db.createNote("Alice", "Zephyr protocol shared openly", undefined, { poolId: "p_open" });
     db.createNote("Alice", "Zephyr protocol gated detail", undefined, { poolId: "p_gated" });
     db.createNote("Alice", "Zephyr protocol private musing");
-    const results = db.globalSearch("zephyr");
+    const results = db.globalSearch("zephyr", null);
     const noteResults = results.filter((r) => r.type === "pool_note");
     expect(noteResults.length).toBe(1);
     expect(noteResults[0]!.title).toContain("openly");
@@ -737,19 +780,19 @@ describe("Global Search", () => {
       title: "The obsidian bridge accord",
       body: "Two crews agreed to share the bridge.",
     });
-    const results = db.globalSearch("obsidian");
+    const results = db.globalSearch("obsidian", null);
     const chronicleResults = results.filter((r) => r.type === "chronicle");
     expect(chronicleResults.length).toBeGreaterThan(0);
     expect(chronicleResults[0]!.context).toBe("narrative");
   });
 
   it("should handle empty query", () => {
-    const results = db.globalSearch("");
+    const results = db.globalSearch("", null);
     expect(results.length).toBe(0);
   });
 
   it("should handle special characters safely", () => {
-    const results = db.globalSearch("test'\"*()");
+    const results = db.globalSearch("test'\"*()", null);
     expect(results.length).toBe(0);
   });
 });

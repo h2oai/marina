@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { TaskManager } from "../../coordination/task-manager";
+import type { TaskClaim, TaskManager } from "../../coordination/task-manager";
 import { parseTaskNodeType, TASK_NODE_TYPE_MEANING } from "../../coordination/task-node-type";
 import { harnessDecisionProvider } from "../../decisions/engines";
 import type { Evidence } from "../../decisions/evidence";
@@ -25,6 +25,7 @@ import {
 } from "../../net/ansi";
 import type { JudgeObservationInput } from "../../persistence/db-decisions";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
+import { mayActOn, ownershipRefusal } from "../ownership";
 import { canonicalSub, parseModifiers, unknownSubcommand } from "../parse-input";
 
 const TASK_SUBS = [
@@ -48,6 +49,15 @@ const TASK_SUBS = [
 
 const TASK_USAGE =
   "Usage: task list|info|create|goal|progress|claim|heartbeat|recover|submit|approve|reject|cancel|bundle|assign|children|standing [args]";
+
+/** A claim that still holds the task: claimed with a live lease, or submitted. */
+function isActiveClaim(claim: TaskClaim | null, now = Date.now()): boolean {
+  if (!claim) return false;
+  if (claim.status === "submitted") return true;
+  return (
+    claim.status === "claimed" && (claim.leaseExpiresAt === null || claim.leaseExpiresAt > now)
+  );
+}
 
 /** Split `<title> | <description>` on the first pipe. */
 function splitTitle(rest: string): { title: string; rawDesc: string } {
@@ -338,18 +348,41 @@ export function taskCommand(
             ctx.send(input.entity, "Progress must be a number (e.g., +20 or 50).");
             return;
           }
-          tasks.updateProgress(taskId, newProgress);
+          if (task.status === "completed" || task.status === "cancelled") {
+            ctx.send(input.entity, `Task ${fmtId(taskId)} is ${task.status}; progress is final.`);
+            return;
+          }
+          // The creator or the CURRENT claimant (whoever holds a live claim —
+          // an abandoned lease is released on the tick and anyone may claim the
+          // task to take it over), or an admin, reports progress.
+          const isCreator = task.creatorId === input.entity;
+          const isClaimant = isActiveClaim(tasks.getClaim(taskId, input.entity));
+          const refusal = ownershipRefusal(
+            self,
+            { ownerIds: [task.creatorId, isClaimant ? input.entity : undefined] },
+            `Only task ${fmtId(taskId)}'s creator, its current claimant, or an admin can set its progress. Claim it (\`task claim ${taskId}\`) once it is open.`,
+          );
+          if (refusal) {
+            ctx.send(input.entity, refusal);
+            return;
+          }
+          let clamped = Math.max(0, Math.min(100, newProgress));
+          // Reaching 100 closes the task, which is the creator's call: a
+          // claimant's work is closed through submit → approve.
+          const closes = isCreator || mayActOn(self, {});
+          if (clamped >= 100 && !closes) clamped = 99;
+          tasks.updateProgress(taskId, clamped);
           // Progress is an implicit liveness signal for the current worker.
-          tasks.heartbeat(taskId, input.entity);
-          const clamped = Math.max(0, Math.min(100, newProgress));
+          if (isClaimant) tasks.heartbeat(taskId, input.entity);
           if (clamped >= 100) {
-            ctx.send(input.entity, `Task ${fmtId(taskId)} completed!`);
-            logEvent?.({
-              type: "task_approved",
-              entity: input.entity,
-              taskId,
-              timestamp: Date.now(),
-            });
+            // Completion is not approval: `task_approved` (standing credit and
+            // the chronicle entry) comes only from `task approve`.
+            ctx.send(input.entity, `Task ${fmtId(taskId)} completed.`);
+          } else if (newProgress >= 100) {
+            ctx.send(
+              input.entity,
+              `Task ${fmtId(taskId)}: ${progressBar(clamped, 100)} — submit it for approval: task submit ${taskId} <report>`,
+            );
           } else {
             ctx.send(input.entity, `Task ${fmtId(taskId)}: ${progressBar(clamped, 100)}`);
           }

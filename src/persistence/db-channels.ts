@@ -502,7 +502,27 @@ export function updateGroupMemberRank(
 
 // ─── Global Search ────────────────────────────────────────────────────
 
-export function globalSearch(db: Database, query: string): GlobalSearchResult[] {
+/**
+ * Who is searching. `entityKey` is the durable membership key
+ * (`MarinaDB.durableEntityKey()`), matching `channel_members` / `group_members`.
+ */
+export interface SearchViewer {
+  entityKey: string;
+  rank: number;
+}
+
+/**
+ * Cross-surface search, scoped to what `viewer` can read: channel messages
+ * only from channels the viewer is a reading member of, board posts only from
+ * boards within the viewer's read rank (and, for group boards, the viewer's
+ * groups). With no viewer only public surfaces are searched — no channel
+ * messages, no group boards, no rank-restricted boards.
+ */
+export function globalSearch(
+  db: Database,
+  query: string,
+  viewer: SearchViewer | null,
+): GlobalSearchResult[] {
   const results: GlobalSearchResult[] = [];
   const ftsQuery = buildFtsQuery(query, "and");
   if (!ftsQuery) return results;
@@ -512,10 +532,15 @@ export function globalSearch(db: Database, query: string): GlobalSearchResult[] 
         `SELECT bp.id, bp.board_id, bp.title, bp.body, bp.author_name
          FROM board_posts bp
          JOIN board_posts_fts fts ON bp.id = fts.rowid
+         JOIN boards b ON b.id = bp.board_id
          WHERE board_posts_fts MATCH ?
+           AND b.read_rank <= ?
+           AND (b.scope_type != 'group' OR EXISTS (
+             SELECT 1 FROM group_members gm
+             WHERE gm.group_id = b.scope_id AND gm.entity_id = ?))
          ORDER BY fts.rank LIMIT 10`,
       )
-      .all(ftsQuery) as {
+      .all(ftsQuery, viewer?.rank ?? 0, viewer?.entityKey ?? null) as {
       id: number;
       board_id: string;
       title: string;
@@ -534,22 +559,27 @@ export function globalSearch(db: Database, query: string): GlobalSearchResult[] 
     logger.warn("db", "search board FTS5 query failed", { error: (err as Error).message });
   }
 
-  // Search channel messages via LIKE
+  // Search channel messages via LIKE — only channels the viewer reads as a member.
   const likePattern = `%${query.replace(/[%_\\]/g, "").trim()}%`;
   try {
-    const msgResults = db
-      .query(
-        `SELECT id, channel_id, sender_name, content
-         FROM channel_messages
-         WHERE content LIKE ?
-         ORDER BY id DESC LIMIT 10`,
-      )
-      .all(likePattern) as {
-      id: number;
-      channel_id: string;
-      sender_name: string;
-      content: string;
-    }[];
+    const msgResults = !viewer
+      ? []
+      : (db
+          .query(
+            `SELECT m.id, m.channel_id, m.sender_name, m.content
+         FROM channel_messages m
+         WHERE m.content LIKE ?
+           AND m.channel_id IN (
+             SELECT cm.channel_id FROM channel_members cm
+             WHERE cm.entity_id = ? AND cm.can_read = 1)
+         ORDER BY m.id DESC LIMIT 10`,
+          )
+          .all(likePattern, viewer.entityKey) as {
+          id: number;
+          channel_id: string;
+          sender_name: string;
+          content: string;
+        }[]);
     for (const r of msgResults) {
       results.push({
         type: "channel_message",

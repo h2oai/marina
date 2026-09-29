@@ -101,7 +101,7 @@ export async function handleDiscoveryRoutes(
   }
   if (db) {
     // Reuse task FTS; never forward the unscoped message/pool hits from globalSearch.
-    for (const hit of db.globalSearch(query).filter((hit) => hit.type === "task")) {
+    for (const hit of db.globalSearch(query, null).filter((hit) => hit.type === "task")) {
       results.push({
         kind: "task",
         id: hit.id,
