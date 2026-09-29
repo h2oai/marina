@@ -53,6 +53,7 @@ import { generateArenaKey } from "../src/arena/protocol";
 import {
   arenaData,
   arenaDepsWithForecaster,
+  arenaRegistrationCheck,
   arenaStatus,
   forecasterFor,
   recordShadow,
@@ -139,6 +140,11 @@ async function main(): Promise<number> {
     case "status": {
       const s = arenaStatus();
       console.log(JSON.stringify(s, null, 2));
+      if (s.configured) {
+        const reg = await arenaRegistrationCheck();
+        console.log(`registration: ${reg.ok ? "OK" : "PROBLEM"} — ${reg.message}`);
+        for (const k of reg.registeredKeys ?? []) console.log(`  registered key ${k}`);
+      }
       if (s.configured) {
         const db = openDb();
         const rows = db.listArenaSubmissions({ entrant: s.entrant, limit: 500 });
