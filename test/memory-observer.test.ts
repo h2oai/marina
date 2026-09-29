@@ -108,9 +108,18 @@ it("/api/graph filters in one batch: no per-note getNote, one ACL lookup per poo
     pool: db.getMemoryPoolById.bind(db),
     service: db.isServiceMemoryNote.bind(db),
   };
-  db.getNote = (id) => (calls.getNote++, originals.getNote(id));
-  db.getMemoryPoolById = (id) => (calls.pool++, originals.pool(id));
-  db.isServiceMemoryNote = (id) => (calls.service++, originals.service(id));
+  db.getNote = (id) => {
+    calls.getNote++;
+    return originals.getNote(id);
+  };
+  db.getMemoryPoolById = (id) => {
+    calls.pool++;
+    return originals.pool(id);
+  };
+  db.isServiceMemoryNote = (id) => {
+    calls.service++;
+    return originals.service(id);
+  };
   try {
     const { data } = await get("/api/graph");
     const body = JSON.stringify(data);

@@ -17,6 +17,7 @@ import {
   SIMILAR_NOTE_RELEVANCE_THRESHOLD,
 } from "../engine/constants";
 import { Logger } from "../engine/logger";
+import { contextRevision } from "./db-context-revision";
 import {
   linkNumericNotes,
   materializeNumericNote,
@@ -25,7 +26,6 @@ import {
   sourceNumericNote,
   verifyNumericNote,
 } from "./db-memory-numeric";
-import { contextRevision } from "./db-context-revision";
 import { createStoredNote, deleteStoredNote } from "./db-note-storage";
 import { buildFtsQuery } from "./fts";
 
