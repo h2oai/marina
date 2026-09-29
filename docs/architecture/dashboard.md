@@ -74,7 +74,7 @@ and keeps property drafts when saving fails.
 
 ## Canvas intent system
 - **Intents**: work requests attached to canvas nodes — humans set them (double-click node in dashboard), agents discover and fulfill
-- **Lifecycle**: pending → active (claimed) → done/failed. Active intents timeout after 5 min back to pending
+- **Lifecycle**: pending → active (claimed) → done/failed. An active claim older than 5 min (`CANVAS_INTENT_CLAIM_TIMEOUT_MS`) is listed as pending and may be claimed by another worker; `listCanvasIntents` is a pure read (status filter + limit in SQL), and the takeover is written by `claimCanvasIntent`
 - **Agent commands**: `canvas intent list [canvas]`, `canvas intent claim <node_id>`, `canvas intent complete <node_id> [--type <type>] <result>`, `canvas intent complete-rich <node_id> <a2ui_json>`, `canvas intent fail <node_id> [reason]`
 - **Discovery**: brief compass shows "N pending intents", `brief full` lists actual intents, `canvas-watcher` trait in general role
 - **Conversations**: every node supports threaded dialogue — messages create child nodes with edges, agents reply via `canvas publish text <asset> <canvas> reply:<node_id>`

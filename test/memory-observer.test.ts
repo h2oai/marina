@@ -90,6 +90,51 @@ it("revokes group notes on direct, owner-list, graph and pool-list routes", asyn
   expect((await get("/api/memory/pools")).data).toEqual([]);
 });
 
+it("/api/graph filters in one batch: no per-note getNote, one ACL lookup per pool", async () => {
+  db.createGroup({ id: "team", name: "team", leaderId: alice.entityId });
+  db.addGroupMember("team", bob.entityId);
+  db.createMemoryPool("shared", "shared", "Alice", "team");
+  db.createMemoryPool("closed", "closed", "Alice", "nobody");
+  const shared: number[] = [];
+  for (let i = 0; i < 8; i++) shared.push(db.addPoolNote("shared", "Alice", `SHARED_${i}`));
+  for (let i = 0; i < 4; i++) db.addPoolNote("closed", "Alice", `CLOSED_SENTINEL_${i}`);
+  const own = db.createNote("Bob", "BOB_OWN");
+  db.createNoteLink(own, shared[0]!, "related_to");
+  db.createNoteLink(own, db.createNote("Alice", "ALICE_PRIVATE_SENTINEL"), "related_to");
+
+  const calls = { getNote: 0, pool: 0, service: 0 };
+  const originals = {
+    getNote: db.getNote.bind(db),
+    pool: db.getMemoryPoolById.bind(db),
+    service: db.isServiceMemoryNote.bind(db),
+  };
+  db.getNote = (id) => (calls.getNote++, originals.getNote(id));
+  db.getMemoryPoolById = (id) => (calls.pool++, originals.pool(id));
+  db.isServiceMemoryNote = (id) => (calls.service++, originals.service(id));
+  try {
+    const { data } = await get("/api/graph");
+    const body = JSON.stringify(data);
+    expect(body).not.toContain("CLOSED_SENTINEL");
+    expect(body).not.toContain("ALICE_PRIVATE_SENTINEL");
+    expect(
+      data.notes.filter((n: { content: string }) => n.content.startsWith("SHARED_")),
+    ).toHaveLength(8);
+    expect(data.links).toEqual([
+      { sourceId: own, targetId: shared[0], relationship: "related_to" },
+    ]);
+    expect(calls.getNote).toBe(0);
+    expect(calls.service).toBe(0);
+    // Once per distinct pool per batch (notes, then link endpoints), never per note.
+    expect(calls.pool).toBeLessThanOrEqual(4);
+  } finally {
+    Object.assign(db, {
+      getNote: originals.getNote,
+      getMemoryPoolById: originals.pool,
+      isServiceMemoryNote: originals.service,
+    });
+  }
+});
+
 it("filters live memory events per reader and stops automatic public copying", () => {
   const broadcaster = new DashboardBroadcaster();
   const ownMessages: string[] = [];

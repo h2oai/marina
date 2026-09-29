@@ -23,11 +23,31 @@ export function memoryObserver(engine: Engine, principal?: string) {
   const access = engine.db ? memoryAccess(engine.db, { name: entity?.name ?? "", id }) : undefined;
   const read = (note: NoteRow | undefined): note is NoteRow =>
     !!note && (privilegedRead || !!access?.read(note));
+  // Batch `read` for list surfaces (`/api/graph`): one service-note query and
+  // one ACL lookup per pool for the whole set, never a `getNote` per row.
+  const readable = (notes: readonly (NoteRow | undefined)[]): NoteRow[] =>
+    privilegedRead ? notes.filter((n): n is NoteRow => !!n) : (access?.readable(notes) ?? []);
+  const readableLinks = <L extends { source_id: number; target_id: number }>(
+    rows: readonly L[],
+    known: readonly NoteRow[] = [],
+  ): L[] => {
+    const db = engine.db;
+    if (!db || rows.length === 0) return [];
+    const byId = new Map(known.map((n) => [n.id, n] as const));
+    const missing = rows
+      .flatMap((l) => [l.source_id, l.target_id])
+      .filter((noteId) => !byId.has(noteId));
+    for (const [noteId, note] of notesById(db, missing)) byId.set(noteId, note);
+    const ok = new Set(readable([...byId.values()]).map((n) => n.id));
+    return rows.filter((l) => ok.has(l.source_id) && ok.has(l.target_id));
+  };
   return {
     privilegedRead,
     operator,
     entity,
     read,
+    readable,
+    readableLinks,
     pool: (pool: Parameters<NonNullable<typeof access>["pool"]>[0]) =>
       !!pool && (privilegedRead || !!access?.pool(pool)),
     write: (note: NoteRow | undefined) => !!note && (operator || !!access?.write(note)),

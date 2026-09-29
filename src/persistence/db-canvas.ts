@@ -225,6 +225,31 @@ export function updateNode(
   return true;
 }
 
+/**
+ * How long an `active` claim holds before another worker may take it over.
+ * Expiry happens on the write path (`claimCanvasIntent`); reads never write.
+ */
+export const CANVAS_INTENT_CLAIM_TIMEOUT_MS = 5 * 60 * 1000;
+
+function claimIsStale(
+  intent: CanvasIntentData,
+  updatedAt: number,
+  timeoutMs: number,
+  now: number,
+): boolean {
+  return intent.status === "active" && now - (intent.claimedAt ?? updatedAt) > timeoutMs;
+}
+
+/** Page size for the SQL-filtered intent scan (rows that fail to parse are skipped). */
+const INTENT_PAGE_ROWS = 200;
+
+/**
+ * Pure read: intents whose status is in `statuses`, oldest first, at most
+ * `limit`. The status filter and the limit run in SQL, so a canvas with many
+ * ordinary nodes is never loaded whole. With `expireActiveMs`, an `active`
+ * claim older than the window is REPORTED as `pending` (claimant cleared) —
+ * the stored row is untouched; the next `claimCanvasIntent` takes it over.
+ */
 export function listCanvasIntents(
   db: Database,
   options?: {
@@ -236,89 +261,73 @@ export function listCanvasIntents(
   },
 ): CanvasIntentSummary[] {
   const now = options?.now ?? Date.now();
-  if (options?.expireActiveMs) {
-    expireCanvasIntentClaims(db, options.expireActiveMs, now);
-  }
-
-  const statuses = new Set(options?.statuses ?? ["pending", "active"]);
+  const expireMs = options?.expireActiveMs;
+  const statuses = new Set<CanvasIntentStatus>(options?.statuses ?? ["pending", "active"]);
   const limit = options?.limit ?? 100;
-  const rows = options?.canvasName
-    ? db
-        .query(
-          `SELECT n.*, c.name AS canvas_name
-             FROM canvas_nodes n
-             JOIN canvases c ON c.id = n.canvas_id
-             WHERE c.name = ?
-             ORDER BY n.created_at ASC`,
-        )
-        .all(options.canvasName)
-    : db
-        .query(
-          `SELECT n.*, c.name AS canvas_name
-             FROM canvas_nodes n
-             JOIN canvases c ON c.id = n.canvas_id
-             ORDER BY n.created_at ASC`,
-        )
-        .all();
+  if (limit <= 0 || statuses.size === 0) return [];
+  // A stale active claim can surface as pending, so fetch active rows too.
+  const queried = new Set(statuses);
+  if (expireMs && statuses.has("pending")) queried.add("active");
+  const statusList = [...queried];
+  const statusSql = statusList.map(() => "?").join(",");
+  const where = [
+    `(CASE WHEN json_valid(n.data) THEN json_extract(n.data, '$.intent.status') END) IN (${statusSql})`,
+  ];
+  const params: (string | number)[] = [...statusList];
+  if (options?.canvasName) {
+    where.push("c.name = ?");
+    params.push(options.canvasName);
+  }
+  const page = db.query(
+    `SELECT n.*, c.name AS canvas_name
+       FROM canvas_nodes n
+       JOIN canvases c ON c.id = n.canvas_id
+       WHERE ${where.join(" AND ")}
+       ORDER BY n.created_at ASC, n.rowid ASC
+       LIMIT ? OFFSET ?`,
+  );
 
   const intents: CanvasIntentSummary[] = [];
-  for (const row of rows as (CanvasNodeRow & { canvas_name: string })[]) {
-    const intent = parseCanvasIntent(row.data);
-    if (!intent || !statuses.has(intent.status)) continue;
-    intents.push({
-      nodeId: row.id,
-      canvasId: row.canvas_id,
-      canvasName: row.canvas_name,
-      type: row.type,
-      creatorName: row.creator_name,
-      assetId: row.asset_id,
-      parentNodeId: row.parent_node_id,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      intent,
-    });
-    if (intents.length >= limit) break;
+  for (let offset = 0; intents.length < limit; offset += INTENT_PAGE_ROWS) {
+    const rows = page.all(...params, INTENT_PAGE_ROWS, offset) as (CanvasNodeRow & {
+      canvas_name: string;
+    })[];
+    for (const row of rows) {
+      let intent = parseCanvasIntent(row.data);
+      if (!intent) continue;
+      if (expireMs && claimIsStale(intent, row.updated_at, expireMs, now)) {
+        intent = { ...intent, status: "pending", claimedBy: undefined, claimedAt: undefined };
+      }
+      if (!statuses.has(intent.status)) continue;
+      intents.push({
+        nodeId: row.id,
+        canvasId: row.canvas_id,
+        canvasName: row.canvas_name,
+        type: row.type,
+        creatorName: row.creator_name,
+        assetId: row.asset_id,
+        parentNodeId: row.parent_node_id,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        intent,
+      });
+      if (intents.length >= limit) break;
+    }
+    if (rows.length < INTENT_PAGE_ROWS) break;
   }
   return intents;
 }
 
-export function expireCanvasIntentClaims(
-  db: Database,
-  timeoutMs: number,
-  now = Date.now(),
-): number {
-  const rows = db
-    .query("SELECT * FROM canvas_nodes ORDER BY updated_at ASC")
-    .all() as CanvasNodeRow[];
-  let expired = 0;
-  for (const row of rows) {
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(row.data);
-    } catch {
-      continue;
-    }
-    const intent = readCanvasIntent(parsed);
-    if (intent?.status !== "active") continue;
-    const claimedAt = intent.claimedAt ?? row.updated_at;
-    if (now - claimedAt <= timeoutMs) continue;
-
-    parsed.intent = {
-      ...intent,
-      status: "pending",
-      claimedBy: undefined,
-      claimedAt: undefined,
-    };
-    if (updateNodeDataIfUnchanged(db, row, JSON.stringify(parsed), now)) expired++;
-  }
-  return expired;
-}
-
+/**
+ * Claim a pending intent — or take over an `active` claim older than
+ * `claimTimeoutMs` (the write-path half of claim expiry).
+ */
 export function claimCanvasIntent(
   db: Database,
   idOrPrefix: string,
   claimantName: string,
   now = Date.now(),
+  claimTimeoutMs = CANVAS_INTENT_CLAIM_TIMEOUT_MS,
 ): CanvasIntentClaimResult {
   const node = resolveCanvasNode(db, idOrPrefix);
   if (!node) return { ok: false, reason: "not_found" };
@@ -332,7 +341,7 @@ export function claimCanvasIntent(
 
   const intent = readCanvasIntent(parsed);
   if (!intent) return { ok: false, reason: "no_intent" };
-  if (intent.status !== "pending") {
+  if (intent.status !== "pending" && !claimIsStale(intent, node.updated_at, claimTimeoutMs, now)) {
     return { ok: false, reason: "not_pending", status: intent.status };
   }
 

@@ -1757,6 +1757,13 @@ export class MarinaDB implements MarinaStores {
     return notesDb.getNotes(this.db, ids);
   }
 
+  noteTermCounts(
+    entityName: string,
+    terms: readonly string[],
+  ): { total: number; counts: number[] } {
+    return notesDb.noteTermCounts(this.db, entityName, terms);
+  }
+
   addNoteSource(noteId: number, source: notesDb.NoteSourceInput): number {
     return notesDb.addNoteSource(this.db, noteId, source);
   }
@@ -2333,6 +2340,9 @@ export class MarinaDB implements MarinaStores {
   }
   isServiceMemoryNote(id: number): boolean {
     return memoryServiceDb.isServiceMemoryNote(this.db, id);
+  }
+  serviceMemoryNoteIds(ids: readonly number[]): Set<number> {
+    return memoryServiceDb.serviceMemoryNoteIds(this.db, ids);
   }
   issueMemoryCredential(
     ...args: Parameters<typeof principalsDb.issueMemoryCredential> extends [unknown, ...infer R]
@@ -3115,10 +3125,6 @@ export class MarinaDB implements MarinaStores {
     now?: number;
   }): CanvasIntentSummary[] {
     return canvasDb.listCanvasIntents(this.db, options);
-  }
-
-  expireCanvasIntentClaims(timeoutMs: number, now = Date.now()): number {
-    return canvasDb.expireCanvasIntentClaims(this.db, timeoutMs, now);
   }
 
   claimCanvasIntent(

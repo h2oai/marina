@@ -175,27 +175,26 @@ export async function handleMemoryGraphRoutes(
     const limit =
       Number.isFinite(limitParam) && limitParam > 0 && limitParam <= 2000 ? limitParam : 500;
     const snapshot = db.getGraphSnapshot(limit);
+    // Snapshot rows are full numeric_notes rows: filter them in one batch
+    // (service-note check + per-pool ACL once), never a getNote per row.
+    const notes = memory.readable(snapshot.notes);
     return json({
-      notes: snapshot.notes
-        .filter((n) => memory.read(db.getNote(n.id)))
-        .map((n) => ({
-          id: n.id,
-          entityName: n.entity_name,
-          content: n.content.length > 240 ? `${n.content.slice(0, 240)}…` : n.content,
-          importance: n.importance,
-          noteType: n.note_type,
-          createdAt: n.created_at,
-          lastAccessed: n.last_accessed,
-          roomId: n.room_id,
-          poolId: n.pool_id,
-        })),
-      links: snapshot.links
-        .filter((l) => memory.read(db.getNote(l.source_id)) && memory.read(db.getNote(l.target_id)))
-        .map((l) => ({
-          sourceId: l.source_id,
-          targetId: l.target_id,
-          relationship: l.relationship,
-        })),
+      notes: notes.map((n) => ({
+        id: n.id,
+        entityName: n.entity_name,
+        content: n.content.length > 240 ? `${n.content.slice(0, 240)}…` : n.content,
+        importance: n.importance,
+        noteType: n.note_type,
+        createdAt: n.created_at,
+        lastAccessed: n.last_accessed,
+        roomId: n.room_id,
+        poolId: n.pool_id,
+      })),
+      links: memory.readableLinks(snapshot.links, snapshot.notes).map((l) => ({
+        sourceId: l.source_id,
+        targetId: l.target_id,
+        relationship: l.relationship,
+      })),
     });
   }
 

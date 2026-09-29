@@ -56,6 +56,8 @@ export interface NotesStore {
   getNote(id: number): NoteRow | undefined;
   /** Batch read of every existing note among `ids` (one `IN (…)` per 500-id chunk). */
   getNotes(ids: number[]): NoteRow[];
+  /** Per-term substring counts over the entity's private fact-like notes (revision-cached). */
+  noteTermCounts(entityName: string, terms: readonly string[]): { total: number; counts: number[] };
   addNoteSource(noteId: number, source: notesDb.NoteSourceInput): number;
   getNoteSources(noteId: number): notesDb.NoteSourceRow[];
   getNotesBySourceUrl(url: string, entityName?: string, limit?: number): NoteRow[];
@@ -175,6 +177,7 @@ export const NOTES_STORE_METHODS = [
   "deleteNote",
   "getNote",
   "getNotes",
+  "noteTermCounts",
   "addNoteSource",
   "getNoteSources",
   "getNotesBySourceUrl",

@@ -31,10 +31,19 @@ export function expandMemoryRecall(
   const results = initial.filter(eligible);
   if (results.length >= 20) return results.slice(0, 20);
   const byId = new Map(results.map((note) => [note.id, note]));
-  for (const seed of results.slice(0, 5)) {
-    for (const link of db.getNoteLinks(seed.id)) {
-      const linkedId = link.source_id === seed.id ? link.target_id : link.source_id;
-      const linked = db.getNote(linkedId);
+  const seeds = results.slice(0, 5).map((seed) => ({
+    seed,
+    linkedIds: db
+      .getNoteLinks(seed.id)
+      .map((link) => (link.source_id === seed.id ? link.target_id : link.source_id)),
+  }));
+  // One batched read for every linked note instead of a getNote per link.
+  const linkedNotes = new Map(
+    db.getNotes(seeds.flatMap((s) => s.linkedIds)).map((note) => [note.id, note] as const),
+  );
+  for (const { seed, linkedIds } of seeds) {
+    for (const linkedId of linkedIds) {
+      const linked = linkedNotes.get(linkedId);
       if (!eligible(linked)) continue;
       const score = seed.score * 0.3;
       const previous = byId.get(linkedId);
