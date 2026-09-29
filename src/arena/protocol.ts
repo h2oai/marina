@@ -143,7 +143,9 @@ export function openSshEd25519Seed(text: string): Buffer {
     p += n;
     return out;
   };
-  if (pu32() !== pu32()) throw new Error("corrupt OpenSSH private key (check bytes differ)");
+  const check1 = pu32();
+  const check2 = pu32();
+  if (check1 !== check2) throw new Error("corrupt OpenSSH private key (check bytes differ)");
   if (pbytes().toString() !== "ssh-ed25519") throw new Error("arena key must be Ed25519");
   const pub = pbytes();
   const secret = pbytes();
