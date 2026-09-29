@@ -1614,11 +1614,13 @@ export class MarinaDB implements MarinaStores {
     usersDb.bindAuthSubject(this.db, id, subject, email);
   }
 
-  deleteUser(id: string): void {
-    usersDb.deleteUser(this.db, id);
+  /** Account erasure (see `usersDb.deleteUser`): one transaction, audited in the chronicle. */
+  deleteUser(id: string): usersDb.AccountErasure {
+    const erased = usersDb.deleteUser(this.db, id);
     this.durableKeyCache.forEach((value, key) => {
       if (value === id) this.durableKeyCache.delete(key);
     });
+    return erased;
   }
 
   // ─── Ban Persistence ──────────────────────────────────────────────────
