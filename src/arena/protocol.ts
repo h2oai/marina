@@ -90,8 +90,74 @@ export function assertSafeId(label: string, value: string): void {
 const PKCS8_ED25519_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
 
 /** A private key from PKCS#8 PEM (what `arena keygen` writes) or the raw 32-byte seed. */
+/**
+ * The 32-byte Ed25519 seed from an unencrypted OpenSSH private key
+ * (`-----BEGIN OPENSSH PRIVATE KEY-----`, what `ssh-keygen -t ed25519` writes
+ * and the arena's registration guide asks for). Node's crypto cannot read this
+ * container, so it is unpacked here: magic, cipher/kdf `none`, one key, and the
+ * private section's `ssh-ed25519` entry, whose 64-byte private field is the
+ * seed followed by the public key (cross-checked against the embedded one).
+ */
+export function openSshEd25519Seed(text: string): Buffer {
+  const body = text
+    .replace(/-----BEGIN OPENSSH PRIVATE KEY-----/, "")
+    .replace(/-----END OPENSSH PRIVATE KEY-----[\s\S]*$/, "")
+    .replace(/\s+/g, "");
+  const buf = Buffer.from(body, "base64");
+  const magic = Buffer.from("openssh-key-v1\0");
+  if (!buf.subarray(0, magic.length).equals(magic)) throw new Error("not an OpenSSH private key");
+  let at = magic.length;
+  const u32 = () => {
+    if (at + 4 > buf.length) throw new Error("truncated OpenSSH private key");
+    const v = buf.readUInt32BE(at);
+    at += 4;
+    return v;
+  };
+  const bytes = () => {
+    const n = u32();
+    if (at + n > buf.length) throw new Error("truncated OpenSSH private key");
+    const out = buf.subarray(at, at + n);
+    at += n;
+    return out;
+  };
+  const cipher = bytes().toString();
+  const kdf = bytes().toString();
+  bytes(); // kdf options
+  if (cipher !== "none" || kdf !== "none") {
+    throw new Error(
+      "the OpenSSH arena key is passphrase-protected; remove the passphrase on a copy (ssh-keygen -p -N '' -f <copy>) or use an unencrypted key file",
+    );
+  }
+  if (u32() !== 1) throw new Error("OpenSSH key file must hold exactly one key");
+  bytes(); // public key blob
+  const priv = bytes();
+  let p = 0;
+  const pu32 = () => {
+    const v = priv.readUInt32BE(p);
+    p += 4;
+    return v;
+  };
+  const pbytes = () => {
+    const n = pu32();
+    const out = priv.subarray(p, p + n);
+    p += n;
+    return out;
+  };
+  if (pu32() !== pu32()) throw new Error("corrupt OpenSSH private key (check bytes differ)");
+  if (pbytes().toString() !== "ssh-ed25519") throw new Error("arena key must be Ed25519");
+  const pub = pbytes();
+  const secret = pbytes();
+  if (pub.length !== 32 || secret.length !== 64 || !secret.subarray(32).equals(pub)) {
+    throw new Error("corrupt OpenSSH Ed25519 key");
+  }
+  return Buffer.from(secret.subarray(0, 32));
+}
+
 export function loadPrivateKey(data: Buffer | string) {
-  const bytes = typeof data === "string" ? Buffer.from(data) : data;
+  let bytes = typeof data === "string" ? Buffer.from(data) : data;
+  if (bytes.subarray(0, 40).toString().includes("BEGIN OPENSSH PRIVATE KEY")) {
+    bytes = openSshEd25519Seed(bytes.toString());
+  }
   if (bytes.length === 32) {
     return createPrivateKey({
       key: Buffer.concat([PKCS8_ED25519_PREFIX, bytes]),

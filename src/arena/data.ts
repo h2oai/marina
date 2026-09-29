@@ -41,6 +41,20 @@ export class ArenaData {
     return value;
   }
 
+  /** The published registration for an entrant (entrants/<id>.json), or undefined when absent. */
+  async entrant(id: string): Promise<
+    | {
+        entrant_id: string;
+        github?: string;
+        status?: string;
+        keys?: Array<{ id: string; alg?: string; public: string; revoked?: boolean }>;
+      }
+    | undefined
+  > {
+    if (!/^[a-z0-9][a-z0-9_.-]{1,47}$/.test(id)) return undefined;
+    return this.json<{ entrant_id: string }>(`entrants/${id}.json`).catch(() => undefined) as never;
+  }
+
   async rounds(): Promise<ArenaRound[]> {
     const season = await this.json<{ rounds: ArenaRound[] }>("questions/season0.json");
     return season.rounds;

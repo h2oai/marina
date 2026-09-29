@@ -75,6 +75,60 @@ export function arenaStatus(env: NodeJS.ProcessEnv = process.env): ArenaStatus {
 }
 
 /**
+ * Does the arena's published registration accept the local signing key? Reads
+ * entrants/<id>.json and checks that MARINA_ARENA_KEY_ID is listed, unrevoked,
+ * with the SAME public key the local key file derives — so a key-id / key-file
+ * mix-up is caught here rather than as a rejected filing at lock time.
+ */
+export async function arenaRegistrationCheck(
+  env: NodeJS.ProcessEnv = process.env,
+  data: ArenaData = arenaData(env),
+): Promise<{ ok: boolean; message: string; registeredKeys?: string[] }> {
+  const status = arenaStatus(env);
+  if (!status.configured || !status.entrant) {
+    return { ok: false, message: "MARINA_ARENA_ENTRANT is not set" };
+  }
+  if (!status.publicKey) return { ok: false, message: `local key not usable: ${status.keyError}` };
+  const reg = await data.entrant(status.entrant);
+  if (!reg) {
+    return {
+      ok: false,
+      message: `${status.entrant} is not registered yet (no entrants/${status.entrant}.json on the arena's main branch)`,
+    };
+  }
+  const keys = reg.keys ?? [];
+  const registeredKeys = keys.map((k) => `${k.id}${k.revoked ? " (revoked)" : ""}: ${k.public}`);
+  const byId = keys.find((k) => k.id === status.keyId);
+  const byPublic = keys.find((k) => k.public === status.publicKey);
+  if (reg.status === "revoked")
+    return { ok: false, message: "the entrant is revoked", registeredKeys };
+  if (byId && !byId.revoked && byId.public === status.publicKey) {
+    return { ok: true, message: `key ${status.keyId} matches the registration`, registeredKeys };
+  }
+  if (byPublic && !byPublic.revoked) {
+    return {
+      ok: false,
+      message: `the local key is registered as "${byPublic.id}", but MARINA_ARENA_KEY_ID is "${status.keyId}" — set MARINA_ARENA_KEY_ID=${byPublic.id}`,
+      registeredKeys,
+    };
+  }
+  if (byId) {
+    return {
+      ok: false,
+      message: byId.revoked
+        ? `key ${status.keyId} is revoked`
+        : `key ${status.keyId} is registered with a different public key (${byId.public}) than MARINA_ARENA_KEY_FILE derives (${status.publicKey}) — point MARINA_ARENA_KEY_FILE at that key's private half`,
+      registeredKeys,
+    };
+  }
+  return {
+    ok: false,
+    message: `neither key id ${status.keyId} nor the local public key ${status.publicKey} is registered for ${status.entrant}`,
+    registeredKeys,
+  };
+}
+
+/**
  * The forecaster a spec names: the calibrated baseline, or a model shrunk toward
  * it. The model stack is imported only when a model is actually asked for.
  * `raw: true` returns the model's own answer (for shadow scoring), not the blend.
