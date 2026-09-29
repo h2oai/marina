@@ -598,16 +598,28 @@ async function researchForecasterFor(
   return {
     usage,
     forecaster: async (round, lock) => {
-      const f = await research.researchForecastRound(round, lock, {
-        retriever,
-        analysts: made.map((m) => ({ name: m.name, complete: m.complete })),
-        ...(judge ? { judge } : {}),
-        trustCap: Number.isFinite(trustCap) ? trustCap : 0.5,
-        pageText,
-        base: nowcast,
-      });
-      researchCost += (f.dossier?.costUsd ?? 0) + (f.judge?.costUsd ?? 0);
-      judgeCalls += f.judge?.calls ?? 0;
+      const spent = (
+        f: Pick<import("./research/forecaster").ResearchForecast, "dossier" | "judge">,
+      ) => {
+        researchCost += (f.dossier?.costUsd ?? 0) + (f.judge?.costUsd ?? 0);
+        judgeCalls += f.judge?.calls ?? 0;
+      };
+      let f: import("./research/forecaster").ResearchForecast;
+      try {
+        f = await research.researchForecastRound(round, lock, {
+          retriever,
+          analysts: made.map((m) => ({ name: m.name, complete: m.complete })),
+          ...(judge ? { judge } : {}),
+          trustCap: Number.isFinite(trustCap) ? trustCap : 0.5,
+          pageText,
+          base: nowcast,
+        });
+      } catch (err) {
+        // A no-history round that research could not answer still spent money.
+        if (err instanceof research.NoAnchorRefusal) spent(err.detail);
+        throw err;
+      }
+      spent(f);
       return f;
     },
   };

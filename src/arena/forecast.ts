@@ -149,7 +149,7 @@ export function isExcludedTitle(title: string): boolean {
   return EXCLUDED_TITLES.has(title) || NAMESPACE_PREFIXES.some((p) => title.startsWith(p));
 }
 
-/** Recency half-life for ranking views (days). Backtested over 7 archived weeks: h=3 → +0.069 vs the arena's persistence; a flat 7-day sum +0.045. */
+/** Recency half-life for ranking views (days), chosen by backtest over the arena's archived weeks. */
 export const RANKING_HALF_LIFE_DAYS = 3;
 
 /**

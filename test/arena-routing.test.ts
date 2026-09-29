@@ -27,11 +27,11 @@ describe("per-family routing", () => {
     expect(() => parseForecasterSpec("route:civiqs=gpt")).toThrow();
     expect(() => parseForecasterSpec("route:civiqs=routed")).toThrow("do not nest");
     expect(() => parseForecasterSpec("route:civiqs")).toThrow("<family>=<forecaster>");
-    // The default map routes Civiqs to the nowcast and skips the losing families.
+    // Unset, the map answers every family with the free nowcast.
     const d = parseRoutes("routed", {});
     expect(routeFor(d, "civiqs")).toBe("nowcast");
-    expect(routeFor(d, "economist_yougov")).toBe("skip");
-    expect(routeFor(d, "aaii")).toContain("formation:symbiosis:");
+    expect(routeFor(d, "economist_yougov")).toBe("nowcast");
+    expect(routeFor(d, "aaii")).toBe("nowcast");
     expect(parseRoutes("routed", { MARINA_ARENA_ROUTES: "*=baseline" }).fallback).toBe("baseline");
     expect(DEFAULT_ROUTES).toContain("*=nowcast");
   });
@@ -77,5 +77,28 @@ describe("per-family routing", () => {
     expect(byRound["aaii-r1"]).toBeDefined();
     expect(byRound["yg-r1"]).toBeUndefined();
     expect(report.families.find((x) => x.tracker === "economist_yougov")?.skill.routed).toBeNaN();
+  });
+
+  it("a no-history round refuses under the nowcast and reaches research when routed there", async () => {
+    const seats: ArenaRound = {
+      round_id: "special-seats",
+      tracker: "special",
+      series: "seats",
+      question: "Seats won by Party A in the chamber (all 500 decided)",
+      target_type: "continuous_normal",
+      lock_at: "2026-10-20T22:00:00Z",
+      release_at: "2026-11-20T00:00:00Z",
+    };
+    const empty = { round_id: seats.round_id, answer_history: [], history: [] };
+    const env = { MARINA_ARENA_CIVIQS_LIVE: "off" };
+    const plain = await forecasterFor("route:*=nowcast", { env });
+    await expect(plain.forecaster(seats, empty)).rejects.toThrow("no history to forecast from");
+    // Routed to research: the research forecaster is built (here it stops at
+    // its missing retriever key — no network in tests), proving the route reaches it.
+    const routed = await forecasterFor(
+      "route:special=research:openrouter/vendor/model-a@tavily:advanced;*=nowcast",
+      { env },
+    );
+    await expect(routed.forecaster(seats, empty)).rejects.toThrow("TAVILY_API_KEY");
   });
 });

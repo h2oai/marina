@@ -15,6 +15,8 @@ export interface ArenaRound {
   lock_at: string;
   release_at: string;
   release_estimated?: boolean;
+  /** How the round resolves, in the arena's words (one-off rounds such as elections). */
+  resolve?: string;
   /** Profile rounds: every cell the answer must carry. */
   cells?: string[];
   /** Ranking rounds: `length` and (for a fixed basket) the allowed items. */
