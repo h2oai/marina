@@ -18,9 +18,10 @@ import {
   settleExecApproval,
 } from "../src/coding/exec-approver";
 import { LocalWorkspace } from "../src/coding/local-workspace";
+import { setCurrentCommand } from "../src/engine/gate-context";
 import { grant, recordDemonstration } from "../src/engine/safety-gates";
 import { MarinaDB } from "../src/persistence/database";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, until } from "./helpers";
 
 /** A stub approver with a fixed decision — the simplest ExecApprover. */
 function stubApprover(decision: ExecApprovalDecision): ExecApprover {
@@ -216,6 +217,31 @@ describe("InteractiveApprover", () => {
     expect(decision.approved).toBe(false);
     expect(decision.reason).toMatch(/timed out/);
     expect(audits.at(-1)?.decision.approved).toBe(false);
+    expect(audits.at(-1)?.decision.outcome).toBe("timeout");
+  });
+
+  it("a held approval that times out writes an audit record with outcome timeout", async () => {
+    setCurrentCommand("e_agent", "code run sleep 999");
+    try {
+      const approver = make("prompt", "s4-held", 20);
+      const decision = await approver.requestApproval(req(["sleep", "999"]));
+      // Held: answered at once, nothing waits on the human.
+      expect(decision.approved).toBe(false);
+      expect(audits).toHaveLength(0);
+      const token = (notifications.at(-1)!.metadata!.execApproval as { token: string }).token;
+      await until(() => audits.length > 0);
+      expect(audits.at(-1)?.decision).toMatchObject({
+        approved: false,
+        reason: "approval timed out",
+        outcome: "timeout",
+      });
+      expect(audits.at(-1)?.mode).toBe("prompt");
+      // The expired token can no longer be answered, and the requester was told.
+      expect(getPendingExecApproval(token)).toBeUndefined();
+      expect(notifications.some((n) => n.entityId === "e_agent")).toBe(true);
+    } finally {
+      setCurrentCommand("e_agent", undefined);
+    }
   });
 
   it("auto mode approves immediately without a prompt but still audits", async () => {
