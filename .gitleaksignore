@@ -18,3 +18,5 @@ fe683112527dc3cddae8c7f43ed3408c10b7e2db:test/key-crypto.test.ts:generic-api-key
 # Provider → default model-id map (env var NAME as the key, a public model id as the value) — moved into model-api/upstream.ts by the split; not a credential.
 0f10b52f3ddb42feb22826e9faef3225230e092e:src/net/model-api/upstream.ts:generic-api-key:65
 a815e8ab7df25e58716bec0012c626a175f72d19:test/key-secret-file.test.ts:generic-api-key:40
+f3bb0f3d575b854a4f6a2641b9c1e14c9d2c49db:src/arena/protocol.ts:private-key:95
+f3bb0f3d575b854a4f6a2641b9c1e14c9d2c49db:test/arena-key-formats.test.ts:private-key:48
