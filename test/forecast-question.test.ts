@@ -113,6 +113,58 @@ describe("forecast any question", () => {
     expect(a.probability).toBeCloseTo(0.9, 2);
     expect(a.caveat).toContain("little verified evidence");
   });
+
+  it("gives an unjudged answer no weight on a judge outage and records the error", async () => {
+    // The judge fails on the first analyst only; the second is judged normally.
+    let calls = 0;
+    const flaky: DecisionProvider = {
+      kind: "fake",
+      model: "fake-jev",
+      ask: async (request) => {
+        calls++;
+        if (JSON.stringify(request.state).includes("0.9")) throw new Error("judge 503");
+        return judge(1).ask(request);
+      },
+    };
+    const a = await forecastQuestion(
+      { question: "Will X?" },
+      {
+        retriever,
+        analysts: [
+          { name: "loud", complete: analyst('{"probability": 0.9, "reason": "r"}') },
+          { name: "judged", complete: analyst('{"probability": 0.2, "reason": "r"}') },
+        ],
+        judge: flaky,
+      },
+    );
+    expect(calls).toBe(2);
+    const loud = a.analysts.find((x) => x.name === "loud")!;
+    expect(loud.weight).toBe(0);
+    expect(loud.judgeError).toContain("judge 503");
+    // The outage is not a pass: the answer is the judged analyst's alone.
+    expect(a.probability).toBeCloseTo(0.2, 3);
+    expect(a.judge).toMatchObject({ provider: "fake", calls: 2, errors: 1 });
+    expect(a.judge?.error).toContain("judge 503");
+
+    const down: DecisionProvider = {
+      kind: "fake",
+      model: "fake-jev",
+      ask: async () => {
+        throw new Error("judge down");
+      },
+    };
+    const none = await forecastQuestion(
+      { question: "Will X?" },
+      {
+        retriever,
+        analysts: [{ name: "a", complete: analyst('{"probability": 0.9}') }],
+        judge: down,
+      },
+    );
+    expect(none.probability).toBeUndefined();
+    expect(none.caveat).toContain("judge failed");
+    expect(none.judge?.errors).toBe(1);
+  });
 });
 
 describe("POST /v1/forecast", () => {

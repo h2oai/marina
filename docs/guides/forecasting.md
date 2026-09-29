@@ -23,7 +23,10 @@ behind the model API's auth; the reply is the full answer, below.
 3. **Analysts** — one model per vendor (by default DeepSeek V4 Pro, Claude Sonnet 5, GPT-6 Luna)
    answers from the tagged dossier.
 4. **Judge** — Jev scores how well each analyst's reasoning is supported by the *verified* facts;
-   weakly supported answers count for little.
+   weakly supported answers count for little. If the judge fails on an answer, that answer gets
+   **no** weight (an outage is no opinion, never a pass) and the error is recorded on it
+   (`judgeError`) and in the answer's `judge` record (calls, errors, latency, cost). The arena's
+   research forecaster uses the same analyst + judge step (`src/forecast/judge.ts`).
 5. **Aggregate** — probabilities are combined in log-odds, numbers as a weighted mean whose spread
    includes the analysts' disagreement.
 
