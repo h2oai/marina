@@ -11,6 +11,7 @@ import { memoryNoteResults, memoryResult } from "../../memory/command-result";
 import { header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import { rankFloorRefusal } from "../rank-floor";
 import { isLocalUngated } from "../trust-profile";
 import { requiresPersistence } from "./command-messages";
 import { auditKnowledgeNotes, renderKnowledgeHygieneReport } from "./knowledge-hygiene";
@@ -360,9 +361,13 @@ export function skillCommand(deps: {
         case "import": {
           // Host file read driven by in-world input: rank-gated and confined
           // to the server's working directory (see resolveConfinedSkillPath).
-          const rank = (entity.properties.rank as number | undefined) ?? 0;
-          if (rank < 3 && !isLocalUngated()) {
-            ctx.send(input.entity, "skill import requires rank 3+ (host file access)");
+          const importFloor = rankFloorRefusal(
+            entity,
+            3,
+            "skill import requires rank 3+ (host file access)",
+          );
+          if (importFloor) {
+            ctx.send(input.entity, importFloor);
             return;
           }
           const path = input.tokens.slice(1).join(" ").trim();

@@ -21,21 +21,21 @@ link for validation, HTTP statuses, streaming and deployment-specific availabili
 
 ### `url.pathname.match(/^\/api\/assets\/(.+)$/)`
 
-[Source](../../src/net/asset-api.ts#L228)
+[Source](../../src/net/asset-api.ts#L232)
 
 - Guard: `idMatch && method === "DELETE"`
 - Guard: `method === "DELETE"`
 
 ### `url.pathname === "/api/assets"`
 
-[Source](../../src/net/asset-api.ts#L251)
+[Source](../../src/net/asset-api.ts#L260)
 
 - Guard: `url.pathname === "/api/assets" && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `url.pathname === "/api/assets"`
 
-[Source](../../src/net/asset-api.ts#L256)
+[Source](../../src/net/asset-api.ts#L265)
 
 - Guard: `url.pathname === "/api/assets" && method === "GET"`
 - Guard: `method === "GET"`
@@ -821,20 +821,20 @@ Fields read here: `error`, `evidenceRefs`, `rationale`.
 
 ### `url.pathname.match(/^\/api\/coordination\/tasks\/(\d+)$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L417)
+[Source](../../src/net/dashboard-api/world.ts#L418)
 
 - Guard: `taskDetailMatch && db`
 
 ### `url.pathname.match(/^\/api\/coding\/runs\/([^/]+)$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L423)
+[Source](../../src/net/dashboard-api/world.ts#L424)
 
 - Guard: `runMatch && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname.match(/^\/api\/coding\/session\/([^/]+)\/artifacts$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L434)
+[Source](../../src/net/dashboard-api/world.ts#L435)
 
 - Guard: `codingArtifactsMatch && method === "GET" && db`
 - Guard: `method === "GET"`
@@ -843,14 +843,14 @@ Fields read here: `clampLimit(url.searchParams.get("limit"), 100)`, `url.searchP
 
 ### `url.pathname.match(/^\/api\/coding\/session\/([^/]+)$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L443)
+[Source](../../src/net/dashboard-api/world.ts#L444)
 
 - Guard: `codingSessionDetailMatch && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/coding/sessions"`
 
-[Source](../../src/net/dashboard-api/world.ts#L455)
+[Source](../../src/net/dashboard-api/world.ts#L456)
 
 - Guard: `url.pathname === "/api/coding/sessions" && method === "GET" && db`
 - Guard: `method === "GET"`
@@ -859,50 +859,50 @@ Fields read here: `clampLimit(url.searchParams.get("limit"), 10)`, `url.searchPa
 
 ### `url.pathname.match(/^\/api\/coordination\/boards\/(.+)\/posts$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L465)
+[Source](../../src/net/dashboard-api/world.ts#L466)
 
 - Guard: `boardPostsMatch && db`
 
 ### `url.pathname.match( /^\/api\/coordination\/channels\/(.+)\/messages$/, )`
 
-[Source](../../src/net/dashboard-api/world.ts#L470)
+[Source](../../src/net/dashboard-api/world.ts#L471)
 
 - Guard: `channelMessagesMatch && db`
 
 ### `url.pathname.match(/^\/api\/coordination\/boards\/(.+)$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L477)
+[Source](../../src/net/dashboard-api/world.ts#L478)
 
 - Guard: `boardDetailMatch && db`
 
 ### `url.pathname.match(/^\/api\/coordination\/groups\/(.+)$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L482)
+[Source](../../src/net/dashboard-api/world.ts#L483)
 
 - Guard: `groupDetailMatch && db`
 
 ### `url.pathname.match(/^\/api\/coordination\/channels\/(.+)$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L487)
+[Source](../../src/net/dashboard-api/world.ts#L488)
 
 - Guard: `channelDetailMatch && db`
 
 ### `url.pathname.match(/^\/api\/rooms\/(.+)$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L492)
+[Source](../../src/net/dashboard-api/world.ts#L493)
 
 - Guard: `roomMatch`
 
 ### `url.pathname.match(/^\/api\/entities\/([^/]+)\/canvas$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L502)
+[Source](../../src/net/dashboard-api/world.ts#L503)
 
 - Guard: `entityCanvasMatch && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/feed"`
 
-[Source](../../src/net/dashboard-api/world.ts#L553)
+[Source](../../src/net/dashboard-api/world.ts#L554)
 
 - Guard: `url.pathname === "/api/feed" && method === "GET" && db`
 - Guard: `method === "GET"`
@@ -911,7 +911,7 @@ Fields read here: `Number.parseInt(url.searchParams.get("limit") ?? "", 10)`, `N
 
 ### `url.pathname === "/api/media-jobs"`
 
-[Source](../../src/net/dashboard-api/world.ts#L579)
+[Source](../../src/net/dashboard-api/world.ts#L580)
 
 - Guard: `url.pathname === "/api/media-jobs" && method === "GET" && db`
 - Guard: `method === "GET"`
@@ -920,41 +920,41 @@ Fields read here: `Number.parseInt(url.searchParams.get("limit") ?? "", 10)`, `u
 
 ### `url.pathname.match(/^\/api\/media-jobs\/([^/]+)\/retry$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L591)
+[Source](../../src/net/dashboard-api/world.ts#L592)
 
 - Guard: `mediaRetryMatch && method === "POST" && db`
 - Guard: `method === "POST"`
 
 ### `url.pathname.match(/^\/api\/entities\/([^/]+)\/brief$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L652)
+[Source](../../src/net/dashboard-api/world.ts#L658)
 
 - Guard: `briefMatch && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname.match(/^\/api\/entities\/([^/]+)\/work$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L696)
+[Source](../../src/net/dashboard-api/world.ts#L702)
 
 - Guard: `workMatch && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname.match(/^\/api\/entities\/(.+)$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L714)
+[Source](../../src/net/dashboard-api/world.ts#L720)
 
 - Guard: `entityMatch`
 - Guard: `method === "DELETE"`
 
 ### `url.pathname === "/api/coordination/boards"`
 
-[Source](../../src/net/dashboard-api/world.ts#L738)
+[Source](../../src/net/dashboard-api/world.ts#L744)
 
 - Guard: `url.pathname === "/api/coordination/boards" && db`
 
 ### `url.pathname === "/api/coordination/tasks"`
 
-[Source](../../src/net/dashboard-api/world.ts#L741)
+[Source](../../src/net/dashboard-api/world.ts#L747)
 
 - Guard: `url.pathname === "/api/coordination/tasks" && db`
 
@@ -962,86 +962,86 @@ Fields read here: `clampLimit(url.searchParams.get("limit"), 50)`, `url.searchPa
 
 ### `url.pathname === "/api/coordination/channels"`
 
-[Source](../../src/net/dashboard-api/world.ts#L751)
+[Source](../../src/net/dashboard-api/world.ts#L757)
 
 - Guard: `url.pathname === "/api/coordination/channels" && db`
 
 ### `url.pathname === "/api/coordination/groups"`
 
-[Source](../../src/net/dashboard-api/world.ts#L754)
+[Source](../../src/net/dashboard-api/world.ts#L760)
 
 - Guard: `url.pathname === "/api/coordination/groups" && db`
 
 ### `url.pathname === "/api/coordination/projects"`
 
-[Source](../../src/net/dashboard-api/world.ts#L757)
+[Source](../../src/net/dashboard-api/world.ts#L763)
 
 - Guard: `url.pathname === "/api/coordination/projects" && db`
 
 ### `url.pathname === "/api/connectors"`
 
-[Source](../../src/net/dashboard-api/world.ts#L760)
+[Source](../../src/net/dashboard-api/world.ts#L766)
 
 - Guard: `url.pathname === "/api/connectors" && db`
 
 ### `url.pathname === "/api/commands"`
 
-[Source](../../src/net/dashboard-api/world.ts#L763)
+[Source](../../src/net/dashboard-api/world.ts#L769)
 
 - Guard: `url.pathname === "/api/commands" && db`
 
 ### `url.pathname === "/api/room-templates"`
 
-[Source](../../src/net/dashboard-api/world.ts#L776)
+[Source](../../src/net/dashboard-api/world.ts#L782)
 
 - Guard: `url.pathname === "/api/room-templates" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/macros"`
 
-[Source](../../src/net/dashboard-api/world.ts#L779)
+[Source](../../src/net/dashboard-api/world.ts#L785)
 
 - Guard: `url.pathname === "/api/macros" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/experiments"`
 
-[Source](../../src/net/dashboard-api/world.ts#L786)
+[Source](../../src/net/dashboard-api/world.ts#L792)
 
 - Guard: `url.pathname === "/api/experiments" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/evolution-sessions"`
 
-[Source](../../src/net/dashboard-api/world.ts#L789)
+[Source](../../src/net/dashboard-api/world.ts#L795)
 
 - Guard: `url.pathname === "/api/evolution-sessions" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/markets"`
 
-[Source](../../src/net/dashboard-api/world.ts#L795)
+[Source](../../src/net/dashboard-api/world.ts#L801)
 
 - Guard: `url.pathname === "/api/markets" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/benchmarks"`
 
-[Source](../../src/net/dashboard-api/world.ts#L798)
+[Source](../../src/net/dashboard-api/world.ts#L804)
 
 - Guard: `url.pathname === "/api/benchmarks" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/recipes"`
 
-[Source](../../src/net/dashboard-api/world.ts#L815)
+[Source](../../src/net/dashboard-api/world.ts#L821)
 
 - Guard: `url.pathname === "/api/recipes" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname.match(/^\/api\/coordination\/projects\/([^/]+)\/orchestration$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L836)
+[Source](../../src/net/dashboard-api/world.ts#L842)
 
 - Guard: `orchMatch && method === "POST" && db`
 - Guard: `method === "POST"`

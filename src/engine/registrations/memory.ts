@@ -241,6 +241,7 @@ export function registerMemoryCommands(engine: Engine): void {
       getEntity: (id) => engine.entities.get(id as EntityId),
       db: engine.db,
       benchmarkReady: (name) => engine.benchmarkRunner?.datasetReady(name) ?? false,
+      trackBackground: (work) => engine.trackBackground(work),
       replicateDeps: () => {
         const rt = engine.agentRuntime;
         const db = engine.db;

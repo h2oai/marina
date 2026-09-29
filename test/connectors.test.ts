@@ -69,12 +69,14 @@ describe("Connectors", () => {
       expect(conn1.lastText()).toContain("2-40 characters");
     });
 
-    it("should require sovereign for stdio", () => {
-      const entity = engine.entities.get(conn1.entity!);
-      if (entity) entity.properties.rank = 7; // steward
+    it("should require the shell.exec gate for stdio", () => {
+      // A stdio connector spawns a local process: `shell.exec` is the authority.
+      revoke(db, conn1.entity!, "shell.exec");
       conn1.clear();
       engine.processCommand(conn1.entity!, "connect add myserver stdio npx some-server");
-      expect(conn1.lastText()).toContain("sovereign rank");
+      expect(conn1.lastText()).toContain("execute shell commands");
+      expect(db.getConnectorByName("myserver")).toBeFalsy();
+      grantAllGates(db, conn1.entity!);
     });
 
     it("should allow admin to add stdio connector", () => {

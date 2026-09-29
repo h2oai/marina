@@ -26,8 +26,10 @@ export interface TickJob {
   /** Offset within the interval: the job fires when `tick % every === phase`. */
   phase: number;
   /**
-   * The work. A returned Promise is fire-and-forget (`tryLogAsync`, never
-   * awaited by the tick); a sync return runs inside the tick budget (`tryLog`).
+   * The work. A returned Promise is never awaited by the tick (`tryLogAsync`),
+   * but it is tracked: the job is not started again while it is in flight,
+   * and `drain()` settles it before shutdown closes the database. A sync
+   * return runs inside the tick budget (`tryLog`).
    */
   run: (tick: number) => void | Promise<void>;
   /**
@@ -60,6 +62,10 @@ export interface TickJobStatus {
   lastDurationMs?: number;
   /** Message of the most recent failure; cleared by the next successful run. */
   lastError?: string;
+  /** `true` while the job's last async run has not settled yet. */
+  inFlight?: boolean;
+  /** Times the job came due while its previous async run was still in flight (skipped). */
+  skippedOverlaps?: number;
 }
 
 interface JobState {
@@ -69,6 +75,9 @@ interface JobState {
   lastRunTick?: number;
   lastDurationMs?: number;
   lastError?: string;
+  /** The unsettled async run, if any: the job never overlaps itself. */
+  inFlight?: Promise<void>;
+  skippedOverlaps: number;
 }
 
 function isThenable(value: unknown): value is Promise<void> {
@@ -109,7 +118,7 @@ export class TickScheduler {
           "jobs on the same interval must run at distinct phases",
       );
     }
-    const state: JobState = { job, async: false, runs: 0 };
+    const state: JobState = { job, async: false, runs: 0, skippedOverlaps: 0 };
     this.jobs.push(state);
     this.byName.set(job.name, state);
     return this;
@@ -151,7 +160,27 @@ export class TickScheduler {
       lastRunTick: s.lastRunTick,
       lastDurationMs: s.lastDurationMs,
       lastError: s.lastError,
+      inFlight: s.inFlight !== undefined,
+      skippedOverlaps: s.skippedOverlaps,
     }));
+  }
+
+  /** Async job runs that have not settled yet. */
+  get pendingCount(): number {
+    return this.jobs.filter((s) => s.inFlight).length;
+  }
+
+  /**
+   * Settle every in-flight async job run. The engine awaits this before the
+   * database closes, so a job never writes into a closed store. Failures were
+   * already logged by the run itself; this never rejects.
+   */
+  async drain(): Promise<void> {
+    for (;;) {
+      const pending = this.jobs.flatMap((s) => (s.inFlight ? [s.inFlight] : []));
+      if (pending.length === 0) return;
+      await Promise.allSettled(pending);
+    }
   }
 
   /** Number of registered jobs. */
@@ -163,6 +192,12 @@ export class TickScheduler {
     const { job } = state;
     const category = job.logCategory ?? "tick";
     const message = job.failureMessage ?? `${job.name} failed`;
+    // Overlap guard: a slow async run (network, model calls) is never started
+    // a second time on top of itself; the due tick is skipped and counted.
+    if (state.inFlight) {
+      state.skippedOverlaps++;
+      return;
+    }
     const started = performance.now();
     state.runs++;
     state.lastRunTick = tick;
@@ -189,7 +224,7 @@ export class TickScheduler {
     if (isThenable(result)) {
       state.async = true;
       const pending = result;
-      void tryLogAsync(this.logger, category, message, async () => {
+      const settled = tryLogAsync(this.logger, category, message, async () => {
         try {
           await pending;
         } catch (err) {
@@ -197,6 +232,13 @@ export class TickScheduler {
           throw err;
         }
         finish();
+      }).then(
+        () => undefined,
+        () => undefined,
+      );
+      state.inFlight = settled;
+      void settled.then(() => {
+        if (state.inFlight === settled) state.inFlight = undefined;
       });
       return;
     }

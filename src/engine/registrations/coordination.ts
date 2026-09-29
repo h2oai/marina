@@ -201,7 +201,10 @@ export function registerCoordinationCommands(engine: Engine): void {
     send: (id, text) => engine.sendToEntity(id as EntityId, text, "challenge"),
     // The leading "/" is explicit world input, so an active modal (Code Mode)
     // never rewrites the held command on its way back in.
-    redispatch: (id, raw) => engine.processCommand(id as EntityId, `/${raw}`),
+    // Through admission + FIFO: the re-run lines up behind anything the
+    // requester already queued instead of interleaving with it.
+    redispatch: (id, raw) =>
+      engine.dispatchCommand(id as EntityId, `/${raw}`).then(() => undefined),
     creatorOf: (entity) => engine.db?.getAgentConfig(entity.name)?.spawned_by || undefined,
   });
   engine.commands.registerBuiltin(
@@ -255,6 +258,13 @@ export function registerCoordinationCommands(engine: Engine): void {
     );
   }
   if (engine.macroManager) {
-    engine.commands.registerBuiltin(macroCommand(engine.macroManager, engine.commands));
+    engine.commands.registerBuiltin(
+      macroCommand(engine.macroManager, engine.commands, (name) =>
+        engine.rooms.all().some((room) => {
+          const commands = room.module.commands;
+          return !!commands && Object.hasOwn(commands, name);
+        }),
+      ),
+    );
   }
 }

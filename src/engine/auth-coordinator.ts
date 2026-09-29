@@ -42,7 +42,8 @@ export interface AuthHost {
   readonly logger: Logger;
   readonly world?: Pick<WorldDefinition, "autoQuest" | "autoBootstrap">;
   spawnEntity(connId: string, name: string): Entity | undefined;
-  processCommand(entityId: EntityId, raw: string): Promise<void>;
+  /** Ingress through admission + per-entity FIFO (Engine.dispatchCommand). */
+  dispatchCommand(entityId: EntityId, raw: string): Promise<unknown>;
   buildContext(room: RoomId): RoomContext | undefined;
   logEvent(event: EngineEvent): void;
 }
@@ -339,7 +340,7 @@ export class AuthCoordinator {
     // Auto-bootstrap commands for new entities
     if (isNewUser && this.host.world?.autoBootstrap) {
       for (const cmd of this.host.world.autoBootstrap) {
-        this.host.processCommand(entity.id, cmd);
+        void this.host.dispatchCommand(entity.id, cmd);
       }
     }
 

@@ -129,13 +129,26 @@ export class CommandRouter {
 
   /** Resolve a verb to a handler. Checks room commands first, then builtins. */
   resolve(verb: string, roomCommands?: Record<string, CommandHandler>): CommandHandler | undefined {
-    // Room-specific commands take priority
-    if (roomCommands?.[verb]) {
-      return roomCommands[verb];
+    return this.resolveCommand(verb, roomCommands)?.handler;
+  }
+
+  /**
+   * Resolve a verb to its handler AND the definition that governs it. A room
+   * command shadows a builtin of the same name and carries no builtin
+   * definition: the builtin's rank floor and gate belong to the builtin
+   * handler, never to the room handler that replaced it. Only a room's OWN
+   * keys count (`Object.hasOwn`), so `constructor`/`__proto__` never resolve.
+   */
+  resolveCommand(
+    verb: string,
+    roomCommands?: Record<string, CommandHandler>,
+  ): { handler: CommandHandler; def?: CommandDef; owner: "room" | "builtin" } | undefined {
+    if (roomCommands && Object.hasOwn(roomCommands, verb)) {
+      const handler = roomCommands[verb];
+      if (typeof handler === "function") return { handler, owner: "room" };
     }
-    // Built-in commands
     const def = this.builtins.get(verb);
-    return def?.handler;
+    return def ? { handler: def.handler, def, owner: "builtin" } : undefined;
   }
 
   /** Get a command definition by verb */

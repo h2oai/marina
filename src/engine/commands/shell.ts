@@ -5,9 +5,12 @@ import { dim, error as fmtError, header, separator, success } from "../../net/an
 import type { MarinaDB } from "../../persistence/database";
 import type { StorageProvider } from "../../storage/provider";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
-import { getRank } from "../permissions";
+import { rankFloorRefusal } from "../rank-floor";
 import type { ShellRuntime } from "../shell-runtime";
 import { requiresPersistence } from "./command-messages";
+
+/** Editing the allowlist decides what `run`/`shell` may execute: a path into the core. */
+const ALLOWLIST_FLOOR = "Managing the allowlist requires steward rank (7).";
 
 const HELP = `Shell management and output routing.
 Gated capability: earn it via \`witness request shell.exec\` or an operator grant (see \`standing\`).
@@ -70,9 +73,9 @@ export function shellCommand(deps: ShellDeps): CommandDef {
           return;
 
         case "allow": {
-          const rank = getRank(entity);
-          if (rank < 7) {
-            ctx.send(eid, "Managing the allowlist requires steward rank (7).");
+          const floor = rankFloorRefusal(entity, 7, ALLOWLIST_FLOOR, { core: true });
+          if (floor) {
+            ctx.send(eid, floor);
             return;
           }
           const binary = tokens[1];
@@ -86,9 +89,9 @@ export function shellCommand(deps: ShellDeps): CommandDef {
         }
 
         case "deny": {
-          const rank = getRank(entity);
-          if (rank < 7) {
-            ctx.send(eid, "Managing the allowlist requires steward rank (7).");
+          const floor = rankFloorRefusal(entity, 7, ALLOWLIST_FLOOR, { core: true });
+          if (floor) {
+            ctx.send(eid, floor);
             return;
           }
           const binary = tokens[1];
@@ -110,9 +113,13 @@ export function shellCommand(deps: ShellDeps): CommandDef {
           return;
 
         case "log": {
-          const rank = getRank(entity);
-          if (rank < 7) {
-            ctx.send(eid, "Viewing other entities' logs requires steward rank (7).");
+          const floor = rankFloorRefusal(
+            entity,
+            7,
+            "Viewing other entities' logs requires steward rank (7).",
+          );
+          if (floor) {
+            ctx.send(eid, floor);
             return;
           }
           handleLog(ctx, eid, deps.db, tokens.slice(1));

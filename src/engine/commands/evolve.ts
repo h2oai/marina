@@ -107,6 +107,8 @@ export function evolveCommand(deps: {
   replicateDeps?: () => ReplicateDeps | undefined;
   /** Whether a benchmark's dataset is available (picks the default trial benchmark). */
   benchmarkReady?: (name: string) => boolean;
+  /** Register detached work (a trial, a replication) so shutdown drains it before the DB closes. */
+  trackBackground?: (work: Promise<unknown>) => void;
   notifyEvolutionState?: (
     entityNames: string[],
     state: { sessionId: number; experimentName: string; active: boolean },
@@ -114,7 +116,47 @@ export function evolveCommand(deps: {
 }): CommandDef {
   return {
     category: "Growth",
-    usage: ["evolve", "evolve loop"],
+    usage: [
+      { syntax: "evolve", effect: "read", description: "Your loop status and the next step." },
+      { syntax: "evolve loop", effect: "read", description: "How the evolution loop works." },
+      { syntax: "evolve adoption <role>", effect: "read" },
+      { syntax: "evolve sessions", effect: "read" },
+      { syntax: "evolve qualify", effect: "read" },
+      {
+        syntax: "evolve create <experiment> | <objective>",
+        effect: "write",
+        description:
+          "Attach an evolution protocol; optional `| max-runs=N | max-seconds=N | min-trials=N | min-effect=N | independent-review=true | guardrail=<metric>:<higher|lower>`.",
+      },
+      { syntax: "evolve start <experiment>", effect: "write" },
+      { syntax: "evolve pause <experiment>", effect: "write" },
+      { syntax: "evolve resume <experiment>", effect: "write" },
+      { syntax: "evolve complete <experiment>", effect: "write" },
+      { syntax: "evolve status <experiment>", effect: "read" },
+      { syntax: "evolve analyze <experiment>", effect: "read" },
+      {
+        syntax: "evolve propose <experiment> | <hypothesis> | <candidate-reference>",
+        effect: "write",
+        description: "Propose a run; optional `| parent=<run-id>`.",
+      },
+      {
+        syntax:
+          "evolve trial <experiment> <run-id> [incumbent:<role>] [benchmark:<name>] [limit:<n>] [seed:<n>] [model:<m>] [timeout:<duration>]",
+        effect: "execute",
+        description: "Measure a candidate against the incumbent (child or parallel world only).",
+      },
+      { syntax: "evolve trial <experiment> <run-id> result", effect: "read" },
+      { syntax: "evolve evaluate <experiment> <run-id> | <evidence>", effect: "write" },
+      {
+        syntax: "evolve decide <experiment> <run-id> <accept|reject|inconclusive>",
+        effect: "write",
+      },
+      {
+        syntax: "evolve replicate <experiment> <run-id> [n:<n>] [budget:<calls>] [model:<m>]",
+        effect: "execute",
+        description: "Spawn copies of an accepted candidate that won its trial.",
+      },
+    ],
     name: "evolve",
     aliases: ["coach"],
     help: "Your self-improvement loop: where you stand + the next step. `evolve` for status, `evolve loop` for the how-to.",
@@ -154,8 +196,9 @@ export function evolveCommand(deps: {
           "complete",
         ].includes(arg)
       ) {
-        // Returned so a bounded async step (replicate) completes before the
-        // command does — its reply must reach a short-lived bridge connection.
+        // Returned so any awaited step completes before the command does. The
+        // slow parts (a trial, replication's spaced spawns) run detached and
+        // report later, so this entity's command queue never waits on them.
         return handleEvolutionProtocol(ctx, input, entity, deps, arg);
       }
 
@@ -724,6 +767,8 @@ const TRIAL_MODS: ModifierSpec = {
   timeout: { type: "duration" },
 };
 let trialRunning = false;
+/** Runs whose detached replication is still spawning (one at a time per run). */
+const replicating = new Set<number>();
 const TRIAL_NOTE_TYPE = "evolve_trial";
 /** World-level owner of trial and replication records. */
 export const TRIAL_OWNER = "evolve-trials";
@@ -763,6 +808,7 @@ function storedTrial(
 /** Test hook: trials are single-flight per world. */
 export function resetEvolveTrialForTests(): void {
   trialRunning = false;
+  replicating.clear();
 }
 
 /**
@@ -779,6 +825,7 @@ function handleTrial(
   deps: {
     trialDeps?: (opts: TrialOptions) => TrialDeps | undefined;
     benchmarkReady?: (name: string) => boolean;
+    trackBackground?: (work: Promise<unknown>) => void;
   },
   db: MarinaDB,
   run: { id: number; status: string; candidate_ref: string | null },
@@ -870,7 +917,9 @@ function handleTrial(
   say(
     `Trial started for run ${run.id}: ${candidate}${incumbent ? ` vs ${incumbent}` : " (no incumbent: one arm)"} on ${benchmark}${opts.limit && benchmark !== "smoke" ? ` (${opts.limit} items${partition ? `, ${partition} split` : ""})` : ""}, deadline ${Math.round(timeoutMs / 60_000)} min. Nothing is adopted; results follow here.${smokeWarning}`,
   );
-  void runTrial(trialDeps, { runId: run.id, arms, timeoutMs })
+  // Tracked: shutdown drains the trial before the database closes, so its
+  // result note is never written into a closed store.
+  const trial = runTrial(trialDeps, { runId: run.id, arms, timeoutMs })
     .then((result) => {
       const text = renderTrial(run.id, result);
       tryLog(new Logger(), "evolve", "Trial result not stored", () => {
@@ -892,6 +941,7 @@ function handleTrial(
     .finally(() => {
       trialRunning = false;
     });
+  deps.trackBackground?.(trial);
 }
 
 /** "(97/100 answered · 96.9% of answered)" — the two things a score mixes. */
@@ -984,7 +1034,10 @@ async function handleReplicate(
   ctx: RoomContext,
   input: { entity: string; tokens: string[] },
   entity: Entity,
-  deps: { replicateDeps?: () => ReplicateDeps | undefined },
+  deps: {
+    replicateDeps?: () => ReplicateDeps | undefined;
+    trackBackground?: (work: Promise<unknown>) => void;
+  },
   db: MarinaDB,
   sessionId: number,
   run: { id: number; status: string; candidate_ref: string | null },
@@ -1031,6 +1084,10 @@ async function handleReplicate(
     say("Replication needs the agent runtime, which this world does not have.");
     return;
   }
+  if (replicating.has(run.id)) {
+    say(`Run ${run.id} is already replicating; its results follow here.`);
+    return;
+  }
   const capped = dailyCapRefusal();
   if (capped) {
     say(`Not replicating: ${capped}.`);
@@ -1058,41 +1115,68 @@ async function handleReplicate(
     Math.max((mods.values.budget as number | undefined) ?? 200, 10),
     2_000,
   );
-  const made: string[] = [];
-  const failed: string[] = [];
-  for (let k = already + 1; k <= already + n; k++) {
-    const name = sanitizeEntityName(`${role.replace(/[^A-Za-z0-9]/g, "")}r${run.id}n${k}`);
-    try {
-      if (made.length > 0) await new Promise((res) => setTimeout(res, 1_100)); // spawn cooldown
-      await r.spawn({ name, role, model, budgetCalls, spawnedBy: entity.name });
-      recordGateExecution(db, entity.id, "agent.spawn", gate, `evolve replicate run ${run.id}`);
-      db.createNote(
-        TRIAL_OWNER,
-        `${replicaTag} ${JSON.stringify({ run: run.id, role, agent: name, parent: entity.name, delta, margin, at: Date.now() })}`,
-        undefined,
-        { noteType: REPLICA_NOTE_TYPE, tier: "process", skipDedup: true },
-      );
-      made.push(name);
-    } catch (err) {
-      failed.push(`${name} (${err instanceof Error ? err.message : String(err)})`);
-    }
-  }
+  replicating.add(run.id);
   say(
-    [
-      header(`Replicated run ${run.id}: ${role}`),
-      separator(),
-      `  earned: +${(delta * 100).toFixed(1)} points over ${inc.role} (bar ${(margin * 100).toFixed(1)})`,
-      ...(made.length
-        ? [
-            `  spawned ${made.join(", ")} (budget ${budgetCalls} calls each, lineage: spawned by ${entity.name})`,
-          ]
-        : []),
-      ...(failed.length ? [`  failed: ${failed.join("; ")}`] : []),
-      dim(
-        `  copies of this run: ${already + made.length}/${MAX_REPLICAS_PER_RUN}. Nothing in the parent world changed.`,
-      ),
-    ].join("\n"),
+    `Replicating run ${run.id} (${role}): earned +${(delta * 100).toFixed(1)} points over ${inc.role}; starting ${n} cop${n === 1 ? "y" : "ies"} in the background — results follow here.`,
   );
+  // The runtime spaces spawns ≥ 1 s apart. That wait runs DETACHED so this
+  // entity's command queue moves on; the work is tracked so shutdown drains
+  // it before the database closes.
+  const work = (async () => {
+    const made: string[] = [];
+    const failed: string[] = [];
+    for (let k = already + 1; k <= already + n; k++) {
+      const name = sanitizeEntityName(`${role.replace(/[^A-Za-z0-9]/g, "")}r${run.id}n${k}`);
+      try {
+        if (made.length > 0) await new Promise((res) => setTimeout(res, 1_100)); // spawn cooldown
+        await r.spawn({ name, role, model, budgetCalls, spawnedBy: entity.name });
+        db.createNote(
+          TRIAL_OWNER,
+          `${replicaTag} ${JSON.stringify({ run: run.id, role, agent: name, parent: entity.name, delta, margin, at: Date.now() })}`,
+          undefined,
+          { noteType: REPLICA_NOTE_TYPE, tier: "process", skipDedup: true },
+        );
+        made.push(name);
+      } catch (err) {
+        failed.push(`${name} (${err instanceof Error ? err.message : String(err)})`);
+      }
+    }
+    // One authorization, one recorded execution — and only if a copy started.
+    if (made.length > 0) {
+      recordGateExecution(
+        db,
+        entity.id,
+        "agent.spawn",
+        gate,
+        `evolve replicate run ${run.id}: ${made.join(",")}`,
+      );
+    }
+    say(
+      [
+        header(`Replicated run ${run.id}: ${role}`),
+        separator(),
+        `  earned: +${(delta * 100).toFixed(1)} points over ${inc.role} (bar ${(margin * 100).toFixed(1)})`,
+        ...(made.length
+          ? [
+              `  spawned ${made.join(", ")} (budget ${budgetCalls} calls each, lineage: spawned by ${entity.name})`,
+            ]
+          : []),
+        ...(failed.length ? [`  failed: ${failed.join("; ")}`] : []),
+        dim(
+          `  copies of this run: ${already + made.length}/${MAX_REPLICAS_PER_RUN}. Nothing in the parent world changed.`,
+        ),
+      ].join("\n"),
+    );
+  })()
+    .catch((err) =>
+      say(
+        `Replication of run ${run.id} failed: ${err instanceof Error ? err.message : String(err)}`,
+      ),
+    )
+    .finally(() => {
+      replicating.delete(run.id);
+    });
+  deps.trackBackground?.(work);
 }
 
 export type EarnedWin =

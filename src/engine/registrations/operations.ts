@@ -131,6 +131,7 @@ export function registerOperationCommands(engine: Engine): void {
     runCommand({
       getEntity: (id) => engine.entities.get(id as EntityId),
       shellRuntime: engine.shellRuntime,
+      db: engine.db,
     }),
   );
   engine.commands.registerBuiltin(
