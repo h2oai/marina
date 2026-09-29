@@ -6,16 +6,24 @@
  * bound (WS_PORT=0 or a custom WS_PORT), never a hard-coded 3300/3301.
  */
 
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   localHttpBase,
   localMcpPort,
   localWsPort,
+  preserveListenPortsForTests,
   recordListenPort,
   resetListenPortsForTests,
 } from "../src/net/listen-ports";
 
-afterEach(() => resetListenPortsForTests());
+// Start from a clean slate whatever an earlier file in this process bound,
+// and hand the prior state back afterwards.
+let prior: Disposable;
+beforeEach(() => {
+  prior = preserveListenPortsForTests();
+  resetListenPortsForTests();
+});
+afterEach(() => prior[Symbol.dispose]());
 
 describe("listen ports", () => {
   it("before binding: the configured env, then the default layout", () => {
@@ -37,5 +45,17 @@ describe("listen ports", () => {
     expect(localMcpPort({})).toBe(50000);
     recordListenPort("websocket", 0); // ignored
     expect(localWsPort({})).toBe(41234);
+  });
+
+  it("preserveListenPortsForTests restores the exact prior snapshot", () => {
+    recordListenPort("websocket", 15300);
+    {
+      using _scope = preserveListenPortsForTests();
+      resetListenPortsForTests();
+      recordListenPort("mcp", 20000);
+      expect(localWsPort({})).toBe(3300);
+    }
+    expect(localWsPort({})).toBe(15300);
+    expect(localMcpPort({})).toBe(15301);
   });
 });

@@ -98,3 +98,23 @@ export function sameRoomMessages(
   }
   return true;
 }
+
+export const PILL_FADE_HOLD = 0.65; // portion of lifetime before fade starts
+
+/** Opacity keyframes for a pill whose message is `ageMs` old: hold at full
+ *  opacity until PILL_FADE_HOLD of the lifetime, then fade linearly to 0.
+ *  Returns null once the message has outlived ROOM_MESSAGE_LIFETIME_MS. */
+export function pillFade(
+  ageMs: number,
+): { remainingMs: number; opacity: number[]; times: number[] } | null {
+  const age = Math.max(0, ageMs);
+  const remainingMs = ROOM_MESSAGE_LIFETIME_MS - age;
+  if (remainingMs <= 0) return null;
+  const holdEnd = ROOM_MESSAGE_LIFETIME_MS * PILL_FADE_HOLD;
+  if (age < holdEnd) {
+    return { remainingMs, opacity: [1, 1, 0], times: [0, (holdEnd - age) / remainingMs, 1] };
+  }
+  const t = age / ROOM_MESSAGE_LIFETIME_MS;
+  const start = Math.max(0, 1 - (t - PILL_FADE_HOLD) / (1 - PILL_FADE_HOLD));
+  return { remainingMs, opacity: [start, 0], times: [0, 1] };
+}

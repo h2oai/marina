@@ -42,3 +42,16 @@ export function localHttpBase(env: NodeJS.ProcessEnv = process.env): string {
 export function resetListenPortsForTests(): void {
   for (const key of Object.keys(bound) as Listener[]) delete bound[key];
 }
+
+/** Snapshot the recorded ports; disposing restores that exact snapshot. A
+ *  test that starts a real listener records its port process-wide, so any
+ *  later file in the same process would otherwise read it. */
+export function preserveListenPortsForTests(): Disposable {
+  const snapshot = { ...bound };
+  return {
+    [Symbol.dispose]() {
+      resetListenPortsForTests();
+      Object.assign(bound, snapshot);
+    },
+  };
+}

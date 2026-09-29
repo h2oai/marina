@@ -108,13 +108,9 @@ export function springEntrance(elements: Element | Element[] | NodeListOf<Elemen
     animate(
       el,
       { scale: [1, 1.025, 1], opacity: [1, 0.92, 1] },
-      {
-        duration: 0.5,
-        delay: i * 0.05,
-        type: "spring",
-        stiffness: 120,
-        damping: 14,
-      },
+      // Motion's spring generator accepts only two keyframes and throws on
+      // this three-frame pulse, so the pulse runs as a timed ease instead.
+      { duration: 0.5, delay: i * 0.05, ease: "easeOut" },
     );
   });
 }
