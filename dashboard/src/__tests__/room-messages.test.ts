@@ -6,6 +6,8 @@ import type { DashboardEvent } from "../lib/types";
 import {
   hasLiveRoomMessage,
   latestRoomMessages,
+  PILL_FADE_HOLD,
+  pillFade,
   ROOM_MESSAGE_LIFETIME_MS,
 } from "../unified/lib/room-messages";
 
@@ -208,5 +210,28 @@ describe("hasLiveRoomMessage", () => {
 
   it("is false for empty maps", () => {
     expect(hasLiveRoomMessage({}, 1000)).toBe(false);
+  });
+});
+
+describe("pillFade", () => {
+  it("holds full opacity until the fade point, then fades to zero over the rest", () => {
+    const f = pillFade(0);
+    expect(f).not.toBeNull();
+    expect(f?.remainingMs).toBe(ROOM_MESSAGE_LIFETIME_MS);
+    expect(f?.opacity).toEqual([1, 1, 0]);
+    expect(f?.times[1]).toBeCloseTo(PILL_FADE_HOLD);
+  });
+
+  it("starts mid-fade for a message that is already fading", () => {
+    const halfway = ROOM_MESSAGE_LIFETIME_MS * (PILL_FADE_HOLD + (1 - PILL_FADE_HOLD) / 2);
+    const f = pillFade(halfway);
+    expect(f?.opacity[0]).toBeCloseTo(0.5);
+    expect(f?.opacity[1]).toBe(0);
+    expect(f?.remainingMs).toBeCloseTo(ROOM_MESSAGE_LIFETIME_MS - halfway);
+  });
+
+  it("returns null once the lifetime has elapsed and clamps negative ages", () => {
+    expect(pillFade(ROOM_MESSAGE_LIFETIME_MS)).toBeNull();
+    expect(pillFade(-500)?.remainingMs).toBe(ROOM_MESSAGE_LIFETIME_MS);
   });
 });
