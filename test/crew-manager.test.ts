@@ -221,6 +221,58 @@ describe("CrewManager", () => {
     expect(crew.state).toBe("assembling");
   });
 
+  it("tick collects a never-dispatched ephemeral crew after a day with no open invitation", () => {
+    const waiting = crews.create({
+      name: "waiting",
+      goal: "",
+      owner: OWNER,
+      members: [{ agentName: "alice" }],
+    });
+    const stuck = crews.create({
+      name: "stuck",
+      goal: "",
+      owner: OWNER,
+      members: [{ agentName: "alice" }],
+    });
+    crews.invite(waiting.id, "bob", "alice", "specialist", 48 * 60 * 60 * 1000);
+    now += 25 * 60 * 60 * 1000;
+    crews.tick();
+    expect(stuck.state).toBe("dissolved");
+    // An invitation still open keeps the crew for its owner.
+    expect(waiting.state).toBe("assembling");
+    now += 24 * 60 * 60 * 1000; // the invitation lapses
+    crews.tick();
+    expect(waiting.state).toBe("dissolved");
+  });
+
+  it("drops settled invitations from memory and clears dispatch rotation on dissolve", () => {
+    const crew = crews.create({
+      name: "alpha",
+      goal: "",
+      owner: OWNER,
+      members: [{ agentName: "alice" }, { agentName: "carol" }],
+    });
+    crews.invite(crew.id, "bob", "alice");
+    crews.invite(crew.id, "dave", "alice", "specialist", 1000);
+    const internals = crews as unknown as {
+      invitations: Map<string, unknown>;
+      dispatchCounts: Map<string, number>;
+    };
+    expect(internals.invitations.size).toBe(2);
+    crews.respondToInvitation(crew.id, "bob", "declined");
+    expect(internals.invitations.size).toBe(1);
+    expect(() => crews.respondToInvitation(crew.id, "bob", "accepted")).toThrow(CrewError);
+    now += 2000; // dave's lapses
+    expect(crews.invitationsFor("dave")).toEqual([]);
+    expect(internals.invitations.size).toBe(0);
+
+    crews.dispatch(crew.id, "go");
+    crews.dispatch(crew.id, "again");
+    expect(internals.dispatchCounts.get(crew.id)).toBeGreaterThan(0);
+    crews.dissolve(crew.id, "done");
+    expect(internals.dispatchCounts.has(crew.id)).toBe(false);
+  });
+
   it("rejects dispatch on a dissolved crew", () => {
     const crew = crews.create({
       name: "alpha",
