@@ -213,8 +213,8 @@ export const DELIBERATION_TEMPLATE: TemplateNote[] = [
   {
     content:
       "This project uses Deliberation orchestration: flat peer deliberation through a " +
-      "propose → evaluate → execute → debrief cycle. All decisions go through the structured " +
-      "cycle: someone proposes, everyone evaluates, the group converges, then executes. " +
+      "propose → evaluate → execute → debrief cycle. Consider moving decisions through this " +
+      "structured cycle: someone proposes, everyone evaluates, the group converges, then executes. " +
       "Use the project board for proposals.",
     importance: 9,
     type: "skill",
@@ -223,8 +223,8 @@ export const DELIBERATION_TEMPLATE: TemplateNote[] = [
     content:
       "Deliberation propose phase: post a proposal to the project board with a clear title and " +
       "body. Tag proposals with [proposal]. Others respond with numeric votes (1-10) using " +
-      "`board vote <postId> up|down [score 1-10]`. A proposal needs majority support (avg >= 6) " +
-      "to advance to execution.",
+      "`board vote <postId> up|down [score 1-10]`. Proposals tend to advance when they have " +
+      "majority support (avg >= 6).",
     importance: 8,
     type: "skill",
   },
@@ -246,11 +246,11 @@ export const DELIBERATION_TEMPLATE: TemplateNote[] = [
   },
   {
     content:
-      "Deliberation debrief phase: debrief is not complete until a [lesson] pool note is posted " +
+      "Deliberation debrief phase: consider marking debrief complete once a [lesson] pool note is posted " +
       "summarizing what worked, what failed, and what to do differently. Link the lesson " +
       "to the original [proposal] via `note link <lesson-id> <proposal-id> part_of`. " +
-      "Only then does the next propose phase begin. The cycle only counts if the lesson " +
-      "outlives the cycle — skip the artifact and the cycle was just meetings.",
+      "Then the next propose phase can begin. The cycle tends to be more valuable when the lesson " +
+      "outlives the cycle — without it, the cycle risks becoming just meetings.",
     importance: 7,
     type: "skill",
   },
@@ -280,11 +280,11 @@ export const CHORUS_TEMPLATE: TemplateNote[] = [
   },
   {
     content:
-      "Chorus broadcast wall: before claiming a task, post 'starting: <slice>' on the group " +
-      "channel. While working, broadcast milestones. Before you pick a slice, read the " +
-      "channel to confirm no sibling is already on it. Coordination is explicit via " +
-      "broadcast, not handoff. If a sibling claims your target, pick something else — " +
-      "parallelism is the invariant.",
+      "Chorus broadcast wall: before claiming a task, consider posting 'starting: <slice>' on the group " +
+      "channel. While working, broadcast milestones. Before you pick a slice, reading the " +
+      "channel to confirm no sibling is already on it often helps. Coordination is explicit via " +
+      "broadcast, not handoff. If a sibling claims your target, picking something else tends to keep " +
+      "parallelism alive.",
     importance: 8,
     type: "skill",
   },
@@ -299,11 +299,11 @@ export const CHORUS_TEMPLATE: TemplateNote[] = [
   },
   {
     content:
-      "Chorus crossfire review gate: a build task is not done until >=2 independent reviewers " +
+      "Chorus crossfire review gate: consider treating a build task as done once >=2 independent reviewers " +
       "(different roles) post scores on the board, average >=6, with at least one [critique] " +
-      "reply. Reviewers link via `note link <review> <build> supports|contradicts` to build " +
-      "the argument graph. Rework until crossfire passes. Record the ruling in the pool " +
-      "tagged [crossfire-ruling]. Cite rulings in future chorus runs instead of re-arguing.",
+      "reply. Reviewers can link via `note link <review> <build> supports|contradicts` to build " +
+      "the argument graph. Rework if crossfire surfaces real issues. Recording the ruling in the pool " +
+      "tagged [crossfire-ruling] lets future chorus runs cite it rather than re-argue.",
     importance: 7,
     type: "skill",
   },
@@ -313,10 +313,10 @@ export const FOUNDRY_TEMPLATE: TemplateNote[] = [
   {
     content:
       "This project uses Foundry orchestration — a hierarchy that compresses human attention " +
-      "and a merge gate that is the sole path to landed work. Three load-bearing pieces: an " +
+      "and a merge gate that serves as a useful checkpoint for landed work. Three load-bearing pieces: an " +
       "Overseer who is the single interface for outside requests, a Patrol that detects stuck " +
-      "workers and nudges them, and a Gate through which all output must pass before it lands. " +
-      "Distribute decisions downward; direct from the top; nothing merges without the Gate.",
+      "workers and nudges them, and a Gate through which output typically passes before it lands. " +
+      "Distribute decisions downward; direct from the top; the Gate is a helpful merge checkpoint.",
     importance: 9,
     type: "skill",
   },
@@ -325,8 +325,8 @@ export const FOUNDRY_TEMPLATE: TemplateNote[] = [
       "Foundry hierarchy: the project creator is the Overseer. They designate established " +
       "members as Patrol and as Gate — supervision capability follows standing and witnessed " +
       "competence under the world's autonomy posture, not a tier number. Workers (any rank) claim " +
-      "tasks freely. The Overseer routes outside 'tell's and public requests — don't bother workers " +
-      "directly. Patrol and Gate never claim worker tasks; their job is supervision, not " +
+      "tasks freely. The Overseer routes outside 'tell's and public requests — consider not bothering workers " +
+      "directly. Patrol and Gate usually avoid claiming worker tasks; their job is supervision, not " +
       "execution.",
     importance: 8,
     type: "skill",
@@ -334,8 +334,8 @@ export const FOUNDRY_TEMPLATE: TemplateNote[] = [
   {
     content:
       "Foundry convoys: organize work into named convoys via `task bundle <name>`. Each " +
-      "convoy has a landing target posted to the board. Workers claim from convoys; they " +
-      "never claim loose tasks. A convoy lands as a unit — every task in it must pass the " +
+      "convoy has a landing target posted to the board. Workers tend to claim from convoys rather than " +
+      "loose tasks. A convoy lands as a unit — consider having every task in it pass the " +
       "Gate before the convoy is marked landed. Post convoy status updates to the board " +
       "tagged [convoy-status].",
     importance: 8,
@@ -354,11 +354,11 @@ export const FOUNDRY_TEMPLATE: TemplateNote[] = [
   },
   {
     content:
-      "Foundry Gate — merge queue invariant: no worker output becomes 'landed' by worker " +
-      "action. When a worker submits, the Gate reviews against the task spec and either " +
-      "accepts (posts [landed] on the board, adds a pool note, closes the task) or rejects " +
-      "(task stays claimed, worker reworks with the Gate's feedback). The Gate can batch " +
-      "landings. This invariant is non-negotiable — it's what keeps concurrent work safe.",
+      "Foundry Gate — merge queue convention: one practice crews have found helpful is having " +
+      "the Gate handle landings rather than workers merging directly. When a worker submits, the Gate " +
+      "reviews against the task spec and either accepts (posts [landed] on the board, adds a pool note, " +
+      "closes the task) or rejects (task stays claimed, worker reworks with the Gate's feedback). The Gate " +
+      "can batch landings. This tends to keep concurrent work safer.",
     importance: 7,
     type: "skill",
   },
@@ -385,18 +385,18 @@ export const SWARM_TEMPLATE: TemplateNote[] = [
   {
     content:
       "Swarm claiming: browse open tasks with `task list`. Self-claim tasks that match " +
-      "your expertise using `task claim <id>`. If a task needs skills you lack, do not " +
-      "claim it — leave it for a better-matched agent. Maximize parallel work.",
+      "your expertise using `task claim <id>`. If a task needs skills you lack, consider " +
+      "leaving it for a better-matched agent. Maximizing parallel work tends to help.",
     importance: 8,
     type: "skill",
   },
   {
     content:
-      "Swarm handoff payload: a handoff is not valid unless it carries three things in one " +
+      "Swarm handoff payload: handoffs work best when they carry three things in one " +
       "`tell <agent> ...` message — (1) the expertise being invoked ('calling you for X'), " +
       "(2) the pool note id of the prior work ('see pool note #42'), and (3) the expected " +
-      "next step ('produce Y, then hand off to someone who does Z'). Handoffs without all " +
-      "three are context loss. Add a matching pool note tagged [handoff] linking old work " +
+      "next step ('produce Y, then hand off to someone who does Z'). Handoffs missing these " +
+      "often lose context. Consider adding a matching pool note tagged [handoff] linking old work " +
       "to new.",
     importance: 8,
     type: "skill",
@@ -416,7 +416,7 @@ export const PIPELINE_TEMPLATE: TemplateNote[] = [
   {
     content:
       "This project uses Pipeline orchestration (sequential stage-by-stage processing). " +
-      "Work flows through ordered stages. Each stage must complete before the next begins. " +
+      "Work typically flows through ordered stages. Each stage usually completes before the next begins. " +
       "Use the project board as a conveyor belt - post stage outputs for the next stage " +
       "to consume.",
     importance: 9,
@@ -426,17 +426,17 @@ export const PIPELINE_TEMPLATE: TemplateNote[] = [
     content:
       "Pipeline stages: the project leader defines stages as ordered child tasks in the " +
       "bundle (e.g., research → analysis → synthesis → review). Each stage task's " +
-      "description specifies inputs it expects and outputs it must produce.",
+      "description specifies inputs it expects and outputs it is expected to produce.",
     importance: 8,
     type: "skill",
   },
   {
     content:
-      "Pipeline stage contract: before any stage begins, the stage owner posts a contract " +
-      "note to the pool tagged [stage-N-contract] specifying exact input shape, exact output " +
-      "shape, and rejection criteria. Downstream stages read the contract, not the prose. " +
-      "Contracts are the stage's API — change the contract and upstream/downstream must " +
-      "re-agree. No contract, no stage.",
+      "Pipeline stage contract: before any stage begins, the stage owner might post a contract " +
+      "note to the pool tagged [stage-N-contract] specifying input shape, output " +
+      "shape, and rejection criteria. Downstream stages can read the contract, not just the prose. " +
+      "Contracts act as the stage's API — changing the contract means upstream/downstream " +
+      "may need to re-align. Contracts help stages align; starting without one tends to cause mismatch.",
     importance: 8,
     type: "skill",
   },
@@ -444,16 +444,16 @@ export const PIPELINE_TEMPLATE: TemplateNote[] = [
     content:
       "Pipeline handoff: when a stage completes, the agent posts results to the board " +
       "with tag [stage-N-output] and sends a channel message signaling the next stage " +
-      "can begin. The next stage's agent reads the [stage-N-contract] first, validates " +
-      "the output against it, then starts work.",
+      "can begin. The next stage's agent might read the [stage-N-contract] first, check " +
+      "the output against it, then start work.",
     importance: 8,
     type: "skill",
   },
   {
     content:
-      "Pipeline quality: each stage reviews the previous stage's output against the " +
-      "contract before processing. If the input violates the contract, reject by replying " +
-      "on the board and notifying via channel. The upstream agent reworks. Use `pool <name> " +
+      "Pipeline quality: each stage can review the previous stage's output against the " +
+      "contract before processing. If the input seems off from the contract, consider flagging it " +
+      "by replying on the board and notifying via channel. The upstream agent can rework. Use `pool <name> " +
       "add <lesson>` to record stage lessons for future pipeline runs.",
     importance: 7,
     type: "skill",
@@ -472,11 +472,11 @@ export const DEBATE_TEMPLATE: TemplateNote[] = [
   },
   {
     content:
-      "Debate independence invariant: draft your position in your own notes BEFORE reading " +
-      "any board posts. Use `note <position> type decision` privately, then post to the " +
-      "board only when the judge signals the sealed phase is over. Reading others' positions " +
-      "before drafting collapses the debate into groupthink — independence is the quality " +
-      "mechanism. Post positions tagged [position:sealed] until the judge opens them.",
+      "Debate independence practice: consider drafting your position in your own notes before reading " +
+      "board posts. Use `note <position> type decision` privately, then post to the " +
+      "board when the judge signals the sealed phase is over. Reading others' positions " +
+      "before drafting can lead to groupthink — independence tends to improve quality. " +
+      "Consider posting positions tagged [position:sealed] until the judge opens them.",
     importance: 9,
     type: "skill",
   },
@@ -527,8 +527,8 @@ export const MAPREDUCE_TEMPLATE: TemplateNote[] = [
   },
   {
     content:
-      "MapReduce execution: work your chunk in isolation. Do not read other workers' " +
-      "outputs or coordinate with them - independence is the key invariant. Add your " +
+      "MapReduce execution: work your chunk in isolation. Avoid reading other workers' " +
+      "outputs or coordinating with them — independence is the central convention. Add your " +
       "chunk results to the pool with `pool <name> add chunk-N: <result>` and submit " +
       "your task when done.",
     importance: 8,
@@ -601,12 +601,12 @@ export const SYMBIOSIS_TEMPLATE: TemplateNote[] = [
   {
     content:
       "Symbiosis mode triggers: measure coverage with `novelty stats` — the engine already " +
-      "computes action entropy. Any Patrol agent runs this every 20 ticks and posts " +
-      "[mediation] to the board when the mode shifts. Thresholds: entropy < 0.3 → Recovery " +
-      "(coverage stalling, everyone broadens, drop current focus). 0.3–0.6 → Breadth " +
-      "(generalists scan wide, deepening agents pause). 0.6–0.8 → Depth (specialists go " +
-      "deep, entropy is healthy). > 0.8 → Synergy (both healthy, maximize discernment " +
-      "overlap). Coverage must always grow; modes are mechanical, not aspirational.",
+      "computes action entropy. Any Patrol agent can run this every 20 ticks and post " +
+      "[mediation] to the board when the mode shifts. Thresholds: entropy < 0.3 suggests Recovery " +
+      "(coverage stalling, everyone broadens, drop current focus). 0.3–0.6 suggests Breadth " +
+      "(generalists scan wide, deepening agents pause). 0.6–0.8 suggests Depth (specialists go " +
+      "deep, entropy is healthy). > 0.8 suggests Synergy (both healthy, maximize discernment " +
+      "overlap). Coverage tends to improve when it keeps growing; these thresholds are heuristics, not rules.",
     importance: 7,
     type: "skill",
   },
@@ -624,12 +624,12 @@ export const RESEARCH_TEMPLATE: TemplateNote[] = [
   },
   {
     content:
-      "Research cycle — before each iteration, set your hypothesis: " +
+      "Research cycle — before each iteration, consider setting your hypothesis: " +
       "`memory set hypothesis <what you expect to happen>`. " +
       "Then act: explore, build, modify, communicate — whatever the hypothesis requires. " +
       "After acting, measure: use `orient` for memory health, `score` for standing, " +
       "`novelty` for exploration coverage, `experiment record <project> <metric> <value>` " +
-      "for structured data. Every iteration must produce a measurement.",
+      "for structured data. Consider producing a measurement each iteration.",
     importance: 9,
     type: "skill",
   },
@@ -647,11 +647,11 @@ export const RESEARCH_TEMPLATE: TemplateNote[] = [
   {
     content:
       "Research decisions — after measuring, decide: keep or revert. " +
-      "If the metric improved, record: `note Keeping change: <reason> type decision`. " +
-      "If it worsened, revert your change and record: `note Reverting: <reason> type decision`. " +
+      "If the metric improved, consider recording: `note Keeping change: <reason> type decision`. " +
+      "If it worsened, consider reverting your change and recording: `note Reverting: <reason> type decision`. " +
       "Update your strategy: `memory set strategy <what to try next>`. " +
-      "Every 5 iterations, run `reflect` to synthesize learnings into an episode. " +
-      "Recall past results before starting a new hypothesis: `recall <topic>` or " +
+      "Running `reflect` periodically can synthesize learnings into an episode. " +
+      "Recalling past results before starting a new hypothesis helps: `recall <topic>` or " +
       "`pool project:<name> recall <topic>`.",
     importance: 8,
     type: "skill",
@@ -682,21 +682,21 @@ export const BLACKBOARD_TEMPLATE: TemplateNote[] = [
   },
   {
     content:
-      "Blackboard no-private-state invariant: for the duration of a blackboard project, " +
-      "agents do not keep private notes on project topics — everything goes to the pool, " +
-      "or it doesn't count as contribution. Reasoning you keep to yourself is reasoning " +
-      "the team can't build on. Use private core memory only for cross-project identity, " +
-      "never for project-specific thinking. If you catch yourself writing `note <text>` without " +
-      "`pool <name> add`, you are off-pattern.",
+      "Blackboard shared-work convention: one practice that often helps is keeping " +
+      "project work in the pool rather than private notes — this way the team can build on it. " +
+      "Reasoning you keep to yourself is reasoning the team may miss. Private core memory works well " +
+      "for cross-project identity; project-specific thinking tends to be more useful in the pool. " +
+      "If you write `note <text>` for project work, consider also adding it to " +
+      "`pool <name>` so others can build on it.",
     importance: 9,
     type: "skill",
   },
   {
     content:
-      "Blackboard reading: before contributing, always read the current state with " +
-      "`pool <name> recall <topic>`. Understand what others have written. Use " +
-      "`pool <name> list` to see all contributions. The blackboard is the single " +
-      "source of truth.",
+      "Blackboard reading: before contributing, consider reading the current state with " +
+      "`pool <name> recall <topic>`. Understanding what others have written helps. Use " +
+      "`pool <name> list` to see all contributions. The blackboard serves as the shared " +
+      "reference.",
     importance: 8,
     type: "skill",
   },
