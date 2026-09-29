@@ -441,14 +441,20 @@ describe("memory foundation contracts", () => {
     db.addGroupMember("team", bob.entity!);
     db.createMemoryPool("restricted", "restricted", "Alice", "team");
     const url = new URL("http://memory.test/mem/pools/restricted/notes");
+    // Membership is revoked while the body is still streaming in: the handler
+    // reads it through the bounded reader, so the revocation lands mid-await.
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        db.removeGroupMember("team", bob.entity!);
+        controller.enqueue(new TextEncoder().encode(JSON.stringify({ content: "late write" })));
+        controller.close();
+      },
+    });
     const req = new Request(url, {
       method: "POST",
       headers: { Authorization: "Bearer test-memory-Bob" },
+      body,
     });
-    req.json = async () => {
-      db.removeGroupMember("team", bob.entity!);
-      return { content: "late write" };
-    };
     const response = await handleMemApi(url, "POST", req, db);
     expect(response?.status).toBe(404);
     expect(db.getPoolNotes("restricted")).toHaveLength(0);

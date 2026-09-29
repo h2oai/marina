@@ -18,7 +18,7 @@ import {
 import { getErrorMessage } from "../../engine/errors";
 import { checkGateForExecution, recordGateExecution } from "../../engine/safety-gates";
 import { buildOpsOverview, opsObserverScope, stopAgentCascade } from "../ops-api";
-import { authorizePrivileged, type DashboardRouteContext, json } from "./shared";
+import { authorizePrivileged, type DashboardRouteContext, json, readSmallJsonBody } from "./shared";
 
 /** Ops overview (observer-scoped read) + the privileged agent cascade stop. */
 export async function handleOpsRoutes(ctx: DashboardRouteContext): Promise<Response | undefined> {
@@ -83,12 +83,8 @@ export async function handleOpsRoutes(ctx: DashboardRouteContext): Promise<Respo
         return denied;
       }
     }
-    let body: { setting?: unknown; value?: unknown };
-    try {
-      body = (await ctx.req.json()) as typeof body;
-    } catch {
-      return json({ error: "Body must be JSON: { setting, value } (value null clears it)." }, 400);
-    }
+    const body = await readSmallJsonBody<{ setting?: unknown; value?: unknown }>(ctx.req);
+    if ("error" in body) return body.error;
     if (
       typeof body.setting !== "string" ||
       (body.value !== null && typeof body.value !== "string")

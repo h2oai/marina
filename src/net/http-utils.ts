@@ -43,35 +43,233 @@ export function clientIp(req: Request, peer?: PeerAddressSource | string | null)
   return peer?.requestIP?.(req)?.address ?? UNKNOWN_CLIENT_IP;
 }
 
+// ─── Error bodies ────────────────────────────────────────────────────────────
+
+/**
+ * Stable machine-readable code for an HTTP status. Every JSON error body a
+ * Marina HTTP surface returns carries a string `code` next to its human
+ * `error` message, so a client can branch without parsing prose. A site with
+ * better knowledge passes its own code; everything else gets this mapping.
+ */
+export function inferHttpErrorCode(status: number): string {
+  switch (status) {
+    case 400:
+      return "bad_request";
+    case 401:
+      return "unauthorized";
+    case 403:
+      return "forbidden";
+    case 404:
+      return "not_found";
+    case 405:
+      return "method_not_allowed";
+    case 409:
+      return "conflict";
+    case 410:
+      return "gone";
+    case 413:
+      return "payload_too_large";
+    case 415:
+      return "unsupported_media_type";
+    case 422:
+      return "unprocessable_entity";
+    case 429:
+      return "rate_limited";
+    case 501:
+      return "not_implemented";
+    case 502:
+      return "upstream_error";
+    case 503:
+      return "unavailable";
+    case 504:
+      return "upstream_timeout";
+    default:
+      return status >= 500 ? "internal_error" : "bad_request";
+  }
+}
+
+/** `{ error, code }` — the flat error body of every non-OpenAI HTTP surface. */
+export function errorBody(
+  status: number,
+  message: string,
+  code: string = inferHttpErrorCode(status),
+): { error: string; code: string } {
+  return { error: message, code };
+}
+
+/**
+ * Give an error payload a string `code` when it lacks one. Applied by the
+ * shared JSON helper of each surface, so a route that returns
+ * `{ error: "..." }` with a 4xx/5xx status still satisfies the contract.
+ * Success bodies, non-objects and payloads that already carry a string `code`
+ * pass through untouched. An `error` string that is itself code-shaped
+ * (`not_found`) becomes the code.
+ */
+export function withErrorCode(data: unknown, status: number): unknown {
+  if (status < 400 || !data || typeof data !== "object" || Array.isArray(data)) return data;
+  const record = data as Record<string, unknown>;
+  if (typeof record.code === "string") return data;
+  const err = record.error;
+  const code =
+    typeof err === "string" && /^[a-z][a-z0-9_]{1,63}$/.test(err)
+      ? err
+      : inferHttpErrorCode(status);
+  return { ...record, code };
+}
+
 // ─── JSON body ───────────────────────────────────────────────────────────────
 
 export type JsonBodyResult =
   | { ok: true; body: Record<string, unknown> }
   | { ok: false; response: Response };
 
+/** Ceiling for small bodies: pre-auth ingress, key/env/agent management. */
+export const SMALL_JSON_BODY_BYTES = 64 * 1024;
+
+export interface ReadJsonBodyOptions {
+  /** CORS origin for the default error response (default: the request's). */
+  origin?: string | null;
+  /** Byte ceiling for this route (default `maxRequestBodyBytes()`). */
+  maxBytes?: number;
+  /** Treat an empty body as `{}` instead of a 400. */
+  allowEmpty?: boolean;
+  /** Build the error response (e.g. an OpenAI-shaped envelope). */
+  errorResponse?: (status: number, code: string, message: string) => Response;
+}
+
+/** Why a body read failed — status and code map 1:1 onto the response. */
+export interface BodyReadFailure {
+  status: 400 | 413;
+  code: string;
+  message: string;
+}
+
 /**
- * Read a JSON object body without letting a malformed payload propagate as an
- * unhandled rejection into `Bun.serve`. Returns a 400 response on parse failure
- * or a non-object body. Size is bounded by `Bun.serve({ maxRequestBodySize })`.
+ * Read a request body as text without buffering more than `maxBytes`: a
+ * declared `Content-Length` above the cap is refused before any read, and a
+ * chunked body is cancelled as soon as it crosses the cap.
+ */
+export async function readBodyTextCapped(
+  req: Request,
+  maxBytes: number,
+): Promise<{ ok: true; text: string } | { ok: false; failure: BodyReadFailure }> {
+  const tooLarge = (): { ok: false; failure: BodyReadFailure } => ({
+    ok: false,
+    failure: {
+      status: 413,
+      code: "payload_too_large",
+      message: `Request body exceeds ${maxBytes} bytes`,
+    },
+  });
+  const declared = Number(req.headers.get("content-length") ?? "");
+  if (Number.isFinite(declared) && declared > maxBytes) return tooLarge();
+  if (!req.body) return { ok: true, text: "" };
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        return tooLarge();
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return {
+      ok: false,
+      failure: { status: 400, code: "invalid_body", message: "Request body could not be read" },
+    };
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { ok: true, text: new TextDecoder().decode(bytes) };
+}
+
+/**
+ * Parse a JSON body (any JSON value) under a byte ceiling: 400 `invalid_json`
+ * on malformed input, 413 `payload_too_large` over the cap.
+ */
+export async function readJsonValue(
+  req: Request,
+  opts: { maxBytes?: number; allowEmpty?: boolean } = {},
+): Promise<{ ok: true; value: unknown } | { ok: false; failure: BodyReadFailure }> {
+  const text = await readBodyTextCapped(req, opts.maxBytes ?? maxRequestBodyBytes());
+  if (!text.ok) return text;
+  if (opts.allowEmpty && text.text.trim() === "") return { ok: true, value: {} };
+  try {
+    return { ok: true, value: JSON.parse(text.text) };
+  } catch {
+    return {
+      ok: false,
+      failure: { status: 400, code: "invalid_json", message: "Invalid JSON body" },
+    };
+  }
+}
+
+/**
+ * The JSON-object body reader for every HTTP route. A malformed payload never
+ * propagates as an unhandled rejection into `Bun.serve`; the per-route byte
+ * ceiling is enforced here (the server-wide `maxRequestBodySize` must admit
+ * asset uploads, so it cannot bound JSON routes); failures answer 400
+ * `invalid_json` / `expected_object` or 413 `payload_too_large`.
+ *
+ * The second argument is the CORS origin (legacy form) or an options object.
  */
 export async function readJsonBody(
   req: Request,
-  origin: string | null = req.headers.get("Origin"),
+  originOrOpts: string | null | ReadJsonBodyOptions = req.headers.get("Origin"),
 ): Promise<JsonBodyResult> {
-  const fail = (message: string): JsonBodyResult => ({
+  const opts: ReadJsonBodyOptions =
+    originOrOpts !== null && typeof originOrOpts === "object"
+      ? originOrOpts
+      : { origin: originOrOpts };
+  const origin = opts.origin === undefined ? req.headers.get("Origin") : opts.origin;
+  const fail = (status: number, code: string, message: string): JsonBodyResult => ({
     ok: false,
-    response: Response.json({ error: message }, { status: 400, headers: corsHeaders(origin) }),
+    response: opts.errorResponse
+      ? opts.errorResponse(status, code, message)
+      : Response.json(errorBody(status, message, code), {
+          status,
+          headers: corsHeaders(origin),
+        }),
   });
-  let parsed: unknown;
+  const parsed = await readJsonValue(req, { maxBytes: opts.maxBytes, allowEmpty: opts.allowEmpty });
+  if (!parsed.ok) return fail(parsed.failure.status, parsed.failure.code, parsed.failure.message);
+  const value = parsed.value;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return fail(400, "expected_object", "Expected JSON object body");
+  }
+  return { ok: true, body: value as Record<string, unknown> };
+}
+
+// ─── Path decoding ───────────────────────────────────────────────────────────
+
+/**
+ * `decodeURIComponent` that reports a malformed escape (`%E0`) as `null`
+ * instead of throwing a URIError out of the route handler.
+ */
+export function safeDecodeURIComponent(raw: string): string | null {
   try {
-    parsed = await req.json();
+    return decodeURIComponent(raw);
   } catch {
-    return fail("Invalid JSON body");
+    return null;
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return fail("Expected JSON object body");
-  }
-  return { ok: true, body: parsed as Record<string, unknown> };
+}
+
+/** 400 `invalid_path_encoding` for a path segment that is not valid percent-encoding. */
+export function badPathEncodingResponse(origin: string | null = null): Response {
+  return Response.json(
+    errorBody(400, "Malformed percent-encoding in request path", "invalid_path_encoding"),
+    { status: 400, headers: corsHeaders(origin) },
+  );
 }
 
 // ─── Request body limits ─────────────────────────────────────────────────────
@@ -283,6 +481,19 @@ export const HTTP_RATE_LIMITS = {
   publicRead: { maxTokens: 30, refillRate: 30, refillInterval: 10_000 },
   /** MCP session creation + login/auth tool calls, per IP: 10 / min. */
   mcpSession: { maxTokens: 10, refillRate: 10, refillInterval: 60_000 },
+  /** Pre-auth `/api/setup-status` (login-screen metadata), per IP: 20 / min. */
+  setupStatus: { maxTokens: 20, refillRate: 20, refillInterval: 60_000 },
+  /**
+   * FAILED credential checks on `/v1`, the Ollama routes and `/mem`, per IP:
+   * 20 / min. Consumed only by a rejected credential; once empty, the IP is
+   * refused before its credential is even compared. Enforced under the local
+   * profile too — these surfaces can face the network.
+   */
+  authFailure: { maxTokens: 20, refillRate: 20, refillInterval: 60_000, ignoreBypass: true },
+  /** Unauthenticated-cost model API reads (`/v1/models`, `/api/tags`, health), per IP: 120 / min. */
+  modelRead: { maxTokens: 120, refillRate: 120, refillInterval: 60_000 },
+  /** Public asset bytes (`GET /assets/*`), per IP: 300 / min (a canvas loads many). */
+  assetRead: { maxTokens: 300, refillRate: 300, refillInterval: 60_000 },
 } as const satisfies Record<string, RateLimiterConfig>;
 
 export type HttpRateLimitName = keyof typeof HTTP_RATE_LIMITS;
@@ -322,7 +533,38 @@ export function httpRateLimiter(name: HttpRateLimitName): RateLimiter {
  */
 export function consumeHttpRate(name: HttpRateLimitName, key: string): boolean {
   if (name === "mcpSession" && mcpSessionsPerMinute() === 0) return true;
+  sweepIdleBuckets();
   return httpRateLimiter(name).consume(`${name}:${key}`);
+}
+
+/** How often idle (refilled) buckets are evicted from the named limiters. */
+const SWEEP_INTERVAL_MS = 60_000;
+let lastSweep = Date.now();
+
+/**
+ * Evict idle buckets so a stream of distinct keys (one per spoofed or
+ * rotating client) cannot grow the maps without bound. Runs lazily from the
+ * consume path at most once per `SWEEP_INTERVAL_MS`.
+ */
+function sweepIdleBuckets(now = Date.now()): void {
+  if (now - lastSweep < SWEEP_INTERVAL_MS) return;
+  lastSweep = now;
+  for (const limiter of limiters.values()) limiter.cleanup();
+}
+
+/**
+ * True when `ip` has used up its failed-credential budget: the caller is then
+ * refused BEFORE its credential is compared, so a guessing loop gets no
+ * signal. Read-only — `recordAuthFailure` spends the budget.
+ */
+export function authFailuresExhausted(ip: string): boolean {
+  return httpRateLimiter("authFailure").getRemaining(`authFailure:${ip}`) < 1;
+}
+
+/** Spend one failed-credential token for `ip` (call only on a rejected credential). */
+export function recordAuthFailure(ip: string): void {
+  sweepIdleBuckets();
+  httpRateLimiter("authFailure").consume(`authFailure:${ip}`);
 }
 
 /** Drop every bucket (tests). */
@@ -337,7 +579,7 @@ export function rateLimitedResponse(
   extraHeaders: Record<string, string> = {},
 ): Response {
   return Response.json(
-    { error: "Rate limited. Please slow down." },
+    { error: "Rate limited. Please slow down.", code: "rate_limited" },
     {
       status: 429,
       headers: {

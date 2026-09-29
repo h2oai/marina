@@ -8,19 +8,20 @@
 
 import type { Engine } from "../../engine/engine";
 import type { EntityId } from "../../types";
-import { authorizePrivileged, type DashboardRouteContext, json } from "./shared";
+import { authorizePrivileged, type DashboardRouteContext, json, readSmallJsonBody } from "./shared";
 
 // ─── Agent API Handlers ─────────────────────────────────────────────────────
 
 async function handleAgentSpawn(req: Request, engine: Engine): Promise<Response> {
+  const body = await readSmallJsonBody<{
+    name?: string;
+    model?: string;
+    role?: string;
+    goal?: string;
+    keyName?: string;
+  }>(req);
+  if ("error" in body) return body.error;
   try {
-    const body = (await req.json()) as {
-      name?: string;
-      model?: string;
-      role?: string;
-      goal?: string;
-      keyName?: string;
-    };
     if (!body.name) return json({ error: "name is required" }, 400);
 
     const handle = await engine.agentRuntime.spawn({
@@ -82,7 +83,8 @@ async function handleAgentAttention(req: Request, name: string, engine: Engine):
   const agent = engine.agentRuntime.get(name);
   if (!agent) return json({ error: "Agent not found" }, 404);
 
-  const body = (await req.json()) as { message?: string };
+  const body = await readSmallJsonBody<{ message?: string }>(req);
+  if ("error" in body) return body.error;
   if (!body.message) return json({ error: "message is required" }, 400);
 
   await agent.sendAttention(body.message);
@@ -93,7 +95,8 @@ async function handleAgentConfig(req: Request, name: string, engine: Engine): Pr
   const agent = engine.agentRuntime.get(name);
   if (!agent) return json({ error: "Agent not found" }, 404);
 
-  const body = (await req.json()) as { model?: string; role?: string; key?: string };
+  const body = await readSmallJsonBody<{ model?: string; role?: string; key?: string }>(req);
+  if ("error" in body) return body.error;
   await engine.agentRuntime.reconfigure(name, {
     model: body.model,
     role: body.role,

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
 import { upgradeNumericMemory } from "./db-memory-upgrade";
 import { SCHEMA_BASELINE_VERSION } from "./schema-baseline";
 import {
@@ -88,7 +89,31 @@ DROP TABLE spend_daily;
 ALTER TABLE spend_daily_v142 RENAME TO spend_daily;
 `,
   },
+  // Migration 143: memory API key secrets are stored as `sha256:<hex>` digests
+  // (src/persistence/db-notes.ts hashMemApiKeySecret) and looked up by digest.
+  // Every existing plaintext row is rewritten in place; already-hashed rows are
+  // left alone so the rewrite is safe to replay against a partial copy.
+  {
+    version: 143,
+    // The digest lookup keeps using the migration-28 index on `secret`.
+    sql: "CREATE INDEX IF NOT EXISTS idx_mem_api_keys_secret ON mem_api_keys(secret);",
+    apply: hashMemApiKeySecrets,
+  },
 ];
+
+/** Migration 143 body — self-contained so later edits to db-notes never change it. */
+function hashMemApiKeySecrets(db: Database): void {
+  const rows = db.query("SELECT id, secret FROM mem_api_keys").all() as {
+    id: string;
+    secret: string;
+  }[];
+  const update = db.prepare("UPDATE mem_api_keys SET secret = ? WHERE id = ?");
+  for (const row of rows) {
+    if (row.secret.startsWith("sha256:")) continue;
+    const digest = createHash("sha256").update(row.secret, "utf8").digest("hex");
+    update.run(`sha256:${digest}`, row.id);
+  }
+}
 export const SCHEMA_VERSION = FORWARD_MIGRATIONS.at(-1)?.version ?? SCHEMA_BASELINE_VERSION;
 
 /** Full upgrade history; fresh databases use SCHEMA_BASELINE in one transaction. */

@@ -30,12 +30,14 @@ import {
   json,
   maskKey,
   PROJECT_ROOT,
+  readSmallJsonBody,
 } from "./shared";
 
 // ─── Key API Handlers ───────────────────────────────────────────────────────
 
 async function handleKeyAdd(req: Request, db: MarinaDB): Promise<Response> {
-  const body = (await req.json()) as { name?: string; provider?: string; value?: string };
+  const body = await readSmallJsonBody<{ name?: string; provider?: string; value?: string }>(req);
+  if ("error" in body) return body.error;
   if (!body.name || !body.provider || !body.value) {
     return json({ error: "name, provider, and value are required" }, 400);
   }
@@ -138,7 +140,8 @@ function getAdaptersWithEnv(db: MarinaDB, engine: Engine): Response {
 }
 
 async function handleAdapterSave(req: Request, db: MarinaDB, engine: Engine): Promise<Response> {
-  const body = (await req.json()) as { platform?: string; config?: string };
+  const body = await readSmallJsonBody<{ platform?: string; config?: string }>(req);
+  if ("error" in body) return body.error;
   if (!body.platform) return json({ error: "platform is required" }, 400);
 
   const allowedPlatforms = ["telegram", "discord"];
@@ -184,7 +187,8 @@ async function handleAdapterUpdate(
     return json({ error: "Adapter not found" }, 404);
   }
 
-  const body = (await req.json()) as { status?: string };
+  const body = await readSmallJsonBody<{ status?: string }>(req);
+  if ("error" in body) return body.error;
   if (!body.status) return json({ error: "status is required" }, 400);
 
   const allowedStatuses = ["active", "disabled"];
@@ -447,7 +451,8 @@ export const HOT_RELOADABLE_VARS: ReadonlySet<string> = new Set([
 ]);
 
 async function handleEnvPut(req: Request): Promise<Response> {
-  const body = (await req.json()) as { vars?: Record<string, string> };
+  const body = await readSmallJsonBody<{ vars?: Record<string, string> }>(req);
+  if ("error" in body) return body.error;
   if (!body.vars || typeof body.vars !== "object" || Array.isArray(body.vars)) {
     return json({ error: "vars object is required" }, 400);
   }
@@ -588,7 +593,8 @@ export async function handleKeyRoutes(ctx: DashboardRouteContext): Promise<Respo
   if (url.pathname === "/api/default-model" && method === "PUT" && db) {
     const denied = authorizePrivileged(engine, db, callerId, "admin.destructive");
     if (denied) return denied;
-    const body = (await req.json().catch(() => ({}))) as { model?: string };
+    const body = await readSmallJsonBody<{ model?: string }>(req, { allowEmpty: true });
+    if ("error" in body) return body.error;
     const model = body.model?.trim();
     if (!model) return json({ error: "model is required" }, 400);
     if (!/^[\w.-]+\/[\w./:-]+$/.test(model)) {
@@ -615,7 +621,8 @@ export async function handleKeyRoutes(ctx: DashboardRouteContext): Promise<Respo
   if (url.pathname === "/api/model-endpoint" && method === "PUT" && db) {
     const denied = authorizePrivileged(engine, db, callerId, "admin.destructive");
     if (denied) return denied;
-    const body = (await req.json().catch(() => ({}))) as Partial<EndpointConfig>;
+    const body = await readSmallJsonBody<Partial<EndpointConfig>>(req, { allowEmpty: true });
+    if ("error" in body) return body.error;
     const result = setEndpointConfig(db, body);
     if ("error" in result) return json({ error: result.error }, 400);
     return json(result.config);

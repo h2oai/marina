@@ -6,6 +6,7 @@ import { getLeanSystemPrompt, getPromptVersion } from "../agent/prompts/lean-sys
 import type { Engine } from "../engine/engine";
 import { MARINA_ROOT } from "../runtime-paths";
 import { corsHeaders } from "./cors";
+import { readJsonBody, SMALL_JSON_BODY_BYTES } from "./http-utils";
 import { localMcpPort, localWsPort } from "./listen-ports";
 
 const CONNECT_CORS = corsHeaders(null, { methods: "GET, OPTIONS" });
@@ -146,14 +147,18 @@ export function buildConnectManifest(req: Request, engine: Engine): Response {
 /** Negotiate a joining runtime's supported capability layers without imposing a prompt/runtime. */
 export async function negotiateConnectCapabilities(req: Request): Promise<Response> {
   if (req.method !== "POST") {
-    return Response.json({ error: "POST required" }, { status: 405, headers: CONNECT_CORS });
+    return Response.json(
+      { error: "POST required", code: "method_not_allowed" },
+      { status: 405, headers: CONNECT_CORS },
+    );
   }
-  let body: { name?: unknown; capabilities?: unknown };
-  try {
-    body = (await req.json()) as typeof body;
-  } catch {
-    return Response.json({ error: "Invalid JSON" }, { status: 400, headers: CONNECT_CORS });
-  }
+  const read = await readJsonBody(req, {
+    maxBytes: SMALL_JSON_BODY_BYTES,
+    errorResponse: (status, code, message) =>
+      Response.json({ error: message, code }, { status, headers: CONNECT_CORS }),
+  });
+  if (!read.ok) return read.response;
+  const body = read.body as { name?: unknown; capabilities?: unknown };
   const offered = Array.isArray(body.capabilities)
     ? [...new Set(body.capabilities.filter((value): value is string => typeof value === "string"))]
     : [];
@@ -174,6 +179,36 @@ export async function negotiateConnectCapabilities(req: Request): Promise<Respon
     },
     { headers: CONNECT_CORS },
   );
+}
+
+/**
+ * The discovery routes both listeners (WebSocket/HTTP and MCP) serve:
+ * `/api/connect`, `/api/connect/negotiate` and `/api/skill`. One
+ * implementation so the two surfaces can never drift. `undefined` = not one
+ * of these paths.
+ */
+export async function handleConnectRoutes(
+  req: Request,
+  url: URL,
+  engine: Engine,
+): Promise<Response | undefined> {
+  if (url.pathname === "/api/connect") return buildConnectManifest(req, engine);
+  if (url.pathname === "/api/connect/negotiate") return await negotiateConnectCapabilities(req);
+  if (url.pathname === "/api/skill") return handleSkillRequest();
+  return undefined;
+}
+
+/**
+ * `GET /health` body shared by both listeners: the common liveness fields
+ * plus each listener's own counters (`extra`).
+ */
+export function healthResponse(engine: Engine, extra: Record<string, unknown> = {}): Response {
+  return Response.json({
+    status: "ok",
+    ...extra,
+    rooms: engine.rooms.size,
+    entities: engine.entities.size,
+  });
 }
 
 /** Serve SKILL.md as text/markdown. */

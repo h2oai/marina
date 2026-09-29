@@ -464,6 +464,10 @@ const LIMITER_KEYING: Record<keyof typeof HTTP_RATE_LIMITS, OpsLimiter["keyedBy"
   mutation: "principal",
   publicRead: "ip",
   mcpSession: "ip",
+  setupStatus: "ip",
+  authFailure: "ip",
+  modelRead: "ip",
+  assetRead: "ip",
 };
 
 export function securityPosture(engine: Engine): OpsSecurity {

@@ -328,7 +328,8 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 
 | Variable | Description | Flags |
 |---|---|---|
-| `MARINA_MAX_REQUEST_BODY_BYTES=8388608`<br>`MARINA_MAX_UPLOAD_BYTES=52428800` | Request body ceiling for the HTTP port, and the separate cap on one asset upload (uploads are MIME-allowlisted and magic-byte checked). | restart |
+| `MARINA_MAX_REQUEST_BODY_BYTES=8388608`<br>`MARINA_MAX_UPLOAD_BYTES=52428800` | Request body ceiling for JSON routes (enforced per route; pre-auth and key-management routes use a 64 KiB cap), and the separate cap on one asset upload (uploads are MIME-allowlisted and magic-byte checked). | restart |
+| `MARINA_UPSTREAM_TIMEOUT_MS=300000` | Deadline in milliseconds for one proxied upstream model call (response headers for a stream, the whole reply otherwise). A non-streaming call is also aborted when its client disconnects. |  |
 | `MARINA_MCP_SESSIONS_PER_MIN=10` | MCP session creations and login/auth tool calls per client IP per minute. 0 disables. |  |
 | `MARINA_MCP_ALLOWED_HOSTS=mcp.example.com` | Extra Host header values /mcp accepts (DNS-rebinding protection; validation is never off). Unset on a non-loopback bind: only loopback names, a specific bind address, the machine hostname and the BETTER_AUTH_URL / ALLOWED_ORIGINS hosts. List LAN IPs or other names clients use here. | protected |
 | `MARINA_URL_GUARD_DNS_FAIL_OPEN=false` | `true` lets outbound fetches proceed when DNS resolution fails, instead of refusing them (fail open). Only for restricted-DNS environments. | protected |
