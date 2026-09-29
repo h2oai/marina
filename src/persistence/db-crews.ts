@@ -89,10 +89,6 @@ export function saveCrew(
   );
 }
 
-export function getCrew(db: Database, id: string): CrewRow | undefined {
-  return (db.query("SELECT * FROM crews WHERE id = ?").get(id) as CrewRow | null) ?? undefined;
-}
-
 export function getCrewByName(db: Database, name: string): CrewRow | undefined {
   return (db.query("SELECT * FROM crews WHERE name = ?").get(name) as CrewRow | null) ?? undefined;
 }
@@ -152,21 +148,6 @@ export function saveCrewInvitation(db: Database, row: CrewInvitationRow): void {
       row.responded_at,
     ],
   );
-}
-
-export function setCrewInvitationStatus(
-  db: Database,
-  crewId: string,
-  agentName: string,
-  status: CrewInvitationRow["status"],
-  respondedAt: number,
-): void {
-  db.run("UPDATE crew_invitations SET status=?,responded_at=? WHERE crew_id=? AND agent_name=?", [
-    status,
-    respondedAt,
-    crewId,
-    agentName,
-  ]);
 }
 
 export function deleteCrewInvitations(db: Database, crewId: string): void {

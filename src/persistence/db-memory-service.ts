@@ -1301,6 +1301,22 @@ export function isServiceMemoryNote(db: Database, id: number): boolean {
   return !!db.query("SELECT 1 FROM memory_record_versions WHERE note_id=?").get(id);
 }
 
+/** Batch `isServiceMemoryNote`: the ids among `ids` that are physical version rows. */
+export function serviceMemoryNoteIds(db: Database, ids: readonly number[]): Set<number> {
+  const unique = [...new Set(ids)];
+  const found = new Set<number>();
+  for (let i = 0; i < unique.length; i += 500) {
+    const chunk = unique.slice(i, i + 500);
+    const rows = db
+      .query(
+        `SELECT DISTINCT note_id FROM memory_record_versions WHERE note_id IN (${chunk.map(() => "?").join(",")})`,
+      )
+      .all(...chunk) as { note_id: number }[];
+    for (const row of rows) found.add(row.note_id);
+  }
+  return found;
+}
+
 /** Exact predicates over portable terms. No tokenizer, embedding or model calls. */
 export function queryMemory(
   db: Database,

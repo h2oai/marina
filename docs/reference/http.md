@@ -522,33 +522,33 @@ Fields read here: `Number.parseInt(url.searchParams.get("limit") ?? "", 10)`, `u
 
 ### `url.pathname.match(/^\/api\/memory\/graph\/([^/]+)$/)`
 
-[Source](../../src/net/dashboard-api/memory.ts#L203)
+[Source](../../src/net/dashboard-api/memory.ts#L202)
 
 - Guard: `graphMatch && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname.match(/^\/api\/memory\/notes\/(.+)$/)`
 
-[Source](../../src/net/dashboard-api/memory.ts#L242)
+[Source](../../src/net/dashboard-api/memory.ts#L241)
 
 - Guard: `memNotesMatch && db`
 
 ### `url.pathname.match(/^\/api\/notes\/(\d+)$/)`
 
-[Source](../../src/net/dashboard-api/memory.ts#L251)
+[Source](../../src/net/dashboard-api/memory.ts#L250)
 
 - Guard: `noteDetailMatch && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname.match(/^\/api\/memory\/core\/(.+)$/)`
 
-[Source](../../src/net/dashboard-api/memory.ts#L299)
+[Source](../../src/net/dashboard-api/memory.ts#L298)
 
 - Guard: `memCoreMatch && db`
 
 ### `url.pathname === "/api/memory/pools"`
 
-[Source](../../src/net/dashboard-api/memory.ts#L307)
+[Source](../../src/net/dashboard-api/memory.ts#L306)
 
 - Guard: `url.pathname === "/api/memory/pools" && db`
 

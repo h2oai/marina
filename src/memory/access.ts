@@ -21,24 +21,58 @@ export function memoryAccess(db: MarinaDB, actor: { name: string; id?: string })
   function write(note: NoteRow | undefined): note is NoteRow {
     return read(note) && note.entity_name === actor.name;
   }
+  /**
+   * Batch `read`: the readable notes among `notes`, in input order. One
+   * service-note query for the whole set; each pool (and its group
+   * membership) is looked up once per call rather than once per note.
+   */
+  function readable(notes: readonly (NoteRow | undefined)[]): NoteRow[] {
+    const present = notes.filter((n): n is NoteRow => !!n);
+    if (present.length === 0) return [];
+    const service = db.serviceMemoryNoteIds(present.map((n) => n.id));
+    const pools = new Map<string, boolean>();
+    const poolOk = (id: string) => {
+      let ok = pools.get(id);
+      if (ok === undefined) {
+        ok = pool(db.getMemoryPoolById(id));
+        pools.set(id, ok);
+      }
+      return ok;
+    };
+    return present.filter(
+      (note) =>
+        !service.has(note.id) &&
+        (note.pool_id ? poolOk(note.pool_id) : note.entity_name === actor.name),
+    );
+  }
+  /** Links among `notes`-adjacent ids whose BOTH endpoints are readable. */
+  function readableLinks<L extends { source_id: number; target_id: number }>(
+    rows: readonly L[],
+    known: readonly NoteRow[] = [],
+  ): L[] {
+    if (rows.length === 0) return [];
+    const byId = new Map(known.map((n) => [n.id, n] as const));
+    const missing = new Set<number>();
+    for (const link of rows) {
+      if (!byId.has(link.source_id)) missing.add(link.source_id);
+      if (!byId.has(link.target_id)) missing.add(link.target_id);
+    }
+    for (const note of db.getNotes([...missing])) byId.set(note.id, note);
+    const ok = new Set(readable([...byId.values()]).map((n) => n.id));
+    return rows.filter((link) => ok.has(link.source_id) && ok.has(link.target_id));
+  }
   function links(noteId: number) {
     if (!read(db.getNote(noteId))) return [];
-    const rows = db.getNoteLinks(noteId);
-    if (rows.length === 0) return rows;
     // One batched read for every note the links reference instead of two
     // getNote round-trips per link (the N+1 the dashboard observer also had).
-    const ids = new Set<number>();
-    for (const link of rows) {
-      ids.add(link.source_id);
-      ids.add(link.target_id);
-    }
-    const byId = new Map(db.getNotes([...ids]).map((n) => [n.id, n] as const));
-    return rows.filter((link) => read(byId.get(link.source_id)) && read(byId.get(link.target_id)));
+    return readableLinks(db.getNoteLinks(noteId));
   }
 
   return {
     pool,
     read,
+    readable,
+    readableLinks,
     write,
     links,
     trace: (noteId: number, depth = 2) => db.traceNoteGraph(noteId, depth, read),

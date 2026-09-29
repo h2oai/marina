@@ -152,12 +152,6 @@ export function getAllTraits(db: Database): TraitRow[] {
   return db.query("SELECT * FROM traits ORDER BY category, name").all() as TraitRow[];
 }
 
-export function getTraitsByCategory(db: Database, category: string): TraitRow[] {
-  return db
-    .query("SELECT * FROM traits WHERE category = ? ORDER BY name")
-    .all(category) as TraitRow[];
-}
-
 export function deleteTrait(db: Database, name: string): void {
   db.run("DELETE FROM traits WHERE name = ?", [name]);
 }

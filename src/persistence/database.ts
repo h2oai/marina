@@ -432,9 +432,13 @@ export class MarinaDB implements MarinaStores {
     // new id here — the token `reconnect()` path did this, but a plain
     // name-login after eviction minted a new id and left the claim pointing at
     // the dead one. Idempotent; a no-op when the name has no live claims.
-    const isNew = !entitiesDb.entityExists(this.db, entity.id);
-    entitiesDb.saveEntity(this.db, entity);
-    if (isNew) entitiesDb.migrateTaskClaimsByName(this.db, entity.name, entity.id);
+    // One transaction: the existence check, the upsert and the claim re-key
+    // must not interleave with another writer (or half-apply on failure).
+    this.db.transaction(() => {
+      const isNew = !entitiesDb.entityExists(this.db, entity.id);
+      entitiesDb.saveEntity(this.db, entity);
+      if (isNew) entitiesDb.migrateTaskClaimsByName(this.db, entity.name, entity.id);
+    })();
   }
 
   loadEntity(id: EntityId): Entity | undefined {
@@ -451,10 +455,6 @@ export class MarinaDB implements MarinaStores {
 
   deleteEntity(id: EntityId): void {
     entitiesDb.deleteEntity(this.db, id);
-  }
-
-  loadEntitiesInRoom(room: RoomId): Entity[] {
-    return entitiesDb.loadEntitiesInRoom(this.db, room);
   }
 
   // ─── Room Key-Value Store (delegated to db-entities.ts) ────────────────
@@ -1133,9 +1133,6 @@ export class MarinaDB implements MarinaStores {
   saveCrew(c: Parameters<typeof crewsDb.saveCrew>[1]): void {
     crewsDb.saveCrew(this.db, c);
   }
-  getCrew(id: string): import("./db-crews").CrewRow | undefined {
-    return crewsDb.getCrew(this.db, id);
-  }
   getCrewByName(name: string): import("./db-crews").CrewRow | undefined {
     return crewsDb.getCrewByName(this.db, name);
   }
@@ -1156,14 +1153,6 @@ export class MarinaDB implements MarinaStores {
   }
   saveCrewInvitation(row: import("./db-crews").CrewInvitationRow): void {
     crewsDb.saveCrewInvitation(this.db, row);
-  }
-  setCrewInvitationStatus(
-    crewId: string,
-    agentName: string,
-    status: import("./db-crews").CrewInvitationRow["status"],
-    respondedAt: number,
-  ): void {
-    crewsDb.setCrewInvitationStatus(this.db, crewId, agentName, status, respondedAt);
   }
   deleteCrewInvitations(crewId: string): void {
     crewsDb.deleteCrewInvitations(this.db, crewId);
@@ -1290,10 +1279,6 @@ export class MarinaDB implements MarinaStores {
       opts?.entityId ? { ...opts, entityId: this.durableEntityKey(opts.entityId) } : opts,
     );
   }
-  countAttestedDemonstrations(entityId: string, gate: string) {
-    return witnessDb.countAttested(this.reader, this.durableEntityKey(entityId), gate);
-  }
-
   revokeCompetence(entityId: string, gate: string): void {
     competenceDb.revokeCompetence(this.db, this.durableEntityKey(entityId), gate);
   }
@@ -1471,12 +1456,24 @@ export class MarinaDB implements MarinaStores {
     return tasksDb.searchTasks(this.db, query, opts);
   }
 
+  /**
+   * Task-completion credit: one `task_complete` ledger event, idempotent on
+   * `(account, task)`. Goes through `appendStandingEvent` so the row is keyed
+   * by the durable account like every other ledger write.
+   */
   recordStandingEarned(entityId: string, entityName: string, taskId: number, amount: number): void {
-    tasksDb.recordStandingEarned(this.db, entityId, entityName, taskId, amount);
+    this.appendStandingEvent({
+      entityId,
+      entityName,
+      kind: "task_complete",
+      ref: String(taskId),
+      taskId,
+      amount,
+    });
   }
 
   getEntityStanding(entityId: string): number {
-    return tasksDb.getEntityStanding(this.db, entityId);
+    return standingDb.lifetimeStanding(this.db, this.durableEntityKey(entityId));
   }
 
   getStandingLeaderboard(limit = 10): { entityName: string; total: number; taskCount: number }[] {
@@ -1613,15 +1610,13 @@ export class MarinaDB implements MarinaStores {
     usersDb.bindAuthSubject(this.db, id, subject, email);
   }
 
-  updateUserProperties(id: string, properties: Record<string, unknown>): void {
-    usersDb.updateUserProperties(this.db, id, properties);
-  }
-
-  deleteUser(id: string): void {
-    usersDb.deleteUser(this.db, id);
+  /** Account erasure (see `usersDb.deleteUser`): one transaction, audited in the chronicle. */
+  deleteUser(id: string): usersDb.AccountErasure {
+    const erased = usersDb.deleteUser(this.db, id);
     this.durableKeyCache.forEach((value, key) => {
       if (value === id) this.durableKeyCache.delete(key);
     });
+    return erased;
   }
 
   // ─── Ban Persistence ──────────────────────────────────────────────────
@@ -1756,6 +1751,13 @@ export class MarinaDB implements MarinaStores {
 
   getNotes(ids: number[]): NoteRow[] {
     return notesDb.getNotes(this.db, ids);
+  }
+
+  noteTermCounts(
+    entityName: string,
+    terms: readonly string[],
+  ): { total: number; counts: number[] } {
+    return notesDb.noteTermCounts(this.db, entityName, terms);
   }
 
   addNoteSource(noteId: number, source: notesDb.NoteSourceInput): number {
@@ -2335,6 +2337,9 @@ export class MarinaDB implements MarinaStores {
   isServiceMemoryNote(id: number): boolean {
     return memoryServiceDb.isServiceMemoryNote(this.db, id);
   }
+  serviceMemoryNoteIds(ids: readonly number[]): Set<number> {
+    return memoryServiceDb.serviceMemoryNoteIds(this.db, ids);
+  }
   issueMemoryCredential(
     ...args: Parameters<typeof principalsDb.issueMemoryCredential> extends [unknown, ...infer R]
       ? R
@@ -2370,16 +2375,6 @@ export class MarinaDB implements MarinaStores {
     pools: number;
   } {
     return notesDb.getMemStats(this.db, agentName);
-  }
-
-  /** Count personal notes (excluding pool notes) for an entity, optionally filtered by type. */
-  countNotes(entityName: string, noteType?: string): number {
-    return notesDb.countNotes(this.db, entityName, noteType);
-  }
-
-  /** Count completed tasks created by an entity. */
-  countCompletedTasks(entityName: string): number {
-    return tasksDb.countCompletedTasks(this.db, entityName);
   }
 
   countApprovedTaskClaims(entityId: string): number {
@@ -2445,10 +2440,6 @@ export class MarinaDB implements MarinaStores {
 
   saveCommandSource(opts: { id: string; name: string; source: string; createdBy: string }): void {
     commandsDb.saveCommandSource(this.db, opts);
-  }
-
-  getCommand(id: string): CommandSourceRow | undefined {
-    return commandsDb.getCommand(this.db, id);
   }
 
   getCommandByName(name: string): CommandSourceRow | undefined {
@@ -2819,10 +2810,6 @@ export class MarinaDB implements MarinaStores {
     return experimentsDb.listExperiments(this.db, status);
   }
 
-  updateExperimentStatus(id: number, status: string): void {
-    experimentsDb.updateExperimentStatus(this.db, id, status);
-  }
-
   startExperiment(id: number): void {
     experimentsDb.startExperiment(this.db, id);
   }
@@ -2933,10 +2920,6 @@ export class MarinaDB implements MarinaStores {
     limit = 20,
   ): { type: string; input?: string; timestamp: number }[] {
     return entitiesDb.getEventsByEntity(this.db, entityId, limit);
-  }
-
-  getEntityCommandCount(entityId: string): number {
-    return entitiesDb.getEntityCommandCount(this.db, entityId);
   }
 
   getLastActivity(
@@ -3145,10 +3128,6 @@ export class MarinaDB implements MarinaStores {
     now?: number;
   }): CanvasIntentSummary[] {
     return canvasDb.listCanvasIntents(this.db, options);
-  }
-
-  expireCanvasIntentClaims(timeoutMs: number, now = Date.now()): number {
-    return canvasDb.expireCanvasIntentClaims(this.db, timeoutMs, now);
   }
 
   claimCanvasIntent(
@@ -3374,10 +3353,6 @@ export class MarinaDB implements MarinaStores {
 
   // ─── Entity Migration (delegated to db-entities.ts) ─────────────────────
 
-  migrateEntityId(oldId: string, newId: string): void {
-    entitiesDb.migrateEntityId(this.db, oldId, newId);
-  }
-
   migrateTaskClaimsByName(entityName: string, newId: string): void {
     entitiesDb.migrateTaskClaimsByName(this.db, entityName, newId);
   }
@@ -3463,6 +3438,31 @@ export class MarinaDB implements MarinaStores {
     return marketsDb.getEntityMarketScore(this.db, entityName);
   }
 
+  saveForecastAnswer(input: Parameters<typeof marketsDb.saveForecastAnswer>[1]): number {
+    return marketsDb.saveForecastAnswer(this.db, input);
+  }
+
+  linkForecastToSample(id: number, entityName: string, sampleId: string): boolean {
+    return marketsDb.linkForecastToSample(this.db, id, entityName, sampleId);
+  }
+
+  listForecastAnswers(entityName: string, limit?: number): marketsDb.ForecastAnswerRow[] {
+    return marketsDb.listForecastAnswers(this.db, entityName, limit);
+  }
+
+  openForecastsForSample(sampleId: string): marketsDb.ForecastAnswerRow[] {
+    return marketsDb.openForecastsForSample(this.db, sampleId);
+  }
+
+  resolveForecastAnswer(
+    id: number,
+    outcomeJson: string,
+    score: number | null,
+    now?: number,
+  ): boolean {
+    return marketsDb.resolveForecastAnswer(this.db, id, outcomeJson, score, now);
+  }
+
   // ─── Traits (delegated to db-agents.ts) ──────────────────────────────────
 
   saveTrait(opts: {
@@ -3479,9 +3479,6 @@ export class MarinaDB implements MarinaStores {
   }
   getAllTraits(): TraitRow[] {
     return agentsDb.getAllTraits(this.db);
-  }
-  getTraitsByCategory(category: string): TraitRow[] {
-    return agentsDb.getTraitsByCategory(this.db, category);
   }
   deleteTrait(name: string): void {
     agentsDb.deleteTrait(this.db, name);
@@ -3534,16 +3531,20 @@ export class MarinaDB implements MarinaStores {
     /** Reasoning depth (migration 120). `undefined` keeps the stored value. */
     thinkingLevel?: AgentThinkingLevel;
   }): void {
-    agentsDb.saveAgentConfig(this.db, opts);
-    const parent =
-      principalsDb.getPrincipal(this.reader, "agent", opts.spawnedBy) ??
-      principalsDb.getPrincipal(this.reader, "human", opts.spawnedBy);
-    principalsDb.ensurePrincipal(this.db, {
-      type: "agent",
-      displayName: opts.name,
-      ownerPrincipalId: parent?.principal_id,
-      lineageParentId: parent?.principal_type === "agent" ? parent.principal_id : null,
-    });
+    // Config row and agent principal commit together; the parent lookup reads
+    // the writer so it sees the same snapshot.
+    this.db.transaction(() => {
+      agentsDb.saveAgentConfig(this.db, opts);
+      const parent =
+        principalsDb.getPrincipal(this.db, "agent", opts.spawnedBy) ??
+        principalsDb.getPrincipal(this.db, "human", opts.spawnedBy);
+      principalsDb.ensurePrincipal(this.db, {
+        type: "agent",
+        displayName: opts.name,
+        ownerPrincipalId: parent?.principal_id,
+        lineageParentId: parent?.principal_type === "agent" ? parent.principal_id : null,
+      });
+    })();
   }
   getAgentConfig(name: string): AgentConfigRow | undefined {
     return agentsDb.getAgentConfig(this.db, name);
@@ -3635,11 +3636,17 @@ export class MarinaDB implements MarinaStores {
   }
 
   getOrCreateWorldId(): string {
-    const existing = agentsDb.getSetting(this.db, "federation.world_id");
-    if (existing) return existing;
-    const worldId = crypto.randomUUID();
-    agentsDb.setSetting(this.db, "federation.world_id", worldId);
-    return worldId;
+    // IMMEDIATE: take the write lock before reading, so two processes opening
+    // the same file cannot both miss and mint different world ids. Nested
+    // inside an outer transaction it runs as a savepoint of that one.
+    const run = this.db.transaction((): string => {
+      const existing = agentsDb.getSetting(this.db, "federation.world_id");
+      if (existing) return existing;
+      const worldId = crypto.randomUUID();
+      agentsDb.setSetting(this.db, "federation.world_id", worldId);
+      return worldId;
+    });
+    return this.db.inTransaction ? run() : run.immediate();
   }
 
   upsertFederationPeer(

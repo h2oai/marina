@@ -677,10 +677,11 @@
 # Polymarket market-data base override. Market data works; live Polymarket orders are not implemented.
 # POLYMARKET_GAMMA_BASE=https://gamma-api.polymarket.com
 
-# Reserved Polymarket credentials for live orders, which are not implemented yet (the signing path returns an error).
+# Reserved Polymarket credentials. Live Polymarket orders are NOT supported (no CLOB order signing): with MARINA_TRADING_ENABLED=true and all four set, orders fail closed with an error and nothing is sent; otherwise orders are paper.
 # @internal
 # POLYMARKET_API_KEY=
 # POLYMARKET_API_SECRET=
+# POLYMARKET_API_PASSPHRASE=
 # POLYMARKET_PRIVATE_KEY=
 
 # ── Memory ───────────────────────────────────────────────────────────────────

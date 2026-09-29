@@ -75,14 +75,31 @@ describe("gate intent context", () => {
   });
 
   it("fails closed when a context-aware backend skips the authorization answer", () => {
-    // decideGate only reads the questions it was given; a missing answer is simply absent.
+    // Every asked question must be answered: a skipped one has not cleared the call.
     const verdict = decideGate(
       { destructive: n(0.1), irreversible: n(0.1), outsideScope: n(0.1) },
       undefined,
       GATE_QUESTIONS_WITH_AUTHORIZATION,
     );
     expect(verdict.signals.unauthorized).toBeUndefined();
-    expect(verdict.action).toBe("allow");
+    expect(verdict.action).toBe("block");
+    expect(verdict.reason).toContain("unauthorized unanswered");
+    // A non-probability answer counts as unanswered, too.
+    const wrongType = decideGate({
+      destructive: n(0.1),
+      irreversible: { type: "score", score: 1, confidence: 0.9 },
+      outsideScope: n(0.1),
+    });
+    expect(wrongType.action).toBe("block");
+    expect(wrongType.reason).toContain("irreversible");
+    // All answered and low ⇒ allow, as before.
+    expect(
+      decideGate(
+        { destructive: n(0.1), irreversible: n(0.1), outsideScope: n(0.1), unauthorized: n(0.1) },
+        undefined,
+        GATE_QUESTIONS_WITH_AUTHORIZATION,
+      ).action,
+    ).toBe("allow");
   });
 
   it("is on by default with the gate, and off only when explicitly disabled", () => {

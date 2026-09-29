@@ -18,6 +18,7 @@ import {
   SIMILAR_NOTE_RELEVANCE_THRESHOLD,
 } from "../engine/constants";
 import { Logger } from "../engine/logger";
+import { contextRevision } from "./db-context-revision";
 import {
   linkNumericNotes,
   materializeNumericNote,
@@ -316,6 +317,85 @@ export function getNotes(db: Database, ids: number[]): NoteRow[] {
     );
   }
   return rows;
+}
+
+// ─── Term frequency over an entity's own fact-like notes ─────────────────
+//
+// `distinctiveTerms` (src/memory/unified-context.ts) needs, per query term,
+// how many of the entity's private fact-like notes contain it. That is a
+// substring scan (LIKE '%term%' cannot use an index), so counts are cached
+// per (entity, term) and keyed by the connection's context revision
+// (`contextRevision`, bumped by triggers on every memory/world write): any
+// write invalidates the whole cache, so a count is never stale. Nothing is
+// cached inside an open transaction (a rollback rewinds the revision).
+
+const TERM_COUNT_CACHE_MAX = 4096;
+const TERM_COUNT_BATCH = 32;
+interface TermCountCache {
+  revision: string;
+  totals: Map<string, number>;
+  counts: Map<string, number>;
+}
+const termCountCaches = new WeakMap<Database, TermCountCache>();
+
+function likeContains(term: string): string {
+  return `%${term.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+}
+
+/**
+ * `total` = the entity's private fact-like notes; `counts[i]` = how many of
+ * them contain `terms[i]` (case-insensitive substring).
+ */
+export function noteTermCounts(
+  db: Database,
+  entityName: string,
+  terms: readonly string[],
+): { total: number; counts: number[] } {
+  const lowered = terms.map((t) => t.toLowerCase());
+  const entityKey = entityName.toLowerCase();
+  let cache: TermCountCache | undefined;
+  if (!db.inTransaction) {
+    const revision = contextRevision(db);
+    cache = termCountCaches.get(db);
+    if (!cache || cache.revision !== revision || cache.counts.size > TERM_COUNT_CACHE_MAX) {
+      cache = { revision, totals: new Map(), counts: new Map() };
+      termCountCaches.set(db, cache);
+    }
+  }
+  const key = (term: string) => `${entityKey}\u0000${term}`;
+  const fresh = new Map<string, number>();
+  let total = cache?.totals.get(entityKey);
+  const missing = [...new Set(lowered.filter((t) => !cache?.counts.has(key(t))))];
+  // Bound SQL columns/parameters even for unusually long internal queries.
+  let offset = 0;
+  while (total === undefined || offset < missing.length) {
+    const batch = missing.slice(offset, offset + TERM_COUNT_BATCH);
+    offset += TERM_COUNT_BATCH;
+    const columns = batch
+      .map(
+        (_, i) => `, sum(CASE WHEN lower(content) LIKE ? ESCAPE '\\' THEN 1 ELSE 0 END) AS t${i}`,
+      )
+      .join("");
+    const row = db
+      .query(
+        `SELECT count(*) AS n${columns} FROM numeric_notes
+         WHERE entity_name=? COLLATE NOCASE AND pool_id IS NULL
+         AND tier IN ('fact','reflection','skill')`,
+      )
+      .get(...batch.map(likeContains), entityName) as Record<string, number | null>;
+    total = row.n ?? 0;
+    batch.forEach((term, i) => {
+      fresh.set(term, row[`t${i}`] ?? 0);
+    });
+  }
+  if (cache) {
+    cache.totals.set(entityKey, total);
+    for (const [term, n] of fresh) cache.counts.set(key(term), n);
+  }
+  return {
+    total,
+    counts: lowered.map((t) => fresh.get(t) ?? cache?.counts.get(key(t)) ?? 0),
+  };
 }
 
 export function normalizeClaim(content: string): string {
@@ -1444,23 +1524,6 @@ export function getMemStats(
   return { notes, links, coreKeys, pools };
 }
 
-export function countNotes(db: Database, entityName: string, noteType?: string): number {
-  if (noteType) {
-    return (
-      db
-        .query(
-          "SELECT COUNT(*) as c FROM numeric_notes WHERE entity_name = ? AND pool_id IS NULL AND note_type = ?",
-        )
-        .get(entityName, noteType) as { c: number }
-    ).c;
-  }
-  return (
-    db
-      .query("SELECT COUNT(*) as c FROM numeric_notes WHERE entity_name = ? AND pool_id IS NULL")
-      .get(entityName) as { c: number }
-  ).c;
-}
-
 // ─── Memory quality summary ──────────────────────────────────────────────
 
 export function getMemoryQualitySummary(
@@ -1494,16 +1557,16 @@ export function getMemoryQualitySummary(
       )
       .get(Date.now() - 90 * 86_400_000, ...args) as { c: number }
   ).c;
-  const entities = entityName
-    ? [entityName]
-    : (
-        db.query("SELECT DISTINCT entity_name FROM numeric_notes").all() as {
-          entity_name: string;
-        }[]
-      ).map((r) => r.entity_name);
+  // Per entity: the live contradiction scan for that entity only. Globally:
+  // count the open cases in SQL (the old path listed every entity name it
+  // never used and loaded up to 10k case rows just to take `.length`).
   const contradictions = entityName
-    ? entities.reduce((sum, name) => sum + findMemoryContradictions(db, name).length, 0)
-    : listContradictionCases(db, "open", 10_000).length;
+    ? findMemoryContradictions(db, entityName).length
+    : (
+        db.query("SELECT COUNT(*) AS c FROM contradiction_cases WHERE status = 'open'").get() as {
+          c: number;
+        }
+      ).c;
   return {
     total: row.total,
     unverified: row.unverified ?? 0,

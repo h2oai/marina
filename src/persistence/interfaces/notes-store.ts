@@ -56,6 +56,8 @@ export interface NotesStore {
   getNote(id: number): NoteRow | undefined;
   /** Batch read of every existing note among `ids` (one `IN (…)` per 500-id chunk). */
   getNotes(ids: number[]): NoteRow[];
+  /** Per-term substring counts over the entity's private fact-like notes (revision-cached). */
+  noteTermCounts(entityName: string, terms: readonly string[]): { total: number; counts: number[] };
   addNoteSource(noteId: number, source: notesDb.NoteSourceInput): number;
   getNoteSources(noteId: number): notesDb.NoteSourceRow[];
   getNotesBySourceUrl(url: string, entityName?: string, limit?: number): NoteRow[];
@@ -160,8 +162,6 @@ export interface NotesStore {
   deleteMemApiKey(id: string): boolean;
   /** Aggregate stats for an agent's memory namespace */
   getMemStats(agentName: string): { notes: number; links: number; coreKeys: number; pools: number };
-  /** Count personal notes (excluding pool notes) for an entity, optionally filtered by type. */
-  countNotes(entityName: string, noteType?: string): number;
 }
 
 /** Runtime mirror of `NotesStore`'s method names — the drift test compares it to the facade. */
@@ -177,6 +177,7 @@ export const NOTES_STORE_METHODS = [
   "deleteNote",
   "getNote",
   "getNotes",
+  "noteTermCounts",
   "addNoteSource",
   "getNoteSources",
   "getNotesBySourceUrl",
@@ -221,7 +222,6 @@ export const NOTES_STORE_METHODS = [
   "listMemApiKeys",
   "deleteMemApiKey",
   "getMemStats",
-  "countNotes",
 ] as const satisfies readonly (keyof NotesStore)[];
 
 export const NOTES_STORE_COMPLETE: ExactKeys<NotesStore, typeof NOTES_STORE_METHODS> = true;

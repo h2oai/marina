@@ -4,29 +4,87 @@
 import { RateLimiter } from "../../auth/rate-limiter";
 import type { ForecastAnswer } from "../../forecast/question";
 import { bold, dim, header, separator } from "../../net/ansi";
+import type { ForecastAnswerRow } from "../../persistence/db-markets";
+import type { MarinaStores } from "../../persistence/interfaces";
+import { parseSampleId } from "../../resolvers/calibration";
 import type { CommandDef, RoomContext } from "../../types";
+import { getErrorMessage } from "../errors";
+import { Logger } from "../logger";
+import { parseModifiers } from "../parse-input";
 import { dailyCapRefusal } from "../spend-ledger";
 
-const USAGE = "Usage: forecast <question>   e.g. forecast Will the Fed cut rates in October 2026?";
+const logger = new Logger();
+
+const USAGE = [
+  "Usage: forecast <question> [resolves:<venue>/<ticker>]   e.g. forecast Will the Fed cut rates in October 2026?",
+  "       forecast list                     your saved forecasts and, once resolved, their scores",
+  "       forecast track <id> <venue>/<ticker>   score forecast #id when that market/watch resolves",
+].join("\n");
 /** Each forecast spends real money (web research + several models): a small per-entity budget. */
 const limiter = new RateLimiter({ maxTokens: 5, refillRate: 1, refillInterval: 12 * 60_000 });
+
+export interface ForecastCommandDeps {
+  /** Persistence for the answer record (optional: without it, forecasts are not saved). */
+  readonly db?: Pick<
+    MarinaStores,
+    "saveForecastAnswer" | "linkForecastToSample" | "listForecastAnswers"
+  >;
+  getEntity?: (id: string) => { name: string } | undefined;
+}
 
 /**
  * `forecast <question>` — a calibrated, evidence-backed answer to any question:
  * web research with cited sources, figures checked against those sources, one
  * analyst per model vendor, a judge that weights them by how well the evidence
  * supports them (src/forecast). Rank 0: any entity may ask; the budget caps spend.
+ *
+ * Every answer is saved (`forecast_answers`, migration 145) with its full audit
+ * trail. Linked to a resolver Sample id (`resolves:` or `forecast track`), it is
+ * scored by the `forecast-question` calibration finder when that Sample resolves.
  */
-export function forecastCommand(): CommandDef {
+export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
   return {
     category: "Markets & Forecasting",
-    usage: ["forecast <question>"],
+    usage: [
+      "forecast <question> [resolves:<venue>/<ticker>]",
+      "forecast list",
+      "forecast track <id> <venue>/<ticker>",
+    ],
     name: "forecast",
     aliases: ["predict"],
     help: `Forecast any question with cited, verified evidence and several models.\n${USAGE}`,
     minRank: 0,
     handler: (ctx: RoomContext, input) => {
-      const question = input.args.trim();
+      const args = input.args.trim();
+      if (!args) return ctx.send(input.entity, USAGE);
+      const name = deps.getEntity?.(input.entity)?.name;
+      const [first, ...rest] = args.split(/\s+/);
+      const sub = first?.toLowerCase();
+      if (sub === "list" || sub === "ls") {
+        if (!deps.db || !name) return ctx.send(input.entity, "Forecast history needs persistence.");
+        return ctx.send(input.entity, renderHistory(deps.db.listForecastAnswers(name, 20)));
+      }
+      if (sub === "track") {
+        const id = Number(rest[0]);
+        const sampleId = rest[1];
+        if (!Number.isInteger(id) || id <= 0 || !sampleId || !parseSampleId(sampleId)) {
+          return ctx.send(input.entity, "Usage: forecast track <id> <venue>/<ticker>");
+        }
+        if (!deps.db || !name)
+          return ctx.send(input.entity, "Forecast tracking needs persistence.");
+        return ctx.send(
+          input.entity,
+          deps.db.linkForecastToSample(id, name, sampleId)
+            ? `Forecast #${id} will be scored when ${sampleId} resolves.`
+            : `No open forecast #${id} of yours to track.`,
+        );
+      }
+      const parsed = parseModifiers(args.split(/\s+/), { resolves: { type: "string" } });
+      const sampleId = parsed.values.resolves as string | undefined;
+      if (sampleId !== undefined && !parseSampleId(sampleId)) {
+        return ctx.send(input.entity, "resolves: takes a <venue>/<ticker> Sample id.");
+      }
+      const question = sampleId === undefined ? args : parsed.rest.join(" ").trim();
       if (!question) return ctx.send(input.entity, USAGE);
       const capped = dailyCapRefusal();
       if (capped) {
@@ -52,7 +110,14 @@ export function forecastCommand(): CommandDef {
         if ("error" in made) return ctx.send(input.entity, made.error);
         const a = await forecastQuestion({ question }, made.deps);
         a.costUsd = made.costUsd();
-        ctx.send(input.entity, render(a));
+        const saved = name && deps.db ? saveAnswer(deps.db, name, a, sampleId) : undefined;
+        ctx.send(
+          input.entity,
+          render(a) +
+            (saved === undefined
+              ? ""
+              : `\n${dim(`saved as forecast #${saved}${sampleId ? ` · scored when ${sampleId} resolves` : " · forecast track <id> <venue>/<ticker> to score it"}`)}`),
+        );
       })().catch((err) =>
         ctx.send(
           input.entity,
@@ -61,6 +126,55 @@ export function forecastCommand(): CommandDef {
       );
     },
   };
+}
+
+/** Persist one answer (best-effort: a failed save never loses the reply). */
+export function saveAnswer(
+  db: NonNullable<ForecastCommandDeps["db"]>,
+  entityName: string,
+  a: ForecastAnswer,
+  sampleId?: string,
+): number | undefined {
+  try {
+    return db.saveForecastAnswer({
+      entityName,
+      question: a.question,
+      kind: a.kind,
+      ...(a.probability === undefined ? {} : { probability: a.probability }),
+      ...(a.mean === undefined ? {} : { mean: a.mean }),
+      ...(a.sd === undefined ? {} : { sd: a.sd }),
+      answerJson: JSON.stringify(a),
+      ...(sampleId ? { sampleId } : {}),
+    });
+  } catch (err) {
+    logger.warn("forecast", "Forecast answer not saved", { error: getErrorMessage(err) });
+    return undefined;
+  }
+}
+
+export function renderHistory(rows: ForecastAnswerRow[]): string {
+  if (rows.length === 0) return "No saved forecasts yet.";
+  return [
+    header("Forecasts"),
+    separator(),
+    ...rows.map((r) => {
+      const value =
+        r.kind === "probability"
+          ? r.probability === null
+            ? "no answer"
+            : `${Math.round(r.probability * 100)}% yes`
+          : r.mean === null
+            ? "no answer"
+            : `${r.mean} ± ${r.sd}`;
+      const state =
+        r.resolved_at === null
+          ? r.sample_id
+            ? `open · resolves on ${r.sample_id}`
+            : "open · untracked"
+          : `resolved${r.score === null ? "" : ` · ${r.kind === "probability" ? "Brier" : "CRPS"} ${r.score.toFixed(3)}`}`;
+      return `  #${r.id} ${bold(value)} ${r.question.slice(0, 80)}\n    ${dim(state)}`;
+    }),
+  ].join("\n");
 }
 
 export function render(a: ForecastAnswer): string {

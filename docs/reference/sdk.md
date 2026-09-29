@@ -629,7 +629,7 @@ export interface MarinaExtension {
 ```typescript
 export type { CapabilityManifest, CommandCatalogEntry } from "./capabilities.js";
 export { renderCapabilityRoster } from "./capabilities.js";
-export type { ClientOptions, CommandResult, RoomView, SessionInfo } from "./client.js";
+export type { ClientOptions, CommandResult, ConnectionState, RoomView, SessionInfo, } from "./client.js";
 export { CommandError, MarinaAgent, MarinaClient } from "./client.js";
 export type { CommandField, CommandForm, CommandUsage } from "./command-forms.js";
 export { commandFormPrefix, compileCommandForms, composeCommand, matchCommandForm, } from "./command-forms.js";

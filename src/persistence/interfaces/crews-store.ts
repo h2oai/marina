@@ -7,7 +7,6 @@ import type { ExactKeys } from "./exact-keys";
 /** Crews (`db-crews.ts`). */
 export interface CrewsStore {
   saveCrew(c: Parameters<typeof crewsDb.saveCrew>[1]): void;
-  getCrew(id: string): import("../db-crews").CrewRow | undefined;
   getCrewByName(name: string): import("../db-crews").CrewRow | undefined;
   getAllCrews(): import("../db-crews").CrewRow[];
   deleteCrew(id: string): void;
@@ -15,12 +14,6 @@ export interface CrewsStore {
   removeCrewMember(crewId: string, agentName: string): void;
   getCrewMembers(crewId: string): import("../db-crews").CrewMemberRow[];
   saveCrewInvitation(row: import("../db-crews").CrewInvitationRow): void;
-  setCrewInvitationStatus(
-    crewId: string,
-    agentName: string,
-    status: import("../db-crews").CrewInvitationRow["status"],
-    respondedAt: number,
-  ): void;
   deleteCrewInvitations(crewId: string): void;
   getOpenCrewInvitations(): import("../db-crews").CrewInvitationRow[];
 }
@@ -28,7 +21,6 @@ export interface CrewsStore {
 /** Runtime mirror of `CrewsStore`'s method names — the drift test compares it to the facade. */
 export const CREWS_STORE_METHODS = [
   "saveCrew",
-  "getCrew",
   "getCrewByName",
   "getAllCrews",
   "deleteCrew",
@@ -36,7 +28,6 @@ export const CREWS_STORE_METHODS = [
   "removeCrewMember",
   "getCrewMembers",
   "saveCrewInvitation",
-  "setCrewInvitationStatus",
   "deleteCrewInvitations",
   "getOpenCrewInvitations",
 ] as const satisfies readonly (keyof CrewsStore)[];

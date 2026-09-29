@@ -213,7 +213,14 @@ export function registerCoordinationCommands(engine: Engine): void {
   engine.commands.registerBuiltin(
     challengeCommand({ getEntity: (id) => engine.entities.get(id as EntityId) }),
   );
-  engine.commands.registerBuiltin(forecastCommand());
+  engine.commands.registerBuiltin(
+    forecastCommand({
+      get db() {
+        return engine.db;
+      },
+      getEntity: (id) => engine.entities.get(id as EntityId),
+    }),
+  );
   engine.commands.registerBuiltin(
     arenaCommand({
       get store() {

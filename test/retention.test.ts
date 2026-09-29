@@ -212,6 +212,50 @@ describe("retention pass", () => {
     expect(formatRetentionSummary(result)).toContain("primitive_usage=2");
   });
 
+  it("declares every event/probe/job table and prunes only settled index jobs", () => {
+    const kinds = new Map(RETENTION_POLICIES.map((p) => [p.table, p.kind]));
+    expect(kinds.get("coding_service_probes")).toBe("telemetry");
+    expect(kinds.get("memory_index_jobs")).toBe("ledger");
+    for (const table of [
+      "intellect_events",
+      "mesh_events",
+      "mesh_membership_events",
+      "journey_events",
+      "simulation_events",
+    ]) {
+      expect(kinds.get(table)).toBe("append-only");
+    }
+
+    const old = now - 40 * DAY;
+    raw.run(
+      `INSERT INTO coding_service_probes
+         (id, service_id, entity_id, sandbox_id, path, duration_ms, success, created_at)
+       VALUES ('p1', 's', 'e', 'sb', '/', 1, 1, ?), ('p2', 's', 'e', 'sb', '/', 1, 1, ?)`,
+      [old, now - DAY],
+    );
+    // memory_index_jobs has FKs; insert with enforcement off for the fixture.
+    raw.run("PRAGMA foreign_keys=OFF");
+    for (const [id, state] of [
+      ["j1", "ready"],
+      ["j2", "failed"],
+      ["j3", "pending"],
+      ["j4", "running"],
+    ]) {
+      raw.run(
+        `INSERT INTO memory_index_jobs (id, space_id, record_id, note_id, model, state, created_at)
+         VALUES (?, 's', 'r', 1, 'm', ?, ?)`,
+        [id as string, state as string, old],
+      );
+    }
+    const result = runRetentionPass(db, { now, overridesEnv: "" });
+    expect(result.deleted).toEqual({ coding_service_probes: 1, memory_index_jobs: 2 });
+    expect(
+      (raw.query("SELECT id FROM memory_index_jobs ORDER BY id").all() as { id: string }[]).map(
+        (r) => r.id,
+      ),
+    ).toEqual(["j3", "j4"]);
+  });
+
   it("reconciles the direct-message lifecycle: settled rows age out, live deadlines stay", () => {
     const old = now - 100 * DAY;
     const insert = (status: string, deadline: number | null, at: number) =>

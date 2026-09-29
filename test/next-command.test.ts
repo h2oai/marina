@@ -80,7 +80,11 @@ describe("next command fast-loop guidance", () => {
     const out = stripAnsi(conn.lastText());
     expect(out).toContain("Pending canvas intent on requests");
     expect(out).toContain("canvas intent claim node-int");
-    expect(JSON.parse(db.getNode("node-intent-stale")!.data).intent.status).toBe("pending");
+    // `next` is a read: the stale claim is reported as pending, never rewritten.
+    expect(JSON.parse(db.getNode("node-intent-stale")!.data).intent.status).toBe("active");
+    // Claiming it is the write that takes the stale claim over.
+    engine.processCommand(conn.entity!, "canvas intent claim node-intent-stale");
+    expect(JSON.parse(db.getNode("node-intent-stale")!.data).intent.claimedBy).not.toBe("Other");
   });
 
   it("work command shows the prioritized work inbox", () => {

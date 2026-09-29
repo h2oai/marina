@@ -1,7 +1,13 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { AdapterLinkRow, AdapterUserMappingRow, BanRow, UserRow } from "../db-users";
+import type {
+  AccountErasure,
+  AdapterLinkRow,
+  AdapterUserMappingRow,
+  BanRow,
+  UserRow,
+} from "../db-users";
 import type { ExactKeys } from "./exact-keys";
 
 /** World accounts, bans, adapter links and adapter user mappings (`db-users.ts`). */
@@ -17,8 +23,7 @@ export interface UsersStore {
   getUserByAuthSubject(subject: string): UserRow | undefined;
   /** Bind a verified identity (subject + email) to an existing named user. */
   bindAuthSubject(id: string, subject: string, email: string): void;
-  updateUserProperties(id: string, properties: Record<string, unknown>): void;
-  deleteUser(id: string): void;
+  deleteUser(id: string): AccountErasure;
   addBan(name: string, bannedBy: string, reason?: string): void;
   removeBan(name: string): boolean;
   isBanned(name: string): boolean;
@@ -47,7 +52,6 @@ export const USERS_STORE_METHODS = [
   "updateUserRank",
   "getUserByAuthSubject",
   "bindAuthSubject",
-  "updateUserProperties",
   "deleteUser",
   "addBan",
   "removeBan",
