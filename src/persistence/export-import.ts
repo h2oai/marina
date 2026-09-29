@@ -128,6 +128,7 @@ export const EXPORT_TABLES = [
   "markets",
   "market_positions",
   "market_scores",
+  "forecast_answers",
   "mem_api_keys",
   // Civic substrate + agent identity (added 2026-06 — previously dropped on
   // export/import, permanently losing standing/ranks/competence/roles on restore).
