@@ -11,11 +11,31 @@ import type { StorageProvider } from "../../storage/provider";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import { getErrorMessage } from "../errors";
 import { Logger } from "../logger";
+import { type OwnershipSubject, ownershipRefusal } from "../ownership";
 import { rankFloorRefusal } from "../rank-floor";
 import { requiresPersistence } from "./command-messages";
 
 /** Module logger. */
 const logger = new Logger();
+
+/** An agent's creator may act for the agents it spawned. */
+function agentCreatorOf(db: MarinaDB): (ownerName: string) => string | undefined {
+  return (ownerName) => db.getAgentConfig(ownerName)?.spawned_by || undefined;
+}
+
+/**
+ * Who owns a canvas: an entity-scoped canvas belongs to that entity (whoever
+ * lazily created it); every other canvas belongs to its creator. System
+ * canvases (creator "system") are admin-only.
+ */
+function canvasOwners(
+  db: MarinaDB,
+  canvas: { scope: string; scope_id: string | null; creator_name: string },
+): OwnershipSubject {
+  return canvas.scope === "entity"
+    ? { ownerIds: [canvas.scope_id] }
+    : { owners: [canvas.creator_name], creatorOf: agentCreatorOf(db) };
+}
 
 const HELP =
   "Canvas management. Subcommands: canvas create <name> [desc] | canvas list | canvas info <name> | canvas visit <self|entity|name> | canvas post [on:<canvas>] [reply:<node_id>] <text> | canvas publish <type> <asset_id> [canvas] [reply:<node_id>] | canvas nodes <name> | canvas edges <name> | canvas layout <grid|timeline|feed> <name> | canvas delete <name> | canvas asset upload|list|info|delete | canvas intent list [canvas] | canvas intent claim <node_id> | canvas intent fail <node_id> [reason] | canvas intent complete <node_id> [--type <type>] <result> | canvas intent complete-rich <node_id> <json> | canvas connect <src_node_id> <tgt_node_id> <relationship> [canvas] | canvas disconnect <edge_id>";
@@ -109,7 +129,7 @@ export function canvasCommand(deps: {
           handleNodes(ctx, eid, db, tokens.slice(1));
           return;
         case "layout":
-          handleLayout(ctx, eid, db, tokens.slice(1), deps.logEvent);
+          handleLayout(ctx, eid, entity, db, tokens.slice(1), deps.logEvent);
           return;
         case "delete": {
           // Deleting a whole canvas (and its nodes) is destructive and shared —
@@ -123,7 +143,7 @@ export function canvasCommand(deps: {
             ctx.send(eid, floor);
             return;
           }
-          handleDelete(ctx, eid, db, deps.logEvent, tokens.slice(1));
+          handleDelete(ctx, eid, entity, db, deps.logEvent, tokens.slice(1));
           return;
         }
         case "intent":
@@ -227,7 +247,7 @@ function handleConnect(
 function handleDisconnect(
   ctx: RoomContext,
   eid: EntityId,
-  _entity: Entity,
+  entity: Entity,
   db: MarinaDB,
   logEvent: ((event: { type: string; entity: EntityId; [k: string]: unknown }) => void) | undefined,
   tokens: string[],
@@ -253,6 +273,22 @@ function handleDisconnect(
   }
   if (!edge) {
     ctx.send(eid, `Edge "${edgeIdPrefix}" not found.`);
+    return;
+  }
+  // The edge's author or the canvas owner (or an admin) may remove it.
+  const edgeCanvas = db.getCanvas(edge.canvas_id);
+  const canvasSubject = edgeCanvas ? canvasOwners(db, edgeCanvas) : undefined;
+  const refusal = ownershipRefusal(
+    entity,
+    {
+      owners: [edge.creator_name, ...(canvasSubject?.owners ?? [])],
+      ownerIds: canvasSubject?.ownerIds ?? [],
+      creatorOf: agentCreatorOf(db),
+    },
+    `Only the edge's author, the canvas owner, or an admin can remove edge ${edge.id.slice(0, 8)}.`,
+  );
+  if (refusal) {
+    ctx.send(eid, refusal);
     return;
   }
   const ok = db.deleteCanvasEdge(edge.id);
@@ -616,6 +652,7 @@ function handleNodes(ctx: RoomContext, eid: EntityId, db: MarinaDB, tokens: stri
 function handleDelete(
   ctx: RoomContext,
   eid: EntityId,
+  entity: Entity,
   db: MarinaDB,
   logEvent: ((event: { type: string; entity: EntityId; [k: string]: unknown }) => void) | undefined,
   tokens: string[],
@@ -628,6 +665,15 @@ function handleDelete(
   const canvas = db.getCanvasByName(name);
   if (!canvas) {
     ctx.send(eid, `Canvas "${name}" not found.`);
+    return;
+  }
+  const refusal = ownershipRefusal(
+    entity,
+    canvasOwners(db, canvas),
+    `Only the owner of canvas "${canvas.name}" or an admin can delete it.`,
+  );
+  if (refusal) {
+    ctx.send(eid, refusal);
     return;
   }
   db.deleteCanvas(canvas.id);
@@ -1173,6 +1219,7 @@ async function previewNodeAsset(
 function handleLayout(
   ctx: RoomContext,
   eid: EntityId,
+  entity: Entity,
   db: MarinaDB,
   tokens: string[],
   logEvent?: (event: { type: string; entity: EntityId; [key: string]: unknown }) => void,
@@ -1186,6 +1233,16 @@ function handleLayout(
   const canvas = db.getCanvasByName(name);
   if (!canvas) {
     ctx.send(eid, `Canvas "${name}" not found.`);
+    return;
+  }
+  // Re-laying out moves every author's nodes: the canvas owner's call.
+  const refusal = ownershipRefusal(
+    entity,
+    canvasOwners(db, canvas),
+    `Only the owner of canvas "${canvas.name}" or an admin can re-layout it.`,
+  );
+  if (refusal) {
+    ctx.send(eid, refusal);
     return;
   }
   const nodes = db.getNodesByCanvas(canvas.id);
@@ -1499,10 +1556,32 @@ async function handleAsset(
         ctx.send(eid, "Usage: canvas asset delete <id>");
         return;
       }
-      const asset =
-        db.getAsset(id) ?? db.listAssets({ limit: 100 }).find((a) => a.id.startsWith(id));
+      // Deletion takes the exact id: a prefix could name a different asset
+      // than the one listed. Offer the full ids a prefix matches instead.
+      const asset = db.getAsset(id);
       if (!asset) {
-        ctx.send(eid, `Asset "${id}" not found.`);
+        const matches =
+          id.length >= 4
+            ? db
+                .listAssets({ limit: 100 })
+                .filter((a) => a.id.startsWith(id))
+                .slice(0, 5)
+            : [];
+        ctx.send(
+          eid,
+          matches.length > 0
+            ? `Asset delete needs the full id. Matching: ${matches.map((a) => `${a.id} (${a.filename})`).join(", ")}`
+            : `Asset "${id}" not found.`,
+        );
+        return;
+      }
+      const refusal = ownershipRefusal(
+        entity,
+        { owners: [asset.entity_name], creatorOf: agentCreatorOf(db) },
+        `Only the asset's owner (${asset.entity_name}) or an admin can delete it.`,
+      );
+      if (refusal) {
+        ctx.send(eid, refusal);
         return;
       }
       if (storage) {

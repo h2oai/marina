@@ -127,7 +127,7 @@ describe("legacy verbs ↔ durable twin bridge", () => {
     expect((await record(loserTwin.recordId)).version).toBe(2);
   });
 
-  it("`note verify disputed` closes the twin's validity (dropped from [evidence]); `verified` reopens it, then reaffirms", async () => {
+  it("`note verify disputed` closes the twin's validity (dropped from [evidence]); the author can't self-verify; `unverified` reopens it", async () => {
     await run(alice, "note Heron nests on the north tower type fact");
     const noteId = latestNoteId("Alice");
     const twin = findDurableTwin(db, noteId)!;
@@ -162,25 +162,25 @@ describe("legacy verbs ↔ durable twin bridge", () => {
 
     expect((await record(twin.recordId)).version).toBe(2);
 
-    // Verified → validity reopens, metadata follows.
-    await run(alice, `note verify ${noteId} verified 0.9 confirmed with binoculars`);
+    // The author can't attest their own note (self-attestation is refused).
+    expect(await run(alice, `note verify ${noteId} verified 0.9`)).toContain("can't verify");
+    expect((await record(twin.recordId)).version).toBe(2);
+
+    // Retracting the dispute (unverified) → validity reopens, metadata follows.
+    await run(alice, `note verify ${noteId} unverified 0.6 checked again`);
     current = await record(twin.recordId);
     expect(current.version).toBe(3);
     expect(current.valid_time?.until).toBeNull();
-    expect(current.metadata).toMatchObject({ legacy_verification: "verified" });
+    expect(current.metadata).toMatchObject({ legacy_verification: "unverified" });
     expect(current.metadata).not.toHaveProperty("disputed_at");
     expect(servableRecord(current)).toBe(true);
     expect(await evidenceIds("heron north tower")).toContain(twin.recordId);
 
-    // Verified on an already-open twin → durable `reaffirm` (version bump, no closure).
-    await run(alice, `note verify ${noteId} verified 0.95`);
+    // Disputing again is another audited canonical revision.
+    await run(alice, `note verify ${noteId} disputed 0.3`);
     current = await record(twin.recordId);
     expect(current.version).toBe(4);
-    expect(current.valid_time?.until ?? null).toBeNull();
-
-    // Revoking verification is an audited canonical revision.
-    await run(alice, `note verify ${noteId} unverified`);
-    expect((await record(twin.recordId)).version).toBe(5);
+    expect(current.valid_time?.until).toBeNumber();
   });
 
   it("`note resolve` mirrors the case verdicts: the loser's twin is closed as disputed, the winner's twin reaffirmed", async () => {

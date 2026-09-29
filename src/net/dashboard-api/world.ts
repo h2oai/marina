@@ -18,10 +18,11 @@ import { evolutionSessionsWithEvidence } from "../../engine/evolution-qualificat
 import type { MarinaDB, MediaJobRow } from "../../persistence/database";
 import type { EntityId, RoomId } from "../../types";
 import { ORCHESTRATION_PATTERNS } from "../../world/templates/orchestration";
-import { isSentinelPrincipal } from "../auth-middleware";
+import { isSentinelPrincipal, refuseOpenApiWrite } from "../auth-middleware";
 import { buildCanvasPrincipal, resolveCanvasHttpPrincipal } from "../canvas-principal";
 import { authorizeCanvasSubscription } from "../canvas-ws";
 import type { memoryObserver } from "../memory-visibility";
+import { authorizeOwnerOrPrivileged } from "../owner-authorization";
 import {
   authorizeEntityRead,
   authorizePrivileged,
@@ -412,7 +413,7 @@ function serializeMediaJob(job: MediaJobRow, engine: Engine): Record<string, unk
 export async function handleCoordinationRoutes(
   ctx: DashboardRouteContext,
 ): Promise<Response | undefined> {
-  const { db, engine, method, peerIp, req, url } = ctx;
+  const { callerId, db, engine, method, peerIp, req, url } = ctx;
   // Parameterized detail routes (check before list routes)
   const taskDetailMatch = url.pathname.match(/^\/api\/coordination\/tasks\/(\d+)$/);
   if (taskDetailMatch && db) {
@@ -594,6 +595,11 @@ export async function handleCoordinationRoutes(
     const jobId = decodeURIComponent(mediaRetryMatch[1]!);
     const job = db.getMediaJob(jobId);
     if (!job) return json({ error: "Job not found" }, 404);
+    // A retry spends on the job owner's behalf: the owner or an operator.
+    const denied =
+      refuseOpenApiWrite(callerId, req.headers.get("Origin")) ??
+      authorizeOwnerOrPrivileged(engine, db, callerId, [job.entity_name], [job.entity_id]);
+    if (denied) return denied;
     try {
       const options = safeParse(job.options) as Record<string, unknown> | null;
       const metadata = safeParse(job.metadata) as Record<string, unknown> | null;
@@ -836,14 +842,32 @@ export async function handleWorldCatalogRoutes(
   const orchMatch = url.pathname.match(/^\/api\/coordination\/projects\/([^/]+)\/orchestration$/);
   if (orchMatch && method === "POST" && db) {
     const projectId = decodeURIComponent(orchMatch[1]!);
-    const body = (await req.json()) as { orchestration?: string };
-    if (!body.orchestration) return json({ error: "orchestration is required" }, 400);
+    const refused = refuseOpenApiWrite(callerId, req.headers.get("Origin"));
+    if (refused) return refused;
+    let body: { orchestration?: unknown };
+    try {
+      body = (await req.json()) as { orchestration?: unknown };
+    } catch {
+      return json({ error: "Invalid JSON body", code: "invalid_json" }, 400);
+    }
+    if (!body || typeof body !== "object" || typeof body.orchestration !== "string") {
+      return json({ error: "orchestration is required", code: "invalid_request" }, 400);
+    }
     const validPatterns = ORCHESTRATION_PATTERNS as readonly string[];
     if (!validPatterns.includes(body.orchestration)) {
-      return json({ error: `Invalid orchestration. Valid: ${validPatterns.join(", ")}` }, 400);
+      return json(
+        {
+          error: `Invalid orchestration. Valid: ${validPatterns.join(", ")}`,
+          code: "invalid_request",
+        },
+        400,
+      );
     }
     const project = db.getProject(projectId);
     if (!project) return json({ error: "Project not found" }, 404);
+    // The project's creator (or an operator) changes how it is orchestrated.
+    const denied = authorizeOwnerOrPrivileged(engine, db, callerId, [project.created_by]);
+    if (denied) return denied;
     db.updateProjectOrchestration(projectId, body.orchestration);
     return json({ ok: true, orchestration: body.orchestration });
   }
