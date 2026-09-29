@@ -749,7 +749,7 @@ describe("arena autopilot", () => {
       writeFileSync(keyFile, generateArenaKey().privatePem);
       chmodSync(keyFile, 0o600);
       const env = {
-        MARINA_ARENA_ENTRANT: "h2oai-marina",
+        MARINA_ARENA_ENTRANT: "example-entrant",
         MARINA_ARENA_AUTOPILOT: "on",
         MARINA_ARENA_KEY_FILE: keyFile,
         // Refused by the SSRF guard: the first run fails inside its work.
