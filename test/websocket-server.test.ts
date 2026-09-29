@@ -13,6 +13,7 @@ import { WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
+import { scopeProcessState } from "./process-state";
 import { openWs, parse, tmpDbPath } from "./websocket-helpers";
 
 describe("WebSocket Server", () => {
@@ -21,8 +22,12 @@ describe("WebSocket Server", () => {
   let db: MarinaDB;
   let dbPath: string;
   const WS_PORT = 15300;
+  // The listener records its bound port process-wide (src/net/listen-ports);
+  // scope it so later files in the same process see the prior state.
+  let processState: DisposableStack;
 
   beforeEach(() => {
+    processState = scopeProcessState();
     dbPath = tmpDbPath();
     db = new MarinaDB(dbPath);
     engine = new Engine({
@@ -60,6 +65,7 @@ describe("WebSocket Server", () => {
     wsServer.stop();
     db.close();
     cleanupDb(dbPath);
+    processState.dispose();
     await Bun.sleep(100);
   });
 
