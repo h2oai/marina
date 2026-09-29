@@ -203,11 +203,18 @@ describe("Gateway Command", () => {
       grantAllGates(db, conn2.entity!);
       conn2.clear();
 
+      {
+        // A shared instance holds the sovereign floor (raising a challenge);
+        // the operator's own local instance does not wall it.
+        using _processState = scopeProcessState();
+        setTrustProfile("shared");
+        await engine.processCommand(conn2.entity!, "gateway remove lab");
+        expect(conn2.allTextJoined()).toContain("only remove gateways you created");
+        // Verify it still exists
+        expect(db.getGatewayByName("lab")).toBeDefined();
+      }
       await engine.processCommand(conn2.entity!, "gateway remove lab");
-      expect(conn2.lastText()).toContain("only remove gateways you created");
-
-      // Verify it still exists
-      expect(db.getGatewayByName("lab")).toBeDefined();
+      expect(db.getGatewayByName("lab")).toBeFalsy();
     });
 
     it("should allow admin to remove any gateway", async () => {
