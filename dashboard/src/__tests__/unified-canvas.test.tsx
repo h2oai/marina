@@ -13,6 +13,7 @@ import type { Node } from "@xyflow/react";
 import { forwardRef, useImperativeHandle } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useWorldState } from "../hooks/use-world-state";
+import { useMemoryMapState } from "../unified/hooks/use-memory-map";
 import { renderWithProviders, resetWorldState } from "./test-utils";
 
 vi.mock("../hooks/use-websocket", () => ({
@@ -50,6 +51,12 @@ vi.mock("../unified/hooks/use-canvas-integration", async (importOriginal) => ({
     onDrop: async () => [],
     removeNode: () => {},
   }),
+}));
+
+const authFetch = vi.fn();
+vi.mock("../lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/api")>()),
+  authFetch: (...args: unknown[]) => authFetch(...args),
 }));
 
 vi.mock("../unified/hooks/use-memory-map", async (importOriginal) => ({
@@ -132,8 +139,10 @@ function nodeEl(container: HTMLElement, id: string): Element {
 beforeEach(() => {
   resetWorldState();
   sent.length = 0;
+  authFetch.mockReset();
   localStorage.clear();
   canvasState.nodes = [];
+  useMemoryMapState.setState({ graph: { nodes: [], edges: [], truncated: false } as never });
 });
 
 describe("UnifiedCanvas", () => {
@@ -212,6 +221,98 @@ describe("UnifiedCanvas", () => {
     fireEvent.keyDown(input, { key: "Enter" });
     expect(sent).toEqual(["note create check the tide @zone/lobby"]);
     expect(screen.queryByRole("group", { name: "Node actions" })).toBeNull();
+  });
+
+  it("opens, sets an intent on, and deletes a canvas node from the right-click menu", async () => {
+    canvasState.nodes = [
+      {
+        id: "canvas-n3",
+        type: "image",
+        position: { x: 0, y: 0 },
+        data: { title: "Photo", url: "/a.png", canvasId: "c1" },
+      },
+    ];
+    authFetch.mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
+    const { container } = renderWithProviders(<UnifiedCanvas embedded />);
+    const node = await waitFor(() => nodeEl(container, "canvas-n3"));
+
+    fireEvent.contextMenu(node);
+    fireEvent.click(screen.getByRole("button", { name: "Open in viewer" }));
+    expect(await screen.findByAltText("Viewer content")).toHaveAttribute("src", "/a.png");
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    fireEvent.contextMenu(node);
+    fireEvent.click(screen.getByRole("button", { name: "Set intent" }));
+    const input = screen.getByPlaceholderText("What should be done with this?");
+    fireEvent.change(input, { target: { value: "caption it" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(authFetch).toHaveBeenCalledTimes(1));
+    const [patchUrl, patch] = authFetch.mock.calls[0] as [string, RequestInit];
+    expect(patchUrl).toMatch(/\/api\/canvases\/c1\/nodes\/n3$/);
+    expect(patch.method).toBe("PATCH");
+    expect(JSON.parse(String(patch.body)).data.intent).toEqual({
+      prompt: "caption it",
+      status: "pending",
+    });
+
+    fireEvent.contextMenu(node);
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() =>
+      expect(container.querySelector('.react-flow__node[data-id="canvas-n3"]')).toBeNull(),
+    );
+    expect(authFetch.mock.calls[1]).toEqual([
+      expect.stringMatching(/\/api\/canvases\/c1\/nodes\/n3$/),
+      { method: "DELETE" },
+    ]);
+  });
+
+  it("shows a finished canvas intent without claim actions in the right-click menu", async () => {
+    canvasState.nodes = [
+      {
+        id: "canvas-n4",
+        type: "text",
+        position: { x: 0, y: 0 },
+        data: { title: "T", canvasId: "c1", intent: { status: "done", prompt: "p" } },
+      },
+    ];
+    const { container } = renderWithProviders(<UnifiedCanvas embedded />);
+    fireEvent.contextMenu(await waitFor(() => nodeEl(container, "canvas-n4")));
+    expect(screen.getByText("Intent done")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Claim intent" })).toBeNull();
+  });
+
+  it("projects the memory layer and inspects a memory node", async () => {
+    useMemoryMapState.setState({
+      graph: {
+        nodes: [
+          { id: "space:crew", kind: "space", label: "crew" },
+          { id: "helper:reflector-1", kind: "helper", label: "reflector-1" },
+        ],
+        edges: [
+          {
+            id: "e1",
+            source: "helper:reflector-1",
+            target: "space:crew",
+            relationship: "in_space",
+          },
+        ],
+        truncated: false,
+      } as never,
+    });
+    const { container } = renderWithProviders(<UnifiedCanvas embedded />);
+    await waitFor(() => nodeEl(container, "mem-helper:reflector-1"));
+    nodeEl(container, "mem-space:crew");
+    fireEvent.click(screen.getByLabelText("Inspect helper: helper:reflector-1"));
+    expect(screen.getByTestId("context-panel")).toHaveTextContent("memory:helper:reflector-1");
+    // Key 5 hides the Memory layer.
+    act(() => {
+      fireEvent.keyDown(document, { key: "5" });
+    });
+    await waitFor(() =>
+      expect(
+        container.querySelector('.react-flow__node[data-id="mem-helper:reflector-1"]'),
+      ).toBeNull(),
+    );
   });
 
   it("inspects a room from the right-click menu", async () => {
