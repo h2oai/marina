@@ -381,6 +381,7 @@ export async function guardedFetch(
   let currentUrl = urlStr;
   let method = (init?.method ?? "GET").toString().toUpperCase();
   let body = init?.body;
+  let headers = new Headers(init?.headers);
 
   for (let hop = 0; ; hop++) {
     // Resolve + validate once per hop, then pin the connection to the validated
@@ -391,6 +392,7 @@ export async function guardedFetch(
 
     const resp = await pinnedFetch(currentUrl, check.addresses, {
       ...init,
+      headers,
       method,
       body,
       redirect: "manual",
@@ -409,16 +411,73 @@ export async function guardedFetch(
     const location = resp.headers.get("location");
     if (!location) return resp; // 3xx without Location — nothing to follow
 
+    const previousUrl = currentUrl;
     try {
       currentUrl = new URL(location, currentUrl).toString();
     } catch {
       throw new Error(`SSRF blocked: invalid redirect target: ${location}`);
     }
-    // Match fetch redirect semantics: 301/302/303 drop to GET with no body;
-    // 307/308 preserve method and body.
-    if (resp.status === 301 || resp.status === 302 || resp.status === 303) {
+    // Fetch-spec redirect semantics: a 303 becomes GET (HEAD stays HEAD); a
+    // 301/302 becomes GET only after a POST; 307/308 keep method and body. A
+    // method switch drops the body and the headers that describe it.
+    const switchToGet =
+      (resp.status === 303 && method !== "GET" && method !== "HEAD") ||
+      ((resp.status === 301 || resp.status === 302) && method === "POST");
+    if (switchToGet) {
       method = "GET";
       body = undefined;
+      headers = withoutHeaders(headers, isBodyHeader);
     }
+    // Credentials belong to the origin they were issued for: a redirect to a
+    // different origin never carries them (the fetch spec strips
+    // Authorization; API-key headers are the same kind of secret).
+    if (!sameOrigin(previousUrl, currentUrl)) {
+      headers = withoutHeaders(headers, isCredentialHeader);
+    }
+  }
+}
+
+const BODY_HEADERS = new Set([
+  "content-type",
+  "content-length",
+  "content-encoding",
+  "content-language",
+  "content-location",
+]);
+
+function isBodyHeader(name: string): boolean {
+  return BODY_HEADERS.has(name.toLowerCase());
+}
+
+/**
+ * True for a header that carries a caller credential: `Authorization`,
+ * `Proxy-Authorization`, `Cookie`, and every API-key header (`x-api-key`,
+ * `x-goog-api-key`, `api-key`, `apikey`, ...).
+ */
+export function isCredentialHeader(name: string): boolean {
+  const n = name.toLowerCase();
+  return (
+    n === "authorization" ||
+    n === "proxy-authorization" ||
+    n === "cookie" ||
+    n.includes("api-key") ||
+    n.includes("apikey") ||
+    n.includes("api_key")
+  );
+}
+
+function withoutHeaders(headers: Headers, drop: (name: string) => boolean): Headers {
+  const next = new Headers();
+  headers.forEach((value, name) => {
+    if (!drop(name)) next.set(name, value);
+  });
+  return next;
+}
+
+function sameOrigin(a: string, b: string): boolean {
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
   }
 }
