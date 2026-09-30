@@ -35,6 +35,20 @@
  *                  check is COMPUTED here (recent mean, trend, last-k deltas,
  *                  typical move, daily readings after the last value); the
  *                  model keeps or reverts and revises (two checks each)
+ *   delphi       — independence before influence: round 1 independent; the
+ *                  code summarizes the panel ANONYMOUSLY (median, range, short
+ *                  reason snippets, no names); each model revises once having
+ *                  seen only that summary; median of the revisions
+ *   tournament   — proposals {mean, sd, rationale} meet in pairwise knockout
+ *                  matches judged by the last model (an odd field gives a bye);
+ *                  the champion's distribution is the answer; the bracket is
+ *                  recorded
+ *   verification — proposals must pass every aspect check: the mean within the
+ *                  series' typical moves of the start, the sd consistent with
+ *                  the history's spread, every cited (date, value) present in
+ *                  the data shown (all computed here), and — when a decision
+ *                  judge is configured — a judged "follows from the evidence";
+ *                  median of the passers, the start when none pass
  *
  * Composition (`composeForecastRound`): an optional research crew builds ONE
  * dated, citation-verified dossier per round (the research agent's retrieval
@@ -51,6 +65,9 @@
  * usable proposal the formation files the start forecast.
  */
 
+import type { Evidence } from "../decisions/evidence";
+import type { DecisionProvider } from "../decisions/types";
+import { judgeAudit, judgeClaim, newJudgeRecord } from "../forecast/judge";
 import type { RoundForecast } from "./forecast";
 import { forecastRound } from "./forecast";
 import type { Complete } from "./model-forecaster";
@@ -58,6 +75,7 @@ import { parseReply } from "./model-forecaster";
 import {
   dailyBlock,
   dailyOf,
+  datedLines,
   freshestReading,
   historyBlock,
   rulesLines,
@@ -80,6 +98,9 @@ export const FORMATION_PATTERNS = [
   "blackboard",
   "symbiosis",
   "research",
+  "delphi",
+  "tournament",
+  "verification",
 ] as const;
 export type FormationPattern = (typeof FORMATION_PATTERNS)[number];
 
@@ -128,6 +149,8 @@ export interface FormationForecast extends RoundForecast {
   /** 1 / (1 + (dispersion of the moves / start sd)²); 1 with one proposal. */
   agreement?: number;
   critique?: string;
+  /** Pattern-specific audit record: delphi's summary, the tournament bracket, verification's verdicts. */
+  protocol?: Record<string, unknown>;
   fallback?: string;
   dailySource?: string;
   /** Filled by the service: what the round's calls cost. */
@@ -148,6 +171,12 @@ interface Ctx {
   daily?: CiviqsDaily;
   /** Appended to every call: the verified dossier and/or an upstream formation's handoff. */
   briefing?: string;
+  /** The start forecast as the members were told it (no daily attached). */
+  start: RoundForecast;
+  /** The dated points the members were shown (history window, daily tracker, start reading). */
+  shown: ArenaPoint[];
+  /** A decision backend for model-judged aspects (verification); optional. */
+  judge?: DecisionProvider;
 }
 
 const round3 = (x: number) => Math.round(x * 1000) / 1000;
@@ -270,6 +299,7 @@ interface Outcome {
   trust: number;
   agreement?: number;
   critique?: string;
+  protocol?: Record<string, unknown>;
 }
 
 type Protocol = (ctx: Ctx, members: FormationMember[]) => Promise<Outcome | undefined>;
@@ -771,6 +801,369 @@ const research: Protocol = async (ctx, members) => {
   return byMedian(ctx, keyed(members, finals));
 };
 
+// ─── Delphi: independence before influence ───────────────────────────────────
+
+/** Longest reason snippet a Delphi summary quotes. */
+export const DELPHI_SNIPPET_CHARS = 160;
+
+/** Replace any member's name (full id or short name) in a snippet with "a panelist". */
+function anonymize(text: string, members: FormationMember[]): string {
+  let out = text;
+  for (const m of members) {
+    for (const name of new Set([m.name, m.name.split("/").at(-1) ?? m.name])) {
+      if (name.length >= 3) out = out.split(name).join("a panelist");
+    }
+  }
+  return out;
+}
+
+/**
+ * The anonymized panel summary Delphi's second round sees: count, median and
+ * range of the means and sds, and short reason snippets — sorted, so their
+ * order says nothing about who wrote them, and scrubbed of member names.
+ */
+export function delphiSummary(
+  base: Distribution,
+  proposals: Proposal[],
+  members: FormationMember[],
+): { text: string; record: Record<string, unknown> } {
+  const means = proposals.map((p) => p.mean);
+  const sds = proposals.map((p) => p.sd);
+  const snippets = proposals
+    .map((p) => anonymize((p.reason ?? "").trim(), members).slice(0, DELPHI_SNIPPET_CHARS))
+    .filter(Boolean)
+    .sort();
+  const medianMean = round3(median(means));
+  const meanRange = [round3(Math.min(...means)), round3(Math.max(...means))];
+  const medianSd = round3(median(sds));
+  const sdRange = [round3(Math.min(...sds)), round3(Math.max(...sds))];
+  const medianMove = round3(median(means) - base.mean);
+  const text = [
+    `PANEL SUMMARY (round 1, ${proposals.length} independent forecasts, anonymized):`,
+    `- mean: median ${medianMean} (a move of ${medianMove} from the start), range ${meanRange[0]} to ${meanRange[1]}`,
+    `- sd: median ${medianSd}, range ${sdRange[0]} to ${sdRange[1]}`,
+    ...(snippets.length
+      ? ["- reasons given (unordered):", ...snippets.map((s) => `  • ${s}`)]
+      : []),
+  ].join("\n");
+  return {
+    text,
+    record: { n: proposals.length, medianMean, meanRange, medianSd, sdRange, medianMove, snippets },
+  };
+}
+
+const DELPHI_SYSTEM = `You are a panelist in a Delphi forecast. In round 1 every panelist forecast independently. You now see only an anonymized statistical summary of the panel's round-1 forecasts — no individual forecasts, no names. Revise ONCE: keep your forecast unless the summary points you to something concrete in the data you had missed; a panel median is not evidence by itself. ${SCORING} ${PROPOSAL_REPLY}`;
+
+const delphi: Protocol = async (ctx, members) => {
+  const first = await independent(ctx, members, "round1");
+  const valid = first.filter((p): p is Proposal => p !== undefined);
+  if (valid.length < 2) {
+    // A summary of one forecast is that forecast: nothing to revise against.
+    const out = byMedian(ctx, keyed(members, first));
+    return out && { ...out, protocol: { summary: null, revised: 0 } };
+  }
+  const summary = delphiSummary(ctx.base, valid, members);
+  const revised = await Promise.all(
+    members.map(async (m, i) => {
+      const own = first[i];
+      if (!own) return undefined;
+      const user = `${ctx.head}\n\n${ctx.numbers}\n\nYour round-1 forecast: ${show(own)}\n\n${summary.text}`;
+      return (await propose(ctx, "round2", m, DELPHI_SYSTEM, user)) ?? own;
+    }),
+  );
+  const out = byMedian(ctx, keyed(members, revised));
+  const moved = revised.filter(
+    (p, i) => p && first[i] && (p.mean !== first[i]!.mean || p.sd !== first[i]!.sd),
+  ).length;
+  return (
+    out && {
+      ...out,
+      protocol: { summary: summary.record, round1: keyed(members, first), moved },
+    }
+  );
+};
+
+// ─── Tournament: pairwise knockout judged by the last model ──────────────────
+
+export interface TournamentMatch {
+  round: number;
+  /** Candidate labels; `b` absent ⇒ `a` had a bye. */
+  a: string;
+  b?: string;
+  winner: string;
+  /** "judge", "bye", or "fallback: <why>" (the candidate nearer the start advances). */
+  decided: string;
+  reason?: string;
+}
+
+const TOURNAMENT_JUDGE = `You judge one match of a forecasting tournament: two candidate forecasts for the same round, anonymized as A and B, each with its rationale. Pick the one that better fits the evidence in the data and the scoring rule: a mean moved only as far as concrete evidence supports, and an sd honest about how this series moves. A confident-sounding rationale is not evidence. ${SCORING} Reply with ONE JSON object: {"winner": "A" | "B", "reason": "<one sentence>"}.`;
+
+const candidateLine = (tag: string, p: Proposal, base: Distribution) =>
+  `Candidate ${tag}: {"mean": ${p.mean}, "sd": ${p.sd}} — a move of ${round3(p.mean - base.mean)} from the start. Rationale: ${p.reason ?? "(none given)"}`;
+
+/**
+ * Tournament. With three or more models the last judges and the others
+ * propose; with one or two, every model proposes and the last also judges
+ * (candidates are anonymized). Each round pairs the survivors in order; an
+ * odd survivor out (the last) gets a bye. A match without a usable judgment
+ * advances the candidate nearer the start. The champion's distribution is
+ * settled at the default trust × the field's agreement, like a median.
+ */
+const tournament: Protocol = async (ctx, members) => {
+  const judge = members[members.length - 1]!;
+  const proposers = members.length >= 3 ? members.slice(0, -1) : members;
+  const field = keyed(proposers, await independent(ctx, proposers));
+  let alive = Object.keys(field);
+  if (alive.length === 0) return undefined;
+  const bracket: TournamentMatch[] = [];
+  for (let round = 1; alive.length > 1; round++) {
+    const pairs: Array<[string, string | undefined]> = [];
+    for (let i = 0; i < alive.length; i += 2) pairs.push([alive[i]!, alive[i + 1]]);
+    const results = await Promise.all(
+      pairs.map(async ([a, b], slot): Promise<TournamentMatch> => {
+        if (!b) return { round, a, winner: a, decided: "bye" };
+        const pa = field[a]!;
+        const pb = field[b]!;
+        const stage = `match r${round}.${slot + 1}`;
+        const verdict = await ask(
+          ctx,
+          stage,
+          judge,
+          TOURNAMENT_JUDGE,
+          `${ctx.head}\n\n${ctx.numbers}\n\n${candidateLine("A", pa, ctx.base)}\n${candidateLine("B", pb, ctx.base)}`,
+        );
+        const pick = String(verdict?.winner ?? "")
+          .trim()
+          .toUpperCase();
+        const reason =
+          typeof verdict?.reason === "string" ? verdict.reason.slice(0, 300) : undefined;
+        if (pick === "A" || pick === "B") {
+          return {
+            round,
+            a,
+            b,
+            winner: pick === "A" ? a : b,
+            decided: "judge",
+            ...(reason ? { reason } : {}),
+          };
+        }
+        // No usable judgment: the more conservative candidate advances.
+        const why = verdict
+          ? "no A/B winner in the reply"
+          : (ctx.steps.find((s) => s.stage === stage)?.status ?? "no reply");
+        const nearer =
+          Math.abs(pb.mean - ctx.base.mean) < Math.abs(pa.mean - ctx.base.mean) ? b : a;
+        return { round, a, b, winner: nearer, decided: `fallback: ${why}` };
+      }),
+    );
+    bracket.push(...results);
+    alive = results.map((m) => m.winner);
+  }
+  const champion = alive[0]!;
+  const win = field[champion]!;
+  const agree = agreement(ctx.base, Object.values(field));
+  const trust = DEFAULT_TRUST * agree;
+  return {
+    proposals: { [champion]: win },
+    topline: settle(ctx.base, win.mean - ctx.base.mean, win.sd, trust),
+    trust: round3(trust),
+    agreement: round3(agree),
+    critique: `champion ${champion}`,
+    protocol: { judge: judge.name, field, bracket, champion },
+  };
+};
+
+// ─── Verification: every aspect must pass ────────────────────────────────────
+
+/** The plausible band's half-width: this quantile of |one-step change| … */
+export const VERIFY_BAND_QUANTILE = 0.9;
+/** … and at least this share of the start sd. */
+export const VERIFY_BAND_FLOOR_SD = 0.25;
+/** A proposal's sd must lie in [LO × min(spread, start sd), HI × max(spread, start sd)]. */
+export const VERIFY_SD_LO = 0.5;
+export const VERIFY_SD_HI = 3;
+/** With fewer history points than this, the computed aspects cannot pass. */
+export const VERIFY_MIN_POINTS = 3;
+
+export interface AspectVerdict {
+  pass: boolean;
+  detail: string;
+}
+
+/**
+ * The series' own scales the computed aspects check against (the last 30
+ * published values): the plausible band around the start, from the typical
+ * one-step move, and the sd range, from the RMS one-step change. Pure.
+ */
+export function verificationScales(base: Distribution, history: ArenaPoint[]) {
+  const vals = history.slice(-30).map((p) => p.value);
+  if (vals.length < VERIFY_MIN_POINTS) return undefined;
+  const deltas = vals.slice(1).map((v, i) => v - vals[i]!);
+  const abs = deltas.map(Math.abs).sort((a, b) => a - b);
+  const q = abs[Math.min(abs.length - 1, Math.floor(VERIFY_BAND_QUANTILE * abs.length))]!;
+  const halfWidth = Math.max(q, VERIFY_BAND_FLOOR_SD * base.sd);
+  const rms = Math.sqrt(deltas.reduce((s, d) => s + d * d, 0) / deltas.length);
+  const spread = rms > 0 ? rms : base.sd;
+  return {
+    band: [round3(base.mean - halfWidth), round3(base.mean + halfWidth)] as [number, number],
+    sdRange: [
+      round3(VERIFY_SD_LO * Math.min(spread, base.sd)),
+      round3(VERIFY_SD_HI * Math.max(spread, base.sd)),
+    ] as [number, number],
+    spread: round3(spread),
+  };
+}
+
+/** A cited value matches the data point on its date, to the data's rounding. */
+function citeMatches(point: ArenaPoint, value: number): boolean {
+  return (
+    Number.isFinite(value) &&
+    Math.abs(point.value - value) <= Math.max(0.051, 0.005 * Math.abs(point.value))
+  );
+}
+
+/**
+ * Every `{date, value}` the rationale cites must be a point the members were
+ * shown, and at least one is required. Mechanical: dates and values only.
+ */
+export function checkCitations(cites: unknown, shown: ArenaPoint[]): AspectVerdict {
+  if (!Array.isArray(cites) || cites.length === 0) {
+    return { pass: false, detail: "cites no dated value from the data" };
+  }
+  const bad: string[] = [];
+  const checked = cites.slice(0, 12);
+  for (const c of checked) {
+    const date = String((c as { date?: unknown } | null)?.date ?? "").slice(0, 10);
+    const value = Number((c as { value?: unknown } | null)?.value);
+    if (!shown.some((p) => p.date === date && citeMatches(p, value))) {
+      bad.push(`${date || "?"} ${Number.isFinite(value) ? value : "?"}`);
+    }
+  }
+  return bad.length
+    ? { pass: false, detail: `${bad.length} cited value(s) not in the data: ${bad.join(", ")}` }
+    : { pass: true, detail: `${checked.length} cited value(s), all in the data` };
+}
+
+const VERIFY_SYSTEM = `You are one of several independent forecasters; every proposal is checked before it counts. ${SCORING} Ground your reason in the data and cite the dated values it relies on exactly as shown. Reply with ONE JSON object: {"mean": number, "sd": number > 0, "reason": "<one or two sentences>", "cites": [{"date": "YYYY-MM-DD", "value": number}, …]}.`;
+
+/** The series data as judge evidence, labeled as the benchmark's own measurements. */
+function judgeEvidence(ctx: Ctx): Evidence[] {
+  const label = "STRUCTURED SOURCE DATA (the benchmark's own series; not web research)";
+  const out: Evidence[] = [
+    {
+      ref: "series:history",
+      text: `${label}. Published history of ${ctx.round.series ?? ctx.round.round_id} (date value, oldest first):\n${datedLines(ctx.history, 12)}`,
+    },
+    { ref: "series:start", text: `${label}. ${startLine(ctx.round, ctx.start, ctx.history)}` },
+  ];
+  if (ctx.daily?.points.length) {
+    out.push({
+      ref: "series:daily",
+      text: `${label}. Civiqs daily tracker from ${ctx.daily.source} (date value, oldest first):\n${datedLines(ctx.daily.points, ctx.daily.points.length)}`,
+    });
+  }
+  return out;
+}
+
+/**
+ * Verification. Every proposal is checked on separate aspects: `range` (the
+ * mean within the series' typical one-step moves of the start), `sd`
+ * (consistent with the history's spread), `cites` (every cited dated value is
+ * in the data shown) — all computed here — and, when a decision judge is
+ * configured, `follows` (the judge finds the rationale grounded in the series
+ * data; an outage is no opinion, never a pass; only proposals that passed the
+ * computed aspects are judged). A proposal counts only if it passes every
+ * aspect; the passers are aggregated by median; none ⇒ the start forecast.
+ */
+const verification: Protocol = async (ctx, members) => {
+  const user = `${ctx.head}\n\n${ctx.numbers}`;
+  const replies = await Promise.all(
+    members.map(async (m) => {
+      const r = await ask(ctx, "propose", m, VERIFY_SYSTEM, user);
+      return { r, p: proposalOf(ctx, r) };
+    }),
+  );
+  const scales = verificationScales(ctx.base, ctx.history);
+  const judgeRecord = newJudgeRecord(ctx.judge);
+  const evidence = ctx.judge ? judgeEvidence(ctx) : [];
+  const checked = await Promise.all(
+    replies.map(async ({ r, p }, i) => {
+      if (!p) return undefined;
+      const key = `${i + 1}:${members[i]!.name}`;
+      const aspects: Record<string, AspectVerdict> = {};
+      if (!scales) {
+        const none = { pass: false, detail: `fewer than ${VERIFY_MIN_POINTS} history points` };
+        aspects.range = none;
+        aspects.sd = none;
+      } else {
+        const [lo, hi] = scales.band;
+        aspects.range = {
+          pass: p.mean >= lo && p.mean <= hi,
+          detail: `mean ${p.mean} vs plausible ${lo}..${hi}`,
+        };
+        const [slo, shi] = scales.sdRange;
+        aspects.sd = {
+          pass: p.sd >= slo && p.sd <= shi,
+          detail: `sd ${p.sd} vs consistent ${slo}..${shi}`,
+        };
+      }
+      aspects.cites = checkCitations(r?.cites, ctx.shown);
+      if (ctx.judge) {
+        if (!Object.values(aspects).every((a) => a.pass)) {
+          aspects.follows = { pass: false, detail: "not judged (failed a computed aspect)" };
+        } else {
+          const draft = `Forecast {"mean": ${p.mean}, "sd": ${p.sd}}. Reason: ${p.reason ?? ""}`;
+          const judged = await judgeClaim(
+            ctx.judge,
+            judgeRecord,
+            draft,
+            evidence,
+            ctx.round.question,
+          );
+          aspects.follows = judged.judgeError
+            ? { pass: false, detail: `judge unavailable: ${judged.judgeError}` }
+            : {
+                pass: judged.weight > 0,
+                detail: `grounded ${judged.grounded ?? "?"}, quality ${judged.quality ?? "?"}`,
+              };
+        }
+      }
+      return { key, p, aspects, passed: Object.values(aspects).every((a) => a.pass) };
+    }),
+  );
+  // Recorded in member order, whatever order the checks finished in.
+  const verdicts: Record<string, Record<string, AspectVerdict | boolean>> = {};
+  const passers: Record<string, Proposal> = {};
+  for (const c of checked) {
+    if (!c) continue;
+    verdicts[c.key] = { ...c.aspects, passed: c.passed };
+    if (c.passed) passers[c.key] = c.p;
+  }
+  const proposed = Object.keys(verdicts).length;
+  if (proposed === 0) return undefined;
+  const accepted = Object.keys(passers).length;
+  const protocol = {
+    ...(scales ?? {}),
+    verdicts,
+    proposed,
+    accepted,
+    rejected: proposed - accepted,
+    ...judgeAudit(judgeRecord),
+  };
+  if (accepted === 0) {
+    // No proposal survived its checks: the start forecast, and the record says why.
+    return {
+      proposals: {},
+      topline: { mean: ctx.base.mean, sd: ctx.base.sd },
+      trust: 0,
+      critique: `0/${proposed} passed every aspect; the start forecast`,
+      protocol,
+    };
+  }
+  const out = byMedian(ctx, passers);
+  return out && { ...out, critique: `${accepted}/${proposed} passed every aspect`, protocol };
+};
+
 const PROTOCOLS: Record<FormationPattern, Protocol> = {
   ensemble,
   deliberation,
@@ -781,7 +1174,21 @@ const PROTOCOLS: Record<FormationPattern, Protocol> = {
   blackboard,
   symbiosis,
   research,
+  delphi,
+  tournament,
+  verification,
 };
+
+/** The dated points a member is shown: the history window, the daily tracker, the start reading. */
+function shownPoints(
+  round: ArenaRound,
+  start: RoundForecast,
+  history: ArenaPoint[],
+  daily: CiviqsDaily | undefined,
+): ArenaPoint[] {
+  const fresh = freshestReading(start, round.series);
+  return [...history.slice(-30), ...(daily?.points ?? []), ...(fresh ? [fresh] : [])];
+}
 
 export async function formationForecastRound(
   pattern: FormationPattern,
@@ -792,6 +1199,8 @@ export async function formationForecastRound(
   start?: RoundForecast,
   /** Appended to every call (a verified dossier, an upstream formation's handoff). */
   briefing?: string,
+  /** A decision backend for model-judged aspects (verification); omitted ⇒ computed aspects only. */
+  judge?: DecisionProvider,
 ): Promise<FormationForecast> {
   const given = start ?? forecastRound(round, lock);
   const daily = dailyOf(given);
@@ -818,8 +1227,11 @@ export async function formationForecastRound(
     numbers: [historyBlock(round, history, 30), dailyBlock(daily)].filter(Boolean).join("\n\n"),
     recent: historyBlock(round, history, 8),
     steps: [],
+    start: baseline,
+    shown: shownPoints(round, baseline, history, daily),
     ...(daily ? { daily } : {}),
     ...(briefing ? { briefing } : {}),
+    ...(judge ? { judge } : {}),
   };
   const out = await PROTOCOLS[pattern](ctx, members);
   const fresh = freshestReading(baseline, round.series);
@@ -837,6 +1249,7 @@ export async function formationForecastRound(
     trust: out.trust,
     ...(out.agreement !== undefined ? { agreement: out.agreement } : {}),
     ...(out.critique ? { critique: out.critique } : {}),
+    ...(out.protocol ? { protocol: out.protocol } : {}),
     note: `marina ${pattern} formation (${members.map((m) => m.name).join(", ")}) over ${fresh ? `the nowcast (${fresh.date})` : "the calibrated baseline"}`,
   };
 }
@@ -912,7 +1325,10 @@ function handoffBlock(pattern: string, f: FormationForecast, base: Distribution)
 export interface ComposedForecast extends FormationForecast {
   dossier?: ResearchDossier;
   /** The first formation's forecast when a second one judged it. */
-  upstream?: Pick<FormationForecast, "formation" | "topline" | "proposals" | "trust" | "rounds">;
+  upstream?: Pick<
+    FormationForecast,
+    "formation" | "topline" | "proposals" | "trust" | "rounds" | "protocol"
+  >;
 }
 
 /**
@@ -927,6 +1343,8 @@ export async function composeForecastRound(
   stages: [FormationStage, FormationStage?],
   start: RoundForecast,
   research?: { retriever: Retriever; pageText: PageText },
+  /** A decision backend for model-judged aspects, handed to both formations. */
+  judge?: DecisionProvider,
 ): Promise<ComposedForecast> {
   const [first, second] = stages;
   const numeric = round.target_type === "continuous_normal" && Boolean(start.topline);
@@ -935,7 +1353,15 @@ export async function composeForecastRound(
       ? await buildDossier(round, lock, start, research.retriever, research.pageText)
       : undefined;
   const brief = dossier ? dossierBlock(dossier) : undefined;
-  const one = await formationForecastRound(first.pattern, round, lock, first.members, start, brief);
+  const one = await formationForecastRound(
+    first.pattern,
+    round,
+    lock,
+    first.members,
+    start,
+    brief,
+    judge,
+  );
   if (!second || !numeric || !start.topline) return { ...one, ...(dossier ? { dossier } : {}) };
   const base = withoutDaily(start).topline!;
   const two = await formationForecastRound(
@@ -945,6 +1371,7 @@ export async function composeForecastRound(
     second.members,
     start,
     [brief, handoffBlock(first.pattern, one, base)].filter(Boolean).join("\n\n"),
+    judge,
   );
   return {
     ...two,
@@ -958,6 +1385,7 @@ export async function composeForecastRound(
       ...(one.topline ? { topline: one.topline } : {}),
       ...(one.proposals ? { proposals: one.proposals } : {}),
       ...(one.trust !== undefined ? { trust: one.trust } : {}),
+      ...(one.protocol ? { protocol: one.protocol } : {}),
     },
     note: `${two.note ?? `marina ${second.pattern}`} judging ${first.pattern}${dossier ? " with a verified research dossier" : ""}`,
   };

@@ -7,8 +7,11 @@ import { ArenaData } from "../src/arena/data";
 import { evaluateResolved } from "../src/arena/evaluate";
 import { forecastRound } from "../src/arena/forecast";
 import {
+  type AspectVerdict,
   agreement,
+  checkCitations,
   composeForecastRound,
+  delphiSummary,
   type FormationMember,
   formationForecastRound,
   formationPattern,
@@ -16,9 +19,12 @@ import {
   median,
   runCheck,
   settle,
+  type TournamentMatch,
+  verificationScales,
 } from "../src/arena/formations";
 import type { Retriever } from "../src/arena/research/retrieve";
 import type { ArenaLock, ArenaPoint, ArenaRound } from "../src/arena/types";
+import type { DecisionProvider } from "../src/decisions/types";
 
 const weekly = (values: number[], start = "2026-01-02"): ArenaPoint[] =>
   values.map((value, i) => ({
@@ -436,3 +442,236 @@ describe("formation protocols", () => {
 function historyBlockMarker(n: number): string {
   return history.at(-n)!.date;
 }
+
+describe("delphi, tournament and verification", () => {
+  const last = history.at(-1)!;
+  const cite = [{ date: last.date, value: last.value }];
+
+  it("delphi: round 2 sees only the anonymized summary; median of the revisions", async () => {
+    const moves = [0.3, 0.7, 1.9];
+    const { members, calls } = crew(3, (i, system) =>
+      system.includes("Delphi")
+        ? at(1)
+        : { ...at(moves[i]!), reason: `reason ${String.fromCharCode(120 + i)}` },
+    );
+    const f = await formationForecastRound("delphi", round, lock, members);
+    const first = calls.filter((c) => !c.system.includes("Delphi"));
+    const second = calls.filter((c) => c.system.includes("Delphi"));
+    expect(first).toHaveLength(3);
+    expect(second).toHaveLength(3);
+    // Round 1 is independent: no summary, no peers.
+    expect(first.every((c) => !c.user.includes("PANEL SUMMARY"))).toBe(true);
+    for (const c of second) {
+      expect(c.user).toContain("PANEL SUMMARY");
+      // The only distributions in the prompt: the start forecast and the member's own.
+      expect(c.user.match(/\{"mean":/g)).toHaveLength(2);
+      expect(c.user).toContain("Your round-1 forecast");
+      expect(c.user).not.toContain("Peer");
+      expect(/\bm[0-2]\b/.test(c.user)).toBe(false);
+      expect(c.user).toContain(`median ${base.mean + 0.7}`);
+      expect(c.user).toContain(`range ${base.mean + 0.3} to ${base.mean + 1.9}`);
+      expect(c.user).toContain("reason x");
+    }
+    expect(f.rounds!.map((s) => s.stage)).toEqual([
+      "round1",
+      "round1",
+      "round1",
+      "round2",
+      "round2",
+      "round2",
+    ]);
+    expect(f.topline!.mean).toBeCloseTo(base.mean + 0.5, 2);
+    const protocol = f.protocol as { summary: { n: number }; moved: number };
+    expect(protocol.summary.n).toBe(3);
+    expect(protocol.moved).toBe(3);
+  });
+
+  it("delphi summary: sorted snippets scrubbed of member names", () => {
+    const members = [
+      { name: "openai/gpt-x", complete: async () => "" },
+      { name: "google/gem-y", complete: async () => "" },
+    ];
+    const s = delphiSummary(
+      base,
+      [
+        { mean: 1, sd: 1, reason: "zz: gpt-x sees a rise" },
+        { mean: 3, sd: 2, reason: "aa: google/gem-y is flat" },
+      ],
+      members,
+    );
+    expect(s.text).not.toMatch(/gpt-x|gem-y/);
+    expect(s.record.snippets).toEqual(["aa: a panelist is flat", "zz: a panelist sees a rise"]);
+    expect(s.record.meanRange).toEqual([1, 3]);
+  });
+
+  it("delphi with one usable round-1 forecast has nothing to revise against", async () => {
+    const { members, calls } = crew(3, (i) => (i === 0 ? at(1) : new Error("down")));
+    const f = await formationForecastRound("delphi", round, lock, members);
+    expect(calls).toHaveLength(3);
+    expect(f.topline!.mean).toBeCloseTo(base.mean + 0.5, 2);
+  });
+
+  it("tournament: knockout bracket with a bye, judged by the last model", async () => {
+    const moves = [0.2, 0.4, 0.6];
+    const { members, calls } = crew(4, (i, system) =>
+      system.includes("tournament") ? { winner: "B", reason: "fits" } : at(moves[i]!),
+    );
+    const f = await formationForecastRound("tournament", round, lock, members);
+    const matches = calls.filter((c) => c.system.includes("tournament"));
+    // Three proposers (the judge does not propose), two matches.
+    expect(calls.filter((c) => !c.system.includes("tournament")).map((c) => c.member)).toEqual([
+      "m0",
+      "m1",
+      "m2",
+    ]);
+    expect(matches.map((c) => c.member)).toEqual(["m3", "m3"]);
+    expect(
+      matches.every((c) => c.user.includes("Candidate A") && c.user.includes("Candidate B")),
+    ).toBe(true);
+    expect(matches.some((c) => /\bm[0-2]\b/.test(c.user))).toBe(false);
+    const p = f.protocol as { bracket: TournamentMatch[]; champion: string };
+    expect(p.bracket).toEqual([
+      { round: 1, a: "1:m0", b: "2:m1", winner: "2:m1", decided: "judge", reason: "fits" },
+      { round: 1, a: "3:m2", winner: "3:m2", decided: "bye" },
+      { round: 2, a: "2:m1", b: "3:m2", winner: "3:m2", decided: "judge", reason: "fits" },
+    ]);
+    expect(p.champion).toBe("3:m2");
+    expect(Object.keys(f.proposals!)).toEqual(["3:m2"]);
+    const trust =
+      0.5 *
+      agreement(
+        base,
+        moves.map((m) => at(m)),
+      );
+    expect(f.topline!.mean).toBeCloseTo(settle(base, 0.6, base.sd, trust).mean, 3);
+  });
+
+  it("tournament: an unusable judgment advances the candidate nearer the start", async () => {
+    const moves = [0.2, 0.4, 0.6];
+    const { members } = crew(4, (i, system) =>
+      system.includes("tournament") ? "no idea" : at(moves[i]!),
+    );
+    const f = await formationForecastRound("tournament", round, lock, members);
+    const p = f.protocol as { bracket: TournamentMatch[]; champion: string };
+    expect(p.champion).toBe("1:m0");
+    expect(p.bracket.filter((m) => m.b).every((m) => m.decided.startsWith("fallback"))).toBe(true);
+  });
+
+  it("tournament with two models: both propose, the last also judges", async () => {
+    const { members, calls } = crew(2, (i, system) =>
+      system.includes("tournament") ? { winner: "A" } : at(i + 1),
+    );
+    const f = await formationForecastRound("tournament", round, lock, members);
+    expect(calls.map((c) => c.member)).toEqual(["m0", "m1", "m1"]);
+    expect((f.protocol as { champion: string }).champion).toBe("1:m0");
+  });
+
+  it("verification: computed aspects; only proposals passing every aspect count", async () => {
+    const scales = verificationScales(base, history)!;
+    expect(scales.band[1]).toBeGreaterThan(base.mean);
+    const { members } = crew(
+      4,
+      (i) =>
+        [
+          { ...at(0.5), cites: cite },
+          { ...at(scales.band[1] - base.mean + 0.5), cites: cite }, // beyond the plausible band
+          { ...at(0.5), cites: [{ date: last.date, value: 99 }] }, // a value not in the data
+          { ...at(0.5, scales.sdRange[1] * 2), cites: cite }, // sd far wider than the history
+        ][i],
+    );
+    const f = await formationForecastRound("verification", round, lock, members);
+    const p = f.protocol as {
+      verdicts: Record<string, Record<string, AspectVerdict | boolean>>;
+      accepted: number;
+      rejected: number;
+    };
+    expect(p.accepted).toBe(1);
+    expect(p.rejected).toBe(3);
+    expect(p.verdicts["1:m0"]!.passed).toBe(true);
+    expect((p.verdicts["2:m1"]!.range as AspectVerdict).pass).toBe(false);
+    expect((p.verdicts["3:m2"]!.cites as AspectVerdict).detail).toContain("not in the data");
+    expect((p.verdicts["4:m3"]!.sd as AspectVerdict).pass).toBe(false);
+    expect(Object.keys(f.proposals!)).toEqual(["1:m0"]);
+    expect(f.topline!.mean).toBeCloseTo(base.mean + 0.25, 2);
+  });
+
+  it("verification: none passing keeps the start forecast", async () => {
+    const { members } = crew(2, () => at(0.5)); // no citations
+    const f = await formationForecastRound("verification", round, lock, members);
+    expect(f.topline).toEqual(base);
+    expect(f.trust).toBe(0);
+    expect((f.protocol as { accepted: number }).accepted).toBe(0);
+    expect(f.critique).toContain("0/2");
+  });
+
+  it("verification: citations are checked mechanically", () => {
+    expect(checkCitations(undefined, history).pass).toBe(false);
+    expect(checkCitations([], history).pass).toBe(false);
+    expect(checkCitations(cite, history).pass).toBe(true);
+    expect(checkCitations([{ date: last.date, value: last.value + 1 }], history).pass).toBe(false);
+    expect(checkCitations([{ date: "2020-01-01", value: last.value }], history).pass).toBe(false);
+  });
+
+  it("verification: the judged aspect runs only on computed passers; an outage never passes", async () => {
+    const judged: string[] = [];
+    const judge = (grounded: number | Error): DecisionProvider => ({
+      kind: "fake",
+      model: "fake-jev",
+      ask: async (req) => {
+        judged.push(String((req.state as { answer?: string }).answer));
+        if (grounded instanceof Error) throw grounded;
+        return {
+          answers: {
+            quality: { type: "score", score: 2, confidence: 0.9 },
+            grounded: { type: "noul", noul: grounded },
+          },
+          model: "fake-jev",
+          provider: "fake",
+          latencyMs: 1,
+          costUsd: 0.001,
+        };
+      },
+    });
+    const answer = (i: number) => (i === 0 ? { ...at(0.5), cites: cite } : at(0.5));
+    const run = (j: DecisionProvider) =>
+      formationForecastRound(
+        "verification",
+        round,
+        lock,
+        crew(2, answer).members,
+        undefined,
+        undefined,
+        j,
+      );
+    const ok = await run(judge(1));
+    expect(judged).toHaveLength(1);
+    expect(ok.topline!.mean).toBeCloseTo(base.mean + 0.25, 2);
+    const okp = ok.protocol as {
+      verdicts: Record<string, Record<string, AspectVerdict>>;
+      judge: { calls: number; costUsd: number };
+    };
+    expect(okp.verdicts["1:m0"]!.follows!.pass).toBe(true);
+    expect(okp.verdicts["2:m1"]!.follows!.detail).toContain("not judged");
+    expect(okp.judge.calls).toBe(1);
+    expect(okp.judge.costUsd).toBeCloseTo(0.001, 6);
+
+    const ungrounded = await run(judge(0));
+    expect(ungrounded.topline).toEqual(base);
+    const down = await run(judge(new Error("timeout")));
+    expect(down.topline).toEqual(base);
+    const downp = down.protocol as { verdicts: Record<string, Record<string, AspectVerdict>> };
+    expect(downp.verdicts["1:m0"]!.follows!.detail).toContain("judge unavailable");
+  });
+
+  it("parses the new patterns and composes them", () => {
+    const M = "openrouter/openai/gpt-6-luna,openrouter/deepseek/deepseek-v4-flash";
+    for (const p of ["delphi", "tournament", "verification"]) {
+      expect(parseForecasterSpec(`formation:${p}:${M}`)).toContain(p);
+      expect(formationPattern(p)).toBe(p as never);
+    }
+    expect(parseForecasterSpec(`formation:delphi:${M}+then:tournament:${M}`)).toContain("+then:");
+    expect(parseForecasterSpec(`formation:verification:${M}+research@tavily:basic`)).toContain(
+      "+research@",
+    );
+  });
+});
