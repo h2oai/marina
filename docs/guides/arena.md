@@ -99,6 +99,39 @@ start sd. Each round's calls, statuses, trust and cost are kept in the evaluate/
 with the pattern's own audit under `protocol` (delphi's summary, the tournament bracket,
 verification's aspect verdicts and judge record).
 
+**Profile rounds.** On a `profile_energy` round (a Google Trends basket, Civiqs or YouGov subgroup
+profiles) every pattern runs the same protocol over the whole profile
+(`src/arena/formation-profile.ts`, shared shape helpers in `src/arena/profile-shape.ts`):
+
+- the prompt shows each cell's last 12 dated values and its start forecast (the nowcast's dated
+  reading where the start used one), and a member answers **every cell in one reply**
+  (`{"profile": {"<cell>": {"mean", "sd"}, …}}`) — one call per member per step, never one per
+  cell;
+- each reply is validated cell by cell: a missing or malformed cell, or one beyond 4 of **its own**
+  start sds, is left out of that proposal (the step's status names it) while the rest of the
+  proposal counts;
+- aggregation runs per cell with the scalar clamps — median of the proposals that answered the
+  cell, trust 0.5 × their agreement on that cell (or the judge's/skeptic's), move capped at 2 of
+  the cell's start sds, sd blended with a floor of half the start sd; a cell nobody answered keeps
+  its start;
+- **share baskets**: when the round's unit or question says its cells add to 100 (or the unit
+  names a share) AND its last published values add to 100 within 2 points, the aggregated means are
+  rescaled proportionally to 100 (every mean × 100 / Σ means; sds unchanged). Independent cells
+  (subgroup profiles) are never rescaled.
+
+Per pattern: debate's sealed sides become CHANGE (the profile moves from the start) and STAY, and
+the judge rules change or stay with one trust; pipeline takes the analyst's cell where it gave one,
+else the quant's; mapreduce's specialists propose a per-cell adjustment and the reduce sums them per
+cell; symbiosis exchanges again when the largest per-cell gap exceeds 0.5 start sds; research's
+checks name a cell and run on its history; delphi's anonymized summary is per cell; the tournament
+judge compares whole-profile candidates (a match without a usable judgment advances the smaller
+total move in start sds); verification checks range and sd **per cell** (a failing cell drops out
+of that proposal) and citations (`{cell, date, value}`) and the judged "follows" per proposal.
+`+then:` hands the second formation the first's profile and proposals, and `+research@` builds the
+dossier from an item-by-item brief. The record keeps `profileProposals`, and under `protocol` the
+pattern's audit plus `cells` (per-cell proposals counted, trust, agreement) and `shares` (the
+rescale: sum before, factor). Ranking rounds keep their start.
+
 Auction, ledger and sharding are orchestration patterns for allocating or partitioning work, not
 for combining views of one number, so they have no formation.
 
@@ -111,7 +144,8 @@ every member of every formation. A composition with `+research@` reads today's w
 `arena evaluate` refuses it — record it with `arena shadow run`.
 
 Measure a formation before filing it with `bun run arena evaluate --forecaster formation:…` (all
-resolved rounds, per family, with cost); compositions with `+research@` are recorded with `arena
+resolved rounds, per family, with cost; `--shape profile` scores only the resolved profile rounds,
+per family and with cost, and runs no numeric round); compositions with `+research@` are recorded with `arena
 shadow run`. Model reliability matters as much as the pattern: a model that spends its output
 budget on reasoning and returns no JSON silently turns a five-model formation into a smaller one,
 so check each run's failed-proposal count in the record.
@@ -238,6 +272,17 @@ against the arena's recorded persistence loss for each round.
    errors}` (and each proposal's judge latency and cost), and the judge's cost is in the shadow
    row's `cost_usd` (the daily spend cap already sees it through the metered provider).
 6. **Aggregate** — judge-weighted mean move × confidence × `MARINA_ARENA_RESEARCH_TRUST` (0.5).
+
+**Profile rounds.** On a `profile_energy` round with a start profile, the same pipeline runs over
+the whole profile: the brief asks the family's playbook **item by item** for the round's cells
+(for an attention basket, events scheduled during the measured week for each item, with one search
+query per item), bounded to facts after the newest known cell value; each analyst answers every
+cell in one reply; the judge weights each analyst once; and step 6 runs **per cell** over the
+analysts that answered it validly (a missing, malformed or wild cell is left out; a cell no analyst
+answered keeps its start). A share basket's means are then rescaled to 100 as for formations. The
+record keeps `profileProposals` and `protocol.cells`. `arena shadow score` scores recorded profile
+forecasts on the arena's energy score against its recorded persistence energy, next to the
+baseline. The no-anchor mode below stays numeric-only.
 
 **Rounds with no history (no-anchor mode).** A one-off numeric round (an election result, say)
 can lock with an empty `answer_history`. Every other forecaster (`baseline`, `nowcast`,

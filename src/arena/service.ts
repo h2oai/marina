@@ -133,6 +133,31 @@ export async function arenaRegistrationCheck(
  * it. The model stack is imported only when a model is actually asked for.
  * `raw: true` returns the model's own answer (for shadow scoring), not the blend.
  */
+/**
+ * The lock as model roles read it: a Google Trends basket whose lock carries no
+ * per-cell history gets the archive's (fetched before the lock) — the same
+ * history the nowcast start forecast is built from, so the cells a model is
+ * shown match its start. Every other lock is returned as it is.
+ */
+async function lockForModels(
+  data: ArenaData,
+  round: import("./types").ArenaRound,
+  lock: import("./types").ArenaLock,
+): Promise<import("./types").ArenaLock> {
+  if (
+    round.tracker !== "google_trends" ||
+    round.target_type !== "profile_energy" ||
+    lock.answer_history_by_cell
+  ) {
+    return lock;
+  }
+  const { trendsBasketHistory, TRENDS_INCLUDE_PARTIAL } = await import("./research/civiqs-nowcast");
+  const byCell = await trendsBasketHistory(data, round, TRENDS_INCLUDE_PARTIAL).catch(
+    () => undefined,
+  );
+  return byCell ? { ...lock, answer_history_by_cell: byCell } : lock;
+}
+
 /** Live Civiqs reads for open rounds (on unless MARINA_ARENA_CIVIQS_LIVE=off). */
 async function liveCiviqs(env: NodeJS.ProcessEnv = process.env) {
   const { civiqsLiveEnabled, fetchCiviqsLive } = await import("./research/civiqs-live");
@@ -449,7 +474,8 @@ async function formationForecasterFor(
       )
     : undefined;
   const usage: Usage = { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
-  const start = nowcastForecaster(arenaData(env), forecastRound, {
+  const data = arenaData(env);
+  const start = nowcastForecaster(data, forecastRound, {
     ...(await liveCiviqs(env)),
     daily: DAILY_POINTS,
   });
@@ -461,12 +487,13 @@ async function formationForecasterFor(
       );
       const members = made.map((ms) => ms.map(({ name, complete }) => ({ name, complete })));
       const given = await start(round, lock);
+      const shown = await lockForModels(data, round, lock);
       const f =
         stages.length === 1 && !research
           ? await formations.formationForecastRound(
               stages[0]!.pattern,
               round,
-              lock,
+              shown,
               members[0]!,
               given,
               undefined,
@@ -474,7 +501,7 @@ async function formationForecasterFor(
             )
           : await formations.composeForecastRound(
               round,
-              lock,
+              shown,
               [
                 { pattern: stages[0]!.pattern, members: members[0]! },
                 ...(stages[1] ? [{ pattern: stages[1].pattern, members: members[1]! }] : []),
@@ -678,7 +705,8 @@ async function researchForecasterFor(
   const trustCap = Number(env.MARINA_ARENA_RESEARCH_TRUST ?? 0.5);
   // Structured evidence first: the research agent starts from the Civiqs nowcast.
   const { nowcastForecaster } = await import("./research/civiqs-nowcast");
-  const nowcast = nowcastForecaster(arenaData(env), forecastRound, {
+  const data = arenaData(env);
+  const nowcast = nowcastForecaster(data, forecastRound, {
     ...(await liveCiviqs(env)),
     daily: DAILY_POINTS,
   });
@@ -712,7 +740,7 @@ async function researchForecasterFor(
       };
       let f: import("./research/forecaster").ResearchForecast;
       try {
-        f = await research.researchForecastRound(round, lock, {
+        f = await research.researchForecastRound(round, await lockForModels(data, round, lock), {
           retriever,
           analysts: made.map((m) => ({ name: m.name, complete: m.complete })),
           ...(judge ? { judge } : {}),

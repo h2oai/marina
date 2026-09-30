@@ -26,8 +26,9 @@
  *   bun run arena shadow run <round_id|due> | list | score
  *                                               record / list / score shadow forecasts (never filed)
  *   bun run arena evaluate [--forecaster model:<m>|crew:<m>[,<m>,<m>]|formation:<pattern>:<m>[,<m>…]|tabh2o[:forecast][@nowcast]]
- *                          [--no-learn] [--limit N] [--tracker T] [--out FILE]
- *                                               score forecasters on already-resolved rounds (files nothing)
+ *                          [--no-learn] [--limit N] [--tracker T] [--shape profile|ranking] [--out FILE]
+ *                                               score forecasters on already-resolved rounds (files nothing);
+ *                                               --shape scores only that round shape (no numeric rounds)
  *
  * `--forecaster baseline|model:<provider/model>` overrides MARINA_ARENA_FORECASTER for show/submit.
  *
@@ -75,6 +76,7 @@ const { positionals, values } = parseArgs({
     forecaster: { type: "string" },
     limit: { type: "string" },
     tracker: { type: "string" },
+    shape: { type: "string" },
     weight: { type: "string" },
     "no-learn": { type: "boolean" },
     proposer: { type: "string" },
@@ -309,47 +311,65 @@ async function main(): Promise<number> {
         forecasters[`${model} raw`] = raw.forecaster;
         usage.push(blended.usage!, raw.usage!);
       }
-      const report = await evaluateResolved(arenaData(), forecasters, {
-        ...(values.limit ? { limit: Number(values.limit) } : {}),
-        ...(values.tracker ? { tracker: values.tracker } : {}),
-        concurrency: 4,
-        learners,
-      });
+      const shape =
+        values.shape === undefined
+          ? undefined
+          : ({ profile: "profile_energy", ranking: "ranking_list" } as const)[
+              values.shape as "profile" | "ranking"
+            ];
+      if (values.shape !== undefined && !shape) {
+        throw new Error("--shape must be profile or ranking");
+      }
+      // `--shape` scores that shape only: no numeric round runs (nor costs anything).
+      const report = shape
+        ? { rounds: [], families: [], overall: {} as Record<string, number>, excluded: [] }
+        : await evaluateResolved(arenaData(), forecasters, {
+            ...(values.limit ? { limit: Number(values.limit) } : {}),
+            ...(values.tracker ? { tracker: values.tracker } : {}),
+            concurrency: 4,
+            learners,
+          });
       const lessons = scratch?.getNotesByType("arena-crew", "lesson", 1000).length;
       scratch?.close();
       const names = Object.keys(forecasters);
       const fmt = (x: number) => (Number.isNaN(x) ? "n/a" : `${x >= 0 ? "+" : ""}${x.toFixed(3)}`);
-      console.log(
-        ["family".padEnd(18), "n".padEnd(4), ...names.map((n) => n.padEnd(34))].join(" "),
-      );
-      for (const f of report.families) {
-        const cells = names.map((n) =>
-          `${fmt(f.skill[n]!)} (${f.wins[n]}/${f.rounds} beat)`.padEnd(34),
-        );
-        console.log([f.tracker.padEnd(18), String(f.rounds).padEnd(4), ...cells].join(" "));
-      }
-      const all = names.map((n) => fmt(report.overall[n]!).padEnd(34));
-      console.log(["ALL".padEnd(18), String(report.rounds.length).padEnd(4), ...all].join(" "));
-      if (usage.length) {
-        const kept = report.rounds.filter((r) =>
-          Object.entries(r.results).some(
-            ([n, x]) => n !== "baseline" && !n.endsWith("raw") && x.note,
-          ),
-        ).length;
-        const cost = usage.reduce((s, u) => s + u.costUsd, 0);
-        const calls = usage.reduce((s, u) => s + u.calls, 0);
+      // `--shape` ran no numeric round: no numeric table.
+      if (!shape) {
         console.log(
-          `model calls ${calls} · cost $${cost.toFixed(4)} · kept the baseline on ${kept} round(s)${lessons === undefined ? "" : ` · lessons written ${lessons}${values["no-learn"] ? " (learning off)" : ""}`}`,
+          ["family".padEnd(18), "n".padEnd(4), ...names.map((n) => n.padEnd(34))].join(" "),
         );
-      }
-      console.log("skill: 0 = the arena's persistence (last value, sd 1.5); above 0 beats it.");
-      if (report.excluded.length) {
-        console.log(
-          `excluded ${report.excluded.length} round(s) whose outcome was already public at lock: ${report.excluded.join(", ")}`,
-        );
+        for (const f of report.families) {
+          const cells = names.map((n) =>
+            `${fmt(f.skill[n]!)} (${f.wins[n]}/${f.rounds} beat)`.padEnd(34),
+          );
+          console.log([f.tracker.padEnd(18), String(f.rounds).padEnd(4), ...cells].join(" "));
+        }
+        const all = names.map((n) => fmt(report.overall[n]!).padEnd(34));
+        console.log(["ALL".padEnd(18), String(report.rounds.length).padEnd(4), ...all].join(" "));
+        if (usage.length) {
+          const kept = report.rounds.filter((r) =>
+            Object.entries(r.results).some(
+              ([n, x]) => n !== "baseline" && !n.endsWith("raw") && x.note,
+            ),
+          ).length;
+          const cost = usage.reduce((s, u) => s + u.costUsd, 0);
+          const calls = usage.reduce((s, u) => s + u.calls, 0);
+          console.log(
+            `model calls ${calls} · cost $${cost.toFixed(4)} · kept the baseline on ${kept} round(s)${lessons === undefined ? "" : ` · lessons written ${lessons}${values["no-learn"] ? " (learning off)" : ""}`}`,
+          );
+        }
+        console.log("skill: 0 = the arena's persistence (last value, sd 1.5); above 0 beats it.");
+        if (report.excluded.length) {
+          console.log(
+            `excluded ${report.excluded.length} round(s) whose outcome was already public at lock: ${report.excluded.join(", ")}`,
+          );
+        }
       }
       // Profile and ranking rounds, scored as the leaderboard scores them.
-      const shapes = await evaluateShapes(arenaData(), forecasters);
+      const shapes = await evaluateShapes(arenaData(), forecasters, {
+        ...(values.tracker ? { tracker: values.tracker } : {}),
+        ...(shape ? { shape } : {}),
+      });
       if (shapes.rounds.length) {
         console.log(
           `\nprofile & ranking rounds (${shapes.rounds.length}), skill vs the arena's persistence:`,
@@ -362,11 +382,26 @@ async function main(): Promise<number> {
         console.log(
           `  ALL ${names.map((n) => `${n.slice(0, 18)} ${fmt(shapes.overall[n]!)}`).join("  ")}`,
         );
+        for (const f of shapes.families) {
+          console.log(
+            `  ${`${f.tracker} (${f.rounds})`.padEnd(26)} ${names
+              .map(
+                (n) =>
+                  `${n.slice(0, 18)} ${fmt(f.skill[n]!)}${f.costUsd[n] ? ` $${f.costUsd[n]!.toFixed(4)}` : ""}`,
+              )
+              .join("  ")}`,
+          );
+        }
+        if (shape && usage.length) {
+          const cost = usage.reduce((s, u) => s + u.costUsd, 0);
+          const calls = usage.reduce((s, u) => s + u.calls, 0);
+          console.log(`  model calls ${calls} · cost $${cost.toFixed(4)}`);
+        }
       }
       if (values.out) {
         await Bun.write(
           values.out,
-          `${JSON.stringify({ generatedAt: new Date().toISOString(), ...report }, null, 2)}\n`,
+          `${JSON.stringify({ generatedAt: new Date().toISOString(), ...report, shapes }, null, 2)}\n`,
         );
         console.error(`report → ${values.out}`);
       }

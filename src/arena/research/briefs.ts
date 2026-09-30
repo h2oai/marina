@@ -11,6 +11,7 @@
  * (Civiqs), else the last published value: older news is already in it.
  */
 
+import { cellLabels } from "../profile-shape";
 import type { ArenaLock, ArenaRound } from "../types";
 
 export interface ResearchBrief {
@@ -119,8 +120,17 @@ export function familyOf(round: ArenaRound): keyof typeof PLAYBOOKS {
 export function buildResearchBrief(
   round: ArenaRound,
   lock: ArenaLock,
-  opts: { nowcast?: BriefNowcast; now?: number } = {},
+  opts: {
+    nowcast?: BriefNowcast;
+    now?: number;
+    /** Profile rounds: the start forecast's nowcast reading per cell (Civiqs). */
+    cellNowcasts?: Record<string, BriefNowcast>;
+  } = {},
 ): ResearchBrief {
+  if (round.target_type === "profile_energy" && (round.cells?.length ?? 0) >= 2) {
+    const brief = profileBrief(round, lock, opts.cellNowcasts ?? {});
+    if (brief) return brief;
+  }
   const history = lock.answer_history ?? lock.history ?? [];
   const last = history.at(-1);
   const obsDay = lock.answer_obs?.at(-1)?.date;
@@ -180,4 +190,65 @@ function noHistoryBrief(round: ArenaRound, now: number): ResearchBrief {
     request,
     queries: [q, `${q} forecast`, `${q} prediction market odds`],
   };
+}
+
+/** Most per-item search queries a profile brief adds (attention baskets name searchable items). */
+const MAX_ITEM_QUERIES = 8;
+
+/**
+ * The brief for a profile round (a Trends basket, subgroup profiles): the
+ * family's playbook, asked ITEM BY ITEM for the round's cells, bounded to the
+ * window since the latest known value of any cell (a cell's nowcast reading
+ * where it is newer than its history). For an attention basket every item
+ * also gets its own search query, since scheduled events — launches,
+ * premieres, earnings, finals — move one item's share of the basket. Undefined
+ * when no cell has any value (the no-history brief then applies).
+ */
+function profileBrief(
+  round: ArenaRound,
+  lock: ArenaLock,
+  nowcasts: Record<string, BriefNowcast>,
+): ResearchBrief | undefined {
+  const cells = round.cells ?? [];
+  const labels = cellLabels(cells);
+  const latest: Record<string, BriefNowcast> = {};
+  for (const c of cells) {
+    const last = lock.answer_history_by_cell?.[c]?.at(-1);
+    const n = nowcasts[c];
+    const pick = n && (!last || n.date > last.date) ? n : last;
+    if (pick) latest[c] = { date: pick.date, value: pick.value };
+  }
+  const dates = Object.values(latest).map((p) => p.date);
+  if (dates.length === 0) return undefined;
+  const since = dates.sort().at(-1)!;
+  const known = cells
+    .filter((c) => latest[c])
+    .map((c) => `${labels[c]} ${latest[c]!.value}`)
+    .join(", ");
+  const family = familyOf(round);
+  const items = cells.map((c) => labels[c]).join(", ");
+  const asks = [
+    ...PLAYBOOKS[family]!,
+    family === "attention"
+      ? `For EACH item — ${items} — anything scheduled during the measured week or reported since that date that bears on that item specifically (launches, announcements, earnings, premieres, finals, outages, recalls); say "nothing found" for an item with nothing.`
+      : `For EACH subgroup — ${items} — any poll crosstab since that date that reports it, with the same pollster's previous reading for that subgroup.`,
+  ].map((a, i) => `${i + 1}. ${a}`);
+  const request = [
+    `A forecaster must predict, item by item (${cells.length} items): ${round.question}`,
+    `The answer is published around ${round.release_at.slice(0, 10)}. The benchmark's own latest values (up to ${since}) are ALREADY known — ${known}${round.unit ? ` (${round.unit})` : ""} — the question is where each item stands in the next release.`,
+    "",
+    `Research ONLY facts dated after ${since}, and report:`,
+    ...asks,
+    "",
+    "Rules: every fact needs its date and its source; give numbers exactly as published; say plainly when you found nothing for an item; do not forecast or give opinions.",
+  ].join("\n");
+  const queries =
+    family === "attention"
+      ? [
+          round.question.slice(0, 300),
+          ...cells.slice(0, MAX_ITEM_QUERIES).map((c) => `${labels[c]} news this week`),
+          ...(QUERIES.attention ?? []),
+        ]
+      : [...(QUERIES[family] ?? []), "poll crosstabs by party age race education"];
+  return { roundId: round.round_id, since, request, queries };
 }

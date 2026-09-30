@@ -18,6 +18,14 @@
  *                   judged confidence and capped (`trustCap`), spread blended;
  *                   wild proposals dropped; nothing usable ⇒ the baseline
  *
+ * A PROFILE round (a Trends basket, subgroup profiles) runs the same stages
+ * over the whole profile (`researchProfileRound`): the brief asks for evidence
+ * item by item, each analyst answers every cell in ONE reply, the judge
+ * weights each analyst once, and the aggregation above runs per cell over the
+ * analysts that answered it validly (a missing, malformed or wild cell is left
+ * out; a cell nobody answered keeps its start). A share basket's means are
+ * rescaled proportionally to its total afterwards (`profile-shape.ts`).
+ *
  * A numeric round with NO published history (a one-off question such as an
  * election result) has no baseline to shrink toward, so it runs NO-ANCHOR
  * (`noAnchorForecastRound`): the analysts estimate the level from the
@@ -43,6 +51,15 @@ import {
 import { forecastRound, type RoundForecast } from "../forecast";
 import { median } from "../formations";
 import type { Complete } from "../model-forecaster";
+import {
+  cellBlock,
+  cellHistories,
+  parseProfile,
+  profileRulesLines,
+  profileStartLine,
+  renormaliseShares,
+  shareBasketTotal,
+} from "../profile-shape";
 import {
   dailyBlock,
   dailyOf,
@@ -102,6 +119,10 @@ export interface ResearchForecast extends RoundForecast {
     verification?: Record<string, number>;
   };
   proposals?: Record<string, JudgedProposal>;
+  /** Profile rounds: each analyst's judged whole-profile proposal. */
+  profileProposals?: Record<string, JudgedProfileProposal>;
+  /** Profile rounds: the per-cell aggregation (analysts counted, their weight) and any share rescale. */
+  protocol?: Record<string, unknown>;
   /** The judge's identity, latency and cost (present whenever a judge was configured). */
   judge?: JudgeRecord;
   /** The daily series the analysts read, when there was one. */
@@ -113,6 +134,11 @@ export interface ResearchForecast extends RoundForecast {
   anchor?: "none";
   /** How the no-anchor answer was aggregated from the proposals. */
   noAnchor?: NoAnchorAudit;
+}
+
+/** A judged whole-profile proposal: the cells it answered validly, one judge weight. */
+export interface JudgedProfileProposal extends Omit<JudgedProposal, "mean" | "sd"> {
+  profile: Record<string, Distribution>;
 }
 
 /** Sanity bounds a question implies (a named total, a percentage). */
@@ -268,8 +294,16 @@ export async function researchForecastRound(
     ...extra,
     fallback: why,
   });
+  const cells = round.cells ?? [];
+  if (
+    round.target_type === "profile_energy" &&
+    cells.length >= 2 &&
+    cells.every((c) => baseline.profile?.[c] !== undefined)
+  ) {
+    return researchProfileRound(round, lock, deps, baseline);
+  }
   if (round.target_type !== "continuous_normal" || !baseline.topline) {
-    return keep("research agent answers numeric rounds; baseline for this shape");
+    return keep("research agent answers numeric and profile rounds; baseline for this shape");
   }
   const base = baseline.topline;
   // Search from the nowcast's own date when it is fresher than the weekly history.
@@ -606,5 +640,165 @@ export async function noAnchorForecastRound(
     ...audit,
     noAnchor: agg.audit,
     note: `marina research agent, no anchor (${research.retriever}; median of ${agg.audit.used.length} judged analysts; sd ≥ ${Math.round(NO_ANCHOR_SD_FLOOR_SHARE * 100)}% of the level): the series has no published history`,
+  };
+}
+
+// ─── Profile rounds: the whole profile per analyst, aggregated per cell ─────
+
+const PROFILE_ANALYST_SYSTEM = [
+  "You are an analyst forecasting a published PROFILE — one statistic per cell — for a live benchmark scored by the energy score of the whole profile against persistence (each cell's last published value).",
+  "You get the round's resolution and scoring rules, every cell's dated history and start forecast (the Civiqs nowcast reading, with its date, where noted; else persistence), and a research dossier of dated, sourced facts gathered item by item.",
+  "The histories are the benchmark's own measurements of these cells. Never replace a cell's level with a different source's number.",
+  "Use the dossier for CHANGES only: scheduled or reported events that bear on one item (a launch, an announcement, a premiere, a final), how a pollster's reading of a subgroup moved since its own previous one — and only what is dated after the start. Move a cell only as far as that evidence justifies; leave every other cell on its start.",
+  "Size each sd honestly.",
+  'Reply with ONE JSON object: {"profile": {"<cell>": {"mean": number, "sd": number > 0}, …one entry for EVERY cell, keyed exactly as listed…}, "evidence": "<the specific facts that moved you, cell by cell, or none>", "reason": "<one or two sentences>"}.',
+].join(" ");
+
+/**
+ * The research agent on a profile round (anchored: the start profile is the
+ * anchor). One retrieval, one reply per analyst for the whole profile, one
+ * judgment per analyst, then per cell: the judge-weighted mean move of the
+ * analysts that answered the cell, scaled by trustCap × the judged confidence,
+ * the sd blended with a floor of half the start sd.
+ */
+async function researchProfileRound(
+  round: ArenaRound,
+  lock: ArenaLock,
+  deps: ResearchDeps,
+  baseline: RoundForecast,
+): Promise<ResearchForecast> {
+  const cells = round.cells ?? [];
+  const base = baseline.profile!;
+  const keep = (why: string, extra: Partial<ResearchForecast> = {}): ResearchForecast => ({
+    ...baseline,
+    ...extra,
+    fallback: why,
+  });
+  const nowcastUsed = (baseline as { nowcast?: Record<string, { date: string; value: number }> })
+    .nowcast;
+  const brief = buildResearchBrief(round, lock, nowcastUsed ? { cellNowcasts: nowcastUsed } : {});
+  let research: ResearchReport;
+  try {
+    research = await deps.retriever(brief);
+  } catch (err) {
+    return keep(`research failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  const checked: VerifiedDossier | undefined = deps.pageText
+    ? await verifyDossier(research.report, deps.pageText)
+    : undefined;
+  const dossier = {
+    since: brief.since,
+    report: research.report,
+    sources: research.sources,
+    costUsd: research.costUsd,
+    searches: research.searches,
+    retriever: research.retriever,
+    ...(checked ? { verification: checked.stats } : {}),
+  };
+  const histories = cellHistories(round, lock);
+  const share = shareBasketTotal(round, lock, baseline);
+  const sourceList = research.sources
+    .map((s, i) => `[${i + 1}] ${s.title ?? ""} ${s.url}`)
+    .join("\n");
+  const user = [
+    `Question: ${round.question}`,
+    `Unit: ${round.unit ?? "(see question)"}; published around ${round.release_at}; locks ${round.lock_at}.`,
+    ...profileRulesLines(round, share),
+    `Cells (${cells.length}): ${cells.join(", ")}`,
+    profileStartLine(baseline, cells),
+    "",
+    cellBlock(round, histories, baseline, SERIES_EVIDENCE_POINTS),
+    "",
+    checked
+      ? `RESEARCH DOSSIER (facts since ${brief.since}). Each cited line is tagged by a mechanical check of its figures against the cited page: rely on [verified] lines; treat [unverified] figures as likely wrong and [unreachable] ones as unconfirmed.\n${checked.annotated}`
+      : `RESEARCH DOSSIER (facts since ${brief.since}):\n${research.report}`,
+    sourceList ? `\nSources:\n${sourceList}` : "",
+  ].join("\n");
+
+  const roles: Record<string, string> = {};
+  const raw = await askAnalysts(deps.analysts, PROFILE_ANALYST_SYSTEM, user, roles);
+  const evidence: Evidence[] = [
+    {
+      ref: "series:cells",
+      text: `STRUCTURED SOURCE DATA (the benchmark's own series; not web research). ${cellBlock(round, histories, baseline, 6)}`,
+    },
+    ...chunks(checked ? checked.verifiedText || "(no verified facts)" : research.report),
+  ];
+  const judgeRecord = newJudgeRecord(deps.judge);
+  const proposals: Record<string, JudgedProfileProposal> = {};
+  await Promise.all(
+    raw.map(async ([name, reply]) => {
+      if (!reply) return;
+      const { profile, issues } = parseProfile(reply.profile, cells, base, MAX_SD_MOVE);
+      if (Object.keys(profile).length === 0) {
+        if (roles[name] === "ok") roles[name] = "invalid reply (no valid cell)";
+        return;
+      }
+      if (issues.length && roles[name] === "ok") {
+        roles[name] = `ok; ${issues.length} cell(s) left out: ${issues.join("; ")}`.slice(0, 400);
+      }
+      const reason = [reply.evidence, reply.reason]
+        .filter((x) => typeof x === "string")
+        .join(" — ");
+      const moves = Object.entries(profile)
+        .filter(([c, d]) => d.mean !== base[c]!.mean)
+        .map(([c, d]) => `${c} ${base[c]!.mean}→${d.mean} (sd ${d.sd})`);
+      const judged = await judgeProposal(
+        deps.judge,
+        judgeRecord,
+        { mean: 0, sd: 1, reason },
+        `Profile forecast: ${moves.length ? moves.join("; ") : "every cell at its start"}. ${reason}`,
+        evidence,
+        round.question,
+      );
+      const { mean: _m, sd: _s, ...rest } = judged;
+      proposals[name] = { ...rest, profile };
+    }),
+  );
+
+  const audit = judgeAudit(judgeRecord);
+  const usable = Object.values(proposals);
+  const totalWeight = usable.reduce((s, p) => s + p.weight, 0);
+  if (usable.length === 0 || totalWeight <= 0) {
+    return keep(usable.length ? "judge found no grounded proposal" : "no usable proposal", {
+      dossier,
+      profileProposals: proposals,
+      roles,
+      ...audit,
+    });
+  }
+  const trustCap = Math.min(Math.max(deps.trustCap ?? 0.5, 0), 1);
+  const round3 = (x: number) => Math.round(x * 1000) / 1000;
+  const profile: Record<string, Distribution> = {};
+  const perCell: Record<string, { n: number; weight: number; trust: number }> = {};
+  for (const c of cells) {
+    const b = base[c]!;
+    const on = usable.filter((p) => p.profile[c]);
+    const w = on.reduce((s, p) => s + p.weight, 0);
+    if (on.length === 0 || w <= 0) {
+      profile[c] = { mean: b.mean, sd: b.sd };
+      perCell[c] = { n: on.length, weight: 0, trust: 0 };
+      continue;
+    }
+    const move = on.reduce((s, p) => s + p.weight * (p.profile[c]!.mean - b.mean), 0) / w;
+    const sd = on.reduce((s, p) => s + p.weight * p.profile[c]!.sd, 0) / w;
+    const trust = trustCap * (w / on.length);
+    profile[c] = {
+      mean: round3(b.mean + trust * move),
+      sd: round3(Math.max(b.sd * 0.5, (1 - trust) * b.sd + trust * sd)),
+    };
+    perCell[c] = { n: on.length, weight: round3(w), trust: round3(trust) };
+  }
+  const closed = share !== undefined ? renormaliseShares(profile, cells, share) : undefined;
+  return {
+    ...baseline,
+    profile: closed?.profile ?? profile,
+    dossier,
+    profileProposals: proposals,
+    ...audit,
+    trust: trustCap * (totalWeight / usable.length),
+    roles,
+    protocol: { cells: perCell, ...(closed ? { shares: closed.audit } : {}) },
+    note: `marina research agent (${research.retriever}; ${usable.length} judged analysts) over ${nowcastUsed ? "the Civiqs nowcast profile" : "the calibrated baseline"}, per cell${closed ? `, shares rescaled to ${share}` : ""}`,
   };
 }

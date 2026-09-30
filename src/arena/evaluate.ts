@@ -17,7 +17,7 @@ import type { ArenaData } from "./data";
 import type { RoundForecast } from "./forecast";
 import { PERSISTENCE_SD } from "./forecast";
 import { crpsNormal, skill } from "./score";
-import type { ArenaLock, ArenaRound } from "./types";
+import type { ArenaLock, ArenaRound, Distribution } from "./types";
 
 export type Forecaster = (round: ArenaRound, lock: ArenaLock) => Promise<RoundForecast>;
 
@@ -252,7 +252,10 @@ export interface ShadowScore {
   roundId: string;
   tracker: string;
   forecaster: string;
+  /** The resolved value (NaN for a profile round, whose outcome is a profile). */
   outcome: number;
+  /** Set for a profile round: scored by the arena's energy score. */
+  shape?: "profile_energy";
   /** vs the arena's persistence (the leaderboard's skill). */
   skill: number;
   /** The calibrated baseline's skill on the same round, for the head-to-head. */
@@ -291,9 +294,18 @@ export async function scoreShadow(
     if (!prior || at > (prior.created_at ?? 0)) counted.set(key, row);
   }
   const out: ShadowScore[] = [];
+  let site: Awaited<ReturnType<ArenaData["siteRounds"]>> | undefined;
   for (const row of counted.values()) {
     const outcome = resolved[row.round_id]?.value;
-    if (typeof outcome !== "number") continue;
+    if (typeof outcome !== "number") {
+      // A profile round: scored on the arena's energy score, as evaluateShapes does.
+      const round = await data.round(row.round_id);
+      if (round?.target_type !== "profile_energy") continue;
+      site ??= await data.siteRounds().catch(() => []);
+      const scored = await scoreShadowProfile(data, round, row, site);
+      if (scored) out.push(scored);
+      continue;
+    }
     const round = await data.round(row.round_id);
     const lock = round && (await data.lock(row.round_id).catch(() => undefined));
     const history = lock?.answer_history ?? lock?.history ?? [];
@@ -315,14 +327,83 @@ export async function scoreShadow(
   return out;
 }
 
+/**
+ * A recorded profile forecast against its resolved profile: the energy score,
+ * as skill against the arena's recorded persistence energy for the round, next
+ * to the baseline Marina would have filed from the same frozen inputs (a Trends
+ * lock without per-cell history reads the archive, as the nowcast does).
+ */
+async function scoreShadowProfile(
+  data: ArenaData,
+  round: ArenaRound,
+  row: { round_id: string; forecaster: string; forecast: string; cost_usd: number },
+  site: Awaited<ReturnType<ArenaData["siteRounds"]>>,
+): Promise<ShadowScore | undefined> {
+  const s = site.find((x) => x.round_id === round.round_id);
+  const persistence = s?.scores?.persistence?.energy;
+  const outcome = s?.resolution?.outcome as Record<string, number> | undefined;
+  const profile = (JSON.parse(row.forecast) as { profile?: Record<string, Distribution> }).profile;
+  const cells = round.cells ?? [];
+  if (s?.status !== "resolved" || !persistence || !outcome || !profile) return undefined;
+  if (!cells.every((c) => profile[c] && typeof outcome[c] === "number")) return undefined;
+  const [{ profileEnergy }, { forecastRound }, { trendsBasketHistory, TRENDS_INCLUDE_PARTIAL }] =
+    await Promise.all([
+      import("./score-shapes"),
+      import("./forecast"),
+      import("./research/civiqs-nowcast"),
+    ]);
+  let lock = await data.lock(round.round_id).catch(() => undefined);
+  if (lock && round.tracker === "google_trends" && !lock.answer_history_by_cell) {
+    const byCell = await trendsBasketHistory(data, round, TRENDS_INCLUDE_PARTIAL).catch(
+      () => undefined,
+    );
+    if (byCell) lock = { ...lock, answer_history_by_cell: byCell };
+  }
+  let base: Record<string, Distribution> | undefined;
+  try {
+    base = lock ? forecastRound(round, lock).profile : undefined;
+  } catch {
+    base = undefined; // No per-cell history: no baseline to compare against.
+  }
+  if (!base) return undefined;
+  const skillOf = (p: Record<string, Distribution>) =>
+    1 - profileEnergy(p, outcome, cells) / persistence;
+  return {
+    roundId: round.round_id,
+    tracker: round.tracker,
+    forecaster: row.forecaster,
+    outcome: Number.NaN,
+    shape: "profile_energy",
+    skill: skillOf(profile),
+    baselineSkill: skillOf(base),
+    costUsd: row.cost_usd,
+  };
+}
+
 export interface ShapeScore {
   roundId: string;
   shape: "profile_energy" | "ranking_list";
   tracker: string;
   /** The arena's own persistence loss for the round (energy, or 1 − RBO). */
   persistenceLoss: number;
-  results: Record<string, { loss: number; skill: number; note?: string }>;
+  results: Record<
+    string,
+    { loss: number; skill: number; note?: string; detail?: Record<string, unknown> }
+  >;
 }
+
+/** What a shape forecaster did beyond its answer: its audit record and cost. */
+const SHAPE_DETAIL_KEYS = [
+  "formation",
+  "trust",
+  "agreement",
+  "critique",
+  "protocol",
+  "profileProposals",
+  "rounds",
+  "roles",
+  "costUsd",
+] as const;
 
 /**
  * Profile and ranking rounds the arena has resolved, scored exactly as the
@@ -332,18 +413,32 @@ export interface ShapeScore {
 export async function evaluateShapes(
   data: ArenaData,
   forecasters: Record<string, Forecaster>,
-): Promise<{ rounds: ShapeScore[]; overall: Record<string, number> }> {
+  opts: { tracker?: string; shape?: "profile_energy" | "ranking_list" } = {},
+): Promise<{
+  rounds: ShapeScore[];
+  overall: Record<string, number>;
+  /** Per tracker family: rounds, mean skill per forecaster, and its summed cost where recorded. */
+  families: Array<{
+    tracker: string;
+    shape: string;
+    rounds: number;
+    skill: Record<string, number>;
+    costUsd: Record<string, number>;
+  }>;
+}> {
   const { profileEnergy, rboLoss } = await import("./score-shapes");
   const site = await data.siteRounds();
   const out: ShapeScore[] = [];
   for (const s of site) {
     if (
       s.status !== "resolved" ||
-      (s.target_type !== "profile_energy" && s.target_type !== "ranking_list")
+      (s.target_type !== "profile_energy" && s.target_type !== "ranking_list") ||
+      (opts.shape && s.target_type !== opts.shape)
     ) {
       continue;
     }
     const round = await data.round(s.round_id);
+    if (opts.tracker && round?.tracker !== opts.tracker) continue;
     // Resolved ranking rounds may have no lock file left; archive-backed
     // forecasters rebuild their inputs, lock-only ones simply cannot answer.
     const lock =
@@ -368,10 +463,15 @@ export async function evaluateShapes(
         }
         if (loss === undefined) continue;
         const fallback = (f as { fallback?: string }).fallback;
+        const extra = f as unknown as Record<string, unknown>;
+        const detail = Object.fromEntries(
+          SHAPE_DETAIL_KEYS.filter((k) => extra[k] !== undefined).map((k) => [k, extra[k]]),
+        );
         results[name] = {
           loss,
           skill: persistenceLoss === 0 ? 0 : 1 - loss / persistenceLoss,
           ...(fallback ? { note: fallback } : {}),
+          ...(Object.keys(detail).length ? { detail } : {}),
         };
       } catch {
         // No score for a forecaster that cannot answer the round.
@@ -390,5 +490,24 @@ export async function evaluateShapes(
     const sk = out.map((r) => r.results[name]?.skill).filter((x): x is number => x !== undefined);
     overall[name] = sk.length ? sk.reduce((a, b) => a + b, 0) / sk.length : Number.NaN;
   }
-  return { rounds: out, overall };
+  const byFamily = new Map<string, ShapeScore[]>();
+  for (const r of out) {
+    const key = `${r.tracker}\u0000${r.shape}`;
+    byFamily.set(key, [...(byFamily.get(key) ?? []), r]);
+  }
+  const families = [...byFamily.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([key, rows]) => {
+      const [tracker = "", shape = ""] = key.split("\u0000");
+      const skill: Record<string, number> = {};
+      const costUsd: Record<string, number> = {};
+      for (const name of Object.keys(forecasters)) {
+        const got = rows.map((r) => r.results[name]).filter((x) => x !== undefined);
+        skill[name] = got.length ? got.reduce((a, x) => a + x.skill, 0) / got.length : Number.NaN;
+        const cost = got.reduce((a, x) => a + Number(x.detail?.costUsd ?? 0), 0);
+        if (cost > 0) costUsd[name] = cost;
+      }
+      return { tracker, shape, rounds: rows.length, skill, costUsd };
+    });
+  return { rounds: out, overall, families };
 }
