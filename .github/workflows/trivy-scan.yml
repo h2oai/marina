@@ -25,12 +25,18 @@ jobs:
 
       # Build to the local docker daemon (load:true) so Trivy can scan it by
       # tag without pushing to a registry. Layer cache via GitHub Actions cache.
+      # The date busts only the OS security-update layer, once a day.
+      - name: Security refresh key
+        id: refresh
+        run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
       - name: Build image
         uses: docker/build-push-action@v7.3.0
         with:
           context: .
           load: true
           tags: ${{ env.IMAGE }}
+          build-args: SECURITY_REFRESH=${{ steps.refresh.outputs.date }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
