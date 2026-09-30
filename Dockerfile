@@ -63,8 +63,12 @@ ENV NODE_ENV=production
 # Also pull in Debian security updates for the base-image packages Trivy flags
 # (libc6, libcap2, libsystemd0/libudev1, sed) so the runtime layer ships
 # patched OS libraries even when the base tag lags behind.
+# SECURITY_REFRESH (set to the build date by CI) invalidates this layer daily, so a
+# cached build still picks up Debian security fixes published after the cache was made.
+ARG SECURITY_REFRESH=unset
 USER root
-RUN apt-get update \
+RUN echo "security refresh: ${SECURITY_REFRESH}" \
+  && apt-get update \
   && apt-get install -y --no-install-recommends sqlite3 git ripgrep \
   && apt-get upgrade -y --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
