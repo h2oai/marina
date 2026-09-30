@@ -10,6 +10,7 @@ import { CodeSessionDriver } from "../src/coding/code-session-driver";
 import { LocalWorkspace, type WorkspaceRuntime } from "../src/coding/local-workspace";
 import type { WorkspaceRegistry } from "../src/coding/workspace-registry";
 import { codeCommand } from "../src/engine/commands/code";
+import { recruitCodingAgent } from "../src/engine/commands/code/crew";
 import { sanitizeEntityName } from "../src/engine/entity-name";
 import { grant } from "../src/engine/safety-gates";
 import { MarinaDB } from "../src/persistence/database";
@@ -79,7 +80,7 @@ function fakeHandle(
   const subscribers: Array<(event: AgentEvent) => void> = [];
   const handle = {
     name,
-    getStatus: () => ({ entityId, role }) as never,
+    getStatus: () => ({ entityId, role, state: "idle" }) as never,
     sendAttention: async (message: string) => {
       attention.push(message);
     },
@@ -159,6 +160,50 @@ describe("code single-agent binding (writer lock + role-aware recruit)", () => {
     cleanupDb(TEST_DB);
   });
 
+  it("automatic recruitment preserves busy, focused and already-claimed workers", () => {
+    const coder = makeAgentEntity("recruit-coder", "Coder");
+    db.saveEntity(coder);
+    const { handle } = fakeHandle("Coder", coder.id);
+    const status = { entityId: coder.id, role: "coder", state: "idle" };
+    handle.getStatus = () => status as never;
+    const deps = {
+      db,
+      getEntity: () => coder,
+      findAgentByName: () => coder,
+      listAgents: () => [{ name: "Coder" }],
+      agentRuntime: { get: () => handle },
+    };
+    expect(recruitCodingAgent(deps, new Set())?.id).toBe(coder.id);
+    for (const patch of [
+      { state: "starting" },
+      { state: "autonomous" },
+      { state: "stopping" },
+      { state: "error" },
+      { healthState: "waiting" },
+      { budgetExhausted: true },
+      { attentionMode: "focused" },
+      { queuedPerceptions: 1 },
+      { focus: "another user's repair" },
+      { goal: "maintain an independent service" },
+    ]) {
+      handle.getStatus = () => ({ ...status, ...patch }) as never;
+      expect(recruitCodingAgent(deps, new Set())).toBeUndefined();
+    }
+    handle.getStatus = () => status as never;
+    coder.properties.coding_task = "in progress";
+    expect(recruitCodingAgent(deps, new Set())).toBeUndefined();
+    delete coder.properties.coding_task;
+    const task = db.createTask({
+      title: "Independent work",
+      description: "",
+      creatorId: coder.id,
+      creatorName: coder.name,
+    });
+    db.createTaskClaim(task, coder.id, coder.name, Date.now() + 60_000);
+    expect(recruitCodingAgent(deps, new Set())).toBeUndefined();
+    expect(db.getTaskClaim(task, coder.id)?.status).toBe("claimed");
+  });
+
   it("sets session.writer to the recruited bound agent so it can apply", async () => {
     const alice = makeAgentEntity("u_alice", "Alice");
     db.saveEntity(alice);
@@ -207,7 +252,8 @@ describe("code single-agent binding (writer lock + role-aware recruit)", () => {
     grant(db, alice.id, "code.exec");
     const fixture = fakeHandle("ModelCoder", coder.id);
     let model = "provider/first";
-    fixture.handle.getStatus = () => ({ entityId: coder.id, role: "coder", model }) as never;
+    fixture.handle.getStatus = () =>
+      ({ entityId: coder.id, role: "coder", state: "idle", model }) as never;
     fixture.handle.reconfigure = async (options) => {
       if (options.model) model = options.model;
     };

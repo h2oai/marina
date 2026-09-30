@@ -503,6 +503,9 @@ Usage:
   code observe <note>         Store an app/workspace observation
   code review [approve|reject] Review the latest coding task and its evidence
   code verify                 Run detected typecheck/lint/test/build chain
+  code verify start           Start local allowlisted checks; return a durable receipt
+  code verify candidate       Check an isolated Git source snapshot; return a receipt
+  code verify candidate dependencies:bun  Prepare locked Bun dependencies without install scripts
   code test|lint|typecheck    Run a common verification command
   code patch [title]\\n<diff>  Propose a unified-diff patch
   code edit <path> [all]\\n<<<<<<< OLD\\n{old}\\n=======\\n{new}\\n>>>>>>> NEW  Replace exact text in a file

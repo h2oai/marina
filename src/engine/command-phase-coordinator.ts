@@ -4,6 +4,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { MacroManager } from "../coordination/macro-manager";
 import type { MarinaDB } from "../persistence/database";
+import { type CodingCommandTarget, parseCodingCommandTarget } from "../sdk/command-target";
 import { classifyPrimitive } from "../telemetry/primitive-usage";
 import type { CommandContext, EngineEvent, Entity, EntityId, RoomContext, RoomId } from "../types";
 import type { EntityManager } from "../world/entity-manager";
@@ -13,13 +14,24 @@ import { failCommandResponse } from "./command-response";
 import type { CommandRouter } from "./command-router";
 import { trackQuestProgress } from "./commands/quest";
 import { getErrorMessage, tryLog } from "./errors";
-import { armGatePass, claimCommandPass, runCommandScope, setCurrentCommand } from "./gate-context";
+import {
+  armGatePass,
+  claimCommandPass,
+  runCommandScope,
+  setCurrentCodingTarget,
+  setCurrentCommand,
+} from "./gate-context";
 import type { Logger } from "./logger";
 import { getRank, rankName } from "./permissions";
 import { checkGateForExecution, recordGateExecution } from "./safety-gates";
 import { isLocalUngated } from "./trust-profile";
 
 /** Admission/FIFO/drain belongs to CommandCoordinator; execution policy lives here. */
+export interface CommandExecutionOptions {
+  bypassModal?: boolean;
+  codingTarget?: CodingCommandTarget;
+}
+
 export interface CommandPhaseHost {
   readonly entities: Pick<EntityManager, "get">;
   readonly rooms: Pick<RoomManager, "get">;
@@ -65,17 +77,26 @@ export class CommandPhaseCoordinator {
 
   /**
    * Process a single command immediately. Each execution runs in its own
-   * gate-context frame: its current command and armed approval are its own,
-   * and a nested or interleaved command can neither read nor clear them.
+   * gate-context frame: its current command, armed approval and coding
+   * target are its own, and a nested or interleaved command can neither read
+   * nor clear them.
    */
-  execute(entityId: EntityId, raw: string, opts?: { bypassModal?: boolean }): Promise<void> {
-    return runCommandScope(entityId, () => this.executeInner(entityId, raw, opts));
+  execute(entityId: EntityId, raw: string, opts?: CommandExecutionOptions): Promise<void> {
+    return runCommandScope(entityId, async () => {
+      // Copy at entry so a caller cannot retarget an invocation across an await.
+      const own =
+        opts?.codingTarget !== undefined
+          ? { ...opts, codingTarget: parseCodingCommandTarget(opts.codingTarget) }
+          : opts;
+      setCurrentCodingTarget(entityId, own?.codingTarget);
+      await this.executeInner(entityId, raw, own);
+    });
   }
 
   private async executeInner(
     entityId: EntityId,
     raw: string,
-    opts?: { bypassModal?: boolean },
+    opts?: CommandExecutionOptions,
   ): Promise<void> {
     const commandStartedAt = Date.now();
     const entity = this.host.entities.get(entityId);
@@ -84,10 +105,11 @@ export class CommandPhaseCoordinator {
     // Engine-initiated housekeeping (brief heartbeat, login look) must not be
     // captured by an entity's active modal — inside Code Mode the rewrite
     // would turn "brief" into the coding task `code brief`.
-    const routedRaw = opts?.bypassModal ? raw : this.routeModalCommand(entity, raw);
+    const routedRaw =
+      opts?.bypassModal || opts?.codingTarget ? raw : this.routeModalCommand(entity, raw);
     const input = this.host.commands.parse(routedRaw, entityId, entity.room);
 
-    if (!input.verb) return;
+    if (!input.verb && !opts?.codingTarget) return;
     // A room command that shadows a builtin runs under its OWN (empty)
     // definition: the builtin's rank floor and gate govern the builtin
     // handler, and a gate execution must never be credited to a room handler.
@@ -115,6 +137,14 @@ export class CommandPhaseCoordinator {
         });
       });
     };
+
+    // Targeted requests use explicit code grammar, never modal rewrites, macros or room overrides.
+    if (opts?.codingTarget && (input.verb !== "code" || resolved?.owner !== "builtin")) {
+      const message = "Coding targets require an explicit built-in code command.";
+      this.host.sendToEntity(entityId, message);
+      failCommandResponse(message);
+      return;
+    }
 
     if (!handler) {
       // Macro fallback: entity macros first, then system macros
@@ -191,9 +221,10 @@ export class CommandPhaseCoordinator {
       recordGateExecution(this.host.db, entityId, def.gate, result, `command:${def.name}`);
     }
 
-    const ctx =
+    const baseCtx =
       this.host.buildCommandContext(entity.room, entityId) ?? this.host.buildContext(entity.room);
-    if (!ctx) return;
+    if (!baseCtx) return;
+    const ctx = opts?.codingTarget ? { ...baseCtx, codingTarget: opts.codingTarget } : baseCtx;
 
     try {
       const result = handler(ctx, input);

@@ -54,6 +54,7 @@ export declare function renderCapabilityRoster(entries: CommandCatalogEntry[], m
 
 ```typescript
 import type { CapabilityManifest } from "./capabilities.js";
+import { type CodingCommandTarget } from "./command-target.js";
 import { type RunScoreDeps } from "./conduct.js";
 import type { UnifiedContextResult } from "./memory-context.js";
 import type { MemoryOperationRequest, MemoryOperationResult } from "./memory-operations.js";
@@ -97,6 +98,9 @@ export interface ClientOptions {
     commandDrainTimeout?: number;
     /** Auto negotiates legacy compatibility; correlated refuses legacy commands before sending. */
     commandMode?: "auto" | "correlated";
+    /** World grammar ignores a resident's human input modal. Native tool clients
+     * should select world; requires advertised support, never silently downgrades. */
+    commandGrammar?: "modal" | "world";
     /** Command completion timeout in ms (default: 120000). A timeout never implies success. */
     commandTimeout?: number;
     /** Callback fired immediately after WebSocket opens, before any login message is sent. */
@@ -104,6 +108,10 @@ export interface ClientOptions {
     /** Internal-agent token. Sent with login/auth messages so the engine can
      * exempt internal room/crew agents from instance login limits. */
     internalToken?: string;
+}
+export interface CommandOptions {
+    signal?: AbortSignal;
+    codingTarget?: CodingCommandTarget;
 }
 type PerceptionHandler = (p: Perception) => void;
 /** Legacy results are observations, without guaranteed attribution or completion. */
@@ -189,6 +197,8 @@ export declare class MarinaClient {
     private reconnectAttempts;
     private reconnectGaveUp;
     private commandProtocol;
+    private codingTargetSupported;
+    private worldCommandSupported;
     private commandSession;
     private legacyCommands;
     private legacyCommandUncertain;
@@ -205,6 +215,7 @@ export declare class MarinaClient {
     /** Negotiated when login/auth succeeds; no commands are replayed to detect support. */
     getCommandProtocol(): "correlated" | "legacy" | undefined;
     private negotiateCommands;
+    private worldCommand;
     /** Subscribe to a client event. */
     on<K extends ClientEventName>(event: K, handler: (...args: ClientEventMap[K]) => void): void;
     /** Unsubscribe from a client event. */
@@ -215,7 +226,7 @@ export declare class MarinaClient {
     /** Reconnect using a previously issued session token. */
     reconnect(token: string): Promise<SessionInfo>;
     /** Confirmed results on current servers; explicitly unconfirmed observations on legacy servers. */
-    command(cmd: string, signal?: AbortSignal): Promise<CommandResult>;
+    command(cmd: string, options?: AbortSignal | CommandOptions): Promise<CommandResult>;
     private legacyCommand;
     private collectLegacyCommand;
     private capabilityCache?;
@@ -494,6 +505,21 @@ export declare function namedInputSchema(form: CommandForm): Record<string, unkn
 export declare function commandInputSchema(form: CommandForm): Record<string, unknown>;
 ```
 
+## command-target
+
+[Source](../../src/sdk/command-target.ts)
+
+```typescript
+/** Request-local destination; never changes the resident's selected coding session. */
+export interface CodingCommandTarget {
+    readonly sessionId: string;
+    /** Optional precondition: this must still be the session's active attempt at execution. */
+    readonly runId?: string;
+}
+/** Shared wire validation. Session ownership and attempt freshness are checked by the engine. */
+export declare function parseCodingCommandTarget(value: unknown): CodingCommandTarget;
+```
+
 ## conduct
 
 [Source](../../src/sdk/conduct.ts)
@@ -629,11 +655,12 @@ export interface MarinaExtension {
 ```typescript
 export type { CapabilityManifest, CommandCatalogEntry } from "./capabilities.js";
 export { renderCapabilityRoster } from "./capabilities.js";
-export type { ClientOptions, CommandResult, ConnectionState, RoomView, SessionInfo, } from "./client.js";
+export type { ClientOptions, CommandOptions, CommandResult, ConnectionState, RoomView, SessionInfo, } from "./client.js";
 export { CommandError, MarinaAgent, MarinaClient } from "./client.js";
 export type { CommandField, CommandForm, CommandUsage } from "./command-forms.js";
 export { commandFormPrefix, compileCommandForms, composeCommand, matchCommandForm, } from "./command-forms.js";
 export { commandInputSchema } from "./command-schema.js";
+export type { CodingCommandTarget } from "./command-target.js";
 export type * from "./extensions.js";
 export { EXTENSION_API_VERSION } from "./extensions.js";
 export type { UnifiedContextResult } from "./memory-context.js";

@@ -200,12 +200,14 @@ export function registerCoordinationCommands(engine: Engine): void {
         engine.entities.all().filter((e) => engine._connections.isEntityConnected(e.id)),
       isConnected: (id) => engine._connections.isEntityConnected(id as EntityId),
       send: (id, text) => engine.sendToEntity(id as EntityId, text, "challenge"),
-      // The leading "/" is explicit world input, so an active modal (Code Mode)
-      // never rewrites the held command on its way back in.
       // Through admission + FIFO: the re-run lines up behind anything the
-      // requester already queued instead of interleaving with it.
-      redispatch: (id, raw) =>
-        engine.dispatchCommand(id as EntityId, `/${raw}`).then(() => undefined),
+      // requester already queued instead of interleaving with it. The held
+      // input already passed modal routing, so it re-runs verbatim (the pass
+      // is keyed on that exact input) with its request-local coding target.
+      redispatch: (id, raw, options) =>
+        engine
+          .dispatchCommand(id as EntityId, raw, { ...options, bypassModal: true })
+          .then(() => undefined),
       creatorOf: (entity) => engine.db?.getAgentConfig(entity.name)?.spawned_by || undefined,
     },
     engine,

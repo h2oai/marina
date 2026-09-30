@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { CommandForm, CommandUsage } from "./sdk/command-forms";
+import type { CodingCommandTarget } from "./sdk/command-target";
 import type { DurableMemoryAPI } from "./sdk/memory-operations";
 
 import type { Entity, EntityId, EntityRank, Perception, RoomId } from "./sdk/protocol";
@@ -72,6 +73,8 @@ export interface CommandDef {
 // ─── Room Context (injected into room modules) ──────────────────────────────
 
 export interface RoomContext {
+  /** Explicit destination for this command only; code handlers validate access before use. */
+  readonly codingTarget?: CodingCommandTarget;
   /** All entities currently in this room */
   entities: Entity[];
 

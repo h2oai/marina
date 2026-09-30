@@ -1,11 +1,14 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { realpath } from "node:fs/promises";
 import { TaskManager } from "../coordination/task-manager";
 import { sanitizeEntityName } from "../engine/entity-name";
+import { getErrorMessage } from "../engine/errors";
 import { codingRunContext } from "../persistence/coding-run-context";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../persistence/database";
 import type { Entity, EntityId } from "../types";
+import { CANDIDATE_POLICY, type CandidateIdentity, observeCandidate } from "./candidate";
 
 export interface CodingRunMetadata {
   version: 1;
@@ -13,6 +16,8 @@ export interface CodingRunMetadata {
   ownerKey: string;
   ownerName: string;
   workerKey: string;
+  /** Exact canonical task-claim row; unlike workerKey, this may be a transient entity id. */
+  claimantId?: string;
   workerName: string;
   runtimeName?: string;
   profile: string;
@@ -21,13 +26,32 @@ export interface CodingRunMetadata {
   executionTarget: string;
   workspaceEventId?: string;
   summaryId?: string;
+  /** Frozen owner intent for this attempt; omission preserves ordinary task behavior. */
+  verificationRequirement?: "candidate";
+  unverifiedAcceptance?: { ownerKey: string; reason: string; acceptedAt: number };
   verificationId?: string;
-  verification?: "passed" | "failed" | "missing" | "stale";
+  verification?: "passed" | "failed" | "missing" | "stale" | "unbound" | "unavailable";
+  candidateId?: string;
+  verificationObservedAt?: number;
+  verificationReason?: string;
   reason?: string;
 }
 
 export function codingRunMetadata(run: CodingArtifactRow): CodingRunMetadata {
   return JSON.parse(run.metadata_json) as CodingRunMetadata;
+}
+
+/** Resolve the canonical claim without confusing its row key with account authority.
+ * Older attempts lack the row reference; accept only an exact or durable identity match. */
+export function codingRunClaim(db: MarinaDB, run: CodingArtifactRow) {
+  const meta = codingRunMetadata(run);
+  if (meta.claimantId) return db.getTaskClaim(meta.taskId, meta.claimantId);
+  return (
+    db.getTaskClaim(meta.taskId, meta.workerKey) ??
+    db
+      .getTaskClaims(meta.taskId)
+      .find((claim) => db.durableEntityKey(claim.entity_id) === meta.workerKey)
+  );
 }
 
 /** Called before delivering attention, so even an immediate reply has an attempt. */
@@ -41,6 +65,7 @@ export function beginCodingRun(
     profile: string;
     modelTarget?: string;
     runtimeName?: string;
+    verificationRequirement?: "candidate";
   },
 ): CodingArtifactRow {
   return db.transaction(() => {
@@ -50,6 +75,8 @@ export function beginCodingRun(
     ) {
       throw new Error("Only the coding session creator may dispatch its task.");
     }
+    if (input.verificationRequirement && input.session.execution_target !== "local")
+      throw new Error("Candidate-required tasks need a local Git workspace.");
     const workerKey = db.durableEntityKey(input.worker.id);
     const ownerKey = db.durableEntityKey(input.owner.id);
     const active = db.listCodingRuns({
@@ -64,6 +91,13 @@ export function beginCodingRun(
           "This coding session already has an active task. Stop it before changing workers.",
         );
       }
+      if (
+        input.verificationRequirement &&
+        meta.verificationRequirement !== input.verificationRequirement
+      )
+        throw new Error(
+          "This attempt's verification contract is already set. Stop it before starting a candidate-required task.",
+        );
       if (!heartbeatCodingRun(db, active)) {
         throw new Error(
           "The task claim is no longer active. Stop this attempt before starting another.",
@@ -88,7 +122,8 @@ export function beginCodingRun(
       creatorId: input.owner.id,
       creatorName: input.owner.name,
     });
-    if (!tasks.claim(task.id, input.worker.id, input.worker.name)) {
+    const claim = tasks.claim(task.id, input.worker.id, input.worker.name);
+    if (!claim) {
       throw new Error("Could not claim the coding task.");
     }
     const metadata: CodingRunMetadata = {
@@ -97,12 +132,14 @@ export function beginCodingRun(
       ownerKey,
       ownerName: input.owner.name,
       workerKey,
+      claimantId: claim.entityId,
       workerName: input.worker.name,
       runtimeName: input.runtimeName,
       profile: input.profile,
       modelTarget: input.modelTarget,
       workspace: input.session.workspace_root,
       executionTarget: input.session.execution_target,
+      verificationRequirement: input.verificationRequirement,
     };
     const run = db.createCodingArtifact({
       sessionId: input.session.id,
@@ -124,39 +161,48 @@ export function beginCodingRun(
   });
 }
 
-/** A stored summary is a submission; only the ordinary task review approves it. */
-export function submitCodingRun(
+/** Required checks gate submission. An early summary remains durable progress on the same attempt. */
+export async function submitCodingRun(
   db: MarinaDB,
   sessionId: string,
   worker: Entity,
   summary: CodingArtifactRow,
-): CodingArtifactRow | undefined {
+  allowHostObservation = true,
+): Promise<CodingArtifactRow | undefined> {
+  const initial = db.listCodingRuns({ sessionId, status: "active", limit: 1 })[0];
+  if (!initial || codingRunMetadata(initial).workerKey !== db.durableEntityKey(worker.id))
+    return undefined;
+  if (summary.session_id !== sessionId || JSON.parse(summary.metadata_json).runId !== initial.id)
+    return undefined;
+  const assessed = await assessCodingVerification(db, initial, allowHostObservation);
   return db.transaction(() => {
     const run = db.listCodingRuns({ sessionId, status: "active", limit: 1 })[0];
-    if (!run) return undefined;
+    if (!run || run.id !== initial.id) return undefined;
     const meta = codingRunMetadata(run);
     const origin = JSON.parse(summary.metadata_json) as { runId?: string };
     if (summary.session_id !== sessionId || origin.runId !== run.id) return undefined;
     if (meta.workerKey !== db.durableEntityKey(worker.id)) return undefined;
     const tasks = new TaskManager(db);
-    const artifacts = db.listCodingRunArtifacts(run.id);
-    const verificationIndex = artifacts.findIndex((artifact) => artifact.kind === "verification");
-    const verification = artifacts[verificationIndex];
-    const changedSince =
-      verification &&
-      (JSON.parse(verification.metadata_json) as { workspaceEventId?: string }).workspaceEventId !==
-        meta.workspaceEventId;
+    const verification = latestVerification(db, run.id);
+    if (!codingVerificationUnchanged(db, initial, assessed.verificationId))
+      throw new Error(
+        "Verification evidence changed during submission. Inspect it and submit again.",
+      );
     meta.summaryId = summary.id;
-    meta.verificationId = verification?.id;
-    meta.verification = !verification
-      ? "missing"
-      : verification.status !== "complete"
-        ? "failed"
-        : changedSince
-          ? "stale"
-          : "passed";
+    Object.assign(meta, assessed);
+    if (meta.verificationRequirement === "candidate" && meta.verification !== "passed") {
+      db.updateCodingArtifact(run.id, { metadata: meta });
+      db.createCodingEvent({
+        sessionId,
+        actor: worker.name,
+        kind: "verification_required",
+        payload: { runId: run.id, summaryId: summary.id, ...meta },
+      });
+      return db.getCodingArtifact(run.id)!;
+    }
     const evidence = `${summary.content_text}\n\nCoding attempt: artifact:${run.id}\nSummary: artifact:${summary.id}\nRecorded verification: ${meta.verification}${verification ? ` (artifact:${verification.id})` : ""}`;
-    if (!tasks.submit(meta.taskId, worker.id, evidence)) {
+    const claim = codingRunClaim(db, run);
+    if (!claim || !tasks.submit(meta.taskId, claim.entity_id, evidence)) {
       throw new Error(
         "The coding task claim expired or changed; its summary was saved but could not be submitted.",
       );
@@ -172,6 +218,143 @@ export function submitCodingRun(
   });
 }
 
+function latestVerification(db: MarinaDB, runId: string) {
+  return db
+    .listCodingRunArtifacts(runId)
+    .find(
+      (artifact) => artifact.kind === "verification" || artifact.kind === "verification_request",
+    );
+}
+
+/** UI projection of a fresh assessment, never a substitute for the submission check. */
+export function codingVerificationReadiness(
+  db: MarinaDB,
+  run: CodingArtifactRow,
+  meta = codingRunMetadata(run),
+) {
+  if (latestVerification(db, run.id)?.status === "running") return "running" as const;
+  if (meta.verification === "passed") return "ready" as const;
+  if (meta.verification && meta.verification !== "missing") return "needs-attention" as const;
+  return meta.verificationRequirement === "candidate" ? ("required" as const) : undefined;
+}
+
+/** No async observation may overwrite a concurrent attempt/evidence transition. */
+export function codingVerificationUnchanged(
+  db: MarinaDB,
+  run: CodingArtifactRow,
+  verificationId?: string,
+) {
+  const current = db.getCodingArtifact(run.id);
+  return (
+    current?.metadata_json === run.metadata_json &&
+    current.status === run.status &&
+    latestVerification(db, run.id)?.id === verificationId
+  );
+}
+
+/** Explicit observation, never a promise that a mutable working tree stays verified.
+ * Live/legacy checks retain their output but cannot manufacture immutable evidence. */
+export async function assessCodingVerification(
+  db: MarinaDB,
+  run: CodingArtifactRow,
+  allowHostObservation = true,
+) {
+  const meta = codingRunMetadata(run);
+  const verification = latestVerification(db, run.id);
+  const result: Pick<
+    CodingRunMetadata,
+    | "verification"
+    | "verificationId"
+    | "candidateId"
+    | "verificationObservedAt"
+    | "verificationReason"
+  > = {
+    verification: "missing",
+    verificationId: verification?.id,
+    candidateId: undefined,
+    verificationObservedAt: Date.now(),
+    verificationReason: undefined,
+  };
+  if (!verification)
+    return {
+      ...result,
+      verificationReason:
+        "No candidate checks recorded. Run code verify candidate, inspect its result, then submit a summary.",
+    };
+  if (verification.kind === "verification_request" && verification.status === "running")
+    return {
+      ...result,
+      verificationReason: `Checks are still running. Inspect code show ${verification.id}; wait for the result before resubmitting.`,
+    };
+  const evidence = JSON.parse(verification.metadata_json) as Record<string, unknown>;
+  result.candidateId = typeof evidence.candidateId === "string" ? evidence.candidateId : undefined;
+  if (verification.status !== "complete") return { ...result, verification: "failed" as const };
+  if (evidence.workspaceEventId !== meta.workspaceEventId)
+    return { ...result, verification: "stale" as const };
+  const row =
+    typeof evidence.candidateId === "string"
+      ? db.getCodingArtifact(evidence.candidateId)
+      : undefined;
+  if (row?.kind !== "candidate" || row.session_id !== run.session_id)
+    return {
+      ...result,
+      verification: "unbound" as const,
+      verificationReason:
+        "Checks ran without an immutable source candidate. Use code verify candidate.",
+    };
+  result.candidateId = row.id;
+  const candidate = JSON.parse(row.metadata_json) as CandidateIdentity & { runId?: string };
+  const session = db.getCodingSession(run.session_id);
+  if (
+    candidate.version !== 1 ||
+    candidate.policy !== CANDIDATE_POLICY ||
+    candidate.runId !== run.id ||
+    session?.execution_target !== "local" ||
+    evidence.executionTarget !== "local" ||
+    evidence.executionLocation !== "candidate-materialization" ||
+    evidence.tree !== candidate.tree ||
+    evidence.candidateFingerprint !== candidate.fingerprint
+  )
+    return {
+      ...result,
+      verification: "unavailable" as const,
+      verificationReason: "Candidate identity or workspace binding changed.",
+    };
+  if (evidence.materializedFingerprint !== candidate.fingerprint)
+    return {
+      ...result,
+      verification: "stale" as const,
+      verificationReason:
+        "Checks changed the materialized source or its final state could not be observed.",
+    };
+  if (!allowHostObservation)
+    return {
+      ...result,
+      verification: "unavailable" as const,
+      verificationReason: "Host source observation is unavailable over this transport.",
+    };
+  try {
+    if ((await realpath(session.worktree_path ?? session.workspace_root)) !== candidate.repository)
+      throw new Error("Candidate workspace binding changed.");
+    const current = await observeCandidate(candidate);
+    const latestSession = db.getCodingSession(run.session_id);
+    if (
+      latestSession?.workspace_root !== session.workspace_root ||
+      latestSession?.worktree_path !== session.worktree_path ||
+      latestSession?.execution_target !== "local"
+    )
+      throw new Error("Candidate workspace binding changed during observation.");
+    result.verification = current === candidate.fingerprint ? "passed" : "stale";
+    if (result.verification === "stale")
+      result.verificationReason = "Included source changed since snapshot verification.";
+  } catch (error) {
+    result.verification = "unavailable";
+    result.verificationReason = getErrorMessage(error);
+  }
+  result.verificationObservedAt = Date.now();
+  return result;
+}
+
 export function endCodingRun(
   db: MarinaDB,
   runId: string,
@@ -185,9 +368,9 @@ export function endCodingRun(
     meta.reason = reason;
     // Release only this attempt's live claim. A submitted/approved claim cannot
     // be undone by a delayed stop or a late event from an old worker.
-    const claim = db.getTaskClaim(meta.taskId, meta.workerKey);
+    const claim = codingRunClaim(db, run);
     if (claim?.status === "claimed") {
-      db.updateTaskClaimStatus(meta.taskId, meta.workerKey, "released");
+      db.updateTaskClaimStatus(meta.taskId, claim.entity_id, "released");
       const task = db.getTask(meta.taskId);
       if (task?.status === "claimed") db.updateTaskStatus(meta.taskId, "open");
     }
@@ -208,8 +391,7 @@ export function recoverCodingRuns(db: MarinaDB): void {
     const runs = db.listCodingRuns({ status: "active", limit: 100 });
     if (!runs.length) return;
     for (const run of runs) {
-      const meta = codingRunMetadata(run);
-      const claim = db.getTaskClaim(meta.taskId, meta.workerKey);
+      const claim = codingRunClaim(db, run);
       const worker = claim ? db.loadEntity(claim.entity_id as EntityId) : undefined;
       if (worker?.properties.coding_session_id === run.session_id) {
         delete worker.properties.coding_task;
@@ -228,13 +410,13 @@ export function recoverCodingRuns(db: MarinaDB): void {
 export function heartbeatCodingRun(db: MarinaDB, run: CodingArtifactRow): boolean {
   const meta = codingRunMetadata(run);
   const tasks = new TaskManager(db);
-  const claim = tasks.getClaim(meta.taskId, meta.workerKey);
+  const claim = codingRunClaim(db, run);
   if (
     claim?.status !== "claimed" ||
-    (claim.leaseExpiresAt !== null && claim.leaseExpiresAt <= Date.now())
+    (claim.lease_expires_at !== null && claim.lease_expires_at <= Date.now())
   )
     return false;
-  return !!tasks.heartbeat(meta.taskId, meta.workerKey);
+  return !!tasks.heartbeat(meta.taskId, claim.entity_id);
 }
 
 function bindRunContext(run: CodingArtifactRow): void {

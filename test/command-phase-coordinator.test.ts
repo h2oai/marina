@@ -9,11 +9,17 @@ import { Logger } from "../src/engine/logger";
 import type { EngineEvent, RoomContext } from "../src/types";
 import { roomId } from "../src/types";
 import { EntityManager } from "../src/world/entity-manager";
+import { scopeProcessState } from "./process-state";
 
 // Another file's engine may still be wired as the challenge host.
 beforeEach(() => resetChallengesForTests());
 
 test("execution routes modals through the same permissions and awaits async handlers without Engine", async () => {
+  // This standalone coordinator has no challenge host. Do not borrow a prior engine's host.
+  using _state = scopeProcessState({
+    trustProfile: "shared",
+    env: { MARINA_AUTONOMY: "guarded", MARINA_CHALLENGES: "off" },
+  });
   const entities = new EntityManager();
   const entity = entities.create({
     kind: "agent",

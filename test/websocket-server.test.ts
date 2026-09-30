@@ -21,7 +21,7 @@ describe("WebSocket Server", () => {
   let wsServer: WebSocketServer;
   let db: MarinaDB;
   let dbPath: string;
-  const WS_PORT = 15300;
+  let WS_PORT: number;
   // The listener records its bound port process-wide (src/net/listen-ports);
   // scope it so later files in the same process see the prior state.
   let processState: DisposableStack;
@@ -55,18 +55,19 @@ describe("WebSocket Server", () => {
       }),
     );
 
-    wsServer = new WebSocketServer(engine, WS_PORT);
+    wsServer = new WebSocketServer(engine, 0);
     wsServer.start();
+    WS_PORT = wsServer.getPort();
     engine.start();
   });
 
   afterEach(async () => {
     engine.stop();
-    wsServer.stop();
+    await wsServer.stop();
+    await engine.drainCommands();
     db.close();
     cleanupDb(dbPath);
     processState.dispose();
-    await Bun.sleep(100);
   });
 
   // ─── Connection ───────────────────────────────────────────────────────

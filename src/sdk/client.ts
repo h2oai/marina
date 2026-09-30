@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { CapabilityManifest } from "./capabilities";
+import { type CodingCommandTarget, parseCodingCommandTarget } from "./command-target";
 import { type RunScoreDeps, runScore } from "./conduct";
 import { MemoryClientError } from "./memory-client";
 import type { UnifiedContextResult } from "./memory-context";
@@ -45,6 +46,9 @@ export interface ClientOptions {
   commandDrainTimeout?: number;
   /** Auto negotiates legacy compatibility; correlated refuses legacy commands before sending. */
   commandMode?: "auto" | "correlated";
+  /** World grammar ignores a resident's human input modal. Native tool clients
+   * should select world; requires advertised support, never silently downgrades. */
+  commandGrammar?: "modal" | "world";
   /** Command completion timeout in ms (default: 120000). A timeout never implies success. */
   commandTimeout?: number;
   /** Callback fired immediately after WebSocket opens, before any login message is sent. */
@@ -52,6 +56,11 @@ export interface ClientOptions {
   /** Internal-agent token. Sent with login/auth messages so the engine can
    * exempt internal room/crew agents from instance login limits. */
   internalToken?: string;
+}
+
+export interface CommandOptions {
+  signal?: AbortSignal;
+  codingTarget?: CodingCommandTarget;
 }
 
 type PerceptionHandler = (p: Perception) => void;
@@ -204,6 +213,8 @@ export class MarinaClient {
   private reconnectAttempts = 0;
   private reconnectGaveUp = false;
   private commandProtocol: "correlated" | "legacy" | undefined;
+  private codingTargetSupported = false;
+  private worldCommandSupported = false;
   private commandSession = 0;
   private legacyCommands: Promise<void> = Promise.resolve();
   private legacyCommandUncertain = false;
@@ -220,6 +231,7 @@ export class MarinaClient {
       maxReconnectDelay: options?.maxReconnectDelay ?? 30000,
       commandDrainTimeout: options?.commandDrainTimeout ?? 500,
       commandMode: options?.commandMode ?? "auto",
+      commandGrammar: options?.commandGrammar ?? "modal",
       commandTimeout: options?.commandTimeout ?? 120_000,
       onOpen: options?.onOpen ?? undefined,
       internalToken: options?.internalToken ?? undefined,
@@ -256,8 +268,22 @@ export class MarinaClient {
 
   private negotiateCommands(p: Perception): void {
     this.commandProtocol = p.data.commandProtocol === "correlated-v1" ? "correlated" : "legacy";
+    this.codingTargetSupported = p.data.codingTargetProtocol === "session-run-v1";
+    this.worldCommandSupported = p.data.worldCommandProtocol === "slash-v1";
     this.commandSession++;
     this.legacyCommandUncertain = false;
+  }
+
+  private worldCommand(command: string): string {
+    if (this.worldCommandSupported)
+      return command.trimStart().startsWith("/") ? command : `/${command}`;
+    if (this.options.commandGrammar === "world")
+      throw new CommandError(
+        "Server does not advertise world command grammar; command was not sent.",
+      );
+    // Structured memory remains compatible with older servers. Current servers
+    // always advertise the explicit grammar, independent of the human modal.
+    return command;
   }
 
   // ─── Event Emitter ─────────────────────────────────────────────────────
@@ -373,10 +399,17 @@ export class MarinaClient {
   }
 
   /** Confirmed results on current servers; explicitly unconfirmed observations on legacy servers. */
-  async command(cmd: string, signal?: AbortSignal): Promise<CommandResult> {
+  async command(cmd: string, options?: AbortSignal | CommandOptions): Promise<CommandResult> {
+    const { signal, codingTarget: requestedTarget } =
+      options instanceof AbortSignal ? { signal: options } : (options ?? {});
+    const codingTarget =
+      requestedTarget !== undefined ? parseCodingCommandTarget(requestedTarget) : undefined;
     signal?.throwIfAborted();
     if (!this.session) throw new Error("Not connected. Call connect() first.");
     if (!this.connected) throw new Error("Disconnected before command execution.");
+    if (!codingTarget && this.options.commandGrammar === "world") cmd = this.worldCommand(cmd);
+    if (codingTarget && (!this.codingTargetSupported || this.commandProtocol !== "correlated"))
+      throw new CommandError("Server does not advertise coding targets; command was not sent.");
     if (this.commandProtocol !== "correlated") {
       if (this.options.commandMode === "correlated")
         throw new CommandError(
@@ -422,7 +455,12 @@ export class MarinaClient {
       this.on("disconnect", disconnected);
       signal?.addEventListener("abort", aborted, { once: true });
       try {
-        this.send({ type: "command", command: cmd, request_id: requestId });
+        this.send({
+          type: "command",
+          command: cmd,
+          request_id: requestId,
+          ...(codingTarget ? { coding_target: codingTarget } : {}),
+        });
       } catch (error) {
         cleanup();
         reject(error);
@@ -678,7 +716,9 @@ export class MarinaClient {
       try {
         this.send({
           type: "command",
-          command: `memory api ${JSON.stringify({ ...request, request_id: requestId })}`,
+          command: this.worldCommand(
+            `memory api ${JSON.stringify({ ...request, request_id: requestId })}`,
+          ),
         });
       } catch (error) {
         cleanup();

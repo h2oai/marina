@@ -9,7 +9,22 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type Static, Type } from "@sinclair/typebox";
 import { execCommand, type ToolContext, wrap } from "./shared";
 
+const verificationMode = Type.Optional(
+  Type.Union([Type.Literal("live"), Type.Literal("start"), Type.Literal("candidate")], {
+    description:
+      "live waits for workspace checks; start runs them in background; candidate verifies a separate local Git source snapshot. Background modes return a receipt; inspect its result before submitting a summary.",
+  }),
+);
+const dependencies = Type.Optional(
+  Type.Literal("bun", {
+    description:
+      "Only with candidate mode and user authorization: install captured bun.lock in the disposable snapshot, frozen, without lifecycle scripts. Never uses live node_modules.",
+  }),
+);
+
 const codeSchema = Type.Object({
+  verificationMode,
+  dependencies,
   action: Type.Union(
     [
       Type.Literal("status"),
@@ -29,6 +44,7 @@ const codeSchema = Type.Object({
       Type.Literal("history"),
       Type.Literal("plan"),
       Type.Literal("summary"),
+      Type.Literal("blocked"),
       Type.Literal("handoff"),
       Type.Literal("decision"),
       Type.Literal("workspace"),
@@ -71,7 +87,7 @@ const codeSchema = Type.Object({
     }),
   ),
   text: Type.Optional(
-    Type.String({ description: "Text for plan/summary/handoff/decision/observe/reject" }),
+    Type.String({ description: "Text for plan/summary/blocked/handoff/decision/observe/reject" }),
   ),
 });
 
@@ -263,9 +279,9 @@ export function createTypedCodeTools(ctx: ToolContext): AgentTool[] {
     wrap(
       "marina_code_verify",
       "Code Verify",
-      "Run the detected verification chain and store a verification artifact.",
-      codeEmptySchema,
-      () => "code verify",
+      "Run the detected verification chain. Candidate mode binds results to an isolated local Git snapshot; ignored dependencies are excluded. Background admission is not a passing result.",
+      Type.Object({ verificationMode, dependencies }),
+      (p) => verificationCommand(p.verificationMode, p.dependencies),
       ctx,
     ),
     wrap(
@@ -371,7 +387,7 @@ export function createTypedCodeTools(ctx: ToolContext): AgentTool[] {
     wrap(
       "marina_code_summary",
       "Code Summary",
-      "Store a summary artifact in the active coding session.",
+      "Store a summary and submit for owner review when required checks pass. Missing, failed or stale candidate checks keep the task active; follow the returned feedback or report action=blocked with a reason.",
       codeTextSchema,
       (p) =>
         `code summary ${requiredSingleLineCodeParam(p.text as string | undefined, "text", "text is required")}`,
@@ -608,6 +624,17 @@ export function createTypedCodeTools(ctx: ToolContext): AgentTool[] {
   ];
 }
 
+function verificationCommand(mode: unknown, dependencies?: unknown): string {
+  if (dependencies !== undefined) {
+    if (dependencies !== "bun" || mode !== "candidate")
+      throw new Error("dependencies must be bun with verificationMode candidate");
+    return "code verify candidate dependencies:bun";
+  }
+  if (mode === undefined || mode === "live") return "code verify";
+  if (mode === "start" || mode === "candidate") return `code verify ${mode}`;
+  throw new Error("verificationMode must be live, start or candidate");
+}
+
 function buildCodeCommand(params: Record<string, unknown>): string {
   const action = params.action as string;
   const path = params.path as string | undefined;
@@ -634,7 +661,7 @@ function buildCodeCommand(params: Record<string, unknown>): string {
     case "run":
       return `code run ${requiredSingleLineCodeParam(command, "command", "action=run requires command")}`;
     case "verify":
-      return "code verify";
+      return verificationCommand(params.verificationMode, params.dependencies);
     case "observe":
       return `code observe ${requiredSingleLineCodeParam(text, "text", "action=observe requires text")}`;
     case "patch":
@@ -729,6 +756,7 @@ function buildCodeCommand(params: Record<string, unknown>): string {
       }
       return "code external";
     case "plan":
+    case "blocked":
     case "summary":
     case "handoff":
     case "decision":

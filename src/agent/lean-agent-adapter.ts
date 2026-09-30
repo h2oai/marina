@@ -1388,6 +1388,7 @@ export class LeanAgentAdapter implements AgentHandle {
       pingInterval: 30000,
       internalToken,
       commandMode: "correlated",
+      commandGrammar: "world",
     });
 
     // Platform memory (sole backend — no local storage)
@@ -2406,7 +2407,10 @@ export class LeanAgentAdapter implements AgentHandle {
         // moment a perception arrives. See the crew fast-dispatch design (private archive: marina-internal design/crew-fast-dispatch-design.md).
         // A responder may choose an autonomous life instead: `memory set
         // autonomy full` (crewResponderMode turns false, the full loop runs).
-        if (this.crewResponderMode) {
+        // A bound coding task is already an explicit work obligation. Finish
+        // its next cycle after a per-run yield even without a new peer message;
+        // clearing the task restores the responder's usual idle behavior.
+        if (this.crewResponderMode && !this.activeCodingTask) {
           const actionable = this.pendingPerceptions.some(
             (perception) =>
               perception.shouldRespond ||
