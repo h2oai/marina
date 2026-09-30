@@ -389,6 +389,14 @@ const substantive = (e: TranscriptEvent) => e.text.trim().length >= 60;
 const REVISION = /revis|updat|stick|keep|hold|stay|mov(e|ed|ing)|final|chang|\d/i;
 
 /**
+ * An actual shard post: the brief's `shard 1: <case>` line, or a `Shards: C3, C5`
+ * list with something in it. A mention ("no shards needed", "shards: none") is not one.
+ */
+export const SHARD_POST = /\bshard\s*#?\d+\s*:|\bshards\s*:\s*(?!(?:none|n\/a|no|nothing)\b)\w/i;
+/** A shard handed out as a task (`task create shard 2: C5 | …`). */
+export const SHARD_TASK = /^\s*task\s+create\b.*\bshard\b/i;
+
+/**
  * An aspect verdict: an aspect name and an explicit pass/fail within a few words of each other
  * ("correctness: pass", "requirements — FAIL", "PASS (evidence)"). Loose words such as
  * "verified" or "correct" alone are not verdicts.
@@ -788,9 +796,9 @@ export const FORMATION_STEPS: Record<string, Step[]> = {
       id: "shards-posted",
       layer: "brief",
       check: (v) => {
-        const p = v.posts.find(
-          (e) => e.actor === v.tr.lead && /\bshards?\b|failing (cases|checks)/i.test(e.text),
-        );
+        const p =
+          v.posts.find((e) => e.actor === v.tr.lead && SHARD_POST.test(e.text)) ??
+          v.cmds.find((e) => e.actor === v.tr.lead && SHARD_TASK.test(e.text));
         return { score: p ? 1 : 0, evidence: quote(p) };
       },
     },
