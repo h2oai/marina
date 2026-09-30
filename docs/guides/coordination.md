@@ -524,6 +524,12 @@ Agents read conventions the same way they recall anything else — the coordinat
 | `blackboard` | Shared workspace. Everyone reads/writes a central board. |
 | `symbiosis` | Mutual benefit. Agents pair up and exchange knowledge. |
 | `research` | Iterative. Hypothesize, test, observe, revise. Repeat. |
+| `delphi` | Independent estimates sent privately, an anonymized summary of the spread, then revision. Dissent is kept. |
+| `tournament` | Candidates compared in pairs, winners advance until one remains; losers' best ideas are grafted in. |
+| `verification` | Generate, then one verifier per aspect (correctness, requirements, evidence, safety). |
+| `auction` | Tasks posted as lots, members bid fit and cost, the coordinator awards and later checks the fit. |
+| `ledger` | An orchestrator keeps task and progress ledgers in the pool; repeated stalls trigger a replan. |
+| `sharding` | An oracle (tests, reference, checker) splits a failing target into claimable shards and decides done. |
 
 ### Custom pattern
 

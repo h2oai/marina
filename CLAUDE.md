@@ -90,7 +90,7 @@ Agents are autonomous from birth, not assistants ("You think, therefore you are 
 → docs/architecture/memory.md
 
 ## Orchestration Patterns
-All 10 patterns are convention-based pool notes discovered via `recall`, not engine constraints (`src/world/templates/orchestration.ts`; activated via `project <name> orchestrate <pattern>`; "NSED" is the legacy name for Deliberation — accepted, never advertised). Crew pools are members-only: every persisted crew's `crew:<name>` pool has a group object of the same id (`memory_pools.group_id`) and the group-pool ACL in `src/memory/access.ts` plus the `gatherRetrievalContext` guard are the fence; dissolving keeps pool and notes scoped to the final roster. Formation mediators post at most one `[formation-mediator]` line per event. → docs/architecture/orchestration.md
+All 16 patterns are convention-based pool notes discovered via `recall`, not engine constraints (`src/world/templates/orchestration.ts`; activated via `project <name> orchestrate <pattern>`; "NSED" is the legacy name for Deliberation — accepted, never advertised). Crew pools are members-only: every persisted crew's `crew:<name>` pool has a group object of the same id (`memory_pools.group_id`) and the group-pool ACL in `src/memory/access.ts` plus the `gatherRetrievalContext` guard are the fence; dissolving keeps pool and notes scoped to the final roster. Formation mediators post at most one `[formation-mediator]` line per event. → docs/architecture/orchestration.md
 
 ## Dashboard, Canvas, and Memory Observability
 Every mutation at the DB write site emits one `EngineEvent` (`note_created`, `note_link_created`, `feed_event`, `canvas_edge_created`, …) that dashboard stores subscribe to. Canvas intent data lives in the node's `data` JSON as `{ intent: { prompt, status, … } }` — no schema changes. `memory_job` / `memory_service_event` broadcasts carry no content (no task/answer/citations); content is always fetched per-principal over REST, scoped server-side by `memoryObserverScope`; job cancel runs through the REQUESTER's resident binding and refuses the dev-open sentinel. GlassPanel section headers deliberately do NOT use the `title` prop (it is the react-grid-layout drag handle). Dashboard animations: see Code Style. → docs/architecture/dashboard.md (user guide: docs/guides/dashboard.md)
@@ -157,7 +157,7 @@ Compat profiles (`src/net/compat-profiles.ts`) are self-contained — they only 
 - `src/persistence/db-competence.ts` — entity_competence SQL (per-gate demonstration tracking)
 - `src/agent/social.ts` — relationship tracking, adaptive social response, coordination signals
 - `src/world/world-definition.ts` — WorldDefinition interface (includes `seed`)
-- `src/world/templates/orchestration.ts` — 10 orchestration pattern templates (5 notes each)
+- `src/world/templates/orchestration.ts` — 16 orchestration pattern templates (5 notes each)
 - `worlds/default.ts` — compact intent-first Workbench (the default)
 - `worlds/showcase.ts` — full-featured 25-room capability showcase
 - `worlds/seed.ts` — shared seed utilities, trait/role definitions with capabilities

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Crew formations — runtime form of the 10 orchestration patterns.
+ * Crew formations — runtime form of the 16 orchestration patterns.
  *
  * Three runtime layers, each measured in the 2026-09 orchestration sweeps
  * (report: marina-internal design/orchestration-pattern-sweep-2026-09.md):
@@ -23,6 +23,12 @@
  * The project pool-note TEMPLATES remain the project-level conventions
  * (seeded into orchestration:<pattern> pools); formations no longer reuse
  * them verbatim for crew runtime.
+ *
+ * Every formation has a runtime brief; mediators are optional. Delphi,
+ * tournament, verification, auction, ledger and sharding (added 2026-09) run
+ * on their brief alone, like swarm, chorus, symbiosis and research — their
+ * mechanics use existing crew primitives (`tell`, `crew artifact`,
+ * `crew stall`) and need no special runtime roles.
  */
 
 import type { CrewFormation } from "../types";
@@ -92,6 +98,33 @@ export const CREW_BRIEFS: Record<CrewFormation, string> = {
     "One hypothesis at a time: state it here → run the smallest test → post the measurement → " +
     "keep or kill it. Record what was learned with `crew artifact <name> synthesis -- <ref>` " +
     "before completing.",
+  delphi:
+    "Independent first: each member sends ONE estimate + reasons privately to the lead (`tell`) " +
+    "before reading anyone else's. Lead posts one anonymized summary here (range, median, key " +
+    "reasons, no names). Members revise once. Keep dissenting reasons; deliver the final " +
+    "estimate with the dissent that survived.",
+  tournament:
+    "Each member produces one candidate alone and deposits it " +
+    "(`crew artifact <name> draft -- <ref>`). Lead pairs candidates; a non-author picks the " +
+    "stronger of each pair in one message until one remains. Graft the losers' best ideas into " +
+    "the winner, then deliver.",
+  verification:
+    "One member drafts the candidate; each other member checks ONE aspect (correctness, " +
+    "requirements, evidence, safety) and posts pass/fail with evidence here. Run checks rather " +
+    "than argue them. A failed aspect goes back to the author once; deliver when every aspect " +
+    "passes.",
+  auction:
+    "Lead posts the pieces here. Each member replies with a bid per piece: fit (a past result) " +
+    "and expected effort. Lead awards each piece to the best fit per effort by `tell`. Winners do " +
+    "their piece; lead merges and delivers.",
+  ledger:
+    "Lead keeps two ledgers here: plan (facts, steps, owners) and progress (done, in flight, " +
+    "stuck), updating progress after each step. A member stuck twice on a step " +
+    "(`crew stall <name> <agent>`): lead replans rather than retries. Lead delivers.",
+  sharding:
+    "Lead runs the checker or tests once and posts the failing cases here as shards. Each member " +
+    "replies 'claiming: <shard>', fixes it WITHOUT editing the checker or tests, re-runs, and " +
+    "posts the result. Done = the full check passes; lead delivers.",
 };
 
 /**

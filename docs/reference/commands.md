@@ -2945,7 +2945,7 @@ Usage:
   crew stall <name> <agent> [reason]
   crew complete <name> -- <summary>
   crew dissolve <name> [reason]
-Formations: deliberation, chorus, foundry, swarm, pipeline, debate, mapreduce, blackboard, symbiosis, research, freeform
+Formations: deliberation, chorus, foundry, swarm, pipeline, debate, mapreduce, blackboard, symbiosis, research, delphi, tournament, verification, auction, ledger, sharding, freeform
 Artifact kinds: map, reduce, synthesis, draft
 
 Category: Coordination. Minimum rank: 0.
