@@ -9,8 +9,8 @@
  * health, learning signal, ACE reflection, idle consolidation. While
  * setActiveCodingTask is set, those sections are suppressed and a compact
  * [Active Coding Task] section is injected EVERY cycle. Unlike crewResponder,
- * the loop still cycles without fresh perceptions (that behavior lives in
- * runAutonomousLoop and is untouched by task mode).
+ * the loop still cycles without fresh perceptions, including a recruited
+ * crew responder, until the task clears or an existing budget pauses it.
  *
  * The adapter constructor is I/O-free (MarinaClient connects only in start()),
  * so we can drive buildContinuationPrompt directly with stubbed platform
@@ -145,4 +145,44 @@ describe("coding-task mode — continuation prompt assembly", () => {
     const internals = adapter as unknown as { activeCodingTask: string | null };
     expect(internals.activeCodingTask).toBeNull();
   });
+});
+
+it("a recruited responder continues an active coding task across cycles, then returns to idle", async () => {
+  const adapter = new LeanAgentAdapter(
+    { name: "tasked-responder", crewResponder: true },
+    "ws://127.0.0.1:3300",
+    null,
+  );
+  const internals = adapter as unknown as {
+    autonomousLoopRunning: boolean;
+    autonomousMode: boolean;
+    client: { capabilities(): Promise<unknown> };
+    agent: { state: { isStreaming: boolean }; prompt(text: string): Promise<void> };
+    pauseSleep(ms: number): Promise<void>;
+    checkSpendCaps(): undefined;
+    buildContinuationPrompt(): Promise<string>;
+    runAutonomousLoop(): Promise<void>;
+  };
+  internals.autonomousLoopRunning = true;
+  internals.autonomousMode = true;
+  internals.checkSpendCaps = () => undefined;
+  internals.client.capabilities = async () => ({
+    schema: "marina.capabilities.v1",
+    revision: 1,
+    commands: [],
+  });
+  internals.buildContinuationPrompt = async () => "Continue the assigned coding task";
+  let cycle = 0;
+  const prompted: number[] = [];
+  internals.pauseSleep = async () => {
+    cycle++;
+    if (cycle === 2) adapter.setActiveCodingTask("Repair and verify source");
+    if (cycle > 4) internals.autonomousLoopRunning = false;
+  };
+  internals.agent.prompt = async () => {
+    prompted.push(cycle);
+    if (cycle === 3) adapter.setActiveCodingTask(null);
+  };
+  await internals.runAutonomousLoop();
+  expect(prompted).toEqual([2, 3]);
 });

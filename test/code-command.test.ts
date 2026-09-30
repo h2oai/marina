@@ -2003,7 +2003,8 @@ describe("code command", () => {
     expect(attention[0]).toContain("Request: inspect failing tests");
     expect(attention[0]).toContain("Use the marina_code tool when it is available.");
     expect(attention[0]).toContain("files/read/search/diff");
-    expect(attention[0]).toContain("Use verify for the local check chain");
+    expect(attention[0]).toContain("verificationMode=candidate");
+    expect(attention[0]).toContain("inspect its result before submitting a summary");
     expect(attention[0]).toContain("Long-running app launch is disabled on the Marina host");
     expect(helperEntity.properties.active_modal).toBe("code");
     expect(helperEntity.properties.coding_session_id).toBe(sessionId);
@@ -2735,7 +2736,7 @@ function fakeAgent(
         peakInputTokens: 0,
         role: "coder",
         silentTurns: 0,
-        state: "autonomous",
+        state: "idle",
         supports: { text: true },
         toolCalls: 0,
         uptime: 0,
@@ -2902,11 +2903,15 @@ describe("code mode — agentic dispatch (single-agent driver)", () => {
     expect(joined).toContain("code read src/x.ts");
     expect(joined).toContain("Coder: Found the issue.");
     expect(notifications.map((item) => (item.code as { phase?: string })?.phase)).toEqual([
+      "received",
       "inspecting",
       "verifying",
       "submitting",
     ]);
     const sessionId = alice.properties.coding_session_id as string;
+    expect(notifications[0]?.code).toMatchObject({
+      metadata: { runId: db.listCodingRuns({ sessionId })[0]!.id, runStatus: "active" },
+    });
     const lifecycle = db
       .listCodingEvents(sessionId, 50)
       .filter((event) => event.kind === "code_lifecycle");

@@ -43,6 +43,7 @@ export type Dispatch =
       harness?: string;
     }
   | { kind: "connect"; rest: string[] }
+  | { kind: "code-connected"; url: string; name: string; session: string }
   | { kind: "route"; rest: string[] }
   | { kind: "supervise"; rest: string[] }
   | { kind: "start" };
@@ -90,8 +91,15 @@ export function parseDispatch(
   let allowExec: boolean | undefined;
   let dangerouslyAllowAll: boolean | undefined;
   const selection: { agent?: string; model?: string; profile?: string; harness?: string } = {};
+  const connected: { url?: string; name?: string; session?: string } = {};
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
+    if (["--url", "--name", "--session"].includes(arg)) {
+      const value = argv[++i];
+      if (!value || value.startsWith("-")) return { kind: "usage-error", arg };
+      connected[arg.slice(2) as keyof typeof connected] = value;
+      continue;
+    }
     if (["--agent", "--model", "--profile", "--harness"].includes(arg)) {
       const value = argv[++i];
       if (!value || value.startsWith("-")) return { kind: "usage-error", arg };
@@ -123,6 +131,29 @@ export function parseDispatch(
     if (!looksLikeDirectory(arg, isDir)) return { kind: "unknown-target", arg };
     dir = arg;
   }
+  if (Object.keys(connected).length) {
+    if (
+      !connected.url ||
+      !connected.name ||
+      !connected.session ||
+      dir !== undefined ||
+      fresh ||
+      print !== undefined ||
+      allowExec ||
+      dangerouslyAllowAll ||
+      Object.keys(selection).length
+    )
+      return {
+        kind: "usage-error",
+        arg: "Connected coding requires --url, --name and --session together; folder, one-shot and local runtime options belong to standalone coding.",
+      };
+    return {
+      kind: "code-connected",
+      url: connected.url,
+      name: connected.name,
+      session: connected.session,
+    };
+  }
   return {
     kind: "code",
     dir,
@@ -139,6 +170,8 @@ export const USAGE = `marina — you think, therefore you are here
 Usage:
   marina [dir]                 code in a folder (defaults to the current directory)
   marina -p "<task>" [dir]     one-shot: run a task, print the diff + summary, exit
+  marina --url <url> --name <account> --session <id>
+                               code in an existing world session; closing leaves it running
   marina connect <name> [...]  connect to a running Marina (-c "cmd" for one-shot)
   marina supervise [...]       manage local coding agents from the dashboard
   marina route [...]           join, publish, and exchange participant messages
@@ -149,6 +182,8 @@ Usage:
   marina --help                show this help
 
 Options:
+  --url --name --session      connected interactive coding, using the server's workspace
+                              authenticate first with marina connect; no new world is started
   --agent <runtime>           marina (default), claude, codex, or pi
   --model <id>                model for the selected runtime
   --profile <dialect>         Marina command dialect: marina, claude, codex, pi
@@ -178,8 +213,8 @@ Exit codes (one-shot -p):
 
 Environment:
   MARINA_URL                   server URL for connect/status (default: ws://localhost:3300)
-  MARINA_TOKEN                 bearer token for \`marina status\` readiness (else the
-                               newest cached \`marina connect\` session is used)
+  MARINA_TOKEN                 credential for connected coding or status readiness;
+                               connected coding otherwise uses that account's server-bound cache
   MARINA_CODE_FRESH=1          same as --fresh
   MARINA_CODE_TASK_TIMEOUT_MS  one-shot task timeout in ms (default 600000)
   ANTHROPIC_API_KEY, ...       an LLM provider key so agents can think`;
@@ -336,7 +371,7 @@ if (import.meta.main) {
       console.log(readPackageVersion());
       break;
     case "usage-error":
-      console.error(`Unknown option: ${dispatch.arg}\n\n${USAGE}`);
+      console.error(`Invalid option or combination: ${dispatch.arg}\n\n${USAGE}`);
       process.exit(1);
       break;
     case "unknown-target":
@@ -375,6 +410,19 @@ if (import.meta.main) {
       ];
       await import("./connect");
       break;
+    case "code-connected": {
+      const { runConnectedCodeSession } = await import("./code-connected");
+      try {
+        process.exitCode = await runConnectedCodeSession({
+          ...dispatch,
+          token: process.env.MARINA_TOKEN,
+        });
+      } catch (error) {
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exitCode = 1;
+      }
+      break;
+    }
     case "start":
       // Full server in the foreground; src/main.ts prints its own boot banner.
       await import("../src/main");

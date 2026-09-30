@@ -3,7 +3,7 @@ import { MARINA_ROOT } from "../runtime-paths";
 import { AuthCoordinator, type LoginIdentity, type LoginResult } from "./auth-coordinator";
 import { autoRespawnEnabled } from "./auto-respawn";
 import { CommandCoordinator } from "./command-coordinator";
-import { CommandPhaseCoordinator } from "./command-phase-coordinator";
+import { type CommandExecutionOptions, CommandPhaseCoordinator } from "./command-phase-coordinator";
 import { RoomTickCoordinator } from "./room-tick-coordinator";
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
@@ -54,6 +54,7 @@ import { BriefManager } from "./brief-manager";
 import { recordEngineCognition } from "./cognitive-provenance";
 import { registerBuiltinCommands } from "./command-registry";
 import { CommandRouter } from "./command-router";
+import { stopCodeStreamsFor } from "./commands/code/stream";
 import { isIgnoring } from "./commands/ignore";
 import { ConnectionManager } from "./connection-manager";
 import { ConnectorRuntime } from "./connector-runtime";
@@ -422,6 +423,8 @@ export class Engine {
   }
 
   removeConnection(connId: string, intent: "transient" | "explicit" = "transient"): void {
+    const entityId = this._connections.get(connId)?.entity;
+    if (entityId) stopCodeStreamsFor(entityId);
     this.authCoordinator.removeConnection(connId, intent);
   }
 
@@ -539,6 +542,14 @@ export class Engine {
   get commandAdmission() {
     return this.commandCoordinator.snapshot();
   }
+  /** Finite admitted background work participates in the existing shutdown drain. */
+  trackBackgroundCommand(pending: Promise<void>): void {
+    this.commandCoordinator.track(
+      pending.catch((error) => {
+        this.logger.error("background-command", getErrorMessage(error));
+      }),
+    );
+  }
   /** Settle queued and directly admitted commands before persistence closes. */
   async drainCommands(): Promise<void> {
     await this.roomTickCoordinator.drain();
@@ -548,7 +559,7 @@ export class Engine {
     return this.commandCoordinator.queuedCount;
   }
 
-  processCommand(entityId: EntityId, raw: string, opts?: { bypassModal?: boolean }): Promise<void> {
+  processCommand(entityId: EntityId, raw: string, opts?: CommandExecutionOptions): Promise<void> {
     return this.commandCoordinator.track(this.commandPhaseCoordinator.execute(entityId, raw, opts));
   }
 

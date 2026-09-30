@@ -3,6 +3,7 @@
 
 import type { MacroManager } from "../coordination/macro-manager";
 import type { MarinaDB } from "../persistence/database";
+import { type CodingCommandTarget, parseCodingCommandTarget } from "../sdk/command-target";
 import { classifyPrimitive } from "../telemetry/primitive-usage";
 import type { CommandContext, EngineEvent, Entity, EntityId, RoomContext, RoomId } from "../types";
 import type { EntityManager } from "../world/entity-manager";
@@ -15,7 +16,9 @@ import { getErrorMessage, tryLog } from "./errors";
 import {
   armGatePass,
   claimCommandPass,
+  getCurrentCodingTarget,
   getCurrentCommand,
+  setCurrentCodingTarget,
   setCurrentCommand,
 } from "./gate-context";
 import type { Logger } from "./logger";
@@ -24,6 +27,11 @@ import { checkGateForExecution, recordGateExecution } from "./safety-gates";
 import { isLocalUngated } from "./trust-profile";
 
 /** Admission/FIFO/drain belongs to CommandCoordinator; execution policy lives here. */
+export interface CommandExecutionOptions {
+  bypassModal?: boolean;
+  codingTarget?: CodingCommandTarget;
+}
+
 export interface CommandPhaseHost {
   readonly entities: Pick<EntityManager, "get">;
   readonly rooms: Pick<RoomManager, "get">;
@@ -43,12 +51,20 @@ export class CommandPhaseCoordinator {
   constructor(private readonly host: CommandPhaseHost) {}
 
   /** Process a single command immediately */
-  async execute(entityId: EntityId, raw: string, opts?: { bypassModal?: boolean }): Promise<void> {
+  async execute(entityId: EntityId, raw: string, opts?: CommandExecutionOptions): Promise<void> {
     const previous = getCurrentCommand(entityId);
+    const previousTarget = getCurrentCodingTarget(entityId);
     try {
+      // Copy at entry so a caller cannot retarget an invocation across an await.
+      opts =
+        opts?.codingTarget !== undefined
+          ? { ...opts, codingTarget: parseCodingCommandTarget(opts.codingTarget) }
+          : opts;
+      setCurrentCodingTarget(entityId, opts?.codingTarget);
       await this.executeInner(entityId, raw, opts);
     } finally {
       setCurrentCommand(entityId, previous);
+      setCurrentCodingTarget(entityId, previousTarget);
       if (previous === undefined) armGatePass(entityId, undefined);
     }
   }
@@ -56,7 +72,7 @@ export class CommandPhaseCoordinator {
   private async executeInner(
     entityId: EntityId,
     raw: string,
-    opts?: { bypassModal?: boolean },
+    opts?: CommandExecutionOptions,
   ): Promise<void> {
     const commandStartedAt = Date.now();
     const entity = this.host.entities.get(entityId);
@@ -65,10 +81,11 @@ export class CommandPhaseCoordinator {
     // Engine-initiated housekeeping (brief heartbeat, login look) must not be
     // captured by an entity's active modal — inside Code Mode the rewrite
     // would turn "brief" into the coding task `code brief`.
-    const routedRaw = opts?.bypassModal ? raw : this.routeModalCommand(entity, raw);
+    const routedRaw =
+      opts?.bypassModal || opts?.codingTarget ? raw : this.routeModalCommand(entity, raw);
     const input = this.host.commands.parse(routedRaw, entityId, entity.room);
 
-    if (!input.verb) return;
+    if (!input.verb && !opts?.codingTarget) return;
     const def = this.host.commands.getDef(input.verb);
 
     const recordUsage = (success: boolean) => {
@@ -93,6 +110,14 @@ export class CommandPhaseCoordinator {
 
     const room = this.host.rooms.get(entity.room);
     const handler = this.host.commands.resolve(input.verb, room?.module.commands);
+
+    // Targeted requests use explicit code grammar, never modal rewrites, macros or room overrides.
+    if (opts?.codingTarget && (input.verb !== "code" || handler !== def?.handler)) {
+      const message = "Coding targets require an explicit built-in code command.";
+      this.host.sendToEntity(entityId, message);
+      failCommandResponse(message);
+      return;
+    }
 
     if (!handler) {
       // Macro fallback: entity macros first, then system macros
@@ -175,9 +200,10 @@ export class CommandPhaseCoordinator {
       recordGateExecution(this.host.db, entityId, def.gate, result, `command:${def.name}`);
     }
 
-    const ctx =
+    const baseCtx =
       this.host.buildCommandContext(entity.room, entityId) ?? this.host.buildContext(entity.room);
-    if (!ctx) return;
+    if (!baseCtx) return;
+    const ctx = opts?.codingTarget ? { ...baseCtx, codingTarget: opts.codingTarget } : baseCtx;
 
     let handlerThrew = false;
     try {

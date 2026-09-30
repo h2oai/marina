@@ -100,6 +100,7 @@
     "eval-prompt": "bun run scripts/eval-prompt.ts",
     "qualify:prompt": "bun run scripts/eval-prompt.ts marina:answerer --min-score 13",
     "qualify:autonomy": "bun run scripts/qualify-autonomy.ts",
+    "qualify:coding": "bun run scripts/qualify-coding.ts",
     "qualify:evolution": "bun run scripts/qualify-evolution.ts",
     "sbom": "bun scripts/generate-sbom.ts",
     "qualify:release": "bun run sbom && bun run check:versions && bun run schema:check && bun run qualify:sdk && bun run typecheck && bun run lint && bun run test && cd dashboard && bun run test && bun run build && cd .. && bun run qualify:server && cd dashboard && bun run test:browser && cd ../site && bun run build && cd .. && bun audit",

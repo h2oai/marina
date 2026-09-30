@@ -199,9 +199,21 @@ export function registerCoordinationCommands(engine: Engine): void {
       engine.entities.all().filter((e) => engine._connections.isEntityConnected(e.id)),
     isConnected: (id) => engine._connections.isEntityConnected(id as EntityId),
     send: (id, text) => engine.sendToEntity(id as EntityId, text, "challenge"),
-    // The leading "/" is explicit world input, so an active modal (Code Mode)
-    // never rewrites the held command on its way back in.
-    redispatch: (id, raw) => engine.processCommand(id as EntityId, `/${raw}`),
+    // Replay is a new admission: it cannot overtake this resident's running command.
+    // The held input already passed modal routing; retain its request-local destination.
+    redispatch: (id, raw, options) =>
+      new Promise<void>((resolve, reject) => {
+        const admitted = engine.submitCommand(id as EntityId, raw, async () => {
+          try {
+            await engine.processCommand(id as EntityId, raw, { ...options, bypassModal: true });
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        });
+        if (!admitted)
+          reject(new Error("World command capacity reached; inspect state before retrying."));
+      }),
     creatorOf: (entity) => engine.db?.getAgentConfig(entity.name)?.spawned_by || undefined,
   });
   engine.commands.registerBuiltin(

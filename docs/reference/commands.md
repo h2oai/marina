@@ -1752,6 +1752,9 @@ Usage:
   code observe <note>         Store an app/workspace observation
   code review [approve|reject] Review the latest coding task and its evidence
   code verify                 Run detected typecheck/lint/test/build chain
+  code verify start           Start local allowlisted checks; return a durable receipt
+  code verify candidate       Check an isolated Git source snapshot; return a receipt
+  code verify candidate dependencies:bun  Prepare locked Bun dependencies without install scripts
   code test|lint|typecheck    Run a common verification command
   code patch [title]\n<diff>  Propose a unified-diff patch
   code edit <path> [all]\n<<<<<<< OLD\n{old}\n=======\n{new}\n>>>>>>> NEW  Replace exact text in a file
@@ -1875,6 +1878,25 @@ Effect: unknown.
 
 - `field-0` (`agent`): text, required.
 - `field-1` (`req`): text, required.
+
+### `code assign <agent> verification:candidate -- <req>`
+
+Effect: unknown.
+
+- `field-0` (`agent`): text, required.
+- `field-1` (`req`): text, required.
+
+### `code do verification:candidate -- <task>`
+
+Effect: unknown.
+
+- `field-0` (`task`): text, required.
+
+### `code blocked <reason>`
+
+Effect: unknown.
+
+- `field-0` (`reason`): text, required.
 
 ### `code branch [title]`
 
@@ -2343,6 +2365,13 @@ Effect: unknown.
 Effect: unknown.
 
 
+### `code review accept-unverified <attempt> <reason>`
+
+Effect: unknown.
+
+- `field-0` (`attempt`): text, required.
+- `field-1` (`reason`): text, required.
+
 ### `code roles`
 
 Effect: unknown.
@@ -2667,6 +2696,21 @@ Effect: unknown.
 - `field-0` (`artifact id|last`): text, required, choices `artifact_id`, `last`.
 
 ### `code verify`
+
+Effect: unknown.
+
+
+### `code verify start`
+
+Effect: unknown.
+
+
+### `code verify candidate`
+
+Effect: unknown.
+
+
+### `code verify candidate dependencies:bun`
 
 Effect: unknown.
 

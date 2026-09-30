@@ -30,6 +30,7 @@ import type { MemoryService } from "../memory/service";
 import { worldMemoryService } from "../memory/world-service";
 import type { MarinaDB } from "../persistence/database";
 import { MARINA_ROOT } from "../runtime-paths";
+import { type CodingCommandTarget, parseCodingCommandTarget } from "../sdk/command-target";
 import type { StorageProvider } from "../storage/provider";
 import type { Connection, Perception } from "../types";
 import { handleAssetApi, handleAssetServing } from "./asset-api";
@@ -790,6 +791,7 @@ export class WebSocketServer {
             internalToken?: string;
             version?: number;
             request_id?: string;
+            coding_target?: unknown;
             capability_key?: string;
             options?: Record<string, unknown>;
           };
@@ -887,6 +889,8 @@ export class WebSocketServer {
                   name: result.name,
                   token: result.token,
                   commandProtocol: "correlated-v1",
+                  worldCommandProtocol: "slash-v1",
+                  codingTargetProtocol: "session-run-v1",
                   activeEvolutionSessions: engine.getActiveEvolutionSessions(result.name),
                 },
               }),
@@ -917,6 +921,8 @@ export class WebSocketServer {
                   name: result.name,
                   token: result.token,
                   commandProtocol: "correlated-v1",
+                  worldCommandProtocol: "slash-v1",
+                  codingTargetProtocol: "session-run-v1",
                   activeEvolutionSessions: engine.getActiveEvolutionSessions(result.name),
                 },
               }),
@@ -1025,6 +1031,14 @@ export class WebSocketServer {
               refuse("Command request ID exceeds 100 characters.");
               return;
             }
+            let codingTarget: CodingCommandTarget | undefined;
+            try {
+              if (parsed.coding_target !== undefined)
+                codingTarget = parseCodingCommandTarget(parsed.coding_target);
+            } catch (error) {
+              refuse(getErrorMessage(error));
+              return;
+            }
             const entityId = engine.getConnectionEntity(connId);
             if (entityId) {
               // Rate limit check
@@ -1038,7 +1052,7 @@ export class WebSocketServer {
                 const execute = async () => {
                   if (engine.getConnectionEntity(connId) !== entityId || ws.readyState !== 1)
                     throw new Error("Command connection closed before execution.");
-                  await engine.processCommand(entityId, command);
+                  await engine.processCommand(entityId, command, { codingTarget });
                 };
                 if (requestId) await withCommandResponse(connId, requestId, execute, send);
                 else await execute();

@@ -438,3 +438,21 @@ historical query plan. An independent load test still exercises admission and FU
 Run `bun run test:a11y` for the dashboard lint contract and axe-core browser checks.
 See [dashboard accessibility](dashboard-accessibility.md) for coverage, content-dependent
 media exceptions, and the manual keyboard and screen-reader checklist.
+
+## Live coding smoke qualification
+
+With `OPENAI_API_KEY` configured, run the native Marina worker against disposable Git fixtures:
+
+```sh
+bun run qualify:coding --directory /tmp/marina-coding-check --budget-usd 1 --scenarios bugfix,feature,refactor
+```
+
+Use a new private directory outside the source checkout. The script creates its own world and
+participants, uses a fixed model with a conservative upstream spending reservation (maximum $2),
+and never connects to a running world. It asks the worker to edit, verify a captured candidate,
+inspect the receipt and submit through normal coding tools. It then independently checks the
+result, preserves the original acceptance tests, and performs canonical owner review. World
+messages must still arrive while coding runs. Reports and traces remain in the supplied directory.
+Failures, missing credentials and timeouts are failures; this is a small functional smoke test,
+not a general coding-quality benchmark. The default scenario is `bugfix`; `--timeout-ms` controls
+the deadline per scenario (default 240000, maximum 600000).

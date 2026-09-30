@@ -25,10 +25,13 @@
  * durable audit record.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { redispatchHeldCommand } from "../engine/challenges";
-import { getCurrentCommand } from "../engine/gate-context";
+import { getCurrentCodingTarget, getCurrentCommand } from "../engine/gate-context";
 import { checkGate } from "../engine/safety-gates";
+import { codingRunContext } from "../persistence/coding-run-context";
 import type { MarinaDB } from "../persistence/database";
+import type { CodingCommandTarget } from "../sdk/command-target";
 
 /** A request to run a specific argv in a specific workspace on behalf of an entity. */
 export interface ExecApprovalRequest {
@@ -103,8 +106,49 @@ interface PendingApproval {
 // re-prompt) and the per-session allow-set (arbitrary exec re-prompts).
 const pendingApprovals = new Map<string, PendingApproval>();
 const sessionAllowSets = new Map<string, Set<string>>();
-// Approved-once argvs waiting for their held command to be re-run (single use).
-const approvedReplays = new Map<string, Set<string>>();
+// A once approval exists only in its replay's async scope. Failed/stale replays
+// leave no ambient permission for another command, actor, workspace or attempt.
+const approvedReplay = new AsyncLocalStorage<{
+  key: string;
+  used: boolean;
+  /** Identity of the existing session allow-set; clearing a session revokes queued replays too. */
+  sessionState: Set<string>;
+}>();
+
+function replayKey(
+  sessionId: string,
+  req: ExecApprovalRequest,
+  command: string | undefined,
+  target?: CodingCommandTarget,
+): string {
+  const run = codingRunContext.getStore();
+  return JSON.stringify([
+    sessionId,
+    req.entityId,
+    req.cwd,
+    req.argv,
+    command,
+    target?.sessionId,
+    target?.runId,
+    run?.sessionId === sessionId ? run.runId : undefined,
+  ]);
+}
+
+function currentTarget(entityId: string, sessionId: string): CodingCommandTarget | undefined {
+  const explicit = getCurrentCodingTarget(entityId);
+  const run = codingRunContext.getStore();
+  if (explicit)
+    return {
+      ...explicit,
+      ...(explicit.runId === undefined && run?.sessionId === explicit.sessionId && run.runId
+        ? { runId: run.runId }
+        : {}),
+    };
+  // Pin even a legacy modal command to the session/attempt it originally resolved.
+  return run?.sessionId === sessionId
+    ? { sessionId, ...(run.runId ? { runId: run.runId } : {}) }
+    : undefined;
+}
 
 export interface InteractiveApproverDeps {
   sessionId: string;
@@ -122,6 +166,8 @@ export class InteractiveApprover implements ExecApprover {
   constructor(private readonly deps: InteractiveApproverDeps) {}
 
   async requestApproval(req: ExecApprovalRequest): Promise<ExecApprovalDecision> {
+    // Neither notifications nor callers may mutate the pending request's authority.
+    req = { ...req, argv: [...req.argv] };
     const key = argvKey(req.argv);
 
     // Session-scope allow-set: same argv approved earlier this session runs with
@@ -151,14 +197,20 @@ export class InteractiveApprover implements ExecApprover {
     }
 
     // The re-run of a command a human approved while it was held (below).
-    const replays = approvedReplays.get(this.deps.sessionId);
-    if (replays?.delete(key)) {
-      this.deps.audit(
-        req,
-        { approved: true, reason: "approved-replay" },
-        { mode: "prompt", interactive: true, humanApproved: false },
-      );
-      return { approved: true };
+    const heldCommand = getCurrentCommand(req.entityId);
+    const target = currentTarget(req.entityId, this.deps.sessionId);
+    const authority = replayKey(this.deps.sessionId, req, heldCommand, target);
+    const originalRun = { ...codingRunContext.getStore() };
+    const replay = approvedReplay.getStore();
+    if (replay && !replay.used && replay.key === authority) {
+      replay.used = true;
+      const approved = sessionAllowSets.get(this.deps.sessionId) === replay.sessionState;
+      const decision = {
+        approved,
+        reason: approved ? "approved-replay" : "session execution authority cleared",
+      };
+      this.deps.audit(req, decision, { mode: "prompt", interactive: true, humanApproved: false });
+      return decision;
     }
 
     const token = crypto.randomUUID().slice(0, 12);
@@ -167,7 +219,6 @@ export class InteractiveApprover implements ExecApprover {
     // Inside a command: never wait on the human. Hold it, answer NOW, and
     // re-run the held command automatically when the creator approves — the
     // requester's loop (and its command queue) carries on meanwhile.
-    const heldCommand = getCurrentCommand(req.entityId);
     if (heldCommand !== undefined) {
       const timer = setTimeout(
         () => pendingApprovals.delete(token),
@@ -182,11 +233,13 @@ export class InteractiveApprover implements ExecApprover {
         settle: (d) => {
           clearTimeout(timer);
           pendingApprovals.delete(token);
-          this.deps.audit(req, d, {
-            mode: "prompt",
-            interactive: true,
-            humanApproved: d.approved && d.reason === OPERATOR_APPROVED_REASON,
-          });
+          codingRunContext.run(originalRun, () =>
+            this.deps.audit(req, d, {
+              mode: "prompt",
+              interactive: true,
+              humanApproved: d.approved && d.reason === OPERATOR_APPROVED_REASON,
+            }),
+          );
           if (!d.approved) {
             this.deps.notify(
               req.entityId,
@@ -194,13 +247,17 @@ export class InteractiveApprover implements ExecApprover {
             );
             return;
           }
-          const target = d.scope === "session" ? sessionAllowSets : approvedReplays;
-          const set = target.get(this.deps.sessionId) ?? new Set<string>();
-          set.add(key);
-          target.set(this.deps.sessionId, set);
-          if (!redispatchHeldCommand(req.entityId, heldCommand)) {
-            this.deps.notify(req.entityId, `Approved (${token}) — run it again: ${rendered}`);
-          }
+          const sessionState = sessionAllowSets.get(this.deps.sessionId) ?? new Set<string>();
+          if (d.scope === "session") sessionState.add(key);
+          sessionAllowSets.set(this.deps.sessionId, sessionState);
+          const admitted = approvedReplay.run({ key: authority, used: false, sessionState }, () =>
+            redispatchHeldCommand(req.entityId, heldCommand, target),
+          );
+          if (!admitted)
+            this.deps.notify(
+              req.entityId,
+              `Approval could not be dispatched (${token}); no command ran. Submit it again to request a new approval: ${rendered}`,
+            );
         },
       });
       this.deps.notify(
@@ -274,7 +331,11 @@ export function getPendingExecApproval(
 ): { creatorName: string; sessionId: string; argv: string[] } | undefined {
   const pending = pendingApprovals.get(token);
   if (!pending) return undefined;
-  return { creatorName: pending.creatorName, sessionId: pending.sessionId, argv: pending.argv };
+  return {
+    creatorName: pending.creatorName,
+    sessionId: pending.sessionId,
+    argv: [...pending.argv],
+  };
 }
 
 /** Resolve a pending prompt. Returns false when the token is unknown/expired. */
@@ -288,7 +349,6 @@ export function settleExecApproval(token: string, decision: ExecApprovalDecision
 /** Drop a session's allow-set and deny any of its still-pending prompts. */
 export function clearSessionExecState(sessionId: string): void {
   sessionAllowSets.delete(sessionId);
-  approvedReplays.delete(sessionId);
   for (const [token, pending] of [...pendingApprovals.entries()]) {
     if (pending.sessionId === sessionId) {
       pendingApprovals.delete(token);

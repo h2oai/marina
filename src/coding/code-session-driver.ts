@@ -149,6 +149,7 @@ export class CodeSessionDriver {
     agentName: string;
     actorEntity?: Entity;
     modelTarget?: string;
+    verificationRequirement?: "candidate";
     profile: string;
     prompt: string;
     session: CodingSessionRow;
@@ -163,6 +164,8 @@ export class CodeSessionDriver {
     if (!agent) throw new Error(`Agent "${opts.agentName}" is not running.`);
     const workerId = agent.getStatus().entityId;
     const worker = workerId ? this.deps.getEntity?.(workerId) : undefined;
+    if (opts.verificationRequirement && (!opts.actorEntity || !worker))
+      throw new Error("Candidate-required tasks need a bound Marina worker.");
     const run =
       opts.actorEntity && worker
         ? beginCodingRun(this.deps.db, {
@@ -173,17 +176,24 @@ export class CodeSessionDriver {
             profile: opts.profile,
             modelTarget: opts.modelTarget,
             runtimeName: agent.name,
+            verificationRequirement: opts.verificationRequirement,
           })
         : undefined;
     if (run) this.deps.onRun?.(run, agent);
-    const boundEntity = this.bindAgentEntity(agent, opts.session, opts.profile, prompt);
+    const requirement =
+      run && codingRunMetadata(run).verificationRequirement === "candidate"
+        ? "Completion requires current candidate verification: use marina_code verify with verificationMode=candidate, inspect its receipt/result, then summary. Early summaries remain progress. If blocked, use marina_code blocked with the reason; do not loop indefinitely or install dependencies without permission."
+        : undefined;
+    const activeTask = requirement ? `${prompt}\n\n${requirement}` : prompt;
+    const boundEntity = this.bindAgentEntity(agent, opts.session, opts.profile, activeTask);
     // Task mode: the adapter suppresses its low-value cognitive sections and
     // restates this task every cycle until code.ts clears it (stop/summary).
-    agent.setActiveCodingTask?.(prompt);
+    agent.setActiveCodingTask?.(activeTask);
 
     const attention = [
       `You have been assigned to Marina coding session ${opts.session.id}.`,
       `Requester: ${opts.actor}`,
+      requirement,
       run
         ? `Task #${codingRunMetadata(run).taskId}; attempt artifact:${run.id}. Record a summary only after finishing checks. A stored summary submits the task for the requester to review.`
         : undefined,
@@ -199,7 +209,7 @@ export class CodeSessionDriver {
       boundEntity
         ? opts.session.execution_target === "flywheel"
           ? "Start with marina_code status, then inspect with files/read/search/diff. Finite commands run in the active Flywheel project with no host fallback; use code service for long-running apps."
-          : "Start with marina_code status, then inspect with files/read/search/diff. Use verify for the local check chain and run only host-allowlisted checks."
+          : "Start with marina_code status, then inspect with files/read/search/diff. For a supported local Git root, use verify with verificationMode=candidate for immutable source evidence. It returns a receipt: inspect its result before submitting a summary. Ignored dependencies are not copied; report missing prerequisites. Ordinary verify checks the live workspace and is unbound evidence. Run only host-allowlisted checks."
         : `First run: code resume ${opts.session.id}. Then use marina_code status/files/read/search/diff/verify when available.`,
       "Use patch to propose a unified diff, apply/reject for patch decisions, show/artifacts/patches/history for durable context.",
       opts.session.execution_target === "flywheel"

@@ -30,13 +30,12 @@ import { createServer } from "node:net";
 import { homedir, hostname, tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { formatAge } from "../src/engine/commands/format-duration";
-import { formatPerception } from "../src/net/formatter";
 import { MarinaAgent, type Perception } from "../src/sdk/client";
 import { CodeConsole } from "./code-console";
 import { HarnessStore, validateHarness } from "./code-harness";
 import { inferCodeDefaultModel, PROVIDER_KEY_ENV_VARS } from "./code-model";
 import { installedCodingAdapters } from "./code-native";
-import { terminalText } from "./code-terminal";
+import { formatCodePerception, terminalText } from "./code-terminal";
 
 const REPO_ROOT = resolve(import.meta.dir, "..");
 const STDERR_TAIL_LINES = 40;
@@ -365,12 +364,13 @@ export async function runCodeSession(
   let echoPerceptions = false;
   agent.onPerception((p) => {
     if (!echoPerceptions) return;
-    const text = formatPerception(p, "plaintext");
+    const text = formatCodePerception(p);
     if (text) {
       if (sessionConsole) sessionConsole.write(text);
       else process.stdout.write(`${terminalText(text)}\n`);
     }
-    if (terminalCodeLifecycle(p)) sessionConsole?.completed();
+    const terminal = terminalCodeLifecycle(p);
+    if (terminal) sessionConsole?.completed(terminal.sessionId);
     sessionConsole?.observe(p);
   });
 
@@ -467,6 +467,12 @@ export async function runCodeSession(
     agent,
     url: `http://localhost:${port}`,
     root: dir,
+    sessionId:
+      entered.completion === "confirmed"
+        ? entered
+            .map((p) => p.data.code as { event?: string; sessionId?: string } | undefined)
+            .find((code) => code?.event === "code_mode_entered")?.sessionId
+        : undefined,
     directory: fresh ? `${dbPath}.runner` : join(projectDirectory, "terminal-runner"),
     harness,
     store: harnessStore,

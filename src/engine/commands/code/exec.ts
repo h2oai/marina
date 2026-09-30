@@ -1,7 +1,9 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { CandidatePreparation } from "../../../coding/candidate-dependencies";
 import {
+  clearSessionExecState,
   type ExecApprover,
   type ExecAuditSink,
   getPendingExecApproval,
@@ -27,6 +29,7 @@ import {
 } from "./artifacts";
 import {
   type CodeDeps,
+  canAdoptCodingSession,
   entityNameForm,
   getCodeProfile,
   parseJsonObject,
@@ -367,16 +370,24 @@ export async function verifyWorkspace(
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
 
-  const workspace = workspaceForSession(deps, session);
-  const commands = (await resolveRecipeCommands(deps.db, session, workspace, "default")) ??
-    (session.execution_target === "local"
-      ? await resolveRecipeCommands(deps.db, session, workspace, "detected")
-      : null) ?? ["git diff --check"];
-
+  const commands = await verificationCommands(deps, session);
   await runVerificationCommands(ctx, eid, entity, deps, session, commands, "Verification");
 }
 
-async function runVerificationCommands(
+export async function verificationCommands(
+  deps: CodeDeps & { db: MarinaDB },
+  session: CodingSessionRow,
+): Promise<string[]> {
+  const workspace = workspaceForSession(deps, session);
+  return (
+    (await resolveRecipeCommands(deps.db, session, workspace, "default")) ??
+    (session.execution_target === "local"
+      ? await resolveRecipeCommands(deps.db, session, workspace, "detected")
+      : null) ?? ["git diff --check"]
+  );
+}
+
+export async function runVerificationCommands(
   ctx: RoomContext,
   eid: EntityId,
   entity: Entity,
@@ -384,18 +395,64 @@ async function runVerificationCommands(
   session: CodingSessionRow,
   commands: string[],
   titlePrefix: string,
-): Promise<void> {
+  background?: {
+    receiptId: string;
+    workspace: WorkspaceRuntime;
+    beforeSpawn: () => void;
+    candidateId?: string;
+    candidateEvidence?: () => Promise<Record<string, unknown>>;
+    prepare?: () => Promise<CandidatePreparation>;
+  },
+): Promise<CodingArtifactRow> {
   const results: StoredCommandResult[] = [];
-  for (const commandText of commands) {
+  const preparation = await background?.prepare?.();
+  const preparationArtifact = preparation
+    ? deps.db.createCodingArtifact({
+        sessionId: session.id,
+        kind: "command_output",
+        title: "Candidate dependency preparation",
+        status:
+          preparation.result.exitCode === 0 && !preparation.result.timedOut ? "complete" : "failed",
+        contentText: preparation.result.output,
+        metadata: {
+          command: preparation.result.command,
+          exitCode: preparation.result.exitCode,
+          timedOut: preparation.result.timedOut,
+          truncated: preparation.result.truncated,
+          durationMs: preparation.result.durationMs,
+          phase: "dependency-preparation",
+          policy: preparation.policy,
+          lockfileSha256: preparation.lockfileSha256,
+          candidateId: background?.candidateId,
+          executionLocation: "candidate-materialization",
+        },
+        createdBy: entity.name,
+      })
+    : undefined;
+  const preparationFailed =
+    preparation && (preparation.result.exitCode !== 0 || preparation.result.timedOut);
+  for (const commandText of preparationFailed ? [] : commands) {
     const command = normalizeCodeRunArgs(commandText.split(/\s+/).filter(Boolean));
-    const stored = await executeWorkspaceCommand(entity, deps, session, command);
+    const stored = await executeWorkspaceCommand(entity, deps, session, command, background);
     results.push(stored);
     if (stored.result.exitCode !== 0 || stored.result.timedOut) break;
   }
 
-  const failed = results.find((item) => item.result.exitCode !== 0 || item.result.timedOut);
+  const failed = preparationFailed
+    ? { result: preparation.result }
+    : results.find((item) => item.result.exitCode !== 0 || item.result.timedOut);
   const status = failed ? "failed" : "complete";
-  const summary = formatVerificationSummary(results);
+  const candidateEvidence = await background?.candidateEvidence?.();
+  const summary =
+    (preparationArtifact
+      ? `Dependency preparation: ${preparationArtifact.status} (${preparationArtifact.id}).${preparationFailed ? " Checks were not run." : " Install scripts disabled."}\n`
+      : "") +
+    (preparationFailed
+      ? fmtError("Verification failed during dependency preparation.")
+      : formatVerificationSummary(results)) +
+    (candidateEvidence
+      ? `\nCandidate evidence: ${candidateEvidence.freshness}. Source snapshot: ${candidateEvidence.candidateId}.\nRecipe: ${candidateEvidence.recipeType}.${typeof candidateEvidence.observedAt === "number" ? `\nObserved: ${new Date(candidateEvidence.observedAt).toISOString()}` : ""}${candidateEvidence.freshnessReason ? `\n${candidateEvidence.freshnessReason}` : ""}`
+      : "\nLive-workspace check results; no immutable candidate binding.");
   const artifact = deps.db.createCodingArtifact({
     sessionId: session.id,
     kind: "verification",
@@ -403,6 +460,18 @@ async function runVerificationCommands(
     status,
     contentText: summary,
     metadata: {
+      ...candidateEvidence,
+      ...(background ? { requestId: background.receiptId } : {}),
+      ...(preparationArtifact
+        ? {
+            preparationArtifactId: preparationArtifact.id,
+            preparation: {
+              policy: preparation?.policy,
+              lockfileSha256: preparation?.lockfileSha256,
+              status: preparationArtifact.status,
+            },
+          }
+        : {}),
       commands: results.map((item) => item.result.command),
       artifactIds: results.map((item) => item.artifact.id),
       exitCode: failed?.result.exitCode ?? 0,
@@ -421,7 +490,10 @@ async function runVerificationCommands(
       artifactIds: results.map((item) => item.artifact.id),
     },
   });
-  updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
+  const currentEntity = background ? deps.getEntity(eid) : entity;
+  const currentSession = deps.db.getCodingSession(session.id) ?? session;
+  if (currentEntity && (!background || canAdoptCodingSession(currentSession, currentEntity)))
+    updateCodeContext(currentEntity, deps.db, currentSession);
 
   sendCode(ctx, eid, `${summary}\n${dim(`verification artifact: ${artifact.id}`)}`, {
     artifactId: artifact.id,
@@ -429,11 +501,13 @@ async function runVerificationCommands(
     commands: ["code show last", "code verify"],
     content: summary,
     event: "verification_ran",
+    metadata: { runId: JSON.parse(artifact.metadata_json).runId },
     exitCode: failed?.result.exitCode ?? 0,
     sessionId: session.id,
     status,
     type: "verification",
   });
+  return artifact;
 }
 
 interface StoredCommandResult {
@@ -446,24 +520,31 @@ async function executeWorkspaceCommand(
   deps: CodeDeps & { db: MarinaDB },
   session: CodingSessionRow,
   command: string[],
+  background?: { workspace: WorkspaceRuntime; beforeSpawn: () => void; candidateId?: string },
 ): Promise<StoredCommandResult> {
-  const workspace = workspaceForSession(deps, session);
+  const workspace = background?.workspace ?? workspaceForSession(deps, session);
   // Arbitrary (non-allowlisted) host exec is fenced by an optional approver,
   // attached per-call to the local workspace only. Off the allowlist, the
   // workspace consults it; with none attached, behavior is allowlist-only.
-  if (session.execution_target === "local") {
+  if (!background && session.execution_target === "local") {
     workspace.attachExecApprover?.(selectExecApprover(entity, deps, session), entity.id);
   }
-  const execution = await new WorkspaceGateway(workspace, deps.flywheel).run(
-    entity.id,
-    session.execution_target,
-    command,
-    120_000,
-    session.execution_target === "flywheel"
-      ? (deps.db.listFlywheelBindings().find((row) => row.entity_id === entity.id)?.guest_cwd ??
-          undefined)
-      : undefined,
-  );
+  const execution = background
+    ? {
+        target: "local" as const,
+        result: await workspace.runAllowlisted!(command, background.beforeSpawn),
+        flywheelEvents: undefined,
+      }
+    : await new WorkspaceGateway(workspace, deps.flywheel).run(
+        entity.id,
+        session.execution_target,
+        command,
+        120_000,
+        session.execution_target === "flywheel"
+          ? (deps.db.listFlywheelBindings().find((row) => row.entity_id === entity.id)?.guest_cwd ??
+              undefined)
+          : undefined,
+      );
   const { result } = execution;
   const commandText = result.command.join(" ");
   const flywheelEventKinds = execution.flywheelEvents
@@ -482,11 +563,17 @@ async function executeWorkspaceCommand(
       timedOut: result.timedOut,
       durationMs: result.durationMs,
       executionTarget: execution.target,
+      ...(background?.candidateId
+        ? {
+            candidateId: background.candidateId,
+            executionLocation: "candidate-materialization",
+          }
+        : {}),
       flywheelEventKinds,
       cwd:
         session.execution_target === "flywheel"
           ? deps.db.listFlywheelBindings().find((row) => row.entity_id === entity.id)?.guest_cwd
-          : undefined,
+          : workspace.displayRoot(),
     },
     createdBy: entity.name,
   });
@@ -512,9 +599,9 @@ async function executeWorkspaceCommand(
 
 const LOOPBACK_IPS = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1", "localhost"]);
 
-// Per-session interactive exec mode ("prompt"/"auto"). In-memory only, never
-// persisted — a restart drops it and exec returns to allowlist-only.
-const execModes = new Map<string, "prompt" | "auto">();
+// Per-session exec policy. Explicit off overrides the profile default.
+// In-memory only; a restart drops overrides and re-applies the instance's policy.
+const execModes = new Map<string, "prompt" | "auto" | "off">();
 
 /**
  * Exported for tests: the exec/loopback TRUST anchor. Consults ONLY the real,
@@ -649,6 +736,7 @@ function selectExecApprover(
   // `auto`) unless the launcher chose otherwise; the exec_decision audit row
   // is still written for every attempt.
   const mode = execModes.get(session.id) ?? (isLocalUngated() ? "auto" : undefined);
+  if (mode === "off") return undefined;
   if (mode && deps.notify && verifyInteractiveEligible(deps, session)) {
     const creator = resolveCreatorExact(deps, session);
     return new InteractiveApprover({
@@ -701,7 +789,9 @@ export function execModeCommand(
   }
   const mode = args[0]?.toLowerCase();
   if (mode === "off" || mode === "none" || mode === "disable") {
-    execModes.delete(session.id);
+    // Explicit off must override the local profile's default auto mode and revoke pending grants.
+    execModes.set(session.id, "off");
+    clearSessionExecState(session.id);
     ctx.send(eid, success("Code exec-mode disabled (allowlist only)."));
     return;
   }
@@ -768,7 +858,7 @@ export function execDeny(ctx: RoomContext, eid: EntityId, entity: Entity, args: 
   ctx.send(eid, success(`Denied exec ${token}.`));
 }
 
-function normalizeCodeRunArgs(args: string[]): string[] {
+export function normalizeCodeRunArgs(args: string[]): string[] {
   const shorthand = args[0]?.toLowerCase();
   if (
     args.length === 1 &&

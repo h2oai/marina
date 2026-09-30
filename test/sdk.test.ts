@@ -90,6 +90,76 @@ describe("MarinaClient SDK", () => {
     client.disconnect();
   });
 
+  it("targets sessions through the wire and validates a queued run at execution", async () => {
+    const client = new MarinaClient(TEST_URL, { autoReconnect: false });
+    const other = new MarinaClient(TEST_URL, { autoReconnect: false });
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    try {
+      const login = await client.connect("TargetOwner");
+      await other.connect("TargetVisitor");
+      const owner = engine.entities.get(login.entityId)!;
+      for (const id of ["target-a", "target-b"]) {
+        db.createCodingSession({ id, title: id, workspaceRoot: "/tmp", createdBy: owner.name });
+      }
+      owner.properties.coding_session_id = "target-a";
+      owner.properties.active_modal = "code";
+      const target = { sessionId: "target-b" };
+      const result = await client.command("code observe targeted evidence", {
+        codingTarget: target,
+      });
+      expect(result.completion).toBe("confirmed");
+      expect(
+        result.some((p) => (p.data.code as { sessionId?: string })?.sessionId === "target-b"),
+      ).toBe(true);
+      expect(db.listCodingArtifacts("target-a")).toEqual([]);
+      await expect(other.command("code status", { codingTarget: target })).rejects.toThrow(
+        "not authorized",
+      );
+      const run = db.createCodingArtifact({
+        sessionId: "target-b",
+        kind: "task_run",
+        title: "Attempt",
+        status: "active",
+        contentText: "",
+        metadata: { taskId: 1 },
+        createdBy: owner.name,
+      });
+      engine.commands.registerOwned("target-fixture", {
+        name: "holdtarget",
+        help: "Test queue barrier",
+        async handler() {
+          entered.resolve();
+          await release.promise;
+        },
+      });
+      const held = client.command("/holdtarget");
+      await entered.promise;
+      const queued = client
+        .command("code observe stale evidence", { codingTarget: { ...target, runId: run.id } })
+        .catch((error: unknown) => error);
+      db.updateCodingArtifact(run.id, { status: "interrupted" });
+      const ambient: string[] = [];
+      client.onPerception((p) => {
+        if (typeof p.data.text === "string") ambient.push(p.data.text);
+      });
+      await other.command("say independently progressing");
+      await until(() => ambient.some((text) => text.includes("independently progressing")));
+      release.resolve();
+      await held;
+      expect(String(await queued)).toContain("not the session's active attempt");
+      expect(
+        db.listCodingArtifacts("target-b").filter((a) => a.kind === "observation"),
+      ).toHaveLength(1);
+      expect(owner.properties.coding_session_id).toBe("target-a");
+    } finally {
+      release.resolve();
+      await engine.drainCommands();
+      client.disconnect();
+      other.disconnect();
+    }
+  });
+
   it("acknowledges an explicit quit before closing the session", async () => {
     const client = new MarinaAgent(TEST_URL, { autoReconnect: false });
     const session = await client.connect("QuitSDK");
