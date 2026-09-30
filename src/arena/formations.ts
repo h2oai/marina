@@ -63,6 +63,10 @@
  * 2 start-sds; the sd blends toward the proposals' by the same trust with a
  * floor of half the start sd. A failed or malformed call drops out; with no
  * usable proposal the formation files the start forecast.
+ *
+ * Profile rounds run the same patterns over whole profiles, one call per
+ * member per step, aggregated cell by cell with these clamps
+ * (`formation-profile.ts`); ranking rounds keep their start.
  */
 
 import type { Evidence } from "../decisions/evidence";
@@ -70,6 +74,7 @@ import type { DecisionProvider } from "../decisions/types";
 import { judgeAudit, judgeClaim, newJudgeRecord } from "../forecast/judge";
 import type { RoundForecast } from "./forecast";
 import { forecastRound } from "./forecast";
+import type { ProfileProposal } from "./formation-profile";
 import type { Complete } from "./model-forecaster";
 import { parseReply } from "./model-forecaster";
 import {
@@ -151,6 +156,8 @@ export interface FormationForecast extends RoundForecast {
   critique?: string;
   /** Pattern-specific audit record: delphi's summary, the tournament bracket, verification's verdicts. */
   protocol?: Record<string, unknown>;
+  /** Profile rounds: the whole-profile proposals the per-cell aggregation used, by label. */
+  profileProposals?: Record<string, ProfileProposal>;
   fallback?: string;
   dailySource?: string;
   /** Filled by the service: what the round's calls cost. */
@@ -258,7 +265,7 @@ async function ask(
   }
 }
 
-function trimReply(r: Record<string, unknown>): Record<string, unknown> {
+export function trimReply(r: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(r).map(([k, v]) => [k, typeof v === "string" ? v.slice(0, 400) : v]),
   );
@@ -807,7 +814,7 @@ const research: Protocol = async (ctx, members) => {
 export const DELPHI_SNIPPET_CHARS = 160;
 
 /** Replace any member's name (full id or short name) in a snippet with "a panelist". */
-function anonymize(text: string, members: FormationMember[]): string {
+export function anonymize(text: string, members: FormationMember[]): string {
   let out = text;
   for (const m of members) {
     for (const name of new Set([m.name, m.name.split("/").at(-1) ?? m.name])) {
@@ -1190,6 +1197,12 @@ function shownPoints(
   return [...history.slice(-30), ...(daily?.points ?? []), ...(fresh ? [fresh] : [])];
 }
 
+/** The start forecast carries a distribution for every cell of a profile round. */
+function hasEveryCell(round: ArenaRound, start: RoundForecast): boolean {
+  const cells = round.cells ?? [];
+  return cells.length >= 2 && cells.every((c) => start.profile?.[c] !== undefined);
+}
+
 export async function formationForecastRound(
   pattern: FormationPattern,
   round: ArenaRound,
@@ -1205,11 +1218,16 @@ export async function formationForecastRound(
   const given = start ?? forecastRound(round, lock);
   const daily = dailyOf(given);
   const baseline = withoutDaily(given);
+  if (round.target_type === "profile_energy" && hasEveryCell(round, baseline) && members.length) {
+    // Profile rounds: the same protocols over whole profiles, aggregated per cell.
+    const { profileFormationForecastRound } = await import("./formation-profile");
+    return profileFormationForecastRound(pattern, round, lock, members, baseline, briefing, judge);
+  }
   if (round.target_type !== "continuous_normal" || !baseline.topline || members.length === 0) {
     return {
       ...baseline,
       formation: pattern,
-      fallback: "formations answer numeric rounds; the start forecast for this shape",
+      fallback: "formations answer numeric and profile rounds; the start forecast for this shape",
     };
   }
   const history = lock.answer_history ?? lock.history ?? [];
@@ -1285,9 +1303,12 @@ export async function buildDossier(
   pageText: PageText,
 ): Promise<ResearchDossier> {
   const used = (start as { nowcast?: Record<string, { date: string; value: number }> }).nowcast;
-  const brief = buildResearchBrief(round, lock, {
-    ...(round.series && used?.[round.series] ? { nowcast: used[round.series] } : {}),
-  });
+  const brief =
+    round.target_type === "profile_energy"
+      ? buildResearchBrief(round, lock, { ...(used ? { cellNowcasts: used } : {}) })
+      : buildResearchBrief(round, lock, {
+          ...(round.series && used?.[round.series] ? { nowcast: used[round.series] } : {}),
+        });
   try {
     const report = await retriever(brief);
     const checked = await verifyDossier(report.report, pageText);
@@ -1327,7 +1348,14 @@ export interface ComposedForecast extends FormationForecast {
   /** The first formation's forecast when a second one judged it. */
   upstream?: Pick<
     FormationForecast,
-    "formation" | "topline" | "proposals" | "trust" | "rounds" | "protocol"
+    | "formation"
+    | "topline"
+    | "profile"
+    | "proposals"
+    | "profileProposals"
+    | "trust"
+    | "rounds"
+    | "protocol"
   >;
 }
 
@@ -1348,8 +1376,9 @@ export async function composeForecastRound(
 ): Promise<ComposedForecast> {
   const [first, second] = stages;
   const numeric = round.target_type === "continuous_normal" && Boolean(start.topline);
+  const profiled = round.target_type === "profile_energy" && hasEveryCell(round, start);
   const dossier =
-    research && numeric
+    research && (numeric || profiled)
       ? await buildDossier(round, lock, start, research.retriever, research.pageText)
       : undefined;
   const brief = dossier ? dossierBlock(dossier) : undefined;
@@ -1362,15 +1391,22 @@ export async function composeForecastRound(
     brief,
     judge,
   );
-  if (!second || !numeric || !start.topline) return { ...one, ...(dossier ? { dossier } : {}) };
-  const base = withoutDaily(start).topline!;
+  if (!second || !(numeric || profiled)) return { ...one, ...(dossier ? { dossier } : {}) };
+  const handoff = numeric
+    ? handoffBlock(first.pattern, one, withoutDaily(start).topline!)
+    : (await import("./formation-profile")).profileHandoffBlock(
+        first.pattern,
+        one,
+        round.cells ?? [],
+        withoutDaily(start).profile!,
+      );
   const two = await formationForecastRound(
     second.pattern,
     round,
     lock,
     second.members,
     start,
-    [brief, handoffBlock(first.pattern, one, base)].filter(Boolean).join("\n\n"),
+    [brief, handoff].filter(Boolean).join("\n\n"),
     judge,
   );
   return {
@@ -1383,7 +1419,9 @@ export async function composeForecastRound(
     upstream: {
       ...(one.formation ? { formation: one.formation } : {}),
       ...(one.topline ? { topline: one.topline } : {}),
+      ...(one.profile && profiled ? { profile: one.profile } : {}),
       ...(one.proposals ? { proposals: one.proposals } : {}),
+      ...(one.profileProposals ? { profileProposals: one.profileProposals } : {}),
       ...(one.trust !== undefined ? { trust: one.trust } : {}),
       ...(one.protocol ? { protocol: one.protocol } : {}),
     },
