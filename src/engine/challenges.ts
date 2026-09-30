@@ -41,6 +41,13 @@
  * them), so they are their own family, never mixed into the independent case
  * sets that prove calibration.
  *
+ * A requester has at most MAX_PER_REQUESTER open challenges. The same held
+ * input coalesces onto its open challenge; past the cap the newest hold
+ * replaces the requester's oldest one of the same class (closed as expired,
+ * the requester and approvers told), and only when every open one is of
+ * another class is nothing opened — with the open tokens named. A hold never
+ * turns into a silent refusal.
+ *
  * In-process only; a restart drops pending challenges (the requester can ask
  * again). `MARINA_CHALLENGES=off` restores plain refusals.
  */
@@ -370,12 +377,30 @@ function notify(challenge: Challenge): string[] {
   return [...told].map((id) => host?.getEntity(id)?.name ?? id);
 }
 
+interface Created {
+  challenge?: Challenge;
+  existing?: boolean;
+  /** The requester's oldest same-class challenge this one replaced (at the cap). */
+  superseded?: Challenge;
+  /** `requester_full`: the requester's open challenges, all of other classes. */
+  open?: Challenge[];
+  error?: "disabled" | "no_requester" | "full" | "requester_full";
+}
+
+/**
+ * Open (or coalesce onto) a challenge. At the per-requester cap the newest
+ * hold REPLACES the requester's oldest open challenge of the same class — the
+ * replaced one is closed as expired and the requester is told it did not run —
+ * so a stream of holds never silently turns into a wall; only when every open
+ * challenge is of another class is nothing opened (`requester_full`, with the
+ * open ones named).
+ */
 function create(
   input: Omit<Challenge, "token" | "createdAt" | "expiresAt" | "requesterName" | "creatorName">,
   rerun?: () => Promise<string>,
   ttl = ttlMs(),
   requesterName?: string,
-): { challenge?: Challenge; existing?: boolean; error?: string } {
+): Created {
   if (!host || !challengesEnabled()) return { error: "disabled" };
   sweep();
   const requester =
@@ -394,7 +419,24 @@ function create(
       p.challenge.summary === input.summary,
   );
   if (same) return { challenge: same.challenge, existing: true };
-  if (mine.length >= MAX_PER_REQUESTER || pending.size >= MAX_PENDING) return { error: "full" };
+  let superseded: Challenge | undefined;
+  if (mine.length >= MAX_PER_REQUESTER) {
+    const cls = challengeClass(input);
+    const oldest = mine
+      .filter((p) => challengeClass(p.challenge) === cls)
+      .sort((a, b) => a.challenge.createdAt - b.challenge.createdAt)[0];
+    if (!oldest) {
+      return {
+        error: "requester_full",
+        open: mine.map((p) => p.challenge).sort((a, b) => a.createdAt - b.createdAt),
+      };
+    }
+    pending.delete(oldest.challenge.token);
+    recordOutcome(oldest, "expired");
+    superseded = oldest.challenge;
+  } else if (pending.size >= MAX_PENDING) {
+    return { error: "full" };
+  }
   const creator = host.creatorOf(requester);
   const now = Date.now();
   const challenge: Challenge = {
@@ -406,16 +448,68 @@ function create(
     expiresAt: now + ttl,
   };
   pending.set(challenge.token, { challenge, ...(rerun ? { rerun } : {}) });
-  return { challenge };
+  return { challenge, ...(superseded ? { superseded } : {}) };
 }
 
-function heldMessage(challenge: Challenge, told: string[], existing: boolean): string {
-  const who = told.length ? told.join(", ") : "no approver is online right now";
+function minutesLeft(challenge: Challenge, now = Date.now()): number {
+  return Math.max(1, Math.round((challenge.expiresAt - now) / 60_000));
+}
+
+/**
+ * What the requester is told when a call is held: always who can answer, how
+ * long it stays open, and that nothing waits on it — including when no
+ * approver is connected, so the loop never mistakes a hold for progress.
+ */
+function heldMessage(
+  challenge: Challenge,
+  told: string[],
+  existing: boolean,
+  superseded?: Challenge,
+): string {
+  const token = challenge.token;
+  const minutes = minutesLeft(challenge);
+  const replaced = superseded
+    ? ` It replaces your oldest held call (challenge ${superseded.token}: ${superseded.summary.slice(0, 80)}), which did not run.`
+    : "";
+  if (existing) {
+    return (
+      `\nStill waiting on an approver for this same call (challenge ${token}, ${minutes} min left). ` +
+      "It runs automatically if approved — carry on with other work meanwhile."
+    );
+  }
+  if (told.length) {
+    return (
+      `\nAsked ${told.join(", ")} to approve it (challenge ${token}). ` +
+      "It runs automatically if approved — nothing is waiting on it, so carry on with other work " +
+      `or another route meanwhile.${replaced}`
+    );
+  }
+  // A creator answers its agent's tool calls; a rank or gate hold needs one who holds it.
+  const approver = !challenge.creatorName
+    ? "an admin"
+    : challenge.kind === "tool"
+      ? `${challenge.creatorName} or an admin`
+      : `an admin, or ${challenge.creatorName} if they hold the authority`;
   return (
-    `\n${existing ? "Still waiting on" : "Asked"} ${who} to approve it (challenge ${challenge.token}). ` +
-    `It runs automatically if approved — nothing is waiting on it, so carry on with other work ` +
-    `or another route meanwhile.`
+    `\nHeld for approval by ${approver} (challenge ${token}), but no eligible approver is connected right now. ` +
+    `It stays open ${minutes} min and runs automatically if approved; unanswered, it expires without running. ` +
+    `Continue with other work, and if this step is essential, find another route.${replaced}`
   );
+}
+
+/** The refusal when nothing could be opened: explicit, naming what is open. */
+function notOpenedMessage(made: Created): string {
+  if (made.error === "requester_full" && made.open?.length) {
+    const open = made.open.map((c) => `${c.token} (${c.summary.slice(0, 60)})`).join(", ");
+    return (
+      ` It did not run: you already have ${made.open.length} open challenges of other kinds — ${open} — ` +
+      "so no new one was opened. Take another route, or repeat this call once one of those is answered or expires."
+    );
+  }
+  if (made.error === "full") {
+    return " It did not run: too many challenges are open in this world right now, so none was opened. Take another route, or repeat it later.";
+  }
+  return " It did not run (no challenge could be opened); choose another step.";
 }
 
 /**
@@ -451,13 +545,14 @@ export function raiseForCommand(input: {
     ...(input.minRank !== undefined ? { minRank: input.minRank } : {}),
   });
   if (!made.challenge) {
-    return made.error === "full"
-      ? "\n(Too many open challenges — wait for an answer before asking again.)"
+    return made.error === "full" || made.error === "requester_full"
+      ? `\n${notOpenedMessage(made).trim()}`
       : "";
   }
+  if (made.superseded) tellSuperseded(made.superseded, made.challenge);
   const told = made.existing ? [] : notify(made.challenge);
   if (!made.existing) maybeJudge(made.challenge);
-  return heldMessage(made.challenge, told, !!made.existing);
+  return heldMessage(made.challenge, told, !!made.existing, made.superseded);
 }
 
 /**
@@ -488,15 +583,35 @@ export function raiseForTool(input: {
     input.requesterName,
   );
   if (!made.challenge) {
-    return {
-      message: `${input.reason} It did not run (no challenge could be opened); choose another step.`,
-    };
+    return { message: `${input.reason}${notOpenedMessage(made)}` };
   }
+  if (made.superseded) tellSuperseded(made.superseded, made.challenge);
   const told = made.existing ? [] : notify(made.challenge);
   return {
     token: made.challenge.token,
-    message: `${input.reason}${heldMessage(made.challenge, told, !!made.existing)}`,
+    message: `${input.reason}${heldMessage(made.challenge, told, !!made.existing, made.superseded)}`,
   };
+}
+
+/** Tell the connected approvers that a challenge they saw was replaced by a newer one. */
+function tellSuperseded(old: Challenge, next: Challenge): void {
+  if (!host) return;
+  const candidates: Entity[] = [];
+  if (old.creatorName) {
+    const creator = host.findEntity(old.creatorName);
+    if (creator) candidates.push(creator);
+  }
+  for (const entity of host.connectedEntities()) if (isAdmin(entity)) candidates.push(entity);
+  const told = new Set<string>();
+  for (const candidate of candidates) {
+    if (told.has(candidate.id) || !host.isConnected(candidate.id)) continue;
+    if (authorize(candidate, old)) continue;
+    host.send(
+      candidate.id,
+      `Challenge ${old.token} (${old.requesterName}) was replaced by ${next.token}; it did not run.`,
+    );
+    told.add(candidate.id);
+  }
 }
 
 function firstSentence(text: string): string {
