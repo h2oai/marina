@@ -506,6 +506,46 @@ describe("CrewManager: deposit echo (dedup visibility)", () => {
     expect(dispatches[0]!).toContain("Everyone works the task");
   });
 
+  it("brief-routed formations name the depositor and defer to the brief, not the channel", () => {
+    for (const formation of ["delphi", "tournament", "verification", "auction", "sharding"]) {
+      const crew = crews.create({
+        name: `routed-${formation}`,
+        goal: "one deliverable",
+        owner: OWNER,
+        formation: formation as never,
+        members: [{ agentName: "alice", role: "lead" }, { agentName: "bob" }],
+      });
+      crews.dispatch(crew.id, "task");
+      const dispatch = channels
+        .getHistory(crew.channelId!, 20)
+        .map((m) => m.content)
+        .find((c) => c.startsWith("[crew-task]"))!;
+      expect(dispatch).toMatch(/Designated depositor: \w+\./);
+      expect(dispatch).toContain("writes the final deliverable");
+      expect(dispatch).toContain(`follow the [formation:${formation}] brief`);
+      expect(dispatch).not.toContain("ON THIS CHANNEL");
+      expect(dispatch).not.toContain("Everyone works the task");
+    }
+  });
+
+  it("broadcast formations keep the post-on-channel wording", () => {
+    for (const formation of ["chorus", "blackboard", "ledger"]) {
+      const crew = crews.create({
+        name: `broadcast-${formation}`,
+        goal: "g",
+        owner: OWNER,
+        formation: formation as never,
+        members: [{ agentName: "alice" }, { agentName: "bob" }],
+      });
+      crews.dispatch(crew.id, "task");
+      const dispatch = channels
+        .getHistory(crew.channelId!, 20)
+        .map((m) => m.content)
+        .find((c) => c.startsWith("[crew-task]"))!;
+      expect(dispatch).toContain("post your result ON THIS CHANNEL");
+    }
+  });
+
   it("stays silent for non-members and inactive crews", () => {
     const crew = crews.create({
       name: "quiet",

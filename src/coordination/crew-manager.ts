@@ -31,6 +31,7 @@ import { normalizePatternName } from "../world/templates/orchestration";
 import type { ChannelManager } from "./channel-manager";
 import {
   buildFormationBrief,
+  dispatchDepositorLine,
   getFormationMediator,
   type MediatorCrewView,
 } from "./crew-formations";
@@ -442,16 +443,8 @@ export class CrewManager {
     // ("you are / are not the depositor") is the only slot that precedes the
     // race. Rotates per dispatch so no member is starved of deposit credit.
     const depositor = this.pickDepositor(crew);
-    // "Everyone works, one writes": members all engage the task, but their
-    // results go on the CHANNEL (visible, mergeable contributions) while only
-    // the designated depositor writes the deliverable. Measured 2026-09:
-    // suppress-everyone-else ("only X works") solved duplication (63→12
-    // notes) but halved completion — one member's dropped turn had no cover.
-    const depositorLine = depositor
-      ? `\n(Designated depositor: ${depositor}. Everyone works the task, but post your result ` +
-        `ON THIS CHANNEL — only ${depositor} writes the final deliverable (pool note / crew ` +
-        `artifact), consolidating what lands here. Never write a competing deliverable.)`
-      : "";
+    // Wording per formation lives with the briefs (`dispatchDepositorLine`).
+    const depositorLine = depositor ? `\n${dispatchDepositorLine(crew.formation, depositor)}` : "";
     this.channels.send(
       crew.channelId!,
       sender?.id ?? "__crew_manager__",
