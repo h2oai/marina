@@ -160,6 +160,25 @@ export function selectAgent(
   return selected;
 }
 
+/**
+ * Who may fulfil a single-target agents-mode request: any CURRENT member of
+ * the endpoint's `model-<name>` channel, never the model API itself.
+ *
+ * The routed `target` is only the member the request is addressed to. Every
+ * member perceives the request, and a crew's members may all have joined the
+ * channel, so the member that actually answers is often not the one the
+ * balancer picked. Accepting only `target` dropped those answers and timed the
+ * request out. Channel membership is the authorization boundary: the balancer
+ * may already pick any member, so any member's reply carries the same
+ * authority. Deployments that keep specialists away from the endpoint do so by
+ * membership (`pruneChannelToAuthorized` in the world seeds). The reply must
+ * still carry this request's correlation id; the first matching reply wins.
+ */
+function isEndpointResponder(cm: ChannelManager, channelId: string, senderId: string): boolean {
+  if (senderId === "__model_api__") return false;
+  return cm.isMember(channelId, senderId);
+}
+
 function incrementPending(entityId: string): void {
   pendingRequests.set(entityId, (pendingRequests.get(entityId) ?? 0) + 1);
 }
@@ -334,6 +353,8 @@ export async function routeToChannel(
 
   incrementPending(target);
   const cancelReminders = scheduleRequestReminders(cm, channel.id, requestId, target, userContent);
+  // The member whose correlated reply fulfilled the request (usually `target`).
+  let respondedBy = target;
 
   try {
     const result = await new Promise<RouteResult>((resolve, reject) => {
@@ -344,11 +365,7 @@ export async function routeToChannel(
 
       const unsub = cm.onMessage((channelId, senderId, _senderName, content) => {
         if (channelId !== channel.id) return;
-        if (senderId === "__model_api__") return;
-        // Orchestration boundary: only the designated target may fulfill the
-        // response. Specialists that share the channel (to hear internal
-        // coordination) must not race the orchestrator.
-        if (senderId !== target) return;
+        if (!isEndpointResponder(cm, channel.id, senderId)) return;
 
         // Try JSON response format
         let parsed: Record<string, string> | undefined;
@@ -360,6 +377,7 @@ export async function routeToChannel(
         if (parsed?.type === "model_response" && parsed.id === requestId) {
           clearTimeout(timer);
           unsub();
+          respondedBy = senderId;
           resolve({ content: parsed.content ?? "", conversationId: convId, requestId });
           return;
         }
@@ -369,6 +387,7 @@ export async function routeToChannel(
         if (content.startsWith(prefix)) {
           clearTimeout(timer);
           unsub();
+          respondedBy = senderId;
           resolve({
             content: content.slice(prefix.length),
             conversationId: convId,
@@ -384,7 +403,7 @@ export async function routeToChannel(
     // Persist to conversation channel (use __model_conv__ to avoid triggering agents)
     if (convChannel) {
       cm.send(convChannel.id, "__model_conv__", "user", userContent);
-      cm.send(convChannel.id, target, "agent", result.content);
+      cm.send(convChannel.id, respondedBy, "agent", result.content);
     }
 
     engine.logEvent({
@@ -394,6 +413,7 @@ export async function routeToChannel(
       ...requestTrace(requestId),
       model,
       target,
+      ...(respondedBy !== target ? { respondedBy } : {}),
       routeStrategy: strategy,
       candidateCount: onlineMembers.length,
       routeAdviceMode: route.adviceMode,
@@ -803,6 +823,8 @@ export function routeToChannelStreaming(
   let settled = false;
   let traceFinished = false;
   let cancelReminders: (() => void) | undefined;
+  /** First member to send a correlated frame; only it may continue the stream. */
+  let streamOwner: string | undefined;
   const cleanup = () => {
     if (settled) return;
     settled = true;
@@ -821,6 +843,7 @@ export function routeToChannelStreaming(
       ...requestTrace(reqId),
       model,
       target,
+      ...(streamOwner && streamOwner !== target ? { respondedBy: streamOwner } : {}),
       routeStrategy: strategy,
       candidateCount: onlineMembers.length,
       routeAdviceMode: route.adviceMode,
@@ -853,10 +876,11 @@ export function routeToChannelStreaming(
 
       unsub = cm.onMessage((channelId, senderId, _senderName, content) => {
         if (channelId !== channel.id) return;
-        if (senderId === "__model_api__") return;
-        // Orchestration boundary: only the designated target may fulfill the
-        // stream. Mirrors the non-streaming guard in routeToChannel.
-        if (senderId !== target) return;
+        // Any current channel member may fulfil the stream (see
+        // isEndpointResponder); the first member to send a correlated frame
+        // owns it, so two members' chunks never interleave.
+        if (streamOwner ? senderId !== streamOwner : !isEndpointResponder(cm, channelId, senderId))
+          return;
 
         let parsed: { type?: string; id?: string; content?: string };
         try {
@@ -864,6 +888,15 @@ export function routeToChannelStreaming(
         } catch {
           return; // Non-JSON message — skip
         }
+        if (parsed.id !== reqId) return;
+        if (
+          parsed.type !== "model_response_chunk" &&
+          parsed.type !== "model_response_end" &&
+          parsed.type !== "model_response"
+        ) {
+          return;
+        }
+        streamOwner ??= senderId;
 
         const text = parsed.content ?? "";
 
@@ -904,7 +937,7 @@ export function routeToChannelStreaming(
           // Persist to conversation channel
           if (convChannel) {
             cm.send(convChannel.id, "__model_conv__", "user", userContent);
-            cm.send(convChannel.id, target, "agent", collectedContent.join(""));
+            cm.send(convChannel.id, streamOwner ?? target, "agent", collectedContent.join(""));
           }
           safeClose(controller);
           return;
@@ -929,7 +962,7 @@ export function routeToChannelStreaming(
           }
           if (convChannel) {
             cm.send(convChannel.id, "__model_conv__", "user", userContent);
-            cm.send(convChannel.id, target, "agent", text);
+            cm.send(convChannel.id, streamOwner ?? target, "agent", text);
           }
           safeClose(controller);
         }

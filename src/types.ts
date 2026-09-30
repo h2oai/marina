@@ -657,6 +657,9 @@ export type EngineEvent =
       spanId?: string;
       model: string;
       target?: string;
+      /** Channel member whose correlated reply fulfilled the request, when it
+       * was not the routed `target`. Absent when the target answered. */
+      respondedBy?: string;
       routeStrategy?: "round-robin" | "least-busy" | "adaptive";
       candidateCount?: number;
       routeAdviceMode?: "pareto" | "explore" | "insufficient";
