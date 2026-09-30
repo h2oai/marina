@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { CREW_BRIEFS } from "../src/coordination/crew-formations";
 import { auditKnowledgeNotes } from "../src/engine/commands/knowledge-hygiene";
 import type { NoteRow } from "../src/persistence/database";
+import type { CrewFormation } from "../src/types";
 import {
   AUCTION_TEMPLATE,
   BLACKBOARD_TEMPLATE,
@@ -49,6 +51,9 @@ const TEMPLATES: Record<string, TemplateNote[]> = {
 
 const ADDED = ["delphi", "tournament", "verification", "auction", "ledger", "sharding"];
 const BUILTIN = ORCHESTRATION_PATTERNS.filter((p) => p !== "custom");
+/** Supported spellings that are deliberately absent from `usage` (the bare
+ *  `memory set/get/...` forms of `memory kv`, documented in memory.ts). */
+const LEGACY_BARE_FORMS = new Set(["memory set"]);
 
 describe("orchestration pattern templates", () => {
   it("every built-in pattern has a template, a fit entry and a validation entry", () => {
@@ -98,19 +103,19 @@ describe("orchestration pattern templates", () => {
       expect(report.unsupportedClaims.map((f) => f.detail)).toEqual([]);
     });
 
-    it.each(ADDED)("every backticked command in %s names a real verb", (pattern) => {
-      // Stricter than the auditor for the new notes: every backticked ref must
-      // start with a registered command, and a literal second token must be a
-      // subcommand some declared usage form starts with (or the command must
-      // take a positional argument there).
+    // Stricter than the auditor: every backticked ref must start with a
+    // registered command, and a literal second token must be a subcommand some
+    // declared usage form starts with (or the command must take a positional
+    // argument there).
+    function commandProblems(texts: string[]): string[] {
       const defs = new Map(
         fixture.engine.commands
           .allBuiltins()
           .flatMap((cmd) => [cmd.name, ...(cmd.aliases ?? [])].map((n) => [n, cmd] as const)),
       );
       const problems: string[] = [];
-      for (const note of TEMPLATES[pattern] ?? []) {
-        for (const match of note.content.matchAll(/`([^`]+)`/g)) {
+      for (const text of texts) {
+        for (const match of text.matchAll(/`([^`]+)`/g)) {
           const tokens = (match[1] ?? "").trim().split(/\s+/);
           const def = defs.get(tokens[0] ?? "");
           if (!def) {
@@ -119,6 +124,7 @@ describe("orchestration pattern templates", () => {
           }
           const sub = tokens[1];
           if (!sub || !/^[a-z][a-z-]*$/.test(sub)) continue;
+          if (LEGACY_BARE_FORMS.has(`${def.name} ${sub}`)) continue;
           const forms = (def.usage ?? []).map(
             (u) => (typeof u === "string" ? u : u.syntax).split(/\s+/)[1] ?? "",
           );
@@ -126,7 +132,24 @@ describe("orchestration pattern templates", () => {
           if (!ok) problems.push(`\`${match[1]}\`: "${sub}" is not a ${def.name} form`);
         }
       }
-      expect(problems).toEqual([]);
+      return problems;
+    }
+
+    it.each(BUILTIN)("every backticked command in %s names a real verb", (pattern) => {
+      expect(commandProblems((TEMPLATES[pattern] ?? []).map((n) => n.content))).toEqual([]);
     });
+
+    it.each(BUILTIN)("every backticked command in the %s crew brief names a real verb", (p) => {
+      expect(commandProblems([CREW_BRIEFS[p as CrewFormation]])).toEqual([]);
+    });
+  });
+
+  it.each(ADDED)("%s opens with a concrete starting move", (pattern) => {
+    // Template: the overview note ends with a copyable first command.
+    expect(TEMPLATES[pattern]?.[0]?.content).toMatch(/Start with: `[^`]+`/);
+    // Crew brief: the runtime brief leads with the opening move.
+    const brief = CREW_BRIEFS[pattern as CrewFormation];
+    expect(brief).toStartWith("Start — ");
+    expect(brief).toMatch(/`[^`]+`/);
   });
 });

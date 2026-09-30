@@ -27,8 +27,9 @@
  * Every formation has a runtime brief; mediators are optional. Delphi,
  * tournament, verification, auction, ledger and sharding (added 2026-09) run
  * on their brief alone, like swarm, chorus, symbiosis and research — their
- * mechanics use existing crew primitives (`tell`, `crew artifact`,
- * `crew stall`) and need no special runtime roles.
+ * mechanics use existing primitives (`tell`, `channel send`, `crew artifact`)
+ * and need no special runtime roles. Each of their briefs opens with one
+ * concrete starting move ("Start — …").
  */
 
 import type { CrewFormation } from "../types";
@@ -99,33 +100,81 @@ export const CREW_BRIEFS: Record<CrewFormation, string> = {
     "keep or kill it. Record what was learned with `crew artifact <name> synthesis -- <ref>` " +
     "before completing.",
   delphi:
-    "Independent first: each member sends ONE estimate + reasons privately to the lead (`tell`) " +
-    "before reading anyone else's. Lead posts one anonymized summary here (range, median, key " +
-    "reasons, no names). Members revise once. Keep dissenting reasons; deliver the final " +
-    "estimate with the dissent that survived.",
+    "Start — each member: send your estimate privately to the lead before reading anyone else's " +
+    "(`tell <lead> estimate: <value> | <reasons>`; for a choice, your pick plus a confidence). " +
+    "Lead: once all are in, post one anonymized summary here (range, median, key reasons, no " +
+    "names). Members revise once. Keep dissenting reasons; deliver the final estimate with the " +
+    "dissent that survived.",
   tournament:
-    "Each member produces one candidate alone and deposits it " +
-    "(`crew artifact <name> draft -- <ref>`). Lead pairs candidates; a non-author picks the " +
-    "stronger of each pair in one message until one remains. Graft the losers' best ideas into " +
-    "the winner, then deliver.",
+    "Start — each member: produce one candidate alone and deposit it as a draft " +
+    "(`crew artifact <name> draft -- <candidate>`) before anyone names a winner. Lead pairs " +
+    "candidates; a non-author picks the stronger of each pair in one message until one remains. " +
+    "Graft the losers' best ideas into the winner, then deliver.",
   verification:
-    "One member drafts the candidate; each other member checks ONE aspect (correctness, " +
-    "requirements, evidence, safety) and posts pass/fail with evidence here. Run checks rather " +
-    "than argue them. A failed aspect goes back to the author once; deliver when every aspect " +
-    "passes.",
+    "Start — one drafter deposits the candidate (`crew artifact <name> draft -- <candidate>`). " +
+    "Each other member checks ONE named aspect (correctness, requirements, evidence, safety) and " +
+    "replies `channel send <crew-channel> aspect: <aspect> pass|fail — <reason>`. Run checks " +
+    "rather than argue them. A failed aspect goes back to the drafter once; deliver when every " +
+    "aspect passes.",
   auction:
-    "Lead posts the pieces here. Each member replies with a bid per piece: fit (a past result) " +
-    "and expected effort. Lead awards each piece to the best fit per effort by `tell`. Winners do " +
-    "their piece; lead merges and delivers.",
+    "Start — lead: post the lots first (`channel send <crew-channel> lots: 1) … 2) …`), then " +
+    "wait for bids. Each member bids per lot: fit (a past result) and expected effort. Lead " +
+    "awards each lot to the best fit per effort by `tell`. Winners do their lot; lead merges and " +
+    "delivers.",
   ledger:
-    "Lead keeps two ledgers here: plan (facts, steps, owners) and progress (done, in flight, " +
-    "stuck), updating progress after each step. A member stuck twice on a step " +
-    "(`crew stall <name> <agent>`): lead replans rather than retries. Lead delivers.",
+    "Start — lead: post the plan ledger first " +
+    "(`channel send <crew-channel> [plan] facts: … | steps: … | owners: …`), then a progress " +
+    "ledger (done, in flight, stuck) after each step. When a member reports being stuck twice on " +
+    "the same step, the lead replans rather than retries. Lead delivers.",
   sharding:
-    "Lead runs the checker or tests once and posts the failing cases here as shards. Each member " +
-    "replies 'claiming: <shard>', fixes it WITHOUT editing the checker or tests, re-runs, and " +
-    "posts the result. Done = the full check passes; lead delivers.",
+    "Start — lead: run the checker once and post one shard per failing case " +
+    "(`channel send <crew-channel> shard 1: <case>`). Each member replies 'claiming: <shard>', " +
+    "fixes it WITHOUT editing the checker or tests, re-runs, posts the result. Done = the full " +
+    "check passes; lead delivers. If the checker cannot run, say so, verify by hand and deliver " +
+    "with the limitation stated.",
 };
+
+/**
+ * Formations whose protocol routes contributions somewhere other than the crew
+ * channel (private estimates to the lead, drafts, bids, claimed shards,
+ * per-aspect checks). Their dispatch line names the depositor and defers to
+ * the brief instead of telling every member to post results on the channel.
+ */
+const BRIEF_ROUTED_FORMATIONS = new Set<CrewFormation>([
+  "delphi",
+  "tournament",
+  "verification",
+  "auction",
+  "sharding",
+]);
+
+/**
+ * The designated-depositor line appended to a `[crew-task]` dispatch.
+ *
+ * Broadcast formations keep "everyone works, one writes": members all engage
+ * the task and post results on the CHANNEL (visible, mergeable
+ * contributions) while only the depositor writes the deliverable. Measured
+ * 2026-09: suppress-everyone-else ("only X works") solved duplication but
+ * halved completion — one member's dropped turn had no cover.
+ *
+ * Brief-routed formations (above) get the same single-writer rule without the
+ * channel instruction, which would contradict their brief.
+ */
+export function dispatchDepositorLine(formation: CrewFormation, depositor: string): string {
+  const canonical = normalizePatternName(formation) as CrewFormation;
+  if (BRIEF_ROUTED_FORMATIONS.has(canonical)) {
+    return (
+      `(Designated depositor: ${depositor}. Only ${depositor} writes the final deliverable ` +
+      `(pool note / final crew artifact); never write a competing one. Otherwise follow the ` +
+      `[formation:${canonical}] brief for how and where to contribute.)`
+    );
+  }
+  return (
+    `(Designated depositor: ${depositor}. Everyone works the task, but post your result ` +
+    `ON THIS CHANNEL — only ${depositor} writes the final deliverable (pool note / crew ` +
+    `artifact), consolidating what lands here. Never write a competing deliverable.)`
+  );
+}
 
 /**
  * Build the single-message formation brief posted on activation / formation

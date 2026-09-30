@@ -258,7 +258,8 @@ export const DELIBERATION_TEMPLATE: TemplateNote[] = [
   {
     content:
       "Deliberation propose phase: post a proposal to the project board with a clear title and " +
-      "body. Tag proposals with [proposal]. Others respond with numeric votes (1-10) using " +
+      "body — `board post project:<name> [proposal] <title> | <body>`. Tag proposals with " +
+      "[proposal]. Others respond with numeric votes (1-10) using " +
       "`board vote <postId> up|down [score 1-10]`. Proposals tend to advance when they have " +
       "majority support (avg >= 6).",
     importance: 8,
@@ -274,7 +275,8 @@ export const DELIBERATION_TEMPLATE: TemplateNote[] = [
   },
   {
     content:
-      "Deliberation execute phase: once a proposal passes, create tasks from it. Assign tasks " +
+      "Deliberation execute phase: once a proposal passes, create tasks from it (`task create " +
+      "<title> | <description>`). Assign tasks " +
       "to the project bundle. Claim and work tasks individually. Submit results for review. " +
       "The proposer or project creator approves submissions.",
     importance: 8,
@@ -317,7 +319,7 @@ export const CHORUS_TEMPLATE: TemplateNote[] = [
   {
     content:
       "Chorus broadcast wall: before claiming a task, consider posting 'starting: <slice>' on the group " +
-      "channel. While working, broadcast milestones. Before you pick a slice, reading the " +
+      "channel (`channel send <channel> starting: <slice>`). While working, broadcast milestones. Before you pick a slice, reading the " +
       "channel to confirm no sibling is already on it often helps. Coordination is explicit via " +
       "broadcast, not handoff. If a sibling claims your target, picking something else tends to keep " +
       "parallelism alive.",
@@ -392,7 +394,8 @@ export const FOUNDRY_TEMPLATE: TemplateNote[] = [
     content:
       "Foundry Gate — merge queue convention: one practice crews have found helpful is having " +
       "the Gate handle landings rather than workers merging directly. When a worker submits, the Gate " +
-      "reviews against the task spec and either accepts (posts [landed] on the board, adds a pool note, " +
+      "reviews against the task spec and either accepts (`board post project:<name> [landed] " +
+      "<task> | <summary>`, adds a pool note, " +
       "closes the task) or rejects (task stays claimed, worker reworks with the Gate's feedback). The Gate " +
       "can batch landings. This tends to keep concurrent work safer.",
     importance: 7,
@@ -462,7 +465,8 @@ export const PIPELINE_TEMPLATE: TemplateNote[] = [
     content:
       "Pipeline stages: the project leader defines stages as ordered child tasks in the " +
       "bundle (e.g., research → analysis → synthesis → review). Each stage task's " +
-      "description specifies inputs it expects and outputs it is expected to produce.",
+      "description specifies inputs it expects and outputs it is expected to produce: " +
+      "`task create Stage 1: research | inputs: <...> outputs: <...>`.",
     importance: 8,
     type: "skill",
   },
@@ -470,7 +474,8 @@ export const PIPELINE_TEMPLATE: TemplateNote[] = [
     content:
       "Pipeline stage contract: before any stage begins, the stage owner might post a contract " +
       "note to the pool tagged [stage-N-contract] specifying input shape, output " +
-      "shape, and rejection criteria. Downstream stages can read the contract, not just the prose. " +
+      "shape, and rejection criteria (`pool <name> add [stage-N-contract] in: <shape> | out: " +
+      "<shape> | reject: <criteria>`). Downstream stages can read the contract, not just the prose. " +
       "Contracts act as the stage's API — changing the contract means upstream/downstream " +
       "may need to re-align. Contracts help stages align; starting without one tends to cause mismatch.",
     importance: 8,
@@ -479,8 +484,8 @@ export const PIPELINE_TEMPLATE: TemplateNote[] = [
   {
     content:
       "Pipeline handoff: when a stage completes, the agent posts results to the board " +
-      "with tag [stage-N-output] and sends a channel message signaling the next stage " +
-      "can begin. The next stage's agent might read the [stage-N-contract] first, check " +
+      "with tag [stage-N-output] (`board post project:<name> [stage-N-output] <title> | " +
+      "<result>`) and sends a channel message signaling the next stage can begin. The next stage's agent might read the [stage-N-contract] first, check " +
       "the output against it, then start work.",
     importance: 8,
     type: "skill",
@@ -529,7 +534,8 @@ export const DEBATE_TEMPLATE: TemplateNote[] = [
     content:
       "Debate judging: the project creator or designated judge reviews all positions " +
       "and scores with `board scores <postId>`. The judge posts a synthesis " +
-      "tagged [ruling] that weighs arguments. The ruling becomes a task or action item.",
+      "tagged [ruling] that weighs arguments (`board post project:<name> [ruling] <decision> | " +
+      "<reasoning>`). The ruling becomes a task or action item.",
     importance: 8,
     type: "skill",
   },
@@ -556,8 +562,9 @@ export const MAPREDUCE_TEMPLATE: TemplateNote[] = [
   {
     content:
       "MapReduce mapping: the coordinator creates one child task per chunk in the project " +
-      "bundle. Each task description fully specifies the chunk boundaries so workers need " +
-      "no coordination. Workers claim chunks freely — all chunks are independent.",
+      "bundle (`task create Chunk N: <boundaries> | <spec>`). Each task description fully " +
+      "specifies the chunk boundaries so workers need no coordination. Workers claim chunks " +
+      "freely — all chunks are independent.",
     importance: 8,
     type: "skill",
   },
@@ -630,7 +637,8 @@ export const SYMBIOSIS_TEMPLATE: TemplateNote[] = [
       "Synergy frontiers (novel AND relevant to someone's profile) get priority. Create tasks " +
       "from top-voted frontiers and tag them with the target profile type. Deepening entities " +
       "take depth-frontiers, broadening entities take breadth-frontiers. Post assignments to " +
-      "the board tagged [discernment].",
+      "the board tagged [discernment] (`board post project:<name> [discernment] <frontier> | " +
+      "<entity and why>`).",
     importance: 8,
     type: "skill",
   },
@@ -766,7 +774,8 @@ export const DELPHI_TEMPLATE: TemplateNote[] = [
       "else's, a facilitator summarizes the spread without names, and members revise in light " +
       "of the summary. The mechanism is independence before influence: the first round tends to " +
       "be most useful when nobody has anchored on an earlier or louder voice. Consider naming one " +
-      "facilitator (not an estimator) before the first round starts.",
+      "facilitator (not an estimator) before the first round starts. Start with: `board post " +
+      "project:<name> [delphi] facilitator: <name> | question: <the question>`.",
     importance: 9,
     type: "skill",
   },
@@ -774,9 +783,10 @@ export const DELPHI_TEMPLATE: TemplateNote[] = [
     content:
       "Delphi drafting: consider drafting your estimate privately first — `memory kv set " +
       "estimate <value> because <reasons>` — before reading the board or channel. Once drafted, send it to " +
-      "the facilitator only: `tell <facilitator> [estimate] <value> | <reasons>`. Posting to the " +
-      "board before everyone has drafted tends to anchor the others. The facilitator can confirm " +
-      "on the project channel when every member has sent a draft, which opens the summary step.",
+      "the facilitator only: `tell <facilitator> [estimate] <value> | <reasons>`. For a choice, " +
+      "each member's estimate is their pick plus a confidence ([estimate] <option>, 0.7 | " +
+      "<reasons>). Posting to the board before everyone has drafted tends to anchor the others. " +
+      "The facilitator can confirm on the project channel when every member has sent a draft.",
     importance: 8,
     type: "skill",
   },
@@ -821,7 +831,9 @@ export const TOURNAMENT_TEMPLATE: TemplateNote[] = [
       "solutions. Several members each produce a candidate independently, candidates meet in " +
       "pairs, the stronger of each pair advances, and rounds repeat until one remains. Comparing " +
       "two at a time tends to be easier to judge well than ranking many at once. The losing " +
-      "candidates are not wasted: their best ideas can be grafted into the winner at the end.",
+      "candidates are not wasted: their best ideas can be grafted into the winner at the end. " +
+      "Start with: `board post project:<name> [tournament] <goal> | entrants: <names> | " +
+      "criteria: <criteria>`.",
     importance: 9,
     type: "skill",
   },
@@ -877,7 +889,8 @@ export const VERIFICATION_TEMPLATE: TemplateNote[] = [
       "of a candidate: correctness, constraints and requirements, evidence and citations, or " +
       "safety. A candidate passes when every aspect verifier passes it. Splitting verification by " +
       "aspect tends to catch what one generalist reviewer misses, and keeps each check small " +
-      "enough to do thoroughly.",
+      "enough to do thoroughly. Start with: `board post project:<name> [aspects] <candidate> | " +
+      "correctness, requirements, evidence, safety`.",
     importance: 9,
     type: "skill",
   },
@@ -932,7 +945,8 @@ export const AUCTION_TEMPLATE: TemplateNote[] = [
       "into tasks or bounties, members bid by stating their fit and an expected cost, and the " +
       "coordinator awards each task to the best fit for its cost. Afterwards the coordinator " +
       "records whether the winner's claimed fit held up, so later awards learn from it. The " +
-      "auction is a convention over ordinary tasks and claims, not a separate mechanism.",
+      "auction is a convention over ordinary tasks and claims, not a separate mechanism. Start " +
+      "with: `pool <name> recall award-check` to see how past bidders' fit claims held up.",
     importance: 9,
     type: "skill",
   },
@@ -985,7 +999,8 @@ export const LEDGER_TEMPLATE: TemplateNote[] = [
       "ledger holds the facts, the plan and the assignments; the progress ledger holds what is " +
       "done, what is in flight and what is stuck. Both live in the pool as known notes the " +
       "orchestrator updates, so any member can recall where the work stands without asking. The " +
-      "orchestrator steers from the ledgers rather than from its own recollection.",
+      "orchestrator steers from the ledgers rather than from its own recollection. Start with: " +
+      "`pool <name> recall task-ledger` to find the current plan, if one exists.",
     importance: 9,
     type: "skill",
   },
@@ -1013,18 +1028,19 @@ export const LEDGER_TEMPLATE: TemplateNote[] = [
     content:
       "Ledger stall signal: a claim whose lease expired, or one that shows no progress between " +
       "two ledger updates, is the stall signal. `task recover` releases expired leases back to " +
-      "open. On a first stall the orchestrator can nudge the claimant (`tell <name> <message>`) " +
-      "or reassign the task. Each stall goes into the progress ledger with its cause, so repeated " +
+      "open. A member who is stuck can say so rather than go quiet: `tell <orchestrator> [stuck] " +
+      "<task id> | <what blocks it>`. On a first stall the orchestrator can nudge the claimant or " +
+      "reassign the task. Each stall goes into the progress ledger with its cause, so repeated " +
       "stalls on the same step stay visible.",
     importance: 8,
     type: "skill",
   },
   {
     content:
-      "Ledger replanning: after repeated stalls on the same step (two or three is a reasonable " +
-      "bar), consider replanning instead of retrying — revisit the task ledger's facts and " +
-      "guesses, write a new plan version, and cancel tasks only the old plan needed (`task cancel " +
-      "<id>`). The debrief is a [ledger-lesson] pool note: which guess failed, what the replan " +
+      "Ledger replanning: when a member reports being stuck twice on the same step, or the same " +
+      "step stalls twice, the orchestrator replans rather than retries — revisit the task " +
+      "ledger's facts and guesses, write a new plan version, and cancel tasks only the old plan " +
+      "needed (`task cancel <id>`). The debrief is a [ledger-lesson] pool note: which guess failed, what the replan " +
       "changed and how many stalls it took, so future orchestrators can recall it.",
     importance: 7,
     type: "skill",
@@ -1038,7 +1054,8 @@ export const SHARDING_TEMPLATE: TemplateNote[] = [
       "independent, claimable pieces. The oracle is whatever decides pass or fail mechanically: a " +
       "test suite, a reference implementation, or a checker. Each failing case or shard becomes a " +
       "task; members fix shards in parallel and re-run the oracle to confirm. The oracle, not " +
-      "opinion, decides when a shard or the whole target is done.",
+      "opinion, decides when a shard or the whole target is done. Start with: `pool <name> " +
+      "recall oracle-baseline` to see whether a baseline run already exists.",
     importance: 9,
     type: "skill",
   },
@@ -1068,7 +1085,8 @@ export const SHARDING_TEMPLATE: TemplateNote[] = [
       "the reference implementation, the checker. A case that looks wrong in the oracle itself " +
       "becomes a separate question for someone else to review: `board post project:<name> " +
       "[oracle-question] <case> | <why it looks wrong>`. Keeping the oracle fixed is what lets " +
-      "each pass mean something.",
+      "each pass mean something. If the checker cannot run at all, post an [oracle-question], " +
+      "verify by hand and deliver with the limitation stated.",
     importance: 8,
     type: "skill",
   },

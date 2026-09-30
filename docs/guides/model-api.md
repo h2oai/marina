@@ -229,7 +229,13 @@ To set this up, have your provider agent join the right channel:
 AGENT_NAME=Scholar MODEL_CHANNEL=model-scholar bun run src/sdk/examples/provider.ts
 ```
 
-Multiple agents in the same channel means requests are load-balanced across them.
+Multiple agents in the same channel means requests are load-balanced across them. The balancer
+addresses each request to one member (`target` in the `model_request`), but every member perceives
+it, and the first correlated reply (`model_response` with the request `id`, or `[<id>] <text>`)
+from any current member of the channel fulfils it. A streamed reply belongs to the first member
+that sends a correlated frame. Channel membership is the authorization boundary: keep agents that
+should not answer off the `model-<name>` channel. When a member other than the target answers, the
+completed lifecycle event records it as `respondedBy`.
 
 Choose the within-channel strategy with `X-Load-Balance`. The header is honored on the routes that
 select a single agent: `POST /v1/chat/completions` (in the default `agents` endpoint mode),
