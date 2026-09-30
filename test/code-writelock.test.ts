@@ -76,6 +76,11 @@ function makeCrewManagerStub(): {
   const dispatched: { id: CrewId; message: string }[] = [];
   const crews = new Map<string, Crew>();
   const manager = {
+    forAgent(name: string): Crew[] {
+      return [...crews.values()].filter((crew) =>
+        crew.members.some((member) => member.agentName === name),
+      );
+    },
     create(opts: CreateCrewOpts): Crew {
       created.push(opts);
       const crew: Crew = {
@@ -371,6 +376,11 @@ describe("code autonomous crew assembly (Phase 4 B1)", () => {
     const idle = makeAgentEntity("agent_idle", "idle");
     // Recruitment is role-aware: only coding-appropriate roles are drafted.
     idle.properties.role = "coding-agent";
+    const idleHandle = {
+      name: "idle",
+      getStatus: () => ({ entityId: idle.id, role: "coding-agent", state: "idle" }),
+      sendAttention: async () => {},
+    } as unknown as AgentHandle;
     const crewStub = makeCrewManagerStub();
     const baseGet = (id: string) => (id === entity.id ? entity : id === idle.id ? idle : undefined);
     const rt = makeAgentRuntimeStub(baseGet);
@@ -379,7 +389,10 @@ describe("code autonomous crew assembly (Phase 4 B1)", () => {
       db,
       getEntity: rt.wrappedGetEntity,
       workspace: new LocalWorkspace(),
-      agentRuntime: rt.runtime as never,
+      agentRuntime: {
+        ...rt.runtime,
+        get: (name: string) => (name === "idle" ? idleHandle : undefined),
+      },
       crewManager: crewStub.manager,
       channelManager: makeChannelManagerStub(),
       findAgentByName: (name) => (name === "idle" ? idle : undefined),

@@ -3,6 +3,7 @@
 
 import { parseExecUnrestricted } from "../../coding/exec-approver";
 import { recoverCodingRuns } from "../../coding/task-run";
+import { VerificationRunner } from "../../coding/verification-runner";
 import { probeConfiguredProviders } from "../../net/model-api";
 import type { EntityId } from "../../types";
 import { adapterCommand } from "../commands/adapter";
@@ -143,9 +144,15 @@ export function registerOperationCommands(engine: Engine): void {
       logEvent: (event) => engine.logEvent(event),
     }),
   );
-  if (engine.db) recoverCodingRuns(engine.db);
+  if (engine.db) {
+    recoverCodingRuns(engine.db);
+    engine.db.recoverCodingVerifications();
+  }
   engine.commands.registerBuiltin(
     codeCommand({
+      verificationRunner: engine.db
+        ? new VerificationRunner(engine.db, (pending) => engine.trackBackgroundCommand(pending))
+        : undefined,
       logEvent: (event) => engine.logEvent(event),
       agentRuntime: engine.agentRuntime,
       answerPrompt: answerCodeViaLocalModel,

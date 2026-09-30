@@ -14,6 +14,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import { captureGitCandidate } from "./candidate";
+import { prepareCandidateBunDependencies } from "./candidate-dependencies";
 import type { ExecApprover } from "./exec-approver";
 
 const DEFAULT_MAX_READ_BYTES = 64 * 1024;
@@ -142,7 +144,14 @@ export interface WorkspaceFiles {
  * sends across the guest boundary; the local runtime runs it on the host.
  */
 export interface WorkspaceExec {
+  captureCandidate?(
+    repository?: string,
+    beforeCapture?: () => void,
+  ): ReturnType<typeof captureGitCandidate>;
   run(command: string[], timeoutMs?: number, maxBytes?: number): Promise<WorkspaceRunResult>;
+  /** Finite background checks never consult an interactive or ambient exec approver.
+   * Revalidate authority inside the root lock, immediately before spawning. */
+  runAllowlisted?(command: string[], beforeSpawn: () => void): Promise<WorkspaceRunResult>;
   runPolicy(): CodeRunPolicy;
   describe(): WorkspaceDescriptor;
   /**
@@ -195,13 +204,15 @@ function withRootLock<T>(root: string, fn: () => Promise<T>): Promise<T> {
   const prev = rootLocks.get(root) ?? Promise.resolve();
   const next = prev.then(fn, fn); // run after the prior op settles (either way)
   // Store a rejection-swallowed tail so one failure can't break the chain.
-  rootLocks.set(
-    root,
-    next.then(
-      () => undefined,
-      () => undefined,
-    ),
+  const tail = next.then(
+    () => undefined,
+    () => undefined,
   );
+  rootLocks.set(root, tail);
+  void tail.then(() => {
+    // Snapshot roots are disposable. Drop only our idle tail, never a queued successor.
+    if (rootLocks.get(root) === tail) rootLocks.delete(root);
+  });
   return next;
 }
 
@@ -213,6 +224,18 @@ export class LocalWorkspace implements WorkspaceRuntime {
 
   constructor(root = process.cwd()) {
     this.root = realpathSync(root);
+  }
+
+  captureCandidate(
+    repository?: string,
+    beforeCapture?: () => void,
+  ): ReturnType<typeof captureGitCandidate> {
+    assertHostExecAllowed(this.hostExecForbidden);
+    return withRootLock(this.root, () => {
+      assertHostExecAllowed(this.hostExecForbidden);
+      beforeCapture?.();
+      return captureGitCandidate(this.root, repository);
+    });
   }
 
   attachExecApprover(approver: ExecApprover | undefined, entityId: string): void {
@@ -491,7 +514,50 @@ export class LocalWorkspace implements WorkspaceRuntime {
         throw allowlistErr;
       }
     }
+    return this.runNormalized(normalized, timeoutMs, maxBytes);
+  }
+
+  async runAllowlisted(command: string[], beforeSpawn: () => void): Promise<WorkspaceRunResult> {
+    assertHostExecAllowed(this.hostExecForbidden);
+    const normalized = normalizeAllowedCodeCommand(this.root, command);
+    return this.runNormalized(
+      normalized,
+      DEFAULT_RUN_TIMEOUT_MS,
+      DEFAULT_MAX_OUTPUT_BYTES,
+      beforeSpawn,
+    );
+  }
+
+  /** Fixed opt-in preparation for a disposable candidate; never widens code run's allowlist. */
+  prepareCandidateDependencies(beforeSpawn: () => void) {
+    assertHostExecAllowed(this.hostExecForbidden);
+    return withRootLock(this.root, () => {
+      assertHostExecAllowed(this.hostExecForbidden);
+      beforeSpawn();
+      return prepareCandidateBunDependencies(this.root, async (command, environment) => {
+        beforeSpawn();
+        const started = Date.now();
+        const result = await runWorkspaceCommand(
+          command,
+          this.root,
+          DEFAULT_RUN_TIMEOUT_MS,
+          DEFAULT_MAX_OUTPUT_BYTES,
+          this.hostExecForbidden,
+          environment,
+        );
+        return { ...result, command, durationMs: Date.now() - started };
+      });
+    });
+  }
+
+  private runNormalized(
+    normalized: string[],
+    timeoutMs: number,
+    maxBytes: number,
+    beforeSpawn?: () => void,
+  ): Promise<WorkspaceRunResult> {
     return withRootLock(this.root, async () => {
+      beforeSpawn?.();
       const started = Date.now();
       const result = await runWorkspaceCommand(
         normalized,
@@ -624,7 +690,7 @@ function validatePatchPaths(root: string, patch: string): string[] {
   return paths;
 }
 
-function normalizeAllowedCodeCommand(root: string, command: string[]): string[] {
+export function normalizeAllowedCodeCommand(root: string, command: string[]): string[] {
   const [binary, ...args] = command.map((part) => part.trim()).filter(Boolean);
   if (!binary) {
     throw new Error("Usage: code run <allowed command>");
@@ -874,6 +940,7 @@ async function runWorkspaceCommand(
   timeoutMs: number,
   maxBytes: number,
   hostExecForbidden = false,
+  environment: Record<string, string> = {},
 ): Promise<Omit<WorkspaceRunResult, "command" | "durationMs">> {
   assertHostExecAllowed(hostExecForbidden); // chokepoint: telnet-origin never spawns
   mkdirSync(CODE_RUN_HOME, { recursive: true });
@@ -881,18 +948,47 @@ async function runWorkspaceCommand(
     ...CODE_RUN_ENV,
     PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
     HOME: CODE_RUN_HOME,
+    ...environment,
   };
 
   let timedOut = false;
   let exitCode = -1;
   let stdout = "";
   let stderr = "";
+  let truncated = false;
 
   try {
-    const proc = Bun.spawn(cmd, { cwd, env, stdout: "pipe", stderr: "pipe" });
+    const grouped = process.platform !== "win32";
+    const proc = Bun.spawn(cmd, { cwd, env, stdout: "pipe", stderr: "pipe", detached: grouped });
+    const stop = (signal: "SIGTERM" | "SIGKILL") => {
+      try {
+        if (grouped) process.kill(-proc.pid, signal);
+        else proc.kill(signal);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      }
+    };
+    // Drain concurrently so a verbose installer/check cannot fill a pipe while we
+    // wait for exit. Retain bounded bytes even when the child keeps writing.
+    const readers = [proc.stdout.getReader(), proc.stderr.getReader()];
+    const read = async (reader: ReadableStreamDefaultReader<Uint8Array>) => {
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      for (;;) {
+        const { done, value: chunk } = await reader.read();
+        if (done) break;
+        const remaining = Math.max(0, maxBytes - size);
+        if (chunk.byteLength > remaining) truncated = true;
+        if (remaining) chunks.push(chunk.slice(0, remaining));
+        size += Math.min(remaining, chunk.byteLength);
+      }
+      return Buffer.concat(chunks).toString("utf8");
+    };
+    const output = Promise.all(readers.map(read));
+    const completed = Promise.all([proc.exited, output]);
     let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
     const result = await Promise.race([
-      proc.exited,
+      completed,
       new Promise<"timeout">((resolve) => {
         timeoutTimer = setTimeout(() => resolve("timeout"), timeoutMs);
       }),
@@ -901,26 +997,28 @@ async function runWorkspaceCommand(
 
     if (result === "timeout") {
       timedOut = true;
-      proc.kill(); // SIGTERM
+      stop("SIGTERM");
       // Escalate to SIGKILL if the child ignores/traps SIGTERM and doesn't exit
       // within a short grace window — otherwise `await proc.exited` could hang.
       let graceTimer: ReturnType<typeof setTimeout> | undefined;
       const exitedInGrace = await Promise.race([
-        proc.exited.then(() => true),
+        completed.then(() => true),
         new Promise<boolean>((resolve) => {
           graceTimer = setTimeout(() => resolve(false), 3000);
         }),
       ]);
       if (graceTimer) clearTimeout(graceTimer);
       if (!exitedInGrace) {
-        proc.kill("SIGKILL");
+        stop("SIGKILL");
+        // A host command can deliberately detach descendants. Bound our pipe
+        // wait too; this is process lifecycle management, not a security sandbox.
+        await Promise.all(readers.map((reader) => reader.cancel().catch(() => {})));
         await proc.exited;
       }
     }
 
     exitCode = proc.exitCode ?? -1;
-    stdout = await new Response(proc.stdout).text();
-    stderr = await new Response(proc.stderr).text();
+    [stdout = "", stderr = ""] = await output;
   } catch (err) {
     stderr = err instanceof Error ? err.message : String(err);
     exitCode = 127;
@@ -930,7 +1028,7 @@ async function runWorkspaceCommand(
   return {
     exitCode,
     output: content.length > maxBytes ? content.slice(0, maxBytes) : content,
-    truncated: content.length > maxBytes,
+    truncated: truncated || content.length > maxBytes,
     timedOut,
   };
 }

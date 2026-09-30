@@ -28,8 +28,31 @@ their own configuration and permission systems; Marina's `--allow-exec` flags ap
 only to Marina's own Code Mode commands. There is no automatic provider failover.
 
 Inside the terminal, `/help` shows the controls; Tab completes their names. Streaming
-output redraws the current input, and permission questions use the same input owner.
-End a line with `\` to continue a task on another line.
+output preserves the current draft and cursor, including wrapped lines and terminal resizing.
+The prompt shows task/check activity; transcript labels distinguish world messages, check
+receipts, results, submitted work and review. Permission details appear above a short answer
+prompt. End a line with `\` to continue a task on another line.
+
+For a local Git project with a Marina worker, `/task <request>` requires current candidate
+verification before the worker can submit its result. Start with a small change, for example
+`/task Fix the pagination boundary and add a regression test`. Early summaries remain progress;
+blockers are reported explicitly. Ordinary freeform requests retain their existing behavior.
+
+For the selected Marina session, `/status` shows the task, `/diff` shows working changes,
+`/verify` starts candidate checks, and `/review` inspects the latest attempt and its evidence.
+`/verify live` starts background checks in the live workspace; those results remain unbound to
+an immutable candidate. These shortcuts use the same server commands and permissions as other
+interfaces. Native runtimes retain their own tools. Redirected output stays plain text.
+
+Use `/world <command>` while a runtime is launching or a permission question is pending
+to send a message, inspect the world, or participate in another task. World input does
+not answer or dismiss a permission question, and your unfinished coding draft is kept.
+Coding input stays ordered behind setup. World commands still use normal server admission:
+a long synchronous command already running as your resident can delay subsequent commands.
+Use `code verify start` for finite local checks that return a receipt and leave your resident
+free to participate while they run.
+Approval prompts require both terminal input and visible terminal output; redirected or
+closed input/output never counts as consent.
 
 ```text
 /agents
@@ -88,6 +111,110 @@ Native runtimes also support `marina --agent codex -p "<task>"`. Exit 0 means th
 turn finished without a reported error, not that Marina verified or approved its work.
 Missing terminal input denies native permission requests. Marina-native tasks retain
 the canonical task/submission/review workflow described below.
+
+## Code inside an existing world
+
+Use connected coding when your Marina already contains conversations, agents and ongoing
+work. Authenticate as your own resident, select a workspace configured on that server,
+and create or find your session:
+
+```bash
+marina connect Owner --url ws://localhost:3300
+```
+
+```text
+code workspace use /srv/projects/my-project
+code start Repair the application
+code list
+```
+
+Note the session ID, then disconnect that terminal with Ctrl+D. Attach the coding terminal:
+
+```bash
+marina --url ws://localhost:3300 --name Owner --session code_<id>
+```
+
+This reconnects the same resident using its cached credential for that server; an explicit
+`MARINA_TOKEN` also works. An invalid credential or inaccessible session is refused. It
+does not create a replacement identity or world. Reconnection rotates and privately saves
+the credential, including when a later session check refuses the attach. A resident can
+have one controlling connection: disconnect its existing chat/CLI before attaching.
+
+Describe a task in ordinary language. The server's coding agent uses the session's existing
+model, dialect, permissions and workspace. The printed **Server workspace** path belongs
+to that server; files on your terminal's machine are not synchronized. Configure provider
+credentials and allowed workspace roots on the server. Task dispatch still requires
+`code.exec`, and launching a new worker requires `agent.spawn`.
+
+```text
+Fix the failing parser test, run the checks, and summarize the changes.
+/world tell Reviewer I am working on the parser
+/world channel send project Verification is running
+/world task list
+verify start
+```
+
+World messages and worker output continue while you work. `/world` uses normal command
+admission; background verification releases the command slot while finite checks run.
+Closing with `/quit` or Ctrl+D disconnects this view and leaves the world, agents and tasks
+running. `/stop` explicitly interrupts the selected coding worker. Reattaching restores
+its output stream and task indicator without replaying work. After a network failure,
+inspect `status`, `history` and `artifacts` before retrying an uncertain command.
+
+Automatic recruitment only considers idle coding agents without a goal, focus, pending
+perceptions, task claim, active coding run or crew membership. An existing bound worker
+continues to receive its session's steering; other autonomous workers keep their work.
+Additional workers remain an explicit or permission-gated choice.
+
+Connected coding currently supports Marina's server-side worker in an interactive terminal.
+Local native runtimes (`/use codex`, `/spawn claude`, etc.) require a separate workspace
+bridge and are refused here. Use the folder launcher for those runtimes. Simultaneous
+controlling views of one resident and connected one-shot mode are not yet supported.
+
+## Address a session without selecting it
+
+SDK clients can direct an operation to an existing coding session without changing the
+resident's selected session, modal input mode, or saved coding context:
+
+```ts
+await client.command("code status", { codingTarget: { sessionId } });
+await client.command("code observe reproduced the failure", {
+  codingTarget: { sessionId, runId },
+  signal: controller.signal,
+});
+```
+
+`sessionId` is required. The caller must be the session creator or its bound coding agent,
+matching `code resume` authority; holding its writer lock alone does not grant access.
+Existing write locks, competence gates, workspace boundaries and transport restrictions
+still apply. An optional `runId` is an execution precondition: it must still identify that
+session's active attempt when the command starts. It is not a historical query selector.
+A rejected or uncertain request must be inspected before retrying.
+
+Targeting currently supports session inspection (`status`, `history`, `artifacts`, `show`,
+`thread`, `patches`, `review`), owner dispatch (`do`, `assign`), evidence
+(`plan`, `decision`, `observe`, `summary`, `blocked`), and workspace
+operations (`files`, `read`, `search`, `diff`, `patch`, `propose`, `apply`, `reject`, `edit`,
+`write`, `checkpoint`, `revert`, `verify`, `run`, `test`, `lint`, `typecheck`, `build`,
+`dashboard:build`, `recipe`). Use explicit `code …` input. Conflicting session IDs, selection changes,
+settings, separate recruitment/lifecycle operations, macros and room overrides are refused when
+a target is supplied. Commands without a target keep their existing behavior.
+
+The WebSocket envelope carries `coding_target: { sessionId, runId? }`; successful login
+and authentication advertise `codingTargetProtocol: "session-run-v1"`. The SDK refuses
+to send a targeted command if that support is absent, even on a server that supports
+correlated command completion. Gate challenges and held shell-execution approvals retain
+the target for replay through the normal bounded command queue. A shell approval for one
+execution cannot authorize another request or survive a stale/rejected replay. Explicit
+session-wide shell approvals retain their broader scope. Late results and approval audit
+records retain the attempt captured when execution began; replay output arrives as a world
+event, separate from the command that granted approval.
+`code exec-mode off` revokes pending shell approvals and enforces allowlist-only execution,
+including under the local profile. Session exec-mode overrides last until server restart.
+
+This adds addressing to the existing command path. Commands from one participant still
+execute in FIFO order; it does not add a second execution lane or change world lifetime.
+Other participants and incoming world perceptions remain independent.
 
 ## First autonomous fix (copy and paste)
 
@@ -273,10 +400,11 @@ same active attempt. Its tool events, changes, checks and summary carry the atte
 A worker can hold one active coding attempt at a time.
 
 `code summary` submits the worker's task after storing its summary. Calling the tool or writing
-an operator note does not complete the task. Verification is reported as passed, failed, missing
-or stale; a recorded workspace mutation after a successful check makes that check stale. These
-are observed checks, not a claim to detect edits made outside Marina. Only task review marks the
-canonical task completed:
+an operator note does not complete the task. Candidate verification is reported as passed,
+failed, missing, stale or unavailable. Submission and `code review` read actual included source
+bytes, so edits made outside Marina also make evidence stale. Live-workspace checks are reported
+as **unbound**: their output remains useful, but does not certify an immutable candidate. Only
+task review marks the canonical task completed:
 
 ```text
 code review                  # inspect the latest attempt, summary and verification
@@ -289,6 +417,40 @@ The dashboard renders the same task/evidence links and review actions. Ordinary 
 `task approve` and `task reject` still operate on the same task. A one-shot exit `0` means the
 worker stored and submitted its result; it does not mean the operator approved it or that every
 check passed. Check the reported verification and review evidence before accepting changes.
+`code review approve` withholds approval of candidate-bound work unless its checks still pass
+for the observed source. Inspect stale work and reverify in a new attempt. Ordinary `task approve`
+remains a manual task decision; it does not refresh evidence or mark changed source verified.
+Freshness is an observation at the displayed time, not a continuous lock on external writers.
+
+For a task that must have current candidate evidence before submission, use:
+
+```text
+/task Fix the pagination boundary and add a regression test
+# Equivalent world commands:
+code do verification:candidate -- Fix the pagination boundary and add a regression test
+code assign alice verification:candidate -- Fix the pagination boundary
+```
+
+`/task` applies to Marina workers in local Git workspaces with the single-agent driver.
+Ordinary freeform dispatch retains its existing behavior. The owner sets the requirement
+when the attempt begins; steering preserves it. An early summary is saved as progress,
+keeps the same task active, and returns the missing step. Pending, failed, stale, unavailable,
+or live-workspace checks cannot satisfy the requirement. The worker inspects the candidate
+receipt/result, resolves failures, and submits another summary. The terminal shows server
+states: verification required, checks running, needs attention, or ready for review. Source
+freshness is reassessed at status, submission, and review; readiness is an observation.
+The configured check recipe determines what is tested: a whitespace-only fallback does not
+establish functional correctness. Use a project test recipe for a meaningful completion check.
+
+If work cannot proceed, `code blocked <reason>` saves a handoff, interrupts this attempt,
+and releases its claim. It preserves edits and evidence. Configured worker budgets still apply;
+this requirement adds no retry scheduler or automatic dependency installation. An active task
+continues until it submits, reports a blocker, reaches its configured limits, or is stopped.
+An owner can deliberately accept a saved worker summary with
+`code review accept-unverified <attempt-id> <reason>`. This records who accepted the risk and
+why; it never changes missing or failed verification to passed. Normal approval still requires
+current evidence for a candidate-required task. World communication and other agents continue
+while background checks run.
 
 `code stop` retains changes and ends the attempt as cancelled. Worker death records failure.
 On server restart, unfinished attempts become interrupted and their claims are released;
@@ -372,6 +534,88 @@ exit 0 · 8.1s
 ```
 
 `code verify` runs the whole detected chain (typecheck → lint → test → build) in one go.
+
+For a local workspace, `code verify start` starts that same chain and returns a durable
+`verification_request` artifact immediately. Its command completion acknowledges admission;
+it does **not** mean checks passed. Continue chatting or inspecting other sessions. Completion
+arrives as a later world event; `code show <receipt_id>` displays the status, any error, and
+the result artifact. Target the original session when inspecting it from another session.
+The existing `code verify` and `code recipe run` still wait for their results.
+
+Background verification is bounded to four workspaces per engine, one request per real
+workspace path, and at most eight commands per recipe. It accepts only the existing local
+command allowlist and requires unattended `code.exec` competence (or the local trust profile).
+Interactive shell approvals, supervised checks, and Flywheel checks use foreground verification.
+Session access, writer authority, execution target, transport, and the current coding attempt
+are rechecked before each check process starts, including after waiting for the workspace lock.
+Revocation stops subsequent processes; it does not undo or cancel one already executing.
+
+Results remain attached to the original session and attempt. `code verify` and `code verify start`
+use the live workspace and existing per-command workspace lock; they are unbound checks.
+Graceful shutdown drains admitted checks before closing persistence,
+subject to the server's existing 30-second forced-shutdown watchdog.
+After an interrupted process, unfinished receipts are marked `interrupted` with an unknown
+execution outcome and are never replayed automatically. Inspect the workspace before retrying.
+
+For immutable source evidence in a supported local Git repository, use **`code verify candidate`**.
+This uses the same background admission and authority checks, with a separate source directory
+and Git index. It captures actual tracked and untracked, non-ignored files into a Git tree using
+an alternate index, without changing your index, staging choices, branch or HEAD. Tracked
+deletions, executable modes, binary files and internal relative symlinks are represented.
+Git stat caches and `assume-unchanged` flags cannot hide source edits. The Git working-tree root
+must be the session root; sparse checkouts, unresolved merges, submodules, filters/LFS, encoding
+or ident attributes, escaping symlinks and non-UTF-8/newline paths are refused explicitly.
+
+The `candidate` artifact records the tree, base commit, repository, capture policy, source hash
+and retained ref. Each command receipt names the candidate and temporary execution directory;
+the verification artifact records commands, exit status, runtime, final source hash and freshness.
+The directory is disposed after checking. If checks modify included source, Marina captures a
+successor candidate and withholds evidence for it until it is separately verified. Those changes
+are never copied back automatically. The fallback whitespace check compares the candidate index
+with its base (`git diff --cached --check`); it is labeled `whitespace-only`, not a test suite.
+
+Capture is bounded to 8,192 paths, 16 MiB per file and 128 MiB total. Ignored untracked files
+(including `node_modules`, generated files and ignored secrets) are excluded. Included
+credential-shaped files such as `.env.local`, `.npmrc` and private-key files cause refusal;
+this filename rule is not a content secret scanner. External dependencies are excluded by
+default. A recipe that needs unavailable dependencies fails.
+
+For a Bun project, explicitly opt into preparation with:
+
+```text
+code verify candidate dependencies:bun
+# From the terminal:
+/world code verify candidate dependencies:bun
+```
+
+Marina requires a captured `bun.lock`, installs into the disposable snapshot with
+`--frozen-lockfile --ignore-scripts`, and records preparation separately from checks. It uses
+an isolated cache and copied packages; it never copies or links the writer's `node_modules`.
+The supported dependency sources are integrity-locked public npm packages and captured
+workspaces. Repository/global install settings and credentials are not inherited; custom
+registries, Git/URL/file dependencies, uncaptured workspaces, unsafe patch paths and captured
+`node_modules` are refused. Native packages that need install scripts may therefore fail their
+checks. Preparation has a 120-second deadline and the existing background admission limits.
+A preparation failure stops the check chain and produces failed evidence, with an inspectable
+output artifact. Successful evidence records the preparation policy and lockfile SHA-256;
+generated dependencies are excluded from source freshness only inside the private copy.
+
+The source tree does not certify the external environment, services or dependencies, and the
+temporary directory is **not a security sandbox**. Host-local checks retain their existing trust
+model; Flywheel remains a separate execution target with no host fallback.
+
+Git refs under `refs/marina/candidates/` retain each snapshot and its base ancestry across Git GC.
+At 64 retained candidates, further captures refuse instead of deleting review evidence. Inspect
+the exact ref in `code show <candidate-id>` with `git show <ref>:<path>` or
+`git diff <base-commit> <ref>`. An operator may retire a finished candidate with
+`git update-ref -d <ref> <recorded-commit>` (the commit is in the artifact metadata). Retire only
+after its review/evidence retention needs end; later freshness checks report retired evidence
+unavailable. Refs are local Git metadata and are not pushed automatically.
+
+Agents can use `marina_code` with `action: "verify", verificationMode: "candidate"`, or the same
+optional `verificationMode` on `marina_code_verify`. The default remains live verification.
+With user authorization, add `dependencies: "bun"` to either tool in candidate mode.
+For either background mode, inspect the receipt's result before writing the final summary.
 
 **6. Propose a change.** You (or an agent) propose a unified diff as a reviewable *patch*, rather
 than editing blindly:

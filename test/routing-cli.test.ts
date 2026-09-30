@@ -31,6 +31,13 @@ it("requires a named credential bound to the same server and rejects path traver
     );
     writeFileSync(join(directory, "Alice.json"), JSON.stringify({ token: "unbound" }));
     expect(routingCachedToken("Alice", "ws://localhost:3300", directory)).toBeUndefined();
+    writeFileSync(
+      join(directory, "Alice.json"),
+      JSON.stringify({ token: "scoped", url: "wss://remote.example/team/" }),
+    );
+    expect(routingCachedToken("Alice", "https://remote.example/team", directory)).toBe("scoped");
+    expect(routingCachedToken("Alice", "https://remote.example", directory)).toBeUndefined();
+    expect(routingCachedToken("Alice", "https://remote.example/other", directory)).toBeUndefined();
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

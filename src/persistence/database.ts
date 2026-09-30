@@ -3339,6 +3339,10 @@ export class MarinaDB implements MarinaStores {
     return codingDb.listCodingArtifacts(this.db, sessionId, limit);
   }
 
+  recoverCodingVerifications(): void {
+    codingDb.recoverCodingVerifications(this.db);
+  }
+
   updateCodingArtifact(
     id: string,
     patch: Partial<{

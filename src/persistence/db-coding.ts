@@ -244,6 +244,17 @@ export function getCodingArtifact(db: Database, id: string): CodingArtifactRow |
     .get(id) as CodingArtifactRow | null;
 }
 
+/** A restarted process cannot know whether a child finished before its result was saved.
+ * Keep its receipt, mark uncertainty, and never replay host execution automatically. */
+export function recoverCodingVerifications(db: Database): void {
+  db.run(
+    `UPDATE coding_artifacts SET status = 'interrupted', updated_at = ?,
+       metadata_json = json_set(metadata_json, '$.error', 'Process restarted; execution outcome unknown. Inspect workspace before retrying.')
+     WHERE kind = 'verification_request' AND status = 'running'`,
+    [Date.now()],
+  );
+}
+
 export function listCodingArtifacts(
   db: Database,
   sessionId: string,

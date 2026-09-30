@@ -4,6 +4,7 @@
 import type { AgentHandle } from "../../../agent/agent-types";
 import type { CodePromptAnswerer, CodingAgentRuntime } from "../../../coding/code-session-driver";
 import type { WorkspaceRuntime } from "../../../coding/local-workspace";
+import type { VerificationRunner } from "../../../coding/verification-runner";
 import type { WorkspaceRegistry } from "../../../coding/workspace-registry";
 import type { ChannelManager } from "../../../coordination/channel-manager";
 import type { CrewManager } from "../../../coordination/crew-manager";
@@ -17,6 +18,7 @@ import type {
   EntityId,
   RoomContext,
 } from "../../../types";
+import { failCommandResponse } from "../../command-response";
 import { sanitizeEntityName } from "../../entity-name";
 
 export const ACTIVE_SESSION_KEY = "coding_session_id";
@@ -376,6 +378,7 @@ export function refuseTelnetDispatch(ctx: RoomContext, eid: EntityId, deps: Code
 }
 
 export interface CodeDeps {
+  verificationRunner?: VerificationRunner;
   logEvent?: (event: EngineEvent) => void;
   agentRuntime?: CodingAgentRuntime;
   answerPrompt?: CodePromptAnswerer;
@@ -435,6 +438,7 @@ export function enforceWriteLock(
   session: CodingSessionRow,
 ): boolean {
   if (!session.writer || sameEntityName(session.writer, entity.name)) return true;
+  failCommandResponse("The participant does not hold this session's write lock.");
   ctx.send(
     eid,
     `${session.writer} holds the write lock for this session — request a handoff (code handoff <notes> to ${entity.name}) or have the owner reassign (code writer ${entity.name}).`,
@@ -449,7 +453,10 @@ export function resolveSession(
   db: MarinaDB,
   id?: string,
 ) {
-  const sessionId = id || getActiveSessionId(entity);
+  if (ctx.codingTarget && id && id !== ctx.codingTarget.sessionId) {
+    throw new Error("Command session ID conflicts with the coding target.");
+  }
+  const sessionId = ctx.codingTarget?.sessionId ?? (id || getActiveSessionId(entity));
   if (!sessionId) {
     ctx.send(
       eid,
@@ -461,11 +468,21 @@ export function resolveSession(
     return null;
   }
   const session = db.getCodingSession(sessionId);
+  if (ctx.codingTarget && (!session || !canAdoptCodingSession(session, entity))) {
+    throw new Error("Coding target is unavailable or not authorized for this participant.");
+  }
   if (!session) {
     ctx.send(eid, `Coding session not found: ${sessionId}`);
     return null;
   }
   return session;
+}
+
+/** Same authority as code resume; a writer lock alone is not session adoption authority. */
+export function canAdoptCodingSession(session: CodingSessionRow, entity: Entity): boolean {
+  return (
+    sameEntityName(session.created_by, entity.name) || sameEntityName(session.agent, entity.name)
+  );
 }
 
 export function getSessionModelTarget(db: MarinaDB, sessionId: string): string | undefined {
@@ -596,6 +613,8 @@ export function getActiveSessionId(entity: Entity): string | undefined {
 }
 
 export function updateCodeContext(entity: Entity, db: MarinaDB, session?: CodingSessionRow): void {
+  // Inspection and late results from another session must never steal the selected context.
+  if (session && session.id !== getActiveSessionId(entity)) return;
   const profile = getCodeProfile(entity);
   const artifacts = session ? db.listCodingArtifacts(session.id, 50) : [];
   const latestArtifact = artifacts[0];

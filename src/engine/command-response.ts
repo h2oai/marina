@@ -13,6 +13,11 @@ interface CommandResponse {
 
 const responses = new AsyncLocalStorage<CommandResponse>();
 
+/** An approved replay produces its own world output, not the approver's command result. */
+export function withoutCommandResponse<T>(execute: () => T): T {
+  return responses.exit(execute);
+}
+
 export function failCommandResponse(error: string): void {
   const response = responses.getStore();
   if (response?.active) response.error ??= error;

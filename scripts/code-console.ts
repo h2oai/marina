@@ -2,11 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { getErrorMessage } from "../src/engine/errors";
-import type { MarinaAgent, Perception } from "../src/sdk/client";
+import type { CommandOptions, MarinaAgent, Perception } from "../src/sdk/client";
 import { type CodingHarness, codingAgent, type HarnessStore } from "./code-harness";
 import { inferCodeDefaultModel } from "./code-model";
 import { installedCodingAdapters, NativeTerminal, type TerminalAgent } from "./code-native";
-import { CodeTerminal, TERMINAL_HELP, terminalText } from "./code-terminal";
+import {
+  CodeTerminal,
+  isWorldInput,
+  TERMINAL_HELP,
+  terminalText,
+  verificationReadinessLabel,
+} from "./code-terminal";
 
 export interface CodeConsoleOptions {
   agent: MarinaAgent;
@@ -16,6 +22,9 @@ export interface CodeConsoleOptions {
   harness: CodingHarness;
   store: HarnessStore;
   finish: (code: number) => void;
+  /** Attached to an existing world. Source and execution belong to that server. */
+  connected?: boolean;
+  sessionId?: string;
 }
 
 export class CodeConsole {
@@ -26,12 +35,22 @@ export class CodeConsole {
   private harness: CodingHarness;
   private marinaHarness: CodingHarness;
   private marinaBusy = false;
+  private marinaPhase = "ready";
+  private checksRunning = false;
+  private verificationReadiness?: string;
+  private runId?: string;
+  private runSettled = false;
+  private supersededRuns = new Set<string>();
   private interrupted = false;
   private lastInterruptAt = 0;
   private closing = false;
   private interactive = true;
   private commands: Promise<void> = Promise.resolve();
+  private sessionId?: string;
+  private commandSequence = 0;
+  private selectionSequence = 0;
   constructor(private options: CodeConsoleOptions) {
+    this.sessionId = options.sessionId;
     this.harness = options.harness;
     this.marinaHarness =
       options.harness.agent === "marina"
@@ -42,7 +61,76 @@ export class CodeConsole {
             model: inferCodeDefaultModel(process.env),
           };
   }
+  /** Only confirmed results of commands issued by this view can select its session. */
+  private async command(text: string, options?: CommandOptions) {
+    const sequence = ++this.commandSequence;
+    const result = await this.options.agent.command(text, options);
+    let changedSession: string | undefined;
+    if (result.completion === "confirmed" && sequence >= this.selectionSequence) {
+      for (const p of result) {
+        const code = p.data?.code as
+          | { event?: string; sessionId?: string; workspace?: string }
+          | undefined;
+        if (
+          !p.command_request_id ||
+          !code?.sessionId ||
+          !["session_started", "session_resumed", "session_branched", "code_mode_entered"].includes(
+            code.event ?? "",
+          )
+        )
+          continue;
+        this.selectionSequence = sequence;
+        if (this.sessionId !== code.sessionId) {
+          this.marinaBusy = false;
+          this.marinaPhase = "syncing";
+          this.checksRunning = false;
+          this.verificationReadiness = undefined;
+          this.runId = undefined;
+          this.runSettled = false;
+          this.supersededRuns.clear();
+          changedSession = code.sessionId;
+        }
+        this.sessionId = code.sessionId;
+        if (code.workspace) this.options.root = code.workspace;
+        if (this.options.connected) this.terminal?.setTarget(`marina:${this.sessionId}`);
+      }
+    }
+    if (changedSession) {
+      this.updatePrompt();
+      try {
+        // A fast worker may finish before selection is confirmed. Request fresh
+        // status instead of replaying an earlier received event as current work.
+        // The normal perception listener applies it once, in arrival order.
+        await this.options.agent.command("code status", {
+          codingTarget: { sessionId: changedSession },
+        });
+      } catch (error) {
+        this.write(`Session selected; status refresh failed: ${getErrorMessage(error)}`);
+      }
+      if (this.sessionId === changedSession && this.marinaPhase === "syncing") {
+        this.marinaPhase = "status unknown";
+        this.updatePrompt();
+      }
+    }
+    return result;
+  }
+  private activity() {
+    if (
+      !this.marinaBusy &&
+      ["stopped", "blocked", "submitted for review"].includes(this.marinaPhase)
+    )
+      return this.marinaPhase;
+    return (
+      this.verificationReadiness ??
+      `${this.marinaPhase}${this.checksRunning ? " · checks running" : ""}`
+    );
+  }
+  private updatePrompt() {
+    const selected = this.selected ? this.native?.agents.get(this.selected) : undefined;
+    this.terminal?.setStatus(selected ? selected.state.status : this.activity());
+  }
   write(text: string) {
+    this.updatePrompt();
     const token = this.options.agent.getSession()?.token;
     if (token)
       text = text
@@ -54,12 +142,124 @@ export class CodeConsole {
   ask(text: string, signal?: AbortSignal) {
     return this.terminal?.ask(text, signal) ?? Promise.resolve("");
   }
-  completed() {
+  completed(sessionId?: string) {
+    if (sessionId && this.sessionId && sessionId !== this.sessionId) return;
+    // Older integrations call this with only a session ID before observe().
+    // Once an attempt is known, only its run-scoped terminal event can settle it.
+    if (this.runId) return;
     this.marinaBusy = false;
+    this.marinaPhase = "ready";
+    this.updatePrompt();
   }
   observe(p: Perception) {
-    const code = p.data?.code as { event?: string; phase?: string } | undefined;
-    if (code?.event === "code_lifecycle" && code.phase === "received") this.marinaBusy = true;
+    const code = p.data?.code as
+      | {
+          event?: string;
+          phase?: string;
+          sessionId?: string;
+          runId?: string;
+          status?: string;
+          verificationReadiness?: string;
+          metadata?: {
+            runId?: string;
+            sessionId?: string;
+            runStatus?: string;
+            terminal?: boolean;
+            outcome?: string;
+            reason?: string;
+            verificationReadiness?: string;
+          };
+        }
+      | undefined;
+    if (!code) return;
+    const meta = code.metadata ?? {};
+    const sessionId = code.sessionId ?? meta.sessionId;
+    if (this.sessionId && sessionId !== this.sessionId) return;
+    const runId = meta.runId ?? code.runId;
+    if (runId && runId !== this.runId) {
+      if (this.supersededRuns.has(runId)) return;
+      if (
+        code.event !== "session_status" &&
+        !(code.event === "code_lifecycle" && code.phase === "received")
+      )
+        return;
+      if (this.runId) this.supersededRuns.add(this.runId);
+      this.runId = runId;
+      this.runSettled = false;
+      this.verificationReadiness = undefined;
+      this.checksRunning = false;
+    } else if (this.runId && !runId) return;
+    if (this.runSettled && (code.event !== "session_status" || meta.runStatus === "active")) return;
+    if (code.event === "session_status") {
+      this.marinaBusy = meta.runStatus === "active";
+      this.marinaPhase = this.marinaBusy
+        ? "working"
+        : meta.runStatus === "submitted"
+          ? "submitted for review"
+          : ["interrupted", "failed"].includes(meta.runStatus ?? "")
+            ? meta.reason === "blocked"
+              ? "blocked"
+              : "stopped"
+            : "ready";
+      this.runSettled = !!this.runId && !!meta.runStatus && meta.runStatus !== "active";
+    }
+    if (code.event === "verification_started") this.checksRunning = true;
+    if (code.event === "verification_finished" || code.event === "verification_ran")
+      this.checksRunning = false;
+    if (
+      (code.event === "verification_finished" || code.event === "verification_ran") &&
+      this.verificationReadiness === "checks running"
+    )
+      this.verificationReadiness = undefined;
+    if (code.event === "verification_required") {
+      this.marinaBusy = true;
+      this.marinaPhase = "working";
+      this.verificationReadiness = "verification required";
+    }
+    if (code.event === "code_lifecycle") {
+      if (code.phase === "received") this.marinaBusy = true;
+      const phases: Record<string, string> = {
+        received: "working",
+        inspecting: "inspecting",
+        planning: "planning",
+        patching: "patching",
+        applying: "applying",
+        verifying: "verifying",
+        awaiting_approval: "approval",
+        submitting: "submitting",
+      };
+      this.marinaPhase = phases[code.phase ?? ""] ?? this.marinaPhase;
+      if (meta.terminal || code.phase === "completed") {
+        this.runSettled = !!this.runId;
+        this.marinaBusy = false;
+        this.checksRunning = false;
+        this.verificationReadiness = undefined;
+        this.marinaPhase =
+          code.phase === "completed"
+            ? "submitted for review"
+            : meta.reason === "blocked"
+              ? "blocked"
+              : "stopped";
+        this.updatePrompt();
+        return;
+      }
+    }
+    if (
+      [
+        "session_status",
+        "code_lifecycle",
+        "verification_required",
+        "verification_started",
+        "verification_ran",
+        "verification_finished",
+      ].includes(code.event ?? "")
+    ) {
+      const readiness = verificationReadinessLabel(
+        meta.verificationReadiness ?? code.verificationReadiness,
+      );
+      if (readiness) this.verificationReadiness = readiness;
+    }
+    this.updatePrompt();
   }
   busy() {
     return this.selected
@@ -68,20 +268,24 @@ export class CodeConsole {
         )
       : this.marinaBusy;
   }
+  /** UI input entry point. World input uses normal server admission independently of local launches. */
+  submit(text: string): Promise<void> {
+    text = text.trim();
+    if (!text) return Promise.resolve();
+    if (this.closing) return Promise.resolve();
+    const report = (error: unknown) => this.write(getErrorMessage(error));
+    if (isWorldInput(text) || ["/help", "/agents", "/stop", "/quit", "exit", "quit"].includes(text))
+      return this.line(text).catch(report);
+    this.commands = this.commands.then(() => this.line(text)).catch(report);
+    return this.commands;
+  }
   async start(interactive: boolean) {
     this.interactive = interactive;
     if (interactive || process.stdin.isTTY) {
       this.terminal = new CodeTerminal({
         line: (text) => {
           if (!interactive) return;
-          // Stop/exit must overtake a pending slow prompt or launch.
-          if (["/stop", "/quit", "exit", "quit"].includes(text)) {
-            void this.line(text).catch((error) => this.write(getErrorMessage(error)));
-            return;
-          }
-          this.commands = this.commands
-            .then(() => this.line(text))
-            .catch((error) => this.write(getErrorMessage(error)));
+          void this.submit(text);
         },
         interrupt: () => {
           void this.interrupt();
@@ -92,17 +296,31 @@ export class CodeConsole {
       });
     }
     if (interactive) {
-      this.write("Describe a task. /help shows controls; /dashboard opens the UI.");
       this.write(
-        `Available runtimes: marina${installedCodingAdapters()
+        "Use /task <request> to work toward verified results, or type freely. /diff inspects changes; /review shows evidence.",
+      );
+      this.write("/world keeps you in the conversation. /help lists controls; Tab completes them.");
+      this.write(
+        `Available runtimes: marina${(this.options.connected ? [] : installedCodingAdapters())
           .map((a) => `, ${a.id}`)
           .join("")}`,
       );
+    }
+    if (this.options.connected) {
+      this.terminal?.setTarget(`marina:${this.sessionId}`);
+      this.write(
+        "Connected to an existing world. Closing this terminal leaves its agents and tasks running.",
+      );
+      return;
     }
     this.commands = this.selectHarness(this.harness);
     await this.commands;
   }
   private async runtime() {
+    if (this.options.connected)
+      throw new Error(
+        "Connected mode uses Marina's server-side coding agent. Local native runtimes need a separately configured workspace bridge.",
+      );
     if (this.native) return this.native;
     if (!this.startingNative) {
       this.startingNative = (async () => {
@@ -128,19 +346,23 @@ export class CodeConsole {
     return this.startingNative;
   }
   private async selectHarness(harness: CodingHarness) {
+    if (this.options.connected && harness.agent !== "marina")
+      throw new Error(
+        "Connected mode uses Marina's server-side coding agent; no local native runtime was launched.",
+      );
     if (
       harness.agent === "marina" &&
       this.marinaBusy &&
       (harness.model !== this.marinaHarness.model || harness.profile !== this.marinaHarness.profile)
     )
       throw new Error("Stop or finish Marina's active task before changing its harness");
-    await this.options.agent.command(`code profile use ${harness.profile ?? "marina"}`);
+    await this.command(`code profile use ${harness.profile ?? "marina"}`);
     if (harness.agent === "marina") {
       if (harness.model) {
-        const current = await this.options.agent.command("code");
+        const current = await this.command("code");
         if (!current.some((p) => (p.data?.code as { sessionId?: string } | undefined)?.sessionId))
-          await this.options.agent.command("code start");
-        await this.options.agent.command(`code model set ${harness.model}`);
+          await this.command("code start");
+        await this.command(`code model set ${harness.model}`);
       }
       this.selected = undefined;
       this.marinaHarness = structuredClone(harness);
@@ -162,7 +384,11 @@ export class CodeConsole {
     }
     this.harness = structuredClone(harness);
     this.terminal?.setTarget(
-      this.selected ? this.native!.agents.get(this.selected)!.session.label : "marina",
+      this.selected
+        ? this.native!.agents.get(this.selected)!.session.label
+        : this.options.connected
+          ? `marina:${this.sessionId}`
+          : "marina",
     );
     this.write(
       `Harness · ${harness.agent}${harness.model ? ` · ${harness.model}` : " · runtime default model"}${harness.profile ? ` · Marina dialect: ${harness.profile}` : ""}`,
@@ -176,7 +402,9 @@ export class CodeConsole {
       if (wait) await this.native!.waitForTurn(id, revision, timeoutMs);
     } else {
       this.marinaBusy = true;
-      await this.options.agent.command(`code do ${text}`);
+      this.marinaPhase = "working";
+      this.updatePrompt();
+      await this.command(`code do ${text}`);
     }
   }
   private select(agent: TerminalAgent) {
@@ -198,16 +426,30 @@ export class CodeConsole {
       if (this.selected) await this.task(text);
       else {
         // Preserve Code Mode's existing task/command/dialect parser.
-        const results = await this.options.agent.command(text);
+        const results = await this.command(text);
         if (results.some((p) => p.kind === "error")) this.marinaBusy = false;
       }
       return;
     }
-    const space = text.indexOf(" ");
+    const space = text.search(/\s/);
     const verb = space < 0 ? text : text.slice(0, space);
     const argument = space < 0 ? "" : text.slice(space + 1).trim();
     if (verb === "/help") {
-      this.write(TERMINAL_HELP);
+      this.write(
+        this.options.connected
+          ? TERMINAL_HELP.split("\n")
+              .filter((line) => !line.startsWith("/spawn ") && !line.startsWith("Native agents "))
+              .join("\n")
+              .replace(
+                "/use marina|claude|codex|pi|name  Switch agents (first native agent works in this folder)",
+                "/use marina                     Select the server-side coding agent",
+              )
+              .replace(
+                "/quit                           Stop owned agents and exit",
+                "/quit                           Detach; world agents and tasks keep running",
+              )
+          : TERMINAL_HELP,
+      );
       return;
     }
     if (verb === "/stop") {
@@ -216,11 +458,48 @@ export class CodeConsole {
     }
     if (verb === "/world") {
       if (!argument) throw new Error("Usage: /world <Marina command>");
-      await this.options.agent.command(`/${argument}`);
+      await this.command(`/${argument}`);
+      return;
+    }
+    if (verb === "/task") {
+      if (this.selected || this.harness.agent !== "marina")
+        throw new Error(
+          "/task uses Marina's verification workflow. /use marina selects it; native agents keep their own tools.",
+        );
+      if (!argument) throw new Error("Usage: /task <request>");
+      this.interrupted = false;
+      await this.command(
+        `code do verification:candidate -- ${argument}`,
+        this.sessionId ? { codingTarget: { sessionId: this.sessionId } } : undefined,
+      );
+      return;
+    }
+    if (["/status", "/diff", "/verify", "/review"].includes(verb)) {
+      if (this.selected)
+        throw new Error(
+          "These controls inspect Marina's coding session. /use marina selects it; native agents keep their own tools.",
+        );
+      if (verb !== "/verify" && argument)
+        throw new Error(
+          `Usage: ${verb}. Use /world code ${verb.slice(1)} for additional arguments.`,
+        );
+      let command = `code ${verb.slice(1)}`;
+      if (verb === "/verify") {
+        if (!argument || argument === "candidate") command = "code verify candidate";
+        else if (argument === "live") command = "code verify start";
+        else
+          throw new Error(
+            "Usage: /verify [candidate|live]. Use /world code verify for other verification options.",
+          );
+      }
+      await this.command(
+        command,
+        this.sessionId ? { codingTarget: { sessionId: this.sessionId } } : undefined,
+      );
       return;
     }
     if (verb === "/agents") {
-      this.write(`marina · ${this.marinaBusy ? "working" : "ready"} · ${this.options.root}`);
+      this.write(`marina · ${this.activity()} · ${this.options.root}`);
       for (const agent of this.native?.agents.values() ?? []) {
         if (agent.state.role === "agent")
           this.write(
@@ -270,7 +549,9 @@ export class CodeConsole {
       }
       if (argument.startsWith("save ")) {
         this.options.store.save(argument.slice(5).trim(), this.harness);
-        this.write(`Saved as this folder's default: ${this.options.store.path}`);
+        this.write(
+          `Saved ${this.options.connected ? "harness" : "as this folder's default"}: ${this.options.store.path}`,
+        );
         return;
       }
       if (argument.startsWith("use ")) {
@@ -298,8 +579,9 @@ export class CodeConsole {
   }
   private async stopSelected() {
     if (this.selected) await this.native!.control(this.selected, { action: "interrupt" });
-    else await this.options.agent.command("code stop");
+    else await this.command("code stop");
     this.marinaBusy = false;
+    this.marinaPhase = "interrupt requested";
     this.write("Interrupt requested. Inspect output before starting replacement work.");
   }
   async interrupt() {

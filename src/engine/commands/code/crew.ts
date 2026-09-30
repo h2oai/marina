@@ -388,10 +388,9 @@ export function bindSessionWriter(
 const CODING_ROLE_PATTERN = /cod|implement|engineer/i;
 
 /**
- * Pick an existing live coding agent not already taken in this assembly. Best
- * effort: the runtime's agent list is the source of "online"; we skip any name
- * already taken. (Idle/assigned distinction is not surfaced by the runtime list
- * here, so we treat any untaken online agent as recruitable.)
+ * Pick an available coding agent without taking over unrelated autonomous work.
+ * Unknown runtime state is not availability. Explicit assignments use their own
+ * path; canonical coding-run admission still arbitrates competing dispatches.
  */
 export function recruitCodingAgent(
   deps: CodeDeps & { db: MarinaDB },
@@ -405,11 +404,31 @@ export function recruitCodingAgent(
     // Config names may differ from the login-sanitized entity name — retry.
     const agent = deps.findAgentByName?.(name) ?? deps.findAgentByName?.(sanitizeEntityName(name));
     if (!agent) continue;
-    if (model && getAgentHandle(deps, name)?.getStatus().model !== model) continue;
-    const role =
-      getAgentHandle(deps, name)?.getStatus().role ??
-      (candidate as { role?: string }).role ??
-      agent.properties.role;
+    const status = getAgentHandle(deps, name)?.getStatus();
+    if (
+      status?.state !== "idle" ||
+      status.budgetExhausted ||
+      (status.healthState && status.healthState !== "ready") ||
+      status.attentionMode === "focused" ||
+      status.focus ||
+      status.goal ||
+      (status.queuedPerceptions ?? 0) > 0 ||
+      agent.properties.coding_task
+    )
+      continue;
+    if (
+      deps.db.listCodingRuns({
+        workerKey: deps.db.durableEntityKey(agent.id),
+        status: "active",
+        limit: 1,
+      }).length ||
+      deps.db.listTasksClaimedBy(agent.id).length ||
+      deps.crewManager?.forAgent(name).length ||
+      (name !== agent.name && deps.crewManager?.forAgent(agent.name).length)
+    )
+      continue;
+    if (model && status.model !== model) continue;
+    const role = status.role;
     if (typeof role !== "string" || !CODING_ROLE_PATTERN.test(role)) continue;
     // Return the runtime-facing candidate name (not agent.name): downstream
     // dispatch resolves the handle by this name; the writer lock stores the

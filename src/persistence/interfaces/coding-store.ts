@@ -57,6 +57,7 @@ export interface CodingStore {
   listCodingRunArtifacts(runId: string): CodingArtifactRow[];
   getCodingArtifact(id: string): CodingArtifactRow | null;
   listCodingArtifacts(sessionId: string, limit?: number): CodingArtifactRow[];
+  recoverCodingVerifications(): void;
   updateCodingArtifact(
     id: string,
     patch: Partial<{
@@ -81,6 +82,7 @@ export const CODING_STORE_METHODS = [
   "listCodingRuns",
   "listCodingRunArtifacts",
   "listCodingArtifacts",
+  "recoverCodingVerifications",
   "updateCodingArtifact",
 ] as const satisfies readonly (keyof CodingStore)[];
 

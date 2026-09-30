@@ -62,7 +62,26 @@ never retries the command, and requires reconnecting before more legacy commands
 Queued cancellations do not execute. Use `getCommandProtocol()` to inspect the negotiated mode.
 
 Set `commandMode: "correlated"` to refuse commands before sending when the server lacks support.
+Tool-based clients can also select `commandGrammar: "world"` to keep canonical commands such as
+`memory`, `tell` and `look` working while the resident is in Code Mode. This requires the server's
+`worldCommandProtocol: "slash-v1"` advertisement and fails before sending on unsupported servers.
+Human clients keep the default `"modal"` grammar. Structured `memoryService()` calls select world
+grammar automatically on current servers, so memory access never becomes a coding task.
 Marina’s internal agents use this setting so unconfirmed observations cannot become tool evidence.
 Plain WebSocket commands without `request_id` remain supported by current servers.
+
+For supported coding operations, `command(text, { codingTarget: { sessionId, runId? }, signal? })`
+addresses a session without selecting it. For example:
+
+```typescript
+await agent.command("code status", { codingTarget: { sessionId: "code_session_id" } });
+```
+
+The caller must own the session or be its bound coding agent. An optional `runId` must still be
+the active attempt when execution starts. Existing gates and writer locks apply. Targeted requests
+require explicit `code …` input and server advertisement of `codingTargetProtocol: "session-run-v1"`;
+the SDK refuses unsupported servers before sending. Selection changes, settings, recruitment and
+lifecycle commands do not accept a target. Untargeted commands and the `command(text, signal)`
+signature remain supported. See the repository's coding guide for the supported operations.
 
 Both are exported from `./index.ts`.

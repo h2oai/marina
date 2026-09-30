@@ -7,6 +7,7 @@ export type { CapabilityManifest, CommandCatalogEntry } from "./capabilities";
 export { renderCapabilityRoster } from "./capabilities";
 export type {
   ClientOptions,
+  CommandOptions,
   CommandResult,
   ConnectionState,
   RoomView,
@@ -21,6 +22,7 @@ export {
   matchCommandForm,
 } from "./command-forms";
 export { commandInputSchema } from "./command-schema";
+export type { CodingCommandTarget } from "./command-target";
 export type * from "./extensions";
 export { EXTENSION_API_VERSION } from "./extensions";
 export type { UnifiedContextResult } from "./memory-context";

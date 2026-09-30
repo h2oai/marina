@@ -1490,6 +1490,41 @@ describe("tool profiles", () => {
     expect(resultText).toContain("Invalid marina_code request");
     expect(resultText).toContain("action=read requires path");
     expect(commands).toHaveLength(9);
+    await tool!.execute("candidate-check", { action: "verify", verificationMode: "candidate" });
+    await tool!.execute("background-check", { action: "verify", verificationMode: "start" });
+    expect(commands.slice(-2)).toEqual(["code verify candidate", "code verify start"]);
+    const refused = await tool!.execute("invalid-check", {
+      action: "verify",
+      verificationMode: "candidate; rm",
+    });
+    expect(JSON.stringify(refused)).toContain("verificationMode must be");
+    expect(commands).toHaveLength(11);
+    const toolset = createProfileToolset(ctx, memory, "full");
+    const typedVerify = [...toolset.resident, ...toolset.deferred].find(
+      (entry) => entry.name === "marina_code_verify",
+    )!;
+    await typedVerify.execute("typed-candidate", { verificationMode: "candidate" });
+    await typedVerify.execute("typed-default", {});
+    expect(commands.slice(-2)).toEqual(["code verify candidate", "code verify"]);
+    await typedVerify.execute("typed-dependencies", {
+      verificationMode: "candidate",
+      dependencies: "bun",
+    });
+    await tool!.execute("generic-dependencies", {
+      action: "verify",
+      verificationMode: "candidate",
+      dependencies: "bun",
+    });
+    expect(commands.slice(-2)).toEqual([
+      "code verify candidate dependencies:bun",
+      "code verify candidate dependencies:bun",
+    ]);
+    await expect(
+      typedVerify.execute("invalid-preparation", {
+        verificationMode: "start",
+        dependencies: "bun",
+      }),
+    ).rejects.toThrow("dependencies must be bun with verificationMode candidate");
   });
 
   it("typed code tools map directly to Marina code commands", async () => {

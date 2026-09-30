@@ -3,7 +3,12 @@
 
 import { basename } from "node:path";
 import { clearSessionExecState } from "../../../coding/exec-approver";
-import { codingRunMetadata } from "../../../coding/task-run";
+import {
+  assessCodingVerification,
+  codingRunMetadata,
+  codingVerificationReadiness,
+  codingVerificationUnchanged,
+} from "../../../coding/task-run";
 import { bold, dim, header, separator, success } from "../../../net/ansi";
 import type { CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
@@ -15,10 +20,12 @@ import {
   CODE_CONTEXT_KEY,
   type CodeDeps,
   type CodeTreeNode,
+  canAdoptCodingSession,
   capitalize,
   formatCodingNoteTitle,
   formatCompletionTitle,
   getActiveSessionId,
+  getAgentHandle,
   getCodeProfile,
   latestActiveArtifact,
   normalizeCodingNoteKind,
@@ -30,7 +37,7 @@ import {
   sendCode,
   updateCodeContext,
 } from "./shared";
-import { stopCodeStreamsFor } from "./stream";
+import { stopCodeStreamsFor, streamSessionAgent } from "./stream";
 import { submitSessionRun } from "./task-run";
 import {
   cleanupSessionWorktree,
@@ -346,10 +353,7 @@ export function resumeSession(
   // loopback-sovereign's exec-mode session and ride its exec authorization
   // (which keys on session.created_by) — a confused-deputy path to arbitrary
   // host execution. Fail closed.
-  if (
-    !sameEntityName(session.created_by, entity.name) &&
-    !sameEntityName(session.agent, entity.name)
-  ) {
+  if (!canAdoptCodingSession(session, entity)) {
     ctx.send(
       eid,
       "You can only resume a coding session you created or are the bound coding agent for.",
@@ -358,6 +362,12 @@ export function resumeSession(
   }
   entity.properties[ACTIVE_SESSION_KEY] = session.id;
   updateCodeContext(entity, deps.db, session);
+  // Reattach output without redispatching work. The bound worker must never
+  // subscribe to its own prose/tool stream and turn it into another input loop.
+  if (session.agent && !sameEntityName(session.agent, entity.name)) {
+    const handle = getAgentHandle(deps, session.agent);
+    if (handle) streamSessionAgent(deps, eid, handle, session.id);
+  }
   deps.db.createCodingEvent({
     sessionId: session.id,
     actor: entity.name,
@@ -511,13 +521,13 @@ export function modelSetting(
   });
 }
 
-export function status(
+export async function status(
   ctx: RoomContext,
   eid: EntityId,
   entity: Entity,
   deps: CodeDeps & { db: MarinaDB },
   id?: string,
-): void {
+): Promise<void> {
   const session = resolveSession(ctx, eid, entity, deps.db, id);
   if (!session) return;
   const events = deps.db.listCodingEvents(session.id, 5);
@@ -533,6 +543,19 @@ export function status(
   updateCodeContext(entity, deps.db, session);
   const run = deps.db.listCodingRuns({ sessionId: session.id, limit: 1 })[0];
   const runMeta = run ? codingRunMetadata(run) : undefined;
+  if (run && runMeta) {
+    const assessment = await assessCodingVerification(
+      deps.db,
+      run,
+      deps.getConnectionProtocol?.(eid) !== "telnet",
+    );
+    if (!codingVerificationUnchanged(deps.db, run, assessment.verificationId))
+      throw new Error("Task evidence changed during status. Inspect code status again.");
+    const currentSession = deps.db.getCodingSession(session.id);
+    const actor = deps.getEntity(eid);
+    if (!currentSession || !actor || !canAdoptCodingSession(currentSession, actor)) return;
+    Object.assign(runMeta, assessment);
+  }
   const lines = [
     header("Coding Session"),
     separator(),
@@ -545,6 +568,9 @@ export function status(
           `Task: #${runMeta.taskId} | Attempt: ${run.id} (${run.status})`,
           `Task review: ${deps.db.getTask(runMeta.taskId)?.status ?? "unknown"}`,
           `Recorded verification: ${runMeta.verification ?? "not yet submitted"}`,
+          ...(runMeta.verificationRequirement
+            ? [`Required verification: ${runMeta.verificationRequirement}`]
+            : []),
         ]
       : []),
     `Execution target: ${session.execution_target}`,
@@ -568,6 +594,15 @@ export function status(
       ...(runMeta ? [`task info ${runMeta.taskId}`] : []),
     ],
     event: "session_status",
+    metadata: {
+      runId: run?.id,
+      runStatus: run?.status,
+      verification: runMeta?.verification,
+      verificationRequirement: runMeta?.verificationRequirement,
+      verificationReadiness: run ? codingVerificationReadiness(deps.db, run, runMeta) : undefined,
+      profile: getCodeProfile(entity).name,
+      model: typeof modelMeta.target === "string" ? modelMeta.target : undefined,
+    },
     events: events.slice(-5).map((ev) => ({
       actor: ev.actor,
       kind: ev.kind,
@@ -821,14 +856,14 @@ function depositSessionSummary(
   }
 }
 
-export function recordCodingNote(
+export async function recordCodingNote(
   ctx: RoomContext,
   eid: EntityId,
   entity: Entity,
   deps: CodeDeps & { db: MarinaDB },
   kind: string,
   args: string[],
-): void {
+): Promise<void> {
   const noteKind = normalizeCodingNoteKind(kind);
   if (!noteKind) {
     ctx.send(eid, "Usage: code plan|summary|handoff|decision <text>");
@@ -887,7 +922,33 @@ export function recordCodingNote(
   // project pool (when present) and a personal note. Degrades silently.
   if (noteKind === "summary") {
     // The artifact is durable before this can produce a terminal event.
-    submitSessionRun(deps, session.id, entity, artifact);
+    const run = await submitSessionRun(deps, session.id, entity, artifact);
+    if (run?.status === "active") {
+      const meta = codingRunMetadata(run);
+      const text = `Summary saved as progress; task remains active. Candidate verification is ${meta.verification}. ${meta.verificationReason ?? "Inspect the check output, fix the problem, and run code verify candidate again."} After checks pass, submit code summary again. If blocked, use code blocked <reason>.`;
+      const message = {
+        type: "verification" as const,
+        event: "verification_required",
+        artifactId: artifact.id,
+        artifactKind: artifact.kind,
+        sessionId: session.id,
+        status: "active",
+        title: "Verification required",
+        content: text,
+        metadata: {
+          ...meta,
+          runId: run.id,
+          verificationReadiness: codingVerificationReadiness(deps.db, run),
+        },
+        commands: ["code verify candidate", "code status", `code show ${artifact.id}`],
+      };
+      sendCode(ctx, eid, text, message);
+      const owner = deps.findEntityExact?.(meta.ownerName) ?? deps.getEntity(meta.ownerKey);
+      if (owner && owner.id !== eid && sameEntityName(owner.name, meta.ownerName))
+        deps.notify?.(owner.id, text, { code: message });
+      updateCodeContext(entity, deps.db, session);
+      return;
+    }
     depositSessionSummary(deps, entity, session, text);
   }
   updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);

@@ -6,6 +6,9 @@ import { codingRunMetadata, endCodingRun } from "../../../coding/task-run";
 import { bold, dim, error as fmtError, separator, success } from "../../../net/ansi";
 import type { CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
+import { failCommandResponse } from "../../command-response";
+import { getErrorMessage } from "../../errors";
+import { parseModifiers } from "../../parse-input";
 import { checkGateForExecution, grant, recordGateExecution } from "../../safety-gates";
 import { bindSessionWriter, crewPlan, recruitCodingAgent } from "./crew";
 import { startSession } from "./session";
@@ -32,6 +35,31 @@ import {
   streamSessionAgent,
 } from "./stream";
 import { getWorkspaceRegistry } from "./workspace";
+
+/** Parse only leading options; prose after -- (or the first task word) stays literal. */
+export function parseCodingTask(raw: string) {
+  const parsed = parseModifiers(
+    raw.trim().split(/\s+/),
+    { verification: { type: "string" } },
+    { leading: true },
+  );
+  if (
+    parsed.errors.length ||
+    (parsed.values.verification !== undefined && parsed.values.verification !== "candidate")
+  )
+    throw new Error("Usage: code do [verification:candidate] -- <task>");
+  return {
+    prompt: parsed.rest.join(" ").trim(),
+    verificationRequirement:
+      parsed.values.verification === "candidate" ? ("candidate" as const) : undefined,
+  };
+}
+function validateTaskContract(session: CodingSessionRow, requirement?: "candidate") {
+  if (requirement && (session.execution_target !== "local" || session.driver === "crew"))
+    throw new Error(
+      "Candidate-required tasks currently need a local Git workspace and the single-agent driver. Use code target/code driver to select them, or dispatch an ordinary task.",
+    );
+}
 
 export async function askCode(
   ctx: RoomContext,
@@ -91,7 +119,10 @@ export async function assignCode(
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
   const agentName = args[0];
-  const prompt = args.slice(1).join(" ");
+  const { prompt, verificationRequirement } = parseCodingTask(args.slice(1).join(" "));
+  if (!sameEntityName(session.created_by, entity.name))
+    throw new Error("Only the coding session creator may dispatch its task.");
+  validateTaskContract(session, verificationRequirement);
   const profile = getCodeProfile(entity);
   const modelTarget = getSessionModelTarget(deps.db, session.id);
   const handle = agentName ? getAgentHandle(deps, agentName) : undefined;
@@ -103,6 +134,7 @@ export async function assignCode(
     modelTarget,
     profile: profile.name,
     prompt,
+    verificationRequirement,
     session,
   });
   updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
@@ -168,7 +200,7 @@ export async function doCode(
   driver: CodeSessionDriver,
   rawTask: string,
 ): Promise<void> {
-  const task = rawTask.trim();
+  const { prompt: task, verificationRequirement } = parseCodingTask(rawTask);
   if (!task) {
     ctx.send(eid, 'Describe what you want done, e.g. "fix the off-by-one in the tokenizer".');
     return;
@@ -211,7 +243,7 @@ export async function doCode(
 
   // Auto-start a session on the first task so entering Code Mode + typing just
   // works — no explicit `code start` required.
-  if (!getActiveSessionId(entity)) startSession(ctx, eid, entity, deps, "");
+  if (!ctx.codingTarget && !getActiveSessionId(entity)) startSession(ctx, eid, entity, deps, "");
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
 
@@ -229,6 +261,9 @@ export async function doCode(
     return;
   }
 
+  if (!sameEntityName(session.created_by, entity.name))
+    throw new Error("Only the coding session creator may dispatch its task.");
+  validateTaskContract(session, verificationRequirement);
   const strategy = (session.driver ?? "single").toLowerCase();
   if (strategy === "crew") {
     await crewPlan(ctx, eid, entity, deps, task);
@@ -252,21 +287,6 @@ export async function doCode(
   if (!agentName) return; // ensureSessionAgent already explained why
   const profile = getCodeProfile(entity);
   try {
-    deps.db.createCodingEvent({
-      sessionId: session.id,
-      actor: entity.name,
-      kind: "code_lifecycle",
-      payload: { phase: "received", task },
-    });
-    sendCode(ctx, eid, "Task received and queued for the coding agent.", {
-      event: "code_lifecycle",
-      metadata: { phase: "received", task },
-      phase: "received",
-      sessionId: session.id,
-      status: "active",
-      title: "Task received",
-      type: "lifecycle",
-    });
     const handle = getAgentHandle(deps, agentName);
     if (handle) streamSessionAgent(deps, eid, handle, session.id);
     await driver.assignAgent({
@@ -276,18 +296,20 @@ export async function doCode(
       modelTarget: getSessionModelTarget(deps.db, session.id),
       profile: profile.name,
       prompt: task,
+      verificationRequirement,
       session,
     });
     ctx.send(
       eid,
       [
-        success(`→ ${agentName} is on it.`),
+        success(`Task received: ${agentName} is on it.`),
         dim(`"${task.length > 80 ? `${task.slice(0, 77)}...` : task}"`),
         dim("It explores, edits, and runs checks autonomously — streaming below. Type to steer."),
       ].join("\n"),
     );
   } catch (err) {
-    ctx.send(eid, fmtError(err instanceof Error ? err.message : String(err)));
+    failCommandResponse(getErrorMessage(err));
+    ctx.send(eid, fmtError(getErrorMessage(err)));
   }
 }
 

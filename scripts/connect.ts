@@ -19,14 +19,12 @@
  *   MARINA_URL — WebSocket server URL (default: ws://localhost:3300)
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { sanitizeEntityName } from "../src/engine/entity-name";
 import { formatPerception } from "../src/net/formatter";
 import type { CommandCatalogEntry } from "../src/sdk/capabilities";
 import { MarinaAgent } from "../src/sdk/client";
+import { cachedParticipantToken, saveParticipantToken } from "./session-cache";
 
 const args = process.argv.slice(2);
 
@@ -124,29 +122,14 @@ if (!name) {
 // the second invocation was a different entity. Caching the token per name
 // and reconnecting first preserves identity across one-shot commands.
 
-const SESSION_DIR = join(homedir(), ".marina", "sessions");
-
-function sessionFile(n: string): string {
-  return join(SESSION_DIR, `${n}.json`);
-}
-
 function loadCachedToken(n: string): string | undefined {
-  try {
-    const raw = readFileSync(sessionFile(n), "utf8");
-    const parsed = JSON.parse(raw) as { token?: string; url?: string };
-    // Only honor cached tokens for the same server URL — a token from a
-    // different host doesn't transfer.
-    if (parsed.url && parsed.url !== URL) return undefined;
-    return parsed.token;
-  } catch {
-    return undefined;
-  }
+  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(n)) return undefined;
+  return cachedParticipantToken(n, URL);
 }
 
 function saveSessionToken(n: string, token: string): void {
   try {
-    mkdirSync(SESSION_DIR, { recursive: true });
-    writeFileSync(sessionFile(n), JSON.stringify({ token, url: URL }), { mode: 0o600 });
+    saveParticipantToken(n, URL, token);
   } catch {
     // Non-fatal — the next invocation will just do a fresh login.
   }

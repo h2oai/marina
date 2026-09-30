@@ -13,7 +13,11 @@ import { codingRunMetadata } from "../../coding/task-run";
 import { error as fmtError } from "../../net/ansi";
 import { codingRunContext } from "../../persistence/coding-run-context";
 import type { MarinaDB } from "../../persistence/database";
+import { parseCodingCommandTarget } from "../../sdk/command-target";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import { failCommandResponse } from "../command-response";
+import { getErrorMessage } from "../errors";
+import { parseModifiers } from "../parse-input";
 import { checkGateForExecution, recordGateExecution } from "../safety-gates";
 import {
   approval,
@@ -82,11 +86,18 @@ import {
   getCodeProfile,
   HOST_ROOT_EXEC_SUBCOMMANDS,
   NO_CODE_ROOT_DENY,
+  resolveSession,
   restAfterSubcommand,
   TELNET_HOST_EXEC_DENY,
 } from "./code/shared";
 import { spawnRequest } from "./code/spawn";
-import { observeCodingRun, publishCodingRun, reviewCodingRun } from "./code/task-run";
+import {
+  blockCodingRun,
+  observeCodingRun,
+  publishCodingRun,
+  reviewCodingRun,
+} from "./code/task-run";
+import { startVerification } from "./code/verification";
 import { doctor, getWorkspaceRegistry, handleWorkspace, handleWorktree } from "./code/workspace";
 import { requiresPersistence } from "./command-messages";
 
@@ -111,6 +122,47 @@ interface SubcommandCall {
 }
 
 type SubcommandHandler = (call: SubcommandCall) => void | Promise<void>;
+
+// First request-local surface: existing session inspection, evidence and workspace operations.
+// Owner dispatch and blocked reports are scoped; selection/settings and other lifecycle verbs
+// still use their explicit legacy paths.
+// New subcommands must be reviewed before accepting a target, rather than silently ignoring it.
+const TARGETED_SUBCOMMANDS = new Set([
+  "review",
+  "blocked",
+  "do",
+  "assign",
+  "status",
+  "history",
+  "files",
+  "read",
+  "search",
+  "diff",
+  "artifacts",
+  "show",
+  "thread",
+  "patches",
+  "plan",
+  "decision",
+  "observe",
+  "summary",
+  "patch",
+  "propose",
+  "apply",
+  "reject",
+  "edit",
+  "write",
+  "checkpoint",
+  "revert",
+  "verify",
+  "run",
+  "test",
+  "lint",
+  "typecheck",
+  "build",
+  "dashboard:build",
+  "recipe",
+]);
 
 const doctorHandler: SubcommandHandler = async (c) => {
   await doctor(c.ctx, c.eid, c.entity, c.deps);
@@ -141,8 +193,8 @@ const proposeHandler: SubcommandHandler = async (c) => {
   await proposePatch(c.ctx, c.eid, c.entity, c.deps, c.rawAfterSub);
 };
 /** plan / summary / handoff / decision — the canonical name is the note kind. */
-const codingNoteHandler: SubcommandHandler = (c) => {
-  recordCodingNote(c.ctx, c.eid, c.entity, c.deps, c.canonicalSub, c.args);
+const codingNoteHandler: SubcommandHandler = async (c) => {
+  await recordCodingNote(c.ctx, c.eid, c.entity, c.deps, c.canonicalSub, c.args);
 };
 const stopHandler: SubcommandHandler = async (c) => {
   await stopSessionAgent(c.ctx, c.eid, c.entity, c.deps);
@@ -210,6 +262,7 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
   writer: (c) => {
     writerCommand(c.ctx, c.eid, c.entity, c.deps, c.args);
   },
+  blocked: (c) => blockCodingRun(c.ctx, c.eid, c.entity, c.deps, c.args),
   review: (c) => reviewCodingRun(c.ctx, c.eid, c.entity, c.deps, c.args),
   task: (c) => {
     sessionTask(c.ctx, c.eid, c.entity, c.deps, c.rawAfterSub);
@@ -254,8 +307,8 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
   sessions: listHandler,
   resume: resumeHandler,
   use: resumeHandler,
-  status: (c) => {
-    status(c.ctx, c.eid, c.entity, c.deps, c.args[0]);
+  status: async (c) => {
+    await status(c.ctx, c.eid, c.entity, c.deps, c.args[0]);
   },
   files: filesHandler,
   ls: filesHandler,
@@ -271,6 +324,27 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
     await runWorkspaceCommand(c.ctx, c.eid, c.entity, c.deps, c.args);
   },
   verify: async (c) => {
+    const parsed = parseModifiers(c.args, { dependencies: { type: "string" } });
+    const mode = parsed.rest[0]?.toLowerCase();
+    const dependencies = parsed.values.dependencies;
+    if (
+      parsed.errors.length ||
+      parsed.rest.length > 1 ||
+      (dependencies !== undefined && (dependencies !== "bun" || mode !== "candidate"))
+    )
+      throw new Error("Usage: code verify [start|candidate [dependencies:bun]]");
+    if (mode === "start" || mode === "candidate") {
+      await startVerification(
+        c.ctx,
+        c.eid,
+        c.entity,
+        c.deps,
+        mode === "candidate",
+        dependencies === "bun" ? "bun" : undefined,
+      );
+      return;
+    }
+    if (c.args.length) throw new Error("Usage: code verify [start|candidate [dependencies:bun]]");
     await verifyWorkspace(c.ctx, c.eid, c.entity, c.deps);
   },
   test: namedRunHandler,
@@ -357,6 +431,9 @@ export function codeCommand(deps: CodeDeps): CommandDef {
       "code artifacts status <status>",
       "code ask <request>",
       "code assign <agent> <req>",
+      "code assign <agent> verification:candidate -- <req>",
+      "code do verification:candidate -- <task>",
+      "code blocked <reason>",
       "code branch [title]",
       "code checkpoint [title]",
       "code crew <goal> [with <a,b>]",
@@ -433,6 +510,7 @@ export function codeCommand(deps: CodeDeps): CommandDef {
       "code review",
       "code review approve",
       "code review reject",
+      "code review accept-unverified <attempt> <reason>",
       "code roles",
       "code run <check|cmd...>",
       "code run <typecheck|lint|test|build|dashboard:build|bun ...|git ...>",
@@ -490,6 +568,9 @@ export function codeCommand(deps: CodeDeps): CommandDef {
       "code typecheck",
       "code unpin <artifact_id|last>",
       "code verify",
+      "code verify start",
+      "code verify candidate",
+      "code verify candidate dependencies:bun",
       "code workspace",
       "code workspace discover",
       "code workspace list",
@@ -573,6 +654,7 @@ export function codeCommand(deps: CodeDeps): CommandDef {
         const isHostExecSurface =
           CODE_HOST_EXEC_SURFACE.has(canonicalSub) || mutatesSandbox || isProject;
         if (isHostExecSurface && deps.getConnectionProtocol?.(input.entity) === "telnet") {
+          failCommandResponse(TELNET_HOST_EXEC_DENY);
           ctx.send(input.entity, TELNET_HOST_EXEC_DENY);
           return;
         }
@@ -587,6 +669,7 @@ export function codeCommand(deps: CodeDeps): CommandDef {
           HOST_ROOT_EXEC_SUBCOMMANDS.has(canonicalSub) &&
           !getWorkspaceRegistry(depsWithDb).hostExecAllowed
         ) {
+          failCommandResponse(NO_CODE_ROOT_DENY);
           ctx.send(input.entity, NO_CODE_ROOT_DENY);
           return;
         }
@@ -598,6 +681,7 @@ export function codeCommand(deps: CodeDeps): CommandDef {
         if (CODE_EXEC_SUBCOMMANDS.has(canonicalSub) || mutatesSandbox || isProject) {
           const gate = checkGateForExecution(depsWithDb.db, input.entity, "code.exec");
           if (!gate.ok) {
+            failCommandResponse(gate.reason ?? "code.exec capability required.");
             ctx.send(
               input.entity,
               gate.reason ??
@@ -645,16 +729,50 @@ export function codeCommand(deps: CodeDeps): CommandDef {
           ctx.send(input.entity, formatHelp(profile));
         }
       } catch (err) {
-        ctx.send(input.entity, fmtError(err instanceof Error ? err.message : String(err)));
+        failCommandResponse(getErrorMessage(err));
+        ctx.send(input.entity, fmtError(getErrorMessage(err)));
       }
     },
   };
   return {
     ...command,
-    handler: (ctx, input) => {
-      const sessionId = deps.getEntity(input.entity)?.properties.coding_session_id as
-        | string
-        | undefined;
+    handler: async (ctx, input) => {
+      const entity = deps.getEntity(input.entity);
+      let sessionId = entity?.properties.coding_session_id as string | undefined;
+      if (ctx.codingTarget !== undefined) {
+        try {
+          ctx = { ...ctx, codingTarget: parseCodingCommandTarget(ctx.codingTarget) };
+          if (!entity || !deps.db) throw new Error("Coding target is unavailable.");
+          const session = resolveSession(ctx, input.entity, entity, deps.db);
+          if (!session) return;
+          sessionId = session.id;
+          const sub = canonicalCodeSubcommand(
+            getCodeProfile(entity),
+            input.tokens[0]?.toLowerCase() ?? "",
+          );
+          if (!TARGETED_SUBCOMMANDS.has(sub))
+            throw new Error("This code operation does not support request-local targeting.");
+          // Check before gates and side effects. Never silently use the selected/latest attempt
+          // when an explicit expected attempt has completed, moved or been replaced.
+          if (ctx.codingTarget?.runId) {
+            const expected = deps.db.getCodingArtifact(ctx.codingTarget.runId);
+            const active = deps.db.listCodingRuns({ sessionId, status: "active", limit: 1 })[0];
+            if (
+              expected?.kind !== "task_run" ||
+              expected.session_id !== sessionId ||
+              active?.id !== expected.id
+            )
+              throw new Error(
+                "Coding run target is not the session's active attempt. Inspect state before retrying.",
+              );
+          }
+        } catch (error) {
+          const message = getErrorMessage(error);
+          failCommandResponse(message);
+          ctx.send(input.entity, fmtError(message));
+          return;
+        }
+      }
       const run = sessionId
         ? deps.db?.listCodingRuns({ sessionId, status: "active", limit: 1 })[0]
         : undefined;

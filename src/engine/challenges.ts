@@ -48,11 +48,19 @@
 import { harnessDecisionProvider } from "../decisions/engines";
 import { gateToolCall, maskSensitiveText } from "../decisions/gate";
 import type { MarinaDB } from "../persistence/database";
+import type { CodingCommandTarget } from "../sdk/command-target";
 import type { Entity, EntityRank } from "../types";
 import { OPEN_POSTURE_CORE } from "./autonomy";
+import { withoutCommandResponse } from "./command-response";
 import { positiveNumberFromEnv } from "./constants";
 import { sanitizeEntityName } from "./entity-name";
-import { getCurrentCommand, grantCommandPass, setGateRefusalHook } from "./gate-context";
+import { getErrorMessage } from "./errors";
+import {
+  getCurrentCodingTarget,
+  getCurrentCommand,
+  grantCommandPass,
+  setGateRefusalHook,
+} from "./gate-context";
 import { getRank, rankName } from "./permissions";
 import { checkUnattendedGate, grant, SAFETY_GATES } from "./safety-gates";
 
@@ -60,6 +68,7 @@ export type ChallengeKind = "gate" | "rank" | "tool";
 export type ChallengeAnswer = "once" | "always" | "deny";
 
 export interface Challenge {
+  codingTarget?: CodingCommandTarget;
   token: string;
   kind: ChallengeKind;
   requesterId: string;
@@ -91,7 +100,11 @@ export interface ChallengeHost {
   isConnected(id: string): boolean;
   send(id: string, text: string): void;
   /** Re-run a held command as the requester. */
-  redispatch(entityId: string, raw: string): Promise<void>;
+  redispatch(
+    entityId: string,
+    raw: string,
+    options?: { codingTarget?: CodingCommandTarget },
+  ): Promise<void>;
   /** The principal that spawned this entity, when it is an agent. */
   creatorOf(entity: Entity): string | undefined;
 }
@@ -375,6 +388,8 @@ function create(
     (p) =>
       p.challenge.kind === input.kind &&
       p.challenge.command === input.command &&
+      p.challenge.codingTarget?.sessionId === input.codingTarget?.sessionId &&
+      p.challenge.codingTarget?.runId === input.codingTarget?.runId &&
       p.challenge.toolName === input.toolName &&
       p.challenge.summary === input.summary,
   );
@@ -414,7 +429,12 @@ export function raiseForCommand(input: {
   gateId?: string;
   minRank?: number;
 }): string {
-  const summary = input.command.trim().slice(0, 240);
+  const codingTarget = getCurrentCodingTarget(input.requesterId);
+  const summary =
+    input.command.trim().slice(0, 240) +
+    (codingTarget
+      ? ` [session ${codingTarget.sessionId}${codingTarget.runId ? `, run ${codingTarget.runId}` : ""}]`
+      : "");
   const kind: ChallengeKind = input.minRank !== undefined ? "rank" : "gate";
   const reason =
     kind === "rank"
@@ -424,6 +444,7 @@ export function raiseForCommand(input: {
     kind,
     requesterId: input.requesterId,
     command: input.command,
+    ...(codingTarget ? { codingTarget: { ...codingTarget } } : {}),
     summary,
     reason,
     ...(input.gateId ? { gateId: input.gateId } : {}),
@@ -574,6 +595,7 @@ export function settleChallenge(
     }
   } else if (challenge.command) {
     grantCommandPass(challenge.requesterId, challenge.command, {
+      codingTarget: challenge.codingTarget,
       gateIds: challenge.gateId ? [challenge.gateId] : [],
       rankWaived: challenge.minRank !== undefined,
       ...(challenge.minRank !== undefined ? { waivedRank: challenge.minRank } : {}),
@@ -581,7 +603,7 @@ export function settleChallenge(
       approverName,
       token: challenge.token,
     });
-    void host.redispatch(challenge.requesterId, challenge.command);
+    redispatchHeldCommand(challenge.requesterId, challenge.command, challenge.codingTarget);
   }
   return {
     ok: true,
@@ -596,9 +618,20 @@ export function settleChallenge(
  * Re-run a held command as its requester, for approval flows that keep their
  * own pending state (the Code Mode exec approver). False when no host is wired.
  */
-export function redispatchHeldCommand(entityId: string, raw: string): boolean {
-  if (!host) return false;
-  void host.redispatch(entityId, raw);
+export function redispatchHeldCommand(
+  entityId: string,
+  raw: string,
+  codingTarget?: CodingCommandTarget,
+): boolean {
+  const dispatcher = host;
+  if (!dispatcher) return false;
+  withoutCommandResponse(() => {
+    void dispatcher
+      .redispatch(entityId, raw, codingTarget ? { codingTarget } : undefined)
+      .catch((error) =>
+        dispatcher.send(entityId, `Approved command could not execute: ${getErrorMessage(error)}`),
+      );
+  });
   return true;
 }
 

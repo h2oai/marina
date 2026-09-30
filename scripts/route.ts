@@ -2,12 +2,10 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { getErrorMessage } from "../src/engine/errors";
 import { MarinaRoutingClient } from "../src/sdk/routing-client";
 import { httpBaseFromUrl } from "./marina";
+import { cachedParticipantToken } from "./session-cache";
 
 export const ROUTE_USAGE = `marina route [--name <world-account>] <action> [session-id] [JSON or message-id]
 
@@ -35,29 +33,7 @@ an agent's terminal or execute messages. Use marina supervise for managed agents
 `;
 
 /** Exact account and server binding; never silently choose another cached identity. */
-export function routingCachedToken(
-  name: string,
-  url: string,
-  directory = join(homedir(), ".marina", "sessions"),
-): string | undefined {
-  if (!/^[a-zA-Z0-9_-]+$/.test(name))
-    throw new Error("Account name must contain only letters, digits, underscores or hyphens");
-  try {
-    const cached = JSON.parse(readFileSync(join(directory, `${name}.json`), "utf8")) as {
-      url?: string;
-      token?: string;
-    };
-    if (
-      cached.url &&
-      httpBaseFromUrl(cached.url) === httpBaseFromUrl(url) &&
-      typeof cached.token === "string"
-    )
-      return cached.token;
-  } catch {
-    // An absent or malformed cache is handled as missing credentials below.
-  }
-  return undefined;
-}
+export const routingCachedToken = cachedParticipantToken;
 
 export async function runRoute(args: string[]): Promise<number> {
   if (!args.length || args.includes("--help") || args.includes("-h")) {
