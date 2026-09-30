@@ -11,6 +11,14 @@
  * each step of the formation's runtime brief (`CREW_BRIEFS`) 0–1, plus the
  * project-convention markers of its pool template.
  *
+ * Two layers, reported separately. `brief` steps are the protocol a crew is
+ * expected to follow: the runtime brief and the per-task `[crew-task]`
+ * dispatch restate them, and they alone make up the headline score
+ * (`summarizeAdherence().brief`). `convention` markers come from the pool
+ * templates, which are advisory reference material members may read on
+ * joining; they are kept as a reported diagnostic (`.convention`) and are
+ * excluded from the headline.
+ *
  * Deterministic checks run here. Steps that need judgement (e.g. "the lead
  * picked the strongest proposal") are returned as `method: "judge"` with a
  * question and no score; `buildJudgePacket()` renders the window transcript
@@ -869,6 +877,25 @@ export function scoreWindow(tr: Transcript, formation: string): StepResult[] {
   });
 }
 
+/** Mean of the scored steps in one layer; null when none were scored. */
+function layerMean(results: StepResult[], layer: StepResult["layer"]): number | null {
+  const scored = results.filter((r) => r.layer === layer && r.score !== null);
+  if (scored.length === 0) return null;
+  return scored.reduce((sum, r) => sum + (r.score ?? 0), 0) / scored.length;
+}
+
+/**
+ * Headline and diagnostic scores for one window. `brief` (the headline) is
+ * the mean over scored brief steps only; `convention` is the pool-template
+ * diagnostic, reported but never folded into the headline.
+ */
+export function summarizeAdherence(results: StepResult[]): {
+  brief: number | null;
+  convention: number | null;
+} {
+  return { brief: layerMean(results, "brief"), convention: layerMean(results, "convention") };
+}
+
 /** Render the window as a compact transcript for a judge model. */
 export function renderTranscript(tr: Transcript, maxChars = 14000): string {
   const t0 = tr.start;
@@ -962,5 +989,11 @@ if (import.meta.main) {
         `${r.layer.padEnd(10)} ${r.step.padEnd(26)} ${score.padStart(5)}  ${r.evidence}\n`,
       );
     }
+    const summary = summarizeAdherence(results);
+    const fmt = (n: number | null) => (n === null ? "n/a" : n.toFixed(2));
+    process.stdout.write(
+      `headline (brief steps) ${fmt(summary.brief)}; ` +
+        `diagnostic (convention markers, excluded) ${fmt(summary.convention)}\n`,
+    );
   }
 }
