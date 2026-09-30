@@ -17,9 +17,10 @@ const { values } = parseArgs({
 });
 const output = resolve(values.output!);
 await mkdir(output, { recursive: true });
-// Official release asset, independently verifiable through GitHub's release digest.
-const url = "https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar";
-const sha256 = "ab4694601923fd5ac06452abbf847c366a5054a3d739552085edd6ed986c29ec";
+// Official stable release asset. `v1.8.0` is a rolling pre-release whose jar is rebuilt in place,
+// so pinning its checksum breaks whenever upstream republishes; stable releases do not change.
+const url = "https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar";
+const sha256 = "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88";
 const jar = resolve(values.jar ?? `${output}/tla2tools.jar`);
 if (!values.jar) {
   const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
@@ -105,5 +106,5 @@ for (const [name, fault, invariant] of variants) {
 }
 await writeFile(
   `${output}/report.json`,
-  JSON.stringify({ checker: "TLC 1.8.0", sha256, results }, null, 2),
+  JSON.stringify({ checker: "TLC 1.7.4", sha256, results }, null, 2),
 );
