@@ -204,7 +204,14 @@ describe("crew command (integration)", () => {
 
   it("crew formation accepts the patterns added 2026-09", () => {
     engine.processCommand(alice.entity!, "crew create alpha bob -- task");
-    for (const f of ["delphi", "tournament", "verification", "auction", "ledger", "sharding"]) {
+    for (const f of [
+      "delphi",
+      "tournament",
+      "verification",
+      "auction",
+      "ledger",
+      "sharding",
+    ] as const) {
       alice.clear();
       engine.processCommand(alice.entity!, `crew formation alpha ${f}`);
       expect(lastFor(alice)).toContain(`formation → ${f}`);
