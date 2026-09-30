@@ -73,10 +73,14 @@ export function streamSessionAgent(
       },
     });
   };
+  const emitOutput = (text: string) =>
+    notify(dispatcherId, text, {
+      code: { event: "agent_output", type: "stream", sessionId, metadata: { agent: handle.name } },
+    });
   const flush = () => {
     const text = buffer.trim();
     buffer = "";
-    if (text) notify(dispatcherId, `${handle.name}: ${text}`);
+    if (text) emitOutput(`${handle.name}: ${text}`);
   };
   const unsub = handle.subscribe((ev: AgentEvent) => {
     switch (ev.type) {
@@ -88,12 +92,12 @@ export function streamSessionAgent(
             emitLifecycle(lifecycle.phase, lifecycle.detail, extra);
           }
         }
-        notify(dispatcherId, dim(`  ▸ ${formatAgentToolCall(ev.toolName, ev.args)}`));
+        emitOutput(dim(`  ▸ ${formatAgentToolCall(ev.toolName, ev.args)}`));
         break;
       case "tool_result":
         if (ev.isError) {
           emitLifecycle("failed", `${handle.name} hit a tool error`, { tool: ev.toolName });
-          notify(dispatcherId, `  ✗ ${ev.toolName}: ${clipLine(stringifyResult(ev.result))}`);
+          emitOutput(`  ✗ ${ev.toolName}: ${clipLine(stringifyResult(ev.result))}`);
         }
         break;
       case "text_delta":
@@ -103,7 +107,7 @@ export function streamSessionAgent(
         flush();
         break;
       case "error":
-        notify(dispatcherId, `  ⚠ ${clipLine(ev.error)}`);
+        emitOutput(`  ⚠ ${clipLine(ev.error)}`);
         break;
       case "status_change":
         // The bound agent's handle died (stopped or errored out). If it was

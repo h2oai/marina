@@ -194,6 +194,11 @@ describe("LeanAgentAdapter spend guard", () => {
     const { adapter, internals, sent } = makeAdapter({
       perAgentUsdPerHour: 1,
     });
+    const pauses: (string | null)[] = [];
+    const unsubscribe = adapter.subscribe((event) => {
+      if (event.type === "operator_status_change")
+        pauses.push(operatorStatusOf(adapter)?.paused?.kind ?? null);
+    });
     const tick = (ms: number) => new Promise((r) => setTimeout(r, ms));
     internals.spend.record(2);
     internals.autonomousLoopRunning = true;
@@ -222,6 +227,8 @@ describe("LeanAgentAdapter spend guard", () => {
     await tick(50);
     ops = operatorStatusOf(adapter);
     expect(ops?.paused).toBeNull();
+    expect(pauses).toEqual(["spend-cap", null]);
+    unsubscribe();
     // No second notification on resume.
     expect(sent.filter((c) => c.startsWith("tell Boss")).length).toBe(1);
 

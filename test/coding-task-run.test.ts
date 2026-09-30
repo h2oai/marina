@@ -6,6 +6,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentEvent, AgentHandle } from "../src/agent/agent-types";
+import type { AgentOperatorStatus } from "../src/agent/lean-agent-adapter";
 import { LocalWorkspace } from "../src/coding/local-workspace";
 import {
   beginCodingRun,
@@ -15,9 +16,12 @@ import {
   submitCodingRun,
 } from "../src/coding/task-run";
 import { VerificationRunner } from "../src/coding/verification-runner";
+import { codingWorkerState } from "../src/coding/worker-state";
 import { TaskManager } from "../src/coordination/task-manager";
 import { codeCommand } from "../src/engine/commands/code";
 import { parseCodingTask } from "../src/engine/commands/code/driver";
+import { status as codingStatus } from "../src/engine/commands/code/session";
+import { observeCodingRun } from "../src/engine/commands/code/task-run";
 import { grant } from "../src/engine/safety-gates";
 import { codingRunContext } from "../src/persistence/coding-run-context";
 import { MarinaDB } from "../src/persistence/database";
@@ -76,6 +80,116 @@ describe("durable coding task attempts", () => {
       createdBy: worker.name,
     });
   }
+
+  it("projects budget pauses and recovery without terminating, renewing or completing the task", async () => {
+    const run = begin("s", "candidate");
+    const listeners = new Set<(event: AgentEvent) => void>();
+    const notices: Record<string, unknown>[] = [];
+    let pause: AgentOperatorStatus["paused"] = null;
+    let error = false;
+    const handle = {
+      name: worker.name,
+      getStatus: () => ({
+        entityId: worker.id,
+        state: error ? "error" : "autonomous",
+        healthState: "busy",
+        modelCalls: 7,
+        budgetCalls: 7,
+      }),
+      getOperatorStatus: () => ({ paused: pause }),
+      subscribe: (listener: (event: AgentEvent) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    } as unknown as AgentHandle;
+    const deps = {
+      db,
+      getEntity: (id: string) => (id === owner.id ? owner : id === worker.id ? worker : undefined),
+      agentRuntime: { get: () => handle },
+      notify: (_id: string, _text: string, metadata?: Record<string, unknown>) => {
+        if (metadata) notices.push(metadata);
+      },
+    };
+    const claimBefore = db.getTaskClaim(codingRunMetadata(run).taskId, worker.id);
+    observeCodingRun(deps, run, handle);
+    const emit = () => {
+      for (const listener of listeners) listener({ type: "operator_status_change" });
+    };
+    pause = { kind: "budget", reason: "7 model calls used", since: Date.now() };
+    emit();
+    emit();
+    expect(notices.at(-1)?.code).toMatchObject({
+      event: "worker_state_changed",
+      status: "active",
+      metadata: { runId: run.id, workerState: "paused", workerPauseKind: "budget" },
+    });
+    expect(
+      db.listCodingEvents("s").filter((event) => event.kind === "worker_state_changed"),
+    ).toHaveLength(1);
+    const status: Record<string, unknown>[] = [];
+    const context = {
+      send: (_id: string, _text: string, _tag?: string, metadata?: Record<string, unknown>) => {
+        if (metadata) status.push(metadata);
+      },
+      codingTarget: { sessionId: "s", runId: run.id },
+    } as unknown as RoomContext;
+    await codeCommand(deps).handler(context, {
+      entity: owner.id,
+      room: owner.room,
+      verb: "code",
+      raw: "code status",
+      args: "status",
+      tokens: ["status"],
+    });
+    expect(status.at(-1)?.code).toMatchObject({
+      event: "session_status",
+      metadata: { workerState: "paused", workerReason: "7 model calls used", workerBudgetCalls: 7 },
+    });
+    error = true;
+    pause = { kind: "upstream-errors", reason: "Provider backoff", since: Date.now() };
+    emit();
+    expect(notices.at(-1)?.code).toMatchObject({ metadata: { workerState: "recovering" } });
+    expect(db.getCodingArtifact(run.id)?.status).toBe("active");
+    pause = null;
+    error = false;
+    emit();
+    expect(notices.at(-1)?.code).toMatchObject({ metadata: { workerState: "working" } });
+    expect(db.getTaskClaim(codingRunMetadata(run).taskId, worker.id)).toEqual(claimBefore);
+    expect(db.getCodingArtifact(run.id)?.metadata_json).toBe(run.metadata_json);
+    endCodingRun(db, run.id, "cancelled", "operator stopped");
+    const replacement = begin();
+    const count = notices.length;
+    pause = { kind: "budget", reason: "late old pause", since: Date.now() };
+    emit();
+    expect(notices).toHaveLength(count);
+    expect(db.getCodingArtifact(replacement.id)?.status).toBe("active");
+    expect(listeners.size).toBe(0);
+  });
+
+  it("does not infer work or zero cost from missing worker telemetry", () => {
+    expect(codingWorkerState(undefined)).toMatchObject({ workerState: "unavailable" });
+    const handle = { getStatus: () => ({ state: "autonomous" }) } as unknown as AgentHandle;
+    expect(codingWorkerState(handle)).toMatchObject({ workerState: "unknown" });
+    expect(codingWorkerState(handle).workerBudgetCalls).toBeUndefined();
+  });
+
+  it("refuses to publish superseded task status after asynchronous evidence assessment", async () => {
+    const prior = begin();
+    endCodingRun(db, prior.id, "cancelled", "operator stopped");
+    const sent: unknown[] = [];
+    const context = {
+      codingTarget: { sessionId: "s" },
+      send: (...args: unknown[]) => sent.push(args),
+    } as unknown as RoomContext;
+    const pending = codingStatus(context, owner.id, owner, {
+      db,
+      getEntity: (id: string) => (id === owner.id ? owner : worker),
+    });
+    const replacement = begin();
+    await expect(pending).rejects.toThrow("Task evidence changed during status");
+    expect(sent).toHaveLength(0);
+    expect(db.getCodingArtifact(replacement.id)?.status).toBe("active");
+  });
 
   it("persists owner intent, preserves it during steering, and refuses changing an existing contract", () => {
     const run = begin("s", "candidate");

@@ -2556,6 +2556,10 @@ export class LeanAgentAdapter implements AgentHandle {
         // just reported — catches estimator undercount before it 400s, and
         // relaxes the window back toward nominal after overflow recovery.
         this.calibrateContextWindow(lastMsg as unknown as Record<string, unknown>);
+        // pi keeps isStreaming true through turn_end/agent_end listeners. Only
+        // the settled prompt reflects its idle state; publish after bookkeeping
+        // so coding observers see the wait between cycles without changing it.
+        this.emitEvent({ type: "operator_status_change" });
 
         // Periodic heartbeat every 50 cycles
         if (this.loopIterationCount % 50 === 0 && this.loopIterationCount > 0) {
@@ -4561,12 +4565,14 @@ The goal is a smaller, sharper memory — not more notes.`;
   private enterPause(kind: AgentPauseState["kind"], reason: string, until?: number): void {
     this.pause = { kind, reason, since: Date.now(), ...(until === undefined ? {} : { until }) };
     this.noteError(reason);
+    this.emitEvent({ type: "operator_status_change" });
   }
 
   private clearPause(note: string): void {
     if (!this.pause) return;
     this.log.info(LEAN_AGENT_LOG_CATEGORY, note, { agent: this.name });
     this.pause = null;
+    this.emitEvent({ type: "operator_status_change" });
   }
 
   /**
@@ -4642,8 +4648,8 @@ The goal is a smaller, sharper memory — not more notes.`;
       if (remaining <= 0) break;
       await this.pauseSleep(Math.min(SPEND_CAP_POLL_MS, remaining));
     }
-    this.clearPause("upstream-error pause over — resuming with the error counter reset");
     this.consecutiveLoopErrors = 0;
+    this.clearPause("upstream-error pause over — resuming with the error counter reset");
     return 0;
   }
 

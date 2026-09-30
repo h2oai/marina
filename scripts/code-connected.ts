@@ -112,11 +112,13 @@ export async function runConnectedCodeSession(options: ConnectedCodeOptions): Pr
   const write = (text: string) =>
     consoleView ? consoleView.write(text) : process.stdout.write(`${terminalText(text)}\n`);
   const observe = (p: Perception) => {
-    const text = formatCodePerception(p);
-    if (text) write(text);
     const terminal = terminalCodeLifecycle(p);
     if (terminal) consoleView?.completed(terminal.sessionId);
-    consoleView?.observe(p);
+    if (consoleView) consoleView.receive(p);
+    else {
+      const text = formatCodePerception(p);
+      if (text) write(text);
+    }
     const request = execApprovalRequest(p);
     if (!request || !consoleView || !attached || pendingApprovals.has(request.token)) return;
     pendingApprovals.add(request.token);
