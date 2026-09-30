@@ -46,8 +46,6 @@ export interface TasksStore {
   ): void;
   renewTaskClaim(taskId: number, entityId: string, leaseExpiresAt: number): boolean;
   recoverExpiredTaskClaims(now?: number): TaskClaimRow[];
-  /** Count completed tasks created by an entity. */
-  countCompletedTasks(entityName: string): number;
   countApprovedTaskClaims(entityId: string): number;
   createProject(project: {
     id: string;
@@ -90,7 +88,6 @@ export const TASKS_STORE_METHODS = [
   "updateTaskClaimStatus",
   "renewTaskClaim",
   "recoverExpiredTaskClaims",
-  "countCompletedTasks",
   "countApprovedTaskClaims",
   "createProject",
   "getProject",

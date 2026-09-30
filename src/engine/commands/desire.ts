@@ -4,6 +4,7 @@
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity } from "../../types";
+import { getRank } from "../permissions";
 
 // One model-backed grounding pass per entity per window — `desire` is rank 0
 // and each pass is a (up to 45s) LLM call; without a cooldown it is a free
@@ -88,7 +89,7 @@ export function desireCommand(deps: {
           if (now - at > MODEL_PASS_COOLDOWN_MS) lastModelPass.delete(key);
         }
       }
-      const context = collectContext(deps.db, entity.name, expression);
+      const context = collectContext(deps.db, entity, expression);
       try {
         const response = await deps.interpretDesire(expression, context);
         if (!response?.trim()) return;
@@ -179,12 +180,13 @@ function cleanModelField(value: unknown): string | undefined {
   return cleaned ? cleaned.slice(0, 4000) : undefined;
 }
 
-function collectContext(db: MarinaDB, entityName: string, expression: string): string {
+function collectContext(db: MarinaDB, entity: Entity, expression: string): string {
   const lines: string[] = [];
-  for (const note of db.recallNotes(entityName, expression).slice(0, 4)) {
+  for (const note of db.recallNotes(entity.name, expression).slice(0, 4)) {
     lines.push(`[personal-note:${note.id}] ${note.content}`);
   }
-  for (const hit of db.globalSearch(expression).slice(0, 4)) {
+  const viewer = { entityId: entity.id, rank: getRank(entity) };
+  for (const hit of db.globalSearch(expression, viewer).slice(0, 4)) {
     lines.push(`[world:${hit.type}:${hit.context}] ${hit.title}`);
   }
   return lines.join("\n").slice(0, 6000);

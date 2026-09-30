@@ -677,10 +677,11 @@
 # Polymarket market-data base override. Market data works; live Polymarket orders are not implemented.
 # POLYMARKET_GAMMA_BASE=https://gamma-api.polymarket.com
 
-# Reserved Polymarket credentials for live orders, which are not implemented yet (the signing path returns an error).
+# Reserved Polymarket credentials. Live Polymarket orders are NOT supported (no CLOB order signing): with MARINA_TRADING_ENABLED=true and all four set, orders fail closed with an error and nothing is sent; otherwise orders are paper.
 # @internal
 # POLYMARKET_API_KEY=
 # POLYMARKET_API_SECRET=
+# POLYMARKET_API_PASSPHRASE=
 # POLYMARKET_PRIVATE_KEY=
 
 # ── Memory ───────────────────────────────────────────────────────────────────
@@ -730,10 +731,13 @@
 
 # ── HTTP hardening ───────────────────────────────────────────────────────────
 
-# Request body ceiling for the HTTP port, and the separate cap on one asset upload (uploads are MIME-allowlisted and magic-byte checked).
+# Request body ceiling for JSON routes (enforced per route; pre-auth and key-management routes use a 64 KiB cap), and the separate cap on one asset upload (uploads are MIME-allowlisted and magic-byte checked).
 # @restart
 # MARINA_MAX_REQUEST_BODY_BYTES=8388608
 # MARINA_MAX_UPLOAD_BYTES=52428800
+
+# Deadline in milliseconds for one proxied upstream model call (response headers for a stream, the whole reply otherwise). A non-streaming call is also aborted when its client disconnects.
+# MARINA_UPSTREAM_TIMEOUT_MS=300000
 
 # MCP session creations and login/auth tool calls per client IP per minute. 0 disables.
 # MARINA_MCP_SESSIONS_PER_MIN=10

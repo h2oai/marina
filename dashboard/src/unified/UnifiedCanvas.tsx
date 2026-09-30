@@ -21,10 +21,8 @@ import {
   Background,
   BackgroundVariant,
   type Edge,
-  type EdgeTypes,
   type Node,
   type NodeChange,
-  type NodeTypes,
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
@@ -34,7 +32,6 @@ import "@xyflow/react/dist/style.css";
 import "./unified-canvas.css";
 import { AnimatePresence } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { nodeTypes as canvasContentNodeTypes } from "../canvas/nodes";
 import { FetchErrorNotice } from "../components/FetchErrorNotice";
 import { useSetupStatus, useSystem } from "../hooks/use-api";
 import { ensureChatWs, getChatWs, useChatState } from "../hooks/use-chat-state";
@@ -43,26 +40,11 @@ import { loadGraphSnapshot, useGraphState } from "../hooks/use-graph-state";
 import { useDashboardWebSocket } from "../hooks/use-websocket";
 import { useWorldState } from "../hooks/use-world-state";
 import { clearToken, setToken } from "../lib/api";
-import { FlowEdge } from "./edges/FlowEdge";
-import { GraphLinkEdge } from "./edges/GraphLinkEdge";
-import { InteractionArc } from "./edges/InteractionArc";
-import { MemoryMapEdge } from "./edges/MemoryMapEdge";
-import { RecallPath } from "./edges/RecallPath";
 import { useActivity } from "./hooks/use-activity";
-import {
-  claimIntent,
-  completeIntent,
-  type DroppedFileResult,
-  failIntent,
-  useCanvasIntegration,
-} from "./hooks/use-canvas-integration";
+import { type DroppedFileResult, useCanvasIntegration } from "./hooks/use-canvas-integration";
 import { useEventFeedActivity, useLatestRoomMessages } from "./hooks/use-event-feed-bridge";
 import { useInteractions } from "./hooks/use-interactions";
-import {
-  MEMORY_ADOPT_HANDOFF_MS,
-  useMemoryMapLive,
-  useMemoryMapState,
-} from "./hooks/use-memory-map";
+import { useMemoryLayer } from "./hooks/use-memory-layer";
 import { useZoom } from "./hooks/use-zoom";
 import { getDistrictColor } from "./lib/crown-shapes";
 import { computeNoteLayout, forceDirectedLayout } from "./lib/layout-utils";
@@ -72,24 +54,21 @@ import {
   loadLayerHidden,
   saveLayerHidden,
 } from "./lib/memory-map-layer";
-import { computeMemoryLayout } from "./lib/memory-map-layout";
-import { indexMemoryGraph, neighborsVia } from "./lib/memory-map-reducer";
-import { LEGACY_LINK_RELATIONSHIPS, memoryFlowNodeId } from "./lib/memory-map-types";
 import { buildRecallPathEdges, hasLiveRecallTrace } from "./lib/recall-paths";
 import { ROOM_MESSAGE_LIFETIME_MS } from "./lib/room-messages";
 import { type SearchableWorldState, searchWorld } from "./lib/search";
-import { cycleTheme, useTheme } from "./lib/theme-switcher";
-import { GraphNoteNode, type GraphNoteNodeData } from "./nodes/GraphNoteNode";
-import { MemoryMapNode, type MemoryMapNodeData, memoryNodeSize } from "./nodes/MemoryMapNode";
-import { RoomNode, type RoomNodeData } from "./nodes/RoomNode";
+import { useTheme } from "./lib/theme-switcher";
+import type { GraphNoteNodeData } from "./nodes/GraphNoteNode";
+import type { RoomNodeData } from "./nodes/RoomNode";
 import { CanvasBreadcrumb } from "./overlays/CanvasBreadcrumb";
 import { ConnectingOverlay } from "./overlays/ConnectingOverlay";
 import { DropDialog } from "./overlays/DropDialog";
 import { EdgeContextMenu, type EdgeContextMenuTarget } from "./overlays/EdgeContextMenu";
 import { LayerChips } from "./overlays/LayerChips";
+import { NodeContextMenu, type NodeContextMenuTarget } from "./overlays/NodeContextMenu";
 import { ShortcutHelp } from "./overlays/ShortcutHelp";
 import { TimelineStrip } from "./overlays/TimelineStrip";
-import { TopbarNotices } from "./overlays/TopbarNotices";
+import { UnifiedTopbar } from "./overlays/UnifiedTopbar";
 import { Viewer, type ViewerContentType } from "./overlays/Viewer";
 import { clearSeenTour, WelcomeTour } from "./overlays/WelcomeTour";
 import { WorldRing } from "./overlays/WorldRing";
@@ -97,83 +76,14 @@ import { CommandBar, type CommandBarHandle } from "./panels/CommandBar";
 import { ContextPanel, type ContextType } from "./panels/ContextPanel";
 import { EntityPanel } from "./panels/EntityPanel";
 import { WorldNav } from "./panels/WorldNav";
-
-/**
- * Canvas content node types — every per-type renderer the standalone canvas
- * registers (text / image / video / pdf / audio / document / frame / a2ui /
- * embed) is also rendered in the unified surface, so node content is the same
- * across both views. The unified surface adds its own `room` and `graphNote`
- * overlays for the world-map and knowledge-graph layers.
- */
-const CANVAS_CONTENT_TYPES: ReadonlySet<string> = new Set(Object.keys(canvasContentNodeTypes));
-
-/** True when this ReactFlow node hosts canvas content (vs. a room/graphNote overlay). */
-function isCanvasContentNode(type: string | undefined): boolean {
-  return type !== undefined && CANVAS_CONTENT_TYPES.has(type);
-}
-
-/** Shape of `data` on canvas content nodes after useCanvasIntegration has populated it. */
-interface CanvasNodeMeta {
-  title?: string;
-  intent?: {
-    status: "pending" | "active" | "done" | "failed";
-    prompt?: string;
-    claimedBy?: string;
-    result?: string;
-    failReason?: string;
-  };
-  canvasId?: string;
-  url?: string;
-  [k: string]: unknown;
-}
-
-/** Custom node types registered with ReactFlow. */
-const nodeTypes: NodeTypes = {
-  ...canvasContentNodeTypes,
-  room: RoomNode,
-  graphNote: GraphNoteNode,
-  memoryNode: MemoryMapNode,
-};
-
-/** Custom edge types registered with ReactFlow. */
-const edgeTypes: EdgeTypes = {
-  flow: FlowEdge,
-  interaction: InteractionArc,
-  graphLink: GraphLinkEdge,
-  recallPath: RecallPath,
-  memoryEdge: MemoryMapEdge,
-};
-
-/**
- * Load a boolean layer-visibility preference from localStorage.
- * If the key has never been set (first visit), returns `firstVisitDefault`.
- */
-function loadLayerPref(key: string, firstVisitDefault: boolean): boolean {
-  try {
-    const raw = localStorage.getItem(key);
-    if (raw === null) return firstVisitDefault;
-    return raw === "true";
-  } catch {
-    return firstVisitDefault;
-  }
-}
-
-function saveLayerPref(key: string, value: boolean): void {
-  try {
-    localStorage.setItem(key, String(value));
-  } catch {
-    // ignore — private mode, etc.
-  }
-}
-
-/** Format seconds into short uptime display. */
-function formatUptimeShort(seconds: number): string {
-  if (seconds < 60) return `${Math.floor(seconds)}s`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  return m > 0 ? `${h}h${m}m` : `${h}h`;
-}
+import {
+  edgeTypes,
+  isCanvasContentNode,
+  loadLayerPref,
+  nodeTypes,
+  saveLayerPref,
+  viewerTargetFor,
+} from "./unified-canvas-config";
 
 /** Inner component that uses ReactFlow hooks (must be inside ReactFlowProvider). */
 interface UnifiedCanvasProps {
@@ -334,12 +244,7 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
   const [viewerContent, setViewerContent] = useState<string | undefined>();
 
   // Context menu state
-  const [contextMenu, setContextMenu] = useState<{
-    x: number;
-    y: number;
-    nodeId: string;
-    nodeType: string;
-  } | null>(null);
+  const [contextMenu, setContextMenu] = useState<NodeContextMenuTarget | null>(null);
   const [noteInput, setNoteInput] = useState<{ nodeId: string; nodeType: string } | null>(null);
   const [noteText, setNoteText] = useState("");
   const noteInputRef = useRef<HTMLInputElement>(null);
@@ -460,42 +365,26 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
     [openContext],
   );
 
+  /** Open a canvas content node in the Viewer overlay. */
+  const openInViewer = useCallback((node: Node) => {
+    const target = viewerTargetFor(node);
+    setViewerTitle(target.title);
+    setViewerContentType(target.contentType);
+    setViewerContent(target.content);
+    setViewerOpen(true);
+  }, []);
+
   // ── Double-click node -> open Viewer overlay or detail ──────────────────
   const onNodeDoubleClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {
       if (isCanvasContentNode(node.type)) {
-        const data = node.data as CanvasNodeMeta;
-        const nodeType = node.type as string;
-        setViewerTitle(data.title ?? nodeType);
-        const intentMode = !!data.intent;
-        // Intent overlays use a dedicated viewer; everything else routes by node type.
-        const contentType = (
-          intentMode
-            ? "intent"
-            : ["image", "video", "audio", "pdf", "document", "a2ui"].includes(nodeType)
-              ? nodeType
-              : "unknown"
-        ) as ViewerContentType;
-        setViewerContentType(contentType);
-        if (intentMode && data.intent) {
-          const rawNodeId = node.id.replace("canvas-", "");
-          setViewerContent(
-            JSON.stringify({
-              ...data.intent,
-              canvasId: data.canvasId,
-              nodeId: rawNodeId,
-            }),
-          );
-        } else {
-          setViewerContent(data.url ?? undefined);
-        }
-        setViewerOpen(true);
+        openInViewer(node);
       } else if (node.type === "room") {
         // Double-click room opens detail context (source, items, exits)
         openContext("room", node.id);
       }
     },
-    [openContext],
+    [openContext, openInViewer],
   );
 
   const onPaneClick = useCallback(() => {
@@ -987,137 +876,17 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
   }, [graphLinks, noteLayout, activatedIds, hideGraph]);
 
   // ── Memory layer (durable twins · curator loop) ──────────────────────────
-  // Scope: the focused entity when the inspector is on one, else the operator
-  // view (server decides what to return without an entity filter).
-  const memoryScopeEntity = contextType === "entity" && contextId ? contextId : undefined;
-  useMemoryMapLive({ enabled: !hideMemory, entityName: memoryScopeEntity, wsRef, connected });
-  const memoryGraph = useMemoryMapState((s) => s.graph);
-  const memoryPulses = useMemoryMapState((s) => s.pulses);
-  const memoryAdoptions = useMemoryMapState((s) => s.adoptions);
-  const memoryIndex = useMemo(() => indexMemoryGraph(memoryGraph), [memoryGraph]);
-
-  // GraphNoteNode positions are the top-left of an importance-sized box; the
-  // memory layout docks twins against note CENTERS.
-  const noteCenters = useMemo(() => {
-    const centers = new Map<number, { x: number; y: number }>();
-    for (const [id, pos] of noteLayout) {
-      const importance = graphNotes.get(id)?.importance ?? 5;
-      const half = ((8 + importance * 1.6) * 2 + 6) / 2;
-      centers.set(id, { x: pos.x + half, y: pos.y + half });
-    }
-    return centers;
-  }, [noteLayout, graphNotes]);
-
-  const memoryLayout = useMemo(() => {
-    if (hideMemory || memoryGraph.nodes.length === 0) return null;
-    return computeMemoryLayout(memoryGraph, noteCenters, {
-      center: { x: 0, y: 3200 },
-      baseRadius: 400,
-    });
-  }, [memoryGraph, noteCenters, hideMemory]);
-
-  const memoryNodes = useMemo<Node[]>(() => {
-    if (!memoryLayout) return [];
-    const now = Date.now();
-    // record id → job id it was adopted from (graph edges + live adoption events)
-    const adoptedRecordToJob = new Map<string, string>();
-    for (const e of memoryGraph.edges) {
-      if (e.relationship === "adopted_as") adoptedRecordToJob.set(e.target, e.source);
-    }
-    for (const [jobId, a] of Object.entries(memoryAdoptions)) {
-      if (!a.recordId) continue;
-      adoptedRecordToJob.set(
-        a.recordId.startsWith("record:") ? a.recordId : `record:${a.recordId}`,
-        jobId,
-      );
-    }
-    const adoptedJobs = new Set(adoptedRecordToJob.values());
-
-    const result: Node[] = [];
-    for (const n of memoryGraph.nodes) {
-      if (n.kind === "note") continue; // legacy notes are the GRAPH layer's
-      const p = memoryLayout.positions.get(n.id);
-      if (!p) continue;
-      const hull = n.kind === "space" ? memoryLayout.hullRadius.get(n.id) : undefined;
-      const size = memoryNodeSize(n.kind, hull);
-      const data: MemoryMapNodeData = {
-        node: n,
-        pulseAt: memoryPulses[n.id],
-        onClick: handleMemoryNodeClick,
-      };
-      if (n.kind === "space") {
-        data.hullRadius = hull;
-        data.memberCount = neighborsVia(memoryIndex, n.id, "in_space", "in").length;
-      } else if (n.kind === "job") {
-        const rem = n.meta?.remainingOperations;
-        const init = n.meta?.initialOperations;
-        data.remainingFraction =
-          typeof rem === "number" && typeof init === "number" && init > 0 ? rem / init : null;
-        data.handOff = n.meta?.adopted === true || adoptedJobs.has(n.id);
-      } else if (n.kind === "record") {
-        const fromJob = adoptedRecordToJob.get(n.id);
-        const a = fromJob ? memoryAdoptions[fromJob] : undefined;
-        if (fromJob && a && now - a.at < MEMORY_ADOPT_HANDOFF_MS) data.adoptedFromJob = fromJob;
-      } else if (n.kind === "proposal") {
-        data.adopted =
-          n.state === "adopted" ||
-          n.meta?.adopted === true ||
-          adoptedRecordToJob.has(`record:${n.id.slice("proposal:".length)}`);
-      }
-      const isHull = n.kind === "space";
-      result.push({
-        id: memoryFlowNodeId(n.id),
-        type: "memoryNode",
-        position: { x: p.x - size / 2, y: p.y - size / 2 },
-        data: data as unknown as Record<string, unknown>,
-        draggable: !isHull,
-        selectable: !isHull,
-        zIndex: isHull ? -1 : undefined,
-        className: isHull ? "uc-memory-hull" : undefined,
-      });
-    }
-    return result;
-  }, [
-    memoryLayout,
-    memoryGraph,
-    memoryIndex,
-    memoryPulses,
-    memoryAdoptions,
-    handleMemoryNodeClick,
-  ]);
-
-  const memoryEdges = useMemo<Edge[]>(() => {
-    if (!memoryLayout) return [];
-    const present = new Set(memoryNodes.map((n) => n.id));
-    if (!hideGraph) for (const id of noteLayout.keys()) present.add(`note-${id}`);
-    const result: Edge[] = [];
-    for (const e of memoryGraph.edges) {
-      const s = memoryFlowNodeId(e.source);
-      const t = memoryFlowNodeId(e.target);
-      if (s === t || !present.has(s) || !present.has(t)) continue;
-      const emphasized =
-        contextType === "memory" && (e.source === contextId || e.target === contextId);
-      if (LEGACY_LINK_RELATIONSHIPS.has(e.relationship)) {
-        // Keep the GRAPH layer's styles for related_to / part_of / supersedes / contradicts.
-        result.push({
-          id: `mem-edge-${e.id}`,
-          source: s,
-          target: t,
-          type: "graphLink",
-          data: { relationship: e.relationship, activated: emphasized },
-        });
-      } else {
-        result.push({
-          id: `mem-edge-${e.id}`,
-          source: s,
-          target: t,
-          type: "memoryEdge",
-          data: { relationship: e.relationship, emphasized },
-        });
-      }
-    }
-    return result;
-  }, [memoryLayout, memoryNodes, memoryGraph, noteLayout, hideGraph, contextType, contextId]);
+  const { memoryGraph, memoryNodes, memoryEdges } = useMemoryLayer({
+    hideMemory,
+    hideGraph,
+    contextType,
+    contextId,
+    wsRef,
+    connected,
+    graphNotes,
+    noteLayout,
+    onMemoryNodeClick: handleMemoryNodeClick,
+  });
 
   // Computed source nodes (for search, world ring, etc.)
   const allNodes = useMemo<Node[]>(
@@ -1665,187 +1434,27 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
       {/* Loading overlay — shown before world data arrives */}
       {!connected && rooms.length === 0 && <ConnectingOverlay />}
 
-      <div className="uc-topbar" style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
-        <span className="uc-logo">MARINA</span>
-
-        {/* Instance status indicator */}
-        <span
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "6px",
-            fontSize: "clamp(10px, 0.7vw, 13px)",
-            marginLeft: "clamp(6px, 0.6vw, 12px)",
-          }}
-        >
-          <span
-            aria-hidden="true"
-            style={{
-              width: "6px",
-              height: "6px",
-              borderRadius: "50%",
-              background: setupStatus?.hasLlmKey ? "#22c55e" : "#f59e0b",
-              flexShrink: 0,
-            }}
-          />
-          <span className="visually-hidden">
-            {setupStatus?.hasLlmKey ? "LLM configured" : "no LLM key"}
-          </span>
-          <span style={{ color: "var(--uc-text-muted)", fontFamily: "'VT323', monospace" }}>
-            {instanceName || setupStatus?.instanceName || worldName || "Marina"}
-          </span>
-          {setupStatus && !setupStatus.hasLlmKey && (
-            <span
-              style={{
-                color: "var(--color-warning)",
-                fontSize: "clamp(8px, 0.6vw, 11px)",
-                fontFamily: "'VT323', monospace",
-              }}
-            >
-              (no LLM — add key in Admin)
-            </span>
-          )}
-        </span>
-
-        {/* Compass items area */}
-        <div style={{ display: "flex", alignItems: "center", gap: "clamp(8px, 0.9vw, 16px)" }}>
-          <div className="uc-divider" />
-          <span className="uc-stat-value">{rooms.length}</span>
-          <span className="uc-stat-label">rooms</span>
-          <div className="uc-divider" />
-          <span className="uc-stat-value">{entities.length}</span>
-          <span className="uc-stat-label">entities</span>
-          <div className="uc-divider" />
-          <span className="uc-stat-value">{agentCount}</span>
-          <span className="uc-stat-label">agents</span>
-          <div className="uc-divider" />
-          <span className="uc-stat-value">{wsConnections}</span>
-          <span className="uc-stat-label">conn</span>
-          {systemData?.projectCount != null && systemData.projectCount > 0 && (
-            <>
-              <div className="uc-divider" />
-              <span className="uc-stat-value">{systemData.projectCount}</span>
-              <span className="uc-stat-label">proj</span>
-            </>
-          )}
-          {systemData?.uptime != null && systemData.uptime > 0 && (
-            <>
-              <div className="uc-divider" />
-              <span className="uc-stat-value">{formatUptimeShort(systemData.uptime)}</span>
-              <span className="uc-stat-label">uptime</span>
-            </>
-          )}
-        </div>
-
-        {/* Spacer */}
-        <div style={{ flex: 1 }} />
-
-        <TopbarNotices
-          canvasWsStatus={canvasWsStatus}
-          canvasLoading={canvasLoading}
-          canvasError={canvasError}
-          onRetryCanvas={retryCanvas}
-        />
-
-        {/* Panel toggle buttons */}
-        <div
-          style={{
-            display: "flex",
-            gap: "2px",
-            alignItems: "center",
-            flexShrink: 0,
-            marginRight: "12px",
-          }}
-        />
-
-        {/* Theme switcher */}
-        <button
-          type="button"
-          onClick={cycleTheme}
-          style={{
-            padding: "3px 10px",
-            border: "1px solid var(--color-border)",
-            background: "none",
-            fontFamily: "'Press Start 2P', monospace",
-            fontSize: "clamp(6px, 0.52vw, 8px)",
-            color: "var(--color-primary)",
-            cursor: "pointer",
-          }}
-          title="Cycle theme"
-          aria-label={`Cycle theme (current: ${themeName})`}
-        >
-          {themeName}
-        </button>
-
-        {/* Reset layout button */}
-        <button
-          type="button"
-          onClick={handleReset}
-          style={{
-            padding: "3px 10px",
-            border: "1px solid var(--color-border)",
-            background: "none",
-            fontFamily: "'Press Start 2P', monospace",
-            fontSize: "clamp(6px, 0.52vw, 8px)",
-            color: "var(--uc-text-muted)",
-            cursor: "pointer",
-          }}
-          title="Reset all panels to defaults"
-        >
-          Reset
-        </button>
-
-        {/* Clear view */}
-        <button
-          type="button"
-          onClick={toggleClearView}
-          style={{
-            padding: "3px 10px",
-            border: "1px solid var(--color-border)",
-            background: "none",
-            fontFamily: "'Press Start 2P', monospace",
-            fontSize: "clamp(6px, 0.52vw, 8px)",
-            color: clearView ? "var(--color-primary)" : "var(--uc-text-muted)",
-            cursor: "pointer",
-          }}
-          title="Clear view (Space)"
-          aria-pressed={clearView}
-        >
-          Clear
-        </button>
-
-        {/* Command bar toggle */}
-        <button
-          type="button"
-          onClick={toggleCommandBar}
-          style={{
-            padding: "3px 10px",
-            border: "1px solid color-mix(in srgb, var(--color-primary) 15%, transparent)",
-            background: "color-mix(in srgb, var(--color-primary) 3%, transparent)",
-            fontFamily: "'VT323', monospace",
-            fontSize: "clamp(12px, 0.83vw, 16px)",
-            color: "var(--color-primary)",
-            cursor: "pointer",
-          }}
-          title="Command bar ( / )"
-          aria-label="Toggle command bar (key /)"
-          aria-pressed={showCommandBar}
-        >
-          /
-        </button>
-
-        <button
-          type="button"
-          aria-label="Keyboard shortcuts"
-          onClick={() => setShowHelp(true)}
-          className="uc-panel-btn"
-        >
-          ?
-        </button>
-
-        {/* LIVE indicator */}
-        <div className="uc-live">{connected ? "LIVE" : "OFFLINE"}</div>
-      </div>
+      <UnifiedTopbar
+        connected={connected}
+        setupStatus={setupStatus}
+        systemData={systemData}
+        displayName={instanceName || setupStatus?.instanceName || worldName || "Marina"}
+        roomCount={rooms.length}
+        entityCount={entities.length}
+        agentCount={agentCount}
+        connectionCount={wsConnections}
+        canvasWsStatus={canvasWsStatus}
+        canvasLoading={canvasLoading}
+        canvasError={canvasError}
+        onRetryCanvas={retryCanvas}
+        themeName={themeName}
+        onReset={handleReset}
+        clearView={clearView}
+        onToggleClearView={toggleClearView}
+        showCommandBar={showCommandBar}
+        onToggleCommandBar={toggleCommandBar}
+        onShowHelp={() => setShowHelp(true)}
+      />
 
       {/* ═══ MAIN AREA ═══ */}
       {/* Drag-and-drop is wired on the outermost container so files dropped
@@ -2097,466 +1706,26 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
 
       {/* ═══ RIGHT-CLICK CONTEXT MENU ═══ */}
       {contextMenu && (
-        <fieldset
-          className="uc-node-context-menu"
-          aria-label="Node actions"
-          style={{
-            margin: 0,
-            minWidth: 0,
-            position: "fixed",
-            left: contextMenu.x,
-            top: contextMenu.y,
-            zIndex: 200,
-          }}
-        >
-          <button
-            type="button"
-            onClick={() => {
-              const nodeId = contextMenu.nodeId;
-              const nodeType = contextMenu.nodeType;
-              closeContextMenu();
-              if (nodeType === "room") {
-                openContext("room", nodeId);
-              } else if (isCanvasContentNode(nodeType)) {
-                openContext("canvas", nodeId);
-              }
-            }}
-          >
-            Inspect
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              const nodeId = contextMenu.nodeId;
-              closeContextMenu();
-              setDisplayNodes((nds) =>
-                nds.map((n) => (n.id === nodeId ? { ...n, zIndex: (n.zIndex ?? 0) + 100 } : n)),
-              );
-            }}
-          >
-            Move to front
-          </button>
-          <div className="uc-context-menu-divider" />
-          {/* Add Note — inline input or button */}
-          {noteInput && noteInput.nodeId === contextMenu.nodeId ? (
-            <div style={{ padding: "4px 8px", display: "flex", gap: "4px" }}>
-              <input
-                ref={noteInputRef}
-                type="text"
-                value={noteText}
-                onChange={(e) => setNoteText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && noteText.trim()) {
-                    const target =
-                      noteInput.nodeType === "room" ? noteInput.nodeId : noteInput.nodeId;
-                    sendCommand(`note create ${noteText.trim()} @${target}`);
-                    setNoteText("");
-                    setNoteInput(null);
-                    closeContextMenu();
-                  }
-                  if (e.key === "Escape") {
-                    setNoteText("");
-                    setNoteInput(null);
-                  }
-                }}
-                placeholder="Type note..."
-                style={{
-                  flex: 1,
-                  background: "var(--color-bg-card)",
-                  border: "1px solid var(--color-border)",
-                  color: "var(--color-text)",
-                  fontFamily: "'VT323', monospace",
-                  fontSize: "14px",
-                  padding: "3px 6px",
-                  outline: "none",
-                  minWidth: 0,
-                }}
-              />
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => {
-                setNoteInput({ nodeId: contextMenu.nodeId, nodeType: contextMenu.nodeType });
-                setNoteText("");
-                setTimeout(() => noteInputRef.current?.focus(), 50);
-              }}
-            >
-              Add note
-            </button>
-          )}
-          {isCanvasContentNode(contextMenu.nodeType) && (
-            <>
-              <div className="uc-context-menu-divider" />
-              <button
-                type="button"
-                onClick={() => {
-                  const nodeId = contextMenu.nodeId;
-                  closeContextMenu();
-                  const node = displayNodes.find((n) => n.id === nodeId);
-                  if (node) {
-                    const data = node.data as CanvasNodeMeta;
-                    const nodeType = node.type as string;
-                    setViewerTitle(data.title ?? nodeType);
-                    const intentMode = !!data.intent;
-                    const ct = (
-                      intentMode
-                        ? "intent"
-                        : ["image", "video", "audio", "pdf", "document", "a2ui"].includes(nodeType)
-                          ? nodeType
-                          : "unknown"
-                    ) as ViewerContentType;
-                    setViewerContentType(ct);
-                    if (intentMode && data.intent) {
-                      const rawNodeId = nodeId.replace("canvas-", "");
-                      setViewerContent(
-                        JSON.stringify({
-                          ...data.intent,
-                          canvasId: data.canvasId,
-                          nodeId: rawNodeId,
-                        }),
-                      );
-                    } else {
-                      setViewerContent(data.url ?? undefined);
-                    }
-                    setViewerOpen(true);
-                  }
-                }}
-              >
-                Open in viewer
-              </button>
-              {/* Set intent — inline prompt or button */}
-              {noteInput &&
-              noteInput.nodeType === "_intent" &&
-              noteInput.nodeId === contextMenu.nodeId ? (
-                <div style={{ padding: "4px 8px", display: "flex", gap: "4px" }}>
-                  <input
-                    type="text"
-                    value={noteText}
-                    onChange={(e) => setNoteText(e.target.value)}
-                    onKeyDown={async (e) => {
-                      if (e.key === "Enter" && noteText.trim()) {
-                        const rawId = contextMenu.nodeId.replace("canvas-", "");
-                        const node = displayNodes.find((n) => n.id === contextMenu.nodeId);
-                        const canvasId = node
-                          ? ((node.data as Record<string, unknown>).canvasId as string)
-                          : null;
-                        if (canvasId) {
-                          try {
-                            const { authFetch } = await import("../lib/api");
-                            const existingData = (node?.data as Record<string, unknown>) ?? {};
-                            await authFetch(
-                              `${window.location.origin}/api/canvases/${canvasId}/nodes/${rawId}`,
-                              {
-                                method: "PATCH",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({
-                                  data: {
-                                    ...existingData,
-                                    intent: { prompt: noteText.trim(), status: "pending" },
-                                  },
-                                }),
-                              },
-                            );
-                            commandBarRef.current?.addMessage(
-                              null,
-                              `Intent set: "${noteText.trim()}"`,
-                              true,
-                              "system",
-                            );
-                          } catch {
-                            commandBarRef.current?.addMessage(
-                              null,
-                              "Failed to set intent",
-                              true,
-                              "system",
-                            );
-                          }
-                        }
-                        setNoteText("");
-                        setNoteInput(null);
-                        closeContextMenu();
-                      }
-                      if (e.key === "Escape") {
-                        setNoteText("");
-                        setNoteInput(null);
-                      }
-                    }}
-                    placeholder="What should be done with this?"
-                    style={{
-                      flex: 1,
-                      background: "var(--color-bg-card)",
-                      border: "1px solid var(--color-teal)",
-                      color: "var(--color-text)",
-                      fontFamily: "'VT323', monospace",
-                      fontSize: "14px",
-                      padding: "3px 6px",
-                      outline: "none",
-                      minWidth: 0,
-                    }}
-                  />
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setNoteInput({ nodeId: contextMenu.nodeId, nodeType: "_intent" });
-                    setNoteText("");
-                  }}
-                >
-                  Set intent
-                </button>
-              )}
-              {/* ── Intent Actions: Claim / Complete / Fail ── */}
-              {(() => {
-                const node = displayNodes.find((n) => n.id === contextMenu.nodeId);
-                const intentData = node ? (node.data as CanvasNodeMeta).intent : undefined;
-                if (!intentData) return null;
-                const rawId = contextMenu.nodeId.replace("canvas-", "");
-                const canvasId = (node!.data as Record<string, unknown>).canvasId as string;
-                return (
-                  <>
-                    <div className="uc-context-menu-divider" />
-                    {/* Pending -> Claim */}
-                    {intentData.status === "pending" && (
-                      <button
-                        type="button"
-                        style={{ color: "#FFB800" }}
-                        onClick={async () => {
-                          const username = currentEntityName ?? "dashboard-user";
-                          closeContextMenu();
-                          try {
-                            await claimIntent(canvasId, rawId, username);
-                            commandBarRef.current?.addMessage(
-                              null,
-                              `Intent claimed by ${username}`,
-                              true,
-                              "system",
-                            );
-                          } catch {
-                            commandBarRef.current?.addMessage(
-                              null,
-                              "Failed to claim intent",
-                              true,
-                              "system",
-                            );
-                          }
-                        }}
-                      >
-                        Claim intent
-                      </button>
-                    )}
-                    {/* Active + owned -> Complete / Fail */}
-                    {intentData.status === "active" &&
-                      intentData.claimedBy === currentEntityName && (
-                        <>
-                          {intentActionInput &&
-                          intentActionInput.nodeId === contextMenu.nodeId &&
-                          intentActionInput.action === "complete" ? (
-                            <div
-                              style={{
-                                padding: "4px 8px",
-                                display: "flex",
-                                gap: "4px",
-                              }}
-                            >
-                              <input
-                                ref={intentInputRef}
-                                type="text"
-                                value={noteText}
-                                onChange={(e) => setNoteText(e.target.value)}
-                                onKeyDown={async (e) => {
-                                  if (e.key === "Enter" && noteText.trim()) {
-                                    closeContextMenu();
-                                    try {
-                                      await completeIntent(canvasId, rawId, noteText.trim());
-                                      commandBarRef.current?.addMessage(
-                                        null,
-                                        "Intent completed",
-                                        true,
-                                        "system",
-                                      );
-                                    } catch {
-                                      commandBarRef.current?.addMessage(
-                                        null,
-                                        "Failed to complete intent",
-                                        true,
-                                        "system",
-                                      );
-                                    }
-                                  }
-                                  if (e.key === "Escape") {
-                                    setNoteText("");
-                                    setIntentActionInput(null);
-                                  }
-                                }}
-                                placeholder="Result text..."
-                                style={{
-                                  flex: 1,
-                                  background: "var(--color-bg-card)",
-                                  border: "1px solid #22c55e",
-                                  color: "var(--color-text)",
-                                  fontFamily: "'VT323', monospace",
-                                  fontSize: "14px",
-                                  padding: "3px 6px",
-                                  outline: "none",
-                                  minWidth: 0,
-                                }}
-                              />
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              style={{ color: "#22c55e" }}
-                              onClick={() => {
-                                setIntentActionInput({
-                                  nodeId: contextMenu.nodeId,
-                                  action: "complete",
-                                });
-                                setNoteText("");
-                                setTimeout(() => intentInputRef.current?.focus(), 50);
-                              }}
-                            >
-                              Complete intent
-                            </button>
-                          )}
-                          {intentActionInput &&
-                          intentActionInput.nodeId === contextMenu.nodeId &&
-                          intentActionInput.action === "fail" ? (
-                            <div
-                              style={{
-                                padding: "4px 8px",
-                                display: "flex",
-                                gap: "4px",
-                              }}
-                            >
-                              <input
-                                ref={intentInputRef}
-                                type="text"
-                                value={noteText}
-                                onChange={(e) => setNoteText(e.target.value)}
-                                onKeyDown={async (e) => {
-                                  if (e.key === "Enter" && noteText.trim()) {
-                                    closeContextMenu();
-                                    try {
-                                      await failIntent(canvasId, rawId, noteText.trim());
-                                      commandBarRef.current?.addMessage(
-                                        null,
-                                        "Intent failed",
-                                        true,
-                                        "system",
-                                      );
-                                    } catch {
-                                      commandBarRef.current?.addMessage(
-                                        null,
-                                        "Failed to update intent",
-                                        true,
-                                        "system",
-                                      );
-                                    }
-                                  }
-                                  if (e.key === "Escape") {
-                                    setNoteText("");
-                                    setIntentActionInput(null);
-                                  }
-                                }}
-                                placeholder="Failure reason..."
-                                style={{
-                                  flex: 1,
-                                  background: "var(--color-bg-card)",
-                                  border: "1px solid #ef4444",
-                                  color: "var(--color-text)",
-                                  fontFamily: "'VT323', monospace",
-                                  fontSize: "14px",
-                                  padding: "3px 6px",
-                                  outline: "none",
-                                  minWidth: 0,
-                                }}
-                              />
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              style={{ color: "#ef4444" }}
-                              onClick={() => {
-                                setIntentActionInput({
-                                  nodeId: contextMenu.nodeId,
-                                  action: "fail",
-                                });
-                                setNoteText("");
-                                setTimeout(() => intentInputRef.current?.focus(), 50);
-                              }}
-                            >
-                              Fail intent
-                            </button>
-                          )}
-                        </>
-                      )}
-                    {/* Done/Failed intents: status indicator */}
-                    {(intentData.status === "done" || intentData.status === "failed") && (
-                      <span
-                        style={{
-                          padding: "4px 12px",
-                          fontSize: "12px",
-                          color: intentData.status === "done" ? "#22c55e" : "#ef4444",
-                          fontFamily: "'VT323', monospace",
-                          opacity: 0.7,
-                        }}
-                      >
-                        Intent {intentData.status}
-                      </span>
-                    )}
-                  </>
-                );
-              })()}
-              <div className="uc-context-menu-divider" />
-              <button
-                type="button"
-                style={{ color: "#ef4444" }}
-                onClick={async () => {
-                  const rawNodeId = contextMenu.nodeId.replace("canvas-", "");
-                  const reactFlowId = contextMenu.nodeId;
-                  closeContextMenu();
-                  try {
-                    const { authFetch } = await import("../lib/api");
-                    const node = displayNodes.find((n) => n.id === reactFlowId);
-                    const canvasId = node
-                      ? ((node.data as Record<string, unknown>).canvasId as string)
-                      : null;
-                    if (canvasId) {
-                      const res = await authFetch(
-                        `${window.location.origin}/api/canvases/${canvasId}/nodes/${rawNodeId}`,
-                        {
-                          method: "DELETE",
-                        },
-                      );
-                      if (res.ok) {
-                        // Remove from both canvas integration state AND display nodes
-                        removeCanvasNode(rawNodeId);
-                        setDisplayNodes((nds) => nds.filter((n) => n.id !== reactFlowId));
-                        commandBarRef.current?.addMessage(
-                          null,
-                          "Canvas node deleted",
-                          true,
-                          "system",
-                        );
-                      }
-                    }
-                  } catch {
-                    commandBarRef.current?.addMessage(
-                      null,
-                      "Failed to delete node",
-                      true,
-                      "system",
-                    );
-                  }
-                }}
-              >
-                Delete
-              </button>
-            </>
-          )}
-        </fieldset>
+        <NodeContextMenu
+          contextMenu={contextMenu}
+          displayNodes={displayNodes}
+          setDisplayNodes={setDisplayNodes}
+          closeContextMenu={closeContextMenu}
+          openContext={openContext}
+          onOpenInViewer={openInViewer}
+          sendCommand={sendCommand}
+          commandBarRef={commandBarRef}
+          currentEntityName={currentEntityName}
+          removeCanvasNode={removeCanvasNode}
+          noteInput={noteInput}
+          setNoteInput={setNoteInput}
+          noteText={noteText}
+          setNoteText={setNoteText}
+          noteInputRef={noteInputRef}
+          intentActionInput={intentActionInput}
+          setIntentActionInput={setIntentActionInput}
+          intentInputRef={intentInputRef}
+        />
       )}
 
       {/* ═══ VIEWER OVERLAY ═══ */}

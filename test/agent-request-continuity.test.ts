@@ -14,7 +14,9 @@ import { scopeProcessState } from "./process-state";
 
 type Internals = {
   agent: Agent;
-  client: Pick<MarinaClient, "capabilities"> & { emit(event: "perception", p: Perception): void };
+  client: Pick<MarinaClient, "capabilities" | "isConnected"> & {
+    emit(event: "perception", p: Perception): void;
+  };
   platformMemory: PlatformMemoryBackend;
   autonomousMode: boolean;
   autonomousLoopRunning: boolean;
@@ -54,6 +56,8 @@ function adapter(model = "marina/default") {
     revision: 1,
     commands: [],
   });
+  // The loop makes no model call while the world connection is down.
+  i.client.isConnected = () => true;
   i.agent.transformContext = undefined;
   i.agent.prepareNextTurnWithContext = undefined;
   i.agent.getApiKey = () => undefined;

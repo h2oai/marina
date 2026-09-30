@@ -101,7 +101,7 @@ export class AcpServer {
     while (idx !== -1) {
       const line = this.buffer.slice(0, idx).trim();
       this.buffer = this.buffer.slice(idx + 1);
-      if (line) void this.handleLine(line);
+      if (line) this.dispatchLine(line);
       idx = this.buffer.indexOf("\n");
     }
   }
@@ -133,10 +133,27 @@ export class AcpServer {
     this.send({ jsonrpc: "2.0", method, params });
   }
 
+  /**
+   * Handle one line without leaving a rejected promise behind: a failure that
+   * escapes `handleLine` is logged to stderr and answered with a JSON-RPC
+   * internal error (stdout stays protocol-only).
+   */
+  private dispatchLine(line: string): void {
+    this.handleLine(line).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`[acp] unhandled error: ${message}\n`);
+      try {
+        this.respondError(null, -32603, "Internal error");
+      } catch (writeErr) {
+        process.stderr.write(`[acp] could not write error response: ${String(writeErr)}\n`);
+      }
+    });
+  }
+
   private async handleLine(line: string): Promise<void> {
-    let req: JsonRpcRequest;
+    let parsed: unknown;
     try {
-      req = JSON.parse(line) as JsonRpcRequest;
+      parsed = JSON.parse(line);
     } catch (err) {
       // Parse error — we cannot recover an id, null is correct per spec.
       const message = err instanceof Error ? err.message : String(err);
@@ -145,7 +162,25 @@ export class AcpServer {
       return;
     }
 
-    const { id, method, params } = req;
+    // Valid JSON that is not a request object (`null`, a number, a batch
+    // array, no method) is an Invalid Request (-32600), answered with the
+    // request id when one is recoverable.
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      process.stderr.write("[acp] invalid request: not a JSON-RPC object\n");
+      this.respondError(null, -32600, "Invalid Request");
+      return;
+    }
+    const candidate = parsed as { id?: unknown; method?: unknown };
+    const rawId = candidate.id;
+    const recoveredId = typeof rawId === "string" || typeof rawId === "number" ? rawId : undefined;
+    const idValid = rawId === undefined || rawId === null || recoveredId !== undefined;
+    if (!idValid || typeof candidate.method !== "string") {
+      process.stderr.write("[acp] invalid request: missing method or malformed id\n");
+      this.respondError(recoveredId ?? null, -32600, "Invalid Request");
+      return;
+    }
+
+    const { id, method, params } = parsed as JsonRpcRequest;
 
     try {
       if (method === "initialize") {

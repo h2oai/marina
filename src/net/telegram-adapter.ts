@@ -146,7 +146,8 @@ export class TelegramAdapter implements Adapter {
           return;
         }
 
-        engine.processCommand(entityId, text);
+        // Admission + per-entity FIFO: messages run in arrival order.
+        void engine.dispatchCommand(entityId, text);
       } catch (err) {
         logger.error("telegram", "Message handler error", { error: err });
       }

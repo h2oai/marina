@@ -402,6 +402,103 @@ describe("guardedFetch (redirect-aware SSRF guard)", () => {
     await expect(guardedFetch("http://sneaky.example.com/x")).rejects.toThrow(/SSRF blocked/);
     expect(called).toBe(false);
   });
+
+  type Hop = { host: string; method: string; body: string | null; headers: Headers };
+  function recordHops(route: (host: string, hopIndex: number) => Response): Hop[] {
+    const hops: Hop[] = [];
+    __setDnsResolverForTest(async () => ["93.184.216.34"]);
+    globalThis.fetch = (async (_input: string | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      const host = headers.get("host") ?? "";
+      hops.push({
+        host,
+        method: init?.method ?? "GET",
+        body: typeof init?.body === "string" ? init.body : null,
+        headers,
+      });
+      return route(host, hops.length - 1);
+    }) as unknown as typeof fetch;
+    return hops;
+  }
+
+  it("strips credential headers on a cross-origin redirect", async () => {
+    const hops = recordHops((host) =>
+      host === "api.example.com"
+        ? new Response(null, { status: 302, headers: { location: "https://cdn.example.net/f" } })
+        : new Response("ok", { status: 200 }),
+    );
+    await guardedFetch("https://api.example.com/start", {
+      headers: {
+        Authorization: "Bearer test-token",
+        "x-goog-api-key": "k1",
+        "X-Api-Key": "k2",
+        Cookie: "sid=1",
+        "Proxy-Authorization": "Basic x",
+        Accept: "application/json",
+      },
+    });
+    expect(hops).toHaveLength(2);
+    expect(hops[0]!.headers.get("authorization")).toBe("Bearer test-token");
+    const second = hops[1]!.headers;
+    for (const name of [
+      "authorization",
+      "x-goog-api-key",
+      "x-api-key",
+      "cookie",
+      "proxy-authorization",
+    ]) {
+      expect(second.has(name)).toBe(false);
+    }
+    expect(second.get("accept")).toBe("application/json");
+  });
+
+  it("keeps credential headers on a same-origin redirect", async () => {
+    const hops = recordHops((_host, i) =>
+      i === 0
+        ? new Response(null, { status: 307, headers: { location: "/next" } })
+        : new Response("ok", { status: 200 }),
+    );
+    await guardedFetch("https://api.example.com/start", {
+      headers: { "x-goog-api-key": "k1" },
+    });
+    expect(hops[1]!.headers.get("x-goog-api-key")).toBe("k1");
+  });
+
+  it("303 switches a POST to a bodiless GET", async () => {
+    const hops = recordHops((_host, i) =>
+      i === 0
+        ? new Response(null, { status: 303, headers: { location: "/result" } })
+        : new Response("ok", { status: 200 }),
+    );
+    await guardedFetch("https://api.example.com/job", {
+      method: "POST",
+      body: '{"a":1}',
+      headers: { "content-type": "application/json" },
+    });
+    expect(hops[1]!.method).toBe("GET");
+    expect(hops[1]!.body).toBeNull();
+    expect(hops[1]!.headers.has("content-type")).toBe(false);
+  });
+
+  it("301/302 switch only a POST to GET; a PUT keeps its method and body", async () => {
+    const hops = recordHops((_host, i) =>
+      i === 0
+        ? new Response(null, { status: 302, headers: { location: "/moved" } })
+        : new Response("ok", { status: 200 }),
+    );
+    await guardedFetch("https://api.example.com/x", { method: "PUT", body: "payload" });
+    expect(hops[1]!.method).toBe("PUT");
+    expect(hops[1]!.body).toBe("payload");
+
+    const postHops = recordHops((_host, i) =>
+      i === 0
+        ? new Response(null, { status: 301, headers: { location: "/moved" } })
+        : new Response("ok", { status: 200 }),
+    );
+    await guardedFetch("https://api.example.com/x", { method: "POST", body: "payload" });
+    expect(postHops[1]!.method).toBe("GET");
+    expect(postHops[1]!.body).toBeNull();
+  });
 });
 
 describe("DNS resolution failure (fail closed by default)", () => {

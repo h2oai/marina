@@ -189,37 +189,44 @@ export function registerCoordinationCommands(engine: Engine): void {
   }
   // Challenges: a refusal asks the requester's creator and the admins, and an
   // approval re-runs the held action (src/engine/challenges.ts). Nothing waits.
-  setChallengeHost({
-    get db() {
-      return engine.db;
-    },
-    getEntity: (id) => engine.entities.get(id as EntityId),
-    findEntity: (name) => engine.findEntityGlobal(name),
-    connectedEntities: () =>
-      engine.entities.all().filter((e) => engine._connections.isEntityConnected(e.id)),
-    isConnected: (id) => engine._connections.isEntityConnected(id as EntityId),
-    send: (id, text) => engine.sendToEntity(id as EntityId, text, "challenge"),
-    // Replay is a new admission: it cannot overtake this resident's running command.
-    // The held input already passed modal routing; retain its request-local destination.
-    redispatch: (id, raw, options) =>
-      new Promise<void>((resolve, reject) => {
-        const admitted = engine.submitCommand(id as EntityId, raw, async () => {
-          try {
-            await engine.processCommand(id as EntityId, raw, { ...options, bypassModal: true });
-            resolve();
-          } catch (error) {
-            reject(error);
-          }
+  setChallengeHost(
+    {
+      get db() {
+        return engine.db;
+      },
+      getEntity: (id) => engine.entities.get(id as EntityId),
+      findEntity: (name) => engine.findEntityGlobal(name),
+      connectedEntities: () =>
+        engine.entities.all().filter((e) => engine._connections.isEntityConnected(e.id)),
+      isConnected: (id) => engine._connections.isEntityConnected(id as EntityId),
+      send: (id, text) => engine.sendToEntity(id as EntityId, text, "challenge"),
+      // Through admission + FIFO: the re-run lines up behind anything the
+      // requester already queued instead of interleaving with it. The held
+      // input already passed modal routing, so it re-runs verbatim (the pass
+      // is keyed on that exact input) with its request-local coding target.
+      redispatch: async (id, raw, options) => {
+        const admitted = await engine.dispatchCommand(id as EntityId, raw, {
+          ...options,
+          bypassModal: true,
         });
         if (!admitted)
-          reject(new Error("World command capacity reached; inspect state before retrying."));
-      }),
-    creatorOf: (entity) => engine.db?.getAgentConfig(entity.name)?.spawned_by || undefined,
-  });
+          throw new Error("World command capacity reached; inspect state before retrying.");
+      },
+      creatorOf: (entity) => engine.db?.getAgentConfig(entity.name)?.spawned_by || undefined,
+    },
+    engine,
+  );
   engine.commands.registerBuiltin(
     challengeCommand({ getEntity: (id) => engine.entities.get(id as EntityId) }),
   );
-  engine.commands.registerBuiltin(forecastCommand());
+  engine.commands.registerBuiltin(
+    forecastCommand({
+      get db() {
+        return engine.db;
+      },
+      getEntity: (id) => engine.entities.get(id as EntityId),
+    }),
+  );
   engine.commands.registerBuiltin(
     arenaCommand({
       get store() {
@@ -267,6 +274,13 @@ export function registerCoordinationCommands(engine: Engine): void {
     );
   }
   if (engine.macroManager) {
-    engine.commands.registerBuiltin(macroCommand(engine.macroManager, engine.commands));
+    engine.commands.registerBuiltin(
+      macroCommand(engine.macroManager, engine.commands, (name) =>
+        engine.rooms.all().some((room) => {
+          const commands = room.module.commands;
+          return !!commands && Object.hasOwn(commands, name);
+        }),
+      ),
+    );
   }
 }

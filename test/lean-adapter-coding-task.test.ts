@@ -160,7 +160,7 @@ it("a recruited responder continues an active coding task across cycles, then re
   const internals = adapter as unknown as {
     autonomousLoopRunning: boolean;
     autonomousMode: boolean;
-    client: { capabilities(): Promise<unknown> };
+    client: { capabilities(): Promise<unknown>; isConnected(): boolean };
     agent: { state: { isStreaming: boolean }; prompt(text: string): Promise<void> };
     pauseSleep(ms: number): Promise<void>;
     checkSpendCaps(): undefined;
@@ -170,6 +170,8 @@ it("a recruited responder continues an active coding task across cycles, then re
   internals.autonomousLoopRunning = true;
   internals.autonomousMode = true;
   internals.checkSpendCaps = () => undefined;
+  // The loop makes no model call while the world connection is down.
+  internals.client.isConnected = () => true;
   internals.client.capabilities = async () => ({
     schema: "marina.capabilities.v1",
     revision: 1,
@@ -199,6 +201,7 @@ it("publishes a real worker's busy-to-waiting transition after the prompt settle
   );
   const internals = adapter as unknown as {
     agent: Agent;
+    client: { isConnected(): boolean };
     platformMemory: PlatformMemoryBackend;
     activeCodingTask: string | null;
     autonomousLoopRunning: boolean;
@@ -219,6 +222,7 @@ it("publishes a real worker's busy-to-waiting transition after the prompt settle
   internals.autonomousLoopRunning = true;
   internals.autonomousMode = true;
   internals.checkSpendCaps = () => null;
+  internals.client.isConnected = () => true;
   internals.buildContinuationPrompt = async () => "Continue the assigned coding task";
   adapter.setActiveCodingTask("Work continues after this yield");
   let cycles = 0;

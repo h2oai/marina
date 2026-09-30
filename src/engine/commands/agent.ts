@@ -18,7 +18,6 @@ import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../
 import { MARINA_DEFAULT_MODEL, MAX_SPAWN_DEPTH, STANDING_PER_SPAWNED_CHILD } from "../constants";
 import { sanitizeEntityName } from "../entity-name";
 import { type ModifierSpec, parseModifiers } from "../parse-input";
-import { getRank } from "../permissions";
 import { rankFloorRefusal } from "../rank-floor";
 import { successorHint } from "../role-guard";
 import { checkGateForExecution, recordGateExecution } from "../safety-gates";
@@ -156,7 +155,6 @@ Usage:
     handler: async (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
-      const rank = getRank(entity);
       const tokens = input.tokens;
       const sub = tokens[0]?.toLowerCase();
 
@@ -176,7 +174,7 @@ Usage:
           // demonstrations), checked inside handleSpawn so a demonstration can
           // be recorded only after a clean spawn. Falls back to the legacy
           // builder-rank check when no standing substrate (db) is wired.
-          return handleSpawn(ctx, input.entity, entity, rank, tokens.slice(1), deps);
+          return handleSpawn(ctx, input.entity, entity, tokens.slice(1), deps);
 
         case "stop": {
           const floor = rankFloorRefusal(entity, 4, REQUIRES_BUILDER_RANK);
@@ -537,7 +535,6 @@ async function handleSpawn(
   ctx: RoomContext,
   eid: EntityId,
   spawner: Entity,
-  rank: number,
   tokens: string[],
   deps: {
     agentRuntime: AgentRuntime;
@@ -607,9 +604,12 @@ async function handleSpawn(
       );
       return;
     }
-  } else if (rank < 4) {
-    ctx.send(eid, REQUIRES_BUILDER_RANK);
-    return;
+  } else {
+    const floor = rankFloorRefusal(spawner, 4, REQUIRES_BUILDER_RANK);
+    if (floor) {
+      ctx.send(eid, floor);
+      return;
+    }
   }
 
   // Validate the input before checking the environment. A malformed name is

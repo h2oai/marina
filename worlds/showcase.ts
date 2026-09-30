@@ -224,7 +224,8 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
       "creates a crew:<name> memory pool). 'crew complete <name> -- <summary>' writes a result note and " +
       "dissolves. 'crew dissolve <name>' force-ends. Members see crew context in 'brief' and 'who'. " +
       "Formations: deliberation, chorus, foundry, swarm, pipeline, debate, mapreduce, blackboard, symbiosis, " +
-      "research, freeform — same shapes as project orchestration patterns. Use a crew when the work fits " +
+      "research, delphi, tournament, verification, auction, ledger, sharding, freeform — same shapes as " +
+      "project orchestration patterns. Use a crew when the work fits " +
       "in one task; use a project when it spans tasks/bundles/governance.",
     importance: 8,
     type: "skill",
@@ -796,6 +797,31 @@ function seed(db: MarinaDB): void {
     },
     {
       content: "symbiosis: mutual epistemic benefit. Agents with complementary knowledge pair up.",
+      importance: 7,
+    },
+    {
+      content:
+        "delphi: independent estimates first, then an anonymized summary of the spread, then revision.",
+      importance: 7,
+    },
+    {
+      content: "tournament: candidates compared in pairs, winners advance until one remains.",
+      importance: 7,
+    },
+    {
+      content: "verification: generate candidates, then one verifier per aspect checks each.",
+      importance: 7,
+    },
+    {
+      content: "auction: tasks awarded to the best-fit bid per cost; fit claims are checked after.",
+      importance: 7,
+    },
+    {
+      content: "ledger: an orchestrator keeps task and progress ledgers and replans on stalls.",
+      importance: 7,
+    },
+    {
+      content: "sharding: an oracle splits a failing target into claimable shards it alone judges.",
       importance: 7,
     },
   ]);

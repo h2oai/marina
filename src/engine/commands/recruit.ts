@@ -10,6 +10,7 @@ import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 import { RECRUIT_MIN_STANDING } from "../constants";
 import { getRank } from "../permissions";
+import { rankFloorRefusal } from "../rank-floor";
 
 /** Runtime states in which a running agent can be pulled into a crew. */
 const RECRUITABLE_STATES = new Set<AgentStatus["state"]>(["autonomous", "connected", "idle"]);
@@ -191,8 +192,16 @@ export function recruitCommand(deps: RecruitCommandDeps): CommandDef {
           ctx.send(input.entity, `Active crew "${crewName}" not found.`);
           return;
         }
-        if (crew.ownerId !== input.entity && getRank(caller) < 4) {
-          ctx.send(input.entity, `Only the owner or rank 4+ can recruit into crew "${crew.name}".`);
+        const ownerFloor =
+          crew.ownerId === input.entity
+            ? undefined
+            : rankFloorRefusal(
+                caller,
+                4,
+                `Only the owner or rank 4+ can recruit into crew "${crew.name}".`,
+              );
+        if (ownerFloor) {
+          ctx.send(input.entity, ownerFloor);
           return;
         }
         const candidates = recruitableAgents(deps, caller.name)
@@ -311,9 +320,16 @@ export function recruitCommand(deps: RecruitCommandDeps): CommandDef {
         ctx.send(input.entity, `Crew "${crewName}" is dissolved.`);
         return;
       }
-      const isOwner = crew.ownerId === input.entity;
-      if (!isOwner && getRank(caller) < 4) {
-        ctx.send(input.entity, `Only the owner or rank 4+ can recruit into crew "${crew.name}".`);
+      const ownerFloor =
+        crew.ownerId === input.entity
+          ? undefined
+          : rankFloorRefusal(
+              caller,
+              4,
+              `Only the owner or rank 4+ can recruit into crew "${crew.name}".`,
+            );
+      if (ownerFloor) {
+        ctx.send(input.entity, ownerFloor);
         return;
       }
 

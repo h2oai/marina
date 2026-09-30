@@ -70,6 +70,7 @@ export function refuseOpenApiWrite(entityId: EntityId, origin: string | null): R
       error:
         "MARINA_OPEN_API grants read-only access; writes require a valid session token " +
         "(Authorization: Bearer <token>).",
+      code: "open_api_read_only",
     },
     { status: 403, headers: corsHeaders(origin) },
   );
@@ -120,6 +121,7 @@ export function authenticateRequest(
         error: auth?.startsWith("Bearer ")
           ? "Invalid or expired session token"
           : "Missing or invalid Authorization header",
+        code: "unauthorized",
       },
       { status: 401, headers: corsHeaders(origin) },
     ),

@@ -7,6 +7,7 @@ import { MacroManager } from "../src/coordination/macro-manager";
 import { TaskManager } from "../src/coordination/task-manager";
 import { FlywheelManager } from "../src/integrations/flywheel-manager";
 import { MarinaDB } from "../src/persistence/database";
+import { ERASED_ACCOUNT } from "../src/persistence/db-users";
 import { type Entity, type EntityId, entityId, roomId } from "../src/types";
 import { EntityManager } from "../src/world/entity-manager";
 import { cleanupDb } from "./helpers";
@@ -131,6 +132,38 @@ describe("durable keys survive re-login", () => {
     db.deleteEntity(e2);
     expect(db.getGroup("g3")?.leader_id).toBe("u_alice");
     expect(db.getTask(task.id)?.creator_id).toBe("u_alice");
+  });
+
+  it("keeps bounty standing with the account across re-login", () => {
+    db.createUser({ id: "u_bob", name: "Bob" });
+    db.saveEntity(entity("e_b", "Bob"));
+    const tasks = new TaskManager(db);
+    const task = tasks.create({
+      title: "bounty",
+      creatorId: "e_b",
+      creatorName: "Bob",
+      validationMode: "bounty",
+      standing: 12,
+    });
+    expect(tasks.claim(task.id, "e_1", "Alice")).not.toBeNull();
+    expect(tasks.submit(task.id, "e_1", "done")).toBe(true);
+    expect(tasks.approveSubmission(task.id, "e_1", "e_b")).toBe(true);
+
+    // The ledger row is keyed by the account, not the transient entity id.
+    expect(
+      (
+        raw.query("SELECT entity_id FROM entity_standing WHERE kind = 'task_complete'").get() as {
+          entity_id: string;
+        }
+      ).entity_id,
+    ).toBe("u_alice");
+    expect(tasks.getEntityStanding("e_1")).toBe(12);
+
+    const e2 = relogin();
+    expect(tasks.getEntityStanding(e2)).toBe(12);
+    // Re-recording the same task for the new id is still idempotent.
+    db.recordStandingEarned(e2, "Alice", task.id, 12);
+    expect(tasks.getEntityStanding(e2)).toBe(12);
   });
 
   it("passes ids with no world account through unchanged", () => {
@@ -366,5 +399,65 @@ describe("durable keys survive re-login", () => {
     expect(rows("entity_competence")).toBe(0);
     expect(rows("entity_standing")).toBe(0);
     expect(rows("entity_standing_cache")).toBe(0);
+  });
+
+  it("deleteUser erases memberships and anonymizes shared rows in one audited transaction", () => {
+    db.createUser({ id: "u_bob", name: "Bob" });
+    db.saveEntity(entity("e_b", "Bob"));
+    db.createGroup({ id: "g1", name: "crew", leaderId: "e_1" });
+    db.addGroupMember("g1", "e_1", 3);
+    db.addGroupMember("g1", "e_b", 1);
+    db.createGroup({ id: "g2", name: "solo", leaderId: "e_1" });
+    db.addGroupMember("g2", "e_1", 3);
+    db.createChannel({ id: "ch1", type: "group", name: "group:g1" });
+    db.addChannelMember("ch1", "e_1");
+    db.createBoard({ id: "b1", name: "general" });
+    const post = db.createBoardPost({
+      boardId: "b1",
+      authorId: "e_1",
+      authorName: "Alice",
+      body: "hello",
+    });
+    const bobPost = db.createBoardPost({
+      boardId: "b1",
+      authorId: "e_b",
+      authorName: "Bob",
+      body: "x",
+    });
+    db.voteBoardPost(bobPost, "e_1", 1, 1);
+    db.createMacro("hi", "e_1", "say hi");
+    const task = db.createTask({ title: "t", creatorId: "e_1", creatorName: "Alice" });
+
+    const counts = db.deleteUser("u_alice");
+    expect(counts.group_members).toBe(2);
+    expect(counts.channel_members).toBe(1);
+    expect(counts.board_votes).toBe(1);
+    expect(counts.macros).toBe(1);
+    expect(counts.tasks_creator).toBe(1);
+    expect(counts.board_posts_author).toBe(1);
+    expect(counts.groups_leader).toBe(2);
+
+    const count = (sql: string) => (raw.query(sql).get() as { n: number }).n;
+    for (const [table, column] of [
+      ["group_members", "entity_id"],
+      ["channel_members", "entity_id"],
+      ["board_votes", "entity_id"],
+      ["macros", "author_id"],
+      ["groups_", "leader_id"],
+      ["tasks", "creator_id"],
+      ["board_posts", "author_id"],
+    ] as const) {
+      expect(count(`SELECT COUNT(*) AS n FROM ${table} WHERE ${column} = 'u_alice'`)).toBe(0);
+    }
+    // A led group passes to the highest-ranked remaining member, else the placeholder.
+    expect(db.getGroup("g1")?.leader_id).toBe("e_b");
+    expect(db.getGroup("g2")?.leader_id).toBe(ERASED_ACCOUNT);
+    expect(db.getTask(task)?.creator_name).toBe(ERASED_ACCOUNT);
+    expect(db.getBoardPost(post)?.author_name).toBe(ERASED_ACCOUNT);
+    // The erasure is audited once, by account id, never by name.
+    const audit = db.queryChronicle({ kind: "event" }).filter((e) => e.source === "account");
+    expect(audit).toHaveLength(1);
+    expect(audit[0]!.refs).toEqual(["user:u_alice"]);
+    expect(audit[0]!.body).not.toContain("Alice");
   });
 });

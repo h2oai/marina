@@ -34,33 +34,51 @@ import type { CommandDef, Entity, RoomContext } from "../../types";
  *   calc mean([1,2,3,4,5])
  */
 
-// Build a scoped mathjs instance with high precision and restricted "eval".
-// mathjs `evaluate` is already safe (no JS globals exposed); we further
-// forbid its `import`/`createUnit`/function-definition overrides by using
-// its `limitedEvaluate` pattern.
+// Build a scoped mathjs instance with high precision.
+// mathjs expressions have no access to JS globals. Two layers keep an
+// expression from mutating or re-entering the engine:
+//   1. Instance level: `import`, `createUnit` and `config` are replaced with
+//      throwers, so no path (including node methods such as
+//      `simplify(...).evaluate()`) can change the shared instance.
+//   2. Expression level: every parser scope pre-binds the meta functions
+//      (`evaluate`, `parse`, `compile`, `parser`, plus the three above) to
+//      throwers. Symbols resolve from the scope before the math namespace,
+//      so naming one inside an expression is refused.
+// `evaluate` and `parse` stay intact on the instance itself: the parser,
+// `simplify` and `derivative` call them internally, and overriding them on
+// the instance breaks every expression.
 const math = create(all as never, {
   number: "BigNumber",
   precision: 64,
 });
-// Disable the meta-operations that would let an agent mutate the math
-// environment (even though these are already sandboxed from JS itself).
+const disabled = (name: string) => () => {
+  throw new Error(`${name} disabled`);
+};
 math.import(
   {
-    import: () => {
-      throw new Error("import disabled");
-    },
-    createUnit: () => {
-      throw new Error("createUnit disabled");
-    },
-    evaluate: () => {
-      throw new Error("recursive evaluate disabled");
-    },
-    parse: () => {
-      throw new Error("parse disabled");
-    },
+    import: disabled("import"),
+    createUnit: disabled("createUnit"),
+    config: disabled("config"),
   },
   { override: true },
 );
+
+/** Names an expression may not call; bound to throwers in every parser scope. */
+export const CALC_BLOCKED_FUNCTIONS = [
+  "evaluate",
+  "parse",
+  "compile",
+  "parser",
+  "import",
+  "createUnit",
+  "config",
+] as const;
+
+function sandboxedParser(): ReturnType<typeof math.parser> {
+  const parser = math.parser();
+  for (const name of CALC_BLOCKED_FUNCTIONS) parser.set(name, disabled(name));
+  return parser;
+}
 
 const MAX_EXPR_BYTES = 4_000;
 const MAX_STATEMENTS = 50;
@@ -76,13 +94,13 @@ function formatValue(v: unknown): string {
   }
 }
 
-interface EvalResult {
+export interface EvalResult {
   outputs: string[];
   error?: string;
   durationMs: number;
 }
 
-function evalExpression(source: string): EvalResult {
+export function evalExpression(source: string): EvalResult {
   const t0 = performance.now();
   const trimmed = source.trim();
   if (!trimmed) {
@@ -102,7 +120,7 @@ function evalExpression(source: string): EvalResult {
     .filter((s) => s.length > 0)
     .slice(0, MAX_STATEMENTS);
 
-  const parser = math.parser();
+  const parser = sandboxedParser();
   const outputs: string[] = [];
   let error: string | undefined;
   try {

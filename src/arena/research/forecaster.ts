@@ -33,9 +33,16 @@
 
 import type { Evidence } from "../../decisions/evidence";
 import type { DecisionProvider } from "../../decisions/types";
-import { checkDraft } from "../../decisions/verify";
+import {
+  askAnalyst,
+  type JudgeRecord,
+  judgeAudit,
+  judgeClaim,
+  newJudgeRecord,
+} from "../../forecast/judge";
 import { forecastRound, type RoundForecast } from "../forecast";
-import { type Complete, parseReply } from "../model-forecaster";
+import { median } from "../formations";
+import type { Complete } from "../model-forecaster";
 import {
   dailyBlock,
   dailyOf,
@@ -194,16 +201,7 @@ export function seriesEvidence(
   return out;
 }
 
-/** What the judge was and what it cost, summed over the proposals it judged. */
-export interface JudgeRecord {
-  provider?: string;
-  model?: string;
-  calls: number;
-  latencyMs: number;
-  costUsd: number;
-  errors: number;
-  error?: string;
-}
+export type { JudgeRecord } from "../../forecast/judge";
 
 /** Each analyst's parsed reply (undefined on an error or no JSON), with the outcome noted in `roles`. */
 async function askAnalysts(
@@ -214,42 +212,23 @@ async function askAnalysts(
 ): Promise<Array<readonly [string, Record<string, unknown> | undefined]>> {
   return Promise.all(
     analysts.map(async (a) => {
-      try {
-        const reply = parseReply(await a.complete(system, user));
-        roles[a.name] = reply ? "ok" : "invalid reply (no JSON object)";
-        return [a.name, reply] as const;
-      } catch (err) {
-        roles[a.name] =
-          `error: ${(err instanceof Error ? err.message : String(err)).slice(0, 120)}`;
-        return [a.name, undefined] as const;
-      }
+      const { reply, error } = await askAnalyst(a, system, user);
+      roles[a.name] =
+        error !== undefined
+          ? `error: ${error.slice(0, 120)}`
+          : reply
+            ? "ok"
+            : "invalid reply (no JSON object)";
+      return [a.name, reply] as const;
     }),
   );
 }
 
-function newJudgeRecord(judge: DecisionProvider | undefined): JudgeRecord | undefined {
-  return judge
-    ? {
-        provider: judge.kind,
-        ...(judge.model ? { model: judge.model } : {}),
-        calls: 0,
-        latencyMs: 0,
-        costUsd: 0,
-        errors: 0,
-      }
-    : undefined;
-}
-
-function judgeAudit(judgeRecord: JudgeRecord | undefined): { judge?: JudgeRecord } {
-  return judgeRecord
-    ? { judge: { ...judgeRecord, costUsd: Math.round(judgeRecord.costUsd * 1e6) / 1e6 } }
-    : {};
-}
-
 /**
- * One proposal through the judge: weight = grounded × quality / 2, clamped to
- * [0, 1]; no judge ⇒ weight 1; a judge outage ⇒ weight 0 (no opinion, never a
- * pass). Totals accumulate into `judgeRecord`.
+ * One proposal through the judge (`judgeClaim`, shared with forecasting any
+ * question): weight = grounded × quality / 2, clamped to [0, 1]; no judge ⇒
+ * weight 1; a judge outage ⇒ weight 0 (no opinion, never a pass). Totals
+ * accumulate into `judgeRecord`.
  */
 async function judgeProposal(
   judge: DecisionProvider | undefined,
@@ -259,49 +238,17 @@ async function judgeProposal(
   evidence: Evidence[],
   question: string,
 ): Promise<JudgedProposal> {
-  let weight = 1;
-  let quality: number | undefined;
-  let grounded: number | undefined;
-  let judgeError: string | undefined;
-  let judgeLatencyMs: number | undefined;
-  let judgeCostUsd: number | undefined;
-  if (judge) {
-    const verdict = await checkDraft(judge, draft.slice(0, 3_000), evidence, question);
-    if (judgeRecord) {
-      judgeRecord.calls++;
-      if (verdict.provider) judgeRecord.provider = verdict.provider;
-      if (verdict.model) judgeRecord.model = verdict.model;
-      judgeRecord.latencyMs = Math.max(judgeRecord.latencyMs, verdict.latencyMs ?? 0);
-      judgeRecord.costUsd += verdict.costUsd ?? 0;
-    }
-    judgeLatencyMs = verdict.latencyMs;
-    judgeCostUsd = verdict.costUsd;
-    if (!verdict.error) {
-      quality = verdict.signals.quality;
-      grounded = verdict.signals.grounded;
-      // No grounding ⇒ no weight; a fully grounded, high-quality rationale ⇒ weight 1.
-      weight = Math.max(0, Math.min(1, (grounded ?? 0) * ((quality ?? 0) / 2)));
-    } else {
-      // A judge outage is no opinion, never a pass: an unjudged proposal
-      // gets no weight (it used to keep weight 1 — ~10× a judged run).
-      weight = 0;
-      judgeError = String(verdict.error).slice(0, 200);
-      if (judgeRecord) {
-        judgeRecord.errors++;
-        judgeRecord.error = judgeError;
-      }
-    }
-  }
+  const judged = await judgeClaim(judge, judgeRecord, draft, evidence, question);
   return {
     mean: p.mean,
     sd: p.sd,
-    weight,
+    weight: judged.weight,
     ...(p.reason ? { reason: p.reason.slice(0, 400) } : {}),
-    ...(quality === undefined ? {} : { quality }),
-    ...(grounded === undefined ? {} : { grounded }),
-    ...(judgeError ? { judgeError } : {}),
-    ...(judgeLatencyMs === undefined ? {} : { judgeLatencyMs }),
-    ...(judgeCostUsd === undefined ? {} : { judgeCostUsd }),
+    ...(judged.quality === undefined ? {} : { quality: judged.quality }),
+    ...(judged.grounded === undefined ? {} : { grounded: judged.grounded }),
+    ...(judged.judgeError ? { judgeError: judged.judgeError } : {}),
+    ...(judged.judgeLatencyMs === undefined ? {} : { judgeLatencyMs: judged.judgeLatencyMs }),
+    ...(judged.judgeCostUsd === undefined ? {} : { judgeCostUsd: judged.judgeCostUsd }),
   };
 }
 
@@ -469,12 +416,6 @@ export function questionBounds(round: ArenaRound): Bounds | undefined {
     return { lo: 0, hi: 100, why: "a percentage" };
   }
   return undefined;
-}
-
-function median(xs: number[]): number {
-  const s = [...xs].sort((a, b) => a - b);
-  const mid = Math.floor(s.length / 2);
-  return s.length % 2 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
 }
 
 /**

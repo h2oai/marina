@@ -1,7 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect, test } from "bun:test";
+import { beforeEach, expect, test } from "bun:test";
+import { resetChallengesForTests } from "../src/engine/challenges";
 import { CommandPhaseCoordinator } from "../src/engine/command-phase-coordinator";
 import { CommandRouter } from "../src/engine/command-router";
 import { Logger } from "../src/engine/logger";
@@ -9,6 +10,9 @@ import type { EngineEvent, RoomContext } from "../src/types";
 import { roomId } from "../src/types";
 import { EntityManager } from "../src/world/entity-manager";
 import { scopeProcessState } from "./process-state";
+
+// Another file's engine may still be wired as the challenge host.
+beforeEach(() => resetChallengesForTests());
 
 test("execution routes modals through the same permissions and awaits async handlers without Engine", async () => {
   // This standalone coordinator has no challenge host. Do not borrow a prior engine's host.

@@ -115,7 +115,7 @@ describe("spend / breaker env parsing", () => {
 type AdapterInternals = {
   spend: SpendWindow;
   config: { spawnedBy?: string };
-  client: { command: (cmd: string) => Promise<unknown> };
+  client: { command: (cmd: string) => Promise<unknown>; isConnected: () => boolean };
   autonomousLoopRunning: boolean;
   autonomousMode: boolean;
   cycleWaiter: { wake(): void };
@@ -143,6 +143,8 @@ function makeAdapter(
     sent.push(cmd);
     return { ok: true };
   };
+  // The loop makes no model call while the world connection is down.
+  internals.client.isConnected = () => true;
   return { adapter, internals, sent };
 }
 

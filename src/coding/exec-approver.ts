@@ -48,6 +48,15 @@ export type ExecApprovalDecision = {
   approved: boolean;
   scope?: "once" | "session";
   reason?: string;
+  /** Set when no one answered a held prompt before its deadline. */
+  outcome?: "timeout";
+};
+
+/** Reason and outcome recorded when a prompt expires unanswered. */
+export const EXEC_APPROVAL_TIMEOUT_DECISION: ExecApprovalDecision = {
+  approved: false,
+  reason: "approval timed out",
+  outcome: "timeout",
 };
 
 /** The seam the workspace chokepoint consults for non-allowlisted commands. */
@@ -220,8 +229,11 @@ export class InteractiveApprover implements ExecApprover {
     // re-run the held command automatically when the creator approves — the
     // requester's loop (and its command queue) carries on meanwhile.
     if (heldCommand !== undefined) {
+      // An unanswered hold expires through the same settle path as a deny, so
+      // the timeout writes its own exec_decision audit record (outcome
+      // `timeout`) and tells the requester — it never just vanishes.
       const timer = setTimeout(
-        () => pendingApprovals.delete(token),
+        () => pendingApprovals.get(token)?.settle({ ...EXEC_APPROVAL_TIMEOUT_DECISION }),
         this.deps.timeoutMs ?? DEFAULT_EXEC_APPROVAL_TIMEOUT_MS,
       );
       (timer as { unref?: () => void }).unref?.();
@@ -303,7 +315,7 @@ export class InteractiveApprover implements ExecApprover {
         execApproval: { token, argv: req.argv, cwd: req.cwd, rendered },
       });
       timer = setTimeout(
-        () => settle({ approved: false, reason: "approval timed out" }),
+        () => settle({ ...EXEC_APPROVAL_TIMEOUT_DECISION }),
         this.deps.timeoutMs ?? DEFAULT_EXEC_APPROVAL_TIMEOUT_MS,
       );
     });

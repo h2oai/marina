@@ -424,6 +424,21 @@ export function noteCommand(deps: {
           const note = db.getNote(id);
           const confidence =
             tokens[3] === undefined ? (note?.confidence ?? 0.5) : Number(tokens[3]);
+          // Self-attestation is refused in every posture: the author may mark
+          // their own note unverified (which also retracts a dispute) or
+          // disputed, but `verified` — the trusted tier — must come from
+          // someone else (e.g. `pool <name> ratify` on a shared pool note).
+          if (
+            verification === "verified" &&
+            access.write(note) &&
+            note.verification_status !== "superseded"
+          ) {
+            ctx.send(
+              input.entity,
+              `Note #${id} is yours: an author can't verify their own note. Cite evidence with \`note source ${id} <url|note:id>\`; in a shared pool another resident can ratify it (\`pool <name> ratify ${id}\`). \`note verify ${id} unverified\` retracts a dispute.`,
+            );
+            return;
+          }
           if (
             !access.write(note) ||
             note.verification_status === "superseded" ||

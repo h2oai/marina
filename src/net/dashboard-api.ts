@@ -24,7 +24,7 @@ import { handleOpsRoutes } from "./dashboard-api/ops";
 import { handleProductivityRoute, handleReadinessRoutes } from "./dashboard-api/readiness";
 import { handleRoutingRoutes } from "./dashboard-api/routing";
 import type { DashboardApiOptions, DashboardRouteContext } from "./dashboard-api/shared";
-import { extractIp, json } from "./dashboard-api/shared";
+import { ensureErrorCode, json } from "./dashboard-api/shared";
 import { handleSystemRoutes } from "./dashboard-api/system";
 import {
   handleCoordinationListRoutes,
@@ -32,7 +32,13 @@ import {
   handleEntityRoutes,
   handleWorldCatalogRoutes,
 } from "./dashboard-api/world";
-import { consumeHttpRate, rateLimitedResponse } from "./http-utils";
+import {
+  badPathEncodingResponse,
+  clientIp,
+  consumeHttpRate,
+  rateLimitedResponse,
+  safeDecodeURIComponent,
+} from "./http-utils";
 import { memoryObserver } from "./memory-visibility";
 
 // Public surface consumed by other modules, scripts and tests
@@ -53,6 +59,26 @@ export async function handleDashboardApi(
   peerIp?: string,
   opts: DashboardApiOptions = {},
 ): Promise<Response | undefined> {
+  // Every route matcher percent-decodes a captured path segment; a path that
+  // does not decode as a whole (`%E0`) is refused once here, so no matcher
+  // ever throws a URIError. Captures end at literal separators, so a path
+  // that decodes whole decodes in every segment.
+  if (safeDecodeURIComponent(url.pathname) === null) {
+    return badPathEncodingResponse(req.headers.get("Origin"));
+  }
+  const resp = await dispatchDashboardApi(req, url, method, engine, db, peerIp, opts);
+  return resp ? await ensureErrorCode(resp) : resp;
+}
+
+async function dispatchDashboardApi(
+  req: Request,
+  url: URL,
+  method: string,
+  engine: Engine,
+  db: MarinaDB | undefined,
+  peerIp: string | undefined,
+  opts: DashboardApiOptions,
+): Promise<Response | undefined> {
   // Pre-auth endpoints (no session required — used by dashboard before login)
   const preAuth = await handlePreAuthRoutes(req, url, method, engine, db, peerIp, opts);
   if (preAuth) return preAuth;
@@ -67,9 +93,7 @@ export async function handleDashboardApi(
   // Per-principal budget for the authenticated REST surface (DASHBOARD_API
   // limit in http-utils.ts). Sentinels share one id, so they are keyed by
   // client IP instead of letting every dev-open caller pool into one bucket.
-  const rateKey = isSentinelPrincipal(callerId)
-    ? `${callerId}@${extractIp(req, peerIp)}`
-    : callerId;
+  const rateKey = isSentinelPrincipal(callerId) ? `${callerId}@${clientIp(req, peerIp)}` : callerId;
   if (!consumeHttpRate("dashboard", rateKey)) {
     return rateLimitedResponse(req.headers.get("Origin"));
   }

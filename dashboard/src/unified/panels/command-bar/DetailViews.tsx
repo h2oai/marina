@@ -391,6 +391,12 @@ export const ORCHESTRATION_PATTERNS_FALLBACK: OrchestrationPatternOption[] = [
   "blackboard",
   "symbiosis",
   "research",
+  "delphi",
+  "tournament",
+  "verification",
+  "auction",
+  "ledger",
+  "sharding",
   "custom",
 ].map((id) => ({ id, name: id, description: "" }));
 

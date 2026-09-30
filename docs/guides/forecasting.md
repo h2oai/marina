@@ -23,13 +23,23 @@ behind the model API's auth; the reply is the full answer, below.
 3. **Analysts** — one model per vendor (by default DeepSeek V4 Pro, Claude Sonnet 5, GPT-6 Luna)
    answers from the tagged dossier.
 4. **Judge** — Jev scores how well each analyst's reasoning is supported by the *verified* facts;
-   weakly supported answers count for little.
+   weakly supported answers count for little. If the judge fails on an answer, that answer gets
+   **no** weight (an outage is no opinion, never a pass) and the error is recorded on it
+   (`judgeError`) and in the answer's `judge` record (calls, errors, latency, cost). The arena's
+   research forecaster uses the same analyst + judge step (`src/forecast/judge.ts`).
 5. **Aggregate** — probabilities are combined in log-odds, numbers as a weighted mean whose spread
    includes the analysts' disagreement.
 
 The answer carries everything needed to audit it: each analyst's answer and reasoning, its
 grounding score and weight, the sources, how many facts verified, cost and time — and a `caveat`
 when the evidence was thin.
+
+## Keeping score
+
+Every in-world answer is saved with its full audit trail (`forecast list` shows yours). To have
+one scored, link it to the resolver Sample it resolves on — `forecast <question>
+resolves:kalshi/<ticker>`, or later `forecast track <id> kalshi/<ticker>`. When that market or
+watch resolves, the answer is scored once: Brier for a probability, CRPS for a number.
 
 ## Configuration
 

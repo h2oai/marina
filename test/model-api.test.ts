@@ -1010,46 +1010,35 @@ describe("Model API", () => {
     });
   });
 
-  it("orchestration boundary: non-target sender responses are ignored", async () => {
-    // A specialist sharing the channel with the orchestrator must not race
-    // the orchestrator with a reply. selectAgent picks the target; whichever
-    // agent is NOT the target plays the specialist role in this test.
+  it("any channel member's correlated reply fulfils the request (routed to A, B answers)", async () => {
+    // Three members on the endpoint channel. The balancer routes to one of
+    // them (A); a different member (B) posts the correlated answer. The
+    // request must succeed with B's answer instead of timing out.
     engine.processCommand(conn1.entity!, "channel join model");
     const conn2 = new MockConnection("c2");
     engine.addConnection(conn2);
     engine.spawnEntity("c2", "Agent2");
     engine.processCommand(conn2.entity!, "channel join model");
+    const conn3 = new MockConnection("c3");
+    engine.addConnection(conn3);
+    engine.spawnEntity("c3", "Agent3");
+    engine.processCommand(conn3.entity!, "channel join model");
+    const members = [conn1.entity!, conn2.entity!, conn3.entity!];
 
-    let nonTargetResponded = false;
+    let routedTo: string | undefined;
+    let answeredBy: string | undefined;
     cm.onMessage((channelId, senderId, _senderName, content) => {
       if (senderId !== "__model_api__") return;
       try {
         const parsed = JSON.parse(content);
-        if (parsed.type !== "model_request") return;
-        const target: string = parsed.target;
-        const nonTarget = target === conn1.entity! ? conn2.entity! : conn1.entity!;
-        // Non-target fires first with the wrong answer.
+        if (parsed.type !== "model_request" || parsed.reminder) return;
+        routedTo = parsed.target;
+        answeredBy = members.find((m) => m !== routedTo);
         cm.send(
           channelId,
-          nonTarget,
-          "NonTarget",
-          JSON.stringify({
-            type: "model_response",
-            id: parsed.id,
-            content: "non-target-hijack",
-          }),
-        );
-        nonTargetResponded = true;
-        // Target fires the authoritative answer.
-        cm.send(
-          channelId,
-          target,
-          "Target",
-          JSON.stringify({
-            type: "model_response",
-            id: parsed.id,
-            content: "target-answer",
-          }),
+          answeredBy!,
+          "B",
+          JSON.stringify({ type: "model_response", id: parsed.id, content: "answer-from-B" }),
         );
       } catch {}
     });
@@ -1061,8 +1050,95 @@ describe("Model API", () => {
     const resp = await handleModelApi(url, method, req, engine);
     expect(resp!.status).toBe(200);
     const data = await resp!.json();
-    expect(nonTargetResponded).toBe(true);
-    expect(data.choices[0].message.content).toBe("target-answer");
+    expect(data.choices[0].message.content).toBe("answer-from-B");
+    expect(routedTo).toBeDefined();
+    expect(answeredBy).not.toBe(routedTo);
+    const completed = engine
+      .getEventLog()
+      .filter((e) => e.type === "model_request_lifecycle" && e.phase === "completed")
+      .at(-1);
+    expect(completed).toMatchObject({ target: routedTo, respondedBy: answeredBy });
+  });
+
+  it("streaming: the first member to answer owns the stream; other members' chunks are ignored", async () => {
+    engine.processCommand(conn1.entity!, "channel join model");
+    const conn2 = new MockConnection("c2");
+    engine.addConnection(conn2);
+    engine.spawnEntity("c2", "Agent2");
+    engine.processCommand(conn2.entity!, "channel join model");
+
+    cm.onMessage((channelId, senderId, _senderName, content) => {
+      if (senderId !== "__model_api__") return;
+      try {
+        const parsed = JSON.parse(content);
+        if (parsed.type !== "model_request" || parsed.reminder) return;
+        const other = parsed.target === conn1.entity! ? conn2.entity! : conn1.entity!;
+        const frame = (from: string, type: string, text?: string) =>
+          cm.send(channelId, from, "m", JSON.stringify({ type, id: parsed.id, content: text }));
+        frame(other, "model_response_chunk", "owner ");
+        frame(parsed.target, "model_response_chunk", "intruder ");
+        frame(other, "model_response_chunk", "answer");
+        frame(other, "model_response_end");
+      } catch {}
+    });
+
+    const [url, method, req] = makeRequest("/v1/chat/completions", "POST", {
+      model: "marina",
+      messages: [{ role: "user", content: "hello" }],
+      stream: true,
+    });
+    const resp = await handleModelApi(url, method, req, engine);
+    const text = await collectStream(resp!);
+    const deltas = text
+      .split("\n")
+      .filter((l) => l.startsWith("data: ") && l !== "data: [DONE]")
+      .map((l) => JSON.parse(l.slice(6)).choices[0].delta.content ?? "")
+      .join("");
+    expect(deltas).toBe("owner answer");
+  });
+
+  it("replies from non-members and uncorrelated replies are ignored", async () => {
+    engine.processCommand(conn1.entity!, "channel join model");
+    const outsider = new MockConnection("c-out");
+    engine.addConnection(outsider);
+    engine.spawnEntity("c-out", "Outsider");
+
+    cm.onMessage((channelId, senderId, _senderName, content) => {
+      if (senderId !== "__model_api__") return;
+      try {
+        const parsed = JSON.parse(content);
+        if (parsed.type !== "model_request" || parsed.reminder) return;
+        // A non-member posts a correlated reply; a member posts a reply with
+        // the wrong id; then the member posts the correlated answer.
+        cm.send(
+          channelId,
+          outsider.entity!,
+          "Outsider",
+          JSON.stringify({ type: "model_response", id: parsed.id, content: "outsider" }),
+        );
+        cm.send(
+          channelId,
+          conn1.entity!,
+          "Agent1",
+          JSON.stringify({ type: "model_response", id: "req-other", content: "wrong-id" }),
+        );
+        cm.send(
+          channelId,
+          conn1.entity!,
+          "Agent1",
+          JSON.stringify({ type: "model_response", id: parsed.id, content: "member-answer" }),
+        );
+      } catch {}
+    });
+
+    const [url, method, req] = makeRequest("/v1/chat/completions", "POST", {
+      model: "marina",
+      messages: [{ role: "user", content: "hello" }],
+    });
+    const resp = await handleModelApi(url, method, req, engine);
+    expect(resp!.status).toBe(200);
+    const data = await resp!.json();
+    expect(data.choices[0].message.content).toBe("member-answer");
   });
 
   describe("execution tracing", () => {

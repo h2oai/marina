@@ -153,19 +153,6 @@ export function listOpenWitnessRows(
     .all(...params) as WitnessRow[];
 }
 
-/** Count attested demonstrations for (entity, gate) — the earned-posture
- *  progress that has passed external review. */
-export function countAttested(db: Database, entityId: string, gate: string): number {
-  return (
-    db
-      .query(
-        `SELECT COUNT(*) AS n FROM witness_attestations
-         WHERE entity_id = ? AND gate = ? AND kind = 'pending' AND status = 'attested'`,
-      )
-      .get(entityId, gate) as { n: number }
-  ).n;
-}
-
 function expireStale(db: Database, now = Date.now()): void {
   db.run(
     `UPDATE witness_attestations SET status = 'expired', resolved_at = ?

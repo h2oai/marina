@@ -99,8 +99,15 @@ export type ClientEventMap = {
   disconnect: [];
   perception: [Perception];
   error: [Error];
+  /** Emitted once when automatic reconnection gives up (see `hasGivenUpReconnecting`). */
   reconnect_failed: [];
 };
+
+/**
+ * Transport state: `reconnecting` while automatic reconnection is still
+ * retrying, `failed` once it gave up (only a new `connect()` recovers).
+ */
+export type ConnectionState = "connected" | "reconnecting" | "failed" | "disconnected";
 
 type ClientEventName = keyof ClientEventMap;
 
@@ -204,6 +211,7 @@ export class MarinaClient {
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempts = 0;
+  private reconnectGaveUp = false;
   private commandProtocol: "correlated" | "legacy" | undefined;
   private codingTargetSupported = false;
   private worldCommandSupported = false;
@@ -233,6 +241,19 @@ export class MarinaClient {
   /** Check if connected to the server. */
   isConnected(): boolean {
     return this.connected;
+  }
+
+  /** True once automatic reconnection exhausted `maxReconnectAttempts`. */
+  hasGivenUpReconnecting(): boolean {
+    return this.reconnectGaveUp;
+  }
+
+  /** Current transport state; `failed` means reconnection gave up. */
+  getConnectionState(): ConnectionState {
+    if (this.connected) return "connected";
+    if (this.reconnectGaveUp) return "failed";
+    if (this.reconnectTimer || (this.options.autoReconnect && this.session)) return "reconnecting";
+    return "disconnected";
   }
 
   /** Get the server URL. */
@@ -309,6 +330,7 @@ export class MarinaClient {
           clearTimeout(timer);
           this.removeInternalHandler(handler);
           this.reconnectAttempts = 0;
+          this.reconnectGaveUp = false;
           this.negotiateCommands(p);
           this.session = {
             entityId: p.data.entityId as EntityId,
@@ -347,6 +369,7 @@ export class MarinaClient {
           clearTimeout(timer);
           this.removeInternalHandler(handler);
           this.reconnectAttempts = 0;
+          this.reconnectGaveUp = false;
           this.negotiateCommands(p);
           this.session = {
             entityId: p.data.entityId as EntityId,
@@ -810,7 +833,15 @@ export class MarinaClient {
   }
 
   private scheduleReconnect(): void {
+    if (this.reconnectGaveUp) return;
     if (this.reconnectAttempts >= this.options.maxReconnectAttempts) {
+      // A failed attempt can reschedule from both its rejection and the new
+      // socket's close; give up (and tell listeners) exactly once.
+      this.reconnectGaveUp = true;
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
       this.emit("reconnect_failed");
       return;
     }

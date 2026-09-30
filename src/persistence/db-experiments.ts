@@ -55,10 +55,6 @@ export function listExperiments(db: Database, status?: string): ExperimentRow[] 
   return db.query("SELECT * FROM experiments ORDER BY id DESC").all() as ExperimentRow[];
 }
 
-export function updateExperimentStatus(db: Database, id: number, status: string): void {
-  db.run("UPDATE experiments SET status = ? WHERE id = ?", [status, id]);
-}
-
 export function startExperiment(db: Database, id: number): void {
   db.run("UPDATE experiments SET status = 'active', started_at = ? WHERE id = ?", [Date.now(), id]);
 }

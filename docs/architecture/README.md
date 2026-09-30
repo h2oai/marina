@@ -9,7 +9,7 @@ These pages hold the long-form design, history, measurements, and per-feature wa
 | [worlds.md](worlds.md) | World templates and the `MARINA_WORLD` catalogue, `seed()` semantics, room-agent spawning, auth, and cost control |
 | [agent-cognition.md](agent-cognition.md) | Identity and principles, the cadenced continuation prompt, tool profiles and prompt budget, role composition and PRISM gating, in-world trait/role editing, fast crew dispatch, platform-level cognitive commands |
 | [memory.md](memory.md) | Legacy notes vs. durable service, unified context tiers, legacy bridge and twins, hygiene and dispatch ticks, adoption/ratification, reputation-weighted retrieval, retrieval quality, gateway/receipts/response cache, contradiction `resolve`, workflows, benchmarks |
-| [orchestration.md](orchestration.md) | The 10 orchestration patterns, members-only crew pools, crew briefs and formation mediators |
+| [orchestration.md](orchestration.md) | The 16 orchestration patterns, members-only crew pools, crew briefs and formation mediators |
 | [dashboard.md](dashboard.md) | Canvas intents, WebSocket event taxonomy, layer toggles, MEMORY layer, Admin → Memory tab, memory observability API and hygiene ratios (user guide: [`docs/guides/dashboard.md`](../guides/dashboard.md)) |
 | [resolvers.md](resolvers.md) | Resolver primitive and sample taxonomy, `probe`/`watch`, calibration finder registry, `position` invariants, SDK client, TabH2O integration |
 | [decisions.md](decisions.md) | Harness decisions: noul / choice / score wire format, decision backends (Jev family / OpenJev via the Decisions API, or any chat model as a classifier), route / gate / verify policies and failure rules, the pi tool gate, `POST /v1/decisions` |

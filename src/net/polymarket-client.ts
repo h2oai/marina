@@ -3,24 +3,22 @@
 
 // ─── Polymarket Trading API Client ──────────────────────────────────────────
 //
-// Typed wrapper around Polymarket's gamma (read) + CLOB (write) APIs. Mirrors
-// the kalshi-client shape: SSRF-guarded, timeout-safe, paper-mode default,
-// graceful degradation, opt-in live trading via MARINA_TRADING_ENABLED.
+// Wrapper around Polymarket's gamma (read) API plus PAPER order placement.
+// Mirrors the kalshi-client shape: SSRF-guarded, timeout-safe, paper-mode
+// default, graceful degradation.
 //
-// Polymarket's CLOB requires EIP-712 signed orders authenticated by a wallet
-// private key. For Phase 2 we ship the public/read endpoints + paper order
-// placement. Live order placement is structured (CLOB request shape is
-// correct) but the EIP-712 signing path is left as a TODO that will be filled
-// in when we onboard a real wallet — gating the live flag is the operator's
-// call. The paper path is fully functional and is where the bettor world
-// runs by default.
+// LIVE POLYMARKET ORDERS ARE NOT SUPPORTED. Polymarket's CLOB accepts only
+// EIP-712-signed orders with L2 HMAC headers; this client has no CLOB request
+// builder and no signer. `placeOrder` / `cancelOrder` therefore FAIL CLOSED
+// outside paper mode: with MARINA_TRADING_ENABLED=true and a complete set of
+// credentials they return an explicit error and send nothing. Paper mode —
+// the default, and whenever the flag or any credential is missing — returns
+// synthetic orders and is fully functional.
 //
-// Live trading requirements (when toggling out of paper mode):
-//   - POLYMARKET_API_KEY: API key
-//   - POLYMARKET_API_SECRET: HMAC secret
-//   - POLYMARKET_API_PASSPHRASE: passphrase set during key creation
-//   - POLYMARKET_PRIVATE_KEY: EVM wallet key for EIP-712 signing
-//   - MARINA_TRADING_ENABLED=true
+// "Configured" (isPolymarketConfigured) means ALL of the credentials a future
+// live path would need are present: POLYMARKET_API_KEY, POLYMARKET_API_SECRET,
+// POLYMARKET_API_PASSPHRASE and POLYMARKET_PRIVATE_KEY. It only decides
+// whether a call leaves paper mode — and that call then fails closed.
 //
 // Polymarket docs:
 //   - Gamma (read): https://gamma-api.polymarket.com
@@ -155,12 +153,14 @@ export interface PolymarketClientOpts {
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
+/** Every credential the CLOB's L2 auth + order signing would need (key, secret, passphrase, wallet key). */
 export function isPolymarketConfigured(
   apiKey = process.env.POLYMARKET_API_KEY,
   apiSecret = process.env.POLYMARKET_API_SECRET,
   privateKey = process.env.POLYMARKET_PRIVATE_KEY,
+  apiPassphrase = process.env.POLYMARKET_API_PASSPHRASE,
 ): boolean {
-  return Boolean(apiKey && apiSecret && privateKey);
+  return Boolean(apiKey && apiSecret && apiPassphrase && privateKey);
 }
 
 export function isLiveTradingEnabled(): boolean {
@@ -170,7 +170,8 @@ export function isLiveTradingEnabled(): boolean {
 export function isPaperMode(opts: PolymarketClientOpts = {}): boolean {
   if (opts.paperMode !== undefined) return opts.paperMode;
   return !(
-    isLiveTradingEnabled() && isPolymarketConfigured(opts.apiKey, opts.apiSecret, opts.privateKey)
+    isLiveTradingEnabled() &&
+    isPolymarketConfigured(opts.apiKey, opts.apiSecret, opts.privateKey, opts.apiPassphrase)
   );
 }
 
@@ -201,9 +202,9 @@ export async function getEvent(
 
 /**
  * Place an order. Paper mode (default) returns a synthetic order without
- * hitting the CLOB. Live mode requires EIP-712 wallet signing — currently
- * stubbed as `error: "live trading not yet implemented"` so the operator
- * has an explicit failure rather than a silent no-op when flipping the flag.
+ * hitting the CLOB. Outside paper mode it FAILS CLOSED: live orders are
+ * unsupported (no CLOB builder, no EIP-712 signer), so it returns an explicit
+ * error and sends nothing.
  */
 export async function placeOrder(
   req: PlacePolymarketOrderRequest,
@@ -229,14 +230,12 @@ export async function placeOrder(
     };
   }
 
-  // Live placement requires EIP-712 wallet signing. Until that path is
-  // implemented + audited + operator-greenlit, return an explicit error.
-  // This is intentional — operators flipping MARINA_TRADING_ENABLED=true
-  // for Polymarket should hit a hard block until the signing layer is built.
+  // Fail closed: no live order path exists (no CLOB request builder, no
+  // EIP-712 signer). Nothing is sent.
   return {
     ok: false,
     error:
-      "Polymarket live trading not yet implemented (CLOB EIP-712 signing pending operator approval). " +
+      "Polymarket live trading is not supported (no CLOB order signing); nothing was sent. " +
       "Use paper mode or trade Kalshi instead.",
   };
 }
@@ -254,7 +253,7 @@ export async function cancelOrder(
   }
   return {
     ok: false,
-    error: "Polymarket live trading not yet implemented — use paper mode.",
+    error: "Polymarket live trading is not supported; nothing was sent — use paper mode.",
   };
 }
 

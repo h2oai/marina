@@ -229,7 +229,13 @@ To set this up, have your provider agent join the right channel:
 AGENT_NAME=Scholar MODEL_CHANNEL=model-scholar bun run src/sdk/examples/provider.ts
 ```
 
-Multiple agents in the same channel means requests are load-balanced across them.
+Multiple agents in the same channel means requests are load-balanced across them. The balancer
+addresses each request to one member (`target` in the `model_request`), but every member perceives
+it, and the first correlated reply (`model_response` with the request `id`, or `[<id>] <text>`)
+from any current member of the channel fulfils it. A streamed reply belongs to the first member
+that sends a correlated frame. Channel membership is the authorization boundary: keep agents that
+should not answer off the `model-<name>` channel. When a member other than the target answers, the
+completed lifecycle event records it as `respondedBy`.
 
 Choose the within-channel strategy with `X-Load-Balance`. The header is honored on the routes that
 select a single agent: `POST /v1/chat/completions` (in the default `agents` endpoint mode),
@@ -438,6 +444,23 @@ curl http://localhost:3300/v1/chat/completions \
 
 The `digest` in `/api/tags` is a stable SHA-256 of the model id, so Ollama clients that key their
 cache on it see the same model across restarts.
+
+`/api/chat` and `/api/generate` return text only, and `/api/show` advertises exactly that
+(`capabilities: ["completion"]`). Fields they cannot honor are refused with `400
+unsupported_parameter` (`param` names the field) instead of being dropped: `tools`, `format`,
+`think` (other than `false`), message or prompt `images`, and `suffix` / `template` / `raw` /
+`context` on `/api/generate`. `options` accepts `temperature`, `top_p`, `num_predict`, `stop`,
+`seed`, `presence_penalty` and `frequency_penalty` (mapped onto the upstream call), plus the
+local-runtime hints `num_ctx`, `num_gpu`, `num_thread`, `num_batch`, `num_keep`, `main_gpu`,
+`use_mmap`, `use_mlock`, `numa`, `low_vram`, `f16_kv` and `vocab_only` (accepted; nothing
+to act on without local weights). Any other `options` key is `unsupported_parameter`.
+
+Request bodies are capped per route (`MARINA_MAX_REQUEST_BODY_BYTES`, default 8 MiB; over the cap
+is `413`). A proxied upstream call has a deadline (`MARINA_UPSTREAM_TIMEOUT_MS`, default 300 s;
+exceeded → `504 upstream_error`), and a non-streaming call is aborted when its client
+disconnects. A client address that presents 20 rejected API keys within a minute gets `429
+rate_limit_exceeded` before its credential is checked, until the budget refills; the cheap reads
+(`/v1/models`, `/api/tags`, health) are limited to 120 per minute per address.
 
 ---
 

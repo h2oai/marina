@@ -13,6 +13,7 @@ import { WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
+import { scopeProcessState } from "./process-state";
 import { openWs, parse, tmpDbPath } from "./websocket-helpers";
 
 describe("WebSocket Server", () => {
@@ -21,8 +22,12 @@ describe("WebSocket Server", () => {
   let db: MarinaDB;
   let dbPath: string;
   let WS_PORT: number;
+  // The listener records its bound port process-wide (src/net/listen-ports);
+  // scope it so later files in the same process see the prior state.
+  let processState: DisposableStack;
 
   beforeEach(() => {
+    processState = scopeProcessState();
     dbPath = tmpDbPath();
     db = new MarinaDB(dbPath);
     engine = new Engine({
@@ -62,6 +67,7 @@ describe("WebSocket Server", () => {
     await engine.drainCommands();
     db.close();
     cleanupDb(dbPath);
+    processState.dispose();
   });
 
   // ─── Connection ───────────────────────────────────────────────────────
@@ -275,10 +281,11 @@ describe("WebSocket Server", () => {
 
   // ─── Exec trust anchor: peerIp vs. spoofable conn.ip ──────────────────
 
-  it("a spoofed X-Forwarded-For sets conn.ip (display) but NOT peerIp (real socket, the trust anchor)", async () => {
+  it("a spoofed X-Forwarded-For sets neither conn.ip nor peerIp without a trusted proxy", async () => {
     // Bun's WebSocket honors a `headers` option. Forge an X-Forwarded-For that
-    // would previously have poisoned the loopback trust check. conn.ip follows
-    // the header; conn.peerIp follows the real TCP socket (localhost here).
+    // would previously have poisoned the loopback trust check and picked a fresh
+    // per-IP connection bucket. Without MARINA_TRUST_PROXY both conn.ip (the
+    // per-IP cap key, via clientIp) and conn.peerIp follow the real TCP socket.
     const ws = new WebSocket(`ws://localhost:${WS_PORT}/ws`, {
       headers: { "X-Forwarded-For": "203.0.113.99" },
     } as unknown as string[]);
@@ -294,8 +301,9 @@ describe("WebSocket Server", () => {
         .filter((c) => c.protocol === "websocket" && c.entity)
         .at(-1)!;
       expect(conn).toBeDefined();
-      // conn.ip is the SPOOFED, header-derived value — never a trust anchor.
-      expect(conn.ip).toBe("203.0.113.99");
+      // conn.ip ignores the forged header (no trusted proxy declared).
+      expect(conn.ip).not.toBe("203.0.113.99");
+      expect(conn.ip).toBe(conn.peerIp);
       // peerIp is the REAL socket peer (loopback in this test), independent of the header.
       expect(conn.peerIp).toBeDefined();
       expect(conn.peerIp).not.toBe("203.0.113.99");

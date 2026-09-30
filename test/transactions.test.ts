@@ -111,4 +111,50 @@ describe("multi-statement writes are atomic", () => {
     ).toBe(42);
     expect(db.getNotesByEntity("Alice")).toHaveLength(1);
   });
+
+  const entity = (id: string, name: string) =>
+    ({
+      id,
+      kind: "agent",
+      name,
+      short: name,
+      long: name,
+      room: "test/start",
+      properties: {},
+      inventory: [],
+      createdAt: Date.now(),
+    }) as unknown as Parameters<MarinaDB["saveEntity"]>[0];
+
+  it("saveEntity rolls back the upsert when the claim re-key fails", () => {
+    db.saveEntity(entity("e_old", "Alice"));
+    const tasks = new TaskManager(db);
+    const task = tasks.create({ title: "t", creatorId: "e_old", creatorName: "Alice" });
+    expect(tasks.claim(task.id, "e_old", "Alice")).not.toBeNull();
+    raw.exec(
+      "CREATE TRIGGER inject_failure BEFORE UPDATE ON task_claims BEGIN SELECT RAISE(ABORT, 'injected'); END",
+    );
+    expect(() => db.saveEntity(entity("e_new", "Alice"))).toThrow("injected");
+    expect(db.loadEntity("e_new" as never)).toBeUndefined();
+  });
+
+  it("saveAgentConfig rolls back the config row when the principal write fails", () => {
+    raw.exec(
+      "CREATE TRIGGER inject_failure BEFORE INSERT ON principals BEGIN SELECT RAISE(ABORT, 'injected'); END",
+    );
+    expect(() => db.saveAgentConfig({ name: "Scout", model: "m", spawnedBy: "Operator" })).toThrow(
+      "injected",
+    );
+    expect(db.getAgentConfig("Scout")).toBeUndefined();
+  });
+
+  it("getOrCreateWorldId mints once per database, also inside an outer transaction", () => {
+    const first = db.transaction(() => db.getOrCreateWorldId());
+    expect(db.getOrCreateWorldId()).toBe(first);
+    const other = new MarinaDB(path);
+    try {
+      expect(other.getOrCreateWorldId()).toBe(first);
+    } finally {
+      other.close();
+    }
+  });
 });

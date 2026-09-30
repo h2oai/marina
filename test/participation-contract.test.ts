@@ -111,8 +111,11 @@ describe("shared participation contracts", () => {
     );
     expect(matchCommandForm(forms, `note verify ${id} disputed `)?.syntax).toContain(" disputed ");
     expect(verified.fields.find((field) => field.label === "your-note-id")?.multiline).toBe(false);
+    // The author can't self-verify (self-attestation is refused), so the
+    // composed form exercised end-to-end is the author's own `disputed` verdict.
+    const disputed = forms.find((form) => form.syntax.includes(" disputed "))!;
     const values = Object.fromEntries(
-      verified.fields.map((field) => [
+      disputed.fields.map((field) => [
         field.id,
         field.label === "your-note-id"
           ? String(id)
@@ -122,13 +125,13 @@ describe("shared participation contracts", () => {
       ]),
     );
     const input = composeCommand(
-      verified,
+      disputed,
       values,
-      Object.fromEntries(verified.groups.map((group) => [group.id, true])),
+      Object.fromEntries(disputed.groups.map((group) => [group.id, true])),
     );
     expect(input.errors).toEqual({});
     await engine.processCommand(alice.entity!, input.command);
-    expect(db.getNote(id)?.verification_status).toBe("verified");
+    expect(db.getNote(id)?.verification_status).toBe("disputed");
     expect(db.getNote(id)?.confidence).toBe(0.9);
   });
   it("keeps the live prompt bounded while retaining autonomy and provenance", () => {

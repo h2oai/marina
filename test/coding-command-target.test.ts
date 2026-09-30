@@ -73,6 +73,45 @@ describe("request-local coding destinations", () => {
     );
   });
 
+  it("preserves a queued ingress destination when its caller changes the options", async () => {
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    f.engine.commands.registerBuiltin({
+      name: "wait-for-target-test",
+      help: "hold the admission slot",
+      handler: async () => {
+        entered.resolve();
+        await release.promise;
+      },
+    });
+    const first = f.engine.dispatchCommand(f.owner.entityId, "wait-for-target-test", {
+      bypassModal: true,
+    });
+    let queued: Promise<boolean> | undefined;
+    try {
+      await entered.promise;
+      const target = { sessionId: "b", runId: f.runB.id };
+      queued = f.engine.dispatchCommand(f.owner.entityId, "code observe queued destination", {
+        codingTarget: target,
+      });
+      target.sessionId = "a";
+      target.runId = f.runA.id;
+      release.resolve();
+      expect(await first).toBe(true);
+      expect(await queued).toBe(true);
+      expect(
+        f.db.listCodingArtifacts("b").find((row) => row.kind === "observation")?.content_text,
+      ).toBe("queued destination");
+      expect(
+        f.db.listCodingArtifacts("a").filter((row) => row.kind === "observation"),
+      ).toHaveLength(0);
+    } finally {
+      release.resolve();
+      await first;
+      await queued;
+    }
+  });
+
   it("supports a solo session with no selected session or task attempt", async () => {
     f.db.createCodingSession({
       id: "solo",

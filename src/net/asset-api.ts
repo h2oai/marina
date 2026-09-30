@@ -4,6 +4,7 @@
 import type { Engine } from "../engine/engine";
 import type { MarinaDB } from "../persistence/database";
 import type { StorageProvider } from "../storage/provider";
+import type { EntityId } from "../types";
 import { authenticateRequest, refuseOpenApiWrite } from "./auth-middleware";
 import { corsHeaders } from "./cors";
 import {
@@ -13,6 +14,7 @@ import {
   rateLimitedResponse,
   securityHeaders,
 } from "./http-utils";
+import { authorizeOwnerOrPrivileged } from "./owner-authorization";
 
 function json(data: unknown, status = 200): Response {
   return Response.json(data, { status, headers: corsHeaders(null) });
@@ -215,6 +217,7 @@ export async function handleAssetApi(
   // valid session token: the dev-open sentinel is read-only, and each principal
   // is rate-limited so an authenticated client cannot flood storage.
   let writerName: string | undefined;
+  let writerId: EntityId | undefined;
   if (method !== "GET") {
     const auth = authenticateRequest(req, engine);
     if ("error" in auth) return auth.error;
@@ -223,6 +226,7 @@ export async function handleAssetApi(
     if (refused) return refused;
     if (!consumeHttpRate("mutation", auth.entityId)) return rateLimitedResponse(origin);
     writerName = engine.entities.get(auth.entityId)?.name;
+    writerId = auth.entityId;
   }
   // DELETE /api/assets/:id
   const idMatch = url.pathname.match(/^\/api\/assets\/(.+)$/);
@@ -230,6 +234,11 @@ export async function handleAssetApi(
     const id = decodeURIComponent(idMatch[1]!);
     const asset = db.getAsset(id);
     if (!asset) return json({ error: "Asset not found" }, 404);
+    // The uploader (or an operator/admin) deletes an asset.
+    if (writerId) {
+      const denied = authorizeOwnerOrPrivileged(engine, db, writerId, [asset.entity_name]);
+      if (denied) return denied;
+    }
     await storage.delete(asset.storage_key);
     db.deleteAsset(id);
     return json({ ok: true, id });

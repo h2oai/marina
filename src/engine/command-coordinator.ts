@@ -1,5 +1,6 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { EntityId } from "../types";
 import { MAX_COMMAND_QUEUE_SIZE, MAX_COMMANDS_PER_TICK } from "./constants";
 
@@ -9,8 +10,17 @@ interface QueuedCommand {
   execute?: () => Promise<void>;
 }
 
+/** One running FIFO slot; `open` flips false once its command settled. */
+interface Slot {
+  entity: EntityId;
+  open: boolean;
+  parent?: Slot;
+}
+
 /** Bounded fair admission, per-entity FIFO execution and complete shutdown drain. */
 export class CommandCoordinator {
+  /** Which entities' FIFO slots the current async context is running inside. */
+  private readonly slots = new AsyncLocalStorage<Slot>();
   private queue: QueuedCommand[] = [];
   private chains = new Map<EntityId, Promise<void>>();
   private active = new Set<Promise<unknown>>();
@@ -67,9 +77,31 @@ export class CommandCoordinator {
     return promise;
   }
 
+  /**
+   * True while the caller runs inside an open FIFO slot of `entity` — its own
+   * command, or a command it is awaiting. Work admitted from there must run
+   * inline: queuing it behind the slot that is waiting for it would deadlock.
+   */
+  isInSlot(entity: EntityId): boolean {
+    for (let slot = this.slots.getStore(); slot; slot = slot.parent) {
+      if (slot.open && slot.entity === entity) return true;
+    }
+    return false;
+  }
+
   private dispatch({ entity, raw, execute }: QueuedCommand): void {
     const previous = this.chains.get(entity);
-    const invoke = execute ?? (() => this.execute(entity, raw));
+    const body = execute ?? (() => this.execute(entity, raw));
+    const invoke = () => {
+      const slot: Slot = { entity, open: true, parent: this.slots.getStore() };
+      return this.slots.run(slot, async () => {
+        try {
+          await body();
+        } finally {
+          slot.open = false;
+        }
+      });
+    };
     const run = (previous ? previous.then(invoke) : invoke()).catch(this.onError).finally(() => {
       this.admitted--;
     });

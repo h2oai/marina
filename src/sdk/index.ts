@@ -5,7 +5,14 @@
 
 export type { CapabilityManifest, CommandCatalogEntry } from "./capabilities";
 export { renderCapabilityRoster } from "./capabilities";
-export type { ClientOptions, CommandOptions, CommandResult, RoomView, SessionInfo } from "./client";
+export type {
+  ClientOptions,
+  CommandOptions,
+  CommandResult,
+  ConnectionState,
+  RoomView,
+  SessionInfo,
+} from "./client";
 export { CommandError, MarinaAgent, MarinaClient } from "./client";
 export type { CommandField, CommandForm, CommandUsage } from "./command-forms";
 export {

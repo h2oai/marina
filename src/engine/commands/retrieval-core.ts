@@ -46,7 +46,8 @@ const PER_POOL_LIMIT = 2;
 
 export function gatherRetrievalContext(
   db: MarinaDB,
-  entity: { id: EntityId; name: string },
+  /** `rank` scopes world-search boards; omitted = 0 (public boards only). */
+  entity: { id: EntityId; name: string; rank?: number },
   query: string,
   limits: RetrievalLimits = {},
 ): RetrievalContext {
@@ -107,7 +108,7 @@ export function gatherRetrievalContext(
   const world =
     want.world > 0
       ? db
-          .globalSearch(query)
+          .globalSearch(query, { entityId: entity.id, rank: entity.rank ?? 0 })
           .filter((h) => h.type !== "chronicle")
           .slice(0, want.world)
       : [];

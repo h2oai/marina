@@ -13,7 +13,6 @@ export interface EntitiesStore {
   loadAllEntities(): Entity[];
   findEntityIdByName(name: string): string | undefined;
   deleteEntity(id: EntityId): void;
-  loadEntitiesInRoom(room: RoomId): Entity[];
   getRoomStoreValue(roomId: RoomId, key: string): unknown | undefined;
   setRoomStoreValue(roomId: RoomId, key: string, value: unknown): void;
   deleteRoomStoreValue(roomId: RoomId, key: string): void;
@@ -63,14 +62,12 @@ export interface EntitiesStore {
     entityId: string,
     limit?: number,
   ): { type: string; input?: string; timestamp: number }[];
-  getEntityCommandCount(entityId: string): number;
   getLastActivity(
     entityId: string,
   ): { type: string; timestamp: number; input?: string } | undefined;
   getActiveEntities(
     sinceMs: number,
   ): { entityId: string; commandCount: number; lastActivity: number }[];
-  migrateEntityId(oldId: string, newId: string): void;
   migrateTaskClaimsByName(entityName: string, newId: string): void;
   /** Get active task claims for an entity by name. */
   getActiveClaimsByName(entityName: string): {
@@ -95,7 +92,6 @@ export const ENTITIES_STORE_METHODS = [
   "loadAllEntities",
   "findEntityIdByName",
   "deleteEntity",
-  "loadEntitiesInRoom",
   "getRoomStoreValue",
   "setRoomStoreValue",
   "deleteRoomStoreValue",
@@ -122,10 +118,8 @@ export const ENTITIES_STORE_METHODS = [
   "getRoomVisitCount",
   "getActivityByType",
   "getEventsByEntity",
-  "getEntityCommandCount",
   "getLastActivity",
   "getActiveEntities",
-  "migrateEntityId",
   "migrateTaskClaimsByName",
   "getActiveClaimsByName",
   "getRecentActivity",

@@ -13,12 +13,7 @@ import { Logger } from "../engine/logger";
 import type { FlywheelToolBackend } from "../integrations/flywheel-manager";
 import { contextCacheStats } from "../memory/context-cache";
 import type { Connection, Perception } from "../types";
-import {
-  buildConnectManifest,
-  handleSkillRequest,
-  negotiateConnectCapabilities,
-  registerConnectEndpoint,
-} from "./connect-api";
+import { handleConnectRoutes, healthResponse, registerConnectEndpoint } from "./connect-api";
 import { isTrustedBrowserOrigin } from "./cors";
 import { consumeHttpRate, rateLimitedResponse, securityHeaders } from "./http-utils";
 import { recordListenPort } from "./listen-ports";
@@ -214,7 +209,7 @@ export class McpServerAdapter {
       error(error: unknown) {
         logger.error("mcp", "Unhandled request error", { error });
         return Response.json(
-          { error: "Internal server error" },
+          { error: "Internal server error", code: "internal_error" },
           { status: 500, headers: securityHeaders("api") },
         );
       },
@@ -224,36 +219,25 @@ export class McpServerAdapter {
         try {
           if (self.draining)
             return Response.json(
-              { error: "Instance is draining" },
+              { error: "Instance is draining", code: "draining" },
               { status: 503, headers: { "Retry-After": "5" } },
             );
           const url = new URL(req.url);
 
           if (url.pathname === "/health") {
-            return Response.json({
-              status: "ok",
+            return healthResponse(engine, {
               protocol: "mcp",
               admission: mcpAdmission(engine).snapshot(),
               commands: engine.commandAdmission,
               contextCache: engine.db ? contextCacheStats(engine.db) : undefined,
               sessions: sessions.size,
-              rooms: engine.rooms.size,
-              entities: engine.entities.size,
             });
           }
 
-          // Connect manifest
-          if (url.pathname === "/api/connect") {
-            return buildConnectManifest(req, engine);
-          }
-          if (url.pathname === "/api/connect/negotiate") {
-            return negotiateConnectCapabilities(req);
-          }
-
-          // Skill document
-          if (url.pathname === "/api/skill") {
-            return handleSkillRequest();
-          }
+          // Connect manifest, capability negotiation, skill document — the
+          // same handlers the WebSocket listener serves.
+          const connectResp = await handleConnectRoutes(req, url, engine);
+          if (connectResp) return connectResp;
 
           if (url.pathname === "/mcp") {
             // Browser-origin gate: a page on another site must not drive a

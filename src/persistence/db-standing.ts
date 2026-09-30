@@ -70,6 +70,18 @@ export function appendStandingEvent(
 }
 
 /**
+ * Raw lifetime sum of standing for an entity, undecayed. Kept for the
+ * leaderboard/orient callers that want the cumulative ledger view; the
+ * decayed civic-standing value is `computeStanding`.
+ */
+export function lifetimeStanding(db: Database, entityId: string): number {
+  const row = db
+    .query("SELECT COALESCE(SUM(amount), 0) AS total FROM entity_standing WHERE entity_id = ?")
+    .get(entityId) as { total: number };
+  return row.total;
+}
+
+/**
  * Compute decayed standing for an entity from the ledger. Pure SQL — no
  * in-process iteration. Decay is exponential with a configurable half-life;
  * the caller passes in `halfLifeMs` so the policy stays out of this module.

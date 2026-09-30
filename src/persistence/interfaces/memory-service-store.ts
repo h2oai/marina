@@ -15,6 +15,7 @@ export interface MemoryServiceStore {
   memoryRepository(): memoryServiceDb.MemoryRepository;
   admitMemoryImport(): ReturnType<typeof admitMemoryImport>;
   isServiceMemoryNote(id: number): boolean;
+  serviceMemoryNoteIds(ids: readonly number[]): Set<number>;
   issueMemoryCredential(
     ...args: Parameters<typeof principalsDb.issueMemoryCredential> extends [unknown, ...infer R]
       ? R
@@ -29,6 +30,7 @@ export const MEMORY_SERVICE_STORE_METHODS = [
   "memoryRepository",
   "admitMemoryImport",
   "isServiceMemoryNote",
+  "serviceMemoryNoteIds",
   "issueMemoryCredential",
   "verifyMemoryCredential",
 ] as const satisfies readonly (keyof MemoryServiceStore)[];

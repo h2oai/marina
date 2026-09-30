@@ -658,7 +658,7 @@ function makeExecAudit(
     const artifact = deps.db.createCodingArtifact({
       sessionId: session.id,
       kind: "exec_decision",
-      title: `${decision.approved ? "Approved" : "Denied"} exec: ${rendered}`,
+      title: `${decision.approved ? "Approved" : decision.outcome === "timeout" ? "Timed out" : "Denied"} exec: ${rendered}`,
       status: decision.approved ? "complete" : "denied",
       contentText: rendered,
       metadata: {
@@ -668,6 +668,7 @@ function makeExecAudit(
         approved: decision.approved,
         scope: decision.scope,
         reason: decision.reason,
+        outcome: decision.outcome ?? (decision.approved ? "approved" : "denied"),
         mode: meta.mode,
         interactive: meta.interactive,
         humanApproved: meta.humanApproved,
@@ -685,6 +686,7 @@ function makeExecAudit(
         mode: meta.mode,
         interactive: meta.interactive,
         reason: decision.reason ?? null,
+        outcome: decision.outcome ?? (decision.approved ? "approved" : "denied"),
       },
     });
     // A supervised (human-approved) interactive arbitrary exec is a witnessed

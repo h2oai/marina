@@ -88,11 +88,19 @@ the same truthful round context as the crew, started from the nowcast:
 | `blackboard` | a shared scratchpad; two passes in which each model adds or corrects evidence and a number |
 | `symbiosis` | a quant (the numbers) and an analyst (the context) exchange contributions; a revision must credit the partner's; a gap > 0.5 start-sd triggers another exchange (at most two) |
 | `research` | hypothesis → the model picks a check (recent mean, trend, last-k deltas, typical move, daily readings after the last value) → Marina COMPUTES it → keep or revert → revise (two checks) |
+| `delphi` | independence before influence: round 1 independent → Marina computes an anonymized panel summary (median and range of the means and sds, short reason snippets, no names) → each model revises once having seen only that summary → median of the revisions |
+| `tournament` | proposals {mean, sd, rationale} meet in pairwise knockout matches judged by the last model (with three or more models the judge does not propose); an odd candidate out gets a bye; a match without a usable judgment advances the candidate nearer the start; the champion is settled at the default trust × the field's agreement; the bracket is recorded |
+| `verification` | each proposal is checked on separate aspects — mean within the series' typical one-step moves of the start (90th percentile of the last 30 changes, at least a quarter start-sd), sd within 0.5× to 3× of the history's RMS change / the start sd, every cited `{date, value}` present in the data shown — and, when the research judge is available (`MARINA_ARENA_RESEARCH_JUDGE`, as for `research:`), whether the rationale follows from the series data (an outage never passes); a proposal counts only if it passes every aspect; median of the passers, the start forecast when none pass; every verdict is recorded |
 
 Aggregation is deterministic with the crew's clamps: proposals beyond 4 start-sds are dropped, the
 median move is scaled by a trust (0.5 × the proposals' agreement, or the judge's/skeptic's), the
 final move is capped at 2 start-sds, and the sd blends by the same trust with a floor of half the
-start sd. Each round's calls, statuses, trust and cost are kept in the evaluate/shadow record.
+start sd. Each round's calls, statuses, trust and cost are kept in the evaluate/shadow record,
+with the pattern's own audit under `protocol` (delphi's summary, the tournament bracket,
+verification's aspect verdicts and judge record).
+
+Auction, ledger and sharding are orchestration patterns for allocating or partitioning work, not
+for combining views of one number, so they have no formation.
 
 **Compositions.** `+then:<pattern>:<models>` adds a second formation that judges the first one's
 handoff (e.g. `formation:mapreduce:…+then:debate:…`); both shrink toward the same start, so a

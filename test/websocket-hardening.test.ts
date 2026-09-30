@@ -331,7 +331,10 @@ describe("HTTP surface hardening (headers, body cap, public-read throttle)", () 
       body: "{ nope",
     });
     expect(resp.status).toBe(400);
-    expect(((await resp.json()) as { error: string }).error).toBe("Invalid JSON");
+    expect((await resp.json()) as { error: string; code: string }).toEqual({
+      error: "Invalid JSON body",
+      code: "invalid_json",
+    });
   });
 
   it("rate-limits the public /api/entity/* reads per client IP (30 / 10 s)", async () => {

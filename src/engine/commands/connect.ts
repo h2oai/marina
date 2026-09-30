@@ -7,8 +7,9 @@ import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 import type { ConnectorRuntime } from "../connector-runtime";
 import { getErrorMessage } from "../errors";
-import { getRank } from "../permissions";
+import { rankFloorRefusal } from "../rank-floor";
 import { requiresPersistence } from "./command-messages";
+import { shellExecRefusal } from "./run";
 
 export function connectCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
@@ -32,12 +33,10 @@ export function connectCommand(deps: {
     aliases: ["conn"],
     minRank: 5,
     gate: "connect.manage",
-    help: "Manage external MCP connectors. Gated capability: earn it via `witness request connect.manage` or an operator grant (see `standing`). Usage: connect add <name> <url> | connect add <name> stdio <cmd> [args] (rank 9; spawns a local process) | connect remove <name> | connect list | connect tools <name> | connect call <name> <tool> [json] | connect auth <name> bearer <token> | connect auth <name> header <key> <value>",
+    help: "Manage external MCP connectors. Gated capability: earn it via `witness request connect.manage` or an operator grant (see `standing`). Usage: connect add <name> <url> | connect add <name> stdio <cmd> [args] (shell.exec gate; spawns a local process) | connect remove <name> | connect list | connect tools <name> | connect call <name> <tool> [json] | connect auth <name> bearer <token> | connect auth <name> header <key> <value>",
     handler: async (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
-
-      const rank = getRank(entity);
 
       if (!deps.db) {
         ctx.send(input.entity, requiresPersistence("connectors"));
@@ -83,17 +82,20 @@ export function connectCommand(deps: {
           const maybeStdio = tokens[2]?.toLowerCase();
 
           if (maybeStdio === "stdio") {
-            // Stdio transport — sovereign only
-            if (rank < 9) {
-              ctx.send(
-                input.entity,
-                "Stdio connectors require sovereign rank (9). They spawn processes.",
-              );
-              return;
-            }
+            // Stdio transport spawns a local process: it takes the `shell.exec`
+            // gate on top of the command's own `connect.manage` gate.
             const cmd = tokens[3];
             if (!cmd) {
               ctx.send(input.entity, "Usage: connect add <name> stdio <command> [args...]");
+              return;
+            }
+            const refusal = shellExecRefusal(
+              db,
+              entity,
+              `connect add ${name} stdio ${tokens.slice(3).join(" ")}`,
+            );
+            if (refusal) {
+              ctx.send(input.entity, refusal);
               return;
             }
             const args = tokens.slice(4);
@@ -204,8 +206,16 @@ export function connectCommand(deps: {
           }
 
           // Only owner or sovereign can remove
-          if (conn.created_by !== entity.name && rank < 9) {
-            ctx.send(input.entity, "You can only remove connectors you created, or be sovereign.");
+          const removeFloor =
+            conn.created_by === entity.name
+              ? undefined
+              : rankFloorRefusal(
+                  entity,
+                  9,
+                  "You can only remove connectors you created, or be sovereign.",
+                );
+          if (removeFloor) {
+            ctx.send(input.entity, removeFloor);
             return;
           }
 
@@ -338,11 +348,16 @@ export function connectCommand(deps: {
             return;
           }
 
-          if (conn.created_by !== entity.name && rank < 9) {
-            ctx.send(
-              input.entity,
-              "You can only set auth on connectors you created, or be sovereign.",
-            );
+          const authFloor =
+            conn.created_by === entity.name
+              ? undefined
+              : rankFloorRefusal(
+                  entity,
+                  9,
+                  "You can only set auth on connectors you created, or be sovereign.",
+                );
+          if (authFloor) {
+            ctx.send(input.entity, authFloor);
             return;
           }
 

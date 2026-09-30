@@ -362,7 +362,8 @@ describe("Ollama discovery surface", () => {
         "general.name": "marina",
         "marina.version": MARINA_VERSION,
       },
-      capabilities: ["completion", "tools"],
+      // Only what the Ollama routes honor: tools/format/images/think are refused.
+      capabilities: ["completion"],
     });
     const missing = await call("/api/show", "POST", { name: "llama3" });
     expect(missing!.status).toBe(404);
