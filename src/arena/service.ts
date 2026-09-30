@@ -440,6 +440,14 @@ async function formationForecasterFor(
       defaultPageText(),
     );
   }
+  // Verification's model-judged aspect uses the research judge (same env, same default).
+  const judge = stages.some((st) => st.pattern === "verification")
+    ? (await import("../decisions/config")).researchJudge(
+        env.MARINA_ARENA_RESEARCH_JUDGE?.trim() || (env.OPENROUTER_API_KEY ? "jev" : "none"),
+        env,
+        env.OPENROUTER_API_KEY,
+      )
+    : undefined;
   const usage: Usage = { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
   const start = nowcastForecaster(arenaData(env), forecastRound, {
     ...(await liveCiviqs(env)),
@@ -461,6 +469,8 @@ async function formationForecasterFor(
               lock,
               members[0]!,
               given,
+              undefined,
+              judge,
             )
           : await formations.composeForecastRound(
               round,
@@ -471,8 +481,16 @@ async function formationForecasterFor(
               ] as [import("./formations").FormationStage, import("./formations").FormationStage?],
               given,
               research,
+              judge,
             );
       let cost = (f as { dossier?: { costUsd?: number } }).dossier?.costUsd ?? 0;
+      // The judge's calls and dollars, from each formation's audit record.
+      const composed = f as import("./formations").ComposedForecast;
+      for (const p of [composed.protocol, composed.upstream?.protocol]) {
+        const j = (p as { judge?: { calls?: number; costUsd?: number } } | undefined)?.judge;
+        usage.calls += j?.calls ?? 0;
+        cost += j?.costUsd ?? 0;
+      }
       for (const m of made.flat()) {
         usage.calls += m.usage.calls;
         usage.inputTokens += m.usage.inputTokens;
