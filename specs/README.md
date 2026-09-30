@@ -1,6 +1,6 @@
 # MCP session model
 
-`bun run check:model` runs the pinned [TLC 1.8.0 model checker](https://github.com/tlaplus/tlaplus/releases/tag/v1.8.0)
+`bun run check:model` runs the pinned [TLC 1.7.4 model checker](https://github.com/tlaplus/tlaplus/releases/tag/v1.7.4) (the latest stable release)
 with Java 21. The script verifies the official JAR's SHA-256 before execution. An offline
 copy can be supplied with `--jar /path/tla2tools.jar`; `--java /path/java` selects a runtime.
 Logs, counterexamples and the JSON result go to `/tmp/marina-session-model` (`--output` overrides it).
