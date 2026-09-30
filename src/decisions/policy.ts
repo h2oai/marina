@@ -77,6 +77,28 @@ export interface GatePolicy {
   blockAt: number;
   /** At or above (and below blockAt): needs a person. */
   askAt: number;
+  /**
+   * On a routine (`mutate`) call, the `unauthorized` context question on its
+   * own holds only at or above this (never below `askAt`), and never blocks.
+   * Default `CONTEXT_ONLY_ASK_AT`.
+   */
+  contextAskAt?: number;
+}
+
+/**
+ * The context question is a prompt-injection signal, not a risk measure: on
+ * its own it holds a routine mutation only when the judge is nearly certain
+ * the call did not come from the agent's purpose. On a consequential call it
+ * counts like every other question.
+ */
+export const CONTEXT_ONLY_ASK_AT = 0.9;
+
+export interface GateDecideOptions {
+  /**
+   * The call's risk class from the reference monitor (`classifyToolRisk`).
+   * Default `consequential`: every asked question counts alike.
+   */
+  risk?: "mutate" | "consequential";
 }
 
 export const DEFAULT_GATE_POLICY: GatePolicy = { blockAt: 0.88, askAt: 0.65 };
@@ -121,6 +143,7 @@ export function decideGate(
   answers: Record<string, DecisionAnswer> | undefined,
   policy: GatePolicy = DEFAULT_GATE_POLICY,
   questions: DecisionQuestions = GATE_QUESTIONS,
+  opts: GateDecideOptions = {},
 ): GateVerdict {
   const signals: Record<string, number> = {};
   const missing: string[] = [];
@@ -145,8 +168,35 @@ export function decideGate(
       signals,
     };
   }
-  const worst = Math.max(...values);
-  const top = Object.entries(signals).find(([, v]) => v === worst)?.[0] ?? "risk";
+  const context = signals.unauthorized;
+  if (opts.risk !== "mutate" || context === undefined) return bandVerdict(signals, signals, policy);
+  // Routine call: the risk questions decide as they always have; the context
+  // question can only ADD a hold, and only at the stricter context bar.
+  const risks = Object.fromEntries(Object.entries(signals).filter(([id]) => id !== "unauthorized"));
+  const base = bandVerdict(risks, signals, policy);
+  if (base.action !== "allow") return base;
+  const bar = Math.max(policy.askAt, policy.contextAskAt ?? CONTEXT_ONLY_ASK_AT);
+  if (context >= bar) {
+    return {
+      action: "ask",
+      reason: `Held for approval by the decision gate (unauthorized ${context.toFixed(2)}).`,
+      worst: context,
+      signals,
+    };
+  }
+  return base;
+}
+
+/** The three-band verdict on `scored` (reported with every signal in `signals`). */
+function bandVerdict(
+  scored: Record<string, number>,
+  signals: Record<string, number>,
+  policy: GatePolicy,
+): GateVerdict {
+  const entries = Object.entries(scored);
+  if (entries.length === 0) return { action: "allow", reason: "Allowed.", worst: 0, signals };
+  const worst = Math.max(...entries.map(([, v]) => v));
+  const top = entries.find(([, v]) => v === worst)?.[0] ?? "risk";
   const detail = `${top} ${worst.toFixed(2)}`;
   if (worst >= policy.blockAt) {
     return { action: "block", reason: `Blocked by the decision gate (${detail}).`, worst, signals };

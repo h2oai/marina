@@ -133,7 +133,7 @@ import {
 import { COMPACTION_SYSTEM_PROMPT, formatUntrustedContext } from "./prompts/support-prompts";
 import { defaultModelPrice, isUnpricedModel, sniffProviderCost } from "./provider-cost";
 import { SocialAwareness } from "./social";
-import { mediateToolCall, POLICY_LANGUAGE_LABEL } from "./tool-policy";
+import { isAdditiveDeposit, mediateToolCall, POLICY_LANGUAGE_LABEL } from "./tool-policy";
 import {
   agentToolExecutionMode,
   applyToolExecutionModes,
@@ -1621,6 +1621,7 @@ export class LeanAgentAdapter implements AgentHandle {
           const held = await this.decisionGate(
             context.toolCall.name,
             args,
+            policy.risk,
             tool?.description,
             tool ? () => runHeldTool(tool, context.toolCall.id, args) : undefined,
           );
@@ -1691,22 +1692,29 @@ export class LeanAgentAdapter implements AgentHandle {
   private async decisionGate(
     toolName: string,
     args: Record<string, unknown>,
+    risk: "mutate" | "consequential",
     description?: string,
     rerun?: () => Promise<string>,
   ): Promise<string | undefined> {
     if (!harnessGateEnabled()) return undefined;
     const provider = harnessDecisionProvider();
     if (!provider) return undefined;
-    const intent: GateIntent | undefined = decisionGateContextEnabled()
-      ? {
-          ...(this.config.goal ? { goal: this.config.goal } : {}),
-          ...(this.config.role ? { role: this.config.role } : {}),
-          ...(this.focus?.description ? { focus: this.focus.description } : {}),
-          ...(this.activeCodingTask ? { task: this.activeCodingTask } : {}),
-          sources: [...this.currentTrustSources],
-        }
-      : undefined;
-    const decision = await gateToolCall(provider, toolName, args, undefined, description, intent);
+    // An additive deposit into a pool or crew artifact slot is how a member
+    // delivers its task: scored on the risk questions, never held on the
+    // context question alone (see `isAdditiveDeposit`).
+    const intent: GateIntent | undefined =
+      decisionGateContextEnabled() && !isAdditiveDeposit(toolName, args)
+        ? {
+            ...(this.config.goal ? { goal: this.config.goal } : {}),
+            ...(this.config.role ? { role: this.config.role } : {}),
+            ...(this.focus?.description ? { focus: this.focus.description } : {}),
+            ...(this.activeCodingTask ? { task: this.activeCodingTask } : {}),
+            sources: [...this.currentTrustSources],
+          }
+        : undefined;
+    const decision = await gateToolCall(provider, toolName, args, undefined, description, intent, {
+      risk,
+    });
     this.emitEvent({
       type: "decision",
       stage: "gate",
