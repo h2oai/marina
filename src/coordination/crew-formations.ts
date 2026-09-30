@@ -29,7 +29,9 @@
  * on their brief alone, like swarm, chorus, symbiosis and research — their
  * mechanics use existing primitives (`tell`, `channel send`, `crew artifact`)
  * and need no special runtime roles. Each of their briefs opens with one
- * concrete starting move ("Start — …").
+ * concrete starting move ("Start — …"), and every `[crew-task]` dispatch
+ * restates that move for the task at hand with the lead named
+ * (`dispatchStartMove`). The pool-note templates stay advisory reference.
  */
 
 import type { CrewFormation } from "../types";
@@ -114,8 +116,8 @@ export const CREW_BRIEFS: Record<CrewFormation, string> = {
     "Start — one drafter deposits the candidate (`crew artifact <name> draft -- <candidate>`). " +
     "Each other member checks ONE named aspect (correctness, requirements, evidence, safety) and " +
     "replies `channel send <crew-channel> aspect: <aspect> pass|fail — <reason>`. Run checks " +
-    "rather than argue them. A failed aspect goes back to the drafter once; deliver when every " +
-    "aspect passes.",
+    "rather than argue them. A failed aspect goes back to the drafter once; the lead delivers " +
+    "when every aspect passes.",
   auction:
     "Start — lead: post the lots first (`channel send <crew-channel> lots: 1) … 2) …`), then " +
     "wait for bids. Each member bids per lot: fit (a past result) and expected effort. Lead " +
@@ -127,8 +129,9 @@ export const CREW_BRIEFS: Record<CrewFormation, string> = {
     "ledger (done, in flight, stuck) after each step. When a member reports being stuck twice on " +
     "the same step, the lead replans rather than retries. Lead delivers.",
   sharding:
-    "Start — lead: run the checker once and post one shard per failing case " +
-    "(`channel send <crew-channel> shard 1: <case>`). Each member replies 'claiming: <shard>', " +
+    "Start — lead: run the checker once. Shard when it reports several independent failing " +
+    "cases: post one shard per case (`channel send <crew-channel> shard 1: <case>`); for one or " +
+    "two, just fix them. Each member replies 'claiming: <shard>', " +
     "fixes it WITHOUT editing the checker or tests, re-runs, posts the result. Done = the full " +
     "check passes; lead delivers. If the checker cannot run, say so, verify by hand and deliver " +
     "with the limitation stated.",
@@ -177,15 +180,122 @@ export function dispatchDepositorLine(formation: CrewFormation, depositor: strin
 }
 
 /**
- * Build the single-message formation brief posted on activation / formation
- * change: header + protocol priority + the formation's runtime brief.
+ * The concrete names a brief or dispatch is rendered with. `CREW_BRIEFS`
+ * keep `<lead>`, `<name>` and `<crew-channel>` placeholders (they document
+ * the protocol); the text a crew reads names the real lead, crew and
+ * channel. Measured 2026-09: with only `tell <lead> …` in the brief, a delphi
+ * lead sent its own estimate to the requester and waited for the requester's
+ * summary.
  */
-export function buildFormationBrief(formation: CrewFormation, goal: string): string {
+export interface FormationNames {
+  /** The crew lead's agent name (see {@link crewLeadName}). */
+  lead?: string;
+  /** Crew name, as `crew artifact <name> …` takes it. */
+  crewName?: string;
+  /** Crew channel name, as `channel send <crew-channel> …` takes it. */
+  channel?: string;
+}
+
+/**
+ * The crew lead: the member whose role is `lead`, else the first member. One
+ * resolution for the brief, the per-task dispatch line and the depositor, so
+ * every text names the same facilitator.
+ */
+export function crewLeadName(
+  members: readonly { agentName: string; role?: string }[],
+): string | undefined {
+  return (members.find((m) => m.role === "lead") ?? members[0])?.agentName;
+}
+
+/** Substitute the known names for the brief placeholders. */
+export function fillFormationNames(text: string, names: FormationNames = {}): string {
+  let out = text;
+  if (names.lead) out = out.replaceAll("<lead>", names.lead);
+  if (names.crewName) out = out.replaceAll("<name>", names.crewName);
+  if (names.channel) out = out.replaceAll("<crew-channel>", names.channel);
+  return out;
+}
+
+/**
+ * Build the single-message formation brief posted on activation / formation
+ * change: header + protocol priority + the formation's runtime brief, with
+ * the real lead, crew and channel names substituted. When the brief routes
+ * work through a lead, a `Lead:` line names that member and states that the
+ * requester is not a participant: the lead facilitates.
+ */
+export function buildFormationBrief(
+  formation: CrewFormation,
+  goal: string,
+  names: FormationNames = {},
+): string {
   const canonical = normalizePatternName(formation) as CrewFormation;
   const header = `[formation:${canonical}] crew goal: ${goal || "(unspecified)"}`;
   const brief = CREW_BRIEFS[canonical];
   if (!brief) return `${header}\n${PROTOCOL_PRIORITY}`;
-  return `${header}\n${PROTOCOL_PRIORITY}\n${brief}`;
+  const leadLine =
+    names.lead && /\blead\b/i.test(brief)
+      ? `\nLead: ${names.lead}. The lead facilitates this protocol; whoever dispatched the ` +
+        `task (e.g. Operator) is not part of it — contributions go to ${names.lead} or this ` +
+        `channel, and ${names.lead} runs every lead step.`
+      : "";
+  return `${header}\n${PROTOCOL_PRIORITY}\n${fillFormationNames(brief, names)}${leadLine}`;
+}
+
+/**
+ * Per-task restatement of each lead-routed formation's starting move. The
+ * brief's "Start — …" posts once, at activation; measured 2026-09, the move
+ * then fired for the first task only (auction lots posted once as standing
+ * routing, one ledger plan, `aspect:` verdicts decaying after two tasks).
+ * Appending the move to every `[crew-task]` dispatch puts the formation's
+ * essential protocol command in the perception members act on, for THIS task.
+ */
+const START_MOVES: Partial<Record<CrewFormation, (n: Required<FormationNames>) => string>> = {
+  delphi: ({ lead }) =>
+    `Start this task — each member: \`tell ${lead} estimate: <value> | <reasons>\` before ` +
+    `reading anyone else's. ${lead} (lead, not the requester) then posts one anonymized ` +
+    `summary here.`,
+  tournament: ({ lead, crewName }) =>
+    `Start this task — each member: deposit your candidate draft for this task ` +
+    `(\`crew artifact ${crewName} draft -- <candidate>\`) before anyone names a winner. ` +
+    `${lead} (lead) then pairs the candidates.`,
+  verification: ({ lead, crewName, channel }) =>
+    `Start this task — one drafter deposits the candidate ` +
+    `(\`crew artifact ${crewName} draft -- <candidate>\`). Verifiers: reply ` +
+    `\`channel send ${channel} aspect: <aspect> pass|fail — <reason>\` for this task. ` +
+    `${lead} (lead) delivers once every aspect passes.`,
+  auction: ({ lead, channel }) =>
+    `Start this task — ${lead} (lead): post lots for this task first ` +
+    `(\`channel send ${channel} lots: 1) … 2) …\`). Members bid per lot; ${lead} awards each ` +
+    `lot by \`tell\`.`,
+  ledger: ({ lead, channel }) =>
+    `Start this task — ${lead} (lead): post this task's plan ledger first ` +
+    `(\`channel send ${channel} [plan] facts: … | steps: … | owners: …\`), then a progress ` +
+    `ledger after each step.`,
+  sharding: ({ lead, channel }) =>
+    `Start this task — ${lead} (lead): run the checker. Several independent failing cases: ` +
+    `post one shard per case (\`channel send ${channel} shard 1: <case>\`) for members to ` +
+    `claim. One or two: just fix them.`,
+};
+
+/** Formations whose per-task dispatch restates a starting move. */
+export const START_MOVE_FORMATIONS = Object.keys(START_MOVES) as CrewFormation[];
+
+/**
+ * The per-task starting move appended to a formation's `[crew-task]`
+ * dispatch, or undefined when the formation has none. Missing names fall
+ * back to the brief placeholders.
+ */
+export function dispatchStartMove(
+  formation: CrewFormation,
+  names: FormationNames = {},
+): string | undefined {
+  const move = START_MOVES[normalizePatternName(formation) as CrewFormation];
+  if (!move) return undefined;
+  return move({
+    lead: names.lead ?? "the lead",
+    crewName: names.crewName ?? "<name>",
+    channel: names.channel ?? "<crew-channel>",
+  });
 }
 
 // ─── Formation mediators (Phase 4 — deterministic event-driven nudges) ──────

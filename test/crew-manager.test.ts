@@ -528,6 +528,88 @@ describe("CrewManager: deposit echo (dedup visibility)", () => {
     }
   });
 
+  it("briefs and dispatches name the resolved lead, crew and channel — no placeholders", () => {
+    for (const formation of [
+      "delphi",
+      "tournament",
+      "verification",
+      "auction",
+      "ledger",
+      "sharding",
+    ]) {
+      const crew = crews.create({
+        name: `named-${formation}`,
+        goal: "one deliverable",
+        owner: entityId(`e_owner_${formation}`),
+        formation: formation as never,
+        members: [{ agentName: "bob" }, { agentName: "Answerer", role: "lead" }],
+      });
+      crews.dispatch(crew.id, "TASK 1");
+      crews.dispatch(crew.id, "TASK 2");
+      const history = channels.getHistory(crew.channelId!, 20).map((m) => m.content);
+      const brief = history.find((c) => c.startsWith(`[formation:${formation}]`))!;
+      const dispatches = history.filter((c) => c.startsWith("[crew-task]"));
+      expect(dispatches).toHaveLength(2);
+      for (const text of [brief, ...dispatches]) {
+        expect(text).toContain("Answerer");
+        expect(text).not.toContain("<lead>");
+        expect(text).not.toContain("<crew-channel>");
+        expect(text).not.toMatch(/crew artifact <name>/);
+      }
+      expect(brief).toContain("Lead: Answerer.");
+      expect(brief).toContain("is not part of it");
+      // Every task, not only the first, restates the formation's start move.
+      for (const d of dispatches) {
+        expect(d).toContain("Start this task");
+        expect(d).toContain("Designated depositor: Answerer.");
+      }
+    }
+  });
+
+  it("each lead-routed dispatch carries its formation's essential start move", () => {
+    const expected: Record<string, (id: string, name: string) => string> = {
+      delphi: () => "`tell Answerer estimate: <value> | <reasons>`",
+      tournament: (_id, name) => `\`crew artifact ${name} draft -- <candidate>\``,
+      verification: (id) => `\`channel send ${id} aspect: <aspect> pass|fail — <reason>\``,
+      auction: (id) => `Answerer (lead): post lots for this task first (\`channel send ${id} lots:`,
+      ledger: (id) => `\`channel send ${id} [plan] facts:`,
+      sharding: (id) => `\`channel send ${id} shard 1: <case>\``,
+    };
+    for (const [formation, move] of Object.entries(expected)) {
+      const crew = crews.create({
+        name: `move-${formation}`,
+        goal: "g",
+        owner: entityId(`e_owner_${formation}`),
+        formation: formation as never,
+        members: [{ agentName: "Answerer", role: "lead" }, { agentName: "bob" }],
+      });
+      crews.dispatch(crew.id, "task");
+      const dispatch = channels
+        .getHistory(crew.channelId!, 20)
+        .map((m) => m.content)
+        .find((c) => c.startsWith("[crew-task]"))!;
+      expect(dispatch).toContain(move(crew.id, crew.name));
+    }
+  });
+
+  it("a lead-routed crew without a lead role names its first member everywhere", () => {
+    const crew = crews.create({
+      name: "no-lead-role",
+      goal: "g",
+      owner: OWNER,
+      formation: "delphi" as never,
+      members: [{ agentName: "alice" }, { agentName: "bob" }],
+    });
+    crews.dispatch(crew.id, "one");
+    crews.dispatch(crew.id, "two");
+    const history = channels.getHistory(crew.channelId!, 20).map((m) => m.content);
+    expect(history.find((c) => c.startsWith("[formation:delphi]"))!).toContain("Lead: alice.");
+    for (const d of history.filter((c) => c.startsWith("[crew-task]"))) {
+      expect(d).toContain("Designated depositor: alice.");
+      expect(d).toContain("`tell alice estimate:");
+    }
+  });
+
   it("broadcast formations keep the post-on-channel wording", () => {
     for (const formation of ["chorus", "blackboard", "ledger"]) {
       const crew = crews.create({

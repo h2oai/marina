@@ -31,7 +31,10 @@ import { normalizePatternName } from "../world/templates/orchestration";
 import type { ChannelManager } from "./channel-manager";
 import {
   buildFormationBrief,
+  crewLeadName,
   dispatchDepositorLine,
+  dispatchStartMove,
+  type FormationNames,
   getFormationMediator,
   type MediatorCrewView,
 } from "./crew-formations";
@@ -445,11 +448,14 @@ export class CrewManager {
     const depositor = this.pickDepositor(crew);
     // Wording per formation lives with the briefs (`dispatchDepositorLine`).
     const depositorLine = depositor ? `\n${dispatchDepositorLine(crew.formation, depositor)}` : "";
+    // The formation's starting move, restated for THIS task with the lead
+    // named — the activation brief alone fired it for the first task only.
+    const startMove = dispatchStartMove(crew.formation, this.formationNames(crew));
     this.channels.send(
       crew.channelId!,
       sender?.id ?? "__crew_manager__",
       sender?.name ?? "crew",
-      `[crew-task] ${message}${depositorLine}`,
+      `[crew-task] ${message}${depositorLine}${startMove ? `\n${startMove}` : ""}`,
     );
     this.postMediatorNudge(crew, (m, view) => m.onDispatch?.(view, message));
     this.armDepositFallback(crew, depositor);
@@ -538,6 +544,9 @@ export class CrewManager {
     const lead = crew.members.find((m) => m.role === "lead");
     if (lead) return lead.agentName;
     if (crew.members.length === 1) return crew.members[0]!.agentName;
+    // A lead-routed formation's dispatch names one facilitator; rotating the
+    // depositor away from it would split "lead" across two members.
+    if (dispatchStartMove(crew.formation)) return crewLeadName(crew.members);
     const count = this.dispatchCounts.get(crew.id) ?? 0;
     this.dispatchCounts.set(crew.id, count + 1);
     return crew.members[count % crew.members.length]!.agentName;
@@ -568,6 +577,18 @@ export class CrewManager {
           `write a competing version): ${snippet}`,
       );
     }
+  }
+
+  /** The real lead, crew and channel names a brief or dispatch is rendered with. */
+  private formationNames(crew: Crew): FormationNames {
+    return {
+      lead: crewLeadName(crew.members),
+      crewName: crew.name,
+      // `crew:<id>` channels are addressed by name (`channel send <id> …`).
+      channel: crew.channelId
+        ? (this.channels.getChannel(crew.channelId)?.name ?? crew.id)
+        : crew.id,
+    };
   }
 
   /** Minimal crew view handed to formation mediators. */
@@ -620,7 +641,7 @@ export class CrewManager {
   /** Post the formation brief to the crew channel (no-op if no channel). */
   private postFormationBrief(crew: Crew): void {
     if (!crew.channelId) return;
-    const brief = buildFormationBrief(crew.formation, crew.goal);
+    const brief = buildFormationBrief(crew.formation, crew.goal, this.formationNames(crew));
     this.channels.send(crew.channelId, "__crew_manager__", "crew", brief);
   }
 

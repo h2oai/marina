@@ -4,7 +4,9 @@ import { describe, expect, test } from "bun:test";
 import {
   buildJudgePacket,
   FORMATION_STEPS,
+  type StepResult,
   scoreWindow,
+  summarizeAdherence,
   type Transcript,
   type TranscriptEvent,
 } from "../benchmarks/formation-adherence";
@@ -118,5 +120,24 @@ describe("formation adherence scorer", () => {
       { kind: "note", actor: "Bob", pool: "out", text: "T1 PRIMES: 83, 89, 97" },
     ]);
     expect(score(tr, "freeform", "single-deliverable")).toBe(0.5);
+  });
+});
+
+describe("summarizeAdherence", () => {
+  test("the headline is brief steps only; convention markers are a separate diagnostic", () => {
+    const results: StepResult[] = [
+      { step: "a", layer: "brief", method: "det", score: 1, evidence: "" },
+      { step: "b", layer: "brief", method: "det", score: 0.5, evidence: "" },
+      { step: "c", layer: "brief", method: "judge", score: null, evidence: "" },
+      { step: "d", layer: "convention", method: "det", score: 0, evidence: "" },
+      { step: "e", layer: "convention", method: "det", score: 0, evidence: "" },
+    ];
+    expect(summarizeAdherence(results)).toEqual({ brief: 0.75, convention: 0 });
+    expect(summarizeAdherence(results.filter((r) => r.layer === "convention")).brief).toBeNull();
+  });
+
+  test("the sharding brief says when to shard", () => {
+    expect(CREW_BRIEFS.sharding).toContain("several independent failing cases");
+    expect(CREW_BRIEFS.sharding).toContain("for one or two, just fix them");
   });
 });

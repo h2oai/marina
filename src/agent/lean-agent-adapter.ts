@@ -80,6 +80,7 @@ import {
 import { MarinaClient, TELL_NOTICE_PREFIX } from "../sdk/client";
 import type { Perception } from "../types";
 import { suggestPatterns } from "../world/templates/orchestration";
+import { isPureAcknowledgement } from "./acknowledgement";
 import { ActionHistory } from "./action-history";
 import {
   type AgentConfig,
@@ -146,6 +147,40 @@ export const LEAN_AGENT_LOG_CATEGORY = "lean-agent";
 
 /** Module-level fallback when no Logger is injected via the constructor. */
 const moduleLogger = new Logger();
+
+/** Buffer priority of a pure-acknowledgement tell: information, not work. */
+export const ACKNOWLEDGEMENT_PRIORITY = 30;
+
+/**
+ * An outgoing tell that only acknowledges a peer whose own latest tell was a
+ * pure acknowledgement is not sent: neither side owes a reply, and each
+ * acknowledgement would otherwise invite the next. Returns the refusal
+ * reason, or undefined to let the tell through. `marina_tell` and a
+ * `marina_command` `tell <target> <message>` are both covered.
+ */
+export function acknowledgementReplyRefusal(
+  toolName: string,
+  args: Record<string, unknown>,
+  peersWhoAcknowledged: ReadonlySet<string>,
+): string | undefined {
+  let target: string | undefined;
+  let message: string | undefined;
+  if (toolName === "marina_tell") {
+    target = typeof args.target === "string" ? args.target : undefined;
+    message = typeof args.message === "string" ? args.message : undefined;
+  } else if (toolName === "marina_command" && typeof args.command === "string") {
+    const match = /^\s*tell\s+(\S+)\s+([\s\S]+)$/i.exec(args.command);
+    target = match?.[1];
+    message = match?.[2];
+  }
+  if (!target || !message) return undefined;
+  if (!peersWhoAcknowledged.has(target.toLowerCase())) return undefined;
+  if (!isPureAcknowledgement(message)) return undefined;
+  return (
+    `Not sent: ${target}'s last message to you was an acknowledgement, so no reply is owed ` +
+    `either way. Carry on with your work; tell ${target} again when you have something new.`
+  );
+}
 
 export function shouldKeepPerception(
   mode: "focused" | "balanced" | "open",
@@ -1168,6 +1203,11 @@ export class LeanAgentAdapter implements AgentHandle {
   /** Prevent named channel mentions from creating agent↔agent ping-pong. This
    * is a per-agent channel cadence; direct tells and endpoint requests are never throttled. */
   private lastChannelResponseAt = 0;
+  /** Peers (lower-cased names) whose latest tell to this agent was a pure
+   *  acknowledgement. An acknowledgement back to one of them is not sent
+   *  (see `acknowledgementReplyRefusal`), which ends ack ping-pong at the
+   *  second message instead of letting each side owe the other a reply. */
+  private lastTellWasAck = new Set<string>();
 
   private metrics = {
     toolCalls: 0,
@@ -1600,6 +1640,12 @@ export class LeanAgentAdapter implements AgentHandle {
           };
         }
         if (isChannelSend) this.currentRunChannelSends++;
+        const ackRefusal = acknowledgementReplyRefusal(
+          context.toolCall.name,
+          args,
+          this.lastTellWasAck,
+        );
+        if (ackRefusal) return { block: true, reason: ackRefusal };
         this.hookRegistry.runBeforeToolCall(context.toolCall.name, args);
         return undefined;
       },
@@ -1769,9 +1815,29 @@ export class LeanAgentAdapter implements AgentHandle {
               priority >= 80 ||
               (this.config.role === "guide" && lastEvent?.type === "player_entered_room") ||
               (lastEvent ? this.socialAwareness.shouldRespond(lastEvent, this.name) : false);
+            // A tell is directed work (priority 100, reply owed) — unless it is
+            // a pure acknowledgement ("thanks", "noted", "no reply needed"),
+            // which owes nothing. Forcing a reply to those made each side of
+            // a conversation owe the other one in turn. The acknowledgement
+            // stays visible as low-priority information: never dropped by the
+            // attention filter, never tracked as a request, never a wake.
+            let acknowledgement = false;
             if (p.tag === "tell" && typeof p.data.senderName === "string") {
-              priority = 100;
-              respond = true;
+              const body =
+                typeof p.data.message === "string"
+                  ? p.data.message
+                  : text.replace(/^[\s\S]*?\btells you:\s*/, "");
+              acknowledgement = isPureAcknowledgement(body);
+              const sender = p.data.senderName.toLowerCase();
+              if (acknowledgement) {
+                this.lastTellWasAck.add(sender);
+                priority = Math.min(priority, ACKNOWLEDGEMENT_PRIORITY);
+                respond = false;
+              } else {
+                this.lastTellWasAck.delete(sender);
+                priority = 100;
+                respond = true;
+              }
             }
             // Gateway/cross-instance relayed content is untrusted. It stays
             // VISIBLE (federation is a feature) but must never drive auto-action:
@@ -1785,6 +1851,7 @@ export class LeanAgentAdapter implements AgentHandle {
               priority = Math.min(priority, 40);
             }
             if (
+              !acknowledgement &&
               !shouldKeepPerception(this.attentionMode, priority, respond, this.attentionThreshold)
             ) {
               this.droppedPerceptions++;
@@ -1859,7 +1926,7 @@ export class LeanAgentAdapter implements AgentHandle {
             this.pendingPerceptions.push({
               id: perceptionId,
               requestId,
-              text: `[${p.kind}] ${text}`,
+              text: `[${p.kind}] ${text}${acknowledgement ? " (acknowledgement — no reply owed)" : ""}`,
               priority,
               shouldRespond: respond,
               traceParent: traceParentFromPerception(text),
