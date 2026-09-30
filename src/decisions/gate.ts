@@ -144,6 +144,12 @@ export interface GateCallOptions {
   calibration?: CalibrationEntry | null;
   /** The question wording (default: the adopted set, else the baseline). */
   questions?: GateQuestionSet;
+  /**
+   * The call's risk class (`classifyToolRisk`). On a `mutate` call the
+   * `unauthorized` context question alone holds only at the stricter context
+   * bar (see `decideGate`); default `consequential` counts it like the rest.
+   */
+  risk?: "mutate" | "consequential";
 }
 
 /** Score one tool call. Never throws: a backend failure is a fail-closed `block`. */
@@ -158,6 +164,7 @@ export async function gateToolCall(
 ): Promise<GateDecision> {
   const set = opts.questions ?? activeGateQuestions();
   const questions = questionsFor(set, !!intent);
+  const decide = opts.risk ? { risk: opts.risk } : {};
   const fit =
     opts.calibration === undefined
       ? earnedGateCalibration(provider.model, process.env, questionSetHash(set))
@@ -181,9 +188,9 @@ export async function gateToolCall(
     // number says so (see `gateActionWithFit`).
     const rule =
       fit && !policy
-        ? fittedGatePolicy(decideGate(result.answers, effective, questions), native)
+        ? fittedGatePolicy(decideGate(result.answers, effective, questions, decide), native)
         : effective;
-    const verdict = decideGate(answers, rule, questions);
+    const verdict = decideGate(answers, rule, questions, decide);
     return {
       ...verdict,
       ...(calibrated

@@ -265,6 +265,120 @@ describe("challenges (engine)", () => {
   });
 });
 
+describe("challenges: no silent walls", () => {
+  const DB = `test_challenges_cap_${process.pid}.db`;
+  let db: MarinaDB;
+  let engine: Engine;
+  let alice: MockConnection;
+  let builder: MockConnection;
+  let root: MockConnection;
+
+  const text = (c: MockConnection) => stripAnsi(c.allText().join("\n"));
+  const hold = (summary: string, requesterName = "Builder") =>
+    raiseForTool({
+      requesterId: "",
+      requesterName,
+      toolName: "marina_command",
+      summary,
+      reason: "Held for approval by the decision gate (unauthorized 0.95).",
+      rerun: async () => `ran ${summary}`,
+    });
+
+  beforeEach(() => {
+    resetChallengesForTests();
+    resetGateContextForTests();
+    db = new MarinaDB(DB);
+    engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
+    engine.registerRoom(roomId("test/start"), makeTestRoom({ short: "Start" }));
+    engine.commands.registerBuiltin({
+      name: "zap",
+      category: "Test",
+      help: "rank-5 test command",
+      minRank: 5,
+      handler: (ctx, input) => ctx.send(input.entity, "zapped"),
+    });
+    const conns: MockConnection[] = [];
+    for (const [i, name] of ["Alice", "Builder", "Root"].entries()) {
+      const c = new MockConnection(`k${i}`);
+      engine.addConnection(c);
+      engine.spawnEntity(`k${i}`, name);
+      conns.push(c);
+    }
+    [alice, builder, root] = conns as [MockConnection, MockConnection, MockConnection];
+    for (const c of conns) c.clear();
+    engine.entities.get(root.entity as EntityId)!.properties.rank = 9;
+    db.saveAgentConfig({ name: "Builder", model: "x", spawnedBy: "Alice" });
+  });
+  afterEach(() => {
+    resetChallengesForTests();
+    resetGateContextForTests();
+    restoreEnv();
+    db.close();
+    cleanupDb(DB);
+  });
+
+  it("at the cap, the newest hold replaces the oldest of its class and says so", async () => {
+    const first = hold("marina_command call 1");
+    for (let i = 2; i <= 5; i++) expect(hold(`marina_command call ${i}`).token).toBeDefined();
+    alice.clear();
+    const sixth = hold("marina_command call 6");
+    expect(sixth.token).toMatch(/^ch_/);
+    expect(sixth.message).toContain("runs automatically if approved");
+    expect(sixth.message).toContain(`replaces your oldest held call (challenge ${first.token}`);
+    expect(sixth.message).toContain("did not run");
+    // Approvers hear that the old one is gone and about the new one.
+    expect(text(alice)).toContain(
+      `Challenge ${first.token} (Builder) was replaced by ${sixth.token}`,
+    );
+    expect(text(alice)).toContain(`challenge approve ${sixth.token}`);
+    // The replaced challenge can no longer be approved; the new one still runs.
+    await engine.processCommand(alice.entity!, `challenge approve ${first.token}`);
+    expect(text(builder)).not.toContain("ran marina_command call 1");
+    await engine.processCommand(alice.entity!, `challenge approve ${sixth.token}`);
+    await until(() => text(builder).includes("ran marina_command call 6"));
+    // Its outcome is recorded as expired (unanswered), never as a person's verdict.
+    const outcome = db
+      .listChallengeOutcomes({ limit: 50 })
+      .find((row) => row.token === first.token);
+    expect(outcome?.answer).toBe("expired");
+  });
+
+  it("when every open challenge is of another class, the refusal names them", async () => {
+    const tokens: string[] = [];
+    for (const arg of ["a", "b", "c", "d", "e"]) {
+      builder.clear();
+      await engine.processCommand(builder.entity!, `zap ${arg}`);
+      tokens.push(tokenIn(text(builder))!);
+    }
+    expect(tokens.every(Boolean)).toBe(true);
+    const refused = hold("marina_command pool out add T1");
+    expect(refused.token).toBeUndefined();
+    expect(refused.message).toContain("It did not run");
+    expect(refused.message).toContain("already have 5 open challenges of other kinds");
+    for (const token of tokens) expect(refused.message).toContain(token);
+    expect(refused.message).toContain("Take another route");
+  });
+
+  it("with no approver connected, the agent is told who can answer and to carry on", () => {
+    engine.entities.get(root.entity as EntityId)!.properties.rank = 0;
+    const loner = new MockConnection("k9");
+    engine.addConnection(loner);
+    engine.spawnEntity("k9", "Loner");
+    db.saveAgentConfig({ name: "Loner", model: "x", spawnedBy: "Operator" });
+    const held = hold("marina_pool add crew:answerer T1", "Loner");
+    expect(held.token).toMatch(/^ch_/);
+    expect(held.message).toContain("Held for approval by Operator or an admin");
+    expect(held.message).toContain("no eligible approver is connected right now");
+    expect(held.message).toMatch(/stays open \d+ min and runs automatically if approved/);
+    expect(held.message).toContain("expires without running");
+    expect(held.message).toContain("Continue with other work");
+    // The same call again coalesces onto the open challenge instead of opening another.
+    const again = hold("marina_pool add crew:answerer T1", "Loner");
+    expect(again.token).toBe(held.token);
+    expect(again.message).toContain("Still waiting on an approver");
+  });
+});
+
 describe("challenge judge + pi adapter", () => {
   let backend: ReturnType<typeof Bun.serve>;
   let risk = 0.8;

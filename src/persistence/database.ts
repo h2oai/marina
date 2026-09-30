@@ -1942,7 +1942,7 @@ export class MarinaDB implements MarinaStores {
     communication?: boolean;
     latencyMs?: number;
     promptVersion?: string;
-    riskClass?: "read" | "communicate" | "mutate" | "consequential";
+    riskClass?: "read" | "self" | "communicate" | "mutate" | "consequential";
     trustSources?: string[];
     createdAt?: number;
   }): number {

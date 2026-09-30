@@ -609,7 +609,7 @@ export type EngineEvent =
       traceId?: string;
       spanId?: string;
       parentSpanId?: string;
-      risk?: "read" | "communicate" | "mutate" | "consequential";
+      risk?: "read" | "self" | "communicate" | "mutate" | "consequential";
       trustSources?: string[];
       timestamp: number;
     }

@@ -87,6 +87,27 @@ describe("formation adherence scorer", () => {
     expect(score(tr, "sharding", "lead-delivers")).toBe(1);
   });
 
+  test("shards-posted counts actual shard posts, never a mention of shards", () => {
+    const lead = (text: string, kind: "chan" | "cmd" = "chan") =>
+      score(transcript([{ kind, actor: "Lead", text }]), "sharding", "shards-posted");
+    expect(lead("shard 1: C3 fails")).toBe(1);
+    expect(lead("Shard #2: C5 still failing")).toBe(1);
+    expect(lead("Shards: C3 fails, C5 fails")).toBe(1);
+    expect(lead("task create shard 2: C5 | fix the failing check", "cmd")).toBe(1);
+    expect(lead("no shards needed, only two failing cases — fixing them myself")).toBe(0);
+    expect(lead("Shards: none — both checks pass")).toBe(0);
+    expect(lead("Two failing checks; I will fix them directly")).toBe(0);
+    expect(lead("calc 2^10", "cmd")).toBe(0);
+    // A member's shard line is not the lead posting shards.
+    expect(
+      score(
+        transcript([{ kind: "chan", actor: "Ann", text: "shard 1: C3" }]),
+        "sharding",
+        "shards-posted",
+      ),
+    ).toBe(0);
+  });
+
   test("steps without an applicable condition are n/a, judged steps are deferred", () => {
     const tr = transcript([
       { kind: "note", actor: "Ann", pool: "out", text: "T2 RECOMMEND: SQLite" },
