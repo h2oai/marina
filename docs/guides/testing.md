@@ -456,3 +456,17 @@ messages must still arrive while coding runs. Reports and traces remain in the s
 Failures, missing credentials and timeouts are failures; this is a small functional smoke test,
 not a general coding-quality benchmark. The default scenario is `bugfix`; `--timeout-ms` controls
 the deadline per scenario (default 240000, maximum 600000).
+
+For a multi-package exercise with nested project instructions and workspace dependencies:
+
+```sh
+bun run qualify:coding --directory /tmp/marina-coding-workspace-check --budget-usd 2 --scenarios workspace --timeout-ms 360000
+```
+
+The `workspace` fixture requires coordinated pricing and checkout changes, regression tests
+in both packages, and candidate verification after frozen-lockfile dependency preparation.
+The harness checks that the worker received the applicable nested instructions, preserves
+the original acceptance tests and configuration, and independently checks rounding, invalid
+inputs, order and mutation behavior. Dependency preparation uses captured workspace packages;
+it does not install into your checkout. This remains a bounded functional exercise, not a
+claim of reliability on arbitrary repositories.

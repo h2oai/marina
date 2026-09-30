@@ -364,14 +364,13 @@ export async function runCodeSession(
   let echoPerceptions = false;
   agent.onPerception((p) => {
     if (!echoPerceptions) return;
-    const text = formatCodePerception(p);
-    if (text) {
-      if (sessionConsole) sessionConsole.write(text);
-      else process.stdout.write(`${terminalText(text)}\n`);
-    }
     const terminal = terminalCodeLifecycle(p);
     if (terminal) sessionConsole?.completed(terminal.sessionId);
-    sessionConsole?.observe(p);
+    if (sessionConsole) sessionConsole.receive(p);
+    else {
+      const text = formatCodePerception(p);
+      if (text) process.stdout.write(`${terminalText(text)}\n`);
+    }
   });
 
   let lastSigintAt = 0;

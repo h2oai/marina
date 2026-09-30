@@ -19,7 +19,11 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import type { Agent } from "@earendil-works/pi-agent-core";
+import { type AssistantMessage, createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { LeanAgentAdapter } from "../src/agent/lean-agent-adapter";
+import type { PlatformMemoryBackend } from "../src/agent/memory-platform";
+import { codingWorkerState } from "../src/coding/worker-state";
 
 type AdapterInternals = {
   buildContinuationPrompt(): Promise<string>;
@@ -185,4 +189,85 @@ it("a recruited responder continues an active coding task across cycles, then re
   };
   await internals.runAutonomousLoop();
   expect(prompted).toEqual([2, 3]);
+});
+
+it("publishes a real worker's busy-to-waiting transition after the prompt settles", async () => {
+  const adapter = new LeanAgentAdapter(
+    { name: "observed-coder", model: "marina/default", crewResponder: true, budgetCalls: 5 },
+    "ws://127.0.0.1:3300",
+    null,
+  );
+  const internals = adapter as unknown as {
+    agent: Agent;
+    platformMemory: PlatformMemoryBackend;
+    activeCodingTask: string | null;
+    autonomousLoopRunning: boolean;
+    autonomousMode: boolean;
+    pauseSleep(): Promise<void>;
+    checkSpendCaps(): null;
+    buildContinuationPrompt(): Promise<string>;
+    setupActionTracking(): void;
+    runAutonomousLoop(): Promise<void>;
+  };
+  internals.platformMemory.saveOutstandingRequests = async () => {};
+  internals.platformMemory.journalMessage = async () => {};
+  internals.agent.transformContext = undefined;
+  internals.agent.prepareNextTurnWithContext = undefined;
+  internals.agent.getApiKey = () => undefined;
+  internals.agent.state.tools = [];
+  internals.setupActionTracking();
+  internals.autonomousLoopRunning = true;
+  internals.autonomousMode = true;
+  internals.checkSpendCaps = () => null;
+  internals.buildContinuationPrompt = async () => "Continue the assigned coding task";
+  adapter.setActiveCodingTask("Work continues after this yield");
+  let cycles = 0;
+  internals.pauseSleep = async () => {
+    if (++cycles > 1) internals.autonomousLoopRunning = false;
+  };
+  internals.agent.streamFunction = async (model) => {
+    const message: AssistantMessage = {
+      role: "assistant",
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      timestamp: 1,
+      content: [{ type: "text", text: "Continue next cycle." }],
+      stopReason: "stop",
+      usage: {
+        input: 1,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 2,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    };
+    const stream = createAssistantMessageEventStream();
+    stream.push({ type: "done", reason: "stop", message });
+    stream.end();
+    return stream;
+  };
+  const observations: { event: string; state: string }[] = [];
+  const unsubscribe = adapter.subscribe((event) => {
+    if (["turn_start", "turn_end", "operator_status_change"].includes(event.type)) {
+      observations.push({ event: event.type, state: codingWorkerState(adapter).workerState });
+    }
+  });
+  try {
+    await internals.runAutonomousLoop();
+    expect(observations).toEqual([
+      { event: "turn_start", state: "working" },
+      { event: "turn_end", state: "working" },
+      { event: "operator_status_change", state: "waiting" },
+    ]);
+    expect(internals.activeCodingTask).toBe("Work continues after this yield");
+    expect(adapter.getStatus()).toMatchObject({
+      state: "autonomous",
+      modelCalls: 1,
+      budgetCalls: 5,
+    });
+  } finally {
+    unsubscribe();
+  }
 });

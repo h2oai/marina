@@ -22,6 +22,24 @@ const dependencies = Type.Optional(
   }),
 );
 
+const codeEditSchema = Type.Object({
+  path: Type.String({ description: "Relative workspace file path" }),
+  oldText: Type.String({
+    description: "For edit: exact existing text to replace (may span lines)",
+  }),
+  newText: Type.String({
+    description: "For edit: replacement text (empty string deletes oldText)",
+  }),
+  replaceAll: Type.Optional(
+    Type.Boolean({ description: "Replace every occurrence instead of requiring a unique match" }),
+  ),
+});
+
+const codeWriteSchema = Type.Object({
+  path: Type.String({ description: "Relative workspace file path" }),
+  content: Type.String({ description: "For write: full file content, including newlines" }),
+});
+
 const codeSchema = Type.Object({
   verificationMode,
   dependencies,
@@ -36,6 +54,8 @@ const codeSchema = Type.Object({
       Type.Literal("verify"),
       Type.Literal("observe"),
       Type.Literal("patch"),
+      Type.Literal("edit"),
+      Type.Literal("write"),
       Type.Literal("apply"),
       Type.Literal("reject"),
       Type.Literal("show"),
@@ -64,10 +84,16 @@ const codeSchema = Type.Object({
     ],
     {
       description:
-        "Coding action. Assigned agents normally have an active coding session already bound.",
+        "Action in the bound coding session. edit/write change files; patch proposes a diff for later apply.",
     },
   ),
-  path: Type.Optional(Type.String({ description: "Relative workspace path for files/read/diff" })),
+  path: Type.Optional(
+    Type.String({ description: "Relative workspace path for files/read/diff/edit/write" }),
+  ),
+  oldText: Type.Optional(codeEditSchema.properties.oldText),
+  newText: Type.Optional(codeEditSchema.properties.newText),
+  replaceAll: codeEditSchema.properties.replaceAll,
+  content: Type.Optional(codeWriteSchema.properties.content),
   query: Type.Optional(Type.String({ description: "Search query for action=search" })),
   command: Type.Optional(
     Type.String({
@@ -114,20 +140,6 @@ const codeRunSchema = Type.Object({
 const codePatchSchema = Type.Object({
   title: Type.Optional(Type.String({ description: "Patch artifact title" })),
   diff: Type.String({ description: "Unified diff to propose" }),
-});
-
-const codeEditSchema = Type.Object({
-  path: Type.String({ description: "Relative workspace file path" }),
-  oldText: Type.String({ description: "Exact existing text to replace (may span lines)" }),
-  newText: Type.String({ description: "Replacement text (empty string deletes oldText)" }),
-  replaceAll: Type.Optional(
-    Type.Boolean({ description: "Replace every occurrence instead of requiring a unique match" }),
-  ),
-});
-
-const codeWriteSchema = Type.Object({
-  path: Type.String({ description: "Relative workspace file path" }),
-  content: Type.String({ description: "Full file content to write" }),
 });
 
 const codeArtifactsSchema = Type.Object({
@@ -207,7 +219,7 @@ export function createCodeTool(ctx: ToolContext): AgentTool<typeof codeSchema> {
     name: "marina_code",
     label: "Code",
     description:
-      "Work inside the active Marina coding session: inspect files, read, search, diff, run allowed checks, propose/apply patches, and record durable coding artifacts.",
+      "Work inside the active Marina coding session: inspect files, edit exact text, write files, run allowed checks, propose/apply patches, and record durable artifacts. For small edits prefer edit with oldText/newText; if a patch fails, inspect and use edit instead of repeating the same diff. Use write with content for new files or complete rewrites.",
     parameters: codeSchema,
     execute: async (_id, params: Static<typeof codeSchema>, signal) => {
       try {
@@ -309,18 +321,7 @@ export function createTypedCodeTools(ctx: ToolContext): AgentTool[] {
       "Code Edit",
       "Surgically replace exact text in one workspace file. Prefer this over patches for small targeted changes; if a patch fails to apply, fall back to this instead of retrying the same diff. oldText must match the file byte-for-byte (copy it from marina_code_read_file, including whitespace); set replaceAll only when every occurrence should change.",
       codeEditSchema,
-      (p) => {
-        const path = requiredSingleLineCodeParam(
-          p.path as string | undefined,
-          "path",
-          "path is required",
-        );
-        const oldText = p.oldText as string | undefined;
-        if (!oldText) throw new Error("oldText is required");
-        const newText = (p.newText as string | undefined) ?? "";
-        const all = p.replaceAll === true ? " all" : "";
-        return `code edit ${path}${all}\n<<<<<<< OLD\n${oldText}\n=======\n${newText}\n>>>>>>> NEW`;
-      },
+      buildCodeEditCommand,
       ctx,
     ),
     wrap(
@@ -328,16 +329,7 @@ export function createTypedCodeTools(ctx: ToolContext): AgentTool[] {
       "Code Write",
       "Create or fully overwrite one workspace file with the given content (parent directories are created). Use for new files or full rewrites; prefer marina_code_edit for surgical changes to existing files.",
       codeWriteSchema,
-      (p) => {
-        const path = requiredSingleLineCodeParam(
-          p.path as string | undefined,
-          "path",
-          "path is required",
-        );
-        const content = p.content as string | undefined;
-        if (content == null) throw new Error("content is required");
-        return `code write ${path}\n${content}`;
-      },
+      buildCodeWriteCommand,
       ctx,
     ),
     wrap(
@@ -666,6 +658,10 @@ function buildCodeCommand(params: Record<string, unknown>): string {
       return `code observe ${requiredSingleLineCodeParam(text, "text", "action=observe requires text")}`;
     case "patch":
       return `code patch ${singleLineCodeParam(title ?? "Proposed change", "title")}\n${requiredCodeDiff(diff)}`;
+    case "edit":
+      return buildCodeEditCommand(params);
+    case "write":
+      return buildCodeWriteCommand(params);
     case "apply":
       return `code apply ${requiredSingleLineCodeParam(artifactId, "artifactId", "action=apply requires artifactId")}`;
     case "reject":
@@ -768,6 +764,32 @@ function buildCodeCommand(params: Record<string, unknown>): string {
     default:
       return "code status";
   }
+}
+
+function buildCodeEditCommand(params: Record<string, unknown>): string {
+  const path = requiredSingleLineCodeParam(
+    params.path as string | undefined,
+    "path",
+    "path is required",
+  );
+  const { oldText, newText } = params;
+  if (typeof oldText !== "string" || !oldText)
+    throw new Error("oldText is required for edit; copy exact text from read");
+  if (typeof newText !== "string")
+    throw new Error("newText is required for edit; use an empty string for deletion");
+  const all = params.replaceAll === true ? " all" : "";
+  return `code edit ${path}${all}\n<<<<<<< OLD\n${oldText}\n=======\n${newText}\n>>>>>>> NEW`;
+}
+
+function buildCodeWriteCommand(params: Record<string, unknown>): string {
+  const path = requiredSingleLineCodeParam(
+    params.path as string | undefined,
+    "path",
+    "path is required",
+  );
+  if (typeof params.content !== "string")
+    throw new Error("content is required for write; supply the complete file content");
+  return `code write ${path}\n${params.content}`;
 }
 
 function requiredSingleLineCodeParam(

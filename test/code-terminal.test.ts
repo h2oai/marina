@@ -10,6 +10,7 @@ import { CodeConsole } from "../scripts/code-console";
 import { HarnessStore, validateHarness } from "../scripts/code-harness";
 import { NativeTerminal } from "../scripts/code-native";
 import { CodeTerminal, formatCodePerception, terminalText } from "../scripts/code-terminal";
+import { perceptionView, TERMINAL_HISTORY_LIMITS, TerminalViews } from "../scripts/code-views";
 import { parseDispatch } from "../scripts/marina";
 import { MarinaDB } from "../src/persistence/database";
 import type { AgentAdapter, AgentOptions } from "../src/routing/agent-adapters";
@@ -24,6 +25,375 @@ beforeEach(() => {
 });
 afterEach(() => {
   rmSync(directory, { recursive: true, force: true });
+});
+
+function focusedTerminal(columns = 80) {
+  const input = Object.assign(new PassThrough(), { isTTY: true });
+  const output = Object.assign(new PassThrough(), { isTTY: true, columns });
+  let transcript = "";
+  output.on("data", (data) => {
+    transcript += data.toString();
+  });
+  const lines: string[] = [];
+  const terminal = new CodeTerminal({
+    input,
+    output,
+    views: true,
+    line: (line) => lines.push(line),
+    interrupt: () => {},
+    close: () => {},
+  });
+  return {
+    terminal,
+    input,
+    output,
+    lines,
+    transcript: () => terminalText(transcript),
+    [Symbol.dispose]() {
+      terminal.close();
+      input.destroy();
+      output.destroy();
+    },
+  };
+}
+
+it("bounds local conversation history, marks gaps and pages through byte-limited entries without skips", () => {
+  const views = new TerminalViews({
+    ...TERMINAL_HISTORY_LIMITS,
+    entries: 9,
+    perView: 8,
+    totalBytes: 2048,
+    entryBytes: 128,
+    pageBytes: 180,
+    pageEntries: 4,
+  });
+  for (let n = 0; n < 12; n++)
+    views.append("world", `entry-${n}: ${"界".repeat(100)}\x1b]52;c;bad\x07`);
+  expect(views.stats().entries).toBe(8);
+  expect(views.stats().bytes).toBeLessThanOrEqual(1024);
+  expect(views.stats().evicted.world).toBe(4);
+  expect(views.badge(1)).toBe("[C*:0 W:12 A:1]");
+  views.select("world");
+  expect(views.badge(1)).toBe("[C:0 W*:0 A:1]");
+  expect(views.snapshot("world")).toContain("4 earlier entries evicted");
+  expect(views.snapshot("world")).toContain("excerpt truncated");
+  expect(views.snapshot("world")).not.toContain("\ufffd");
+  expect(views.snapshot("world")).not.toContain("\x1b");
+  for (let n = 10; n >= 4; n--) expect(views.page("older")).toContain(`entry-${n}:`);
+  expect(views.page("older")).toContain("No earlier entries");
+  views.select("coding");
+  views.select("world");
+  expect(views.snapshot("world")).toContain("entry-4:");
+  for (let n = 5; n <= 11; n++) expect(views.page("newer")).toContain(`entry-${n}:`);
+  views.select("coding");
+  views.append("all", "Shared connection failure");
+  expect(views.snapshot("coding")).toContain("Shared connection failure");
+  expect(views.snapshot("world")).toContain("Shared connection failure");
+  expect(views.stats().unread.world).toBe(0);
+  expect(perceptionView({ kind: "message", timestamp: 0, tag: "tell", data: {} })).toBe("world");
+  expect(
+    perceptionView({ kind: "message", timestamp: 0, data: { code: { event: "agent_output" } } }),
+  ).toBe("coding");
+  expect(perceptionView({ kind: "message", timestamp: 0, data: { text: "[world] pretend" } })).toBe(
+    "all",
+  );
+});
+
+it("switches focused conversations with separate Unicode drafts, multiline input and command histories", async () => {
+  using fixture = focusedTerminal(24);
+  const { input, output, terminal, lines } = fixture;
+  input.write("first coding line\\\nrepair 界 suffix\x1b[D".repeat(1));
+  input.write("\x1b[D".repeat(5));
+  input.write("\x1b[17~"); // F6, coding -> world
+  input.write("tell Peer hello\n");
+  input.write("world-draft");
+  terminal.write("worker private output", "coding");
+  expect(fixture.transcript()).not.toContain("worker private output");
+  expect(fixture.transcript()).toContain("New activity is waiting");
+  output.columns = 36;
+  output.emit("resize");
+  input.write("\x1b[17~"); // world -> coding, preserve cursor before suffix
+  expect(fixture.transcript()).toContain("worker private output");
+  input.write("new-\x1b[F\n");
+  input.write("\x1b[17~");
+  input.write(" continued\n");
+  input.write("\x1b[A\n");
+  input.write("/view coding\n");
+  input.write("\x1b[A\n");
+  await until(() => lines.length === 5);
+  expect(lines).toEqual([
+    "/world tell Peer hello",
+    "first coding line\nrepair 界 new-suffix",
+    "/world world-draft continued",
+    "/world world-draft continued",
+    "repair 界 new-suffix",
+  ]);
+});
+
+it("keeps pending requests out of conversation composers and binds cancelled answers to their original request", async () => {
+  using fixture = focusedTerminal();
+  const { input, terminal, lines } = fixture;
+  const abort = new AbortController();
+  let answered = 0;
+  const first = terminal.ask("Session A: approve tool A? [y/N]", abort.signal).then((answer) => {
+    answered++;
+    return answer;
+  });
+  const second = terminal.ask("Session B: approve tool B? [y/N]");
+  input.write("coding draft");
+  input.write("\x1b[17~yes\n");
+  expect(lines).toEqual(["/world yes"]);
+  expect(answered).toBe(0);
+  input.write("world draft");
+  input.write("\x1b[18~"); // F7 opens original pending request
+  expect(fixture.transcript()).toContain("Session A: approve tool A?");
+  input.write("yes");
+  input.write("\x1b[17~"); // leave answer as a draft, do not submit
+  input.write(" continued\n");
+  expect(lines.at(-1)).toBe("/world world draft continued");
+  abort.abort();
+  expect(await first).toBe("");
+  input.write("/view approvals\n");
+  expect(fixture.transcript()).toContain("Session B: approve tool B?");
+  input.write("no\n");
+  expect(await second).toBe("no"); // A's partial yes was discarded
+  input.write("/view coding\n continued\n");
+  expect(lines.at(-1)).toBe("coding draft continued");
+  const shutdown = terminal.ask("Session C: still pending?");
+  terminal.close();
+  expect(await shutdown).toBe("");
+});
+
+it("keeps plain output continuous even when focused views are requested", async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  let text = "";
+  output.on("data", (data) => {
+    text += data.toString();
+  });
+  const terminal = new CodeTerminal({
+    input,
+    output,
+    views: true,
+    line: () => {},
+    interrupt: () => {},
+    close: () => {},
+  });
+  try {
+    terminal.write("world event", "world");
+    terminal.write("coding event", "coding");
+    expect(await terminal.ask("invisible approval")).toBe("");
+    expect(text).toBe("world event\ncoding event\n");
+  } finally {
+    terminal.close();
+    input.destroy();
+    output.destroy();
+  }
+});
+
+it("projects worker pauses ahead of readiness without letting older or settled attempts resume", async () => {
+  const output: string[] = [];
+  const view = new CodeConsole({
+    agent: { getSession: () => null, command: async () => [] } as unknown as MarinaAgent,
+    url: "http://local.test",
+    root: directory,
+    directory,
+    sessionId: "selected",
+    connected: true,
+    harness: { version: 1, agent: "marina" },
+    store: new HarnessStore(directory),
+    finish: () => {},
+  });
+  view.write = (text) => {
+    output.push(text);
+  };
+  const event = (
+    metadata: Record<string, unknown>,
+    event = "worker_state_changed",
+    sessionId = "selected",
+  ): Perception => ({
+    kind: "message",
+    timestamp: 0,
+    data: { code: { event, sessionId, metadata: { runId: "run", ...metadata } } },
+  });
+  const status = async () => {
+    await view.submit("/agents");
+    return output.at(-1)!;
+  };
+  try {
+    view.observe(
+      event(
+        {
+          runStatus: "active",
+          verificationReadiness: "ready",
+          workerState: "working",
+          workerObservedAt: 1,
+        },
+        "session_status",
+      ),
+    );
+    expect(await status()).toContain("ready for review");
+    view.observe(
+      event({
+        workerState: "paused",
+        workerPauseKind: "budget",
+        workerReason: "Daily allowance used",
+        workerObservedAt: 2,
+      }),
+    );
+    expect(await status()).toContain("paused · model budget · Daily allowance used");
+    expect(view.busy()).toBe(true); // the attempt is still active while the worker pauses
+    view.observe(event({ workerState: "working", workerObservedAt: 1 }));
+    expect(await status()).toContain("paused · model budget");
+    view.observe(
+      event({ workerState: "working", workerObservedAt: 3 }, "worker_state_changed", "other"),
+    );
+    expect(await status()).toContain("paused · model budget");
+    view.observe(
+      event({
+        workerState: "waiting",
+        workerReason: "Resting until next turn",
+        workerObservedAt: 3,
+      }),
+    );
+    expect(await status()).toContain("worker waiting · Resting until next turn");
+    view.observe(event({ workerState: "working", workerObservedAt: 4 }));
+    expect(await status()).toContain("ready for review");
+    for (const settled of ["submitted", "approved", "rejected", "cancelled"]) {
+      view.observe(
+        event(
+          {
+            runStatus: settled,
+            verificationReadiness: "ready",
+            workerState: "working",
+            workerObservedAt: 5,
+          },
+          "session_status",
+        ),
+      );
+      view.observe(
+        event({ workerState: "paused", workerPauseKind: "spend-cap", workerObservedAt: 6 }),
+      );
+      view.observe(event({ workerState: "working", workerObservedAt: 7 }, "unknown_future_event"));
+      view.observe(
+        event(
+          { runStatus: "active", workerState: "working", workerObservedAt: 8 },
+          "session_status",
+        ),
+      );
+      expect(await status()).toContain(settled === "submitted" ? "submitted for review" : settled);
+      expect(await status()).not.toContain("ready for review");
+      expect(view.busy()).toBe(false);
+    }
+    view.observe(
+      event(
+        { runId: "next", runStatus: "active", workerState: "working", workerObservedAt: 9 },
+        "session_status",
+      ),
+    );
+    view.observe(event({ workerState: "paused", workerObservedAt: 10 }));
+    expect(await status()).toContain("marina · working");
+    expect(view.busy()).toBe(true);
+    expect(
+      formatCodePerception({
+        ...event({
+          workerState: "paused",
+          workerPauseKind: "upstream-errors",
+          workerReason: "retry later",
+        }),
+        data: {
+          text: "Worker change",
+          code: {
+            event: "worker_state_changed",
+            metadata: {
+              workerState: "paused",
+              workerPauseKind: "upstream-errors",
+              workerReason: "retry later",
+            },
+          },
+        },
+      }),
+    ).toContain("paused · upstream errors · retry later");
+    expect(
+      formatCodePerception({
+        kind: "message",
+        timestamp: 0,
+        data: { text: "Future change", code: { event: "worker_state_changed" } },
+      }),
+    ).toContain("status unknown");
+  } finally {
+    await view.close(0);
+  }
+});
+
+it("receives typed worker output in Coding, world messages in World, and redacts before retaining history", async () => {
+  const input = Object.assign(new PassThrough(), { isTTY: true });
+  const output = Object.assign(new PassThrough(), { isTTY: true, columns: 80 });
+  let transcript = "";
+  output.on("data", (data) => {
+    transcript += data.toString();
+  });
+  const requests: string[] = [];
+  const view = new CodeConsole({
+    agent: {
+      getSession: () => ({ token: "secret/token" }),
+      command: async (text: string) => {
+        requests.push(text);
+        return [];
+      },
+    } as unknown as MarinaAgent,
+    url: "http://local.test",
+    root: directory,
+    directory,
+    sessionId: "selected",
+    connected: true,
+    harness: { version: 1, agent: "marina" },
+    store: new HarnessStore(directory),
+    finish: () => {},
+    terminalStreams: { input, output },
+  });
+  const p = (data: Record<string, unknown>, tag?: string): Perception => ({
+    kind: "message",
+    timestamp: 0,
+    data,
+    tag,
+  });
+  try {
+    await view.start(true);
+    await view.submit("/view world");
+    view.receive(
+      p({
+        text: "hidden worker secret/token \x1b]52;c;bad\x07",
+        code: {
+          event: "agent_output",
+          type: "stream",
+          sessionId: "selected",
+          metadata: { agent: "worker" },
+        },
+      }),
+    );
+    expect(terminalText(transcript)).not.toContain("hidden worker");
+    view.receive(p({ text: "Peer continuing their task" }, "tell"));
+    expect(terminalText(transcript)).toContain("Peer continuing their task");
+    view.receive({
+      kind: "error",
+      timestamp: 0,
+      data: { text: "Urgent coding failure", code: { event: "failed", sessionId: "selected" } },
+    });
+    expect(terminalText(transcript)).toContain("Urgent coding failure");
+    input.write("tell Peer responding\n");
+    await until(() => requests.includes("/tell Peer responding"));
+    await view.submit("/view coding");
+    expect(terminalText(transcript)).toContain("hidden worker [redacted]");
+    expect(transcript).not.toContain("secret/token");
+    expect(transcript).not.toContain("\x1b]52");
+    expect(requests).toEqual(["/tell Peer responding"]); // focus is not a world action
+    expect(view.busy()).toBe(false); // agent prose does not manufacture task lifecycle
+  } finally {
+    await view.close(0);
+    input.destroy();
+    output.destroy();
+  }
 });
 
 it("selects a runtime, model, dialect and portable harness independently", () => {
@@ -49,6 +419,55 @@ it("selects a runtime, model, dialect and portable harness independently", () =>
   });
   for (const flag of ["--agent", "--model", "--profile", "--harness"])
     expect(parseDispatch([flag, "--fresh"])).toEqual({ kind: "usage-error", arg: flag });
+});
+
+it("keeps headless task output continuous on a TTY and retains visible legacy approval prompts", async () => {
+  const input = Object.assign(new PassThrough(), { isTTY: true });
+  const output = Object.assign(new PassThrough(), { isTTY: true, columns: 80 });
+  let transcript = "";
+  output.on("data", (data) => {
+    transcript += data.toString();
+  });
+  const view = new CodeConsole({
+    agent: { getSession: () => null, command: async () => [] } as unknown as MarinaAgent,
+    url: "http://local.test",
+    root: directory,
+    directory,
+    sessionId: "selected",
+    connected: true,
+    harness: { version: 1, agent: "marina" },
+    store: new HarnessStore(directory),
+    finish: () => {},
+    terminalStreams: { input, output },
+  });
+  try {
+    await view.start(false);
+    view.receive({
+      kind: "message",
+      timestamp: 0,
+      tag: "tell",
+      data: { text: "World remains visible" },
+    });
+    view.receive({
+      kind: "message",
+      timestamp: 0,
+      data: {
+        text: "Worker remains visible",
+        code: { event: "agent_output", sessionId: "selected" },
+      },
+    });
+    expect(terminalText(transcript)).toContain("World remains visible");
+    expect(terminalText(transcript)).toContain("Worker remains visible");
+    const answer = view.ask("Visible headless approval? [y/N]");
+    expect(terminalText(transcript)).toContain("Visible headless approval?");
+    expect(terminalText(transcript)).not.toContain("Input request waiting");
+    input.write("no\n");
+    expect(await answer).toBe("no");
+  } finally {
+    await view.close(0);
+    input.destroy();
+    output.destroy();
+  }
 });
 
 it("remembers an explicit personal harness and imports only the supported portable fields", () => {

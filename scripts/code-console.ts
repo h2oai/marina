@@ -6,13 +6,17 @@ import type { CommandOptions, MarinaAgent, Perception } from "../src/sdk/client"
 import { type CodingHarness, codingAgent, type HarnessStore } from "./code-harness";
 import { inferCodeDefaultModel } from "./code-model";
 import { installedCodingAdapters, NativeTerminal, type TerminalAgent } from "./code-native";
+import { workerActivityLabel } from "./code-presentation";
 import {
   CodeTerminal,
+  type CodeTerminalOptions,
+  formatCodePerception,
   isWorldInput,
   TERMINAL_HELP,
   terminalText,
   verificationReadinessLabel,
 } from "./code-terminal";
+import { perceptionView, type TranscriptView } from "./code-views";
 
 export interface CodeConsoleOptions {
   agent: MarinaAgent;
@@ -25,6 +29,7 @@ export interface CodeConsoleOptions {
   /** Attached to an existing world. Source and execution belong to that server. */
   connected?: boolean;
   sessionId?: string;
+  terminalStreams?: Pick<CodeTerminalOptions, "input" | "output">;
 }
 
 export class CodeConsole {
@@ -38,6 +43,8 @@ export class CodeConsole {
   private marinaPhase = "ready";
   private checksRunning = false;
   private verificationReadiness?: string;
+  private workerActivity?: string;
+  private workerObservedAt = -Infinity;
   private runId?: string;
   private runSettled = false;
   private supersededRuns = new Set<string>();
@@ -85,6 +92,8 @@ export class CodeConsole {
           this.marinaPhase = "syncing";
           this.checksRunning = false;
           this.verificationReadiness = undefined;
+          this.workerActivity = undefined;
+          this.workerObservedAt = -Infinity;
           this.runId = undefined;
           this.runSettled = false;
           this.supersededRuns.clear();
@@ -115,32 +124,44 @@ export class CodeConsole {
     return result;
   }
   private activity() {
-    if (
-      !this.marinaBusy &&
-      ["stopped", "blocked", "submitted for review"].includes(this.marinaPhase)
-    )
-      return this.marinaPhase;
+    if (this.runSettled || this.marinaPhase === "interrupt requested") return this.marinaPhase;
     return (
+      this.workerActivity ??
       this.verificationReadiness ??
       `${this.marinaPhase}${this.checksRunning ? " · checks running" : ""}`
     );
   }
   private updatePrompt() {
     const selected = this.selected ? this.native?.agents.get(this.selected) : undefined;
-    this.terminal?.setStatus(selected ? selected.state.status : this.activity());
+    this.terminal?.setStatus(this.safeText(selected ? selected.state.status : this.activity()));
   }
-  write(text: string) {
-    this.updatePrompt();
+  private safeText(text: string) {
     const token = this.options.agent.getSession()?.token;
     if (token)
       text = text
         .replaceAll(token, "[redacted]")
         .replaceAll(encodeURIComponent(token), "[redacted]");
-    if (this.terminal) this.terminal.write(text);
-    else process.stdout.write(`${terminalText(text)}\n`);
+    return terminalText(text);
+  }
+  write(text: string, view: TranscriptView = "all", urgent = false) {
+    this.updatePrompt();
+    text = this.safeText(text);
+    if (this.terminal) this.terminal.write(text, view, urgent);
+    else process.stdout.write(`${text}\n`);
+  }
+  /** The one perception printer: metadata drives local views, never rendered prose. */
+  receive(p: Perception) {
+    this.observe(p);
+    const text = formatCodePerception(p);
+    if (text)
+      this.write(
+        text,
+        perceptionView(p),
+        p.kind === "error" || p.kind === "auth_error" || !!p.data?.execApproval,
+      );
   }
   ask(text: string, signal?: AbortSignal) {
-    return this.terminal?.ask(text, signal) ?? Promise.resolve("");
+    return this.terminal?.ask(this.safeText(text), signal) ?? Promise.resolve("");
   }
   completed(sessionId?: string) {
     if (sessionId && this.sessionId && sessionId !== this.sessionId) return;
@@ -149,6 +170,8 @@ export class CodeConsole {
     if (this.runId) return;
     this.marinaBusy = false;
     this.marinaPhase = "ready";
+    this.workerActivity = undefined;
+    this.workerObservedAt = -Infinity;
     this.updatePrompt();
   }
   observe(p: Perception) {
@@ -168,6 +191,10 @@ export class CodeConsole {
             outcome?: string;
             reason?: string;
             verificationReadiness?: string;
+            workerState?: string;
+            workerReason?: string;
+            workerPauseKind?: string;
+            workerObservedAt?: number;
           };
         }
       | undefined;
@@ -187,9 +214,23 @@ export class CodeConsole {
       this.runId = runId;
       this.runSettled = false;
       this.verificationReadiness = undefined;
+      this.workerActivity = undefined;
+      this.workerObservedAt = -Infinity;
       this.checksRunning = false;
     } else if (this.runId && !runId) return;
     if (this.runSettled && (code.event !== "session_status" || meta.runStatus === "active")) return;
+    if (
+      ["session_status", "worker_state_changed", "code_lifecycle"].includes(code.event ?? "") &&
+      typeof meta.workerObservedAt === "number" &&
+      Number.isFinite(meta.workerObservedAt) &&
+      meta.workerObservedAt >= this.workerObservedAt &&
+      ["working", "waiting", "paused", "recovering", "unavailable", "stopped", "unknown"].includes(
+        meta.workerState ?? "",
+      )
+    ) {
+      this.workerObservedAt = meta.workerObservedAt;
+      this.workerActivity = workerActivityLabel(meta);
+    }
     if (code.event === "session_status") {
       this.marinaBusy = meta.runStatus === "active";
       this.marinaPhase = this.marinaBusy
@@ -200,7 +241,9 @@ export class CodeConsole {
             ? meta.reason === "blocked"
               ? "blocked"
               : "stopped"
-            : "ready";
+            : ["approved", "rejected", "cancelled"].includes(meta.runStatus ?? "")
+              ? meta.runStatus!
+              : "ready";
       this.runSettled = !!this.runId && !!meta.runStatus && meta.runStatus !== "active";
     }
     if (code.event === "verification_started") this.checksRunning = true;
@@ -274,15 +317,21 @@ export class CodeConsole {
     if (!text) return Promise.resolve();
     if (this.closing) return Promise.resolve();
     const report = (error: unknown) => this.write(getErrorMessage(error));
-    if (isWorldInput(text) || ["/help", "/agents", "/stop", "/quit", "exit", "quit"].includes(text))
+    if (
+      isWorldInput(text) ||
+      /^\/view(?:\s|$)/.test(text) ||
+      ["/help", "/agents", "/stop", "/quit", "exit", "quit"].includes(text)
+    )
       return this.line(text).catch(report);
     this.commands = this.commands.then(() => this.line(text)).catch(report);
     return this.commands;
   }
   async start(interactive: boolean) {
     this.interactive = interactive;
-    if (interactive || process.stdin.isTTY) {
+    if (interactive || (this.options.terminalStreams?.input ?? process.stdin).isTTY) {
       this.terminal = new CodeTerminal({
+        ...this.options.terminalStreams,
+        views: interactive,
         line: (text) => {
           if (!interactive) return;
           void this.submit(text);
@@ -299,7 +348,9 @@ export class CodeConsole {
       this.write(
         "Use /task <request> to work toward verified results, or type freely. /diff inspects changes; /review shows evidence.",
       );
-      this.write("/world keeps you in the conversation. /help lists controls; Tab completes them.");
+      this.write(
+        "F6 switches Coding/World; F7 opens pending requests. /view lists views; /help lists controls.",
+      );
       this.write(
         `Available runtimes: marina${(this.options.connected ? [] : installedCodingAdapters())
           .map((a) => `, ${a.id}`)
@@ -329,7 +380,7 @@ export class CodeConsole {
           token: this.options.agent.getSession()!.token,
           root: this.options.root,
           directory: this.options.directory,
-          write: (text) => this.write(text),
+          write: (text) => this.write(text, "coding"),
           ask: (text, signal) => this.ask(text, signal),
         });
         await runtime.start();
@@ -434,6 +485,11 @@ export class CodeConsole {
     const space = text.search(/\s/);
     const verb = space < 0 ? text : text.slice(0, space);
     const argument = space < 0 ? "" : text.slice(space + 1).trim();
+    if (verb === "/view") {
+      if (this.terminal) this.terminal.selectView(argument);
+      else this.write("Focused views require an interactive terminal; /world remains available.");
+      return;
+    }
     if (verb === "/help") {
       this.write(
         this.options.connected
@@ -581,7 +637,7 @@ export class CodeConsole {
     if (this.selected) await this.native!.control(this.selected, { action: "interrupt" });
     else await this.command("code stop");
     this.marinaBusy = false;
-    this.marinaPhase = "interrupt requested";
+    if (!this.runSettled) this.marinaPhase = "interrupt requested";
     this.write("Interrupt requested. Inspect output before starting replacement work.");
   }
   async interrupt() {

@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { WorkspaceRuntime } from "../../../coding/local-workspace";
+import {
+  formatProjectInstructions,
+  loadProjectInstructions,
+  projectInstructionMetadata,
+} from "../../../coding/project-instructions";
 import { dim, error as fmtError, header, separator, success } from "../../../net/ansi";
 import type { CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
@@ -19,22 +24,28 @@ import {
 } from "./shared";
 import { workspaceForSession } from "./workspace";
 
-export function files(
+export async function files(
   ctx: RoomContext,
   eid: EntityId,
   entity: Entity,
   deps: CodeDeps & { db: MarinaDB },
   path: string,
-): void {
+): Promise<void> {
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
   const workspace = workspaceForSession(deps, session);
   const entries = workspace.list(path);
+  const instructions = await loadProjectInstructions({
+    root: workspace.displayRoot(),
+    target: path,
+    executionTarget: session.execution_target,
+  });
+  const instructionMetadata = projectInstructionMetadata(instructions);
   deps.db.createCodingEvent({
     sessionId: session.id,
     actor: entity.name,
     kind: "files_listed",
-    payload: { path },
+    payload: { path, projectInstructions: instructionMetadata },
   });
   const lines = [header(`Files: ${path || "."}`), separator()];
   for (const entry of entries) {
@@ -42,9 +53,11 @@ export function files(
     const size = entry.type === "file" ? dim(`${entry.size}b`) : "";
     lines.push(`  ${entry.path}${icon} ${size}`);
   }
+  lines.push(...formatProjectInstructions(instructions));
   sendCode(ctx, eid, lines.join("\n"), {
     commands: ["code read <path>", "code search <query>", "code diff"],
     event: "files_listed",
+    metadata: { projectInstructions: instructionMetadata },
     rows: entries.map((entry) => ({
       path: entry.path,
       size: entry.size,
@@ -73,21 +86,36 @@ export async function readFile(
   if (!session) return;
   const workspace = workspaceForSession(deps, session);
   const result = await workspace.read(path);
+  const instructions = await loadProjectInstructions({
+    root: workspace.displayRoot(),
+    target: result.path,
+    executionTarget: session.execution_target,
+  });
+  const instructionMetadata = projectInstructionMetadata(instructions);
   deps.db.createCodingEvent({
     sessionId: session.id,
     actor: entity.name,
     kind: "file_read",
-    payload: { path: result.path, size: result.size, truncated: result.truncated },
+    payload: {
+      path: result.path,
+      size: result.size,
+      truncated: result.truncated,
+      projectInstructions: instructionMetadata,
+    },
   });
   const suffix = result.truncated ? dim("\n[truncated]") : "";
   sendCode(
     ctx,
     eid,
-    `${header(result.path)} ${dim(`${result.size}b`)}\n${result.content}${suffix}`,
+    [
+      `${header(result.path)} ${dim(`${result.size}b`)}\n${result.content}${suffix}`,
+      ...formatProjectInstructions(instructions),
+    ].join("\n"),
     {
       commands: [`code diff ${result.path}`, `code search ${result.path}`],
       content: result.content,
       event: "file_read",
+      metadata: { projectInstructions: instructionMetadata },
       paths: [result.path],
       rows: [
         {
