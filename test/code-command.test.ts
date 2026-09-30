@@ -2902,13 +2902,16 @@ describe("code mode — agentic dispatch (single-agent driver)", () => {
     expect(joined).toContain("u_alice:");
     expect(joined).toContain("code read src/x.ts");
     expect(joined).toContain("Coder: Found the issue.");
-    expect(notifications.map((item) => (item.code as { phase?: string })?.phase)).toEqual([
-      "received",
-      "inspecting",
-      "verifying",
-      "submitting",
-    ]);
+    expect(
+      notifications
+        .filter((item) => (item.code as { event?: string })?.event === "code_lifecycle")
+        .map((item) => (item.code as { phase?: string })?.phase),
+    ).toEqual(["received", "inspecting", "verifying", "submitting"]);
     const sessionId = alice.properties.coding_session_id as string;
+    expect(
+      notifications.find((item) => (item.code as { event?: string })?.event === "agent_output")
+        ?.code,
+    ).toMatchObject({ sessionId, metadata: { agent: "Coder" } });
     expect(notifications[0]?.code).toMatchObject({
       metadata: { runId: db.listCodingRuns({ sessionId })[0]!.id, runStatus: "active" },
     });

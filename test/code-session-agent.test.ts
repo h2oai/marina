@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentEvent, AgentHandle } from "../src/agent/agent-types";
@@ -646,6 +646,121 @@ describe("assignAgent workspace-convention ingestion", () => {
     });
 
     expect(attention.join("\n")).not.toContain("Project conventions:");
+  });
+
+  it("snapshots effective worktree instructions without reading the base workspace", async () => {
+    const worktree = join(dir, "worktree");
+    mkdirSync(worktree);
+    writeFileSync(join(dir, "AGENTS.md"), "BASE_ONLY_RULES");
+    writeFileSync(join(worktree, "AGENTS.md"), "Worktree rules version one.");
+    const session = db.createCodingSession({
+      id: "code_worktree_conventions",
+      title: "Worktree conventions",
+      workspaceRoot: dir,
+      createdBy: "Alice",
+    });
+    db.updateCodingSession(session.id, { worktreePath: worktree });
+    const { handle, attention } = fakeHandle("Coder", "agent_coder");
+    const driver = new CodeSessionDriver({
+      db,
+      agentRuntime: { get: () => handle },
+    });
+    const assignment = await driver.assignAgent({
+      actor: "Alice",
+      agentName: "Coder",
+      profile: "marina",
+      prompt: "use the worktree",
+      session: db.getCodingSession(session.id)!,
+    });
+    expect(attention[0]).toContain("Worktree rules version one.");
+    expect(attention[0]).not.toContain("BASE_ONLY_RULES");
+    expect(attention[0]).toContain(`Workspace: ${worktree}`);
+    const metadata = JSON.parse(assignment.metadata_json);
+    expect(metadata.projectInstructions).toMatchObject({
+      root: worktree,
+      sources: [{ path: "AGENTS.md", status: "loaded", scope: "." }],
+    });
+    writeFileSync(join(worktree, "AGENTS.md"), "Worktree rules version two.");
+    expect(db.getCodingArtifact(assignment.id)?.content_text).toContain(
+      "Worktree rules version one.",
+    );
+    expect(JSON.parse(db.getCodingArtifact(assignment.id)!.metadata_json)).toEqual(metadata);
+  });
+
+  it("does not inject host conventions into a Flywheel assignment", async () => {
+    writeFileSync(join(dir, "AGENTS.md"), "HOST_ONLY_RULES");
+    const session = db.createCodingSession({
+      id: "code_sandbox_conventions",
+      title: "Sandbox conventions",
+      workspaceRoot: dir,
+      createdBy: "Alice",
+    });
+    db.updateCodingSession(session.id, { executionTarget: "flywheel" });
+    const { handle, attention } = fakeHandle("Coder", "agent_coder");
+    const driver = new CodeSessionDriver({ db, agentRuntime: { get: () => handle } });
+    await driver.assignAgent({
+      actor: "Alice",
+      agentName: "Coder",
+      profile: "marina",
+      prompt: "inspect actual sandbox instructions",
+      session: db.getCodingSession(session.id)!,
+    });
+    expect(attention[0]).toContain("not loaded from the host");
+    expect(attention[0]).not.toContain("HOST_ONLY_RULES");
+  });
+
+  it("refuses assignment if the session changes while instructions are loading", async () => {
+    writeFileSync(join(dir, "AGENTS.md"), "Local-only rules.");
+    const session = db.createCodingSession({
+      id: "code_changed_conventions",
+      title: "Changing execution target",
+      workspaceRoot: dir,
+      createdBy: "Alice",
+    });
+    const { handle, attention, codingTasks } = fakeHandle("Coder", "agent_coder");
+    const driver = new CodeSessionDriver({ db, agentRuntime: { get: () => handle } });
+    const assignment = driver.assignAgent({
+      actor: "Alice",
+      agentName: "Coder",
+      profile: "marina",
+      prompt: "inspect instructions",
+      session,
+    });
+    db.updateCodingSession(session.id, { executionTarget: "flywheel" });
+    await expect(assignment).rejects.toThrow("Coding session changed while loading instructions");
+    expect(attention).toEqual([]);
+    expect(codingTasks).toEqual([]);
+  });
+
+  it("does not revive a task cancelled while refreshed instructions are loading", async () => {
+    const session = db.createCodingSession({
+      id: "code_cancelled_conventions",
+      title: "Cancelled while steering",
+      workspaceRoot: dir,
+      createdBy: "Alice",
+    });
+    const run = db.createCodingArtifact({
+      sessionId: session.id,
+      kind: "task_run",
+      title: "Current attempt",
+      status: "active",
+      contentText: "Prior task",
+      createdBy: "Alice",
+    });
+    const { handle, attention, codingTasks } = fakeHandle("Coder", "agent_coder");
+    const driver = new CodeSessionDriver({ db, agentRuntime: { get: () => handle } });
+    const assignment = driver.assignAgent({
+      actor: "Alice",
+      agentName: "Coder",
+      profile: "marina",
+      prompt: "steer prior task",
+      session,
+    });
+    db.updateCodingArtifact(run.id, { status: "cancelled" });
+    await expect(assignment).rejects.toThrow("Coding session changed while loading instructions");
+    expect(attention).toEqual([]);
+    expect(codingTasks).toEqual([]);
+    expect(db.getCodingArtifact(run.id)?.status).toBe("cancelled");
   });
 });
 

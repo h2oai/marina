@@ -33,6 +33,19 @@ The prompt shows task/check activity; transcript labels distinguish world messag
 receipts, results, submitted work and review. Permission details appear above a short answer
 prompt. End a line with `\` to continue a task on another line.
 
+In an interactive terminal, **Coding** is the initial view. F6 switches between Coding and
+**World**, preserving each view's draft, cursor, multiline input and command history. The
+prompt's C/W counters show unread output in the other conversation. Use `/view coding` or
+`/view world` when function keys are unavailable. World input uses normal Marina commands;
+`/world <command>` also works from either conversation. Incoming world events and coding
+output continue to arrive while you focus elsewhere.
+
+F7 or `/view approvals` opens pending permission questions deliberately; a new question
+does not replace your draft or turn a world message into an answer. `/view older` and
+`/view newer` browse bounded local transcript pages. Eviction and excerpt notices identify
+missing history; these pages are not a durable server transcript. Redirected output remains
+one continuous plain-text stream.
+
 For a local Git project with a Marina worker, `/task <request>` requires current candidate
 verification before the worker can submit its result. Start with a small change, for example
 `/task Fix the pagination boundary and add a regression test`. Early summaries remain progress;
@@ -43,6 +56,11 @@ For the selected Marina session, `/status` shows the task, `/diff` shows working
 `/verify live` starts background checks in the live workspace; those results remain unbound to
 an immutable candidate. These shortcuts use the same server commands and permissions as other
 interfaces. Native runtimes retain their own tools. Redirected output stays plain text.
+
+The prompt also shows worker pauses, budget exhaustion and upstream recovery when reported
+by the selected Marina worker. `/status` includes the reason; use the suggested `agent status`
+command to inspect its limits. A pause is not a completed task, and switching views does not
+raise budgets, resume workers or change task ownership.
 
 Use `/world <command>` while a runtime is launching or a permission question is pending
 to send a message, inspect the world, or participate in another task. World input does
@@ -102,7 +120,7 @@ Export prints a portable, versioned JSON definition, for example:
 
 Save that JSON to a file and use `marina --harness ./daily.json`, or select a personal
 definition with `marina --harness daily`. `/harness use <name-or-path>` selects one inside
-the terminal. Files in a repository are never loaded implicitly. These definitions
+the terminal. Harness definitions in a repository are never loaded implicitly. These definitions
 select a runtime, model and dialect; they do not yet package teams, Scores, roles,
 credentials or approval policies. Changing a bound Marina worker's model takes effect
 between tasks; stop or finish active work first.
@@ -111,6 +129,25 @@ Native runtimes also support `marina --agent codex -p "<task>"`. Exit 0 means th
 turn finished without a reported error, not that Marina verified or approved its work.
 Missing terminal input denies native permission requests. Marina-native tasks retain
 the canonical task/submission/review workflow described below.
+
+## Project instructions
+
+Marina workers receive `CLAUDE.md`, `AGENTS.md` and `.marina.md` from the effective workspace
+root when assigned work. `code files <directory>` and `code read <path>` refresh instructions
+along that path, from the root to the inspected directory. Deeper instructions apply within
+their subtree; same-directory documents retain their stated precedence. Workers are prompted
+to inspect a path before editing it. This is guidance, not an additional write permission gate.
+
+Each delivery identifies its sources, scope, loaded byte count and any omissions or read
+errors. Assignment artifacts and inspection events record source metadata and SHA-256 hashes
+of the raw source excerpts. Automatic loading is bounded to 4 KiB per file, 16 KiB in total and
+32 directory levels. Read truncated or omitted files explicitly before relying on them.
+Instructions are refreshed from disk on inspection, so subsequent edits can change the
+guidance. Symlinks and nonregular instruction files are refused.
+
+Worktree sessions use the worktree's instructions. Sandbox sessions report that host
+instructions were not loaded; inspect the actual execution workspace. Repository instructions
+never grant execution permission. Native external runtimes keep their own instruction loaders.
 
 ## Code inside an existing world
 

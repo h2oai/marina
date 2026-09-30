@@ -10,7 +10,7 @@
 import { describe, expect, it } from "bun:test";
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { Api, Message, Model } from "@earendil-works/pi-ai";
+import { type Api, type Message, type Model, validateToolArguments } from "@earendil-works/pi-ai";
 import { type ActionEntry, ActionHistory } from "../src/agent/action-history";
 import { inferCrewResponder } from "../src/agent/agent-runtime";
 import {
@@ -52,6 +52,7 @@ import {
 import { LOCAL_PROVIDERS } from "../src/net/model-discovery";
 import type { MarinaDB } from "../src/persistence/database";
 import type { EntityId, EntityRank, KnownProperties, Perception, RoomId } from "../src/types";
+import { scopeProcessState } from "./process-state";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1525,6 +1526,86 @@ describe("tool profiles", () => {
         dependencies: "bun",
       }),
     ).rejects.toThrow("dependencies must be bun with verificationMode candidate");
+  });
+
+  it("resident coding tools expose edit/write and share safe command composition with deferred wrappers", async () => {
+    using _state = scopeProcessState({ env: { MARINA_DEFERRED_TOOLS: "on" } });
+    const commands: string[] = [];
+    const ctx = {
+      client: {
+        isConnected: () => true,
+        command: async (command: string) => {
+          commands.push(command);
+          return [{ kind: "text", data: { text: "ok" } }];
+        },
+      },
+      gameState: { handlePerception: () => {} },
+    } as never;
+    for (const profile of ["full", "crew"] as const) {
+      const toolset = createProfileToolset(ctx, {} as never, profile);
+      const generic = toolset.resident.find((tool) => tool.name === "marina_code")!;
+      if (profile === "full")
+        expect(toolset.deferred.some((tool) => tool.name === "marina_code_edit")).toBe(true);
+      const cases: Record<string, string | boolean>[] = [
+        {
+          action: "edit",
+          path: "apps/checkout/src/index.ts",
+          oldText: "one\ntwo",
+          newText: "three\nfour",
+        },
+        {
+          action: "edit",
+          path: "packages/pricing/src/index.ts",
+          oldText: "old",
+          newText: "",
+          replaceAll: true,
+        },
+        {
+          action: "write",
+          path: "packages/pricing/src/regression.test.ts",
+          content: "first\nsecond\n",
+        },
+        { action: "write", path: "empty.txt", content: "" },
+      ];
+      for (const input of cases) {
+        // This is the actual framework validator that rejected the live worker.
+        const params = validateToolArguments(generic, {
+          type: "toolCall",
+          id: "test",
+          name: generic.name,
+          arguments: input,
+        });
+        await generic.execute("generic", params);
+        const emitted = commands.at(-1);
+        const typed = createProfileToolset(ctx, {} as never, "full").deferred.find(
+          (tool) => tool.name === `marina_code_${input.action}`,
+        )!;
+        await typed.execute("typed", input);
+        expect(commands.at(-1)).toBe(emitted);
+      }
+      expect(commands.slice(-8)).toEqual([
+        "code edit apps/checkout/src/index.ts\n<<<<<<< OLD\none\ntwo\n=======\nthree\nfour\n>>>>>>> NEW",
+        "code edit apps/checkout/src/index.ts\n<<<<<<< OLD\none\ntwo\n=======\nthree\nfour\n>>>>>>> NEW",
+        "code edit packages/pricing/src/index.ts all\n<<<<<<< OLD\nold\n=======\n\n>>>>>>> NEW",
+        "code edit packages/pricing/src/index.ts all\n<<<<<<< OLD\nold\n=======\n\n>>>>>>> NEW",
+        "code write packages/pricing/src/regression.test.ts\nfirst\nsecond\n",
+        "code write packages/pricing/src/regression.test.ts\nfirst\nsecond\n",
+        "code write empty.txt\n",
+        "code write empty.txt\n",
+      ]);
+      const before = commands.length;
+      for (const params of [
+        { action: "write", path: "a.ts", text: "wrong field" },
+        { action: "edit", path: "a.ts", diff: "wrong format" },
+        { action: "edit", path: "a.ts", oldText: "old" },
+        { action: "write", path: "a.ts\ncode stop", content: "hello" },
+        { action: "edit", path: "a.ts\ncode stop", oldText: "a", newText: "b" },
+      ]) {
+        const result = await generic.execute("invalid", params);
+        expect(JSON.stringify(result)).toContain("Invalid marina_code request");
+      }
+      expect(commands.length).toBe(before);
+    }
   });
 
   it("typed code tools map directly to Marina code commands", async () => {

@@ -12,6 +12,7 @@ import {
   heartbeatCodingRun,
   submitCodingRun,
 } from "../../../coding/task-run";
+import { codingWorkerState } from "../../../coding/worker-state";
 import { TaskManager } from "../../../coordination/task-manager";
 import type { CodingArtifactRow, MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
@@ -50,12 +51,14 @@ export function observeCodingRun(
   if (entries.has(run.id)) return;
   const meta = codingRunMetadata(run);
   const workerId = handle.getStatus().entityId;
+  const initialWorker = codingWorkerState(handle);
   const received = {
     runId: run.id,
     runStatus: run.status,
     phase: "received",
     verificationRequirement: meta.verificationRequirement,
     verificationReadiness: codingVerificationReadiness(deps.db, run),
+    ...initialWorker,
   };
   deps.db.createCodingEvent({
     sessionId: run.session_id,
@@ -84,6 +87,44 @@ export function observeCodingRun(
       timestamp: Date.now(),
     });
   let closed = false;
+  const stateKey = (worker: ReturnType<typeof codingWorkerState>) =>
+    JSON.stringify([worker.workerState, worker.workerReason, worker.workerPauseKind]);
+  let previousWorker = stateKey(initialWorker);
+  const publishWorker = () => {
+    const worker = codingWorkerState(handle);
+    const key = stateKey(worker);
+    if (key === previousWorker) return;
+    previousWorker = key;
+    const payload = { runId: run.id, runStatus: "active", ...worker };
+    deps.db.createCodingEvent({
+      sessionId: run.session_id,
+      actor: meta.workerName,
+      kind: "worker_state_changed",
+      payload,
+    });
+    const currentOwner = deps.findEntityExact?.(meta.ownerName) ?? deps.getEntity(meta.ownerKey);
+    const currentSession = deps.db.getCodingSession(run.session_id);
+    if (
+      currentOwner &&
+      sameEntityName(currentOwner.name, meta.ownerName) &&
+      currentSession &&
+      canAdoptCodingSession(currentSession, currentOwner)
+    )
+      deps.notify?.(
+        currentOwner.id,
+        `Worker ${worker.workerState}${worker.workerReason ? `: ${worker.workerReason}` : "."}`,
+        {
+          code: {
+            event: "worker_state_changed",
+            type: "lifecycle",
+            sessionId: run.session_id,
+            status: "active",
+            metadata: payload,
+            commands: [`agent status ${handle.name}`, "code status", "code stop"],
+          },
+        },
+      );
+  };
   const unsubscribe = handle.subscribe((event) => {
     if (closed) return;
     if (deps.db.getCodingArtifact(run.id)?.status !== "active") {
@@ -128,6 +169,18 @@ export function observeCodingRun(
         },
       });
     }
+    if (
+      [
+        "operator_status_change",
+        "status_change",
+        "error",
+        "turn_start",
+        "turn_end",
+        "tool_call",
+        "tool_result",
+      ].includes(event.type)
+    )
+      publishWorker();
   });
   entries.set(run.id, () => {
     closed = true;

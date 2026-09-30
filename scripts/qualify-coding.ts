@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { strict as assert } from "node:assert";
+import { createHash } from "node:crypto";
 import {
   mkdirSync,
   readdirSync,
@@ -15,6 +16,9 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import type { AgentEvent } from "../src/agent/agent-types";
 import { operatorStatusOf } from "../src/agent/lean-agent-adapter";
+import { BUN_PREPARATION_POLICY } from "../src/coding/candidate-dependencies";
+import { LocalWorkspace } from "../src/coding/local-workspace";
+import type { ProjectInstructions } from "../src/coding/project-instructions";
 import { codingRunMetadata } from "../src/coding/task-run";
 import { Engine } from "../src/engine/engine";
 import { getErrorMessage } from "../src/engine/errors";
@@ -25,12 +29,13 @@ import { closeWorldMemoryService } from "../src/memory/world-service";
 import { setEndpointConfig } from "../src/net/model-endpoint";
 import { WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
+import type { CodingEventRow } from "../src/persistence/db-coding";
 import { MarinaClient } from "../src/sdk/client";
 import { type EntityId, roomId } from "../src/types";
 import { scopeProcessState, scopeProperty } from "../test/process-state";
 import { evaluationBudgetFetch } from "./research/memory-evaluation-budget";
 
-const SCENARIOS = ["bugfix", "feature", "refactor"] as const;
+const SCENARIOS = ["bugfix", "feature", "refactor", "workspace"] as const;
 export type CodingScenario = (typeof SCENARIOS)[number];
 export interface CodingQualificationOptions {
   directory: string;
@@ -49,11 +54,11 @@ export function validateCodingQualification(options: CodingQualificationOptions)
   const scenarios = options.scenarios ?? ["bugfix"];
   if (
     !scenarios.length ||
-    scenarios.length > 3 ||
+    scenarios.length > SCENARIOS.length ||
     new Set(scenarios).size !== scenarios.length ||
     scenarios.some((s) => !SCENARIOS.includes(s))
   )
-    throw new Error("Choose distinct scenarios: bugfix, feature, refactor");
+    throw new Error(`Choose distinct scenarios: ${SCENARIOS.join(", ")}`);
   // Resolve the nearest existing parent as well: a symlink must not put a report
   // or disposable model-edited workspace inside the public source checkout.
   let parent = resolve(options.directory);
@@ -77,7 +82,7 @@ export function validateCodingQualification(options: CodingQualificationOptions)
 
 /** The initial fixtures are deliberately dependency-free. These are small
  * functional journeys, not a benchmark of general coding capability. */
-export function codingQualificationFixture(scenario: CodingScenario) {
+export function codingQualificationFixture(scenario: Exclude<CodingScenario, "workspace">) {
   const source = `export function paginate<T>(items: readonly T[], page: number, size: number): T[] {
   if (!Number.isInteger(page) || page < 1) throw new RangeError("page");
   if (!Number.isInteger(size) || size < 1) throw new RangeError("size");
@@ -111,6 +116,170 @@ test("invalid arguments", () => {
   };
 }
 
+/** A small real package boundary, with no registry or ambient dependency input.
+ * Instructions are captured source. Holdouts are created outside the worker's
+ * repository only after it submits; they are never part of its acceptance suite. */
+export function codingWorkspaceFixture() {
+  const files: Record<string, string> = {
+    "package.json": JSON.stringify({
+      name: "checkout-qualification",
+      private: true,
+      workspaces: ["packages/*", "apps/*"],
+      scripts: { test: "bun test" },
+    }),
+    "packages/pricing/package.json": JSON.stringify({
+      name: "@fixture/pricing",
+      version: "1.0.0",
+      exports: "./src/index.ts",
+    }),
+    "apps/checkout/package.json": JSON.stringify({
+      name: "@fixture/checkout",
+      version: "1.0.0",
+      exports: "./src/index.ts",
+      dependencies: { "@fixture/pricing": "workspace:*" },
+    }),
+    "bun.lock": JSON.stringify({
+      lockfileVersion: 2,
+      configVersion: 1,
+      workspaces: {
+        "": { name: "checkout-qualification" },
+        "packages/pricing": { name: "@fixture/pricing", version: "1.0.0" },
+        "apps/checkout": {
+          name: "@fixture/checkout",
+          version: "1.0.0",
+          dependencies: { "@fixture/pricing": "workspace:*" },
+        },
+      },
+      packages: {
+        "@fixture/pricing": ["@fixture/pricing@workspace:packages/pricing"],
+        "@fixture/checkout": ["@fixture/checkout@workspace:apps/checkout"],
+      },
+    }),
+    ".gitignore": "node_modules/\n",
+    "AGENTS.md": `This repository uses Bun workspaces. Read the nested AGENTS.md governing each package before changing it.
+Keep acceptance.test.ts, package.json files, bun.lock and all AGENTS.md files unchanged.
+Implement pricing in packages/pricing, and consume it through @fixture/pricing in apps/checkout.
+Add a new regression.test.ts in each package's src directory. Use candidate verification with dependencies:bun; inspect its completed receipt before summarizing. No commits or self-approval.
+`,
+    "packages/pricing/AGENTS.md": `Pricing contract: unitCents is an integer from 0 through 1000000; quantity is an integer from 1 through 1000.
+The optional discountBasisPoints is an integer from 0 through 10000, defaulting to 0. Reject invalid numeric inputs with RangeError.
+Apply the discount to the full line (unitCents * quantity), then round HALF UP to the nearest integer cent ONCE. Do not round each unit. Keep arithmetic in integer cents/basis points; do not format or use decimal currency strings.
+Preserve the existing two-argument lineTotal API. Add regression tests in src/regression.test.ts, including a fractional-cent discount on a multi-unit line.
+`,
+    "apps/checkout/AGENTS.md": `Checkout contract: accept optional discountBasisPoints on each input line and pass it to @fixture/pricing's lineTotal; do not duplicate pricing arithmetic here.
+Preserve the result shape { lines: [{ sku, totalCents }], totalCents }, input SKU order, duplicate-SKU rejection, and the caller's array/objects unchanged. An omitted discount preserves current behavior.
+Add regression tests in src/regression.test.ts for discounted checkout and unchanged no-discount behavior.
+`,
+    "packages/pricing/src/index.ts": `export function lineTotal(unitCents: number, quantity: number): number {
+  if (!Number.isInteger(unitCents) || unitCents < 0 || unitCents > 1000000) throw new RangeError("unitCents");
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 1000) throw new RangeError("quantity");
+  return unitCents * quantity;
+}
+`,
+    "apps/checkout/src/index.ts": `import { lineTotal } from "@fixture/pricing";
+export interface CheckoutLine { sku: string; unitCents: number; quantity: number }
+export function checkout(input: readonly CheckoutLine[]) {
+  const seen = new Set<string>();
+  const lines = input.map((line) => {
+    if (seen.has(line.sku)) throw new RangeError("duplicate sku");
+    seen.add(line.sku);
+    return { sku: line.sku, totalCents: lineTotal(line.unitCents, line.quantity) };
+  });
+  return { lines, totalCents: lines.reduce((total, line) => total + line.totalCents, 0) };
+}
+`,
+    "acceptance.test.ts": `import { expect, test } from "bun:test";
+import { lineTotal } from "./packages/pricing/src/index";
+import { checkout } from "./apps/checkout/src/index";
+test("existing integer pricing", () => {
+  expect(lineTotal(125, 3)).toBe(375);
+  expect(() => lineTotal(-1, 1)).toThrow(RangeError);
+  expect(() => lineTotal(1, 0)).toThrow(RangeError);
+});
+test("existing checkout shape and duplicate rejection", () => {
+  expect(checkout([{ sku: "b", unitCents: 125, quantity: 2 }, { sku: "a", unitCents: 20, quantity: 1 }])).toEqual({ lines: [{ sku: "b", totalCents: 250 }, { sku: "a", totalCents: 20 }], totalCents: 270 });
+  expect(checkout([])).toEqual({ lines: [], totalCents: 0 });
+  expect(() => checkout([{ sku: "a", unitCents: 1, quantity: 1 }, { sku: "a", unitCents: 2, quantity: 1 }])).toThrow(RangeError);
+});
+`,
+  };
+  return {
+    files,
+    sourcePaths: ["packages/pricing/src/index.ts", "apps/checkout/src/index.ts"],
+    regressionPaths: [
+      "packages/pricing/src/regression.test.ts",
+      "apps/checkout/src/regression.test.ts",
+    ],
+    instructionPaths: ["packages/pricing/AGENTS.md", "apps/checkout/AGENTS.md"],
+    task: "Add optional per-line discountBasisPoints support to lineTotal and checkout across both workspace packages. Read applicable AGENTS.md instructions for the exact validation and rounding contract. Preserve existing behavior when the discount is omitted. Add new regression.test.ts tests in each package's src directory. Do not change acceptance.test.ts, any package.json, bun.lock, or AGENTS.md. Use Marina's normal coding tools, run candidate verification with code verify candidate dependencies:bun (marina_code action=verify, verificationMode=candidate, dependencies=bun), inspect the completed receipt, then submit a code summary with actual results. Do not commit, spawn helpers, or approve your own work.",
+  };
+}
+
+export function codingWorkspaceHoldout(root: string): string {
+  return `import { strict as assert } from "node:assert";
+import { lineTotal } from ${JSON.stringify(join(root, "packages/pricing/src/index.ts"))};
+import { checkout } from ${JSON.stringify(join(root, "apps/checkout/src/index.ts"))};
+// BigInt gives the owner an independent integer oracle, including half-cent ties.
+for (const cents of [0,1,3,99,125,999999,1000000]) for (const quantity of [1,2,3,1000]) for (const discount of [0,1,3333,5000,9999,10000]) {
+  const expected = Number((BigInt(cents) * BigInt(quantity) * BigInt(10000-discount) + 5000n) / 10000n);
+  assert.equal(lineTotal(cents, quantity, discount), expected);
+  const input = Object.freeze([Object.freeze({sku:"z",unitCents:cents,quantity,discountBasisPoints:discount}), Object.freeze({sku:"a",unitCents:7,quantity:2})]);
+  const before = JSON.stringify(input);
+  assert.deepEqual(checkout(input), {lines:[{sku:"z",totalCents:expected},{sku:"a",totalCents:14}],totalCents:expected+14});
+  assert.equal(JSON.stringify(input),before);
+  assert.equal(lineTotal(cents,quantity),cents*quantity);
+}
+for (const discount of [-1,10001,0.5,NaN,Infinity,null,"5000"]) {
+  assert.throws(()=>lineTotal(125,3,discount),RangeError);
+  assert.throws(()=>checkout([{sku:"a",unitCents:125,quantity:3,discountBasisPoints:discount}]),RangeError);
+}
+for (const [cents,quantity] of [[-1,1],[1000001,1],[1.5,1],[NaN,1],[1,0],[1,1001],[1,1.5],[1,Infinity]]) assert.throws(()=>lineTotal(cents,quantity,0),RangeError);
+assert.throws(()=>checkout([{sku:"x",unitCents:1,quantity:1},{sku:"x",unitCents:1,quantity:1,discountBasisPoints:5000}]),RangeError);
+assert.deepEqual(checkout([]),{lines:[],totalCents:0});
+console.log("Independent workspace discount contract passed");
+`;
+}
+
+/** Evidence of instruction delivery, not a claim that a model understood it. */
+export function codingWorkspaceInstructionEvidence(
+  events: Pick<CodingEventRow, "id" | "actor" | "kind" | "payload_json">[],
+  worker: string,
+) {
+  const fixture = codingWorkspaceFixture();
+  return fixture.instructionPaths.flatMap((path) => {
+    const expected = fixture.files[path]!;
+    const expectedHash = createHash("sha256").update(expected).digest("hex");
+    for (const event of events) {
+      if (event.actor !== worker || !["file_read", "files_listed"].includes(event.kind)) continue;
+      const payload = JSON.parse(event.payload_json) as {
+        path?: string;
+        size?: number;
+        truncated?: boolean;
+        projectInstructions?: ProjectInstructions;
+      };
+      if (
+        payload.projectInstructions?.sources.some(
+          (source) =>
+            source.path === path &&
+            source.status === "loaded" &&
+            source.excerptHash === expectedHash,
+        )
+      )
+        return [
+          { path, eventId: event.id, inspected: payload.path, delivery: "scoped-instructions" },
+        ];
+      if (
+        event.kind === "file_read" &&
+        payload.path === path &&
+        payload.truncated === false &&
+        payload.size === Buffer.byteLength(expected)
+      )
+        return [{ path, eventId: event.id, inspected: payload.path, delivery: "explicit-read" }];
+    }
+    return [];
+  });
+}
+
 async function processResult(command: string[], cwd: string) {
   const child = Bun.spawn(command, {
     cwd,
@@ -140,6 +309,22 @@ async function processResult(command: string[], cwd: string) {
 
 function passingTests(output: string): number {
   return Number(output.match(/\b(\d+) pass\b/)?.[1] ?? 0);
+}
+
+export function codingQualificationFailure(input: {
+  status: string;
+  reason?: string;
+  budgetExhausted?: boolean;
+  deadlineReached: boolean;
+}): string | undefined {
+  if (input.status === "submitted") return undefined;
+  if (input.reason?.startsWith("Blocked:"))
+    return `worker blocked: ${input.reason.slice(8).trim()}`;
+  if (input.status !== "active")
+    return `run ${input.status}${input.reason ? `: ${input.reason}` : ""}`;
+  if (input.budgetExhausted) return "native worker exhausted its call budget";
+  if (input.deadlineReached) return "scenario deadline reached while the run was still active";
+  return `worker did not submit (run ${input.status})`;
 }
 
 /** Real native worker, real WS ingress, existing task/artifact ledgers. The
@@ -247,7 +432,8 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
     provider: `openai/${spending.model}`,
     model_loop: "native Marina worker",
     scenarios: [],
-    limits: "Small dependency-free fixtures; no general coding-quality or hermetic-build claim.",
+    limits:
+      "Small functional fixtures; workspace uses captured local packages only. No general coding-quality or hermetic-build claim.",
   };
   const started = Date.now();
   const workers: { name: string; recordedCostUsd: number }[] = [];
@@ -257,14 +443,30 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
     const ownerId = owner.getSession()!.entityId as EntityId;
     grant(db, ownerId, "code.exec");
     for (const scenario of options.scenarios ?? ["bugfix"]) {
-      const fixture = codingQualificationFixture(scenario);
+      const workspaceFixture = scenario === "workspace" ? codingWorkspaceFixture() : undefined;
+      const fixture = scenario !== "workspace" ? codingQualificationFixture(scenario) : undefined;
       const root = join(directory, scenario);
       mkdirSync(root, { mode: 0o700 });
-      writeFileSync(join(root, "source.ts"), fixture.source);
-      writeFileSync(join(root, "acceptance.test.ts"), fixture.tests);
       const pkg = JSON.stringify({ private: true, scripts: { test: "bun test" } });
-      writeFileSync(join(root, "package.json"), pkg);
-      writeFileSync(join(root, ".gitignore"), "node_modules/\n");
+      const files = workspaceFixture?.files ?? {
+        "source.ts": fixture!.source,
+        "acceptance.test.ts": fixture!.tests,
+        "package.json": pkg,
+        ".gitignore": "node_modules/\n",
+      };
+      for (const [path, content] of Object.entries(files)) {
+        mkdirSync(dirname(join(root, path)), { recursive: true });
+        writeFileSync(join(root, path), content);
+      }
+      if (workspaceFixture) {
+        // The initial live checkout needs its captured workspace links too. Use
+        // the same frozen preparation policy as candidate verification, with
+        // no registry dependencies, scripts, or shared node_modules.
+        const initialPreparation = await new LocalWorkspace(root).prepareCandidateDependencies(
+          () => {},
+        );
+        assert.equal(initialPreparation.result.exitCode, 0, initialPreparation.result.output);
+      }
       const git = async (...args: string[]) => {
         const result = await processResult(
           [
@@ -310,7 +512,9 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
       assert.ok(workerId, "Native worker failed to join the world");
       grant(db, workerId, "code.exec");
       const scenarioStarted = Date.now();
-      await owner.command(`code do verification:candidate -- ${fixture.task}`);
+      await owner.command(
+        `code do verification:candidate -- ${workspaceFixture?.task ?? fixture!.task}`,
+      );
       const run = db.listCodingRuns({ sessionId, status: "active" })[0];
       assert.ok(run, "Task dispatch did not create a canonical attempt");
       assert.equal(
@@ -326,11 +530,16 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
       while (Date.now() < deadline && db.getCodingArtifact(run.id)?.status === "active") {
         if (worldLatency === undefined && messages.some((m) => m.includes(marker)))
           worldLatency = performance.now() - sent;
-        if (handle.getStatus().budgetExhausted)
-          throw new Error(`${scenario}: native worker exhausted its call budget`);
+        if (handle.getStatus().budgetExhausted) break;
         await Bun.sleep(50);
       }
       const submitted = db.getCodingArtifact(run.id)!;
+      const failure = codingQualificationFailure({
+        status: submitted.status,
+        reason: codingRunMetadata(submitted).reason,
+        budgetExhausted: handle.getStatus().budgetExhausted,
+        deadlineReached: Date.now() >= deadline,
+      });
       const result: Record<string, unknown> = {
         scenario,
         runId: run.id,
@@ -343,13 +552,10 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
         elapsed_ms: Date.now() - scenarioStarted,
         world_message_latency_ms: worldLatency,
         worker: handle.getStatus(),
+        failure,
       };
       (report.scenarios as unknown[]).push(result);
-      assert.equal(
-        submitted.status,
-        "submitted",
-        `${scenario}: worker did not submit before timeout`,
-      );
+      assert.equal(submitted.status, "submitted", `${scenario}: ${failure}`);
       assert.equal(
         codingRunMetadata(submitted).verification,
         "passed",
@@ -360,19 +566,39 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
         "Independent world communication did not arrive during work",
       );
       // Checks cannot be made green by weakening the provided acceptance suite.
-      assert.equal(readFileSync(join(root, "acceptance.test.ts"), "utf8"), fixture.tests);
-      assert.equal(readFileSync(join(root, "package.json"), "utf8"), pkg);
-      assert.notEqual(readFileSync(join(root, "source.ts"), "utf8"), fixture.source);
+      const sourcePaths = workspaceFixture?.sourcePaths ?? ["source.ts"];
+      for (const [path, original] of Object.entries(files)) {
+        if (sourcePaths.includes(path))
+          assert.notEqual(
+            readFileSync(join(root, path), "utf8"),
+            original,
+            `${path}: source unchanged`,
+          );
+        else
+          assert.equal(
+            readFileSync(join(root, path), "utf8"),
+            original,
+            `${path}: fixture changed`,
+          );
+      }
       const regressionFiles = readdirSync(root, { recursive: true }).filter(
         (path) =>
           typeof path === "string" &&
           /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(path) &&
+          !path.split(sep).includes("node_modules") &&
           path !== "acceptance.test.ts",
       );
       assert.ok(regressionFiles.length, `${scenario}: no model-authored regression test file`);
-      const checkOutputs = db
-        .listCodingArtifacts(sessionId)
-        .filter((artifact) => artifact.kind === "command_output")
+      const artifacts = db.listCodingArtifacts(sessionId);
+      const verificationId = codingRunMetadata(submitted).verificationId;
+      const verification = artifacts.find((artifact) => artifact.id === verificationId);
+      const verificationMetadata = verification ? JSON.parse(verification.metadata_json) : {};
+      const checkOutputs = artifacts
+        .filter((artifact) =>
+          workspaceFixture
+            ? verificationMetadata.artifactIds?.includes(artifact.id)
+            : artifact.kind === "command_output",
+        )
         .map((artifact) => artifact.content_text)
         .join("\n");
       assert.ok(
@@ -381,10 +607,47 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
       );
       result.regression_files = regressionFiles;
       result.passing_tests = passingTests(checkOutputs);
+      if (workspaceFixture) {
+        const instructionEvidence = codingWorkspaceInstructionEvidence(
+          db.listCodingEvents(sessionId, 1000),
+          name,
+        );
+        result.instruction_delivery = instructionEvidence;
+        assert.equal(
+          instructionEvidence.length,
+          workspaceFixture.instructionPaths.length,
+          "Worker did not inspect both packages' complete governing instructions",
+        );
+        // Evidence must belong to the exact verification accepted for this run,
+        // not a prior successful install or a failed attempt's extra test count.
+        const preparation = artifacts.find(
+          (artifact) => artifact.id === verificationMetadata.preparationArtifactId,
+        );
+        assert.ok(preparation, "Workspace verification omitted frozen dependency preparation");
+        const preparationMetadata = JSON.parse(preparation.metadata_json);
+        assert.equal(preparation.status, "complete");
+        assert.equal(preparationMetadata.policy, BUN_PREPARATION_POLICY);
+        assert.equal(preparationMetadata.candidateId, codingRunMetadata(submitted).candidateId);
+        assert.equal(preparationMetadata.executionLocation, "candidate-materialization");
+        assert.equal(
+          preparationMetadata.lockfileSha256,
+          createHash("sha256").update(files["bun.lock"]!).digest("hex"),
+        );
+        for (const path of workspaceFixture.regressionPaths) {
+          assert.ok(regressionFiles.includes(path), `Missing model-authored ${path}`);
+          assert.ok(checkOutputs.includes(path), `Accepted verification did not execute ${path}`);
+        }
+        assert.ok(
+          passingTests(checkOutputs) >= passingTests(baseline.stdout + baseline.stderr) + 2,
+        );
+        result.dependency_preparation = preparationMetadata;
+      }
       const holdout = join(directory, `holdout-${scenario}.ts`);
       writeFileSync(
         holdout,
-        `import { strict as assert } from "node:assert";
+        workspaceFixture
+          ? codingWorkspaceHoldout(root)
+          : `import { strict as assert } from "node:assert";
 import * as source from ${JSON.stringify(join(root, "source.ts"))};
 for (let length=0; length<19; length++) for (let size=1; size<7; size++) for (let page=1; page<8; page++) {
   const items=Array.from({length},(_,i)=>i); const before=[...items];

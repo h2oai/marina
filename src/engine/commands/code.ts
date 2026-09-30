@@ -179,8 +179,8 @@ const listHandler: SubcommandHandler = (c) => {
 const resumeHandler: SubcommandHandler = (c) => {
   resumeSession(c.ctx, c.eid, c.entity, c.deps, c.args[0]);
 };
-const filesHandler: SubcommandHandler = (c) => {
-  files(c.ctx, c.eid, c.entity, c.deps, c.args.join(" ") || ".");
+const filesHandler: SubcommandHandler = async (c) => {
+  await files(c.ctx, c.eid, c.entity, c.deps, c.args.join(" ") || ".");
 };
 const readHandler: SubcommandHandler = async (c) => {
   await readFile(c.ctx, c.eid, c.entity, c.deps, c.args.join(" "));

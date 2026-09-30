@@ -272,6 +272,8 @@ export interface AgentHandle {
 
 export type AgentEvent =
   | { type: "status_change"; status: AgentStatus }
+  /** Pause/accounting changed without changing connection or task ownership. Read the handle. */
+  | { type: "operator_status_change" }
   | {
       type: "tool_call";
       toolName: string;

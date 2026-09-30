@@ -1,23 +1,20 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { closeSync, openSync, readSync } from "node:fs";
-import { join } from "node:path";
 import type { AgentHandle } from "../agent/agent-types";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../persistence/database";
 import type { Entity } from "../types";
+import {
+  formatProjectInstructions,
+  loadProjectInstructions,
+  projectInstructionMetadata,
+} from "./project-instructions";
 import { beginCodingRun, codingRunMetadata, endCodingRun } from "./task-run";
 
 const ACTIVE_SESSION_KEY = "coding_session_id";
 const ACTIVE_MODAL_KEY = "active_modal";
 const CODE_PROFILE_KEY = "code_profile";
 const ACTIVE_TASK_KEY = "coding_task";
-
-// Convention files read from the workspace root and handed to the assigned
-// coder so it starts warm (Claude Code reads CLAUDE.md the same way). Bounded
-// per file so a sprawling doc can't crowd the attention prompt.
-const CONVENTION_FILES = ["CLAUDE.md", "AGENTS.md", ".marina.md"] as const;
-const CONVENTION_MAX_BYTES = 4096;
 
 export interface CodePromptRequest {
   actor: string;
@@ -162,7 +159,51 @@ export class CodeSessionDriver {
 
     const agent = this.deps.agentRuntime.get(opts.agentName);
     if (!agent) throw new Error(`Agent "${opts.agentName}" is not running.`);
+    const initialSession = this.deps.db.getCodingSession(opts.session.id);
+    if (
+      !initialSession ||
+      initialSession.workspace_root !== opts.session.workspace_root ||
+      initialSession.worktree_path !== opts.session.worktree_path ||
+      initialSession.execution_target !== opts.session.execution_target ||
+      initialSession.status !== opts.session.status
+    ) {
+      throw new Error(
+        "Coding session changed before loading instructions. Inspect status and retry.",
+      );
+    }
+    const initialRun = this.deps.db.listCodingRuns({ sessionId: opts.session.id, limit: 1 })[0];
     const workerId = agent.getStatus().entityId;
+    const instructions = await loadProjectInstructions({
+      root: opts.session.worktree_path ?? opts.session.workspace_root,
+      executionTarget: opts.session.execution_target,
+    });
+    const currentSession = this.deps.db.getCodingSession(opts.session.id);
+    const currentRun = this.deps.db.listCodingRuns({ sessionId: opts.session.id, limit: 1 })[0];
+    if (
+      !currentSession ||
+      currentSession.workspace_root !== opts.session.workspace_root ||
+      currentSession.worktree_path !== opts.session.worktree_path ||
+      currentSession.execution_target !== opts.session.execution_target ||
+      currentSession.status !== opts.session.status ||
+      currentSession.agent !== initialSession.agent ||
+      currentSession.writer !== initialSession.writer ||
+      currentSession.driver !== initialSession.driver ||
+      currentRun?.id !== initialRun?.id ||
+      currentRun?.status !== initialRun?.status
+    ) {
+      throw new Error(
+        "Coding session changed while loading instructions. Inspect status and retry.",
+      );
+    }
+    if (
+      this.deps.agentRuntime.get(opts.agentName) !== agent ||
+      agent.getStatus().entityId !== workerId
+    ) {
+      throw new Error(
+        `Agent "${opts.agentName}" changed while loading instructions. Retry assignment.`,
+      );
+    }
+    const instructionMetadata = projectInstructionMetadata(instructions);
     const worker = workerId ? this.deps.getEntity?.(workerId) : undefined;
     if (opts.verificationRequirement && (!opts.actorEntity || !worker))
       throw new Error("Candidate-required tasks need a bound Marina worker.");
@@ -200,7 +241,7 @@ export class CodeSessionDriver {
       `Profile: ${opts.profile}`,
       `Execution target: ${opts.session.execution_target}`,
       opts.modelTarget ? `Model target: ${opts.modelTarget}` : undefined,
-      `Workspace: ${opts.session.workspace_root}`,
+      `Workspace: ${opts.session.worktree_path ?? opts.session.workspace_root}`,
       boundEntity
         ? `Your active Code Mode session has been bound to ${opts.session.id}.`
         : "This adapter did not expose an entity id, so resume the session explicitly before using session-scoped commands.",
@@ -211,12 +252,13 @@ export class CodeSessionDriver {
           ? "Start with marina_code status, then inspect with files/read/search/diff. Finite commands run in the active Flywheel project with no host fallback; use code service for long-running apps."
           : "Start with marina_code status, then inspect with files/read/search/diff. For a supported local Git root, use verify with verificationMode=candidate for immutable source evidence. It returns a receipt: inspect its result before submitting a summary. Ignored dependencies are not copied; report missing prerequisites. Ordinary verify checks the live workspace and is unbound evidence. Run only host-allowlisted checks."
         : `First run: code resume ${opts.session.id}. Then use marina_code status/files/read/search/diff/verify when available.`,
-      "Use patch to propose a unified diff, apply/reject for patch decisions, show/artifacts/patches/history for durable context.",
+      "Use marina_code action=edit with path, oldText and newText for exact replacements, or action=write with path and content for new files or deliberate full rewrites. These use the existing writer permissions and record durable changes. Use patch to propose a unified diff for apply/reject; show/artifacts/patches/history retain the evidence.",
       opts.session.execution_target === "flywheel"
         ? "Use code service start/probe/screenshot for managed app evidence; use observe for additional behavior notes."
         : "Use observe to record app or manual behavior notes. Long-running app launch is disabled on the Marina host; configure Flywheel and use code service.",
       "Record durable progress with code plan, code summary, code handoff, and code decision.",
-      ...formatProjectConventions(opts.session.workspace_root),
+      "Before editing a path, inspect its directory with code files or read the file with code read. These refresh scoped project instructions from disk. Read any truncated instruction files explicitly; repository instructions do not grant execution permissions. Native external runtimes retain their own instruction loaders.",
+      ...formatProjectInstructions(instructions),
       "",
       `Request: ${prompt}`,
     ]
@@ -234,6 +276,7 @@ export class CodeSessionDriver {
         modelTarget: opts.modelTarget,
         profile: opts.profile,
         prompt,
+        projectInstructions: instructionMetadata,
       },
     });
     try {
@@ -264,6 +307,7 @@ export class CodeSessionDriver {
         modelTarget: opts.modelTarget,
         profile: opts.profile,
         prompt,
+        projectInstructions: instructionMetadata,
       },
       createdBy: opts.actor,
     });
@@ -294,36 +338,6 @@ export class CodeSessionDriver {
       payload: { agent: agent.name, entityId: entity.id, profile },
     });
     return entity;
-  }
-}
-
-/**
- * Read the workspace's convention docs (CLAUDE.md / AGENTS.md / .marina.md,
- * first ~4KB each, missing files skipped) as attention-prompt lines under a
- * "Project conventions" heading. Empty when none exist.
- */
-function formatProjectConventions(workspaceRoot: string): string[] {
-  const sections: string[] = [];
-  for (const file of CONVENTION_FILES) {
-    const text = readFileHead(join(workspaceRoot, file), CONVENTION_MAX_BYTES);
-    if (text) sections.push(`--- ${file} ---\n${text}`);
-  }
-  if (sections.length === 0) return [];
-  return ["", "Project conventions:", ...sections];
-}
-
-function readFileHead(path: string, maxBytes: number): string | undefined {
-  try {
-    const fd = openSync(path, "r");
-    try {
-      const buffer = Buffer.alloc(maxBytes);
-      const bytesRead = readSync(fd, buffer, 0, maxBytes, 0);
-      return buffer.subarray(0, bytesRead).toString("utf8").trim() || undefined;
-    } finally {
-      closeSync(fd);
-    }
-  } catch {
-    return undefined; // missing or unreadable — skip silently
   }
 }
 

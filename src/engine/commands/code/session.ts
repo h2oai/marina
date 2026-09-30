@@ -9,6 +9,7 @@ import {
   codingVerificationReadiness,
   codingVerificationUnchanged,
 } from "../../../coding/task-run";
+import { codingWorkerState } from "../../../coding/worker-state";
 import { bold, dim, header, separator, success } from "../../../net/ansi";
 import type { CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
@@ -549,13 +550,20 @@ export async function status(
       run,
       deps.getConnectionProtocol?.(eid) !== "telnet",
     );
-    if (!codingVerificationUnchanged(deps.db, run, assessment.verificationId))
+    if (
+      deps.db.listCodingRuns({ sessionId: session.id, limit: 1 })[0]?.id !== run.id ||
+      !codingVerificationUnchanged(deps.db, run, assessment.verificationId)
+    )
       throw new Error("Task evidence changed during status. Inspect code status again.");
     const currentSession = deps.db.getCodingSession(session.id);
     const actor = deps.getEntity(eid);
     if (!currentSession || !actor || !canAdoptCodingSession(currentSession, actor)) return;
     Object.assign(runMeta, assessment);
   }
+  const worker =
+    run?.status === "active" && runMeta
+      ? codingWorkerState(getAgentHandle(deps, runMeta.runtimeName ?? runMeta.workerName))
+      : undefined;
   const lines = [
     header("Coding Session"),
     separator(),
@@ -567,6 +575,11 @@ export async function status(
       ? [
           `Task: #${runMeta.taskId} | Attempt: ${run.id} (${run.status})`,
           `Task review: ${deps.db.getTask(runMeta.taskId)?.status ?? "unknown"}`,
+          ...(worker
+            ? [
+                `Worker: ${worker.workerState}${worker.workerReason ? ` — ${worker.workerReason}` : ""}`,
+              ]
+            : []),
           `Recorded verification: ${runMeta.verification ?? "not yet submitted"}`,
           ...(runMeta.verificationRequirement
             ? [`Required verification: ${runMeta.verificationRequirement}`]
@@ -592,11 +605,15 @@ export async function status(
       "code artifacts",
       "code patches",
       ...(runMeta ? [`task info ${runMeta.taskId}`] : []),
+      ...(worker && runMeta
+        ? [`agent status ${runMeta.runtimeName ?? runMeta.workerName}`, "code stop"]
+        : []),
     ],
     event: "session_status",
     metadata: {
       runId: run?.id,
       runStatus: run?.status,
+      ...worker,
       verification: runMeta?.verification,
       verificationRequirement: runMeta?.verificationRequirement,
       verificationReadiness: run ? codingVerificationReadiness(deps.db, run, runMeta) : undefined,
