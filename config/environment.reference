@@ -424,12 +424,12 @@
 # What forces a tool call after a silent turn. `all` (default): any addressed or high-priority event. `requests`: only an event that owes a reply — a request tell, an addressed post whose body is a request, or a request already in the reply ledger; addressed information still wakes the agent but is not tracked as owed or nudged.
 # MARINA_FORCED_ACTION_NUDGE=all
 
-# Absolute cap on an agent's conversation, in estimated tokens (system prompt and tool schemas excluded). Unset: compaction fires only near the model window. When set, the history is compacted between prompts to MARINA_AGENT_CONTEXT_TARGET_TOKENS (default a third of the cap) and kept; the originals are archived first.
+# Absolute cap on an agent's conversation, in estimated tokens (system prompt and tool schemas excluded). Default 48000; `0`/`off` disables it (compaction then fires only near the model window); explicit values below 8000 are raised to 8000. Once the cap is reached after the agent's first run, the history is compacted to MARINA_AGENT_CONTEXT_TARGET_TOKENS (default a third of the cap) and kept; the originals are archived first. The near-window trigger still applies when it comes first. The built-in default exempts an agent bound to an active Code Mode task; an explicit value applies to every agent.
 # MARINA_AGENT_CONTEXT_CAP_TOKENS=48000
 # MARINA_AGENT_CONTEXT_TARGET_TOKENS=16000
 
-# `on` removes reasoning blocks (text and provider signature) from assistant messages of earlier runs between prompts; the latest run is untouched, OpenAI Responses-API messages are skipped, and the originals stay in the continuity journal. Off by default.
-# MARINA_DROP_OLD_THINKING_SIGNATURES=off
+# Removes reasoning blocks (text and provider signature) from assistant messages of earlier runs between prompts; the latest run is untouched, OpenAI Responses-API messages are skipped, and the originals stay in the continuity journal. On by default; `off` keeps every reasoning block.
+# MARINA_DROP_OLD_THINKING_SIGNATURES=on
 
 # Provider-level retries inside one request (transient 5xx, short 429) before the loop's own backoff. 0 disables.
 # MARINA_PROVIDER_MAX_RETRIES=2

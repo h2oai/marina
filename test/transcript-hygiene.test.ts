@@ -4,8 +4,8 @@
 /**
  * Operator transcript hygiene: the absolute conversation cap
  * (`MARINA_AGENT_CONTEXT_CAP_TOKENS`) and dropping reasoning blocks from
- * earlier runs (`MARINA_DROP_OLD_THINKING_SIGNATURES`). Both are off by
- * default and leave the transcript untouched when off.
+ * earlier runs (`MARINA_DROP_OLD_THINKING_SIGNATURES`). Both are on by
+ * default and leave the transcript untouched when set `off`.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -15,6 +15,9 @@ import {
   conversationTokenCap,
   conversationTokens,
   createContextManager,
+  DEFAULT_CONVERSATION_CAP_TOKENS,
+  hasCompletedRun,
+  MIN_CONVERSATION_CAP_TOKENS,
 } from "../src/agent/context-manager";
 import { LeanAgentAdapter } from "../src/agent/lean-agent-adapter";
 import { dropOldThinking, dropOldThinkingEnabled } from "../src/agent/transcript-hygiene";
@@ -64,20 +67,30 @@ function longConversation(turns: number): AgentMessage[] {
 }
 
 describe("conversationTokenCap", () => {
-  it("is off unless a positive cap is set; the target defaults to a third", () => {
-    expect(conversationTokenCap({})).toBeUndefined();
+  it("defaults on at 48k with a third as target; 0/off disables; explicit values win", () => {
+    const fallback = {
+      capTokens: DEFAULT_CONVERSATION_CAP_TOKENS,
+      targetTokens: Math.floor(DEFAULT_CONVERSATION_CAP_TOKENS / 3),
+      explicit: false,
+    };
+    expect(conversationTokenCap({})).toEqual(fallback);
+    expect(conversationTokenCap({ MARINA_AGENT_CONTEXT_CAP_TOKENS: "" })).toEqual(fallback);
+    // Junk never lifts the cap.
+    expect(conversationTokenCap({ MARINA_AGENT_CONTEXT_CAP_TOKENS: "junk" })).toEqual(fallback);
     expect(conversationTokenCap({ MARINA_AGENT_CONTEXT_CAP_TOKENS: "0" })).toBeUndefined();
-    expect(conversationTokenCap({ MARINA_AGENT_CONTEXT_CAP_TOKENS: "junk" })).toBeUndefined();
-    expect(conversationTokenCap({ MARINA_AGENT_CONTEXT_CAP_TOKENS: "48000" })).toEqual({
-      capTokens: 48_000,
-      targetTokens: 16_000,
+    expect(conversationTokenCap({ MARINA_AGENT_CONTEXT_CAP_TOKENS: "off" })).toBeUndefined();
+    expect(conversationTokenCap({ MARINA_AGENT_CONTEXT_CAP_TOKENS: "false" })).toBeUndefined();
+    expect(conversationTokenCap({ MARINA_AGENT_CONTEXT_CAP_TOKENS: "96000" })).toEqual({
+      capTokens: 96_000,
+      targetTokens: 32_000,
+      explicit: true,
     });
     expect(
       conversationTokenCap({
         MARINA_AGENT_CONTEXT_CAP_TOKENS: "48000",
         MARINA_AGENT_CONTEXT_TARGET_TOKENS: "20000",
       }),
-    ).toEqual({ capTokens: 48_000, targetTokens: 20_000 });
+    ).toEqual({ capTokens: 48_000, targetTokens: 20_000, explicit: true });
     // A target at or above the cap would never shrink anything: fall back.
     expect(
       conversationTokenCap({
@@ -85,6 +98,25 @@ describe("conversationTokenCap", () => {
         MARINA_AGENT_CONTEXT_TARGET_TOKENS: "60000",
       })?.targetTokens,
     ).toBe(16_000);
+    // The default target applies to the default cap too.
+    expect(
+      conversationTokenCap({ MARINA_AGENT_CONTEXT_TARGET_TOKENS: "12000" })?.targetTokens,
+    ).toBe(12_000);
+  });
+
+  it("floors a tiny explicit cap", () => {
+    expect(conversationTokenCap({ MARINA_AGENT_CONTEXT_CAP_TOKENS: "500" })?.capTokens).toBe(
+      MIN_CONVERSATION_CAP_TOKENS,
+    );
+  });
+});
+
+describe("hasCompletedRun", () => {
+  it("needs an assistant turn before the latest prompt", () => {
+    expect(hasCompletedRun([])).toBe(false);
+    expect(hasCompletedRun([system("sys"), user("p1")])).toBe(false);
+    expect(hasCompletedRun([user("p1"), assistant([text("a1")])])).toBe(false);
+    expect(hasCompletedRun([user("p1"), assistant([text("a1")]), user("p2")])).toBe(true);
   });
 });
 
@@ -105,7 +137,7 @@ describe("absolute conversation cap", () => {
     const transform = createContextManager({
       getModel: () => bigModel,
       getSystemPrompt: () => "sys",
-      getTokenCap: () => ({ capTokens: 20_000, targetTokens: 8_000 }),
+      getTokenCap: () => ({ capTokens: 20_000, targetTokens: 8_000, explicit: true }),
       onBeforeCompact: (original) => {
         archived.push(original.length);
       },
@@ -124,7 +156,7 @@ describe("absolute conversation cap", () => {
     const transform = createContextManager({
       getModel: () => bigModel,
       getSystemPrompt: () => "sys",
-      getTokenCap: () => ({ capTokens: 20_000, targetTokens: 8_000 }),
+      getTokenCap: () => ({ capTokens: 20_000, targetTokens: 8_000, explicit: true }),
       onBeforeCompact: () => {
         throw new Error("disk full");
       },
@@ -134,10 +166,12 @@ describe("absolute conversation cap", () => {
 });
 
 describe("dropOldThinking", () => {
-  it("is off by default", () => {
-    expect(dropOldThinkingEnabled({})).toBe(false);
-    expect(dropOldThinkingEnabled({ MARINA_DROP_OLD_THINKING_SIGNATURES: "off" })).toBe(false);
+  it("is on by default; off/false/0 disables", () => {
+    expect(dropOldThinkingEnabled({})).toBe(true);
     expect(dropOldThinkingEnabled({ MARINA_DROP_OLD_THINKING_SIGNATURES: "on" })).toBe(true);
+    expect(dropOldThinkingEnabled({ MARINA_DROP_OLD_THINKING_SIGNATURES: "off" })).toBe(false);
+    expect(dropOldThinkingEnabled({ MARINA_DROP_OLD_THINKING_SIGNATURES: "false" })).toBe(false);
+    expect(dropOldThinkingEnabled({ MARINA_DROP_OLD_THINKING_SIGNATURES: "0" })).toBe(false);
   });
 
   it("drops reasoning from earlier runs and keeps the latest run intact", () => {
@@ -180,19 +214,19 @@ describe("between-prompt hygiene in the adapter", () => {
       null,
     ) as unknown as Internals;
 
-  it("writes the reduced history back to the agent state only when enabled", async () => {
+  it("drops old reasoning by default and leaves the history alone when off", async () => {
     const messages = [user("p1"), assistant([thinking, text("a1")]), user("p2")];
     {
-      using _state = scopeProcessState({
-        env: { MARINA_DROP_OLD_THINKING_SIGNATURES: undefined },
-      });
+      using _state = scopeProcessState({ env: { MARINA_DROP_OLD_THINKING_SIGNATURES: "off" } });
       const i = make();
       i.agent.state.messages = messages;
       await i.tidyTranscriptBeforePrompt();
       expect(i.agent.state.messages).toEqual(messages);
     }
     {
-      using _state = scopeProcessState({ env: { MARINA_DROP_OLD_THINKING_SIGNATURES: "on" } });
+      using _state = scopeProcessState({
+        env: { MARINA_DROP_OLD_THINKING_SIGNATURES: undefined },
+      });
       const i = make();
       i.agent.state.messages = messages;
       await i.tidyTranscriptBeforePrompt();
@@ -201,5 +235,41 @@ describe("between-prompt hygiene in the adapter", () => {
       };
       expect(kept.content).toEqual([text("a1")]);
     }
+  });
+
+  type CapInternals = Internals & {
+    activeCodingTask: string | null;
+    tokenCapFor(
+      messages: readonly AgentMessage[],
+      opts?: { betweenPrompts?: boolean },
+    ): { capTokens: number } | undefined;
+  };
+  const done = [user("p1"), assistant([text("a1")]), user("p2")];
+
+  it("applies the default cap after the first run, never during it", () => {
+    using _state = scopeProcessState({ env: { MARINA_AGENT_CONTEXT_CAP_TOKENS: undefined } });
+    const i = make() as unknown as CapInternals;
+    expect(i.tokenCapFor([user("p1")])).toBeUndefined();
+    expect(i.tokenCapFor(done)?.capTokens).toBe(DEFAULT_CONVERSATION_CAP_TOKENS);
+  });
+
+  it("exempts a bound coder from the default cap but not from an explicit one", () => {
+    {
+      using _state = scopeProcessState({ env: { MARINA_AGENT_CONTEXT_CAP_TOKENS: undefined } });
+      const i = make() as unknown as CapInternals;
+      i.activeCodingTask = "fix the parser";
+      expect(i.tokenCapFor(done)).toBeUndefined();
+    }
+    {
+      using _state = scopeProcessState({ env: { MARINA_AGENT_CONTEXT_CAP_TOKENS: "64000" } });
+      const i = make() as unknown as CapInternals;
+      i.activeCodingTask = "fix the parser";
+      expect(i.tokenCapFor(done)?.capTokens).toBe(64_000);
+    }
+  });
+
+  it("off disables the cap for every agent", () => {
+    using _state = scopeProcessState({ env: { MARINA_AGENT_CONTEXT_CAP_TOKENS: "off" } });
+    expect((make() as unknown as CapInternals).tokenCapFor(done)).toBeUndefined();
   });
 });
