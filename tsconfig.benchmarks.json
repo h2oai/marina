@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["benchmarks/**/*.ts"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "benchmarks/datasets",
+    "benchmarks/results",
+    "benchmarks/.tmp-humaneval",
+    "benchmarks/run-direct-anthropic.ts"
+  ]
+}

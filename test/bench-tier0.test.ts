@@ -18,6 +18,7 @@ import { usageFromResponse } from "../benchmarks/modes/passthrough";
 import { parseEquivalenceVerdict } from "../benchmarks/scoring/judge";
 import { mcnemarExact, pairedBootstrap, wilsonInterval } from "../benchmarks/stats";
 import {
+  failureReason,
   formatTier0Summary,
   resolveTier0Target,
   summarizeSet,
@@ -150,6 +151,7 @@ describe("HLE adapter parsing", () => {
     expect(normalizeShortAnswer("  $\\boxed{17}$. ")).toBe("17");
     expect(normalizeShortAnswer('"Blue Whale"')).toBe("blue whale");
     expect(normalizeShortAnswer("\\text{yes}")).toBe("yes");
+    expect(normalizeShortAnswer("\\(9\\)")).toBe("9");
   });
 
   it("keeps only Gold, text-only rows", () => {
@@ -395,6 +397,19 @@ describe("tier0 preset", () => {
     expect(args.join(" ")).not.toContain("secret-key");
     expect(args).toContain("--seed");
     expect(args[args.indexOf("--judge-model") + 1]).toBe("marina/default");
+  });
+
+  it("reports the thrown message of a failed child, not its stack", () => {
+    const stderr = [
+      "Fatal error: 344 |   if (!hfToken()) {",
+      "345 |     throw new Error(",
+      "error: synthetic gated dataset message",
+      "      at downloadX (/x/download.ts:345:15)",
+      "      at /x/harness.ts:775:1",
+    ].join("\n");
+    expect(failureReason(stderr)).toBe("synthetic gated dataset message");
+    expect(failureReason("plain failure\n  at y (z:1:1)")).toBe("plain failure");
+    expect(failureReason("")).toBeUndefined();
   });
 
   it("summarizes sets with accuracy, interval and cost", () => {

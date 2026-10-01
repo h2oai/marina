@@ -190,6 +190,20 @@ export function summarizeSet(
   };
 }
 
+/**
+ * The error message in a failed harness child's stderr: the last `error:` line
+ * (Bun's thrown-error line), else the last non-stack line. Pure.
+ */
+export function failureReason(stderr: string): string | undefined {
+  const lines = stderr
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const error = lines.filter((l) => /^(?:error|Error|Fatal error)\b.*:/.test(l)).pop();
+  if (error) return error.replace(/^error:\s*/, "");
+  return lines.filter((l) => !l.startsWith("at ") && !/^\d+ \|/.test(l)).pop();
+}
+
 /** The closing table. Pure. */
 export function formatTier0Summary(target: Tier0Target, sets: Tier0SetSummary[]): string {
   const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
@@ -278,7 +292,7 @@ async function main(): Promise<void> {
     const stderr = await new Response(proc.stderr).text();
     if (stderr) process.stderr.write(stderr);
     if (code !== 0 || !existsSync(file)) {
-      const reason = stderr.trim().split("\n").filter(Boolean).slice(-1)[0] ?? `exit ${code}`;
+      const reason = failureReason(stderr) ?? `exit ${code}`;
       summaries.push({ benchmark: set.benchmark, status: "failed", error: reason });
       continue;
     }

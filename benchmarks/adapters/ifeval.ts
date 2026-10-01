@@ -31,8 +31,8 @@ export async function runIFEval(
         const kwargs = (item.metadata?.kwargs as Record<string, unknown>[]) ?? [];
         totalConstraints = instructionIds.length;
         passedCount = 0;
-        for (let i = 0; i < instructionIds.length; i++) {
-          const passed = checkInstruction(actual, instructionIds[i], kwargs[i] ?? {});
+        for (const [i, instructionId] of instructionIds.entries()) {
+          const passed = checkInstruction(actual, instructionId, kwargs[i] ?? {});
           if (passed) passedCount++;
         }
         allPassed = passedCount === totalConstraints;

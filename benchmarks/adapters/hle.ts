@@ -69,6 +69,7 @@ export function extractChoiceLetter(response: string): string {
 /** Lowercase, drop TeX wrappers, `$`, surrounding quotes, whitespace and a trailing period. */
 export function normalizeShortAnswer(s: string): string {
   return s
+    .replace(/\\[()[\]]/g, "")
     .replace(/\\boxed\{([^{}]*)\}/g, "$1")
     .replace(/\\text\{([^{}]*)\}/g, "$1")
     .replace(/\$/g, "")

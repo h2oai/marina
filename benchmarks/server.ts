@@ -9,7 +9,7 @@
  * Usage: bun run benchmarks/server.ts [--port 3303]
  */
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import { parseArgs } from "node:util";
 import type { BenchmarkResult } from "./types";
@@ -22,7 +22,7 @@ const { values: args } = parseArgs({
   strict: false,
 });
 
-const PORT = Number.parseInt(args.port ?? "3303", 10);
+const PORT = Number.parseInt(typeof args.port === "string" ? args.port : "3303", 10);
 const RESULTS_DIR = join(import.meta.dir, "results");
 const WEBUI_DIR = join(import.meta.dir, "webui");
 
@@ -248,18 +248,18 @@ function startBenchmarkRun(config: {
 
 function processOutputLine(state: RunState, line: string): void {
   // Parse progress updates like "Progress: 5/100"
-  const progressMatch = line.match(/Progress:\s*(\d+)\/(\d+)/);
-  if (progressMatch) {
-    state.progress = Number.parseInt(progressMatch[1], 10);
-    state.total = Number.parseInt(progressMatch[2], 10);
+  const [, progress, total] = line.match(/Progress:\s*(\d+)\/(\d+)/) ?? [];
+  if (progress !== undefined && total !== undefined) {
+    state.progress = Number.parseInt(progress, 10);
+    state.total = Number.parseInt(total, 10);
     state.status = "running";
     return; // Don't buffer progress lines
   }
 
   // Parse score from summary
-  const scoreMatch = line.match(/Overall Score:\s*([\d.]+)%/);
-  if (scoreMatch) {
-    state.score = Number.parseFloat(scoreMatch[1]) / 100;
+  const score = line.match(/Overall Score:\s*([\d.]+)%/)?.[1];
+  if (score !== undefined) {
+    state.score = Number.parseFloat(score) / 100;
   }
 
   // Parse status lines
@@ -358,9 +358,8 @@ async function handleApi(req: Request, path: string): Promise<Response> {
   }
 
   // GET /api/run/:id — poll run status
-  const runMatch = path.match(/^\/api\/run\/(.+)$/);
-  if (runMatch && req.method === "GET") {
-    const runId = runMatch[1];
+  const runId = path.match(/^\/api\/run\/(.+)$/)?.[1];
+  if (runId !== undefined && req.method === "GET") {
     const state = activeRuns.get(runId);
     if (!state) {
       return json({ status: "not_found" }, 404);
