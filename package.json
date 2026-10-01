@@ -94,6 +94,7 @@
     "clean": "rm -f marina.db marina.db-shm marina.db-wal data/marina.db && rm -rf data/scratch/*",
     "bench": "bun run benchmarks/harness.ts",
     "bench:compare": "bun run benchmarks/compare.ts",
+    "benchmark:import": "bun scripts/benchmark-import.ts",
     "bench:tier0": "bun run benchmarks/tier0.ts",
     "bench:context": "bun --env-file=/dev/null benchmarks/context-statistics.ts",
     "bench:ui": "bun run benchmarks/server.ts",

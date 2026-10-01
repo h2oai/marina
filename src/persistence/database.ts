@@ -225,7 +225,13 @@ import { BASE_SCHEMA, MIGRATIONS, SCHEMA_BASELINE, SCHEMA_VERSION } from "./sche
 // are re-exported here so importers keep a single path.
 export type { OperationalAlertRow } from "./db-alerts";
 export type { AssetRow } from "./db-assets";
-export type { BenchmarkRunRow } from "./db-benchmarks";
+export type {
+  BenchmarkItemInput,
+  BenchmarkItemRow,
+  BenchmarkLedgerRunInput,
+  BenchmarkRunRow,
+  BenchmarkTargetKind,
+} from "./db-benchmarks";
 export type {
   CanvasEdgeRow,
   CanvasIntentClaimResult,
@@ -279,7 +285,12 @@ export { MIGRATIONS } from "./schema";
 
 import type { OperationalAlertRow } from "./db-alerts";
 import type { AssetRow } from "./db-assets";
-import type { BenchmarkRunRow } from "./db-benchmarks";
+import type {
+  BenchmarkItemInput,
+  BenchmarkItemRow,
+  BenchmarkLedgerRunInput,
+  BenchmarkRunRow,
+} from "./db-benchmarks";
 import type {
   CanvasEdgeRow,
   CanvasIntentClaimResult,
@@ -2252,6 +2263,21 @@ export class MarinaDB implements MarinaStores {
 
   leaderboardBenchmark(benchmark: string, limit = 20): BenchmarkRunRow[] {
     return benchmarksDb.leaderboardBenchmark(this.reader, benchmark, limit);
+  }
+
+  recordBenchmarkLedgerRun(
+    run: BenchmarkLedgerRunInput,
+    items: readonly BenchmarkItemInput[],
+  ): { id: string; created: boolean } {
+    return benchmarksDb.recordBenchmarkLedgerRun(this.db, run, items);
+  }
+
+  getBenchmarkItems(runId: string): BenchmarkItemRow[] {
+    return benchmarksDb.getBenchmarkItems(this.reader, runId);
+  }
+
+  getBenchmarkItemsForBenchmark(benchmark: string, limit = 20_000): BenchmarkItemRow[] {
+    return benchmarksDb.getBenchmarkItemsForBenchmark(this.reader, benchmark, limit);
   }
 
   traceNoteGraph(

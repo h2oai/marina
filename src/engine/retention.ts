@@ -192,12 +192,6 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
   },
   { table: "association_events", timeColumn: "created_at", kind: "audit" },
   {
-    table: "benchmark_runs",
-    timeColumn: "started_at",
-    kind: "audit",
-    note: "qualification history",
-  },
-  {
     table: "shell_log",
     timeColumn: "created_at",
     kind: "audit",
@@ -208,6 +202,12 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
   { table: "chronicle", kind: "append-only", note: "canonical civic history" },
   { table: "entity_standing", kind: "append-only", note: "reputation ledger (decay is computed)" },
   { table: "memory_resolutions", kind: "append-only", note: "contradiction-resolution audit" },
+  {
+    table: "benchmark_runs",
+    kind: "append-only",
+    note: "benchmark ledger: every run ever measured is ranked and compared",
+  },
+  { table: "benchmark_items", kind: "append-only", note: "per-item outcomes of the ledger" },
   {
     table: "spend_daily",
     timeColumn: "updated_at",

@@ -170,6 +170,7 @@ export const EXPORT_TABLES = [
   "memory_hygiene_snapshots",
   "canvas_edges",
   "benchmark_runs",
+  "benchmark_items",
   "adapters",
   "adapter_user_mappings",
   "app_settings",
