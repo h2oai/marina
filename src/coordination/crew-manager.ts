@@ -94,6 +94,12 @@ export interface CrewCompletionResult {
   standingCredited: boolean;
   /** One-line, agent-facing reason when `standingCredited` is false. */
   standingSkippedReason?: string;
+  /**
+   * True when the crew outlived the completion: a persisted crew closes the
+   * finished unit of work and stays available for the next dispatch. False
+   * when the crew dissolved (ephemeral).
+   */
+  retained: boolean;
 }
 
 export class CrewError extends Error {
@@ -877,10 +883,16 @@ export class CrewManager {
   }
 
   /**
-   * Mark the crew completing, write a result note, then transition to
-   * dissolved on the next tick. Result lands in the crew pool (persisted) or
-   * the owner's notes (ephemeral). Members can recall it via the standard
-   * note paths — no special crew_results surface.
+   * Mark the crew completing and write a result note. Result lands in the
+   * crew pool (persisted) or the owner's notes (ephemeral). Members can
+   * recall it via the standard note paths — no special crew_results surface.
+   *
+   * An ephemeral crew then dissolves. A persisted crew is a standing team
+   * (e.g. a serving crew behind a model endpoint): completion closes the
+   * finished unit of work and the crew returns to `active`, ready for the
+   * next dispatch. Any member may complete, so dissolving a persisted crew
+   * here would let a member end a standing team that only the owner (or
+   * rank 5+) may dissolve — and every later dispatch would find no crew.
    */
   complete(id: CrewId, summary: string, ownerName: string): CrewCompletionResult {
     const crew = this.requireCrew(id);
@@ -979,13 +991,30 @@ export class CrewManager {
       resultNoteId: noteId,
       timestamp: this.now(),
     });
-    // Dissolve immediately — completing → dissolved transition keeps the
-    // ordering deterministic for listeners and avoids a tick-delay window
-    // where members could keep dispatching.
-    this.dissolve(id, "completed");
+    const retained = crew.lifetime === "persisted";
+    if (retained) {
+      // The unit of work is closed: its deposit fallbacks must not nudge the
+      // crew about a task that is done, and the next completion needs fresh
+      // work evidence of its own.
+      this.clearDepositFallbacks(crew.id);
+      this.workEvidence.delete(crew.id);
+      this.transition(crew, "active");
+      this.touch(crew);
+      this.persistRow(crew);
+    } else {
+      // Dissolve immediately — completing → dissolved transition keeps the
+      // ordering deterministic for listeners and avoids a tick-delay window
+      // where members could keep dispatching.
+      this.dissolve(id, "completed");
+    }
     return standingSkipped
-      ? { resultNoteId: noteId, standingCredited: false, standingSkippedReason: standingSkipped }
-      : { resultNoteId: noteId, standingCredited: true };
+      ? {
+          resultNoteId: noteId,
+          standingCredited: false,
+          standingSkippedReason: standingSkipped,
+          retained,
+        }
+      : { resultNoteId: noteId, standingCredited: true, retained };
   }
 
   /** Why `complete()` would withhold standing for this crew, or undefined if it pays. */

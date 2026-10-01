@@ -779,7 +779,7 @@ describe("CrewManager: persistence", () => {
     db2.close();
   });
 
-  it("complete() writes a result note + dissolves the crew", () => {
+  it("complete() writes a result note into the pool and keeps a persisted crew", () => {
     const { db, crews } = freshManager();
     const crew = crews.create({
       name: "alpha",
@@ -791,7 +791,8 @@ describe("CrewManager: persistence", () => {
     crews.dispatch(crew.id, "go");
     const result = crews.complete(crew.id, "shipped phase 3", "alice");
     expect(result.resultNoteId).toBeDefined();
-    expect(crew.state).toBe("dissolved");
+    expect(result.retained).toBe(true);
+    expect(crew.state).toBe("active");
 
     // Note exists in the crew pool
     const pool = db.getMemoryPool("crew:alpha");
