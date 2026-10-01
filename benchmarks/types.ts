@@ -64,6 +64,10 @@ export interface ResultItem {
   judgeUsage?: ItemUsage;
   /** Judge verdict when a judge decided the item; "error" = the judge failed. */
   judge?: "correct" | "incorrect" | "error";
+  /** The target's `x-request-id` for this item (a Marina traceId); filed to the ledger. */
+  traceId?: string;
+  /** The judge call's `x-request-id`, when the judge reported one. */
+  judgeTraceId?: string;
 }
 
 /** Usage of one model call. Undefined fields were not reported — never estimated. */

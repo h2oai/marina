@@ -40,6 +40,11 @@ export function usageFromResponse(
 export interface QueryResult {
   content: string;
   usage: CallUsage;
+  /**
+   * The endpoint's `x-request-id`. On a Marina it is the request's traceId, so
+   * the ledger can resolve who worked on the item (`POST /v1/benchmarks/runs`).
+   */
+  requestId?: string;
 }
 
 /** One chat completion, with the usage and cost the endpoint reported. */
@@ -95,9 +100,11 @@ export async function queryWithUsage(
       }
       // A reasoning model that spends its whole budget thinking returns
       // `content: null`: an empty answer (scored wrong), never a crash.
+      const requestId = resp.headers.get("x-request-id") ?? undefined;
       return {
         content: content ?? "",
         usage: usageFromResponse(data, resp.headers.get(MARINA_COST_HEADER)),
+        ...(requestId ? { requestId } : {}),
       };
     } finally {
       clearTimeout(timer);

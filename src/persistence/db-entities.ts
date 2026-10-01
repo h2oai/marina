@@ -167,6 +167,40 @@ export function getTraceEventsByTraceIds(db: Database, traceIds: readonly string
   return events;
 }
 
+/**
+ * Events of the given types whose timestamp falls in [fromTs, toTs], oldest
+ * first, capped at `limit` (default 5,000; at most 20,000). Backs benchmark
+ * participant attribution: agent turns inside a request's window that carry
+ * no trace id.
+ */
+export function getEventsBetween(
+  db: Database,
+  types: readonly string[],
+  fromTs: number,
+  toTs: number,
+  limit = 5000,
+): EngineEvent[] {
+  if (types.length === 0 || toTs < fromTs) return [];
+  const placeholders = types.map(() => "?").join(",");
+  const bounded = Math.max(1, Math.min(Math.trunc(limit), 20_000));
+  const rows = db
+    .query(
+      `SELECT data FROM event_log
+       WHERE type IN (${placeholders}) AND timestamp BETWEEN ? AND ?
+       ORDER BY id LIMIT ?`,
+    )
+    .all(...types, fromTs, toTs, bounded) as { data: string }[];
+  const events: EngineEvent[] = [];
+  for (const row of rows) {
+    try {
+      events.push(JSON.parse(row.data) as EngineEvent);
+    } catch {
+      // allow-empty-catch: a corrupt row is skipped; the rest of the window still counts
+    }
+  }
+  return events;
+}
+
 export interface TraceJudgmentInput {
   traceId: string;
   evaluatorEntity: string;

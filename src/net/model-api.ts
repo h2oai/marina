@@ -10,6 +10,7 @@ import { version as MARINA_VERSION } from "../../package.json";
 import type { RateLimiter } from "../auth/rate-limiter";
 import type { Engine } from "../engine/engine";
 import { handleAnthropicMessages } from "./anthropic-inbound";
+import { handleBenchmarkFile } from "./benchmarks-api";
 import { handleDecisionModels, handleDecisions } from "./decisions-api";
 import { handleForecast } from "./forecast-api";
 import {
@@ -143,6 +144,11 @@ export async function handleModelApi(
 
   if (url.pathname.startsWith("/v1/media")) {
     return await handleMediaApi(url, method, req, engine, server);
+  }
+
+  // Benchmark runs file themselves into this Marina's ledger — src/net/benchmarks-api.ts.
+  if (url.pathname === "/v1/benchmarks/runs" && method === "POST") {
+    return await handleBenchmarkFile(req, engine, authResult);
   }
 
   // Forecast any question (research → verified evidence → analysts → judge) — src/forecast.

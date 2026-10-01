@@ -21,6 +21,15 @@
 - **Writes:** one transaction through `recordBenchmarkLedgerRun`. Re-importing the same file returns the existing run.
 - **Import:** `bun run benchmark:import` (`scripts/benchmark-import.ts`) records harness or Tier-0 results. It is an operator script, never an in-world command, and it drops any credential in the result's config.
 - **Ranking:** the pure functions live in `src/engine/benchmark-ledger.ts` (paired comparison with exact McNemar, Pareto frontier, participant credit). They back `benchmark compare | frontier | participants` and the ledger columns of `benchmark leaderboard`.
+- **Auto-filing (`POST /v1/benchmarks/runs`, `src/net/benchmarks-api.ts`):** a harness files a finished run into the Marina it measured.
+  - The body is `{ result, targetKind, target, label?, judge?, costUsd? }`. Only item ids, outcomes, scores, latency, cost, judge verdict and `traceId` are kept, and the content hash is taken over that slim document, so re-filing is a no-op.
+  - Auth is the model API's. The open-API sentinel may file only under the local, ungated profile; elsewhere a `MODEL_API_KEYS` credential is required (403 `open_api_read_only`).
+  - The ledger source is `import`. The run's `config_json` records the attribution counts.
+- **Participants (`src/engine/benchmark-participants.ts`):** each item's `traceId` is the target's `x-request-id` (`traceId === requestId`), resolved against the event log. Each participant records which evidence put it there:
+  - `trace`: an `agent_turn_end` under the request's trace. This is exact, but only the agent that received the `model_request` perception inherits the trace. A passthru request credits the upstream model.
+  - `window`: untraced turns by the routed agent's crew-mates that ended inside the request's received→completed window. Delegation does not carry the trace, so this is the best evidence available.
+  - `shared`: another request to the same crew overlapped the window (found on a ±30 min padded range). The participant is listed, but its cost is not charged to the item.
+  - An item whose request left no lifecycle events (event log pruned, or never routed through this Marina) records no participants and counts as `none`.
 
 ## Durable keys
 - **Durable keys, second pass (migration 117)**: `group_members`, `channel_members`, `board_votes`, `task_votes`, `flywheel_bindings`, `coding_projects`, `coding_services` are rekeyed to `users.id`; `MarinaDB` delegates resolve `durableEntityKey()` on write and project back to the LIVE entity id on read (`liveEntityIdSql`), so callers keep passing entity ids. `getFlywheelBinding(entityId)` replaces the linear scan; `saveEntity` re-keys task claims by name on first persist of a new id. Migrations 118 and 119 closed the remaining transient columns (see below). `approveSubmission`, `deleteNote`, and `deleteUser` (account erasure, below) are transactional.

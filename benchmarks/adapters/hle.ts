@@ -106,6 +106,7 @@ export async function runHLE(
       let usage: ItemUsage | undefined;
       let judgeUsage: ItemUsage | undefined;
       let judge: ResultItem["judge"];
+      let traceId: string | undefined;
       try {
         const reply = await queryWithUsage(
           config.endpoint,
@@ -114,6 +115,7 @@ export async function runHLE(
           config.apiKey,
         );
         usage = addCallUsage(undefined, reply.usage);
+        traceId = reply.requestId;
         rawResponse = reply.content;
         if (isMultipleChoice(item)) {
           actual = extractChoiceLetter(reply.content);
@@ -151,6 +153,7 @@ export async function runHLE(
         ...(usage ? { usage } : {}),
         ...(judgeUsage ? { judgeUsage } : {}),
         ...(judge ? { judge } : {}),
+        ...(traceId ? { traceId } : {}),
       });
       completed++;
       onProgress?.(completed, items.length);

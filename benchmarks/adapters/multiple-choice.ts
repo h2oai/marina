@@ -1,8 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mulberry32 } from "../stats";
 import { queryWithUsage } from "../modes/passthrough";
+import { mulberry32 } from "../stats";
 import type { BenchmarkConfig, DatasetItem, ItemUsage, Message, ResultItem } from "../types";
 import { addCallUsage } from "../usage";
 
@@ -118,10 +118,12 @@ export async function runMultipleChoice(
       let correct = false;
       let score: number | undefined;
       let usage: ItemUsage | undefined;
+      let traceId: string | undefined;
 
       try {
         const reply = await queryWithUsage(config.endpoint, config.model, messages, config.apiKey);
         usage = addCallUsage(undefined, reply.usage);
+        traceId = reply.requestId;
         actual = extractLetter(reply.content, item.choices?.length);
         if (reasoning) rawResponse = reply.content.slice(0, 4000);
 
@@ -149,6 +151,7 @@ export async function runMultipleChoice(
         latencyMs,
         category: item.category,
         ...(usage ? { usage } : {}),
+        ...(traceId ? { traceId } : {}),
       });
 
       completed++;
