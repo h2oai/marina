@@ -77,7 +77,7 @@
     "test:serial": "bun test --path-ignore-patterns '**/dashboard/**' --path-ignore-patterns '**/examples/coding-agent-demo/**' --path-ignore-patterns '**/marina-desktop/**'",
     "test:coverage": "bun test --path-ignore-patterns '**/dashboard/**' --path-ignore-patterns '**/examples/coding-agent-demo/**' --path-ignore-patterns '**/marina-desktop/**' --coverage",
     "check:coverage": "bun run scripts/check-coverage.ts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.benchmarks.json",
     "lint": "biome check src/ test/ dashboard/src/",
     "format": "biome format --write src/ test/ dashboard/src/",
     "schema:check": "bun scripts/generate-schema-baseline.ts --check",

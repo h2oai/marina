@@ -34,8 +34,9 @@ const checkers: Record<string, CheckFn> = {
     const paragraphs = response.split(/\n\s*\n/).filter((p) => p.trim());
     const n = (kwargs.num_paragraphs as number) ?? 1;
     const firstWord = (kwargs.first_word as string) ?? "";
-    if (n > paragraphs.length) return false;
-    const pFirstWord = paragraphs[n - 1].trim().split(/\s+/)[0]?.toLowerCase();
+    const paragraph = paragraphs[n - 1];
+    if (paragraph === undefined) return false;
+    const pFirstWord = paragraph.trim().split(/\s+/)[0]?.toLowerCase();
     return pFirstWord === firstWord.toLowerCase();
   },
 
@@ -101,10 +102,10 @@ const checkers: Record<string, CheckFn> = {
       return true;
     } catch {
       // Try extracting JSON from markdown code block
-      const match = response.match(/```(?:json)?\s*\n([\s\S]*?)```/);
-      if (match) {
+      const fenced = response.match(/```(?:json)?\s*\n([\s\S]*?)```/)?.[1];
+      if (fenced !== undefined) {
         try {
-          JSON.parse(match[1].trim());
+          JSON.parse(fenced.trim());
           return true;
         } catch {
           return false;
@@ -116,7 +117,7 @@ const checkers: Record<string, CheckFn> = {
 
   "detectable_format:title": (response, _kwargs) => {
     // Check if response starts with a title (markdown heading or all caps first line)
-    const firstLine = response.trim().split("\n")[0];
+    const firstLine = response.trim().split("\n")[0] ?? "";
     return /^#/.test(firstLine) || /^[A-Z][A-Z\s:]+$/.test(firstLine.trim());
   },
 
@@ -131,7 +132,10 @@ const checkers: Record<string, CheckFn> = {
 
   "change_case:english_capital": (response, _kwargs) => {
     const words = response.split(/\s+/).filter(Boolean);
-    return words.every((w) => w[0] === w[0].toUpperCase());
+    return words.every((w) => {
+      const first = w[0] ?? "";
+      return first === first.toUpperCase();
+    });
   },
 
   // Punctuation constraints

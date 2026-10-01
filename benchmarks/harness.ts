@@ -2,11 +2,10 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { loadSmoke, runChecks } from "./adapters/checks";
-import { inPartition, parsePartition } from "./partition";
 import { runCodeGen } from "./adapters/code-gen";
 import { runFreeForm } from "./adapters/free-form";
 import { runHLE } from "./adapters/hle";
@@ -36,6 +35,7 @@ import {
   loadRetentionBenchmark,
 } from "./download";
 import { runRetentionTask, runRetentionTaskPassthrough } from "./modes/memory";
+import { inPartition, parsePartition } from "./partition";
 import { computeAccuracy, computeJudgeScore } from "./scoring/accuracy";
 import { computePassAtK } from "./scoring/pass-at-k";
 import type {
@@ -261,7 +261,29 @@ function parseCliArgs() {
     },
     strict: false,
   });
-  return values;
+  // `strict: false` tolerates unknown flags, which also widens every value to
+  // `string | boolean`; narrow each option back to the type it was declared with.
+  const str = (key: string): string | undefined => {
+    const value = values[key];
+    return typeof value === "string" ? value : undefined;
+  };
+  return {
+    benchmark: str("benchmark"),
+    mode: str("mode"),
+    limit: str("limit"),
+    endpoint: str("endpoint"),
+    "api-key": str("api-key"),
+    model: str("model"),
+    "judge-model": str("judge-model"),
+    "judge-endpoint": str("judge-endpoint"),
+    concurrency: str("concurrency"),
+    seed: str("seed"),
+    partition: str("partition"),
+    compare: str("compare"),
+    list: values.list === true,
+    results: values.results === true,
+    help: values.help === true,
+  };
 }
 
 // --- Output Formatting ---
@@ -271,8 +293,8 @@ function printTable(headers: string[], rows: string[][], colWidths?: number[]): 
     colWidths ?? headers.map((h, i) => Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length)));
 
   const sep = widths.map((w) => "─".repeat(w + 2)).join("┼");
-  const headerLine = headers.map((h, i) => ` ${h.padEnd(widths[i])} `).join("│");
-  const dataLines = rows.map((r) => r.map((c, i) => ` ${c.padEnd(widths[i])} `).join("│"));
+  const headerLine = headers.map((h, i) => ` ${h.padEnd(widths[i] ?? 0)} `).join("│");
+  const dataLines = rows.map((r) => r.map((c, i) => ` ${c.padEnd(widths[i] ?? 0)} `).join("│"));
 
   console.log(`┌${sep.replaceAll("┼", "┬")}┐`);
   console.log(`│${headerLine}│`);

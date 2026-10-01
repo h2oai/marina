@@ -101,17 +101,12 @@ async function runMTBenchItem(item: DatasetItem, config: BenchmarkConfig): Promi
     return await query(
       config.endpoint,
       config.model,
-      [{ role: "user", content: turns[0] }],
+      [{ role: "user", content: turns[0] ?? item.question }],
       config.apiKey,
     );
   }
 
-  const responses = await queryMultiTurn(
-    config.endpoint,
-    config.model,
-    turns,
-    config.apiKey,
-  );
+  const responses = await queryMultiTurn(config.endpoint, config.model, turns, config.apiKey);
   // Return last response for judging, but include all for context
   return responses.join("\n---\n");
 }

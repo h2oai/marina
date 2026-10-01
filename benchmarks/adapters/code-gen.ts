@@ -9,11 +9,11 @@ import type { BenchmarkConfig, DatasetItem, Message, ResultItem } from "../types
 function extractCode(response: string, entryPoint: string): string {
   // Try to extract Python code from markdown code block
   const codeBlockMatch = response.match(/```(?:python)?\s*\n([\s\S]*?)```/);
-  if (codeBlockMatch) return codeBlockMatch[1].trim();
+  if (codeBlockMatch?.[1] !== undefined) return codeBlockMatch[1].trim();
 
   // Try to find function definition
   const funcMatch = response.match(new RegExp(`(def ${entryPoint}[\\s\\S]*)`, "m"));
-  if (funcMatch) return funcMatch[1].trim();
+  if (funcMatch?.[1] !== undefined) return funcMatch[1].trim();
 
   // Return the whole response as a fallback
   return response.trim();
