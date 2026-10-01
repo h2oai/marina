@@ -87,18 +87,83 @@ export function seedSystemAgent(
   db: MarinaDB,
   config: { name: string; model: string; role: string; goal: string },
 ): void {
+  seededAgentNames.add(config.name.toLowerCase());
   if (isSeedDisabled(db, config.name)) return;
   const existing = db.getAgentConfig(config.name);
   if (existing && existing.spawned_by !== SYSTEM_OWNER) return;
   db.saveAgentConfig({
     name: config.name,
-    model: config.model,
+    model: agentModelOverride(config.name) ?? config.model,
     role: config.role,
     goal: config.goal,
     keyName: existing?.key_name || undefined,
     room: existing?.room || undefined,
     spawnedBy: SYSTEM_OWNER,
   });
+}
+
+// ─── Per-agent model map (MARINA_AGENT_MODELS) ─────────────────────────────
+
+/** Names (lower-cased) every `seedSystemAgent` call has seen this process. */
+const seededAgentNames = new Set<string>();
+
+/**
+ * Parse `MARINA_AGENT_MODELS` — `Name=model,Name=model` — into a map keyed by
+ * lower-cased agent name. The model string passes through untouched (split at
+ * the first `=`). Entries without a name or a model are returned in `invalid`.
+ */
+export function parseAgentModelMap(raw: string | undefined): {
+  models: Map<string, { name: string; model: string }>;
+  invalid: string[];
+} {
+  const models = new Map<string, { name: string; model: string }>();
+  const invalid: string[] = [];
+  for (const entry of (raw ?? "").split(",")) {
+    const text = entry.trim();
+    if (!text) continue;
+    const eq = text.indexOf("=");
+    const name = eq > 0 ? text.slice(0, eq).trim() : "";
+    const model = eq > 0 ? text.slice(eq + 1).trim() : "";
+    if (!name || !model) {
+      invalid.push(text);
+      continue;
+    }
+    models.set(name.toLowerCase(), { name, model });
+  }
+  return { models, invalid };
+}
+
+/**
+ * The `MARINA_AGENT_MODELS` model for a boot-seeded agent, if any. Wins over
+ * the per-role variables (`MARINA_ANSWERER_MODEL`, …) and `MARINA_CREW_MODEL`,
+ * because those only choose the `model` handed to `seedSystemAgent`.
+ */
+export function agentModelOverride(
+  name: string,
+  env: Record<string, string | undefined> = process.env,
+): string | undefined {
+  return parseAgentModelMap(env.MARINA_AGENT_MODELS).models.get(name.toLowerCase())?.model;
+}
+
+/**
+ * Problems with `MARINA_AGENT_MODELS` after the world seeded: entries that
+ * name no boot-seeded agent, and malformed entries. The boot logs each one —
+ * a typo never silently leaves an agent on its default model.
+ */
+export function agentModelMapProblems(
+  env: Record<string, string | undefined> = process.env,
+): string[] {
+  const { models, invalid } = parseAgentModelMap(env.MARINA_AGENT_MODELS);
+  const problems = invalid.map((e) => `malformed entry "${e}" (want Name=model)`);
+  for (const [key, { name }] of models) {
+    if (!seededAgentNames.has(key)) problems.push(`"${name}" matches no seeded agent`);
+  }
+  return problems;
+}
+
+/** Test hook: forget the agent names seen so far. */
+export function resetSeededAgentNamesForTests(): void {
+  seededAgentNames.clear();
 }
 
 // ─── Seed Helpers ───────────────────────────────────────────────────────────
