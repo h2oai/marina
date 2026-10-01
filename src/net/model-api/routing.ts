@@ -37,6 +37,17 @@ import { proxyToUpstream } from "./upstream";
 const REQUEST_TIMEOUT_MS = Number.parseInt(process.env.MODEL_REQUEST_TIMEOUT_MS ?? "600000", 10);
 
 /**
+ * Per-request socket idle limit (seconds) for model-API calls. Bun's server
+ * `idleTimeout` caps at 255 s, but a routed request (a crew deliberating on a
+ * hard item) is bounded by MODEL_REQUEST_TIMEOUT_MS instead; the listener
+ * lifts the idle limit for each model request to that bound plus a margin, so
+ * the socket is never closed while the answer is still on its way.
+ */
+export function modelRequestIdleSeconds(): number {
+  return Math.ceil(REQUEST_TIMEOUT_MS / 1000) + 30;
+}
+
+/**
  * Pending-request reminders — the mechanical backstop for coordinator drift.
  *
  * Measured in the 2026-09 orchestration sweeps: a small-model coordinator

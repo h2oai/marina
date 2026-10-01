@@ -48,7 +48,7 @@ import {
   readModelJsonBody,
   requestTrace,
 } from "./shared";
-import { proxyToUpstream } from "./upstream";
+import { explicitUpstreamModel, passthruForceModel, proxyToUpstream } from "./upstream";
 
 /** Resolve only an explicit, single binary arithmetic expression. This is
  * intentionally conservative: no precedence, variables, units, or inferred
@@ -163,7 +163,15 @@ export async function runOpenaiChat(
       model,
       req.headers.get("X-Marina-Agent")?.split(":")[0]?.trim() || undefined,
     );
-    if ((ec.mode === "passthru" || isInternalCaller(authResult)) && !orchestration) {
+    // An explicit upstream id (`openrouter/<vendor>/<model>`, `anthropic/<model>`,
+    // …) reaches that upstream in every mode — the mirror of the orchestration
+    // rule above (see `explicitUpstreamModel`).
+    if (
+      (ec.mode === "passthru" ||
+        isInternalCaller(authResult) ||
+        explicitUpstreamModel(engine, model)) &&
+      !orchestration
+    ) {
       // Also the `/v1/messages` path: the Anthropic bridge translates its body
       // to this shape first, so the addendum lands in the OpenAI system message
       // here and `proxyToAnthropic` moves it into the native `system` field.
@@ -185,12 +193,13 @@ export async function runOpenaiChat(
       if (anthropicNative && prep.addendum) {
         anthropicNative = applyInjection({ ...anthropicNative }, prep.addendum, "anthropic");
       }
-      const cached = await passthruCacheLookup(engine, prep, body, ec.passthruModel);
+      const forceModel = passthruForceModel(engine, ec, model);
+      const cached = await passthruCacheLookup(engine, prep, body, forceModel);
       if (cached) return cached;
       const resp = await proxyToUpstream(
         engine,
         body,
-        ec.passthruModel || undefined,
+        forceModel || undefined,
         passthruTraceOptions(prep),
         {
           ...passthruUpstreamHints(prep, anthropicNative ? { anthropicNative } : {}),
@@ -199,7 +208,7 @@ export async function runOpenaiChat(
       );
       if (prep.identity?.contextOptIn) {
         void capturePassthruResponse(engine, prep.identity.entityId, messages, resp);
-        passthruCacheStore(engine, prep, body, ec.passthruModel, resp);
+        passthruCacheStore(engine, prep, body, forceModel, resp);
       }
       return resp;
     }

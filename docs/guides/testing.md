@@ -454,7 +454,8 @@ needs `HF_TOKEN`) and FRAMES (20 items), one harness process and one result JSON
 `bun run bench:compare <a> <b>` pairs two runs (or two Tier-0 directories) by item id and
 reports per-arm accuracy with Wilson intervals, McNemar's exact test, a paired bootstrap of
 the difference, and reported cost and tokens (`n/a` when the endpoint reported none). Both
-call live models and are never part of CI. Datasets are fetched at run time into the
+call live models and are never part of CI. `--timeout <ms>` bounds each request (`marina:`
+targets default to 900 s; the server's own bound is `MODEL_REQUEST_TIMEOUT_MS`). Datasets are fetched at run time into the
 gitignored `benchmarks/datasets/`; case content is never committed. Details:
 [benchmarks/README.md](../../benchmarks/README.md#tier-0--small-hard-slice-for-crew-and-formation-sweeps).
 

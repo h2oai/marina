@@ -61,7 +61,15 @@ bun run bench:tier0 --endpoint http://host:port --model <id>  # any OpenAI-compa
 - **Judge.** Judge-scored items use `--judge-model` / `--judge-endpoint`. The default is the
   target model, except `marina:<crew>` targets, which default to `marina/default` so a crew
   never grades itself and every crew in a sweep shares one judge. A judge that fails is
-  recorded as `judge: "error"` on the item and scored wrong.
+  recorded as `judge: "error"` on the item and scored wrong. For a crew, keep the judge on the
+  crew's own server: `--judge-model openrouter/<vendor>/<model>` reaches that upstream through
+  Marina's passthru in every endpoint mode, so judge calls are traced and costed like any
+  other call.
+- **Timeout.** `--timeout <ms>` bounds each request (the harness flag of the same name, else
+  `HARNESS_TIMEOUT_MS`, else 600 s). `marina:<crew>` targets default to 900 s: a crew
+  deliberating on a hard item takes minutes, and a client that gives up first scores an answer
+  still on its way as wrong. The server bounds the same request with `MODEL_REQUEST_TIMEOUT_MS`
+  (600 s by default) — raise both for longer runs. Latency stays in every item.
 - **Keys** reach each harness child as `MARINA_BENCH_API_KEY`, never on the command line.
 - **Failure.** A set that cannot run (for example GPQA without `HF_TOKEN`) is reported as
   `FAILED` with the reason; the other sets still run and the exit code is 1.

@@ -64,6 +64,7 @@ import { recordListenPort } from "./listen-ports";
 import { handleMemApi } from "./mem-api";
 import { handleMemoryServiceApi } from "./memory-service-api";
 import { handleModelApi, isModelApiPath } from "./model-api";
+import { modelRequestIdleSeconds } from "./model-api/routing";
 import { hasInternalBearer } from "./model-api/shared";
 import { handleOrchestrationApi } from "./orchestration-api";
 import { handleProbeApi } from "./probe-api";
@@ -545,7 +546,15 @@ export class WebSocketServer {
           if (url.pathname.startsWith("/v1/memory") && self.memoryService)
             return await handleMemoryServiceApi(req, self.memoryService);
 
-          // Model API routes (OpenAI + Ollama compatible)
+          // Model API routes (OpenAI + Ollama compatible). A routed request may
+          // outlive the listener's 255 s idle cap; its bound is
+          // MODEL_REQUEST_TIMEOUT_MS (see `modelRequestIdleSeconds`).
+          if (
+            req.method === "POST" &&
+            (url.pathname.startsWith("/v1/") || isModelApiPath(url.pathname))
+          ) {
+            server.timeout(req, modelRequestIdleSeconds());
+          }
           if (url.pathname.startsWith("/v1/")) {
             const modelResp = await handleModelApi(
               url,

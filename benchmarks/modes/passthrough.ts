@@ -7,7 +7,12 @@ import type { CallUsage, Message } from "../types";
 // multi-hop, debate-council orchestrations) can legitimately take minutes.
 // Single passthrough substrates finish in seconds and aren't affected.
 // Set to effectively off (10 min) so we don't bound correctness on wall time.
-const DEFAULT_TIMEOUT_MS = Number.parseInt(process.env.HARNESS_TIMEOUT_MS ?? "600000", 10);
+// Read per call, so `harness.ts --timeout` (which sets HARNESS_TIMEOUT_MS)
+// applies to every adapter without threading a parameter through each one.
+export function defaultTimeoutMs(): number {
+  const v = Number.parseInt(process.env.HARNESS_TIMEOUT_MS ?? "", 10);
+  return Number.isFinite(v) && v > 0 ? v : 600_000;
+}
 
 /** Header a Marina `/v1` passthru sets with the upstream dollar cost of the call. */
 const MARINA_COST_HEADER = "x-marina-cost-usd";
@@ -43,7 +48,7 @@ export async function queryWithUsage(
   model: string,
   messages: Message[],
   apiKey?: string,
-  timeoutMs = DEFAULT_TIMEOUT_MS,
+  timeoutMs = defaultTimeoutMs(),
 ): Promise<QueryResult> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -62,6 +67,11 @@ export async function queryWithUsage(
         headers,
         body: JSON.stringify({ model, messages, temperature: 0 }),
         signal: controller.signal,
+        // Bun's fetch fails a socket idle for 5 minutes on its own
+        // (BUN_CONFIG_HTTP_IDLE_TIMEOUT), before `timeoutMs` ever fires; a
+        // non-streaming answer from a deliberating crew is silent until it
+        // lands. The idle deadline follows the harness bound instead.
+        timeout: timeoutMs,
       });
 
       if (resp.status === 429 && attempt < maxAttempts) {
@@ -100,7 +110,7 @@ export async function query(
   model: string,
   messages: Message[],
   apiKey?: string,
-  timeoutMs = DEFAULT_TIMEOUT_MS,
+  timeoutMs = defaultTimeoutMs(),
 ): Promise<string> {
   return (await queryWithUsage(endpoint, model, messages, apiKey, timeoutMs)).content;
 }
@@ -110,7 +120,7 @@ export async function queryMultiTurn(
   model: string,
   turns: string[],
   apiKey?: string,
-  timeoutMs = DEFAULT_TIMEOUT_MS,
+  timeoutMs = defaultTimeoutMs(),
 ): Promise<string[]> {
   const messages: Message[] = [];
   const responses: string[] = [];

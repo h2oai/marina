@@ -53,7 +53,7 @@ import {
   readModelJsonBody,
   SSE_HEADERS,
 } from "./shared";
-import { proxyToUpstream } from "./upstream";
+import { explicitUpstreamModel, passthruForceModel, proxyToUpstream } from "./upstream";
 
 /** Stable per-credential owner key for Responses records. Hashes the matched
  *  API key so the raw secret is never stored; internal/open/anon get sentinels. */
@@ -183,8 +183,13 @@ export async function handleResponsesCreate(
     }
 
     const ec = getEndpointConfig(engine.db);
-    // Marina's own agents always proxy upstream (see `isInternalCaller`).
-    if (ec.mode === "passthru" || isInternalCaller(auth)) {
+    // Marina's own agents always proxy upstream (see `isInternalCaller`), and an
+    // explicit upstream id reaches that upstream in every mode.
+    if (
+      ec.mode === "passthru" ||
+      isInternalCaller(auth) ||
+      explicitUpstreamModel(engine, body.model)
+    ) {
       // Responses tools → chat tools before any upstream call; a hosted tool
       // type (web_search, file_search, …) is a 400 the client must see, never
       // a silent drop.
@@ -366,16 +371,14 @@ async function runResponsesPassthru(
   };
   applyInjection(body, prep.addendum, "openai");
 
-  const cached = await passthruCacheLookup(engine, prep, body, ec.passthruModel);
+  const forceModel = passthruForceModel(engine, ec, body.model);
+  const cached = await passthruCacheLookup(engine, prep, body, forceModel);
   const resp =
     cached ??
-    (await proxyToUpstream(
-      engine,
-      body,
-      ec.passthruModel || undefined,
-      passthruTraceOptions(prep),
-      { ...passthruUpstreamHints(prep), clientSignal: req.signal },
-    ));
+    (await proxyToUpstream(engine, body, forceModel || undefined, passthruTraceOptions(prep), {
+      ...passthruUpstreamHints(prep),
+      clientSignal: req.signal,
+    }));
   if (!resp.ok) {
     let message = resp.statusText || "Upstream request failed";
     try {
@@ -424,7 +427,7 @@ async function runResponsesPassthru(
 
   if (!cached && prep.identity?.contextOptIn) {
     void capturePassthruResponse(engine, prep.identity.entityId, turns, resp);
-    passthruCacheStore(engine, prep, body, ec.passthruModel, resp);
+    passthruCacheStore(engine, prep, body, forceModel, resp);
   }
   const { content, usage, toolCalls } = await extractResponseTextAndUsage(resp.clone());
   const rec: ResponseRecord = {

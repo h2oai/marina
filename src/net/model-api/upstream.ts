@@ -208,6 +208,41 @@ function resolveProviderKey(engine: Engine, provider: string): string | undefine
 }
 
 /**
+ * True when `model` is `<provider>/<id>` naming an upstream this instance can
+ * reach: a provider in `PROVIDER_UPSTREAM` with a key (env or admin panel), or
+ * a local runtime the operator opted into. The endpoint modes that route to
+ * agents (`agents` / `open` / `panel`) send such an id upstream instead of
+ * looking for a `model-<id>` channel that cannot exist — the mirror of
+ * `liveOrchestrationChannel`: an explicit id reaches what it names in every
+ * mode. `marina` / `marina/default` ids and unprefixed ids keep their route.
+ */
+export function explicitUpstreamModel(engine: Engine, model: unknown): boolean {
+  if (typeof model !== "string" || isMarinaModel(model)) return false;
+  const slash = model.indexOf("/");
+  if (slash <= 0 || slash === model.length - 1) return false;
+  const provider = model.slice(0, slash);
+  if (!PROVIDER_UPSTREAM[provider]) return false;
+  if (isLocalProvider(provider) && localProviderConfigured(provider)) return true;
+  return !!resolveProviderKey(engine, provider);
+}
+
+/**
+ * The model the passthru branch pins (`forceModel`). In `passthru` endpoint
+ * mode the operator's configured model wins, as always. In the agent-routing
+ * modes the configured model is only the fallback for an id that names
+ * nothing, so an explicit upstream id is served as named — never silently
+ * answered by a different model.
+ */
+export function passthruForceModel(
+  engine: Engine,
+  ec: { mode: string; passthruModel: string },
+  model: unknown,
+): string {
+  if (ec.mode !== "passthru" && explicitUpstreamModel(engine, model)) return "";
+  return ec.passthruModel;
+}
+
+/**
  * Human-readable "what would the marina/default channel actually hit right now"
  * — mirrors proxyToUpstream's selection order without making a request. Used by
  * the boot wiring summary so it reports the concrete upstream (e.g.
