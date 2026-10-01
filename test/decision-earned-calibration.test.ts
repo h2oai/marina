@@ -395,7 +395,7 @@ const JEV_ENV = {
 };
 
 describe("marina/ensemble", () => {
-  it("asks every member and combines; needs a strict majority", async () => {
+  it("asks every member and combines those that answered; fails only when all fail", async () => {
     const env = {
       ...JEV_ENV,
       MARINA_DECISION_ENSEMBLE:
@@ -409,13 +409,21 @@ describe("marina/ensemble", () => {
     expect(result.members).toEqual(["marina/classifier:a/one", "marina/classifier:b/two"]);
     expect((result.answers.x as { noul: number }).noul).toBeCloseTo(0.9);
     expect(result.calibrated).toBe(false);
-    const minority = selfProxy({ "a/one": 0.9, "b/two": "down", "c/three": "down" });
+    // One survivor still answers, alone.
+    const minority = selfProxy({ "a/one": 0.8, "b/two": "down", "c/three": "down" });
     const r2 = resolveEngine("marina/ensemble", env, {
       token: async () => "t",
       fetch: minority.fetch,
     });
     if (!("provider" in r2)) throw new Error("no engine");
-    await expect(r2.provider.ask({ state: "s", questions: { x: noul("?") } })).rejects.toThrow();
+    const alone = await r2.provider.ask({ state: "s", questions: { x: noul("?") } });
+    expect(alone.members).toEqual(["marina/classifier:a/one"]);
+    expect((alone.answers.x as { noul: number }).noul).toBeCloseTo(0.8);
+    // Every member down: the ensemble fails.
+    const none = selfProxy({ "a/one": "down", "b/two": "down", "c/three": "down" });
+    const r3 = resolveEngine("marina/ensemble", env, { token: async () => "t", fetch: none.fetch });
+    if (!("provider" in r3)) throw new Error("no engine");
+    await expect(r3.provider.ask({ state: "s", questions: { x: noul("?") } })).rejects.toThrow();
   });
 
   it("is not offered unless configured, and refuses members it cannot serve", () => {

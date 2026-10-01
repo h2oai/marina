@@ -48,6 +48,32 @@ let db: MarinaDB;
 let engine: Engine;
 let calls: { host: string; model: unknown }[];
 let events: EngineEvent[];
+/** Per-host reply override; unset hosts answer as before. */
+let replies: Record<string, () => Response>;
+
+/** OpenRouter relaying a provider's rejection of `logprobs` on a reasoning model. */
+const OPENROUTER_WRAPPED_400 = () =>
+  new Response(
+    JSON.stringify({
+      error: {
+        message: "Provider returned error",
+        code: 400,
+        metadata: {
+          raw: JSON.stringify({
+            error: {
+              message: "logprobs are not supported with reasoning models.",
+              type: "invalid_request_error",
+              param: "include",
+              code: "unsupported_parameter",
+            },
+          }),
+          provider_name: "OpenAI",
+          provider_error_code: "unsupported_parameter",
+        },
+      },
+    }),
+    { status: 400, headers: { "Content-Type": "application/json" } },
+  );
 
 const OPENAI_OK = (model: string) =>
   Response.json({
@@ -72,11 +98,14 @@ beforeEach(() => {
   process.env.OPENROUTER_API_KEY = "sk-or-test";
   originalFetch = globalThis.fetch;
   calls = [];
+  replies = {};
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const req = new Request(input, init);
     const body = (await req.json()) as { model?: unknown };
     const host = new URL(req.url).host;
     calls.push({ host, model: body.model });
+    const reply = replies[host];
+    if (reply) return reply();
     if (host === "api.anthropic.com") return ANTHROPIC_404();
     return OPENAI_OK(String(body.model));
   }) as typeof fetch;
@@ -134,5 +163,34 @@ describe("proxyToUpstream: explicit provider prefix", () => {
     const resp = await ask("vendor/some-model");
     expect(resp.status).toBe(404);
     expect(calls.map((c) => c.host)).toEqual(["api.anthropic.com"]);
+  });
+
+  it("returns the named provider's own 400 with its body, never retrying elsewhere", async () => {
+    process.env.OPENAI_API_KEY = "sk-openai-test";
+    replies["openrouter.ai"] = OPENROUTER_WRAPPED_400;
+    const resp = await ask("openrouter/openai/gpt-reasoner");
+    expect(resp.status).toBe(400);
+    const body = (await resp.json()) as { error: { metadata: { raw: string } } };
+    expect(body.error.metadata.raw).toContain("logprobs are not supported");
+    expect(calls).toEqual([{ host: "openrouter.ai", model: "openai/gpt-reasoner" }]);
+    expect(routedTarget()).toBe("openrouter/openai/gpt-reasoner");
+  });
+
+  it("after the named provider fails, sends the full id only to an aggregator", async () => {
+    process.env.OPENAI_API_KEY = "sk-openai-test";
+    replies["api.openai.com"] = () => new Response("{}", { status: 503 });
+    const resp = await ask("openai/gpt-x");
+    expect(resp.status).toBe(200);
+    expect(calls.map((c) => c.host)).toEqual(["api.openai.com", "openrouter.ai"]);
+    expect(calls[1]!.model).toBe("openai/gpt-x");
+    expect(routedTarget()).toBe("openrouter/openai/gpt-x");
+  });
+
+  it("an aggregator outage on a prefixed id is not retried on first-party APIs", async () => {
+    process.env.OPENAI_API_KEY = "sk-openai-test";
+    replies["openrouter.ai"] = () => new Response("{}", { status: 503 });
+    const resp = await ask("openrouter/openai/gpt-x");
+    expect(resp.status).toBe(502);
+    expect(calls.map((c) => c.host)).toEqual(["openrouter.ai"]);
   });
 });
