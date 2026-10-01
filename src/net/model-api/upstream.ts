@@ -153,6 +153,18 @@ const PROVIDER_UPSTREAM: Record<string, { url: string; envKeys: string[]; anthro
   },
 };
 
+/** Providers that serve other vendors' models under `<vendor>/<model>` ids. */
+const AGGREGATORS = new Set(["openrouter", "huggingface"]);
+
+/**
+ * An upstream status that rejects the request itself (unsupported parameter,
+ * malformed or oversized body), as opposed to a routing miss (404), an auth or
+ * quota problem, or an outage — those may still be served elsewhere.
+ */
+function isRequestRejection(status: number | undefined): boolean {
+  return status === 400 || status === 413 || status === 415 || status === 422;
+}
+
 // First-party providers preferred over OpenRouter on the fallback path, since
 // OpenRouter is an aggregator that re-routes (and adds markup). An explicitly
 // configured default model overrides this order entirely (see proxyToUpstream).
@@ -585,6 +597,8 @@ async function dispatchOpenAICompatible(
 ): Promise<{
   response: Response | null;
   errorStatus?: number;
+  /** The upstream's own error reply (status and body), when it sent one. */
+  errorResponse?: Response;
   networkError?: boolean;
   timedOut?: boolean;
 }> {
@@ -628,7 +642,15 @@ async function dispatchOpenAICompatible(
           status: resp.status,
         },
       );
-      return { response: null, errorStatus: resp.status };
+      const text = await resp.text().catch(() => "");
+      return {
+        response: null,
+        errorStatus: resp.status,
+        errorResponse: new Response(text, {
+          status: resp.status,
+          headers: { ...MODEL_CORS, "Content-Type": "application/json" },
+        }),
+      };
     }
     const model = String((body.model as string) ?? "marina");
     if (wantStream) {
@@ -1149,6 +1171,13 @@ export async function proxyToUpstream(
           clientSignal,
         );
         if (r.response) return finish(r.response, lastTarget);
+        // The named provider rejected the request itself (an unsupported
+        // parameter, a malformed body): that is the answer. Another provider
+        // would not serve this provider's model id, and a silent retry
+        // elsewhere would hide the reason from the caller.
+        if (r.errorResponse && isRequestRejection(r.errorStatus)) {
+          return finish(r.errorResponse, lastTarget, classifyProxyError(r.errorStatus ?? 0));
+        }
         lastErrorKind = r.networkError ? "network" : classifyProxyError(r.errorStatus ?? 0);
         anyTimedOut ||= r.timedOut === true;
       }
@@ -1161,6 +1190,9 @@ export async function proxyToUpstream(
     if (clientSignal?.aborted) break;
     // The explicitly named provider was already asked with the stripped id.
     if (provider === explicitProvider) continue;
+    // `<provider>/<id>` names that provider's model: after it failed, only an
+    // aggregator can serve the full id; a first-party API cannot.
+    if (explicitProvider && !AGGREGATORS.has(provider)) continue;
     const cfg = PROVIDER_UPSTREAM[provider]!;
     const key = resolveProviderKey(engine, provider);
     // Skip cloud providers with no key, and local runtimes the operator hasn't
