@@ -581,6 +581,11 @@ Dissolving the crew keeps the pool and its notes — that is the generational me
 keeps its final roster, so the notes stay readable only by the people who were in the crew. A new
 crew that reuses the name inherits the pool and the group is re-synced to the new roster.
 
+**Completion and lifetime.** `crew complete <name> -- <summary>` writes the result note, credits
+standing and posts the completion. An ephemeral crew then dissolves. A persisted crew is a standing
+team: completion closes that unit of work and the crew returns to `active`, so the next
+`crew dispatch` reuses it. A persisted crew ends only with `crew dissolve` (owner or rank 5+).
+
 ---
 
 ## Putting It All Together
