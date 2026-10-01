@@ -73,7 +73,23 @@ export interface DecisionRequest {
   /** The situation to judge: a string, object or array. */
   state: unknown;
   questions: DecisionQuestions;
+  /**
+   * Composite engines only (`marina/auto`): whether an UNSURE primary answer
+   * (`unsureAnswers`) is worth a second opinion — the caller's own decision
+   * boundary, e.g. the gate asks only when a nearby answer could flip its
+   * verdict. It only narrows the generic test: a sure primary never escalates.
+   * `calibrated` is whether the primary's numbers are calibrated. Absent ⇒ any
+   * unsure answer escalates. Never sent to a backend.
+   */
+  escalate?: (answers: Record<string, DecisionAnswer>, calibrated: boolean) => boolean;
 }
+
+/**
+ * `marina/auto`: what happened to the second opinion — `used` (combined with
+ * the primary), `timeout` / `failed` (the primary's answer stands), `outage`
+ * (the primary failed; the fallback answered alone).
+ */
+export type SecondOpinion = "used" | "timeout" | "failed" | "outage";
 
 export interface DecisionResult {
   answers: Record<string, DecisionAnswer>;
@@ -91,6 +107,10 @@ export interface DecisionResult {
   /** Per-reply calibration when it differs from the provider's (a composite's answering members). */
   calibrated?: boolean;
   latencyMs: number;
+  /** `marina/auto`: whether the primary's answers asked for a second opinion. */
+  escalated?: boolean;
+  /** `marina/auto`, when a second opinion was asked for (see {@link SecondOpinion}). */
+  secondOpinion?: SecondOpinion;
   /** USD, when the backend reports it. */
   costUsd?: number;
   /** Token usage, when the backend reports it. */

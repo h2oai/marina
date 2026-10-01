@@ -1807,6 +1807,8 @@ export class LeanAgentAdapter implements AgentHandle {
       ...(decision.latencyMs === undefined ? {} : { latencyMs: decision.latencyMs }),
       ...(decision.costUsd === undefined ? {} : { costUsd: decision.costUsd }),
       ...(decision.error ? { error: decision.error } : {}),
+      ...(decision.escalated === undefined ? {} : { escalated: decision.escalated }),
+      ...(decision.secondOpinion ? { secondOpinion: decision.secondOpinion } : {}),
     });
     if (decision.action === "allow") return undefined;
     if (decision.action === "ask") {
