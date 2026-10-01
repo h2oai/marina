@@ -99,6 +99,8 @@ import {
 
 import {
   computeContextBudget,
+  conversationTokenCap,
+  conversationTokens,
   createContextManager,
   effectivePromptWindow,
 } from "./context-manager";
@@ -153,6 +155,7 @@ import {
   createProfileToolset,
   TOOL_SEARCH_NAME,
 } from "./tools";
+import { dropOldThinking, dropOldThinkingEnabled } from "./transcript-hygiene";
 
 /** Category under which every adapter log line is emitted (`[lean-agent]`). */
 export const LEAN_AGENT_LOG_CATEGORY = "lean-agent";
@@ -206,6 +209,24 @@ export function acknowledgementReplyRefusal(
 function noReplyMarker(acknowledgement: boolean, information: boolean): string {
   if (acknowledgement) return " (ack; no reply owed)";
   return information ? " (info; no reply owed)" : "";
+}
+
+/**
+ * `MARINA_FORCED_ACTION_NUDGE`: what makes a prompt "actionable" — the state
+ * that drives the forced-action nudge (§11), the in-run silent recovery, the
+ * declared-rest exemption and reply-ledger tracking.
+ *
+ * - `all` (default): any first-party perception that should be answered or
+ *   scored ≥ 80.
+ * - `requests`: only a perception that owes a reply — a REQUEST tell, an
+ *   addressed post whose body is a request (`classifyIncomingTell`), or a
+ *   request already in the ledger. Addressed INFORMATION still wakes the loop
+ *   and renders as `[!]`; it never forces a tool call.
+ */
+export function forcedActionNudgeMode(
+  env: Record<string, string | undefined> = process.env,
+): "all" | "requests" {
+  return env.MARINA_FORCED_ACTION_NUDGE?.trim().toLowerCase() === "requests" ? "requests" : "all";
 }
 
 export function shouldKeepPerception(
@@ -1152,6 +1173,9 @@ export class LeanAgentAdapter implements AgentHandle {
     text: string;
     priority: number;
     shouldRespond?: boolean;
+    /** A REQUEST that owes a reply (see `forcedActionNudgeMode`). Unset ⇒
+     *  `shouldRespond` decides. */
+    owesReply?: boolean;
     traceParent?: TraceParent;
     /** Addressed to this agent (an INFORMATION tell): wakes the loop and
      *  keeps a crew responder's turn, but owes no reply. */
@@ -1269,6 +1293,8 @@ export class LeanAgentAdapter implements AgentHandle {
     totalCacheWriteTokens: 0,
     /** Compactions run BETWEEN turns of one prompt (prepareNextTurn), not between prompts. */
     midRunCompactions: 0,
+    /** Between-prompt compactions under `MARINA_AGENT_CONTEXT_CAP_TOKENS`. */
+    capCompactions: 0,
   };
   /** Accounting headers of the most recent provider response, consumed by the next turn_end. */
   private pendingProxyMeta: ProxyResponseMeta | null = null;
@@ -1564,6 +1590,7 @@ export class LeanAgentAdapter implements AgentHandle {
       getTools: () => this.agent?.state.tools ?? this.baseTools,
       pruneThreshold: CONTEXT_PRUNE_THRESHOLD,
       pruneTarget: CONTEXT_PRUNE_TARGET,
+      getTokenCap: () => conversationTokenCap(),
       summarizeWithLLM,
       onBeforeCompact,
     });
@@ -1996,8 +2023,21 @@ export class LeanAgentAdapter implements AgentHandle {
               }
             }
             const perceptionId = ++this.perceptionSeq;
+            // Under `MARINA_FORCED_ACTION_NUDGE=requests` only a REQUEST owes a
+            // reply: a tell already classified above, otherwise an addressed
+            // post whose body classifies as a request. An INFORMATION post that
+            // scored high (a crew update naming this agent) stays a wake and a
+            // [!] line, but is neither tracked as owed nor nudged.
+            const requestBody = typeof p.data?.message === "string" ? p.data.message : text;
+            const owesReply =
+              forcedActionNudgeMode() === "requests"
+                ? respond &&
+                  (p.tag === "tell" ||
+                    (!isPureAcknowledgement(requestBody) &&
+                      classifyIncomingTell(requestBody) === "request"))
+                : respond || priority >= 80;
             const tracked =
-              !untrusted && (respond || priority >= 80)
+              !untrusted && owesReply
                 ? this.outstandingRequests.track(p, perceptionId, text)
                 : undefined;
             const requestId = tracked?.id;
@@ -2022,6 +2062,7 @@ export class LeanAgentAdapter implements AgentHandle {
               text: `[${p.kind}] ${text}${noReplyMarker(acknowledgement, information)}`,
               priority,
               shouldRespond: respond,
+              owesReply,
               ...(information && !untrusted ? { addressed: true } : {}),
               traceParent: traceParentFromPerception(text),
               untrusted,
@@ -2544,6 +2585,7 @@ export class LeanAgentAdapter implements AgentHandle {
           timedOut = true;
           this.agent.abort();
         }, this.promptTimeoutMs);
+        await this.tidyTranscriptBeforePrompt();
         try {
           await this.agent.prompt(continuationPrompt);
         } finally {
@@ -3120,10 +3162,18 @@ export class LeanAgentAdapter implements AgentHandle {
       this.currentPromptTraceParent = unambiguousTraceParent(
         trustedEvents.map((perception) => perception.traceParent),
       );
-      this.currentPromptActionable = trustedEvents.some(
-        (perception) => perception.shouldRespond || perception.priority >= 80,
-      );
-      this.currentPromptAddressed = trustedEvents.some((perception) => perception.shouldRespond);
+      if (forcedActionNudgeMode() === "requests") {
+        const owed = trustedEvents.some(
+          (perception) => perception.owesReply ?? perception.shouldRespond === true,
+        );
+        this.currentPromptActionable = owed;
+        this.currentPromptAddressed = owed;
+      } else {
+        this.currentPromptActionable = trustedEvents.some(
+          (perception) => perception.shouldRespond || perception.priority >= 80,
+        );
+        this.currentPromptAddressed = trustedEvents.some((perception) => perception.shouldRespond);
+      }
 
       if (trustedEvents.length > 0) {
         this.currentTrustSources.add("world_event");
@@ -3708,7 +3758,9 @@ The goal is a smaller, sharper memory — not more notes.`;
         messages: messages.filter((m) => m.role !== "system"),
         targetRatio: CONTEXT_PRUNE_TARGET,
       });
-      if (gauge.usageRatio < CONTEXT_PRUNE_THRESHOLD) return undefined;
+      const cap = conversationTokenCap();
+      const overCap = cap !== undefined && conversationTokens(messages) >= cap.capTokens;
+      if (gauge.usageRatio < CONTEXT_PRUNE_THRESHOLD && !overCap) return undefined;
       const compacted = await transform(messages, signal);
       const changed =
         compacted.length !== messages.length || compacted.some((m, i) => m !== messages[i]);
@@ -3743,6 +3795,41 @@ The goal is a smaller, sharper memory — not more notes.`;
     this.lastDirectiveFocus = description;
     const shown = changed ? description : clampText(description, FOCUS_DIRECTIVE_REPEAT_CHARS);
     return `Focus${changed ? "" : " (unchanged)"}: ${shown}. Next verifiable step; skip completed work.`;
+  }
+
+  /**
+   * Between prompts, apply the operator's transcript hygiene to the working
+   * history and keep the result: dropping old reasoning blocks
+   * (`MARINA_DROP_OLD_THINKING_SIGNATURES`) and the absolute conversation cap
+   * (`MARINA_AGENT_CONTEXT_CAP_TOKENS`). Writing it back once here — instead of
+   * re-deriving it in the per-request transform — keeps the request prefix
+   * stable for the provider's prompt cache until the next reduction. A failed
+   * archive (`ContextPersistenceError`) keeps the full history.
+   */
+  private async tidyTranscriptBeforePrompt(): Promise<void> {
+    const original = this.agent.state.messages;
+    let messages = dropOldThinkingEnabled() ? dropOldThinking(original) : original;
+    const cap = conversationTokenCap();
+    const transform = this.contextTransform;
+    if (cap && transform && conversationTokens(messages) >= cap.capTokens) {
+      try {
+        const compacted = await transform(messages);
+        if (compacted.length !== messages.length || compacted.some((m, i) => m !== messages[i])) {
+          this.metrics.capCompactions += 1;
+          this.log.info(
+            LEAN_AGENT_LOG_CATEGORY,
+            `context cap: ${messages.length} → ${compacted.length} messages (cap ${cap.capTokens}, target ${cap.targetTokens} tokens)`,
+            { agent: this.name },
+          );
+          messages = compacted;
+        }
+      } catch (error) {
+        this.log.warn(LEAN_AGENT_LOG_CATEGORY, `context cap skipped: ${getErrorMessage(error)}`, {
+          agent: this.name,
+        });
+      }
+    }
+    if (messages !== original) this.agent.state.messages = messages;
   }
 
   // ─── Stuck Detection ──────────────────────────────────────────────────
