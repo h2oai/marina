@@ -95,6 +95,7 @@
     "bench": "bun run benchmarks/harness.ts",
     "bench:context": "bun --env-file=/dev/null benchmarks/context-statistics.ts",
     "bench:ui": "bun run benchmarks/server.ts",
+    "bench:native": "bun --env-file=/dev/null benchmarks/native/cli.ts",
     "init": "bun run scripts/init.ts",
     "prune-agent-users": "bun run scripts/prune-agent-users.ts",
     "eval-prompt": "bun run scripts/eval-prompt.ts",
