@@ -80,7 +80,12 @@ import {
 import { MarinaClient, TELL_NOTICE_PREFIX } from "../sdk/client";
 import type { Perception } from "../types";
 import { suggestPatterns } from "../world/templates/orchestration";
-import { isPureAcknowledgement, outgoingAcknowledgementRefusal } from "./acknowledgement";
+import {
+  classifyIncomingTell,
+  isPureAcknowledgement,
+  numericTokens,
+  outgoingAcknowledgementRefusal,
+} from "./acknowledgement";
 import { ActionHistory } from "./action-history";
 import {
   type AgentConfig,
@@ -159,6 +164,17 @@ const moduleLogger = new Logger();
 export const ACKNOWLEDGEMENT_PRIORITY = 30;
 
 /**
+ * Buffer priority of an INFORMATION tell (a result, a statement, a status;
+ * see `classifyIncomingTell`): read on the next cycle and kept by every
+ * attention mode, but below the request tier (80) — no reply owed, no steer
+ * into a run in flight.
+ */
+export const INFORMATION_TELL_PRIORITY = 60;
+
+/** Most numeric tokens remembered as "already seen" for status-echo checks. */
+const KNOWN_NUMBERS_CAP = 512;
+
+/**
  * An outgoing tell that only acknowledges a peer whose own latest tell was a
  * pure acknowledgement is not sent: neither side owes a reply, and each
  * acknowledgement would otherwise invite the next. Returns the refusal
@@ -184,6 +200,12 @@ export function acknowledgementReplyRefusal(
   if (!peersWhoAcknowledged.has(target.toLowerCase())) return undefined;
   if (!isPureAcknowledgement(message)) return undefined;
   return `not sent: acknowledgement; ${target}'s last message was one (no reply owed).`;
+}
+
+/** Suffix marking a buffered tell that owes no reply. */
+function noReplyMarker(acknowledgement: boolean, information: boolean): string {
+  if (acknowledgement) return " (ack; no reply owed)";
+  return information ? " (info; no reply owed)" : "";
 }
 
 export function shouldKeepPerception(
@@ -1122,6 +1144,9 @@ export class LeanAgentAdapter implements AgentHandle {
     priority: number;
     shouldRespond?: boolean;
     traceParent?: TraceParent;
+    /** Addressed to this agent (an INFORMATION tell): wakes the loop and
+     *  keeps a crew responder's turn, but owes no reply. */
+    addressed?: boolean;
     /** Gateway/cross-instance relayed content. Rendered for awareness but kept
      * off every tool-influencing / auto-action path (never actionable, never a
      * high-priority interrupt, never first-party trust attribution). */
@@ -1212,6 +1237,11 @@ export class LeanAgentAdapter implements AgentHandle {
    *  (see `acknowledgementReplyRefusal`), which ends ack ping-pong at the
    *  second message instead of letting each side owe the other a reply. */
   private lastTellWasAck = new Set<string>();
+  /** Numbers and IDs (`#245` → `245`) this agent has already seen in what
+   *  peers told it and in its own sent messages (not its tool results: a value
+   *  it computed is news to the peer) — insertion-ordered, capped.
+   *  An outgoing message whose only numbers are in here can be a status echo. */
+  private knownNumbers = new Set<string>();
 
   private metrics = {
     toolCalls: 0,
@@ -1654,8 +1684,10 @@ export class LeanAgentAdapter implements AgentHandle {
             context.toolCall.name,
             args,
             new Set(this.outstandingRequests.entries().map((r) => r.target.toLowerCase())),
+            this.knownNumbers,
           );
         if (ackRefusal) return { block: true, reason: ackRefusal };
+        this.rememberNumbers(JSON.stringify(args));
         this.hookRegistry.runBeforeToolCall(context.toolCall.name, args);
         return undefined;
       },
@@ -1782,6 +1814,19 @@ export class LeanAgentAdapter implements AgentHandle {
     return this.requestSave;
   }
 
+  /** Record the numbers in `text` as already seen (see `knownNumbers`). */
+  private rememberNumbers(text: string): void {
+    for (const n of numericTokens(text)) {
+      this.knownNumbers.delete(n);
+      this.knownNumbers.add(n);
+    }
+    while (this.knownNumbers.size > KNOWN_NUMBERS_CAP) {
+      const oldest = this.knownNumbers.values().next().value;
+      if (oldest === undefined) break;
+      this.knownNumbers.delete(oldest);
+    }
+  }
+
   private setupPerceptionHandlers(): void {
     this.client.on("perception", (p: Perception) => {
       const evolutionState = evolutionControlState(p);
@@ -1792,6 +1837,9 @@ export class LeanAgentAdapter implements AgentHandle {
       }
       this.hookRegistry.runOnPerception(p);
       this.gameState.handlePerception(p);
+      this.rememberNumbers(
+        String(p.data?.text ?? "") + (typeof p.data?.message === "string" ? p.data.message : ""),
+      );
 
       this.emitEvent({
         type: "perception",
@@ -1840,7 +1888,15 @@ export class LeanAgentAdapter implements AgentHandle {
             // a conversation owe the other one in turn. The acknowledgement
             // stays visible as low-priority information: never dropped by the
             // attention filter, never tracked as a request, never a wake.
+            //
+            // Of the rest, only a REQUEST (a question, an ask, an imperative,
+            // a correlation tag, a dispatch, a model request) owes a reply.
+            // INFORMATION — a delivered result, a statement, a status — is
+            // read, wakes the loop and passes the attention filter, but owes
+            // nothing: forcing a reply to it made the recipient answer every
+            // result with a status echo, which owed the sender in turn.
             let acknowledgement = false;
+            let information = false;
             if (p.tag === "tell" && typeof p.data.senderName === "string") {
               const body =
                 typeof p.data.message === "string"
@@ -1851,6 +1907,11 @@ export class LeanAgentAdapter implements AgentHandle {
               if (acknowledgement) {
                 this.lastTellWasAck.add(sender);
                 priority = Math.min(priority, ACKNOWLEDGEMENT_PRIORITY);
+                respond = false;
+              } else if (classifyIncomingTell(body) === "information") {
+                this.lastTellWasAck.delete(sender);
+                information = true;
+                priority = INFORMATION_TELL_PRIORITY;
                 respond = false;
               } else {
                 this.lastTellWasAck.delete(sender);
@@ -1871,6 +1932,7 @@ export class LeanAgentAdapter implements AgentHandle {
             }
             if (
               !acknowledgement &&
+              !information &&
               !shouldKeepPerception(this.attentionMode, priority, respond, this.attentionThreshold)
             ) {
               this.droppedPerceptions++;
@@ -1945,9 +2007,10 @@ export class LeanAgentAdapter implements AgentHandle {
             this.pendingPerceptions.push({
               id: perceptionId,
               requestId,
-              text: `[${p.kind}] ${text}${acknowledgement ? " (ack; no reply owed)" : ""}`,
+              text: `[${p.kind}] ${text}${noReplyMarker(acknowledgement, information)}`,
               priority,
               shouldRespond: respond,
+              ...(information && !untrusted ? { addressed: true } : {}),
               traceParent: traceParentFromPerception(text),
               untrusted,
             });
@@ -1963,7 +2026,7 @@ export class LeanAgentAdapter implements AgentHandle {
             // Ambient connects, movement, and channel chatter remain available
             // to the next reflective cycle but do not each purchase an LLM
             // turn. Addressed messages and endpoint requests still wake now.
-            if (respond || priority >= 80) this.cycleWaiter.wake();
+            if (respond || priority >= 80 || (information && !untrusted)) this.cycleWaiter.wake();
 
             // High-priority perceptions interrupt a run in flight. When the
             // agent is idle the buffer alone delivers it on the next cycle
@@ -2432,6 +2495,7 @@ export class LeanAgentAdapter implements AgentHandle {
           const actionable = this.pendingPerceptions.some(
             (perception) =>
               perception.shouldRespond ||
+              perception.addressed ||
               perception.priority >= 80 ||
               isAddressedOrCrewMessage(undefined, perception.text, this.name),
           );
@@ -2780,13 +2844,15 @@ export class LeanAgentAdapter implements AgentHandle {
     // Declared rest: idle cadence unless someone addresses the agent.
     if (this.loopPrefs.rest !== null) {
       return this.outstandingRequests.size > 0 ||
-        this.pendingPerceptions.some((perception) => perception.shouldRespond)
+        this.pendingPerceptions.some(
+          (perception) => perception.shouldRespond || perception.addressed,
+        )
         ? rate.min
         : rate.idle;
     }
 
     const hasActionablePerceptions = this.pendingPerceptions.some(
-      (perception) => perception.shouldRespond || perception.priority >= 80,
+      (perception) => perception.shouldRespond || perception.addressed || perception.priority >= 80,
     );
 
     // Events incoming — fast tick
