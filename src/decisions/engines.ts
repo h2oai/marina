@@ -35,7 +35,12 @@ import { combineAnswers, unsureAnswers } from "./combine";
 import { classifierTuning, getDecisionProvider } from "./config";
 import { acceptsRequestedModel } from "./model-ids";
 import { chatClassifierProvider } from "./providers";
-import { DecisionError, type DecisionProvider, type DecisionResult } from "./types";
+import {
+  DecisionError,
+  type DecisionProvider,
+  type DecisionRequest,
+  type DecisionResult,
+} from "./types";
 
 const logger = new Logger();
 
@@ -246,13 +251,69 @@ function combined(
   };
 }
 
+/** The default bound on a second opinion the primary's answer can stand without. */
+export const SECOND_OPINION_TIMEOUT_MS = 3_000;
+
 /**
- * The configured backend first; the fallback only when the primary is unsure
- * (see `UNSURE`) or failed. Unsure ⇒ both answers combined; failed ⇒ the
- * fallback alone. The fallback failing too rethrows the primary's error, so a
- * caller's own failure rule (the gate fails closed) still applies.
+ * `MARINA_DECISION_SECOND_OPINION_TIMEOUT_MS`: how long `marina/auto` waits for
+ * a second opinion before the primary's answer stands. `0` = no bound; unset or
+ * junk ⇒ {@link SECOND_OPINION_TIMEOUT_MS}.
  */
-function autoEngine(primary: DecisionProvider, fallback: DecisionProvider): DecisionProvider {
+export function secondOpinionTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.MARINA_DECISION_SECOND_OPINION_TIMEOUT_MS?.trim();
+  if (!raw) return SECOND_OPINION_TIMEOUT_MS;
+  const ms = Number(raw);
+  return Number.isFinite(ms) && ms >= 0 ? Math.floor(ms) : SECOND_OPINION_TIMEOUT_MS;
+}
+
+/**
+ * Ask `provider` within `ms` (0 = no bound): resolves `"timeout"` at the
+ * deadline and aborts the in-flight request. The caller's own `signal` still
+ * aborts it too.
+ */
+async function askWithin(
+  provider: DecisionProvider,
+  request: DecisionRequest,
+  signal: AbortSignal | undefined,
+  ms: number,
+): Promise<DecisionResult | "timeout"> {
+  if (ms <= 0) return provider.ask(request, signal);
+  const controller = new AbortController();
+  const forward = () => controller.abort(signal?.reason);
+  if (signal?.aborted) forward();
+  else signal?.addEventListener("abort", forward, { once: true });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort(new DecisionError("second opinion deadline", "timeout", 504));
+      resolve("timeout");
+    }, ms);
+  });
+  try {
+    return await Promise.race([provider.ask(request, controller.signal), deadline]);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", forward);
+  }
+}
+
+/**
+ * The configured backend first; the fallback only when the primary's answers
+ * call for it — an unsure answer (see `UNSURE`) that, when the caller gives
+ * `request.escalate`, could also change the caller's verdict — or when the
+ * primary failed. Escalated ⇒ both
+ * answers combined, the second opinion bounded by `secondOpinionMs` (on
+ * timeout or failure the primary's answer stands). Failed ⇒ the fallback alone,
+ * WITHOUT the short bound: it is then the only judge, and cutting it short
+ * would turn an outage into a fail-closed block. The fallback failing too
+ * rethrows the primary's error, so a caller's own failure rule (the gate fails
+ * closed) still applies.
+ */
+export function autoEngine(
+  primary: DecisionProvider,
+  fallback: DecisionProvider,
+  secondOpinionMs: number,
+): DecisionProvider {
   return {
     kind: "marina-auto",
     model: AUTO_ENGINE,
@@ -265,37 +326,58 @@ function autoEngine(primary: DecisionProvider, fallback: DecisionProvider): Deci
       } catch (primaryErr) {
         try {
           const second = await fallback.ask(request, signal);
-          return combined(
-            request.questions,
-            [{ result: second, provider: fallback }],
-            "cascade",
-            started,
-          );
+          return {
+            ...combined(
+              request.questions,
+              [{ result: second, provider: fallback }],
+              "cascade",
+              started,
+            ),
+            escalated: true,
+            secondOpinion: "outage",
+          };
         } catch {
           throw primaryErr;
         }
       }
-      if (unsureAnswers(request.questions, first.answers).length === 0) {
-        return combined(
-          request.questions,
-          [{ result: first, provider: primary }],
-          "cascade",
-          started,
-        );
-      }
       const alone = [{ result: first, provider: primary }];
+      const firstCalibrated = (first.calibrated ?? primary.calibrated) !== false;
+      // The caller's boundary only NARROWS the generic test: a sure primary is
+      // never second-guessed (that could soften a confident verdict).
+      const escalate =
+        unsureAnswers(request.questions, first.answers).length > 0 &&
+        (request.escalate?.(first.answers, firstCalibrated) ?? true);
+      if (!escalate) {
+        return { ...combined(request.questions, alone, "cascade", started), escalated: false };
+      }
+      let second: DecisionResult | "timeout";
       try {
-        const second = await fallback.ask(request, signal);
-        return combined(
+        second = await askWithin(fallback, request, signal, secondOpinionMs);
+      } catch {
+        // The second opinion failed: the primary's answer stands.
+        return {
+          ...combined(request.questions, alone, "cascade", started),
+          escalated: true,
+          secondOpinion: "failed",
+        };
+      }
+      if (second === "timeout") {
+        return {
+          ...combined(request.questions, alone, "cascade", started),
+          escalated: true,
+          secondOpinion: "timeout",
+        };
+      }
+      return {
+        ...combined(
           request.questions,
           [...alone, { result: second, provider: fallback }],
           "cascade",
           started,
-        );
-      } catch {
-        // The second opinion failed: the primary's answer stands.
-        return combined(request.questions, alone, "cascade", started);
-      }
+        ),
+        escalated: true,
+        secondOpinion: "used",
+      };
     },
   };
 }
@@ -334,7 +416,7 @@ export function resolveEngine(
   if (model === AUTO_ENGINE) {
     const fallback = autoFallback(env, deps);
     if (!configured || !fallback) return { error: unknownEngine(model) };
-    return { provider: autoEngine(configured, fallback) };
+    return { provider: autoEngine(configured, fallback, secondOpinionTimeoutMs(env)) };
   }
   const base = resolveBase(model, env, deps);
   return base ? { provider: base } : { error: unknownEngine(model) };

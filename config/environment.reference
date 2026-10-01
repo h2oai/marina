@@ -597,6 +597,9 @@
 # Run Marina's own harness (tool gate, spawn routing, task verifier, `decision` commands) on an engine such as marina/auto instead of the configured backend. Unresolvable falls back to the backend with a readiness warning.
 # MARINA_DECISION_ENGINE=
 
+# How long `marina/auto` waits for a second opinion before the primary's answer stands (milliseconds; `0` = no limit). Not applied when the primary failed: the fallback is then the only judge.
+# MARINA_DECISION_SECOND_OPINION_TIMEOUT_MS=3000
+
 # Adopted gate-question wording file written by `bun run qualify:decisions -- --adopt <file>`. Refused unless the variant earned a held-out win.
 # MARINA_DECISION_GATE_QUESTIONS=
 
