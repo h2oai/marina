@@ -98,11 +98,13 @@ import {
 } from "./agent-types";
 
 import {
+  type ConversationTokenCap,
   computeContextBudget,
   conversationTokenCap,
   conversationTokens,
   createContextManager,
   effectivePromptWindow,
+  hasCompletedRun,
 } from "./context-manager";
 import {
   type PromptMetrics,
@@ -1590,7 +1592,7 @@ export class LeanAgentAdapter implements AgentHandle {
       getTools: () => this.agent?.state.tools ?? this.baseTools,
       pruneThreshold: CONTEXT_PRUNE_THRESHOLD,
       pruneTarget: CONTEXT_PRUNE_TARGET,
-      getTokenCap: () => conversationTokenCap(),
+      getTokenCap: (messages) => this.tokenCapFor(messages),
       summarizeWithLLM,
       onBeforeCompact,
     });
@@ -3758,7 +3760,7 @@ The goal is a smaller, sharper memory — not more notes.`;
         messages: messages.filter((m) => m.role !== "system"),
         targetRatio: CONTEXT_PRUNE_TARGET,
       });
-      const cap = conversationTokenCap();
+      const cap = this.tokenCapFor(messages);
       const overCap = cap !== undefined && conversationTokens(messages) >= cap.capTokens;
       if (gauge.usageRatio < CONTEXT_PRUNE_THRESHOLD && !overCap) return undefined;
       const compacted = await transform(messages, signal);
@@ -3798,6 +3800,24 @@ The goal is a smaller, sharper memory — not more notes.`;
   }
 
   /**
+   * The conversation cap that applies to this agent now. The built-in default
+   * exempts a bound coder (an active Code Mode task legitimately carries a large
+   * working set; the window-ratio threshold still guards it), while an
+   * operator-set `MARINA_AGENT_CONTEXT_CAP_TOKENS` applies to every agent. No
+   * cap compacts an agent's first run.
+   */
+  private tokenCapFor(
+    messages: readonly AgentMessage[],
+    opts: { betweenPrompts?: boolean } = {},
+  ): ConversationTokenCap | undefined {
+    const cap = conversationTokenCap();
+    if (!cap) return undefined;
+    if (!cap.explicit && this.activeCodingTask) return undefined;
+    if (!opts.betweenPrompts && !hasCompletedRun(messages)) return undefined;
+    return cap;
+  }
+
+  /**
    * Between prompts, apply the operator's transcript hygiene to the working
    * history and keep the result: dropping old reasoning blocks
    * (`MARINA_DROP_OLD_THINKING_SIGNATURES`) and the absolute conversation cap
@@ -3809,7 +3829,11 @@ The goal is a smaller, sharper memory — not more notes.`;
   private async tidyTranscriptBeforePrompt(): Promise<void> {
     const original = this.agent.state.messages;
     let messages = dropOldThinkingEnabled() ? dropOldThinking(original) : original;
-    const cap = conversationTokenCap();
+    // Before the next prompt is appended, a completed earlier run is any
+    // assistant turn in the history.
+    const cap = messages.some((m) => m.role === "assistant")
+      ? this.tokenCapFor(messages, { betweenPrompts: true })
+      : undefined;
     const transform = this.contextTransform;
     if (cap && transform && conversationTokens(messages) >= cap.capTokens) {
       try {
