@@ -3,7 +3,9 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { RateLimiter } from "../auth/rate-limiter";
+import { describeCommand } from "../engine/command-manifest";
 import type { Engine } from "../engine/engine";
+import { unsplitChainNote } from "../sdk/command-chain";
 import { NAMED_COMMAND_FORMS } from "../sdk/named-command-forms";
 import { guarded, quoteArg, textArg } from "./mcp-arguments";
 import { mcpNamedCommandSchema } from "./mcp-command-schema";
@@ -28,6 +30,14 @@ export function registerNamedWorldTools(
   },
 ) {
   const { engine, rateLimiter, getSession, describeTool, runCmd, runInput } = deps;
+
+  /** The command ran as typed; an unsplit `;` chain only earns one appended line. */
+  function withChainNote(input: string, result: McpResult): McpResult {
+    if (!input.includes(";")) return result;
+    const note = unsplitChainNote(input, engine.commands.allBuiltins().map(describeCommand));
+    if (!note) return result;
+    return { ...result, content: [...result.content, { type: "text", text: note }] };
+  }
 
   // ── Cognition ─────────────────────────────────────────────────────────
 
@@ -303,7 +313,7 @@ export function registerNamedWorldTools(
       "Type 'help' to see all available commands.",
     mcpNamedCommandSchema(NAMED_COMMAND_FORMS.command),
     { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-    async ({ input }, extra) => runInput(extra, input),
+    async ({ input }, extra) => withChainNote(input, await runInput(extra, input)),
   );
 
   mcp.tool(
