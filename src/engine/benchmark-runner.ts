@@ -117,6 +117,16 @@ export const BENCHMARKS: Record<string, BenchmarkSpec> = {
     description: "AIME 2024 olympiad math (30 problems)",
     datasetFile: "aime-2024.json",
   },
+  gpqa: {
+    name: "gpqa",
+    description: "GPQA-Diamond graduate-level science MC, options shuffled per seed (gated)",
+    datasetFile: "gpqa-diamond.json",
+  },
+  "hle-verified-gold": {
+    name: "hle-verified-gold",
+    description: "HLE-Verified Gold subset, text-only (exact match, else equivalence judge)",
+    datasetFile: "hle-verified-gold.json",
+  },
 };
 
 export interface BenchmarkRunOptions {

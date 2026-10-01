@@ -9,8 +9,9 @@ import { loadSmoke, runChecks } from "./adapters/checks";
 import { inPartition, parsePartition } from "./partition";
 import { runCodeGen } from "./adapters/code-gen";
 import { runFreeForm } from "./adapters/free-form";
+import { runHLE } from "./adapters/hle";
 import { runIFEval } from "./adapters/ifeval";
-import { runMultipleChoice } from "./adapters/multiple-choice";
+import { runMultipleChoice, shuffleChoices } from "./adapters/multiple-choice";
 import { runNumeric } from "./adapters/numeric";
 import { runShortAnswer } from "./adapters/short-answer";
 import {
@@ -22,6 +23,7 @@ import {
   downloadGPQA,
   downloadGSM8K,
   downloadHellaSwag,
+  downloadHLEVerifiedGold,
   downloadHumanEval,
   downloadIFEval,
   downloadMATH,
@@ -43,6 +45,7 @@ import type {
   DatasetItem,
   ResultItem,
 } from "./types";
+import { formatUsd, summarizeUsage, totalCostUsd } from "./usage";
 
 // --- Benchmark Registry ---
 
@@ -52,7 +55,8 @@ const BENCHMARKS: Record<string, BenchmarkDefinition> = {
     dataset: "smoke-eval",
     adapter: "checks",
     scoring: "accuracy",
-    description: "Frozen 15-item prompt A/B set (benchmarks/smoke-eval.json) — same set as eval-prompt",
+    description:
+      "Frozen 15-item prompt A/B set (benchmarks/smoke-eval.json) — same set as eval-prompt",
     phase: "A",
     download: loadSmoke,
   },
@@ -120,7 +124,6 @@ const BENCHMARKS: Record<string, BenchmarkDefinition> = {
     download: async (_dir, limit) => loadRetentionBenchmark(_dir, limit),
   },
   // --- New benchmarks (Tier 1: MC reasoning) ---
-  // GPQA Diamond is gated on HuggingFace — skipped until we add auth-token support
   "arc-challenge": {
     name: "ARC-Challenge",
     dataset: "arc-challenge",
@@ -214,13 +217,23 @@ const BENCHMARKS: Record<string, BenchmarkDefinition> = {
   },
   gpqa: {
     name: "GPQA-Diamond",
-    dataset: "gpqa",
+    dataset: "gpqa-diamond",
     adapter: "multiple-choice",
     scoring: "accuracy",
     description:
-      "198 graduate-level physics/bio/chem multiple-choice (gated; set HF_TOKEN)",
+      "198 graduate-level physics/bio/chem MC, options shuffled per seed (gated; HF_TOKEN)",
     phase: "A",
     download: downloadGPQA,
+    prepare: (items, seed) => items.map((item) => shuffleChoices(item, seed)),
+  },
+  "hle-verified-gold": {
+    name: "HLE-Verified Gold",
+    dataset: "hle-verified-gold",
+    adapter: "hle",
+    scoring: "accuracy",
+    description: "HLE-Verified Gold subset, text-only; exact match, else equivalence judge",
+    phase: "A",
+    download: downloadHLEVerifiedGold,
   },
 };
 
@@ -283,6 +296,21 @@ function printSummary(result: BenchmarkResult): void {
   console.log(`  Timeouts: ${result.metadata.timeouts}`);
   console.log(`  Avg Latency: ${result.metadata.avgLatencyMs.toFixed(0)}ms`);
   console.log(`  Duration: ${(result.duration_ms / 1000).toFixed(1)}s`);
+  const usage = result.metadata.usage;
+  if (usage) {
+    const cost = totalCostUsd(usage);
+    const perItem = cost !== undefined && usage.items > 0 ? cost / usage.items : undefined;
+    const priced =
+      usage.pricedItems < usage.items ? ` (priced ${usage.pricedItems}/${usage.items})` : "";
+    console.log(
+      `  Cost: ${formatUsd(cost)}${cost !== undefined ? priced : ""}  per item ${formatUsd(perItem)}`,
+    );
+    if (usage.promptTokens !== undefined || usage.completionTokens !== undefined) {
+      console.log(
+        `  Tokens: ${usage.promptTokens ?? "n/a"} in / ${usage.completionTokens ?? "n/a"} out`,
+      );
+    }
+  }
 
   const breakdownEntries = Object.entries(result.scores.breakdown);
   if (breakdownEntries.length > 1) {
@@ -442,6 +470,9 @@ async function runAdapter(items: DatasetItem[], config: BenchmarkConfig): Promis
     case "short-answer":
       results = await runShortAnswer(items, config, progressFn);
       break;
+    case "hle":
+      results = await runHLE(items, config, progressFn);
+      break;
     case "checks":
       results = await runChecks(items, config, progressFn);
       break;
@@ -533,8 +564,9 @@ Usage:
   bun run benchmarks/harness.ts --results
 
 Benchmarks:
-  Phase A (baseline):  mmlu-pro, ifeval, truthfulqa, humaneval
+  Phase A (baseline):  mmlu-pro, ifeval, truthfulqa, humaneval, gpqa, hle-verified-gold, …
   Phase B (memory):    narrativeqa, mt-bench, retention
+  (--list shows all; bun run bench:tier0 runs the Tier-0 preset)
 
 Options:
   -b, --benchmark <name>    Benchmark to run
@@ -543,6 +575,8 @@ Options:
   -e, --endpoint <url>      API endpoint (default: http://localhost:3300)
   -k, --api-key <key>       API key for authentication
       --model <name>        Model name (default: marina)
+      --judge-model <name>  Judge model for judge-scored items (default: --model)
+      --judge-endpoint <url> Judge endpoint (default: --endpoint)
   -c, --concurrency <n>     Parallel requests (default: 5)
   -s, --seed <n>            Random seed for subset selection
       --compare <mode>      Run comparison (e.g., --compare passthrough)
@@ -628,6 +662,7 @@ Options:
     items = seededShuffle(items, config.seed);
   }
   if (config.limit) items = items.slice(0, config.limit);
+  if (benchDef.prepare) items = benchDef.prepare(items, config.seed ?? 0);
 
   console.log(`  Loaded ${items.length} items`);
 
@@ -677,6 +712,7 @@ Options:
       timeouts,
       errors,
       avgLatencyMs,
+      usage: summarizeUsage(resultItems),
     },
     items: resultItems,
   };
@@ -718,6 +754,7 @@ Options:
         timeouts: compareItems.filter((i) => i.actual.includes("abort")).length,
         errors: compareErrors,
         avgLatencyMs: compareAvgLatency,
+        usage: summarizeUsage(compareItems),
       },
       items: compareItems,
     };

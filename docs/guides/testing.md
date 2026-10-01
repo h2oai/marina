@@ -446,6 +446,18 @@ Run `bun run test:a11y` for the dashboard lint contract and axe-core browser che
 See [dashboard accessibility](dashboard-accessibility.md) for coverage, content-dependent
 media exceptions, and the manual keyboard and screen-reader checklist.
 
+## Benchmark Tier 0 and paired comparison
+
+`bun run bench:tier0 --endpoint <marina:<crew> | openrouter/<vendor>/<model> | URL>` runs a
+fixed, seeded slice of HLE-Verified Gold (text-only, 40 items), GPQA-Diamond (40 items; gated,
+needs `HF_TOKEN`) and FRAMES (20 items), one harness process and one result JSON per set.
+`bun run bench:compare <a> <b>` pairs two runs (or two Tier-0 directories) by item id and
+reports per-arm accuracy with Wilson intervals, McNemar's exact test, a paired bootstrap of
+the difference, and reported cost and tokens (`n/a` when the endpoint reported none). Both
+call live models and are never part of CI. Datasets are fetched at run time into the
+gitignored `benchmarks/datasets/`; case content is never committed. Details:
+[benchmarks/README.md](../../benchmarks/README.md#tier-0--small-hard-slice-for-crew-and-formation-sweeps).
+
 ## Live coding smoke qualification
 
 With `OPENAI_API_KEY` configured, run the native Marina worker against disposable Git fixtures:

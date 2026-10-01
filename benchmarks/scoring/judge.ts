@@ -1,7 +1,9 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { query } from "../modes/passthrough";
+import { query, queryWithUsage } from "../modes/passthrough";
+import type { ItemUsage } from "../types";
+import { addCallUsage } from "../usage";
 
 const JUDGE_SYSTEM_PROMPT = `You are a fair and impartial judge evaluating the quality of AI responses.
 Rate the response on a scale of 1-10 based on accuracy, helpfulness, and relevance.
@@ -63,8 +65,66 @@ function parseScore(text: string): number | null {
   // Try to find a number 1-10
   const match = cleaned.match(/\b(10|[1-9])\b/);
   if (match) {
-    const score = Number.parseInt(match[1], 10);
+    const score = Number.parseInt(match[1] ?? "", 10);
     if (score >= 1 && score <= 10) return score;
   }
   return null;
+}
+
+// --- Answer equivalence (strict yes/no) ---
+
+const EQUIVALENCE_SYSTEM_PROMPT = `You grade one answer against a reference answer.
+Decide only whether the response's FINAL answer means the same thing as the reference answer.
+Accept equivalent forms (algebraically equal expressions, numbers equal within the precision the reference implies, the same entity named differently).
+Reject answers that are vaguer, hedge between options, add a conflicting claim, or differ in substance.
+Do not solve the problem yourself and do not judge the reasoning.
+Reply with exactly one word: CORRECT or INCORRECT.`;
+
+export interface EquivalenceVerdict {
+  verdict: "correct" | "incorrect" | "error";
+  usage: ItemUsage | undefined;
+}
+
+/** Parse a CORRECT / INCORRECT reply; the last verdict word wins. Anything else is null. */
+export function parseEquivalenceVerdict(reply: string): "correct" | "incorrect" | null {
+  const words = reply.toUpperCase().match(/\b(INCORRECT|CORRECT)\b/g);
+  if (!words || words.length === 0) return null;
+  return words[words.length - 1] === "CORRECT" ? "correct" : "incorrect";
+}
+
+/**
+ * Strict equivalence judge for short answers whose reference is not an exact
+ * string match. Uses the run's judge model/endpoint (`--judge-model`,
+ * `--judge-endpoint`). A judge that fails twice returns `error` — the caller
+ * scores it as wrong and records the failure, never a silent pass.
+ */
+export async function judgeEquivalence(
+  question: string,
+  reference: string,
+  response: string,
+  judgeConfig: { model: string; endpoint: string },
+  apiKey?: string,
+): Promise<EquivalenceVerdict> {
+  let usage: ItemUsage | undefined;
+  const user = `Question:\n${question}\n\nReference answer:\n${reference}\n\nResponse:\n${response}\n\nVerdict (CORRECT or INCORRECT):`;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const reply = await queryWithUsage(
+        judgeConfig.endpoint,
+        judgeConfig.model,
+        [
+          { role: "system", content: EQUIVALENCE_SYSTEM_PROMPT },
+          { role: "user", content: user },
+        ],
+        apiKey,
+        120_000,
+      );
+      usage = addCallUsage(usage, reply.usage);
+      const verdict = parseEquivalenceVerdict(reply.content);
+      if (verdict) return { verdict, usage };
+    } catch {
+      // allow-empty-catch: one retry, then the verdict is "error"
+    }
+  }
+  return { verdict: "error", usage };
 }

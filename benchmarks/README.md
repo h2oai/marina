@@ -37,6 +37,54 @@ bun run benchmarks/harness.ts --benchmark truthfulqa --mode passthrough
 bun run benchmarks/harness.ts --benchmark humaneval --mode passthrough  # requires Python 3.10+
 ```
 
+## Tier 0 — Small Hard Slice for Crew and Formation Sweeps
+
+`bun run bench:tier0` runs a fixed, deterministic slice of hard sets against one target and
+writes one result JSON per set, plus `summary.json`, to
+`benchmarks/results/tier0-<label>-<timestamp>/` (or `--out-dir`).
+
+| Set | Items | Source | Scoring |
+|-----|-------|--------|---------|
+| `hle-verified-gold` | 40 (`--hle N`) | [`skylenage-ai/HLE-Verified`](https://huggingface.co/datasets/skylenage-ai/HLE-Verified) `train` split, `Verified_Classes = Gold subset`, items without an image | MC: exact letter. Short answer: normalized exact match, else the strict equivalence judge |
+| `gpqa` | 40 (`--gpqa N`) | [`Idavidrein/gpqa`](https://huggingface.co/datasets/Idavidrein/gpqa) `gpqa_diamond` (gated — needs `HF_TOKEN`) | Exact letter; options shuffled per seed |
+| `frames` | 20 (`--frames N`, `0` skips) | `google/frames-benchmark` (closed book) | Substring match, else the 1–10 judge (≥ 7) |
+
+```bash
+bun run bench:tier0 --endpoint marina:<crew>                  # a crew on http://localhost:3300 (--base to change)
+bun run bench:tier0 --endpoint openrouter/<vendor>/<model>    # one model, direct (OPENROUTER_API_KEY)
+bun run bench:tier0 --endpoint http://host:port --model <id>  # any OpenAI-compatible /v1
+```
+
+- **Determinism.** The same `--seed` (default `42`) selects the same items and, for GPQA, the
+  same option order (`shuffleChoices`: per-item permutation seeded by `(seed, item id)`). The
+  cache keeps GPQA unshuffled, so a cached file never fixes the answer position.
+- **Judge.** Judge-scored items use `--judge-model` / `--judge-endpoint`. The default is the
+  target model, except `marina:<crew>` targets, which default to `marina/default` so a crew
+  never grades itself and every crew in a sweep shares one judge. A judge that fails is
+  recorded as `judge: "error"` on the item and scored wrong.
+- **Keys** reach each harness child as `MARINA_BENCH_API_KEY`, never on the command line.
+- **Failure.** A set that cannot run (for example GPQA without `HF_TOKEN`) is reported as
+  `FAILED` with the reason; the other sets still run and the exit code is 1.
+- **Cost.** Each item records the usage its endpoint reported: tokens from `usage`, dollars
+  from Marina's `x-marina-cost-usd` header or OpenRouter's `usage.cost`. Unreported cost
+  prints `n/a` and is never estimated. Judge dollars are kept separately from answer dollars.
+
+The individual sets also run alone, e.g.
+`bun run bench --benchmark hle-verified-gold --limit 40 --seed 42`.
+
+### Paired comparison
+
+```bash
+bun run bench:compare <runA.json> <runB.json>   # two result files
+bun run bench:compare <tier0-dirA> <tier0-dirB> # every set present in both directories
+bun run bench:compare a.json b.json --json      # machine-readable
+```
+
+Items are paired by id (unpaired ids are counted and left out). For each arm: accuracy with
+its 95 % Wilson interval, dollars total and per item, and tokens. For the pair: McNemar's
+exact test on the discordant counts, and a paired bootstrap (10,000 resamples, `--seed`,
+`--resamples`) of accuracy(B) − accuracy(A) with a 95 % percentile interval.
+
 ## Phase B — Memory Delta Experiments
 
 The core thesis test: does Marina's memory system measurably improve outcomes?
@@ -88,6 +136,8 @@ honestly, and an explicit "what this does NOT prove" list are in
 | `-e, --endpoint` | API endpoint URL | `http://localhost:3300` |
 | `-k, --api-key` | Bearer token | none |
 | `--model` | Model name | `marina` |
+| `--judge-model` | Judge model for judge-scored items | `--model` |
+| `--judge-endpoint` | Judge endpoint | `--endpoint` |
 | `-c, --concurrency` | Parallel requests | `5` |
 | `-s, --seed` | Deterministic subset | none |
 | `--compare` | Run comparison mode | none |
@@ -151,7 +201,7 @@ bun run bench:native --task bugs --seed 7 --score-only --db world.db --workspace
 
 ## Datasets
 
-Datasets are auto-downloaded from HuggingFace on first run and cached in `benchmarks/datasets/` (gitignored). The retention benchmark ships in-repo (generated at runtime).
+Datasets are auto-downloaded from HuggingFace on first run and cached in `benchmarks/datasets/` (gitignored). The retention benchmark ships in-repo (generated at runtime). Gated datasets (GPQA) need `HF_TOKEN` (or `HUGGINGFACE_TOKEN`) for an account that has accepted the dataset's terms. Benchmark items are never committed.
 
 ## Results
 
