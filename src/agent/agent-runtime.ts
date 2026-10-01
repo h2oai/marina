@@ -16,6 +16,7 @@ import {
   routeTableFromEnv,
   routeTiersFromEnv,
 } from "../decisions/route";
+import { applyRouteEvidence, routeEvidenceSettingsFromEnv } from "../engine/benchmark-evidence";
 import {
   MARINA_DEFAULT_MODEL,
   MEMORY_REFLECTOR_ROLE,
@@ -571,15 +572,31 @@ export class AgentRuntime {
         const routed = table
           ? await routeModelWithTable(config.goal, config.role, table)
           : await routeModelForGoal(config.goal, config.role, tiers!);
-        routedModel = routed.model;
+        // Measured benchmark evidence may prefer another of the SAME eligible
+        // candidates (MARINA_ROUTE_EVIDENCE; off by default, fails open).
+        const evidence = applyRouteEvidence(
+          { route: routed.tier, model: routed.model },
+          table
+            ? Object.entries(table.routes).map(([route, r]) => ({ route, model: r.model }))
+            : [
+                { route: "fast", model: tiers!.fast },
+                { route: "powerful", model: tiers!.powerful },
+              ],
+          config.role,
+          routeEvidenceSettingsFromEnv(),
+          this.db,
+        );
+        routedModel = evidence.model;
         this.onEvent?.({
           type: "agent_decision",
           name: config.name,
           stage: "route",
-          verdict: routed.tier,
-          subject: routed.model,
-          reason: routed.verdict.reason,
-          signals: routed.verdict.signals,
+          verdict: evidence.route,
+          subject: evidence.model,
+          reason: evidence.applied
+            ? `evidence: ${evidence.reason ?? "best measured lower bound"} (router picked ${routed.tier})`
+            : routed.verdict.reason,
+          signals: { ...routed.verdict.signals, ...evidence.signals },
           ...(routed.provider ? { provider: routed.provider } : {}),
           ...(routed.decisionModel ? { model: routed.decisionModel } : {}),
           ...(routed.latencyMs === undefined ? {} : { latencyMs: routed.latencyMs }),

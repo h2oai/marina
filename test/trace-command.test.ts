@@ -197,6 +197,56 @@ describe("trace command", () => {
     expect(output).toContain("never applies model advice without an explicit eligible set");
   });
 
+  it("shows measured benchmark evidence per model with intervals", async () => {
+    await engine.processCommand(entityId, "trace advise evidence hle");
+    expect(stripAnsi(conn.lastText())).toContain("No attributed item outcomes");
+    conn.clear();
+    const now = Date.now();
+    db.recordBenchmarkLedgerRun(
+      {
+        id: "ev-run",
+        benchmark: "hle",
+        config_hash: "ev-run",
+        config_json: "{}",
+        started_at: now,
+        completed_at: now,
+        duration_ms: 1,
+        score: 0.75,
+        answered: 4,
+        total: 4,
+        cost_usd: 0.04,
+        n: 4,
+        ci_low: 0,
+        ci_high: 1,
+        seed: 1,
+        slice_hash: "s",
+        judge: "j",
+        target_kind: "model",
+        target_json: JSON.stringify({ model: "anthropic/claude-opus-5.5" }),
+        label: null,
+        source: "import",
+        content_hash: "ev-run",
+      },
+      [0, 1, 2, 3].map((i) => ({
+        item_id: `q${i}`,
+        correct: i < 3,
+        score: null,
+        latency_ms: 1,
+        cost_usd: 0.01,
+        trace_id: null,
+        participants_json: null,
+        judge_verdict: null,
+      })),
+    );
+    await engine.processCommand(entityId, "trace advise evidence hle 2");
+    const output = stripAnsi(conn.lastText());
+    expect(output).toContain("Benchmark Evidence: hle");
+    expect(output).toContain("anthropic/claude-opus-5.5");
+    expect(output).toContain("75.0%");
+    expect(output).toContain("n=4");
+    expect(output).toContain("routing evidence: off");
+  });
+
   it("makes autonomous-model and tool shadow advice agent-consumable", async () => {
     await engine.processCommand(entityId, "trace advise autonomous");
     expect(stripAnsi(conn.lastText())).toContain("Shadow Routing Advice: autonomous_model");
