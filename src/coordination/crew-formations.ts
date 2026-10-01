@@ -45,10 +45,9 @@ import { normalizePatternName } from "../world/templates/orchestration";
  * every request timed out. Formation process must never outrank answering.
  */
 const PROTOCOL_PRIORITY =
-  "PRIORITY: if this crew serves a model endpoint, answering `model_request` " +
-  "messages (post `{type:'model_response',id,content}` back on the request's " +
-  "channel) always takes precedence over formation process. Apply the " +
-  "formation to HOW you work, never as a reason to delay or skip a reply.";
+  "PRIORITY: a `model_request` takes precedence over formation process: post " +
+  "`{type:'model_response',id,content}` on its channel. Formation shapes how you work, " +
+  "never delays a reply.";
 
 /**
  * Purpose-built RUNTIME briefs, one per formation. Design rules (from the
@@ -58,83 +57,69 @@ const PROTOCOL_PRIORITY =
  */
 export const CREW_BRIEFS: Record<CrewFormation, string> = {
   freeform:
-    "No fixed structure. Talk on this channel, divide work by strength, merge results. " +
-    "Complete or dissolve the crew when the goal is met.",
+    "No fixed structure. Divide work by strength on this channel; merge results. Complete or " +
+    "dissolve the crew when the goal is met.",
   deliberation:
-    "ONE round, then act: each member posts one proposal here → the lead picks (or merges) the " +
-    "strongest → the picked owner executes immediately. Do not run further rounds unless the " +
-    "execution fails. Debrief in one message after delivery.",
+    "ONE round: each member posts one proposal here → lead picks or merges → picked owner " +
+    "executes now. Another round only if execution fails. One debrief message after delivery.",
   chorus:
-    "Work parallel phases NOW. Post partial results to this channel as you produce them " +
-    "(the broadcast wall). Before completing, each member crossfire-reviews one other member's " +
-    "partial. Lead merges and delivers.",
+    "Parallel phases now. Post partial results here as produced. Before completing, each " +
+    "member reviews one other member's partial. Lead merges and delivers.",
   foundry:
-    "Lead = overseer: split the goal, assign each worker one piece by `tell`. Workers deliver to " +
-    "the lead, never merge directly — the lead is the merge gate. Mark handoffs with " +
-    "`crew stage <name> <piece>`.",
+    "Lead = overseer and merge gate: split the goal, assign one piece per worker by `tell`. " +
+    "Workers deliver to the lead, never merge. Mark handoffs: `crew stage <name> <piece>`.",
   swarm:
-    "Self-assign: reply 'claiming: <piece>' for what matches your strength, then do it. If stuck, " +
-    "hand off ON THIS CHANNEL with what you have (payload), don't sit on it. Lead assembles " +
-    "whatever landed.",
+    "Self-assign: reply 'claiming: <piece>', then do it. Stuck: hand off here with the partial " +
+    "payload. Lead assembles what lands.",
   pipeline:
-    "Strict stage order. Current stage owner works, then posts the handoff here and marks " +
-    "`crew stage <name> <stage>`. Next owner starts only from the handoff content. No " +
-    "stage-skipping, no parallel stages.",
+    "Strict stage order. Stage owner works, posts the handoff here, marks " +
+    "`crew stage <name> <stage>`. Next owner starts from the handoff only. No skipped or " +
+    "parallel stages.",
   debate:
-    "Two members write SEALED positions first — no cross-talk until both are posted here " +
-    "(`crew artifact <name> draft -- <ref>`). Then one judge (not an author) decides in one " +
-    "message. The decision is final; deliver it.",
+    "Two members post SEALED positions first (`crew artifact <name> draft -- <ref>`); no " +
+    "cross-talk until both land. One non-author judge decides in one message; final. Deliver it.",
   mapreduce:
-    "Lead: split into INDEPENDENT chunks now, one `tell` per specialist. Specialists return " +
-    "chunk results here (`crew artifact <name> map -- <ref>`). Lead merges once all land and " +
-    "deposits the merge (`crew artifact <name> reduce -- <ref>`). Chunks must not depend on " +
-    "each other.",
+    "Lead: split into INDEPENDENT chunks now, one `tell` per specialist. Specialists: " +
+    "`crew artifact <name> map -- <ref>`. Lead merges when all land: " +
+    "`crew artifact <name> reduce -- <ref>`.",
   blackboard:
-    "This channel IS the shared workspace. Post improvements to the CURRENT state — never fork a " +
-    "private copy. Each post must build on the last. Stop when two consecutive posts change " +
-    "nothing material.",
+    "This channel IS the workspace. Post improvements to the CURRENT state; never fork a " +
+    "private copy. Stop after two consecutive posts that change nothing material.",
   symbiosis:
-    "Pair on the goal from your different strengths: alternate short contributions here, each " +
-    "building on the other's. If you stop learning from the exchange, say so and deliver what " +
-    "you have.",
+    "Pair from different strengths: alternate short contributions here, each building on the " +
+    "last. When the exchange stops adding, say so and deliver.",
   research:
-    "One hypothesis at a time: state it here → run the smallest test → post the measurement → " +
-    "keep or kill it. Record what was learned with `crew artifact <name> synthesis -- <ref>` " +
-    "before completing.",
+    "One hypothesis at a time: state it → smallest test → post the measurement → keep or kill. " +
+    "Before completing: `crew artifact <name> synthesis -- <ref>`.",
   delphi:
-    "Start — each member: send your estimate privately to the lead before reading anyone else's " +
-    "(`tell <lead> estimate: <value> | <reasons>`; for a choice, your pick plus a confidence). " +
-    "Lead: once all are in, post one anonymized summary here (range, median, key reasons, no " +
-    "names). Members revise once. Keep dissenting reasons; deliver the final estimate with the " +
-    "dissent that survived.",
+    "Start — each member: `tell <lead> estimate: <value> | <reasons>` (a choice: pick + " +
+    "confidence) before reading others'. Lead: once all are in, post one anonymized summary " +
+    "here (range, median, key reasons). Members revise once. Deliver the final estimate with " +
+    "surviving dissent.",
   tournament:
-    "Start — each member: produce one candidate alone and deposit it as a draft " +
-    "(`crew artifact <name> draft -- <candidate>`) before anyone names a winner. Lead pairs " +
-    "candidates; a non-author picks the stronger of each pair in one message until one remains. " +
-    "Graft the losers' best ideas into the winner, then deliver.",
+    "Start — each member: deposit one candidate alone " +
+    "(`crew artifact <name> draft -- <candidate>`) before any winner is named. Lead pairs " +
+    "candidates; a non-author picks each pair's winner in one message until one remains. " +
+    "Graft losers' best ideas in; deliver.",
   verification:
-    "Start — one drafter deposits the candidate (`crew artifact <name> draft -- <candidate>`). " +
-    "Each other member checks ONE named aspect (correctness, requirements, evidence, safety) and " +
-    "replies `channel send <crew-channel> aspect: <aspect> pass|fail — <reason>`. Run checks " +
-    "rather than argue them. A failed aspect goes back to the drafter once; the lead delivers " +
-    "when every aspect passes.",
+    "Start — one drafter: `crew artifact <name> draft -- <candidate>`. Each other member " +
+    "checks ONE aspect (correctness, requirements, evidence, safety): " +
+    "`channel send <crew-channel> aspect: <aspect> pass|fail — <reason>`. Run checks, don't " +
+    "argue them. A fail returns to the drafter once; lead delivers when every aspect passes.",
   auction:
-    "Start — lead: post the lots first (`channel send <crew-channel> lots: 1) … 2) …`), then " +
-    "wait for bids. Each member bids per lot: fit (a past result) and expected effort. Lead " +
-    "awards each lot to the best fit per effort by `tell`. Winners do their lot; lead merges and " +
-    "delivers.",
+    "Start — lead: `channel send <crew-channel> lots: 1) … 2) …`, then wait for bids. Members " +
+    "bid per lot: fit (a past result) + expected effort. Lead awards each lot (best fit per " +
+    "effort) by `tell`. Winners do their lot; lead merges and delivers.",
   ledger:
-    "Start — lead: post the plan ledger first " +
-    "(`channel send <crew-channel> [plan] facts: … | steps: … | owners: …`), then a progress " +
-    "ledger (done, in flight, stuck) after each step. When a member reports being stuck twice on " +
-    "the same step, the lead replans rather than retries. Lead delivers.",
+    "Start — lead: `channel send <crew-channel> [plan] facts: … | steps: … | owners: …`, then " +
+    "a progress ledger (done, in flight, stuck) after each step. A member stuck twice on one " +
+    "step: lead replans, not retries. Lead delivers.",
   sharding:
     "Start — lead: run the checker once. Shard when it reports several independent failing " +
-    "cases: post one shard per case (`channel send <crew-channel> shard 1: <case>`); for one or " +
-    "two, just fix them. Each member replies 'claiming: <shard>', " +
-    "fixes it WITHOUT editing the checker or tests, re-runs, posts the result. Done = the full " +
-    "check passes; lead delivers. If the checker cannot run, say so, verify by hand and deliver " +
-    "with the limitation stated.",
+    "cases: `channel send <crew-channel> shard 1: <case>` per case; for one or two, just fix " +
+    "them. Members: reply 'claiming: <shard>', fix WITHOUT editing the checker or tests, " +
+    "re-run, post the result. Done = full check passes; lead delivers. Checker can't run: " +
+    "verify by hand, deliver with the limitation stated.",
 };
 
 /**
@@ -168,14 +153,14 @@ export function dispatchDepositorLine(formation: CrewFormation, depositor: strin
   if (BRIEF_ROUTED_FORMATIONS.has(canonical)) {
     return (
       `(Designated depositor: ${depositor}. Only ${depositor} writes the final deliverable ` +
-      `(pool note / final crew artifact); never write a competing one. Otherwise follow the ` +
-      `[formation:${canonical}] brief for how and where to contribute.)`
+      `(pool note / final crew artifact); no competing deliverable. Contribute per the ` +
+      `[formation:${canonical}] brief.)`
     );
   }
   return (
-    `(Designated depositor: ${depositor}. Everyone works the task, but post your result ` +
-    `ON THIS CHANNEL — only ${depositor} writes the final deliverable (pool note / crew ` +
-    `artifact), consolidating what lands here. Never write a competing deliverable.)`
+    `(Designated depositor: ${depositor}. Everyone works the task; post your result ON THIS ` +
+    `CHANNEL. Only ${depositor} writes the final deliverable (pool note / crew artifact) from ` +
+    `what lands here; no competing deliverable.)`
   );
 }
 
@@ -234,9 +219,8 @@ export function buildFormationBrief(
   if (!brief) return `${header}\n${PROTOCOL_PRIORITY}`;
   const leadLine =
     names.lead && /\blead\b/i.test(brief)
-      ? `\nLead: ${names.lead}. The lead facilitates this protocol; whoever dispatched the ` +
-        `task (e.g. Operator) is not part of it — contributions go to ${names.lead} or this ` +
-        `channel, and ${names.lead} runs every lead step.`
+      ? `\nLead: ${names.lead}; runs every lead step. The requester is not part of the ` +
+        `protocol; contributions go to ${names.lead} or this channel.`
       : "";
   return `${header}\n${PROTOCOL_PRIORITY}\n${fillFormationNames(brief, names)}${leadLine}`;
 }
@@ -252,29 +236,24 @@ export function buildFormationBrief(
 const START_MOVES: Partial<Record<CrewFormation, (n: Required<FormationNames>) => string>> = {
   delphi: ({ lead }) =>
     `Start this task — each member: \`tell ${lead} estimate: <value> | <reasons>\` before ` +
-    `reading anyone else's. ${lead} (lead, not the requester) then posts one anonymized ` +
-    `summary here.`,
+    `reading others'. ${lead} (lead, not the requester) then posts one anonymized summary here.`,
   tournament: ({ lead, crewName }) =>
-    `Start this task — each member: deposit your candidate draft for this task ` +
-    `(\`crew artifact ${crewName} draft -- <candidate>\`) before anyone names a winner. ` +
-    `${lead} (lead) then pairs the candidates.`,
+    `Start this task — each member: \`crew artifact ${crewName} draft -- <candidate>\` before ` +
+    `any winner is named. ${lead} (lead) then pairs candidates.`,
   verification: ({ lead, crewName, channel }) =>
-    `Start this task — one drafter deposits the candidate ` +
-    `(\`crew artifact ${crewName} draft -- <candidate>\`). Verifiers: reply ` +
-    `\`channel send ${channel} aspect: <aspect> pass|fail — <reason>\` for this task. ` +
+    `Start this task — one drafter: \`crew artifact ${crewName} draft -- <candidate>\`. ` +
+    `Verifiers: \`channel send ${channel} aspect: <aspect> pass|fail — <reason>\`. ` +
     `${lead} (lead) delivers once every aspect passes.`,
   auction: ({ lead, channel }) =>
-    `Start this task — ${lead} (lead): post lots for this task first ` +
-    `(\`channel send ${channel} lots: 1) … 2) …\`). Members bid per lot; ${lead} awards each ` +
-    `lot by \`tell\`.`,
+    `Start this task — ${lead} (lead): \`channel send ${channel} lots: 1) … 2) …\` first. ` +
+    `Members bid per lot; ${lead} awards each lot by \`tell\`.`,
   ledger: ({ lead, channel }) =>
-    `Start this task — ${lead} (lead): post this task's plan ledger first ` +
-    `(\`channel send ${channel} [plan] facts: … | steps: … | owners: …\`), then a progress ` +
-    `ledger after each step.`,
+    `Start this task — ${lead} (lead): \`channel send ${channel} [plan] facts: … | steps: … | ` +
+    `owners: …\` first, then a progress ledger after each step.`,
   sharding: ({ lead, channel }) =>
     `Start this task — ${lead} (lead): run the checker. Several independent failing cases: ` +
-    `post one shard per case (\`channel send ${channel} shard 1: <case>\`) for members to ` +
-    `claim. One or two: just fix them.`,
+    `\`channel send ${channel} shard 1: <case>\` per case, for members to claim. One or two: ` +
+    `just fix them.`,
 };
 
 /** Formations whose per-task dispatch restates a starting move. */
@@ -329,44 +308,43 @@ export interface FormationMediator {
 export const FORMATION_MEDIATORS: Partial<Record<CrewFormation, FormationMediator>> = {
   pipeline: {
     onDispatch: (crew) =>
-      `Pipeline order: first stage owner starts now; everyone else waits for a handoff. ` +
-      `Mark each handoff with \`crew stage ${crew.name} <stage>\`.`,
+      `Pipeline: first stage owner starts now; others wait for a handoff. Mark each: ` +
+      `\`crew stage ${crew.name} <stage>\`.`,
     onStageCompleted: (_crew, stage, agentName) =>
-      `Stage "${stage}" completed by ${agentName} — next stage owner: pick up from the handoff ` +
-      `posted above and start now.`,
+      `Stage "${stage}" done by ${agentName}. Next stage owner: start from the handoff above.`,
   },
   mapreduce: {
     onDispatch: (crew) =>
-      `Lead: split the goal into independent chunks NOW — one \`tell\` per specialist. ` +
-      `Specialists: deposit results with \`crew artifact ${crew.name} map -- <ref>\`.`,
+      `Lead: split into independent chunks now, one \`tell\` per specialist. Specialists: ` +
+      `\`crew artifact ${crew.name} map -- <ref>\`.`,
     onArtifact: (crew, kind, _ref, agentName) =>
       kind === "map"
-        ? `Map chunk landed from ${agentName}. Lead: merge when all chunks are in, then ` +
+        ? `Map chunk from ${agentName}. Lead: when all are in, merge → ` +
           `\`crew artifact ${crew.name} reduce -- <ref>\`.`
         : kind === "reduce"
-          ? `Reduce deposited by ${agentName} — verify and complete the crew.`
+          ? `Reduce deposited by ${agentName}: verify, then complete the crew.`
           : undefined,
   },
   foundry: {
     onStageCompleted: (_crew, stage, agentName) =>
-      `Piece "${stage}" delivered by ${agentName}. Lead (merge gate): review before merging — ` +
-      `workers do not merge directly.`,
+      `Piece "${stage}" from ${agentName}. Lead (merge gate): review before merging; workers ` +
+      `don't merge.`,
   },
   debate: {
     onArtifact: (_crew, kind, _ref, agentName) =>
       kind === "draft"
-        ? `Sealed position deposited by ${agentName}. When BOTH positions are in, the judge ` +
-          `(not an author) decides in one message.`
+        ? `Sealed position from ${agentName}. When both are in, a non-author judge decides in ` +
+          `one message.`
         : undefined,
   },
   deliberation: {
     onDispatch: () =>
-      `One proposal per member, one round. Lead picks or merges, picked owner executes ` +
-      `immediately — no second round unless execution fails.`,
+      `One proposal per member, one round. Lead picks or merges; picked owner executes now. ` +
+      `Second round only if execution fails.`,
   },
   blackboard: {
     onArtifact: (_crew, _kind, _ref, agentName) =>
-      `Workspace updated by ${agentName} — build on the CURRENT state above; never fork a ` +
+      `Workspace updated by ${agentName}: build on the CURRENT state above; never fork a ` +
       `private copy.`,
   },
 };

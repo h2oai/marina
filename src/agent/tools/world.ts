@@ -16,6 +16,7 @@ import {
   type Score,
 } from "../../coordination/score";
 import { runScore } from "../../sdk/conduct";
+import { stripPleasantry } from "../acknowledgement";
 import { createCodeTool, createTypedCodeTools } from "./code";
 import { execCommand, formatPerceptions, type ToolContext, wrap } from "./shared";
 
@@ -308,16 +309,21 @@ export function createWorldTools(ctx: ToolContext): AgentTool[] {
         const timeoutMs = p.timeoutMs ?? 30_000;
         const deliveries: unknown[] = [];
         try {
-          const reply = await ctx.client.tellAndAwait(p.target, p.message, timeoutMs, {
-            signal,
-            onDelivered: (perceptions) => {
-              deliveries.push(
-                ...perceptions.flatMap((perception) =>
-                  perception.data.delivery ? [perception.data.delivery] : [],
-                ),
-              );
+          const reply = await ctx.client.tellAndAwait(
+            p.target,
+            stripPleasantry(p.message),
+            timeoutMs,
+            {
+              signal,
+              onDelivered: (perceptions) => {
+                deliveries.push(
+                  ...perceptions.flatMap((perception) =>
+                    perception.data.delivery ? [perception.data.delivery] : [],
+                  ),
+                );
+              },
             },
-          });
+          );
           return {
             content: [{ type: "text" as const, text: `${p.target} replied: ${reply}` }],
             details: {

@@ -469,19 +469,15 @@ function heldMessage(
   const token = challenge.token;
   const minutes = minutesLeft(challenge);
   const replaced = superseded
-    ? ` It replaces your oldest held call (challenge ${superseded.token}: ${superseded.summary.slice(0, 80)}), which did not run.`
+    ? ` Replaced your oldest held call (challenge ${superseded.token}: ${superseded.summary.slice(0, 80)}); it did not run.`
     : "";
   if (existing) {
-    return (
-      `\nStill waiting on an approver for this same call (challenge ${token}, ${minutes} min left). ` +
-      "It runs automatically if approved — carry on with other work meanwhile."
-    );
+    return `\nheld: challenge ${token} still pending (${minutes} min left); runs automatically if approved. Continue other work.`;
   }
   if (told.length) {
     return (
-      `\nAsked ${told.join(", ")} to approve it (challenge ${token}). ` +
-      "It runs automatically if approved — nothing is waiting on it, so carry on with other work " +
-      `or another route meanwhile.${replaced}`
+      `\nheld: challenge ${token}; asked ${told.join(", ")}; runs automatically if approved, ` +
+      `nothing waits on it. Continue other work.${replaced}`
     );
   }
   // A creator answers its agent's tool calls; a rank or gate hold needs one who holds it.
@@ -491,9 +487,9 @@ function heldMessage(
       ? `${challenge.creatorName} or an admin`
       : `an admin, or ${challenge.creatorName} if they hold the authority`;
   return (
-    `\nHeld for approval by ${approver} (challenge ${token}), but no eligible approver is connected right now. ` +
-    `It stays open ${minutes} min and runs automatically if approved; unanswered, it expires without running. ` +
-    `Continue with other work, and if this step is essential, find another route.${replaced}`
+    `\nheld: challenge ${token}; approver: ${approver}, none connected; open ${minutes} min, ` +
+    "runs automatically if approved, else expires without running. Continue other work; " +
+    `if this step is essential, take another route.${replaced}`
   );
 }
 
@@ -502,14 +498,14 @@ function notOpenedMessage(made: Created): string {
   if (made.error === "requester_full" && made.open?.length) {
     const open = made.open.map((c) => `${c.token} (${c.summary.slice(0, 60)})`).join(", ");
     return (
-      ` It did not run: you already have ${made.open.length} open challenges of other kinds — ${open} — ` +
-      "so no new one was opened. Take another route, or repeat this call once one of those is answered or expires."
+      ` Not run: you have ${made.open.length} open challenges of other kinds (${open}); none opened. ` +
+      "Take another route, or retry once one is answered or expires."
     );
   }
   if (made.error === "full") {
-    return " It did not run: too many challenges are open in this world right now, so none was opened. Take another route, or repeat it later.";
+    return " Not run: too many open challenges in this world; none opened. Take another route, or retry later.";
   }
-  return " It did not run (no challenge could be opened); choose another step.";
+  return " Not run (no challenge could be opened); choose another step.";
 }
 
 /**

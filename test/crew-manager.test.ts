@@ -412,7 +412,7 @@ describe("CrewManager: formation mediators", () => {
     crews.dispatch(crew.id, "go");
     crews.recordStageCompleted(crew.id, "draft", "alice");
     const history = texts(crew.channelId!);
-    expect(history.some((t) => t.includes('Stage "draft" completed by alice'))).toBe(true);
+    expect(history.some((t) => t.includes('Stage "draft" done by alice'))).toBe(true);
   });
 
   it("guides mapreduce merge on map/reduce artifact deposits", () => {
@@ -427,7 +427,7 @@ describe("CrewManager: formation mediators", () => {
     crews.recordArtifactDeposit(crew.id, "worker", "note:1", "map");
     crews.recordArtifactDeposit(crew.id, "lead", "note:2", "reduce");
     const history = texts(crew.channelId!);
-    expect(history.some((t) => t.includes("Map chunk landed from worker"))).toBe(true);
+    expect(history.some((t) => t.includes("Map chunk from worker"))).toBe(true);
     expect(history.some((t) => t.includes("Reduce deposited by lead"))).toBe(true);
   });
 
@@ -501,8 +501,8 @@ describe("CrewManager: deposit echo (dedup visibility)", () => {
     const depositors = dispatches.map((d) => d.match(/Designated depositor: (\w+)\./)?.[1]);
     // Round-robin across all three members, wrapping on the fourth.
     expect(depositors).toEqual(["alice", "bob", "cara", "alice"]);
-    expect(dispatches[0]!).toContain("only alice writes the final deliverable");
-    expect(dispatches[0]!).toContain("Never write a competing deliverable");
+    expect(dispatches[0]!).toContain("Only alice writes the final deliverable");
+    expect(dispatches[0]!).toContain("no competing deliverable");
     expect(dispatches[0]!).toContain("Everyone works the task");
   });
 
@@ -522,7 +522,7 @@ describe("CrewManager: deposit echo (dedup visibility)", () => {
         .find((c) => c.startsWith("[crew-task]"))!;
       expect(dispatch).toMatch(/Designated depositor: \w+\./);
       expect(dispatch).toContain("writes the final deliverable");
-      expect(dispatch).toContain(`follow the [formation:${formation}] brief`);
+      expect(dispatch).toContain(`per the [formation:${formation}] brief`);
       expect(dispatch).not.toContain("ON THIS CHANNEL");
       expect(dispatch).not.toContain("Everyone works the task");
     }
@@ -556,8 +556,8 @@ describe("CrewManager: deposit echo (dedup visibility)", () => {
         expect(text).not.toContain("<crew-channel>");
         expect(text).not.toMatch(/crew artifact <name>/);
       }
-      expect(brief).toContain("Lead: Answerer.");
-      expect(brief).toContain("is not part of it");
+      expect(brief).toContain("Lead: Answerer;");
+      expect(brief).toContain("requester is not part of the protocol");
       // Every task, not only the first, restates the formation's start move.
       for (const d of dispatches) {
         expect(d).toContain("Start this task");
@@ -571,7 +571,7 @@ describe("CrewManager: deposit echo (dedup visibility)", () => {
       delphi: () => "`tell Answerer estimate: <value> | <reasons>`",
       tournament: (_id, name) => `\`crew artifact ${name} draft -- <candidate>\``,
       verification: (id) => `\`channel send ${id} aspect: <aspect> pass|fail — <reason>\``,
-      auction: (id) => `Answerer (lead): post lots for this task first (\`channel send ${id} lots:`,
+      auction: (id) => `Answerer (lead): \`channel send ${id} lots:`,
       ledger: (id) => `\`channel send ${id} [plan] facts:`,
       sharding: (id) => `\`channel send ${id} shard 1: <case>\``,
     };
@@ -603,7 +603,7 @@ describe("CrewManager: deposit echo (dedup visibility)", () => {
     crews.dispatch(crew.id, "one");
     crews.dispatch(crew.id, "two");
     const history = channels.getHistory(crew.channelId!, 20).map((m) => m.content);
-    expect(history.find((c) => c.startsWith("[formation:delphi]"))!).toContain("Lead: alice.");
+    expect(history.find((c) => c.startsWith("[formation:delphi]"))!).toContain("Lead: alice;");
     for (const d of history.filter((c) => c.startsWith("[crew-task]"))) {
       expect(d).toContain("Designated depositor: alice.");
       expect(d).toContain("`tell alice estimate:");

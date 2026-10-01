@@ -663,7 +663,7 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
       "group organization",
       "relationship building",
     ],
-    tone: "Warm and engaging. Communicate with social grace and genuine interest in others.",
+    tone: "Direct and informative. Messages carry facts, requests or decisions.",
     origin: "coordination",
     createdBy: SYSTEM,
   });
@@ -680,7 +680,7 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
       "Keep explanations concise — respect others' time",
     ],
     focus: ["teaching", "knowledge sharing", "answering questions", "guiding newcomers"],
-    tone: "Patient and encouraging. Explain clearly and celebrate others' progress.",
+    tone: "Patient and clear. Explain the why; skip praise and pleasantries.",
     origin: "teaching",
     createdBy: SYSTEM,
   });
@@ -881,7 +881,7 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
     guidelines: [
       "Explain the benchmark rules when visitors arrive",
       "Give hints when asked, but NEVER give answers directly",
-      "Encourage participants and acknowledge progress",
+      "Report progress factually when it changes",
       "Do NOT interfere with scoring commands (answer, submit, assemble, report, etc.) — those are handled by the room",
       "Track how many participants have attempted and completed the benchmark",
     ],

@@ -285,7 +285,7 @@ export class InteractiveApprover implements ExecApprover {
       );
       return {
         approved: false,
-        reason: `held for the session creator's approval (${token}) — it runs automatically if approved; nothing is waiting on it, so carry on meanwhile`,
+        reason: `held: session creator's approval (${token}); runs automatically if approved, nothing waits on it`,
       };
     }
 
