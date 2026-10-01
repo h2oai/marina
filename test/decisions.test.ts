@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { createAgentEventRelay } from "../src/agent/agent-runtime";
 import { normalizeAnswers } from "../src/decisions/answers";
 import {
@@ -27,6 +27,21 @@ import { choice, noul, parseQuestions, score } from "../src/decisions/questions"
 import type { DecisionAnswer, DecisionProvider } from "../src/decisions/types";
 import { handleDecisions } from "../src/net/decisions-api";
 import type { EngineEvent } from "../src/types";
+import { scopeProcessState } from "./process-state";
+
+// Optional operator engine selection must not replace these tests' explicit
+// mock backend (or the intentionally absent backend).
+let decisionEnvironment: DisposableStack;
+beforeEach(() => {
+  decisionEnvironment = scopeProcessState({
+    env: {
+      MARINA_DECISIONS: undefined,
+      MARINA_DECISION_ENGINE: undefined,
+      MARINA_DECISION_ENGINES: undefined,
+    },
+  });
+});
+afterEach(() => decisionEnvironment.dispose());
 
 const n = (p: number): DecisionAnswer => ({ type: "noul", noul: p });
 

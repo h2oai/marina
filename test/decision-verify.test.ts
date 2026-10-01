@@ -9,6 +9,21 @@ import { MarinaDB } from "../src/persistence/database";
 import type { EngineEvent } from "../src/types";
 import { roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, until } from "./helpers";
+import { scopeProcessState } from "./process-state";
+
+// Optional operator engine selection must not replace these tests' explicit
+// mock backend (or the intentionally absent backend).
+let decisionEnvironment: DisposableStack;
+beforeEach(() => {
+  decisionEnvironment = scopeProcessState({
+    env: {
+      MARINA_DECISIONS: undefined,
+      MARINA_DECISION_ENGINE: undefined,
+      MARINA_DECISION_ENGINES: undefined,
+    },
+  });
+});
+afterEach(() => decisionEnvironment.dispose());
 
 describe("verify policy with a named support question", () => {
   it("uses `delivered` for task submissions", () => {

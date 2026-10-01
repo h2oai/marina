@@ -83,6 +83,13 @@ bun run docs:api --check       # generated builtin API reference matches current
 make help                     # optional task shortcuts, all delegate to package scripts
 ```
 
+If your local `.env` enables live services, run the backend without loading it:
+`bun --no-env-file scripts/test-backend.ts --no-env-file`. Invoke the runner directly:
+the package script launches another Bun process which can reload `.env`. The first
+flag applies to the runner and the second to its Bun test child. Shell-exported variables still apply;
+mock-provider tests should scope every setting that can select a live backend with
+`scopeProcessState()` rather than relying on an operator's configuration being absent.
+
 The test wrappers forward everything after `--` to `bun test`
 (`bun run test:fast -- --bail`, `bun run test:shard 1 3 -- --only-failures`).
 

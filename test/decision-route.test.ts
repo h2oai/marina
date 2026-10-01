@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { AgentRuntime } from "../src/agent/agent-runtime";
 import {
   isRouteModel,
@@ -14,6 +14,21 @@ import type { DecisionAnswer, DecisionProvider } from "../src/decisions/types";
 import { MarinaDB } from "../src/persistence/database";
 import type { EngineEvent } from "../src/types";
 import { cleanupDb } from "./helpers";
+import { scopeProcessState } from "./process-state";
+
+// Optional operator engine selection must not replace these tests' explicit
+// mock backend (or the intentionally absent backend).
+let decisionEnvironment: DisposableStack;
+beforeEach(() => {
+  decisionEnvironment = scopeProcessState({
+    env: {
+      MARINA_DECISIONS: undefined,
+      MARINA_DECISION_ENGINE: undefined,
+      MARINA_DECISION_ENGINES: undefined,
+    },
+  });
+});
+afterEach(() => decisionEnvironment.dispose());
 
 const TIERS = { fast: "openai/gpt-4o-mini", powerful: "anthropic/claude-opus-4-6" };
 
