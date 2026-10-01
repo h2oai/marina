@@ -185,6 +185,11 @@ export interface ContextManagerOptions {
   getTools?: () => readonly (Tool | AgentTool)[];
   pruneThreshold?: number;
   pruneTarget?: number;
+  /** Absolute conversation-size cap (`conversationTokenCap`). Read live; when
+   *  it returns a cap and the conversation (character estimate, system prompt
+   *  and tool schemas excluded) reaches `capTokens`, the conversation is
+   *  compacted to `targetTokens` even far below the window-ratio threshold. */
+  getTokenCap?: () => ConversationTokenCap | undefined;
   maxToolResultTokens?: number;
   minRecentMessages?: number;
   onBeforeCompact?: (
@@ -214,6 +219,40 @@ function reservedTokens(model: Pick<Model<string>, "maxTokens">, contextWindow: 
 
 export class ContextPersistenceError extends Error {}
 
+export interface ConversationTokenCap {
+  capTokens: number;
+  targetTokens: number;
+}
+
+/**
+ * The operator's absolute conversation cap (`MARINA_AGENT_CONTEXT_CAP_TOKENS`,
+ * target `MARINA_AGENT_CONTEXT_TARGET_TOKENS`, default a third of the cap).
+ * Unset, zero or junk ⇒ no cap: only the window-ratio threshold compacts.
+ */
+export function conversationTokenCap(
+  env: Record<string, string | undefined> = process.env,
+): ConversationTokenCap | undefined {
+  const cap = Number(env.MARINA_AGENT_CONTEXT_CAP_TOKENS);
+  if (!Number.isFinite(cap) || cap <= 0) return undefined;
+  const capTokens = Math.floor(cap);
+  const rawTarget = Number(env.MARINA_AGENT_CONTEXT_TARGET_TOKENS);
+  const targetTokens =
+    Number.isFinite(rawTarget) && rawTarget > 0 && rawTarget < capTokens
+      ? Math.floor(rawTarget)
+      : Math.floor(capTokens / 3);
+  return { capTokens, targetTokens };
+}
+
+/** Character-estimated conversation size; the usage anchor is deliberately not
+ *  used — after a compaction the surviving assistant turns still carry the
+ *  pre-compaction usage, which would re-trigger the cap on every request. */
+export function conversationTokens(messages: readonly AgentMessage[]): number {
+  return messages.reduce(
+    (sum, msg) => (msg.role === "system" ? sum : sum + estimateMessageTokens(msg)),
+    0,
+  );
+}
+
 // ─── Context Manager Factory ────────────────────────────────────────────────
 
 export function createContextManager(options: ContextManagerOptions) {
@@ -223,6 +262,7 @@ export function createContextManager(options: ContextManagerOptions) {
     getTools,
     pruneThreshold = 0.8,
     pruneTarget = 0.6,
+    getTokenCap,
     maxToolResultTokens: configuredToolResultTokens,
     minRecentMessages = 10,
     onBeforeCompact,
@@ -285,7 +325,9 @@ export function createContextManager(options: ContextManagerOptions) {
       const systemTokens = gauge.fixedTokens;
       const usageRatio = gauge.usageRatio;
 
-      if (usageRatio < pruneThreshold) {
+      const tokenCap = usageRatio < pruneThreshold ? getTokenCap?.() : undefined;
+      const capped = tokenCap !== undefined && gauge.messageTokens >= tokenCap.capTokens;
+      if (usageRatio < pruneThreshold && !capped) {
         return await finish(truncateOversizedToolResults(messages, maxToolResultTokens));
       }
 
@@ -294,7 +336,12 @@ export function createContextManager(options: ContextManagerOptions) {
       let keepRecent: number;
       let maxSummaryRatio: number;
 
-      if (usageRatio >= 0.95) {
+      if (capped) {
+        // Conversation-only budget: the cap excludes the fixed prefix.
+        targetRatio = tokenCap.targetTokens / Math.max(1, contextWindow);
+        keepRecent = minRecentMessages;
+        maxSummaryRatio = (tokenCap.targetTokens * 0.1) / Math.max(1, contextWindow);
+      } else if (usageRatio >= 0.95) {
         targetRatio = 0.4;
         keepRecent = 4;
         maxSummaryRatio = 0;
@@ -308,7 +355,9 @@ export function createContextManager(options: ContextManagerOptions) {
         maxSummaryRatio = 0.1;
       }
 
-      const budgetForMessages = contextWindow * targetRatio - systemTokens;
+      const budgetForMessages = capped
+        ? tokenCap.targetTokens
+        : contextWindow * targetRatio - systemTokens;
 
       if (budgetForMessages <= 0) {
         return await finish(
