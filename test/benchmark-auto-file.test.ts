@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { runHLE } from "../benchmarks/adapters/hle";
+import { fileToLedger, ledgerFileBody } from "../benchmarks/ledger-file";
+import { resolveTier0Target, tier0Filing, tier0HarnessArgs } from "../benchmarks/tier0";
+import type { BenchmarkConfig, BenchmarkResult } from "../benchmarks/types";
 import { attributeRequest, resolveParticipants } from "../src/engine/benchmark-participants";
 import { Engine } from "../src/engine/engine";
 import { handleBenchmarkFile } from "../src/net/benchmarks-api";
@@ -281,5 +285,165 @@ describe("POST /v1/benchmarks/runs — auto-filing", () => {
     expect(resolved.get("req-1")?.attribution).toBe("trace+window");
     expect(resolved.get("req-2")?.attribution).toBe("trace");
     expect(resolved.get("req-missing")?.attribution).toBe("none");
+  });
+});
+
+describe("harness side — trace ids and filing", () => {
+  it("records each item's x-request-id as its traceId", async () => {
+    let n = 0;
+    const server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        Response.json(
+          { choices: [{ message: { content: "Exact Answer: 42" } }] },
+          { headers: { "x-request-id": `req-${++n}` } },
+        ),
+    });
+    try {
+      const config: BenchmarkConfig = {
+        name: "t",
+        dataset: "hle-verified-gold",
+        adapter: "hle",
+        scoring: "accuracy",
+        mode: "passthrough",
+        model: "marina:answerer",
+        endpoint: `http://localhost:${server.port}`,
+        concurrency: 1,
+      };
+      const out = await runHLE(
+        [{ id: "a", question: "q", answer: "42", metadata: { answerType: "exactMatch" } }],
+        config,
+      );
+      expect(out[0]?.traceId).toBe("req-1");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("a crew target files into its own server; other targets only with --file-to", () => {
+    const crewTarget = resolveTier0Target("marina:answerer", { base: "http://localhost:4000" }, {});
+    expect(tier0Filing(crewTarget, {})).toEqual({
+      fileTo: "http://localhost:4000",
+      targetKind: "crew",
+      target: JSON.stringify({ crew: "answerer" }),
+      label: "marina_answerer",
+    });
+    expect(tier0Filing(crewTarget, { noFile: true })).toBeUndefined();
+    const direct = resolveTier0Target("openrouter/v/m", {}, {});
+    expect(tier0Filing(direct, {})).toBeUndefined();
+    expect(tier0Filing(direct, { fileTo: "http://localhost:4000" })).toMatchObject({
+      targetKind: "model",
+      target: "v/m",
+    });
+    const args = tier0HarnessArgs({ benchmark: "frames", limit: 2 }, crewTarget, {
+      seed: 1,
+      concurrency: 1,
+      filing: tier0Filing(crewTarget, {}),
+    });
+    expect(args).toContain("--file-to");
+    expect(args).toContain("crew");
+  });
+
+  it("sends ids and outcomes only — no text, no key", () => {
+    const result = {
+      config: { dataset: "frames", model: "m", apiKey: "sk-secret", endpoint: "http://x" },
+      timestamp: 1,
+      duration_ms: 1,
+      scores: { overall: 1, breakdown: {} },
+      metadata: { total: 1, answered: 1, timeouts: 0, errors: 0, avgLatencyMs: 1 },
+      items: [
+        {
+          id: "i1",
+          question: "secret q",
+          expected: "secret a",
+          actual: "secret r",
+          rawResponse: "secret raw",
+          correct: true,
+          latencyMs: 5,
+          traceId: "req-1",
+        },
+      ],
+    } as unknown as BenchmarkResult;
+    const body = JSON.stringify(
+      ledgerFileBody(result, { fileTo: "http://x", targetKind: "model", target: "m" }),
+    );
+    expect(body).not.toContain("secret");
+    expect(body).toContain("req-1");
+  });
+});
+
+describe("filing end to end through HTTP", () => {
+  let engine: Engine;
+  let db: MarinaDB;
+  let dbPath: string;
+  let server: ReturnType<typeof Bun.serve>;
+
+  beforeEach(() => {
+    dbPath = `/tmp/marina-autofile-e2e-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.db`;
+    db = new MarinaDB(dbPath);
+    engine = new Engine({ startRoom: roomId("test/lobby"), tickInterval: 60_000, db });
+    engine.registerRoom(roomId("test/lobby"), makeTestRoom({ short: "Lobby", long: "Lobby." }));
+    for (const e of request("req-1", T0, T0 + 1000)) db.logEvent(e);
+    server = Bun.serve({
+      port: 0,
+      fetch: (req) =>
+        handleBenchmarkFile(req, engine, {
+          matchedKey: "k",
+          internal: false,
+          openMode: false,
+        } as PassthruAuthResult),
+    });
+  });
+
+  afterEach(() => {
+    server.stop(true);
+    engine.stop();
+    db.close();
+    cleanupDb(dbPath);
+  });
+
+  it("files a harness result and the ledger credits the traced agent", async () => {
+    const result = {
+      config: { dataset: "frames", model: "marina:answerer", endpoint: "http://x" },
+      timestamp: T0 + 2000,
+      duration_ms: 2000,
+      scores: { overall: 1, breakdown: {} },
+      metadata: { total: 1, answered: 1, timeouts: 0, errors: 0, avgLatencyMs: 1 },
+      items: [
+        {
+          id: "i1",
+          question: "",
+          expected: "",
+          actual: "",
+          correct: true,
+          latencyMs: 5,
+          traceId: "req-1",
+        },
+      ],
+    } as unknown as BenchmarkResult;
+    const out = await fileToLedger(result, {
+      fileTo: `http://localhost:${server.port}`,
+      apiKey: "k",
+      targetKind: "crew",
+      target: { crew: "answerer" },
+      label: "e2e",
+    });
+    expect(out.ok).toBe(true);
+    expect(out.attribution?.trace).toBe(1);
+    const items = db.getBenchmarkItems(out.runId as string);
+    expect(JSON.parse(items[0]?.participants_json ?? "[]")[0]).toMatchObject({
+      agent: "Answerer",
+      model: "model-of-Answerer",
+      via: "trace",
+    });
+  });
+
+  it("reports a failed filing without throwing", async () => {
+    const out = await fileToLedger({} as BenchmarkResult, {
+      fileTo: "http://localhost:1",
+      targetKind: "model",
+      target: "m",
+    });
+    expect(out.ok).toBe(false);
   });
 });

@@ -130,6 +130,35 @@ export function tier0Sets(
   return sets.filter((s) => s.limit > 0);
 }
 
+/** Where (and as what) a Tier-0 run files into a Marina's benchmark ledger. */
+export interface Tier0Filing {
+  fileTo: string;
+  targetKind: "model" | "crew" | "population";
+  target: string;
+  label: string;
+}
+
+/**
+ * The ledger filing for a run. A `marina:<crew>` target files into its own
+ * server by default — Marina ranks what it does — as a `crew`; any other
+ * target files only when `--file-to` names a Marina, as a `model`. `--no-file`
+ * turns filing off; `--target-kind` / `--target` override what is recorded.
+ */
+export function tier0Filing(
+  target: Tier0Target,
+  opts: { fileTo?: string; noFile?: boolean; targetKind?: string; target?: string; label?: string },
+): Tier0Filing | undefined {
+  if (opts.noFile) return undefined;
+  const isCrew = target.model.startsWith("marina:");
+  const fileTo = opts.fileTo ?? (isCrew ? target.endpoint : undefined);
+  if (!fileTo) return undefined;
+  const kind = (opts.targetKind ?? (isCrew ? "crew" : "model")) as Tier0Filing["targetKind"];
+  const recorded =
+    opts.target ??
+    (isCrew ? JSON.stringify({ crew: target.model.slice("marina:".length) }) : target.model);
+  return { fileTo, targetKind: kind, target: recorded, label: opts.label ?? target.label };
+}
+
 /** argv for one harness child. No key — that goes in the environment. */
 export function tier0HarnessArgs(
   set: Tier0Set,
@@ -140,6 +169,7 @@ export function tier0HarnessArgs(
     judgeModel?: string;
     judgeEndpoint?: string;
     timeoutMs?: number;
+    filing?: Tier0Filing;
   },
 ): string[] {
   const args = [
@@ -165,6 +195,18 @@ export function tier0HarnessArgs(
   if (opts.judgeEndpoint) args.push("--judge-endpoint", opts.judgeEndpoint);
   const timeoutMs = opts.timeoutMs ?? target.defaultTimeoutMs;
   if (timeoutMs) args.push("--timeout", String(timeoutMs));
+  if (opts.filing) {
+    args.push(
+      "--file-to",
+      opts.filing.fileTo,
+      "--target-kind",
+      opts.filing.targetKind,
+      "--target",
+      opts.filing.target,
+      "--label",
+      opts.filing.label,
+    );
+  }
   return args;
 }
 
@@ -263,12 +305,17 @@ async function main(): Promise<void> {
       frames: { type: "string" },
       timeout: { type: "string" },
       "out-dir": { type: "string" },
+      "file-to": { type: "string" },
+      "no-file": { type: "boolean" },
+      "target-kind": { type: "string" },
+      target: { type: "string" },
+      label: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });
   if (values.help || !values.endpoint) {
     console.log(
-      "usage: bun run bench:tier0 --endpoint <marina:<crew> | openrouter/<vendor>/<model> | URL> [--model id] [--base url] [--seed 42] [--concurrency 5] [--hle 40] [--gpqa 40] [--frames 20] [--judge-model id] [--judge-endpoint url] [--timeout ms] [--out-dir dir]",
+      "usage: bun run bench:tier0 --endpoint <marina:<crew> | openrouter/<vendor>/<model> | URL> [--model id] [--base url] [--seed 42] [--concurrency 5] [--hle 40] [--gpqa 40] [--frames 20] [--judge-model id] [--judge-endpoint url] [--timeout ms] [--out-dir dir] [--file-to url | --no-file] [--target-kind k] [--target json|id] [--label text]",
     );
     process.exit(values.help ? 0 : 1);
   }
@@ -288,6 +335,14 @@ async function main(): Promise<void> {
   const outDir =
     values["out-dir"] ?? join(import.meta.dir, "results", `tier0-${target.label}-${Date.now()}`);
   if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
+  const filing = tier0Filing(target, {
+    fileTo: values["file-to"],
+    noFile: values["no-file"],
+    targetKind: values["target-kind"],
+    target: values.target,
+    label: values.label,
+  });
+  if (filing) console.log(`[tier0] filing each set into the ledger at ${filing.fileTo}`);
 
   const summaries: Tier0SetSummary[] = [];
   for (const set of sets) {
@@ -306,6 +361,7 @@ async function main(): Promise<void> {
           judgeModel: values["judge-model"],
           judgeEndpoint: values["judge-endpoint"],
           timeoutMs: int(values.timeout),
+          filing,
         }),
       ],
       { env, stdout: "inherit", stderr: "pipe" },

@@ -53,9 +53,11 @@ export async function runShortAnswer(
       let score = 0;
       let usage: ItemUsage | undefined;
       let judgeUsage: ItemUsage | undefined;
+      let traceId: string | undefined;
       try {
         const reply = await queryWithUsage(config.endpoint, config.model, messages, config.apiKey);
         usage = addCallUsage(undefined, reply.usage);
+        traceId = reply.requestId;
         actual = reply.content;
         rawResponse = actual;
         // Primary check: normalized substring. Cheap, no LLM.
@@ -92,6 +94,7 @@ export async function runShortAnswer(
         category: item.category,
         ...(usage ? { usage } : {}),
         ...(judgeUsage ? { judgeUsage } : {}),
+        ...(traceId ? { traceId } : {}),
       });
       completed++;
       onProgress?.(completed, items.length);

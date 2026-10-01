@@ -71,6 +71,22 @@ bun run bench:tier0 --endpoint http://host:port --model <id>  # any OpenAI-compa
   still on its way as wrong. The server bounds the same request with `MODEL_REQUEST_TIMEOUT_MS`
   (600 s by default) — raise both for longer runs. Latency stays in every item.
 - **Keys** reach each harness child as `MARINA_BENCH_API_KEY`, never on the command line.
+- **Ledger.** A `marina:<crew>` target files every finished set into its own server's
+  benchmark ledger (`POST /v1/benchmarks/runs`) as a `crew` run. Each item carries its
+  `traceId`, the target's `x-request-id`, and the server resolves who worked on the item from
+  its trace and event log. Then `benchmark compare | frontier | participants` rank it in-world.
+  - **Other targets** file only with `--file-to <marina-url>`, as a `model` run.
+  - **Overrides:** `--no-file` turns filing off. `--target-kind`, `--target` and `--label`
+    override what is recorded.
+  - **Filing key:** `MARINA_LEDGER_API_KEY`, else the target key when filing into the
+    target's own server.
+  - **What is sent:** only ids, outcomes, scores, latency, cost, judge verdict and trace id,
+    never case text.
+  - **Attribution:** each participant says how it was found. `trace` is exact, for the agent
+    that received the request. `window` covers crew-mates' untraced turns inside the
+    request's window; it is `shared`, and its cost is not charged, when another request to
+    the crew overlapped. Run crews at `--concurrency 1` for exclusive windows.
+  - **Failure:** a filing failure is printed and never fails the run.
 - **Failure.** A set that cannot run (for example GPQA without `HF_TOKEN`) is reported as
   `FAILED` with the reason; the other sets still run and the exit code is 1.
 - **Cost.** Each item records the usage its endpoint reported: tokens from `usage`, dollars

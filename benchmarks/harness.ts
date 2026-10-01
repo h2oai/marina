@@ -34,6 +34,7 @@ import {
   downloadTruthfulQA,
   loadRetentionBenchmark,
 } from "./download";
+import { fileToLedger, type LedgerTargetKind, parseTarget } from "./ledger-file";
 import { runRetentionTask, runRetentionTaskPassthrough } from "./modes/memory";
 import { inPartition, parsePartition } from "./partition";
 import { resultForDisk } from "./result-file";
@@ -257,6 +258,11 @@ function parseCliArgs() {
       partition: { type: "string" },
       timeout: { type: "string" },
       compare: { type: "string" },
+      "file-to": { type: "string" },
+      "no-file": { type: "boolean" },
+      "target-kind": { type: "string" },
+      target: { type: "string" },
+      label: { type: "string" },
       list: { type: "boolean" },
       results: { type: "boolean" },
       help: { type: "boolean", short: "h" },
@@ -283,6 +289,11 @@ function parseCliArgs() {
     partition: str("partition"),
     timeout: str("timeout"),
     compare: str("compare"),
+    "file-to": str("file-to"),
+    "no-file": values["no-file"] === true,
+    "target-kind": str("target-kind"),
+    target: str("target"),
+    label: str("label"),
     list: values.list === true,
     results: values.results === true,
     help: values.help === true,
@@ -615,6 +626,13 @@ Options:
   -s, --seed <n>            Random seed for subset selection
       --timeout <ms>        Per-request timeout (default: HARNESS_TIMEOUT_MS, else 600000)
       --compare <mode>      Run comparison (e.g., --compare passthrough)
+      --file-to <url>       File the finished run into that Marina's benchmark ledger
+                            (POST /v1/benchmarks/runs; key: MARINA_LEDGER_API_KEY, else
+                            --api-key when it is the target endpoint)
+      --no-file             Never file, even with --file-to
+      --target-kind <k>     Ledger target kind: model | crew | population (default: model)
+      --target <json|id>    Ledger target (default: --model)
+      --label <text>        Ledger label for the run
       --list                List available benchmarks
       --results             Show past results
   -h, --help                Show this help
@@ -756,6 +774,34 @@ Options:
   const resultPath = saveResult(result);
   printSummary(result);
   console.log(`\n  Results saved: ${resultPath}`);
+
+  // File into a Marina's ledger (participants are resolved server-side from trace ids).
+  const fileTo = args["file-to"];
+  if (fileTo && !args["no-file"]) {
+    const kind = (args["target-kind"] ?? "model") as LedgerTargetKind;
+    const sameEndpoint = fileTo.replace(/\/+$/, "") === config.endpoint.replace(/\/+$/, "");
+    const filed = await fileToLedger(result, {
+      fileTo,
+      apiKey: process.env.MARINA_LEDGER_API_KEY ?? (sameEndpoint ? config.apiKey : undefined),
+      targetKind: kind,
+      target: args.target !== undefined ? parseTarget(args.target) : config.model,
+      ...(args.label ? { label: args.label } : {}),
+      ...(config.judge ? { judge: `${config.judge.model} @ ${config.judge.endpoint}` } : {}),
+    });
+    if (filed.ok) {
+      const a = filed.attribution;
+      const attrib = a
+        ? Object.entries(a)
+            .map(([k, v]) => `${k} ${v}`)
+            .join(", ")
+        : "n/a";
+      console.log(
+        `  Ledger: ${filed.created === false ? "already filed as" : "filed"} ${filed.runId} @ ${fileTo} (participants: ${attrib})`,
+      );
+    } else {
+      console.log(`  Ledger: filing failed (${filed.status}): ${filed.error}`);
+    }
+  }
 
   // Comparison mode
   if (args.compare) {
