@@ -24,6 +24,12 @@ export interface EntitiesStore {
     traceId?: string,
   ): { events: EngineEvent[]; truncated: boolean };
   getTraceEventsByTraceIds(traceIds: readonly string[]): EngineEvent[];
+  getEventsBetween(
+    types: readonly string[],
+    fromTs: number,
+    toTs: number,
+    limit?: number,
+  ): EngineEvent[];
   getMaxEventId(): number;
   addTraceJudgment(input: entitiesDb.TraceJudgmentInput): entitiesDb.TraceJudgmentRow;
   getTraceJudgments(traceId: string, limit?: number): entitiesDb.TraceJudgmentRow[];
@@ -100,6 +106,7 @@ export const ENTITIES_STORE_METHODS = [
   "getRecentEvents",
   "getRecentTraceEvents",
   "getTraceEventsByTraceIds",
+  "getEventsBetween",
   "getMaxEventId",
   "addTraceJudgment",
   "getTraceJudgments",

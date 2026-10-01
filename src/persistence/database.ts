@@ -507,6 +507,15 @@ export class MarinaDB implements MarinaStores {
     return entitiesDb.getTraceEventsByTraceIds(this.reader, traceIds);
   }
 
+  getEventsBetween(
+    types: readonly string[],
+    fromTs: number,
+    toTs: number,
+    limit?: number,
+  ): EngineEvent[] {
+    return entitiesDb.getEventsBetween(this.reader, types, fromTs, toTs, limit);
+  }
+
   getMaxEventId(): number {
     return entitiesDb.getMaxEventId(this.reader);
   }
