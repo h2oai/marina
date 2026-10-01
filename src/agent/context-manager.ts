@@ -189,7 +189,7 @@ export interface ContextManagerOptions {
    *  it returns a cap and the conversation (character estimate, system prompt
    *  and tool schemas excluded) reaches `capTokens`, the conversation is
    *  compacted to `targetTokens` even far below the window-ratio threshold. */
-  getTokenCap?: () => ConversationTokenCap | undefined;
+  getTokenCap?: (messages: readonly AgentMessage[]) => ConversationTokenCap | undefined;
   maxToolResultTokens?: number;
   minRecentMessages?: number;
   onBeforeCompact?: (
@@ -222,25 +222,55 @@ export class ContextPersistenceError extends Error {}
 export interface ConversationTokenCap {
   capTokens: number;
   targetTokens: number;
+  /** True when the operator set `MARINA_AGENT_CONTEXT_CAP_TOKENS`; false for
+   *  the built-in default (which a bound coder is exempt from). */
+  explicit: boolean;
 }
 
+/** The built-in conversation cap when `MARINA_AGENT_CONTEXT_CAP_TOKENS` is unset. */
+export const DEFAULT_CONVERSATION_CAP_TOKENS = 48_000;
+/** No cap compacts a conversation smaller than this, whatever is configured. */
+export const MIN_CONVERSATION_CAP_TOKENS = 8_000;
+
 /**
- * The operator's absolute conversation cap (`MARINA_AGENT_CONTEXT_CAP_TOKENS`,
- * target `MARINA_AGENT_CONTEXT_TARGET_TOKENS`, default a third of the cap).
- * Unset, zero or junk ⇒ no cap: only the window-ratio threshold compacts.
+ * The absolute conversation cap (`MARINA_AGENT_CONTEXT_CAP_TOKENS`, target
+ * `MARINA_AGENT_CONTEXT_TARGET_TOKENS`, default a third of the cap). Unset or
+ * junk ⇒ the built-in default; `0`/`off`/`false` ⇒ no cap (only the
+ * window-ratio threshold compacts); a positive value wins, floored at
+ * `MIN_CONVERSATION_CAP_TOKENS`.
  */
 export function conversationTokenCap(
   env: Record<string, string | undefined> = process.env,
 ): ConversationTokenCap | undefined {
-  const cap = Number(env.MARINA_AGENT_CONTEXT_CAP_TOKENS);
-  if (!Number.isFinite(cap) || cap <= 0) return undefined;
-  const capTokens = Math.floor(cap);
+  const raw = env.MARINA_AGENT_CONTEXT_CAP_TOKENS?.trim().toLowerCase() ?? "";
+  if (raw === "0" || raw === "off" || raw === "false") return undefined;
+  const parsed = Number(raw);
+  const explicit = raw !== "" && Number.isFinite(parsed) && parsed > 0;
+  const capTokens = explicit
+    ? Math.max(MIN_CONVERSATION_CAP_TOKENS, Math.floor(parsed))
+    : DEFAULT_CONVERSATION_CAP_TOKENS;
   const rawTarget = Number(env.MARINA_AGENT_CONTEXT_TARGET_TOKENS);
   const targetTokens =
     Number.isFinite(rawTarget) && rawTarget > 0 && rawTarget < capTokens
       ? Math.floor(rawTarget)
       : Math.floor(capTokens / 3);
-  return { capTokens, targetTokens };
+  return { capTokens, targetTokens, explicit };
+}
+
+/**
+ * True once the conversation holds a completed earlier run: an assistant turn
+ * before the latest user prompt. The cap never compacts an agent's first run.
+ */
+export function hasCompletedRun(messages: readonly AgentMessage[]): boolean {
+  let lastPrompt = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]?.role === "user") {
+      lastPrompt = i;
+      break;
+    }
+  }
+  for (let i = 0; i < lastPrompt; i++) if (messages[i]?.role === "assistant") return true;
+  return false;
 }
 
 /** Character-estimated conversation size; the usage anchor is deliberately not
@@ -325,7 +355,7 @@ export function createContextManager(options: ContextManagerOptions) {
       const systemTokens = gauge.fixedTokens;
       const usageRatio = gauge.usageRatio;
 
-      const tokenCap = usageRatio < pruneThreshold ? getTokenCap?.() : undefined;
+      const tokenCap = usageRatio < pruneThreshold ? getTokenCap?.(messages) : undefined;
       const capped = tokenCap !== undefined && gauge.messageTokens >= tokenCap.capTokens;
       if (usageRatio < pruneThreshold && !capped) {
         return await finish(truncateOversizedToolResults(messages, maxToolResultTokens));

@@ -1,5 +1,6 @@
 /**
- * Transcript hygiene applied to an agent's working history between runs.
+ * Transcript hygiene applied to an agent's working history between runs (on by
+ * default; `MARINA_DROP_OLD_THINKING_SIGNATURES=off` disables it).
  *
  * `dropOldThinking` removes reasoning blocks (thinking text plus its opaque
  * provider signature) from assistant messages of completed runs. Providers
@@ -18,12 +19,12 @@
  */
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
-/** `MARINA_DROP_OLD_THINKING_SIGNATURES=on` enables `dropOldThinking`. */
+/** `dropOldThinking` is on unless `MARINA_DROP_OLD_THINKING_SIGNATURES` is `off`/`false`/`0`. */
 export function dropOldThinkingEnabled(
   env: Record<string, string | undefined> = process.env,
 ): boolean {
   const raw = env.MARINA_DROP_OLD_THINKING_SIGNATURES?.trim().toLowerCase();
-  return raw === "on" || raw === "true" || raw === "1";
+  return !(raw === "off" || raw === "false" || raw === "0");
 }
 
 /** APIs whose assistant items are paired with their reasoning item by id. */
