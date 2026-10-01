@@ -465,3 +465,85 @@ export function canonicalSub(
 export function unknownSubcommand(name: string, sub: string | undefined, usage: string): string {
   return `Unknown ${name} subcommand "${sub ?? ""}". ${usage}`;
 }
+
+/** Commands whose trailing argument is free text (a message, a note, a value). */
+const FREE_TEXT_VERBS = new Set([
+  "say",
+  "'",
+  "tell",
+  "whisper",
+  "shout",
+  "yell",
+  "emote",
+  "me",
+  "pose",
+  "reply",
+  "note",
+]);
+/** `<verb> <sub>` pairs whose remainder is free text. */
+const FREE_TEXT_SUBS = new Set([
+  "channel send",
+  "board post",
+  "board reply",
+  "memory set",
+  "task submit",
+  "task create",
+  "task comment",
+  "crew artifact",
+]);
+
+function takesFreeText(command: string): boolean {
+  const words = command.replace(/^\//, "").toLowerCase().split(/\s+/);
+  const verb = words[0] ?? "";
+  if (FREE_TEXT_VERBS.has(verb) || FREE_TEXT_SUBS.has(`${verb} ${words[1] ?? ""}`)) return true;
+  return verb === "pool" && words[2] === "add"; // `pool <name> add <text>`
+}
+
+/**
+ * Split a `batch` body into commands on `;` at COMMAND boundaries only.
+ *
+ * - `\;` is a literal `;` (the backslash is dropped).
+ * - A `;` inside balanced double quotes or backticks is text.
+ * - After a command that takes free text (`say`, `tell`, `channel send`,
+ *   `note`, `memory set`, …) a `;` stays in that text unless what follows
+ *   starts with a verb `isCommand` recognises: `tell bob a; b` is one tell,
+ *   `say hi; look` is two commands.
+ *
+ * Without `isCommand`, every unquoted, unescaped `;` separates.
+ */
+export function splitCommandChain(body: string, isCommand?: (verb: string) => boolean): string[] {
+  const quotes = new Set(['"', "`"].filter((q) => (body.split(q).length - 1) % 2 === 0));
+  const pieces: string[] = [];
+  let current = "";
+  let open: string | undefined;
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i]!;
+    if (ch === "\\" && body[i + 1] === ";") {
+      current += ";";
+      i++;
+    } else if (ch === ";" && !open) {
+      pieces.push(current);
+      current = "";
+    } else {
+      if (quotes.has(ch)) open = open === ch ? undefined : (open ?? ch);
+      current += ch;
+    }
+  }
+  pieces.push(current);
+
+  const commands: string[] = [];
+  for (const piece of pieces) {
+    const segment = piece.trim();
+    if (!segment) continue;
+    const previous = commands[commands.length - 1];
+    if (previous !== undefined && isCommand && takesFreeText(previous)) {
+      const verb = segment.replace(/^\//, "").split(/\s+/)[0]!.toLowerCase();
+      if (!isCommand(verb)) {
+        commands[commands.length - 1] = `${previous}; ${segment}`;
+        continue;
+      }
+    }
+    commands.push(segment);
+  }
+  return commands;
+}

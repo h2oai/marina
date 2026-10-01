@@ -8,7 +8,7 @@
 // `./code`.
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { Type } from "@sinclair/typebox";
+import { type Static, Type } from "@sinclair/typebox";
 import {
   type ParsedAssignee,
   parseAssignee,
@@ -52,6 +52,63 @@ const tellSchema = Type.Object({
     }),
   ),
 });
+
+const TELL_TARGET_KEYS = ["target", "to", "recipient", "name", "entity"];
+const TELL_MESSAGE_KEYS = ["message", "text", "content", "body", "msg"];
+
+/** A tool's own name sent as an argument (`functions.marina_tell`, `marina_tell`). */
+const isToolName = (value: string) => /^(functions\.)?marina_\w+$/.test(value.trim());
+
+function firstString(
+  args: Record<string, unknown>,
+  keys: string[],
+  skip?: (value: string) => boolean,
+): string | undefined {
+  for (const key of keys) {
+    const value = args[key];
+    if (typeof value === "string" && value.trim() && !skip?.(value)) return value.trim();
+  }
+  return undefined;
+}
+
+/**
+ * Normalize common malformed `marina_tell` calls before schema validation:
+ * arguments nested under `parameters` / `arguments` / `input`, the tool's own
+ * name leaked into `target` (the addressee then sits in `commentary`), synonym
+ * keys (`to`, `recipient`, `text`, …), and a `target` carrying
+ * `<name> <message>` or `<name>: <message>` with no `message`. Never invents a
+ * recipient or a message: an unrecoverable call reaches validation unchanged.
+ */
+export function repairTellArguments(raw: unknown): Static<typeof tellSchema> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw as never;
+  const original = raw as Record<string, unknown>;
+  let args = original;
+  for (const key of ["parameters", "arguments", "input"]) {
+    const nested = original[key];
+    if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+      args = { ...args, ...(nested as Record<string, unknown>) };
+    }
+  }
+  let target =
+    firstString(args, TELL_TARGET_KEYS, isToolName) ??
+    firstString(args, ["commentary"], isToolName);
+  let message = firstString(args, TELL_MESSAGE_KEYS);
+  if (target && !message) {
+    const split = /^([^\s:]+)\s*[:\s]\s*(\S[\s\S]*)$/.exec(target);
+    if (split) {
+      target = split[1];
+      message = split[2];
+    }
+  }
+  if (!target || !message) return raw as never;
+  if (target === original.target && message === original.message) return raw as never;
+  return {
+    target,
+    message,
+    ...(typeof args.awaitReply === "boolean" ? { awaitReply: args.awaitReply } : {}),
+    ...(typeof args.timeoutMs === "number" ? { timeoutMs: args.timeoutMs } : {}),
+  };
+}
 
 const channelSchema = Type.Object({
   action: Type.String({ description: "Action: send, join, leave, list, read" }),
@@ -295,6 +352,7 @@ export function createWorldTools(ctx: ToolContext): AgentTool[] {
       description:
         "Send a private message to an entity. Set awaitReply=true to hold this tool call open until the addressee replies — eliminates the multi-tick handoff that normally separates coordinator and specialist.",
       parameters: tellSchema,
+      prepareArguments: repairTellArguments,
       execute: async (_id: string, params: unknown, signal?: AbortSignal) => {
         const p = params as {
           target: string;

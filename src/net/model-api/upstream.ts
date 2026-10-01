@@ -1113,10 +1113,54 @@ export async function proxyToUpstream(
     }
   }
 
+  // An Anthropic "model not found" for a non-default id is a routing miss, not
+  // an answer: the next provider may serve that id. The 404 is returned only if
+  // no provider does.
+  let modelNotFound: { response: Response; target: string } | undefined;
+
+  // 1b) Explicit provider prefix on a non-default id (`openrouter/z-ai/glm-…`,
+  //     `openai/gpt-…`): that provider first, prefix stripped. Its failure falls
+  //     through to (2), which may still serve the full id (an aggregator accepts
+  //     `openai/gpt-…` as-is).
+  let explicitProvider: string | undefined;
+  if (!isDefault && typeof body.model === "string" && !clientSignal?.aborted) {
+    const slash = body.model.indexOf("/");
+    const provider = slash > 0 ? body.model.slice(0, slash) : "";
+    const upstreamModel = slash > 0 ? body.model.slice(slash + 1) : "";
+    const cfg = provider ? PROVIDER_UPSTREAM[provider] : undefined;
+    const key = cfg ? resolveProviderKey(engine, provider) : undefined;
+    const localReady = isLocalProvider(provider) && localProviderConfigured(provider);
+    if (cfg && (key || localReady) && upstreamModel) {
+      explicitProvider = provider;
+      attemptedUpstream = true;
+      lastTarget = `${provider}/${upstreamModel}`;
+      if (cfg.anthropic) {
+        const resp = await anthropic(key!, upstreamModel);
+        if (resp.status !== 404) return finish(resp, lastTarget);
+        modelNotFound = { response: resp, target: lastTarget };
+        lastErrorKind = classifyProxyError(404);
+      } else {
+        const r = await dispatchOpenAICompatible(
+          cfg.url,
+          key ?? "",
+          prepareUpstreamBody({ ...body, model: upstreamModel }, provider, isDefault),
+          wantStream,
+          upstreamHeaders,
+          clientSignal,
+        );
+        if (r.response) return finish(r.response, lastTarget);
+        lastErrorKind = r.networkError ? "network" : classifyProxyError(r.errorStatus ?? 0);
+        anyTimedOut ||= r.timedOut === true;
+      }
+    }
+  }
+
   // 2) Fallback: first-party-preferred over whatever keys exist (env or DB).
   for (const provider of FALLBACK_PRIORITY) {
     // A caller that disconnected gets no further provider attempts.
     if (clientSignal?.aborted) break;
+    // The explicitly named provider was already asked with the stripped id.
+    if (provider === explicitProvider) continue;
     const cfg = PROVIDER_UPSTREAM[provider]!;
     const key = resolveProviderKey(engine, provider);
     // Skip cloud providers with no key, and local runtimes the operator hasn't
@@ -1128,7 +1172,11 @@ export async function proxyToUpstream(
     const requestModel = isDefault ? getDefaultUpstreamModel(envKey) : (body.model as string);
     lastTarget = `${provider}/${requestModel}`;
     if (cfg.anthropic) {
-      return finish(await anthropic(key!, requestModel), lastTarget);
+      const resp = await anthropic(key!, requestModel);
+      if (isDefault || resp.status !== 404) return finish(resp, lastTarget);
+      modelNotFound ??= { response: resp, target: lastTarget };
+      lastErrorKind = classifyProxyError(404);
+      continue;
     }
     const r = await dispatchOpenAICompatible(
       cfg.url,
@@ -1141,6 +1189,10 @@ export async function proxyToUpstream(
     if (r.response) return finish(r.response, lastTarget);
     lastErrorKind = r.networkError ? "network" : classifyProxyError(r.errorStatus ?? 0);
     anyTimedOut ||= r.timedOut === true;
+  }
+
+  if (modelNotFound && !anyTimedOut) {
+    return finish(modelNotFound.response, modelNotFound.target, lastErrorKind);
   }
 
   if (attemptedUpstream && anyTimedOut) {

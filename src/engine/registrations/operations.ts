@@ -30,6 +30,7 @@ import { traitCommand } from "../commands/trait";
 import { universalIntentCommands, usecaseCommand } from "../commands/usecase";
 import { webCommand } from "../commands/web";
 import type { Engine } from "../engine";
+import { roomMacroOwner } from "../macro-expansion";
 import { computeReadiness } from "../readiness";
 import { answerCodeViaLocalModel, parseExecApprovalTimeout } from "./model-helpers";
 
@@ -112,6 +113,20 @@ export function registerOperationCommands(engine: Engine): void {
     batchCommand({
       processCommand: (entityId, raw) => engine.processCommand(entityId, raw),
       checkRateLimit: (entityId) => engine.checkRateLimit(entityId),
+      // Resolution order mirrors the command phase: builtin / room command,
+      // then the room's, the entity's own and system macros.
+      isCommand: (entityId, verb) => {
+        const entity = engine.entities.get(entityId);
+        const room = entity ? engine.rooms.get(entity.room) : undefined;
+        if (engine.commands.resolveCommand(verb, room?.module.commands)) return true;
+        const macros = engine.macroManager;
+        if (!macros || !entity) return false;
+        return !!(
+          macros.getByName(verb, roomMacroOwner(entity.room)) ??
+          macros.getByName(verb, entityId as string) ??
+          macros.getByName(verb, "system")
+        );
+      },
     }),
   );
 

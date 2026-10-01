@@ -573,7 +573,7 @@ describe("CrewManager: deposit echo (dedup visibility)", () => {
       verification: (id) => `\`channel send ${id} aspect: <aspect> pass|fail — <reason>\``,
       auction: (id) => `Answerer (lead): \`channel send ${id} lots:`,
       ledger: (id) => `\`channel send ${id} [plan] facts:`,
-      sharding: (id) => `\`channel send ${id} shard 1: <case>\``,
+      sharding: (id) => `\`channel send ${id} shard 1: <case> | shard 2: <case> | …\``,
     };
     for (const [formation, move] of Object.entries(expected)) {
       const crew = crews.create({

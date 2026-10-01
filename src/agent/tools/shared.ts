@@ -9,6 +9,7 @@
 // (`../acknowledgement`).
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { stripAnsi } from "../../net/ansi";
 import type { MarinaClient } from "../../sdk/client";
 import type { Perception } from "../../types";
 import { stripCommandPleasantry } from "../acknowledgement";
@@ -29,7 +30,8 @@ export function formatPerceptions(perceptions: Perception[]): string {
       .map((p) => {
         const text = (p.data?.text as string) ?? "";
         const message = (p.data?.message as string) ?? "";
-        return text || message || `[${p.kind}]`;
+        // Agents read text, not terminal colour codes.
+        return stripAnsi(text || message) || `[${p.kind}]`;
       })
       .filter(Boolean)
       .join("\n\n") || "(no response)"
