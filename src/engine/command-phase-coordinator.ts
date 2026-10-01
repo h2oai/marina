@@ -22,6 +22,7 @@ import {
   setCurrentCommand,
 } from "./gate-context";
 import type { Logger } from "./logger";
+import { expandMacroBody, macroLimits, roomMacroOwner } from "./macro-expansion";
 import { getRank, rankName } from "./permissions";
 import { checkGateForExecution, recordGateExecution } from "./safety-gates";
 import { isLocalUngated } from "./trust-profile";
@@ -53,16 +54,16 @@ export interface CommandPhaseHost {
   logEvent(event: EngineEvent): void;
 }
 
-/** Nesting bound for macro expansion (a macro that runs a macro that runs …). */
-export const MAX_MACRO_DEPTH = 8;
-/** Commands one top-level macro invocation may expand to, across all nesting. */
-export const MAX_MACRO_EXPANSIONS = 100;
+/** Shared/public defaults; the live limits come from `macroLimits()`. */
+export { MAX_MACRO_DEPTH, MAX_MACRO_EXPANSIONS } from "./macro-expansion";
 
 interface MacroFrame {
   /** `entity\0name` of every macro on the current expansion path. */
   path: string[];
   /** Shared by every frame of one top-level expansion. */
   budget: { remaining: number };
+  /** Resolved once per top-level expansion (posture + env). */
+  limits: { maxDepth: number; maxExpansions: number };
 }
 
 export class CommandPhaseCoordinator {
@@ -147,13 +148,15 @@ export class CommandPhaseCoordinator {
     }
 
     if (!handler) {
-      // Macro fallback: entity macros first, then system macros
+      // Macro fallback (after builtins and room commands): macros the
+      // entity's room exposes, then the entity's own, then system macros.
       if (this.host.macroManager) {
         const macro =
+          this.host.macroManager.getByName(input.verb, roomMacroOwner(entity.room)) ??
           this.host.macroManager.getByName(input.verb, entityId as string) ??
           this.host.macroManager.getByName(input.verb, "system");
         if (macro) {
-          await this.expandMacro(entityId, macro, recordUsage);
+          await this.expandMacro(entityId, macro, input.args, recordUsage);
           return;
         }
       }
@@ -281,15 +284,21 @@ export class CommandPhaseCoordinator {
   }
 
   /**
-   * Expand a macro inside the current execution slot. Bounded three ways: a
-   * macro already on the expansion path is a cycle and is refused, nesting
-   * stops at MAX_MACRO_DEPTH, and one top-level invocation expands to at most
-   * MAX_MACRO_EXPANSIONS commands. Each expanded command costs one rate-limit
-   * token, so a macro gives no amplification over typing its commands.
+   * Expand a macro inside the current execution slot, binding the caller's
+   * raw arguments (`expandMacroBody`: `$*`/`$@`/`$1`..`$9`/`$$`, or appended
+   * to the last command when the body has no placeholder). A macro already on
+   * the expansion path is a cycle and is ALWAYS refused: macros have no
+   * conditionals, so self-reference never terminates. Nesting depth and the
+   * per-invocation command count are posture limits (`macroLimits`): the
+   * defaults hold on shared/public, are lifted on local-ungated or `open`, and
+   * `MARINA_MACRO_MAX_DEPTH` / `MARINA_MACRO_MAX_EXPANSIONS` override either
+   * way (0 = unlimited). Each expanded command costs one rate-limit token, so
+   * a macro gives no amplification over typing its commands.
    */
   private async expandMacro(
     entityId: EntityId,
     macro: { name: string; command: string },
+    args: string,
     recordUsage: (success: boolean) => void,
   ): Promise<void> {
     const key = `${entityId}\u0000${macro.name.toLowerCase()}`;
@@ -304,18 +313,19 @@ export class CommandPhaseCoordinator {
       refuse(`Macro "${macro.name}" calls itself; expansion stopped.`);
       return;
     }
-    if (path.length >= MAX_MACRO_DEPTH) {
-      refuse(`Macro nesting deeper than ${MAX_MACRO_DEPTH}; expansion of "${macro.name}" stopped.`);
+    const limits = parent?.limits ?? macroLimits();
+    if (path.length >= limits.maxDepth) {
+      refuse(
+        `Macro nesting deeper than ${limits.maxDepth}; expansion of "${macro.name}" stopped (MARINA_MACRO_MAX_DEPTH).`,
+      );
       return;
     }
     const frame: MacroFrame = {
       path: [...path, key],
-      budget: parent?.budget ?? { remaining: MAX_MACRO_EXPANSIONS },
+      budget: parent?.budget ?? { remaining: limits.maxExpansions },
+      limits,
     };
-    const commands = macro.command
-      .split(";")
-      .map((c) => c.trim())
-      .filter(Boolean);
+    const commands = expandMacroBody(macro.command, args);
     let rateBlocked = 0;
     let truncated = false;
     await this.macroFrames.run(frame, async () => {
@@ -335,7 +345,7 @@ export class CommandPhaseCoordinator {
     if (truncated) {
       this.host.sendToEntity(
         entityId,
-        `Macro "${macro.name}" stopped after ${MAX_MACRO_EXPANSIONS} expanded commands.`,
+        `Macro "${macro.name}" stopped after ${limits.maxExpansions} expanded commands (MARINA_MACRO_MAX_EXPANSIONS).`,
       );
     }
     if (rateBlocked > 0) {

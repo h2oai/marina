@@ -4490,23 +4490,27 @@ Effect: unknown.
 
 ## macro
 
-Manage macros. Usage: macro list | macro create <name> <command> | macro delete <name>
+Manage macros: named verbs that expand to one or more `;`-separated commands. Arguments after the macro name bind to $* / $@ (all, verbatim), $1..$9 (words) and $$ (a literal $); with no placeholder, trailing arguments are appended to the last command. room:<id|here> scopes a macro to everyone in that room (rank 4). Usage: macro list | macro create <name> <command with $* / $1…> [room:<id|here>] | macro delete <name> [room:<id|here>]
 
 Category: Coordination. Minimum rank: 0.
 Aliases: none.
 
-### `macro create <name> <command>`
+### `macro create <name> <command with $* / $1…> [room:<room>]`
 
 Effect: unknown.
 
 - `field-0` (`name`): text, required.
-- `field-1` (`command`): text, required.
+- `field-1` (`command with $* / $1…`): text, required.
+- `field-2` (`room`): text, optional group `option-0`.
+- Group `option-0`: `room:room`.
 
-### `macro delete <name>`
+### `macro delete <name> [room:<room>]`
 
 Effect: unknown.
 
 - `field-0` (`name`): text, required.
+- `field-1` (`room`): text, optional group `option-0`.
+- Group `option-0`: `room:room`.
 
 ### `macro list`
 

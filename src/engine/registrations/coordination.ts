@@ -275,11 +275,15 @@ export function registerCoordinationCommands(engine: Engine): void {
   }
   if (engine.macroManager) {
     engine.commands.registerBuiltin(
-      macroCommand(engine.macroManager, engine.commands, (name) =>
-        engine.rooms.all().some((room) => {
-          const commands = room.module.commands;
-          return !!commands && Object.hasOwn(commands, name);
-        }),
+      macroCommand(
+        engine.macroManager,
+        engine.commands,
+        (name) =>
+          engine.rooms.all().some((room) => {
+            const commands = room.module.commands;
+            return !!commands && Object.hasOwn(commands, name);
+          }),
+        (roomId) => engine.rooms.all().some((room) => room.id === roomId),
       ),
     );
   }

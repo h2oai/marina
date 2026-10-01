@@ -208,6 +208,10 @@
 # @restart
 # MARINA_COMMAND_PHASE_BUDGET_MS=150
 
+# Macro expansion limits: nesting depth (a macro that runs a macro …) and commands one top-level macro invocation may expand to. 0 is unlimited. Unset, the shared/public defaults are 8 and 100, and the local-ungated profile or MARINA_AUTONOMY=open is unlimited. A macro cycle is always refused, and every expanded command still costs one rate-limit token.
+# MARINA_MACRO_MAX_DEPTH=8
+# MARINA_MACRO_MAX_EXPANSIONS=100
+
 # `false` suppresses every room-agent auto-spawn (the LLM agents rooms start on first entry). Any other value leaves it on. Room agents need a provider key.
 # MARINA_ROOM_AGENTS=true
 
