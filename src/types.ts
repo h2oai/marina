@@ -548,7 +548,7 @@ export type EngineEvent =
       error?: string;
       /** Gate on `marina/auto`: whether a second opinion was asked for, and its fate. */
       escalated?: boolean;
-      secondOpinion?: "used" | "timeout" | "failed" | "outage";
+      secondOpinion?: "used" | "partial" | "timeout" | "failed" | "outage";
       timestamp: number;
     }
   // Lifecycle state transition (connected → autonomous → stopped, etc.).

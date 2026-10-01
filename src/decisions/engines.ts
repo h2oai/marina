@@ -196,28 +196,54 @@ const sum = (xs: Array<number | undefined>) => {
 };
 
 /**
- * Several engines asked in parallel, answers combined. A majority must answer
- * (else the first failure is thrown). Calibrated only if every member is.
- * Spend is recorded by each member where it is spent, never here.
+ * Several engines asked in parallel, answers combined. The members that
+ * answered are combined; the ensemble fails only when every member fails.
+ * When the caller's `signal` aborts (a deadline) while some members have
+ * answered, those are combined at once (`partial`) and the stragglers are
+ * aborted by the same signal. Calibrated only if every member is. Spend is
+ * recorded by each member where it is spent, never here.
  */
-function ensembleEngine(members: DecisionProvider[]): DecisionProvider {
+export function ensembleEngine(members: DecisionProvider[]): DecisionProvider {
   return {
     kind: "marina-ensemble",
     model: ENSEMBLE_ENGINE,
     calibrated: members.every((m) => m.calibrated !== false),
     async ask(request, signal) {
       const started = performance.now();
-      const settled = await Promise.allSettled(members.map((m) => m.ask(request, signal)));
-      const answered = settled.flatMap((r, i) =>
-        r.status === "fulfilled" ? [{ result: r.value, provider: members[i]! }] : [],
+      const answers: Array<Answered | undefined> = members.map(() => undefined);
+      const settled = Promise.allSettled(
+        members.map((m, i) =>
+          m.ask(request, signal).then((result) => {
+            answers[i] = { result, provider: m };
+            return result;
+          }),
+        ),
       );
-      // The members that answered are combined; a member that failed is left
-      // out (`members` names who answered). Only when every member failed does
-      // the ensemble fail, with the first member's error.
-      if (answered.length === 0) {
-        throw (settled.find((r) => r.status === "rejected") as PromiseRejectedResult).reason;
+      let onAbort: (() => void) | undefined;
+      const aborted = new Promise<"aborted">((resolve) => {
+        if (!signal) return;
+        onAbort = () => resolve("aborted");
+        if (signal.aborted) onAbort();
+        else signal.addEventListener("abort", onAbort, { once: true });
+      });
+      let outcome: PromiseSettledResult<DecisionResult>[] | "aborted";
+      try {
+        outcome = await Promise.race([settled, aborted]);
+      } finally {
+        if (onAbort) signal?.removeEventListener("abort", onAbort);
       }
-      return combined(request.questions, answered, "ensemble", started);
+      const answered = answers.filter((a): a is Answered => a !== undefined);
+      // A failed member is left out (`members` names who answered).
+      if (answered.length === 0) {
+        if (outcome === "aborted") {
+          throw signal?.reason ?? new DecisionError("ensemble aborted", "timeout", 504);
+        }
+        throw (outcome.find((r) => r.status === "rejected") as PromiseRejectedResult).reason;
+      }
+      return {
+        ...combined(request.questions, answered, "ensemble", started),
+        ...(outcome === "aborted" && answered.length < members.length ? { partial: true } : {}),
+      };
     },
   };
 }
@@ -269,9 +295,16 @@ export function secondOpinionTimeoutMs(env: NodeJS.ProcessEnv = process.env): nu
 }
 
 /**
- * Ask `provider` within `ms` (0 = no bound): resolves `"timeout"` at the
- * deadline and aborts the in-flight request. The caller's own `signal` still
- * aborts it too.
+ * After a second opinion's deadline aborts it, how long a composite gets to
+ * settle with the members that already answered (the ensemble does so at once).
+ */
+const DEADLINE_SETTLE_MS = 100;
+
+/**
+ * Ask `provider` within `ms` (0 = no bound). At the deadline the in-flight
+ * request is aborted; a provider that then settles at once with an answer (the
+ * ensemble, with the members that had answered) is returned, otherwise
+ * `"timeout"`. The caller's own `signal` still aborts it too.
  */
 async function askWithin(
   provider: DecisionProvider,
@@ -284,15 +317,25 @@ async function askWithin(
   const forward = () => controller.abort(signal?.reason);
   if (signal?.aborted) forward();
   else signal?.addEventListener("abort", forward, { once: true });
+  const pending = provider.ask(request, controller.signal);
+  // Observed below or abandoned at the settle bound; never an unhandled rejection.
+  pending.catch(() => undefined);
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<"timeout">((resolve) => {
-    timer = setTimeout(() => {
-      controller.abort(new DecisionError("second opinion deadline", "timeout", 504));
-      resolve("timeout");
-    }, ms);
-  });
+  const after = (wait: number) =>
+    new Promise<"deadline">((resolve) => {
+      timer = setTimeout(() => resolve("deadline"), wait);
+    });
   try {
-    return await Promise.race([provider.ask(request, controller.signal), deadline]);
+    const first = await Promise.race([pending, after(ms)]);
+    if (first !== "deadline") return first;
+    clearTimeout(timer);
+    controller.abort(new DecisionError("second opinion deadline", "timeout", 504));
+    try {
+      const settled = await Promise.race([pending, after(DEADLINE_SETTLE_MS)]);
+      return settled === "deadline" ? "timeout" : settled;
+    } catch {
+      return "timeout";
+    }
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener("abort", forward);
@@ -378,7 +421,7 @@ export function autoEngine(
           started,
         ),
         escalated: true,
-        secondOpinion: "used",
+        secondOpinion: second.partial ? "partial" : "used",
       };
     },
   };
