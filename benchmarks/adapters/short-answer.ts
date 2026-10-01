@@ -1,9 +1,10 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { judgeResponse } from "../scoring/judge";
-import { query } from "../modes/passthrough";
-import type { BenchmarkConfig, DatasetItem, Message, ResultItem } from "../types";
+import { queryWithUsage } from "../modes/passthrough";
+import { judgeResponseWithUsage } from "../scoring/judge";
+import type { BenchmarkConfig, DatasetItem, ItemUsage, Message, ResultItem } from "../types";
+import { addCallUsage } from "../usage";
 
 /** Short-answer factual adapter (SimpleQA-style).
  *  Scoring: LLM-as-judge "does the answer contain the correct fact?"
@@ -50,8 +51,12 @@ export async function runShortAnswer(
       let rawResponse = "";
       let correct = false;
       let score = 0;
+      let usage: ItemUsage | undefined;
+      let judgeUsage: ItemUsage | undefined;
       try {
-        actual = await query(config.endpoint, config.model, messages, config.apiKey);
+        const reply = await queryWithUsage(config.endpoint, config.model, messages, config.apiKey);
+        usage = addCallUsage(undefined, reply.usage);
+        actual = reply.content;
         rawResponse = actual;
         // Primary check: normalized substring. Cheap, no LLM.
         if (substringMatch(actual, item.answer)) {
@@ -59,13 +64,15 @@ export async function runShortAnswer(
           score = 1;
         } else if (config.judge) {
           // Fallback: LLM judge for paraphrases / near-matches
-          const judgeScore = await judgeResponse(
+          const judged = await judgeResponseWithUsage(
             item.question,
             item.answer,
             actual,
             config.judge,
             config.apiKey,
           );
+          judgeUsage = judged.usage;
+          const judgeScore = judged.score;
           correct = judgeScore >= 7;
           score = judgeScore / 10;
         }
@@ -83,6 +90,8 @@ export async function runShortAnswer(
         score,
         latencyMs,
         category: item.category,
+        ...(usage ? { usage } : {}),
+        ...(judgeUsage ? { judgeUsage } : {}),
       });
       completed++;
       onProgress?.(completed, items.length);

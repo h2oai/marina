@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { query, queryWithUsage } from "../modes/passthrough";
+import { queryWithUsage } from "../modes/passthrough";
 import type { ItemUsage } from "../types";
 import { addCallUsage } from "../usage";
 
@@ -25,11 +25,23 @@ export async function judgeResponse(
   judgeConfig: { model: string; endpoint: string },
   apiKey?: string,
 ): Promise<number> {
+  return (await judgeResponseWithUsage(question, reference, response, judgeConfig, apiKey)).score;
+}
+
+/** `judgeResponse` plus the usage the judge's calls reported. */
+export async function judgeResponseWithUsage(
+  question: string,
+  reference: string,
+  response: string,
+  judgeConfig: { model: string; endpoint: string },
+  apiKey?: string,
+): Promise<{ score: number; usage: ItemUsage | undefined }> {
   const userContent = buildJudgePrompt(question, reference, response);
+  let usage: ItemUsage | undefined;
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const judgeReply = await query(
+      const judgeReply = await queryWithUsage(
         judgeConfig.endpoint,
         judgeConfig.model,
         [
@@ -39,16 +51,17 @@ export async function judgeResponse(
         apiKey,
         30000,
       );
+      usage = addCallUsage(usage, judgeReply.usage);
 
-      const score = parseScore(judgeReply);
-      if (score !== null) return score;
+      const score = parseScore(judgeReply.content);
+      if (score !== null) return { score, usage };
     } catch {
       // Retry on error
     }
   }
 
   // Default to 5 if judge fails
-  return 5;
+  return { score: 5, usage };
 }
 
 function buildJudgePrompt(question: string, reference: string, response: string): string {
