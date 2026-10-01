@@ -322,7 +322,7 @@ it("a reply started before a new request arrives cannot settle the new request",
   i.platformMemory.journalMessage = async () => {};
   i.setupActionTracking();
   i.autonomousMode = true;
-  i.client.emit("perception", request("first"));
+  i.client.emit("perception", request("first?"));
   const prompt = await i.buildContinuationPrompt();
   i.agent.state.tools = [
     {
@@ -331,7 +331,7 @@ it("a reply started before a new request arrives cannot settle the new request",
       description: "test",
       parameters: Type.Object({}),
       execute: async () => {
-        i.client.emit("perception", request("second"));
+        i.client.emit("perception", request("second?"));
         return {
           content: [{ type: "text", text: "delivered first" }],
           details: { deliveries: [{ kind: "tell", target: "Boss", message: "answer to first" }] },
@@ -346,7 +346,7 @@ it("a reply started before a new request arrives cannot settle the new request",
   );
   await i.agent.prompt(prompt);
   expect(i.outstandingRequests.entries().map((entry) => entry.text)).toEqual([
-    "Boss tells you: second",
+    "Boss tells you: second?",
   ]);
   expect(i.currentPromptActionable).toBe(true);
 });
