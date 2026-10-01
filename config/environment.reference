@@ -230,6 +230,10 @@
 # MARINA_MATH_MODEL=
 # MARINA_REFLECTOR_MODEL=
 
+# Per-agent model map for boot-seeded agents, any world: comma list of Name=model (names case-insensitive; the model string passes through as-is). Wins over the per-role variables above and MARINA_CREW_MODEL. Applied on every boot to agents the seed still owns — a user-customized or retired agent is never touched — exactly like the per-role variables. A name matching no seeded agent, or a malformed entry, is logged as a warning at boot.
+# @restart
+# MARINA_AGENT_MODELS=Answerer=openrouter/anthropic/claude-opus-5.5,Translator=openrouter/deepseek/deepseek-v4-pro-0813
+
 # Showcase world only: which autonomous coordinators to seed beyond marina:answerer (comma list of council, debate, decompose; empty or `none` seeds none). Unset seeds all three. Each is a loop that spends tokens even when its endpoint is never called.
 # @restart
 # MARINA_ENDPOINTS=council,debate,decompose
