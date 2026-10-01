@@ -1,7 +1,12 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { BenchmarkRunRow } from "../db-benchmarks";
+import type {
+  BenchmarkItemInput,
+  BenchmarkItemRow,
+  BenchmarkLedgerRunInput,
+  BenchmarkRunRow,
+} from "../db-benchmarks";
 import type { NoteLinkRow, NoteRow } from "../db-notes";
 import type { ExactKeys } from "./exact-keys";
 
@@ -36,6 +41,13 @@ export interface BenchmarksStore {
     limit?: number;
   }): BenchmarkRunRow[];
   leaderboardBenchmark(benchmark: string, limit?: number): BenchmarkRunRow[];
+  /** Record a completed run + its item outcomes (idempotent on `content_hash`). */
+  recordBenchmarkLedgerRun(
+    run: BenchmarkLedgerRunInput,
+    items: readonly BenchmarkItemInput[],
+  ): { id: string; created: boolean };
+  getBenchmarkItems(runId: string): BenchmarkItemRow[];
+  getBenchmarkItemsForBenchmark(benchmark: string, limit?: number): BenchmarkItemRow[];
   traceNoteGraph(
     noteId: number,
     depth?: number,
@@ -54,6 +66,9 @@ export const BENCHMARKS_STORE_METHODS = [
   "getBenchmarkRun",
   "queryBenchmarkRuns",
   "leaderboardBenchmark",
+  "recordBenchmarkLedgerRun",
+  "getBenchmarkItems",
+  "getBenchmarkItemsForBenchmark",
   "traceNoteGraph",
   "countNoteLinks",
   "countLinksForNote",

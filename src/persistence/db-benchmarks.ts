@@ -105,6 +105,141 @@ export function leaderboardBenchmark(
     .all(benchmark, Math.min(limit, 100)) as BenchmarkRunRow[];
 }
 
+// ─── Ledger (migration 146) ─────────────────────────────────────────────────
+//
+// A ledger run carries its cost, n, Wilson interval, item slice, judge and
+// target, and every item outcome by id (never case content). Writes are one
+// transaction; `content_hash` makes an import idempotent.
+
+export interface BenchmarkLedgerRunInput {
+  id: string;
+  benchmark: string;
+  config_hash: string;
+  config_json: string;
+  agent_id?: string | null;
+  started_at: number;
+  completed_at: number;
+  duration_ms: number | null;
+  score: number;
+  answered: number;
+  total: number;
+  cost_usd: number | null;
+  n: number;
+  ci_low: number;
+  ci_high: number;
+  seed: number | null;
+  slice_hash: string;
+  judge: string | null;
+  target_kind: BenchmarkTargetKind;
+  target_json: string;
+  label: string | null;
+  source: "in-world" | "import";
+  content_hash: string | null;
+}
+
+export type BenchmarkTargetKind = "model" | "crew" | "population";
+
+export interface BenchmarkItemInput {
+  item_id: string;
+  correct: boolean;
+  score: number | null;
+  latency_ms: number | null;
+  cost_usd: number | null;
+  trace_id: string | null;
+  participants_json: string | null;
+  judge_verdict: string | null;
+}
+
+/**
+ * Record a completed run and its items in one transaction. A run whose
+ * `content_hash` is already recorded is not written again: the existing id is
+ * returned with `created: false`.
+ */
+export function recordBenchmarkLedgerRun(
+  db: Database,
+  run: BenchmarkLedgerRunInput,
+  items: readonly BenchmarkItemInput[],
+): { id: string; created: boolean } {
+  return db.transaction(() => {
+    if (run.content_hash) {
+      const existing = db
+        .query("SELECT id FROM benchmark_runs WHERE content_hash = ?")
+        .get(run.content_hash) as { id: string } | null;
+      if (existing) return { id: existing.id, created: false };
+    }
+    db.run(
+      `INSERT INTO benchmark_runs (id, benchmark, config_hash, config_json, score, answered, total,
+         status, agent_id, started_at, completed_at, duration_ms, cost_usd, n, ci_low, ci_high, seed,
+         slice_hash, judge, target_kind, target_json, label, source, content_hash)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        run.id,
+        run.benchmark,
+        run.config_hash,
+        run.config_json,
+        run.score,
+        run.answered,
+        run.total,
+        run.agent_id ?? null,
+        run.started_at,
+        run.completed_at,
+        run.duration_ms,
+        run.cost_usd,
+        run.n,
+        run.ci_low,
+        run.ci_high,
+        run.seed,
+        run.slice_hash,
+        run.judge,
+        run.target_kind,
+        run.target_json,
+        run.label,
+        run.source,
+        run.content_hash,
+      ],
+    );
+    const insert = db.prepare(
+      `INSERT INTO benchmark_items (run_id, item_id, correct, score, latency_ms, cost_usd, trace_id,
+         participants_json, judge_verdict) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const it of items) {
+      insert.run(
+        run.id,
+        it.item_id,
+        it.correct ? 1 : 0,
+        it.score,
+        it.latency_ms,
+        it.cost_usd,
+        it.trace_id,
+        it.participants_json,
+        it.judge_verdict,
+      );
+    }
+    return { id: run.id, created: true };
+  })();
+}
+
+/** Every recorded item outcome of one run, in insertion order. */
+export function getBenchmarkItems(reader: Database, runId: string): BenchmarkItemRow[] {
+  return reader
+    .query("SELECT * FROM benchmark_items WHERE run_id = ? ORDER BY id")
+    .all(runId) as BenchmarkItemRow[];
+}
+
+/** Item outcomes of every completed run of a benchmark (for participant credit). */
+export function getBenchmarkItemsForBenchmark(
+  reader: Database,
+  benchmark: string,
+  limit = 20_000,
+): BenchmarkItemRow[] {
+  return reader
+    .query(
+      `SELECT i.* FROM benchmark_items i JOIN benchmark_runs r ON r.id = i.run_id
+       WHERE r.benchmark = ? AND r.status = 'completed' ORDER BY i.id LIMIT ?`,
+    )
+    .all(benchmark, Math.min(limit, 100_000)) as BenchmarkItemRow[];
+}
+
 // ─── Row types ────────────────────────────────────────────────────────────
 
 export interface BenchmarkRunRow {
@@ -121,4 +256,30 @@ export interface BenchmarkRunRow {
   started_at: number;
   completed_at: number | null;
   duration_ms: number | null;
+  // Ledger columns (migration 146) — null on runs recorded before it.
+  cost_usd?: number | null;
+  n?: number | null;
+  ci_low?: number | null;
+  ci_high?: number | null;
+  seed?: number | null;
+  slice_hash?: string | null;
+  judge?: string | null;
+  target_kind?: BenchmarkTargetKind | null;
+  target_json?: string | null;
+  label?: string | null;
+  source?: "in-world" | "import";
+  content_hash?: string | null;
+}
+
+export interface BenchmarkItemRow {
+  id: number;
+  run_id: string;
+  item_id: string;
+  correct: 0 | 1;
+  score: number | null;
+  latency_ms: number | null;
+  cost_usd: number | null;
+  trace_id: string | null;
+  participants_json: string | null;
+  judge_verdict: string | null;
 }
