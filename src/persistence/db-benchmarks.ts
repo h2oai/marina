@@ -283,3 +283,106 @@ export interface BenchmarkItemRow {
   participants_json: string | null;
   judge_verdict: string | null;
 }
+
+// ─── Promoted defaults (migration 147) ────────────────────────────────────
+
+export interface BenchmarkDefaultRow {
+  slot: string;
+  value_json: string;
+  incumbent_run_id: string | null;
+  holdout_fraction: number;
+  updated_at: number;
+  updated_by: string | null;
+}
+
+export interface BenchmarkPromotionRow {
+  id: number;
+  slot: string;
+  outcome: "seeded" | "promoted" | "refused";
+  challenger_run_id: string | null;
+  incumbent_run_id: string | null;
+  value_json: string | null;
+  actor: string | null;
+  stats_json: string | null;
+  reason: string | null;
+  created_at: number;
+}
+
+export interface BenchmarkPromotionInput {
+  slot: string;
+  outcome: BenchmarkPromotionRow["outcome"];
+  challenger_run_id: string | null;
+  incumbent_run_id: string | null;
+  value_json: string | null;
+  actor: string | null;
+  stats_json: string | null;
+  reason: string | null;
+  /** Fixed on the slot's first row; ignored afterwards. */
+  holdout_fraction?: number;
+  created_at: number;
+}
+
+export function getBenchmarkDefault(
+  reader: Database,
+  slot: string,
+): BenchmarkDefaultRow | undefined {
+  return (reader.query("SELECT * FROM benchmark_defaults WHERE slot = ?").get(slot) ?? undefined) as
+    | BenchmarkDefaultRow
+    | undefined;
+}
+
+export function listBenchmarkDefaults(reader: Database): BenchmarkDefaultRow[] {
+  return reader
+    .query("SELECT * FROM benchmark_defaults ORDER BY slot")
+    .all() as BenchmarkDefaultRow[];
+}
+
+export function listBenchmarkPromotions(reader: Database, slot: string): BenchmarkPromotionRow[] {
+  return reader
+    .query("SELECT * FROM benchmark_promotions WHERE slot = ? ORDER BY id")
+    .all(slot) as BenchmarkPromotionRow[];
+}
+
+/**
+ * Append one history row; a `seeded` or `promoted` outcome also makes its
+ * challenger the slot's incumbent — in the same transaction, so the current
+ * value never moves without its evidence row.
+ */
+export function recordBenchmarkPromotion(db: Database, row: BenchmarkPromotionInput): number {
+  return db.transaction(() => {
+    const res = db.run(
+      `INSERT INTO benchmark_promotions (slot, outcome, challenger_run_id, incumbent_run_id,
+         value_json, actor, stats_json, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.slot,
+        row.outcome,
+        row.challenger_run_id,
+        row.incumbent_run_id,
+        row.value_json,
+        row.actor,
+        row.stats_json,
+        row.reason,
+        row.created_at,
+      ],
+    );
+    if (row.outcome !== "refused") {
+      if (row.value_json === null) throw new Error("a promoted default needs a value");
+      db.run(
+        `INSERT INTO benchmark_defaults (slot, value_json, incumbent_run_id, holdout_fraction,
+           updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(slot) DO UPDATE SET value_json = excluded.value_json,
+           incumbent_run_id = excluded.incumbent_run_id, updated_at = excluded.updated_at,
+           updated_by = excluded.updated_by`,
+        [
+          row.slot,
+          row.value_json,
+          row.challenger_run_id,
+          row.holdout_fraction ?? 0.5,
+          row.created_at,
+          row.actor,
+        ],
+      );
+    }
+    return Number(res.lastInsertRowid);
+  })();
+}

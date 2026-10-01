@@ -2,9 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
+  BenchmarkDefaultRow,
   BenchmarkItemInput,
   BenchmarkItemRow,
   BenchmarkLedgerRunInput,
+  BenchmarkPromotionInput,
+  BenchmarkPromotionRow,
   BenchmarkRunRow,
 } from "../db-benchmarks";
 import type { NoteLinkRow, NoteRow } from "../db-notes";
@@ -48,6 +51,13 @@ export interface BenchmarksStore {
   ): { id: string; created: boolean };
   getBenchmarkItems(runId: string): BenchmarkItemRow[];
   getBenchmarkItemsForBenchmark(benchmark: string, limit?: number): BenchmarkItemRow[];
+  /** The slot's promoted default (migration 147), if one was ever seeded. */
+  getBenchmarkDefault(slot: string): BenchmarkDefaultRow | undefined;
+  listBenchmarkDefaults(): BenchmarkDefaultRow[];
+  /** A slot's append-only promotion history, oldest first. */
+  listBenchmarkPromotions(slot: string): BenchmarkPromotionRow[];
+  /** Append a history row; `seeded`/`promoted` also moves the slot's incumbent. */
+  recordBenchmarkPromotion(row: BenchmarkPromotionInput): number;
   traceNoteGraph(
     noteId: number,
     depth?: number,
@@ -69,6 +79,10 @@ export const BENCHMARKS_STORE_METHODS = [
   "recordBenchmarkLedgerRun",
   "getBenchmarkItems",
   "getBenchmarkItemsForBenchmark",
+  "getBenchmarkDefault",
+  "listBenchmarkDefaults",
+  "listBenchmarkPromotions",
+  "recordBenchmarkPromotion",
   "traceNoteGraph",
   "countNoteLinks",
   "countLinksForNote",

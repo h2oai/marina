@@ -691,6 +691,16 @@ Usage:
   benchmark participants <benchmark>               — per agent / per model: items touched,
                                                      accuracy on them, cost
   benchmark reference [model|benchmark]            — show published reference scores
+  benchmark defaults                               — promoted defaults: each slot's incumbent run
+  benchmark challenge <slot> <run> [--max-cost-ratio R]
+                                                   — dry run on the slot's SELECTION split (the
+                                                     holdout stays unread); shows what promotion needs
+  benchmark promote <slot> <run> [--max-cost-ratio R] [--holdout F]
+                                                   — seed an empty slot, or promote a challenger that
+                                                     EARNED it on the holdout: same benchmark, judge and
+                                                     items; paired 95% interval above 0; delta above a
+                                                     fishing margin that grows with every attempt.
+                                                     Needs role.edit; never the run's own author.
 
 Benchmarks: smoke (15-item prompt A/B, always ready), mmlu-pro, truthfulqa, arc-challenge,
   hellaswag, musr, bbh, gsm8k, math, simple-qa, humaneval, ifeval, frames, aime
@@ -701,8 +711,10 @@ Benchmarks: smoke (15-item prompt A/B, always ready), mmlu-pro, truthfulqa, arc-
 
 Note: "run" and "sweep" need rank 4 — they burn real tokens. Discovery commands
   (list, runs, result, leaderboard, frontier, compare, participants, reference,
-  orchestrations) are rank 0. Results recorded outside the world are imported by
-  the operator with `bun run benchmark:import`.
+  orchestrations, defaults, challenge) are rank 0. Results recorded outside the world
+  are imported by the operator with `bun run benchmark:import`. Promoted defaults are
+  read by worlds (e.g. slot showcase:crew sets the showcase crew's model when
+  MARINA_CREW_MODEL is unset); environment variables always win.
 
 Examples:
   benchmark list
@@ -717,12 +729,37 @@ Examples:
 Category: Growth. Minimum rank: 0.
 Aliases: `bench`.
 
+### `benchmark challenge <slot> <run> [--max-cost-ratio R]`
+
+Effect: unknown.
+
+- `field-0` (`slot`): text, required.
+- `field-1` (`run`): text, required.
+- `field-2` (`--max-cost-ratio`): text, optional group `option-0`.
+- Group `option-0`: `--max-cost-ratio R`.
+
 ### `benchmark compare <runA> <runB>`
 
 Effect: unknown.
 
 - `field-0` (`runA`): text, required.
 - `field-1` (`runB`): text, required.
+
+### `benchmark defaults`
+
+Effect: unknown.
+
+
+### `benchmark promote <slot> <run> [--max-cost-ratio R] [--holdout F]`
+
+Effect: unknown.
+
+- `field-0` (`slot`): text, required.
+- `field-1` (`run`): text, required.
+- `field-2` (`--max-cost-ratio`): text, optional group `option-0`.
+- `field-3` (`--holdout`): text, optional group `option-1`.
+- Group `option-0`: `--max-cost-ratio R`.
+- Group `option-1`: `--holdout F`.
 
 ### `benchmark frontier <benchmark>`
 

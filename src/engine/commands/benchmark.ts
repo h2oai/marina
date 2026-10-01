@@ -12,8 +12,10 @@ import { bold, category, dim, status as fmtStatus, header, separator } from "../
 import type { BenchmarkRunRow, MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
 import { compareRuns, paretoFrontier, participantCredit, runLabel } from "../benchmark-ledger";
+import { type ChallengeEvaluation, lookupChallenge, type SplitStats } from "../benchmark-promotion";
 import { BENCHMARKS, type BenchmarkRunner, type BenchmarkSubject } from "../benchmark-runner";
 import { extractModifiers, resolveMultiWordName } from "../parse-input";
+import { checkRoleEdit } from "../role-guard";
 import { formatAge } from "./format-duration";
 
 /** Render an id-shaped string with dim styling (ansi.id is numeric-only). */
@@ -47,6 +49,16 @@ Usage:
   benchmark participants <benchmark>               — per agent / per model: items touched,
                                                      accuracy on them, cost
   benchmark reference [model|benchmark]            — show published reference scores
+  benchmark defaults                               — promoted defaults: each slot's incumbent run
+  benchmark challenge <slot> <run> [--max-cost-ratio R]
+                                                   — dry run on the slot's SELECTION split (the
+                                                     holdout stays unread); shows what promotion needs
+  benchmark promote <slot> <run> [--max-cost-ratio R] [--holdout F]
+                                                   — seed an empty slot, or promote a challenger that
+                                                     EARNED it on the holdout: same benchmark, judge and
+                                                     items; paired 95% interval above 0; delta above a
+                                                     fishing margin that grows with every attempt.
+                                                     Needs role.edit; never the run's own author.
 
 Benchmarks: smoke (15-item prompt A/B, always ready), mmlu-pro, truthfulqa, arc-challenge,
   hellaswag, musr, bbh, gsm8k, math, simple-qa, humaneval, ifeval, frames, aime
@@ -57,8 +69,10 @@ Benchmarks: smoke (15-item prompt A/B, always ready), mmlu-pro, truthfulqa, arc-
 
 Note: "run" and "sweep" need rank 4 — they burn real tokens. Discovery commands
   (list, runs, result, leaderboard, frontier, compare, participants, reference,
-  orchestrations) are rank 0. Results recorded outside the world are imported by
-  the operator with \`bun run benchmark:import\`.
+  orchestrations, defaults, challenge) are rank 0. Results recorded outside the world
+  are imported by the operator with \`bun run benchmark:import\`. Promoted defaults are
+  read by worlds (e.g. slot showcase:crew sets the showcase crew's model when
+  MARINA_CREW_MODEL is unset); environment variables always win.
 
 Examples:
   benchmark list
@@ -101,7 +115,10 @@ export function benchmarkCommand(deps: {
   return {
     category: "Growth",
     usage: [
+      "benchmark challenge <slot> <run> [--max-cost-ratio R]",
       "benchmark compare <runA> <runB>",
+      "benchmark defaults",
+      "benchmark promote <slot> <run> [--max-cost-ratio R] [--holdout F]",
       "benchmark frontier <benchmark>",
       "benchmark leaderboard <benchmark> [--limit N]",
       "benchmark participants <benchmark>",
@@ -679,6 +696,64 @@ export function benchmarkCommand(deps: {
           return;
         }
 
+        case "defaults": {
+          const rows = db.listBenchmarkDefaults();
+          if (rows.length === 0) {
+            ctx.send(
+              input.entity,
+              "No promoted defaults yet. Seed a slot with `benchmark promote <slot> <run>`.",
+            );
+            return;
+          }
+          const lines = [header(`Promoted defaults (${rows.length})`), separator()];
+          for (const r of rows) {
+            const history = db.listBenchmarkPromotions(r.slot);
+            const won = history.filter((h) => h.outcome === "promoted").length;
+            const refused = history.filter((h) => h.outcome === "refused").length;
+            lines.push(
+              `  ${bold(r.slot).padEnd(36)}  incumbent ${fmtId(r.incumbent_run_id ?? "—")}  holdout ${pct(r.holdout_fraction).trim()}  promotions ${won}  refused ${refused}  ${dim(`${formatAge(Date.now() - r.updated_at)} ago by ${r.updated_by ?? "?"}`)}`,
+              `    ${dim(r.value_json.length > 160 ? `${r.value_json.slice(0, 157)}...` : r.value_json)}`,
+            );
+          }
+          ctx.send(input.entity, lines.join("\n"));
+          return;
+        }
+
+        case "challenge":
+        case "promote": {
+          const [slot, runId] = [tokens[1], tokens[2]];
+          if (!slot || !runId) {
+            ctx.send(
+              input.entity,
+              `Usage: benchmark ${sub} <slot> <run> [--max-cost-ratio R]${sub === "promote" ? " [--holdout F]" : ""}`,
+            );
+            return;
+          }
+          const { modifiers } = extractModifiers(tokens.slice(3).join(" "), [
+            "max-cost-ratio",
+            "holdout",
+          ]);
+          const maxCostRatio = modifiers["max-cost-ratio"]
+            ? Number.parseFloat(modifiers["max-cost-ratio"])
+            : undefined;
+          if (maxCostRatio !== undefined && !(maxCostRatio > 0)) {
+            ctx.send(input.entity, "--max-cost-ratio must be a positive number.");
+            return;
+          }
+          if (sub === "challenge") {
+            ctx.send(input.entity, renderChallenge(db, slot, runId, maxCostRatio));
+            return;
+          }
+          ctx.send(
+            input.entity,
+            promote(db, entity, slot, runId, {
+              ...(maxCostRatio !== undefined ? { maxCostRatio } : {}),
+              ...(modifiers.holdout ? { holdout: modifiers.holdout } : {}),
+            }),
+          );
+          return;
+        }
+
         default:
           ctx.send(input.entity, HELP);
       }
@@ -707,4 +782,138 @@ function ledgerColumns(row: BenchmarkRunRow): string {
   if (typeof row.ci_low !== "number" || typeof row.ci_high !== "number") return "";
   const cost = perItemCost(row);
   return `  ${dim(`n=${row.n ?? row.total} CI [${pct(row.ci_low).trim()}, ${pct(row.ci_high).trim()}]`)}  ${cost === null ? "" : `${usd(cost)}/item  `}${dim(runLabel(row))}`;
+}
+
+// ─── Earned promotion of defaults ──────────────────────────────────────────
+
+function statsLine(s: SplitStats): string {
+  return `  ${s.split}: ${s.n} paired  challenger ${s.challengerCorrect}  incumbent ${s.incumbentCorrect}  (only challenger ${s.challengerOnly}, only incumbent ${s.incumbentOnly})  delta ${(s.delta * 100).toFixed(1)} pts  95% [${(s.low * 100).toFixed(1)}, ${(s.high * 100).toFixed(1)}]`;
+}
+
+function costLine(e: ChallengeEvaluation): string {
+  const c = e.costPerItem;
+  if (c.challenger === null || c.incumbent === null) return `  $/item: ${dim("unpriced")}`;
+  return `  $/item: challenger ${usd(c.challenger)}  incumbent ${usd(c.incumbent)}  ratio ${c.ratio === null ? "—" : `${c.ratio.toFixed(2)}×`}`;
+}
+
+/** Dry run: the SELECTION split only — the holdout stays unread until a promotion attempt. */
+function renderChallenge(
+  db: MarinaDB,
+  slot: string,
+  runId: string,
+  maxCostRatio: number | undefined,
+): string {
+  const found = lookupChallenge(
+    db,
+    slot,
+    runId,
+    "selection",
+    maxCostRatio !== undefined ? { maxCostRatio } : {},
+  );
+  if (found.kind === "error") return found.message;
+  if (found.kind === "seed") {
+    return `Slot ${slot} has no incumbent: \`benchmark promote ${slot} ${runId}\` seeds it with this run (needs role.edit). Its holdout is ${pct(found.holdoutFraction).trim()} of items by item-id hash.`;
+  }
+  const e = found.evaluation;
+  const blockers = e.reasons.filter((r) => !r.startsWith("selection split"));
+  return [
+    header(`Challenge — ${slot}`),
+    separator(),
+    `  challenger ${bold(runLabel(found.challenger))} ${fmtId(found.challenger.id)}`,
+    `  incumbent  ${bold(runLabel(found.incumbent))} ${fmtId(found.incumbent.id)}`,
+    statsLine(e.stats),
+    costLine(e),
+    `  to promote: holdout interval above 0 and delta ≥ ${(e.margin * 100).toFixed(1)} pts (${e.triedBefore} earlier attempt(s)); the holdout is read only by \`benchmark promote\`, and each attempt raises the bar`,
+    ...blockers.map((r) => `  ${fmtStatus("BLOCK", "warn")} ${r}`),
+  ].join("\n");
+}
+
+/** Seed an empty slot, or promote a challenger that earned it on the holdout. */
+function promote(
+  db: MarinaDB,
+  entity: Entity,
+  slot: string,
+  runId: string,
+  opts: { maxCostRatio?: number; holdout?: string },
+): string {
+  const gate = checkRoleEdit(db, entity, `benchmark promote ${slot}`);
+  if ("reason" in gate) return gate.reason;
+  const found = lookupChallenge(
+    db,
+    slot,
+    runId,
+    "holdout",
+    opts.maxCostRatio !== undefined ? { maxCostRatio: opts.maxCostRatio } : {},
+  );
+  if (found.kind === "error") return found.message;
+  // Self-attestation is always refused: whoever ran the challenger cannot promote it —
+  // compared on the durable account key too, so a fresh login is still the same author.
+  const author = found.challenger.agent_id;
+  if (
+    author &&
+    (author === entity.id || db.durableEntityKey(author) === db.durableEntityKey(entity.id))
+  ) {
+    return `Refused: you ran ${runId}. Someone else must promote it — self-attestation is never accepted.`;
+  }
+  const value = found.challenger.target_json;
+  if (!value) {
+    return `Run ${runId} records no target configuration (target_json) — nothing to promote as the default.`;
+  }
+  // The history is append-only, so it stores the opaque durable account key —
+  // never a display name that account erasure would have to rewrite.
+  const actor = db.durableEntityKey(entity.id);
+  const now = Date.now();
+  if (found.kind === "seed") {
+    const fraction = opts.holdout ? Number.parseFloat(opts.holdout) : found.holdoutFraction;
+    if (!(fraction > 0 && fraction < 1)) return "--holdout must be between 0 and 1 (exclusive).";
+    db.recordBenchmarkPromotion({
+      slot,
+      outcome: "seeded",
+      challenger_run_id: runId,
+      incumbent_run_id: null,
+      value_json: value,
+      actor,
+      stats_json: null,
+      reason: "first incumbent",
+      holdout_fraction: fraction,
+      created_at: now,
+    });
+    gate.record();
+    return `Seeded ${slot} with ${runLabel(found.challenger)} (${runId}); holdout ${pct(fraction).trim()} of items. Later challengers must earn it.`;
+  }
+  if (opts.holdout) {
+    return "--holdout is fixed once a slot exists (moving it would move items between splits).";
+  }
+  const e = found.evaluation;
+  const stats = JSON.stringify({
+    ...e.stats,
+    margin: e.margin,
+    triedBefore: e.triedBefore,
+    costPerItem: e.costPerItem,
+  });
+  db.recordBenchmarkPromotion({
+    slot,
+    outcome: e.ok ? "promoted" : "refused",
+    challenger_run_id: runId,
+    incumbent_run_id: found.incumbent.id,
+    value_json: value,
+    actor,
+    stats_json: stats,
+    reason: e.ok ? null : e.reasons.join("; "),
+    created_at: now,
+  });
+  const body = [statsLine(e.stats), costLine(e)];
+  if (!e.ok) {
+    return [
+      `Not promoted — ${slot} keeps ${found.incumbent.id}. Recorded as attempt ${e.triedBefore + 1}.`,
+      ...body,
+      ...e.reasons.map((r) => `  ${fmtStatus("BLOCK", "warn")} ${r}`),
+    ].join("\n");
+  }
+  gate.record();
+  return [
+    `Promoted ${runLabel(found.challenger)} (${runId}) to ${slot}, replacing ${found.incumbent.id}.`,
+    ...body,
+    `  margin ${(e.margin * 100).toFixed(1)} pts (${e.triedBefore} earlier attempt(s))`,
+  ].join("\n");
 }
