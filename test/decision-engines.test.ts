@@ -18,6 +18,7 @@ import {
   chatClassifierProvider,
   decisionsApiProvider,
   resetClassifierCapabilitiesForTests,
+  upstreamErrorReason,
 } from "../src/decisions/providers";
 import { parseQuestions } from "../src/decisions/questions";
 import { resetSpendLedgerForTests, spentTodayUsd } from "../src/engine/spend-ledger";
@@ -43,7 +44,7 @@ interface FakeOptions {
    * Reject logprobs with a 400: `reasoning` like OpenAI's reasoning models, `cap5`
    * like a provider that only allows `top_logprobs` ≤ 5.
    */
-  rejectLogprobs?: "reasoning" | "cap5";
+  rejectLogprobs?: "reasoning" | "cap5" | "openrouter" | "relay502";
   /** Label picked for every labeled answer (default: the first). */
   pick?: (labels: string[], call: number) => string;
   /** Served model name. */
@@ -65,6 +66,33 @@ function fakeUpstream(opts: FakeOptions = {}) {
       return new Response(
         JSON.stringify({ error: { message: "logprobs are not supported with reasoning models." } }),
         { status: 400 },
+      );
+    }
+    if (
+      body.logprobs &&
+      (opts.rejectLogprobs === "openrouter" || opts.rejectLogprobs === "relay502")
+    ) {
+      // OpenRouter relays the serving provider's error inside `metadata.raw`.
+      return new Response(
+        JSON.stringify({
+          error: {
+            message: "Provider returned error",
+            code: 400,
+            metadata: {
+              raw: JSON.stringify({
+                error: {
+                  message: "logprobs are not supported with reasoning models.",
+                  type: "invalid_request_error",
+                  param: "include",
+                  code: "unsupported_parameter",
+                },
+              }),
+              provider_name: "OpenAI",
+              provider_error_code: "unsupported_parameter",
+            },
+          },
+        }),
+        { status: opts.rejectLogprobs === "relay502" ? 502 : 400 },
       );
     }
     if (body.logprobs && opts.rejectLogprobs === "cap5" && Number(body.top_logprobs) > 5) {
@@ -287,6 +315,37 @@ describe("chat classifier methods", () => {
       expect(up.count()).toBe(3);
       expect(up.bodies[2]!.logprobs).toBeUndefined();
     }
+  });
+
+  it("an OpenRouter-wrapped logprob rejection falls back to verbalized and is remembered", async () => {
+    for (const shape of ["openrouter", "relay502"] as const) {
+      resetClassifierCapabilitiesForTests();
+      const up = fakeUpstream({ logprobs: true, rejectLogprobs: shape });
+      const provider = classifier(up.fetch, "auto");
+      const first = await provider.ask({ state: "s", questions: Q });
+      expect(first.method).toBe("verbalized");
+      expect(up.count()).toBe(2);
+      await provider.ask({ state: "s", questions: Q });
+      expect(up.count()).toBe(3);
+      expect(up.bodies[2]!.logprobs).toBeUndefined();
+    }
+  });
+
+  it("names the wrapped provider reason in the error message", () => {
+    const text = JSON.stringify({
+      error: {
+        message: "Provider returned error",
+        metadata: {
+          raw: JSON.stringify({ error: { message: "logprobs are not supported" } }),
+          provider_error_code: "unsupported_parameter",
+        },
+      },
+    });
+    expect(upstreamErrorReason(text)).toBe(
+      "Provider returned error: logprobs are not supported: (unsupported_parameter)",
+    );
+    expect(upstreamErrorReason("plain text")).toBe("plain text");
+    expect(upstreamErrorReason(JSON.stringify({ error: "nope" }))).toBe("nope");
   });
 
   it("a provider that caps top_logprobs is asked again at 5, and remembered", async () => {

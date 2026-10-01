@@ -90,8 +90,45 @@ function waitFor(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+/**
+ * The reason inside an error body. Aggregators wrap the serving provider's
+ * error: OpenRouter answers `{"error":{"message":"Provider returned error",
+ * "metadata":{"raw":"<the provider's JSON>","provider_error_code":"…"}}}`, so
+ * the real cause ("logprobs are not supported with reasoning models") is one
+ * level down. Falls back to the raw text when the body is not that shape.
+ */
+export function upstreamErrorReason(text: string): string {
+  const messageOf = (v: unknown): string | undefined => {
+    const e = (v as { error?: unknown } | null)?.error;
+    if (typeof e === "string") return e;
+    const m = (e as { message?: unknown } | null)?.message;
+    return typeof m === "string" ? m : undefined;
+  };
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return text;
+  }
+  const outer = messageOf(body);
+  const meta = (body as { error?: { metadata?: { raw?: unknown; provider_error_code?: unknown } } })
+    ?.error?.metadata;
+  let inner: string | undefined;
+  if (typeof meta?.raw === "string") {
+    try {
+      inner = messageOf(JSON.parse(meta.raw));
+    } catch {
+      inner = meta.raw;
+    }
+  }
+  const code = typeof meta?.provider_error_code === "string" ? meta.provider_error_code : undefined;
+  const parts = [outer, inner, code && `(${code})`].filter((p): p is string => !!p);
+  return parts.length > 0 ? parts.join(": ") : text;
+}
+
 function statusError(status: number, text: string): DecisionError {
-  const message = `decision backend ${status}${text ? `: ${text.slice(0, 200)}` : ""}`;
+  const reason = text ? upstreamErrorReason(text) : "";
+  const message = `decision backend ${status}${reason ? `: ${reason.slice(0, 300)}` : ""}`;
   if (status === 429) return new DecisionError(message, "rate_limited", 429);
   if (status === 503 || status === 529) return new DecisionError(message, "overloaded", status);
   if (status === 400 || status === 422) return new DecisionError(message, "upstream_rejected", 422);
@@ -387,8 +424,12 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
         answerResponseFormat(request.questions, labels),
         signal,
       );
+    // A 400/422, or any failure whose reason names logprobs (a relay may
+    // report the provider's rejection under another status).
     const rejected = (err: unknown) =>
-      err instanceof DecisionError && err.code === "upstream_rejected";
+      err instanceof DecisionError &&
+      (err.code === "upstream_rejected" ||
+        (err.code === "upstream_error" && /logprob/i.test(err.message)));
     let reply: ChatReply;
     try {
       reply = await ask(caps().topLogprobs ?? TOP_LOGPROBS);

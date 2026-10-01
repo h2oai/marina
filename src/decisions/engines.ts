@@ -211,8 +211,10 @@ function ensembleEngine(members: DecisionProvider[]): DecisionProvider {
       const answered = settled.flatMap((r, i) =>
         r.status === "fulfilled" ? [{ result: r.value, provider: members[i]! }] : [],
       );
-      // A strict majority must answer (two members: both).
-      if (answered.length * 2 <= members.length) {
+      // The members that answered are combined; a member that failed is left
+      // out (`members` names who answered). Only when every member failed does
+      // the ensemble fail, with the first member's error.
+      if (answered.length === 0) {
         throw (settled.find((r) => r.status === "rejected") as PromiseRejectedResult).reason;
       }
       return combined(request.questions, answered, "ensemble", started);
