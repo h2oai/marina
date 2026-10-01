@@ -75,14 +75,20 @@ export async function queryWithUsage(
         throw new Error(`API error ${resp.status}: ${text}`);
       }
       const data = (await resp.json()) as {
-        choices: { message: { content: string } }[];
+        choices: { message: { content: string | null }; finish_reason?: string }[];
         usage?: Record<string, unknown>;
       };
-      const content = data.choices[0]?.message?.content;
+      const choice = data.choices?.[0];
+      const content = choice?.message?.content;
       if (content === undefined) {
         throw new Error("API response missing choices[0].message.content");
       }
-      return { content, usage: usageFromResponse(data, resp.headers.get(MARINA_COST_HEADER)) };
+      // A reasoning model that spends its whole budget thinking returns
+      // `content: null`: an empty answer (scored wrong), never a crash.
+      return {
+        content: content ?? "",
+        usage: usageFromResponse(data, resp.headers.get(MARINA_COST_HEADER)),
+      };
     } finally {
       clearTimeout(timer);
     }
