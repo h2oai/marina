@@ -115,6 +115,40 @@ Opens at `http://localhost:3303` with four tabs:
 
 Supports multiple simultaneous benchmark runs with a persistent status bar showing progress for each.
 
+## Native crew tasks (seeded generators)
+
+`benchmarks/native/` generates crew tasks from a seed. Each seed gives a fresh instance with an exact automatic oracle, so N is unlimited and the instances cannot be memorised. Generation is deterministic and fully synthetic.
+
+| Task | Shape | Setup | Oracle |
+|---|---|---|---|
+| `csp` | private information | a meeting-slot CSP with a planted, unique solution; the minimised constraint set is dealt across members | share of constraints satisfied; correct = all |
+| `aggregation` | sharding | 200–260 records in shards, plus stale `VOID` copies; `--crash` replicates each shard to two members and stops one member mid-task | exact count and sum |
+| `bugs` | verification | a TypeScript module in the code workspace with 3–4 planted defects, partial visible tests, and false "fixed" claims in a pool | share of hidden cases passing (claims are a secondary score) |
+| `auction` | auction | private per-member costs for 4–6 subtasks, with a capacity | optimal cost / achieved cost (exact search, unique optimum) |
+| `delphi` | delphi | a seeded AR(1) process, with a different window for each member | CRPS skill of the forecast against persistence, from draws of the true predictive |
+| `pipeline` | contracted pipeline | raw lines go to the parse owner only; the transform and report contracts are stated in the task | exact report, with partial credit per field |
+
+Every generator exposes `generate(seed, opts)` and `score(deliverable, oracle, ctx?)`.
+
+How the setup is delivered:
+- Private material goes to each member as an Operator `tell`.
+- Short shared items go in as pool notes. Pool listings show only 60 characters of a note, so bulk material is not sent this way.
+- Files are written under `--workspace`.
+
+`environmentSpec()` returns the same setup as a room-hostable spec.
+
+The `bugs` oracle runs the hidden cases in a fresh temp directory, in a separate `bun` process owned by the harness. This is a local fallback, not a sandbox: the oracle does not go through `code` exec or Flywheel.
+
+```bash
+bun run bench:native --task csp --seed 7 --print          # instance + oracle answer
+bun run bench:native --task all --seeds 1-3 --print
+bun run bench:native --task csp --seed 7 --port 40400 --db world.db \
+  --hab habitat.tsv --win windows.tsv --json              # setup → crew dispatch → poll → score
+bun run bench:native --task bugs --seed 7 --setup-only --port 40400 --db world.db \
+  --workspace /path/in/MARINA_CODE_ROOTS                  # prints NATIVE_TID/TEXT/RE/OK for a lane's run_task
+bun run bench:native --task bugs --seed 7 --score-only --db world.db --workspace …
+```
+
 ## Datasets
 
 Datasets are auto-downloaded from HuggingFace on first run and cached in `benchmarks/datasets/` (gitignored). The retention benchmark ships in-repo (generated at runtime).
