@@ -80,7 +80,7 @@ import {
 import { MarinaClient, TELL_NOTICE_PREFIX } from "../sdk/client";
 import type { Perception } from "../types";
 import { suggestPatterns } from "../world/templates/orchestration";
-import { isPureAcknowledgement } from "./acknowledgement";
+import { isPureAcknowledgement, outgoingAcknowledgementRefusal } from "./acknowledgement";
 import { ActionHistory } from "./action-history";
 import {
   type AgentConfig,
@@ -183,10 +183,7 @@ export function acknowledgementReplyRefusal(
   if (!target || !message) return undefined;
   if (!peersWhoAcknowledged.has(target.toLowerCase())) return undefined;
   if (!isPureAcknowledgement(message)) return undefined;
-  return (
-    `Not sent: ${target}'s last message to you was an acknowledgement, so no reply is owed ` +
-    `either way. Carry on with your work; tell ${target} again when you have something new.`
-  );
+  return `not sent: acknowledgement; ${target}'s last message was one (no reply owed).`;
 }
 
 export function shouldKeepPerception(
@@ -1649,11 +1646,15 @@ export class LeanAgentAdapter implements AgentHandle {
           };
         }
         if (isChannelSend) this.currentRunChannelSends++;
-        const ackRefusal = acknowledgementReplyRefusal(
-          context.toolCall.name,
-          args,
-          this.lastTellWasAck,
-        );
+        // Acknowledgements are not sent (returns at once; nothing waits),
+        // unless they answer a reply this agent still owes the target.
+        const ackRefusal =
+          acknowledgementReplyRefusal(context.toolCall.name, args, this.lastTellWasAck) ??
+          outgoingAcknowledgementRefusal(
+            context.toolCall.name,
+            args,
+            new Set(this.outstandingRequests.entries().map((r) => r.target.toLowerCase())),
+          );
         if (ackRefusal) return { block: true, reason: ackRefusal };
         this.hookRegistry.runBeforeToolCall(context.toolCall.name, args);
         return undefined;
@@ -1944,7 +1945,7 @@ export class LeanAgentAdapter implements AgentHandle {
             this.pendingPerceptions.push({
               id: perceptionId,
               requestId,
-              text: `[${p.kind}] ${text}${acknowledgement ? " (acknowledgement — no reply owed)" : ""}`,
+              text: `[${p.kind}] ${text}${acknowledgement ? " (ack; no reply owed)" : ""}`,
               priority,
               shouldRespond: respond,
               traceParent: traceParentFromPerception(text),
@@ -3075,12 +3076,11 @@ export class LeanAgentAdapter implements AgentHandle {
             .slice(0, 3);
           const tagLine =
             tags.length > 0
-              ? ` End your \`tell\` reply with the exact tag ${tags.join(" or ")} so the asker's wait resolves immediately.`
+              ? ` End the reply with tag ${tags.join(" or ")} (resolves the asker's wait).`
               : "";
           parts.push(
-            "Events marked [!] await your response. Match the channel of the ask: " +
-              "answer a private tell with `marina_tell` back to the sender — never " +
-              `broadcast a private conversation to a room or channel.${tagLine}`,
+            "[!] = reply owed, on the ask's channel: tell → `marina_tell` to the sender; " +
+              `never broadcast a private exchange.${tagLine}`,
             95,
             "reply_channel_hint",
           );

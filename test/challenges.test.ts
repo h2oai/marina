@@ -110,7 +110,7 @@ describe("challenges (engine)", () => {
     const reply = text(builder);
     expect(reply).toContain('to use "zap"');
     expect(reply).toContain("runs automatically if approved");
-    expect(reply).toContain("carry on with other work");
+    expect(reply).toContain("Continue other work");
     const token = tokenIn(reply)!;
     expect(token).toBeDefined();
     expect(ran).toEqual([]);
@@ -238,7 +238,7 @@ describe("challenges (engine)", () => {
     const token = tokenIn(text(builder))!;
     root.clear();
     await send(builder, "zap same");
-    expect(stripAnsi(builder.lastText())).toContain(`Still waiting on`);
+    expect(stripAnsi(builder.lastText())).toContain(`still pending`);
     expect(stripAnsi(builder.lastText())).toContain(token);
     expect(text(root)).toBe("");
   });
@@ -324,7 +324,7 @@ describe("challenges: no silent walls", () => {
     const sixth = hold("marina_command call 6");
     expect(sixth.token).toMatch(/^ch_/);
     expect(sixth.message).toContain("runs automatically if approved");
-    expect(sixth.message).toContain(`replaces your oldest held call (challenge ${first.token}`);
+    expect(sixth.message).toContain(`Replaced your oldest held call (challenge ${first.token}`);
     expect(sixth.message).toContain("did not run");
     // Approvers hear that the old one is gone and about the new one.
     expect(text(alice)).toContain(
@@ -353,8 +353,8 @@ describe("challenges: no silent walls", () => {
     expect(tokens.every(Boolean)).toBe(true);
     const refused = hold("marina_command pool out add T1");
     expect(refused.token).toBeUndefined();
-    expect(refused.message).toContain("It did not run");
-    expect(refused.message).toContain("already have 5 open challenges of other kinds");
+    expect(refused.message).toContain("Not run");
+    expect(refused.message).toContain("you have 5 open challenges of other kinds");
     for (const token of tokens) expect(refused.message).toContain(token);
     expect(refused.message).toContain("Take another route");
   });
@@ -367,15 +367,15 @@ describe("challenges: no silent walls", () => {
     db.saveAgentConfig({ name: "Loner", model: "x", spawnedBy: "Operator" });
     const held = hold("marina_pool add crew:answerer T1", "Loner");
     expect(held.token).toMatch(/^ch_/);
-    expect(held.message).toContain("Held for approval by Operator or an admin");
-    expect(held.message).toContain("no eligible approver is connected right now");
-    expect(held.message).toMatch(/stays open \d+ min and runs automatically if approved/);
+    expect(held.message).toContain("approver: Operator or an admin");
+    expect(held.message).toContain("none connected");
+    expect(held.message).toMatch(/open \d+ min, runs automatically if approved/);
     expect(held.message).toContain("expires without running");
-    expect(held.message).toContain("Continue with other work");
+    expect(held.message).toContain("Continue other work");
     // The same call again coalesces onto the open challenge instead of opening another.
     const again = hold("marina_pool add crew:answerer T1", "Loner");
     expect(again.token).toBe(held.token);
-    expect(again.message).toContain("Still waiting on an approver");
+    expect(again.message).toContain("still pending");
   });
 });
 

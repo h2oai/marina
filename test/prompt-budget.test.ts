@@ -301,7 +301,7 @@ describe("continuation prompt budget (adapter)", () => {
     });
     const prompt = await i.buildContinuationPrompt();
     expect(prompt).toContain("[!] [message] Coordinator tells you");
-    expect(prompt).toContain("End your `tell` reply with the exact tag [re:ab12cd]");
+    expect(prompt).toContain("End the reply with tag [re:ab12cd]");
   });
 
   it("clamps the Active Coding Task section", async () => {

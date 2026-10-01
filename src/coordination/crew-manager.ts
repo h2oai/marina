@@ -502,11 +502,10 @@ export class CrewManager {
         const text =
           shot === 0
             ? `[formation-mediator] No deliverable has been deposited yet. ` +
-              `${depositor ? `${depositor}: deposit your best current result NOW. ` : ""}` +
-              `Use what teammates posted on this channel — consolidation beats perfection.`
-            : `[formation-mediator] STILL no deliverable. EVERY member: if you have any result, ` +
-              `deposit it into the requested pool immediately — a good-enough deliverable now ` +
-              `beats a perfect one that never lands. Duplicates are acceptable at this point.`;
+              `${depositor ? `${depositor}: deposit` : "Deposit"} the best current result now, ` +
+              `consolidated from this channel.`
+            : `[formation-mediator] STILL no deliverable. Every member: deposit any result ` +
+              `into the requested pool now; duplicates accepted.`;
         // Defensive: stop() clears these timers, but an owner that tears the
         // DB down without stopping the manager must degrade to a warning, not
         // an unhandled "Database has closed" thrown from a timer.
@@ -573,8 +572,8 @@ export class CrewManager {
         crew.channelId,
         "__crew_manager__",
         "crew",
-        `[crew-deposit] ${agentName} → ${poolName} (already delivered — verify it, do not ` +
-          `write a competing version): ${snippet}`,
+        `[crew-deposit] ${agentName} → ${poolName} (delivered; verify, do not write a ` +
+          `competing version): ${snippet}`,
       );
     }
   }
