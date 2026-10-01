@@ -86,10 +86,12 @@ export interface DecisionRequest {
 
 /**
  * `marina/auto`: what happened to the second opinion — `used` (combined with
- * the primary), `timeout` / `failed` (the primary's answer stands), `outage`
- * (the primary failed; the fallback answered alone).
+ * the primary), `partial` (a composite reached its deadline: the members that
+ * had answered were combined with the primary), `timeout` / `failed` (the
+ * primary's answer stands), `outage` (the primary failed; the fallback
+ * answered alone).
  */
-export type SecondOpinion = "used" | "timeout" | "failed" | "outage";
+export type SecondOpinion = "used" | "partial" | "timeout" | "failed" | "outage";
 
 export interface DecisionResult {
   answers: Record<string, DecisionAnswer>;
@@ -104,6 +106,8 @@ export interface DecisionResult {
   method?: "logprobs" | "sampled" | "verbalized" | "ensemble" | "cascade";
   /** Composite engines: the models that actually answered. */
   members?: string[];
+  /** A composite cut short by its caller's abort: only `members` answered. */
+  partial?: boolean;
   /** Per-reply calibration when it differs from the provider's (a composite's answering members). */
   calibrated?: boolean;
   latencyMs: number;

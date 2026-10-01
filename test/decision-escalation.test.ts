@@ -8,6 +8,8 @@
 import { describe, expect, it } from "bun:test";
 import {
   autoEngine,
+  ENSEMBLE_ENGINE,
+  ensembleEngine,
   SECOND_OPINION_TIMEOUT_MS,
   secondOpinionTimeoutMs,
 } from "../src/decisions/engines";
@@ -157,6 +159,82 @@ describe("the second-opinion deadline", () => {
     // Aborted ⇒ the second opinion failed ⇒ the primary's answer stands.
     expect(r.secondOpinion).toBe("failed");
     expect(slow.calls[0]!.signal?.aborted).toBe(true);
+  });
+});
+
+describe("an ensemble second opinion at the deadline", () => {
+  const Q = { urgent: noul("Is this urgent?") };
+
+  it("combines the members that answered and aborts the stragglers", async () => {
+    const jev = backend("jev", { urgent: 0.45 });
+    const fast = backend("fast", { urgent: 0.9 });
+    const slow = backend("slow", { urgent: 0.1 }, { delayMs: 5_000 });
+    const started = performance.now();
+    const r = await autoEngine(
+      jev.provider,
+      ensembleEngine([fast.provider, slow.provider]),
+      30,
+    ).ask({ state: "s", questions: Q });
+    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(r).toMatchObject({ escalated: true, secondOpinion: "partial" });
+    // The fast member's answer is combined with Jev's; the slow one never counted.
+    expect((r.answers.urgent as { noul: number }).noul).toBeGreaterThan(0.45);
+    expect(r.members).toEqual(["jev", ENSEMBLE_ENGINE]);
+    expect(slow.calls[0]!.signal?.aborted).toBe(true);
+  });
+
+  it("no member answered by the deadline ⇒ timeout, the primary stands", async () => {
+    const jev = backend("jev", { urgent: 0.45 });
+    const a = backend("a", { urgent: 0.9 }, { delayMs: 5_000 });
+    const b = backend("b", { urgent: 0.9 }, { delayMs: 5_000 });
+    const r = await autoEngine(jev.provider, ensembleEngine([a.provider, b.provider]), 30).ask({
+      state: "s",
+      questions: Q,
+    });
+    expect(r).toMatchObject({ escalated: true, secondOpinion: "timeout" });
+    expect((r.answers.urgent as { noul: number }).noul).toBe(0.45);
+    expect(r.members).toEqual(["jev"]);
+  });
+
+  it("every member in time ⇒ used, never partial", async () => {
+    const jev = backend("jev", { urgent: 0.45 });
+    const a = backend("a", { urgent: 0.9 }, { delayMs: 10 });
+    const b = backend("b", { urgent: 0.8 });
+    const r = await autoEngine(jev.provider, ensembleEngine([a.provider, b.provider]), 1_000).ask({
+      state: "s",
+      questions: Q,
+    });
+    expect(r.secondOpinion).toBe("used");
+  });
+
+  it("the ensemble alone: an abort with answers returns them as partial; with none it throws", async () => {
+    const fast = backend("fast", { urgent: 0.9 });
+    const slow = backend("slow", { urgent: 0.1 }, { delayMs: 5_000 });
+    const controller = new AbortController();
+    const pending = ensembleEngine([fast.provider, slow.provider]).ask(
+      { state: "s", questions: Q },
+      controller.signal,
+    );
+    setTimeout(() => controller.abort(), 20);
+    const r = await pending;
+    expect(r.partial).toBe(true);
+    expect(r.members).toEqual(["fast"]);
+
+    const none = new AbortController();
+    const both = ensembleEngine([
+      backend("x", { urgent: 0.9 }, { delayMs: 5_000 }).provider,
+      backend("y", { urgent: 0.9 }, { delayMs: 5_000 }).provider,
+    ]).ask({ state: "s", questions: Q }, none.signal);
+    setTimeout(() => none.abort(new Error("deadline")), 20);
+    await expect(both).rejects.toThrow("deadline");
+  });
+
+  it("without an abort the ensemble waits for every member (no partial)", async () => {
+    const a = backend("a", { urgent: 0.9 }, { delayMs: 20 });
+    const b = backend("b", { urgent: 0.7 });
+    const r = await ensembleEngine([a.provider, b.provider]).ask({ state: "s", questions: Q });
+    expect(r.partial).toBeUndefined();
+    expect(r.members).toEqual(["a", "b"]);
   });
 });
 
