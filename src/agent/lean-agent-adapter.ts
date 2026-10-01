@@ -133,7 +133,14 @@ import {
 import { COMPACTION_SYSTEM_PROMPT, formatUntrustedContext } from "./prompts/support-prompts";
 import { defaultModelPrice, isUnpricedModel, sniffProviderCost } from "./provider-cost";
 import { SocialAwareness } from "./social";
-import { isAdditiveDeposit, mediateToolCall, POLICY_LANGUAGE_LABEL } from "./tool-policy";
+import {
+  type GatedRisk,
+  gateScopedArgs,
+  isAdditiveDeposit,
+  isGatedRisk,
+  mediateToolCall,
+  POLICY_LANGUAGE_LABEL,
+} from "./tool-policy";
 import {
   agentToolExecutionMode,
   applyToolExecutionModes,
@@ -1616,7 +1623,7 @@ export class LeanAgentAdapter implements AgentHandle {
         // Decision gate (opt-in, MARINA_DECISION_GATE=on): after the
         // deterministic monitor, score calls that change things. Reads and
         // messages never leave the process for scoring.
-        if (policy.risk === "mutate" || policy.risk === "consequential") {
+        if (isGatedRisk(policy.risk)) {
           const tool = context.context.tools?.find((t) => t.name === context.toolCall.name);
           const held = await this.decisionGate(
             context.toolCall.name,
@@ -1692,7 +1699,7 @@ export class LeanAgentAdapter implements AgentHandle {
   private async decisionGate(
     toolName: string,
     args: Record<string, unknown>,
-    risk: "mutate" | "consequential",
+    risk: GatedRisk,
     description?: string,
     rerun?: () => Promise<string>,
   ): Promise<string | undefined> {
@@ -1712,7 +1719,9 @@ export class LeanAgentAdapter implements AgentHandle {
             sources: [...this.currentTrustSources],
           }
         : undefined;
-    const decision = await gateToolCall(provider, toolName, args, undefined, description, intent, {
+    // A batch is scored on its gated parts only; the risk is the worst part's.
+    const call = gateScopedArgs(toolName, args);
+    const decision = await gateToolCall(provider, toolName, call, undefined, description, intent, {
       risk,
     });
     this.emitEvent({

@@ -4,6 +4,8 @@
 import { describe, expect, it } from "bun:test";
 import {
   classifyToolRisk,
+  commandParts,
+  gateScopedArgs,
   isAdditiveDeposit,
   mediateToolCall,
   POLICY_LANGUAGE_LABEL,
@@ -61,6 +63,10 @@ describe("agent tool reference monitor", () => {
       "memory set focus_persistent true",
       "memory delete rest",
       "memory rm rest",
+      "memory kv delete pace.",
+      // v4 sweep: the router does not split a plain command, so this deletes
+      // only the caller's own `rest;` key and `project hab join` never runs.
+      "memory delete rest; project hab join",
     ]) {
       expect([command, classifyToolRisk("marina_command", { command })]).toEqual([command, "self"]);
     }
@@ -79,8 +85,10 @@ describe("agent tool reference monitor", () => {
       "memory set goal something else",
       "memory delete goal",
       "memory clear",
-      "memory delete rest; project hab join",
+      "memory delete goal; memory delete rest",
       "memory set rest",
+      "web post https://x.test body",
+      "web",
       "benchmark run smoke --limit 15",
       "channel join model-answerer",
       "frobnicate everything",
@@ -112,6 +120,70 @@ describe("agent tool reference monitor", () => {
     expect(batched.block).toBeUndefined();
   });
 
+  it("splits a command string only where the router does", () => {
+    // Only `batch` splits its body; every other command reaches its handler whole.
+    expect(commandParts("memory delete rest; project hab join")).toEqual([
+      "memory delete rest; project hab join",
+    ]);
+    expect(commandParts("calc 83 % 2; 83 % 3")).toEqual(["calc 83 % 2; 83 % 3"]);
+    expect(commandParts("batch memory delete rest; project hab join; crew info answerer")).toEqual([
+      "memory delete rest",
+      "project hab join",
+      "crew info answerer",
+    ]);
+    expect(commandParts("batch")).toEqual([]);
+    expect(commandParts("batchelor x")).toEqual(["batchelor x"]);
+  });
+
+  it("classifies each batch part; the worst part is the batch's risk", () => {
+    // v4 sweep: self + mutate + read.
+    const commands = "memory delete rest; project hab join; crew info answerer";
+    expect(classifyToolRisk("marina_batch", { commands })).toBe("mutate");
+    expect(classifyToolRisk("marina_command", { command: `batch ${commands}` })).toBe("mutate");
+    expect(classifyToolRisk("marina_batch", { commands: "memory delete rest; look" })).toBe("self");
+    expect(classifyToolRisk("marina_batch", { commands: "look; web search x" })).toBe("egress");
+  });
+
+  it("sends the gate only a batch's gated parts", () => {
+    const commands = "memory delete rest; project hab join; crew info answerer";
+    expect(gateScopedArgs("marina_batch", { commands })).toEqual({ commands: "project hab join" });
+    expect(gateScopedArgs("marina_command", { command: `batch ${commands}` })).toEqual({
+      command: "batch project hab join",
+    });
+    // Egress and consequential parts are scored too; read and self parts are not.
+    expect(
+      gateScopedArgs("marina_batch", {
+        commands: "look; web fetch https://x.test; memory set pace slow; admin stats",
+      }),
+    ).toEqual({ commands: "web fetch https://x.test; admin stats" });
+    // Nothing to narrow: the call is scored as it is.
+    const whole = { commands: "task create a | b; project hab join" };
+    expect(gateScopedArgs("marina_batch", whole)).toBe(whole);
+    const plain = { command: "memory delete rest; project hab join" };
+    expect(gateScopedArgs("marina_command", plain)).toBe(plain);
+    const typed = { action: "create", args: "a; b" };
+    expect(gateScopedArgs("marina_task", typed)).toBe(typed);
+  });
+
+  it("classifies outbound web reads as egress, never as a write", () => {
+    for (const command of [
+      "web fetch https://github.com/h2oai/marina/blob/main/docs/guides/civic-substrate.md",
+      'web search Marina "posture" "civic-substrate" project glossary',
+      'web search site:github.com/h2oai/marina "posture"',
+      'web search Marina "autonomy posture"',
+      "web read example.com",
+      "web multisearch a | b",
+      "WEB SEARCH x",
+    ]) {
+      expect([command, classifyToolRisk("marina_command", { command })]).toEqual([
+        command,
+        "egress",
+      ]);
+    }
+    expect(classifyToolRisk("marina_web", { action: "search", query: "x" })).toBe("egress");
+    expect(classifyToolRisk("marina_web", { action: "post", query: "x" })).toBe("mutate");
+  });
+
   it("classifies typed wrappers by the command they send", () => {
     expect(classifyToolRisk("marina_pool", { action: "recall", pool: "guide", content: "x" })).toBe(
       "read",
@@ -129,9 +201,9 @@ describe("agent tool reference monitor", () => {
     expect(classifyToolRisk("memory", { action: "search", query: "x" })).toBe("read");
     expect(classifyToolRisk("memory", { action: "write", content: "x" })).toBe("mutate");
     expect(classifyToolRisk("marina_examine", { target: "lamp" })).toBe("read");
-    // A fetch leaves the process with agent-chosen arguments: still gated.
+    // A fetch leaves the process with agent-chosen arguments: egress, still gated.
     expect(classifyToolRisk("marina_web", { action: "fetch", url: "https://x.test" })).toBe(
-      "mutate",
+      "egress",
     );
     // Tools outside Marina stay gated.
     expect(classifyToolRisk("github_create_issue", { title: "x" })).toBe("mutate");
@@ -163,6 +235,9 @@ describe("agent tool reference monitor", () => {
       ["marina_market", { action: "leaderboard" }],
       ["marina_market", { action: "position", args: "open X" }],
       ["marina_batch", { commands: "look; calc 1" }],
+      ["marina_web", { action: "fetch", url: "https://x.test" }],
+      ["marina_web", { action: "search", query: "autonomy posture" }],
+      ["marina_web", { action: "multisearch", query: "a | b" }],
       ["marina_focus", { action: "show" }],
       ["marina_goal", { action: "show" }],
     ];

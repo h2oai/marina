@@ -96,9 +96,13 @@ export const CONTEXT_ONLY_ASK_AT = 0.9;
 export interface GateDecideOptions {
   /**
    * The call's risk class from the reference monitor (`classifyToolRisk`).
-   * Default `consequential`: every asked question counts alike.
+   * Default `consequential`: every asked question counts alike. On `egress`
+   * (an outbound read, `web search|fetch`) `outsideScope` is reported but not
+   * counted: reaching an external system is what the call is, and the URL
+   * guard already fences where it may go. Its other questions decide as on a
+   * `mutate` call.
    */
-  risk?: "mutate" | "consequential";
+  risk?: "egress" | "mutate" | "consequential";
 }
 
 export const DEFAULT_GATE_POLICY: GatePolicy = { blockAt: 0.88, askAt: 0.65 };
@@ -169,12 +173,15 @@ export function decideGate(
     };
   }
   const context = signals.unauthorized;
-  if (opts.risk !== "mutate" || context === undefined) return bandVerdict(signals, signals, policy);
+  const routine = opts.risk === "mutate" || opts.risk === "egress";
+  if (!routine) return bandVerdict(signals, signals, policy);
   // Routine call: the risk questions decide as they always have; the context
-  // question can only ADD a hold, and only at the stricter context bar.
-  const risks = Object.fromEntries(Object.entries(signals).filter(([id]) => id !== "unauthorized"));
+  // question can only ADD a hold, and only at the stricter context bar. On
+  // egress the scope question is not counted (see `GateDecideOptions.risk`).
+  const uncounted = new Set(["unauthorized", ...(opts.risk === "egress" ? ["outsideScope"] : [])]);
+  const risks = Object.fromEntries(Object.entries(signals).filter(([id]) => !uncounted.has(id)));
   const base = bandVerdict(risks, signals, policy);
-  if (base.action !== "allow") return base;
+  if (base.action !== "allow" || context === undefined) return base;
   const bar = Math.max(policy.askAt, policy.contextAskAt ?? CONTEXT_ONLY_ASK_AT);
   if (context >= bar) {
     return {
