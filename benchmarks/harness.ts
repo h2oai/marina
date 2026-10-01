@@ -36,6 +36,7 @@ import {
 } from "./download";
 import { runRetentionTask, runRetentionTaskPassthrough } from "./modes/memory";
 import { inPartition, parsePartition } from "./partition";
+import { resultForDisk } from "./result-file";
 import { computeAccuracy, computeJudgeScore } from "./scoring/accuracy";
 import { computePassAtK } from "./scoring/pass-at-k";
 import type {
@@ -254,6 +255,7 @@ function parseCliArgs() {
       concurrency: { type: "string", short: "c", default: "5" },
       seed: { type: "string", short: "s" },
       partition: { type: "string" },
+      timeout: { type: "string" },
       compare: { type: "string" },
       list: { type: "boolean" },
       results: { type: "boolean" },
@@ -279,6 +281,7 @@ function parseCliArgs() {
     concurrency: str("concurrency"),
     seed: str("seed"),
     partition: str("partition"),
+    timeout: str("timeout"),
     compare: str("compare"),
     list: values.list === true,
     results: values.results === true,
@@ -389,7 +392,7 @@ function saveResult(result: BenchmarkResult): string {
   else if (!existsSync(RESULTS_DIR)) mkdirSync(RESULTS_DIR, { recursive: true });
   const filename = `${result.config.dataset}-${result.config.mode}-${result.timestamp}.json`;
   const path = explicit ?? join(RESULTS_DIR, filename);
-  writeFileSync(path, JSON.stringify(result, null, 2));
+  writeFileSync(path, JSON.stringify(resultForDisk(result), null, 2));
   return path;
 }
 
@@ -575,6 +578,15 @@ async function runRetention(items: DatasetItem[], config: BenchmarkConfig): Prom
 
 async function main(): Promise<void> {
   const args = parseCliArgs();
+  // Every adapter reads the per-request bound through `defaultTimeoutMs()`.
+  if (args.timeout !== undefined) {
+    const ms = Number.parseInt(args.timeout, 10);
+    if (!Number.isFinite(ms) || ms <= 0) {
+      console.error(`--timeout must be a positive number of milliseconds, got "${args.timeout}"`);
+      process.exit(2);
+    }
+    process.env.HARNESS_TIMEOUT_MS = String(ms);
+  }
 
   if (args.help) {
     console.log(`
@@ -601,6 +613,7 @@ Options:
       --judge-endpoint <url> Judge endpoint (default: --endpoint)
   -c, --concurrency <n>     Parallel requests (default: 5)
   -s, --seed <n>            Random seed for subset selection
+      --timeout <ms>        Per-request timeout (default: HARNESS_TIMEOUT_MS, else 600000)
       --compare <mode>      Run comparison (e.g., --compare passthrough)
       --list                List available benchmarks
       --results             Show past results

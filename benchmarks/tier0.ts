@@ -49,10 +49,21 @@ export interface Tier0Target {
   label: string;
   /** Judge model when `--judge-model` is not given (else the harness uses the target). */
   defaultJudgeModel?: string;
+  /** Per-request timeout when `--timeout` is not given (else the harness default). */
+  defaultTimeoutMs?: number;
 }
 
 /** The judge for `marina:<crew>` targets — the same model for every crew compared. */
 export const MARINA_DEFAULT_JUDGE_MODEL = "marina/default";
+
+/**
+ * Per-request timeout for `marina:<crew>` targets. A crew deliberating on a
+ * hard item legitimately takes minutes; a client that gives up first scores
+ * an answer that was still on its way as wrong. The server bounds the same
+ * request with its own MODEL_REQUEST_TIMEOUT_MS (600 s by default): raise that
+ * too when a crew needs more than ten minutes.
+ */
+export const MARINA_TARGET_TIMEOUT_MS = 900_000;
 
 const safeLabel = (s: string) => s.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 80);
 
@@ -75,6 +86,7 @@ export function resolveTier0Target(
       label: safeLabel(endpoint),
       // A crew never grades itself: judge with the server's default model.
       defaultJudgeModel: MARINA_DEFAULT_JUDGE_MODEL,
+      defaultTimeoutMs: MARINA_TARGET_TIMEOUT_MS,
     };
   }
   if (endpoint.startsWith("openrouter/")) {
@@ -122,7 +134,13 @@ export function tier0Sets(
 export function tier0HarnessArgs(
   set: Tier0Set,
   target: Tier0Target,
-  opts: { seed: number; concurrency: number; judgeModel?: string; judgeEndpoint?: string },
+  opts: {
+    seed: number;
+    concurrency: number;
+    judgeModel?: string;
+    judgeEndpoint?: string;
+    timeoutMs?: number;
+  },
 ): string[] {
   const args = [
     "run",
@@ -145,6 +163,8 @@ export function tier0HarnessArgs(
   const judgeModel = opts.judgeModel ?? target.defaultJudgeModel;
   if (judgeModel) args.push("--judge-model", judgeModel);
   if (opts.judgeEndpoint) args.push("--judge-endpoint", opts.judgeEndpoint);
+  const timeoutMs = opts.timeoutMs ?? target.defaultTimeoutMs;
+  if (timeoutMs) args.push("--timeout", String(timeoutMs));
   return args;
 }
 
@@ -241,13 +261,14 @@ async function main(): Promise<void> {
       hle: { type: "string" },
       gpqa: { type: "string" },
       frames: { type: "string" },
+      timeout: { type: "string" },
       "out-dir": { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });
   if (values.help || !values.endpoint) {
     console.log(
-      "usage: bun run bench:tier0 --endpoint <marina:<crew> | openrouter/<vendor>/<model> | URL> [--model id] [--base url] [--seed 42] [--concurrency 5] [--hle 40] [--gpqa 40] [--frames 20] [--judge-model id] [--judge-endpoint url] [--out-dir dir]",
+      "usage: bun run bench:tier0 --endpoint <marina:<crew> | openrouter/<vendor>/<model> | URL> [--model id] [--base url] [--seed 42] [--concurrency 5] [--hle 40] [--gpqa 40] [--frames 20] [--judge-model id] [--judge-endpoint url] [--timeout ms] [--out-dir dir]",
     );
     process.exit(values.help ? 0 : 1);
   }
@@ -284,6 +305,7 @@ async function main(): Promise<void> {
           concurrency,
           judgeModel: values["judge-model"],
           judgeEndpoint: values["judge-endpoint"],
+          timeoutMs: int(values.timeout),
         }),
       ],
       { env, stdout: "inherit", stderr: "pipe" },

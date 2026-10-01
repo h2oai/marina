@@ -14,12 +14,14 @@ import {
 import { extractLetter, shuffleChoices } from "../benchmarks/adapters/multiple-choice";
 import { compareRuns, formatCompareReport } from "../benchmarks/compare";
 import { hleGoldTextItems } from "../benchmarks/download";
-import { usageFromResponse } from "../benchmarks/modes/passthrough";
+import { defaultTimeoutMs, usageFromResponse } from "../benchmarks/modes/passthrough";
+import { resultForDisk } from "../benchmarks/result-file";
 import { parseEquivalenceVerdict } from "../benchmarks/scoring/judge";
 import { mcnemarExact, pairedBootstrap, wilsonInterval } from "../benchmarks/stats";
 import {
   failureReason,
   formatTier0Summary,
+  MARINA_TARGET_TIMEOUT_MS,
   resolveTier0Target,
   summarizeSet,
   tier0HarnessArgs,
@@ -397,6 +399,69 @@ describe("tier0 preset", () => {
     expect(args.join(" ")).not.toContain("secret-key");
     expect(args).toContain("--seed");
     expect(args[args.indexOf("--judge-model") + 1]).toBe("marina/default");
+  });
+
+  it("gives crews a generous per-request timeout and lets --timeout override it", () => {
+    const set = { benchmark: "hle-verified-gold", limit: 40 };
+    const crew = resolveTier0Target("marina:answerer", {}, {});
+    const crewArgs = tier0HarnessArgs(set, crew, { seed: 42, concurrency: 2 });
+    expect(crewArgs[crewArgs.indexOf("--timeout") + 1]).toBe(String(MARINA_TARGET_TIMEOUT_MS));
+    const custom = tier0HarnessArgs(set, crew, { seed: 42, concurrency: 2, timeoutMs: 1200000 });
+    expect(custom[custom.indexOf("--timeout") + 1]).toBe("1200000");
+    // A direct model keeps the harness default unless asked.
+    const direct = resolveTier0Target("openrouter/openai/gpt-6.1-sol", {}, {});
+    expect(tier0HarnessArgs(set, direct, { seed: 42, concurrency: 2 })).not.toContain("--timeout");
+  });
+
+  it("never writes the endpoint key into a saved result", () => {
+    const secret = "test-endpoint-credential";
+    const result = {
+      config: {
+        name: "HLE",
+        dataset: "hle-verified-gold",
+        adapter: "hle",
+        scoring: "judge",
+        mode: "passthrough",
+        model: "openrouter/openai/gpt-6.1-sol",
+        endpoint: "http://localhost:3300",
+        apiKey: secret,
+        concurrency: 2,
+        judge: {
+          model: "openrouter/openai/gpt-6.1-sol",
+          endpoint: "http://localhost:3300",
+          apiKey: secret,
+        },
+      },
+      timestamp: 1,
+      duration_ms: 1,
+      scores: { overall: 0 },
+      metadata: { total: 0, answered: 0, timeouts: 0, errors: 0, avgLatencyMs: 0 },
+      items: [],
+    } as unknown as BenchmarkResult;
+    const onDisk = JSON.stringify(resultForDisk(result));
+    expect(onDisk).not.toContain(secret);
+    expect(onDisk).not.toContain("apiKey");
+    // Everything else survives, and the in-memory result is untouched.
+    expect(resultForDisk(result).config.judge).toEqual({
+      model: "openrouter/openai/gpt-6.1-sol",
+      endpoint: "http://localhost:3300",
+    });
+    expect(result.config.apiKey).toBe(secret);
+  });
+
+  it("reads the per-request timeout at call time", () => {
+    const prev = process.env.HARNESS_TIMEOUT_MS;
+    try {
+      delete process.env.HARNESS_TIMEOUT_MS;
+      expect(defaultTimeoutMs()).toBe(600_000);
+      process.env.HARNESS_TIMEOUT_MS = "900000";
+      expect(defaultTimeoutMs()).toBe(900_000);
+      process.env.HARNESS_TIMEOUT_MS = "junk";
+      expect(defaultTimeoutMs()).toBe(600_000);
+    } finally {
+      if (prev === undefined) delete process.env.HARNESS_TIMEOUT_MS;
+      else process.env.HARNESS_TIMEOUT_MS = prev;
+    }
   });
 
   it("reports the thrown message of a failed child, not its stack", () => {

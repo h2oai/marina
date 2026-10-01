@@ -39,7 +39,12 @@ import {
   safeClose,
   unsupportedParam,
 } from "./shared";
-import { describeDefaultUpstream, proxyToUpstream } from "./upstream";
+import {
+  describeDefaultUpstream,
+  explicitUpstreamModel,
+  passthruForceModel,
+  proxyToUpstream,
+} from "./upstream";
 
 // --- Request validation ---
 
@@ -319,13 +324,14 @@ async function runOllamaPassthru(
       : {}),
   };
 
-  const cached = await passthruCacheLookup(engine, prep, body, ec.passthruModel);
+  const forceModel = passthruForceModel(engine, ec, body.model);
+  const cached = await passthruCacheLookup(engine, prep, body, forceModel);
   const resp =
     cached ??
     (await proxyToUpstream(
       engine,
       body,
-      ec.passthruModel || undefined,
+      forceModel || undefined,
       passthruTraceOptions(prep),
       // `/api/generate` folds the addendum into ONE system string — no separate tail.
       isChat
@@ -335,7 +341,7 @@ async function runOllamaPassthru(
   if (!resp.ok) return resp;
   if (!cached && prep.identity?.contextOptIn) {
     void capturePassthruResponse(engine, prep.identity.entityId, inbound, resp);
-    passthruCacheStore(engine, prep, body, ec.passthruModel, resp);
+    passthruCacheStore(engine, prep, body, forceModel, resp);
   }
   const text = await extractResponseText(resp.clone());
   const headers = forwardPassthruHeaders(resp.headers, { ...MODEL_CORS });
@@ -381,7 +387,11 @@ export async function handleOllamaChat(
     const userMsg = [...messages].reverse().find((m: { role: string }) => m.role === "user");
     if (!userMsg) return errorJson(400, "No user message found");
 
-    if (getEndpointConfig(engine.db).mode === "passthru" || isInternalCaller(authResult)) {
+    if (
+      getEndpointConfig(engine.db).mode === "passthru" ||
+      isInternalCaller(authResult) ||
+      explicitUpstreamModel(engine, model)
+    ) {
       return await runOllamaPassthru(engine, req, authResult, {
         kind: "chat",
         model,
@@ -448,7 +458,11 @@ export async function handleOllamaGenerate(
     const prompt = body.prompt;
     if (!prompt) return errorJson(400, "No prompt provided");
 
-    if (getEndpointConfig(engine.db).mode === "passthru" || isInternalCaller(authResult)) {
+    if (
+      getEndpointConfig(engine.db).mode === "passthru" ||
+      isInternalCaller(authResult) ||
+      explicitUpstreamModel(engine, model)
+    ) {
       return await runOllamaPassthru(engine, req, authResult, {
         kind: "generate",
         model,

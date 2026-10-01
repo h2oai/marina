@@ -114,10 +114,11 @@ export const PROCESS_TIER_QUOTA = 500;
 
 /** Bun.serve idleTimeout (seconds). Applies to BOTH WebSocket and HTTP
  *  keepalive. Bun caps this at 255s — anything above throws at boot
- *  (`Bun.serve expects idleTimeout to be 255 or less`). For long-running
- *  benchmark dispatch the harness must keep the connection live by
- *  streaming or chunked progress; HTTP requests that idle more than
- *  255s WILL be closed regardless of MODEL_REQUEST_TIMEOUT_MS. */
+ *  (`Bun.serve expects idleTimeout to be 255 or less`). Model-API POSTs
+ *  lift it per request to MODEL_REQUEST_TIMEOUT_MS (+ margin) via
+ *  `server.timeout` (`modelRequestIdleSeconds`), so a routed request that
+ *  takes longer than 255s is still answered; every other HTTP request that
+ *  idles past 255s is closed. */
 export const WS_IDLE_TIMEOUT_SECONDS = 255;
 
 /** Max WebSocket connections per IP address (env-overridable for multi-agent
