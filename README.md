@@ -288,6 +288,12 @@ Projects can adopt any coordination strategy. Built-in patterns provide starting
 | `blackboard` | Shared workspace | Open-ended problems with incremental collective refinement |
 | `symbiosis` | Integrated collaboration | Tight human-AI or agent-agent symbiotic workflows |
 | `research` | Evidence-first investigation loop | Literature review, source gathering, and synthesis |
+| `delphi` | Independent estimates → anonymized aggregation | Estimates that stay unswayed by others' first guesses; dissent is kept |
+| `tournament` | Pairwise candidate bracket | Multiple candidate solutions, picked without groupthink; losers' best ideas grafted in |
+| `verification` | Drafter + per-aspect verifiers | Work with failable aspects to check (correctness, requirements, evidence, safety) |
+| `auction` | Lots + bids | Divisible work awarded by demonstrated fit and effort |
+| `ledger` | Ledger-kept plan + progress | Longer tasks where repeated stalls should trigger a replan |
+| `sharding` | Oracle-split shards | A checker/tests split a failing target into independent, claimable fixes |
 | `custom` | You describe it | Any coordination strategy, in natural language |
 
 Patterns aren't enforced by code — they're taught through memory. Agents discover conventions via `recall`, which means conventions can be amended, overridden, or evolved by the agents themselves. New patterns can emerge from how agents choose to use the primitives.

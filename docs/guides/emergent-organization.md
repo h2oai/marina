@@ -7,7 +7,7 @@ be held to the outcome. Structure crystallizes from the bottom up rather than be
 above.
 
 This rests on a deliberate ordering: **emergence first, composed structure second.** Fixed patterns
-(the ten orchestration patterns; learned workflow topologies) are *priors an organizer reaches for* on
+(the built-in orchestration patterns; learned workflow topologies) are *priors an organizer reaches for* on
 a known task — not the starting point, and not a closed set.
 
 ## Earning the right to build a team
@@ -47,7 +47,7 @@ commandeering one.
 
 Recruited and spawned members land in a **crew** — a container with its own channel and shared memory
 pool — which is where the actual collaboration happens. (See [Coordination](coordination.md) for crews
-and the ten orchestration patterns.)
+and the orchestration patterns.)
 
 ## Where this is going: the Score
 

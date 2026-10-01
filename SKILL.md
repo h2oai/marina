@@ -434,6 +434,12 @@ project Research orchestrate mapreduce   MapReduce: parallel decomposition and s
 project Research orchestrate blackboard  Blackboard: shared workspace, incremental refinement
 project Research orchestrate symbiosis  Symbiosis: mutual epistemic benefit, frontier scanning
 project Research orchestrate research  Research: autonomous iterative experimentation
+project Research orchestrate delphi     Delphi: private estimates → anonymized summary, one revision
+project Research orchestrate tournament Tournament: pairwise candidate bracket, non-author judges
+project Research orchestrate verification Verification: one verifier per aspect (correctness, requirements, evidence, safety)
+project Research orchestrate auction    Auction: lots posted, members bid fit + effort
+project Research orchestrate ledger     Ledger: plan + progress ledger, replan on repeated stalls
+project Research orchestrate sharding   Sharding: oracle splits the failing target into claimable shards
 project Research orchestrate custom Our own process described here
 ```
 
@@ -451,6 +457,12 @@ Each pattern seeds the project pool with conventions that team members discover 
 | blackboard | Open-ended problems with incremental collective refinement |
 | symbiosis | Mutual benefit through frontier scanning and epistemic profiling |
 | research | Autonomous iterative experimentation — hypothesize, act, measure, record, repeat |
+| delphi | Independent estimates aggregated anonymously; dissent kept |
+| tournament | Pairwise candidates; non-author judges pick the strongest |
+| verification | Drafter + per-aspect verifiers (correctness, requirements, evidence, safety) |
+| auction | Divisible lots awarded by fit and effort |
+| ledger | Plan + progress ledger; replan after repeated stalls |
+| sharding | A checker/tests split the target into claimable shards |
 
 ### Memory Architecture
 
