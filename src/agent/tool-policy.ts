@@ -2,15 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Tool-call risk, ordered: `read` < `self` < `communicate` < `mutate` <
- * `consequential`. The decision gate scores only `mutate` and `consequential`
- * calls; everything else runs without a gate call.
+ * Tool-call risk, ordered: `read` < `self` < `communicate` < `egress` <
+ * `mutate` < `consequential`. The decision gate scores only `egress`,
+ * `mutate` and `consequential` calls; everything else runs without a gate call.
  *
  * - `read` — observes the world, memory or a workspace and changes nothing.
  * - `self` — changes only the caller's OWN loop instruments (`memory set
  *   pace|rest|channel_sends|focus_persistent|autonomy …`, `memory delete
  *   rest`): nobody else can see or be affected by them.
  * - `communicate` — a message.
+ * - `egress` — an outbound read (`web search|fetch|read|multisearch`). It
+ *   changes nothing in the world, and the URL guard (`src/net/url-guard.ts`)
+ *   already fences WHERE it can go. It leaves the process with arguments the
+ *   agent chose, so it is still gated. But reaching an external system is what
+ *   egress is, so the gate does not count `outsideScope` on it (see
+ *   `decideGate`).
  * - `mutate` — anything else, and anything unknown or ambiguous (fails closed).
  * - `consequential` — changes authority, identity, federation or destroys.
  *
@@ -21,9 +27,23 @@
  * no form a command declares `write` / `delete` / `execute` is classified as a
  * read here, so the list can only err towards the gate.
  */
-export type ToolRisk = "read" | "self" | "communicate" | "mutate" | "consequential";
+export type ToolRisk = "read" | "self" | "communicate" | "egress" | "mutate" | "consequential";
 
-const RISK_ORDER: readonly ToolRisk[] = ["read", "self", "communicate", "mutate", "consequential"];
+/** The risk classes the decision gate scores. */
+export type GatedRisk = "egress" | "mutate" | "consequential";
+
+const RISK_ORDER: readonly ToolRisk[] = [
+  "read",
+  "self",
+  "communicate",
+  "egress",
+  "mutate",
+  "consequential",
+];
+
+export function isGatedRisk(risk: ToolRisk): risk is GatedRisk {
+  return risk === "egress" || risk === "mutate" || risk === "consequential";
+}
 
 function worstRisk(risks: readonly ToolRisk[]): ToolRisk {
   let worst: ToolRisk = "read";
@@ -44,7 +64,8 @@ export const POLICY_LANGUAGE_LABEL = "[policy-language noted]";
 
 /**
  * Typed tools that only observe. `marina_web` is deliberately absent: a fetch
- * leaves the process with arguments the agent chose, so it stays gated.
+ * leaves the process with arguments the agent chose, so it is `egress`, which
+ * is still gated.
  * Every name here is also in `READ_ONLY_TOOL_NAMES` (tools/profiles.ts).
  */
 export const READ_TOOL_NAMES: ReadonlySet<string> = new Set([
@@ -111,6 +132,17 @@ const SELF_LOOP_KEYS: ReadonlySet<string> = new Set([
   "focus_persistent",
   "autonomy",
 ]);
+
+/** `web` subcommands that only read from outside (all go through the URL guard). */
+const EGRESS_WEB_SUBCOMMANDS: ReadonlySet<string> = new Set([
+  "search",
+  "fetch",
+  "read",
+  "multisearch",
+]);
+
+/** A key as the agent meant it: `rest;` and `rest,` are `rest`. */
+const normalizeKey = (key: string) => key.replace(/[;,.:!?]+$/, "").toLowerCase();
 
 /** Commands whose every form only reads. Aliases included. */
 const READ_VERBS: ReadonlySet<string> = new Set([
@@ -220,29 +252,50 @@ function classifyMemoryCommand(words: string[]): ToolRisk {
   if (!verb) return "read"; // bare `memory` / `memory kv` lists
   if (has(["list", "ls", "get", "history"], verb)) return "read";
   if (!kv && has(READ_MEMORY_VERBS, verb)) return "read";
-  const loopKey = !!key && SELF_LOOP_KEYS.has(key.toLowerCase());
+  const loopKey = !!key && SELF_LOOP_KEYS.has(normalizeKey(key));
   if (verb === "set" && loopKey && rest.length > 0) return "self";
-  if (has(["delete", "rm", "remove"], verb) && loopKey && rest.length === 0) return "self";
+  // The router deletes only the first token after the verb (`keyOf` in
+  // commands/memory.ts) and ignores the rest, so trailing text never runs.
+  // A plain command is not split on `;` (only `batch` and macros split), so
+  // `memory delete rest; project hab join` deletes the caller's own key and
+  // nothing else.
+  if (has(["delete", "rm", "remove"], verb) && loopKey) return "self";
   return "mutate";
+}
+
+/**
+ * The commands a raw command string runs, split as the router splits it:
+ * `batch` (like a macro) splits its body on `;`. Every other command is ONE
+ * command whatever it contains: `calc 1; 2` and `memory set rest a; b` reach
+ * their handlers whole.
+ */
+export function commandParts(raw: string): string[] {
+  const command = raw.trim();
+  const match = /^batch(?:\s+|$)/i.exec(command);
+  if (!match) return command ? [command] : [];
+  return command
+    .slice(match[0].length)
+    .split(";")
+    .map((p) => p.trim())
+    .filter(Boolean);
 }
 
 /** Risk of ONE raw world command (the whole string is one command; only `batch` splits). */
 export function classifyCommandRisk(raw: string): ToolRisk {
   const command = raw.trim();
   if (!command) return "mutate";
+  if (/^batch(\s|$)/i.test(command)) {
+    const parts = commandParts(command);
+    return parts.length ? worstRisk(parts.map(classifyCommandRisk)) : "mutate";
+  }
   if (CONSEQUENTIAL_COMMAND.test(command)) return "consequential";
   const words = command.split(/\s+/);
   const verb = words[0]!.toLowerCase();
   const tail = words.slice(1);
-  if (verb === "batch") {
-    const parts = tail
-      .join(" ")
-      .split(";")
-      .map((p) => p.trim())
-      .filter(Boolean);
-    return parts.length ? worstRisk(parts.map(classifyCommandRisk)) : "mutate";
-  }
   if (READ_VERBS.has(verb)) return "read";
+  if (verb === "web") {
+    return EGRESS_WEB_SUBCOMMANDS.has(tail[0]?.toLowerCase() ?? "") ? "egress" : "mutate";
+  }
   if (verb === "memory") return classifyMemoryCommand(tail);
   const readSub = READ_SUBCOMMANDS[SUBCOMMAND_ALIASES[verb] ?? verb];
   if (readSub?.(tail.slice(0, 2).map((w) => w.toLowerCase()))) return "read";
@@ -268,6 +321,13 @@ export function typedToolCommand(
       return str(args.command);
     case "marina_batch":
       return `batch ${str(args.commands)}`;
+    case "marina_web": {
+      const url = str(args.url);
+      const query = str(args.query);
+      if (action === "fetch" && url) return `web fetch ${url}`;
+      if (action === "search" && query) return `web search ${query}`;
+      return `web ${action}${query ? ` ${query}` : ""}${url ? ` ${url}` : ""}`;
+    }
     case "marina_board":
     case "marina_task":
     case "marina_project":
@@ -310,6 +370,30 @@ export function classifyToolRisk(toolName: string, args: Record<string, unknown>
   const command = typedToolCommand(toolName, args);
   if (command !== undefined) return classifyCommandRisk(command);
   return "mutate";
+}
+
+/**
+ * The arguments the decision gate scores. A batch is narrowed to the parts the
+ * gate scores on their own (`egress` / `mutate` / `consequential`): a self
+ * part like `memory delete rest` or a read in the same batch is not judged.
+ * The risk class stays the worst over every part (`classifyToolRisk`), and the
+ * held call, if any, still replays the whole batch. Every other call is
+ * scored as it is.
+ */
+export function gateScopedArgs(
+  toolName: string,
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  const command = toolName === "marina_batch" || toolName === "marina_command";
+  const sent = command ? typedToolCommand(toolName, args) : undefined;
+  if (!sent || !/^batch(\s|$)/i.test(sent)) return args;
+  const parts = commandParts(sent);
+  const scored = parts.filter((part) => isGatedRisk(classifyCommandRisk(part)));
+  if (scored.length === 0 || scored.length === parts.length) return args;
+  const body = scored.join("; ");
+  return toolName === "marina_batch"
+    ? { ...args, commands: body }
+    : { ...args, command: `batch ${body}` };
 }
 
 /**

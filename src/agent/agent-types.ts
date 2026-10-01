@@ -278,7 +278,7 @@ export type AgentEvent =
       type: "tool_call";
       toolName: string;
       args: Record<string, unknown>;
-      risk?: "read" | "self" | "communicate" | "mutate" | "consequential";
+      risk?: "read" | "self" | "communicate" | "egress" | "mutate" | "consequential";
       trustSources?: string[];
     }
   | { type: "tool_result"; toolName: string; result: unknown; isError: boolean }

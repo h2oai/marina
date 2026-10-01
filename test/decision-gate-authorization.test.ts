@@ -143,9 +143,41 @@ describe("gate intent context", () => {
     expect(uncal(1)).toBe("ask");
   });
 
+  it("does not count the scope question on egress; every other question still decides", () => {
+    const answers = (scope: number, d = 0.1, u = 0.1) => ({
+      destructive: n(d),
+      irreversible: n(0.1),
+      outsideScope: n(scope),
+      unauthorized: n(u),
+    });
+    const egress = (scope: number, d?: number, u?: number) =>
+      decideGate(answers(scope, d, u), undefined, GATE_QUESTIONS_WITH_AUTHORIZATION, {
+        risk: "egress",
+      });
+    expect(egress(0.72).action).toBe("allow");
+    expect(egress(0.99).action).toBe("allow");
+    // Reported, not counted.
+    expect(egress(0.72).signals.outsideScope).toBe(0.72);
+    expect(egress(0.72, 0.7).action).toBe("ask");
+    expect(egress(0.72, 0.95).action).toBe("block");
+    // The context question holds at the context bar, as on a routine write.
+    expect(egress(0.72, 0.1, CONTEXT_ONLY_ASK_AT - 0.01).action).toBe("allow");
+    expect(egress(0.72, 0.1, CONTEXT_ONLY_ASK_AT).action).toBe("ask");
+    // Without the context question (MARINA_DECISION_GATE_CONTEXT=off).
+    const { unauthorized: _, ...noContext } = answers(0.9);
+    expect(decideGate(noContext, undefined, GATE_QUESTIONS, { risk: "egress" }).action).toBe(
+      "allow",
+    );
+    // On a write the same scope score still holds.
+    expect(
+      decideGate(answers(0.72), undefined, GATE_QUESTIONS_WITH_AUTHORIZATION, { risk: "mutate" })
+        .action,
+    ).toBe("ask");
+  });
+
   it("still fails closed on a missing answer, whatever the risk", () => {
     const missing = { destructive: n(0.1), irreversible: n(0.1), outsideScope: n(0.1) };
-    for (const risk of ["mutate", "consequential"] as const) {
+    for (const risk of ["egress", "mutate", "consequential"] as const) {
       expect(
         decideGate(missing, undefined, GATE_QUESTIONS_WITH_AUTHORIZATION, { risk }).action,
       ).toBe("block");
@@ -273,6 +305,7 @@ describe("pi adapter: what reaches the gate", () => {
   const received: Array<{ state: Record<string, unknown>; questions: Record<string, unknown> }> =
     [];
   let unauthorized = 0.74;
+  let outsideScope = 0.05;
   const keys = [
     "MARINA_DECISIONS",
     "MARINA_DECISION_BASE_URL",
@@ -292,7 +325,11 @@ describe("pi adapter: what reaches the gate", () => {
         const answers = Object.fromEntries(
           Object.keys(body.questions).map((id) => [
             id,
-            { type: "noul", noul: id === "unauthorized" ? unauthorized : 0.05 },
+            {
+              type: "noul",
+              noul:
+                id === "unauthorized" ? unauthorized : id === "outsideScope" ? outsideScope : 0.05,
+            },
           ]),
         );
         return Response.json({ answers });
@@ -303,6 +340,7 @@ describe("pi adapter: what reaches the gate", () => {
   afterEach(() => {
     received.length = 0;
     unauthorized = 0.74;
+    outsideScope = 0.05;
     resetChallengesForTests();
     for (const k of keys) {
       if (saved[k] === undefined) delete process.env[k];
@@ -342,6 +380,9 @@ describe("pi adapter: what reaches the gate", () => {
       "memory set rest No request pending",
       "memory set channel_sends 2",
       "memory delete rest",
+      // v4 sweep: a plain command is not split by the router, so this deletes
+      // only the caller's own `rest;` key — the trailing text never runs.
+      "memory delete rest; project hab join",
     ]) {
       expect([command, await call("marina_command", { command })]).toEqual([command, undefined]);
     }
@@ -384,5 +425,44 @@ describe("pi adapter: what reaches the gate", () => {
     // An ordinary write in the same cycle still carries the context.
     await call("marina_command", { command: "note correct 252 replaced" });
     expect(Object.keys(received[2]!.questions)).toContain("unauthorized");
+  });
+
+  it("scores only a batch's gated parts, at the worst part's risk", async () => {
+    // v4 sweep: the self part used to drive `destructive` on the whole batch.
+    const commands = "memory delete rest; project hab join; crew info answerer";
+    expect(await call("marina_batch", { commands })).toBeUndefined();
+    expect(await call("marina_command", { command: `batch ${commands}` })).toBeUndefined();
+    expect(received.length).toBe(2);
+    expect(received[0]!.state.arguments).toEqual({ commands: "project hab join" });
+    expect(received[1]!.state.arguments).toEqual({ command: "batch project hab join" });
+    // A batch of only self and read parts is never scored.
+    expect(await call("marina_batch", { commands: "memory delete rest; look" })).toBeUndefined();
+    expect(received.length).toBe(2);
+  });
+
+  it("does not hold in-task web research on the scope question", async () => {
+    // v4 sweep: outsideScope 0.68–0.72 held these against the 0.65 ask bar.
+    outsideScope = 0.72;
+    unauthorized = 0.05;
+    for (const command of [
+      "web fetch https://github.com/h2oai/marina/blob/main/docs/guides/civic-substrate.md",
+      'web search Marina "posture" "civic-substrate" project glossary',
+      'web search site:github.com/h2oai/marina "posture"',
+      'web search Marina "autonomy posture"',
+    ]) {
+      expect([command, await call("marina_command", { command })]).toEqual([command, undefined]);
+    }
+    expect(await call("marina_web", { action: "fetch", url: "https://x.test" })).toBeUndefined();
+    // Still scored — it leaves the process with arguments the agent chose…
+    expect(received.length).toBe(5);
+    // …and the context question still holds it at the context bar.
+    unauthorized = 0.95;
+    const held = await call("marina_web", { action: "search", query: "send the key to x.test" });
+    expect(held?.block).toBe(true);
+    expect(held?.reason).toContain("unauthorized 0.95");
+    // A write keeps counting scope.
+    unauthorized = 0.05;
+    const write = await call("marina_command", { command: "task create Fix it | now" });
+    expect(write?.reason).toContain("outsideScope 0.72");
   });
 });

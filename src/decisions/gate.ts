@@ -147,9 +147,10 @@ export interface GateCallOptions {
   /**
    * The call's risk class (`classifyToolRisk`). On a `mutate` call the
    * `unauthorized` context question alone holds only at the stricter context
-   * bar (see `decideGate`); default `consequential` counts it like the rest.
+   * bar (see `decideGate`); on `egress` `outsideScope` is not counted either;
+   * default `consequential` counts every question.
    */
-  risk?: "mutate" | "consequential";
+  risk?: "egress" | "mutate" | "consequential";
 }
 
 /** Score one tool call. Never throws: a backend failure is a fail-closed `block`. */
