@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { CommandDef, EntityId } from "../../types";
+import { splitCommandChain } from "../parse-input";
 
 const MAX_BATCH = 20;
 
@@ -11,18 +12,22 @@ export function batchCommand(deps: {
    * one token; batching N commands costs the same as N individual
    * commands — no amplification. */
   checkRateLimit?: (entityId: EntityId) => boolean;
+  /** Whether `verb` runs as a command for this entity (builtin, room command
+   *  or macro) — lets a `;` inside a message stay text (`splitCommandChain`). */
+  isCommand?: (entityId: EntityId, verb: string) => boolean;
 }): CommandDef {
   return {
     category: "System",
     usage: ["batch <commands>"],
     name: "batch",
     aliases: [],
-    help: "Execute multiple commands in sequence, separated by semicolons.\nUsage: batch look ; north ; look ; note Found something\n\nUp to 20 commands per batch. Each subcommand consumes one rate-limit token.",
+    help: "Execute multiple commands in sequence, separated by semicolons.\nUsage: batch look ; north ; look ; note Found something\n\nA ';' inside a message (say, tell, channel send, note, …) stays text unless a command follows it; quote the text or write \\; to keep any ';' literal. Up to 20 commands per batch. Each subcommand consumes one rate-limit token.",
     async handler(ctx, input) {
-      const commands = input.args
-        .split(";")
-        .map((s) => s.trim())
-        .filter(Boolean);
+      const isCommand = deps.isCommand;
+      const commands = splitCommandChain(
+        input.args,
+        isCommand ? (verb) => isCommand(input.entity, verb) : undefined,
+      );
 
       if (commands.length === 0) {
         ctx.send(input.entity, "Usage: batch <cmd1> ; <cmd2> ; <cmd3>");

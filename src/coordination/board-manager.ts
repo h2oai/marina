@@ -29,6 +29,17 @@ export interface BoardPost {
   updatedAt: number;
 }
 
+/**
+ * `project:<name>` (the spelling the pool and the orchestration notes use) →
+ * the project's group board, `group:project_<name>` (see `project create`).
+ * Any other name maps to itself.
+ */
+export function projectBoardAlias(name: string): string {
+  const match = /^project:(.+)$/i.exec(name.trim());
+  if (!match) return name;
+  return `group:project_${match[1]!.toLowerCase().replace(/\s+/g, "_")}`;
+}
+
 function rowToBoard(row: BoardRow): Board {
   return {
     id: row.id,
@@ -105,7 +116,9 @@ export class BoardManager {
   }
 
   getBoardByName(name: string): Board | undefined {
-    const row = this.db.getBoardByName(name);
+    const alias = projectBoardAlias(name);
+    const row =
+      this.db.getBoardByName(name) ?? (alias === name ? undefined : this.db.getBoardByName(alias));
     return row ? rowToBoard(row) : undefined;
   }
 

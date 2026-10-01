@@ -269,7 +269,9 @@ export function evolutionControlState(
  *      `data.memory.schema === "marina.memory.command.v1"` (`note` / `recall` /
  *      `pool` replies, already returned to the tool call that issued them);
  *  (b) the agent's own send receipts — `You tell <name>: …` / `You say: …` /
- *      `You shout: …` echoes and the duplicate-suppressed tell receipt.
+ *      `You shout: …` echoes and the duplicate-suppressed tell receipt;
+ *  (c) any non-tell perception tagged with the agent's own
+ *      `command_request_id` (the correlated command's output).
  *
  * Everything addressed to the agent by someone else (`<name> tells you`,
  * channel messages, broadcasts, endpoint requests) is untouched. The tool
@@ -278,6 +280,9 @@ export function evolutionControlState(
  * `MARINA_PERCEIVE_SELF_ECHO=on` restores the old behaviour.
  */
 export function isSelfEchoPerception(p: Perception, text: string): boolean {
+  // (c) Output correlated to the agent's own command (`command_request_id`)
+  // already reached that command's tool result; a tell is never one.
+  if (p.command_request_id && p.tag !== "tell") return true;
   if (p.kind !== "message") return false;
   const data = (p.data ?? {}) as Record<string, unknown>;
   if (data.memory_service !== undefined) return true;
@@ -551,6 +556,8 @@ const CHANNEL_REPLY_COOLDOWN_MS = Number(process.env.AGENT_CHANNEL_REPLY_COOLDOW
 
 /** Max characters of any single recalled note / skill / orient block in the prompt. */
 const RECALL_BLOCK_MAX_CHARS = 600;
+/** Chars of an UNCHANGED focus repeated in the per-turn action directive. */
+const FOCUS_DIRECTIVE_REPEAT_CHARS = 160;
 
 /** Clamp recalled text so one oversized note can't balloon the continuation prompt. */
 function clampText(text: string, maxChars = RECALL_BLOCK_MAX_CHARS): string {
@@ -1152,6 +1159,8 @@ export class LeanAgentAdapter implements AgentHandle {
   private outputMaxTokens: number | undefined;
 
   private focus: Focus | null = null;
+  /** The focus text the action directive last carried in full (see `focusDirective`). */
+  private lastDirectiveFocus: string | undefined;
   private autonomousMode = false;
   private autonomousLoopRunning = false;
   private autonomousLoopPromise: Promise<void> | null = null;
@@ -1879,7 +1888,10 @@ export class LeanAgentAdapter implements AgentHandle {
         const events = this.socialAwareness.handlePerception(p);
 
         if (this.autonomousMode) {
-          const text = (p.data?.text as string) ?? (p.data?.message as string) ?? `[${p.kind}]`;
+          // Agents read text, not terminal colour codes.
+          const text = stripAnsi(
+            (p.data?.text as string) ?? (p.data?.message as string) ?? `[${p.kind}]`,
+          );
           if (text) {
             // Self-echo filter — the agent's own memory-service acknowledgements
             // and send receipts never enter the buffer (see isSelfEchoPerception).
@@ -2079,7 +2091,7 @@ export class LeanAgentAdapter implements AgentHandle {
               const speaker = lastEvent?.speaker ?? "Someone";
               this.agent.steer({
                 role: "user",
-                content: `**${speaker}** is speaking to you:\n\n${text}\n\nIntegrate this into your current plan.`,
+                content: `[steer] from:${speaker}\n${text}\nFold into the current plan; reply only to a request.`,
                 timestamp: Date.now(),
                 ...(requestId ? { marinaRequestId: requestId } : {}),
               });
@@ -3598,7 +3610,7 @@ The goal is a smaller, sharper memory — not more notes.`;
       // Declared rest: quiet is a legitimate choice, not a failure to act.
       actionDirective = `You are resting (${clampText(this.loopPrefs.rest, 120)}). Act only if something here is worth it; otherwise end the turn. \`memory delete rest\` resumes your loop.`;
     } else if (this.focus) {
-      actionDirective = `Your focus: ${this.focus.description}. Take the next verifiable step; do not repeat completed work.`;
+      actionDirective = this.focusDirective(this.focus.description);
     } else if (this.config.goal) {
       actionDirective = `Your goal: ${this.config.goal}. What's the next step?`;
     } else {
@@ -3771,6 +3783,18 @@ The goal is a smaller, sharper memory — not more notes.`;
       );
       return undefined;
     }
+  }
+
+  /**
+   * The action directive for a focus: the full text the first time (and after
+   * every change), a clamped reference while it stays the same — the full text
+   * is already in the transcript and in the `[Current Focus]` section's TTL.
+   */
+  focusDirective(description: string): string {
+    const changed = description !== this.lastDirectiveFocus;
+    this.lastDirectiveFocus = description;
+    const shown = changed ? description : clampText(description, FOCUS_DIRECTIVE_REPEAT_CHARS);
+    return `Focus${changed ? "" : " (unchanged)"}: ${shown}. Next verifiable step; skip completed work.`;
   }
 
   /**
@@ -4564,7 +4588,7 @@ The goal is a smaller, sharper memory — not more notes.`;
   async sendAttention(message: string): Promise<void> {
     this.agent.steer({
       role: "user",
-      content: `ATTENTION:\n\n${message}\n\nIntegrate this into your current plan.`,
+      content: `[attention]\n${message}\nFold into the current plan.`,
       timestamp: Date.now(),
     });
     // Instant pickup: steer() only queues — an idle loop would otherwise

@@ -116,7 +116,8 @@ export const CREW_BRIEFS: Record<CrewFormation, string> = {
     "step: lead replans, not retries. Lead delivers.",
   sharding:
     "Start — lead: run the checker once. Shard when it reports several independent failing " +
-    "cases: `channel send <crew-channel> shard 1: <case>` per case; for one or two, just fix " +
+    "cases: ONE message with every shard — `channel send <crew-channel> shard 1: <case> | " +
+    "shard 2: <case> | …`; for one or two, just fix " +
     "them. Members: reply 'claiming: <shard>', fix WITHOUT editing the checker or tests, " +
     "re-run, post the result. Done = full check passes; lead delivers. Checker can't run: " +
     "verify by hand, deliver with the limitation stated.",
@@ -252,7 +253,8 @@ const START_MOVES: Partial<Record<CrewFormation, (n: Required<FormationNames>) =
     `owners: …\` first, then a progress ledger after each step.`,
   sharding: ({ lead, channel }) =>
     `Start this task — ${lead} (lead): run the checker. Several independent failing cases: ` +
-    `\`channel send ${channel} shard 1: <case>\` per case, for members to claim. One or two: ` +
+    `one message, every shard: \`channel send ${channel} shard 1: <case> | shard 2: <case> | …\`, ` +
+    `for members to claim. One or two: ` +
     `just fix them.`,
 };
 

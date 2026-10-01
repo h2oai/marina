@@ -659,7 +659,7 @@ Effect: unknown.
 Execute multiple commands in sequence, separated by semicolons.
 Usage: batch look ; north ; look ; note Found something
 
-Up to 20 commands per batch. Each subcommand consumes one rate-limit token.
+A ';' inside a message (say, tell, channel send, note, …) stays text unless a command follows it; quote the text or write \; to keep any ';' literal. Up to 20 commands per batch. Each subcommand consumes one rate-limit token.
 
 Category: System. Minimum rank: 0.
 Aliases: none.
