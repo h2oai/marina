@@ -1213,6 +1213,21 @@ describe("MCP Server", () => {
       expect(text).toContain("CmdBot");
     });
 
+    it("notes an unsplit ';' chain without changing what ran", async () => {
+      const sid = await initSession(url);
+      await toolCall(url, sid, "login", { name: "ChainBot" });
+      const chained = await toolCall(url, sid, "command", {
+        input: "memory delete rest; project hab join; task list",
+      });
+      expect(chained).toEndWith(
+        "note: ';' is not a separator here — `project hab join`, `task list` did not run; use `batch <a>; <b>` to run several",
+      );
+      const prose = await toolCall(url, sid, "command", { input: "say hello; world" });
+      expect(prose).not.toContain("not a separator");
+      const batched = await toolCall(url, sid, "batch", { input: "look; who" });
+      expect(batched).not.toContain("not a separator");
+    });
+
     it("should execute help command", async () => {
       const sid = await initSession(url);
       await toolCall(url, sid, "login", { name: "HelpBot" });
