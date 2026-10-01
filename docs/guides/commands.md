@@ -705,7 +705,10 @@ real tokens); everything else is rank 0. Runs call this instance's own `/v1` wit
 | `benchmark run smoke --model marina:answerer` | The frozen 15-item prompt A/B set (the same items as `bun run eval-prompt`) — run before and after a prompt, role or crew change and compare on the leaderboard |
 | `benchmark sweep <name\|all>` | Fan one benchmark out across every live orchestration |
 | `benchmark result <id>` · `benchmark runs` | One run's score and breakdown; recent runs |
-| `benchmark leaderboard <benchmark>` | Top runs, interleaved with published reference scores; runs that answered nothing are left out |
+| `benchmark leaderboard <benchmark>` | Top runs, interleaved with published reference scores; runs that answered nothing are left out; ledger runs also show n, the 95 % interval and $/item |
+| `benchmark frontier <benchmark>` | The accuracy vs $/item Pareto set: runs no other run beats on both |
+| `benchmark compare <runA> <runB>` | Paired on the items both answered: each run's accuracy and interval, exact McNemar p, $/item and its delta; warns when the slices or judges differ |
+| `benchmark participants <benchmark>` | Per agent and per model: items touched, accuracy on them, cost (needs participants recorded on the items) |
 | `benchmark reference [model\|benchmark]` · `benchmark orchestrations` | Published reference scores; live `marina:<name>` endpoints |
 
 A run where every item errored is recorded as `failed` with the first error, never as a 0% score.

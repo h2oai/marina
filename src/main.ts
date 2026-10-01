@@ -3,6 +3,7 @@
 
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
+import { agentModelMapProblems } from "../worlds/seed";
 import { getInternalModelToken } from "./agent/agent-runtime";
 import { RateLimiter } from "./auth/rate-limiter";
 import { parseExecUnrestricted } from "./coding/exec-approver";
@@ -415,6 +416,9 @@ seedGuidePool(db, world.guideNotes);
 // Run world seed function (idempotent)
 if (world.seed) {
   world.seed(db);
+}
+for (const problem of agentModelMapProblems()) {
+  logger.warn("main", `MARINA_AGENT_MODELS: ${problem}`);
 }
 
 // Seed canvas from world definition (idempotent)

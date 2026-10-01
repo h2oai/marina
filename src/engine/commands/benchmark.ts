@@ -11,6 +11,7 @@ import {
 import { bold, category, dim, status as fmtStatus, header, separator } from "../../net/ansi";
 import type { BenchmarkRunRow, MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import { compareRuns, paretoFrontier, participantCredit, runLabel } from "../benchmark-ledger";
 import { BENCHMARKS, type BenchmarkRunner, type BenchmarkSubject } from "../benchmark-runner";
 import { extractModifiers, resolveMultiWordName } from "../parse-input";
 import { formatAge } from "./format-duration";
@@ -38,7 +39,13 @@ Usage:
   benchmark result <id>                            — show a single run's score + breakdown
   benchmark runs [--benchmark X] [--limit N]      — list recent runs
   benchmark leaderboard <benchmark> [--limit N]   — top scoring configs for a benchmark
-                                                     (interleaves reference-model scores)
+                                                     (interleaves reference-model scores;
+                                                     ledger runs show n, 95% CI and $/item)
+  benchmark frontier <benchmark>                   — the accuracy vs $/item Pareto set
+  benchmark compare <runA> <runB>                  — paired on shared items: exact McNemar,
+                                                     each run's CI, $/item and its delta
+  benchmark participants <benchmark>               — per agent / per model: items touched,
+                                                     accuracy on them, cost
   benchmark reference [model|benchmark]            — show published reference scores
 
 Benchmarks: smoke (15-item prompt A/B, always ready), mmlu-pro, truthfulqa, arc-challenge,
@@ -49,7 +56,9 @@ Benchmarks: smoke (15-item prompt A/B, always ready), mmlu-pro, truthfulqa, arc-
   orchestration (a model-* channel with a live agent). See "benchmark orchestrations".
 
 Note: "run" and "sweep" need rank 4 — they burn real tokens. Discovery commands
-  (list, runs, result, leaderboard, reference, orchestrations) are rank 0.
+  (list, runs, result, leaderboard, frontier, compare, participants, reference,
+  orchestrations) are rank 0. Results recorded outside the world are imported by
+  the operator with \`bun run benchmark:import\`.
 
 Examples:
   benchmark list
@@ -92,7 +101,10 @@ export function benchmarkCommand(deps: {
   return {
     category: "Growth",
     usage: [
+      "benchmark compare <runA> <runB>",
+      "benchmark frontier <benchmark>",
       "benchmark leaderboard <benchmark> [--limit N]",
+      "benchmark participants <benchmark>",
       "benchmark list",
       "benchmark orchestrations",
       "benchmark reference",
@@ -481,8 +493,9 @@ export function benchmarkCommand(deps: {
             const hash = row.config_hash.padEnd(12);
             const ans = row.total > 0 ? `${row.answered}/${row.total}`.padEnd(7) : "-      ";
             const agent = row.agent_id ? bold(row.agent_id) : dim("—");
+            const ledger = ledgerColumns(row);
             lines.push(
-              `  ${rank}  ${score}  ${hash}  ${ans}  ${agent.padEnd(36)}  ${fmtId(row.id)}`,
+              `  ${rank}  ${score}  ${hash}  ${ans}  ${agent.padEnd(36)}  ${fmtId(row.id)}${ledger}`,
             );
           });
           ctx.send(input.entity, lines.join("\n"));
@@ -559,9 +572,139 @@ export function benchmarkCommand(deps: {
           return;
         }
 
+        case "compare": {
+          const [a, b] = [tokens[1], tokens[2]];
+          if (!a || !b) {
+            ctx.send(input.entity, "Usage: benchmark compare <runA> <runB>");
+            return;
+          }
+          const runA = db.getBenchmarkRun(a);
+          const runB = db.getBenchmarkRun(b);
+          if (!runA || !runB) {
+            ctx.send(input.entity, `No run ${runA ? b : a}.`);
+            return;
+          }
+          const itemsA = db.getBenchmarkItems(a);
+          const itemsB = db.getBenchmarkItems(b);
+          if (itemsA.length === 0 || itemsB.length === 0) {
+            ctx.send(
+              input.entity,
+              `No item outcomes recorded for ${itemsA.length === 0 ? a : b} — a paired comparison needs per-item results (import them with \`bun run benchmark:import\`).`,
+            );
+            return;
+          }
+          const c = compareRuns(runA, itemsA, runB, itemsB);
+          const line = (tag: string, run: BenchmarkRunRow, sum: typeof c.a) =>
+            `  ${tag}  ${bold(runLabel(run)).padEnd(32)}  ${pct(sum.accuracy)} (${sum.correct}/${sum.n})  CI [${pct(sum.ciLow)}, ${pct(sum.ciHigh)}]  ${usd(sum.costPerItemUsd ?? perItemCost(run))}/item  ${fmtId(run.id)}`;
+          const lines = [
+            header(
+              `Compare — ${runA.benchmark}${runA.benchmark === runB.benchmark ? "" : ` vs ${runB.benchmark}`}`,
+            ),
+            separator(),
+            ...c.warnings.map((w) => `  ${fmtStatus("WARN", "warn")} ${w}`),
+            line("A", runA, c.a),
+            line("B", runB, c.b),
+            `  shared ${c.shared}  (only A ${c.onlyA}, only B ${c.onlyB})`,
+            `  A right / B wrong ${c.aWins}   A wrong / B right ${c.bWins}   exact McNemar p=${c.p.toFixed(3)}`,
+            `  $/item delta (B − A): ${c.costDeltaPerItemUsd === null ? dim("unpriced") : usd(c.costDeltaPerItemUsd, true)}`,
+          ];
+          ctx.send(input.entity, lines.join("\n"));
+          return;
+        }
+
+        case "frontier": {
+          const name = tokens[1];
+          if (!name) {
+            ctx.send(input.entity, "Usage: benchmark frontier <benchmark>");
+            return;
+          }
+          const rows = db.leaderboardBenchmark(name, 100);
+          const points = rows
+            .map((row) => ({ row, accuracy: row.score ?? 0, costPerItemUsd: perItemCost(row) }))
+            .filter(
+              (p): p is { row: BenchmarkRunRow; accuracy: number; costPerItemUsd: number } =>
+                p.costPerItemUsd !== null,
+            )
+            .map((p) => ({ ...p, id: p.row.id }));
+          if (points.length === 0) {
+            ctx.send(
+              input.entity,
+              `No priced runs for ${category(name)} — the frontier needs cost.`,
+            );
+            return;
+          }
+          const frontier = paretoFrontier(points);
+          const lines = [
+            header(
+              `Frontier — ${name} (accuracy vs $/item, ${frontier.length} of ${points.length} priced runs)`,
+            ),
+            separator(),
+            ...frontier.map(
+              (p) =>
+                `  ${pct(p.accuracy)}  ${usd(p.costPerItemUsd)}/item  n=${p.row.n ?? p.row.total}  ${bold(runLabel(p.row))}  ${fmtId(p.row.id)}`,
+            ),
+          ];
+          ctx.send(input.entity, lines.join("\n"));
+          return;
+        }
+
+        case "participants": {
+          const name = tokens[1];
+          if (!name) {
+            ctx.send(input.entity, "Usage: benchmark participants <benchmark>");
+            return;
+          }
+          const items = db.getBenchmarkItemsForBenchmark(name);
+          const { credit, withParticipants } = participantCredit(items);
+          if (withParticipants === 0) {
+            ctx.send(
+              input.entity,
+              items.length === 0
+                ? `No item outcomes recorded for ${category(name)}.`
+                : `No participants recorded on ${items.length} ${category(name)} item outcomes — participant credit needs the agents/models from each item's trace.`,
+            );
+            return;
+          }
+          const lines = [
+            header(
+              `Participants — ${name} (${withParticipants} of ${items.length} items attributed)`,
+            ),
+            separator(),
+            ...credit.map(
+              (c) =>
+                `  ${dim(c.kind.padEnd(5))}  ${bold(c.name).padEnd(40)}  ${pct(c.accuracy)} (${c.correct}/${c.items})  ${c.costUsd === null ? dim("unpriced") : usd(c.costUsd)}`,
+            ),
+          ];
+          ctx.send(input.entity, lines.join("\n"));
+          return;
+        }
+
         default:
           ctx.send(input.entity, HELP);
       }
     },
   };
+}
+
+function pct(x: number): string {
+  return `${(x * 100).toFixed(1)}%`.padStart(6);
+}
+
+function usd(x: number | null, signed = false): string {
+  if (x === null) return dim("—");
+  const sign = signed && x > 0 ? "+" : "";
+  return `${sign}$${x.toFixed(Math.abs(x) < 0.01 ? 4 : 3)}`;
+}
+
+/** A run's cost per item from its ledger columns, or null when unpriced. */
+function perItemCost(row: BenchmarkRunRow): number | null {
+  const n = row.n ?? row.total;
+  return typeof row.cost_usd === "number" && n > 0 ? row.cost_usd / n : null;
+}
+
+/** The ledger columns of a leaderboard row (empty for pre-ledger runs). */
+function ledgerColumns(row: BenchmarkRunRow): string {
+  if (typeof row.ci_low !== "number" || typeof row.ci_high !== "number") return "";
+  const cost = perItemCost(row);
+  return `  ${dim(`n=${row.n ?? row.total} CI [${pct(row.ci_low).trim()}, ${pct(row.ci_high).trim()}]`)}  ${cost === null ? "" : `${usd(cost)}/item  `}${dim(runLabel(row))}`;
 }

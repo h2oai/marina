@@ -683,7 +683,13 @@ Usage:
   benchmark result <id>                            — show a single run's score + breakdown
   benchmark runs [--benchmark X] [--limit N]      — list recent runs
   benchmark leaderboard <benchmark> [--limit N]   — top scoring configs for a benchmark
-                                                     (interleaves reference-model scores)
+                                                     (interleaves reference-model scores;
+                                                     ledger runs show n, 95% CI and $/item)
+  benchmark frontier <benchmark>                   — the accuracy vs $/item Pareto set
+  benchmark compare <runA> <runB>                  — paired on shared items: exact McNemar,
+                                                     each run's CI, $/item and its delta
+  benchmark participants <benchmark>               — per agent / per model: items touched,
+                                                     accuracy on them, cost
   benchmark reference [model|benchmark]            — show published reference scores
 
 Benchmarks: smoke (15-item prompt A/B, always ready), mmlu-pro, truthfulqa, arc-challenge,
@@ -694,7 +700,9 @@ Benchmarks: smoke (15-item prompt A/B, always ready), mmlu-pro, truthfulqa, arc-
   orchestration (a model-* channel with a live agent). See "benchmark orchestrations".
 
 Note: "run" and "sweep" need rank 4 — they burn real tokens. Discovery commands
-  (list, runs, result, leaderboard, reference, orchestrations) are rank 0.
+  (list, runs, result, leaderboard, frontier, compare, participants, reference,
+  orchestrations) are rank 0. Results recorded outside the world are imported by
+  the operator with `bun run benchmark:import`.
 
 Examples:
   benchmark list
@@ -709,6 +717,19 @@ Examples:
 Category: Growth. Minimum rank: 0.
 Aliases: `bench`.
 
+### `benchmark compare <runA> <runB>`
+
+Effect: unknown.
+
+- `field-0` (`runA`): text, required.
+- `field-1` (`runB`): text, required.
+
+### `benchmark frontier <benchmark>`
+
+Effect: unknown.
+
+- `field-0` (`benchmark`): text, required.
+
 ### `benchmark leaderboard <benchmark> [--limit N]`
 
 Effect: unknown.
@@ -716,6 +737,12 @@ Effect: unknown.
 - `field-0` (`benchmark`): text, required.
 - `field-1` (`--limit`): number, optional group `option-0`.
 - Group `option-0`: `--limit N`.
+
+### `benchmark participants <benchmark>`
+
+Effect: unknown.
+
+- `field-0` (`benchmark`): text, required.
 
 ### `benchmark list`
 

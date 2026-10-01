@@ -207,6 +207,46 @@ CREATE INDEX idx_forecast_answers_open_sample ON forecast_answers(sample_id) WHE
 CREATE INDEX idx_forecast_answers_entity ON forecast_answers(entity_name, created_at);
 `,
   },
+  // Migration 146: the benchmark ledger — every run carries its cost, n,
+  // Wilson interval, item slice, judge and target (a model, a crew + formation,
+  // or a model population), and every item outcome is kept (ids only, never
+  // case content) so runs compare paired on shared items and participants are
+  // credited from their traces. `content_hash` makes imports idempotent.
+  // Ledger rows are never rewritten; retention never prunes either table.
+  {
+    version: 146,
+    sql: `
+ALTER TABLE benchmark_runs ADD COLUMN cost_usd REAL;
+ALTER TABLE benchmark_runs ADD COLUMN n INTEGER;
+ALTER TABLE benchmark_runs ADD COLUMN ci_low REAL;
+ALTER TABLE benchmark_runs ADD COLUMN ci_high REAL;
+ALTER TABLE benchmark_runs ADD COLUMN seed INTEGER;
+ALTER TABLE benchmark_runs ADD COLUMN slice_hash TEXT;
+ALTER TABLE benchmark_runs ADD COLUMN judge TEXT;
+ALTER TABLE benchmark_runs ADD COLUMN target_kind TEXT CHECK (target_kind IS NULL OR target_kind IN ('model', 'crew', 'population'));
+ALTER TABLE benchmark_runs ADD COLUMN target_json TEXT;
+ALTER TABLE benchmark_runs ADD COLUMN label TEXT;
+ALTER TABLE benchmark_runs ADD COLUMN source TEXT NOT NULL DEFAULT 'in-world' CHECK (source IN ('in-world', 'import'));
+ALTER TABLE benchmark_runs ADD COLUMN content_hash TEXT;
+CREATE UNIQUE INDEX idx_benchmark_runs_content_hash ON benchmark_runs(content_hash) WHERE content_hash IS NOT NULL;
+CREATE TABLE benchmark_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  correct INTEGER NOT NULL CHECK (correct IN (0, 1)),
+  score REAL,
+  latency_ms REAL,
+  cost_usd REAL,
+  trace_id TEXT,
+  participants_json TEXT,
+  judge_verdict TEXT,
+  UNIQUE (run_id, item_id)
+);
+CREATE INDEX idx_benchmark_items_item ON benchmark_items(item_id);
+CREATE TRIGGER benchmark_items_no_update BEFORE UPDATE ON benchmark_items
+BEGIN SELECT RAISE(ABORT, 'benchmark_items is append-only'); END;
+`,
+  },
 ];
 
 /** Migration 143 body — self-contained so later edits to db-notes never change it. */
