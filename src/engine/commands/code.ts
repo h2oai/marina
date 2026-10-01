@@ -128,6 +128,9 @@ type SubcommandHandler = (call: SubcommandCall) => void | Promise<void>;
 // still use their explicit legacy paths.
 // New subcommands must be reviewed before accepting a target, rather than silently ignoring it.
 const TARGETED_SUBCOMMANDS = new Set([
+  "doctor",
+  "onboard",
+  "setup",
   "review",
   "blocked",
   "do",

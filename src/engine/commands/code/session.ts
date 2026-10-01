@@ -5,6 +5,7 @@ import { basename } from "node:path";
 import { clearSessionExecState } from "../../../coding/exec-approver";
 import {
   assessCodingVerification,
+  codingRunClaim,
   codingRunMetadata,
   codingVerificationReadiness,
   codingVerificationUnchanged,
@@ -613,6 +614,8 @@ export async function status(
     metadata: {
       runId: run?.id,
       runStatus: run?.status,
+      reviewStatus: run ? codingRunClaim(deps.db, run)?.status : undefined,
+      acceptedUnverified: !!runMeta?.unverifiedAcceptance,
       ...worker,
       verification: runMeta?.verification,
       verificationRequirement: runMeta?.verificationRequirement,

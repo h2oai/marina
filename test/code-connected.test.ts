@@ -1,10 +1,11 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { PassThrough } from "node:stream";
 import { openConnectedCodeSession } from "../scripts/code-connected";
-import { CodeConsole } from "../scripts/code-console";
+import { CodeConsole, type CodeConsoleOptions } from "../scripts/code-console";
 import { HarnessStore } from "../scripts/code-harness";
 import { parseDispatch } from "../scripts/marina";
 import {
@@ -117,17 +118,22 @@ describe("connected coding in an existing world", () => {
     clients.push(connected.agent);
     return connected;
   }
-  function consoleFor(connected: Awaited<ReturnType<typeof open>>, finish = (_code: number) => {}) {
+  function consoleFor(
+    connected: Awaited<ReturnType<typeof open>>,
+    finish = (_code: number) => {},
+    terminalStreams?: CodeConsoleOptions["terminalStreams"],
+  ) {
     const consoleView = new CodeConsole({
       agent: connected.agent,
       url: url.replace("ws:", "http:"),
       root: connected.workspace,
       directory: dirname(world.path),
       store: new HarnessStore(dirname(world.path)),
-      sessionId: "project",
+      sessionId: connected.sessionId,
       connected: true,
       harness: connected.harness,
       finish,
+      terminalStreams,
     });
     consoleView.write = () => {};
     return consoleView;
@@ -293,6 +299,117 @@ describe("connected coding in an existing world", () => {
     expect((await fetch(`${url.replace("ws:", "http:")}/health`)).ok).toBe(true);
     const resumed = await open();
     expect(resumed.agent.getSession()?.entityId).toBe(owner.entityId);
+  });
+
+  it("takes a terminal task through project inspection, candidate checks and explicit fresh review while peers remain live", async () => {
+    const root = join(dirname(world.path), "source");
+    mkdirSync(root);
+    writeFileSync(join(root, "AGENTS.md"), "Verify the changed source before submission.\n");
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ scripts: { test: "bun check.ts" } }),
+    );
+    writeFileSync(
+      join(root, "check.ts"),
+      'import { answer } from "./answer"; if (answer !== 42) throw new Error("wrong answer");',
+    );
+    writeFileSync(join(root, "answer.ts"), "export const answer = 0;\n");
+    for (const args of [
+      ["init", "-q"],
+      ["add", "."],
+      [
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.test",
+        "commit",
+        "-qm",
+        "baseline",
+      ],
+    ]) {
+      const result = Bun.spawnSync(["git", ...args], { cwd: root });
+      expect(result.exitCode).toBe(0);
+    }
+    world.db.createCodingSession({
+      id: "terminal-project",
+      title: "Terminal",
+      workspaceRoot: root,
+      createdBy: "Owner",
+    });
+    const seen: Perception[] = [];
+    const connected = await openConnectedCodeSession(
+      { ...options(), session: "terminal-project" },
+      (p) => seen.push(p),
+    );
+    clients.push(connected.agent);
+    const input = new PassThrough();
+    const terminalOutput = new PassThrough();
+    terminalOutput.resume();
+    const view = consoleFor(connected, () => connected.agent.disconnect(), {
+      input,
+      output: terminalOutput,
+    });
+    connected.agent.onPerception((p) => view.receive(p));
+    const output: string[] = [];
+    view.write = (text) => {
+      output.push(text);
+    };
+    try {
+      await view.start(true);
+      expect(output.join("\n")).toContain("Code Doctor");
+      const project = seen.find((p) => (p.data.code as { event?: string })?.event === "doctor_ran");
+      expect(project?.data.code).toMatchObject({
+        workspace: root,
+        metadata: { candidateAvailable: true, verificationCommands: ["test"] },
+      });
+      expect(world.db.listTasks()).toHaveLength(0); // startup inspection recruits nobody
+      const actor = world.engine.entities.get(owner.entityId)!;
+      // Deterministic worker boundary: the command transport, source, candidates,
+      // verifier, canonical claim and owner review are all real.
+      const run = beginCodingRun(world.db, {
+        session: world.db.getCodingSession("terminal-project")!,
+        owner: actor,
+        worker: actor,
+        prompt: "Return 42",
+        profile: "marina",
+        verificationRequirement: "candidate",
+      });
+      await view.submit("/status");
+      await view.submit("/world code write answer.ts\nexport const answer = 42;\n");
+      const verifiedSource = readFileSync(join(root, "answer.ts"));
+      await view.submit("/verify");
+      await view.submit("/world tell Independent reviewing this task");
+      expect(peer.connection.allText().join("\n")).toContain("reviewing this task");
+      await until(() =>
+        seen.some((p) => (p.data.code as { event?: string })?.event === "verification_finished"),
+      );
+      await view.submit("/world code summary Returns 42; candidate tests passed.");
+      expect(world.db.getCodingArtifact(run.id)?.status).toBe("submitted");
+      await view.submit("/history");
+      await view.submit("/checks");
+      await view.submit(`/review ${run.id}`);
+      expect(output.join("\n")).toContain(`/review approve ${run.id}`);
+      const meta = codingRunMetadata(world.db.getCodingArtifact(run.id)!);
+      expect(meta.verification).toBe("passed");
+      await view.submit(`/show ${meta.verificationId}`);
+      writeFileSync(join(root, "answer.ts"), "export const answer = 7;\n"); // direct edit, no event
+      await view.submit(`/review approve ${run.id}`);
+      expect(output.join("\n")).toContain("Candidate approval withheld");
+      expect(world.db.getTaskClaim(meta.taskId, actor.id)?.status).toBe("submitted");
+      writeFileSync(join(root, "answer.ts"), verifiedSource);
+      await view.submit(`/review approve ${run.id}`);
+      expect(world.db.getTaskClaim(meta.taskId, actor.id)?.status).toBe("approved");
+      await view.submit("/status");
+      await view.submit("/agents");
+      expect(output.at(-1)).toContain("marina · approved");
+      expect(world.db.getCodingSession("terminal-project")?.status).toBe("active");
+    } finally {
+      await view.close(0);
+      input.destroy();
+      terminalOutput.destroy();
+    }
+    expect(world.engine.getConnectionForEntity(peer.entityId)).toBe(peer.connection);
+    expect(world.db.getCodingSession("terminal-project")?.status).toBe("active");
   });
 
   it("dispatches natural language, reattaches worker output and preserves the live task through disconnect", async () => {

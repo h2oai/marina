@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { WorkspaceRuntime } from "../../../coding/local-workspace";
+import { detectPackageScripts, recommendedVerify } from "../../../coding/project-detection";
 import { dim, header, separator, success } from "../../../net/ansi";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
@@ -21,7 +22,6 @@ import {
   sendCode,
   updateCodeContext,
 } from "./shared";
-import { detectPackageScripts, recommendedVerify } from "./workspace";
 
 export function patches(
   ctx: RoomContext,
@@ -843,6 +843,20 @@ export async function resolveRecipeCommands(
   const meta = parseJsonObject(stored.metadata_json);
   const commands = Array.isArray(meta.commands) ? meta.commands.map(String).filter(Boolean) : [];
   return commands.length > 0 ? commands : null;
+}
+
+/** Read the same recipe for readiness and execution; inspection never runs it. */
+export async function resolveVerificationCommands(
+  db: MarinaDB,
+  session: CodingSessionRow,
+  workspace: WorkspaceRuntime,
+): Promise<string[]> {
+  return (
+    (await resolveRecipeCommands(db, session, workspace, "default")) ??
+    (session.execution_target === "local"
+      ? await resolveRecipeCommands(db, session, workspace, "detected")
+      : null) ?? ["git diff --check"]
+  );
 }
 
 export function parseRecipeCommands(raw: string): string[] {

@@ -42,6 +42,7 @@ const STDERR_TAIL_LINES = 40;
 const DEFAULT_TASK_TIMEOUT_MS = 600_000;
 
 export interface CodeSessionOptions {
+  tui?: boolean;
   /** Ephemeral tmp DB, deleted on exit (the pre-persistence behavior). */
   fresh?: boolean;
   agent?: string;
@@ -463,6 +464,7 @@ export async function runCodeSession(
   }
 
   sessionConsole = new CodeConsole({
+    tui: opts.tui,
     agent,
     url: `http://localhost:${port}`,
     root: dir,

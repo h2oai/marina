@@ -107,6 +107,12 @@ export class TerminalViews {
     return `[C${this.focus === "coding" ? "*" : ""}:${count(this.unread.coding)} W${this.focus === "world" ? "*" : ""}:${count(this.unread.world)} A${this.focus === "approvals" ? "*" : ""}:${questions}]`;
   }
 
+  navigation(questions: number): string {
+    const label = (view: TerminalView, name: string, count: number) =>
+      `${view === this.focus ? "● " : ""}${name}${count ? ` (${count})` : ""}`;
+    return `${label("coding", "Coding", this.unread.coding)}  ·  ${label("world", "World", this.unread.world)}  ·  ${label("approvals", "Requests", questions)}`;
+  }
+
   select(view: TerminalView): void {
     this.focus = view;
     if (view !== "approvals" && this.pageEnd[view] === undefined) this.unread[view] = 0;
@@ -141,7 +147,7 @@ export class TerminalViews {
     return this.snapshot(view);
   }
 
-  snapshot(view: ConversationView): string {
+  snapshot(view: ConversationView, workspace = false): string {
     const omitted = this.evicted[view] + this.evicted.all;
     const entries = this.pageEntries(view);
     return [
@@ -152,7 +158,9 @@ export class TerminalViews {
           ]
         : []),
       entries.map((entry) => entry.text).join("\n\n") || "No output received in this view yet.",
-      "[/view older | /view newer · F6 switches conversations · F7 opens pending requests]",
+      ...(workspace
+        ? []
+        : ["[/view older | /view newer · F6 switches conversations · F7 opens pending requests]"]),
     ].join("\n");
   }
 

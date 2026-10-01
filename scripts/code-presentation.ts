@@ -4,6 +4,7 @@
 import { stripVTControlCharacters } from "node:util";
 import { formatPerception } from "../src/net/formatter";
 import type { Perception } from "../src/sdk/client";
+import { workflowShortcut } from "./code-workflow";
 
 /** Native tool output is data, never terminal instructions (OSC links/clipboard, cursor escapes). */
 export function terminalText(text: string): string {
@@ -28,6 +29,25 @@ export function verificationReadinessLabel(value: unknown): string | undefined {
     default:
       return undefined;
   }
+}
+
+export function codingSessionPhase(meta: {
+  runStatus?: string;
+  reviewStatus?: string;
+  acceptedUnverified?: boolean;
+  reason?: string;
+}): string {
+  if (meta.runStatus === "active") return "working";
+  if (meta.runStatus === "submitted") {
+    if (meta.reviewStatus === "approved")
+      return meta.acceptedUnverified ? "accepted unverified" : "approved";
+    if (meta.reviewStatus === "rejected") return "rejected";
+    return "submitted for review";
+  }
+  if (meta.runStatus === "interrupted" || meta.runStatus === "failed")
+    return meta.reason === "blocked" ? "blocked" : "stopped";
+  if (["approved", "rejected", "cancelled"].includes(meta.runStatus ?? "")) return meta.runStatus!;
+  return "ready";
 }
 
 export function workerActivityLabel(meta: {
@@ -73,7 +93,7 @@ export function workerActivityLabel(meta: {
 }
 
 /** Transcript categories add orientation without interpreting prose as authorization or success. */
-export function formatCodePerception(p: Perception): string {
+export function formatCodePerception(p: Perception, selectedSessionId?: string): string {
   const text = formatPerception(p, "plaintext");
   if (!text) return "";
   const code = p.data?.code as
@@ -113,6 +133,7 @@ export function formatCodePerception(p: Perception): string {
   else if (code?.event === "session_status")
     label = workerActivityLabel(code.metadata ?? {}) ?? readiness;
   else if (code?.event === "task_run_review") label = "review";
+  else if (code?.event === "doctor_ran") label = "project · inspection only";
   else if (code?.type === "diff") label = "diff · working changes";
   else if (code?.type === "patch") label = "patch";
   else if (code?.event === "code_lifecycle") {
@@ -130,8 +151,9 @@ export function formatCodePerception(p: Perception): string {
   )
     label = "world";
   const evidence =
-    ["diff", "patch", "verification"].includes(code?.type ?? "") ||
+    ["diff", "patch", "verification", "artifact", "readiness", "list"].includes(code?.type ?? "") ||
     code?.event === "task_run_review";
+  const selected = !!selectedSessionId && code?.sessionId === selectedSessionId;
   const details = evidence
     ? [
         ...(code?.sessionId
@@ -141,9 +163,25 @@ export function formatCodePerception(p: Perception): string {
           : []),
         ...(Array.isArray(code?.commands) ? code.commands : [])
           .filter((command): command is string => typeof command === "string")
-          .slice(0, 4)
-          .map((command) => `  /world ${terminalText(command).replace(/\s+/g, " ").slice(0, 240)}`),
+          .slice(0, 6)
+          .map((command) => {
+            const safe = terminalText(command).replace(/\s+/g, " ").slice(0, 240);
+            // Suggestions for another session must never appear to act on the
+            // current selection. Do not infer actions from prose or sanitize an
+            // invalid suggestion into a valid shortcut.
+            if (code?.sessionId && selectedSessionId && !selected)
+              return `  In session ${terminalText(code.sessionId)}: ${safe}`;
+            return `  ${selected && safe === command ? (workflowShortcut(command) ?? `/world ${safe}`) : `/world ${safe}`}`;
+          }),
       ].join("\n")
     : "";
-  return terminalText(`${label ? `[${label}] ` : ""}${text}${details ? `\n${details}` : ""}`);
+  const guidance =
+    code?.event === "task_run_review" && selected
+      ? "\nReview decisions require the attempt ID above. Approval records the task decision; it does not commit or push files."
+      : code?.event === "doctor_ran"
+        ? "\nNext: /task <request> · /status · /checks · /review. Inspection runs no model or verification recipe."
+        : "";
+  return terminalText(
+    `${label ? `[${label}] ` : ""}${text}${details ? `\n${details}` : ""}${guidance}`,
+  );
 }

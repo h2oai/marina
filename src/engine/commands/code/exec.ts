@@ -25,6 +25,7 @@ import {
   findStoredRecipe,
   parseRecipeCommands,
   resolveRecipeCommands,
+  resolveVerificationCommands,
   showArtifact,
 } from "./artifacts";
 import {
@@ -379,12 +380,7 @@ export async function verificationCommands(
   session: CodingSessionRow,
 ): Promise<string[]> {
   const workspace = workspaceForSession(deps, session);
-  return (
-    (await resolveRecipeCommands(deps.db, session, workspace, "default")) ??
-    (session.execution_target === "local"
-      ? await resolveRecipeCommands(deps.db, session, workspace, "detected")
-      : null) ?? ["git diff --check"]
-  );
+  return resolveVerificationCommands(deps.db, session, workspace);
 }
 
 export async function runVerificationCommands(

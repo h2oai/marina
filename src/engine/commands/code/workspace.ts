@@ -4,6 +4,11 @@
 import { accessSync, existsSync, constants as fsConstants, readdirSync, statSync } from "node:fs";
 import { basename, delimiter, join } from "node:path";
 import { LocalWorkspace, type WorkspaceRuntime } from "../../../coding/local-workspace";
+import { detectPackageScripts, recommendedVerify } from "../../../coding/project-detection";
+import {
+  loadProjectInstructions,
+  projectInstructionMetadata,
+} from "../../../coding/project-instructions";
 import { WorkspaceRegistry } from "../../../coding/workspace-registry";
 import {
   createSessionWorktree,
@@ -15,17 +20,22 @@ import { dim, error as fmtError, header, separator, success } from "../../../net
 import type { CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
 import { checkGateForExecution, recordGateExecution } from "../../safety-gates";
+import { resolveVerificationCommands } from "./artifacts";
 import {
   CODE_WORKSPACE_KEY,
   type CodeCheckRow,
   type CodeDeps,
+  canAdoptCodingSession,
   getActiveSessionId,
+  getSessionModelTarget,
   NO_CODE_ROOT_DENY,
   resolveSession,
   sendCode,
   TELNET_HOST_EXEC_DENY,
   updateCodeContext,
 } from "./shared";
+
+export { detectPackageScripts, recommendedVerify } from "../../../coding/project-detection";
 
 /**
  * Auto-remove a session's worktree on close IF it has no uncommitted changes
@@ -435,10 +445,15 @@ export async function doctor(
   deps: CodeDeps & { db: MarinaDB },
 ): Promise<void> {
   const registry = getWorkspaceRegistry(deps);
-  const selected = getSelectedWorkspace(entity, deps);
-  const activeSessionId = getActiveSessionId(entity);
-  const session = activeSessionId ? deps.db.getCodingSession(activeSessionId) : null;
-  const workspace = session ? workspaceForSession(deps, session) : selected;
+  const session =
+    ctx.codingTarget || getActiveSessionId(entity)
+      ? resolveSession(ctx, eid, entity, deps.db)
+      : null;
+  if (session && !canAdoptCodingSession(session, entity))
+    throw new Error("Coding workspace is not authorized for this participant.");
+  const workspace = session
+    ? workspaceForSession(deps, session)
+    : getSelectedWorkspace(entity, deps);
   const packageJson = await workspace.read("package.json").catch(() => null);
   const scripts = packageJson ? detectPackageScripts(packageJson.content) : [];
   const packageManager = await detectPackageManager(workspace);
@@ -452,6 +467,53 @@ export async function doctor(
   }));
   const gitState = formatGitState(git.exitCode, git.output);
   const verify = recommendedVerify(scripts);
+  const executionTarget = session?.execution_target ?? "local";
+  const recipe = session
+    ? await resolveVerificationCommands(deps.db, session, workspace)
+    : verify.length
+      ? verify
+      : ["git diff --check"];
+  const instructions = await loadProjectInstructions({
+    root: workspace.displayRoot(),
+    executionTarget,
+  });
+  // Readiness is an observation, never permission to run. Recheck access and
+  // workspace after asynchronous inspection, including request-local targets.
+  if (session) {
+    const current = deps.db.getCodingSession(session.id);
+    const actor = deps.getEntity(eid);
+    if (
+      !current ||
+      !actor ||
+      !canAdoptCodingSession(current, actor) ||
+      current.workspace_root !== session.workspace_root ||
+      current.worktree_path !== session.worktree_path ||
+      current.execution_target !== session.execution_target
+    )
+      throw new Error("Coding workspace changed during inspection. Inspect the project again.");
+  }
+  const modelTarget = session ? getSessionModelTarget(deps.db, session.id) : undefined;
+  const candidateReason =
+    executionTarget !== "local"
+      ? "Candidate checks require a local Git workspace; sandbox files are separate."
+      : registry.usesCwdFallback
+        ? "Configure a code workspace before host execution."
+        : git.exitCode !== 0
+          ? "Candidate checks require a Git repository."
+          : !workspace.captureCandidate || !deps.verificationRunner
+            ? "Candidate verification is unavailable in this runtime."
+            : "Git snapshot checks available; permissions and the recipe are checked when run.";
+  const candidateAvailable =
+    executionTarget === "local" &&
+    !registry.usesCwdFallback &&
+    git.exitCode === 0 &&
+    !!workspace.captureCandidate &&
+    !!deps.verificationRunner;
+  const instructionSummary = instructions.sources.length
+    ? instructions.sources.map((source) => `${source.path} (${source.status})`).join(", ")
+    : instructions.notices.length
+      ? instructions.notices.join(" ")
+      : "No root instruction files found; scoped instructions load as paths are inspected.";
   const roots = registry.listChoices();
   const flywheel = deps.flywheel?.status(eid);
   const nextSteps = [
@@ -470,12 +532,26 @@ export async function doctor(
     `Configured roots: ${roots.map((choice) => choice.root).join(", ")}`,
     `Session: ${session?.id ?? dim("none active")}`,
     `Session status: ${session?.status ?? dim("not started")}`,
+    `Execution target: ${executionTarget}`,
+    ...(executionTarget !== "local"
+      ? ["Inspection: host checkout only; sandbox contents were not queried."]
+      : []),
+    `Model target: ${modelTarget ?? "default Marina code route"} (provider not contacted)`,
+    `Project instructions: ${instructionSummary}`,
     `Package manager: ${packageManager}`,
     `Package scripts: ${scripts.length > 0 ? scripts.join(", ") : dim("none detected")}`,
     `Git: ${gitState}`,
     `Binaries: ${formatBinaryAvailability(binaries)}`,
     `Search: ${binaries.find((item) => item.binary === "rg")?.available ? "rg" : "built-in fallback"}`,
     `Recommended verify: ${verify.length > 0 ? verify.map((cmd) => `code run ${cmd}`).join(" -> ") : "code run git diff --check"}`,
+    `Effective verification recipe: ${recipe.join(" -> ")}`,
+    ...(recipe.every((cmd) => /^git diff(?: --cached)? --check$/.test(cmd))
+      ? [
+          "Recipe checks whitespace only; save a default recipe with tests before relying on verification.",
+        ]
+      : []),
+    `Candidate checks: ${candidateReason}`,
+    "Candidate dependencies: not installed automatically. Request code verify candidate dependencies:bun for a captured Bun lockfile; lifecycle scripts remain disabled.",
     `Local policy: host-safe allowlist`,
     `Flywheel: ${deps.flywheel ? (flywheel ? `${flywheel.state} (${flywheel.image})` : "configured; no workspace") : "not configured; local Code Mode available"}`,
     `Next: ${nextSteps.join(" | ")}`,
@@ -485,6 +561,33 @@ export async function doctor(
   sendCode(ctx, eid, lines.join("\n"), {
     checks: [
       { label: "Workspace", status: "ok", detail: workspace.displayRoot() },
+      { label: "Execution target", status: "info", detail: executionTarget },
+      {
+        label: "Model target",
+        status: "info",
+        detail: `${modelTarget ?? "default Marina code route"}; provider not contacted`,
+      },
+      {
+        label: "Project instructions",
+        status:
+          instructions.notices.length ||
+          instructions.sources.some((source) => source.status !== "loaded")
+            ? "warn"
+            : "info",
+        detail: instructionSummary,
+      },
+      {
+        label: "Verification recipe",
+        status: recipe.every((cmd) => /^git diff(?: --cached)? --check$/.test(cmd))
+          ? "warn"
+          : "info",
+        detail: recipe.join(" -> "),
+      },
+      {
+        label: "Candidate checks",
+        status: candidateAvailable ? "info" : "warn",
+        detail: candidateReason,
+      },
       {
         label: "Workspace config",
         status: registry.usesCwdFallback ? "warn" : "ok",
@@ -536,6 +639,14 @@ export async function doctor(
     ],
     commands: nextSteps.length > 0 ? nextSteps : ["code start <title>"],
     event: "doctor_ran",
+    modelTarget,
+    metadata: {
+      executionTarget,
+      verificationCommands: recipe,
+      candidateAvailable,
+      projectInstructions: projectInstructionMetadata(instructions),
+      observedAt: Date.now(),
+    },
     rows: roots.map((choice) => ({
       path: choice.root,
       status: choice.root === workspace.displayRoot() ? "active" : undefined,
@@ -664,18 +775,6 @@ function workspaceDiscoveryReason(root: string): string | undefined {
   return undefined;
 }
 
-export function detectPackageScripts(packageJson: string): string[] {
-  try {
-    const parsed = JSON.parse(packageJson) as { scripts?: Record<string, unknown> };
-    return Object.entries(parsed.scripts ?? {})
-      .filter(([, value]) => typeof value === "string")
-      .map(([name]) => name)
-      .sort((a, b) => a.localeCompare(b));
-  } catch {
-    return [];
-  }
-}
-
 async function detectPackageManager(workspace: WorkspaceRuntime): Promise<string> {
   const lockfiles = [
     ["bun.lock", "bun"],
@@ -696,10 +795,6 @@ async function detectPackageManager(workspace: WorkspaceRuntime): Promise<string
     () => false,
   );
   return packageJson ? "package.json" : "none";
-}
-
-export function recommendedVerify(scripts: string[]): string[] {
-  return ["typecheck", "lint", "test", "build"].filter((script) => scripts.includes(script));
 }
 
 function binaryAvailable(binary: string): boolean {

@@ -41,9 +41,10 @@ export type Dispatch =
       model?: string;
       profile?: string;
       harness?: string;
+      tui?: boolean;
     }
   | { kind: "connect"; rest: string[] }
-  | { kind: "code-connected"; url: string; name: string; session: string }
+  | { kind: "code-connected"; url: string; name: string; session: string; tui?: boolean }
   | { kind: "route"; rest: string[] }
   | { kind: "supervise"; rest: string[] }
   | { kind: "start" };
@@ -87,6 +88,7 @@ export function parseDispatch(
   // exec-approval flags, in any order.
   let dir: string | undefined;
   let fresh: boolean | undefined;
+  let tui: boolean | undefined;
   let print: string | undefined;
   let allowExec: boolean | undefined;
   let dangerouslyAllowAll: boolean | undefined;
@@ -94,6 +96,10 @@ export function parseDispatch(
   const connected: { url?: string; name?: string; session?: string } = {};
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
+    if (arg === "--tui") {
+      tui = true;
+      continue;
+    }
     if (["--url", "--name", "--session"].includes(arg)) {
       const value = argv[++i];
       if (!value || value.startsWith("-")) return { kind: "usage-error", arg };
@@ -152,12 +158,14 @@ export function parseDispatch(
       url: connected.url,
       name: connected.name,
       session: connected.session,
+      ...(tui ? { tui } : {}),
     };
   }
   return {
     kind: "code",
     dir,
     ...selection,
+    ...(tui ? { tui } : {}),
     ...(fresh !== undefined ? { fresh } : {}),
     ...(print !== undefined ? { print } : {}),
     ...(allowExec !== undefined ? { allowExec } : {}),
@@ -182,6 +190,8 @@ Usage:
   marina --help                show this help
 
 Options:
+  --tui                      interactive workspace with inline command guidance;
+                              omit for scrollback; one-shot and pipes stay plain
   --url --name --session      connected interactive coding, using the server's workspace
                               authenticate first with marina connect; no new world is started
   --agent <runtime>           marina (default), claude, codex, or pi
@@ -438,6 +448,7 @@ if (import.meta.main) {
         model: dispatch.model,
         profile: dispatch.profile,
         harness: dispatch.harness,
+        tui: dispatch.tui,
       }).catch((error: unknown) => {
         console.error(error instanceof Error ? error.message : String(error));
         process.exitCode = 1;

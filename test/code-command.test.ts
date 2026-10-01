@@ -1849,6 +1849,79 @@ describe("code command", () => {
     }
   });
 
+  it("inspects the explicitly targeted project and its actual default recipe without running it", async () => {
+    const root = makeTempGitWorkspace();
+    try {
+      writeFileSync(join(root, "AGENTS.md"), "Keep task evidence bound to source.\n");
+      writeFileSync(
+        join(root, "package.json"),
+        JSON.stringify({ scripts: { test: "exit 99", lint: "exit 98" } }),
+      );
+      const entity = engine.entities.get(conn.entity!)!;
+      const sent: string[] = [];
+      const metadata: Record<string, unknown>[] = [];
+      const command = codeCommand({
+        db,
+        getEntity: () => entity,
+        workspace: new LocalWorkspace(root),
+      });
+      const ctx = testRoomContext(sent, metadata);
+      await command.handler(ctx, inputFor(entity, "code start Target"));
+      const target = entity.properties.coding_session_id as string;
+      await command.handler(ctx, inputFor(entity, "code recipe save default lint"));
+      await command.handler(ctx, inputFor(entity, "code model set example/model"));
+      db.createCodingSession({
+        id: "other-selection",
+        title: "Other",
+        createdBy: entity.name,
+        workspaceRoot: root,
+      });
+      entity.properties.coding_session_id = "other-selection";
+      entity.properties.code_workspace_root = join(root, "unavailable-selection");
+      const properties = structuredClone(entity.properties);
+      const before = db.listCodingArtifacts(target);
+      for (const alias of ["doctor", "onboard", "setup"]) {
+        await command.handler(
+          { ...ctx, codingTarget: { sessionId: target } },
+          inputFor(entity, `code ${alias}`),
+        );
+        const code = metadata.at(-1)?.code as {
+          metadata: { projectInstructions: { sources: { path: string; content?: string }[] } };
+        };
+        expect(code).toMatchObject({
+          sessionId: target,
+          modelTarget: "example/model",
+          metadata: { verificationCommands: ["lint"], executionTarget: "local" },
+        });
+        expect(code.metadata.projectInstructions.sources[0]).toMatchObject({
+          path: "AGENTS.md",
+          status: "loaded",
+        });
+        expect(code.metadata.projectInstructions.sources[0]?.content).toBeUndefined();
+        expect(sent.at(-1)).toContain("provider not contacted");
+        expect(sent.at(-1)).toContain("Effective verification recipe: lint");
+        expect(entity.properties).toEqual(properties);
+      }
+      expect(db.listCodingArtifacts(target)).toEqual(before);
+      expect(db.listTasks()).toHaveLength(0);
+      db.createCodingSession({
+        id: "foreign-inspection",
+        title: "Foreign",
+        createdBy: "SomeoneElse",
+        workspaceRoot: root,
+      });
+      const count = metadata.length;
+      await command.handler(
+        { ...ctx, codingTarget: { sessionId: "foreign-inspection" } },
+        inputFor(entity, "code doctor"),
+      );
+      expect(metadata).toHaveLength(count);
+      expect(sent.at(-1)).toContain("not authorized");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("warns when workspace onboarding uses the process cwd fallback", async () => {
     const previousRoot = process.env.MARINA_CODE_DEFAULT_ROOT;
     const previousRoots = process.env.MARINA_CODE_ROOTS;

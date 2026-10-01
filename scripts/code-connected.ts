@@ -18,6 +18,7 @@ export interface ConnectedCodeOptions {
   session: string;
   token?: string;
   cacheDirectory?: string;
+  tui?: boolean;
 }
 
 /** Authenticated existing-session attach. No server spawn, name-login fallback or local filesystem assumption. */
@@ -147,6 +148,7 @@ export async function runConnectedCodeSession(options: ConnectedCodeOptions): Pr
       .slice(0, 20);
     const directory = join(homedir(), ".marina", "connected", key);
     consoleView = new CodeConsole({
+      tui: options.tui,
       agent: attached.agent,
       url: attached.url.replace(/^ws/, "http"),
       root: attached.workspace,

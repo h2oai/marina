@@ -11,6 +11,7 @@ import { HarnessStore, validateHarness } from "../scripts/code-harness";
 import { NativeTerminal } from "../scripts/code-native";
 import { CodeTerminal, formatCodePerception, terminalText } from "../scripts/code-terminal";
 import { perceptionView, TERMINAL_HISTORY_LIMITS, TerminalViews } from "../scripts/code-views";
+import { workflowShortcut } from "../scripts/code-workflow";
 import { parseDispatch } from "../scripts/marina";
 import { MarinaDB } from "../src/persistence/database";
 import type { AgentAdapter, AgentOptions } from "../src/routing/agent-adapters";
@@ -387,7 +388,7 @@ it("receives typed worker output in Coding, world messages in World, and redacts
     expect(terminalText(transcript)).toContain("hidden worker [redacted]");
     expect(transcript).not.toContain("secret/token");
     expect(transcript).not.toContain("\x1b]52");
-    expect(requests).toEqual(["/tell Peer responding"]); // focus is not a world action
+    expect(requests).toEqual(["code doctor", "/tell Peer responding"]); // inspection at startup; focus is local
     expect(view.busy()).toBe(false); // agent prose does not manufacture task lifecycle
   } finally {
     await view.close(0);
@@ -565,7 +566,21 @@ it("routes terminal inspection and verification shortcuts through the selected M
     output.push(text);
   };
   try {
-    for (const text of ["/status", "/diff", "/verify", "/verify live", "/review"])
+    for (const text of [
+      "/status",
+      "/diff",
+      "/verify",
+      "/verify live",
+      "/review",
+      "/project",
+      "/checks",
+      "/history",
+      "/show artifact-123",
+      "/review run-123",
+      "/review approve run-123",
+      "/review reject run-123",
+      "/verify candidate dependencies:bun",
+    ])
       await view.submit(text);
     expect(requests.map((request) => request.text)).toEqual([
       "code status",
@@ -573,6 +588,14 @@ it("routes terminal inspection and verification shortcuts through the selected M
       "code verify candidate",
       "code verify start",
       "code review",
+      "code doctor",
+      "code artifacts kind verification",
+      "code artifacts kind task_run",
+      "code show artifact-123",
+      "code review run-123",
+      "code review approve run-123",
+      "code review reject run-123",
+      "code verify candidate dependencies:bun",
     ]);
     expect(
       requests.every(
@@ -583,7 +606,19 @@ it("routes terminal inspection and verification shortcuts through the selected M
     ).toBe(true);
     await view.submit("/verify arbitrary shell command");
     await view.submit("/review approve");
-    expect(requests).toHaveLength(5);
+    for (const invalid of [
+      "/review approve last",
+      "/review reject",
+      "/review approve run-123 extra",
+      "/review accept-unverified run-123 reason",
+      "/review approve run-123\n/world quit",
+      "/show ../escape",
+      "/show a\u0000b",
+      "/project unexpected",
+      "/verify live dependencies:bun",
+    ])
+      await view.submit(invalid);
+    expect(requests).toHaveLength(13);
     await view.submit("/world\tlook");
     expect(requests.at(-1)).toEqual({ text: "/look", options: undefined });
     await view.submit("/help");
@@ -1426,4 +1461,207 @@ it("runs several native adapters through routing, journals output, resolves inpu
     db.close();
   }
   expect(stopped).toBe(3);
+});
+
+it("keeps project inspection ordered with coding input while world messages bypass the local wait", async () => {
+  const inspected = Promise.withResolvers<void>();
+  const started = Promise.withResolvers<void>();
+  const requests: string[] = [];
+  const input = new PassThrough();
+  const output = new PassThrough();
+  output.resume();
+  const view = new CodeConsole({
+    agent: {
+      getSession: () => null,
+      command: async (text: string) => {
+        requests.push(text);
+        if (text === "code doctor") {
+          started.resolve();
+          await inspected.promise;
+        }
+        return [];
+      },
+    } as unknown as MarinaAgent,
+    url: "http://fixture",
+    root: directory,
+    directory,
+    sessionId: "selected",
+    connected: true,
+    harness: { version: 1, agent: "marina" },
+    store: new HarnessStore(directory),
+    finish: () => {},
+    terminalStreams: { input, output },
+  });
+  const startup = view.start(true);
+  try {
+    await started.promise;
+    const task = view.submit("/task Fix the boundary");
+    await view.submit("/world tell Peer still available");
+    expect(requests).toEqual(["code doctor", "/tell Peer still available"]);
+    inspected.resolve();
+    await startup;
+    await task;
+    expect(requests.at(-1)).toBe("code do verification:candidate -- Fix the boundary");
+  } finally {
+    inspected.resolve();
+    await startup;
+    await view.close(0);
+    input.destroy();
+    output.destroy();
+  }
+});
+
+it("renders review actions only for their selected session and never transforms hostile text into a shortcut", () => {
+  const perception: Perception = {
+    kind: "message",
+    timestamp: 0,
+    data: {
+      text: "Task submitted; candidate evidence is stale.",
+      code: {
+        type: "artifact",
+        event: "task_run_review",
+        sessionId: "selected",
+        commands: ["code show summary-1", "code review approve run-1", "code review reject run-1"],
+      },
+    },
+  };
+  const selected = formatCodePerception(perception, "selected");
+  expect(selected).toContain("/show summary-1");
+  expect(selected).toContain("/review approve run-1");
+  expect(selected).toContain("/review reject run-1");
+  expect(selected).toContain("evidence is stale");
+  expect(selected).toContain("does not commit or push");
+  const foreign = formatCodePerception(perception, "other");
+  expect(foreign).toContain("In session selected: code review approve run-1");
+  expect(foreign).not.toContain("/review approve");
+  expect(workflowShortcut("code review approve last")).toBeUndefined();
+  expect(workflowShortcut("code review approve run-1\nquit")).toBeUndefined();
+  expect(workflowShortcut("code review approve run-1\x1b[31m")).toBeUndefined();
+  expect(workflowShortcut("code exec-approve token")).toBeUndefined();
+});
+
+it("shows explicit review decisions and unverified acceptance without letting historical reviews stop current work", async () => {
+  const output: string[] = [];
+  const view = new CodeConsole({
+    agent: { getSession: () => null, command: async () => [] } as unknown as MarinaAgent,
+    url: "http://fixture",
+    root: directory,
+    directory,
+    sessionId: "selected",
+    connected: true,
+    harness: { version: 1, agent: "marina" },
+    store: new HarnessStore(directory),
+    finish: () => {},
+  });
+  view.write = (text) => {
+    output.push(text);
+  };
+  const event = (code: Record<string, unknown>): Perception => ({
+    kind: "message",
+    timestamp: 0,
+    data: { code: { sessionId: "selected", ...code } },
+  });
+  try {
+    view.observe(
+      event({ event: "session_status", metadata: { runId: "first", runStatus: "submitted" } }),
+    );
+    view.observe(
+      event({
+        event: "task_run_review",
+        status: "approved",
+        metadata: { runId: "first", unverifiedAcceptance: { reason: "owner waiver" } },
+      }),
+    );
+    await view.submit("/agents");
+    expect(output.at(-1)).toContain("accepted unverified");
+    view.observe(
+      event({
+        event: "session_status",
+        metadata: {
+          runId: "first",
+          runStatus: "submitted",
+          reviewStatus: "approved",
+          acceptedUnverified: true,
+        },
+      }),
+    );
+    await view.submit("/agents");
+    expect(output.at(-1)).toContain("accepted unverified");
+    view.observe(
+      event({ event: "code_lifecycle", phase: "received", metadata: { runId: "second" } }),
+    );
+    view.observe(
+      event({ event: "task_run_review", status: "rejected", metadata: { runId: "first" } }),
+    );
+    expect(view.busy()).toBe(true);
+    await view.submit("/agents");
+    expect(output.at(-1)).toContain("working");
+  } finally {
+    await view.close(0);
+  }
+});
+
+it("retains a queued workflow destination when an independent world command changes selection", async () => {
+  const release = Promise.withResolvers<void>();
+  const entered = Promise.withResolvers<void>();
+  const requests: { text: string; options?: CommandOptions }[] = [];
+  const view = new CodeConsole({
+    agent: {
+      getSession: () => null,
+      command: async (text: string, options?: CommandOptions) => {
+        requests.push({ text, options });
+        if (text === "code doctor") {
+          entered.resolve();
+          await release.promise;
+        }
+        if (text === "/code resume second")
+          return Object.assign(
+            [
+              {
+                kind: "message",
+                timestamp: 0,
+                command_request_id: "selection",
+                data: { code: { event: "session_resumed", sessionId: "second" } },
+              },
+            ],
+            { completion: "confirmed" },
+          );
+        return [];
+      },
+    } as unknown as MarinaAgent,
+    url: "http://fixture",
+    root: directory,
+    directory,
+    sessionId: "first",
+    connected: true,
+    harness: { version: 1, agent: "marina" },
+    store: new HarnessStore(directory),
+    finish: () => {},
+  });
+  view.write = () => {};
+  const inspection = view.submit("/project");
+  try {
+    await entered.promise;
+    const check = view.submit("/verify");
+    const task = view.submit("/task Fix in the original project");
+    await view.submit("/world code resume second");
+    release.resolve();
+    await inspection;
+    await check;
+    await task;
+    for (const request of requests.filter((request) =>
+      [
+        "code doctor",
+        "code verify candidate",
+        "code do verification:candidate -- Fix in the original project",
+      ].includes(request.text),
+    ))
+      expect(request.options?.codingTarget?.sessionId).toBe("first");
+    await view.submit("/diff");
+    expect(requests.at(-1)?.options?.codingTarget?.sessionId).toBe("second");
+  } finally {
+    release.resolve();
+    await inspection;
+    await view.close(0);
+  }
 });

@@ -27,7 +27,25 @@ aliases. `--model` selects a model understood by the chosen runtime. Native agen
 their own configuration and permission systems; Marina's `--allow-exec` flags apply
 only to Marina's own Code Mode commands. There is no automatic provider failover.
 
-Inside the terminal, `/help` shows the controls; Tab completes their names. Streaming
+For the fullscreen workspace, run **`marina --tui`** (or add `--tui` to your connected
+`--url … --name … --session …` invocation). It keeps the project location, active
+conversation, task status and unread counts visible around the transcript and composer.
+Coding remains a single session; World messages and independent agents continue alongside it.
+Omit `--tui` to use the scrollback terminal described below.
+
+In the workspace, type `/` for command suggestions with descriptions. Up/Down selects;
+Tab or Enter inserts the selection into your draft, and a separate Enter sends it.
+Argument hints follow the selected command. Paste inserts a multiline draft without sending;
+Shift+Enter (where supported) or a trailing `\` adds another line. F1 opens help, F6 switches
+Coding/World, and F7 opens pending requests. PageUp/PageDown scroll the current transcript;
+Alt+Up/Down or `/view older` and `/view newer` fetch another retained local page. Ctrl+D exits
+an empty composer. Each conversation retains its editor, cursor and history; cancelled
+requests discard their partial answers. The workspace restores the shell on exit without
+copying unsent drafts into scrollback. It requires interactive input and output; one-shot
+`-p` and redirected output keep their existing stream behavior. `NO_COLOR=1` disables accents.
+
+Inside the terminal, `/help` shows the controls; Tab completes their names and the
+`/verify` and `/review` actions. Streaming
 output preserves the current draft and cursor, including wrapped lines and terminal resizing.
 The prompt shows task/check activity; transcript labels distinguish world messages, check
 receipts, results, submitted work and review. Permission details appear above a short answer
@@ -51,10 +69,44 @@ verification before the worker can submit its result. Start with a small change,
 `/task Fix the pagination boundary and add a regression test`. Early summaries remain progress;
 blockers are reported explicitly. Ordinary freeform requests retain their existing behavior.
 
+Interactive Marina sessions inspect the project at startup. `/project` repeats this inspection:
+workspace and execution location, selected model, root instruction sources, Git state, and the
+effective verification recipe (including a saved `default` recipe). It does not call the model,
+run the recipe, install dependencies, or recruit a worker. A whitespace-only recipe is flagged;
+configure meaningful checks with, for example, `/world code recipe save default typecheck then test`.
+The report is an observation, not proof that a provider is reachable or permission to execute.
+Connected mode inspects the server workspace; a sandbox report identifies host-only observations.
+
 For the selected Marina session, `/status` shows the task, `/diff` shows working changes,
 `/verify` starts candidate checks, and `/review` inspects the latest attempt and its evidence.
+`/checks` lists recorded verification results; `/status` shows checks still in progress.
+`/history` lists recent task attempts, and `/show <artifact-id>` opens a recorded artifact.
+These are bounded server listings; local transcript pages are available through `/view older`.
+
+Complete an ordinary verified task from this terminal:
+
+```text
+/project
+/task Fix the pagination boundary and add a regression test
+/status
+/diff
+/checks
+/review
+/review approve <attempt-id>
+```
+
+Copy the attempt ID from the review output. `/review reject <attempt-id>` rejects that submission;
+`/review <attempt-id>` inspects a historical attempt. Decisions require an explicit ID and use
+Marina's existing ownership checks. Approval rechecks source freshness, so a direct filesystem
+edit after inspection can withhold approval. Approval records the canonical task decision; it
+does not commit, merge, or push files. The prompt distinguishes approval, rejection, and explicit
+unverified acceptance. Unverified acceptance remains the deliberate owner command
+`/world code review accept-unverified <attempt-id> <reason>` and never marks checks as passed.
+
 `/verify live` starts background checks in the live workspace; those results remain unbound to
-an immutable candidate. These shortcuts use the same server commands and permissions as other
+an immutable candidate. For a Bun project needing dependencies, `/verify candidate dependencies:bun`
+explicitly prepares the captured lockfile inside the candidate with lifecycle scripts disabled.
+There is no automatic install. These shortcuts use the same server commands and permissions as other
 interfaces. Native runtimes retain their own tools. Redirected output stays plain text.
 
 The prompt also shows worker pauses, budget exhaustion and upstream recovery when reported

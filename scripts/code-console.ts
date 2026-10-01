@@ -6,17 +6,18 @@ import type { CommandOptions, MarinaAgent, Perception } from "../src/sdk/client"
 import { type CodingHarness, codingAgent, type HarnessStore } from "./code-harness";
 import { inferCodeDefaultModel } from "./code-model";
 import { installedCodingAdapters, NativeTerminal, type TerminalAgent } from "./code-native";
-import { workerActivityLabel } from "./code-presentation";
+import { codingSessionPhase, workerActivityLabel } from "./code-presentation";
 import {
   CodeTerminal,
   type CodeTerminalOptions,
   formatCodePerception,
   isWorldInput,
-  TERMINAL_HELP,
+  terminalHelp,
   terminalText,
   verificationReadinessLabel,
 } from "./code-terminal";
 import { perceptionView, type TranscriptView } from "./code-views";
+import { workflowCommand } from "./code-workflow";
 
 export interface CodeConsoleOptions {
   agent: MarinaAgent;
@@ -29,6 +30,7 @@ export interface CodeConsoleOptions {
   /** Attached to an existing world. Source and execution belong to that server. */
   connected?: boolean;
   sessionId?: string;
+  tui?: boolean;
   terminalStreams?: Pick<CodeTerminalOptions, "input" | "output">;
 }
 
@@ -152,7 +154,7 @@ export class CodeConsole {
   /** The one perception printer: metadata drives local views, never rendered prose. */
   receive(p: Perception) {
     this.observe(p);
-    const text = formatCodePerception(p);
+    const text = formatCodePerception(p, this.sessionId);
     if (text)
       this.write(
         text,
@@ -187,6 +189,9 @@ export class CodeConsole {
             runId?: string;
             sessionId?: string;
             runStatus?: string;
+            reviewStatus?: string;
+            acceptedUnverified?: boolean;
+            unverifiedAcceptance?: unknown;
             terminal?: boolean;
             outcome?: string;
             reason?: string;
@@ -218,6 +223,23 @@ export class CodeConsole {
       this.workerObservedAt = -Infinity;
       this.checksRunning = false;
     } else if (this.runId && !runId) return;
+    if (code.event === "task_run_review") {
+      if (!runId || runId !== this.runId || !["approved", "rejected"].includes(code.status ?? ""))
+        return;
+      this.marinaPhase =
+        code.status === "approved"
+          ? meta.unverifiedAcceptance
+            ? "accepted unverified"
+            : "approved"
+          : "rejected";
+      this.runSettled = true;
+      this.marinaBusy = false;
+      this.checksRunning = false;
+      this.workerActivity = undefined;
+      this.verificationReadiness = undefined;
+      this.updatePrompt();
+      return;
+    }
     if (this.runSettled && (code.event !== "session_status" || meta.runStatus === "active")) return;
     if (
       ["session_status", "worker_state_changed", "code_lifecycle"].includes(code.event ?? "") &&
@@ -233,17 +255,7 @@ export class CodeConsole {
     }
     if (code.event === "session_status") {
       this.marinaBusy = meta.runStatus === "active";
-      this.marinaPhase = this.marinaBusy
-        ? "working"
-        : meta.runStatus === "submitted"
-          ? "submitted for review"
-          : ["interrupted", "failed"].includes(meta.runStatus ?? "")
-            ? meta.reason === "blocked"
-              ? "blocked"
-              : "stopped"
-            : ["approved", "rejected", "cancelled"].includes(meta.runStatus ?? "")
-              ? meta.runStatus!
-              : "ready";
+      this.marinaPhase = codingSessionPhase(meta);
       this.runSettled = !!this.runId && !!meta.runStatus && meta.runStatus !== "active";
     }
     if (code.event === "verification_started") this.checksRunning = true;
@@ -316,14 +328,17 @@ export class CodeConsole {
     text = text.trim();
     if (!text) return Promise.resolve();
     if (this.closing) return Promise.resolve();
+    // Preserve the visible destination at input admission. World commands may
+    // change the selection while an earlier coding request is still pending.
+    const destination = { sessionId: this.sessionId, nativeId: this.selected };
     const report = (error: unknown) => this.write(getErrorMessage(error));
     if (
       isWorldInput(text) ||
       /^\/view(?:\s|$)/.test(text) ||
       ["/help", "/agents", "/stop", "/quit", "exit", "quit"].includes(text)
     )
-      return this.line(text).catch(report);
-    this.commands = this.commands.then(() => this.line(text)).catch(report);
+      return this.line(text, destination).catch(report);
+    this.commands = this.commands.then(() => this.line(text, destination)).catch(report);
     return this.commands;
   }
   async start(interactive: boolean) {
@@ -332,6 +347,9 @@ export class CodeConsole {
       this.terminal = new CodeTerminal({
         ...this.options.terminalStreams,
         views: interactive,
+        tui: this.options.tui,
+        connected: this.options.connected,
+        location: `${this.options.connected ? "Server" : "Local"} workspace · ${this.options.root}`,
         line: (text) => {
           if (!interactive) return;
           void this.submit(text);
@@ -346,7 +364,7 @@ export class CodeConsole {
     }
     if (interactive) {
       this.write(
-        "Use /task <request> to work toward verified results, or type freely. /diff inspects changes; /review shows evidence.",
+        "Start with /project to inspect readiness, then /task <request> for verified work. /diff → /checks → /review follows the result; /history recalls prior attempts.",
       );
       this.write(
         "F6 switches Coding/World; F7 opens pending requests. /view lists views; /help lists controls.",
@@ -362,10 +380,12 @@ export class CodeConsole {
       this.write(
         "Connected to an existing world. Closing this terminal leaves its agents and tasks running.",
       );
+      if (interactive) await this.submit("/project");
       return;
     }
     this.commands = this.selectHarness(this.harness);
     await this.commands;
+    if (interactive && this.harness.agent === "marina") await this.submit("/project");
   }
   private async runtime() {
     if (this.options.connected)
@@ -466,7 +486,7 @@ export class CodeConsole {
     this.terminal?.setTarget(agent.session.label);
     this.write(`Selected ${agent.session.label} · ${agent.state.cwd}`);
   }
-  private async line(text: string) {
+  private async line(text: string, destination: { sessionId?: string; nativeId?: string }) {
     if (this.closing) return;
     if (["/quit", "exit", "quit"].includes(text)) {
       await this.close(0);
@@ -491,21 +511,7 @@ export class CodeConsole {
       return;
     }
     if (verb === "/help") {
-      this.write(
-        this.options.connected
-          ? TERMINAL_HELP.split("\n")
-              .filter((line) => !line.startsWith("/spawn ") && !line.startsWith("Native agents "))
-              .join("\n")
-              .replace(
-                "/use marina|claude|codex|pi|name  Switch agents (first native agent works in this folder)",
-                "/use marina                     Select the server-side coding agent",
-              )
-              .replace(
-                "/quit                           Stop owned agents and exit",
-                "/quit                           Detach; world agents and tasks keep running",
-              )
-          : TERMINAL_HELP,
-      );
+      this.write(terminalHelp(this.options.connected));
       return;
     }
     if (verb === "/stop") {
@@ -518,7 +524,7 @@ export class CodeConsole {
       return;
     }
     if (verb === "/task") {
-      if (this.selected || this.harness.agent !== "marina")
+      if (destination.nativeId || this.selected || this.harness.agent !== "marina")
         throw new Error(
           "/task uses Marina's verification workflow. /use marina selects it; native agents keep their own tools.",
         );
@@ -526,31 +532,19 @@ export class CodeConsole {
       this.interrupted = false;
       await this.command(
         `code do verification:candidate -- ${argument}`,
-        this.sessionId ? { codingTarget: { sessionId: this.sessionId } } : undefined,
+        destination.sessionId ? { codingTarget: { sessionId: destination.sessionId } } : undefined,
       );
       return;
     }
-    if (["/status", "/diff", "/verify", "/review"].includes(verb)) {
-      if (this.selected)
+    const workflow = workflowCommand(verb, argument);
+    if (workflow) {
+      if (destination.nativeId || this.selected)
         throw new Error(
           "These controls inspect Marina's coding session. /use marina selects it; native agents keep their own tools.",
         );
-      if (verb !== "/verify" && argument)
-        throw new Error(
-          `Usage: ${verb}. Use /world code ${verb.slice(1)} for additional arguments.`,
-        );
-      let command = `code ${verb.slice(1)}`;
-      if (verb === "/verify") {
-        if (!argument || argument === "candidate") command = "code verify candidate";
-        else if (argument === "live") command = "code verify start";
-        else
-          throw new Error(
-            "Usage: /verify [candidate|live]. Use /world code verify for other verification options.",
-          );
-      }
       await this.command(
-        command,
-        this.sessionId ? { codingTarget: { sessionId: this.sessionId } } : undefined,
+        workflow,
+        destination.sessionId ? { codingTarget: { sessionId: destination.sessionId } } : undefined,
       );
       return;
     }
