@@ -256,6 +256,9 @@ describe("gate context — one frame per execution", () => {
 function phaseFixture(
   opts: {
     macros?: Record<string, string>;
+    /** Macros owned by `room:<roomId>` (room-scoped). */
+    roomMacros?: Record<string, Record<string, string>>;
+    systemMacros?: Record<string, string>;
     rate?: () => boolean;
     roomCommands?: Record<string, CommandHandler>;
     rank?: number;
@@ -283,12 +286,29 @@ function phaseFixture(
       calls.push("look");
     },
   });
+  // `echo` records its raw argument text, so tests can assert byte-exact args.
+  commands.registerBuiltin({
+    name: "echo",
+    help: "Echo",
+    handler: (_ctx, input) => {
+      calls.push(`echo ${input.args}`);
+    },
+  });
   const macros = opts.macros ?? {};
+  const roomMacros = opts.roomMacros ?? {};
+  const systemMacros = opts.systemMacros ?? {};
+  const tableFor = (author: string): Record<string, string> => {
+    if (author === "system") return systemMacros;
+    if (author.startsWith("room:")) return roomMacros[author.slice("room:".length)] ?? {};
+    return macros;
+  };
   const macroManager = {
-    getByName: (name: string, author: string) =>
-      author !== "system" && Object.hasOwn(macros, name)
-        ? { id: 1, name, command: macros[name]!, authorId: author, createdAt: 0 }
-        : undefined,
+    getByName: (name: string, author: string) => {
+      const table = tableFor(author);
+      return Object.hasOwn(table, name)
+        ? { id: 1, name, command: table[name]!, authorId: author, createdAt: 0 }
+        : undefined;
+    },
   } as unknown as Pick<MacroManager, "getByName">;
   const db = {
     recordPrimitiveUsage: (row: { success: boolean }) => usage.push(row.success),
@@ -322,31 +342,138 @@ function phaseFixture(
   return { phase, entity, commands, messages, events, calls, usage, activity };
 }
 
+/** No operator overrides: the posture alone decides the macro limits. */
+const UNSET_MACRO_ENV = {
+  MARINA_MACRO_MAX_DEPTH: undefined,
+  MARINA_MACRO_MAX_EXPANSIONS: undefined,
+  MARINA_AUTONOMY: undefined,
+};
+
+/** `m0 → m1 → … → m{n}` ending in `look`. */
+function chain(n: number): Record<string, string> {
+  const macros: Record<string, string> = {};
+  for (let i = 0; i < n; i++) macros[`m${i}`] = `m${i + 1}`;
+  macros[`m${n}`] = "look";
+  return macros;
+}
+
+/** 11 × 10 = 110 expanded `look`s (plus the 11 `fan` commands themselves). */
+const WIDE = { wide: Array(11).fill("fan").join(";"), fan: Array(10).fill("look").join(";") };
+
 describe("macro expansion — bounded and charged", () => {
   it("stops a macro cycle", async () => {
+    using _state = scopeProcessState({ trustProfile: "shared", env: UNSET_MACRO_ENV });
     const f = phaseFixture({ macros: { ping: "pong", pong: "look; ping" } });
     await f.phase.execute(f.entity.id, "ping");
     expect(f.messages.join("\n")).toContain('Macro "ping" calls itself');
     expect(f.calls).toEqual(["look"]);
   });
 
-  it(`stops nesting past MAX_MACRO_DEPTH (${MAX_MACRO_DEPTH})`, async () => {
-    const macros: Record<string, string> = {};
-    for (let i = 0; i < MAX_MACRO_DEPTH + 2; i++) macros[`m${i}`] = `m${i + 1}`;
-    macros[`m${MAX_MACRO_DEPTH + 2}`] = "look";
-    const f = phaseFixture({ macros });
+  it(`stops nesting past MAX_MACRO_DEPTH (${MAX_MACRO_DEPTH}) on shared`, async () => {
+    using _state = scopeProcessState({ trustProfile: "shared", env: UNSET_MACRO_ENV });
+    const f = phaseFixture({ macros: chain(MAX_MACRO_DEPTH + 2) });
     await f.phase.execute(f.entity.id, "m0");
-    expect(f.messages.join("\n")).toContain(`Macro nesting deeper than ${MAX_MACRO_DEPTH}`);
+    const text = f.messages.join("\n");
+    expect(text).toContain(`Macro nesting deeper than ${MAX_MACRO_DEPTH}`);
+    expect(text).toContain("MARINA_MACRO_MAX_DEPTH");
     expect(f.calls).toEqual([]);
   });
 
-  it(`caps one invocation at MAX_MACRO_EXPANSIONS (${MAX_MACRO_EXPANSIONS}) commands`, async () => {
-    const f = phaseFixture({
-      macros: { wide: Array(11).fill("fan").join(";"), fan: Array(10).fill("look").join(";") },
-    });
+  it(`caps one invocation at MAX_MACRO_EXPANSIONS (${MAX_MACRO_EXPANSIONS}) commands on shared`, async () => {
+    using _state = scopeProcessState({ trustProfile: "shared", env: UNSET_MACRO_ENV });
+    const f = phaseFixture({ macros: WIDE });
     await f.phase.execute(f.entity.id, "wide");
     expect(f.calls.length).toBeLessThan(MAX_MACRO_EXPANSIONS);
-    expect(f.messages.join("\n")).toContain(`stopped after ${MAX_MACRO_EXPANSIONS}`);
+    const text = f.messages.join("\n");
+    expect(text).toContain(`stopped after ${MAX_MACRO_EXPANSIONS}`);
+    expect(text).toContain("MARINA_MACRO_MAX_EXPANSIONS");
+  });
+
+  it("lifts depth and expansion caps under the local-ungated profile", async () => {
+    using _state = scopeProcessState({ trustProfile: "local", env: UNSET_MACRO_ENV });
+    const deep = phaseFixture({ macros: chain(MAX_MACRO_DEPTH * 4) });
+    await deep.phase.execute(deep.entity.id, "m0");
+    expect(deep.calls).toEqual(["look"]);
+    const wide = phaseFixture({ macros: WIDE });
+    await wide.phase.execute(wide.entity.id, "wide");
+    expect(wide.calls).toHaveLength(110);
+    expect(wide.messages.join("\n")).not.toContain("stopped after");
+  });
+
+  it("lifts the caps under MARINA_AUTONOMY=open on a shared profile", async () => {
+    using _state = scopeProcessState({
+      trustProfile: "shared",
+      env: { ...UNSET_MACRO_ENV, MARINA_AUTONOMY: "open" },
+    });
+    const f = phaseFixture({ macros: chain(MAX_MACRO_DEPTH * 2) });
+    await f.phase.execute(f.entity.id, "m0");
+    expect(f.calls).toEqual(["look"]);
+  });
+
+  it("keeps the caps on local when MARINA_AUTONOMY=guarded", async () => {
+    using _state = scopeProcessState({
+      trustProfile: "local",
+      env: { ...UNSET_MACRO_ENV, MARINA_AUTONOMY: "guarded" },
+    });
+    const f = phaseFixture({ macros: chain(MAX_MACRO_DEPTH + 2) });
+    await f.phase.execute(f.entity.id, "m0");
+    expect(f.calls).toEqual([]);
+  });
+
+  it("env overrides the caps in either direction (0 = unlimited)", async () => {
+    {
+      using _state = scopeProcessState({
+        trustProfile: "shared",
+        env: { ...UNSET_MACRO_ENV, MARINA_MACRO_MAX_DEPTH: "0", MARINA_MACRO_MAX_EXPANSIONS: "0" },
+      });
+      const deep = phaseFixture({ macros: chain(MAX_MACRO_DEPTH * 3) });
+      await deep.phase.execute(deep.entity.id, "m0");
+      expect(deep.calls).toEqual(["look"]);
+      const wide = phaseFixture({ macros: WIDE });
+      await wide.phase.execute(wide.entity.id, "wide");
+      expect(wide.calls).toHaveLength(110);
+    }
+    {
+      using _state = scopeProcessState({
+        trustProfile: "local",
+        env: { ...UNSET_MACRO_ENV, MARINA_MACRO_MAX_DEPTH: "2", MARINA_MACRO_MAX_EXPANSIONS: "3" },
+      });
+      const deep = phaseFixture({ macros: chain(3) });
+      await deep.phase.execute(deep.entity.id, "m0");
+      expect(deep.messages.join("\n")).toContain("Macro nesting deeper than 2");
+      expect(deep.calls).toEqual([]);
+      const wide = phaseFixture({ macros: { five: "look; look; look; look; look" } });
+      await wide.phase.execute(wide.entity.id, "five");
+      expect(wide.calls).toEqual(["look", "look", "look"]);
+      expect(wide.messages.join("\n")).toContain("stopped after 3 expanded commands");
+    }
+    {
+      // Junk never changes the posture default.
+      using _state = scopeProcessState({
+        trustProfile: "shared",
+        env: { ...UNSET_MACRO_ENV, MARINA_MACRO_MAX_DEPTH: "lots" },
+      });
+      const f = phaseFixture({ macros: chain(MAX_MACRO_DEPTH + 2) });
+      await f.phase.execute(f.entity.id, "m0");
+      expect(f.messages.join("\n")).toContain(`Macro nesting deeper than ${MAX_MACRO_DEPTH}`);
+    }
+  });
+
+  it("refuses a cycle in every posture, even with unlimited caps", async () => {
+    for (const [trustProfile, env] of [
+      ["local", UNSET_MACRO_ENV],
+      ["shared", { ...UNSET_MACRO_ENV, MARINA_AUTONOMY: "open" }],
+      [
+        "shared",
+        { ...UNSET_MACRO_ENV, MARINA_MACRO_MAX_DEPTH: "0", MARINA_MACRO_MAX_EXPANSIONS: "0" },
+      ],
+    ] as const) {
+      using _state = scopeProcessState({ trustProfile, env });
+      const f = phaseFixture({ macros: { ping: "look; pong $*", pong: "ping $*" } });
+      await f.phase.execute(f.entity.id, "ping x");
+      expect(f.messages.join("\n")).toContain('Macro "ping" calls itself');
+      expect(f.calls).toEqual(["look"]);
+    }
   });
 
   it("charges one rate-limit token per expanded command", async () => {
@@ -387,6 +514,156 @@ describe("macro expansion — bounded and charged", () => {
     expect(out.at(-1)).toContain("Cannot create an empty macro");
     run("macro create fine look ; look");
     expect(created).toEqual(["fine"]);
+  });
+});
+
+describe("macro arguments — the caller's raw text binds into the body", () => {
+  const run = async (macros: Record<string, string>, line: string) => {
+    const f = phaseFixture({ macros });
+    await f.phase.execute(f.entity.id, line);
+    return f;
+  };
+
+  it("appends trailing arguments to the last command when the body has no placeholder", async () => {
+    const f = await run(
+      { book: "look; echo connect call tau2 book_reservation" },
+      'book {"id":42}',
+    );
+    expect(f.calls).toEqual(["look", 'echo connect call tau2 book_reservation {"id":42}']);
+    // No arguments, no trailing space.
+    const bare = await run({ book: "echo call" }, "book");
+    expect(bare.calls).toEqual(["echo call"]);
+  });
+
+  it("preserves JSON byte-exactly — spacing, quotes, braces and `;` inside it", async () => {
+    const json = '{"name": "a  b",\t"q": "x; y", "n": [1, {"$": "$1"}]}';
+    const appended = await run({ book: "echo call book" }, `book ${json}`);
+    expect(appended.calls).toEqual([`echo call book ${json}`]);
+    const placed = await run({ book: "echo call book $* --end" }, `book ${json}`);
+    expect(placed.calls).toEqual([`echo call book ${json} --end`]);
+  });
+
+  it("substitutes $*, $@ and $1..$9; a missing positional is empty", async () => {
+    const f = await run(
+      { m: "echo [$*]; echo [$@]; echo $2-$1; echo <$9>; echo $1$3" },
+      "m alpha  beta gamma",
+    );
+    expect(f.calls).toEqual([
+      "echo [alpha  beta gamma]",
+      "echo [alpha  beta gamma]",
+      "echo beta-alpha",
+      "echo <>",
+      "echo alphagamma",
+    ]);
+  });
+
+  it("binds $1 in several commands of a multi-command body and appends nothing", async () => {
+    const f = await run({ m: "echo one $1; look; echo two $1 $2" }, "m 7 8 9");
+    expect(f.calls).toEqual(["echo one 7", "look", "echo two 7 8"]);
+  });
+
+  it("$$ is a literal $ and does not count as a placeholder", async () => {
+    const f = await run({ price: "echo cost $$5" }, "price usd");
+    expect(f.calls).toEqual(["echo cost $5 usd"]);
+    const mixed = await run({ price: "echo $$1 is $1" }, "price five");
+    expect(mixed.calls).toEqual(["echo $1 is five"]);
+  });
+
+  it("passes arguments through a nested macro", async () => {
+    const f = await run({ outer: "inner $1", inner: "echo got" }, "outer x y");
+    expect(f.calls).toEqual(["echo got x"]);
+  });
+});
+
+describe("room-scoped macros", () => {
+  it("resolve only in their room, ahead of the entity's own and system macros", async () => {
+    const roomed = phaseFixture({
+      macros: { book: "echo own" },
+      systemMacros: { book: "echo system", sys: "echo system-only" },
+      roomMacros: { "test/start": { book: "echo room" } },
+    });
+    await roomed.phase.execute(roomed.entity.id, "book 1");
+    await roomed.phase.execute(roomed.entity.id, "sys");
+    expect(roomed.calls).toEqual(["echo room 1", "echo system-only"]);
+
+    const elsewhere = phaseFixture({
+      macros: { book: "echo own" },
+      roomMacros: { "other/room": { book: "echo room" } },
+    });
+    await elsewhere.phase.execute(elsewhere.entity.id, "book 1");
+    expect(elsewhere.calls).toEqual(["echo own 1"]);
+  });
+
+  it("never shadow a builtin or a room command", async () => {
+    const f = phaseFixture({
+      roomMacros: { "test/start": { look: "echo shadow", pray: "echo shadow" } },
+      roomCommands: { pray: () => void f.calls.push("pray") },
+    });
+    await f.phase.execute(f.entity.id, "look");
+    await f.phase.execute(f.entity.id, "pray");
+    expect(f.calls).toEqual(["look", "pray"]);
+  });
+
+  it("`macro create … room:` stores under the room owner key, rank-floored on shared", () => {
+    using _state = scopeProcessState({ trustProfile: "shared", env: UNSET_MACRO_ENV });
+    const created: Array<[string, string, string]> = [];
+    const macros = {
+      getByName: () => undefined,
+      list: () => [],
+      create: (name: string, owner: string, command: string) =>
+        created.push([name, owner, command]),
+    } as unknown as MacroManager;
+    const router = new CommandRouter();
+    const cmd = macroCommand(
+      macros,
+      router,
+      () => false,
+      (id) => id === "lab/bench",
+    );
+    const out: string[] = [];
+    let rank = 0;
+    const ctx = {
+      send: (_: string, text: string) => out.push(text),
+      getEntity: () => ({ id: "e_1", name: "Mac", room: "test/start", properties: { rank } }),
+    } as unknown as RoomContext;
+    const exec = (line: string) =>
+      cmd.handler(ctx, router.parse(line, "e_1" as EntityId, roomId("test/start")));
+
+    exec('macro create book connect call tau2 book {"a":  1} room:here');
+    expect(out.at(-1)).toContain("rank 4");
+    expect(created).toEqual([]);
+
+    rank = 4;
+    exec('macro create book connect call tau2 book {"a":  1} room:here');
+    exec("macro create peek room:lab/bench look $1");
+    exec("macro create nowhere look room:missing/room");
+    expect(out.at(-1)).toContain('Unknown room "missing/room"');
+    exec('macro create mine echo {"k":  "v"}');
+    expect(created).toEqual([
+      ["book", "room:test/start", 'connect call tau2 book {"a":  1}'],
+      ["peek", "room:lab/bench", "look $1"],
+      ["mine", "e_1", 'echo {"k":  "v"}'],
+    ]);
+  });
+
+  it("the room-macro floor is lifted locally", () => {
+    using _state = scopeProcessState({ trustProfile: "local", env: UNSET_MACRO_ENV });
+    const created: string[] = [];
+    const macros = {
+      getByName: () => undefined,
+      create: (_name: string, owner: string) => created.push(owner),
+    } as unknown as MacroManager;
+    const router = new CommandRouter();
+    const cmd = macroCommand(macros, router);
+    const ctx = {
+      send: () => {},
+      getEntity: () => ({ id: "e_1", name: "Mac", room: "test/start", properties: { rank: 0 } }),
+    } as unknown as RoomContext;
+    cmd.handler(
+      ctx,
+      router.parse("macro create hi look room:here", "e_1" as EntityId, roomId("test/start")),
+    );
+    expect(created).toEqual(["room:test/start"]);
   });
 });
 

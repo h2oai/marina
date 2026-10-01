@@ -352,6 +352,25 @@ Run it by typing the name directly:
 
 This executes all four commands in sequence. Built-in commands always take priority over macros if names collide.
 
+### Arguments
+
+Whatever you type after the macro name is passed in as raw text, never re-tokenised, so JSON arrives byte-for-byte. In the body, `$*` (or `$@`) is all of it, `$1`..`$9` are its whitespace-separated words, and `$$` is a literal `$`. A body with no placeholder gets the arguments appended to its last command, so a one-command macro works as an alias:
+
+```
+> macro create book connect call tau2 book_reservation
+> book {"id":42}          # runs: connect call tau2 book_reservation {"id":42}
+```
+
+A `;` inside the arguments never splits them; only the macro body splits on `;`.
+
+### Room macros
+
+`macro create <name> <command> room:<roomId|here>` scopes a macro to one room: it resolves for every entity in that room, which lets a room expose friendly verbs (rank 4, lifted on a local instance). Resolution order is built-in command, room command, room macro, your own macro, then system macro. `macro delete <name> room:here` removes one.
+
+### Limits
+
+A macro that calls itself, directly or through other macros, is always refused. On a shared or public instance nesting stops at 8 levels and one invocation at 100 commands; a local instance or `MARINA_AUTONOMY=open` lifts both. `MARINA_MACRO_MAX_DEPTH` and `MARINA_MACRO_MAX_EXPANSIONS` override either way (`0` = unlimited). Every expanded command costs one rate-limit token.
+
 ### List your macros
 
 ```

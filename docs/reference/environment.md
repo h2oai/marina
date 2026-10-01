@@ -84,6 +84,7 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 | `START_ROOM=` | Room where new players spawn. Defaults to the world's start room. | restart |
 | `TICK_MS=1000` | Engine tick interval in milliseconds. | restart |
 | `MARINA_COMMAND_PHASE_BUDGET_MS=150` | Wall-clock budget for the per-tick command phase, in milliseconds. | restart |
+| `MARINA_MACRO_MAX_DEPTH=8`<br>`MARINA_MACRO_MAX_EXPANSIONS=100` | Macro expansion limits: nesting depth (a macro that runs a macro …) and commands one top-level macro invocation may expand to. 0 is unlimited. Unset, the shared/public defaults are 8 and 100, and the local-ungated profile or MARINA_AUTONOMY=open is unlimited. A macro cycle is always refused, and every expanded command still costs one rate-limit token. |  |
 | `MARINA_ROOM_AGENTS=true` | `false` suppresses every room-agent auto-spawn (the LLM agents rooms start on first entry). Any other value leaves it on. Room agents need a provider key. |  |
 | `MARINA_WORKBENCH_MODEL=openai/gpt-6-luna` | Model for the default Workbench's Host, Builder, Critic and Chronicler. Unset tries MARINA_CREW_MODEL, then openai/gpt-6-luna (OPENAI_API_KEY), openrouter/openai/gpt-6-luna (OPENROUTER_API_KEY), huggingface/zai-org/GLM-5.3-Flash (HUGGINGFACE_API_KEY or HF_TOKEN), then marina/default. | restart |
 | `MARINA_CREW_MODEL=marina/default` | Shared crew-model override for the Workbench, Showcase and focused single-outcome worlds. | restart |

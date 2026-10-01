@@ -633,6 +633,10 @@ Components: `Text`, `Button`, `TextField`, `CheckBox`, `DateTimeInput`, `Row`, `
 ```
 > macro create morning orient ; brief full ; task list mine
 > morning                                    # type the name directly to run it
+> macro create book connect call tau2 book_reservation
+> book {"id":42}                             # no placeholder: args append to the last command
+> macro create greet say hi $1 ; tell $1 welcome, $2   # $* / $@ all args, $1..$9 words, $$ a literal $
+> macro create book connect call tau2 book_reservation room:here   # a room verb (rank 4)
 > macro list
 > macro delete morning
 > conduct list                               Scores — executable workflow plans (author: conduct create <name> -- <json>; outcomes: conduct outcome / learned)

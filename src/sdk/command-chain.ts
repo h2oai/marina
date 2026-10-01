@@ -92,7 +92,8 @@ const commandForms = (entry: CommandCatalogEntry) =>
  * which did NOT run (the router gave the whole line to the first command).
  *
  * Conservative: the first word must be a catalog command (an unknown head
- * may be a macro, which does split). When the first segment is a complete
+ * may be a macro: its body splits on `;`, and the rest of the line is its
+ * argument text, so nothing there is "unrun"). When the first segment is a complete
  * declared form on its own and that grammar cannot swallow the rest
  * (`look; task list`), a later segment counts when its first word is a
  * catalog verb with a recognised subcommand. Otherwise the first command

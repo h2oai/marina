@@ -146,3 +146,61 @@ describe("Macros", () => {
     expect(texts.some((t) => stripAnsi(t).includes("You say: second"))).toBe(true);
   });
 });
+
+describe("Macros — arguments and room scope (end to end)", () => {
+  let db: MarinaDB;
+  let engine: Engine;
+  let conn: MockConnection;
+  const TEST_DB_ARGS = "test_macros_args.db";
+
+  beforeEach(() => {
+    db = new MarinaDB(TEST_DB_ARGS);
+    engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
+    engine.registerRoom(
+      roomId("test/start"),
+      makeTestRoom({ short: "Start", long: "Start.", exits: { north: roomId("test/north") } }),
+    );
+    engine.registerRoom(
+      roomId("test/north"),
+      makeTestRoom({ short: "North", long: "North.", exits: { south: roomId("test/start") } }),
+    );
+    conn = new MockConnection("c1");
+    engine.addConnection(conn);
+    engine.spawnEntity("c1", "Alice");
+    conn.clear();
+  });
+
+  afterEach(() => {
+    db.close();
+    cleanupDb(TEST_DB_ARGS);
+  });
+
+  const said = () => conn.allText().map((t) => stripAnsi(t));
+
+  it("appends the caller's arguments byte-exactly to a placeholder-free macro", async () => {
+    await engine.processCommand(conn.entity!, "macro create relay say");
+    conn.clear();
+    await engine.processCommand(conn.entity!, 'relay {"id":42,  "q": "a; b"}');
+    expect(said().some((t) => t.includes('You say: {"id":42,  "q": "a; b"}'))).toBe(true);
+  });
+
+  it("keeps the stored body byte-exact and binds $1", async () => {
+    await engine.processCommand(conn.entity!, 'macro create tag say [$1] {"k":  "v"}');
+    expect(engine.macroManager!.getByName("tag", conn.entity!)?.command).toBe(
+      'say [$1] {"k":  "v"}',
+    );
+    conn.clear();
+    await engine.processCommand(conn.entity!, "tag alpha beta");
+    expect(said().some((t) => t.includes('You say: [alpha] {"k":  "v"}'))).toBe(true);
+  });
+
+  it("a room macro resolves only in its room", async () => {
+    engine.macroManager!.create("hail", "room:test/start", "say room hail");
+    await engine.processCommand(conn.entity!, "hail");
+    expect(said().some((t) => t.includes("You say: room hail"))).toBe(true);
+    await engine.processCommand(conn.entity!, "north");
+    conn.clear();
+    await engine.processCommand(conn.entity!, "hail");
+    expect(conn.lastText()).toContain("Unknown command");
+  });
+});
