@@ -28,6 +28,33 @@ function saveCache(name: string, items: DatasetItem[]): void {
   writeFileSync(cachePath(name), JSON.stringify(items, null, 2));
 }
 
+/** One datasets-server page; 429 / 5xx / truncated bodies back off and retry. */
+async function fetchRowsPage(url: string, headers: Record<string, string>): Promise<unknown> {
+  const maxAttempts = 6;
+  for (let attempt = 1; ; attempt++) {
+    const resp = await fetch(url, { headers });
+    if (resp.ok) {
+      const text = await resp.text();
+      try {
+        return JSON.parse(text);
+      } catch (e) {
+        if (attempt >= maxAttempts) throw e;
+      }
+    } else {
+      const body = await resp.text();
+      const retryable = resp.status === 429 || resp.status >= 500;
+      if (!retryable || attempt >= maxAttempts) {
+        const hint =
+          resp.status === 401 || resp.status === 403
+            ? " (gated dataset — set HF_TOKEN with access to this dataset)"
+            : "";
+        throw new Error(`HuggingFace API error ${resp.status}${hint}: ${body.slice(0, 500)}`);
+      }
+    }
+    await new Promise((r) => setTimeout(r, 2000 * 2 ** (attempt - 1)));
+  }
+}
+
 async function fetchHuggingFace(
   dataset: string,
   config: string,
@@ -50,16 +77,7 @@ async function fetchHuggingFace(
     const length = Math.min(batchSize, remaining);
     const url = `https://datasets-server.huggingface.co/rows?dataset=${encodeURIComponent(dataset)}&config=${encodeURIComponent(config)}&split=${encodeURIComponent(split)}&offset=${offset}&length=${length}`;
 
-    const resp = await fetch(url, { headers });
-    if (!resp.ok) {
-      const body = await resp.text();
-      const hint =
-        resp.status === 401 || resp.status === 403
-          ? " (gated dataset — set HF_TOKEN with access to this dataset)"
-          : "";
-      throw new Error(`HuggingFace API error ${resp.status}${hint}: ${body}`);
-    }
-    const data = (await resp.json()) as { rows: { row: unknown }[] };
+    const data = (await fetchRowsPage(url, headers)) as { rows: { row: unknown }[] };
     if (!data.rows || data.rows.length === 0) break;
 
     for (const r of data.rows) {
@@ -300,46 +318,148 @@ export function loadRetentionBenchmark(_dir: string, limit?: number): DatasetIte
 
 // ─── New benchmark downloaders ──────────────────────────────────────────────
 
-/** GPQA Diamond — 198 graduate-level physics/bio/chem MC questions. */
-export async function downloadGPQA(_dir: string, limit?: number): Promise<DatasetItem[]> {
-  const name = "gpqa";
+/** The Hugging Face token for gated datasets, or undefined. */
+function hfToken(): string | undefined {
+  return process.env.HF_TOKEN || process.env.HUGGINGFACE_TOKEN || undefined;
+}
+
+export const GPQA_DIAMOND_SIZE = 198;
+
+/**
+ * GPQA Diamond — 198 graduate-level physics/bio/chem MC questions
+ * (`Idavidrein/gpqa`, config `gpqa_diamond`). The dataset is GATED: it needs an
+ * `HF_TOKEN` whose account accepted the dataset's terms.
+ *
+ * Cached UNSHUFFLED — the correct answer first, answer `A` — and reordered per
+ * run by `shuffleChoices(item, seed)` (the benchmark's `prepare` hook), so the
+ * option order is deterministic per seed and never fixed by the cache.
+ */
+export async function downloadGPQA(_dir: string, _limit?: number): Promise<DatasetItem[]> {
+  const name = "gpqa-diamond";
   const cached = loadCache(name);
-  if (cached && cached.length >= 198) {
+  if (cached && cached.length >= GPQA_DIAMOND_SIZE) {
     console.log(`  Using cached ${name} (${cached.length} items)`);
     return cached;
   }
+  if (!hfToken()) {
+    throw new Error(
+      "GPQA-Diamond is a gated dataset: set HF_TOKEN to a Hugging Face token whose account has accepted the terms at https://huggingface.co/datasets/Idavidrein/gpqa",
+    );
+  }
   console.log("  Downloading GPQA Diamond from HuggingFace...");
   const raw = (await fetchHuggingFace("Idavidrein/gpqa", "gpqa_diamond", "train", 300)) as {
+    "Record ID"?: string;
     Question: string;
     "Correct Answer": string;
     "Incorrect Answer 1": string;
     "Incorrect Answer 2": string;
     "Incorrect Answer 3": string;
     Subdomain?: string;
+    "High-level domain"?: string;
   }[];
-  const items: DatasetItem[] = raw.map((r, i) => {
-    // Randomize letter assignment deterministically by question index to avoid position bias.
-    const choices = [
+  const items: DatasetItem[] = raw.map((r, i) => ({
+    id: `gpqa-${r["Record ID"] ?? i}`,
+    question: r.Question.trim(),
+    choices: [
       r["Correct Answer"],
       r["Incorrect Answer 1"],
       r["Incorrect Answer 2"],
       r["Incorrect Answer 3"],
-    ];
-    // Pseudo-shuffle by index so answer letter varies but is deterministic across runs.
-    const seed = i;
-    const order = [0, 1, 2, 3].sort((a, b) => ((a + 1) * 2654435761 * (seed + 1)) % 7919 - ((b + 1) * 2654435761 * (seed + 1)) % 7919);
-    const shuffled = order.map((o) => choices[o]!);
-    const correctIdx = order.indexOf(0);
-    return {
-      id: `gpqa-${i}`,
-      question: r.Question,
-      choices: shuffled,
-      answer: "ABCD"[correctIdx]!,
-      category: r.Subdomain ?? "unknown",
-    };
-  });
+    ].map((c) => String(c ?? "").trim()),
+    answer: "A",
+    category: r["High-level domain"] ?? r.Subdomain ?? "unknown",
+  }));
   saveCache(name, items);
   console.log(`  Downloaded ${items.length} GPQA items`);
+  return items;
+}
+
+export const HLE_VERIFIED_GOLD_SIZE = 668;
+
+/** One HLE-Verified row as the datasets-server returns it (the `json` column holds the record). */
+interface HLEVerifiedRow {
+  id: string;
+  Verified_Classes: string;
+  category?: string;
+  raw_subject?: string;
+  question: string;
+  answer: string;
+  json?: string;
+}
+
+/**
+ * The text-only Gold items of an HLE-Verified page. Pure — exported for tests.
+ * An item is text-only when its record has no `image`; its answer type comes
+ * from the record's `answer_type` (`exactMatch` | `multipleChoice`).
+ */
+export function hleGoldTextItems(rows: HLEVerifiedRow[]): DatasetItem[] {
+  const items: DatasetItem[] = [];
+  for (const r of rows) {
+    if (r.Verified_Classes !== "Gold subset") continue;
+    let record: { image?: unknown; answer_type?: unknown } = {};
+    try {
+      record = r.json ? JSON.parse(r.json) : {};
+    } catch {
+      continue; // unreadable record: cannot prove it is text-only
+    }
+    if (record.image) continue;
+    const answerType = record.answer_type === "multipleChoice" ? "multipleChoice" : "exactMatch";
+    items.push({
+      id: `hle-${r.id}`,
+      question: String(r.question ?? "").trim(),
+      answer: String(r.answer ?? "").trim(),
+      category: r.category || "unknown",
+      metadata: { answerType, rawSubject: r.raw_subject },
+    });
+  }
+  return items;
+}
+
+/**
+ * HLE-Verified Gold, text-only (`skylenage-ai/HLE-Verified`, arXiv 2602.13964).
+ * The dataset is one `train` split of 2,500 audited HLE items; `Verified_Classes`
+ * marks the 668-item Gold subset (validated without modification). Image items
+ * are dropped. Only the fields the adapter needs are cached (no rationale).
+ *
+ * Gold rows lead the split, so paging stops at the first page without a Gold
+ * row once Gold rows have been seen; a count other than the published 668 Gold
+ * rows is reported, not hidden.
+ */
+export async function downloadHLEVerifiedGold(
+  _dir: string,
+  _limit?: number,
+): Promise<DatasetItem[]> {
+  const name = "hle-verified-gold";
+  const cached = loadCache(name);
+  if (cached && cached.length > 0) {
+    console.log(`  Using cached ${name} (${cached.length} items)`);
+    return cached;
+  }
+  console.log("  Downloading HLE-Verified (Gold subset) from HuggingFace...");
+  const headers: Record<string, string> = {};
+  const token = hfToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const pageSize = 25; // image rows are large; small pages stay under the server's limits
+  const items: DatasetItem[] = [];
+  let goldRows = 0;
+  for (let offset = 0; offset < 2500; offset += pageSize) {
+    const url = `https://datasets-server.huggingface.co/rows?dataset=${encodeURIComponent("skylenage-ai/HLE-Verified")}&config=default&split=train&offset=${offset}&length=${pageSize}`;
+    const page = (await fetchRowsPage(url, headers)) as { rows?: { row: HLEVerifiedRow }[] };
+    const rows = (page.rows ?? []).map((r) => r.row);
+    if (rows.length === 0) break;
+    const gold = rows.filter((r) => r.Verified_Classes === "Gold subset").length;
+    goldRows += gold;
+    items.push(...hleGoldTextItems(rows));
+    if (gold === 0 && goldRows > 0) break;
+  }
+  if (goldRows !== HLE_VERIFIED_GOLD_SIZE) {
+    console.warn(
+      `  Warning: found ${goldRows} Gold rows, expected ${HLE_VERIFIED_GOLD_SIZE} — upstream may have changed`,
+    );
+  }
+  items.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  saveCache(name, items);
+  console.log(`  Downloaded ${items.length} text-only Gold items (of ${goldRows} Gold rows)`);
   return items;
 }
 
@@ -380,7 +500,12 @@ export async function downloadHellaSwag(_dir: string, limit?: number): Promise<D
     return cached;
   }
   console.log("  Downloading HellaSwag from HuggingFace...");
-  const raw = (await fetchHuggingFace("Rowan/hellaswag", "default", "validation", Math.max(MIN, limit ?? 0))) as {
+  const raw = (await fetchHuggingFace(
+    "Rowan/hellaswag",
+    "default",
+    "validation",
+    Math.max(MIN, limit ?? 0),
+  )) as {
     ind: number;
     ctx: string;
     endings: string[];
@@ -497,11 +622,16 @@ export async function downloadMuSR(_dir: string, limit?: number): Promise<Datase
     answer_choice: string;
   }[];
   const items: DatasetItem[] = raw.map((r, i) => {
-    const choices = typeof r.choices === "string"
-      ? (() => {
-          try { return JSON.parse(r.choices); } catch { return r.choices.split("|"); }
-        })()
-      : r.choices;
+    const choices =
+      typeof r.choices === "string"
+        ? (() => {
+            try {
+              return JSON.parse(r.choices);
+            } catch {
+              return r.choices.split("|");
+            }
+          })()
+        : r.choices;
     return {
       id: `musr-${i}`,
       question: `${r.narrative}\n\n${r.question}`,

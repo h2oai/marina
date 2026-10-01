@@ -18,6 +18,7 @@ import {
   downloadGPQA,
   downloadGSM8K,
   downloadHellaSwag,
+  downloadHLEVerifiedGold,
   downloadHumanEval,
   downloadMATH,
   downloadMTBench,
@@ -49,7 +50,8 @@ const JOBS: Job[] = [
   { name: "aime-2025", run: () => downloadAIME2025(DATASETS_DIR, 50) },
   // GPQA is gated on HuggingFace (Idavidrein/gpqa) — requires HF_TOKEN
   // with accepted terms. Downloader returns a clear error if missing.
-  { name: "gpqa", run: () => downloadGPQA(DATASETS_DIR, 200) },
+  { name: "gpqa-diamond", run: () => downloadGPQA(DATASETS_DIR, 200) },
+  { name: "hle-verified-gold", run: () => downloadHLEVerifiedGold(DATASETS_DIR) },
 ];
 
 async function main() {
