@@ -63,6 +63,10 @@ function canvas(id: string, name: string): CanvasData {
   return { id, name } as CanvasData;
 }
 
+function canvasParam(): string | null {
+  return new URL(window.location.href).searchParams.get("canvas");
+}
+
 function json(body: unknown, ok = true, status = 200) {
   return { ok, status, json: async () => body } as Response;
 }
@@ -91,7 +95,9 @@ describe("CanvasPage", () => {
     await waitFor(() => expect(requestedCanvasId).toBe("c2"));
     expect(screen.getByText("MARINA CANVAS")).toBeInTheDocument();
     expect(screen.getByLabelText("Active canvas")).toHaveValue("c2");
-    expect(new URL(window.location.href).searchParams.get("canvas")).toBe("c2");
+    // `requestedCanvasId` is set during render; the URL is written by a passive
+    // effect after commit, so a poll can land between the two.
+    await waitFor(() => expect(canvasParam()).toBe("c2"));
     expect(screen.getByText("This canvas is empty")).toBeInTheDocument();
   });
 
@@ -102,7 +108,7 @@ describe("CanvasPage", () => {
     await waitFor(() => expect(requestedCanvasId).toBe("c1"));
     fireEvent.change(screen.getByLabelText("Active canvas"), { target: { value: "c2" } });
     await waitFor(() => expect(requestedCanvasId).toBe("c2"));
-    expect(new URL(window.location.href).searchParams.get("canvas")).toBe("c2");
+    await waitFor(() => expect(canvasParam()).toBe("c2"));
   });
 
   it("offers to create a first canvas and selects it after creation", async () => {
