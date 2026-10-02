@@ -1,7 +1,182 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
+
+test("independent Streams tiles keep agent output and controls beside work without owning the sessions", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(60_000);
+  const sockets: string[] = [];
+  const commands: string[] = [];
+  const writes: string[] = [];
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("request", (req) => {
+    if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method()))
+      writes.push(new URL(req.url()).pathname);
+  });
+  page.on("websocket", (socket) => {
+    sockets.push(new URL(socket.url()).pathname);
+    socket.on("framesent", (frame) => {
+      const message = JSON.parse(String(frame.payload));
+      if (message.type === "command") commands.push(message.command);
+    });
+  });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/dashboard?surface=canvas&view=streams");
+  await page.getByRole("button", { name: "Dismiss getting-started guide" }).click();
+  await page.getByPlaceholder("Enter your name...").fill("StreamTilesResident");
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  const input = page.locator("#marina-command-input");
+  await expect(input).toBeVisible();
+  await input.fill("Keep this world-chat draft");
+  await input.evaluate((element) => element.setAttribute("data-mount-proof", "retained"));
+  const token = await page.evaluate(() => localStorage.getItem("marina_chat_token"));
+  const headers = { Authorization: `Bearer ${token}` };
+  async function publish(id: string, kind: string, payload: object) {
+    const response = await request.post(`/api/routing/sessions/${id}/events`, {
+      headers,
+      data: { events: [{ id: crypto.randomUUID(), kind, payload }] },
+    });
+    expect(response.ok()).toBe(true);
+  }
+  async function register(clientKey: string, label: string) {
+    const response = await request.post("/api/routing/sessions", {
+      headers,
+      data: { clientKey, label, kind: "service", capabilities: ["runtime.control"] },
+    });
+    expect(response.ok()).toBe(true);
+    const session = await response.json();
+    await publish(session.id, "runtime.state", {
+      version: 1,
+      role: "agent",
+      mode: "managed",
+      status: "idle",
+      adapter: "service",
+      supervisorId: "fixture",
+      cwd: "/project",
+      updatedAt: Date.now(),
+    });
+    return session;
+  }
+  const build = await register("tile-build", "Tile build worker");
+  const review = await register("tile-review", "Tile review worker");
+  await publish(build.id, "output", { text: "Build work is in progress." });
+  await publish(review.id, "output", { text: "Review work is in progress." });
+  const workspace = page.locator('[data-pane-key="workspace"]');
+  await workspace.getByRole("button", { name: /Tile build worker/ }).click();
+  const mainDraft = workspace.getByLabel("Message agent");
+  await mainDraft.fill("Keep the build draft");
+  await workspace.getByRole("button", { name: "Open streams below" }).click();
+  const copy = page.locator('[data-pane-key="view:streams:1"]');
+  await expect(copy).toBeVisible();
+  await copy.getByRole("button", { name: /Tile review worker/ }).click();
+  await copy.getByLabel("Filter this participant page").fill("review");
+  await expect(workspace.getByLabel("Filter this participant page")).toHaveValue("");
+  await expect(mainDraft).toHaveValue("Keep the build draft");
+  const copyDraft = copy.getByLabel("Message agent");
+  await copyDraft.fill("Check the isolated review target");
+  await copyDraft.evaluate((element) => element.setAttribute("data-mount-proof", "retained"));
+  await page.getByRole("tab", { name: "Work", exact: true }).click();
+  await publish(review.id, "output", { text: "Review continues while you work elsewhere." });
+  await expect(
+    copy.getByText("Review continues while you work elsewhere.", { exact: true }),
+  ).toBeVisible();
+  await copy.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(copy.getByText(/Queued ·/)).toBeVisible();
+  const inbox = await (
+    await request.get(`/api/routing/sessions/${review.id}/inbox`, { headers })
+  ).json();
+  expect(inbox.messages).toHaveLength(1);
+  expect(inbox.messages[0].payload).toEqual({
+    action: "prompt",
+    text: "Check the isolated review target",
+  });
+  expect(
+    (await (await request.get(`/api/routing/sessions/${build.id}/inbox`, { headers })).json())
+      .messages,
+  ).toHaveLength(0);
+  await copyDraft.fill("Keep this next review draft");
+  await copy.getByRole("button", { name: "Maximize Streams 1 panel" }).click();
+  await copy.getByRole("button", { name: "Restore Streams 1 panel" }).click();
+  await expect(copyDraft).toHaveAttribute("data-mount-proof", "retained");
+  // Resize within a wide browser: the sidebar must follow the tile's width.
+  const resize = await copy.locator(":scope > .workspace-panel-resize").boundingBox();
+  await page.mouse.move(resize!.x + resize!.width / 2, resize!.y + resize!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(resize!.x - 280, resize!.y + resize!.height / 2, { steps: 10 });
+  await page.mouse.up();
+  await expect
+    .poll(() =>
+      copy
+        .locator(".participant-streams-layout")
+        .evaluate((element) => getComputedStyle(element).flexDirection),
+    )
+    .toBe("column");
+  await expect(copyDraft).toHaveValue("Keep this next review draft");
+  await expect.poll(async () => (await copyDraft.boundingBox())!.width).toBeGreaterThan(150);
+  await expect
+    .poll(
+      async () =>
+        (await copy.getByRole("region", { name: "Published output" }).boundingBox())!.height,
+    )
+    .toBeGreaterThanOrEqual(96);
+  await copy.getByRole("button", { name: "Maximize Streams 1 panel" }).click();
+  await expect
+    .poll(() =>
+      copy
+        .locator(".participant-streams-layout")
+        .evaluate((element) => getComputedStyle(element).flexDirection),
+    )
+    .toBe("row");
+  const violations = (
+    await new AxeBuilder({ page })
+      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
+      .analyze()
+  ).violations;
+  expect(
+    violations.map(({ id, nodes }) => ({ id, targets: nodes.map((node) => node.target) })),
+  ).toEqual([]);
+  const path = test.info().outputPath("work-with-participant-stream.png");
+  await page.screenshot({ path });
+  await test.info().attach("Work alongside a participant", { path, contentType: "image/png" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  const panes = page.getByRole("navigation", { name: "Dashboard panes" });
+  await panes.getByRole("button", { name: "Streams 1", exact: true }).click();
+  await expect(copyDraft).toHaveValue("Keep this next review draft");
+  await panes.getByRole("button", { name: "Chat", exact: true }).click();
+  await expect(input).toBeVisible();
+  await expect(copyDraft).toBeHidden();
+  await expect(input).toHaveValue("Keep this world-chat draft");
+  await panes.getByRole("button", { name: "Streams 1", exact: true }).click();
+  await expect(copyDraft).toHaveAttribute("data-mount-proof", "retained");
+  await expect(copyDraft).toHaveValue("Keep this next review draft");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await copy.getByRole("button", { name: "Close Streams 1 view" }).click();
+  await expect(copy).toHaveCount(0);
+  await page.getByRole("tab", { name: "Streams", exact: true }).click();
+  await expect(mainDraft).toHaveValue("Keep the build draft");
+  const session = await (
+    await request.get(`/api/routing/sessions/${review.id}`, { headers })
+  ).json();
+  expect(session.state).toBe("active");
+  await publish(review.id, "output", { text: "Publishing still works after the view closes." });
+  expect(writes).toEqual([`/api/routing/sessions/${review.id}/control`]);
+  // Anonymous observation is replaced once at login with the resident credential.
+  expect(sockets.sort()).toEqual(["/dashboard-ws", "/dashboard-ws", "/ws"]);
+  expect(commands).toEqual([]);
+  await panes.getByRole("button", { name: "Chat", exact: true }).click();
+  await expect(input).toHaveAttribute("data-mount-proof", "retained");
+  await input.fill("look");
+  await input.press("Enter");
+  await expect.poll(() => commands).toEqual(["look"]);
+  expect(errors).toEqual([]);
+});
 
 test("participant output and delivery receipts remain visible alongside native chat", async ({
   page,

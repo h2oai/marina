@@ -1,3 +1,5 @@
+import { MarinaPanelClient } from "../src/sdk/panel-client";
+import { CodePanels } from "./code-panels";
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -36,6 +38,7 @@ export interface CodeConsoleOptions {
 
 export class CodeConsole {
   private terminal?: CodeTerminal;
+  private panels?: CodePanels;
   private native?: NativeTerminal;
   private startingNative?: Promise<NativeTerminal>;
   private selected?: string;
@@ -334,7 +337,7 @@ export class CodeConsole {
     const report = (error: unknown) => this.write(getErrorMessage(error));
     if (
       isWorldInput(text) ||
-      /^\/view(?:\s|$)/.test(text) ||
+      /^\/(?:view|panel)(?:\s|$)/.test(text) ||
       ["/help", "/agents", "/stop", "/quit", "exit", "quit"].includes(text)
     )
       return this.line(text, destination).catch(report);
@@ -349,6 +352,8 @@ export class CodeConsole {
         views: interactive,
         tui: this.options.tui,
         connected: this.options.connected,
+        panelInput: (input) => this.panels?.input(input),
+        viewChanged: (view) => this.panels?.setActive(view === "panel"),
         location: `${this.options.connected ? "Server" : "Local"} workspace · ${this.options.root}`,
         line: (text) => {
           if (!interactive) return;
@@ -610,6 +615,39 @@ export class CodeConsole {
       }
       throw new Error("Usage: /harness [list|save <name>|use <name-or-path>|export]");
     }
+    if (verb === "/panel") {
+      this.panels ??= new CodePanels(
+        new MarinaPanelClient({
+          url: this.options.url,
+          token: () => this.options.agent.getSession()?.token,
+        }),
+        (content, focus) => {
+          if (this.terminal) this.terminal.setPanelContent(content, focus);
+          else this.write(content);
+        },
+        async (id, spaceId, signal) => {
+          const result = await this.options.agent.memoryService(
+            {
+              operation: "get",
+              id,
+              space_id: spaceId,
+            },
+            15000,
+            signal,
+          );
+          if (!result.ok) throw new Error("Memory unavailable");
+          return result.result;
+        },
+        { present: (state) => this.terminal?.setPanelState(state) },
+      );
+      const parts = argument.trim().split(/\s+/);
+      await this.panels.command(
+        parts[0] === "desk" && parts.length === 2 && this.sessionId
+          ? `${argument} ${this.sessionId}`
+          : argument,
+      );
+      return;
+    }
     if (verb === "/dashboard") {
       // This HTTP-only workspace does not reconnect Chat's single WebSocket.
       const url = `${this.options.url}/terminal#marina-token=${encodeURIComponent(this.options.agent.getSession()!.token)}`;
@@ -653,6 +691,7 @@ export class CodeConsole {
   async close(code: number) {
     if (this.closing) return;
     this.closing = true;
+    this.panels?.dispose();
     this.terminal?.close();
     try {
       await this.startingNative?.catch(() => undefined);

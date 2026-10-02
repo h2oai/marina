@@ -32,6 +32,7 @@ interface WorldState {
    */
   eventFeed: DashboardEvent[];
   connectedSince: number;
+  connectionGeneration: number;
   gridPositions: Record<string, { row: number; col: number }> | null;
 
   /**
@@ -106,6 +107,7 @@ export const useWorldState = create<WorldState>((set) => ({
   memory: { heapUsed: 0, rss: 0 },
   eventFeed: [],
   connectedSince: 0,
+  connectionGeneration: 0,
   gridPositions: null,
 
   thinkingAgents: {},

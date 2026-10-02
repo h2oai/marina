@@ -7,8 +7,10 @@ import { header, separator } from "../../net/ansi";
 import { guardedFetch } from "../../net/url-guard";
 import type { CanvasIntentData, MarinaDB } from "../../persistence/database";
 import { parseCanvasIntent } from "../../persistence/database";
+import { validatePanelDocument } from "../../sdk/panel-document";
 import type { StorageProvider } from "../../storage/provider";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import { canvasDocumentData } from "../canvas-document";
 import { getErrorMessage } from "../errors";
 import { Logger } from "../logger";
 import { type OwnershipSubject, ownershipRefusal } from "../ownership";
@@ -38,7 +40,9 @@ function canvasOwners(
 }
 
 const HELP =
-  "Canvas management. Subcommands: canvas create <name> [desc] | canvas list | canvas info <name> | canvas visit <self|entity|name> | canvas post [on:<canvas>] [reply:<node_id>] <text> | canvas publish <type> <asset_id> [canvas] [reply:<node_id>] | canvas nodes <name> | canvas edges <name> | canvas layout <grid|timeline|feed> <name> | canvas delete <name> | canvas asset upload|list|info|delete | canvas intent list [canvas] | canvas intent claim <node_id> | canvas intent fail <node_id> [reason] | canvas intent complete <node_id> [--type <type>] <result> | canvas intent complete-rich <node_id> <json> | canvas connect <src_node_id> <tgt_node_id> <relationship> [canvas] | canvas disconnect <edge_id>";
+  "Canvas management. Subcommands: canvas create <name> [desc] | canvas list | canvas info <name> | canvas visit <self|entity|name> | canvas post [on:<canvas>] [reply:<node_id>] <text> | canvas publish <type> <asset_id> [canvas] [reply:<node_id>] | canvas nodes <name> | canvas edges <name> | canvas layout <grid|timeline|feed> <name> | canvas delete <name> | canvas asset upload|list|info|delete | canvas intent list [canvas] | canvas intent claim <node_id> | canvas intent fail <node_id> [reason] | canvas intent complete <node_id> [--type <type>] <result> | canvas intent complete-rich <node_id> <json> | canvas connect <src_node_id> <tgt_node_id> <relationship> [canvas] | canvas disconnect <edge_id>" +
+  "\n\nPublish an A2UI JSON asset to compose existing Marina resources. Open it beside Chat from Workspace → Canvas → Published panels, or use Create coding desk for an existing coding session." +
+  "\nResource reads use each viewer’s permissions; operational buttons require review. Opening or closing a panel leaves agents running. The coding terminal also supports these publications through /panel and F8.";
 
 export function canvasCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
@@ -120,7 +124,7 @@ export function canvasCommand(deps: {
           handleInfo(ctx, eid, db, tokens.slice(1));
           return;
         case "publish":
-          handlePublish(ctx, eid, entity, db, deps.storage, deps.logEvent, tokens.slice(1));
+          await handlePublish(ctx, eid, entity, db, deps.storage, deps.logEvent, tokens.slice(1));
           return;
         case "post":
           handlePost(ctx, eid, entity, db, deps.logEvent, tokens.slice(1));
@@ -409,7 +413,7 @@ const TYPE_MIME_RULES: Record<string, (mime: string) => boolean> = {
   frame: () => true,
 };
 
-function handlePublish(
+async function handlePublish(
   ctx: RoomContext,
   eid: EntityId,
   entity: Entity,
@@ -417,7 +421,7 @@ function handlePublish(
   storage: StorageProvider | undefined,
   logEvent: ((event: { type: string; entity: EntityId; [k: string]: unknown }) => void) | undefined,
   tokens: string[],
-): void {
+): Promise<void> {
   const type = tokens[0]?.toLowerCase();
   const assetId = tokens[1];
 
@@ -463,6 +467,16 @@ function handlePublish(
     return;
   }
 
+  let panelData: Record<string, unknown> = {};
+  if (type === "a2ui") {
+    try {
+      panelData = await canvasDocumentData({}, asset.id, db, storage);
+    } catch (error) {
+      ctx.send(eid, `Cannot publish panel: ${getErrorMessage(error)}`);
+      return;
+    }
+  }
+
   // Find or use default canvas — prefer "global"
   let canvas = canvasName
     ? db.getCanvasByName(canvasName)
@@ -499,7 +513,7 @@ function handlePublish(
     x: 0,
     y: maxY + 20,
     assetId: asset.id,
-    data: baseData,
+    data: { ...baseData, ...panelData },
     creatorName: entity.name,
     parentNodeId,
   });
@@ -1044,37 +1058,29 @@ async function handleIntent(
         return;
       }
 
-      let a2uiData: Record<string, unknown>;
+      let raw: unknown;
       try {
-        a2uiData = JSON.parse(jsonStr);
+        raw = JSON.parse(jsonStr);
       } catch {
         ctx.send(eid, "Invalid JSON. Provide a valid A2UI component tree.");
         return;
       }
-      if (!Array.isArray(a2uiData.components)) {
-        ctx.send(eid, "JSON must contain a 'components' array.");
+      const parsedDocument = validatePanelDocument(raw);
+      if (!parsedDocument.ok) {
+        ctx.send(eid, parsedDocument.error);
         return;
       }
-
-      const resultNodeId = crypto.randomUUID();
-      db.createNode({
-        id: resultNodeId,
-        canvasId: node.canvas_id,
-        type: "a2ui",
-        data: {
-          ...a2uiData,
-          author: entity.name,
-          feedType: "intent_result",
-          sourceNodeId: node.id,
-          sourcePrompt: intent.prompt,
-        },
-        creatorName: entity.name,
-        parentNodeId: node.id,
+      const completion = db.completeCanvasIntent(node.id, {
+        result: "[A2UI]",
+        resultType: "a2ui",
+        resultData: { ...parsedDocument.document },
+        completerName: entity.name,
       });
-
-      const parsed = JSON.parse(node.data);
-      parsed.intent = { ...intent, status: "done", result: "[A2UI]", resultNodeId };
-      db.updateNode(node.id, { data: JSON.stringify(parsed) });
+      if (!completion.ok) {
+        ctx.send(eid, "Intent changed before completion. Refresh its status.");
+        return;
+      }
+      const resultNodeId = completion.resultNode.id;
 
       logEvent?.({
         type: "canvas_intent",

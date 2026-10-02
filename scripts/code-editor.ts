@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { PanelInput, TerminalPanelState } from "./code-panel-form";
 import type { TerminalView } from "./code-views";
 
 /** Presentation boundary shared by scrollback and fullscreen; actions stay in CodeTerminal. */
@@ -14,6 +15,7 @@ export interface CodeEditorState {
   transcript?: string;
   answer: boolean;
   multiline: boolean;
+  panel?: TerminalPanelState;
 }
 
 export interface CodeEditorOptions {
@@ -22,6 +24,7 @@ export interface CodeEditorOptions {
   interrupt(): void;
   close(): void;
   navigate(view: string): void;
+  panelInput?(input: PanelInput): void;
   input: NodeJS.ReadableStream & { isTTY?: boolean };
   output: NodeJS.WritableStream & { isTTY?: boolean };
 }

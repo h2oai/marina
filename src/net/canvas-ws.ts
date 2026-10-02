@@ -80,6 +80,7 @@ export type CanvasEvent =
  * when nodes are added, updated, or deleted.
  */
 export class CanvasBroadcaster {
+  private authorizers = new WeakMap<CanvasCompatibleWS, () => boolean>();
   private clients = new Map<string, Set<CanvasCompatibleWS>>();
 
   /**
@@ -95,7 +96,11 @@ export class CanvasBroadcaster {
   addClient(
     ws: CanvasCompatibleWS,
     canvasId: string,
-    auth?: { db: CanvasScopeLookup; principal?: CanvasSubscriptionPrincipal },
+    auth?: {
+      db: CanvasScopeLookup;
+      principal?: CanvasSubscriptionPrincipal;
+      revalidate?: () => CanvasSubscriptionPrincipal | undefined;
+    },
   ): boolean {
     if (auth && !authorizeCanvasSubscription(auth.db, canvasId, auth.principal)) {
       return false;
@@ -104,11 +109,20 @@ export class CanvasBroadcaster {
       this.clients.set(canvasId, new Set());
     }
     this.clients.get(canvasId)!.add(ws);
+    if (auth)
+      this.authorizers.set(ws, () =>
+        authorizeCanvasSubscription(
+          auth.db,
+          canvasId,
+          auth.revalidate ? auth.revalidate() : auth.principal,
+        ),
+      );
     return true;
   }
 
   /** Remove a WebSocket client. */
   removeClient(ws: CanvasCompatibleWS): void {
+    this.authorizers.delete(ws);
     for (const [, clients] of this.clients) {
       clients.delete(ws);
     }
@@ -122,6 +136,11 @@ export class CanvasBroadcaster {
     const payload = JSON.stringify(event);
     for (const ws of clients) {
       try {
+        if (this.authorizers.get(ws)?.() === false) {
+          clients.delete(ws);
+          ws.close(1008, "Canvas access changed");
+          continue;
+        }
         if (ws.readyState === 1) {
           ws.send(payload);
         }

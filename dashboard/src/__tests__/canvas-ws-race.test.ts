@@ -253,3 +253,30 @@ describe("parseCanvasEvent", () => {
     ).toBe("edge_added");
   });
 });
+
+it("shares one transport across repeated views and tears it down after the last observer", () => {
+  const first = renderHook(() => useCanvasEventSocket("shared", () => {}));
+  const second = renderHook(() => useCanvasEventSocket("shared", () => {}));
+  expect(FakeWebSocket.instances).toHaveLength(1);
+  const socket = FakeWebSocket.instances[0]!;
+  act(() => socket.open());
+  first.unmount();
+  expect(socket.readyState).toBe(1);
+  second.unmount();
+  expect(socket.readyState).toBe(3);
+});
+
+it("bounds a stalled snapshot backlog and reconnects before resuming live delivery", () => {
+  const events: CanvasEvent[] = [];
+  const view = renderHook(() => useCanvasEventSocket("overflow", (event) => events.push(event)));
+  const socket = FakeWebSocket.instances[0]!;
+  act(() => socket.open());
+  act(() => {
+    for (let i = 0; i < 1025; i++)
+      socket.emit({ type: "node_deleted", canvasId: "overflow", nodeId: String(i) });
+  });
+  expect(socket.readyState).toBe(3);
+  expect(view.result.current.status).toBe("reconnecting");
+  expect(events).toHaveLength(0);
+  view.unmount();
+});

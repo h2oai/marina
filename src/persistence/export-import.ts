@@ -140,6 +140,10 @@ export const EXPORT_TABLES = [
   "trait_history",
   "role_history",
   "agent_configs",
+  // Preserve pending effects and retry receipts so restore cannot repeat work
+  // merely because its checkpoint or submission claim was lost.
+  "run_state",
+  "submission_requests",
   "crews",
   "crew_members",
   "crew_invitations",

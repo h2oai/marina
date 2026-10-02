@@ -31,6 +31,7 @@ export class ReadlineCodeEditor implements CodeEditor {
     coding: empty(),
     world: empty(),
     approvals: empty(),
+    panel: empty(),
   };
   private history: string[] = [];
   private state?: CodeEditorState;
@@ -39,6 +40,7 @@ export class ReadlineCodeEditor implements CodeEditor {
   private readonly key = (_text: string, key: { name?: string }) => {
     if (key.name === "f6") this.options.navigate(this.view === "world" ? "coding" : "world");
     if (key.name === "f7") this.options.navigate("approvals");
+    if (key.name === "f8") this.options.navigate("panel");
   };
 
   constructor(private options: CodeEditorOptions) {
@@ -133,7 +135,9 @@ export class ReadlineCodeEditor implements CodeEditor {
       ? "answer"
       : focus === "world"
         ? "world command"
-        : `${label}·${compact(status, Math.max(1, limit - [...label].length - 1))}`;
+        : focus === "panel"
+          ? "panel control"
+          : `${label}·${compact(status, Math.max(1, limit - [...label].length - 1))}`;
     const prompt = `${destination}${multiline && !answer ? " …" : ""} › `;
     this.rl.setPrompt(badge ? `${badge}\n${prompt}` : prompt);
     this.rl.prompt(true);

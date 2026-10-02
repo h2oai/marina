@@ -98,6 +98,16 @@ Agents are autonomous from birth, not assistants ("You think, therefore you are 
 All 16 patterns are convention-based pool notes discovered via `recall`, not engine constraints (`src/world/templates/orchestration.ts`; activated via `project <name> orchestrate <pattern>`; "NSED" is the legacy name for Deliberation — accepted, never advertised). Crew pools are members-only: every persisted crew's `crew:<name>` pool has a group object of the same id (`memory_pools.group_id`) and the group-pool ACL in `src/memory/access.ts` plus the `gatherRetrievalContext` guard are the fence; dissolving keeps pool and notes scoped to the final roster. Formation mediators post at most one `[formation-mediator]` line per event. → docs/architecture/orchestration.md
 
 ## Dashboard, Canvas, and Memory Observability
+
+Published panels are validated A2UI Canvas documents, not another runtime or resource store.
+`codingDesk()` composes existing session/task/participant/feed references; operational buttons use
+the live command or routing contracts after explicit reader review. Opening, refreshing or closing
+a view must not start, stop or select a coding session. Public definitions never copy private source
+contents. Resource invalidations carry no contents; reread under the viewer's credential, including
+after reconnect. Hidden views suspend reads, access failures hide cached private content, and layout
+presets save references/geometry rather than drafts. Browser and terminal views share these contracts.
+→ docs/guides/published-panels.md; docs/architecture/dashboard.md
+
 Every mutation at the DB write site emits one `EngineEvent` (`note_created`, `note_link_created`, `feed_event`, `canvas_edge_created`, …) that dashboard stores subscribe to. Canvas intent data lives in the node's `data` JSON as `{ intent: { prompt, status, … } }` — no schema changes. `memory_job` / `memory_service_event` broadcasts carry no content (no task/answer/citations); content is always fetched per-principal over REST, scoped server-side by `memoryObserverScope`; job cancel runs through the REQUESTER's resident binding and refuses the dev-open sentinel. GlassPanel section headers deliberately do NOT use the `title` prop (it is the react-grid-layout drag handle). Dashboard animations: see Code Style. → docs/architecture/dashboard.md (user guide: docs/guides/dashboard.md)
 - **Ops surface (2026-09-22)**: `GET /api/ops/overview` (incl. `decisions` — harness decisions in scope, Admin → Ops → Decisions), `POST /api/ops/agents/:name/stop` (`src/net/ops-api.ts`, contract `ops-types.ts` re-exported type-only); Admin → Ops tab, header `HealthBadge` + `SpendChip`; `light` theme + `system` choice; every icon-only button needs an `aria-label` (a11y test enforces it); never subscribe a large component reactively to `eventFeed` — use `use-event-feed-bridge.ts`. HTML routes carry `HTML_CSP` (`script-src 'self'` + hashes; `MARINA_DASHBOARD_CSP=off` to drop). → docs/architecture/dashboard.md, security.md
 

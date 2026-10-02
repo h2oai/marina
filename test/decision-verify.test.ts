@@ -52,6 +52,8 @@ describe("task submit verifier", () => {
   let backend: ReturnType<typeof Bun.serve>;
   let quality = 0.5;
   let failing = false;
+  let responseGate: Promise<void> | undefined;
+  let releaseResponse: (() => void) | undefined;
   const asked: Array<{ state: { submission: string }; questions: Record<string, unknown> }> = [];
   let db: MarinaDB;
   let engine: Engine;
@@ -64,6 +66,7 @@ describe("task submit verifier", () => {
       port: 0,
       async fetch(req) {
         asked.push((await req.json()) as (typeof asked)[number]);
+        await responseGate;
         if (failing) return new Response("backend down", { status: 503 });
         return Response.json({
           answers: {
@@ -82,6 +85,8 @@ describe("task submit verifier", () => {
     process.env.MARINA_DECISION_BASE_URL = `http://localhost:${backend.port}`;
     process.env.MARINA_DECISION_VERIFY = "on";
     failing = false;
+    responseGate = undefined;
+    releaseResponse = undefined;
     asked.length = 0;
     db = new MarinaDB(DB);
     events = [];
@@ -95,7 +100,10 @@ describe("task submit verifier", () => {
     engine.spawnEntity("c1", "Alice");
     engine.spawnEntity("c2", "Bob");
   });
-  afterEach(() => {
+  afterEach(async () => {
+    releaseResponse?.();
+    await engine.drainCommands();
+    await engine.shutdown();
     db.close();
     cleanupDb(DB);
     for (const k of keys) {
@@ -112,6 +120,38 @@ describe("task submit verifier", () => {
     return id;
   }
   const claimStatus = (id: string) => engine.taskManager!.getClaim(Number(id), bob.entity!)?.status;
+
+  it.each([false, true])(
+    "shutdown waits for observe-only verification, including provider failure (%s)",
+    async (providerFails) => {
+      process.env.MARINA_DECISION_VERIFY = "observe";
+      failing = providerFails;
+      responseGate = new Promise<void>((resolve) => {
+        releaseResponse = resolve;
+      });
+      const id = claimTask();
+      await engine.dispatchCommand(bob.entity!, `task submit ${id} Mapped the east sectors`);
+      // Submission is immediate; the outstanding observation does not block the caller.
+      expect(claimStatus(id)).toBe("submitted");
+      await until(() => asked.length === 1);
+      expect(db.listJudgeObservations()).toHaveLength(0);
+      let stopped = false;
+      const closing = engine.shutdown().then(() => {
+        stopped = true;
+      });
+      // Give an incorrectly eager shutdown a full event-loop turn to finish.
+      await Bun.sleep(0);
+      expect(stopped).toBe(false);
+      releaseResponse!();
+      await closing;
+      expect(db.listJudgeObservations()).toHaveLength(1);
+      expect(db.listJudgeObservations()[0]).toMatchObject({
+        mode: "observe",
+        ...(providerFails ? { opinion: "none" } : {}),
+      });
+      expect(events.filter((e) => e.type === "agent_decision")).toHaveLength(1);
+    },
+  );
 
   it("bounces a below-the-bar first submission once, then records the second as is", async () => {
     quality = 0.5;

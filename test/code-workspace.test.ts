@@ -9,6 +9,7 @@ import {
   terminalCompletion,
   terminalCompletionFor,
 } from "../scripts/code-completion";
+import type { PanelInput, TerminalPanelState } from "../scripts/code-panel-form";
 import { CodeTerminal, terminalText } from "../scripts/code-terminal";
 import { parseDispatch } from "../scripts/marina";
 import { until } from "./helpers";
@@ -52,7 +53,7 @@ class Screen implements Terminal {
   }
 }
 
-function workspace() {
+function workspace(panelInput?: (input: PanelInput) => void) {
   const screen = new Screen();
   const input = Object.assign(new PassThrough(), { isTTY: true });
   const output = Object.assign(new PassThrough(), { isTTY: true });
@@ -65,6 +66,7 @@ function workspace() {
     screen,
     tui: true,
     views: true,
+    panelInput,
     line: (text) => lines.push(text),
     close: () => {
       closes++;
@@ -87,6 +89,51 @@ function workspace() {
     },
   };
 }
+
+it("edits published fields with keys, preserves other drafts and requires separate review confirmation", async () => {
+  const inputs: PanelInput[] = [];
+  const state: TerminalPanelState = {
+    key: "canvas/desk",
+    fields: [
+      { id: "request", label: "Request for coder", kind: "text", value: "", disabled: false },
+    ],
+    actions: [{ id: "ask", label: "Review coding request", disabled: false }],
+    senders: [],
+    sender: "",
+  };
+  using f = workspace((input) => {
+    inputs.push(input);
+    if (input.type === "field") state.fields[0]!.value = input.value;
+    if (input.type === "action") state.review = { label: "Request coder", canConfirm: true };
+    if (input.type === "cancel") delete state.review;
+    f.terminal.setPanelState({ ...state });
+  });
+  f.screen.send("coding draft");
+  f.terminal.setPanelState(state);
+  f.screen.send("\x1b[19~"); // F8
+  f.screen.send("\x1b[200~Fix this\nwithout losing context\x1b[201~");
+  expect(inputs.every((input) => input.type === "field")).toBe(true);
+  expect(state.fields[0]!.value).toBe("Fix this\nwithout losing context");
+  f.terminal.write("World worker still running", "world");
+  f.screen.columns = 32;
+  f.screen.rows = 14;
+  f.screen.resize();
+  f.terminal.setPanelState({ ...state });
+  f.screen.send("\t\r");
+  expect(inputs.at(-1)?.type).toBe("action");
+  f.screen.send("\r"); // Review starts on Cancel, not Confirm.
+  expect(inputs.at(-1)?.type).toBe("cancel");
+  expect(inputs.some((input) => input.type === "confirm")).toBe(false);
+  f.screen.send("\t\r\t\r"); // Select action, review, select Confirm.
+  expect(inputs.at(-1)?.type).toBe("confirm");
+  f.screen.send("\x1b[17~"); // World
+  f.screen.send("tell Peer hello\r");
+  f.screen.send("\x1b[17~\r"); // Coding draft retained.
+  expect(f.lines).toEqual(["/world tell Peer hello", "coding draft"]);
+  expect(state.fields[0]!.value).toBe("Fix this\nwithout losing context");
+  f.screen.send("\x1b[19~\x1b");
+  await until(() => f.screen.text().includes("Request for coder"));
+});
 
 it("selects the workspace without changing session ownership or one-shot parsing", () => {
   expect(parseDispatch([".", "--tui"])).toEqual({ kind: "code", dir: ".", tui: true });

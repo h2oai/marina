@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useRef, useState } from "react";
+import { getToken } from "../lib/api";
 import type { DashboardEvent, WorldSnapshot, WSMessage } from "../lib/types";
+import { useChatState } from "./use-chat-state";
 import { ACTIVITY_EVENT_TYPES, useEntityActivity } from "./use-entity-activity";
 import { FEED_EVENT_TYPES, loadFeedSnapshot, useFeedState } from "./use-feed-state";
 import { GRAPH_EVENT_TYPES, loadGraphSnapshot, useGraphState } from "./use-graph-state";
@@ -14,6 +16,8 @@ import { HIDDEN_FLUSH_MS, pushBounded, reconnectDelay } from "./ws-buffer";
 const FEED_EXCLUDED_TYPES = new Set(["agent_text_delta", "agent_thinking_delta"]);
 
 export function useDashboardWebSocket() {
+  useChatState((s) => `${s.loggedIn}:${s.entityName}`);
+  const token = getToken();
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const setSnapshot = useWorldState((s) => s.setSnapshot);
@@ -79,13 +83,18 @@ export function useDashboardWebSocket() {
 
     function connect() {
       const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-      const ws = new WebSocket(`${protocol}//${location.host}/dashboard-ws`);
+      const ws = new WebSocket(
+        `${protocol}//${location.host}/dashboard-ws${token ? `?token=${encodeURIComponent(token)}` : ""}`,
+      );
       wsRef.current = ws;
 
       ws.onopen = () => {
         if (mounted) {
           reconnectAttempt = 0;
           setConnected(true);
+          useWorldState.setState((state) => ({
+            connectionGeneration: state.connectionGeneration + 1,
+          }));
           // Prime graph + feed stores so the first frame isn't empty; WS
           // events then mutate from this baseline. Both loaders record any
           // failure in their store's `error` field (rendered by the panels)
@@ -108,6 +117,7 @@ export function useDashboardWebSocket() {
       };
 
       ws.onmessage = (e) => {
+        if (!mounted || wsRef.current !== ws) return;
         try {
           const msg: WSMessage = JSON.parse(e.data);
           if (msg.type === "snapshot" || msg.type === "state") {
@@ -131,7 +141,9 @@ export function useDashboardWebSocket() {
             }
           }
           scheduleFlush();
-        } catch {}
+        } catch {
+          /* Ignore malformed transport frames. */
+        }
       };
     }
 
@@ -144,9 +156,14 @@ export function useDashboardWebSocket() {
       rafRef.current = 0;
       if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
       flushTimerRef.current = null;
+      pendingSnapshotRef.current = null;
+      pendingEventsRef.current = [];
+      pendingGraphEventsRef.current = [];
+      pendingFeedEventsRef.current = [];
+      pendingActivityEventsRef.current = [];
       wsRef.current?.close();
     };
-  }, [setSnapshot, pushEvents, applyGraphEvent, applyFeedEvent, applyActivityEvent]);
+  }, [setSnapshot, pushEvents, applyGraphEvent, applyFeedEvent, applyActivityEvent, token]);
 
   const send = (data: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {

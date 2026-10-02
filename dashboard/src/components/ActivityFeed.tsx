@@ -39,7 +39,10 @@ export function ActivityFeed({ backContent }: { backContent?: React.ReactNode })
     }
   }, []);
 
-  const visibleEvents = useMemo(() => events.slice(0, VISIBLE_EVENTS), [events]);
+  const visibleEvents = useMemo(
+    () => events.filter((event) => event.type !== "resource_changed").slice(0, VISIBLE_EVENTS),
+    [events],
+  );
 
   // O(1) name resolution. A per-row entities.find() was O(rows × entities) per
   // render; a Map built once per entities change is O(1) per row, and its stable

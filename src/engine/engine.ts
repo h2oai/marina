@@ -206,6 +206,9 @@ export class Engine {
     this.sandbox = new RoomSandbox();
     this.db = this.config.db;
     this._eventLog = new EventLog(this.logger, this.db);
+    this.db?.onResourceChange((change) =>
+      this.logEvent({ type: "resource_changed", ...change, timestamp: Date.now() }),
+    );
     this.rateLimiter = this.config.rateLimiter;
     this.loginRateLimiter = this.config.loginRateLimiter;
     this.storage = this.config.storage;
@@ -263,13 +266,15 @@ export class Engine {
       // Daily spend ledger: this world's upstream dollars, persisted by day, so
       // MARINA_DAILY_SPEND_CAP_USD survives a restart (src/engine/spend-ledger.ts).
       const spendDb = this.db;
-      attachSpendLedger({
-        add: (day, source, usd) =>
-          tryLog(this.logger, "spend", "Daily spend not recorded", () => {
-            spendDb.addDailySpend(day, source, usd);
-          }),
-        totalFor: (day) => spendDb.getDailySpend(day).reduce((sum, row) => sum + row.cost_usd, 0),
-      });
+      spendDb.onClose(
+        attachSpendLedger({
+          add: (day, source, usd) =>
+            tryLog(this.logger, "spend", "Daily spend not recorded", () => {
+              spendDb.addDailySpend(day, source, usd);
+            }),
+          totalFor: (day) => spendDb.getDailySpend(day).reduce((sum, row) => sum + row.cost_usd, 0),
+        }),
+      );
 
       // Benchmark runner — spawns the harness subprocess + persists runs
       this.benchmarkRunner = new BenchmarkRunner(

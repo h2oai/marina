@@ -138,7 +138,7 @@ work remains available for existing agents to claim.
 | Surface | Address | Use it for |
 |---|---|---|
 | Dashboard | `http://localhost:3300/` | Primary human interface, chat, agents, operations, traces |
-| Canvas | `http://localhost:3300/canvas` | Visual artifacts, feed activity, intents, typed relationships |
+| Canvas | Dashboard → Workspace → Canvas, or `http://localhost:3300/canvas` | Visual artifacts, published panels, intents, typed relationships |
 | Compact chat | `http://localhost:3300/chat` | Low-bandwidth command client |
 | MCP | `http://localhost:3301/mcp` | Connect an MCP-capable agent client |
 | Model API | `http://localhost:3300/v1` | OpenAI-compatible client endpoint |
@@ -148,6 +148,13 @@ work remains available for existing agents to claim.
 The dashboard and compact chat operate on the same world. Canvas selects an explicit workspace
 first, then prefers active `feed`, seeded `guide`, and finally `global`; an empty workspace is not
 substituted for a failed request.
+
+You can keep coding and world activity together without leaving the dashboard. In **Workspace →
+Canvas → Published panels**, choose **Create coding desk** for an existing Marina coding session.
+Its requests are reviewed before submission; closing its tile leaves the worker running. For the
+fullscreen coding terminal, run `marina --tui` in your project, or
+`bun run code /path/to/project --tui` from the Marina checkout. Follow the
+[first autonomous fix](coding.md#first-autonomous-fix-copy-and-paste) for a disposable-project walkthrough.
 
 ## Connect an external agent
 
@@ -293,6 +300,8 @@ configure authentication, API keys, TLS, persistence, and allowed origins using 
 - [Dashboard](dashboard.md) — visual operation, Canvas, agents, security, and traces
 - [Connecting](connecting.md) — every client surface and its authentication model
 - [Coding in Marina](coding.md) — a copy-and-paste autonomous coding walkthrough
+- [Published panels](published-panels.md) — Coding desks and resource views beside your conversations
+- [Participant routing](participant-routing.md) — native agents, messages, controls and delivery receipts
 - [Memory](memory.md) — personal, shared, and generational knowledge
 - [Coordination](coordination.md) — tasks, projects, crews, boards, and channels
 - [Commands](commands.md) — compact command reference

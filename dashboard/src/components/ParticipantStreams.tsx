@@ -8,6 +8,9 @@ import { useChatState } from "../hooks/use-chat-state";
 import { useParticipantOutput } from "../hooks/use-participant-output";
 import { useWorkspaceState } from "../hooks/use-workspace-state";
 import { getToken } from "../lib/api";
+import { openBoundPanel } from "../lib/panel-bindings";
+import type { DashboardPanelProps } from "../lib/panel-registry";
+import { GlassPanel } from "./GlassPanel";
 import { ParticipantActivity } from "./ParticipantActivity";
 import { ParticipantDeliveryLog } from "./ParticipantDeliveryLog";
 import { ParticipantRuntimeControls } from "./ParticipantRuntimeControls";
@@ -43,7 +46,7 @@ function StreamOutput({
   return (
     <section
       aria-label={`${session.label} output`}
-      className="flex min-h-0 min-w-0 flex-1 flex-col"
+      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto"
     >
       <div className="shrink-0 border-b border-border p-3">
         <h3 className="font-semibold">{session.label}</h3>
@@ -55,6 +58,12 @@ function StreamOutput({
           {session.id} · {session.groupId ? `Group ${session.groupId}` : "Private"}
         </p>
         <div className="mt-2 flex flex-wrap gap-3 text-xs text-primary">
+          <button
+            type="button"
+            onClick={() => openBoundPanel({ kind: "participant", id: session.id })}
+          >
+            Open participant beside my work
+          </button>
           <button type="button" onClick={replay}>
             Replay retained history
           </button>
@@ -76,7 +85,7 @@ function StreamOutput({
       ) : (
         <section
           ref={viewport}
-          className="min-h-0 flex-1 overflow-auto p-3"
+          className="min-h-32 flex-1 overflow-auto p-3"
           aria-label="Published output"
           onScroll={(event) => {
             const node = event.currentTarget;
@@ -128,10 +137,17 @@ export function ParticipantStreamWorkspace({
   token,
   autoSelect = false,
   active = true,
+  followWorkspaceSelection = true,
+  targetId,
+  onTargetChange,
 }: {
   token: string;
   autoSelect?: boolean;
   active?: boolean;
+  /** Only the main workspace follows global deep links and attention targets. */
+  followWorkspaceSelection?: boolean;
+  targetId?: string;
+  onTargetChange?: (id: string | undefined) => void;
 }) {
   const [client] = useState(() => new MarinaRoutingClient({ url: window.location.origin, token }));
   const [page, setPage] = useState<RoutingSessionPage>();
@@ -140,7 +156,9 @@ export function ParticipantStreamWorkspace({
   const [selected, setSelected] = useState<string>();
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
-  const requested = useWorkspaceState((state) => state.participantId);
+  const requested = useWorkspaceState((state) =>
+    followWorkspaceSelection ? (state.participantId ?? targetId ?? null) : (targetId ?? null),
+  );
   const [direct, setDirect] = useState<RoutingSession>();
   const [directError, setDirectError] = useState("");
   // biome-ignore lint/correctness/useExhaustiveDependencies: retry explicitly repeats a failed direct lookup.
@@ -223,106 +241,121 @@ export function ParticipantStreamWorkspace({
   return (
     <div
       hidden={!active}
-      className={active ? "flex h-full min-h-0 flex-col sm:flex-row" : "hidden"}
+      className={active ? "participant-streams h-full min-h-0 min-w-0" : "hidden"}
     >
-      <aside
-        aria-label="Participants"
-        className="max-h-[40%] shrink-0 overflow-auto border-b border-border p-3 sm:max-h-full sm:w-56 sm:border-b-0 sm:border-r"
-      >
-        <h2 className="mb-1 font-semibold">Participant streams</h2>
-        <p className="mb-3 text-xs text-text-dim">
-          Output published by connected clients. Registration does not mean a process is running.
-        </p>
-        <input
-          aria-label="Filter this participant page"
-          placeholder="Filter this page…"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          className="mb-2 w-full rounded border border-border bg-surface px-2 py-1 text-sm"
-        />
-        {(error || (requested && directError)) && (
-          <div role="alert" className="text-sm">
-            {error || directError}{" "}
-            <button type="button" className="text-primary" onClick={() => setRetry((n) => n + 1)}>
-              Retry
+      <div className="participant-streams-layout flex h-full min-h-0 min-w-0 flex-col">
+        <aside
+          aria-label="Participants"
+          className="max-h-[40%] shrink-0 overflow-auto border-b border-border p-3"
+        >
+          <h2 className="mb-1 font-semibold">Participant streams</h2>
+          <p className="mb-3 text-xs text-text-dim">
+            Output published by connected clients. Registration does not mean a process is running.
+          </p>
+          <input
+            aria-label="Filter this participant page"
+            placeholder="Filter this page…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            className="mb-2 w-full rounded border border-border bg-surface px-2 py-1 text-sm"
+          />
+          {(error || (requested && directError)) && (
+            <div role="alert" className="text-sm">
+              {error || directError}{" "}
+              <button type="button" className="text-primary" onClick={() => setRetry((n) => n + 1)}>
+                Retry
+              </button>
+            </div>
+          )}
+          {!error && !page && (
+            <p role="status" className="animate-pulse text-sm">
+              Loading participants…
+            </p>
+          )}
+          {page?.sessions.length === 0 && (
+            <p className="text-sm text-text-dim">
+              Start marina supervise --root /path/to/project to manage local agents here, or join
+              with the routing SDK or HTTP API.
+            </p>
+          )}
+          {page && page.sessions.length > 0 && visible?.length === 0 && (
+            <p role="status" className="mb-2 text-sm text-text-dim">
+              No participants match on this page.
+            </p>
+          )}
+          {visible?.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              aria-pressed={selectedId === s.id}
+              onClick={() => {
+                setSelected(s.id);
+                onTargetChange?.(s.id);
+                if (followWorkspaceSelection) useWorkspaceState.setState({ participantId: null });
+                setDirect(undefined);
+              }}
+              className={`mb-1 block w-full rounded p-2 text-left text-sm ${selectedId === s.id ? "bg-primary/15 text-primary" : "hover:bg-surface"}`}
+            >
+              <span className="block truncate">{s.label}</span>
+              <span className="text-xs text-text-dim">
+                {s.kind} · {s.state === "left" ? "Left" : "Registered"}
+              </span>
             </button>
+          ))}
+          <div className="flex gap-3 text-xs text-primary">
+            {after && (
+              <button
+                type="button"
+                onClick={() => {
+                  setAfter("");
+                  setPage(undefined);
+                  setSelected(undefined);
+                  onTargetChange?.(undefined);
+                  if (followWorkspaceSelection) useWorkspaceState.setState({ participantId: null });
+                  setDirect(undefined);
+                }}
+              >
+                First page
+              </button>
+            )}
+            {page?.nextCursor && (
+              <button
+                type="button"
+                onClick={() => {
+                  setAfter(page.nextCursor!);
+                  setPage(undefined);
+                  setSelected(undefined);
+                  onTargetChange?.(undefined);
+                  if (followWorkspaceSelection) useWorkspaceState.setState({ participantId: null });
+                  setDirect(undefined);
+                }}
+              >
+                Next page
+              </button>
+            )}
           </div>
+        </aside>
+        {chosen ? (
+          <StreamOutput key={chosen.id} client={client} session={chosen} active={active} />
+        ) : (
+          <p className="p-4 text-sm text-text-dim">Select a participant to follow its output.</p>
         )}
-        {!error && !page && (
-          <p role="status" className="animate-pulse text-sm">
-            Loading participants…
-          </p>
-        )}
-        {page?.sessions.length === 0 && (
-          <p className="text-sm text-text-dim">
-            Start marina supervise --root /path/to/project to manage local agents here, or join with
-            the routing SDK or HTTP API.
-          </p>
-        )}
-        {page && page.sessions.length > 0 && visible?.length === 0 && (
-          <p role="status" className="mb-2 text-sm text-text-dim">
-            No participants match on this page.
-          </p>
-        )}
-        {visible?.map((s) => (
-          <button
-            key={s.id}
-            type="button"
-            aria-pressed={selectedId === s.id}
-            onClick={() => {
-              setSelected(s.id);
-              useWorkspaceState.setState({ participantId: null });
-              setDirect(undefined);
-            }}
-            className={`mb-1 block w-full rounded p-2 text-left text-sm ${selectedId === s.id ? "bg-primary/15 text-primary" : "hover:bg-surface"}`}
-          >
-            <span className="block truncate">{s.label}</span>
-            <span className="text-xs text-text-dim">
-              {s.kind} · {s.state === "left" ? "Left" : "Registered"}
-            </span>
-          </button>
-        ))}
-        <div className="flex gap-3 text-xs text-primary">
-          {after && (
-            <button
-              type="button"
-              onClick={() => {
-                setAfter("");
-                setPage(undefined);
-                setSelected(undefined);
-                useWorkspaceState.setState({ participantId: null });
-                setDirect(undefined);
-              }}
-            >
-              First page
-            </button>
-          )}
-          {page?.nextCursor && (
-            <button
-              type="button"
-              onClick={() => {
-                setAfter(page.nextCursor!);
-                setPage(undefined);
-                setSelected(undefined);
-                useWorkspaceState.setState({ participantId: null });
-                setDirect(undefined);
-              }}
-            >
-              Next page
-            </button>
-          )}
-        </div>
-      </aside>
-      {chosen ? (
-        <StreamOutput key={chosen.id} client={client} session={chosen} active={active} />
-      ) : (
-        <p className="p-4 text-sm text-text-dim">Select a participant to follow its output.</p>
-      )}
+      </div>
     </div>
   );
 }
 
-export function ParticipantStreams({ active }: { active: boolean }) {
+export function ParticipantStreams({
+  active,
+  followWorkspaceSelection = true,
+  targetId,
+  onTargetChange,
+}: {
+  active: boolean;
+  followWorkspaceSelection?: boolean;
+  targetId?: string;
+  onTargetChange?: (id: string | undefined) => void;
+}) {
   // Subscribe to login/logout transitions so private output is unmounted immediately.
   const loggedIn = useChatState((s) => s.loggedIn);
   const token = getToken();
@@ -330,5 +363,33 @@ export function ParticipantStreams({ active }: { active: boolean }) {
     return active ? (
       <p className="p-4 text-sm">Log in through Chat to view participant streams.</p>
     ) : null;
-  return <ParticipantStreamWorkspace key={token} token={token} active={active} />;
+  return (
+    <ParticipantStreamWorkspace
+      key={token}
+      token={token}
+      active={active}
+      followWorkspaceSelection={followWorkspaceSelection}
+      targetId={targetId}
+      onTargetChange={onTargetChange}
+    />
+  );
+}
+
+/** Another observer/controller of existing sessions; opening and closing never owns an agent. */
+export function ParticipantStreamsPanel({
+  active = true,
+  binding,
+  onBindingChange,
+  ...props
+}: DashboardPanelProps) {
+  return (
+    <GlassPanel title="Streams" {...props} bodyScroll={false}>
+      <ParticipantStreams
+        active={active}
+        followWorkspaceSelection={false}
+        targetId={binding?.kind === "participant" ? binding.id : undefined}
+        onTargetChange={(id) => onBindingChange?.(id ? { kind: "participant", id } : null)}
+      />
+    </GlassPanel>
+  );
 }

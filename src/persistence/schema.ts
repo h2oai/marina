@@ -291,6 +291,48 @@ ALTER TABLE benchmark_runs ADD COLUMN replicate_group TEXT;
 CREATE INDEX idx_benchmark_runs_replicate_group ON benchmark_runs(replicate_group) WHERE replicate_group IS NOT NULL;
 `,
   },
+  // Migration 149: durable execution checkpoint for the agent loop
+  // (src/persistence/db-run-state.ts). One row per agent describing the
+  // single in-flight effect (a tool call) whose outcome has not been
+  // committed; written before the loop advances, read back at boot so a
+  // crash resumes the step instead of restarting from a summary. `phase`,
+  // `replay` are code-validated unions; the CHECK keeps bad rows out of
+  // the store even though the code is the authority.
+  {
+    version: 149,
+    sql: `
+CREATE TABLE run_state (
+  agent_name TEXT PRIMARY KEY,
+  phase TEXT NOT NULL CHECK (phase IN ('tool_call', 'model_request')),
+  tool_call_id TEXT NOT NULL DEFAULT '',
+  tool_name TEXT NOT NULL DEFAULT '',
+  args_json TEXT NOT NULL DEFAULT '{}',
+  replay TEXT NOT NULL CHECK (replay IN ('safe', 'never')),
+  partial_output_json TEXT NOT NULL DEFAULT '[]',
+  updated_at INTEGER NOT NULL
+);
+`,
+  },
+  // Migration 150: exactly-once submission ledger
+  // (src/persistence/db-submissions.ts). A `requestId` is claimed `pending`
+  // before its work runs and flipped `resolved` once the result commits, so a
+  // client retry after a crash/connection loss gets the original result back
+  // instead of the work being performed twice.
+  {
+    version: 150,
+    sql: `
+CREATE TABLE submission_requests (
+  request_id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'resolved')),
+  result_json TEXT,
+  created_at INTEGER NOT NULL,
+  settled_at INTEGER
+);
+CREATE INDEX idx_submission_requests_pending ON submission_requests(status, created_at)
+  WHERE status = 'pending';
+`,
+  },
 ];
 
 /** Migration 143 body — self-contained so later edits to db-notes never change it. */

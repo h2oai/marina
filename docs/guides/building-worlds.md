@@ -450,8 +450,8 @@ Publish interactive UIs as canvas nodes. Create a JSON asset with A2UI component
 {
   "components": [
     { "id": "root", "component": "Card", "children": ["title", "status", "action"] },
-    { "id": "title", "component": "Text", "value": "Build Status" },
-    { "id": "status", "component": "DataTable", "columns": ["Room", "Valid", "Last Edit"] },
+    { "id": "title", "component": "Text", "text": "Build Status" },
+    { "id": "status", "component": "DataTable", "columns": [{"key": "room", "label": "Room"}, {"key": "valid", "label": "Valid"}, {"key": "edited", "label": "Last Edit"}] },
     { "id": "action", "component": "Button", "label": "Refresh" }
   ],
   "rootId": "root"

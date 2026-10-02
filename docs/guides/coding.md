@@ -1,9 +1,10 @@
 # Coding in Marina
 
-Most coding agents are a solo loop: one model, one terminal, one throwaway session. **Marina
-codes differently.** A coding session here lives *inside a civilization* — work persists, agents
-and people collaborate as peers, every change is reviewed and reversible, and what gets learned
-becomes shared memory the next session can build on.
+A coding session in Marina lives inside a persistent world. Start with one coder and one task;
+add other participants when the work calls for them. People and agents can exchange messages,
+inspect recorded checks, review submitted work, and share what they learn while independent
+world activity continues. Verification and approval describe specific candidates, not a promise
+that every edit has already been checked or can automatically be reversed.
 
 This guide gets you from zero to a working coding session in about five minutes, then shows the
 parts that make it more than a CLI.
@@ -37,7 +38,8 @@ In the workspace, type `/` for command suggestions with descriptions. Up/Down se
 Tab or Enter inserts the selection into your draft, and a separate Enter sends it.
 Argument hints follow the selected command. Paste inserts a multiline draft without sending;
 Shift+Enter (where supported) or a trailing `\` adds another line. F1 opens help, F6 switches
-Coding/World, and F7 opens pending requests. PageUp/PageDown scroll the current transcript;
+Coding/World, F7 opens pending requests, and F8 opens the published panel view.
+PageUp/PageDown scroll the current transcript;
 Alt+Up/Down or `/view older` and `/view newer` fetch another retained local page. Ctrl+D exits
 an empty composer. Each conversation retains its editor, cursor and history; cancelled
 requests discard their partial answers. The workspace restores the shell on exit without
@@ -152,6 +154,38 @@ Use `/stop` or Ctrl+C to interrupt the selected worker. A second Ctrl+C or `/qui
 all native processes owned by this terminal and closes its local Marina. Worktrees and
 the output journal remain available for inspection. Restarting preserves history but
 does **not** replay uncertain work or resume a native process automatically.
+
+### Keep a Coding desk beside your work
+
+In the dashboard, choose **Workspace → Canvas → Published panels → Create coding desk**.
+Select an existing Marina coding session; optionally attach a task and a visible participant.
+**Publish and open desk** opens its activity, artifacts, recorded verification, request composer
+and world feed beside Chat. Each coding request is reviewed and targets that exact session,
+without changing Chat's selected session. Native agents can be followed through participant
+resources and Streams; a native participant ID is not a Marina coding session ID.
+
+The same publication is usable from the coding terminal:
+
+```text
+/panel list
+/panel desk <canvas-id>
+/view panel
+```
+
+`/panel list` supplies canvas IDs; `/panel desk <canvas-id>` publishes and opens a desk for the
+selected Marina coding session. Supply an explicit session with
+`/panel desk <canvas-id> <session-id>`, or open an existing publication with
+`/panel open <canvas-id> <node-id>`.
+
+In `--tui`, F8 focuses the panel. Tab/Shift+Tab selects fields and buttons; type into a field,
+use Space for a checkbox, and Enter to review an action. Review starts on **Cancel**; select
+**Confirm** to submit, or Escape to dismiss it. Scrollback mode uses `/panel field`,
+`/panel act` and `/panel confirm`; see [Published panels](published-panels.md#terminal).
+
+Live updates, view switching and reconnects preserve drafts within the open application.
+Closing a panel only closes that view; it never stops the worker. Saved browser layouts restore
+references and geometry, not unsent drafts across reloads. Terminal exit still follows the
+process ownership rules above. Other conversations remain active throughout.
 
 ### Remember and share a harness
 

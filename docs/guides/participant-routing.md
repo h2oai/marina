@@ -22,6 +22,12 @@ saved harnesses and shutdown behavior. The standalone `marina supervise` and gen
 
 ## Work from the dashboard
 
+Participant output can also be composed with coding activity, task evidence and world events in
+[published panels](published-panels.md). A Coding desk's optional participant view uses the same
+routing identity and delivery receipts as Streams. Reviewed messages require an owned sender;
+runtime controls retain their ownership and gate checks. Publishing or closing a panel neither
+registers nor stops a participant. Use repeated Streams tiles for independent conversation drafts.
+
 Install and authenticate the native agent CLIs you want to use, then start Marina and authenticate a
 world account. From your Marina checkout:
 

@@ -30,7 +30,7 @@ export interface SpendSink {
   totalFor(day: string): number;
 }
 
-let sink: SpendSink | undefined;
+let sink: { target: SpendSink } | undefined;
 let currentDay = "";
 let today = 0;
 
@@ -43,7 +43,7 @@ function roll(now: number): void {
   if (day === currentDay) return;
   currentDay = day;
   try {
-    today = sink?.totalFor(day) ?? 0;
+    today = sink?.target.totalFor(day) ?? 0;
   } catch {
     // An unreadable ledger (closed database) must not break the caller; the
     // day restarts from what this process records.
@@ -51,11 +51,16 @@ function roll(now: number): void {
   }
 }
 
-/** Connect persistence (the engine does this once its database is open). */
-export function attachSpendLedger(next: SpendSink): void {
-  sink = next;
+/** Connect persistence; the owner must release it before closing its database.
+ * Releasing an older attachment cannot detach a newer world's ledger. */
+export function attachSpendLedger(next: SpendSink): () => void {
+  const attachment = { target: next };
+  sink = attachment;
   currentDay = "";
   roll(Date.now());
+  return () => {
+    if (sink === attachment) sink = undefined;
+  };
 }
 
 export function recordSpend(source: SpendSource, usd: number | undefined, now = Date.now()): void {
@@ -63,7 +68,7 @@ export function recordSpend(source: SpendSource, usd: number | undefined, now = 
   roll(now);
   today += usd;
   try {
-    sink?.add(currentDay, source, usd);
+    sink?.target.add(currentDay, source, usd);
   } catch {
     // Persisting is best effort (the engine's sink already logs failures);
     // the in-memory total still enforces the cap.

@@ -6,19 +6,29 @@ import { join } from "node:path";
 import { Engine } from "../src/engine/engine";
 import { closeWorldMemoryService } from "../src/memory/world-service";
 import { MarinaDB } from "../src/persistence/database";
+import type { StorageProvider } from "../src/storage/provider";
 import { type RoomModule, roomId } from "../src/types";
 import { MockConnection, makeTestRoom } from "./helpers";
 
 /** Independent world, registry and persistence; no listener, timers or profile mutation.
  * Use disk storage for WAL/external-writer/reopen tests. Always await dispose(). */
 export function createTestEngine(
-  options: { storage?: "memory" | "disk"; room?: Partial<RoomModule> } = {},
+  options: {
+    storage?: "memory" | "disk";
+    assetStorage?: StorageProvider;
+    room?: Partial<RoomModule>;
+  } = {},
 ) {
   const directory =
     options.storage === "disk" ? mkdtempSync(join(tmpdir(), "marina-test-")) : undefined;
   const path = directory ? join(directory, "world.db") : ":memory:";
   const db = new MarinaDB(path);
-  const engine = new Engine({ db, startRoom: roomId("test/start"), tickInterval: 60_000 });
+  const engine = new Engine({
+    db,
+    storage: options.assetStorage,
+    startRoom: roomId("test/start"),
+    tickInterval: 60_000,
+  });
   engine.registerRoom(roomId("test/start"), makeTestRoom(options.room));
   let disposal: Promise<void> | undefined;
   return {

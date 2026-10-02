@@ -42,7 +42,10 @@ function withIntent(Component: React.ComponentType<NodeProps>): React.ComponentT
       { className: "relative w-full h-full group" },
       createElement(Component, props),
       createElement(IntentBadge, { data: props.data as Record<string, unknown> }),
-      createElement(NodeActionBar, { nodeId: props.id }),
+      createElement(NodeActionBar, {
+        nodeId: props.id,
+        canvasId: props.data.canvas_id as string | undefined,
+      }),
     );
   }
   WithIntentBadge.displayName = `WithIntent(${Component.displayName || Component.name || "Node"})`;

@@ -46,7 +46,9 @@ export async function runTestProcess(argv: string[], deadlineMs = 900_000): Prom
       if (/^test\/.*\.test\.ts:$/.test(line)) lastTest = line.slice(0, -1);
       if (/^\((pass|fail|skip)\)/.test(line)) completed++;
       if (
-        /DB log failed|Activity tracking failed|Primitive usage recording failed/.test(line) &&
+        /DB log failed|Activity tracking failed|Primitive usage recording failed|Daily spend not recorded|Judge observation not recorded/.test(
+          line,
+        ) &&
         /Cannot use a closed database|Database has closed/.test(line)
       )
         closedDatabaseWarnings++;

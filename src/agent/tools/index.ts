@@ -25,6 +25,7 @@ export {
   agentToolExecutionMode,
   applyStrictToolSchemas,
   applyToolExecutionModes,
+  applyToolReplayPolicy,
   createAllTools,
   createProfileToolset,
   createScopedTools,
@@ -35,10 +36,12 @@ export {
   isStrictSafeSchema,
   type ProfileToolset,
   READ_ONLY_TOOL_NAMES,
+  replayPolicyFor,
   TOOL_PROFILE_NAMES,
   TOOL_SEARCH_NAME,
   type ToolExecutionPolicy,
   type ToolProfile,
+  type ToolReplay,
   toolExecutionPolicy,
 } from "./profiles";
 export type { ToolContext } from "./shared";

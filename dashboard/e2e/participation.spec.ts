@@ -30,13 +30,20 @@ test("login orients the resident before inline discovery, note helpers and sideb
   });
   await page.goto("/dashboard");
   await page.getByRole("button", { name: "Dismiss getting-started guide" }).click();
-  await page.getByPlaceholder("Enter your name...").fill("InlineAuditBrowser");
+  // Each repeat exercises first-login onboarding, rather than a returning resident's brief.
+  const resident = `InlineAudit${test.info().repeatEachIndex}`;
+  await page.getByPlaceholder("Enter your name...").fill(resident);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   const input = page.locator("#marina-command-input");
   await expect.poll(() => arrival).toContain("onboarding");
   expect(arrival.indexOf("look")).toBeGreaterThanOrEqual(0);
   expect(arrival.indexOf("brief")).toBeGreaterThan(arrival.indexOf("look"));
   expect(arrival.indexOf("onboarding")).toBeGreaterThan(arrival.indexOf("brief"));
+  // The dashboard and Chat bootstrap over separate sockets. Wait for this resident's
+  // world context before exercising completion: its arrival invalidates the catalog.
+  await expect(
+    page.locator('[data-pane-key="context"]').getByText(resident, { exact: true }),
+  ).toBeVisible();
   await input.fill("/mem");
   await expect(page.getByRole("listbox", { name: "Command suggestions" })).toContainText("memory");
   await input.press("Tab");
@@ -65,6 +72,11 @@ test("login orients the resident before inline discovery, note helpers and sideb
   await input.fill("/look");
   await input.press("Enter");
   await expect.poll(() => commands.at(-1)).toBe("look");
+  // Inline discovery deliberately reuses its fresh client cache. The palette
+  // explicitly revalidates, so test the compact wire response through that action.
+  await page
+    .getByRole("button", { name: "Search Marina (Ctrl or Command K)", exact: true })
+    .click();
   await expect.poll(() => confirmedBytes).toBeGreaterThan(0);
   expect(confirmedBytes).toBeLessThan(manifestBytes / 10);
   writeFileSync(

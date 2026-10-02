@@ -1665,3 +1665,21 @@ it("retains a queued workflow destination when an independent world command chan
     await view.close(0);
   }
 });
+
+it("a live panel view preserves coding and world drafts and never turns panel input into a coding task", async () => {
+  using fixture = focusedTerminal();
+  const { input, terminal, lines } = fixture;
+  input.write("unfinished coding draft");
+  terminal.setPanelContent("Panel revision one", true);
+  input.write("field request a panel draft");
+  terminal.write("Another resident says hello", "world");
+  terminal.setPanelContent("Panel revision two");
+  input.write("\n");
+  terminal.selectView("coding");
+  input.write(" continued\n");
+  await until(() => lines.length === 2);
+  expect(lines).toEqual([
+    "/panel field request a panel draft",
+    "unfinished coding draft continued",
+  ]);
+});

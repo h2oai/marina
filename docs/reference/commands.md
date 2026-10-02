@@ -1295,6 +1295,9 @@ Effect: unknown.
 
 Canvas management. Subcommands: canvas create <name> [desc] | canvas list | canvas info <name> | canvas visit <self|entity|name> | canvas post [on:<canvas>] [reply:<node_id>] <text> | canvas publish <type> <asset_id> [canvas] [reply:<node_id>] | canvas nodes <name> | canvas edges <name> | canvas layout <grid|timeline|feed> <name> | canvas delete <name> | canvas asset upload|list|info|delete | canvas intent list [canvas] | canvas intent claim <node_id> | canvas intent fail <node_id> [reason] | canvas intent complete <node_id> [--type <type>] <result> | canvas intent complete-rich <node_id> <json> | canvas connect <src_node_id> <tgt_node_id> <relationship> [canvas] | canvas disconnect <edge_id>
 
+Publish an A2UI JSON asset to compose existing Marina resources. Open it beside Chat from Workspace → Canvas → Published panels, or use Create coding desk for an existing coding session.
+Resource reads use each viewer’s permissions; operational buttons require review. Opening or closing a panel leaves agents running. The coding terminal also supports these publications through /panel and F8.
+
 Category: Canvas & Media. Minimum rank: 0.
 Aliases: `cv`.
 
@@ -1854,7 +1857,10 @@ Usage:
   code exit                   Leave Code Mode
 
 In Code Mode, omit the "code" prefix: start, files, read <path>, run test, exit.
-This first cut is local-CWD only and path-confined. Writes happen only by applying a stored patch.
+The selected workspace and execution backend govern file access and execution. Requested sandbox execution never falls back silently to the host.
+For a shared view, use Workspace → Canvas → Published panels → Create coding desk with an existing session.
+The coding terminal offers /panel desk <canvas-id> [session-id] and F8. These are local terminal controls, not world commands.
+Desk actions require review and retain server permissions. Closing a desk leaves its worker running.
 
 Profile: marina [2mprompt: code>[0m
 Marina-native coding profile: explicit primitives, durable artifacts.

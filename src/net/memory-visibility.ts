@@ -6,6 +6,7 @@ import { getRank } from "../engine/permissions";
 import { checkUnattendedGate } from "../engine/safety-gates";
 import { memoryAccess } from "../memory/access";
 import type { MarinaDB, NoteRow } from "../persistence/database";
+import { RoutingService } from "../routing/service";
 import type { EngineEvent, EntityId } from "../types";
 import { isOperatorPrincipal, isSentinelPrincipal } from "./auth-middleware";
 
@@ -79,6 +80,17 @@ export function memoryObserver(engine: Engine, principal?: string) {
       );
     },
     event: (event: EngineEvent): boolean => {
+      if (event.type === "resource_changed") {
+        if (event.resource === "coding") return true; // Same policy as coding snapshot reads.
+        if (!engine.db || !principal || isSentinelPrincipal(id!)) return false;
+        if (!event.id) return !!entity; // Overflow hint contains no private identifier.
+        try {
+          new RoutingService(engine.db, engine.db.durableEntityKey(id!)).get(event.id);
+          return true;
+        } catch {
+          return false;
+        }
+      }
       if (privilegedRead) return true;
       const own = "entity" in event && event.entity === principal;
       switch (event.type) {

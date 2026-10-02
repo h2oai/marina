@@ -29,6 +29,62 @@ The compact recent-activity strip shows the newest curated entries. **More → P
 live event stream; map heat shows local activity, while **Observe** holds narrative and
 conversation history.
 
+### Canvas panel-host preview
+
+Open `/dashboard?surface=canvas` to try the existing Chat, Workspace, and Context panes hosted
+on the Canvas renderer. The preview keeps the same proportions, panel styling, workspace tabs,
+mobile pane switcher, and named layout presets. Drag headers and resize corners on desktop;
+maximizing or switching panes keeps drafts mounted. Embedded Canvas boards retain their own
+pan, zoom, selection, and editing controls.
+
+The normal `/dashboard` remains the default. Remove `surface=canvas` and reload to return to
+it. Both renderers read the same local presets, including older **Previous grid** arrangements.
+The preview changes only presentation: layout edits do not change shared Canvas documents,
+grant permissions, or start or stop agents. Existing `/canvas` links still work.
+
+To keep the world visible beside your work, select **Workspace → Map**, then use **Open map
+below** in the Workspace header. It splits the pane when there is room and uses vertical
+scrolling for further views. Switch Workspace back to **Work** or **Canvas** while the extra
+map stays visible. Each map has its own zoom, pan, and Heat / Alerts / Presence controls;
+all maps share the live world and the Context inspector. Closing a view only removes its tile.
+
+To follow an agent beside your work, select **Workspace → Streams**, then **Open streams below**.
+Choose a participant in the new tile. Its participant selection, filters, follow position, and
+message draft are independent of other Streams views. The main Streams tab continues to handle
+deep links and attention targets. Extra tiles keep receiving published output while you use
+Work, Canvas, or Map. Sending a message or answering an approval acts on the participant shown
+in that tile, through the same server permissions and delivery receipts as the main tab.
+Closing a tile stops its reads and discards its local draft; it does not stop or disconnect
+the participant. Hidden mobile tiles pause polling and resume from their cursor when reopened.
+
+You can open up to four extra views in total, move or resize them, and save the arrangement through
+**More → Save layout preset**. A saved arrangement restores in either renderer; map zoom and
+layer choices, Streams selections, and drafts are temporary for each mounted view. On phones,
+extra views appear in the scrollable pane switcher. World Map, Streams and published panels
+support repetition. Published resources can nest with bounded depth and cycle checks; arbitrary
+nested workspaces and repeated world chats are not supported.
+
+### Published interactive panels and Coding desks
+
+Select **Workspace → Canvas → Published panels** to open an agent- or human-authored composition
+beside your work. A panel can combine coding activity, task evidence, memory, participant output
+and world events. Repeated views keep separate drafts and share authorized live reads. Save a
+layout preset to restore the same targets and geometry; drafts are not restored after a page reload.
+
+Choose **Create coding desk**, select an existing Marina coding session, optionally attach a task
+and participant, then **Publish and open desk**. One coder is sufficient. The desk's request button
+opens a review and addresses the displayed session without switching Chat's selected session.
+Recorded verification describes the candidate checked; later edits can make it stale.
+
+Opening, refreshing or closing a panel never starts or stops an agent. Operational buttons show
+their destination and values for confirmation, and run with the clicking resident's permissions.
+Live changes and reconnects refresh authorized resources while preserving local drafts. Hidden
+views pause their reads; an access failure is shown instead of cached private content.
+
+See [Published panels](published-panels.md) for SDK authoring, resource bindings, reviewed actions
+and the F8 terminal view. The default dashboard layout and optional canvas workspace use the
+same publications; no separate trip to `/canvas` is required.
+
 ### Start work and review the result
 
 **Work → Start something** brings the first request into the workspace. Choose **Marina** for
@@ -547,7 +603,8 @@ Select the `feed` canvas for a live activity stream. Board posts, channel messag
 - **Connect** two selected nodes or use **Connect nodes** in the inspector to choose endpoints
   and a typed relationship. Drag between node handles to create a `relates_to` edge. Click an
   edge to inspect or remove it
-- **Click** A2UI buttons/fields to trigger actions that agents can respond to
+- **Use** A2UI fields and buttons for interactive content; typed operational buttons show a review
+  before submitting. **Open as panel** places a published composition beside your work
 - **Search** nodes by text or filter by media type using the toolbar
 - **Export** canvas data as JSON
 - **Layout** buttons apply grid, timeline, or feed arrangements
