@@ -637,6 +637,14 @@
 # MARINA_ROUTE_EVIDENCE_MAX_COST_USD=0.05
 # MARINA_ROUTE_EVIDENCE_WINDOW=false
 
+# What the evidence pick optimizes.
+# - `lcb` (default): the best Wilson lower bound.
+# - `budget`: the best lower bound within MARINA_ROUTE_EVIDENCE_MAX_COST_USD per item; it never picks without a budget.
+# - `value`: the CHEAPEST priced candidate not measurably worse than the best-lower-bound one. Its point accuracy must be within TOLERANCE (absolute, 0–1) of the best's. With at least MIN_N shared items, a paired exact McNemar test must not show a significant loss (p < 0.05); otherwise its interval must overlap the best's lower bound.
+# Evidence is per role first (participants whose agent plays the spawning role) and falls back to model level when fewer than two candidates have MIN_N role items.
+# MARINA_ROUTE_EVIDENCE_OBJECTIVE=lcb
+# MARINA_ROUTE_EVIDENCE_TOLERANCE=0.05
+
 # ── Forecasting ──────────────────────────────────────────────────────────────
 
 # `forecast`, `bun run forecast` and POST /v1/forecast (docs/guides/forecasting.md). The defaults need OPENROUTER_API_KEY. Analysts are a comma list of models (defaults: DeepSeek V4 Pro, Claude Sonnet 5 and GPT-6 Luna via OpenRouter); the retriever defaults to OpenRouter web search on GPT-6 Luna; the judge is jev, decisions (the MARINA_DECISIONS backend, falling back to jev) or none.
