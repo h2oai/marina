@@ -567,6 +567,14 @@ crews actually fail:
 3. **Engine backstop** — if a crew serves a `marina:<name>` model endpoint, unanswered requests are
    re-posted as reminders by the model API, so no formation can silently drop a request.
 
+**Serving crews consult specialists.** Requests to `marina:<name>` go to the crew's lead and
+answerer members, not to specialists that happen to sit on the endpoint channel. Under
+`verification`, `deliberation`, `tournament` or `delphi`, each request also carries a one-line
+`protocol` naming up to two online specialists (skeptic, mathematician, scholar or historian, on
+a different model from the responder where possible) to consult by awaited `marina_tell`, each
+bounded to 30 s. A consult that times out is skipped, never waited on. The consulted
+specialists appear in `benchmark participants`.
+
 Formations carry empirical validation status (`validated` / `partial` / `unvalidated`) from
 benchmark sweeps — `project <name> recommend` shows the tags, and `unvalidated` means "no passing
 evidence yet," not proven bad.
