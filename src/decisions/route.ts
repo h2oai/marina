@@ -27,7 +27,11 @@ import { decideRoute, ROUTER_QUESTIONS, type RouteVerdict } from "./policy";
 import { choice } from "./questions";
 import type { DecisionProvider } from "./types";
 
-/** The `model` value that asks the router to pick. */
+/**
+ * The `model` value that asks the router to pick. `agent spawn` writes it as the
+ * modifier `model:route`; a saved or seeded config (e.g. `MARINA_AGENT_MODELS`)
+ * may carry either `route` or the full `model:route` spelling.
+ */
 export const ROUTE_MODEL = "route";
 
 export interface RouteTiers {
@@ -36,7 +40,8 @@ export interface RouteTiers {
 }
 
 export function isRouteModel(model: string | undefined): boolean {
-  return model?.trim().toLowerCase() === ROUTE_MODEL;
+  const m = model?.trim().toLowerCase();
+  return m === ROUTE_MODEL || m === `model:${ROUTE_MODEL}`;
 }
 
 export function routeTiersFromEnv(env: NodeJS.ProcessEnv = process.env): RouteTiers | undefined {

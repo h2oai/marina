@@ -204,6 +204,65 @@ export function inferCrewResponder(role: string | null | undefined): boolean {
 }
 
 /**
+ * Resolve a `route` model (`model:route` on `agent spawn`, or `route` /
+ * `model:route` in a saved or seeded config) to a concrete model ONCE, before
+ * the conversation exists: the route table or tiers pick from the goal and
+ * role, and measured benchmark evidence (`MARINA_ROUTE_EVIDENCE`) may prefer
+ * another of the same candidates. Emits the `agent_decision` route event and
+ * returns the chosen model id. The spawn path persists that id, so respawns
+ * never re-route mid-history. Throws the configuration error when neither a
+ * route table nor tiers are set.
+ */
+export async function resolveRouteModel(
+  config: Pick<AgentConfig, "name" | "goal" | "role">,
+  db: MarinaDB | undefined,
+  onEvent?: (event: EngineEvent) => void,
+): Promise<string> {
+  const table = routeTableFromEnv(); // throws RouteConfigError on a malformed table
+  const tiers = table ? undefined : routeTiersFromEnv();
+  if (!table && !tiers) {
+    throw new Error(
+      "model:route needs MARINA_ROUTES (a route table) or MARINA_ROUTE_FAST_MODEL and MARINA_ROUTE_POWERFUL_MODEL (see config/environment.reference).",
+    );
+  }
+  const routed = table
+    ? await routeModelWithTable(config.goal, config.role, table)
+    : await routeModelForGoal(config.goal, config.role, tiers!);
+  // Measured benchmark evidence may prefer another of the SAME eligible
+  // candidates (MARINA_ROUTE_EVIDENCE; off by default, fails open).
+  const evidence = applyRouteEvidence(
+    { route: routed.tier, model: routed.model },
+    table
+      ? Object.entries(table.routes).map(([route, r]) => ({ route, model: r.model }))
+      : [
+          { route: "fast", model: tiers!.fast },
+          { route: "powerful", model: tiers!.powerful },
+        ],
+    config.role,
+    routeEvidenceSettingsFromEnv(),
+    db,
+  );
+  onEvent?.({
+    type: "agent_decision",
+    name: config.name,
+    stage: "route",
+    verdict: evidence.route,
+    subject: evidence.model,
+    reason: evidence.applied
+      ? `evidence: ${evidence.reason ?? "best measured lower bound"} (router picked ${routed.tier})`
+      : routed.verdict.reason,
+    signals: { ...routed.verdict.signals, ...evidence.signals },
+    ...(routed.provider ? { provider: routed.provider } : {}),
+    ...(routed.decisionModel ? { model: routed.decisionModel } : {}),
+    ...(routed.latencyMs === undefined ? {} : { latencyMs: routed.latencyMs }),
+    ...(routed.costUsd === undefined ? {} : { costUsd: routed.costUsd }),
+    ...(routed.error ? { error: routed.error } : {}),
+    timestamp: Date.now(),
+  });
+  return evidence.model;
+}
+
+/**
  * The spawn config for a saved agent row — the one path boot respawn and
  * `restart()` share, so both infer the same tool profile, crew-responder mode,
  * supports and thinking level from what was persisted.
@@ -560,51 +619,9 @@ export class AgentRuntime {
       // `model:route` — pick a tier model from the goal ONCE, before the
       // conversation exists (src/decisions/route.ts). The resolved id is what
       // gets persisted, so respawns never re-route mid-history.
-      let routedModel: string | undefined;
-      if (isRouteModel(config.model)) {
-        const table = routeTableFromEnv(); // throws RouteConfigError on a malformed table
-        const tiers = table ? undefined : routeTiersFromEnv();
-        if (!table && !tiers) {
-          throw new Error(
-            "model:route needs MARINA_ROUTES (a route table) or MARINA_ROUTE_FAST_MODEL and MARINA_ROUTE_POWERFUL_MODEL (see config/environment.reference).",
-          );
-        }
-        const routed = table
-          ? await routeModelWithTable(config.goal, config.role, table)
-          : await routeModelForGoal(config.goal, config.role, tiers!);
-        // Measured benchmark evidence may prefer another of the SAME eligible
-        // candidates (MARINA_ROUTE_EVIDENCE; off by default, fails open).
-        const evidence = applyRouteEvidence(
-          { route: routed.tier, model: routed.model },
-          table
-            ? Object.entries(table.routes).map(([route, r]) => ({ route, model: r.model }))
-            : [
-                { route: "fast", model: tiers!.fast },
-                { route: "powerful", model: tiers!.powerful },
-              ],
-          config.role,
-          routeEvidenceSettingsFromEnv(),
-          this.db,
-        );
-        routedModel = evidence.model;
-        this.onEvent?.({
-          type: "agent_decision",
-          name: config.name,
-          stage: "route",
-          verdict: evidence.route,
-          subject: evidence.model,
-          reason: evidence.applied
-            ? `evidence: ${evidence.reason ?? "best measured lower bound"} (router picked ${routed.tier})`
-            : routed.verdict.reason,
-          signals: { ...routed.verdict.signals, ...evidence.signals },
-          ...(routed.provider ? { provider: routed.provider } : {}),
-          ...(routed.decisionModel ? { model: routed.decisionModel } : {}),
-          ...(routed.latencyMs === undefined ? {} : { latencyMs: routed.latencyMs }),
-          ...(routed.costUsd === undefined ? {} : { costUsd: routed.costUsd }),
-          ...(routed.error ? { error: routed.error } : {}),
-          timestamp: Date.now(),
-        });
-      }
+      const routedModel = isRouteModel(config.model)
+        ? await resolveRouteModel(config, this.db, this.onEvent)
+        : undefined;
       const resolvedModel =
         routedModel ?? config.model ?? this.db?.getDefaultModel() ?? MARINA_DEFAULT_MODEL;
       const supports = resolveSupports(resolvedModel, config.supports);

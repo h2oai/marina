@@ -38,7 +38,7 @@ they are explained. All are optional — unset means the world's own default.
 | `MARINA_MATH_MODEL` | `showcase` | Model for the mathematician specialist. | `MARINA_CREW_MODEL` |
 | `MARINA_REFLECTOR_MODEL` | `showcase` | Model for the crew reflector. | `MARINA_CREW_MODEL` |
 | `MARINA_SEED_SKILLS` | `showcase` | `true` seeds the universal skill packages on first boot. | off |
-| `MARINA_AGENT_MODELS` | every world (`seedSystemAgent`) | Per-agent map, `Name=model,Name=model` (names case-insensitive, model passed through as-is). Puts a different model on any boot-seeded agent — Translator and every specialist included. Wins over every variable above. | unset |
+| `MARINA_AGENT_MODELS` | every world (`seedSystemAgent`) | Per-agent map, `Name=model,Name=model` (names case-insensitive, model passed through as-is). Puts a different model on any boot-seeded agent — Translator and every specialist included. Wins over every variable above. A model of `route` (or `model:route`) asks the spawn-time router to pick (`MARINA_ROUTES` / tiers, plus `MARINA_ROUTE_EVIDENCE`) at the agent's first spawn; the resolved id is persisted and kept on later boots while the seed still says `route` — changing the entry's value applies as usual. | unset |
 
 Precedence for a seeded agent's model is: its `MARINA_AGENT_MODELS` entry, then
 its own specific override, then `MARINA_CREW_MODEL`, then the world's built-in
