@@ -16,6 +16,12 @@
 
 import type { ArenaData } from "../data";
 import type { ArenaRound } from "../types";
+import {
+  dampingFromEnv,
+  type HorizonMode,
+  horizonModeFromEnv,
+  horizonNowcast,
+} from "./civiqs-horizon";
 
 type Net = true | { minuend: string[]; subtrahend: string[] };
 
@@ -290,9 +296,17 @@ export function nowcastForecaster(
   /**
    * `daily`: also attach the last N daily readings (`daily` on the forecast,
    * topline rounds only) for model roles to read — never part of a filing.
+   * `horizon`: the horizon-aware corrections (civiqs-horizon.ts) — damped drift
+   * to the release day and/or sd(h); defaults to `MARINA_ARENA_NOWCAST_HORIZON`
+   * (off) and `MARINA_ARENA_NOWCAST_DAMPING`.
    */
-  opts: { live?: LiveCiviqs; daily?: number } = {},
+  opts: {
+    live?: LiveCiviqs;
+    daily?: number;
+    horizon?: { mode: HorizonMode; phi?: number };
+  } = {},
 ) {
+  const horizon = opts.horizon ?? { mode: horizonModeFromEnv(), phi: dampingFromEnv() };
   // One live read per tracker per forecast call — a profile's cells share it.
   const live = opts.live;
   return async (round: ArenaRound, lock: import("../types").ArenaLock) => {
@@ -333,6 +347,26 @@ export function nowcastForecaster(
       );
       return n && (!lastDate || n.date >= lastDate) ? n : undefined;
     };
+    // Horizon corrections for one series, given the plain nowcast's reading
+    // and the baseline sd: the drifted centre and/or sd(h), else unchanged.
+    const corrected = async (
+      seriesId: string,
+      n: { date: string; value: number },
+      sd: number,
+    ): Promise<{ mean: number; sd: number; detail?: Record<string, unknown> }> => {
+      if (horizon.mode === "off") return { mean: n.value, sd };
+      const hz = await horizonNowcast(
+        data,
+        { ...round, series: seriesId },
+        horizon.mode,
+        horizon.phi,
+        round.lock_at,
+        cachedLive,
+      ).catch(() => undefined);
+      // Only when it read the same day the nowcast did (one snapshot, one answer).
+      if (!hz || hz.lastDate !== n.date) return { mean: n.value, sd };
+      return { mean: hz.mean, sd: hz.sd ?? sd, detail: hz.detail };
+    };
     const used: Record<string, { date: string; value: number }> = {};
     if (f.topline && round.series) {
       const history = lock.answer_history ?? lock.history ?? [];
@@ -345,10 +379,14 @@ export function nowcastForecaster(
       const withDaily = daily ? { ...f, daily } : f;
       if (n) {
         used[round.series] = { date: n.date, value: n.value };
+        const c = await corrected(round.series, n, f.topline.sd);
+        const hz = c.detail
+          ? ` (horizon ${horizon.mode}: h ${c.detail.h}, drift ${c.detail.drift})`
+          : "";
         return {
           ...withDaily,
-          topline: { mean: n.value, sd: f.topline.sd },
-          note: `${f.note}; Civiqs daily nowcast ${n.date}`,
+          topline: { mean: c.mean, sd: c.sd },
+          note: `${f.note}; Civiqs daily nowcast ${n.date}${hz}`,
           nowcast: used,
         };
       }
@@ -359,7 +397,8 @@ export function nowcastForecaster(
       for (const cell of Object.keys(profile)) {
         const n = await fresher(cell, lock.answer_history_by_cell?.[cell]?.at(-1)?.date);
         if (n) {
-          profile[cell] = { mean: n.value, sd: profile[cell]!.sd };
+          const c = await corrected(cell, n, profile[cell]!.sd);
+          profile[cell] = { mean: c.mean, sd: c.sd };
           used[cell] = { date: n.date, value: n.value };
         }
       }

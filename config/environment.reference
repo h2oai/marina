@@ -677,6 +677,10 @@
 # `on` counts a Google Trends basket's partial current week as its latest reading.
 # MARINA_ARENA_TRENDS_PARTIAL=off
 
+# Horizon-aware Civiqs nowcast (experimental, off until a backtest earns it): `drift` adds a damped local trend to the release day where the series' own history says trends persist, `sd` widens the spread to the h-day-ahead error plus revision noise, `both` does both. Applies wherever the nowcast is the start forecast (nowcast, formations, research). DAMPING is φ in (0, 1]. Measure with `bun run arena evaluate` or the `nowcast-drift:<φ>` / `horizon` signals before switching.
+# MARINA_ARENA_NOWCAST_HORIZON=off
+# MARINA_ARENA_NOWCAST_DAMPING=0.8
+
 # Research forecaster: retriever, judge (jev, decisions or none; default jev, or none without OPENROUTER_API_KEY) and the trust given to verified research lines. Retrievers: openrouter-web:<model> (any model with OpenRouter's web search) or sonar:<Perplexity model> (sonar, sonar-pro, sonar-pro-search, sonar-reasoning-pro, sonar-deep-research); tavily:basic or tavily:advanced calls Tavily's search API directly (needs TAVILY_API_KEY; its page text is used for citation checks); list several, comma-separated, to merge their reports.
 # MARINA_ARENA_RESEARCH_RETRIEVER=openrouter-web:openai/gpt-6-luna
 # MARINA_ARENA_RESEARCH_JUDGE=jev

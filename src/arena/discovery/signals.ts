@@ -13,14 +13,21 @@
  * `nowcast-mean:k` = the mean of the last k daily readings in that same
  * snapshot (Civiqs revises earlier days nightly, so these are the revised
  * values as published at that fetch; the newest reading is the least settled).
+ * `nowcast-drift:φ` = that freshest reading plus a damped local trend projected
+ * to the release day, only where the series' own walk-forward history says a
+ * trend projection beats carrying forward (civiqs-horizon.ts). `horizon` =
+ * sd(h): walk-forward h-step error plus revision noise at both ends.
  *
  *   centre:  last | nowcast | ewma:<α 0.05–1> | mean:<k 2–12> | median:<k 3–12>
  *            | trend:<k 3–12> | nowcast-shrink:<w 0–1> | nowcast-mean:<k 2–7>
+ *            | nowcast-drift:<φ 0.1–1>
  *   spread:  arena | baseline | rms:<window 6–52> | mad:<window 6–52> | scale:<k 0.3–3>
+ *            | horizon
  */
 
 import type { ArenaData } from "../data";
 import { forecastScalar, horizonSteps, PERSISTENCE_SD } from "../forecast";
+import { horizonNowcast } from "../research/civiqs-horizon";
 import { civiqsNowcast } from "../research/civiqs-nowcast";
 import type { ArenaLock, ArenaPoint, ArenaRound, Distribution } from "../types";
 
@@ -32,8 +39,8 @@ export interface SignalSpec {
 }
 
 const CENTRE =
-  /^(last|nowcast|ewma:(0?\.\d+|1(\.0+)?)|mean:\d+|median:\d+|trend:\d+|nowcast-shrink:(0?\.\d+|0|1(\.0+)?)|nowcast-mean:\d+)$/;
-const SPREAD = /^(arena|baseline|rms:\d+|mad:\d+|scale:\d+(\.\d+)?)$/;
+  /^(last|nowcast|ewma:(0?\.\d+|1(\.0+)?)|mean:\d+|median:\d+|trend:\d+|nowcast-shrink:(0?\.\d+|0|1(\.0+)?)|nowcast-mean:\d+|nowcast-drift:(0?\.\d+|1(\.0+)?))$/;
+const SPREAD = /^(arena|baseline|rms:\d+|mad:\d+|scale:\d+(\.\d+)?|horizon)$/;
 
 function param(s: string): number {
   return Number(s.split(":")[1]);
@@ -53,6 +60,7 @@ export function validateSignal(spec: SignalSpec): string | undefined {
     return `${c} window out of range`;
   }
   if (c === "nowcast-mean" && !(cp >= 2 && cp <= 7)) return "nowcast-mean window must be 2–7";
+  if (c === "nowcast-drift" && !(cp >= 0.1 && cp <= 1)) return "nowcast-drift φ must be 0.1–1";
   const s = spec.spread.split(":")[0]!;
   const sp = param(spec.spread);
   if ((s === "rms" || s === "mad") && !(sp >= 6 && sp <= 52)) return `${s} window must be 6–52`;
@@ -126,7 +134,23 @@ export async function applySignal(
   const [ck, cpRaw] = spec.centre.split(":") as [string, string | undefined];
   const cp = Number(cpRaw);
   let mean: number;
-  if (ck === "nowcast" || ck === "nowcast-shrink" || ck === "nowcast-mean") {
+  const [sk, spRaw] = spec.spread.split(":") as [string, string | undefined];
+  // The horizon-aware primitives read the same snapshot as the nowcast; they
+  // apply only when that reading is fresher than the round's own history.
+  const wantHorizon = ck === "nowcast-drift" || sk === "horizon";
+  const hz =
+    wantHorizon && round.tracker === "civiqs"
+      ? await horizonNowcast(
+          data,
+          round,
+          ck === "nowcast-drift" ? (sk === "horizon" ? "both" : "drift") : "sd",
+          ck === "nowcast-drift" ? cp : undefined,
+        ).catch(() => undefined)
+      : undefined;
+  const hzFresh = !!hz && hz.lastDate > (history.at(-1)?.date ?? "");
+  if (ck === "nowcast-drift") {
+    mean = hzFresh ? hz!.mean : v.at(-1)!;
+  } else if (ck === "nowcast" || ck === "nowcast-shrink" || ck === "nowcast-mean") {
     const n =
       round.tracker === "civiqs"
         ? await civiqsNowcast(data, round).catch(() => undefined)
@@ -142,8 +166,12 @@ export async function applySignal(
   } else {
     mean = centreOf(ck, cp, v, steps);
   }
-  const [sk, spRaw] = spec.spread.split(":") as [string, string | undefined];
-  const sd = spreadOf(sk, Number(spRaw), v, steps, baseline.sd);
+  const sd =
+    sk === "horizon"
+      ? hzFresh && hz!.sd !== undefined
+        ? hz!.sd
+        : baseline.sd
+      : spreadOf(sk, Number(spRaw), v, steps, baseline.sd);
   const r = (x: number) => Math.round(x * 1000) / 1000;
   return { mean: r(mean), sd: r(sd) };
 }

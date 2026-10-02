@@ -165,6 +165,26 @@ the Civiqs dashboard (`src/arena/research/civiqs-live.ts`, one paced request per
 whichever reading is fresher. A round whose lock has passed never reads live data, so backtests
 are unaffected. `MARINA_ARENA_CIVIQS_LIVE=off` turns it off.
 
+**Horizon corrections (experimental, off by default).** A round resolves on the reading dated its
+Friday release day, while the newest reading at the lock is often several days older (the horizon
+*h*). `MARINA_ARENA_NOWCAST_HORIZON` adds two corrections (`src/arena/research/civiqs-horizon.ts`),
+each computed only from snapshots fetched by the lock:
+
+- `drift`: a damped local trend, the least-squares slope of the last 7 readings projected *h* days
+  with damping φ (`MARINA_ARENA_NOWCAST_DAMPING`, default 0.8). It applies only when that series'
+  own walk-forward history at the same horizon says a trend projection beats carrying the last
+  value forward.
+- `sd`: sd(*h*). This is the walk-forward *h*-step error of the centre in use, plus Civiqs's
+  revision noise at both ends: earlier snapshots' newest readings are compared against the lock
+  snapshot's value for the same day. It is floored at 0.3 and capped at 5.
+- `both`: both corrections.
+
+They apply wherever the nowcast is the start forecast (`nowcast`, formations, research), and only
+when the nowcast's reading is fresher than the round's own history. The same corrections are in
+the signal language as the `nowcast-drift:<φ>` centre and the `horizon` spread, so
+`bun run arena discover` and `evaluate` can measure them. Keep the default off until a backtest
+earns the switch.
+
 **Replacing a filing.** The arena's signed intake keeps every version and scores the newest one
 accepted before the lock (up to 120 per round). `bun run arena submit <round|due> --replace` files
 a newer version of an accepted round; an unchanged forecast is not re-sent, and the autopilot never
@@ -324,8 +344,10 @@ the Civiqs nowcast, automatically (`src/arena/discovery/`):
 2. A proposer model sees the family, a sample of its history, the **signal language** (a menu of
    centres — `last`, `nowcast`, `ewma:α`, `mean:k`, `median:k`, `trend:k`, `nowcast-shrink:w` (last
    weekly value + w × (nowcast − it)), `nowcast-mean:k` (mean of the last k daily readings in the
-   nowcast's snapshot, i.e. Civiqs's revised values as published before the lock) — and
-   spreads — `arena`, `baseline`, `rms:w`, `mad:w`, `scale:k`), and the incumbent's and every earlier
+   nowcast's snapshot, i.e. Civiqs's revised values as published before the lock),
+   `nowcast-drift:φ` (the nowcast plus a damped trend to the release day, where it persists) — and
+   spreads — `arena`, `baseline`, `rms:w`, `mad:w`, `scale:k`, `horizon` (sd(h) plus revision
+   noise)), and the incumbent's and every earlier
    attempt's **discovery** score. It never sees a holdout score. Signals are data, never code.
 3. Each new proposal is scored on both halves. It is **promoted** only if it beats the incumbent
    (the nowcast over the calibrated baseline) on the holdout by a margin that grows with the number
