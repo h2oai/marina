@@ -514,7 +514,12 @@ export class AgentRuntime {
       // stopAll() during boot: spawn nothing more.
       if (cancelled()) return false;
       try {
-        await this.spawn(spawnConfigFromSaved(config));
+        // A boot respawn is not the interactive herd the cooldown guards
+        // against: the stagger above spaces the starts, but a spawn's success
+        // time (route resolution, start-up) varies, so a slot can land under
+        // 1 s after the previous success. Losing a seeded agent to that is a
+        // correctness bug, so the boot respawn bypasses the cooldown check.
+        await this.spawn(spawnConfigFromSaved(config), { systemRespawn: true });
         // stopAll() ran while this spawn was in flight: its snapshot missed
         // this agent, so wind it down here (config kept for the next boot).
         if (cancelled()) {
@@ -566,7 +571,13 @@ export class AgentRuntime {
   /**
    * Spawn a new agent. Connects via WebSocket and starts autonomous loop.
    */
-  async spawn(config: AgentConfig): Promise<AgentHandle> {
+  async spawn(
+    config: AgentConfig,
+    opts: {
+      /** The boot respawn of saved configs: exempt from the interactive spawn cooldown. */
+      systemRespawn?: boolean;
+    } = {},
+  ): Promise<AgentHandle> {
     const principal = this.db?.getPrincipal("agent", config.name);
     if (principal && principal.status !== "active") {
       throw new Error(`Agent identity "${config.name}" is ${principal.status}.`);
@@ -586,7 +597,7 @@ export class AgentRuntime {
     // fails validation/start doesn't burn the window and reject the operator's
     // immediate corrected retry.
     const now = Date.now();
-    if (now - this.lastSpawnAt < 1000) {
+    if (!opts.systemRespawn && now - this.lastSpawnAt < 1000) {
       throw new Error("Spawn cooldown — wait 1 second between spawns.");
     }
 
