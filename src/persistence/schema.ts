@@ -291,6 +291,40 @@ ALTER TABLE benchmark_runs ADD COLUMN replicate_group TEXT;
 CREATE INDEX idx_benchmark_runs_replicate_group ON benchmark_runs(replicate_group) WHERE replicate_group IS NOT NULL;
 `,
   },
+  // Typed forecast answers (src/forecast/typed.ts): a saved forecast may be a
+  // choice, a set of options, a ranking or a short string, not only a
+  // probability or a number. SQLite cannot widen a CHECK in place, so the
+  // table is rebuilt with the wider kind list and a `prediction` column (the
+  // typed answer as one string); every existing row is copied unchanged.
+  {
+    version: 149,
+    sql: `
+CREATE TABLE forecast_answers_v149 (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_name TEXT NOT NULL,
+  question TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('probability', 'number', 'choice', 'multi', 'ranking', 'text')),
+  probability REAL,
+  mean REAL,
+  sd REAL,
+  prediction TEXT,
+  answer_json TEXT NOT NULL,
+  sample_id TEXT,
+  created_at INTEGER NOT NULL,
+  resolved_at INTEGER,
+  outcome_json TEXT,
+  score REAL
+);
+INSERT INTO forecast_answers_v149
+  (id, entity_name, question, kind, probability, mean, sd, answer_json, sample_id, created_at, resolved_at, outcome_json, score)
+  SELECT id, entity_name, question, kind, probability, mean, sd, answer_json, sample_id, created_at, resolved_at, outcome_json, score
+  FROM forecast_answers;
+DROP TABLE forecast_answers;
+ALTER TABLE forecast_answers_v149 RENAME TO forecast_answers;
+CREATE INDEX idx_forecast_answers_open_sample ON forecast_answers(sample_id) WHERE resolved_at IS NULL;
+CREATE INDEX idx_forecast_answers_entity ON forecast_answers(entity_name, created_at);
+`,
+  },
 ];
 
 /** Migration 143 body — self-contained so later edits to db-notes never change it. */

@@ -188,4 +188,21 @@ describe("POST /v1/forecast", () => {
       "forecast_unavailable",
     );
   });
+
+  it("validates typed answer specs and options before spending anything", async () => {
+    expect((await post({ question: "q", answer: { type: "guess" } })).status).toBe(400);
+    expect((await post({ question: "q", answer: { type: "choice", options: ["A"] } })).status).toBe(
+      400,
+    );
+    expect(
+      (await post({ question: "q", answer: { type: "text" }, endTime: "not a date" })).status,
+    ).toBe(400);
+    expect((await post({ question: "q", answer: { type: "text" }, runs: 50 })).status).toBe(400);
+    expect((await post({ question: "q", answer: { type: "text" }, critique: "yes" })).status).toBe(
+      400,
+    );
+    delete process.env.OPENROUTER_API_KEY;
+    const res = await post({ question: "q", answer: { type: "choice", options: ["A", "B"] } });
+    expect(res.status).toBe(503);
+  });
 });

@@ -190,6 +190,18 @@ export async function getEvents(
   return await jsonGet<PolymarketEvent[]>(url, opts);
 }
 
+/** Free-text search over events (gamma `public-search`); read-only, no key. */
+export async function searchEvents(
+  query: string,
+  limit = 5,
+  opts: PolymarketClientOpts = {},
+): Promise<PolymarketResult<PolymarketEvent[]>> {
+  const base = opts.gammaBase ?? process.env.POLYMARKET_GAMMA_BASE ?? DEFAULT_GAMMA_BASE;
+  const params = new URLSearchParams({ q: query, limit_per_type: String(limit) });
+  const r = await jsonGet<{ events?: PolymarketEvent[] }>(`${base}/public-search?${params}`, opts);
+  return r.ok ? { ...r, response: r.response.events ?? [] } : r;
+}
+
 export async function getEvent(
   slugOrId: string,
   opts: PolymarketClientOpts = {},

@@ -3766,6 +3766,8 @@ Effect: unknown.
 
 Forecast any question with cited, verified evidence and several models.
 Usage: forecast <question> [resolves:<venue>/<ticker>]   e.g. forecast Will the Fed cut rates in October 2026?
+       forecast <question> type:choice|multi|number|ranking|text [options:A,B,C] [size:N] [ends:<ISO time>]
+                                         a typed answer: plan → research rounds → several runs → critique
        forecast list                     your saved forecasts and, once resolved, their scores
        forecast track <id> <venue>/<ticker>   score forecast #id when that market/watch resolves
 
@@ -3780,6 +3782,19 @@ Effect: unknown.
 - `field-1` (`resolves`): text, optional group `option-0`.
 - `field-2` (`ticker`): text, optional group `option-0`.
 - Group `option-0`: `resolves:venue/ticker`.
+
+### `forecast <question> type:<choice|multi|number|ranking|text> [options:<id,id,…>] [size:<n>] [ends:<iso>]`
+
+Effect: unknown.
+
+- `field-0` (`question`): text, required.
+- `field-1` (`type`): text, required, choices `choice`, `multi`, `number`, `ranking`, `text`.
+- `field-2` (`options`): text, optional group `option-0`.
+- `field-3` (`size`): number, optional group `option-1`.
+- `field-4` (`ends`): text, optional group `option-2`.
+- Group `option-0`: `options:id,id,…`.
+- Group `option-1`: `size:n`.
+- Group `option-2`: `ends:iso`.
 
 ### `forecast list`
 

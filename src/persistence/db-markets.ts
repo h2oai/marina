@@ -148,16 +148,20 @@ export function getEntityMarketScore(
   );
 }
 
-// ─── Forecast answers (migration 145) ────────────────────────────────────
+// ─── Forecast answers (migration 145; typed kinds, migration 149) ─────────
+
+export type ForecastAnswerKind = "probability" | "number" | "choice" | "multi" | "ranking" | "text";
 
 export interface ForecastAnswerRow {
   id: number;
   entity_name: string;
   question: string;
-  kind: "probability" | "number";
+  kind: ForecastAnswerKind;
   probability: number | null;
   mean: number | null;
   sd: number | null;
+  /** A typed answer (choice, set, ranking, text, or a number's point) as one string (migration 149). */
+  prediction: string | null;
   /** The full answer object (analysts, judge, sources, verification, cost). */
   answer_json: string;
   /** Resolver Sample id (`<venue>/<ticker>`) this forecast resolves on. */
@@ -174,10 +178,11 @@ export function saveForecastAnswer(
   input: {
     entityName: string;
     question: string;
-    kind: "probability" | "number";
+    kind: ForecastAnswerKind;
     probability?: number;
     mean?: number;
     sd?: number;
+    prediction?: string;
     answerJson: string;
     sampleId?: string;
     now?: number;
@@ -185,8 +190,8 @@ export function saveForecastAnswer(
 ): number {
   const result = db.run(
     `INSERT INTO forecast_answers
-       (entity_name, question, kind, probability, mean, sd, answer_json, sample_id, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (entity_name, question, kind, probability, mean, sd, prediction, answer_json, sample_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       input.entityName,
       input.question,
@@ -194,6 +199,7 @@ export function saveForecastAnswer(
       input.probability ?? null,
       input.mean ?? null,
       input.sd ?? null,
+      input.prediction ?? null,
       input.answerJson,
       input.sampleId ?? null,
       input.now ?? Date.now(),

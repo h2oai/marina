@@ -22,6 +22,11 @@ export interface ResearchBrief {
   request: string;
   /** Short keyword queries, one per playbook item, for a search API (Tavily). */
   queries?: string[];
+  /**
+   * ISO date of the latest evidence allowed (a forecast's cutoff). Engines that
+   * filter by date honour it; results published after it are dropped.
+   */
+  until?: string;
 }
 
 /** The freshest reading known before the round (the Civiqs daily nowcast). */

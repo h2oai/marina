@@ -655,6 +655,19 @@
 # MARINA_FORECAST_RETRIEVER=openrouter-web:openai/gpt-6-luna
 # MARINA_FORECAST_JUDGE=jev
 
+# Typed forecasts (a choice, a set of options, a number, a ranking or a short string; `forecast … type:<t>`, `bun run forecast --type`, POST /v1/forecast with `answer`). The retriever also accepts sonar:<model> and tavily:<basic|advanced> (TAVILY_API_KEY), comma-separated to merge. The planner decomposes the question and names research gaps (default: the first analyst); the critic searches for evidence against the leading answer and may revise it only when its confidence exceeds the runs' agreement (default: the planner). RUNS independent answers (1–9, analysts used round-robin) are combined by type; RESEARCH_ROUNDS bounds the search loop (1–4); CRITIQUE=off skips the disconfirmation pass. LOOKUPS adds optional structured sources (polymarket: current market prices, skipped for a past cutoff); empty means none.
+# MARINA_FORECAST_PLANNER=openrouter/deepseek/deepseek-v4-pro
+# MARINA_FORECAST_CRITIC=openrouter/deepseek/deepseek-v4-pro
+# MARINA_FORECAST_RUNS=3
+# MARINA_FORECAST_RESEARCH_ROUNDS=2
+# MARINA_FORECAST_CRITIQUE=on
+# MARINA_FORECAST_LOOKUPS=
+
+# An analyst written `marina:<crew>` asks that crew through a Marina server's model API (for example a crew in the verification formation). URL defaults to http://localhost:3300; the key is that server's MODEL_API_KEYS entry. The crew's spend is recorded by that server.
+# @protected
+# MARINA_FORECAST_MARINA_URL=http://localhost:3300
+# MARINA_FORECAST_MARINA_KEY=
+
 # ── Social Simulation Arena ──────────────────────────────────────────────────
 
 # Signed participation in the MIT Social Simulation Arena (docs/guides/arena.md). Off unless an entrant id is set. The key file holds the Ed25519 private key (mode 0600, `bun run arena keygen <path>`).

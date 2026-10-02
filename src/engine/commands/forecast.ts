@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { RateLimiter } from "../../auth/rate-limiter";
+import type { AnswerSpec } from "../../forecast/answer-types";
 import type { ForecastAnswer } from "../../forecast/question";
+import type { TypedForecastAnswer } from "../../forecast/typed";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { ForecastAnswerRow } from "../../persistence/db-markets";
 import type { MarinaStores } from "../../persistence/interfaces";
@@ -17,6 +19,8 @@ const logger = new Logger();
 
 const USAGE = [
   "Usage: forecast <question> [resolves:<venue>/<ticker>]   e.g. forecast Will the Fed cut rates in October 2026?",
+  "       forecast <question> type:choice|multi|number|ranking|text [options:A,B,C] [size:N] [ends:<ISO time>]",
+  "                                         a typed answer: plan → research rounds → several runs → critique",
   "       forecast list                     your saved forecasts and, once resolved, their scores",
   "       forecast track <id> <venue>/<ticker>   score forecast #id when that market/watch resolves",
 ].join("\n");
@@ -47,6 +51,7 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
     category: "Markets & Forecasting",
     usage: [
       "forecast <question> [resolves:<venue>/<ticker>]",
+      "forecast <question> type:<choice|multi|number|ranking|text> [options:<id,id,…>] [size:<n>] [ends:<iso>]",
       "forecast list",
       "forecast track <id> <venue>/<ticker>",
     ],
@@ -79,12 +84,21 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
             : `No open forecast #${id} of yours to track.`,
         );
       }
-      const parsed = parseModifiers(args.split(/\s+/), { resolves: { type: "string" } });
+      const parsed = parseModifiers(args.split(/\s+/), {
+        resolves: { type: "string" },
+        type: { type: "string" },
+        options: { type: "string" },
+        size: { type: "string" },
+        ends: { type: "string" },
+      });
       const sampleId = parsed.values.resolves as string | undefined;
       if (sampleId !== undefined && !parseSampleId(sampleId)) {
         return ctx.send(input.entity, "resolves: takes a <venue>/<ticker> Sample id.");
       }
-      const question = sampleId === undefined ? args : parsed.rest.join(" ").trim();
+      const typed = typedSpec(parsed.values);
+      if (typed && "error" in typed) return ctx.send(input.entity, typed.error);
+      const modified = sampleId !== undefined || typed !== undefined;
+      const question = modified ? parsed.rest.join(" ").trim() : args;
       if (!question) return ctx.send(input.entity, USAGE);
       const capped = dailyCapRefusal();
       if (capped) {
@@ -101,6 +115,31 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
         input.entity,
         dim("Researching, checking sources, asking several models… (~20–60 s)"),
       );
+      if (typed) {
+        return (async () => {
+          const [{ forecastTyped }, { typedForecastDeps }] = await Promise.all([
+            import("../../forecast/typed"),
+            import("../../forecast/service"),
+          ]);
+          const made = typedForecastDeps();
+          if ("error" in made) return ctx.send(input.entity, made.error);
+          const a = await forecastTyped(
+            { question, answer: typed.spec, ...(typed.endTime ? { endTime: typed.endTime } : {}) },
+            made.deps,
+          );
+          a.costUsd = made.costUsd();
+          const saved = name && deps.db ? saveTypedAnswer(deps.db, name, a, sampleId) : undefined;
+          ctx.send(
+            input.entity,
+            renderTyped(a) + (saved === undefined ? "" : `\n${dim(`saved as forecast #${saved}`)}`),
+          );
+        })().catch((err) =>
+          ctx.send(
+            input.entity,
+            `Forecast failed: ${err instanceof Error ? err.message : String(err)}`,
+          ),
+        );
+      }
       return (async () => {
         const [{ forecastQuestion }, { forecastDeps }] = await Promise.all([
           import("../../forecast/question"),
@@ -126,6 +165,106 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
       );
     },
   };
+}
+
+const TYPED = ["choice", "multi", "number", "ranking", "text"] as const;
+
+/** `type:` / `options:` / `size:` / `ends:` → a typed answer spec (undefined without `type:`). */
+export function typedSpec(
+  values: Record<string, unknown>,
+): { spec: AnswerSpec; endTime?: string } | { error: string } | undefined {
+  const type = typeof values.type === "string" ? values.type.toLowerCase() : undefined;
+  if (type === undefined) return undefined;
+  if (!(TYPED as readonly string[]).includes(type)) {
+    return { error: `type: takes one of ${TYPED.join(", ")}.` };
+  }
+  const ends = typeof values.ends === "string" ? values.ends : undefined;
+  if (ends !== undefined && !Number.isFinite(Date.parse(ends))) {
+    return { error: "ends: takes an ISO time, e.g. ends:2026-10-07T16:00:00Z." };
+  }
+  const options =
+    typeof values.options === "string"
+      ? values.options
+          .split(",")
+          .map((o) => o.trim())
+          .filter(Boolean)
+      : [];
+  const size = Number(values.size);
+  let spec: AnswerSpec;
+  if (type === "choice" || type === "multi") {
+    if (options.length < 2) return { error: `type:${type} needs options:<id,id,…> (2 or more).` };
+    if (new Set(options.map((o) => o.toUpperCase())).size !== options.length) {
+      return { error: "options: ids must be distinct." };
+    }
+    spec = { type, options: options.map((id) => ({ id })) };
+  } else if (type === "ranking") {
+    spec = {
+      type,
+      ...(Number.isInteger(size) && size > 0 && size <= 50 ? { size } : {}),
+      ...(options.length ? { candidates: options } : {}),
+    };
+  } else {
+    spec = { type: type as "number" | "text" };
+  }
+  return { spec, ...(ends ? { endTime: new Date(ends).toISOString() } : {}) };
+}
+
+/** Persist a typed answer (best-effort, like `saveAnswer`). */
+export function saveTypedAnswer(
+  db: NonNullable<ForecastCommandDeps["db"]>,
+  entityName: string,
+  a: TypedForecastAnswer,
+  sampleId?: string,
+): number | undefined {
+  try {
+    return db.saveForecastAnswer({
+      entityName,
+      question: a.question,
+      kind: a.answer.type,
+      ...(typeof a.prediction === "number" ? { mean: a.prediction } : {}),
+      ...(a.formatted !== undefined ? { prediction: a.formatted } : {}),
+      answerJson: JSON.stringify(a),
+      ...(sampleId ? { sampleId } : {}),
+    });
+  } catch (err) {
+    logger.warn("forecast", "Forecast answer not saved", { error: getErrorMessage(err) });
+    return undefined;
+  }
+}
+
+export function renderTyped(a: TypedForecastAnswer): string {
+  const conf = a.confidence === undefined ? "" : dim(` · confidence ${a.confidence.toFixed(2)}`);
+  return [
+    header("Forecast"),
+    separator(),
+    a.question,
+    `→ ${bold(a.formatted ?? "no answer")}${conf}`,
+    ...(a.caveat ? [dim(`caveat: ${a.caveat}`)] : []),
+    ...(a.plan?.resolutionSource ? [dim(`resolves from: ${a.plan.resolutionSource}`)] : []),
+    "",
+    ...a.runs.map(
+      (r) =>
+        `  ${bold(`run ${r.run}`)} ${r.model}: ${r.formatted ?? r.status}${r.grounded === undefined ? "" : dim(` · grounded ${r.grounded.toFixed(2)}`)}\n    ${dim(r.reason ?? "")}`,
+    ),
+    ...(a.critique
+      ? [
+          dim(
+            `critique (${a.critique.model}): ${a.critique.verdict}${a.critique.proposed ? ` → ${a.critique.proposed}${a.critique.applied ? " (applied)" : " (not applied)"}` : ""}${a.critique.reason ? ` — ${a.critique.reason}` : ""}`,
+          ),
+        ]
+      : []),
+    ...(a.verification
+      ? [
+          dim(
+            `evidence: ${a.verification.verified ?? 0} verified · ${a.verification.unverified ?? 0} unverified · ${a.verification.unreachable ?? 0} unreachable`,
+          ),
+        ]
+      : []),
+    ...a.sources.slice(0, 5).map((s) => dim(`  - ${s.url}`)),
+    dim(
+      `research rounds ${a.research.length} · cutoff ${a.cutoff.at} · cost $${a.costUsd.toFixed(3)} · ${(a.latencyMs / 1000).toFixed(0)} s`,
+    ),
+  ].join("\n");
 }
 
 /** Persist one answer (best-effort: a failed save never loses the reply). */
@@ -163,9 +302,11 @@ export function renderHistory(rows: ForecastAnswerRow[]): string {
           ? r.probability === null
             ? "no answer"
             : `${Math.round(r.probability * 100)}% yes`
-          : r.mean === null
-            ? "no answer"
-            : `${r.mean} ± ${r.sd}`;
+          : r.kind === "number"
+            ? r.mean === null
+              ? "no answer"
+              : `${r.mean} ± ${r.sd}`
+            : (r.prediction ?? "no answer");
       const state =
         r.resolved_at === null
           ? r.sample_id
