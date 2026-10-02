@@ -10,8 +10,9 @@
  * or pools should import from here instead of re-implementing locally.
  */
 
-import { isSeedDisabled } from "../src/agent/seed-registry";
+import { getSeedModel, isSeedDisabled, setSeedModel } from "../src/agent/seed-registry";
 import { discoverSkillFiles, formatSkillContent, loadSkillFile } from "../src/agent/skill-import";
+import { isRouteModel } from "../src/decisions/route";
 import type { Engine } from "../src/engine/engine";
 import type { MarinaDB } from "../src/persistence/database";
 import type { Entity } from "../src/types";
@@ -82,6 +83,10 @@ export const FIRST_STEPS_QUEST: QuestDef = {
  *  - skip if a user customized it (`spawned_by !== "system"`) — edits survive
  *  - otherwise refresh the system-owned fields (model/role/goal) from the seed,
  *    preserving operator-set `key_name` and `room`.
+ *  - a seed model of `route` (or `model:route`) is resolved by the router at the
+ *    agent's first spawn and persisted; while the seed keeps saying `route`, the
+ *    resolved model is kept (no re-route each boot). Changing the seed's model
+ *    value — to a concrete id, or back to `route` from one — applies as usual.
  */
 export function seedSystemAgent(
   db: MarinaDB,
@@ -91,9 +96,19 @@ export function seedSystemAgent(
   if (isSeedDisabled(db, config.name)) return;
   const existing = db.getAgentConfig(config.name);
   if (existing && existing.spawned_by !== SYSTEM_OWNER) return;
+  const seedModel = agentModelOverride(config.name) ?? config.model;
+  const previousSeedModel = getSeedModel(db, config.name);
+  const keepRouted =
+    isRouteModel(seedModel) &&
+    previousSeedModel !== undefined &&
+    isRouteModel(previousSeedModel) &&
+    existing !== null &&
+    existing !== undefined &&
+    !isRouteModel(existing.model);
+  setSeedModel(db, config.name, seedModel);
   db.saveAgentConfig({
     name: config.name,
-    model: agentModelOverride(config.name) ?? config.model,
+    model: keepRouted ? existing.model : seedModel,
     role: config.role,
     goal: config.goal,
     keyName: existing?.key_name || undefined,

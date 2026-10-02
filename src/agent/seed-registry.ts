@@ -58,3 +58,20 @@ export function listDisabledSeedAgents(db: MarinaDB | undefined): string[] {
   }
   return [...names].sort();
 }
+
+const SEED_MODEL_PREFIX = "seed.model.";
+
+/**
+ * The model value the world seed last asked for, for a boot-seeded agent
+ * (`app_settings` `seed.model.<name>`). Seeds refresh system-owned agent models
+ * on every boot; this lets a seed that says `route` keep the model the router
+ * already resolved instead of resetting it to `route` (and re-routing) each boot.
+ */
+export function getSeedModel(db: MarinaDB, name: string): string | undefined {
+  return db.getSetting(`${SEED_MODEL_PREFIX}${name}`) ?? undefined;
+}
+
+/** Record the model value the seed asked for this boot. */
+export function setSeedModel(db: MarinaDB, name: string, model: string): void {
+  db.setSetting(`${SEED_MODEL_PREFIX}${name}`, model);
+}
