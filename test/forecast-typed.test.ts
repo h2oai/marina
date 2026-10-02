@@ -303,21 +303,29 @@ describe("forecastTyped", () => {
     expect(a.caveat).toContain("judge failed");
   });
 
-  it("returns a caveat, not a throw, when research fails", async () => {
+  it("still answers, with a caveat, when every research round fails", async () => {
+    let seen = "";
     const a = await forecastTyped(
       { question: "Q?", answer: choice },
       {
         retriever: async () => {
           throw new Error("offline");
         },
-        analysts: [part("m", () => '{"answer":"A"}')],
+        analysts: [
+          part("m", (_s, u) => {
+            seen = u;
+            return '{"answer":"A"}';
+          }),
+        ],
         planner: planner(),
         now,
-        options: { runs: 1, researchRounds: 1 },
+        options: { runs: 1, researchRounds: 2, critique: false },
       },
     );
+    expect(a.research.every((r) => r.error)).toBe(true);
+    expect(a.prediction).toBe("A");
     expect(a.caveat).toContain("research failed");
-    expect(a.prediction).toBeUndefined();
+    expect(seen).toContain("research unavailable");
   });
 });
 

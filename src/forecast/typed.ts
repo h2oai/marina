@@ -19,6 +19,9 @@
  *              answer; the critic may revise it only when its own confidence
  *              exceeds the runs' agreement
  *
+ * A research outage (every round failed) does not stop the forecast: the runs
+ * answer from the question and its notes, and the answer says so.
+ *
  * Evidence is frozen at a cutoff: the request's `asOf`, else the earlier of now
  * and the question's `endTime`. Retrieval is asked for nothing after it (engines
  * that filter by date drop later results), lookups that only know current
@@ -269,9 +272,12 @@ export async function forecastTyped(
     costUsd: 0,
     latencyMs: 0,
   };
+  /** Caveats gathered on the way (a research outage, …), reported with the final one. */
+  const earlier: string[] = [];
   const finish = (caveat?: string): TypedForecastAnswer => {
     out.latencyMs = Date.now() - started;
     const notes = [
+      ...earlier,
       caveat,
       cutoff.pastCutoff
         ? "the cutoff is in the past: date-filtered engines honour it, others may still surface later pages"
@@ -365,8 +371,13 @@ export async function forecastTyped(
     url,
     ...(title ? { title } : {}),
   }));
-  if (lines.length === 0 && out.research.every((r) => r.error)) {
-    return finish(`research failed: ${out.research[0]?.error ?? "no result"}`);
+  // A research outage is not a reason to give up: the runs still answer from
+  // the question, its resolution notes and what the models know — with a caveat.
+  const researchDown = lines.length === 0 && out.research.every((r) => r.error);
+  if (researchDown) {
+    earlier.push(
+      `research failed, so the runs answered without a dossier: ${out.research[0]?.error ?? "no result"}`,
+    );
   }
 
   // ── Verify ────────────────────────────────────────────────────────────────
@@ -388,7 +399,7 @@ export async function forecastTyped(
   const judgeRecord = newJudgeRecord(judge);
 
   // ── K independent runs ────────────────────────────────────────────────────
-  const user = `${header}\n\nRESEARCH DOSSIER${checked ? " (cited lines tagged by a mechanical check against the cited page)" : ""}:\n${dossier || "(nothing found)"}`;
+  const user = `${header}\n\nRESEARCH DOSSIER${checked ? " (cited lines tagged by a mechanical check against the cited page)" : ""}:\n${dossier || (researchDown ? "(research unavailable — answer from the question, its notes and what you know as of the cutoff)" : "(nothing found)")}`;
   out.runs = await Promise.all(
     Array.from({ length: k }, async (_, i): Promise<TypedRun> => {
       const analyst = deps.analysts[i % deps.analysts.length]!;

@@ -64,7 +64,9 @@ What happens:
 1. **Plan** — the planner restates the question, names the source that resolves it, the facts that
    decide it, what would change the answer, and the first search queries.
 2. **Research rounds** — search runs in bounded rounds; after each, the planner names what decisive
-   fact is still missing and the next queries, or stops when the dossier is enough.
+   fact is still missing and the next queries, or stops when the dossier is enough. If every round
+   fails (an engine outage, an exhausted search quota), the runs still answer from the question and
+   its notes, and the answer carries a caveat saying so.
 3. **Lookups** (opt-in) — structured sources such as prediction-market prices join the dossier as
    ordinary cited lines.
 4. **Citation check** — as above.
