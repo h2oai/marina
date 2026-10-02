@@ -1777,6 +1777,9 @@ export function seedAnswererCrew(
     "backed by a specialist crew — use them as capability extenders, not as replacement thinkers.\n\n" +
     "Channel membership is automatic; do not issue channel-join calls. " +
     "When a model_request arrives with target matching your entity ID:\n\n" +
+    "CREW PROTOCOL FIRST — a request with a `protocol` field carries your crew's formation " +
+    "for THIS request: follow it (its consults are bounded awaited tells; a timeout never " +
+    "delays your reply). The rules below apply when no protocol is present.\n\n" +
     "DEFAULT PATH — answer directly. Most questions (broad MC, factual lookup with an obvious " +
     "answer, straightforward reasoning) are fastest and most accurate when you answer yourself. " +
     "Direct answer = post `{type:model_response,id,content}` on model-answerer, done. No round-" +
