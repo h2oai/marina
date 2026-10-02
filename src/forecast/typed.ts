@@ -222,11 +222,22 @@ function gapSystem(): string {
   ].join(" ");
 }
 
+/**
+ * The forecast is MADE at the cutoff; the event happens later. Said plainly,
+ * because a model otherwise reads "no result by the cutoff" as "no official
+ * result" and picks that option for every future event.
+ */
+const TIMING =
+  "You are forecasting AS OF the evidence cutoff: the event has not happened yet, and the question asks what WILL be true when it resolves. That the outcome is unknown at the cutoff is the point of forecasting, never a reason to answer that there will be no result.";
+
 function runSystem(spec: AnswerSpec): string {
   return [
     "You are a careful forecaster. Given a question, how it resolves, and a research dossier of dated, sourced facts, predict the answer.",
     "Start from the latest published value or the base rate, then adjust for the specific evidence. Rely on [verified] lines; treat [unverified] figures as suspect.",
     "Use nothing dated after the stated cutoff.",
+    TIMING,
+    'Pick an option such as "no official result", "cancelled" or "not reported" only when you expect the event itself to be cancelled, postponed or unreported — rarely the case.',
+    "With little specific evidence, predict the most likely outcome from base rates and priors (favourites, seasonality, the latest trend) — still a real forecast.",
     answerInstruction(spec),
     'Reply with ONE JSON object: {"answer": <as above>, "confidence": <0..1, how likely your answer is exactly right>,' +
       `${spec.type === "number" ? ' "sd": <number>,' : ""} "reason": "<two sentences citing the facts that decided it>"}.`,
@@ -236,6 +247,7 @@ function runSystem(spec: AnswerSpec): string {
 function criticSystem(spec: AnswerSpec): string {
   return [
     "You are the forecaster's critic. Look for the strongest evidence that the leading answer is WRONG — a newer reading, a misread source, a rule that changes how it resolves.",
+    TIMING,
     'Keep it unless the evidence clearly points elsewhere. Reply with ONE JSON object: {"verdict": "keep" | "revise",',
     '"answer": <only on revise, same format as below>, "confidence": <0..1 that YOUR verdict\'s answer is exactly right>, "reason": "<two sentences>"}.',
     "Answer format:",
@@ -292,7 +304,7 @@ export async function forecastTyped(
     `Question: ${req.question}`,
     req.context ? `How it resolves / notes:\n${req.context.slice(0, 4_000)}` : "",
     req.endTime ? `The question closes: ${req.endTime}` : "",
-    `Evidence cutoff: ${cutoff.at} (use nothing published after it)`,
+    `Forecast made as of: ${cutoff.at} (the evidence cutoff — use nothing published after it; the event itself happens later)`,
   ]
     .filter(Boolean)
     .join("\n");

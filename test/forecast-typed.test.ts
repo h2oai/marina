@@ -303,6 +303,30 @@ describe("forecastTyped", () => {
     expect(a.caveat).toContain("judge failed");
   });
 
+  it("tells the runs they forecast AS OF the cutoff, so 'no result yet' is never the answer", async () => {
+    let system = "";
+    let user = "";
+    await forecastTyped(
+      { question: "Who wins?", answer: choice, endTime: "2026-10-09T00:00:00Z" },
+      {
+        retriever: fakeRetriever([]),
+        analysts: [
+          part("m", (s, u) => {
+            system = s;
+            user = u;
+            return '{"answer":"A"}';
+          }),
+        ],
+        planner: planner(),
+        now,
+        options: { runs: 1, researchRounds: 1, critique: false },
+      },
+    );
+    expect(system).toContain("AS OF the evidence cutoff");
+    expect(system).toContain("rarely the case");
+    expect(user).toContain("the event itself happens later");
+  });
+
   it("still answers, with a caveat, when every research round fails", async () => {
     let seen = "";
     const a = await forecastTyped(
