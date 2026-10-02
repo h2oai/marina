@@ -93,7 +93,10 @@ export function scoreItem(
   opts: { sigma?: "relative" | "dataset" } = {},
 ): ItemScore {
   const base = { id: row.id, level: row.level };
-  const truth = parseTruth(row.ground_truth);
+  const parsed = parseTruth(row.ground_truth);
+  // A list sometimes arrives packed into one string ("A; B; C", "A | B | C").
+  const packed = parsed.length === 1 ? parsed[0]!.split(/\s*[;|]\s*/).filter(Boolean) : [];
+  const truth = row.level >= 3 && packed.length >= 2 ? packed : parsed;
   if (prediction === undefined || prediction.trim() === "" || truth.length === 0) {
     return { ...base, score: 0, metric: "missing" };
   }

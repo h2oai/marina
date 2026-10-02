@@ -195,6 +195,8 @@ describe("score: the published metric definitions", () => {
     expect(scoreItem(zero, "0").score).toBe(1);
     const str = row({ level: 3, ground_truth: "['Jane Doe']" });
     expect(scoreItem(str, "jane doe").score).toBe(1);
+    const packed = row({ level: 4, ground_truth: "['X; Y | Z']" });
+    expect(scoreItem(packed, "X, Y, Z").score).toBe(1);
     const list = row({ level: 4, ground_truth: "['X', 'Y', 'Z']" });
     expect(scoreItem(list, "X, Y, Z").score).toBe(1);
     expect(scoreItem(list, "Y, X, Q").score).toBeCloseTo(0.5333, 3);
