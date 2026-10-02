@@ -32,6 +32,11 @@
  * concrete starting move ("Start — …"), and every `[crew-task]` dispatch
  * restates that move for the task at hand with the lead named
  * (`dispatchStartMove`). The pool-note templates stay advisory reference.
+ *
+ * Model requests (`marina:<crew>`) bypass `[crew-task]` dispatch, so a
+ * serving crew's formation reaches each request through its `protocol` line
+ * instead (`requestProtocolLine`): verification, deliberation, tournament and
+ * delphi consult named specialists by bounded awaited tells.
  */
 
 import type { CrewFormation } from "../types";
@@ -277,6 +282,141 @@ export function dispatchStartMove(
     crewName: names.crewName ?? "<name>",
     channel: names.channel ?? "<crew-channel>",
   });
+}
+
+// ─── Request protocols: consult the specialist population per request ───────
+
+/**
+ * Specialist roles a request protocol may consult, keyed by the agent's
+ * configured role, with the aspect each one checks. These are the
+ * population's independent minds (each may run on its own model via
+ * `MARINA_AGENT_MODELS`); crew membership is not required — a consult is an
+ * awaited `marina_tell`, so any online specialist can serve.
+ */
+export const CONSULT_ROLE_ASPECTS: Readonly<Record<string, string>> = {
+  skeptic: "counter-argument",
+  mathematician: "math correctness",
+  scholar: "reasoning",
+  historian: "facts and evidence",
+};
+
+/** One consultable specialist as the router sees it. */
+export interface Consultant {
+  name: string;
+  role: string;
+  model?: string;
+}
+
+/** Wait per consult (an awaited `marina_tell`); bounded below the agent's 120 s prompt cap. */
+export const CONSULT_TIMEOUT_MS = 30_000;
+
+/** Consults per request: two bounded waits keep the worst case well inside one prompt. */
+export const CONSULTS_PER_REQUEST = 2;
+
+interface RequestProtocol {
+  /** Consultant roles in preference order. */
+  roles: readonly string[];
+  render(n: { consultants: string; timeoutMs: number; count: number }): string;
+}
+
+/**
+ * Per-request formation protocols. A `marina:<crew>` model request goes
+ * straight to a serving member and never passes through a `[crew-task]`
+ * dispatch, so without this the formation's brief (posted once on the crew
+ * channel) does not reach the request at all. Each line names real
+ * consultants and a bounded wait; a slow or silent consultant never holds the
+ * reply (timeout ⇒ proceed). Formations not listed here add nothing.
+ */
+const REQUEST_PROTOCOLS: Partial<Record<CrewFormation, RequestProtocol>> = {
+  verification: {
+    roles: ["skeptic", "mathematician", "scholar", "historian"],
+    render: ({ consultants, timeoutMs, count }) =>
+      `[protocol:verification] Draft, then ${count} independent check(s), one awaited ` +
+      `\`marina_tell\` each (awaitReply:true, timeoutMs:${timeoutMs}): ${consultants}. ` +
+      `Message: "check <aspect>: <question> | draft: <answer> — reply pass|fail: <reason>". ` +
+      `A fail: revise once. Timeout: keep your draft. Then send the model_response.`,
+  },
+  deliberation: {
+    roles: ["scholar", "historian", "skeptic", "mathematician"],
+    render: ({ consultants, timeoutMs }) =>
+      `[protocol:deliberation] One proposal each from ${consultants} (awaited \`marina_tell\`, ` +
+      `awaitReply:true, timeoutMs:${timeoutMs}): "propose: <question>". Pick or merge with ` +
+      `yours; timeout: proceed without it. Then send the model_response.`,
+  },
+  tournament: {
+    roles: ["scholar", "historian", "mathematician", "skeptic"],
+    render: ({ consultants, timeoutMs }) =>
+      `[protocol:tournament] One independent candidate each from ${consultants} (awaited ` +
+      `\`marina_tell\`, awaitReply:true, timeoutMs:${timeoutMs}): "candidate: <question>". ` +
+      `Judge them against yours on the question; graft the best parts. Then send the ` +
+      `model_response.`,
+  },
+  delphi: {
+    roles: ["scholar", "historian", "skeptic", "mathematician"],
+    render: ({ consultants, timeoutMs }) =>
+      `[protocol:delphi] An independent estimate each from ${consultants} (awaited ` +
+      `\`marina_tell\`, awaitReply:true, timeoutMs:${timeoutMs}): "estimate: <question> — ` +
+      `reply value | confidence | one reason". Aggregate with yours (median, or the majority ` +
+      `choice). Then send the model_response.`,
+  },
+};
+
+/** Formations whose model requests carry a consult protocol. */
+export const REQUEST_PROTOCOL_FORMATIONS = Object.keys(REQUEST_PROTOCOLS) as CrewFormation[];
+
+/** Vendor of a model id: `openrouter/anthropic/x` → `anthropic`, `openai/x` → `openai`. */
+function modelVendor(model: string | undefined): string {
+  if (!model) return "";
+  const parts = model.split("/");
+  return (parts.length >= 3 ? parts[parts.length - 2] : parts[0]) ?? "";
+}
+
+/**
+ * Pick the consultants for one request: the formation's roles in order, at
+ * most one per role, preferring a model whose vendor differs from the
+ * responder's and from those already picked (independent minds, not the
+ * responder's own model asked twice). Deterministic for a given roster.
+ */
+export function pickConsultants(
+  formation: CrewFormation,
+  candidates: readonly Consultant[],
+  responderModel?: string,
+  count = CONSULTS_PER_REQUEST,
+): Consultant[] {
+  const protocol = REQUEST_PROTOCOLS[normalizePatternName(formation) as CrewFormation];
+  if (!protocol || count <= 0) return [];
+  const usedVendors = new Set([modelVendor(responderModel)].filter(Boolean));
+  const picked: Consultant[] = [];
+  for (const role of protocol.roles) {
+    if (picked.length >= count) break;
+    const ofRole = candidates
+      .filter((c) => c.role === role && !picked.some((p) => p.name === c.name))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const fresh = ofRole.find((c) => !usedVendors.has(modelVendor(c.model)));
+    const choice = fresh ?? ofRole[0];
+    if (!choice) continue;
+    picked.push(choice);
+    const vendor = modelVendor(choice.model);
+    if (vendor) usedVendors.add(vendor);
+  }
+  return picked;
+}
+
+/**
+ * The `protocol` line a serving crew's model request carries, or undefined
+ * when the formation has no request protocol or no consultant is online.
+ */
+export function requestProtocolLine(
+  formation: CrewFormation,
+  consultants: readonly Consultant[],
+  timeoutMs = CONSULT_TIMEOUT_MS,
+): string | undefined {
+  const protocol = REQUEST_PROTOCOLS[normalizePatternName(formation) as CrewFormation];
+  if (!protocol || consultants.length === 0) return undefined;
+  const list = consultants
+    .map((c) => `${c.name} (${CONSULT_ROLE_ASPECTS[c.role] ?? c.role})`)
+    .join(", ");
+  return protocol.render({ consultants: list, timeoutMs, count: consultants.length });
 }
 
 // ─── Formation mediators (Phase 4 — deterministic event-driven nudges) ──────

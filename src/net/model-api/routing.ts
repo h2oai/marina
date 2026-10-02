@@ -12,6 +12,14 @@ import {
   PANEL_SYNTHESIS_SYSTEM_PROMPT,
 } from "../../agent/prompts/support-prompts";
 import type { ChannelManager } from "../../coordination/channel-manager";
+import {
+  CONSULT_ROLE_ASPECTS,
+  CONSULT_TIMEOUT_MS,
+  type Consultant,
+  pickConsultants,
+  REQUEST_PROTOCOL_FORMATIONS,
+  requestProtocolLine,
+} from "../../coordination/crew-formations";
 import type { Engine } from "../../engine/engine";
 import { compareTraceCohorts } from "../../engine/trace-dataset";
 import { projectTraces } from "../../engine/trace-projection";
@@ -291,6 +299,60 @@ function selectRouteTarget(
   return { target: selected.target, adviceMode: advice.mode, reason: selected.reason };
 }
 
+/** Crew roles that face a `marina:<crew>` endpoint; other members are specialists. */
+const OUTWARD_CREW_ROLES = new Set(["lead", "answerer"]);
+
+/**
+ * The persisted/active crew serving a `model-<crew>` channel, if any, and
+ * what it changes about routing:
+ *
+ *  - `eligible` — the crew's outward face (lead/answerer members) among the
+ *    online channel members. Specialists that drifted onto the endpoint
+ *    channel (an agent's own `channel join`) no longer take requests
+ *    meant for the lead; with no outward member online, every online
+ *    member stays eligible (unchanged behaviour).
+ *  - `protocolFor(target)` — the formation's per-request consult line naming
+ *    online specialists (`requestProtocolLine`), or undefined.
+ */
+function servingCrewPlan(
+  engine: Engine,
+  channelName: string,
+  onlineMembers: string[],
+): { eligible: string[]; protocolFor: (target: string) => string | undefined } {
+  const none = { eligible: onlineMembers, protocolFor: () => undefined };
+  if (!channelName.startsWith("model-")) return none;
+  const crew = engine.crewManager?.getByName(channelName.slice("model-".length));
+  if (!crew || crew.state === "dissolved") return none;
+  const online = new Set(onlineMembers);
+  const outward: string[] = [];
+  for (const m of crew.members) {
+    if (!OUTWARD_CREW_ROLES.has(m.role)) continue;
+    const id: string | undefined = engine.entities.findAgentByName(m.agentName)?.id;
+    if (id && online.has(id)) outward.push(id);
+  }
+  const eligible = outward.length > 0 ? outward : onlineMembers;
+  const protocolFor = (target: string): string | undefined => {
+    if (!REQUEST_PROTOCOL_FORMATIONS.includes(crew.formation)) return undefined;
+    const responder = engine.entities.get(target as never);
+    const responderModel = responder ? engine.db?.getAgentConfig(responder.name)?.model : undefined;
+    const candidates: Consultant[] = [];
+    for (const agent of engine.getOnlineAgents()) {
+      if (agent.id === target) continue;
+      const config = engine.db?.getAgentConfig(agent.name);
+      if (!config || !(config.role in CONSULT_ROLE_ASPECTS)) continue;
+      candidates.push({ name: agent.name, role: config.role, model: config.model });
+    }
+    const consultants = pickConsultants(crew.formation, candidates, responderModel);
+    // Two bounded waits must fit well inside the request deadline.
+    const timeoutMs = Math.min(
+      CONSULT_TIMEOUT_MS,
+      Math.floor(REQUEST_TIMEOUT_MS / (consultants.length + 2)),
+    );
+    return requestProtocolLine(crew.formation, consultants, timeoutMs);
+  };
+  return { eligible, protocolFor };
+}
+
 export async function routeToChannel(
   engine: Engine,
   model: string,
@@ -312,10 +374,12 @@ export async function routeToChannel(
     throw new HttpError(503, `No agents online for model "${model}"`);
   }
 
-  // Load balancing
+  // Load balancing — over the serving crew's outward face when one serves.
+  const plan = servingCrewPlan(engine, channelName, onlineMembers);
   const strategy = opts?.strategy ?? "round-robin";
-  const route = selectRouteTarget(engine, onlineMembers, channel.id, strategy);
+  const route = selectRouteTarget(engine, plan.eligible, channel.id, strategy);
   const target = route.target;
+  const protocol = plan.protocolFor(target);
 
   // Multi-turn conversation
   const convId = opts?.conversationId ?? undefined;
@@ -351,9 +415,11 @@ export async function routeToChannel(
   });
 
   // Build request payload
+  // `protocol` rides before `content`: the perception clamp cuts from the end.
   const payload = JSON.stringify({
     type: "model_request",
     id: requestId,
+    ...(protocol ? { protocol } : {}),
     trace: requestTrace(requestId),
     content: userContent,
     target,
@@ -772,9 +838,11 @@ export function routeToChannelStreaming(
     throw new HttpError(503, `No agents online for model "${model}"`);
   }
 
+  const plan = servingCrewPlan(engine, channelName, onlineMembers);
   const strategy = opts?.strategy ?? "round-robin";
-  const route = selectRouteTarget(engine, onlineMembers, channel.id, strategy);
+  const route = selectRouteTarget(engine, plan.eligible, channel.id, strategy);
   const target = route.target;
+  const protocol = plan.protocolFor(target);
 
   const convId = opts?.conversationId ?? undefined;
   let convChannel: { id: string; name: string } | undefined;
@@ -793,6 +861,7 @@ export function routeToChannelStreaming(
   const payload = JSON.stringify({
     type: "model_request",
     id: reqId,
+    ...(protocol ? { protocol } : {}),
     trace: requestTrace(reqId),
     content: userContent,
     target,
