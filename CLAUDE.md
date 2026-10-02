@@ -178,7 +178,12 @@ Compat profiles (`src/net/compat-profiles.ts`) are self-contained — they only 
   - The challenger must win on the slot's hashed holdout split (same benchmark, judge and items).
   - The paired interval must be above 0, and the gain must clear `promotionMargin(tried)`.
   - It needs `role.edit`, and is never the challenger's own author.
+  - The challenger needs `MARINA_PROMOTION_MIN_REPLICATES` replicates (default 2), checked before the holdout is read.
   - The history is append-only.
+  - Replicate groups (migration 148, `src/engine/benchmark-replicates.ts`, statistics in `benchmarks/replicate-stats.ts`) pool repeated runs of one target, slice and judge. A named `replicate_group` is used, else an automatic identity group.
+    - `benchmark compare` adds a two-stage (runs, then items) bootstrap and flags single runs as "not replicated".
+    - `benchmark replicates <run>` shows one group.
+    - The harness takes `--replicates N` / `--group`.
   - Read with `getPromotedDefault`; environment variables win.
 - `src/engine/commands/skill.ts` — `skill compose/store/search/verify/list/share/import` for markdown-with-frontmatter skill packages (Claude-Code-compatible, world-seeded universally).
 - `src/engine/commands/knowledge-hygiene.ts` — shared note auditor (`auditKnowledgeNotes`/`renderKnowledgeHygieneReport`). Five finding kinds: `duplicate`, `overlong`, `stale-command` (unknown command/subcommand refs), `unsupported-claim` (empirical-assertion markers with no citation — conservative, so instructional notes don't trip it), and `stale` (untouched past `maxAgeMs`, opt-in). Backs `pool <name> audit`, `skill audit`, and `guide audit`.

@@ -298,6 +298,8 @@ export interface LedgerImportOptions {
   judge?: string;
   /** Total target spend when the result file has none (e.g. a crew's `spend_daily`). */
   costUsd?: number;
+  /** Explicit replicate group (migration 148); omitted ⇒ grouped by target/slice/judge. */
+  replicateGroup?: string;
   /** Raw file bytes, hashed for idempotent re-import. */
   raw: string;
   /** Fresh run id (the caller supplies it so this stays pure). */
@@ -368,6 +370,7 @@ export function ledgerFromHarnessResult(
       label: opts.label ?? null,
       source: "import",
       content_hash: createHash("sha256").update(opts.raw).digest("hex"),
+      replicate_group: opts.replicateGroup ?? null,
     },
     items,
   };

@@ -465,6 +465,29 @@ Marina other than the target. Datasets are fetched at run time into the
 gitignored `benchmarks/datasets/`; case content is never committed. Details:
 [benchmarks/README.md](../../benchmarks/README.md#tier-0--small-hard-slice-for-crew-and-formation-sweeps).
 
+### Replicates
+
+One run is one draw: identical crews on the same items differ by several items, and a
+single comparison's p-value moves with them. Don't draw a conclusion from one run.
+- **Running:** `--replicates N` (on `bench:tier0` and `harness.ts`) runs the same target N
+  times on the same items and judge.
+  - Each run keeps its own result file: `rep-<i>/` for Tier 0, `<file>.rep<i>.json` for the
+    harness.
+  - Every filed run carries one replicate group (`--group`, else a fresh `rep:<label>:<time>`).
+  - The closing summary pools them: mean accuracy, between-run SD, per-item agreement.
+  - `--replicate-concurrency C` runs up to C Tier-0 replicates at once.
+- **Comparing in-world:** `benchmark compare` then adds a pooled section.
+  - It uses a two-stage bootstrap: resample each group's runs, then items, for the interval
+    and p on the pooled difference.
+  - It also lists the McNemar p of every replicate pair.
+  - A single-run side is flagged "not replicated".
+- **Promotion:** `benchmark promote` refuses a challenger with fewer than
+  `MARINA_PROMOTION_MIN_REPLICATES` replicates (default 2) before reading the holdout.
+- **Regrouping:** recorded runs can be put into one group with
+  `bun run benchmark:import --regroup <ids> --group <key>`.
+
+Method: [persistence.md → Replicate groups](../architecture/persistence.md#replicate-groups-migration-148).
+
 ## Live coding smoke qualification
 
 With `OPENAI_API_KEY` configured, run the native Marina worker against disposable Git fixtures:

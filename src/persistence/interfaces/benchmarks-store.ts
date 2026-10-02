@@ -49,6 +49,8 @@ export interface BenchmarksStore {
     run: BenchmarkLedgerRunInput,
     items: readonly BenchmarkItemInput[],
   ): { id: string; created: boolean };
+  /** Put runs into one replicate group (migration 148); returns rows changed. */
+  setBenchmarkReplicateGroup(runIds: readonly string[], group: string): number;
   getBenchmarkItems(runId: string): BenchmarkItemRow[];
   getBenchmarkItemsForBenchmark(benchmark: string, limit?: number): BenchmarkItemRow[];
   /** The slot's promoted default (migration 147), if one was ever seeded. */
@@ -77,6 +79,7 @@ export const BENCHMARKS_STORE_METHODS = [
   "queryBenchmarkRuns",
   "leaderboardBenchmark",
   "recordBenchmarkLedgerRun",
+  "setBenchmarkReplicateGroup",
   "getBenchmarkItems",
   "getBenchmarkItemsForBenchmark",
   "getBenchmarkDefault",

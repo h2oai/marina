@@ -280,6 +280,17 @@ CREATE TRIGGER benchmark_promotions_no_update BEFORE UPDATE ON benchmark_promoti
 BEGIN SELECT RAISE(ABORT, 'benchmark_promotions is append-only'); END;
 `,
   },
+  // Replicate groups (src/engine/benchmark-replicates.ts): repeated runs of one
+  // configuration — same target, item slice and judge — pool into one group so
+  // comparisons and promotions rest on more than a single noisy draw. Runs that
+  // name no group are grouped by that (target, slice, judge) identity when read.
+  {
+    version: 148,
+    sql: `
+ALTER TABLE benchmark_runs ADD COLUMN replicate_group TEXT;
+CREATE INDEX idx_benchmark_runs_replicate_group ON benchmark_runs(replicate_group) WHERE replicate_group IS NOT NULL;
+`,
+  },
 ];
 
 /** Migration 143 body — self-contained so later edits to db-notes never change it. */

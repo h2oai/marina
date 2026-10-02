@@ -135,6 +135,8 @@ export interface BenchmarkLedgerRunInput {
   label: string | null;
   source: "in-world" | "import";
   content_hash: string | null;
+  /** Replicate group key (migration 148); null ⇒ grouped by target/slice/judge when read. */
+  replicate_group?: string | null;
 }
 
 export type BenchmarkTargetKind = "model" | "crew" | "population";
@@ -170,8 +172,8 @@ export function recordBenchmarkLedgerRun(
     db.run(
       `INSERT INTO benchmark_runs (id, benchmark, config_hash, config_json, score, answered, total,
          status, agent_id, started_at, completed_at, duration_ms, cost_usd, n, ci_low, ci_high, seed,
-         slice_hash, judge, target_kind, target_json, label, source, content_hash)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         slice_hash, judge, target_kind, target_json, label, source, content_hash, replicate_group)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         run.id,
         run.benchmark,
@@ -196,6 +198,7 @@ export function recordBenchmarkLedgerRun(
         run.label,
         run.source,
         run.content_hash,
+        run.replicate_group ?? null,
       ],
     );
     const insert = db.prepare(
@@ -216,6 +219,29 @@ export function recordBenchmarkLedgerRun(
       );
     }
     return { id: run.id, created: true };
+  })();
+}
+
+/**
+ * Put runs into one replicate group (operator regrouping, e.g. replicates
+ * recorded before groups existed or with slightly different target labels).
+ * Item outcomes are untouched — only the run's group key changes.
+ */
+export function setBenchmarkReplicateGroup(
+  db: Database,
+  runIds: readonly string[],
+  group: string,
+): number {
+  if (runIds.length === 0) return 0;
+  return db.transaction(() => {
+    let changed = 0;
+    for (const id of runIds) {
+      changed += db.run("UPDATE benchmark_runs SET replicate_group = ? WHERE id = ?", [
+        group,
+        id,
+      ]).changes;
+    }
+    return changed;
   })();
 }
 
@@ -269,6 +295,8 @@ export interface BenchmarkRunRow {
   label?: string | null;
   source?: "in-world" | "import";
   content_hash?: string | null;
+  /** Replicate group (migration 148) — null on runs that named none. */
+  replicate_group?: string | null;
 }
 
 export interface BenchmarkItemRow {

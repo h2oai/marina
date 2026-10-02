@@ -687,7 +687,11 @@ Usage:
                                                      ledger runs show n, 95% CI and $/item)
   benchmark frontier <benchmark>                   — the accuracy vs $/item Pareto set
   benchmark compare <runA> <runB>                  — paired on shared items: exact McNemar,
-                                                     each run's CI, $/item and its delta
+                                                     each run's CI, $/item and its delta; with
+                                                     replicates, the pooled two-stage bootstrap
+                                                     (a single run is flagged "not replicated")
+  benchmark replicates <run>                       — the run's replicate group: each run, pooled
+                                                     accuracy, between-run SD, per-item agreement
   benchmark participants <benchmark>               — per agent / per model: items touched,
                                                      accuracy on them, cost
   benchmark reference [model|benchmark]            — show published reference scores
@@ -699,7 +703,9 @@ Usage:
                                                    — seed an empty slot, or promote a challenger that
                                                      EARNED it on the holdout: same benchmark, judge and
                                                      items; paired 95% interval above 0; delta above a
-                                                     fishing margin that grows with every attempt.
+                                                     fishing margin that grows with every attempt;
+                                                     the challenger needs MARINA_PROMOTION_MIN_REPLICATES
+                                                     replicates (default 2) before the holdout is read.
                                                      Needs role.edit; never the run's own author.
 
 Benchmarks: smoke (15-item prompt A/B, always ready), mmlu-pro, truthfulqa, arc-challenge,
@@ -710,7 +716,7 @@ Benchmarks: smoke (15-item prompt A/B, always ready), mmlu-pro, truthfulqa, arc-
   orchestration (a model-* channel with a live agent). See "benchmark orchestrations".
 
 Note: "run" and "sweep" need rank 4 — they burn real tokens. Discovery commands
-  (list, runs, result, leaderboard, frontier, compare, participants, reference,
+  (list, runs, result, leaderboard, frontier, compare, replicates, participants, reference,
   orchestrations, defaults, challenge) are rank 0. Results recorded outside the world
   are imported by the operator with `bun run benchmark:import`. Promoted defaults are
   read by worlds (e.g. slot showcase:crew sets the showcase crew's model when
@@ -780,6 +786,12 @@ Effect: unknown.
 Effect: unknown.
 
 - `field-0` (`benchmark`): text, required.
+
+### `benchmark replicates <run>`
+
+Effect: unknown.
+
+- `field-0` (`run`): text, required.
 
 ### `benchmark list`
 

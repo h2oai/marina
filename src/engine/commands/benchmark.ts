@@ -13,6 +13,13 @@ import type { BenchmarkRunRow, MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
 import { compareRuns, paretoFrontier, participantCredit, runLabel } from "../benchmark-ledger";
 import { type ChallengeEvaluation, lookupChallenge, type SplitStats } from "../benchmark-promotion";
+import {
+  comparePooledGroups,
+  type LoadedGroup,
+  loadReplicateGroup,
+  pooledSummary,
+  replicateGroupOf,
+} from "../benchmark-replicates";
 import { BENCHMARKS, type BenchmarkRunner, type BenchmarkSubject } from "../benchmark-runner";
 import { extractModifiers, resolveMultiWordName } from "../parse-input";
 import { checkRoleEdit } from "../role-guard";
@@ -45,7 +52,11 @@ Usage:
                                                      ledger runs show n, 95% CI and $/item)
   benchmark frontier <benchmark>                   — the accuracy vs $/item Pareto set
   benchmark compare <runA> <runB>                  — paired on shared items: exact McNemar,
-                                                     each run's CI, $/item and its delta
+                                                     each run's CI, $/item and its delta; with
+                                                     replicates, the pooled two-stage bootstrap
+                                                     (a single run is flagged "not replicated")
+  benchmark replicates <run>                       — the run's replicate group: each run, pooled
+                                                     accuracy, between-run SD, per-item agreement
   benchmark participants <benchmark>               — per agent / per model: items touched,
                                                      accuracy on them, cost
   benchmark reference [model|benchmark]            — show published reference scores
@@ -57,7 +68,9 @@ Usage:
                                                    — seed an empty slot, or promote a challenger that
                                                      EARNED it on the holdout: same benchmark, judge and
                                                      items; paired 95% interval above 0; delta above a
-                                                     fishing margin that grows with every attempt.
+                                                     fishing margin that grows with every attempt;
+                                                     the challenger needs MARINA_PROMOTION_MIN_REPLICATES
+                                                     replicates (default 2) before the holdout is read.
                                                      Needs role.edit; never the run's own author.
 
 Benchmarks: smoke (15-item prompt A/B, always ready), mmlu-pro, truthfulqa, arc-challenge,
@@ -68,7 +81,7 @@ Benchmarks: smoke (15-item prompt A/B, always ready), mmlu-pro, truthfulqa, arc-
   orchestration (a model-* channel with a live agent). See "benchmark orchestrations".
 
 Note: "run" and "sweep" need rank 4 — they burn real tokens. Discovery commands
-  (list, runs, result, leaderboard, frontier, compare, participants, reference,
+  (list, runs, result, leaderboard, frontier, compare, replicates, participants, reference,
   orchestrations, defaults, challenge) are rank 0. Results recorded outside the world
   are imported by the operator with \`bun run benchmark:import\`. Promoted defaults are
   read by worlds (e.g. slot showcase:crew sets the showcase crew's model when
@@ -122,6 +135,7 @@ export function benchmarkCommand(deps: {
       "benchmark frontier <benchmark>",
       "benchmark leaderboard <benchmark> [--limit N]",
       "benchmark participants <benchmark>",
+      "benchmark replicates <run>",
       "benchmark list",
       "benchmark orchestrations",
       "benchmark reference",
@@ -515,6 +529,7 @@ export function benchmarkCommand(deps: {
               `  ${rank}  ${score}  ${hash}  ${ans}  ${agent.padEnd(36)}  ${fmtId(row.id)}${ledger}`,
             );
           });
+          lines.push(...pooledLeaderboardLines(db, rows));
           ctx.send(input.entity, lines.join("\n"));
           return;
         }
@@ -624,8 +639,24 @@ export function benchmarkCommand(deps: {
             `  shared ${c.shared}  (only A ${c.onlyA}, only B ${c.onlyB})`,
             `  A right / B wrong ${c.aWins}   A wrong / B right ${c.bWins}   exact McNemar p=${c.p.toFixed(3)}`,
             `  $/item delta (B − A): ${c.costDeltaPerItemUsd === null ? dim("unpriced") : usd(c.costDeltaPerItemUsd, true)}`,
+            ...pooledCompareLines(loadReplicateGroup(db, runA), loadReplicateGroup(db, runB)),
           ];
           ctx.send(input.entity, lines.join("\n"));
+          return;
+        }
+
+        case "replicates": {
+          const id = tokens[1];
+          if (!id) {
+            ctx.send(input.entity, "Usage: benchmark replicates <run>");
+            return;
+          }
+          const run = db.getBenchmarkRun(id);
+          if (!run) {
+            ctx.send(input.entity, `No run ${id}.`);
+            return;
+          }
+          ctx.send(input.entity, renderReplicates(loadReplicateGroup(db, run)));
           return;
         }
 
@@ -787,6 +818,10 @@ function ledgerColumns(row: BenchmarkRunRow): string {
 // ─── Earned promotion of defaults ──────────────────────────────────────────
 
 function statsLine(s: SplitStats): string {
+  if (s.pooled) {
+    const pl = s.pooled;
+    return `  ${s.split}: ${s.n} paired items, pooled ×${pl.challengerReplicates} vs ×${pl.incumbentReplicates} replicates  challenger ${pct(pl.challengerAccuracy).trim()}  incumbent ${pct(pl.incumbentAccuracy).trim()}  delta ${(s.delta * 100).toFixed(1)} pts  95% two-stage bootstrap [${(s.low * 100).toFixed(1)}, ${(s.high * 100).toFixed(1)}]  p=${pl.p.toFixed(3)}`;
+  }
   return `  ${s.split}: ${s.n} paired  challenger ${s.challengerCorrect}  incumbent ${s.incumbentCorrect}  (only challenger ${s.challengerOnly}, only incumbent ${s.incumbentOnly})  delta ${(s.delta * 100).toFixed(1)} pts  95% [${(s.low * 100).toFixed(1)}, ${(s.high * 100).toFixed(1)}]`;
 }
 
@@ -812,7 +847,7 @@ function renderChallenge(
   );
   if (found.kind === "error") return found.message;
   if (found.kind === "seed") {
-    return `Slot ${slot} has no incumbent: \`benchmark promote ${slot} ${runId}\` seeds it with this run (needs role.edit). Its holdout is ${pct(found.holdoutFraction).trim()} of items by item-id hash.`;
+    return `Slot ${slot} has no incumbent: \`benchmark promote ${slot} ${runId}\` seeds it with this run (needs role.edit and enough replicates; it has ${found.replicates}). Its holdout is ${pct(found.holdoutFraction).trim()} of items by item-id hash.`;
   }
   const e = found.evaluation;
   const blockers = e.reasons.filter((r) => !r.startsWith("selection split"));
@@ -821,6 +856,7 @@ function renderChallenge(
     separator(),
     `  challenger ${bold(runLabel(found.challenger))} ${fmtId(found.challenger.id)}`,
     `  incumbent  ${bold(runLabel(found.incumbent))} ${fmtId(found.incumbent.id)}`,
+    `  replicates: challenger ${found.replicates.challenger}, incumbent ${found.replicates.incumbent} (promotion needs ≥ ${found.replicates.minimum} of the challenger)`,
     statsLine(e.stats),
     costLine(e),
     `  to promote: holdout interval above 0 and delta ≥ ${(e.margin * 100).toFixed(1)} pts (${e.triedBefore} earlier attempt(s)); the holdout is read only by \`benchmark promote\`, and each attempt raises the bar`,
@@ -879,7 +915,7 @@ function promote(
       created_at: now,
     });
     gate.record();
-    return `Seeded ${slot} with ${runLabel(found.challenger)} (${runId}); holdout ${pct(fraction).trim()} of items. Later challengers must earn it.`;
+    return `Seeded ${slot} with ${runLabel(found.challenger)} (${runId}, ${found.replicates} replicate(s)); holdout ${pct(fraction).trim()} of items. Later challengers must earn it.`;
   }
   if (opts.holdout) {
     return "--holdout is fixed once a slot exists (moving it would move items between splits).";
@@ -887,6 +923,7 @@ function promote(
   const e = found.evaluation;
   const stats = JSON.stringify({
     ...e.stats,
+    replicates: found.replicates,
     margin: e.margin,
     triedBefore: e.triedBefore,
     costPerItem: e.costPerItem,
@@ -916,4 +953,79 @@ function promote(
     ...body,
     `  margin ${(e.margin * 100).toFixed(1)} pts (${e.triedBefore} earlier attempt(s))`,
   ].join("\n");
+}
+
+// ─── Replicates ────────────────────────────────────────────────────────────
+
+/** Replicate groups among leaderboard rows with ≥ 2 runs: pooled mean ± between-run SD. */
+function pooledLeaderboardLines(db: MarinaDB, rows: readonly BenchmarkRunRow[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const row of rows) {
+    const key = replicateGroupOf(row);
+    if (seen.has(key) || key.startsWith("run:")) continue;
+    seen.add(key);
+    const g = loadReplicateGroup(db, row);
+    if (g.replicates.length < 2) continue;
+    const s = pooledSummary(g);
+    out.push(
+      `  ${dim("pooled")}  ${pct(s.meanAccuracy)}  ${dim(`×${s.replicates} replicates on ${s.items} items  ±${(s.betweenSd * 100).toFixed(1)} pts between runs  unanimous ${pct(s.unanimous).trim()}`)}  ${dim(runLabel(row))}  ${fmtId(key)}`,
+    );
+  }
+  return out.length > 0 ? [dim("  ─── replicate groups (pooled) ───"), ...out] : [];
+}
+
+/** The pooled comparison of two runs' replicate groups, or the "not replicated" flag. */
+export function pooledCompareLines(a: LoadedGroup, b: LoadedGroup): string[] {
+  const ka = a.replicates.length;
+  const kb = b.replicates.length;
+  if (ka < 2 && kb < 2) {
+    return [
+      `  ${fmtStatus("WARN", "warn")} 1 replicate each — not replicated: this p is one draw. Re-run both (same items and judge, \`--replicates N\`) before drawing a conclusion.`,
+    ];
+  }
+  if (a.group === b.group) {
+    return [
+      `  ${dim(`A and B are replicates of one group (${ka} runs) — see \`benchmark replicates\``)}`,
+    ];
+  }
+  const c = comparePooledGroups(a, b);
+  const lines = [
+    `  ${bold("pooled")}  A ×${ka} vs B ×${kb} replicates on ${c.items} items common to every run`,
+    `    A ${pct(c.a.meanAccuracy).trim()} (±${(c.a.betweenSd * 100).toFixed(1)} pts between runs, unanimous ${pct(c.a.unanimous).trim()})   B ${pct(c.b.meanAccuracy).trim()} (±${(c.b.betweenSd * 100).toFixed(1)} pts, unanimous ${pct(c.b.unanimous).trim()})`,
+    `    delta A − B ${(c.delta * 100).toFixed(1)} pts  95% two-stage bootstrap [${(c.low * 100).toFixed(1)}, ${(c.high * 100).toFixed(1)}]  p=${c.p.toFixed(3)}  (${c.resamples} resamples of runs, then items)`,
+    `    single-pair McNemar p across ${c.pairP.pairs} replicate pair(s): ${c.pairP.min.toFixed(3)}–${c.pairP.max.toFixed(3)}`,
+  ];
+  if (!c.replicated) {
+    lines.push(
+      `    ${fmtStatus("WARN", "warn")} ${ka < 2 ? "A" : "B"} has 1 replicate — not replicated; its run-to-run variance is unmeasured.`,
+    );
+  }
+  for (const w of [...a.warnings.map((x) => `A: ${x}`), ...b.warnings.map((x) => `B: ${x}`)]) {
+    lines.push(`    ${fmtStatus("WARN", "warn")} ${w}`);
+  }
+  return lines;
+}
+
+/** One replicate group: its runs, pooled accuracy, between-run SD and agreement. */
+function renderReplicates(g: LoadedGroup): string {
+  if (g.runs.length === 0) return "No item outcomes recorded for this run's group.";
+  const s = pooledSummary(g);
+  const lines = [
+    header(`Replicates — ${g.group}`),
+    separator(),
+    ...g.runs.map(
+      (r, i) =>
+        `  ${String(i + 1).padStart(2)}.  ${pct(s.replicateAccuracies[i] ?? 0)}  ${fmtId(r.id)}  ${dim(runLabel(r))}  ${dim(`${formatAge(Date.now() - r.started_at)} ago`)}`,
+    ),
+    `  pooled ${pct(s.meanAccuracy).trim()} (majority ${pct(s.majorityAccuracy).trim()}) on ${s.items} items common to every run`,
+    `  between runs: SD ${(s.betweenSd * 100).toFixed(1)} pts; unanimous on ${pct(s.unanimous).trim()} of items; mean pairwise agreement ${pct(s.pairwiseAgreement).trim()}`,
+  ];
+  if (g.runs.length < 2) {
+    lines.push(
+      `  ${fmtStatus("WARN", "warn")} 1 replicate — not replicated. Re-run with the same target, items and judge (\`--replicates N\`).`,
+    );
+  }
+  for (const w of g.warnings) lines.push(`  ${fmtStatus("WARN", "warn")} ${w}`);
+  return lines.join("\n");
 }

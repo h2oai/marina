@@ -6,7 +6,7 @@
  * this Marina's ledger. Behind the model API's auth and per-IP limit like every
  * `/v1` route.
  *
- * Body: `{ result, targetKind, target, label?, judge?, costUsd? }`, where
+ * Body: `{ result, targetKind, target, label?, judge?, costUsd?, replicateGroup? }`, where
  * `result` is a harness result document (`config`, `timestamp`, `duration_ms`,
  * `metadata`, `items[]`). For each item carrying a `traceId` (the target's
  * `x-request-id`), the server resolves who worked on it from its own trace and
@@ -14,7 +14,9 @@
  * item; an unpriced item is charged the cost its exclusive participants
  * reported. Only item ids and outcomes are stored — no question, answer or
  * response text, whatever the body carries. Re-filing the same document is a
- * no-op (content hash).
+ * no-op (content hash). `replicateGroup` puts the run into a named group of
+ * replicates (`src/engine/benchmark-replicates.ts`); without it the run joins
+ * the automatic group of its target, item slice and judge.
  *
  * The open-API dev sentinel may file only under the local, ungated trust
  * profile (`refuseOpenApiWrite` semantics); elsewhere a `MODEL_API_KEYS`
@@ -28,6 +30,7 @@ import {
   TARGET_KINDS,
 } from "../engine/benchmark-ledger";
 import { type AttributionKind, resolveParticipants } from "../engine/benchmark-participants";
+import { validReplicateGroup } from "../engine/benchmark-replicates";
 import type { Engine } from "../engine/engine";
 import { isLocalUngated } from "../engine/trust-profile";
 import type { BenchmarkTargetKind } from "../persistence/db-benchmarks";
@@ -92,6 +95,7 @@ export async function handleBenchmarkFile(
     label?: unknown;
     judge?: unknown;
     costUsd?: unknown;
+    replicateGroup?: unknown;
   };
   try {
     body = JSON.parse(text) as typeof body;
@@ -114,6 +118,17 @@ export async function handleBenchmarkFile(
     return errorJson(413, `at most ${MAX_BENCHMARK_FILE_ITEMS} items per run`, {
       code: "invalid_request_error",
     });
+  }
+  const replicateGroup = body.replicateGroup;
+  if (
+    replicateGroup !== undefined &&
+    (typeof replicateGroup !== "string" || !validReplicateGroup(replicateGroup))
+  ) {
+    return errorJson(
+      400,
+      "replicateGroup must be a short label (letters, digits, : . _ @ / -; never auto:…)",
+      { code: "invalid_request_error" },
+    );
   }
   const costUsd =
     typeof body.costUsd === "number" && Number.isFinite(body.costUsd) && body.costUsd >= 0
@@ -168,6 +183,7 @@ export async function handleBenchmarkFile(
       ...(typeof body.label === "string" ? { label: body.label.slice(0, 200) } : {}),
       ...(typeof body.judge === "string" ? { judge: body.judge.slice(0, 300) } : {}),
       ...(costUsd !== undefined ? { costUsd } : {}),
+      ...(typeof replicateGroup === "string" ? { replicateGroup } : {}),
       raw,
       id: `bench_${randomUUID().slice(0, 12)}`,
       now: Date.now(),
@@ -196,6 +212,7 @@ export async function handleBenchmarkFile(
       ciLow: ledger.run.ci_low,
       ciHigh: ledger.run.ci_high,
       costUsd: ledger.run.cost_usd,
+      replicateGroup: ledger.run.replicate_group ?? null,
       attribution: counts,
       overlappingItems,
       tracedSharedItems,

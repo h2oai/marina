@@ -172,8 +172,24 @@ describe("earned promotion — store and commands", () => {
     cleanupDb(dbPath);
   });
 
+  /**
+   * Record a configuration as `replicates` runs in one group: `id` is the first
+   * replicate (the run commands name), the rest are `<id>-r2`, `<id>-r3`, ….
+   */
   function record(
     id: string,
+    correct: (id: string, i: number) => boolean,
+    extra: { agent_id?: string; model?: string; replicates?: number } = {},
+  ) {
+    const total = extra.replicates ?? 2;
+    for (let r = 1; r <= total; r++) {
+      recordOne(r === 1 ? id : `${id}-r${r}`, id, correct, extra);
+    }
+  }
+
+  function recordOne(
+    id: string,
+    group: string,
     correct: (id: string, i: number) => boolean,
     extra: { agent_id?: string; model?: string } = {},
   ) {
@@ -199,10 +215,11 @@ describe("earned promotion — store and commands", () => {
         slice_hash: sliceHash(IDS),
         judge: "judge/model",
         target_kind: "crew",
-        target_json: JSON.stringify({ crew: "answerer", model: extra.model ?? `model-${id}` }),
+        target_json: JSON.stringify({ crew: "answerer", model: extra.model ?? `model-${group}` }),
         label: id,
         source: "import",
         content_hash: null,
+        replicate_group: group,
       },
       outcome.map((i) => ({ ...i, correct: Boolean(i.correct) })),
     );
@@ -284,5 +301,54 @@ describe("earned promotion — store and commands", () => {
       "fixed once a slot exists",
     );
     expect(db.getBenchmarkDefault(SLOT)?.holdout_fraction).toBe(0.4);
+  });
+
+  it("refuses an unreplicated challenger before reading the holdout, and records nothing", () => {
+    record("base", incumbentRight);
+    record("lucky", strongRight, { replicates: 1 });
+    const op = login("Strict");
+    grant(db, op.conn.entity!, "role.edit");
+    op.send(`benchmark promote ${SLOT} base`);
+    const reply = op.send(`benchmark promote ${SLOT} lucky`);
+    expect(reply).toContain("Not replicated");
+    expect(reply).toContain("MARINA_PROMOTION_MIN_REPLICATES");
+    expect(reply).not.toContain("holdout:");
+    // No attempt was recorded, so the fishing margin did not move.
+    expect(db.listBenchmarkPromotions(SLOT).map((h) => h.outcome)).toEqual(["seeded"]);
+    // The dry run still answers, flagged.
+    expect(op.send(`benchmark challenge ${SLOT} lucky`)).toContain("not replicated");
+  });
+
+  it("refuses to seed a slot from a single run", () => {
+    record("single", incumbentRight, { replicates: 1 });
+    const op = login("Seeder");
+    grant(db, op.conn.entity!, "role.edit");
+    expect(op.send(`benchmark promote ${SLOT} single`)).toContain("Not replicated");
+    expect(db.listBenchmarkDefaults()).toHaveLength(0);
+  });
+
+  it("promotes on the pooled two-stage interval and reports the replicates", () => {
+    record("base", incumbentRight, { replicates: 3 });
+    record("strong", strongRight, { replicates: 3 });
+    const op = login("Pooler");
+    grant(db, op.conn.entity!, "role.edit");
+    expect(op.send(`benchmark promote ${SLOT} base`)).toContain("3 replicate(s)");
+    const won = op.send(`benchmark promote ${SLOT} strong`);
+    expect(won).toContain("Promoted");
+    expect(won).toContain("pooled ×3 vs ×3 replicates");
+    expect(won).toContain("two-stage bootstrap");
+    const stats = JSON.parse(db.listBenchmarkPromotions(SLOT).at(-1)?.stats_json ?? "{}");
+    expect(stats.replicates).toEqual({ challenger: 3, incumbent: 3, minimum: 2 });
+    expect(stats.pooled.challengerReplicates).toBe(3);
+  });
+
+  it("refuses a challenger that is a replicate of the incumbent", () => {
+    record("base", incumbentRight);
+    const op = login("Twin");
+    grant(db, op.conn.entity!, "role.edit");
+    op.send(`benchmark promote ${SLOT} base`);
+    const reply = op.send(`benchmark promote ${SLOT} base-r2`);
+    expect(reply).toContain("replicate of the incumbent");
+    expect(getPromotedDefault<{ model: string }>(db, SLOT)?.model).toBe("model-base");
   });
 });
