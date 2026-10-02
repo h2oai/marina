@@ -135,6 +135,112 @@ export function evalExpression(source: string): EvalResult {
   return { outputs, error, durationMs: Math.round(performance.now() - t0) };
 }
 
+/**
+ * Wall-clock bound for one `calc` evaluation. mathjs is synchronous: run on the
+ * server's event loop, one expensive call (`rationalize`, `simplify` or `solve`
+ * of a large expression) freezes every agent, room and HTTP request. Each
+ * evaluation therefore runs in a worker, which is terminated at this deadline.
+ */
+export const CALC_TIMEOUT_MS = 10_000;
+const CALC_POOL_SIZE = 2;
+
+interface CalcSlot {
+  worker: Worker;
+  busy: boolean;
+}
+
+const slots: CalcSlot[] = [];
+const waiting: Array<() => void> = [];
+let nextRequestId = 0;
+
+function newCalcWorker(): Worker {
+  const worker = new Worker(new URL("./calc-worker.ts", import.meta.url).href);
+  // An idle worker never keeps the process alive.
+  (worker as Worker & { unref?: () => void }).unref?.();
+  return worker;
+}
+
+async function acquireSlot(): Promise<CalcSlot> {
+  for (;;) {
+    const free = slots.find((slot) => !slot.busy);
+    if (free) {
+      free.busy = true;
+      return free;
+    }
+    if (slots.length < CALC_POOL_SIZE) {
+      const slot = { worker: newCalcWorker(), busy: true };
+      slots.push(slot);
+      return slot;
+    }
+    await new Promise<void>((resolve) => waiting.push(resolve));
+  }
+}
+
+function releaseSlot(slot: CalcSlot, replace: boolean): void {
+  if (replace) {
+    slot.worker.terminate();
+    slot.worker = newCalcWorker();
+  }
+  slot.busy = false;
+  waiting.shift()?.();
+}
+
+/**
+ * `evalExpression` bounded by `timeoutMs`, off the main thread. A timeout
+ * terminates the worker (the pool replaces it) and returns an error result;
+ * it never throws. Without worker support it falls back to the inline call.
+ */
+export async function evalExpressionBounded(
+  source: string,
+  timeoutMs = CALC_TIMEOUT_MS,
+): Promise<EvalResult> {
+  if (typeof Worker === "undefined") return evalExpression(source);
+  let slot: CalcSlot;
+  try {
+    slot = await acquireSlot();
+  } catch {
+    // No worker runtime in this process: evaluate inline, unbounded, as before.
+    return evalExpression(source);
+  }
+  const t0 = performance.now();
+  const id = ++nextRequestId;
+  return new Promise<EvalResult>((resolve) => {
+    let settled = false;
+    const finish = (result: EvalResult, replace: boolean): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      slot.worker.removeEventListener("message", onMessage);
+      slot.worker.removeEventListener("error", onError);
+      releaseSlot(slot, replace);
+      resolve(result);
+    };
+    const elapsed = () => Math.round(performance.now() - t0);
+    const onMessage = (event: MessageEvent<{ id: number; result: EvalResult }>): void => {
+      if (event.data?.id === id) finish(event.data.result, false);
+    };
+    const onError = (event: ErrorEvent): void => {
+      finish(
+        { outputs: [], error: `calc worker failed: ${event.message}`, durationMs: elapsed() },
+        true,
+      );
+    };
+    const timer = setTimeout(() => {
+      finish(
+        {
+          outputs: [],
+          error: `timed out after ${timeoutMs} ms; the expression is too expensive. Simplify it or split it into smaller steps.`,
+          durationMs: elapsed(),
+        },
+        true,
+      );
+    }, timeoutMs);
+    slot.worker.addEventListener("message", onMessage);
+    slot.worker.addEventListener("error", onError);
+    slot.worker.postMessage({ id, source });
+  });
+}
+
 export function calcCommand(deps: { getEntity: (id: string) => Entity | undefined }): CommandDef {
   return {
     category: "System",
@@ -154,7 +260,8 @@ Examples:
   calc mean([1,2,3,4,5])
   calc derivative('sin(x)', 'x')
 
-Statements run in order, sharing a scope. Separate with ; or newline.`,
+Statements run in order, sharing a scope. Separate with ; or newline.
+Each evaluation is bounded to ${CALC_TIMEOUT_MS / 1000} s; an expression that takes longer returns an error.`,
     handler: async (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -165,7 +272,7 @@ Statements run in order, sharing a scope. Separate with ; or newline.`,
         return;
       }
 
-      const result = evalExpression(expr);
+      const result = await evalExpressionBounded(expr);
       const lines: string[] = [
         header("calc"),
         separator(),

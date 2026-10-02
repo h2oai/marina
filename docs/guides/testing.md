@@ -455,7 +455,9 @@ needs `HF_TOKEN`) and FRAMES (20 items), one harness process and one result JSON
 reports per-arm accuracy with Wilson intervals, McNemar's exact test, a paired bootstrap of
 the difference, and reported cost and tokens (`n/a` when the endpoint reported none). Both
 call live models and are never part of CI. `--timeout <ms>` bounds each request (`marina:`
-targets default to 900 s; the server's own bound is `MODEL_REQUEST_TIMEOUT_MS`). A
+targets default to 900 s; the server's own bound is `MODEL_REQUEST_TIMEOUT_MS`). After two
+consecutive timeouts, a target whose `/health` doesn't answer fails the rest of the run fast
+(`target unresponsive`) instead of timing out item by item. A
 `marina:<crew>` run files each set into its server's benchmark ledger
 (`POST /v1/benchmarks/runs`, participants resolved from trace ids). `--no-file` opts out,
 `--file-to <url>` files any other target, and `MARINA_LEDGER_API_KEY` is the filing key for a

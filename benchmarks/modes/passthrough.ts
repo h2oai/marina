@@ -47,6 +47,52 @@ export interface QueryResult {
   requestId?: string;
 }
 
+/**
+ * Dead-target detection. A per-request timeout bounds one item, but a target
+ * that stopped answering (a crashed or frozen server) would still cost the full
+ * timeout per remaining item: hours for a long run. After
+ * `DEAD_TARGET_AFTER_TIMEOUTS` consecutive timeouts on an endpoint, each new
+ * request first probes `<endpoint>/health`. Any HTTP reply, even a 404, means
+ * alive-but-slow and the request proceeds. No reply within the probe timeout
+ * means the endpoint is dead: requests fail at once, and it is re-probed at
+ * most once per `DEAD_TARGET_REPROBE_MS`. Any answered request clears the state.
+ */
+export const DEAD_TARGET_AFTER_TIMEOUTS = 2;
+const HEALTH_PROBE_TIMEOUT_MS = 10_000;
+const DEAD_TARGET_REPROBE_MS = 60_000;
+const consecutiveTimeouts = new Map<string, number>();
+const deadUntil = new Map<string, number>();
+
+/** Forget every endpoint's timeout and dead state (tests). */
+export function resetEndpointHealth(): void {
+  consecutiveTimeouts.clear();
+  deadUntil.clear();
+}
+
+async function endpointResponds(endpoint: string, probeTimeoutMs: number): Promise<boolean> {
+  try {
+    const resp = await fetch(`${endpoint}/health`, {
+      signal: AbortSignal.timeout(probeTimeoutMs),
+    });
+    await resp.body?.cancel();
+    return true;
+  } catch {
+    return false; // allow-empty-catch: no reply within the probe timeout is the answer
+  }
+}
+
+/** Throws when the endpoint is known or found dead; returns when it may be called. */
+async function assertEndpointAlive(endpoint: string, probeTimeoutMs: number): Promise<void> {
+  const timeouts = consecutiveTimeouts.get(endpoint) ?? 0;
+  if (timeouts < DEAD_TARGET_AFTER_TIMEOUTS) return;
+  const dead = (deadUntil.get(endpoint) ?? 0) > Date.now();
+  if (!dead && (await endpointResponds(endpoint, probeTimeoutMs))) return;
+  if (!dead) deadUntil.set(endpoint, Date.now() + DEAD_TARGET_REPROBE_MS);
+  throw new Error(
+    `target unresponsive: ${timeouts} consecutive timeouts and ${endpoint}/health did not answer`,
+  );
+}
+
 /** One chat completion, with the usage and cost the endpoint reported. */
 export async function queryWithUsage(
   endpoint: string,
@@ -54,12 +100,14 @@ export async function queryWithUsage(
   messages: Message[],
   apiKey?: string,
   timeoutMs = defaultTimeoutMs(),
+  probeTimeoutMs = HEALTH_PROBE_TIMEOUT_MS,
 ): Promise<QueryResult> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
+  await assertEndpointAlive(endpoint, probeTimeoutMs);
   const maxAttempts = 6;
   let attempt = 0;
   while (true) {
@@ -101,11 +149,18 @@ export async function queryWithUsage(
       // A reasoning model that spends its whole budget thinking returns
       // `content: null`: an empty answer (scored wrong), never a crash.
       const requestId = resp.headers.get("x-request-id") ?? undefined;
+      consecutiveTimeouts.delete(endpoint);
+      deadUntil.delete(endpoint);
       return {
         content: content ?? "",
         usage: usageFromResponse(data, resp.headers.get(MARINA_COST_HEADER)),
         ...(requestId ? { requestId } : {}),
       };
+    } catch (err) {
+      if (controller.signal.aborted || (err instanceof Error && err.name === "TimeoutError")) {
+        consecutiveTimeouts.set(endpoint, (consecutiveTimeouts.get(endpoint) ?? 0) + 1);
+      }
+      throw err;
     } finally {
       clearTimeout(timer);
     }

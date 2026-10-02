@@ -70,6 +70,11 @@ bun run bench:tier0 --endpoint http://host:port --model <id>  # any OpenAI-compa
   deliberating on a hard item takes minutes, and a client that gives up first scores an answer
   still on its way as wrong. The server bounds the same request with `MODEL_REQUEST_TIMEOUT_MS`
   (600 s by default) — raise both for longer runs. Latency stays in every item.
+- **Dead target.** After two consecutive timeouts on an endpoint, each request first probes
+  `<endpoint>/health`. Any HTTP reply means slow-but-alive, and the run continues. No reply
+  within 10 s fails the remaining items at once with `target unresponsive`, re-probing at most
+  once a minute, instead of spending the full timeout on each one. Any answered request
+  clears the state.
 - **Keys** reach each harness child as `MARINA_BENCH_API_KEY`, never on the command line.
 - **Ledger.** A `marina:<crew>` target files every finished set into its own server's
   benchmark ledger (`POST /v1/benchmarks/runs`) as a `crew` run. Each item carries its
