@@ -1,11 +1,21 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { routeTableFromEnv, routeTiersFromEnv } from "../../decisions/route";
 import { header, separator } from "../../net/ansi";
 import { parseMemoryReceipt, renderMemoryReceiptLines } from "../../net/memory-receipt";
 import type { MarinaDB } from "../../persistence/database";
 import type { OtlpExporterStatus } from "../../telemetry/otlp-exporter";
 import type { CommandDef, EngineEvent, RoomContext } from "../../types";
+import {
+  collectEvidence,
+  type EvidenceCandidate,
+  type EvidenceEntry,
+  loadEvidenceItems,
+  pickByEvidence,
+  poolFamilies,
+  routeEvidenceSettingsFromEnv,
+} from "../benchmark-evidence";
 import {
   analyzeTraces,
   type PromptSectionAggregate,
@@ -36,6 +46,7 @@ const HELP = `Inspect recent execution traces (read-only).
   trace dataset [limit] — replayable structural evaluation cases
   trace dataset verify [limit] — replay an exported dataset copy, report schema + drift
   trace advise <models|routes|autonomous|tools> [limit] — read-only shadow selection advice
+  trace advise evidence <benchmark[,benchmark]> [min-n] — measured benchmark evidence per model/agent
   trace choose <models|routes|autonomous|tools> <eligible...> — select only inside an explicit set
   trace otel            — OTLP collector delivery status (no credentials)
   trace show <id>       — causal request/turn/tool spans
@@ -63,6 +74,7 @@ export function traceCommand(deps: {
     usage: [
       "trace [list] [limit]",
       "trace advise <models|routes|autonomous|tools> [limit]",
+      "trace advise evidence <benchmark[,benchmark]> [min-n]",
       "trace choose <models|routes|autonomous|tools> <eligible-candidate...>",
       "trace choose <models|routes|autonomous|tools> <eligible...>",
       "trace compare <models|routes> [limit]",
@@ -192,6 +204,11 @@ export function traceCommand(deps: {
         return;
       }
 
+      if (sub === "advise" && input.tokens[1]?.toLowerCase() === "evidence") {
+        sendEvidence(ctx, input.entity, deps.db, input.tokens[2], input.tokens[3]);
+        return;
+      }
+
       if (sub === "compare" || sub === "dataset" || sub === "advise") {
         const verify = sub === "dataset" && input.tokens[1]?.toLowerCase() === "verify";
         const rawLimit =
@@ -281,6 +298,75 @@ export function traceCommand(deps: {
       else sendTrace(ctx, input.entity, trace, truncated);
     },
   };
+}
+
+function sendEvidence(
+  ctx: RoomContext,
+  entityId: Parameters<RoomContext["send"]>[0],
+  db: MarinaDB | undefined,
+  rawFamilies: string | undefined,
+  rawMinN: string | undefined,
+): void {
+  const families = (rawFamilies ?? "")
+    .split(",")
+    .map((f) => f.trim())
+    .filter(Boolean);
+  if (families.length === 0) {
+    ctx.send(entityId, "Usage: trace advise evidence <benchmark[,benchmark]> [min-n]");
+    return;
+  }
+  if (!db) {
+    ctx.send(entityId, "No benchmark ledger in this world.");
+    return;
+  }
+  const settings = routeEvidenceSettingsFromEnv();
+  const minN =
+    Number.parseInt(rawMinN ?? "", 10) > 0 ? Number.parseInt(rawMinN!, 10) : settings.minN;
+  const entries = poolFamilies(
+    collectEvidence(loadEvidenceItems(db, families), { includeWindow: settings.includeWindow }),
+  );
+  const row = (e: EvidenceEntry) =>
+    `  ${e.name.padEnd(36)} ${`${(e.accuracy * 100).toFixed(1)}%`.padStart(6)} [${(e.ciLow * 100).toFixed(1)}–${(e.ciHigh * 100).toFixed(1)}]  n=${String(e.n).padEnd(4)} ${e.costPerItemUsd === null ? "unpriced" : `$${e.costPerItemUsd.toFixed(4)}/item`}  ${e.n < minN ? "(below min-n)" : ""}`.trimEnd();
+  const lines = [
+    header(`Benchmark Evidence: ${families.join(" + ")}`),
+    separator(),
+    `  routing evidence: ${settings.mode} (MARINA_ROUTE_EVIDENCE) · min-n ${minN} · window evidence ${settings.includeWindow ? "on" : "off"} · shared never counted`,
+  ];
+  if (entries.length === 0) {
+    lines.push("  No attributed item outcomes for these benchmarks.");
+    ctx.send(entityId, lines.join("\n"));
+    return;
+  }
+  const models = entries.filter((e) => e.kind === "model");
+  const agents = entries.filter((e) => e.kind === "agent");
+  if (models.length > 0)
+    lines.push("  models (Wilson 95%, ranked by lower bound):", ...models.map(row));
+  if (agents.length > 0) lines.push("  participants (agents):", ...agents.map(row));
+  let candidates: EvidenceCandidate[] | undefined;
+  try {
+    const table = routeTableFromEnv();
+    const tiers = table ? undefined : routeTiersFromEnv();
+    candidates = table
+      ? Object.entries(table.routes).map(([route, r]) => ({ route, model: r.model }))
+      : tiers
+        ? [
+            { route: "fast", model: tiers.fast },
+            { route: "powerful", model: tiers.powerful },
+          ]
+        : undefined;
+  } catch {
+    candidates = undefined;
+  }
+  if (candidates) {
+    const pick = pickByEvidence(candidates, entries, { ...settings, minN });
+    lines.push(
+      `  model:route candidates: ${pick.pick ? `${pick.pick.route} → ${pick.pick.model}` : "no evidence pick"} — ${pick.reason}`,
+    );
+  }
+  lines.push(
+    "  Advisory unless MARINA_ROUTE_EVIDENCE=on; applied only at spawn, within the route's own candidates.",
+  );
+  ctx.send(entityId, lines.join("\n"));
 }
 
 function sendAdvice(

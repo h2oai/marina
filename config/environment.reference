@@ -630,6 +630,13 @@
 # MARINA_ROUTE_INSTRUCTIONS=Choose the least costly model that can complete the task.
 # MARINA_ROUTE_FALLBACK=powerful
 
+# Benchmark evidence for model:route (src/engine/benchmark-evidence.ts). After the router picks, measured ledger results may prefer another of the SAME candidates: the best Wilson lower bound among at least two candidates with MIN_N items in the role's families (and within MAX_COST_USD per item, when set). `observe` records the pick on the route decision without acting; `on` applies it. Resolved once at spawn and persisted; any error keeps the router's choice. Families: a comma list of benchmark names for every role, or JSON {"*": [...], "<role>": [...]}; with none, evidence never applies. Evidence is traced participants and direct-model runs; window evidence only with MARINA_ROUTE_EVIDENCE_WINDOW=true, shared window evidence never. Inspect with `trace advise evidence <benchmark>`.
+# MARINA_ROUTE_EVIDENCE=off
+# MARINA_ROUTE_EVIDENCE_FAMILIES=hle-verified-gold,frames
+# MARINA_ROUTE_EVIDENCE_MIN_N=30
+# MARINA_ROUTE_EVIDENCE_MAX_COST_USD=0.05
+# MARINA_ROUTE_EVIDENCE_WINDOW=false
+
 # ── Forecasting ──────────────────────────────────────────────────────────────
 
 # `forecast`, `bun run forecast` and POST /v1/forecast (docs/guides/forecasting.md). The defaults need OPENROUTER_API_KEY. Analysts are a comma list of models (defaults: DeepSeek V4 Pro, Claude Sonnet 5 and GPT-6 Luna via OpenRouter); the retriever defaults to OpenRouter web search on GPT-6 Luna; the judge is jev, decisions (the MARINA_DECISIONS backend, falling back to jev) or none.

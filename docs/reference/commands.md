@@ -7356,6 +7356,7 @@ Inspect recent execution traces (read-only).
   trace dataset [limit] — replayable structural evaluation cases
   trace dataset verify [limit] — replay an exported dataset copy, report schema + drift
   trace advise <models|routes|autonomous|tools> [limit] — read-only shadow selection advice
+  trace advise evidence <benchmark[,benchmark]> [min-n] — measured benchmark evidence per model/agent
   trace choose <models|routes|autonomous|tools> <eligible...> — select only inside an explicit set
   trace otel            — OTLP collector delivery status (no credentials)
   trace show <id>       — causal request/turn/tool spans
@@ -7385,6 +7386,14 @@ Effect: unknown.
 - `field-0` (`models|routes|autonomous|tools`): choice, required, choices `models`, `routes`, `autonomous`, `tools`.
 - `field-1` (`limit`): number, optional group `option-0`.
 - Group `option-0`: `limit`.
+
+### `trace advise evidence <benchmark[,benchmark]> [min-n]`
+
+Effect: unknown.
+
+- `field-0` (`benchmark[,benchmark]`): text, required.
+- `field-1` (`min-n`): text, optional group `option-0`.
+- Group `option-0`: `min-n`.
 
 ### `trace choose <models|routes|autonomous|tools> <eligible-candidate...>`
 
