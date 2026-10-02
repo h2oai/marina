@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { EntityId } from "../types";
-import type { PromptMetrics, TraceParent } from "./execution-trace";
+import type { PromptMetrics, TraceLink, TraceParent } from "./execution-trace";
 
 export interface AgentSupports {
   text: boolean;
@@ -289,6 +289,8 @@ export type AgentEvent =
   | {
       type: "turn_start";
       traceParent?: TraceParent;
+      /** Every request trace this prompt serves (span links), incl. carried handoffs. */
+      traceLinks?: TraceLink[];
       model: string;
       /** Continuation-prompt byte attribution; present on the FIRST turn of a prompt only. */
       prompt?: PromptMetrics;

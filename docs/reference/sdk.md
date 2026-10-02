@@ -203,6 +203,18 @@ export declare class MarinaClient {
     private legacyCommands;
     private legacyCommandUncertain;
     private eventListeners;
+    private traceLinksProvider?;
+    /**
+     * Request traces the caller's current work serves. When set, each command
+     * carries them as `trace_links`, so perceptions the command delivers to
+     * others (a tell, a crew post) link back to those requests. The server keeps
+     * only traces this connection was actually delivered.
+     */
+    setTraceLinksProvider(provider?: () => readonly {
+        traceId: string;
+        spanId: string;
+    }[] | undefined): void;
+    private traceLinksField;
     constructor(url: string, options?: ClientOptions);
     /** Check if connected to the server. */
     isConnected(): boolean;

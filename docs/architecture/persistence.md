@@ -26,9 +26,15 @@
   - Auth is the model API's. The open-API sentinel may file only under the local, ungated profile; elsewhere a `MODEL_API_KEYS` credential is required (403 `open_api_read_only`).
   - The ledger source is `import`. The run's `config_json` records the attribution counts.
 - **Participants (`src/engine/benchmark-participants.ts`):** each item's `traceId` is the target's `x-request-id` (`traceId === requestId`), resolved against the event log. Each participant records which evidence put it there:
-  - `trace`: an `agent_turn_end` under the request's trace. This is exact, but only the agent that received the `model_request` perception inherits the trace. A passthru request credits the upstream model.
-  - `window`: untraced turns by the routed agent's crew-mates that ended inside the request's received→completed window. Delegation does not carry the trace, so this is the best evidence available.
+  - `trace`: an `agent_turn_end` serving the request. That is either its own trace (the agent received the `model_request` while idle and the request parented its prompt) or a span link to it (see [Execution traces](traces.md) → span links):
+    - the request was steered into a prompt already running;
+    - the prompt served several requests at once;
+    - the agent acted on work handed over from the request: a tell, crew post or task notice sent by an agent working on it carries its trace, and this is transitive.
+
+    A turn serving one request is charged to it in full. A turn serving n requests gives each 1/n of its cost and marks the participant `tracedShared` (evidence `traced-shared`). A passthru request credits the upstream model.
+  - `window`: turns by the routed agent's crew-mates that ended inside the request's received→completed window and serve no request trace (neither their own nor a link). This is the fallback when nothing propagated.
   - `shared`: another request to the same crew overlapped the window (found on a ±30 min padded range). The participant is listed, but its cost is not charged to the item.
+  - The filing reply and the run's `config_json` also count `tracedSharedItems`: items with at least one cost-split turn.
   - An item whose request left no lifecycle events (event log pruned, or never routed through this Marina) records no participants and counts as `none`.
 
 ## Earned promotion of defaults (migration 147)

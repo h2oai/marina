@@ -419,6 +419,16 @@ export interface Crew {
 
 // ─── Events (internal engine events) ─────────────────────────────────────────
 
+/**
+ * A span link: one more trace an agent span worked on besides its parent
+ * (OpenTelemetry-style). A turn that handles two requests at once, or that
+ * acts on work handed over from a request, links every originating trace.
+ */
+export interface TraceLink {
+  traceId: string;
+  spanId: string;
+}
+
 export type EngineEvent =
   | { type: "command"; entity: EntityId; input: string; timestamp: number }
   | { type: "tick"; timestamp: number }
@@ -571,6 +581,8 @@ export type EngineEvent =
       traceId?: string;
       spanId?: string;
       parentSpanId?: string;
+      /** Other request traces this span also served (span links, never parents). */
+      links?: TraceLink[];
       origin?: "autonomous" | "request";
       model?: string;
       // Prompt-budget metrics (bytes, never text): total continuation prompt,
@@ -591,6 +603,8 @@ export type EngineEvent =
       traceId?: string;
       spanId?: string;
       parentSpanId?: string;
+      /** Other request traces this span also served (span links, never parents). */
+      links?: TraceLink[];
       origin?: "autonomous" | "request";
       model?: string;
       hadToolCalls: boolean;
@@ -612,6 +626,8 @@ export type EngineEvent =
       traceId?: string;
       spanId?: string;
       parentSpanId?: string;
+      /** Other request traces this span also served (span links, never parents). */
+      links?: TraceLink[];
       risk?: "read" | "self" | "communicate" | "egress" | "mutate" | "consequential";
       trustSources?: string[];
       timestamp: number;
@@ -624,6 +640,8 @@ export type EngineEvent =
       traceId?: string;
       spanId?: string;
       parentSpanId?: string;
+      /** Other request traces this span also served (span links, never parents). */
+      links?: TraceLink[];
       isError: boolean;
       timestamp: number;
     }
@@ -635,6 +653,8 @@ export type EngineEvent =
       traceId?: string;
       spanId?: string;
       parentSpanId?: string;
+      /** Other request traces this span also served (span links, never parents). */
+      links?: TraceLink[];
       timestamp: number;
     }
   | {
@@ -645,6 +665,8 @@ export type EngineEvent =
       traceId?: string;
       spanId?: string;
       parentSpanId?: string;
+      /** Other request traces this span also served (span links, never parents). */
+      links?: TraceLink[];
       timestamp: number;
     }
   // Request-level lifecycle for causal demo timelines. These deliberately sit

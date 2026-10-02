@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Connection, EntityId, Perception } from "../types";
+import { stampTraceLinks } from "./trace-context";
 
 /**
  * Manages the bidirectional mapping between connections and entities.
@@ -94,7 +95,9 @@ export class ConnectionManager {
     if (!connId) return false;
     const conn = this.connections.get(connId);
     if (!conn) return false;
-    conn.send(perception);
+    // Request traces ride along: a perception a traced command delivers to
+    // another entity carries the command's span links (src/engine/trace-context.ts).
+    conn.send(stampTraceLinks(entityId, perception));
     return true;
   }
 }

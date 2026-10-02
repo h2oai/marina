@@ -137,6 +137,45 @@ export function getRecentTraceEvents(
 }
 
 /**
+ * `agent_turn_end` events that LINK one of these traces without belonging to
+ * it: a turn serving several requests at once, or one acting on work handed
+ * over from a request (span links, `TraceLink`). Benchmark attribution reads
+ * these next to the request's own spans; trace export does not.
+ */
+export function getTurnEndsLinkingTraceIds(
+  db: Database,
+  traceIds: readonly string[],
+): EngineEvent[] {
+  if (traceIds.length === 0) return [];
+  const events: EngineEvent[] = [];
+  const CHUNK = 200;
+  for (let i = 0; i < traceIds.length; i += CHUNK) {
+    const chunk = traceIds.slice(i, i + CHUNK);
+    const placeholders = chunk.map(() => "?").join(",");
+    const rows = db
+      .query(
+        `SELECT data FROM event_log
+         WHERE type = 'agent_turn_end'
+           AND data LIKE '%"links"%'
+           AND EXISTS (
+             SELECT 1 FROM json_each(data, '$.links') AS link
+             WHERE json_extract(link.value, '$.traceId') IN (${placeholders})
+           )
+         ORDER BY id`,
+      )
+      .all(...chunk) as { data: string }[];
+    for (const row of rows) {
+      try {
+        events.push(JSON.parse(row.data) as EngineEvent);
+      } catch {
+        // allow-empty-catch: skip a corrupt row rather than dropping the whole batch.
+      }
+    }
+  }
+  return events;
+}
+
+/**
  * Fetch trace events for a batch of trace ids in one indexed query per chunk
  * (vs one 5,000-row scan per id). Serves the OTLP exporter flush, which can
  * hold up to 1,000 pending trace ids.
