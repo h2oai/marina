@@ -18,7 +18,13 @@
  *    the difference clears `promotionMargin(tried)` — the fishing margin
  *    shared with `evolve replicate` and arena signal discovery, which grows
  *    with every earlier attempt on the slot (each attempt read the holdout);
- *  - optionally, cost per item no worse than `maxCostRatio` × the incumbent's.
+ *  - optionally, cost per item no worse than `maxCostRatio` × the incumbent's;
+ *  - REPLICATED: the challenger's replicate group (`benchmark-replicates.ts`)
+ *    holds at least `MARINA_PROMOTION_MIN_REPLICATES` runs (default 2) before
+ *    the holdout is read at all. With replicates on either side the paired
+ *    interval is the two-stage (runs, then items) bootstrap on the pooled
+ *    per-item outcomes, so run-to-run variance is inside the interval; with one
+ *    run on each side (only when the minimum is set to 1) it is Agresti–Min.
  *
  * Every seed, promotion and refused attempt is an append-only history row
  * (`benchmark_promotions`, migration 147). This module is pure except for the
@@ -32,6 +38,12 @@ import type {
   BenchmarkRunRow,
 } from "../persistence/db-benchmarks";
 import type { BenchmarksStore } from "../persistence/interfaces/benchmarks-store";
+import {
+  comparePooledGroups,
+  type LoadedGroup,
+  loadReplicateGroup,
+  promotionMinReplicates,
+} from "./benchmark-replicates";
 import { promotionMargin } from "./fishing-margin";
 
 /** Default share of items held out from selection for a new slot. */
@@ -94,6 +106,14 @@ export interface SplitStats {
   delta: number;
   low: number;
   high: number;
+  /** Present when the stats pool replicates (two-stage bootstrap interval). */
+  pooled?: {
+    challengerReplicates: number;
+    incumbentReplicates: number;
+    challengerAccuracy: number;
+    incumbentAccuracy: number;
+    p: number;
+  };
 }
 
 export interface ChallengeEvaluation {
@@ -155,6 +175,60 @@ export function splitStats(
 }
 
 /**
+ * Pooled stats for two replicate groups on one split of a slot: per-item mean
+ * outcomes, delta = challenger − incumbent, and the two-stage bootstrap 95 %
+ * interval (resampling each group's runs, then items). Counts are the pooled
+ * expectations (they may be fractional).
+ */
+export function pooledSplitStats(
+  slot: string,
+  holdoutFraction: number,
+  split: "holdout" | "selection",
+  challenger: LoadedGroup,
+  incumbent: LoadedGroup,
+): SplitStats & { itemIds: string[] } {
+  const inSplit = (id: string) => itemSplit(slot, id, holdoutFraction) === split;
+  const c = comparePooledGroups(challenger, incumbent, { itemFilter: inSplit });
+  const ids = [...(challenger.replicates[0]?.keys() ?? [])]
+    .filter((id) => inSplit(id))
+    .filter(
+      (id) =>
+        challenger.replicates.every((r) => r.has(id)) &&
+        incumbent.replicates.every((r) => r.has(id)),
+    );
+  // Expected discordant counts under the pooled per-item means.
+  let cOnly = 0;
+  let iOnly = 0;
+  for (const id of ids) {
+    const pc =
+      challenger.replicates.filter((r) => r.get(id) === true).length / challenger.replicates.length;
+    const pi =
+      incumbent.replicates.filter((r) => r.get(id) === true).length / incumbent.replicates.length;
+    cOnly += pc * (1 - pi);
+    iOnly += (1 - pc) * pi;
+  }
+  return {
+    split,
+    n: c.items,
+    challengerCorrect: c.a.meanAccuracy * c.items,
+    incumbentCorrect: c.b.meanAccuracy * c.items,
+    challengerOnly: cOnly,
+    incumbentOnly: iOnly,
+    delta: c.delta,
+    low: c.low,
+    high: c.high,
+    pooled: {
+      challengerReplicates: challenger.replicates.length,
+      incumbentReplicates: incumbent.replicates.length,
+      challengerAccuracy: c.a.meanAccuracy,
+      incumbentAccuracy: c.b.meanAccuracy,
+      p: c.p,
+    },
+    itemIds: ids,
+  };
+}
+
+/**
  * Evidence used for a promotion must lie entirely in the holdout split: items
  * in the selection split are what a proposer was allowed to look at.
  */
@@ -184,10 +258,20 @@ export function evaluateChallenge(input: {
   maxCostRatio?: number;
   /** Item ids the promotion rests on — defaults to the holdout pairing. */
   evidenceItemIds?: readonly string[];
+  /** Replicate groups; with more than one run on either side the stats are pooled. */
+  challengerGroup?: LoadedGroup;
+  incumbentGroup?: LoadedGroup;
 }): ChallengeEvaluation {
   const { slot, holdoutFraction, challenger, incumbent } = input;
   const reasons: string[] = [];
   if (challenger.id === incumbent.id) reasons.push("the challenger is the incumbent");
+  else if (
+    input.challengerGroup &&
+    input.incumbentGroup &&
+    input.challengerGroup.group === input.incumbentGroup.group
+  ) {
+    reasons.push("the challenger is a replicate of the incumbent (same group)");
+  }
   if (challenger.benchmark !== incumbent.benchmark) {
     reasons.push(`different benchmarks (${challenger.benchmark} vs ${incumbent.benchmark})`);
   }
@@ -203,13 +287,19 @@ export function evaluateChallenge(input: {
   ) {
     reasons.push("different item slices — promotion needs the same items on both runs");
   }
-  const full = splitStats(
-    slot,
-    holdoutFraction,
-    input.split,
-    input.challengerItems,
-    input.incumbentItems,
-  );
+  const pooled =
+    input.challengerGroup &&
+    input.incumbentGroup &&
+    (input.challengerGroup.replicates.length > 1 || input.incumbentGroup.replicates.length > 1);
+  const full = pooled
+    ? pooledSplitStats(
+        slot,
+        holdoutFraction,
+        input.split,
+        input.challengerGroup as LoadedGroup,
+        input.incumbentGroup as LoadedGroup,
+      )
+    : splitStats(slot, holdoutFraction, input.split, input.challengerItems, input.incumbentItems);
   const { itemIds, ...stats } = full;
   const triedBefore = Math.max(0, input.triedBefore);
   const margin = promotionMargin(triedBefore);
@@ -261,6 +351,7 @@ export function evaluateChallenge(input: {
 type PromotionStore = Pick<
   BenchmarksStore,
   | "getBenchmarkRun"
+  | "queryBenchmarkRuns"
   | "getBenchmarkItems"
   | "getBenchmarkDefault"
   | "listBenchmarkDefaults"
@@ -310,6 +401,7 @@ export type ChallengeLookup =
       challenger: BenchmarkRunRow;
       items: BenchmarkItemRow[];
       holdoutFraction: number;
+      replicates: number;
     }
   | {
       kind: "contest";
@@ -317,6 +409,7 @@ export type ChallengeLookup =
       incumbent: BenchmarkRunRow;
       def: BenchmarkDefaultRow;
       evaluation: ChallengeEvaluation;
+      replicates: { challenger: number; incumbent: number; minimum: number };
     };
 
 /** Load and evaluate a challenger for a slot on the given split. */
@@ -325,7 +418,7 @@ export function lookupChallenge(
   slot: string,
   runId: string,
   split: "holdout" | "selection",
-  opts: { maxCostRatio?: number } = {},
+  opts: { maxCostRatio?: number; minReplicates?: number } = {},
 ): ChallengeLookup {
   if (!validSlot(slot)) {
     return {
@@ -345,6 +438,20 @@ export function lookupChallenge(
       message: `Run ${runId} has no per-item outcomes — promotion needs paired items.`,
     };
   }
+  const minimum = opts.minReplicates ?? promotionMinReplicates();
+  const challengerGroup = loadReplicateGroup(db, challenger);
+  const replicated = challengerGroup.replicates.length;
+  // A default never rests on one noisy draw: refuse BEFORE the holdout is read,
+  // so an unreplicated attempt neither sees the holdout nor counts as a try.
+  if (split === "holdout" && replicated < minimum) {
+    return {
+      kind: "error",
+      message:
+        `Not replicated — ${runId} has ${replicated} replicate(s) in its group; a default needs at least ${minimum} ` +
+        "(MARINA_PROMOTION_MIN_REPLICATES). Run the same target again on the same items and judge " +
+        "(`bun run bench:tier0 … --replicates N`, or file with the same --group); the holdout stays unread until then.",
+    };
+  }
   const def = db.getBenchmarkDefault(slot);
   if (!def?.incumbent_run_id) {
     return {
@@ -352,6 +459,7 @@ export function lookupChallenge(
       challenger,
       items,
       holdoutFraction: def?.holdout_fraction ?? DEFAULT_HOLDOUT_FRACTION,
+      replicates: replicated,
     };
   }
   const incumbent = db.getBenchmarkRun(def.incumbent_run_id);
@@ -361,6 +469,7 @@ export function lookupChallenge(
       message: `The incumbent run ${def.incumbent_run_id} no longer resolves.`,
     };
   }
+  const incumbentGroup = loadReplicateGroup(db, incumbent);
   const evaluation = evaluateChallenge({
     slot,
     holdoutFraction: def.holdout_fraction,
@@ -371,6 +480,25 @@ export function lookupChallenge(
     incumbentItems: db.getBenchmarkItems(incumbent.id),
     triedBefore: attemptsBefore(db, slot, runId),
     ...(opts.maxCostRatio !== undefined ? { maxCostRatio: opts.maxCostRatio } : {}),
+    challengerGroup,
+    incumbentGroup,
   });
-  return { kind: "contest", challenger, incumbent, def, evaluation };
+  if (split === "selection" && replicated < minimum) {
+    evaluation.reasons.push(
+      `not replicated — ${replicated} replicate(s); a promotion needs at least ${minimum}`,
+    );
+    evaluation.ok = false;
+  }
+  return {
+    kind: "contest",
+    challenger,
+    incumbent,
+    def,
+    evaluation,
+    replicates: {
+      challenger: replicated,
+      incumbent: incumbentGroup.replicates.length,
+      minimum,
+    },
+  };
 }

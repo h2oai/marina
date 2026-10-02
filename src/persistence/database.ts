@@ -2291,6 +2291,10 @@ export class MarinaDB implements MarinaStores {
     return benchmarksDb.recordBenchmarkLedgerRun(this.db, run, items);
   }
 
+  setBenchmarkReplicateGroup(runIds: readonly string[], group: string): number {
+    return benchmarksDb.setBenchmarkReplicateGroup(this.db, runIds, group);
+  }
+
   getBenchmarkItems(runId: string): BenchmarkItemRow[] {
     return benchmarksDb.getBenchmarkItems(this.reader, runId);
   }

@@ -25,6 +25,13 @@
  * judged by `marina/default` so no crew grades its own answers and every crew in
  * a sweep shares one judge.
  *
+ * `--replicates N` runs the whole preset N times on the same items and judge
+ * (`--replicate-concurrency C` runs up to C replicates at once). Each replicate
+ * writes its own `rep-<i>/` directory, every filed run carries one replicate
+ * group (`--group`, else a fresh `rep:<label>:<time>` key), and the closing
+ * summary adds the pooled view per set (`replicate-stats.ts`): mean accuracy
+ * over replicates, between-run SD and per-item agreement.
+ *
  * Keys never go on the harness command line: the child gets MARINA_BENCH_API_KEY.
  * `marina:` targets use --api-key or MARINA_BENCH_API_KEY; `openrouter/` targets
  * use OPENROUTER_API_KEY. Compare two Tier-0 directories with
@@ -34,6 +41,13 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import {
+  defaultReplicateGroup,
+  formatPooled,
+  parseReplicates,
+  poolResults,
+  validGroupKey,
+} from "./replicates";
 import { wilsonInterval } from "./stats";
 import type { BenchmarkResult } from "./types";
 import { formatUsd, totalCostUsd } from "./usage";
@@ -170,6 +184,8 @@ export function tier0HarnessArgs(
     judgeEndpoint?: string;
     timeoutMs?: number;
     filing?: Tier0Filing;
+    /** Replicate group every filed run of this invocation shares. */
+    group?: string;
   },
 ): string[] {
   const args = [
@@ -206,6 +222,7 @@ export function tier0HarnessArgs(
       "--label",
       opts.filing.label,
     );
+    if (opts.group) args.push("--group", opts.group);
   }
   return args;
 }
@@ -288,6 +305,35 @@ export function formatTier0Summary(target: Tier0Target, sets: Tier0SetSummary[])
   return lines.join("\n");
 }
 
+/** Pool each set over the replicates that completed it (reads each replicate's result file). */
+export function pooledSets(
+  sets: readonly Tier0Set[],
+  perReplicate: readonly Tier0SetSummary[][],
+): {
+  benchmark: string;
+  replicates: number;
+  pooled: ReturnType<typeof poolResults>;
+  text: string;
+}[] {
+  return sets.flatMap((set) => {
+    const results = perReplicate.flatMap((reps) => {
+      const s = reps.find((x) => x.benchmark === set.benchmark && x.status === "completed");
+      if (!s?.file || !existsSync(s.file)) return [];
+      return [JSON.parse(readFileSync(s.file, "utf-8")) as BenchmarkResult];
+    });
+    if (results.length === 0) return [];
+    const pooled = poolResults(results);
+    return [
+      {
+        benchmark: set.benchmark,
+        replicates: results.length,
+        pooled,
+        text: formatPooled(set.benchmark, pooled),
+      },
+    ];
+  });
+}
+
 async function main(): Promise<void> {
   const { values } = parseArgs({
     args: process.argv.slice(2),
@@ -310,12 +356,15 @@ async function main(): Promise<void> {
       "target-kind": { type: "string" },
       target: { type: "string" },
       label: { type: "string" },
+      replicates: { type: "string" },
+      "replicate-concurrency": { type: "string" },
+      group: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });
   if (values.help || !values.endpoint) {
     console.log(
-      "usage: bun run bench:tier0 --endpoint <marina:<crew> | openrouter/<vendor>/<model> | URL> [--model id] [--base url] [--seed 42] [--concurrency 5] [--hle 40] [--gpqa 40] [--frames 20] [--judge-model id] [--judge-endpoint url] [--timeout ms] [--out-dir dir] [--file-to url | --no-file] [--target-kind k] [--target json|id] [--label text]",
+      "usage: bun run bench:tier0 --endpoint <marina:<crew> | openrouter/<vendor>/<model> | URL> [--model id] [--base url] [--seed 42] [--concurrency 5] [--hle 40] [--gpqa 40] [--frames 20] [--judge-model id] [--judge-endpoint url] [--timeout ms] [--out-dir dir] [--file-to url | --no-file] [--target-kind k] [--target json|id] [--label text] [--replicates N] [--replicate-concurrency C] [--group key]",
     );
     process.exit(values.help ? 0 : 1);
   }
@@ -344,51 +393,109 @@ async function main(): Promise<void> {
   });
   if (filing) console.log(`[tier0] filing each set into the ledger at ${filing.fileTo}`);
 
-  const summaries: Tier0SetSummary[] = [];
-  for (const set of sets) {
-    const file = join(outDir, `${set.benchmark}.json`);
-    console.log(`\n[tier0] ${set.benchmark} — ${set.limit} items, seed ${seed}`);
-    const env: Record<string, string> = {};
-    for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
-    env.MARINA_BENCH_RESULT_FILE = file;
-    if (target.apiKey) env.MARINA_BENCH_API_KEY = target.apiKey;
-    const proc = Bun.spawn(
-      [
-        "bun",
-        ...tier0HarnessArgs(set, target, {
-          seed,
-          concurrency,
-          judgeModel: values["judge-model"],
-          judgeEndpoint: values["judge-endpoint"],
-          timeoutMs: int(values.timeout),
-          filing,
-        }),
-      ],
-      { env, stdout: "inherit", stderr: "pipe" },
-    );
-    const code = await proc.exited;
-    const stderr = await new Response(proc.stderr).text();
-    if (stderr) process.stderr.write(stderr);
-    if (code !== 0 || !existsSync(file)) {
-      const reason = failureReason(stderr) ?? `exit ${code}`;
-      summaries.push({ benchmark: set.benchmark, status: "failed", error: reason });
-      continue;
-    }
-    const result = JSON.parse(readFileSync(file, "utf-8")) as BenchmarkResult;
-    summaries.push(summarizeSet(set.benchmark, file, result));
+  const replicates = parseReplicates(values.replicates);
+  const replicateConcurrency = Math.max(
+    1,
+    Math.min(replicates, int(values["replicate-concurrency"]) ?? 1),
+  );
+  if (values.group !== undefined && !validGroupKey(values.group)) {
+    throw new Error("--group must be a short label (letters, digits, : . _ @ / -; never auto:…)");
   }
+  const group =
+    values.group ?? (replicates > 1 ? defaultReplicateGroup(target.label, Date.now()) : undefined);
+  if (replicates > 1) {
+    console.log(
+      `[tier0] ${replicates} replicates (${replicateConcurrency} at a time)${group ? `, group ${group}` : ""}`,
+    );
+  }
+
+  const runReplicate = async (rep: number): Promise<Tier0SetSummary[]> => {
+    const repDir = replicates > 1 ? join(outDir, `rep-${rep}`) : outDir;
+    if (!existsSync(repDir)) mkdirSync(repDir, { recursive: true });
+    const summaries: Tier0SetSummary[] = [];
+    for (const set of sets) {
+      const file = join(repDir, `${set.benchmark}.json`);
+      console.log(
+        `\n[tier0] ${set.benchmark} — ${set.limit} items, seed ${seed}${replicates > 1 ? ` (replicate ${rep}/${replicates})` : ""}`,
+      );
+      const env: Record<string, string> = {};
+      for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
+      env.MARINA_BENCH_RESULT_FILE = file;
+      if (target.apiKey) env.MARINA_BENCH_API_KEY = target.apiKey;
+      const proc = Bun.spawn(
+        [
+          "bun",
+          ...tier0HarnessArgs(set, target, {
+            seed,
+            concurrency,
+            judgeModel: values["judge-model"],
+            judgeEndpoint: values["judge-endpoint"],
+            timeoutMs: int(values.timeout),
+            filing,
+            ...(group ? { group } : {}),
+          }),
+        ],
+        { env, stdout: "inherit", stderr: "pipe" },
+      );
+      const code = await proc.exited;
+      const stderr = await new Response(proc.stderr).text();
+      if (stderr) process.stderr.write(stderr);
+      if (code !== 0 || !existsSync(file)) {
+        const reason = failureReason(stderr) ?? `exit ${code}`;
+        summaries.push({ benchmark: set.benchmark, status: "failed", error: reason });
+        continue;
+      }
+      const result = JSON.parse(readFileSync(file, "utf-8")) as BenchmarkResult;
+      summaries.push(summarizeSet(set.benchmark, file, result));
+    }
+    return summaries;
+  };
+
+  const perReplicate: Tier0SetSummary[][] = new Array(replicates);
+  for (let start = 1; start <= replicates; start += replicateConcurrency) {
+    const batch: Promise<void>[] = [];
+    for (let rep = start; rep < start + replicateConcurrency && rep <= replicates; rep++) {
+      batch.push(
+        runReplicate(rep).then((s) => {
+          perReplicate[rep - 1] = s;
+        }),
+      );
+    }
+    await Promise.all(batch);
+  }
+  const summaries = perReplicate[0] ?? [];
+  const pooled = replicates > 1 ? pooledSets(sets, perReplicate) : [];
 
   writeFileSync(
     join(outDir, "summary.json"),
     JSON.stringify(
-      { target: { endpoint: target.endpoint, model: target.model }, seed, sets: summaries },
+      {
+        target: { endpoint: target.endpoint, model: target.model },
+        seed,
+        sets: summaries,
+        ...(replicates > 1
+          ? {
+              group,
+              replicates: perReplicate.map((sets, i) => ({ replicate: i + 1, sets })),
+              pooled,
+            }
+          : {}),
+      },
       null,
       2,
     ),
   );
-  console.log(`\n${formatTier0Summary(target, summaries)}`);
+  if (replicates > 1) {
+    perReplicate.forEach((s, i) => {
+      console.log(`\n[replicate ${i + 1}/${replicates}]\n${formatTier0Summary(target, s)}`);
+    });
+    console.log(`\nPooled over ${replicates} replicates${group ? ` (group ${group})` : ""}:`);
+    for (const p of pooled) console.log(p.text);
+  } else {
+    console.log(`\n${formatTier0Summary(target, summaries)}`);
+  }
   console.log(`\n  Results: ${outDir}`);
-  if (summaries.some((s) => s.status === "failed")) process.exit(1);
+  if (perReplicate.flat().some((s) => s.status === "failed")) process.exit(1);
 }
 
 if (import.meta.main) {

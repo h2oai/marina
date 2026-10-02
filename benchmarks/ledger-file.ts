@@ -26,6 +26,8 @@ export interface LedgerFileOptions {
   label?: string;
   judge?: string;
   costUsd?: number;
+  /** Replicate group key — replicates of one configuration share it. */
+  replicateGroup?: string;
 }
 
 /** The request body: the result stripped to what the ledger stores. */
@@ -37,6 +39,7 @@ export function ledgerFileBody(result: BenchmarkResult, opts: LedgerFileOptions)
     ...(opts.label ? { label: opts.label } : {}),
     ...(opts.judge ? { judge: opts.judge } : {}),
     ...(typeof opts.costUsd === "number" ? { costUsd: opts.costUsd } : {}),
+    ...(opts.replicateGroup ? { replicateGroup: opts.replicateGroup } : {}),
     result: {
       config: safe.config,
       timestamp: safe.timestamp,
@@ -61,6 +64,7 @@ export interface LedgerFileOutcome {
   runId?: string;
   created?: boolean;
   attribution?: Record<string, number>;
+  replicateGroup?: string | null;
   error?: string;
 }
 
@@ -97,6 +101,7 @@ export async function fileToLedger(
       ...(body.attribution && typeof body.attribution === "object"
         ? { attribution: body.attribution as Record<string, number> }
         : {}),
+      ...(typeof body.replicateGroup === "string" ? { replicateGroup: body.replicateGroup } : {}),
     };
   } catch (e) {
     return { ok: false, status: 0, error: e instanceof Error ? e.message : String(e) };

@@ -92,6 +92,18 @@ bun run bench:tier0 --endpoint http://host:port --model <id>  # any OpenAI-compa
     request's window; it is `shared`, and its cost is not charged, when another request to
     the crew overlapped. Run crews at `--concurrency 1` for exclusive windows.
   - **Failure:** a filing failure is printed and never fails the run.
+- **Replicates.** `--replicates N` runs the whole preset N times on the same items and judge
+  (`--replicate-concurrency C` at once).
+  - Each replicate writes `rep-<i>/`.
+  - Every filed run carries one replicate group (`--group <key>`, else a fresh
+    `rep:<label>:<time>`).
+  - The summary adds the pooled view per set: mean accuracy over replicates, each run's
+    accuracy, between-run SD, and unanimous and pairwise agreement.
+  - In-world, `benchmark compare` pools the groups with a two-stage bootstrap (runs, then
+    items), and `benchmark promote` needs replicates (`MARINA_PROMOTION_MIN_REPLICATES`,
+    default 2).
+  - `harness.ts` takes the same `--replicates` / `--group`; each run writes
+    `<file>.rep<i>.json`.
 - **Failure.** A set that cannot run (for example GPQA without `HF_TOKEN`) is reported as
   `FAILED` with the reason; the other sets still run and the exit code is 1.
 - **Cost.** Each item records the usage its endpoint reported: tokens from `usage`, dollars

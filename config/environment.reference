@@ -645,6 +645,9 @@
 # MARINA_ROUTE_EVIDENCE_OBJECTIVE=lcb
 # MARINA_ROUTE_EVIDENCE_TOLERANCE=0.05
 
+# Replicates a challenger needs before `benchmark promote` reads a slot's holdout (src/engine/benchmark-promotion.ts). A replicate is another ledger run of the same target on the same items with the same judge (one replicate group). With replicates on either side, the paired interval is a two-stage bootstrap (runs, then items), so run-to-run variance counts against the gain. An integer from 1 to 100; 1 restores single-run promotion. Anything else is the default.
+# MARINA_PROMOTION_MIN_REPLICATES=2
+
 # ── Forecasting ──────────────────────────────────────────────────────────────
 
 # `forecast`, `bun run forecast` and POST /v1/forecast (docs/guides/forecasting.md). The defaults need OPENROUTER_API_KEY. Analysts are a comma list of models (defaults: DeepSeek V4 Pro, Claude Sonnet 5 and GPT-6 Luna via OpenRouter); the retriever defaults to OpenRouter web search on GPT-6 Luna; the judge is jev, decisions (the MARINA_DECISIONS backend, falling back to jev) or none.

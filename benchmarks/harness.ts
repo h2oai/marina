@@ -37,6 +37,14 @@ import {
 import { fileToLedger, type LedgerTargetKind, parseTarget } from "./ledger-file";
 import { runRetentionTask, runRetentionTaskPassthrough } from "./modes/memory";
 import { inPartition, parsePartition } from "./partition";
+import {
+  defaultReplicateGroup,
+  formatPooled,
+  parseReplicates,
+  poolResults,
+  replicateFilePath,
+  validGroupKey,
+} from "./replicates";
 import { resultForDisk } from "./result-file";
 import { computeAccuracy, computeJudgeScore } from "./scoring/accuracy";
 import { computePassAtK } from "./scoring/pass-at-k";
@@ -263,6 +271,8 @@ function parseCliArgs() {
       "target-kind": { type: "string" },
       target: { type: "string" },
       label: { type: "string" },
+      group: { type: "string" },
+      replicates: { type: "string" },
       list: { type: "boolean" },
       results: { type: "boolean" },
       help: { type: "boolean", short: "h" },
@@ -294,6 +304,8 @@ function parseCliArgs() {
     "target-kind": str("target-kind"),
     target: str("target"),
     label: str("label"),
+    group: str("group"),
+    replicates: str("replicates"),
     list: values.list === true,
     results: values.results === true,
     help: values.help === true,
@@ -395,10 +407,13 @@ function printComparison(baseline: BenchmarkResult, memory: BenchmarkResult): vo
 
 const RESULTS_DIR = join(import.meta.dir, "results");
 
-function saveResult(result: BenchmarkResult): string {
+function saveResult(result: BenchmarkResult, replicate?: { rep: number; total: number }): string {
   // MARINA_BENCH_RESULT_FILE: the in-world runner names each run's file, so
-  // concurrent runs never read each other's results.
-  const explicit = process.env.MARINA_BENCH_RESULT_FILE;
+  // concurrent runs never read each other's results. Replicates of one
+  // invocation each keep their own file (`<file>.rep<i>.json`).
+  const named = process.env.MARINA_BENCH_RESULT_FILE;
+  const explicit =
+    named && replicate ? replicateFilePath(named, replicate.rep, replicate.total) : named;
   if (explicit) mkdirSync(dirname(explicit), { recursive: true });
   else if (!existsSync(RESULTS_DIR)) mkdirSync(RESULTS_DIR, { recursive: true });
   const filename = `${result.config.dataset}-${result.config.mode}-${result.timestamp}.json`;
@@ -633,6 +648,11 @@ Options:
       --target-kind <k>     Ledger target kind: model | crew | population (default: model)
       --target <json|id>    Ledger target (default: --model)
       --label <text>        Ledger label for the run
+      --replicates <n>      Run the same target n times on the same items and judge
+                            (each run keeps its own result file and is filed into one
+                            replicate group); prints the pooled summary
+      --group <key>         Ledger replicate group for the run(s) (default with
+                            --replicates > 1: a fresh rep:<label>:<time> key)
       --list                List available benchmarks
       --results             Show past results
   -h, --help                Show this help
@@ -655,6 +675,22 @@ Options:
   if (args.results) {
     listResults();
     return;
+  }
+
+  let replicates: number;
+  try {
+    replicates = parseReplicates(args.replicates);
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(2);
+  }
+  if (args.group !== undefined && !validGroupKey(args.group)) {
+    console.error("--group must be a short label (letters, digits, : . _ @ / -; never auto:…)");
+    process.exit(2);
+  }
+  if (replicates > 1 && args.compare) {
+    console.error("--replicates and --compare cannot be combined; run each mode with --replicates");
+    process.exit(2);
   }
 
   const benchmarkName = args.benchmark;
@@ -719,88 +755,108 @@ Options:
 
   console.log(`  Loaded ${items.length} items`);
 
-  // Run benchmark
-  console.log("\n  Running...");
-  const startTime = performance.now();
+  const replicateGroup =
+    args.group ??
+    (replicates > 1
+      ? defaultReplicateGroup(args.label ?? `${benchDef.dataset}-${config.model}`, Date.now())
+      : undefined);
+  const replicateResults: BenchmarkResult[] = [];
+  let result!: BenchmarkResult;
+  let startTime = 0;
+  let duration_ms = 0;
+  for (let rep = 1; rep <= replicates; rep++) {
+    // Run benchmark
+    console.log(
+      replicates > 1 ? `\n  Running replicate ${rep}/${replicates}...` : "\n  Running...",
+    );
+    startTime = performance.now();
 
-  let resultItems: ResultItem[];
-  if (benchmarkName === "retention") {
-    resultItems = await runRetention(items, config);
-  } else {
-    resultItems = await runAdapter(items, config);
-  }
-
-  const duration_ms = performance.now() - startTime;
-
-  // Compute scores
-  const scores = computeScores(resultItems, config.scoring);
-  // Per-bucket scoring — slice by completion order to reveal any "gets better
-  // over time" effect when the responder is accumulating memory across items.
-  const BUCKET_SIZE = Number.parseInt(process.env.BENCH_BUCKET_SIZE ?? "50", 10);
-  if (resultItems.length >= BUCKET_SIZE * 2) {
-    for (let i = 0; i < resultItems.length; i += BUCKET_SIZE) {
-      const slice = resultItems.slice(i, i + BUCKET_SIZE);
-      const correct = slice.filter((x) => x.correct).length;
-      const key = `bucket_${i + 1}_${Math.min(i + BUCKET_SIZE, resultItems.length)}`;
-      scores.breakdown[key] = slice.length > 0 ? correct / slice.length : 0;
-    }
-  }
-
-  const errors = resultItems.filter((i) => i.actual.startsWith("ERROR:")).length;
-  const timeouts = resultItems.filter((i) => i.actual.includes("abort")).length;
-  const latencies = resultItems
-    .filter((i) => !i.actual.startsWith("ERROR:"))
-    .map((i) => i.latencyMs);
-  const avgLatencyMs =
-    latencies.length > 0 ? latencies.reduce((a, b) => a + b, 0) / latencies.length : 0;
-
-  const result: BenchmarkResult = {
-    config,
-    timestamp: Date.now(),
-    duration_ms,
-    scores,
-    metadata: {
-      total: items.length,
-      answered: resultItems.length - errors,
-      timeouts,
-      errors,
-      avgLatencyMs,
-      usage: summarizeUsage(resultItems),
-    },
-    items: resultItems,
-  };
-
-  // Save and print
-  const resultPath = saveResult(result);
-  printSummary(result);
-  console.log(`\n  Results saved: ${resultPath}`);
-
-  // File into a Marina's ledger (participants are resolved server-side from trace ids).
-  const fileTo = args["file-to"];
-  if (fileTo && !args["no-file"]) {
-    const kind = (args["target-kind"] ?? "model") as LedgerTargetKind;
-    const sameEndpoint = fileTo.replace(/\/+$/, "") === config.endpoint.replace(/\/+$/, "");
-    const filed = await fileToLedger(result, {
-      fileTo,
-      apiKey: process.env.MARINA_LEDGER_API_KEY ?? (sameEndpoint ? config.apiKey : undefined),
-      targetKind: kind,
-      target: args.target !== undefined ? parseTarget(args.target) : config.model,
-      ...(args.label ? { label: args.label } : {}),
-      ...(config.judge ? { judge: `${config.judge.model} @ ${config.judge.endpoint}` } : {}),
-    });
-    if (filed.ok) {
-      const a = filed.attribution;
-      const attrib = a
-        ? Object.entries(a)
-            .map(([k, v]) => `${k} ${v}`)
-            .join(", ")
-        : "n/a";
-      console.log(
-        `  Ledger: ${filed.created === false ? "already filed as" : "filed"} ${filed.runId} @ ${fileTo} (participants: ${attrib})`,
-      );
+    let resultItems: ResultItem[];
+    if (benchmarkName === "retention") {
+      resultItems = await runRetention(items, config);
     } else {
-      console.log(`  Ledger: filing failed (${filed.status}): ${filed.error}`);
+      resultItems = await runAdapter(items, config);
     }
+
+    duration_ms = performance.now() - startTime;
+
+    // Compute scores
+    const scores = computeScores(resultItems, config.scoring);
+    // Per-bucket scoring — slice by completion order to reveal any "gets better
+    // over time" effect when the responder is accumulating memory across items.
+    const BUCKET_SIZE = Number.parseInt(process.env.BENCH_BUCKET_SIZE ?? "50", 10);
+    if (resultItems.length >= BUCKET_SIZE * 2) {
+      for (let i = 0; i < resultItems.length; i += BUCKET_SIZE) {
+        const slice = resultItems.slice(i, i + BUCKET_SIZE);
+        const correct = slice.filter((x) => x.correct).length;
+        const key = `bucket_${i + 1}_${Math.min(i + BUCKET_SIZE, resultItems.length)}`;
+        scores.breakdown[key] = slice.length > 0 ? correct / slice.length : 0;
+      }
+    }
+
+    const errors = resultItems.filter((i) => i.actual.startsWith("ERROR:")).length;
+    const timeouts = resultItems.filter((i) => i.actual.includes("abort")).length;
+    const latencies = resultItems
+      .filter((i) => !i.actual.startsWith("ERROR:"))
+      .map((i) => i.latencyMs);
+    const avgLatencyMs =
+      latencies.length > 0 ? latencies.reduce((a, b) => a + b, 0) / latencies.length : 0;
+
+    result = {
+      config,
+      timestamp: Date.now(),
+      duration_ms,
+      scores,
+      metadata: {
+        total: items.length,
+        answered: resultItems.length - errors,
+        timeouts,
+        errors,
+        avgLatencyMs,
+        usage: summarizeUsage(resultItems),
+      },
+      items: resultItems,
+    };
+
+    // Save and print
+    replicateResults.push(result);
+    const resultPath = saveResult(result, replicates > 1 ? { rep, total: replicates } : undefined);
+    printSummary(result);
+    console.log(`\n  Results saved: ${resultPath}`);
+
+    // File into a Marina's ledger (participants are resolved server-side from trace ids).
+    const fileTo = args["file-to"];
+    if (fileTo && !args["no-file"]) {
+      const kind = (args["target-kind"] ?? "model") as LedgerTargetKind;
+      const sameEndpoint = fileTo.replace(/\/+$/, "") === config.endpoint.replace(/\/+$/, "");
+      const filed = await fileToLedger(result, {
+        fileTo,
+        apiKey: process.env.MARINA_LEDGER_API_KEY ?? (sameEndpoint ? config.apiKey : undefined),
+        targetKind: kind,
+        target: args.target !== undefined ? parseTarget(args.target) : config.model,
+        ...(args.label ? { label: args.label } : {}),
+        ...(config.judge ? { judge: `${config.judge.model} @ ${config.judge.endpoint}` } : {}),
+        ...(replicateGroup ? { replicateGroup } : {}),
+      });
+      if (filed.ok) {
+        const a = filed.attribution;
+        const attrib = a
+          ? Object.entries(a)
+              .map(([k, v]) => `${k} ${v}`)
+              .join(", ")
+          : "n/a";
+        console.log(
+          `  Ledger: ${filed.created === false ? "already filed as" : "filed"} ${filed.runId} @ ${fileTo} (participants: ${attrib})${filed.replicateGroup ? ` group ${filed.replicateGroup}` : ""}`,
+        );
+      } else {
+        console.log(`  Ledger: filing failed (${filed.status}): ${filed.error}`);
+      }
+    }
+  }
+
+  if (replicates > 1) {
+    console.log(`\n  Replicates${replicateGroup ? ` (group ${replicateGroup})` : ""}:`);
+    console.log(formatPooled(benchDef.dataset, poolResults(replicateResults)));
   }
 
   // Comparison mode

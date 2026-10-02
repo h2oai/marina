@@ -50,14 +50,31 @@ A default configuration — a crew formation, a per-agent model map, a world's c
   - Evidence that touches a selection item is refused.
 - **Rule:** the challenger and incumbent must have the same benchmark, the same recorded judge and the same item slice.
   - At least 20 paired holdout items.
-  - The paired 95 % interval (Agresti–Min) on the accuracy difference lies above zero.
+  - The paired 95 % interval on the accuracy difference lies above zero: Agresti–Min for single runs, the two-stage bootstrap over replicates (below) otherwise.
   - The difference clears `promotionMargin(tried)` — the fishing margin `evolve replicate` and arena signal discovery share — where `tried` counts earlier attempts on the slot, each of which read the holdout.
   - Optional `--max-cost-ratio`.
 - **Who:**
   - Promotion takes `role.edit` through `checkRoleEdit`, since a default changes every agent that runs on it. A refusal raises a challenge.
   - The author of the challenger run can never promote it; the check compares durable account keys.
   - The first incumbent seeds an empty slot.
+- **Replicated:** the challenger's replicate group (below) must hold at least `MARINA_PROMOTION_MIN_REPLICATES` runs (default 2) — seeding included.
+  - The check runs BEFORE the holdout is read, so an unreplicated attempt neither sees the holdout nor counts as a try.
+  - With replicates on either side, the interval is the two-stage bootstrap on pooled per-item outcomes, not Agresti–Min. A challenger in the incumbent's own group is refused.
 - **Consumers:** `getPromotedDefault(db, slot)`. The showcase world reads slot `showcase:crew`'s `model` for its crew when `MARINA_CREW_MODEL` is unset; environment variables always win.
+
+## Replicate groups (migration 148)
+Identical runs differ: two runs of one crew on the same 200 items can disagree on a dozen. So one run — and one McNemar p-value — is a single draw. `benchmark_runs.replicate_group` lets repeated runs of ONE configuration pool (`src/engine/benchmark-replicates.ts`; statistics in `benchmarks/replicate-stats.ts`).
+- **Membership:**
+  - A run belongs to the group it names. It gets one from `--group` on the harness and import, `replicateGroup` on `POST /v1/benchmarks/runs`, or `--replicate-of <run>`; `bun run benchmark:import --regroup <ids> --group <key>` moves recorded runs.
+  - A run that names none belongs to the automatic group of its benchmark, target (canonical JSON), item slice and judge. A run with no target or slice is its own group.
+  - Groups never cross benchmarks. Members whose target, slice or judge differ are flagged.
+- **Pooled view:**
+  - Each item's score is the mean of its replicates' outcomes, and pooled accuracy is the mean over items. Only items in every replicate are used. A majority-vote figure is shown too.
+  - Between-run variation is the SD of replicate accuracies plus per-item agreement: unanimous items, and mean pairwise agreement.
+- **Comparison:** a two-stage (cluster) bootstrap resamples each group's runs, then items, giving a percentile interval and a two-sided p on the pooled difference. Resampling runs puts run-level variance — a degraded crew, a provider's bad patch — inside the interval.
+  - Every replicate pair's exact McNemar p is listed, to show how far one draw can swing.
+  - A side with one replicate is flagged "not replicated".
+- **Surface:** `benchmark compare` adds the pooled section, `benchmark leaderboard` lists replicate groups pooled, and `benchmark replicates <run>` shows one group.
 
 ## Durable keys
 - **Durable keys, second pass (migration 117)**: `group_members`, `channel_members`, `board_votes`, `task_votes`, `flywheel_bindings`, `coding_projects`, `coding_services` are rekeyed to `users.id`; `MarinaDB` delegates resolve `durableEntityKey()` on write and project back to the LIVE entity id on read (`liveEntityIdSql`), so callers keep passing entity ids. `getFlywheelBinding(entityId)` replaces the linear scan; `saveEntity` re-keys task claims by name on first persist of a new id. Migrations 118 and 119 closed the remaining transient columns (see below). `approveSubmission`, `deleteNote`, and `deleteUser` (account erasure, below) are transactional.
