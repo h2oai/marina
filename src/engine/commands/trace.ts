@@ -9,11 +9,13 @@ import type { OtlpExporterStatus } from "../../telemetry/otlp-exporter";
 import type { CommandDef, EngineEvent, RoomContext } from "../../types";
 import {
   collectEvidence,
+  DEFAULT_ROUTE_EVIDENCE_TOLERANCE,
   type EvidenceCandidate,
   type EvidenceEntry,
   loadEvidenceItems,
-  pickByEvidence,
+  pickWithRoleFallback,
   poolFamilies,
+  roleLookup,
   routeEvidenceSettingsFromEnv,
 } from "../benchmark-evidence";
 import {
@@ -46,7 +48,7 @@ const HELP = `Inspect recent execution traces (read-only).
   trace dataset [limit] — replayable structural evaluation cases
   trace dataset verify [limit] — replay an exported dataset copy, report schema + drift
   trace advise <models|routes|autonomous|tools> [limit] — read-only shadow selection advice
-  trace advise evidence <benchmark[,benchmark]> [min-n] — measured benchmark evidence per model/agent
+  trace advise evidence <benchmark[,benchmark]> [min-n] [role:<role>] — measured benchmark evidence per model/agent
   trace choose <models|routes|autonomous|tools> <eligible...> — select only inside an explicit set
   trace otel            — OTLP collector delivery status (no credentials)
   trace show <id>       — causal request/turn/tool spans
@@ -74,7 +76,7 @@ export function traceCommand(deps: {
     usage: [
       "trace [list] [limit]",
       "trace advise <models|routes|autonomous|tools> [limit]",
-      "trace advise evidence <benchmark[,benchmark]> [min-n]",
+      "trace advise evidence <benchmark[,benchmark]> [min-n] [role:<role>]",
       "trace choose <models|routes|autonomous|tools> <eligible-candidate...>",
       "trace choose <models|routes|autonomous|tools> <eligible...>",
       "trace compare <models|routes> [limit]",
@@ -205,7 +207,7 @@ export function traceCommand(deps: {
       }
 
       if (sub === "advise" && input.tokens[1]?.toLowerCase() === "evidence") {
-        sendEvidence(ctx, input.entity, deps.db, input.tokens[2], input.tokens[3]);
+        sendEvidence(ctx, input.entity, deps.db, input.tokens[2], input.tokens.slice(3));
         return;
       }
 
@@ -305,14 +307,15 @@ function sendEvidence(
   entityId: Parameters<RoomContext["send"]>[0],
   db: MarinaDB | undefined,
   rawFamilies: string | undefined,
-  rawMinN: string | undefined,
+  rest: readonly string[],
 ): void {
+  const usage = "Usage: trace advise evidence <benchmark[,benchmark]> [min-n] [role:<role>]";
   const families = (rawFamilies ?? "")
     .split(",")
     .map((f) => f.trim())
     .filter(Boolean);
   if (families.length === 0) {
-    ctx.send(entityId, "Usage: trace advise evidence <benchmark[,benchmark]> [min-n]");
+    ctx.send(entityId, usage);
     return;
   }
   if (!db) {
@@ -320,17 +323,29 @@ function sendEvidence(
     return;
   }
   const settings = routeEvidenceSettingsFromEnv();
-  const minN =
-    Number.parseInt(rawMinN ?? "", 10) > 0 ? Number.parseInt(rawMinN!, 10) : settings.minN;
-  const entries = poolFamilies(
-    collectEvidence(loadEvidenceItems(db, families), { includeWindow: settings.includeWindow }),
-  );
+  let minN = settings.minN;
+  let role: string | undefined;
+  for (const tok of rest) {
+    const m = /^role[:=](.+)$/i.exec(tok);
+    if (m) role = m[1]!.trim() || undefined;
+    else if (Number.parseInt(tok, 10) > 0) minN = Number.parseInt(tok, 10);
+  }
+  const items = loadEvidenceItems(db, families);
+  const entries = poolFamilies(collectEvidence(items, { includeWindow: settings.includeWindow }));
   const row = (e: EvidenceEntry) =>
     `  ${e.name.padEnd(36)} ${`${(e.accuracy * 100).toFixed(1)}%`.padStart(6)} [${(e.ciLow * 100).toFixed(1)}–${(e.ciHigh * 100).toFixed(1)}]  n=${String(e.n).padEnd(4)} ${e.costPerItemUsd === null ? "unpriced" : `$${e.costPerItemUsd.toFixed(4)}/item`}  ${e.n < minN ? "(below min-n)" : ""}`.trimEnd();
+  const objective = settings.objective ?? "lcb";
+  const objectiveLine =
+    objective === "value"
+      ? `value — cheapest not measurably worse than the best lower bound (tolerance ${settings.tolerance ?? DEFAULT_ROUTE_EVIDENCE_TOLERANCE}; paired McNemar when ≥ min-n shared items, else interval overlap)`
+      : objective === "budget"
+        ? `budget — best lower bound within ${settings.maxCostPerItemUsd === undefined ? "(no MARINA_ROUTE_EVIDENCE_MAX_COST_USD set)" : `$${settings.maxCostPerItemUsd}/item`}`
+        : "lcb — best Wilson lower bound";
   const lines = [
     header(`Benchmark Evidence: ${families.join(" + ")}`),
     separator(),
     `  routing evidence: ${settings.mode} (MARINA_ROUTE_EVIDENCE) · min-n ${minN} · window evidence ${settings.includeWindow ? "on" : "off"} · shared never counted`,
+    `  objective: ${objectiveLine}${settings.maxCostPerItemUsd !== undefined && objective !== "budget" ? ` · budget $${settings.maxCostPerItemUsd}/item` : ""}`,
   ];
   if (entries.length === 0) {
     lines.push("  No attributed item outcomes for these benchmarks.");
@@ -358,9 +373,19 @@ function sendEvidence(
     candidates = undefined;
   }
   if (candidates) {
-    const pick = pickByEvidence(candidates, entries, { ...settings, minN });
+    const pick = pickWithRoleFallback(
+      candidates,
+      items,
+      { ...settings, minN },
+      role,
+      role ? roleLookup(db) : undefined,
+    );
     lines.push(
-      `  model:route candidates: ${pick.pick ? `${pick.pick.route} → ${pick.pick.model}` : "no evidence pick"} — ${pick.reason}`,
+      `  model:route candidates (${pick.level} level${role ? `, role ${role}` : ""}): ${pick.pick ? `${pick.pick.route} → ${pick.pick.model}` : "no evidence pick"} — ${pick.reason}`,
+      ...pick.considered.map(
+        (c) =>
+          `    ${c.route.padEnd(12)} n=${String(c.n).padEnd(4)} ${c.ciLow === undefined ? "" : `LCB ${c.ciLow.toFixed(3)} `}${typeof c.costPerItemUsd === "number" ? `$${c.costPerItemUsd.toFixed(4)}/item ` : ""}— ${c.why}`,
+      ),
     );
   }
   lines.push(
