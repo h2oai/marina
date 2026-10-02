@@ -1262,6 +1262,7 @@ Examples:
   calc derivative('sin(x)', 'x')
 
 Statements run in order, sharing a scope. Separate with ; or newline.
+Each evaluation is bounded to 10 s; an expression that takes longer returns an error.
 
 Category: System. Minimum rank: 0.
 Aliases: none.
