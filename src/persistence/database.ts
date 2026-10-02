@@ -226,9 +226,12 @@ import { BASE_SCHEMA, MIGRATIONS, SCHEMA_BASELINE, SCHEMA_VERSION } from "./sche
 export type { OperationalAlertRow } from "./db-alerts";
 export type { AssetRow } from "./db-assets";
 export type {
+  BenchmarkDefaultRow,
   BenchmarkItemInput,
   BenchmarkItemRow,
   BenchmarkLedgerRunInput,
+  BenchmarkPromotionInput,
+  BenchmarkPromotionRow,
   BenchmarkRunRow,
   BenchmarkTargetKind,
 } from "./db-benchmarks";
@@ -286,9 +289,12 @@ export { MIGRATIONS } from "./schema";
 import type { OperationalAlertRow } from "./db-alerts";
 import type { AssetRow } from "./db-assets";
 import type {
+  BenchmarkDefaultRow,
   BenchmarkItemInput,
   BenchmarkItemRow,
   BenchmarkLedgerRunInput,
+  BenchmarkPromotionInput,
+  BenchmarkPromotionRow,
   BenchmarkRunRow,
 } from "./db-benchmarks";
 import type {
@@ -2287,6 +2293,22 @@ export class MarinaDB implements MarinaStores {
 
   getBenchmarkItemsForBenchmark(benchmark: string, limit = 20_000): BenchmarkItemRow[] {
     return benchmarksDb.getBenchmarkItemsForBenchmark(this.reader, benchmark, limit);
+  }
+
+  getBenchmarkDefault(slot: string): BenchmarkDefaultRow | undefined {
+    return benchmarksDb.getBenchmarkDefault(this.reader, slot);
+  }
+
+  listBenchmarkDefaults(): BenchmarkDefaultRow[] {
+    return benchmarksDb.listBenchmarkDefaults(this.reader);
+  }
+
+  listBenchmarkPromotions(slot: string): BenchmarkPromotionRow[] {
+    return benchmarksDb.listBenchmarkPromotions(this.reader, slot);
+  }
+
+  recordBenchmarkPromotion(row: BenchmarkPromotionInput): number {
+    return benchmarksDb.recordBenchmarkPromotion(this.db, row);
   }
 
   traceNoteGraph(

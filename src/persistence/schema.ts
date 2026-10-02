@@ -247,6 +247,39 @@ CREATE TRIGGER benchmark_items_no_update BEFORE UPDATE ON benchmark_items
 BEGIN SELECT RAISE(ABORT, 'benchmark_items is append-only'); END;
 `,
   },
+  // Earned promotion of defaults (src/engine/benchmark-promotion.ts): one row
+  // per named slot holds the current incumbent; every seed, promotion and
+  // refused attempt is an append-only history row with its evidence. The
+  // holdout fraction is fixed per slot once set — moving it would move items
+  // between the selection and holdout splits.
+  {
+    version: 147,
+    sql: `
+CREATE TABLE benchmark_defaults (
+  slot TEXT PRIMARY KEY,
+  value_json TEXT NOT NULL,
+  incumbent_run_id TEXT,
+  holdout_fraction REAL NOT NULL DEFAULT 0.5 CHECK (holdout_fraction > 0 AND holdout_fraction < 1),
+  updated_at INTEGER NOT NULL,
+  updated_by TEXT
+);
+CREATE TABLE benchmark_promotions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  slot TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('seeded', 'promoted', 'refused')),
+  challenger_run_id TEXT,
+  incumbent_run_id TEXT,
+  value_json TEXT,
+  actor TEXT,
+  stats_json TEXT,
+  reason TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_benchmark_promotions_slot ON benchmark_promotions(slot, id);
+CREATE TRIGGER benchmark_promotions_no_update BEFORE UPDATE ON benchmark_promotions
+BEGIN SELECT RAISE(ABORT, 'benchmark_promotions is append-only'); END;
+`,
+  },
 ];
 
 /** Migration 143 body — self-contained so later edits to db-notes never change it. */

@@ -710,6 +710,9 @@ real tokens); everything else is rank 0. Runs call this instance's own `/v1` wit
 | `benchmark compare <runA> <runB>` | Paired on the items both answered: each run's accuracy and interval, exact McNemar p, $/item and its delta; warns when the slices or judges differ |
 | `benchmark participants <benchmark>` | Per agent and per model: items touched, accuracy on them, cost (needs participants recorded on the items) |
 | `benchmark reference [model\|benchmark]` · `benchmark orchestrations` | Published reference scores; live `marina:<name>` endpoints |
+| `benchmark defaults` | Promoted defaults: each slot's incumbent run, holdout share and promotion history counts |
+| `benchmark challenge <slot> <run>` | Dry run against the slot's incumbent on the SELECTION split only (the holdout stays unread); shows what promotion would need |
+| `benchmark promote <slot> <run> [--max-cost-ratio R] [--holdout F]` | Seed an empty slot, or replace the incumbent only if the challenger earns it on the holdout: same benchmark, judge and items; paired 95 % interval above 0; a margin that grows with every attempt. Needs `role.edit`; never the challenger's own author |
 
 A run where every item errored is recorded as `failed` with the first error, never as a 0% score.
 

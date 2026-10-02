@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { join } from "node:path";
+import { getPromotedDefault } from "../src/engine/benchmark-promotion";
 import type { MarinaDB } from "../src/persistence/database";
 import type { RoomId } from "../src/types";
 import type { WorldDefinition } from "../src/world/world-definition";
@@ -27,6 +28,9 @@ import {
   seedTraitsAndRoles,
   seedWatchingRole,
 } from "./seed";
+
+/** Promotion slot for the showcase crew's configuration (its `model` field seeds the crew). */
+export const SHOWCASE_CREW_SLOT = "showcase:crew";
 
 // ─── Guide Notes ─────────────────────────────────────────────────────────────
 
@@ -1248,7 +1252,14 @@ function seed(db: MarinaDB): void {
   // without forking the world definition. MARINA_CREW_MODEL acts as a
   // single-knob default; per-role vars (MARINA_{ANSWERER,MATH,REFLECTOR}_MODEL)
   // win for targeted overrides. Null = use seedAnswererCrew's built-in default.
-  const crewDefault = process.env.MARINA_CREW_MODEL || undefined;
+  // Below the env vars sits the EARNED default: slot `showcase:crew` in the
+  // benchmark ledger (`benchmark promote`, src/engine/benchmark-promotion.ts)
+  // holds the crew configuration that last won on held-out items; its `model`
+  // field is used only when MARINA_CREW_MODEL is unset.
+  const promoted = getPromotedDefault<{ model?: unknown }>(db, SHOWCASE_CREW_SLOT);
+  const crewDefault =
+    process.env.MARINA_CREW_MODEL ||
+    (typeof promoted?.model === "string" && promoted.model ? promoted.model : undefined);
   seedAnswererCrew(db, {
     answererCount: Number(process.env.MARINA_ANSWERER_COUNT) || 4,
     answererModel: process.env.MARINA_ANSWERER_MODEL || crewDefault,

@@ -6,7 +6,7 @@
 - Migrations: append to `FORWARD_MIGRATIONS` in `src/persistence/schema.ts` (re-exported as `MIGRATIONS` by `database.ts`), never modify existing migrations. `MARINA_DB_DURABILITY=full` (fsync per commit) is the world default; migrations 96–109 are append-only like all others.
 
 ## Row retention
-- **Row retention** (`src/engine/retention.ts`, hourly tick phase 2100, `runRetentionPass`): declarative `RETENTION_POLICIES` per table class — telemetry 7–30 d (`primitive_usage`, `feed_events`, `memory_service_events`, `coding_events`, `coding_service_probes`, `event_log` by row count), ledger 30–90 d (`direct_messages` acknowledged/expired, `cognitive_events`, `productivity_sessions`, `core_memory_history`, `media_jobs`, `memory_assistance_actions`, `memory_index_jobs` settled states only), audit 365 d (`witness_attestations`, `trace_judgments`, `note_verifications`, `evidence_receipts`, `association_events`), `shell_log` 90 d; `chronicle`, `entity_standing`, `memory_resolutions`, `economic_events` — and the lineage/replay logs `intellect_events`, `mesh_events`, `mesh_membership_events`, `journey_events`, `simulation_events`, `arena_submissions`, `arena_shadow`, and the benchmark ledger `benchmark_runs` / `benchmark_items` — are `append-only` and are never pruned (an override cannot re-enable it). `MARINA_RETENTION_OVERRIDES="table=30d,table2=0"` (0 = never). Batched deletes ≤ 5,000 rows via `db.deleteBatch` (uses `RETURNING rowid` — bun:sqlite `.changes` counts trigger writes). Missing tables/columns are skipped, not errors. Migration 116 adds the `direct_messages(deadline_at) WHERE status='delivered'` partial index plus `notes(supersedes_id)` and `note_sources(url)`.
+- **Row retention** (`src/engine/retention.ts`, hourly tick phase 2100, `runRetentionPass`): declarative `RETENTION_POLICIES` per table class — telemetry 7–30 d (`primitive_usage`, `feed_events`, `memory_service_events`, `coding_events`, `coding_service_probes`, `event_log` by row count), ledger 30–90 d (`direct_messages` acknowledged/expired, `cognitive_events`, `productivity_sessions`, `core_memory_history`, `media_jobs`, `memory_assistance_actions`, `memory_index_jobs` settled states only), audit 365 d (`witness_attestations`, `trace_judgments`, `note_verifications`, `evidence_receipts`, `association_events`), `shell_log` 90 d; `chronicle`, `entity_standing`, `memory_resolutions`, `economic_events` — and the lineage/replay logs `intellect_events`, `mesh_events`, `mesh_membership_events`, `journey_events`, `simulation_events`, `arena_submissions`, `arena_shadow`, and the benchmark ledger `benchmark_runs` / `benchmark_items` / `benchmark_promotions` / `benchmark_defaults` — are `append-only` and are never pruned (an override cannot re-enable it). `MARINA_RETENTION_OVERRIDES="table=30d,table2=0"` (0 = never). Batched deletes ≤ 5,000 rows via `db.deleteBatch` (uses `RETURNING rowid` — bun:sqlite `.changes` counts trigger writes). Missing tables/columns are skipped, not errors. Migration 116 adds the `direct_messages(deadline_at) WHERE status='delivered'` partial index plus `notes(supersedes_id)` and `note_sources(url)`.
 
 ## Benchmark ledger (migration 146)
 - **Runs:** every benchmark run is a ledger row. `benchmark_runs` gains:
@@ -30,6 +30,28 @@
   - `window`: untraced turns by the routed agent's crew-mates that ended inside the request's received→completed window. Delegation does not carry the trace, so this is the best evidence available.
   - `shared`: another request to the same crew overlapped the window (found on a ±30 min padded range). The participant is listed, but its cost is not charged to the item.
   - An item whose request left no lifecycle events (event log pruned, or never routed through this Marina) records no participants and counts as `none`.
+
+## Earned promotion of defaults (migration 147)
+A default configuration — a crew formation, a per-agent model map, a world's crew model, any named slot — changes only when a challenger run from the ledger earns it over the incumbent run. `src/engine/benchmark-promotion.ts` holds the rule; `benchmark defaults | challenge | promote` is the surface.
+- **Tables:**
+  - `benchmark_defaults` has one row per slot: value, incumbent run, `holdout_fraction`.
+  - `benchmark_promotions` is the append-only history: every seed, promotion and refused attempt, with the evidence statistics. A trigger refuses `UPDATE`; both tables are part of export and restore.
+  - The actor is stored as the opaque durable account key, never a display name.
+  - Retention never prunes either table.
+- **Holdout:** each item belongs to a slot's selection or holdout split by a stable hash of slot + item id.
+  - The fraction (default ½) is fixed once the slot exists.
+  - `benchmark challenge` is a dry run that shows only the selection split. The holdout is read only by a `benchmark promote` attempt.
+  - Evidence that touches a selection item is refused.
+- **Rule:** the challenger and incumbent must have the same benchmark, the same recorded judge and the same item slice.
+  - At least 20 paired holdout items.
+  - The paired 95 % interval (Agresti–Min) on the accuracy difference lies above zero.
+  - The difference clears `promotionMargin(tried)` — the fishing margin `evolve replicate` and arena signal discovery share — where `tried` counts earlier attempts on the slot, each of which read the holdout.
+  - Optional `--max-cost-ratio`.
+- **Who:**
+  - Promotion takes `role.edit` through `checkRoleEdit`, since a default changes every agent that runs on it. A refusal raises a challenge.
+  - The author of the challenger run can never promote it; the check compares durable account keys.
+  - The first incumbent seeds an empty slot.
+- **Consumers:** `getPromotedDefault(db, slot)`. The showcase world reads slot `showcase:crew`'s `model` for its crew when `MARINA_CREW_MODEL` is unset; environment variables always win.
 
 ## Durable keys
 - **Durable keys, second pass (migration 117)**: `group_members`, `channel_members`, `board_votes`, `task_votes`, `flywheel_bindings`, `coding_projects`, `coding_services` are rekeyed to `users.id`; `MarinaDB` delegates resolve `durableEntityKey()` on write and project back to the LIVE entity id on read (`liveEntityIdSql`), so callers keep passing entity ids. `getFlywheelBinding(entityId)` replaces the linear scan; `saveEntity` re-keys task claims by name on first persist of a new id. Migrations 118 and 119 closed the remaining transient columns (see below). `approveSubmission`, `deleteNote`, and `deleteUser` (account erasure, below) are transactional.

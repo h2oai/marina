@@ -209,6 +209,16 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
   },
   { table: "benchmark_items", kind: "append-only", note: "per-item outcomes of the ledger" },
   {
+    table: "benchmark_promotions",
+    kind: "append-only",
+    note: "earned-promotion history of benchmark defaults (seeds, wins, refusals)",
+  },
+  {
+    table: "benchmark_defaults",
+    kind: "append-only",
+    note: "current incumbent per promotion slot (moves only with a history row)",
+  },
+  {
     table: "spend_daily",
     timeColumn: "updated_at",
     kind: "ledger",

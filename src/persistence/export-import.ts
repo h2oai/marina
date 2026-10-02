@@ -171,6 +171,8 @@ export const EXPORT_TABLES = [
   "canvas_edges",
   "benchmark_runs",
   "benchmark_items",
+  "benchmark_defaults",
+  "benchmark_promotions",
   "adapters",
   "adapter_user_mappings",
   "app_settings",
