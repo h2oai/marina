@@ -234,6 +234,8 @@ export type {
   BenchmarkPromotionRow,
   BenchmarkRunRow,
   BenchmarkTargetKind,
+  ExternalSubmissionInput,
+  ExternalSubmissionRow,
 } from "./db-benchmarks";
 export type {
   CanvasEdgeRow,
@@ -296,6 +298,8 @@ import type {
   BenchmarkPromotionInput,
   BenchmarkPromotionRow,
   BenchmarkRunRow,
+  ExternalSubmissionInput,
+  ExternalSubmissionRow,
 } from "./db-benchmarks";
 import type {
   CanvasEdgeRow,
@@ -2317,6 +2321,14 @@ export class MarinaDB implements MarinaStores {
 
   recordBenchmarkPromotion(row: BenchmarkPromotionInput): number {
     return benchmarksDb.recordBenchmarkPromotion(this.db, row);
+  }
+
+  recordExternalSubmission(row: ExternalSubmissionInput): { id: number; created: boolean } {
+    return benchmarksDb.recordExternalSubmission(this.db, row);
+  }
+
+  listExternalSubmissions(benchmark: string, limit = 50): ExternalSubmissionRow[] {
+    return benchmarksDb.listExternalSubmissions(this.reader, benchmark, limit);
   }
 
   traceNoteGraph(

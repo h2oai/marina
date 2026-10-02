@@ -9,6 +9,8 @@ import type {
   BenchmarkPromotionInput,
   BenchmarkPromotionRow,
   BenchmarkRunRow,
+  ExternalSubmissionInput,
+  ExternalSubmissionRow,
 } from "../db-benchmarks";
 import type { NoteLinkRow, NoteRow } from "../db-notes";
 import type { ExactKeys } from "./exact-keys";
@@ -60,6 +62,9 @@ export interface BenchmarksStore {
   listBenchmarkPromotions(slot: string): BenchmarkPromotionRow[];
   /** Append a history row; `seeded`/`promoted` also moves the slot's incumbent. */
   recordBenchmarkPromotion(row: BenchmarkPromotionInput): number;
+  /** Append a submission to an outside evaluation (migration 150); one row per file hash. */
+  recordExternalSubmission(row: ExternalSubmissionInput): { id: number; created: boolean };
+  listExternalSubmissions(benchmark: string, limit?: number): ExternalSubmissionRow[];
   traceNoteGraph(
     noteId: number,
     depth?: number,
@@ -86,6 +91,8 @@ export const BENCHMARKS_STORE_METHODS = [
   "listBenchmarkDefaults",
   "listBenchmarkPromotions",
   "recordBenchmarkPromotion",
+  "recordExternalSubmission",
+  "listExternalSubmissions",
   "traceNoteGraph",
   "countNoteLinks",
   "countLinksForNote",

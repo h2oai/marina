@@ -325,6 +325,33 @@ CREATE INDEX idx_forecast_answers_open_sample ON forecast_answers(sample_id) WHE
 CREATE INDEX idx_forecast_answers_entity ON forecast_answers(entity_name, created_at);
 `,
   },
+  // Submissions to outside evaluations (a weekly forecasting competition, …):
+  // what was filed, for which batch, under which identity, with the file's
+  // hash. A submission has no outcome yet, so it is not a ledger run; once the
+  // batch resolves, its scored run joins the benchmark ledger. Append-only.
+  {
+    version: 150,
+    sql: `
+CREATE TABLE external_submissions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  benchmark TEXT NOT NULL,
+  batch_ref TEXT NOT NULL,
+  variant TEXT NOT NULL,
+  identity_json TEXT NOT NULL,
+  file_name TEXT NOT NULL,
+  file_sha256 TEXT NOT NULL,
+  items INTEGER NOT NULL,
+  answered INTEGER NOT NULL,
+  cost_usd REAL,
+  meta_json TEXT,
+  created_at INTEGER NOT NULL,
+  UNIQUE (benchmark, file_sha256)
+);
+CREATE INDEX idx_external_submissions_batch ON external_submissions(benchmark, batch_ref);
+CREATE TRIGGER external_submissions_no_update BEFORE UPDATE ON external_submissions
+BEGIN SELECT RAISE(ABORT, 'external_submissions is append-only'); END;
+`,
+  },
 ];
 
 /** Migration 143 body — self-contained so later edits to db-notes never change it. */

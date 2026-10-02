@@ -214,6 +214,11 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     note: "earned-promotion history of benchmark defaults (seeds, wins, refusals)",
   },
   {
+    table: "external_submissions",
+    kind: "append-only",
+    note: "what was filed to outside evaluations, by batch, identity and file hash",
+  },
+  {
     table: "benchmark_defaults",
     kind: "append-only",
     note: "current incumbent per promotion slot (moves only with a history row)",
