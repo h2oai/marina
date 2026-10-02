@@ -258,5 +258,39 @@ describe("adapter trace-parent integration (perception → agent_turn_start)", (
     expect(turnStart.runId).toStartWith("agent-run-");
     expect(turnStart.traceId).toStartWith("agent-trace-");
     expect(turnStart.parentSpanId).toBeUndefined();
+    // …but the turn links BOTH requests, so each stays attributable.
+    expect(turnStart.links).toEqual([
+      { traceId: "req-first111", spanId: "span-req-first111" },
+      { traceId: "req-second22", spanId: "span-req-second22" },
+    ]);
+  });
+
+  it("links the request traces a handed-over message carries", async () => {
+    const { adapter, internals } = makeAdapter("trace-int-handoff");
+    const events: EngineEvent[] = [];
+    const unsubscribe = adapter.subscribe(
+      createAgentEventRelay("trace-int-handoff", (event) => events.push(event)),
+    );
+
+    internals.client.emit("perception", {
+      kind: "message",
+      timestamp: Date.now(),
+      tag: "tell",
+      data: {
+        text: "Lead tells you: verify step 3",
+        senderName: "Lead",
+        message: "verify step 3",
+        traceLinks: [{ traceId: "req-handoff1", spanId: "span-req-handoff1" }],
+      },
+    });
+
+    await internals.buildContinuationPrompt();
+    expect(internals.currentPromptTraceParent).toBeUndefined();
+    fireTurnStart(internals);
+    unsubscribe();
+
+    const turnStart = events.find((event) => event.type === "agent_turn_start");
+    if (turnStart?.type !== "agent_turn_start") throw new Error("no turn_start");
+    expect(turnStart.links).toEqual([{ traceId: "req-handoff1", spanId: "span-req-handoff1" }]);
   });
 });

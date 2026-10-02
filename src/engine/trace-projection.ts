@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { EngineEvent } from "../types";
+import type { EngineEvent, TraceLink } from "../types";
 
 export type TraceStatus = "running" | "completed" | "failed";
 
@@ -16,6 +16,12 @@ export interface TraceSpanView {
   durationMs?: number;
   partial: boolean;
   attributes: Record<string, string | number | boolean>;
+  /**
+   * Other request traces this span also served (span links). A link is not a
+   * parent: the span stays in its own trace's tree; the linked trace is only
+   * referenced.
+   */
+  links?: TraceLink[];
 }
 
 export interface TraceView {
@@ -129,6 +135,7 @@ export function projectTraces(events: readonly EngineEvent[]): TraceView[] {
         isEnd: event.type === "agent_turn_end",
         failed: false,
         durationMs: event.type === "agent_turn_end" ? event.durationMs : undefined,
+        links: event.links,
         attributes:
           event.type === "agent_turn_end"
             ? {
@@ -176,6 +183,7 @@ export function projectTraces(events: readonly EngineEvent[]): TraceView[] {
         isStart: event.type === "agent_tool_call",
         isEnd: event.type === "agent_tool_result",
         failed: event.type === "agent_tool_result" && event.isError,
+        links: event.links,
         attributes:
           event.type === "agent_tool_call"
             ? {
@@ -205,6 +213,7 @@ function upsertSpan(
     failed: boolean;
     durationMs?: number;
     attributes: TraceSpanView["attributes"];
+    links?: readonly TraceLink[];
   },
 ): void {
   const existing = trace.spans.get(input.spanId);
@@ -233,6 +242,15 @@ function upsertSpan(
   }
   span.parentSpanId ??= input.parentSpanId;
   span.attributes = { ...span.attributes, ...input.attributes };
+  if (input.links && input.links.length > 0) {
+    const merged = [...(span.links ?? [])];
+    for (const l of input.links) {
+      if (!merged.some((m) => m.traceId === l.traceId)) {
+        merged.push({ traceId: l.traceId, spanId: l.spanId });
+      }
+    }
+    span.links = merged;
+  }
   // Missing starts indicate retention trimming or a producer that joined late.
   // A missing end is represented truthfully by status="running", not partial.
   span.partial = !span.observedStart;

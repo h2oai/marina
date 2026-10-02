@@ -7,21 +7,26 @@
  *
  * Every model-API request mints `{runId, traceId, spanId}` with
  * `traceId === requestId` and returns it as `x-request-id`; the harness records
- * that id per item. Two kinds of evidence exist, and each participant says which
- * one put it there (`via`):
+ * that id per item. Each participant says which evidence put it there (`via`):
  *
- * - `trace` — an `agent_turn_end` carrying the request's traceId. Only the agent
- *   that received the `model_request` perception inherits the trace
- *   (`traceParentFromPerception`), so this names the answering agent with its
- *   model and cost exactly. A passthru request is one traced model call: the
- *   participant is the upstream model itself.
+ * - `trace` — an `agent_turn_end` serving the request's trace:
+ *   - its own trace (the agent received the `model_request` while idle and
+ *     the request parented the prompt), or
+ *   - a span LINK to it (`links`): the request was steered into a prompt
+ *     already running, the prompt served several requests at once, or the
+ *     agent acted on work handed over from the request (a tell or crew post
+ *     sent by an agent on it carries the trace — src/engine/trace-context.ts).
+ *     Handoffs are transitive.
+ *   A turn serving exactly one request is charged to it in full. A turn
+ *   serving n requests is split: each gets 1/n of its cost, and the
+ *   participant is marked `tracedShared` (evidence `traced-shared`).
+ *   A passthru request is one traced model call: the participant is the
+ *   upstream model itself.
  * - `window` — turns of the routed agent's crew-mates that ended inside the
- *   request's received→completed window and carry no trace of their own.
- *   Delegation (tells, crew channel) does not propagate the trace, so this is
- *   the best available evidence — and it is only exclusive when no other
- *   request to the same crew overlapped the window. When one did, those
- *   participants are marked `shared: true` and their cost is NOT charged to
- *   the item.
+ *   request's received→completed window and serve no request trace (neither
+ *   their own nor a link). Only exclusive when no other request to the same
+ *   crew overlapped the window; when one did, those participants are marked
+ *   `shared: true` and their cost is NOT charged to the item.
  *
  * An item whose request left no lifecycle events (pruned event log, a direct
  * provider call that never touched Marina) resolves to `attribution: "none"`.
@@ -46,6 +51,11 @@ export interface ResolvedParticipant {
   costUsd?: number;
   /** Window evidence shared with an overlapping request: not exclusive, cost not charged. */
   shared?: boolean;
+  /**
+   * Traced turns that served several requests at once (`traced-shared`):
+   * each request was charged an equal split of their cost.
+   */
+  tracedShared?: boolean;
 }
 
 export type AttributionKind = "trace" | "trace+window" | "window" | "none";
@@ -65,6 +75,8 @@ export interface AttributionInput {
   traceId: string;
   /** Events carrying this traceId (lifecycle + agent spans). */
   traceEvents: readonly EngineEvent[];
+  /** `agent_turn_end` events that link this trace (span links). */
+  linkedTurns?: readonly EngineEvent[];
   /** `agent_turn_end` events inside the request window. */
   windowTurns: readonly EngineEvent[];
   /**
@@ -85,6 +97,23 @@ interface Acc {
   cost: number;
   priced: boolean;
   shared: boolean;
+  tracedShared?: boolean;
+}
+
+type TurnEnd = Extract<EngineEvent, { type: "agent_turn_end" }>;
+
+/**
+ * The request traces one turn served: its own (when a request parented it)
+ * plus its links. An autonomous turn's own `agent-trace-…` id serves nothing.
+ */
+export function servedTraces(e: TurnEnd): Set<string> {
+  const served = new Set<string>();
+  const ownIsRequest =
+    e.origin === "request" ||
+    (e.origin === undefined && !!e.traceId && !e.traceId.startsWith("agent-trace-"));
+  if (ownIsRequest && e.traceId) served.add(e.traceId);
+  for (const l of e.links ?? []) served.add(l.traceId);
+  return served;
 }
 
 /** The request window from its lifecycle events, or undefined when it has none. */
@@ -124,13 +153,29 @@ export function attributeRequest(input: AttributionInput): ItemAttribution {
     acc.set(key, e);
   };
 
-  // Traced turns: exact.
-  for (const e of input.traceEvents) {
-    if (e.type !== "agent_turn_end" || e.traceId !== input.traceId) continue;
+  // Traced turns: the request's own spans and every turn linking it. A turn
+  // serving n requests is charged 1/n to each.
+  const seenTurns = new Set<string>();
+  for (const e of [...input.traceEvents, ...(input.linkedTurns ?? [])]) {
+    if (e.type !== "agent_turn_end") continue;
+    const served = servedTraces(e);
+    if (e.traceId === input.traceId) served.add(input.traceId);
+    if (!served.has(input.traceId)) continue;
+    const turnKey = `${e.name}:${e.spanId ?? e.timestamp}`;
+    if (seenTurns.has(turnKey)) continue;
+    seenTurns.add(turnKey);
+    const split = served.size > 1;
+    const cost = typeof e.costUsd === "number" ? e.costUsd / served.size : undefined;
     add(
-      `trace:${e.name}`,
-      { agent: e.name, model: e.model, via: "trace", shared: false },
-      e.costUsd,
+      `${split ? "trace-shared" : "trace"}:${e.name}`,
+      {
+        agent: e.name,
+        model: e.model,
+        via: "trace",
+        shared: false,
+        ...(split ? { tracedShared: true } : {}),
+      },
+      cost,
     );
   }
   // A passthru request is a single traced model call: the upstream model participated.
@@ -169,7 +214,10 @@ export function attributeRequest(input: AttributionInput): ItemAttribution {
     for (const e of input.windowTurns) {
       if (e.type !== "agent_turn_end" || !members.has(e.name)) continue;
       if (e.timestamp < window.from || e.timestamp > window.to) continue;
-      if (e.traceId) continue; // its own (possibly another request's) trace — not window evidence
+      // A turn serving a request (its own trace or a link) is that request's
+      // traced evidence — never window evidence. Autonomous turns always carry
+      // their own `agent-trace-…` id, so the trace id alone decides nothing.
+      if (servedTraces(e).size > 0) continue;
       if (acc.has(`trace:${e.name}`)) {
         // Already a traced participant: its untraced turns in the window are the
         // same agent's follow-up work for this crew; count them only if exclusive.
@@ -187,6 +235,7 @@ export function attributeRequest(input: AttributionInput): ItemAttribution {
     turns: e.turns,
     ...(e.priced ? { costUsd: e.cost } : {}),
     ...(e.shared ? { shared: true } : {}),
+    ...(e.tracedShared ? { tracedShared: true } : {}),
   }));
   const traced = participants.some((p) => p.via === "trace");
   const windowed = participants.some((p) => p.via === "window");
@@ -211,6 +260,7 @@ export function attributeRequest(input: AttributionInput): ItemAttribution {
 /** The store slice attribution reads. */
 export interface ParticipantSource {
   getTraceEventsByTraceIds(traceIds: readonly string[]): EngineEvent[];
+  getTurnEndsLinkingTraceIds?(traceIds: readonly string[]): EngineEvent[];
   getEventsBetween(
     types: readonly string[],
     fromTs: number,
@@ -239,6 +289,18 @@ export function resolveParticipants(
     byTrace.set(t, list);
   }
 
+  const wanted = new Set(ids);
+  const linkedByTrace = new Map<string, EngineEvent[]>();
+  for (const e of db.getTurnEndsLinkingTraceIds?.(ids) ?? []) {
+    if (e.type !== "agent_turn_end") continue;
+    for (const l of e.links ?? []) {
+      if (!wanted.has(l.traceId)) continue;
+      const list = linkedByTrace.get(l.traceId) ?? [];
+      list.push(e);
+      linkedByTrace.set(l.traceId, list);
+    }
+  }
+
   const crewByMember = new Map<string, string[]>();
   for (const crew of db.getAllCrews()) {
     const members = db.getCrewMembers(crew.id).map((m) => m.agent_name);
@@ -262,7 +324,14 @@ export function resolveParticipants(
       : [];
     out.set(
       id,
-      attributeRequest({ traceId: id, traceEvents, windowTurns, nearbyRequests, crewOf }),
+      attributeRequest({
+        traceId: id,
+        traceEvents,
+        linkedTurns: linkedByTrace.get(id) ?? [],
+        windowTurns,
+        nearbyRequests,
+        crewOf,
+      }),
     );
   }
   return out;

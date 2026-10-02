@@ -219,6 +219,26 @@ export class MarinaClient {
   private legacyCommands: Promise<void> = Promise.resolve();
   private legacyCommandUncertain = false;
   private eventListeners = new Map<ClientEventName, Array<(...args: unknown[]) => void>>();
+  private traceLinksProvider?: () => readonly { traceId: string; spanId: string }[] | undefined;
+
+  /**
+   * Request traces the caller's current work serves. When set, each command
+   * carries them as `trace_links`, so perceptions the command delivers to
+   * others (a tell, a crew post) link back to those requests. The server keeps
+   * only traces this connection was actually delivered.
+   */
+  setTraceLinksProvider(
+    provider?: () => readonly { traceId: string; spanId: string }[] | undefined,
+  ): void {
+    this.traceLinksProvider = provider;
+  }
+
+  private traceLinksField(): { trace_links?: { traceId: string; spanId: string }[] } {
+    const links = this.traceLinksProvider?.();
+    return links && links.length > 0
+      ? { trace_links: links.slice(0, 32).map((l) => ({ ...l })) }
+      : {};
+  }
 
   constructor(url: string, options?: ClientOptions) {
     this.url = url.replace(/\/$/, "").replace(/\/ws$/, "");
@@ -460,6 +480,7 @@ export class MarinaClient {
           command: cmd,
           request_id: requestId,
           ...(codingTarget ? { coding_target: codingTarget } : {}),
+          ...this.traceLinksField(),
         });
       } catch (error) {
         cleanup();
@@ -552,7 +573,7 @@ export class MarinaClient {
       this.on("disconnect", disconnected);
       signal?.addEventListener("abort", aborted, { once: true });
       try {
-        this.send({ type: "command", command: cmd });
+        this.send({ type: "command", command: cmd, ...this.traceLinksField() });
       } catch (error) {
         cleanup();
         this.legacyCommandUncertain = true;

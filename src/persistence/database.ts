@@ -513,6 +513,10 @@ export class MarinaDB implements MarinaStores {
     return entitiesDb.getTraceEventsByTraceIds(this.reader, traceIds);
   }
 
+  getTurnEndsLinkingTraceIds(traceIds: readonly string[]): EngineEvent[] {
+    return entitiesDb.getTurnEndsLinkingTraceIds(this.reader, traceIds);
+  }
+
   getEventsBetween(
     types: readonly string[],
     fromTs: number,

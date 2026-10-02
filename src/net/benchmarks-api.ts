@@ -143,6 +143,8 @@ export async function handleBenchmarkFile(
     none: 0,
   };
   let overlappingItems = 0;
+  // Items with at least one turn that served several requests (cost split).
+  let tracedSharedItems = 0;
   for (const it of slim.items ?? []) {
     const a = typeof it.traceId === "string" ? resolved.get(it.traceId) : undefined;
     if (!a) {
@@ -151,6 +153,7 @@ export async function handleBenchmarkFile(
     }
     counts[a.attribution]++;
     if (a.overlapping > 0) overlappingItems++;
+    if (a.participants.some((p) => p.tracedShared)) tracedSharedItems++;
     if (a.participants.length > 0) it.participants = a.participants;
     if (typeof it.usage?.costUsd !== "number" && a.costUsd !== null) {
       it.usage = { costUsd: a.costUsd };
@@ -177,7 +180,7 @@ export async function handleBenchmarkFile(
   // Record the attribution summary alongside the (credential-free) config.
   try {
     const config = JSON.parse(ledger.run.config_json) as Record<string, unknown>;
-    config.attribution = { ...counts, overlappingItems };
+    config.attribution = { ...counts, overlappingItems, tracedSharedItems };
     ledger.run.config_json = JSON.stringify(config);
   } catch {
     // allow-empty-catch: config_json is always our own JSON; leave it as built
@@ -195,6 +198,7 @@ export async function handleBenchmarkFile(
       costUsd: ledger.run.cost_usd,
       attribution: counts,
       overlappingItems,
+      tracedSharedItems,
     },
     saved.created ? 201 : 200,
   );

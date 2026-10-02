@@ -1,12 +1,18 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { TraceLink } from "../types";
+
+export type { TraceLink };
+
 export interface AgentTraceFields {
   runId: string;
   traceId: string;
   spanId: string;
   parentSpanId?: string;
   origin: "autonomous" | "request";
+  /** Other request traces this span served; never includes its own trace. */
+  links?: TraceLink[];
 }
 
 export interface TraceParent {
@@ -55,6 +61,7 @@ interface ActiveTurn {
   spanId: string;
   parentSpanId?: string;
   origin: "autonomous" | "request";
+  links: TraceLink[];
   toolSpans: Map<string, string[]>;
 }
 
@@ -75,8 +82,9 @@ export class AgentExecutionTracer {
     toolName?: string,
     parent?: TraceParent,
     prompt?: PromptMetrics,
+    links?: readonly TraceLink[],
   ): (AgentTraceFields & Partial<PromptMetrics>) | undefined {
-    if (type === "turn_start") this.activeTurn = this.createTurn(parent);
+    if (type === "turn_start") this.activeTurn = this.createTurn(parent, links);
     if (!this.activeTurn) return undefined;
 
     const turn = this.activeTurn;
@@ -86,6 +94,7 @@ export class AgentExecutionTracer {
       spanId: turn.spanId,
       ...(turn.parentSpanId ? { parentSpanId: turn.parentSpanId } : {}),
       origin: turn.origin,
+      ...(turn.links.length > 0 ? { links: turn.links.map((l) => ({ ...l })) } : {}),
       // Prompt byte attribution rides only on the turn that opened the prompt.
       ...(type === "turn_start" && prompt ? promptMetricFields(prompt) : {}),
     };
@@ -107,14 +116,16 @@ export class AgentExecutionTracer {
     return fields;
   }
 
-  private createTurn(parent?: TraceParent): ActiveTurn {
+  private createTurn(parent?: TraceParent, links?: readonly TraceLink[]): ActiveTurn {
     const id = this.createId();
+    const traceId = parent?.traceId ?? `agent-trace-${id}`;
     return {
       runId: parent?.runId ?? `agent-run-${id}`,
-      traceId: parent?.traceId ?? `agent-trace-${id}`,
+      traceId,
       spanId: `turn-${id}`,
       parentSpanId: parent?.spanId,
       origin: parent ? "request" : "autonomous",
+      links: distinctTraceLinks(links ?? []).filter((l) => l.traceId !== traceId),
       toolSpans: new Map(),
     };
   }
@@ -180,4 +191,55 @@ export function unambiguousTraceParent(
   )
     ? first
     : undefined;
+}
+
+/** Validate an untrusted span-link list (wire or perception data); drops malformed entries. */
+export function parseTraceLinks(value: unknown, max = 32): TraceLink[] {
+  if (!Array.isArray(value)) return [];
+  const out: TraceLink[] = [];
+  for (const v of value) {
+    if (out.length >= max) break;
+    const l = v as Partial<TraceLink> | null;
+    if (
+      l &&
+      typeof l.traceId === "string" &&
+      typeof l.spanId === "string" &&
+      l.traceId.length > 0 &&
+      l.traceId.length <= 200 &&
+      l.spanId.length > 0 &&
+      l.spanId.length <= 200
+    ) {
+      out.push({ traceId: l.traceId, spanId: l.spanId });
+    }
+  }
+  return distinctTraceLinks(out);
+}
+
+/** First occurrence of each trace wins; order is preserved. */
+export function distinctTraceLinks(links: readonly TraceLink[]): TraceLink[] {
+  const seen = new Set<string>();
+  const out: TraceLink[] = [];
+  for (const l of links) {
+    if (seen.has(l.traceId)) continue;
+    seen.add(l.traceId);
+    out.push({ traceId: l.traceId, spanId: l.spanId });
+  }
+  return out;
+}
+
+/**
+ * Every traced perception of a prompt as span links: the request parents a
+ * prompt only when unambiguous (`unambiguousTraceParent`), but each one it
+ * also served is linked, so a turn handling two requests is attributable to
+ * both. `carried` are links handed over with a message (a tell from an agent
+ * working on a request).
+ */
+export function traceLinksFor(
+  parents: Array<TraceParent | undefined>,
+  carried: Array<readonly TraceLink[] | undefined> = [],
+): TraceLink[] {
+  const links: TraceLink[] = [];
+  for (const p of parents) if (p) links.push({ traceId: p.traceId, spanId: p.spanId });
+  for (const c of carried) if (c) links.push(...c);
+  return distinctTraceLinks(links);
 }

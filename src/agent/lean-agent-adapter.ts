@@ -109,7 +109,10 @@ import {
 import {
   type PromptMetrics,
   type PromptSectionMetric,
+  parseTraceLinks,
+  type TraceLink,
   type TraceParent,
+  traceLinksFor,
   traceParentFromPerception,
   unambiguousTraceParent,
 } from "./execution-trace";
@@ -1179,6 +1182,8 @@ export class LeanAgentAdapter implements AgentHandle {
      *  `shouldRespond` decides. */
     owesReply?: boolean;
     traceParent?: TraceParent;
+    /** Request traces handed over with this message (a tell from an agent on a request). */
+    traceLinks?: TraceLink[];
     /** Addressed to this agent (an INFORMATION tell): wakes the loop and
      *  keeps a crew responder's turn, but owes no reply. */
     addressed?: boolean;
@@ -1246,6 +1251,13 @@ export class LeanAgentAdapter implements AgentHandle {
   private runCapWarned = { tools: false, turns: false };
   /** Explicit parent carried by one unambiguous endpoint request in this prompt. */
   private currentPromptTraceParent?: TraceParent;
+  /**
+   * Every request trace the running prompt serves: each traced perception it
+   * was built from, links carried by handed-over messages, and requests
+   * steered in mid-run. Stamped on every turn as span links, and sent with the
+   * agent's commands so the work it hands on stays attributable.
+   */
+  private currentPromptTraceLinks: TraceLink[] = [];
   /** Evidence classes currently influencing this run; never stores evidence content. */
   private currentTrustSources = new Set<string>();
   /** In-run followUp-based silent recoveries. Resets on agent_start. */
@@ -1461,6 +1473,14 @@ export class LeanAgentAdapter implements AgentHandle {
       commandMode: "correlated",
       commandGrammar: "world",
     });
+
+    // Commands issued while a prompt runs carry the request traces it serves,
+    // so work handed on (tells, crew posts, tasks) stays attributable.
+    this.client.setTraceLinksProvider(() =>
+      this.agent?.state.isStreaming
+        ? traceLinksFor([this.currentPromptTraceParent], [this.currentPromptTraceLinks])
+        : undefined,
+    );
 
     // Platform memory (sole backend — no local storage)
     this.platformMemory = new PlatformMemoryBackend(this.client);
@@ -2027,6 +2047,8 @@ export class LeanAgentAdapter implements AgentHandle {
               }
             }
             const perceptionId = ++this.perceptionSeq;
+            // Links handed over with the message; untrusted content never seeds a trace.
+            const carriedLinks = untrusted ? [] : parseTraceLinks(p.data?.traceLinks);
             // Under `MARINA_FORCED_ACTION_NUDGE=requests` only a REQUEST owes a
             // reply: a tell already classified above, otherwise an addressed
             // post whose body classifies as a request. An INFORMATION post that
@@ -2069,6 +2091,7 @@ export class LeanAgentAdapter implements AgentHandle {
               owesReply,
               ...(information && !untrusted ? { addressed: true } : {}),
               traceParent: traceParentFromPerception(text),
+              ...(carriedLinks.length > 0 ? { traceLinks: carriedLinks } : {}),
               untrusted,
             });
 
@@ -2100,6 +2123,15 @@ export class LeanAgentAdapter implements AgentHandle {
                 ...(requestId ? { marinaRequestId: requestId } : {}),
               });
               this.markDeliveredViaSteer(perceptionId);
+              // The running prompt now serves this request too: link it, so
+              // the turns that act on it are attributable (a steered request
+              // never becomes the next prompt's parent).
+              if (!untrusted) {
+                this.currentPromptTraceLinks = traceLinksFor(
+                  [this.currentPromptTraceParent, traceParentFromPerception(text)],
+                  [this.currentPromptTraceLinks, carriedLinks],
+                ).filter((l) => l.traceId !== this.currentPromptTraceParent?.traceId);
+              }
             }
           }
         }
@@ -3072,6 +3104,7 @@ export class LeanAgentAdapter implements AgentHandle {
     this.currentPromptAddressed = false;
     const previouslyPresented = this.outstandingRequests.presentedIds();
     this.currentPromptTraceParent = undefined;
+    this.currentPromptTraceLinks = [];
     this.currentTrustSources.clear();
     this.retrievedContext = undefined;
     const cycle = this.loopIterationCount;
@@ -3166,6 +3199,10 @@ export class LeanAgentAdapter implements AgentHandle {
       this.currentPromptTraceParent = unambiguousTraceParent(
         trustedEvents.map((perception) => perception.traceParent),
       );
+      this.currentPromptTraceLinks = traceLinksFor(
+        trustedEvents.map((perception) => perception.traceParent),
+        trustedEvents.map((perception) => perception.traceLinks),
+      ).filter((l) => l.traceId !== this.currentPromptTraceParent?.traceId);
       if (forcedActionNudgeMode() === "requests") {
         const owed = trustedEvents.some(
           (perception) => perception.owesReply ?? perception.shouldRespond === true,
@@ -4016,6 +4053,9 @@ The goal is a smaller, sharper memory — not more notes.`;
         this.emitEvent({
           type: "turn_start",
           traceParent: this.currentPromptTraceParent,
+          ...(this.currentPromptTraceLinks.length > 0
+            ? { traceLinks: this.currentPromptTraceLinks.map((l) => ({ ...l })) }
+            : {}),
           model: this.config.model ?? MARINA_DEFAULT_MODEL,
           ...(prompt ? { prompt } : {}),
         });

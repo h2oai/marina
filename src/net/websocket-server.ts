@@ -4,6 +4,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Server, ServerWebSocket } from "bun";
+import { parseTraceLinks } from "../agent/execution-trace";
 import type { MarinaAuthProvider } from "../auth/better-auth-provider";
 import type { RateLimiter } from "../auth/rate-limiter";
 import { secretsEqual } from "../auth/secret-compare";
@@ -24,6 +25,7 @@ import type { Engine } from "../engine/engine";
 import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import { onboardParticipant } from "../engine/onboarding";
+import { ownedTraceLinks, runWithTraceLinks } from "../engine/trace-context";
 import { isOpenApiMode } from "../engine/trust-profile";
 import type { MemoryService } from "../memory/service";
 import { worldMemoryService } from "../memory/world-service";
@@ -792,6 +794,7 @@ export class WebSocketServer {
             version?: number;
             request_id?: string;
             coding_target?: unknown;
+            trace_links?: unknown;
             capability_key?: string;
             options?: Record<string, unknown>;
           };
@@ -1047,12 +1050,17 @@ export class WebSocketServer {
                 return;
               }
               const command = parsed.command;
+              // Request traces this command serves: only ones Marina delivered
+              // to this entity survive (a forged link is dropped).
+              const traceLinks = ownedTraceLinks(entityId, parseTraceLinks(parsed.trace_links));
               const admitted = engine.submitCommand(entityId, command, async () => {
                 // A queued command must never execute under a replaced/disconnected session.
                 const execute = async () => {
                   if (engine.getConnectionEntity(connId) !== entityId || ws.readyState !== 1)
                     throw new Error("Command connection closed before execution.");
-                  await engine.processCommand(entityId, command, { codingTarget });
+                  await runWithTraceLinks(entityId, traceLinks, () =>
+                    engine.processCommand(entityId, command, { codingTarget }),
+                  );
                 };
                 if (requestId) await withCommandResponse(connId, requestId, execute, send);
                 else await execute();

@@ -24,6 +24,7 @@ export interface EntitiesStore {
     traceId?: string,
   ): { events: EngineEvent[]; truncated: boolean };
   getTraceEventsByTraceIds(traceIds: readonly string[]): EngineEvent[];
+  getTurnEndsLinkingTraceIds(traceIds: readonly string[]): EngineEvent[];
   getEventsBetween(
     types: readonly string[],
     fromTs: number,
@@ -106,6 +107,7 @@ export const ENTITIES_STORE_METHODS = [
   "getRecentEvents",
   "getRecentTraceEvents",
   "getTraceEventsByTraceIds",
+  "getTurnEndsLinkingTraceIds",
   "getEventsBetween",
   "getMaxEventId",
   "addTraceJudgment",
