@@ -116,3 +116,15 @@ The loop:
 | **Recall** | `recallLessons(db, domain, query, { asOf })` is lexical, trusted first then newest, and byte-budgeted. It applies `visibleAt`: a lesson resolved at T is invisible to work whose cutoff precedes T, the same leakage rule as the forecast lessons in `src/forecast/lessons.ts`. |
 | **Modes** | `MARINA_LESSONS=observe` recalls without injecting (the ablation arm); `off` disables both writing and recall. |
 | **Budget** | `MARINA_LESSONS_MAX_PER_HOUR` bounds writer and judge calls. Judge spend is recorded as `decision`, writer spend through `modelComplete`. |
+
+Where lessons are recalled. Every site goes through `recallLessons` or `recallAcross(db, domains, query, { asOf, limit, maxBytes })` (one budget merged across domains) and records which lessons it used:
+
+| site | domains | budget | how it shows |
+|---|---|---|---|
+| forecaster (`forecast` command, `forecastLessonsFor`) | `forecast`, `arena` (+ the legacy forecast-lesson store) | 6 lessons / 1,500 B | the answer's `lessons` field |
+| `marina/verify:` (proposer and checker) | `tools`, `code` | 4 / 800 B | one system message after the caller's; the checker's prompt; `x-marina-lessons` header |
+| `marina:<crew>` requests | `tools`, `code`, `forecast` | 3 / 600 B | a `lessons` field on the `model_request` payload |
+| failed `code verify` | `code` | default | appended to the failure summary; ids in the event metadata |
+| `lessons <topic>` command | all | 8 / 2,400 B | read-only listing |
+
+Recall is inert unless learning is armed for the database: it never creates the `marina:lessons` account or its spaces as a side effect. Under `observe` the header and metadata name the lessons recall would have used (prefixed `observe:`) while nothing is injected.

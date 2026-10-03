@@ -12,6 +12,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Engine } from "../src/engine/engine";
+import { memoryLessonSink } from "../src/learning/outcomes";
+import { disableOutcomeLearning, enableOutcomeLearning } from "../src/learning/service";
 import { handleModelApi } from "../src/net/model-api";
 import {
   guardRevision,
@@ -106,6 +108,8 @@ let db: MarinaDB;
 let engine: Engine;
 let calls: { model: unknown; system: string }[];
 let checkerReply: string;
+/** When set, the proposer's draft message (else a cancel_order tool call). */
+let proposerMessage: Record<string, unknown> | undefined;
 
 const toolCall = (name: string, args: string) => ({
   role: "assistant",
@@ -120,6 +124,7 @@ beforeEach(() => {
   process.env.OPENROUTER_API_KEY = "test-openrouter-key";
   calls = [];
   checkerReply = '{"verdict":"approve","issues":""}';
+  proposerMessage = undefined;
   originalFetch = globalThis.fetch;
   globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
     const body = init?.body ? JSON.parse(String(init.body)) : {};
@@ -135,7 +140,7 @@ beforeEach(() => {
       ? { role: "assistant", content: checkerReply }
       : isRevision
         ? { role: "assistant", content: "Please confirm you want order 7 cancelled." }
-        : toolCall("cancel_order", '{"id":7}');
+        : (proposerMessage ?? toolCall("cancel_order", '{"id":7}'));
     return Response.json({
       id: "chatcmpl-1",
       object: "chat.completion",
@@ -235,6 +240,74 @@ describe("POST /v1/chat/completions with marina/verify", () => {
     };
     expect(j.choices[0]!.message.tool_calls?.[0]?.function.name).toBe("cancel_order");
     expect(calls.length).toBe(3); // proposer, checker, revision (discarded)
+  });
+
+  it("injects recalled lessons for the proposer and the checker, and names them", async () => {
+    const sink = memoryLessonSink([
+      {
+        id: "L1",
+        domain: "tools",
+        text: "confirm before you cancel an order",
+        kind: "failure",
+        trust: "trusted",
+        resolvedAt: "2026-09-01T00:00:00.000Z",
+        source: "tau2:retail",
+      },
+    ]);
+    enableOutcomeLearning(db, { sink, writer: null, judge: null, env: {} });
+    try {
+      const resp = await post(request("marina/verify:openrouter/openai/gpt-6.1-sol"));
+      expect(resp?.headers.get("x-marina-lessons")).toBe("L1");
+      expect(calls[0]!.system).toContain("LESSONS (from past outcomes");
+      expect(calls[0]!.system).toContain("confirm before you cancel an order");
+    } finally {
+      disableOutcomeLearning(db);
+    }
+    const plain = await post(request("marina/verify:openrouter/openai/gpt-6.1-sol"));
+    expect(plain?.headers.get("x-marina-lessons")).toBe("0");
+  });
+
+  it("repairs a final message that carries its tool call as text, labelled", async () => {
+    proposerMessage = {
+      role: "assistant",
+      // A fenced JSON call (`<tool_call>` tags are already normalized upstream).
+      content: 'Cancelling now.\n```json\n{"name": "cancel_order", "arguments": {"id": 7}}\n```',
+    };
+    const resp = await post(request("marina/verify:openrouter/openai/gpt-6.1-sol"));
+    expect(resp?.headers.get("x-marina-repair")).toBe("repaired:parse");
+    const j = (await resp!.json()) as {
+      choices: {
+        finish_reason: string;
+        message: {
+          content: unknown;
+          tool_calls?: { function: { name: string; arguments: string } }[];
+        };
+      }[];
+    };
+    expect(j.choices[0]!.finish_reason).toBe("tool_calls");
+    expect(j.choices[0]!.message.content).toBeNull();
+    expect(j.choices[0]!.message.tool_calls?.[0]?.function).toEqual({
+      name: "cancel_order",
+      arguments: '{"id":7}',
+    });
+    expect(calls.length).toBe(2); // proposer + checker; the parse needed no shot
+  });
+
+  it("leaves output raw with MARINA_OUTPUT_REPAIR=off and never repairs plain prose", async () => {
+    proposerMessage = {
+      role: "assistant",
+      content: '{"name": "cancel_order", "arguments": {"id": 7}}',
+    };
+    process.env.MARINA_OUTPUT_REPAIR = "off";
+    try {
+      const off = await post(request("marina/verify:openrouter/openai/gpt-6.1-sol"));
+      expect(off?.headers.get("x-marina-repair")).toBeNull();
+    } finally {
+      delete process.env.MARINA_OUTPUT_REPAIR;
+    }
+    proposerMessage = { role: "assistant", content: "Which order do you mean?" };
+    const prose = await post(request("marina/verify:openrouter/openai/gpt-6.1-sol"));
+    expect(prose?.headers.get("x-marina-repair")).toBeNull();
   });
 
   it("refuses streaming and unreachable models explicitly", async () => {

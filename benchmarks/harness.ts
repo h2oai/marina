@@ -23,6 +23,7 @@ import {
   downloadGSM8K,
   downloadHellaSwag,
   downloadHLEVerifiedGold,
+  downloadHLEVerifiedGoldImages,
   downloadHumanEval,
   downloadIFEval,
   downloadMATH,
@@ -244,6 +245,16 @@ const BENCHMARKS: Record<string, BenchmarkDefinition> = {
     description: "HLE-Verified Gold subset, text-only; exact match, else equivalence judge",
     phase: "A",
     download: downloadHLEVerifiedGold,
+  },
+  "hle-verified-gold-mm": {
+    name: "HLE-Verified Gold (multimodal)",
+    dataset: "hle-verified-gold-mm",
+    adapter: "hle",
+    scoring: "accuracy",
+    description:
+      "HLE-Verified Gold image items, image sent as an image_url part; exact match, else equivalence judge",
+    phase: "A",
+    download: downloadHLEVerifiedGoldImages,
   },
 };
 

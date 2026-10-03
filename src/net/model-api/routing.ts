@@ -24,6 +24,8 @@ import type { Engine } from "../../engine/engine";
 import { compareTraceCohorts } from "../../engine/trace-dataset";
 import { projectTraces } from "../../engine/trace-projection";
 import { adviseTraceRouting, selectAdaptiveCandidate } from "../../engine/trace-routing-advice";
+import { formatLesson } from "../../learning/outcomes";
+import { recallAcross } from "../../learning/service";
 import type { ResponseRecord, ResponsesSseEmitter } from "./responses-sse";
 import {
   type CompletionUsage,
@@ -249,6 +251,13 @@ export interface RouteResult {
    *  log). Returned as `x-request-id` so a caller can jump straight to
    *  `trace show <id>` / Admin → Traces for this exact request. */
   requestId: string;
+  /** The responder delivered this answer through output repair (`repaired:parse|shot`). */
+  repaired?: string;
+}
+
+/** A responder's `repaired` label, when it is one Marina issues. */
+function repairLabelOf(v: unknown): string | undefined {
+  return v === "repaired:parse" || v === "repaired:shot" ? v : undefined;
 }
 
 export interface RouteOptions {
@@ -380,6 +389,14 @@ export async function routeToChannel(
   const route = selectRouteTarget(engine, plan.eligible, channel.id, strategy);
   const target = route.target;
   const protocol = plan.protocolFor(target);
+  // Lessons from past outcomes for the lead to apply (MARINA_LESSONS; observe
+  // and off inject nothing). Byte-budgeted: the perception is clamped.
+  const lessons = await recallAcross(
+    engine.db,
+    ["tools", "code", "forecast"],
+    userContent.slice(0, 500),
+    { limit: 3, maxBytes: 600 },
+  );
 
   // Multi-turn conversation
   const convId = opts?.conversationId ?? undefined;
@@ -420,6 +437,7 @@ export async function routeToChannel(
     type: "model_request",
     id: requestId,
     ...(protocol ? { protocol } : {}),
+    ...(lessons.inject.length ? { lessons: lessons.inject.map(formatLesson) } : {}),
     trace: requestTrace(requestId),
     content: userContent,
     target,
@@ -455,7 +473,13 @@ export async function routeToChannel(
           clearTimeout(timer);
           unsub();
           respondedBy = senderId;
-          resolve({ content: parsed.content ?? "", conversationId: convId, requestId });
+          const repaired = repairLabelOf(parsed.repaired);
+          resolve({
+            content: parsed.content ?? "",
+            conversationId: convId,
+            requestId,
+            ...(repaired ? { repaired } : {}),
+          });
           return;
         }
 
@@ -494,7 +518,9 @@ export async function routeToChannel(
       routeStrategy: strategy,
       candidateCount: onlineMembers.length,
       routeAdviceMode: route.adviceMode,
-      routeReason: route.reason,
+      routeReason: result.repaired
+        ? `${route.reason ?? "routed"}+${result.repaired}`
+        : route.reason,
       durationMs: Date.now() - startedAt,
       timestamp: Date.now(),
     });

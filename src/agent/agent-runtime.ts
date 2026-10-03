@@ -49,11 +49,19 @@ import {
   classifyModelResolution,
   LeanAgentAdapter,
   operatorStatusOf,
+  resolveModel,
   type SpendGuard,
 } from "./lean-agent-adapter";
 import { assertMarinaRemoteTargetAllowed, detectModelLimits } from "./model-probe";
 import { getRolePrompt, inferTaskCategory } from "./roles";
 import { isSeedDisabled } from "./seed-registry";
+import {
+  type ProbeComplete,
+  probeToolCalling,
+  shouldProbeTools,
+  type ToolProbeResult,
+  toolProbeMode,
+} from "./tool-call-probe";
 
 /** Module logger. */
 const logger = new Logger();
@@ -441,6 +449,9 @@ export class AgentRuntime {
   /** Running agent → the entity that spawned it (`config.spawnedBy`, default "system"). */
   private spawnedByOf = new Map<string, string>();
   private readonly spendLimits: SpendLimits;
+  private readonly toolProbeComplete?: ProbeComplete;
+  /** Spawn-time tool-calling probes still running (tests await them). */
+  private readonly toolProbes = new Set<Promise<void>>();
 
   constructor(opts: {
     db?: MarinaDB;
@@ -448,7 +459,10 @@ export class AgentRuntime {
     onEvent?: (event: EngineEvent) => void;
     /** Override the env-derived spend ceilings (tests / embedders). */
     spendLimits?: SpendLimits;
+    /** Model call behind the spawn-time tool-calling probe (tests inject one). */
+    toolProbeComplete?: ProbeComplete;
   }) {
+    this.toolProbeComplete = opts.toolProbeComplete;
     this.db = opts.db;
     this.wsPort = opts.wsPort ?? 3300;
     this.onEvent = opts.onEvent;
@@ -816,6 +830,7 @@ export class AgentRuntime {
 
       // Spawn succeeded — now consume the cooldown window.
       this.lastSpawnAt = Date.now();
+      this.startToolProbe(config.name, effectiveConfig, apiKeyAtSpawn);
 
       // Track it (and its lineage, for cascade stop)
       this.agents.set(config.name, adapter);
@@ -848,6 +863,51 @@ export class AgentRuntime {
       }
       this.spawnsInFlight.delete(config.name);
     }
+  }
+
+  /**
+   * Probe, in the background, whether the agent's model makes tool calls (an
+   * unlisted id, or any OpenRouter route — `tool-call-probe`). A model that
+   * answered without one is reported to the operator; under
+   * `MARINA_TOOL_PROBE=refuse` a crew lead on it is stopped, since a lead that
+   * cannot call tools never delivers a reply.
+   */
+  private startToolProbe(name: string, config: AgentConfig, apiKey: string | undefined): void {
+    const modelStr = config.model ?? MARINA_DEFAULT_MODEL;
+    const mode = toolProbeMode();
+    if (mode === "off" || !shouldProbeTools(modelStr, classifyModelResolution(modelStr))) return;
+    const run: Promise<void> = probeToolCalling(modelStr, resolveModel(modelStr), apiKey, {
+      ...(this.toolProbeComplete ? { complete: this.toolProbeComplete } : {}),
+    })
+      .then((result) => this.onToolProbeResult(name, config, result, mode))
+      .catch((err) => logger.warn("agents", `tool probe failed for "${name}": ${String(err)}`))
+      .finally(() => this.toolProbes.delete(run));
+    this.toolProbes.add(run);
+  }
+
+  private async onToolProbeResult(
+    name: string,
+    config: AgentConfig,
+    result: ToolProbeResult,
+    mode: "warn" | "refuse",
+  ): Promise<void> {
+    if (result.outcome !== "no-tool-call") return;
+    const refuse = mode === "refuse" && config.crewResponder === true;
+    const error =
+      `model ${result.model} answered a tool-calling probe without a tool call (${result.detail}); ` +
+      (refuse
+        ? "stopped this crew lead (MARINA_TOOL_PROBE=refuse) — choose a model that calls tools"
+        : "the agent may stay silent — choose a model that calls tools, or watch `agent status`");
+    logger.warn("agents", `"${name}": ${error}`);
+    this.onEvent?.({ type: "agent_error", name, error, timestamp: Date.now() });
+    if (refuse && this.agents.has(name)) {
+      await this.stop(name, { keepConfig: true }).catch(() => undefined);
+    }
+  }
+
+  /** Test hook: wait for every spawn-time tool probe to settle. */
+  async settleToolProbes(): Promise<void> {
+    await Promise.all([...this.toolProbes]);
   }
 
   /**
