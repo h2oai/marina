@@ -47,6 +47,7 @@ import {
   repairOutput,
 } from "../repair/output-repair";
 import {
+  type AnswerOption,
   type AnswerSpec,
   type AnswerValue,
   type CombinedAnswer,
@@ -54,6 +55,19 @@ import {
   formatAnswer,
   validateAnswer,
 } from "./answer-types";
+import {
+  argmax,
+  averageDistributions,
+  averageMarginals,
+  blendDistributions,
+  blendMarginals,
+  combinedSd,
+  completeMarginals,
+  type Distribution,
+  parseDistribution,
+  parseMarginals,
+  pickDistribution,
+} from "./distribution";
 import { askAnalyst, type JudgeRecord, judgeAudit, judgeClaim, newJudgeRecord } from "./judge";
 import type { LessonStore } from "./lessons";
 import {
@@ -152,6 +166,10 @@ export interface TypedRun {
   value?: AnswerValue;
   formatted?: string;
   confidence?: number;
+  /** Asked with `probabilities`: this run's probability per option. */
+  distribution?: Distribution;
+  /** A number: this run's stated uncertainty (sd, same unit). */
+  sd?: number;
   reason?: string;
   weight: number;
   grounded?: number;
@@ -175,6 +193,8 @@ export interface Critique {
   verdict: "keep" | "revise" | "error";
   /** The answer the critic proposed (present on revise). */
   proposed?: string;
+  /** The critic's probability per option, when the question asks for probabilities. */
+  distribution?: Distribution;
   confidence?: number;
   reason?: string;
   /** True when the revision replaced the runs' answer. */
@@ -192,6 +212,15 @@ export interface TypedForecastAnswer {
   formatted?: string;
   /** 0–1: the runs' agreement, or the critic's confidence when it revised. */
   confidence?: number;
+  /**
+   * Asked with `probabilities`: the forecast probability of every option (the
+   * runs' weighted average, blended with an applied critique). A choice's sum
+   * to 1 and `prediction` is then the most probable option; a multi-select's
+   * are each option's own probability of being true.
+   */
+  distribution?: Distribution;
+  /** A number: the combined uncertainty — the runs' own sd and their spread, in quadrature. */
+  uncertainty?: { sd: number };
   combined?: CombinedAnswer;
   runs: TypedRun[];
   plan?: ForecastPlan;
@@ -225,13 +254,21 @@ export function answerInstruction(spec: AnswerSpec): string {
         "Pick exactly ONE option. Options:",
         ...spec.options.map((o) => `  ${o.id}${o.label ? ` — ${o.label}` : ""}`),
         `"answer" is the option id as a string, e.g. "${spec.options[0]!.id}".`,
-      ].join("\n");
+        spec.probabilities ? probabilitiesInstruction(spec.options) : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
     case "multi":
       return [
         `Pick EVERY option that will be true${spec.maxPicks ? ` (at most ${spec.maxPicks})` : ""}. Options:`,
         ...spec.options.map((o) => `  ${o.id}${o.label ? ` — ${o.label}` : ""}`),
-        `"answer" is an array of option ids, e.g. ["${spec.options[0]!.id}"].`,
-      ].join("\n");
+        `"answer" is an array of option ids, e.g. ["${spec.options[0]!.id}"]${spec.minPicks === 0 ? " (or [] when none will be)" : ""}.`,
+        spec.probabilities
+          ? `Also give "probabilities": an object mapping EVERY option id to your probability (0..1) that THAT option is true — each judged on its own, they need not sum to 1. Calibrate: never 0 or 1.`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
     case "number":
       return [
         `"answer" is ONE number${spec.unit ? ` in ${spec.unit}` : ""}: your single most likely value, exactly as the resolution source will publish it — not a hedge between outcomes.`,
@@ -296,7 +333,7 @@ function runSystem(spec: AnswerSpec): string {
     "With little specific evidence, predict the most likely outcome from base rates and priors (favourites, seasonality, the latest trend) — still a real forecast.",
     answerInstruction(spec),
     'Reply with ONE JSON object: {"answer": <as above>, "confidence": <0..1, how likely your answer is exactly right>,' +
-      `${spec.type === "number" ? ' "sd": <number>,' : ""} "reason": "<two sentences citing the facts that decided it>"}.`,
+      `${spec.type === "number" ? ' "sd": <number>,' : ""}${probabilistic(spec) ? ' "probabilities": {<option id>: <0..1>, …},' : ""} "reason": "<two sentences citing the facts that decided it>"}.`,
   ].join("\n");
 }
 
@@ -534,6 +571,7 @@ export async function forecastTyped(
       const c = Number(reply?.confidence);
       if (Number.isFinite(c)) run.confidence = Math.min(1, Math.max(0, c));
       if (typeof reply?.reason === "string") run.reason = reply.reason.slice(0, 500);
+      readUncertainty(req.answer, reply, run);
       run.weight = 1;
       if (opts.verify && verifier) await verifyRun(req, verifier, user, run);
       if (judge) {
@@ -577,6 +615,28 @@ export async function forecastTyped(
   out.prediction = combined.value;
   out.formatted = formatAnswer(combined.value);
   out.confidence = combined.agreement;
+  const spec = req.answer;
+  if (spec.type === "choice" && spec.probabilities) {
+    const dist = averageDistributions(
+      out.runs
+        .filter((r) => r.distribution)
+        .map((r) => ({ distribution: r.distribution!, weight: r.weight })),
+    );
+    if (dist) setDistribution(out, spec.options, dist);
+  }
+  if (spec.type === "multi" && spec.probabilities) {
+    // Each option's own probability; the picked set stays the runs' combined answer.
+    const marginals = averageMarginals(
+      out.runs
+        .filter((r) => r.distribution)
+        .map((r) => ({ distribution: r.distribution!, weight: r.weight })),
+    );
+    if (marginals) out.distribution = marginals;
+  }
+  if (spec.type === "number") {
+    const sd = combinedSd(out.runs, combined.spread ?? 0);
+    if (sd !== undefined) out.uncertainty = { sd };
+  }
 
   // ── Critique ──────────────────────────────────────────────────────────────
   if (opts.critique !== false && critic) {
@@ -587,6 +647,23 @@ export async function forecastTyped(
         out.prediction = v.value;
         out.formatted = formatAnswer(v.value);
         out.confidence = out.critique.confidence ?? out.confidence;
+        if (spec.type === "choice" && spec.probabilities && out.distribution) {
+          // The critic moves the probabilities halfway toward its own view,
+          // never all the way: the runs' evidence still counts.
+          const theirs =
+            out.critique.distribution ??
+            pickDistribution(spec.options, v.value as string, out.critique.confidence);
+          setDistribution(out, spec.options, blendDistributions(out.distribution, theirs, 0.5));
+        }
+        if (spec.type === "multi" && spec.probabilities && out.distribution) {
+          const theirs = completeMarginals(
+            spec.options,
+            out.critique.distribution,
+            v.value as string[],
+            out.critique.confidence,
+          );
+          out.distribution = blendMarginals(out.distribution, theirs, 0.5);
+        }
       }
     }
   }
@@ -635,6 +712,10 @@ async function verifyRun(
       };
       run.value = v.value;
       run.formatted = formatAnswer(v.value);
+      // The run's uncertainty follows the correction (the verifier's own, else from the pick).
+      delete run.distribution;
+      delete run.sd;
+      readUncertainty(req.answer, reply, run);
       return;
     }
   }
@@ -700,9 +781,75 @@ async function critique(
   if (proposed === out.formatted) return result;
   result.verdict = "revise";
   result.proposed = proposed;
+  if (probabilistic(req.answer)) {
+    const d =
+      req.answer.type === "choice"
+        ? parseDistribution(req.answer.options, reply.probabilities)
+        : parseMarginals(req.answer.options, reply.probabilities);
+    if (d) result.distribution = d;
+  }
   // The critic overrides the runs only when it is more sure than they agree.
   result.applied = (result.confidence ?? 0) > (out.confidence ?? 0);
   return result;
+}
+
+function probabilitiesInstruction(options: AnswerOption[]): string {
+  const example = options
+    .map(
+      (o, i) =>
+        `"${o.id}": ${i === 0 ? "0.7" : (0.3 / Math.max(1, options.length - 1)).toFixed(2)}`,
+    )
+    .join(", ");
+  return `Also give "probabilities": an object mapping EVERY option id to your probability (0..1) that it is the outcome, summing to 1, e.g. {${example}}. Calibrate: never 0 or 1, and keep some mass on outcomes you think unlikely.`;
+}
+
+/** A choice or multi-select that asks for a probability on every option. */
+function probabilistic(
+  spec: AnswerSpec,
+): spec is Extract<AnswerSpec, { type: "choice" | "multi" }> & { probabilities: true } {
+  return (spec.type === "choice" || spec.type === "multi") && spec.probabilities === true;
+}
+
+/**
+ * A run's stated uncertainty: per-option probabilities for a probabilistic
+ * choice or multi-select (from its picks and confidence where it gave none),
+ * an sd for a number.
+ */
+function readUncertainty(
+  spec: AnswerSpec,
+  reply: Record<string, unknown> | undefined,
+  run: TypedRun,
+): void {
+  if (spec.type === "choice" && spec.probabilities && typeof run.value === "string") {
+    run.distribution =
+      parseDistribution(spec.options, reply?.probabilities) ??
+      pickDistribution(spec.options, run.value, run.confidence);
+  }
+  if (spec.type === "multi" && spec.probabilities && Array.isArray(run.value)) {
+    run.distribution = completeMarginals(
+      spec.options,
+      parseMarginals(spec.options, reply?.probabilities),
+      run.value as string[],
+      run.confidence,
+    );
+  }
+  if (spec.type === "number") {
+    const sd = Number(reply?.sd);
+    if (Number.isFinite(sd) && sd > 0) run.sd = sd;
+  }
+}
+
+/** The forecast distribution, with `prediction` its most probable option. */
+function setDistribution(
+  out: TypedForecastAnswer,
+  options: AnswerOption[],
+  dist: Distribution,
+): void {
+  out.distribution = dist;
+  const top = argmax(options, dist);
+  out.prediction = top;
+  out.formatted = top;
+  out.confidence = dist[top];
 }
 
 function chooseCutoff(req: TypedForecastRequest, now: Date): TypedForecastAnswer["cutoff"] {

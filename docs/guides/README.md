@@ -30,6 +30,8 @@ and operate the environment. Start with one path below; the full catalog follows
 | [Forecasting](forecasting.md) | [Model API](model-api.md) |
 | Enter Marina in the Social Simulation Arena | [Arena](arena.md) | [Forecasting](forecasting.md) |
 | Enter Marina in FutureX (weekly future-prediction benchmark) | [FutureX](futurex.md) | [Forecasting](forecasting.md) |
+| Enter Marina in Metaculus AI-benchmark tournaments as a bot | [Metaculus](metaculus.md) | [Forecasting](forecasting.md) |
+| Answer a ForecastBench round (500 questions, up to 3 sets) | [ForecastBench](forecastbench.md) | [Forecasting](forecasting.md) |
 | Run Marina's coding agent on SWE-bench | [SWE-bench](swebench.md) | [Coding](coding.md) |
 | Search the web as of a date, or give agents a search room | [Search](search.md) | [Forecasting](forecasting.md) |
 | Run τ²-bench through Marina; use the verification formation as a model (`marina/verify:`) | [τ²-bench](tau2.md) | [Model API](model-api.md) |
@@ -69,6 +71,8 @@ degraded, or off and gives the next concrete action without exposing secrets.
 | [Forecasting](forecasting.md) | Any question → a probability or a number with cited, checked evidence (CLI, command, `/v1/forecast`) |
 | [Social Simulation Arena](arena.md) | Marina as an arena entrant: forecasters, research agent, signal discovery, integrity rules |
 | [FutureX](futurex.md) | A thin adapter: weekly batch → typed forecasts → submission file (never sent by Marina); backtests into the ledger |
+| [Metaculus](metaculus.md) | A bot adapter: open questions → typed forecasts → forecast + reasoning comment; configuration chosen by held-out backtest |
+| [ForecastBench](forecastbench.md) | A round → typed forecasts (dataset horizons in one call) → set file, resumable, up to 3 configurations by backtest; upload only by the operator |
 | [Reproduce](reproduce.md) | One command per published benchmark setup: `bun run repro doctor`, dry-run plans, replicated arms, pooled comparison from the ledger |
 | [SWE-bench](swebench.md) | A thin adapter: `marina -p` per instance on a clean checkout → patch → official harness → ledger |
 | [How Marina Differs](how-marina-differs.md) | Evidence-based fit across workflow engines, managed agent runtimes, memory products, and persistent worlds |
