@@ -18,6 +18,9 @@ bun run futurex backtest --limit 40   # resolved rows: forecast with an early cu
 bun run futurex backtest --clean --isolation closed-book --variant cheap --limit 160 --replicates 2 --lessons on
                                       # a non-leaking backtest (see Clean backtests)
 bun run futurex watch --once --run cheap   # poll for a new batch; on one, fetch and run
+bun run futurex watch --once --run cheap --daily --learn
+                                      # …and re-forecast open rows daily (see Standing answers)
+bun run futurex learn                 # resolved rows of filed batches → outcome lessons
 bun run futurex status                # every submission recorded so far
 ```
 
@@ -55,6 +58,31 @@ requested format), and the row's end time becomes the evidence cutoff.
 - **Nothing is sent.** `run` prints the file path and the email fields (recipient, subject,
   dataset commit, model, framework, organization). Submitting is an operator's act, or an approved
   connector's.
+
+## Standing answers
+
+FutureX questions stay open for days, so a filed answer is a *standing* answer per row and variant
+(`out/<sha>/<variant>/standing.json`). `watch --daily` re-forecasts the rows still open:
+
+- **Cadence:** once per UTC day at or after `--daily-hour` (default 06:00), plus one **final** run
+  `--final-lead-hours` (default 4) before the batch's deadline, Wednesday 16:00 UTC. Nothing runs
+  after the deadline. Runs are listed in `out/<sha>/schedule.json`.
+- **Revision rule** (`src/forecast/revision.ts`): a new answer replaces the standing one only on a
+  material change:
+  - its confidence rises by at least 0.1; or
+  - its evidence is materially new (word overlap below 0.6) at about the same confidence.
+
+  An unchanged answer (ignoring case, spacing and list order), a number within 2 %, a fallback, or a
+  different answer with nothing behind it keeps the standing answer.
+- **Ledger:** every decision, kept or revised, with its reason, is appended to `revisions.jsonl`.
+  A run that revises something writes a new file, which is a new `external_submissions` row, and
+  prints the email fields again. A run that revises nothing reproduces the same file, which is
+  already recorded, and prints nothing to send.
+
+`--learn` (or `bun run futurex learn`) hands resolved weeks to the
+[outcome-lesson loop](../architecture/memory.md#outcome-lessons-srclearning). Each standing answer
+whose row has a ground truth in the past dataset is scored and recorded once per variant and row.
+The question, truth and answer are seen only by the lesson writer as private context, never stored.
 
 ## Records
 
