@@ -21,6 +21,8 @@ import type { Engine } from "../../engine/engine";
 import { getErrorMessage } from "../../engine/errors";
 import { Logger } from "../../engine/logger";
 import { lessonsBlock, recallAcross } from "../../learning/service";
+import type { RepairLabel } from "../../repair/output-repair";
+import { repairToolCallMessage } from "../../repair/tool-call-repair";
 import {
   COST_USD_HEADER,
   errorJson,
@@ -495,6 +497,24 @@ function firstMessage(body: Record<string, unknown> | undefined): Msg | undefine
   return choices?.[0]?.message;
 }
 
+/** `body` with its first choice's message replaced (finish_reason follows the tool calls). */
+function withFirstMessage(body: Record<string, unknown>, message: Msg): Record<string, unknown> {
+  const choices = Array.isArray(body.choices) ? [...(body.choices as unknown[])] : [];
+  const first = (choices[0] ?? {}) as Record<string, unknown>;
+  choices[0] = {
+    ...first,
+    message,
+    ...(message.tool_calls?.length ? { finish_reason: "tool_calls" } : {}),
+  };
+  return { ...body, choices };
+}
+
+/** The repair shot's model: `MARINA_REPAIR_MODEL` when it is reachable, else the proposer. */
+function repairModelFor(engine: Engine, proposer: string): string {
+  const configured = process.env.MARINA_REPAIR_MODEL?.trim();
+  return configured && explicitUpstreamModel(engine, configured) ? configured : proposer;
+}
+
 type Usage = { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
 
 function addUsage(a: Usage | undefined, b: unknown): Usage | undefined {
@@ -651,6 +671,42 @@ export async function maybeVerifyChat(
     verdictLabel = "revised";
   }
 
+  // 4. Output repair: the final message owed a tool call but carries it as
+  // text or with malformed arguments (`tool-call-repair` — meaning unchanged,
+  // write calls under the write-guard rules). Off with MARINA_OUTPUT_REPAIR=off.
+  let repairLabel: RepairLabel | undefined;
+  const finalMessage = firstMessage(final);
+  if (tools?.length && finalMessage) {
+    const repairModel = repairModelFor(engine, spec.proposer);
+    const repaired = await repairToolCallMessage({
+      message: finalMessage,
+      tools,
+      isWrite: (name) => !isReadOnlyToolCall(name, tools),
+      shot: async (system, user) => {
+        const r = await callUpstream(
+          engine,
+          {
+            messages: [
+              { role: "system", content: system },
+              { role: "user", content: user },
+            ],
+          },
+          repairModel,
+          signal,
+          "verify:repair",
+        );
+        cost += r.costUsd ?? 0;
+        usage = addUsage(usage, r.body?.usage);
+        return r.ok ? textOf(firstMessage(r.body)?.content) : "";
+      },
+    }).catch(() => undefined);
+    if (repaired) {
+      repairLabel = repaired.label;
+      final = withFirstMessage(final, repaired.message);
+      log.info("model-api", `verify: ${repaired.label} — ${repaired.detail}`);
+    }
+  }
+
   engine.logEvent({
     type: "model_request_lifecycle",
     phase: "completed",
@@ -659,13 +715,14 @@ export async function maybeVerifyChat(
     model,
     target: spec.proposer,
     routeKind: "passthru",
-    routeReason: `verify:${verdictLabel}`,
+    routeReason: `verify:${verdictLabel}${repairLabel ? `+${repairLabel}` : ""}`,
     timestamp: Date.now(),
   });
   return json({ ...final, model, ...(usage ? { usage } : {}) }, 200, {
     "x-request-id": requestId,
     "x-marina-verify": verdictLabel,
     "x-marina-lessons": lessonsHeader,
+    ...(repairLabel ? { "x-marina-repair": repairLabel } : {}),
     [COST_USD_HEADER]: cost.toFixed(8),
   });
 }

@@ -68,6 +68,8 @@ export interface ResultItem {
   traceId?: string;
   /** The judge call's `x-request-id`, when the judge reported one. */
   judgeTraceId?: string;
+  /** The answer arrived through Marina's output repair (`repaired:parse|shot`). */
+  repaired?: string;
 }
 
 /** Usage of one model call. Undefined fields were not reported — never estimated. */

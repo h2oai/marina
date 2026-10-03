@@ -83,6 +83,11 @@ Agents are autonomous from birth, not assistants ("You think, therefore you are 
   - The cap never fires on the first run. A bound Code Mode coder is exempt from the default cap, but not from an explicit one.
   - Reasoning blocks from earlier runs are dropped (`MARINA_DROP_OLD_THINKING_SIGNATURES=off` keeps them). Responses-API messages are skipped.
   - The 0.8 × window trigger still applies whenever it is smaller.
+- **Models that reason unasked + output repair (2026-10-03)** (`src/agent/reasoning-control.ts`, `tool-call-probe.ts`, `src/repair/`):
+  - With thinking off, an automatic crew/compact cap for an OpenRouter or unlisted model gets reasoning headroom (8192). A length stop with no tool call grows only an AUTOMATIC cap; explicit caps never grow.
+  - OpenRouter tool requests ask `require_parameters`. The reasoning disable is sent only for a probe-verified model, and an upstream refusal of either field is learned per model.
+  - A spawn-time tool probe (`MARINA_TOOL_PROBE=warn|refuse|off`) reports a prose-only model in `agent status` and `readiness`.
+  - Output repair is a deterministic parse, then ONE re-encoding shot whose values must appear verbatim (`groundedIn`; write calls use only argument names the draft wrote), then a `repaired:parse|shot` label. It covers the owed `model_response` salvage, `marina/verify` (`x-marina-repair`) and typed-forecast runs. `MARINA_OUTPUT_REPAIR=off` returns raw output.
 - **Thinking + tool ordering (2026-09-22)**: `thinkingLevel` resolves explicit → crew responder `off` → `MARINA_AGENT_THINKING` (default `off`); thinking on ⇒ `temperature`/`top_p` omitted for Anthropic. World-mutating tools are stamped `executionMode: "sequential"`; read-only tools stay parallel (`MARINA_TOOL_EXECUTION`). → docs/architecture/agent-cognition.md
 
 ## Memory Architecture — Canonical Records and Compatibility (read before touching memory code)

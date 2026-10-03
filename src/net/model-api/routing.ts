@@ -251,6 +251,13 @@ export interface RouteResult {
    *  log). Returned as `x-request-id` so a caller can jump straight to
    *  `trace show <id>` / Admin → Traces for this exact request. */
   requestId: string;
+  /** The responder delivered this answer through output repair (`repaired:parse|shot`). */
+  repaired?: string;
+}
+
+/** A responder's `repaired` label, when it is one Marina issues. */
+function repairLabelOf(v: unknown): string | undefined {
+  return v === "repaired:parse" || v === "repaired:shot" ? v : undefined;
 }
 
 export interface RouteOptions {
@@ -466,7 +473,13 @@ export async function routeToChannel(
           clearTimeout(timer);
           unsub();
           respondedBy = senderId;
-          resolve({ content: parsed.content ?? "", conversationId: convId, requestId });
+          const repaired = repairLabelOf(parsed.repaired);
+          resolve({
+            content: parsed.content ?? "",
+            conversationId: convId,
+            requestId,
+            ...(repaired ? { repaired } : {}),
+          });
           return;
         }
 
@@ -505,7 +518,9 @@ export async function routeToChannel(
       routeStrategy: strategy,
       candidateCount: onlineMembers.length,
       routeAdviceMode: route.adviceMode,
-      routeReason: route.reason,
+      routeReason: result.repaired
+        ? `${route.reason ?? "routed"}+${result.repaired}`
+        : route.reason,
       durationMs: Date.now() - startedAt,
       timestamp: Date.now(),
     });

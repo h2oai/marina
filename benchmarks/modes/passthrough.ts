@@ -45,6 +45,8 @@ export interface QueryResult {
    * the ledger can resolve who worked on the item (`POST /v1/benchmarks/runs`).
    */
   requestId?: string;
+  /** Marina's `x-marina-repair` label: the answer reached the endpoint through output repair. */
+  repaired?: string;
 }
 
 /**
@@ -149,12 +151,14 @@ export async function queryWithUsage(
       // A reasoning model that spends its whole budget thinking returns
       // `content: null`: an empty answer (scored wrong), never a crash.
       const requestId = resp.headers.get("x-request-id") ?? undefined;
+      const repaired = resp.headers.get("x-marina-repair") ?? undefined;
       consecutiveTimeouts.delete(endpoint);
       deadUntil.delete(endpoint);
       return {
         content: content ?? "",
         usage: usageFromResponse(data, resp.headers.get(MARINA_COST_HEADER)),
         ...(requestId ? { requestId } : {}),
+        ...(repaired ? { repaired } : {}),
       };
     } catch (err) {
       if (controller.signal.aborted || (err instanceof Error && err.name === "TimeoutError")) {

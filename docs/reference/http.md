@@ -1993,7 +1993,7 @@ Fields read here: `model`, `name`.
 
 ### `path.split(".")`
 
-[Source](../../src/net/model-api/verify.ts#L319)
+[Source](../../src/net/model-api/verify.ts#L321)
 
 ## src/net/orchestration-api.ts
 

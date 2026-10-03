@@ -45,6 +45,8 @@ export interface JudgedClaim {
 
 export interface AnalystReply {
   reply?: Record<string, unknown>;
+  /** The analyst's raw text (present whenever the call returned). */
+  raw?: string;
   /** The call failed; the full message (callers truncate for display). */
   error?: string;
 }
@@ -56,8 +58,9 @@ export async function askAnalyst(
   user: string,
 ): Promise<AnalystReply> {
   try {
-    const reply = parseReply(await analyst.complete(system, user));
-    return reply ? { reply } : {};
+    const raw = await analyst.complete(system, user);
+    const reply = parseReply(raw);
+    return reply ? { reply, raw } : { raw };
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };
   }

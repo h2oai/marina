@@ -208,6 +208,43 @@ describe("forecastTyped", () => {
     expect(a.critique).toBeUndefined();
   });
 
+  it("repairs a run whose answer missed the JSON shape, labelled, without changing it", async () => {
+    const briefs: ResearchBrief[] = [];
+    const repairPrompts: string[] = [];
+    const prose = "The latest reading favours option A because the trend held.";
+    const a = await forecastTyped(
+      { question: "Which option?", answer: choice },
+      {
+        retriever: fakeRetriever(briefs),
+        analysts: [
+          part("fenced", () => '```json\n{"answer": "A", "confidence": 0.7,}\n```'),
+          part("prose", (system) => {
+            if (system.includes("You re-encode text")) {
+              repairPrompts.push(system);
+              return '{"answer": "A"}';
+            }
+            return prose;
+          }),
+          part("inventing", (system) =>
+            system.includes("You re-encode text") ? '{"answer": "B"}' : "I cannot decide.",
+          ),
+        ],
+        planner: planner({ done: true }),
+        now,
+        options: { runs: 3, researchRounds: 1, critique: false },
+      },
+    );
+    expect(a.runs[0]?.repaired).toBe("repaired:parse");
+    expect(a.runs[0]?.value).toBe("A");
+    expect(a.runs[1]?.repaired).toBe("repaired:shot");
+    expect(a.runs[1]?.value).toBe("A");
+    expect(repairPrompts).toHaveLength(1);
+    // The third run's shot answered instead of re-encoding: it stays invalid.
+    expect(a.runs[2]?.repaired).toBeUndefined();
+    expect(a.runs[2]?.status).toContain("invalid");
+    expect(a.prediction).toBe("A");
+  });
+
   it("freezes evidence at a past end time and says so", async () => {
     const briefs: ResearchBrief[] = [];
     const a = await forecastTyped(
