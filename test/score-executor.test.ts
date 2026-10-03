@@ -3,11 +3,7 @@
 
 import { describe, expect, it } from "bun:test";
 import { type Score, ScoreError } from "../src/coordination/score";
-import {
-  type DispatchContext,
-  executeScore,
-  type ScoreStepEvent,
-} from "../src/coordination/score-executor";
+import { type DispatchContext, executeScore, type ScoreStepEvent } from "../src/sdk/score-executor";
 
 function score(steps: Score["steps"]): Score {
   return { id: "sc1", goal: "g", author: "alice", steps };

@@ -101,7 +101,7 @@ function RootContent() {
   if (isUnified) {
     surface = <UnifiedSurface />;
   } else {
-    // The grid dashboard is one React tree of live panels; a throw in any of
+    // The workspace canvas is one React tree of live panels; a throw in any of
     // them lands here instead of unmounting the page.
     surface = (
       <ErrorBoundary fallbackTitle="Dashboard crashed">

@@ -3,7 +3,7 @@
 
 /**
  * Pure helpers shared by the Admin → Ops tab, the header spend chip and the
- * agent rows in EntityRoster / AgentLaunchContent. No React, no fetch —
+ * agent rows in EntityRoster. No React, no fetch —
  * everything here is unit-testable in isolation.
  */
 

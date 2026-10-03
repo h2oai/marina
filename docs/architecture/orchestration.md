@@ -23,7 +23,7 @@ See also: `docs/guides/coordination.md`, `docs/guides/emergent-organization.md`.
 
 ## Executable Scores
 
-`src/coordination/score-executor.ts` snapshots a validated Score and dispatches ready steps with
+`src/sdk/score-executor.ts` snapshots a validated Score and dispatches ready steps with
 bounded concurrency (default 4). A successor can start as soon as its own dependencies finish;
 it does not wait for unrelated branches. `DispatchContext.signal` carries cancellation to the
 worker transport. Failure, caller cancellation or an optional overall deadline stops admission

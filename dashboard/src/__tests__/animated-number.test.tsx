@@ -3,7 +3,7 @@
 
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { AnimatedNumber, AnimatedSvgNumber } from "../components/AnimatedNumber";
+import { AnimatedNumber } from "../components/AnimatedNumber";
 
 describe("AnimatedNumber", () => {
   it("renders the initial value as text", () => {
@@ -26,32 +26,5 @@ describe("AnimatedNumber", () => {
     const span = container.querySelector("span");
     expect(span).toBeTruthy();
     expect(span?.className).toContain("text-cyan-500");
-  });
-});
-
-describe("AnimatedSvgNumber", () => {
-  it("renders the initial value inside an SVG text element", () => {
-    const { container } = render(
-      <svg>
-        <title>Test</title>
-        <AnimatedSvgNumber value={7} x={10} y={20} />
-      </svg>,
-    );
-    const text = container.querySelector("text");
-    expect(text).toBeTruthy();
-    expect(text?.textContent).toBe("7");
-  });
-
-  it("forwards SVG props (x, y, fill)", () => {
-    const { container } = render(
-      <svg>
-        <title>Test</title>
-        <AnimatedSvgNumber value={1} x={42} y={99} fill="red" />
-      </svg>,
-    );
-    const text = container.querySelector("text");
-    expect(text?.getAttribute("x")).toBe("42");
-    expect(text?.getAttribute("y")).toBe("99");
-    expect(text?.getAttribute("fill")).toBe("red");
   });
 });

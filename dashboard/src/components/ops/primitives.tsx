@@ -3,9 +3,8 @@
 
 /**
  * Small presentational pieces shared by the Admin → Ops sections. `Section`
- * deliberately does NOT use the GlassPanel `title` prop: that header is the
- * react-grid-layout drag handle, so a titled GlassPanel inside the Admin body
- * would make every section header drag the Admin panel.
+ * uses its own heading inside a titleless GlassPanel to keep section headings
+ * distinct from the outer panel's window controls and drag handle.
  */
 
 import type { ReactNode } from "react";

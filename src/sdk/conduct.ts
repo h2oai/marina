@@ -4,7 +4,7 @@
 /**
  * Live execution of a Score over the agent transport.
  *
- * Wires the transport-free executor (src/coordination/score-executor.ts) to a
+ * Wires the transport-free executor (src/sdk/score-executor.ts) to a
  * real worker-dispatch primitive: `tellAndAwait`. An organizer agent (or an
  * external SDK script) hands each step's instruction — plus the outputs of the
  * steps it accesses — to the resolved worker and awaits the reply. This is the

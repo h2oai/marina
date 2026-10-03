@@ -78,9 +78,6 @@ export const MEMORY_HYGIENE_PHASE = 2700;
 const REVIEW_PAGE = 100;
 const NOTE_SCAN = 500;
 
-/** @deprecated alias — the shared shape now lives in memory-dispatch.ts. */
-export type HygieneHelper = RunningHelper;
-
 export interface MemoryHygieneDeps {
   /** Entities currently connected that may own a durable world account. */
   onlineEntities: () => { id: EntityId; name: string }[];
@@ -92,7 +89,7 @@ export interface MemoryHygieneDeps {
   /** Direct notification to the owner (a `tell`). */
   tell: (entityId: EntityId, text: string) => void;
   /** A running resident helper with the given role, if any. */
-  findRunningHelper: (role: string) => HygieneHelper | undefined;
+  findRunningHelper: (role: string) => RunningHelper | undefined;
   /** Optional warning sink for per-entity soft failures. */
   warn?: (message: string, detail?: Record<string, unknown>) => void;
 }

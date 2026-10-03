@@ -44,8 +44,6 @@ export const FALLBACK_GROUPS: ProviderGroup[] = [
   },
 ];
 
-export const DEFAULT_FALLBACK_MODEL = FALLBACK_GROUPS[0]!.models[0]!.value;
-
 /** Self-hosted, OpenAI-compatible local runtimes, surfaced first in pickers. */
 const LOCAL_PROVIDERS = new Set(["llama", "ollama"]);
 
