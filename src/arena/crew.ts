@@ -120,9 +120,9 @@ export function learn(
   lock: ArenaLock,
   filed: Distribution,
   outcome: number,
-): void {
+): { beat: boolean; skill: number; lean: string } | undefined {
   const last = historyOf(lock).at(-1)?.value;
-  if (last === undefined) return;
+  if (last === undefined) return undefined;
   const ours = crpsNormal(filed.mean, filed.sd, outcome);
   const pers = crpsNormal(last, 1.5, outcome);
   const moved = filed.mean - last;
@@ -141,6 +141,7 @@ export function learn(
     importance: ours > pers ? 7 : 5,
     skipDedup: true,
   });
+  return { beat: ours < pers, skill: pers > 0 ? 1 - ours / pers : 0, lean };
 }
 
 export async function crewForecastRound(

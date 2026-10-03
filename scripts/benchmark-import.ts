@@ -9,7 +9,7 @@
  *   DB_PATH=marina.db bun run benchmark:import <file.json | tier0-dir> ... \
  *     --target-kind model|crew|population --target '<json or model id>' \
  *     [--label name] [--judge "<model> @ <route>"] [--cost-usd N] [--dry-run] \
- *     [--group key | --replicate-of <runId>]
+ *     [--group key | --replicate-of <runId>] [--learn]
  *   DB_PATH=marina.db bun run benchmark:import --regroup <runId,runId,…> --group key
  *
  * A file is one `benchmarks/harness.ts` result; a directory is a Tier-0 output
@@ -24,6 +24,11 @@
  * joins the automatic group of its target, item slice and judge. `--regroup`
  * moves already-recorded runs into one group (e.g. replicates whose recorded
  * targets differ only in a label) — item outcomes are never touched.
+ *
+ * `--learn` also feeds each newly recorded run to the outcome-learning loop
+ * (src/learning/): a judged lesson about which configuration won or lost on
+ * that benchmark. It uses this Marina's own model and decision backend when
+ * reachable; otherwise the lesson is recorded unverified, never trusted.
  */
 
 import { randomUUID } from "node:crypto";
@@ -36,6 +41,8 @@ import {
   TARGET_KINDS,
 } from "../src/engine/benchmark-ledger";
 import { replicateGroupOf, validReplicateGroup } from "../src/engine/benchmark-replicates";
+import { noteBenchmarkRun } from "../src/learning/intake";
+import { enableOutcomeLearning, settleOutcomes } from "../src/learning/service";
 import { MarinaDB } from "../src/persistence/database";
 import type { BenchmarkTargetKind } from "../src/persistence/db-benchmarks";
 
@@ -49,6 +56,7 @@ const { positionals, values } = parseArgs({
     judge: { type: "string" },
     "cost-usd": { type: "string" },
     "dry-run": { type: "boolean" },
+    learn: { type: "boolean" },
     group: { type: "string" },
     "replicate-of": { type: "string" },
     regroup: { type: "string" },
@@ -168,6 +176,10 @@ try {
         continue;
       }
       const res = db.recordBenchmarkLedgerRun(run, items);
+      if (res.created && values.learn) {
+        enableOutcomeLearning(db);
+        noteBenchmarkRun(db, { ...run, id: res.id });
+      }
       console.log(
         res.created
           ? `${file}: recorded ${res.id} — ${run.benchmark} ${acc}${replicateGroup ? ` (group ${replicateGroup})` : ""}`
@@ -179,6 +191,7 @@ try {
     }
   }
 } finally {
+  if (db && values.learn) await settleOutcomes(db);
   db?.close();
 }
 process.exit(failed ? 1 : 0);
