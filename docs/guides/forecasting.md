@@ -79,6 +79,30 @@ What happens:
    may propose another. The proposal replaces the runs' answer only when the critic's confidence
    exceeds the runs' agreement; both are kept in the record.
 
+**Verification** (`MARINA_FORECAST_VERIFY=on`, opt-in) — the verification formation inside one
+forecast: before a run counts, an independent verifier (`MARINA_FORECAST_VERIFIER`, default the
+critic) checks its draft against the dossier and the resolution rules — option semantics, unit and
+scale, the latest reading, arithmetic — and a concrete correction replaces the draft. Each run
+records the verdict and, on a correction, the draft it replaced.
+
+**Lessons.** A forecast can recall lessons from questions that have already resolved: a terse,
+typed record per outcome — answer type, a category, the failure mode (`wrong option`, `numeric
+over 6.0%`, …) and one corrective rule — written only after the outcome is known
+(`src/forecast/lessons.ts`). They are canonical memory records (reflection tier, subject
+`forecast-lesson`, `valid_time.from` = when the outcome became known) written through the memory
+service. Recall is lexical and byte-budgeted, and a lesson is visible to a forecast only when its
+outcome was known at that forecast's evidence cutoff (`visibleAt`) — so a forecast made "as of"
+September never sees a lesson learned from an October result. The lessons used are recorded on
+the answer (`lessons`), and the plan, the runs and the critic all see them.
+
+**Retrieval isolation** (for past cutoffs). Date-filtered engines (`tavily:`, `exa:` with
+`EXA_API_KEY`) only return pages published inside the window. Any other engine can be wrapped with
+`MARINA_FORECAST_RETRIEVAL_FILTER=strict`, which keeps a research line only when every page it
+cites has a known publication day on or before the cutoff (the engine's date, else a date in the
+URL), it cites no live-result page (encyclopedias, scoreboards, markets, charts) and it names no
+later day (`src/arena/research/isolation.ts`). `closed-book` as the retriever does no retrieval at
+all — a lower bound.
+
 **Evidence cutoff.** Each answer uses nothing published after a cutoff: `asOf` when given, else
 the earlier of now and the question's `endTime`. Research asks for nothing later, search engines
 that filter by date (Tavily) drop later results, sources dated after the cutoff are discarded,

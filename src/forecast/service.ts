@@ -24,6 +24,11 @@
  *   MARINA_FORECAST_RESEARCH_ROUNDS  research rounds, 1–4 (default 2)
  *   MARINA_FORECAST_CRITIQUE   on | off (default on)
  *   MARINA_FORECAST_LOOKUPS    optional structured sources: polymarket (default none)
+ *   MARINA_FORECAST_VERIFY     on | off (default off): each run's draft is checked by
+ *                              MARINA_FORECAST_VERIFIER (default: the critic) before it counts
+ *   MARINA_FORECAST_RETRIEVAL_FILTER  strict | none (default none): keep only report lines
+ *                              whose cited pages are provably published by the cutoff
+ *                              (src/arena/research/isolation.ts)
  *
  * Retrieval and the Jev judge go through OpenRouter today, so OPENROUTER_API_KEY
  * is required; analysts may be any model Marina routes. Every model call is
@@ -31,10 +36,12 @@
  */
 
 import { modelComplete } from "../arena/model-backend";
+import { strictDateFilter } from "../arena/research/isolation";
 import { type Retriever, retrieverFromSpec } from "../arena/research/retrieve";
 import { defaultPageText } from "../arena/research/verify";
 import { researchJudge } from "../decisions/config";
 import { dailyCapRefusal } from "../engine/spend-ledger";
+import type { LessonStore } from "./lessons";
 import { lookupsFromSpec } from "./lookups";
 import type { ForecastDeps } from "./question";
 import type { ModelPart, TypedForecastDeps, TypedForecastOptions } from "./typed";
@@ -54,6 +61,13 @@ interface Wired {
   researchCost: () => number;
 }
 
+/** The retrieval filter in force: `strict` keeps only provably pre-cutoff report lines. */
+export function retrievalFilterFromEnv(env: NodeJS.ProcessEnv = process.env): "strict" | "none" {
+  return env.MARINA_FORECAST_RETRIEVAL_FILTER?.trim().toLowerCase() === "strict"
+    ? "strict"
+    : "none";
+}
+
 function wire(env: NodeJS.ProcessEnv): Wired | { error: string } {
   const key = env.OPENROUTER_API_KEY;
   if (!key) {
@@ -67,7 +81,9 @@ function wire(env: NodeJS.ProcessEnv): Wired | { error: string } {
     base = retrieverFromSpec(env.MARINA_FORECAST_RETRIEVER?.trim() || DEFAULT_RETRIEVER, {
       openrouter: key,
       ...(env.TAVILY_API_KEY?.trim() ? { tavily: env.TAVILY_API_KEY.trim() } : {}),
+      ...(env.EXA_API_KEY?.trim() ? { exa: env.EXA_API_KEY.trim() } : {}),
     });
+    if (retrievalFilterFromEnv(env) === "strict") base = strictDateFilter(base);
   } catch (err) {
     return {
       error: (err as Error).message.replace(
@@ -180,27 +196,53 @@ export function typedOptionsFromEnv(
   const runs = intEnv(env.MARINA_FORECAST_RUNS);
   const rounds = intEnv(env.MARINA_FORECAST_RESEARCH_ROUNDS);
   const critique = env.MARINA_FORECAST_CRITIQUE?.trim().toLowerCase();
+  const verify = env.MARINA_FORECAST_VERIFY?.trim().toLowerCase();
   return {
     ...(runs !== undefined ? { runs } : {}),
     ...(rounds !== undefined ? { researchRounds: rounds } : {}),
     ...(critique === "off" || critique === "false" || critique === "0" ? { critique: false } : {}),
+    ...(verify === "on" || verify === "true" || verify === "1" ? { verify: true } : {}),
     ...overrides,
   };
 }
 
 export function typedForecastDeps(
   env: NodeJS.ProcessEnv = process.env,
-  overrides: TypedForecastOptions & { analysts?: string[]; planner?: string; critic?: string } = {},
+  overrides: TypedForecastOptions & {
+    analysts?: string[];
+    planner?: string;
+    critic?: string;
+    verifier?: string;
+    /** A retriever spec instead of MARINA_FORECAST_RETRIEVER. */
+    retriever?: string;
+    /** Wrap retrieval in the strict pre-cutoff filter (MARINA_FORECAST_RETRIEVAL_FILTER=strict). */
+    strictRetrieval?: boolean;
+    /** Wrap the wired retriever (an audit, a capture, a custom filter). */
+    wrapRetriever?: (r: Retriever) => Retriever;
+    lessons?: LessonStore;
+  } = {},
 ): { deps: TypedForecastDeps; costUsd: () => number } | { error: string } {
-  const analystEnv = overrides.analysts?.length
-    ? { ...env, MARINA_FORECAST_ANALYSTS: overrides.analysts.join(",") }
-    : env;
+  const analystEnv: NodeJS.ProcessEnv = {
+    ...env,
+    ...(overrides.analysts?.length
+      ? { MARINA_FORECAST_ANALYSTS: overrides.analysts.join(",") }
+      : {}),
+    ...(overrides.retriever ? { MARINA_FORECAST_RETRIEVER: overrides.retriever } : {}),
+    ...(overrides.strictRetrieval ? { MARINA_FORECAST_RETRIEVAL_FILTER: "strict" } : {}),
+  };
   const w = wire(analystEnv);
   if ("error" in w) return w;
   const extra: Array<{ costUsd: number }> = [];
   let planner: ModelPart | undefined;
   let critic: ModelPart | undefined;
+  let verifier: ModelPart | undefined;
   try {
+    const vSpec = overrides.verifier ?? env.MARINA_FORECAST_VERIFIER?.trim();
+    if (vSpec) {
+      const v = modelPart(vSpec, env);
+      verifier = v;
+      if (v.usage) extra.push(v.usage);
+    }
     const pSpec = overrides.planner ?? env.MARINA_FORECAST_PLANNER?.trim();
     if (pSpec) {
       const p = modelPart(pSpec, env);
@@ -216,13 +258,25 @@ export function typedForecastDeps(
   } catch (err) {
     return { error: (err as Error).message };
   }
-  const { analysts: _a, planner: _p, critic: _c, ...options } = overrides;
+  const {
+    analysts: _a,
+    planner: _p,
+    critic: _c,
+    verifier: _v,
+    retriever: _r,
+    strictRetrieval: _s,
+    wrapRetriever,
+    lessons,
+    ...options
+  } = overrides;
   return {
     deps: {
-      retriever: w.retriever,
+      retriever: wrapRetriever ? wrapRetriever(w.retriever) : w.retriever,
       analysts: w.analysts.map((m) => ({ name: m.name, complete: m.complete })),
       ...(planner ? { planner } : {}),
       ...(critic ? { critic } : {}),
+      ...(verifier ? { verifier } : {}),
+      ...(lessons ? { lessons } : {}),
       ...(w.judge ? { judge: w.judge } : {}),
       pageText: defaultPageText(),
       lookups: lookupsFromSpec(env.MARINA_FORECAST_LOOKUPS),

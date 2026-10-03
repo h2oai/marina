@@ -24,6 +24,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import type { ReferenceScores } from "../benchmarks/futurex/clean";
+import { cleanBacktest } from "../benchmarks/futurex/clean-run";
 import {
   datasetSha,
   type FuturexBatch,
@@ -47,8 +49,11 @@ import {
   submissionBody,
   submissionFileName,
 } from "../benchmarks/futurex/submission";
-import { typedForecastDeps } from "../src/forecast/service";
+import { durableLessonStore, type LessonStore } from "../src/forecast/lessons";
+import { modelPart, typedForecastDeps } from "../src/forecast/service";
+import { residentMemoryOperation } from "../src/memory/resident-service";
 import { MarinaDB } from "../src/persistence/database";
+import type { MemoryOperationRequest } from "../src/sdk/memory-operations";
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -70,6 +75,17 @@ const { positionals, values } = parseArgs({
     run: { type: "string" },
     interval: { type: "string", default: "3600" },
     "no-ledger": { type: "boolean" },
+    // Clean (non-leaking) backtest — see benchmarks/futurex/clean.ts.
+    clean: { type: "boolean" },
+    after: { type: "string" },
+    until: { type: "string" },
+    isolation: { type: "string", default: "post-filtered" },
+    retriever: { type: "string" },
+    replicates: { type: "string", default: "1" },
+    lessons: { type: "string" },
+    "lessons-account": { type: "string", default: "Forecaster" },
+    "lesson-writer": { type: "string", default: "openrouter/deepseek/deepseek-v4-pro-0813" },
+    reference: { type: "string" },
   },
 });
 const [cmd] = positionals;
@@ -122,12 +138,35 @@ function loadBatch(repo: string, which?: string): FuturexBatch | undefined {
   return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as FuturexBatch) : undefined;
 }
 
-function depsFor(v: Variant) {
+/**
+ * The durable lesson memory for `account` (created as a world account when
+ * missing), in the named space — canonical memory records through the
+ * resident memory service.
+ */
+async function lessonStoreFor(db: MarinaDB, account: string, space: string): Promise<LessonStore> {
+  if (!db.getUserByName(account)) db.createUser({ id: crypto.randomUUID(), name: account });
+  const run = (request: MemoryOperationRequest) =>
+    residentMemoryOperation(db, account, request) as Promise<{ ok: true; result: unknown }>;
+  const spaces = (await run({ operation: "spaces" })).result as {
+    spaces?: Array<{ id: string; name: string }>;
+  };
+  const found = spaces.spaces?.find((s) => s.name === space)?.id;
+  const id =
+    found ??
+    ((await run({ operation: "create_space", input: { name: space } })).result as { id: string })
+      .id;
+  return durableLessonStore(run, { spaceId: id });
+}
+
+function depsFor(v: Variant, lessons?: LessonStore) {
   return () => {
     const made = typedForecastDeps(process.env, {
       analysts: v.analysts,
       ...(v.planner ? { planner: v.planner } : {}),
       ...(v.critic ? { critic: v.critic } : {}),
+      ...(v.verifier ? { verifier: v.verifier } : {}),
+      ...(v.verify ? { verify: true } : {}),
+      ...(lessons ? { lessons } : {}),
       ...(v.runs !== undefined ? { runs: v.runs } : {}),
       ...(v.researchRounds !== undefined ? { researchRounds: v.researchRounds } : {}),
       ...(v.critique === false ? { critique: false } : {}),
@@ -159,9 +198,18 @@ async function runCmd(): Promise<number> {
   if (!loadBatch(ONLINE_REPO, batch.sha)) saveBatch(batch);
   const rows = values.limit ? batch.rows.slice(0, Number(values.limit)) : batch.rows;
   console.log(describe(batch));
+  // Live forecasts read every lesson learned so far (now is after every resolution).
+  let lessons: LessonStore | undefined;
+  if (values.lessons !== "off" && !values["no-ledger"]) {
+    const ldb = openDb();
+    if (ldb.getUserByName(values["lessons-account"]!)) {
+      lessons = await lessonStoreFor(ldb, values["lessons-account"]!, SHARED_LESSONS);
+      console.log(`lessons: recalling from ${values["lessons-account"]}/${SHARED_LESSONS}`);
+    }
+  }
   for (const v of variantsFromFlags()) {
     console.log(`\n── variant ${v.label} (${v.analysts.join(", ")}) · ${rows.length} rows`);
-    const run = await runBatch(rows, v, depsFor(v), {
+    const run = await runBatch(rows, v, depsFor(v, lessons), {
       concurrency: Number(values.concurrency),
       onRow: (r, done, total) =>
         console.log(
@@ -214,9 +262,71 @@ async function runCmd(): Promise<number> {
   return 0;
 }
 
+/** The shared lesson space live runs read and every backtest also writes to. */
+const SHARED_LESSONS = "forecast-lessons";
+
+async function cleanBacktestCmd(batch: FuturexBatch): Promise<number> {
+  const isolation = values.isolation as "date-filtered" | "post-filtered" | "closed-book";
+  if (!["date-filtered", "post-filtered", "closed-book"].includes(isolation)) {
+    throw new Error("--isolation date-filtered | post-filtered | closed-book");
+  }
+  const lessons = values.lessons === "on" ? "on" : "off";
+  const db = values["no-ledger"] ? undefined : openDb();
+  try {
+    const account = values["lessons-account"]!;
+    const shared =
+      db && lessons === "on" ? await lessonStoreFor(db, account, SHARED_LESSONS) : undefined;
+    const writer = lessons === "on" ? modelPart(values["lesson-writer"]!) : undefined;
+    const summaries = await cleanBacktest({
+      rows: batch.rows,
+      batchSha: batch.sha,
+      variants: variantsFromFlags(),
+      isolation,
+      ...(values.retriever ? { retriever: values.retriever } : {}),
+      ...(values.after ? { after: values.after } : {}),
+      ...(values.until ? { until: values.until } : {}),
+      limit: Number(values.limit ?? 80),
+      horizonDays: Number(values["horizon-days"]),
+      concurrency: Number(values.concurrency),
+      replicates: Math.max(1, Number(values.replicates)),
+      lessons,
+      ...(db && lessons === "on"
+        ? {
+            // Each run recalls only its own lessons (an honest ablation); every
+            // lesson is also kept in the shared space for live forecasts.
+            lessonStore: async (label: string) => {
+              const own = await lessonStoreFor(db, account, `${SHARED_LESSONS}-${label}`);
+              return {
+                write: async (l) => {
+                  await shared?.write(l);
+                  return own.write(l);
+                },
+                recall: (q, asOf, o) => own.recall(q, asOf, o),
+              } satisfies LessonStore;
+            },
+          }
+        : {}),
+      ...(writer ? { lessonWriter: writer } : {}),
+      ...(values.reference
+        ? { reference: JSON.parse(readFileSync(values.reference, "utf8")) as ReferenceScores }
+        : {}),
+      outDir: join(dir, "clean", batch.sha),
+      ...(db ? { ledger: db } : {}),
+    });
+    writeFileSync(
+      join(dir, "clean", batch.sha, `summary-${Date.now()}.json`),
+      JSON.stringify(summaries, null, 1),
+    );
+    return 0;
+  } finally {
+    db?.close();
+  }
+}
+
 async function backtestCmd(): Promise<number> {
   const batch = loadBatch(PAST_REPO, values.batch) ?? (await fetchBatch(PAST_REPO));
   if (!loadBatch(PAST_REPO, batch.sha)) saveBatch(batch);
+  if (values.clean) return cleanBacktestCmd(batch);
   const since = values.since ? Date.parse(values.since) : Number.NEGATIVE_INFINITY;
   const limit = Number(values.limit ?? 40);
   // The most recent resolved rows, balanced across levels.

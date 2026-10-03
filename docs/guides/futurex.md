@@ -15,6 +15,8 @@ bun run futurex fetch --past          # the resolved-questions dataset (for back
 bun run futurex run --variant cheap   # forecast every row and write the submission file
 bun run futurex run --variant cheap --variant frontier   # several variants, one file each
 bun run futurex backtest --limit 40   # resolved rows: forecast with an early cutoff, score, record
+bun run futurex backtest --clean --isolation closed-book --variant cheap --limit 160 --replicates 2 --lessons on
+                                      # a non-leaking backtest (see Clean backtests)
 bun run futurex watch --once --run cheap   # poll for a new batch; on one, fetch and run
 bun run futurex status                # every submission recorded so far
 ```
@@ -64,12 +66,49 @@ requested format), and the row's end time becomes the evidence cutoff.
 
 ## Variants
 
-Built-ins are `cheap` (one strong low-cost model, three runs), `frontier` (three vendors' current
-models, three runs, a frontier critic) and `crew` (a Marina crew as the analyst, via
-`marina:<crew>`). `--variants <file.json>` supplies others: an array of
-`{ label, model, analysts, planner?, critic?, runs?, researchRounds?, critique? }`.
+Built-ins are:
 
-## Backtests are smoke tests
+- `cheap`: one strong low-cost model, three runs.
+- `verify`: cheap runs with every draft checked by a different-vendor verifier.
+- `frontier`: three vendors' current models, three runs, a frontier critic.
+- `frontier-2607`: a frontier mix released before the latest resolved rows, so it can be backtested cleanly.
+- `crew`: a Marina crew as the analyst, via `marina:<crew>`.
+
+Model ids are pinned, never floating aliases. `--variants <file.json>` supplies others: an array of
+`{ label, model, analysts, planner?, critic?, verifier?, verify?, runs?, researchRounds?, critique? }`.
+
+Live runs recall every lesson in the shared `forecast-lessons` space of the `--lessons-account` world
+account (default `Forecaster`) when it exists; `--lessons off` disables that.
+
+## Clean backtests
+
+`bun run futurex backtest --clean` measures skill on resolved rows without letting outcomes in.
+Each of the three ways an outcome can leak has a guard (`benchmarks/futurex/clean.ts`):
+
+- **Model weights.** Only rows that end at least 10 days after every model's public release are
+  used. A weekly question is released at most about 10 days before it ends, so the question
+  postdates the model. Release dates come from the provider catalogue (`MODEL_RELEASES`) and are an
+  upper bound on knowledge cutoffs. A model with no known release, a floating alias, or a crew
+  (whose agents have their own tools) is refused unless `--after <YYYY-MM-DD>` is given. Every
+  variant in one invocation runs on the same rows.
+- **Retrieval.** `--isolation date-filtered | post-filtered | closed-book` (with `--retriever <spec>`
+  for the first two). An unfiltered engine is never used.
+- **Memory.** `--lessons on` writes a lesson after each scored row and recalls only lessons visible
+  at each forecast's cutoff. Rows run in order of resolution. Each run recalls only its own lessons,
+  so `--lessons on` against `off` is an honest ablation, and every lesson is also kept in the
+  shared space for live runs.
+
+**Leak audit.** After scoring, each row is audited. A row is suspicious if its reasoning names a
+day after the event, its kept evidence names any day after the cutoff, it quotes the exact numeric
+outcome, or its evidence reports a result. Headline scores are given with suspicious rows in and
+out.
+
+**Results.** Each run gets the overall and per-level scores with a bootstrap interval, plus a score
+per batch week compared with `--reference <file.json>` (week → `top`, `median`, `h2o`, entered by
+hand; the website is never scraped). `--replicates N` repeats a run. Every run is filed into the
+benchmark ledger under a replicate group, `futurex-clean:<variant>:<isolation>:lessons-<on|off>`.
+
+## Backtests without `--clean` are smoke tests
 
 The resolved dataset's outcomes are public. A backtest moves each cutoff `--horizon-days` before
 the question's end time (default 7) and searches with date filters where the engine supports them,

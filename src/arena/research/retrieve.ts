@@ -40,6 +40,7 @@ import { waybackFetch } from "../../engine/search-providers/wayback";
 import { dailyCapRefusal, recordSpend } from "../../engine/spend-ledger";
 import { guardedFetch } from "../../net/url-guard";
 import type { ResearchBrief } from "./briefs";
+import { closedBookRetriever } from "./isolation";
 import { fetchAllowed, type PageText } from "./verify";
 
 export interface Source {
@@ -521,6 +522,115 @@ export function isDateStrict(r: Retriever): r is DateStrictRetriever {
   return (r as Partial<DateStrictRetriever>).dateStrict === true;
 }
 
+// ─── Exa ─────────────────────────────────────────────────────────────────────
+
+const EXA_SEARCH_URL = "https://api.exa.ai/search";
+/** Exa's list price per search with contents (an estimate; plans differ). */
+export const EXA_USD_PER_SEARCH = 0.006;
+
+export interface ExaOptions {
+  type: "auto" | "neural" | "keyword";
+  apiKey: string;
+  /** Results per query (default 8). */
+  numResults?: number;
+  timeoutMs?: number;
+  fetcher?: (url: string, init: RequestInit) => Promise<Response>;
+}
+
+interface ExaResult {
+  url?: string;
+  title?: string;
+  publishedDate?: string;
+  text?: string;
+  score?: number;
+}
+
+/**
+ * Exa search, one request per brief query, restricted server-side to pages
+ * published inside the brief's window (`startPublishedDate` = since,
+ * `endPublishedDate` = until) — a date-filtered engine. Results without a
+ * publication date are dropped (an undated page cannot be placed before a
+ * cutoff). Report lines match Tavily's: `- <date> — <snippet> [<title>](<url>)`.
+ */
+export function exaRetriever(opts: ExaOptions): Retriever {
+  const fetcher =
+    opts.fetcher ??
+    ((url: string, init: RequestInit) =>
+      guardedFetch(
+        url,
+        { ...init, signal: AbortSignal.timeout(opts.timeoutMs ?? 60_000) },
+        { maxHops: 0 },
+      ));
+  return async (brief) => {
+    const capped = dailyCapRefusal();
+    if (capped) throw new Error(capped);
+    const queries = (brief.queries?.length ? brief.queries : [brief.request.split("\n")[0] ?? ""])
+      .map((q) => q.trim().slice(0, 400))
+      .filter(Boolean);
+    if (queries.length === 0) throw new Error("exa retrieval: the brief has no query");
+    const settled = await Promise.allSettled(
+      queries.map(async (query) => {
+        const res = await fetcher(EXA_SEARCH_URL, {
+          method: "POST",
+          headers: { "x-api-key": opts.apiKey, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query,
+            type: opts.type,
+            numResults: opts.numResults ?? 8,
+            startPublishedDate: `${brief.since}T00:00:00.000Z`,
+            ...(brief.until ? { endPublishedDate: `${brief.until}T23:59:59.999Z` } : {}),
+            contents: { text: { maxCharacters: 4_000 } },
+          }),
+        });
+        const text = await res.text();
+        if (!res.ok) throw new Error(`exa HTTP ${res.status}: ${text.slice(0, 200)}`);
+        return JSON.parse(text) as { results?: ExaResult[]; costDollars?: { total?: number } };
+      }),
+    );
+    const ok = settled.flatMap((s) => (s.status === "fulfilled" ? [s.value] : []));
+    const costUsd = ok.reduce((sum, d) => sum + (d.costDollars?.total ?? EXA_USD_PER_SEARCH), 0);
+    recordSpend("forecast", costUsd);
+    if (ok.length === 0) {
+      const why = settled.map((s) => (s.status === "rejected" ? String(s.reason) : "")).join("; ");
+      throw new Error(`exa retrieval failed: ${why.slice(0, 400)}`);
+    }
+    const best = new Map<string, ExaResult>();
+    for (const d of ok) {
+      for (const r of d.results ?? []) {
+        if (!r.url || !/^https?:\/\//.test(r.url) || !r.text) continue;
+        const day = isoDay(r.publishedDate);
+        if (!day || day < brief.since || (brief.until && day > brief.until)) continue;
+        const had = best.get(r.url);
+        if (!had || (r.score ?? 0) > (had.score ?? 0)) best.set(r.url, r);
+      }
+    }
+    const kept = [...best.values()]
+      .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+      .slice(0, TAVILY_MAX_LINES);
+    const lines: string[] = [];
+    const sources: Source[] = [];
+    for (const r of kept) {
+      const day = isoDay(r.publishedDate)!;
+      const title = r.title?.trim();
+      lines.push(`- ${day} — ${tavilySnippet(r.text!)} [${linkTitle(title ?? "")}](${r.url})`);
+      const text = fetchAllowed(r.url!) ? r.text : undefined;
+      sources.push({
+        url: r.url!,
+        ...(title ? { title } : {}),
+        published: day,
+        ...(text ? { text } : {}),
+      });
+    }
+    return {
+      report: lines.length ? lines.join("\n") : `Nothing found published since ${brief.since}.`,
+      sources,
+      costUsd,
+      searches: ok.length,
+      retriever: `exa:${opts.type}`,
+    };
+  };
+}
+
 // ─── Provided page text for the citation check ───────────────────────────────
 
 /** Page texts remembered between retrieval and verification (most recent kept). */
@@ -570,6 +680,8 @@ export interface RetrieverKeys {
   openrouter?: string;
   /** TAVILY_API_KEY — `tavily:`. */
   tavily?: string;
+  /** EXA_API_KEY — `exa:`. */
+  exa?: string;
 }
 
 /**
@@ -586,7 +698,7 @@ export function retrieverFromSpec(
   const parts = specParts(spec);
   if (parts.length === 0) throw new Error("empty MARINA_ARENA_RESEARCH_RETRIEVER");
   if (opts.requireDateStrict) {
-    const loose = parts.filter((p) => !isAsOfPart(p));
+    const loose = parts.filter((p) => !isAsOfPart(p) && p !== "closed-book");
     if (loose.length > 0) {
       throw new Error(
         `a date-strict retriever was required, but ${loose.join(", ")} cannot honour a cutoff (use asof:<providers>)`,
@@ -595,6 +707,7 @@ export function retrieverFromSpec(
   }
   return combineRetrievers(
     parts.map((part) => {
+      if (part === "closed-book") return closedBookRetriever();
       if (isAsOfPart(part)) {
         const list = part.includes(":") ? part.slice(part.indexOf(":") + 1) : "";
         const providers = list
@@ -618,6 +731,15 @@ export function retrieverFromSpec(
         if (!k.tavily) throw new Error(`the ${part} retriever needs TAVILY_API_KEY`);
         return tavilyRetriever({ depth: model, apiKey: k.tavily });
       }
+      if (kind === "exa") {
+        if (model !== "auto" && model !== "neural" && model !== "keyword") {
+          throw new Error(
+            `MARINA_ARENA_RESEARCH_RETRIEVER entry "${part}": exa:auto, exa:neural or exa:keyword`,
+          );
+        }
+        if (!k.exa) throw new Error(`the ${part} retriever needs EXA_API_KEY`);
+        return exaRetriever({ type: model, apiKey: k.exa });
+      }
       if (kind === "openrouter-web" || kind === "sonar") {
         if (!k.openrouter) throw new Error(`the ${part} retriever needs OPENROUTER_API_KEY`);
         return kind === "sonar"
@@ -625,7 +747,7 @@ export function retrieverFromSpec(
           : openRouterWebRetriever({ model, apiKey: k.openrouter });
       }
       throw new Error(
-        `unknown MARINA_ARENA_RESEARCH_RETRIEVER entry "${part}" (openrouter-web:<model>, sonar:<model>, tavily:<basic|advanced> or asof[:<providers>])`,
+        `unknown MARINA_ARENA_RESEARCH_RETRIEVER entry "${part}" (openrouter-web:<model>, sonar:<model>, tavily:<basic|advanced>, exa:<auto|neural|keyword>, asof[:<providers>] or closed-book)`,
       );
     }),
   );
@@ -665,5 +787,6 @@ function specParts(spec: string): string[] {
 /** True when every entry of a retriever spec is date-strict (`asof…`). */
 export function isDateStrictSpec(spec: string): boolean {
   const parts = specParts(spec);
-  return parts.length > 0 && parts.every(isAsOfPart);
+  // `closed-book` retrieves nothing, so it trivially honours any cutoff.
+  return parts.length > 0 && parts.every((p) => isAsOfPart(p) || p === "closed-book");
 }
