@@ -27,6 +27,11 @@ export interface ResearchBrief {
    * filter by date honour it; results published after it are dropped.
    */
   until?: string;
+  /**
+   * The exact cutoff instant (ISO). Date-strict engines (`asof:`) bound to it;
+   * without it they bound to the start of `until` (never later), else now.
+   */
+  untilAt?: string;
 }
 
 /** The freshest reading known before the round (the Civiqs daily nowcast). */

@@ -116,8 +116,12 @@ are saved with their answer as one string (`prediction`).
 
 An analyst may be a crew: `MARINA_FORECAST_ANALYSTS=marina:answerer` asks the `answerer` crew on a
 Marina server, so a crew in, say, the verification formation answers every run. The retriever
-accepts `openrouter-web:<model>`, `sonar:<model>` and `tavily:<basic|advanced>` (with
-`TAVILY_API_KEY`), comma-separated to merge.
+accepts `openrouter-web:<model>`, `sonar:<model>`, `tavily:<basic|advanced>` (with
+`TAVILY_API_KEY`) and `asof[:<providers>]`, comma-separated to merge. `asof` is keyless and
+date-strict: GDELT news, Wikipedia revisions, Hacker News and arXiv, each bounded to the
+forecast's cutoff instant, with news read from its Wayback capture at or before it. It is the
+retriever to use for a backtest, since nothing published after the cutoff can reach the dossier;
+see [Search](search.md).
 
 ## How good is it?
 

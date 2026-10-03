@@ -15,10 +15,28 @@
  *     writes the report: each result becomes one dated line quoting Tavily's
  *     snippet, and the page text Tavily fetched rides on the `Source` so the
  *     citation check can read it without fetching the page itself.
+ *   - `asof[:<provider>+<provider>…]` — date-STRICT, keyless engines (GDELT
+ *     news, Wikipedia revisions, Hacker News, arXiv; Wayback for page text),
+ *     bounded to the brief's cutoff instant. Every source is re-checked and
+ *     nothing published after the cutoff is reported; news hits are read from
+ *     the Wayback capture at or before the cutoff. Such a retriever carries
+ *     `dateStrict: true`, and `retrieverFromSpec(…, { requireDateStrict })`
+ *     refuses any spec that mixes in an unfiltered engine.
  * `retrieverFromSpec` accepts a comma-separated list and merges the reports
  * (every source kept, costs summed), so several engines can research one brief.
  */
 
+import { standaloneSearchHttp } from "../../engine/search-providers/asof-http";
+import {
+  DATE_BOUND_PROVIDER_NAMES,
+  dateBoundProvider,
+} from "../../engine/search-providers/asof-providers";
+import {
+  type SearchHttp,
+  type SearchResult,
+  withinBound,
+} from "../../engine/search-providers/index";
+import { waybackFetch } from "../../engine/search-providers/wayback";
 import { dailyCapRefusal, recordSpend } from "../../engine/spend-ledger";
 import { guardedFetch } from "../../net/url-guard";
 import type { ResearchBrief } from "./briefs";
@@ -167,7 +185,8 @@ export function sonarRetriever(opts: Omit<OpenRouterWebOptions, "nativeSearch">)
  */
 export function combineRetrievers(retrievers: Retriever[]): Retriever {
   if (retrievers.length === 1) return retrievers[0]!;
-  return async (brief) => {
+  const strict = retrievers.every((r) => isDateStrict(r));
+  const combined: Retriever = async (brief) => {
     const settled = await Promise.allSettled(retrievers.map((r) => r(brief)));
     const ok = settled.flatMap((s) => (s.status === "fulfilled" ? [s.value] : []));
     if (ok.length === 0) {
@@ -192,6 +211,7 @@ export function combineRetrievers(retrievers: Retriever[]): Retriever {
       retriever: ok.map((r) => r.retriever).join("+"),
     };
   };
+  return strict ? Object.assign(combined, { dateStrict: true as const }) : combined;
 }
 
 // ─── Tavily ──────────────────────────────────────────────────────────────────
@@ -358,6 +378,149 @@ export function tavilyRetriever(opts: TavilyOptions): Retriever {
   };
 }
 
+// ─── Date-strict (as-of) retrieval ───────────────────────────────────────────
+
+/** A retriever whose every source is published at or before the brief's cutoff. */
+export type DateStrictRetriever = Retriever & { readonly dateStrict: true };
+
+/** Search engines in a bare `asof` spec (Wayback is the page reader, not a search engine). */
+const ASOF_SEARCH_DEFAULT = ["gdelt", "wikipedia", "hn", "arxiv"] as const;
+/** News hits read from their Wayback capture, per brief. */
+const ASOF_ENRICH = 4;
+/** Queries searched per brief. */
+const ASOF_MAX_QUERIES = 4;
+
+/**
+ * The instant a date-strict engine may not go past: the brief's exact cutoff,
+ * else the START of its `until` day (never later), else now — and never after
+ * now.
+ */
+export function asOfBound(
+  brief: Pick<ResearchBrief, "until" | "untilAt">,
+  now: Date = new Date(),
+): string {
+  const nowMs = now.getTime();
+  const at = brief.untilAt ? Date.parse(brief.untilAt) : Number.NaN;
+  if (Number.isFinite(at)) return new Date(Math.min(at, nowMs)).toISOString();
+  const day = brief.until ? Date.parse(`${brief.until.slice(0, 10)}T00:00:00.000Z`) : Number.NaN;
+  if (Number.isFinite(day)) return new Date(Math.min(day, nowMs)).toISOString();
+  return now.toISOString();
+}
+
+export interface AsOfRetrieverOptions {
+  /** Providers (default gdelt, wikipedia, hn, arxiv, wayback). `wayback` turns page reading on. */
+  providers?: string[];
+  http?: SearchHttp;
+  /** Results per provider per query (default 5). */
+  perQuery?: number;
+  now?: () => Date;
+}
+
+/**
+ * Keyless, date-strict research: each brief query goes to every listed
+ * provider bounded to `asOfBound(brief)`; results are re-checked against the
+ * bound, de-duplicated, and news hits are read from their Wayback capture at or
+ * before the bound (the cited URL is that capture, so the citation check reads
+ * the same as-of text). Free: no spend is recorded.
+ */
+export function asOfRetriever(opts: AsOfRetrieverOptions = {}): DateStrictRetriever {
+  const names = opts.providers?.length ? opts.providers : [...ASOF_SEARCH_DEFAULT, "wayback"];
+  for (const n of names) {
+    if (!(DATE_BOUND_PROVIDER_NAMES as readonly string[]).includes(n)) {
+      throw new Error(`unknown asof provider "${n}" (${DATE_BOUND_PROVIDER_NAMES.join(", ")})`);
+    }
+  }
+  const readPages = names.includes("wayback");
+  const searchers = names
+    .filter((n) => n !== "wayback")
+    .flatMap((n) => {
+      const p = dateBoundProvider(n);
+      return p ? [p] : [];
+    });
+  if (searchers.length === 0) {
+    throw new Error("an asof retriever needs at least one search provider");
+  }
+  const http = opts.http ?? standaloneSearchHttp();
+  const perQuery = opts.perQuery ?? 5;
+  const label = `asof:${names.join("+")}`;
+  const retriever = async (brief: ResearchBrief): Promise<ResearchReport> => {
+    const bound = asOfBound(brief, opts.now?.() ?? new Date());
+    const after = brief.since ? `${brief.since.slice(0, 10)}T00:00:00.000Z` : undefined;
+    const queries = (brief.queries?.length ? brief.queries : [brief.request.split("\n")[0] ?? ""])
+      .map((q) => q.trim())
+      .filter(Boolean)
+      .slice(0, ASOF_MAX_QUERIES);
+    if (queries.length === 0) throw new Error("asof retrieval: the brief has no query");
+    const calls = searchers.flatMap((p) =>
+      queries.map((q) =>
+        p.search(q, { before: bound, ...(after ? { after } : {}), maxResults: perQuery }, http),
+      ),
+    );
+    const settled = await Promise.allSettled(calls);
+    const byUrl = new Map<string, SearchResult>();
+    for (const r of settled.flatMap((x) => (x.status === "fulfilled" ? x.value : []))) {
+      // The hard guarantee, whatever a provider returned.
+      if (!withinBound(r.published, bound)) continue;
+      const key = r.url.toLowerCase().replace(/\/+$/, "");
+      if (!byUrl.has(key)) byUrl.set(key, r);
+    }
+    let kept = [...byUrl.values()];
+    if (readPages) {
+      const toRead = new Set(
+        kept
+          .filter((r) => !r.text && r.source === "gdelt")
+          .slice(0, ASOF_ENRICH)
+          .map((r) => r.url),
+      );
+      kept = await Promise.all(
+        kept.map(async (r) => {
+          if (!toRead.has(r.url)) return r;
+          const page = await waybackFetch(http, r.url, bound).catch(() => undefined);
+          if (!page?.text || !withinBound(page.at, bound)) return r;
+          return {
+            ...r,
+            url: page.replayUrl,
+            snippet: tavilySnippet(page.text),
+            text: page.text.slice(0, TAVILY_MAX_TEXT_CHARS),
+          };
+        }),
+      );
+    }
+    kept.sort((a, b) => Date.parse(b.published ?? "") - Date.parse(a.published ?? ""));
+    const lines: string[] = [];
+    const sources: Source[] = [];
+    for (const r of kept.slice(0, TAVILY_MAX_LINES * 2)) {
+      const day = (r.published ?? "").slice(0, 10);
+      lines.push(
+        `- ${day} — ${tavilySnippet(r.snippet || r.title)} [${linkTitle(r.title)}](${r.url})`,
+      );
+      const text =
+        r.text && fetchAllowed(r.url) ? r.text.slice(0, TAVILY_MAX_TEXT_CHARS) : undefined;
+      sources.push({
+        url: r.url,
+        ...(r.title ? { title: r.title } : {}),
+        ...(day ? { published: day } : {}),
+        ...(text ? { text } : {}),
+      });
+    }
+    return {
+      report: lines.length
+        ? lines.join("\n")
+        : `Nothing found published between ${brief.since} and ${bound}.`,
+      sources,
+      costUsd: 0,
+      searches: calls.length,
+      retriever: label,
+    };
+  };
+  return Object.assign(retriever, { dateStrict: true as const });
+}
+
+/** True when the retriever (or every engine it combines) is date-strict. */
+export function isDateStrict(r: Retriever): r is DateStrictRetriever {
+  return (r as Partial<DateStrictRetriever>).dateStrict === true;
+}
+
 // ─── Provided page text for the citation check ───────────────────────────────
 
 /** Page texts remembered between retrieval and verification (most recent kept). */
@@ -414,15 +577,35 @@ export interface RetrieverKeys {
  * `sonar:<perplexity model>` and `tavily:<basic|advanced>`, comma-separated.
  * `keys` may be the OpenRouter key alone (the older signature).
  */
-export function retrieverFromSpec(spec: string, keys: string | RetrieverKeys): Retriever {
+export function retrieverFromSpec(
+  spec: string,
+  keys: string | RetrieverKeys,
+  opts: { requireDateStrict?: boolean; http?: SearchHttp } = {},
+): Retriever {
   const k: RetrieverKeys = typeof keys === "string" ? { openrouter: keys } : keys;
-  const parts = spec
-    .split(",")
-    .map((p) => p.trim())
-    .filter(Boolean);
+  const parts = specParts(spec);
   if (parts.length === 0) throw new Error("empty MARINA_ARENA_RESEARCH_RETRIEVER");
+  if (opts.requireDateStrict) {
+    const loose = parts.filter((p) => !isAsOfPart(p));
+    if (loose.length > 0) {
+      throw new Error(
+        `a date-strict retriever was required, but ${loose.join(", ")} cannot honour a cutoff (use asof:<providers>)`,
+      );
+    }
+  }
   return combineRetrievers(
     parts.map((part) => {
+      if (isAsOfPart(part)) {
+        const list = part.includes(":") ? part.slice(part.indexOf(":") + 1) : "";
+        const providers = list
+          .split("+")
+          .map((p) => p.trim().toLowerCase())
+          .filter(Boolean);
+        return asOfRetriever({
+          ...(providers.length ? { providers } : {}),
+          ...(opts.http ? { http: opts.http } : {}),
+        });
+      }
       const [kind, ...rest] = part.split(":");
       const model = rest.join(":");
       if (!model) throw new Error(`MARINA_ARENA_RESEARCH_RETRIEVER entry "${part}" names no model`);
@@ -442,8 +625,45 @@ export function retrieverFromSpec(spec: string, keys: string | RetrieverKeys): R
           : openRouterWebRetriever({ model, apiKey: k.openrouter });
       }
       throw new Error(
-        `unknown MARINA_ARENA_RESEARCH_RETRIEVER entry "${part}" (openrouter-web:<model>, sonar:<model> or tavily:<basic|advanced>)`,
+        `unknown MARINA_ARENA_RESEARCH_RETRIEVER entry "${part}" (openrouter-web:<model>, sonar:<model>, tavily:<basic|advanced> or asof[:<providers>])`,
       );
     }),
   );
+}
+
+function isAsOfPart(part: string): boolean {
+  return part === "asof" || part.startsWith("asof:");
+}
+
+/**
+ * Spec entries, comma-separated. Bare provider names right after an `asof`
+ * entry belong to it, so `asof:gdelt,wikipedia,hn` reads as
+ * `asof:gdelt+wikipedia+hn`.
+ */
+function specParts(spec: string): string[] {
+  const out: string[] = [];
+  for (const part of spec
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean)) {
+    const prev = out[out.length - 1];
+    const name = part.toLowerCase();
+    if (
+      prev &&
+      isAsOfPart(prev) &&
+      !part.includes(":") &&
+      (DATE_BOUND_PROVIDER_NAMES as readonly string[]).includes(name)
+    ) {
+      out[out.length - 1] = prev === "asof" ? `asof:${name}` : `${prev}+${name}`;
+    } else {
+      out.push(part);
+    }
+  }
+  return out;
+}
+
+/** True when every entry of a retriever spec is date-strict (`asof…`). */
+export function isDateStrictSpec(spec: string): boolean {
+  const parts = specParts(spec);
+  return parts.length > 0 && parts.every(isAsOfPart);
 }
