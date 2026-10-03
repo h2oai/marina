@@ -66,6 +66,7 @@
     "forecast": "bun run scripts/forecast.ts",
     "arena": "bun run scripts/arena.ts",
     "futurex": "bun run scripts/futurex.ts",
+    "swebench": "bun run scripts/swebench.ts",
     "start": "bun run src/main.ts",
     "code": "bun run scripts/code.ts",
     "dev": "bun run src/main.ts",

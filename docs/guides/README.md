@@ -28,6 +28,7 @@ and operate the environment. Start with one path below; the full catalog follows
 | Forecast a question (probability or number, with evidence) | [Forecasting](forecasting.md) | [Model API](model-api.md) |
 | Enter Marina in the Social Simulation Arena | [Arena](arena.md) | [Forecasting](forecasting.md) |
 | Enter Marina in FutureX (weekly future-prediction benchmark) | [FutureX](futurex.md) | [Forecasting](forecasting.md) |
+| Run Marina's coding agent on SWE-bench | [SWE-bench](swebench.md) | [Coding](coding.md) |
 | Search the web as of a date, or give agents a search room | [Search](search.md) | [Forecasting](forecasting.md) |
 | Find the right `bun run` script | [Scripts reference](scripts.md) | [Release qualification](release-qualification.md) |
 | Follow a desire from expression to evidence | [Journeys](journeys.md) | [Cognitive Provenance](cognitive-provenance.md) |
@@ -64,6 +65,7 @@ degraded, or off and gives the next concrete action without exposing secrets.
 | [Forecasting](forecasting.md) | Any question → a probability or a number with cited, checked evidence (CLI, command, `/v1/forecast`) |
 | [Social Simulation Arena](arena.md) | Marina as an arena entrant: forecasters, research agent, signal discovery, integrity rules |
 | [FutureX](futurex.md) | A thin adapter: weekly batch → typed forecasts → submission file (never sent by Marina); backtests into the ledger |
+| [SWE-bench](swebench.md) | A thin adapter: `marina -p` per instance on a clean checkout → patch → official harness → ledger |
 | [How Marina Differs](how-marina-differs.md) | Evidence-based fit across workflow engines, managed agent runtimes, memory products, and persistent worlds |
 | [The Civic Substrate](civic-substrate.md) | Standing, rank, and earned safety gates — capability that's earned and decays, not granted |
 | [The Chronicle](chronicle.md) | The canonical, append-only civic history — events, narratives, digests, corrections |
