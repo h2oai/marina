@@ -29,6 +29,11 @@
 - **Mount sync**: the worktree is the only host path mounted (read-write at the workdir) on a `--read-only` root; the process runs as the host user (`--userns=keep-id` on Podman, `--user uid:gid` on Docker).
 - **Patch sync**: nothing from the host is mounted. The pending diff (`git diff HEAD --binary` plus untracked files, capped at 20 MB, refused rather than truncated) is fed on stdin and applied inside the throwaway container.
 - **The command stays an argv.** Only the operator-set one-line `init` preamble is shell text; the validated command follows as `"$@"`.
+- **Two environments, kept apart.**
+  - **The runtime CLI** (podman/docker) runs with the operator's container configuration and storage. `HOME`, `XDG_*`, `CONTAINER_*`/`CONTAINERS_*` and `DOCKER_*` are captured from the server's own environment at startup (`captureRuntimeEnv`), not the scratch `HOME` that host Code Mode commands get. A fresh rootless store under that scratch HOME would re-pull every image, possibly onto a tmpfs `/tmp`.
+  - **The process inside the container** sees none of it: only the fixed `-e` values (`CI`, `TERM`, `HOME=/tmp`), never `--env-host`.
+  - **Overrides:** `MARINA_CODE_CONTAINER_STORAGE` / `_RUNROOT` (absolute paths, Podman only) become `--root` / `--runroot`.
+  - **Warning:** `code doctor` shows the image store and warns loudly when it sits on tmpfs/ramfs or under the temp directory.
 
 ## Test-runner allowlist shapes
 

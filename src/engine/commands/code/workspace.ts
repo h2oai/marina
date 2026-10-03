@@ -3,6 +3,7 @@
 
 import { accessSync, existsSync, constants as fsConstants, readdirSync, statSync } from "node:fs";
 import { basename, delimiter, join } from "node:path";
+import { ContainerWorkspace, storageWarning } from "../../../coding/container-workspace";
 import { LocalWorkspace, type WorkspaceRuntime } from "../../../coding/local-workspace";
 import { detectPackageScripts, detectWorkspaceRunner } from "../../../coding/project-detection";
 import {
@@ -517,6 +518,17 @@ export async function doctor(
       ? instructions.notices.join(" ")
       : "No root instruction files found; scoped instructions load as paths are inspected.";
   const roots = registry.listChoices();
+  // A container runner's image store is the operator's; flag one that would fill memory.
+  const containerStore =
+    workspace instanceof ContainerWorkspace
+      ? (() => {
+          const location = workspace.storageLocation();
+          return {
+            detail: `${workspace.runner.runtime} ${workspace.runner.image}; image store ${location ?? "daemon-managed"}`,
+            warning: storageWarning(location),
+          };
+        })()
+      : null;
   const flywheel = deps.flywheel?.status(eid);
   const nextSteps = [
     session ? "code status" : "code start <title>",
@@ -535,6 +547,12 @@ export async function doctor(
     `Session: ${session?.id ?? dim("none active")}`,
     `Session status: ${session?.status ?? dim("not started")}`,
     `Execution target: ${executionTarget}`,
+    ...(containerStore
+      ? [
+          `Container runner: ${containerStore.detail}`,
+          ...(containerStore.warning ? [fmtError(`WARNING: ${containerStore.warning}`)] : []),
+        ]
+      : []),
     ...(executionTarget !== "local"
       ? ["Inspection: host checkout only; sandbox contents were not queried."]
       : []),
@@ -565,6 +583,15 @@ export async function doctor(
     checks: [
       { label: "Workspace", status: "ok", detail: workspace.displayRoot() },
       { label: "Execution target", status: "info", detail: executionTarget },
+      ...(containerStore
+        ? [
+            {
+              label: "Container image store",
+              status: containerStore.warning ? ("warn" as const) : ("info" as const),
+              detail: containerStore.warning ?? containerStore.detail,
+            },
+          ]
+        : []),
       {
         label: "Model target",
         status: "info",

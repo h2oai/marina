@@ -903,6 +903,13 @@ never quietly runs them on the host instead. Operators can set a default image f
 session with `MARINA_CODE_CONTAINER_IMAGE` (and `_SYNC`, `_WORKDIR`, `_INIT`, `_SHELL`,
 `_NETWORK`, `_RUNTIME`); an explicit `code workspace runner local` still pins the host.
 
+The container runtime uses your own container setup: the images you have already pulled, your
+`containers.conf`/`storage.conf` (or Docker context), and your registry logins, taken from the
+server's environment at startup. The command inside the container gets none of that environment.
+To keep images elsewhere with Podman, set `MARINA_CODE_CONTAINER_STORAGE` (and optionally
+`MARINA_CODE_CONTAINER_RUNROOT`) to absolute paths. `code doctor` shows where images are stored
+and warns if that is on tmpfs or under `/tmp`, where images would fill memory.
+
 ### Optional isolated execution with Flywheel
 
 When the Marina server has `FLYWHEEL_TOKEN`, each entity can create one durable isolated workspace.

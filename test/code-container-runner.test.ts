@@ -7,8 +7,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   ContainerWorkspace,
+  captureRuntimeEnv,
   containerRunArgv,
+  containerStorageLocation,
+  mountFsType,
   resolveContainerRunner,
+  storageWarning,
   UnavailableContainerWorkspace,
 } from "../src/coding/container-workspace";
 import {
@@ -259,6 +263,121 @@ describe("container runner configuration", () => {
     expect(tail[2]).toContain('exec "$@"');
     // argv survives intact (including a space inside one argument).
     expect(tail.slice(3)).toEqual(["marina-run", "python", "-m", "pytest", "a b"]);
+  });
+});
+
+describe("container runtime storage (operator environment)", () => {
+  it("captures only the runtime-CLI variables from an environment", () => {
+    const captured = captureRuntimeEnv({
+      HOME: "/home/op",
+      XDG_RUNTIME_DIR: "/run/user/1000",
+      DOCKER_HOST: "unix:///run/docker.sock",
+      OPENROUTER_API_KEY: "secret",
+      PATH: "/usr/bin",
+      CONTAINERS_STORAGE_CONF: "",
+    });
+    expect(captured).toEqual({
+      HOME: "/home/op",
+      XDG_RUNTIME_DIR: "/run/user/1000",
+      DOCKER_HOST: "unix:///run/docker.sock",
+    });
+  });
+
+  it("an operator storage override becomes podman global flags before `run`", () => {
+    const runner = resolveContainerRunner(
+      { image: IMAGE },
+      { MARINA_CODE_CONTAINER_STORAGE: "/srv/containers", MARINA_CODE_CONTAINER_RUNROOT: "/run/c" },
+      fakeWhich(["podman"]),
+    );
+    expect(runner).toMatchObject({ storageRoot: "/srv/containers", runRoot: "/run/c" });
+    const argv = containerRunArgv(runner, "/repo", ["go", "test", "./..."], "n");
+    expect(argv.slice(0, 6)).toEqual([
+      "podman",
+      "--root",
+      "/srv/containers",
+      "--runroot",
+      "/run/c",
+      "run",
+    ]);
+    expect(() =>
+      resolveContainerRunner(
+        { image: IMAGE },
+        { MARINA_CODE_CONTAINER_STORAGE: "relative/store" },
+        fakeWhich(["podman"]),
+      ),
+    ).toThrow(/absolute path/);
+    expect(() =>
+      resolveContainerRunner(
+        { image: IMAGE, runtime: "docker" },
+        { MARINA_CODE_CONTAINER_STORAGE: "/srv/containers" },
+        fakeWhich(["docker"]),
+      ),
+    ).toThrow(/podman/);
+  });
+
+  it("locates the store from the operator env and warns when it would land in memory or /tmp", () => {
+    const podman = { runtime: "podman" as const };
+    expect(containerStorageLocation(podman, { HOME: "/home/op" }, 1000)).toBe(
+      "/home/op/.local/share/containers/storage",
+    );
+    expect(
+      containerStorageLocation(podman, { HOME: "/home/op", XDG_DATA_HOME: "/data" }, 1000),
+    ).toBe("/data/containers/storage");
+    expect(containerStorageLocation(podman, {}, 0)).toBe("/var/lib/containers/storage");
+    expect(containerStorageLocation({ ...podman, storageRoot: "/srv/c" }, {}, 1000)).toBe("/srv/c");
+    expect(containerStorageLocation({ runtime: "docker" }, { HOME: "/home/op" }, 1000)).toBeNull();
+
+    const mounts = [
+      "/dev/nvme0n1p2 / ext4 rw 0 0",
+      "/dev/nvme0n1p3 /home btrfs rw 0 0",
+      "tmpfs /tmp tmpfs rw 0 0",
+      "tmpfs /home/op/ram tmpfs rw 0 0",
+    ].join("\n");
+    expect(mountFsType("/home/op/.local/share/containers/storage", mounts)).toBe("btrfs");
+    expect(mountFsType("/tmp/marina-code-home/.local", mounts)).toBe("tmpfs");
+    expect(storageWarning("/home/op/.local/share/containers/storage", mounts)).toBeNull();
+    expect(storageWarning("/home/op/ram/containers", mounts)).toMatch(/tmpfs.*memory/);
+    expect(storageWarning("/tmp/marina-code-home/.local/share/containers/storage", mounts)).toMatch(
+      /tmpfs/,
+    );
+    expect(storageWarning(null, mounts)).toBeNull();
+  });
+
+  it("the runtime CLI gets the operator's storage env; the container's env stays isolated", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "marina-fake-rt-env-"));
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "marina-cw-env-")));
+    const script = join(dir, "podman");
+    writeFileSync(
+      script,
+      '#!/bin/sh\necho "RT_HOME:$HOME"\necho "RT_XDG:$XDG_RUNTIME_DIR"\necho "RT_KEY:[$OPENROUTER_API_KEY]"\nfor a in "$@"; do echo "ARG:$a"; done\n',
+    );
+    chmodSync(script, 0o755);
+    const savedPath = process.env.PATH;
+    process.env.PATH = `${dir}:${savedPath}`;
+    try {
+      const ws = new ContainerWorkspace(
+        repo,
+        resolveContainerRunner({ image: IMAGE, runtime: "podman" }),
+        { HOME: "/home/op", XDG_RUNTIME_DIR: "/run/user/4242" },
+      );
+      const result = await ws.run(["git", "status", "--short"]);
+      expect(result.exitCode).toBe(0);
+      // The runtime CLI resolves the operator's store, not the scratch HOME host commands get.
+      expect(result.output).toContain("RT_HOME:/home/op");
+      expect(result.output).not.toContain("marina-code-home");
+      expect(result.output).toContain("RT_XDG:/run/user/4242");
+      // Secrets in the server env never reach the runtime CLI.
+      expect(result.output).toContain("RT_KEY:[]");
+      // Inside the container: only the explicit, fixed values; no host env passthrough.
+      expect(result.output).toContain("ARG:HOME=/tmp");
+      expect(result.output).not.toContain("ARG:HOME=/home/op");
+      expect(result.output).not.toContain("ARG:--env-host");
+      expect(ws.storageLocation()).toBe("/home/op/.local/share/containers/storage");
+    } finally {
+      process.env.PATH = savedPath;
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 });
 
