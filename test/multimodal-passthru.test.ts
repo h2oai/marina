@@ -9,7 +9,11 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { openaiMessagesToAnthropic } from "../src/net/anthropic-tools";
+import {
+  correctDataUrlImageType,
+  openaiMessagesToAnthropic,
+  sniffBase64ImageType,
+} from "../src/net/anthropic-tools";
 import { UnsupportedParameterError } from "../src/net/openai-errors";
 import { responsesInputToMessages } from "../src/net/responses-tools";
 
@@ -37,6 +41,33 @@ describe("Anthropic translation keeps images", () => {
       data: "iVBORw0KGgo=",
     });
     expect(blocks[3]!.source).toEqual({ type: "url", url: "https://example.com/b.png" });
+  });
+
+  it("labels base64 images by their bytes, not a mislabelled data URL", () => {
+    const webp = Buffer.from("RIFF\x10\x00\x00\x00WEBPVP8 ", "latin1").toString("base64");
+    const { messages } = openaiMessagesToAnthropic([
+      {
+        role: "user",
+        content: [
+          { type: "image_url", image_url: { url: `data:image/jpeg;base64,iVBORw0KGgo=` } },
+          { type: "image_url", image_url: { url: `data:image/jpeg;base64,${webp}` } },
+          { type: "image_url", image_url: { url: "data:image/jpeg;base64,AAAA" } },
+        ],
+      },
+    ]);
+    const types = (messages[0]!.content as Array<{ source: { media_type: string } }>).map(
+      (b) => b.source.media_type,
+    );
+    expect(types).toEqual(["image/png", "image/webp", "image/jpeg"]);
+    expect(sniffBase64ImageType("/9j/4AAQ")).toBe("image/jpeg");
+    expect(sniffBase64ImageType("R0lGODlh")).toBe("image/gif");
+    expect(correctDataUrlImageType("data:image/jpeg;base64,iVBORw0KGgo=")).toBe(
+      "data:image/png;base64,iVBORw0KGgo=",
+    );
+    expect(correctDataUrlImageType("data:image/png;base64,iVBORw0KGgo=")).toBe(
+      "data:image/png;base64,iVBORw0KGgo=",
+    );
+    expect(correctDataUrlImageType("https://x/y.png")).toBe("https://x/y.png");
   });
 
   it("keeps an image returned inside a tool result", () => {

@@ -14,6 +14,7 @@
  *     the item wrong and is recorded as `judge: "error"`.
  */
 
+import { correctDataUrlImageType } from "../../src/net/anthropic-tools";
 import { queryWithUsage } from "../modes/passthrough";
 import { judgeEquivalence } from "../scoring/judge";
 import type { BenchmarkConfig, DatasetItem, ItemUsage, Message, ResultItem } from "../types";
@@ -35,7 +36,8 @@ export function itemImage(item: DatasetItem): string | undefined {
   return typeof image === "string" && image ? image : undefined;
 }
 
-/** The prompt; a multimodal item's image goes as an `image_url` part after the question. */
+/** The prompt; a multimodal item's image goes as an `image_url` part after the question, its
+ * declared type corrected to what its bytes are (some dataset images are mislabelled). */
 export function formatHLEPrompt(item: DatasetItem): Message[] {
   const image = itemImage(item);
   return [
@@ -45,7 +47,7 @@ export function formatHLEPrompt(item: DatasetItem): Message[] {
       content: image
         ? [
             { type: "text", text: item.question },
-            { type: "image_url", image_url: { url: image } },
+            { type: "image_url", image_url: { url: correctDataUrlImageType(image) } },
           ]
         : item.question,
     },
