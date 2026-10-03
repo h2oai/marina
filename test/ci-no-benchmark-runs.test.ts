@@ -18,7 +18,7 @@ import { join, resolve } from "node:path";
 const ROOT = resolve(import.meta.dir, "..");
 
 /** Package scripts that start a benchmark run or a dataset download. */
-const RUN_SCRIPTS = ["bench", "bench:compare", "bench:native", "bench:tier0", "bench:ui"];
+const RUN_SCRIPTS = ["bench", "bench:compare", "bench:native", "bench:tier0", "bench:ui", "repro"];
 /** Entry points that run a benchmark, or download data, when executed. */
 const RUN_ENTRY =
   /benchmarks\/(harness|tier0|download-all|download|server|native\/cli|run-[\w-]+)(\.ts)?\b/;
