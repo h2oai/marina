@@ -28,11 +28,18 @@ Marina runs τ²-bench **unmodified**: τ²'s own CLI, agent scaffold, user simu
 2. **Review.** A checker reviews the draft against the conversation: the system rules, the user's requests and earlier tool results. It answers `approve`, or `revise` with a concrete fix.
 3. **Revise.** On `revise`, the proposer writes the corrected message once, with the reviewer's note as a trailing system message (`MARINA_VERIFY_ROUNDS`, default 1).
 
+**Write actions are held.** A revision may rewrite the user-facing text and read-only lookups freely. A state-changing tool call (an order edit, a payment, a cancellation) is kept exactly as drafted unless the checker cites a concrete conflict: a verbatim excerpt from the rules, the conversation or a tool result, found in the conversation. A tool counts as read-only by its declared `annotations.readOnlyHint`, otherwise by a lookup-style name (`get_…`, `list_…`, `find_…`, `search_…`, `calculate`, `think`, …).
+- **Modifying a call:** a cited conflict naming the call and one argument (e.g. `new_item_ids[0]`) allows only that argument to change.
+- **Dropping or adding a call:** the cited conflict must name that call. This is how a drafted write is deferred to ask the user for a confirmation the rules require.
+- **No invented ids:** a new value may not introduce an id that appears nowhere in the conversation or its tool results.
+
+A revision that breaks any of these is discarded, the draft is returned, and the response says `held-write`.
+
 **Fails open.** A checker outage or an unreadable verdict returns the draft.
 
 **Checker choice.** The checker defaults to `MARINA_VERIFY_CHECKER_MODEL`, else the proposer itself.
 
-**Response metadata.** The response carries `x-marina-verify` (`approved`, `revised`, `checker-unavailable`, `revision-failed` or `flagged`) and the summed `x-marina-cost-usd` and `usage` of every call.
+**Response metadata.** The response carries `x-marina-verify` (`approved`, `revised`, `held-write`, `checker-unavailable`, `revision-failed` or `flagged`) and the summed `x-marina-cost-usd` and `usage` of every call.
 
 **Limits.** `stream` and `n > 1` are refused with `unsupported_parameter`.
 
