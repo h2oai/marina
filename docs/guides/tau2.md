@@ -20,6 +20,24 @@ Marina runs τ²-bench **unmodified**: τ²'s own CLI, agent scaffold, user simu
 
    The model after `openai/` is any id Marina serves. That includes an explicit upstream id, a `marina:<crew>` endpoint, or `marina/verify:…` (see below).
 
+## Match the leaderboard's settings
+
+Results are only comparable to the board when the run matches its settings. Three of them are easy to get wrong, and all three fail silently.
+
+1. **Agent reasoning effort.** Board entries run the agent at `high` (or `xhigh`) reasoning. τ² sets LiteLLM's `drop_params = True`, and LiteLLM drops `reasoning_effort` for any model id it doesn't recognise as a reasoning model, without a warning. That includes every id routed through Marina. Pass it in `extra_body`, which LiteLLM always forwards:
+
+   ```bash
+   AGENT_ARGS='{"api_base":"http://localhost:3300/v1","api_key":"<marina key>","extra_body":{"reasoning_effort":"high"}}'
+   ```
+
+   Marina's passthru forwards `reasoning_effort` unchanged.
+2. **User simulator.** The board uses `gpt-5.2` with `reasoning_effort: low`. Passing `--user-llm-args` replaces τ²'s defaults entirely, so state it: `"reasoning_effort":"low"`.
+3. **Evaluator and helper models.** τ² calls some models of its own, the NL-assertion judge among them. These use their default ids with LiteLLM's environment credentials, not the `--agent-llm-args`. Without `OPENAI_API_KEY` in τ²'s environment, those tasks end as `infrastructure_error` before the conversation starts. Export the provider keys into the shell that runs `tau2`.
+
+Also run the `base` task split (the default) for board comparisons. Named splits such as `test` are smaller subsets with their own difficulty.
+
+**Infrastructure errors are never scores.** τ²'s metrics drop simulations that ended in `infrastructure_error`. `bun run tau2 summary` and `convert` do the same and report how many they excluded. A non-zero count means fix the cause and re-run before comparing arms.
+
 ## The verification formation as a model: `marina/verify:`
 
 `marina/verify:<proposer>[+<checker>]` is an OpenAI-compatible model id, with tool calling supported. For each request:
@@ -28,11 +46,20 @@ Marina runs τ²-bench **unmodified**: τ²'s own CLI, agent scaffold, user simu
 2. **Review.** A checker reviews the draft against the conversation: the system rules, the user's requests and earlier tool results. It answers `approve`, or `revise` with a concrete fix.
 3. **Revise.** On `revise`, the proposer writes the corrected message once, with the reviewer's note as a trailing system message (`MARINA_VERIFY_ROUNDS`, default 1).
 
+**Write actions are held.** A revision may rewrite the user-facing text and read-only lookups freely. A state-changing tool call (an order edit, a payment, a cancellation) is kept exactly as drafted unless the checker cites a concrete conflict: a verbatim excerpt from the rules, the conversation or a tool result, found in the conversation. A tool counts as read-only by its declared `annotations.readOnlyHint`, otherwise by a lookup-style name (`get_…`, `list_…`, `find_…`, `search_…`, `calculate`, `think`, …).
+- **Modifying a call:** a cited conflict naming the call and one argument (e.g. `new_item_ids[0]`) allows only that argument to change.
+- **Dropping or adding a call:** the cited conflict must name that call. This is how a drafted write is deferred to ask the user for a confirmation the rules require.
+- **No invented ids:** a new value may not introduce an id that appears nowhere in the conversation or its tool results.
+
+A revision that breaks any of these is discarded, the draft is returned, and the response says `held-write`.
+
 **Fails open.** A checker outage or an unreadable verdict returns the draft.
 
 **Checker choice.** The checker defaults to `MARINA_VERIFY_CHECKER_MODEL`, else the proposer itself.
 
-**Response metadata.** The response carries `x-marina-verify` (`approved`, `revised`, `checker-unavailable`, `revision-failed` or `flagged`) and the summed `x-marina-cost-usd` and `usage` of every call.
+**Response metadata.** The response carries `x-marina-verify` (`approved`, `revised`, `held-write`, `checker-unavailable`, `revision-failed` or `flagged`) and the summed `x-marina-cost-usd` and `usage` of every call.
+
+**Lessons.** With outcome learning armed, judged `tools`/`code` lessons matching the last user turn ride as one system message after the caller's and are shown to the checker; `x-marina-lessons` names them (`0` for none, `observe:` under `MARINA_LESSONS=observe`). Set `MARINA_LESSONS=off` for a lessons-free ablation arm.
 
 **Limits.** `stream` and `n > 1` are refused with `unsupported_parameter`.
 

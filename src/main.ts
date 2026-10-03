@@ -27,6 +27,7 @@ import {
   setTrustProfile,
 } from "./engine/trust-profile";
 import { loadExtensions } from "./extensions/loader";
+import { enableOutcomeLearning } from "./learning/service";
 import { parseEmbeddingEnv } from "./memory/embedding-config";
 import { closeWorldMemoryService, worldMemoryService } from "./memory/world-service";
 import { AdapterManager } from "./net/adapter-manager";
@@ -252,6 +253,9 @@ const db = new MarinaDB(DB_PATH, { durability });
 applyStoredDecisionSettings(db);
 // Canonical numeric writes can enqueue embeddings without an HTTP memory request.
 worldMemoryService(db);
+// Every verdict (benchmark, forecast, code verify, arena) becomes a judged lesson
+// (src/learning/; MARINA_LESSONS=off disables).
+enableOutcomeLearning(db);
 const structuredLogRetention = Math.max(
   100,
   Math.min(Number(process.env.MARINA_LOG_RETENTION) || 10_000, 1_000_000),

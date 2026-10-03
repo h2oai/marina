@@ -322,6 +322,11 @@ stair-step directly: **bare 65.0% → memory-cold 71.7% → memory-warm 75.0%**,
 regressions, +10.0pp over bare carried by 19 curated notes. Details and lineage:
 [benchmarks/HISTORY.md](benchmarks/HISTORY.md).
 
+To reproduce a published setup (HLE-Verified, SWE-bench Verified, τ²-bench, FutureX, the Social
+Simulation Arena) on your own models with one command — prerequisites checked, replicated arms,
+pooled comparison — see [docs/guides/reproduce.md](docs/guides/reproduce.md):
+`bun run repro doctor`, then `bun run repro <setup> --dry-run`.
+
 ## The World
 
 Marina uses a **WorldDefinition** system that separates world configuration from room implementation. Each world is a TypeScript file declaring rooms, onboarding objectives, guide content, and an optional `seed` function that populates the database with room templates, projects, tasks, and pools on first boot.

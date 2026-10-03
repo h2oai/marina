@@ -6,14 +6,16 @@
  * analysts, planner, critic, judge and lookups. Env:
  *
  *   MARINA_FORECAST_ANALYSTS   comma-separated model ids, one per vendor
- *                              (default: DeepSeek V4 Pro, Claude Sonnet 5, GPT-6 Luna via OpenRouter).
+ *                              (default: DeepSeek V4 Pro, Claude Sonnet 5, GPT-6 Luna via OpenRouter;
+ *                              without an OpenRouter key, the configured providers or local model).
  *                              `marina:<crew>` asks a crew on a Marina server
  *                              (MARINA_FORECAST_MARINA_URL / _KEY) — e.g. a crew
  *                              in the verification formation.
  *   MARINA_FORECAST_RETRIEVER  one or more of openrouter-web:<model>, sonar:<model>,
  *                              tavily:<basic|advanced>, asof[:<providers>] (keyless and
  *                              date-strict: gdelt, wikipedia, hn, arxiv, wayback)
- *                              (default openrouter-web:openai/gpt-6-luna)
+ *                              (default openrouter-web:openai/gpt-6-luna; tavily:basic with
+ *                              only a Tavily key; keyless asof with neither)
  *   MARINA_FORECAST_JUDGE      jev (default when an OpenRouter key is set) |
  *                              decisions (the configured MARINA_DECISIONS backend,
  *                              falling back to jev) | none
@@ -32,11 +34,17 @@
  *                              whose cited pages are provably published by the cutoff
  *                              (src/arena/research/isolation.ts)
  *
- * Retrieval and the Jev judge go through OpenRouter today, so OPENROUTER_API_KEY
- * is required; analysts may be any model Marina routes. Every model call is
- * priced and recorded against the daily spend cap (`modelComplete`).
+ * No vendor key is required. Unset, every part resolves to what this
+ * installation has (`src/agent/available-models.ts`): OpenRouter's three-vendor
+ * default with a key, else the configured providers or a single local model
+ * (llama.cpp / Ollama) as the only analyst; keyless `asof` search without a
+ * search key; no judge (equal weights) when neither Jev nor MARINA_DECISIONS is
+ * reachable. The substitutions are reported as `scale` (tier `degraded` with
+ * notes). Only zero models is an error. Every model call is priced and
+ * recorded against the daily spend cap (`modelComplete`).
  */
 
+import { availableModels } from "../agent/available-models";
 import { modelComplete } from "../arena/model-backend";
 import { strictDateFilter } from "../arena/research/isolation";
 import { type Retriever, retrieverFromSpec } from "../arena/research/retrieve";
@@ -56,11 +64,49 @@ export const DEFAULT_ANALYSTS = [
 
 export const DEFAULT_RETRIEVER = "openrouter-web:openai/gpt-6-luna";
 
+/**
+ * What the forecaster runs on, for the answer's audit trail and the operator:
+ * `full` is the multi-vendor default; `degraded` names what was substituted
+ * because a vendor key is missing (one local model, keyless search, no judge).
+ */
+export interface ForecastScale {
+  tier: "full" | "degraded";
+  analysts: string[];
+  retriever: string;
+  judge: string;
+  /** Why it is degraded (empty when full). */
+  notes: string[];
+}
+
 interface Wired {
   retriever: Retriever;
   analysts: Array<ModelPart & { usage?: { costUsd: number } }>;
   judge?: ReturnType<typeof researchJudge>;
   researchCost: () => number;
+  scale: ForecastScale;
+}
+
+/**
+ * The retriever spec when MARINA_FORECAST_RETRIEVER is unset: OpenRouter web
+ * search with a key, else Tavily with a key, else keyless date-bounded search
+ * (`asof`: GDELT, Wikipedia, HN, arXiv, Wayback) — never an error.
+ */
+export function defaultRetrieverSpec(env: NodeJS.ProcessEnv = process.env): string {
+  if (env.OPENROUTER_API_KEY?.trim()) return DEFAULT_RETRIEVER;
+  if (env.TAVILY_API_KEY?.trim()) return "tavily:basic";
+  return "asof";
+}
+
+/**
+ * Analyst specs when MARINA_FORECAST_ANALYSTS is unset: the three-vendor
+ * default through OpenRouter, else whatever this installation has (up to three
+ * distinct providers; one model is enough — K runs supply the samples).
+ */
+export function defaultAnalystSpecs(env: NodeJS.ProcessEnv = process.env): string[] {
+  if (env.OPENROUTER_API_KEY?.trim()) return DEFAULT_ANALYSTS;
+  return availableModels(env)
+    .slice(0, 3)
+    .map((m) => m.spec);
 }
 
 /** The retrieval filter in force: `strict` keeps only provably pre-cutoff report lines. */
@@ -71,17 +117,16 @@ export function retrievalFilterFromEnv(env: NodeJS.ProcessEnv = process.env): "s
 }
 
 function wire(env: NodeJS.ProcessEnv): Wired | { error: string } {
-  const key = env.OPENROUTER_API_KEY;
-  if (!key) {
-    return {
-      error:
-        "Forecasting needs OPENROUTER_API_KEY (web retrieval and the Jev judge run through OpenRouter). Set it and retry.",
-    };
+  const key = env.OPENROUTER_API_KEY?.trim() || undefined;
+  const notes: string[] = [];
+  const retrieverSpec = env.MARINA_FORECAST_RETRIEVER?.trim() || defaultRetrieverSpec(env);
+  if (!env.MARINA_FORECAST_RETRIEVER?.trim() && retrieverSpec !== DEFAULT_RETRIEVER) {
+    notes.push(`no OpenRouter key: research uses ${retrieverSpec}`);
   }
   let base: Retriever;
   try {
-    base = retrieverFromSpec(env.MARINA_FORECAST_RETRIEVER?.trim() || DEFAULT_RETRIEVER, {
-      openrouter: key,
+    base = retrieverFromSpec(retrieverSpec, {
+      ...(key ? { openrouter: key } : {}),
       ...(env.TAVILY_API_KEY?.trim() ? { tavily: env.TAVILY_API_KEY.trim() } : {}),
       ...(env.EXA_API_KEY?.trim() ? { exa: env.EXA_API_KEY.trim() } : {}),
     });
@@ -95,17 +140,47 @@ function wire(env: NodeJS.ProcessEnv): Wired | { error: string } {
     };
   }
   let researchCost = 0;
-  const specs = (env.MARINA_FORECAST_ANALYSTS?.trim() || DEFAULT_ANALYSTS.join(","))
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const explicitAnalysts = env.MARINA_FORECAST_ANALYSTS?.trim();
+  const specs = explicitAnalysts
+    ? explicitAnalysts
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : defaultAnalystSpecs(env);
+  if (specs.length === 0) {
+    // The one real impossibility: nothing to think with.
+    return {
+      error:
+        "No model is available to forecast with. Set any provider key (ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY, …) or point LLAMA_BASE_URL / OLLAMA_BASE_URL at a local runtime, or name models in MARINA_FORECAST_ANALYSTS.",
+    };
+  }
+  if (!explicitAnalysts && !key) {
+    notes.push(
+      specs.length === 1
+        ? `single model: one analyst (${specs[0]}) × K runs`
+        : `no OpenRouter key: analysts are this installation's providers (${specs.join(", ")})`,
+    );
+  }
   let analysts: Wired["analysts"];
   try {
     analysts = specs.map((m) => modelPart(m, env));
   } catch (err) {
     return { error: (err as Error).message };
   }
-  const judge = researchJudge(env.MARINA_FORECAST_JUDGE?.trim() || "jev", env, key);
+  const judgeSpec = env.MARINA_FORECAST_JUDGE?.trim() || "jev";
+  const judge = researchJudge(judgeSpec, env, key);
+  if (!judge && judgeSpec.toLowerCase() !== "none") {
+    notes.push(
+      "no judge reachable (Jev needs OpenRouter or a configured MARINA_DECISIONS backend): analysts weighted equally",
+    );
+  }
+  const scale: ForecastScale = {
+    tier: notes.length > 0 ? "degraded" : "full",
+    analysts: specs,
+    retriever: retrieverSpec,
+    judge: judge ? judge.model : "none",
+    notes,
+  };
   return {
     retriever: async (brief) => {
       const r = await base(brief);
@@ -115,6 +190,7 @@ function wire(env: NodeJS.ProcessEnv): Wired | { error: string } {
     analysts,
     ...(judge ? { judge } : {}),
     researchCost: () => researchCost,
+    scale,
   };
 }
 
@@ -173,10 +249,11 @@ function crewPart(spec: string, env: NodeJS.ProcessEnv): ModelPart {
 
 export function forecastDeps(
   env: NodeJS.ProcessEnv = process.env,
-): { deps: ForecastDeps; costUsd: () => number } | { error: string } {
+): { deps: ForecastDeps; costUsd: () => number; scale: ForecastScale } | { error: string } {
   const w = wire(env);
   if ("error" in w) return w;
   return {
+    scale: w.scale,
     deps: {
       retriever: w.retriever,
       analysts: w.analysts.map((m) => ({ name: m.name, complete: m.complete })),
@@ -223,7 +300,7 @@ export function typedForecastDeps(
     wrapRetriever?: (r: Retriever) => Retriever;
     lessons?: LessonStore;
   } = {},
-): { deps: TypedForecastDeps; costUsd: () => number } | { error: string } {
+): { deps: TypedForecastDeps; costUsd: () => number; scale: ForecastScale } | { error: string } {
   const analystEnv: NodeJS.ProcessEnv = {
     ...env,
     ...(overrides.analysts?.length
@@ -272,6 +349,7 @@ export function typedForecastDeps(
     ...options
   } = overrides;
   return {
+    scale: w.scale,
     deps: {
       retriever: wrapRetriever ? wrapRetriever(w.retriever) : w.retriever,
       analysts: w.analysts.map((m) => ({ name: m.name, complete: m.complete })),

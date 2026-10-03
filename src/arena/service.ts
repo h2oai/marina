@@ -472,7 +472,8 @@ async function formationForecasterFor(
   // Verification's model-judged aspect uses the research judge (same env, same default).
   const judge = stages.some((st) => st.pattern === "verification")
     ? (await import("../decisions/config")).researchJudge(
-        env.MARINA_ARENA_RESEARCH_JUDGE?.trim() || (env.OPENROUTER_API_KEY ? "jev" : "none"),
+        // `jev` falls back to the world's decision backend without OpenRouter.
+        env.MARINA_ARENA_RESEARCH_JUDGE?.trim() || "jev",
         env,
         env.OPENROUTER_API_KEY,
       )
@@ -650,7 +651,20 @@ export async function learnFromResolutions(
     const body = JSON.parse(row.body) as { topline?: { mean: number; sd: number } };
     const round = await deps.data.round(row.round_id);
     if (!body.topline || !round) continue;
-    learn(store, round, await deps.data.lock(row.round_id), body.topline, value);
+    const summary = learn(store, round, await deps.data.lock(row.round_id), body.topline, value);
+    if (summary) {
+      const { noteOutcome } = await import("../learning/service");
+      noteOutcome(store, {
+        domain: "arena",
+        source: `arena:${round.tracker ?? "round"}`,
+        succeeded: summary.beat,
+        score: Math.max(0, Math.min(1, (summary.skill + 1) / 2)),
+        resolvedAt: new Date().toISOString(),
+        attempted: `${round.tracker ?? "tracker"} topline forecast against persistence`,
+        detail: `skill ${summary.skill.toFixed(2)} vs persistence; ${summary.lean}`,
+        refs: [`arena:${row.round_id}`],
+      });
+    }
     known.add(row.round_id);
     written++;
   }
@@ -683,10 +697,16 @@ async function researchForecasterFor(
   const orKey = env.OPENROUTER_API_KEY;
   // `research:<analysts>[@<retrievers>]` — retrievers in the spec win over the env.
   const [analystsPart = "", specRetrievers] = spec.slice("research:".length).split("@");
+  // Default: OpenRouter web search with a key, else Tavily, else keyless
+  // date-bounded search — research never needs a vendor key.
   const retrieverSpec =
     specRetrievers?.trim() ||
     env.MARINA_ARENA_RESEARCH_RETRIEVER?.trim() ||
-    "openrouter-web:openai/gpt-6-luna";
+    (orKey
+      ? "openrouter-web:openai/gpt-6-luna"
+      : env.TAVILY_API_KEY?.trim()
+        ? "tavily:basic"
+        : "asof");
   const { defaultPageText } = await import("./research/verify");
   // Page text a retriever already fetched (Tavily) is checked in place of a fetch.
   const { arenaResearchLookups, withDataLookups } = await import("./research/data-evidence");
@@ -706,7 +726,8 @@ async function researchForecasterFor(
     ...modelComplete(m, env),
   }));
   const judge = decisions.researchJudge(
-    env.MARINA_ARENA_RESEARCH_JUDGE?.trim() || (orKey ? "jev" : "none"),
+    // `jev` falls back to the world's decision backend without OpenRouter.
+    env.MARINA_ARENA_RESEARCH_JUDGE?.trim() || "jev",
     env,
     orKey,
   );

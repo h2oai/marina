@@ -122,6 +122,7 @@ Route once per request (a task claim, job, `model_request` or session start), ne
 
 - **Spawn-time routing** — `agent spawn <name> model:route goal:<…>` (`src/decisions/route.ts`): the runtime asks the router questions about the goal (plus role) before the agent exists and resolves `route` to `MARINA_ROUTE_FAST_MODEL` or `MARINA_ROUTE_POWERFUL_MODEL`. The resolved id is what `agent_configs` stores, so respawns never re-route. A saved or boot-seeded config whose model is `route` or `model:route` (e.g. `MARINA_AGENT_MODELS=Answerer=model:route`) takes the same path at its first spawn — `resolveRouteModel` in `src/agent/agent-runtime.ts` — and the seed keeps the resolved id on later boots while it still says `route` (`seed.model.<name>` in `app_settings`). Missing tiers refuse the spawn with a remediation; no backend, no goal or a backend error resolve to the powerful tier. Emits an `agent_decision` (`stage: "route"`, `subject` = the chosen model).
   - **Route table** (`MARINA_ROUTES`, wins over the two tiers): JSON `{ "<name>": { "model", "criteria" } }` with ≥ 2 routes — the criteria ARE the options of one `choice` question, asked with `MARINA_ROUTE_INSTRUCTIONS` (default "Choose the least costly model that can complete the task."). Pick confidence < `ROUTE_TABLE_MIN_CONFIDENCE` (0.6), no backend, no goal or an error use `MARINA_ROUTE_FALLBACK` (default `powerful`, else the last route); a malformed table refuses the spawn. The decision event keeps the whole distribution (`p_<route>`). Live on jev-1.13: a README lookup → `cheap` (1.00), "add unit tests and fix the flaky ones" → `coder` (0.99), an intermittent-failure redesign split coder 0.43 / powerful 0.52 at confidence 0.27 → fallback `powerful`.
+  - **No table or tiers** (a single-model installation): the router has one candidate — the first available model (`src/agent/available-models.ts`), else `marina/default` — and the route event says so (`verdict: single`). It is degraded, not an error.
   - **Benchmark evidence** (`MARINA_ROUTE_EVIDENCE=off|observe|on`, default `off`; `src/engine/benchmark-evidence.ts`):
     - **When:** after the router picks a route or tier. It may prefer another of the SAME candidates (the table's routes, or `fast`/`powerful`) by what the benchmark ledger has measured.
     - **Families:** the evidence is pooled over the role's task families, `MARINA_ROUTE_EVIDENCE_FAMILIES` (benchmark names; a list for every role, or `{"*": […], "<role>": […]}`). With no family, evidence never applies.
@@ -182,3 +183,12 @@ Trajectory-level truth (a violated run whose harmful call is not identified) is 
 ## Status
 
 Spike (2026-09-24): wire format, both backends, the three policies, the pi tool gate, `/v1/decisions`, events and readiness. Followed by spawn-time routing and the route table, the task-submission verifier, owner approvals for `ask`, TypeSafe compatibility (`/v1/systemone`, `typesafe` preset), gate authorization context, calibration-aware thresholds, and the Admin → Ops → Decisions view. A qualification harness (`qualify:decisions`) compares backends on labeled cases before any default is recommended.
+
+## Lesson judging (`src/learning/outcomes.ts`)
+
+The outcome-learning loop asks the harness backend (`harnessDecisionProvider`) four `noul` questions about each candidate lesson (`LESSON_JUDGE_QUESTIONS`): grounded, general, leak_free, consistent.
+- **Calibrated backend:** bars of 0.6, 0.55, 0.7 and 0.5.
+- **No backend configured:** a chat-classifier on the operator's own model through this Marina's `/v1` (`MARINA_LESSONS_JUDGE_MODEL`, default `marina/default`). It's uncalibrated, so it gets one cut at 0.5, and every lesson it passes carries the judge label `… (uncalibrated)`.
+- **Outage:** it never promotes; the lesson stays `unverified`.
+- **Leak checks:** a mechanical leak (the lesson quotes the case text) is rejected before any judge is asked.
+- **Request content:** the request carries the outcome's general fields and the candidate, never the case text.
