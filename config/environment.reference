@@ -655,13 +655,19 @@
 # MARINA_FORECAST_RETRIEVER=openrouter-web:openai/gpt-6-luna
 # MARINA_FORECAST_JUDGE=jev
 
-# Typed forecasts (a choice, a set of options, a number, a ranking or a short string; `forecast … type:<t>`, `bun run forecast --type`, POST /v1/forecast with `answer`). The retriever also accepts sonar:<model>, tavily:<basic|advanced> (TAVILY_API_KEY) and asof[:<providers>] (keyless and date-strict, bounded to each forecast's cutoff: gdelt, wikipedia, hn, arxiv, wayback; docs/guides/search.md), comma-separated to merge. The planner decomposes the question and names research gaps (default: the first analyst); the critic searches for evidence against the leading answer and may revise it only when its confidence exceeds the runs' agreement (default: the planner). RUNS independent answers (1–9, analysts used round-robin) are combined by type; RESEARCH_ROUNDS bounds the search loop (1–4); CRITIQUE=off skips the disconfirmation pass. LOOKUPS adds optional structured sources (polymarket: current market prices, skipped for a past cutoff); empty means none.
+# Typed forecasts (a choice, a set of options, a number, a ranking or a short string; `forecast … type:<t>`, `bun run forecast --type`, POST /v1/forecast with `answer`). The retriever also accepts sonar:<model>, tavily:<basic|advanced> (TAVILY_API_KEY) and asof[:<providers>] (keyless and date-strict, bounded to each forecast's cutoff: gdelt, wikipedia, hn, arxiv, wayback; docs/guides/search.md), comma-separated to merge. The planner decomposes the question and names research gaps (default: the first analyst); the critic searches for evidence against the leading answer and may revise it only when its confidence exceeds the runs' agreement (default: the planner). RUNS independent answers (1–9, analysts used round-robin) are combined by type; RESEARCH_ROUNDS bounds the search loop (1–4); CRITIQUE=off skips the disconfirmation pass. LOOKUPS adds optional structured sources, a comma list (empty means none): polymarket and kalshi (market prices; a past cutoff reads the last price at or before it, never the resolution), odds (sports head-to-head odds via ODDS_API_KEY; historical snapshots need a paid plan), fred (official series; vintage-correct for a past cutoff with FRED_API_KEY, live-only without), bls (live-only), or markets / all. A number is anchored on the freshest official reading with a horizon-scaled spread.
 # MARINA_FORECAST_PLANNER=openrouter/deepseek/deepseek-v4-pro
 # MARINA_FORECAST_CRITIC=openrouter/deepseek/deepseek-v4-pro
 # MARINA_FORECAST_RUNS=3
 # MARINA_FORECAST_RESEARCH_ROUNDS=2
 # MARINA_FORECAST_CRITIQUE=on
 # MARINA_FORECAST_LOOKUPS=
+
+# Keys for forecast lookups (each lookup is skipped when its key is unset): The Odds API (sports odds), FRED (St. Louis Fed; vintage data for a past cutoff), and BLS (optional; raises the public API's quota).
+# @protected
+# ODDS_API_KEY=
+# FRED_API_KEY=
+# BLS_API_KEY=
 
 # An analyst written `marina:<crew>` asks that crew through a Marina server's model API (for example a crew in the verification formation). URL defaults to http://localhost:3300; the key is that server's MODEL_API_KEYS entry. The crew's spend is recorded by that server.
 # @protected
@@ -730,8 +736,9 @@
 # KALSHI_API_SECRET=
 # KALSHI_BASE=https://api.elections.kalshi.com/trade-api/v2
 
-# Polymarket market-data base override. Market data works; live Polymarket orders are not implemented.
+# Polymarket market-data base overrides (gamma for markets, CLOB for price history). Market data works; live Polymarket orders are not implemented.
 # POLYMARKET_GAMMA_BASE=https://gamma-api.polymarket.com
+# POLYMARKET_CLOB_BASE=https://clob.polymarket.com
 
 # Reserved Polymarket credentials. Live Polymarket orders are NOT supported (no CLOB order signing): with MARINA_TRADING_ENABLED=true and all four set, orders fail closed with an error and nothing is sent; otherwise orders are paper.
 # @internal

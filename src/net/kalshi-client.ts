@@ -34,6 +34,9 @@ export interface KalshiMarket {
   title: string;
   yes_ask: number; // cents (0-100)
   yes_bid: number;
+  /** Current API quotes: dollar strings, 0–1 (the cent fields may be absent). */
+  yes_ask_dollars?: string;
+  yes_bid_dollars?: string;
   no_ask: number;
   no_bid: number;
   volume: number;
@@ -148,6 +151,66 @@ export async function getMarket(
   const base = opts.base ?? process.env.KALSHI_BASE ?? DEFAULT_BASE;
   return await jsonGet<{ market: KalshiMarket }>(
     `${base}/markets/${encodeURIComponent(ticker)}`,
+    opts,
+  );
+}
+
+export interface KalshiEvent {
+  event_ticker: string;
+  series_ticker: string;
+  title: string;
+  sub_title?: string;
+  category?: string;
+  /** Present with `with_nested_markets=true`. */
+  markets?: KalshiMarket[];
+}
+
+/** List events (public, read-only); `withMarkets` inlines each event's markets. */
+export async function getEvents(
+  filter: { status?: string; limit?: number; withMarkets?: boolean; cursor?: string } = {},
+  opts: KalshiClientOpts = {},
+): Promise<KalshiResult<{ events: KalshiEvent[]; cursor?: string }>> {
+  const base = opts.base ?? process.env.KALSHI_BASE ?? DEFAULT_BASE;
+  const params = new URLSearchParams();
+  if (filter.status) params.set("status", filter.status);
+  if (filter.limit) params.set("limit", String(filter.limit));
+  if (filter.withMarkets) params.set("with_nested_markets", "true");
+  if (filter.cursor) params.set("cursor", filter.cursor);
+  return await jsonGet<{ events: KalshiEvent[]; cursor?: string }>(
+    `${base}/events${params.toString() ? `?${params}` : ""}`,
+    opts,
+  );
+}
+
+/**
+ * One OHLC candle; `end_period_ts` is unix seconds. Current API responses
+ * quote dollar strings (`close_dollars`, 0–1); older ones quoted cents
+ * (`close`, 0–100).
+ */
+export interface KalshiCandle {
+  end_period_ts: number;
+  price?: { close?: number | null; close_dollars?: string | null };
+  yes_bid?: { close?: number | null; close_dollars?: string | null };
+  yes_ask?: { close?: number | null; close_dollars?: string | null };
+}
+
+/** A market's price history (public): candles ending in [startTs, endTs], unix seconds. */
+export async function getCandlesticks(
+  seriesTicker: string,
+  ticker: string,
+  startTs: number,
+  endTs: number,
+  periodMinutes = 60,
+  opts: KalshiClientOpts = {},
+): Promise<KalshiResult<{ candlesticks: KalshiCandle[] }>> {
+  const base = opts.base ?? process.env.KALSHI_BASE ?? DEFAULT_BASE;
+  const params = new URLSearchParams({
+    start_ts: String(Math.floor(startTs)),
+    end_ts: String(Math.floor(endTs)),
+    period_interval: String(periodMinutes),
+  });
+  return await jsonGet<{ candlesticks: KalshiCandle[] }>(
+    `${base}/series/${encodeURIComponent(seriesTicker)}/markets/${encodeURIComponent(ticker)}/candlesticks?${params}`,
     opts,
   );
 }

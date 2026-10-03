@@ -9,7 +9,10 @@
  *              the search queries, what would change the answer
  *   research   bounded rounds of search (the forecast retriever); after each,
  *              the planner names what is still missing, or stops
- *   lookups    optional structured sources (prediction markets), opt-in
+ *   lookups    optional structured sources (market prices, sports odds, official
+ *              series), opt-in, steered by the plan's `data` hints; a number
+ *              is anchored on the freshest official reading with a spread
+ *              from that series' own changes over the question's horizon
  *   verify     cited figures checked mechanically against the cited pages
  *   runs       K independent answers (analyst models used round-robin), each
  *              weighted by the judge's grounding score when a judge is set
@@ -24,8 +27,9 @@
  *
  * Evidence is frozen at a cutoff: the request's `asOf`, else the earlier of now
  * and the question's `endTime`. Retrieval is asked for nothing after it (engines
- * that filter by date drop later results), lookups that only know current
- * values are skipped for a past cutoff, and the cutoff is recorded.
+ * that filter by date drop later results), lookups read values as of the
+ * cutoff or, when they only know current values, are skipped for a past
+ * cutoff, and the cutoff is recorded.
  *
  * Every stage is returned — the answer object is the audit trail. Pure
  * orchestration over injected parts; `service.ts` wires the real ones.
@@ -44,7 +48,15 @@ import {
   validateAnswer,
 } from "./answer-types";
 import { askAnalyst, type JudgeRecord, judgeAudit, judgeClaim, newJudgeRecord } from "./judge";
-import { type ForecastLookup, type LookupResult, runLookups } from "./lookups";
+import {
+  anchorLine,
+  type DataHints,
+  type ForecastLookup,
+  type LookupResult,
+  type NumericAnchor,
+  numericAnchor,
+  runLookups,
+} from "./lookups";
 
 export interface TypedForecastRequest {
   question: string;
@@ -96,6 +108,8 @@ export interface ForecastPlan {
   keyQuantities?: string[];
   queries: string[];
   whatWouldChange?: string[];
+  /** Where structured lookups should look (markets, sports odds, official series). */
+  data?: DataHints;
   error?: string;
 }
 
@@ -151,6 +165,8 @@ export interface TypedForecastAnswer {
   plan?: ForecastPlan;
   research: ResearchRound[];
   lookups?: LookupResult[];
+  /** For a number: the freshest official reading the runs started from, and its horizon spread. */
+  anchor?: NumericAnchor;
   critique?: Critique;
   /** The evidence cutoff (ISO) and how it was chosen. */
   cutoff: { at: string; basis: "asOf" | "endTime" | "now"; pastCutoff: boolean };
@@ -210,7 +226,13 @@ function plannerSystem(): string {
     '"resolutionSource": "<who or what publishes the answer, and when>",',
     '"keyQuantities": ["<the facts that decide it>"],',
     '"queries": ["<up to 6 short web search queries, most useful first>"],',
-    '"whatWouldChange": ["<events or readings that would move the answer>"]}.',
+    '"whatWouldChange": ["<events or readings that would move the answer>"],',
+    '"data": {"markets": "<a short prediction-market search phrase, or empty>",',
+    '"sport": "<a The Odds API sport key such as basketball_nba or soccer_epl when this is a sports match, else empty>",',
+    '"teams": ["<the competitors, as the sport names them>"],',
+    '"fred": ["<FRED series ids when the answer is an official US statistic, e.g. UNRATE>"],',
+    '"bls": ["<BLS series ids, e.g. CUUR0000SA0>"]}}.',
+    "Leave a data field empty when it does not apply.",
   ].join(" ");
 }
 
@@ -374,10 +396,25 @@ export async function forecastTyped(
       plan.restatement ?? req.question,
       new Date(cutoff.at),
       now,
+      {
+        ...(plan.data ? { hints: plan.data } : {}),
+        answerType: req.answer.type,
+        ...(req.endTime ? { endTime: req.endTime } : {}),
+      },
     );
     for (const l of out.lookups) {
       lines.push(...l.lines);
       for (const s of l.sources) if (!sources.has(s.url)) sources.set(s.url, s);
+    }
+    // A number starts from the freshest official reading, with the spread of
+    // that series' own changes over the question's horizon.
+    if (req.answer.type === "number") {
+      const readings = out.lookups.flatMap((l) => l.readings ?? []);
+      const anchor = numericAnchor(readings, new Date(cutoff.at), req.endTime);
+      if (anchor) {
+        out.anchor = anchor;
+        lines.push(anchorLine(anchor));
+      }
     }
   }
   out.sources = [...sources.values()].map(({ url, title }) => ({
@@ -611,7 +648,26 @@ function parsePlan(reply: Record<string, unknown> | undefined): ForecastPlan {
     keyQuantities: strings(reply.keyQuantities).slice(0, 8),
     queries: strings(reply.queries).slice(0, 6),
     whatWouldChange: strings(reply.whatWouldChange).slice(0, 8),
+    ...dataHints(reply.data),
   };
+}
+
+function dataHints(v: unknown): { data?: DataHints } {
+  if (!v || typeof v !== "object") return {};
+  const d = v as Record<string, unknown>;
+  const text = (x: unknown) => (typeof x === "string" && x.trim() ? x.trim().slice(0, 120) : "");
+  const hints: DataHints = {};
+  const markets = text(d.markets);
+  if (markets) hints.markets = markets;
+  const sport = text(d.sport);
+  if (sport) hints.sport = sport;
+  const teams = strings(d.teams).slice(0, 4);
+  if (teams.length) hints.teams = teams;
+  const fred = strings(d.fred).slice(0, 3);
+  if (fred.length) hints.fred = fred;
+  const bls = strings(d.bls).slice(0, 3);
+  if (bls.length) hints.bls = bls;
+  return Object.keys(hints).length ? { data: hints } : {};
 }
 
 function strings(v: unknown): string[] {
