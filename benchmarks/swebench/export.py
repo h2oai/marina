@@ -6,9 +6,11 @@
 
 Only the fields a solver is allowed to read are written: the instance id, the
 repository, its base commit, the dataset version and the issue text
-(`problem_statement`). Hints, the gold patch and the test patch are NOT
-exported, so nothing downstream can read them by accident. The file is written
-outside the repository; benchmark content is never committed.
+(`problem_statement`); for SWE-bench Pro (`ScaleAI/SWE-bench_Pro`) also the
+PR's `requirements` and `interface`, which are part of its official task text.
+Hints, the gold patch, the test patch and the test lists are NOT exported, so
+nothing downstream can read them by accident. The file is written outside the
+repository; benchmark content is never committed.
 """
 
 import json
@@ -17,6 +19,8 @@ import sys
 from datasets import load_dataset
 
 ALLOWED = ("instance_id", "repo", "base_commit", "version", "problem_statement", "created_at")
+# Present only in SWE-bench Pro; written only when the dataset has them.
+PRO_ALLOWED = ("requirements", "interface", "repo_language")
 
 
 def main() -> int:
@@ -30,7 +34,9 @@ def main() -> int:
     n = 0
     with open(out, "w", encoding="utf-8") as f:
         for row in rows:
-            f.write(json.dumps({k: row.get(k) for k in ALLOWED}) + "\n")
+            out_row = {k: row.get(k) for k in ALLOWED}
+            out_row.update({k: row[k] for k in PRO_ALLOWED if k in row})
+            f.write(json.dumps(out_row) + "\n")
             n += 1
     print(json.dumps({"dataset": name, "split": split, "rows": n, "out": out}))
     return 0

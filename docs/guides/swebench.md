@@ -44,6 +44,43 @@ bun run swebench file --arm single --replicate 1 --db marina.db
   agent can then run the project's existing tests while it works (a full agent run instead of
   agentless). Without the flag, runs stay agentless.
 
+## SWE-bench Pro
+
+[SWE-bench Pro](https://huggingface.co/datasets/ScaleAI/SWE-bench_Pro) (public set, v2: 642 tasks
+from 11 repositories in Go, Python, JavaScript and TypeScript) uses the same adapter with
+`--benchmark pro`. Its harness is
+[scaleapi/SWE-bench_Pro-os](https://github.com/scaleapi/SWE-bench_Pro-os) (MIT; task content
+follows each upstream repository's license).
+
+```bash
+python benchmarks/swebench/export.py <data>/pro.jsonl ScaleAI/SWE-bench_Pro test
+git clone https://github.com/scaleapi/SWE-bench_Pro-os <harness>
+bun run swebench subset --benchmark pro --data <data> --n 45 --seed 7
+bun run swebench run --benchmark pro --data <data> --arm single --model <model> --replicate 1
+SWEBENCH_PYTHON=python3 bun run swebench score --benchmark pro --data <data> \
+  --tasks <harness>/v2/tasks --arm single --replicate 1
+bun run swebench file --benchmark pro --data <data> --arm single --replicate 1 --db marina.db
+```
+
+- **Task text:** a Pro task is the PR description plus its `requirements` and `interface` sections,
+  as in the official task text. The exporter writes those fields and nothing else: no gold patch, no
+  test patch and no test lists.
+- **Grading:** `benchmarks/swebench/pro_grade.py` runs each task's own verifier, unmodified
+  (`tests/test.sh`, `run_script.sh`, `parser.py`, `config.json`), in a fresh container of the task's
+  pristine image (`ghcr.io/scaleapi/swe-bench_pro-v2:<instance_id>`).
+  - **Patch:** applied with the harness's patch-replay fallback chain.
+  - **Task limits:** each task's timeout, CPU and memory limits are honoured.
+  - **Result:** `reward.txt` decides resolved (1) or not (0).
+  - **Errors:** a pull, start or missing-reward failure is an error and is excluded from the ledger;
+    it is never scored 0.
+  - **Why not Harbor:** this replaces Harbor's own container backends on hosts where they cannot run,
+    such as rootless Podman without bridge networking. With Harbor available, its `PatchReplayAgent`
+    is the reference grader.
+- **Self-check before measuring:** `pro_grade.py --ids <file> --gold` must resolve every task, and
+  `--empty` must resolve none.
+- **The official protocol** runs the agent offline, with only the model endpoint reachable, and bars
+  looking up solutions. The task text carries the harness's no-lookup constraint.
+
 ## Running the official harness with Podman
 
 The harness talks to a Docker-compatible API. With rootless Podman:
