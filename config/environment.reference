@@ -559,6 +559,9 @@
 # TAVILY_API_KEY=
 # SEARXNG_URL=http://localhost:8080
 
+# Where local corpora live: offline BM25 indexes built with `bun run corpus build <name> <docs.jsonl>` and searched with `web search engines:corpus:<name>`, the search room, or the `corpus:<name>` research retriever. Keep it on a disk with room (a 100k-document corpus is several GB), not a small temp filesystem.
+# MARINA_CORPUS_DIR=~/.local/share/marina/corpora
+
 # ── Chat adapters ────────────────────────────────────────────────────────────
 
 # Telegram bot token (from @BotFather). Unset leaves the adapter off.

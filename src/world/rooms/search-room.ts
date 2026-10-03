@@ -8,6 +8,7 @@
  *
  *   search <query> [before:<date>] [engine:<name|category>] [limit:N]
  *   fetch <url> asof:<date>          — the page as archived at or before the date
+ *   fetch corpus://<name>/<docid>    — one document of a local corpus (no date needed)
  *   wiki <title> [asof:<date>]       — the article's revision as of the date
  *   sources                          — engines, and how each enforces a date bound
  *   markets <query> [asof:<date>]    — prediction-market prices (Polymarket, Kalshi)
@@ -34,6 +35,7 @@
 import { createHash } from "node:crypto";
 import { type ModifierSpec, parseModifiers } from "../../engine/parse-input";
 import { standaloneSearchHttp } from "../../engine/search-providers/asof-http";
+import { getCorpusDocument, parseCorpusUrl } from "../../engine/search-providers/corpus";
 import {
   initProvidersSync,
   listProviders,
@@ -214,6 +216,25 @@ export function searchToolCommands(opts: SearchToolOptions = {}): {
   const fetchCmd = async (ctx: RoomContext, input: CommandInput): Promise<void> => {
     const mods = parseModifiers(input.args.trim().split(/\s+/).filter(Boolean), ASOF_SPEC);
     const url = mods.rest[0];
+    const corpusRef = url ? parseCorpusUrl(url) : undefined;
+    if (corpusRef) {
+      if (throttled(ctx, input.entity)) return;
+      let doc: ReturnType<typeof getCorpusDocument>;
+      try {
+        doc = getCorpusDocument(corpusRef.name, corpusRef.docid, { maxChars: MAX_REPLY_CHARS });
+      } catch (e) {
+        ctx.send(input.entity, e instanceof Error ? e.message : String(e));
+        return;
+      }
+      reply(
+        ctx,
+        input.entity,
+        doc
+          ? `${doc.title || doc.docid} — corpus ${corpusRef.name}, docid ${doc.docid}${doc.url ? ` · ${doc.url}` : ""}\n\n${doc.text}`
+          : `No document ${corpusRef.docid} in corpus ${corpusRef.name}.`,
+      );
+      return;
+    }
     const asOf = typeof mods.values.asof === "string" ? parseBound(mods.values.asof) : undefined;
     if (!url || !asOf) {
       ctx.send(
