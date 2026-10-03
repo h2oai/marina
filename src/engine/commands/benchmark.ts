@@ -85,7 +85,10 @@ Usage:
                                                      invalid, excluded from every ranking, pooling,
                                                      comparison, promotion and route evidence; items
                                                      kept; an append-only audit row records who,
-                                                     when and why. Needs role.edit.
+                                                     when and why. Needs role.edit. An invalidated
+                                                     incumbent never frees its slot: a challenger must
+                                                     beat the best earlier valid incumbent, and the
+                                                     invalidator can't fill the slot.
   benchmark revalidate <run> reason:<text>         — undo an invalidation (audited the same way);
                                                      needs role.edit, never the run's own author.
 
@@ -993,7 +996,7 @@ function renderChallenge(
   );
   if (found.kind === "error") return found.message;
   if (found.kind === "seed") {
-    return `Slot ${slot} has no ${found.invalidIncumbent ? `valid incumbent (${found.invalidIncumbent} was invalidated)` : "incumbent"}: \`benchmark promote ${slot} ${runId}\` seeds it with this run (needs role.edit and enough replicates; it has ${found.replicates}). Its holdout is ${pct(found.holdoutFraction).trim()} of items by item-id hash.`;
+    return `Slot ${slot} has no ${found.invalidIncumbent ? `valid incumbent (${found.invalidIncumbent.id} was invalidated, and no earlier one is valid)` : "incumbent"}: \`benchmark promote ${slot} ${runId}\` seeds it with this run (needs role.edit and enough replicates; it has ${found.replicates}). Its holdout is ${pct(found.holdoutFraction).trim()} of items by item-id hash.`;
   }
   const e = found.evaluation;
   const blockers = e.reasons.filter((r) => !r.startsWith("selection split"));
@@ -1002,6 +1005,11 @@ function renderChallenge(
     separator(),
     `  challenger ${bold(runLabel(found.challenger))} ${fmtId(found.challenger.id)}`,
     `  incumbent  ${bold(runLabel(found.incumbent))} ${fmtId(found.incumbent.id)}`,
+    ...(found.invalidIncumbent
+      ? [
+          `  ${dim(`(${found.invalidIncumbent.id} was invalidated — the challenger must beat the best earlier incumbent still valid)`)}`,
+        ]
+      : []),
     `  replicates: challenger ${found.replicates.challenger}, incumbent ${found.replicates.incumbent} (promotion needs ≥ ${found.replicates.minimum} of the challenger)`,
     statsLine(e.stats),
     costLine(e),
@@ -1037,6 +1045,16 @@ function promote(
   ) {
     return `Refused: you ran ${runId}. Someone else must promote it — self-attestation is never accepted.`;
   }
+  // Invalidating an incumbent and then filling its slot is self-attestation
+  // too: neither the promoter nor the challenger's author may be the account
+  // that invalidated it.
+  const by = found.invalidIncumbent?.invalidatedBy;
+  if (
+    by &&
+    (by === db.durableEntityKey(entity.id) || (author && by === db.durableEntityKey(author)))
+  ) {
+    return `Refused: ${by === db.durableEntityKey(entity.id) ? "you" : `the author of ${runId}`} invalidated the incumbent ${found.invalidIncumbent?.id}. Someone else must fill ${slot} — self-attestation is never accepted.`;
+  }
   const value = found.challenger.target_json;
   if (!value) {
     return `Run ${runId} records no target configuration (target_json) — nothing to promote as the default.`;
@@ -1060,13 +1078,13 @@ function promote(
       actor,
       stats_json: null,
       reason: found.invalidIncumbent
-        ? `re-seeded: incumbent ${found.invalidIncumbent} was invalidated`
+        ? `re-seeded: incumbent ${found.invalidIncumbent.id} was invalidated and no earlier incumbent is valid`
         : "first incumbent",
       holdout_fraction: fraction,
       created_at: now,
     });
     gate.record();
-    return `${found.invalidIncumbent ? `Re-seeded ${slot} (its incumbent ${found.invalidIncumbent} was invalidated)` : `Seeded ${slot}`} with ${runLabel(found.challenger)} (${runId}, ${found.replicates} replicate(s)); holdout ${pct(fraction).trim()} of items. Later challengers must earn it.`;
+    return `${found.invalidIncumbent ? `Re-seeded ${slot} (its incumbent ${found.invalidIncumbent.id} was invalidated and no earlier incumbent is valid)` : `Seeded ${slot}`} with ${runLabel(found.challenger)} (${runId}, ${found.replicates} replicate(s)); holdout ${pct(fraction).trim()} of items. Later challengers must earn it.`;
   }
   if (opts.holdout) {
     return "--holdout is fixed once a slot exists (moving it would move items between splits).";
@@ -1093,14 +1111,16 @@ function promote(
   const body = [statsLine(e.stats), costLine(e)];
   if (!e.ok) {
     return [
-      `Not promoted — ${slot} keeps ${found.incumbent.id}. Recorded as attempt ${e.triedBefore + 1}.`,
+      found.invalidIncumbent
+        ? `Not promoted — the challenger did not beat ${found.incumbent.id}, the best earlier incumbent of ${slot} still valid (${found.invalidIncumbent.id} was invalidated). Recorded as attempt ${e.triedBefore + 1}.`
+        : `Not promoted — ${slot} keeps ${found.incumbent.id}. Recorded as attempt ${e.triedBefore + 1}.`,
       ...body,
       ...e.reasons.map((r) => `  ${fmtStatus("BLOCK", "warn")} ${r}`),
     ].join("\n");
   }
   gate.record();
   return [
-    `Promoted ${runLabel(found.challenger)} (${runId}) to ${slot}, replacing ${found.incumbent.id}.`,
+    `Promoted ${runLabel(found.challenger)} (${runId}) to ${slot}, replacing ${found.invalidIncumbent ? `the invalidated ${found.invalidIncumbent.id} (beat ${found.incumbent.id}, the best earlier incumbent still valid)` : found.incumbent.id}.`,
     ...body,
     `  margin ${(e.margin * 100).toFixed(1)} pts (${e.triedBefore} earlier attempt(s))`,
   ].join("\n");

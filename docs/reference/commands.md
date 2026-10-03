@@ -712,7 +712,10 @@ Usage:
                                                      invalid, excluded from every ranking, pooling,
                                                      comparison, promotion and route evidence; items
                                                      kept; an append-only audit row records who,
-                                                     when and why. Needs role.edit.
+                                                     when and why. Needs role.edit. An invalidated
+                                                     incumbent never frees its slot: a challenger must
+                                                     beat the best earlier valid incumbent, and the
+                                                     invalidator can't fill the slot.
   benchmark revalidate <run> reason:<text>         — undo an invalidation (audited the same way);
                                                      needs role.edit, never the run's own author.
 

@@ -361,7 +361,46 @@ describe("every ledger reader excludes invalid runs", () => {
     expect(getPromotedDefault(db, SLOT)).toBeUndefined();
     const reseed = lookupChallenge(db, SLOT, "base-r2", "holdout", { minReplicates: 1 });
     expect(reseed.kind).toBe("seed");
-    expect(reseed.kind === "seed" && reseed.invalidIncumbent).toBe("base");
+    // The slot never had another valid incumbent: replicates alone re-seed it.
+    expect(reseed.kind === "seed" && reseed.invalidIncumbent).toEqual({
+      id: "base",
+      invalidatedBy: "operator",
+    });
+  });
+
+  it("promotion: with a valid earlier incumbent, the challenger must beat it on the holdout", () => {
+    const seed = (outcome: "seeded" | "promoted", run: string, model: string, at: number) =>
+      db.recordBenchmarkPromotion({
+        slot: SLOT,
+        outcome,
+        challenger_run_id: run,
+        incumbent_run_id: null,
+        value_json: JSON.stringify({ model }),
+        actor: "op",
+        stats_json: null,
+        reason: null,
+        created_at: at,
+      });
+    const weak = (i: number) => i % 5 < 1;
+    recordRun(db, "base", incumbentRight, { group: "base" });
+    recordRun(db, "base-r2", incumbentRight, { group: "base" });
+    recordRun(db, "low", weak, { group: "low" });
+    recordRun(db, "mid", strongRight, { group: "mid" });
+    recordRun(db, "twin", incumbentRight, { group: "twin" });
+    recordRun(db, "twin-r2", incumbentRight, { group: "twin" });
+    seed("seeded", "low", "model-low", 1);
+    seed("promoted", "base", "model-base", 2);
+    seed("promoted", "mid", "model-mid", 3);
+    invalidate(db, "mid");
+
+    // The best earlier incumbent still valid is `base` (higher accuracy than `low`).
+    const tie = lookupChallenge(db, SLOT, "twin", "holdout");
+    expect(tie.kind).toBe("contest");
+    if (tie.kind !== "contest") return;
+    expect(tie.incumbent.id).toBe("base");
+    expect(tie.invalidIncumbent?.id).toBe("mid");
+    // A twin of that run does not earn the slot by the invalidation alone.
+    expect(tie.evaluation.ok).toBe(false);
   });
 });
 
@@ -451,6 +490,61 @@ describe("benchmark invalidate | revalidate — commands", () => {
     expect(op.send("benchmark replicates bad")).toContain("excluded from its group");
     expect(op.send("benchmark participants synthetic")).not.toContain("bad");
     expect(op.send(`benchmark challenge ${SLOT} bad`)).toContain("an invalid run is never");
+  });
+
+  it("never lets the invalidator of an incumbent fill its slot, and makes others earn it", () => {
+    const op = login("Invalidator");
+    grant(db, op.conn.entity!, "role.edit");
+    const other = login("Promoter");
+    grant(db, other.conn.entity!, "role.edit");
+    recordRun(db, "base", incumbentRight, { group: "base" });
+    recordRun(db, "base-r2", incumbentRight, { group: "base" });
+    recordRun(db, "mid", (i) => i % 5 < 3, { group: "mid" });
+    recordRun(db, "mid-r2", (i) => i % 5 < 3, { group: "mid" });
+    recordRun(db, "twin", incumbentRight, { group: "twin" });
+    recordRun(db, "twin-r2", incumbentRight, { group: "twin" });
+    recordRun(db, "mine", strongRight, { group: "mine", agent_id: op.conn.entity! });
+    recordRun(db, "mine-r2", strongRight, { group: "mine", agent_id: op.conn.entity! });
+    recordRun(db, "strong", strongRight, { group: "strong" });
+    recordRun(db, "strong-r2", strongRight, { group: "strong" });
+    expect(other.send(`benchmark promote ${SLOT} base`)).toContain(`Seeded ${SLOT}`);
+    expect(other.send(`benchmark promote ${SLOT} mid`)).toContain("Promoted");
+
+    expect(op.send("benchmark invalidate mid reason:cap")).toContain("Invalidated mid");
+    // The invalidator may not promote anything into the slot…
+    expect(op.send(`benchmark promote ${SLOT} strong`)).toContain(
+      "you invalidated the incumbent mid",
+    );
+    // …nor may anyone promote a run the invalidator authored.
+    expect(other.send(`benchmark promote ${SLOT} mine`)).toContain(
+      "the author of mine invalidated the incumbent mid",
+    );
+    const before = db.listBenchmarkPromotions(SLOT).length;
+    expect(before).toBe(2); // refusals for self-attestation record nothing
+
+    // Someone else must beat the best earlier incumbent still valid (`base`).
+    const tie = other.send(`benchmark promote ${SLOT} twin`);
+    expect(tie).toContain("did not beat base");
+    expect(getPromotedDefault(db, SLOT)).toBeUndefined();
+    const won = other.send(`benchmark promote ${SLOT} strong`);
+    expect(won).toContain("Promoted");
+    expect(won).toContain("the invalidated mid");
+    expect(getPromotedDefault<{ model: string }>(db, SLOT)?.model).toBe("model-strong");
+  });
+
+  it("refuses a re-seed by the account that invalidated the only incumbent", () => {
+    const op = login("Invalidator2");
+    grant(db, op.conn.entity!, "role.edit");
+    const other = login("Seeder2");
+    grant(db, other.conn.entity!, "role.edit");
+    recordRun(db, "base", incumbentRight, { group: "base" });
+    recordRun(db, "base-r2", incumbentRight, { group: "base" });
+    recordRun(db, "next", strongRight, { group: "next" });
+    recordRun(db, "next-r2", strongRight, { group: "next" });
+    other.send(`benchmark promote ${SLOT} base`);
+    op.send("benchmark invalidate base reason:cap");
+    expect(op.send(`benchmark promote ${SLOT} next`)).toContain("self-attestation");
+    expect(other.send(`benchmark promote ${SLOT} next`)).toContain(`Re-seeded ${SLOT}`);
   });
 
   it("revalidates (audited), but never for the run's own author", () => {

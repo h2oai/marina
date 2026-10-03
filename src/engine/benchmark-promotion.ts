@@ -410,8 +410,12 @@ export type ChallengeLookup =
       items: BenchmarkItemRow[];
       holdoutFraction: number;
       replicates: number;
-      /** The slot's incumbent run, when it was invalidated (re-seeding replaces it). */
-      invalidIncumbent?: string;
+      /**
+       * The slot's incumbent, when it was invalidated and no earlier incumbent in
+       * the slot's history is still valid (re-seeding replaces it), with the
+       * account that invalidated it (null for an automatic check).
+       */
+      invalidIncumbent?: InvalidatedIncumbent;
     }
   | {
       kind: "contest";
@@ -420,7 +424,58 @@ export type ChallengeLookup =
       def: BenchmarkDefaultRow;
       evaluation: ChallengeEvaluation;
       replicates: { challenger: number; incumbent: number; minimum: number };
+      /**
+       * Set when the slot's incumbent was invalidated: the challenger contests
+       * the best earlier incumbent that is still valid instead.
+       */
+      invalidIncumbent?: InvalidatedIncumbent;
     };
+
+/** An invalidated incumbent and who invalidated it (a durable key, `operator`, or null = auto). */
+export interface InvalidatedIncumbent {
+  id: string;
+  invalidatedBy: string | null;
+}
+
+/**
+ * The best earlier incumbent of a slot that is still valid — highest accuracy,
+ * the most recent on a tie — or undefined when the slot never had another.
+ * A slot whose incumbent was invalidated contests this run, so invalidating
+ * an incumbent never hands its slot to the next promoter for free.
+ */
+export function bestValidPriorIncumbent(
+  db: Pick<BenchmarksStore, "listBenchmarkPromotions" | "getBenchmarkRun">,
+  slot: string,
+  exclude: string,
+): BenchmarkRunRow | undefined {
+  const ids = db
+    .listBenchmarkPromotions(slot)
+    .filter(
+      (r) => r.outcome !== "refused" && r.challenger_run_id && r.challenger_run_id !== exclude,
+    )
+    .map((r) => r.challenger_run_id as string)
+    .reverse(); // newest first, so a tie keeps the most recent
+  let best: BenchmarkRunRow | undefined;
+  for (const id of new Set(ids)) {
+    const run = db.getBenchmarkRun(id);
+    if (run?.status !== "completed") continue;
+    if (!best || (run.score ?? 0) > (best.score ?? 0)) best = run;
+  }
+  return best;
+}
+
+/** Who invalidated a run: the actor of its latest invalidation (null = automatic). */
+export function invalidatedBy(
+  db: Pick<BenchmarksStore, "listBenchmarkRunValidity">,
+  runId: string,
+): string | null {
+  return (
+    db
+      .listBenchmarkRunValidity(runId)
+      .filter((r) => r.action === "invalidate")
+      .at(-1)?.actor ?? null
+  );
+}
 
 /** Load and evaluate a challenger for a slot on the given split. */
 export function lookupChallenge(
@@ -469,16 +524,25 @@ export function lookupChallenge(
     };
   }
   const def = db.getBenchmarkDefault(slot);
-  const incumbent = def?.incumbent_run_id ? db.getBenchmarkRun(def.incumbent_run_id) : undefined;
-  // An invalidated incumbent is no evidence to beat: the slot is re-seeded.
-  if (!def?.incumbent_run_id || incumbent?.status === "invalid") {
+  const current = def?.incumbent_run_id ? db.getBenchmarkRun(def.incumbent_run_id) : undefined;
+  // An invalidated incumbent is no evidence, but invalidating it never frees
+  // the slot: the challenger must beat the best earlier incumbent still valid.
+  // Only a slot that never had another valid incumbent re-seeds from replicates.
+  const invalidIncumbent: InvalidatedIncumbent | undefined =
+    current?.status === "invalid"
+      ? { id: current.id, invalidatedBy: invalidatedBy(db, current.id) }
+      : undefined;
+  const incumbent = invalidIncumbent
+    ? bestValidPriorIncumbent(db, slot, invalidIncumbent.id)
+    : current;
+  if (!def?.incumbent_run_id || (invalidIncumbent && !incumbent)) {
     return {
       kind: "seed",
       challenger,
       items,
       holdoutFraction: def?.holdout_fraction ?? DEFAULT_HOLDOUT_FRACTION,
       replicates: replicated,
-      ...(incumbent ? { invalidIncumbent: incumbent.id } : {}),
+      ...(invalidIncumbent ? { invalidIncumbent } : {}),
     };
   }
   if (!incumbent) {
@@ -518,5 +582,6 @@ export function lookupChallenge(
       incumbent: incumbentGroup.replicates.length,
       minimum,
     },
+    ...(invalidIncumbent ? { invalidIncumbent } : {}),
   };
 }
