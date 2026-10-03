@@ -36,7 +36,7 @@ Results are only comparable to the board when the run matches its settings. Thre
 
 Also run the `base` task split (the default) for board comparisons. Named splits such as `test` are smaller subsets with their own difficulty.
 
-**Infrastructure errors are never scores.** τ²'s metrics drop simulations that ended in `infrastructure_error`. `bun run tau2 summary` and `convert` do the same and report how many they excluded. A non-zero count means fix the cause and re-run before comparing arms.
+**Infrastructure errors are never scores.** τ²'s metrics drop simulations that ended in `infrastructure_error`. `bun run tau2 summary` and `convert` do the same and report how many they excluded. A non-zero count means fix the cause and re-run before comparing arms. `--require-clean` turns that into a refusal: with any infrastructure error, `summary` and `convert` print `INVALID: N infrastructure error(s)`, report no scores, write no ledger file and exit 3. `bun run repro tau2` always uses it.
 
 ## The verification formation as a model: `marina/verify:`
 

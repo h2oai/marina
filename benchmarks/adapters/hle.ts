@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Humanity's Last Exam style items (HLE-Verified Gold, text-only).
+ * Humanity's Last Exam style items (HLE-Verified Gold: text-only, or the
+ * image items with the image sent as an `image_url` part).
  *
  * Two answer types, both carried on `item.metadata.answerType`:
  *   - `multipleChoice`: the options are inside the question text and the
@@ -28,10 +29,26 @@ export function isMultipleChoice(item: DatasetItem): boolean {
   return item.metadata?.answerType === "multipleChoice";
 }
 
+/** The item's image (`metadata.image`, multimodal items only). */
+export function itemImage(item: DatasetItem): string | undefined {
+  const image = item.metadata?.image;
+  return typeof image === "string" && image ? image : undefined;
+}
+
+/** The prompt; a multimodal item's image goes as an `image_url` part after the question. */
 export function formatHLEPrompt(item: DatasetItem): Message[] {
+  const image = itemImage(item);
   return [
     { role: "system", content: isMultipleChoice(item) ? MC_SYSTEM : EXACT_SYSTEM },
-    { role: "user", content: item.question },
+    {
+      role: "user",
+      content: image
+        ? [
+            { type: "text", text: item.question },
+            { type: "image_url", image_url: { url: image } },
+          ]
+        : item.question,
+    },
   ];
 }
 
