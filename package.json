@@ -150,7 +150,8 @@
     "check:context-performance": "bun --env-file=/dev/null scripts/check-context-benchmark.ts",
     "check:a11y": "bun run scripts/check-dashboard-accessibility.ts && biome lint dashboard/src --error-on-warnings",
     "test:a11y": "bun run check:a11y && bun run dashboard:build && cd dashboard && bun run test:browser e2e/accessibility.spec.ts",
-    "tau2": "bun run scripts/tau2.ts"
+    "tau2": "bun run scripts/tau2.ts",
+    "repro": "bun run scripts/repro.ts"
   },
   "devDependencies": {
     "@babel/parser": "^7.29.9",
