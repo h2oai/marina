@@ -23,7 +23,9 @@
  *   MARINA_FORECAST_RUNS       independent answer runs, 1–9 (default 3)
  *   MARINA_FORECAST_RESEARCH_ROUNDS  research rounds, 1–4 (default 2)
  *   MARINA_FORECAST_CRITIQUE   on | off (default on)
- *   MARINA_FORECAST_LOOKUPS    optional structured sources: polymarket (default none)
+ *   MARINA_FORECAST_LOOKUPS    optional structured sources: polymarket, kalshi, odds, fred,
+ *                              bls, markets, all (default none; keys ODDS_API_KEY,
+ *                              FRED_API_KEY, BLS_API_KEY)
  *   MARINA_FORECAST_VERIFY     on | off (default off): each run's draft is checked by
  *                              MARINA_FORECAST_VERIFIER (default: the critic) before it counts
  *   MARINA_FORECAST_RETRIEVAL_FILTER  strict | none (default none): keep only report lines
@@ -279,7 +281,7 @@ export function typedForecastDeps(
       ...(lessons ? { lessons } : {}),
       ...(w.judge ? { judge: w.judge } : {}),
       pageText: defaultPageText(),
-      lookups: lookupsFromSpec(env.MARINA_FORECAST_LOOKUPS),
+      lookups: lookupsFromSpec(env.MARINA_FORECAST_LOOKUPS, env),
       options: typedOptionsFromEnv(env, options),
     },
     costUsd: () =>
