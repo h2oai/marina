@@ -11,7 +11,9 @@
  *                              (MARINA_FORECAST_MARINA_URL / _KEY) — e.g. a crew
  *                              in the verification formation.
  *   MARINA_FORECAST_RETRIEVER  one or more of openrouter-web:<model>, sonar:<model>,
- *                              tavily:<basic|advanced> (default openrouter-web:openai/gpt-6-luna)
+ *                              tavily:<basic|advanced>, asof[:<providers>] (keyless and
+ *                              date-strict: gdelt, wikipedia, hn, arxiv, wayback)
+ *                              (default openrouter-web:openai/gpt-6-luna)
  *   MARINA_FORECAST_JUDGE      jev (default when an OpenRouter key is set) |
  *                              decisions (the configured MARINA_DECISIONS backend,
  *                              falling back to jev) | none

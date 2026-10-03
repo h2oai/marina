@@ -7797,7 +7797,11 @@ Usage:
   web search <query>                        — search the web (auto-detects academic/news/code)
   web search engines:web,academic <query>   — search specific engines only (also --engines web)
   web search limit:5 <query>                — cap results (default 10)
+  web search before:2026-09-30 <query>      — only sources published before then (date-strict
+                                              engines: gdelt news, wikipedia revisions, hn, arxiv;
+                                              a bare date is the start of that UTC day; also asof:)
   web fetch <url>                           — fetch and extract text from a URL
+  web fetch <url> asof:2026-09-30           — the page as archived at or before then (Wayback)
   web multisearch <q1> | <q2>               — parallel multi-query search
 
 Category: Information. Minimum rank: 0.
@@ -7824,15 +7828,31 @@ Effect: unknown.
 - `field-1` (`query2`): text, required.
 - `field-2` (`query3`): text, required.
 
-### `web search [engines:<a,b>] [limit:N] <query>`
+### `web search [engines:<a,b>] [limit:N] [before:<date>] <query>`
 
 Effect: unknown.
 
 - `field-0` (`engines`): text, optional group `option-0`.
 - `field-1` (`limit`): number, optional group `option-1`.
-- `field-2` (`query`): text, required.
+- `field-2` (`before`): text, optional group `option-2`.
+- `field-3` (`query`): text, required.
 - Group `option-0`: `engines:a,b`.
 - Group `option-1`: `limit:N`.
+- Group `option-2`: `before:date`.
+
+### `web search before:<date> <query>`
+
+Effect: unknown.
+
+- `field-0` (`before`): text, required.
+- `field-1` (`query`): text, required.
+
+### `web fetch <url> asof:<date>`
+
+Effect: unknown.
+
+- `field-0` (`url`): text, required.
+- `field-1` (`asof`): text, required.
 
 ### `web search <query>`
 

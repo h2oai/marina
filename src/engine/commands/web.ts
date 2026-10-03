@@ -6,22 +6,39 @@ import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import type { ConnectorRuntime } from "../connector-runtime";
 import { extractReadableText } from "../html-text";
 import { type ModifierSpec, parseModifiers } from "../parse-input";
+import { DATE_BOUND_PROVIDER_NAMES } from "../search-providers/asof-providers";
 import {
   initProvidersSync,
+  parseBound,
   search as providerSearch,
   type SearchResult,
+  splitEnginesAndProviders,
 } from "../search-providers/index";
+import { waybackFetch } from "../search-providers/wayback";
 
-/** `web search` modifiers: `engines:web,academic limit:5` (also `--engines web`). */
+/**
+ * `web search` modifiers: `engines:web,academic limit:5 before:2026-09-30`
+ * (also `--engines web`). `engines:` may name providers too (`engines:gdelt,hn`).
+ */
 const WEB_SEARCH_SPEC: ModifierSpec = {
   engines: { type: "string", aliases: ["engine"] },
   limit: { type: "int", aliases: ["max"] },
+  before: { type: "string", aliases: ["asof"] },
+};
+
+/** `web fetch <url> asof:<date>` — read the page as archived at or before the date. */
+const WEB_FETCH_SPEC: ModifierSpec = {
+  asof: { type: "string", aliases: ["before"] },
 };
 
 export interface WebSearchArgs {
   query: string;
   engines?: string[];
+  /** Provider names picked out of `engines:` (gdelt, wikipedia, …). */
+  providers?: string[];
   maxResults: number;
+  /** ISO bound from `before:`/`asof:` — only date-strict providers answer. */
+  before?: string;
 }
 
 /**
@@ -41,10 +58,20 @@ export function parseWebSearchArgs(tokens: readonly string[]): WebSearchArgs | {
           .filter(Boolean)
       : undefined;
   const limit = typeof mods.values.limit === "number" ? mods.values.limit : 10;
+  let before: string | undefined;
+  if (typeof mods.values.before === "string") {
+    before = parseBound(mods.values.before);
+    if (!before) return { error: `before:${mods.values.before} is not a date (YYYY-MM-DD or ISO)` };
+  }
+  const split = engines ? splitEnginesAndProviders(engines, DATE_BOUND_PROVIDER_NAMES) : undefined;
+  const providers = split?.providers;
+  const categories = split?.engines;
   return {
     query,
-    ...(engines && engines.length > 0 ? { engines } : {}),
+    ...(categories && categories.length > 0 ? { engines: categories } : {}),
+    ...(providers && providers.length > 0 ? { providers } : {}),
     maxResults: Math.min(Math.max(limit, 1), 25),
+    ...(before ? { before } : {}),
   };
 }
 
@@ -77,7 +104,9 @@ export function webCommand(deps: {
       "web fetch <url>",
       "web multisearch <q1> | <q2>",
       "web multisearch <query1> | <query2> | <query3>",
-      "web search [engines:<a,b>] [limit:N] <query>",
+      "web search [engines:<a,b>] [limit:N] [before:<date>] <query>",
+      "web search before:<date> <query>",
+      "web fetch <url> asof:<date>",
       "web search <query>",
       "web search engines:web,academic <query>",
       "web search limit:5 <query>",
@@ -89,7 +118,11 @@ Usage:
   web search <query>                        — search the web (auto-detects academic/news/code)
   web search engines:web,academic <query>   — search specific engines only (also --engines web)
   web search limit:5 <query>                — cap results (default 10)
+  web search before:2026-09-30 <query>      — only sources published before then (date-strict
+                                              engines: gdelt news, wikipedia revisions, hn, arxiv;
+                                              a bare date is the start of that UTC day; also asof:)
   web fetch <url>                           — fetch and extract text from a URL
+  web fetch <url> asof:2026-09-30           — the page as archived at or before then (Wayback)
   web multisearch <q1> | <q2>               — parallel multi-query search`,
     handler: async (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
@@ -113,7 +146,7 @@ Usage:
           return handleSearch(ctx, input.entity, tokens.slice(1), deps.connectorRuntime);
         case "fetch":
         case "read":
-          return handleFetch(ctx, input.entity, tokens[1], deps.connectorRuntime);
+          return handleFetch(ctx, input.entity, tokens.slice(1), deps.connectorRuntime);
         case "multisearch":
           return handleMultiSearch(
             ctx,
@@ -142,23 +175,37 @@ async function handleSearch(
     ctx.send(eid, `${parsed.error}. Usage: web search [engines:<a,b>] [limit:N] <query>`);
     return;
   }
-  const { query, engines, maxResults } = parsed;
+  const { query, engines, providers, maxResults, before } = parsed;
   if (!query) {
-    ctx.send(eid, "Usage: web search [engines:<a,b>] [limit:N] <query>");
+    ctx.send(eid, "Usage: web search [engines:<a,b>] [limit:N] [before:<date>] <query>");
     return;
   }
 
-  const results = await providerSearch(query, { engines, maxResults }, runtime, eid);
+  const results = await providerSearch(
+    query,
+    {
+      ...(engines ? { engines } : {}),
+      ...(providers ? { providers } : {}),
+      maxResults,
+      ...(before ? { before } : {}),
+    },
+    runtime,
+    eid,
+  );
 
   if (results.length === 0) {
     ctx.send(
       eid,
-      `${header(`Search: ${query}`)}\n${separator()}\n${dim("No results found. Try a different query or use 'web fetch <url>' on a known URL.")}`,
+      `${header(`Search: ${query}`)}\n${separator()}\n${dim(
+        before
+          ? `No dated results published before ${before}. Only date-strict engines answer a bounded search.`
+          : "No results found. Try a different query or use 'web fetch <url>' on a known URL.",
+      )}`,
     );
     return;
   }
 
-  ctx.send(eid, formatSearchResults(query, results));
+  ctx.send(eid, formatSearchResults(before ? `${query} (before ${before})` : query, results));
 }
 
 // ─── Multi-Search ───────────────────────────────────────────────────────────
@@ -228,15 +275,49 @@ async function handleMultiSearch(
 async function handleFetch(
   ctx: RoomContext,
   eid: EntityId,
-  url: string | undefined,
+  tokens: string[],
   runtime: ConnectorRuntime,
 ): Promise<void> {
+  const mods = parseModifiers(tokens, WEB_FETCH_SPEC);
+  if (mods.errors.length > 0) {
+    ctx.send(eid, `${mods.errors.join("; ")}. Usage: web fetch <url> [asof:<date>]`);
+    return;
+  }
+  const url = mods.rest[0];
   if (!url?.trim()) {
-    ctx.send(eid, "Usage: web fetch <url>");
+    ctx.send(eid, "Usage: web fetch <url> [asof:<date>]");
     return;
   }
 
   const normalized = url.startsWith("http") ? url : `https://${url}`;
+  if (typeof mods.values.asof === "string") {
+    const asOf = parseBound(mods.values.asof);
+    if (!asOf) {
+      ctx.send(eid, `asof:${mods.values.asof} is not a date (YYYY-MM-DD or ISO).`);
+      return;
+    }
+    const page = await waybackFetch(runtime, normalized, asOf, eid);
+    if (!page) {
+      ctx.send(eid, `No archived capture of ${normalized} at or before ${asOf}.`);
+      return;
+    }
+    const maxLen = 8000;
+    const body =
+      page.text.length > maxLen
+        ? `${page.text.slice(0, maxLen)}\n${dim("... (truncated)")}`
+        : page.text;
+    ctx.send(
+      eid,
+      [
+        header(`Archived: ${normalized}`),
+        separator(),
+        dim(`Captured ${page.at} (at or before ${asOf}) · ${page.replayUrl}`),
+        "",
+        body,
+      ].join("\n"),
+    );
+    return;
+  }
   const result = await runtime.httpGet(normalized, eid);
 
   if ("error" in result) {
@@ -283,7 +364,7 @@ function formatSearchResults(query: string, results: SearchResult[]): string {
   for (let i = 0; i < results.length; i++) {
     const r = results[i]!;
     lines.push(`  ${bold(`[${i + 1}]`)} ${r.title}`);
-    lines.push(`      ${dim(r.url)}`);
+    lines.push(`      ${dim(r.published ? `${r.url} · ${r.published.slice(0, 10)}` : r.url)}`);
     if (r.snippet) {
       const snippet = r.snippet.length > 200 ? `${r.snippet.slice(0, 200)}...` : r.snippet;
       lines.push(`      ${snippet}`);

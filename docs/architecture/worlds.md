@@ -23,6 +23,26 @@
 
 See also: `docs/guides/building-worlds.md`, `docs/guides/example-worlds.md`.
 
+## Rooms as tools: the search room
+
+A room's commands exist only for entities standing in it, so a room is a natural scope for a tool:
+its state lives in room KV, and gates, traces and spend apply unchanged.
+
+`src/world/rooms/search-room.ts` is the trusted harness example.
+
+- **Placement:** `searchToolCommands({ verbs })` mounts it on an existing room. The default world's
+  Library and the showcase world's Research Lab carry it as `find`, `archive`, `wiki` and `sources`,
+  so the global `search` keeps working and the curated room sets are unchanged.
+- **Dedicated room:** `searchRoom({ exits })` builds one whose verbs are `search`, `fetch`, `wiki`
+  and `sources`.
+- **Engines:** the keyless search providers, including the date-strict set (GDELT, Wikipedia
+  revisions, Hacker News, arXiv and Wayback; `src/engine/search-providers/`).
+- **State:** replies are cached in room KV per (engine, query, bound), and each entity is throttled.
+- **Bounded searches** answer only from providers that declare `dateBound: "strict"`, and every
+  result is re-checked against the bound.
+- **Agent-built tool rooms:** agents can build their own with `build` (behind `world.code`), or wrap
+  an MCP server via `connect`. → `docs/guides/search.md`
+
 ## Per-world model overrides (read only in `worlds/`)
 
 World definitions read a handful of `MARINA_*` variables directly, so they never

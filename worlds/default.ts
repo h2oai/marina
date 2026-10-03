@@ -4,6 +4,7 @@
 import type { Engine } from "../src/engine/engine";
 import type { MarinaDB } from "../src/persistence/database";
 import type { RoomId } from "../src/types";
+import { searchToolCommands } from "../src/world/rooms/search-room";
 import type { WorldDefinition } from "../src/world/world-definition";
 import {
   FIRST_STEPS_QUEST,
@@ -248,6 +249,10 @@ function afterAgentsReady(engine: Engine): void {
   }
 }
 
+// The Library doubles as a search tool room (rooms-as-tools); the verbs avoid
+// shadowing the global `search` command.
+const librarySearch = searchToolCommands({ verbs: { search: "find", fetch: "archive" } });
+
 const defaultWorld: WorldDefinition = {
   name: "Workbench",
   startRoom: "workbench/start" as RoomId,
@@ -278,7 +283,9 @@ const defaultWorld: WorldDefinition = {
       items: {
         index:
           "Use `recall`, `note search`, and `pool <name> recall <query>` to retrieve evidence.",
+        catalog: librarySearch.catalog,
       },
+      commands: librarySearch.commands,
     },
     "workbench/review": {
       short: "Review Room",

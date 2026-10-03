@@ -328,6 +328,7 @@ export async function forecastTyped(
       roundId: "forecast",
       since,
       until: cutoffDay,
+      untilAt: cutoff.at,
       queries,
       request: researchRequest(req, plan, queries, cutoffDay, r),
     };
@@ -507,6 +508,7 @@ async function critique(
       roundId: "forecast-critique",
       since,
       until: cutoffDay,
+      untilAt: out.cutoff.at,
       queries: [`${req.question.slice(0, 150)} ${out.formatted}`.slice(0, 200)],
       request: [
         `A forecaster's leading answer to "${req.question}" is: ${out.formatted}.`,
