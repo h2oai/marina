@@ -143,10 +143,16 @@ test("Canvas layout edits preserve one chat connection, drafts, focus and saved 
   const initialMutations = [...mutations];
   // Tag the DOM element itself: preserving text in a remounted input is insufficient.
   await input.evaluate((element) => element.setAttribute("data-mount-proof", "retained"));
+  // `geometry()` reads the panel border, which `.glass-panel:hover` changes. Park the
+  // pointer off every panel before each comparison: after Maximize/Restore it would
+  // otherwise rest over whichever panel moved under it, and Chromium re-evaluates
+  // :hover after a layout change asynchronously.
+  await page.mouse.move(0, 0);
   const before = await geometry(page);
   await page.getByRole("button", { name: "Maximize Web Chat panel" }).click();
   await expect.poll(async () => (await geometry(page))[0].box[2]).toBeGreaterThan(before[0].box[2]);
   await page.getByRole("button", { name: "Restore Web Chat panel" }).click();
+  await page.mouse.move(0, 0);
   await expect.poll(() => geometry(page)).toEqual(before);
   const handle = page.locator('[data-pane-key="webchat"] > .workspace-panel-resize');
   const bounds = (await handle.boundingBox())!;
