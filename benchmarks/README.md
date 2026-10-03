@@ -113,6 +113,13 @@ bun run bench:tier0 --endpoint http://host:port --model <id>  # any OpenAI-compa
 The individual sets also run alone, e.g.
 `bun run bench --benchmark hle-verified-gold --limit 40 --seed 42`.
 
+**Multimodal HLE.** `hle-verified-gold-mm` is the complement: the Gold items whose record
+has an image. The image is sent as an `image_url` part after the question (same scoring),
+so the endpoint must accept images. A `marina:<crew>` endpoint receives it on the canvas
+(`inbox:<model id>`) with the node named in the prompt; `marina/verify:` passes it to the
+checker as well. Images stay in the gitignored dataset cache, and the ledger records item
+ids only.
+
 ### Paired comparison
 
 ```bash

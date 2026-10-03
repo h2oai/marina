@@ -102,9 +102,14 @@ export interface DatasetItem {
   metadata?: Record<string, unknown>;
 }
 
+export type ContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
 export interface Message {
   role: "system" | "user" | "assistant";
-  content: string;
+  /** Plain text, or OpenAI content parts (text + `image_url`) for multimodal items. */
+  content: string | ContentPart[];
 }
 
 export interface BenchmarkDefinition {
