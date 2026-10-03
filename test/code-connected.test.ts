@@ -25,6 +25,7 @@ import { grant } from "../src/engine/safety-gates";
 import { WebSocketServer } from "../src/net/websocket-server";
 import type { MarinaAgent, Perception } from "../src/sdk/client";
 import { createTestEngine } from "./engine-fixture";
+import { git, gitInit } from "./git-helpers";
 import { until } from "./helpers";
 import { scopeProcessState } from "./process-state";
 
@@ -314,22 +315,9 @@ describe("connected coding in an existing world", () => {
       'import { answer } from "./answer"; if (answer !== 42) throw new Error("wrong answer");',
     );
     writeFileSync(join(root, "answer.ts"), "export const answer = 0;\n");
-    for (const args of [
-      ["init", "-q"],
-      ["add", "."],
-      [
-        "-c",
-        "user.name=Fixture",
-        "-c",
-        "user.email=fixture@example.test",
-        "commit",
-        "-qm",
-        "baseline",
-      ],
-    ]) {
-      const result = Bun.spawnSync(["git", ...args], { cwd: root });
-      expect(result.exitCode).toBe(0);
-    }
+    gitInit(root);
+    git(root, "add", ".");
+    git(root, "commit", "-qm", "baseline");
     world.db.createCodingSession({
       id: "terminal-project",
       title: "Terminal",

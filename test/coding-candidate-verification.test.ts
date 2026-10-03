@@ -18,6 +18,7 @@ import { grant, revoke } from "../src/engine/safety-gates";
 import type { CodingArtifactRow } from "../src/persistence/database";
 import type { EntityId, Perception } from "../src/types";
 import { createTestEngine } from "./engine-fixture";
+import { git as gitIn } from "./git-helpers";
 import { until } from "./helpers";
 import { scopeProcessState } from "./process-state";
 
@@ -29,27 +30,8 @@ describe("candidate-bound coding verification", () => {
   let output: Perception[];
   let run: CodingArtifactRow;
   let protocol: "websocket" | "telnet";
-  // `git commit` otherwise starts a detached `git maintenance run --auto` that keeps writing
-  // inside `.git` after the command returns, racing the test that deletes `.git`.
-  function git(...args: string[]) {
-    const result = Bun.spawnSync(
-      [
-        "git",
-        "-c",
-        "user.name=Test",
-        "-c",
-        "user.email=test@example.invalid",
-        "-c",
-        "maintenance.auto=false",
-        "-c",
-        "gc.auto=0",
-        ...args,
-      ],
-      { cwd: root },
-    );
-    if (result.exitCode) throw new Error(result.stderr.toString());
-    return result.stdout.toString().trim();
-  }
+  // Hermetic git (test/git-helpers.ts): no host config, no background maintenance.
+  const git = (...args: string[]) => gitIn(root, ...args);
   beforeEach(() => {
     state = scopeProcessState({
       trustProfile: "shared",

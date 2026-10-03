@@ -16,35 +16,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { candidateFingerprint, captureGitCandidate } from "../src/coding/candidate";
 import { LocalWorkspace } from "../src/coding/local-workspace";
+import { git as gitIn } from "./git-helpers";
 import { until } from "./helpers";
 
 describe("immutable Git source candidates", () => {
   let root: string;
   const snapshots: Awaited<ReturnType<typeof captureGitCandidate>>[] = [];
-  // `git commit` otherwise starts a detached `git maintenance run --auto` that keeps writing
-  // inside `.git` after the command returns, racing tests that delete `.git` right away.
-  function git(...args: string[]) {
-    const result = Bun.spawnSync(
-      [
-        "git",
-        "-c",
-        "user.name=Test",
-        "-c",
-        "user.email=test@example.invalid",
-        "-c",
-        "maintenance.auto=false",
-        "-c",
-        "gc.auto=0",
-        ...args,
-      ],
-      {
-        cwd: root,
-        env: { PATH: process.env.PATH, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
-      },
-    );
-    if (result.exitCode) throw new Error(result.stderr.toString());
-    return result.stdout.toString().trim();
-  }
+  // Hermetic git (test/git-helpers.ts): no host config, no background maintenance.
+  const git = (...args: string[]) => gitIn(root, ...args);
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "marina-candidate-test-"));
     git("init", "--quiet", "--template=");

@@ -29,6 +29,7 @@ import {
   type RoomContext,
   roomId,
 } from "../src/types";
+import { git, gitInit } from "./git-helpers";
 import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
 
 const TEST_DB = "test_code_command.db";
@@ -2540,8 +2541,7 @@ diff --git a/../outside.txt b/../outside.txt
   it("creates and reverts checkpoints", async () => {
     const root = makeTempGitWorkspace();
     try {
-      const add = Bun.spawnSync(["git", "add", "example.txt"], { cwd: root });
-      expect(add.exitCode).toBe(0);
+      git(root, "add", "example.txt");
       writeFileSync(join(root, "example.txt"), "hello checkpoint\n");
       const entity = engine.entities.get(conn.entity!)!;
       const sent: string[] = [];
@@ -2759,10 +2759,7 @@ function makeTempGitWorkspace(): string {
   // the product resolves the real path, so the helper must return it too.
   const root = realpathSync(mkdtempSync(join(tmpdir(), "marina-code-test-")));
   writeFileSync(join(root, "example.txt"), "hello\n");
-  const proc = Bun.spawnSync(["git", "init"], { cwd: root, stdout: "pipe", stderr: "pipe" });
-  if (proc.exitCode !== 0) {
-    throw new Error(new TextDecoder().decode(proc.stderr));
-  }
+  gitInit(root);
   return root;
 }
 
@@ -3127,21 +3124,9 @@ describe("code worktree (per-session isolation)", () => {
   function makeRepoWithCommit(): string {
     const root = wtTempDir("marina-wt-cmd-repo-");
     writeFileSync(join(root, "example.txt"), "hello\n");
-    const env = {
-      ...process.env,
-      GIT_AUTHOR_NAME: "T",
-      GIT_AUTHOR_EMAIL: "t@e.com",
-      GIT_COMMITTER_NAME: "T",
-      GIT_COMMITTER_EMAIL: "t@e.com",
-    };
-    for (const args of [
-      ["init", "-q"],
-      ["add", "example.txt"],
-      ["commit", "-q", "-m", "init"],
-    ]) {
-      const p = Bun.spawnSync(["git", ...args], { cwd: root, env, stdout: "pipe", stderr: "pipe" });
-      if (p.exitCode !== 0) throw new Error(new TextDecoder().decode(p.stderr));
-    }
+    gitInit(root);
+    git(root, "add", "example.txt");
+    git(root, "commit", "-q", "-m", "init");
     return root;
   }
 
