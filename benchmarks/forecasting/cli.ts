@@ -27,6 +27,14 @@ import {
   forecasterFor,
   parseConfigs,
 } from "./configs";
+import {
+  addLeakCounts,
+  auditForecast,
+  describeLeakCounts,
+  emptyLeakCounts,
+  hardLeaks,
+  type LeakCounts,
+} from "./leak-audit";
 import { type BacktestItem, type Selection, selectConfiguration } from "./select";
 import { learnedLessons } from "./shared";
 
@@ -61,6 +69,8 @@ export interface SavedSelection extends Selection {
   /** Every candidate configuration in full, by label. */
   configs: Record<string, ForecastConfig>;
   retriever: string;
+  /** Leak audit per configuration: what its forecasts saw (counts only). */
+  leakAudit?: Record<string, LeakCounts>;
 }
 
 /** A rough projected cost per question (runs + planner + critic calls at list price). */
@@ -126,12 +136,22 @@ export async function runSelection(opts: {
 }): Promise<SavedSelection> {
   const retriever = opts.retriever ?? BACKTEST_RETRIEVER;
   const lessons = learnedLessons(opts.db);
+  const leakAudit: Record<string, LeakCounts> = {};
   const selection = await selectConfiguration({
     benchmark: opts.benchmark,
     items: opts.items,
     candidates: opts.configs,
     releases: releases(opts.catalogue),
-    makeForecaster: (c) => forecasterFor(c, depsForConfig(c, { lessons, retriever })),
+    makeForecaster: (c) =>
+      forecasterFor(c, depsForConfig(c, { lessons, retriever, captureEvidence: true }), {
+        onAnswer: (req, answer, reports) => {
+          if (!req.asOf) return;
+          leakAudit[c.label] = addLeakCounts(
+            leakAudit[c.label] ?? emptyLeakCounts(),
+            auditForecast(req.asOf, reports, answer),
+          );
+        },
+      }),
     replicates: opts.replicates,
     pick: opts.pick,
     maxItems: opts.maxItems,
@@ -147,6 +167,7 @@ export async function runSelection(opts: {
     ...selection,
     configs: Object.fromEntries(opts.configs.map((c) => [c.label, c])),
     retriever,
+    leakAudit,
   };
   mkdirSync(dirname(opts.out), { recursive: true });
   writeFileSync(opts.out, JSON.stringify(saved, null, 2));
@@ -167,6 +188,9 @@ export function printSelection(s: SavedSelection, log: (line: string) => void): 
     );
   }
   log(`picked: ${s.picked.join(", ") || "(none)"}`);
+  for (const [label, c] of Object.entries(s.leakAudit ?? {})) {
+    log(`leak audit ${label}: ${hardLeaks(c) ? "LEAKS" : "clean"} — ${describeLeakCounts(c)}`);
+  }
 }
 
 /**
