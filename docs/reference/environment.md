@@ -226,6 +226,7 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 |---|---|---|
 | `TAVILY_API_KEY=` | Web search upgrades. Search works with no key (DuckDuckGo plus arXiv, PubMed and Semantic Scholar); Tavily or a self-hosted SearXNG improves results. Forecast and arena retrieval use OpenRouter web search instead. | secret, restart |
 | `SEARXNG_URL=http://localhost:8080` | Web search upgrades. Search works with no key (DuckDuckGo plus arXiv, PubMed and Semantic Scholar); Tavily or a self-hosted SearXNG improves results. Forecast and arena retrieval use OpenRouter web search instead. | restart |
+| `MARINA_CORPUS_DIR=~/.local/share/marina/corpora` | Where local corpora live: offline BM25 indexes built with `bun run corpus build <name> <docs.jsonl>` and searched with `web search engines:corpus:<name>`, the search room, or the `corpus:<name>` research retriever. Keep it on a disk with room (a 100k-document corpus is several GB), not a small temp filesystem. |  |
 
 ## Chat adapters
 

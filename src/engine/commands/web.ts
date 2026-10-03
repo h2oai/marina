@@ -4,9 +4,11 @@
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import type { ConnectorRuntime } from "../connector-runtime";
+import { getErrorMessage } from "../errors";
 import { extractReadableText } from "../html-text";
 import { type ModifierSpec, parseModifiers } from "../parse-input";
 import { DATE_BOUND_PROVIDER_NAMES } from "../search-providers/asof-providers";
+import { getCorpusDocument, parseCorpusUrl } from "../search-providers/corpus";
 import {
   initProvidersSync,
   parseBound,
@@ -123,6 +125,8 @@ Usage:
                                               a bare date is the start of that UTC day; also asof:)
   web fetch <url>                           — fetch and extract text from a URL
   web fetch <url> asof:2026-09-30           — the page as archived at or before then (Wayback)
+  web search engines:corpus:<name> <query>  — a local corpus (offline BM25; bun run corpus)
+  web fetch corpus://<name>/<docid>         — one document of a local corpus
   web multisearch <q1> | <q2>               — parallel multi-query search`,
     handler: async (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
@@ -286,6 +290,32 @@ async function handleFetch(
   const url = mods.rest[0];
   if (!url?.trim()) {
     ctx.send(eid, "Usage: web fetch <url> [asof:<date>]");
+    return;
+  }
+
+  const corpusRef = parseCorpusUrl(url);
+  if (corpusRef) {
+    let doc: ReturnType<typeof getCorpusDocument>;
+    try {
+      doc = getCorpusDocument(corpusRef.name, corpusRef.docid, { maxChars: 8_000 });
+    } catch (e) {
+      ctx.send(eid, `Corpus fetch failed: ${getErrorMessage(e)}`);
+      return;
+    }
+    if (!doc) {
+      ctx.send(eid, `No document ${corpusRef.docid} in corpus ${corpusRef.name}.`);
+      return;
+    }
+    ctx.send(
+      eid,
+      [
+        header(`Corpus ${corpusRef.name}: ${doc.title || doc.docid}`),
+        separator(),
+        dim(`docid ${doc.docid}${doc.url ? ` · ${doc.url}` : ""}`),
+        "",
+        doc.text,
+      ].join("\n"),
+    );
     return;
   }
 
