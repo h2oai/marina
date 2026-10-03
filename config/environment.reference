@@ -577,10 +577,10 @@
 # Decision backend for cheap per-step judgements (off by default; it receives tool names and redacted arguments). `decisions-api` (alias `jev`): a Jev-family model over the Decisions API on OpenRouter, or a self-hosted OpenJev. `typesafe`: TypeSafe's API. `chat-classifier` (aliases `classifier`, `llm`): any chat model (see MARINA_DECISION_MODEL). Every MARINA_DECISION* setting except base URLs, paths and API keys can also be changed at runtime (`admin decisions set …`, Admin → Ops → Decisions); a value set here wins and locks it.
 # MARINA_DECISIONS=off
 
-# Backend model. Defaults: typesafe/jev-1.13 for decisions-api, jev-latest for typesafe; chat-classifier uses openai/gpt-6-luna on OpenRouter or zai-org/GLM-5.3-Flash on the Hugging Face router, and any other base URL must name a model.
+# Backend model. Defaults: typesafe/jev-1.13 for decisions-api, jev-latest for typesafe; chat-classifier uses openai/gpt-6-luna on OpenRouter, zai-org/GLM-5.3-Flash on the Hugging Face router, or the local runtime's default model on a configured llama.cpp / Ollama / vLLM server, and any other base URL must name a model.
 # MARINA_DECISION_MODEL=typesafe/jev-1.13
 
-# Backend endpoint. Defaults: https://openrouter.ai/api/alpha (decisions-api), https://api.typesafe.ai (typesafe), https://openrouter.ai/api/v1 (chat-classifier).
+# Backend endpoint. Defaults: https://openrouter.ai/api/alpha (decisions-api), https://api.typesafe.ai (typesafe); chat-classifier: OpenRouter with OPENROUTER_API_KEY, else the Hugging Face router with its key, else a configured local runtime (LLAMA_BASE_URL / OLLAMA_BASE_URL / VIBETHINKER_BASE_URL or its key), else https://openrouter.ai/api/v1.
 # @protected
 # MARINA_DECISION_BASE_URL=https://openrouter.ai/api/alpha
 
@@ -636,7 +636,7 @@
 
 # ── Model routing ────────────────────────────────────────────────────────────
 
-# Tiers for `agent spawn <name> model:route goal:<…>`, chosen once at spawn and persisted. With neither tiers nor MARINA_ROUTES set, model:route refuses the spawn; with tiers but no backend or goal, the powerful tier is used.
+# Tiers for `agent spawn <name> model:route goal:<…>`, chosen once at spawn and persisted. With neither tiers nor MARINA_ROUTES set, model:route has one candidate (this installation's first available model, else marina/default) and says so in the route event; with tiers but no backend or goal, the powerful tier is used.
 # MARINA_ROUTE_FAST_MODEL=openai/gpt-6-luna
 # MARINA_ROUTE_POWERFUL_MODEL=anthropic/claude-opus-5-5
 
@@ -665,7 +665,7 @@
 
 # ── Forecasting ──────────────────────────────────────────────────────────────
 
-# `forecast`, `bun run forecast` and POST /v1/forecast (docs/guides/forecasting.md). The defaults need OPENROUTER_API_KEY. Analysts are a comma list of models (defaults: DeepSeek V4 Pro, Claude Sonnet 5 and GPT-6 Luna via OpenRouter); the retriever defaults to OpenRouter web search on GPT-6 Luna; the judge is jev, decisions (the MARINA_DECISIONS backend, falling back to jev) or none.
+# `forecast`, `bun run forecast` and POST /v1/forecast (docs/guides/forecasting.md). No vendor key is required: unset, every part sizes to what is configured (docs/guides/single-model.md). Analysts are a comma list of models (defaults: DeepSeek V4 Pro, Claude Sonnet 5 and GPT-6 Luna via OpenRouter; without OPENROUTER_API_KEY, the configured providers or a single local model, which then answers as the one analyst × K runs); the retriever defaults to OpenRouter web search on GPT-6 Luna, else tavily:basic with TAVILY_API_KEY, else keyless asof; the judge is jev (without OPENROUTER_API_KEY: the MARINA_DECISIONS backend, else no judge), decisions (the MARINA_DECISIONS backend, falling back to jev) or none. Substitutions are reported as the answer's `scale` (tier `degraded`); only having no model at all is an error.
 # MARINA_FORECAST_ANALYSTS=openrouter/deepseek/deepseek-v4-pro,openrouter/anthropic/claude-opus-5.5,openrouter/openai/gpt-6-luna
 # MARINA_FORECAST_RETRIEVER=openrouter-web:openai/gpt-6-luna
 # MARINA_FORECAST_JUDGE=jev
@@ -726,7 +726,7 @@
 # MARINA_ARENA_NOWCAST_HORIZON=off
 # MARINA_ARENA_NOWCAST_DAMPING=0.8
 
-# Research forecaster: retriever, judge (jev, decisions or none; default jev, or none without OPENROUTER_API_KEY) and the trust given to verified research lines. Retrievers: openrouter-web:<model> (any model with OpenRouter's web search) or sonar:<Perplexity model> (sonar, sonar-pro, sonar-pro-search, sonar-reasoning-pro, sonar-deep-research); tavily:basic or tavily:advanced calls Tavily's search API directly (needs TAVILY_API_KEY; its page text is used for citation checks); asof[:<providers>] uses keyless date-strict engines (gdelt, wikipedia, hn, arxiv, wayback) bounded to the brief's cutoff; list several, comma-separated, to merge their reports.
+# Research forecaster: retriever (default openrouter-web:openai/gpt-6-luna with OPENROUTER_API_KEY, else tavily:basic with TAVILY_API_KEY, else keyless asof), judge (jev, decisions or none; default jev, which without OPENROUTER_API_KEY uses the MARINA_DECISIONS backend or no judge) and the trust given to verified research lines. Retrievers: openrouter-web:<model> (any model with OpenRouter's web search) or sonar:<Perplexity model> (sonar, sonar-pro, sonar-pro-search, sonar-reasoning-pro, sonar-deep-research); tavily:basic or tavily:advanced calls Tavily's search API directly (needs TAVILY_API_KEY; its page text is used for citation checks); asof[:<providers>] uses keyless date-strict engines (gdelt, wikipedia, hn, arxiv, wayback) bounded to the brief's cutoff; list several, comma-separated, to merge their reports.
 # MARINA_ARENA_RESEARCH_RETRIEVER=openrouter-web:openai/gpt-6-luna
 # MARINA_ARENA_RESEARCH_JUDGE=jev
 # MARINA_ARENA_RESEARCH_TRUST=0.5

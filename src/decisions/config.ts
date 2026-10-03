@@ -19,10 +19,13 @@
  *                              `typesafe/jev-1.13` (pin a version; any Jev-family
  *                              or OpenJev id works). chat-classifier: default
  *                              openai/gpt-6-luna on OpenRouter,
- *                              zai-org/GLM-5.3-Flash on the Hugging Face router;
- *                              required for any other base URL.
+ *                              zai-org/GLM-5.3-Flash on the Hugging Face router,
+ *                              the runtime's default model on a configured local
+ *                              runtime; required for any other base URL.
  *   MARINA_DECISION_BASE_URL   decisions-api default https://openrouter.ai/api/alpha
- *                              chat-classifier default https://openrouter.ai/api/v1
+ *                              chat-classifier default: OpenRouter with its key,
+ *                              else the Hugging Face router with its key, else a
+ *                              configured local runtime (LLAMA_/OLLAMA_BASE_URL)
  *   MARINA_DECISION_API_KEY    bearer for the backend; falls back to
  *                              OPENROUTER_API_KEY only for openrouter.ai URLs
  *   MARINA_DECISION_PATH       Decisions API path; default /decisions (typesafe: /v1/systemone)
@@ -41,8 +44,10 @@
  *                              routes). Unset: none (see engines.ts).
  */
 
+import { availableModels } from "../agent/available-models";
 import { positiveNumberFromEnv } from "../engine/constants";
 import { dailyCapRefusal, recordSpend } from "../engine/spend-ledger";
+import { LOCAL_PROVIDERS, localProviderBaseUrl } from "../net/model-discovery";
 import { type ClassifierMethod, parseClassifierMethod } from "./classifier-methods";
 import { chatClassifierProvider, decisionsApiProvider } from "./providers";
 import { DecisionError, type DecisionProvider } from "./types";
@@ -127,6 +132,33 @@ export function defaultClassifierModel(baseUrl: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Where a chat-classifier backend with no MARINA_DECISION_BASE_URL runs:
+ * OpenRouter with its key, else the Hugging Face router with its key, else a
+ * self-hosted runtime the operator configured (its default model) — so a
+ * Marina with one local model still gets classifier decisions. Undefined
+ * keeps the OpenRouter preset (and decisions stay off without a key).
+ */
+function classifierHost(
+  env: NodeJS.ProcessEnv,
+): { baseUrl: string; model?: string; apiKey?: string } | undefined {
+  if (env.OPENROUTER_API_KEY?.trim()) return undefined;
+  if (env.HUGGINGFACE_API_KEY?.trim() || env.HF_TOKEN?.trim()) {
+    return { baseUrl: "https://router.huggingface.co/v1" };
+  }
+  const local = availableModels(env).find((m) => m.local);
+  if (!local) return undefined;
+  const base = localProviderBaseUrl(local.provider);
+  const key = env[LOCAL_PROVIDERS[local.provider]?.keyEnv ?? ""]?.trim();
+  return base
+    ? {
+        baseUrl: base,
+        model: local.spec.slice(local.provider.length + 1),
+        ...(key ? { apiKey: key } : {}),
+      }
+    : undefined;
+}
+
 /** Parse the decision config, or undefined when decisions are off / incomplete. */
 export function decisionConfigFromEnv(
   env: NodeJS.ProcessEnv = process.env,
@@ -135,11 +167,15 @@ export function decisionConfigFromEnv(
   if (!name) return undefined;
   const d = PRESETS[name];
   const kind = d.kind;
-  const baseUrl = env.MARINA_DECISION_BASE_URL?.trim() || d.baseUrl;
+  const sized = kind === "chat-classifier" ? classifierHost(env) : undefined;
+  const baseUrl = env.MARINA_DECISION_BASE_URL?.trim() || sized?.baseUrl || d.baseUrl;
   const model =
     env.MARINA_DECISION_MODEL?.trim() ||
     d.model ||
-    (kind === "chat-classifier" ? defaultClassifierModel(baseUrl) : undefined);
+    (kind === "chat-classifier"
+      ? defaultClassifierModel(baseUrl) ||
+        (sized && sized.baseUrl === baseUrl ? sized.model : undefined)
+      : undefined);
   if (!model) return undefined;
   const path = kind === "decisions-api" ? env.MARINA_DECISION_PATH?.trim() || d.path : undefined;
   // A vendor key only ever goes to that vendor's host.
@@ -150,7 +186,8 @@ export function decisionConfigFromEnv(
       : /^https:\/\/router\.huggingface\.co(\/|$)/.test(baseUrl)
         ? env.HUGGINGFACE_API_KEY || env.HF_TOKEN
         : undefined;
-  const apiKey = env.MARINA_DECISION_API_KEY?.trim() || vendorKey?.trim() || undefined;
+  const localKey = sized && sized.baseUrl === baseUrl ? sized.apiKey : undefined;
+  const apiKey = env.MARINA_DECISION_API_KEY?.trim() || vendorKey?.trim() || localKey || undefined;
   const typesafeHost = /^https:\/\/api\.typesafe\.ai(\/|$)/.test(baseUrl);
   return {
     kind,
@@ -238,7 +275,8 @@ export const DEFAULT_JUDGE_MODEL = "typesafe/jev-1.13";
 /**
  * The judge for a research pipeline (`MARINA_FORECAST_JUDGE`,
  * `MARINA_ARENA_RESEARCH_JUDGE`):
- *   jev        jev-1.13 through OpenRouter's Decisions API (needs `openRouterKey`)
+ *   jev        jev-1.13 through OpenRouter's Decisions API; without `openRouterKey`
+ *              the world's configured backend judges instead (none ⇒ no judge)
  *   decisions  the world's configured backend (`MARINA_DECISIONS`) — OpenJev,
  *              TypeSafe, a chat classifier, Marina's own `/v1`. Opt-in, and it
  *              never removes the judge: with no backend configured it falls
@@ -262,7 +300,15 @@ export function researchJudge(
   } else if (name !== "jev") {
     return undefined;
   }
-  if (!openRouterKey) return undefined;
+  if (!openRouterKey) {
+    // Jev is unreachable without OpenRouter. Size to what exists: the world's
+    // own backend (e.g. a chat classifier on its single local model) judges
+    // instead; with none, there is no judge (analysts weighted equally).
+    const config = decisionConfigFromEnv(env);
+    return config
+      ? providerFromConfig({ ...config, timeoutMs: Math.max(config.timeoutMs, minTimeoutMs) })
+      : undefined;
+  }
   return providerFromConfig({
     kind: "decisions-api",
     baseUrl: "https://openrouter.ai/api/alpha",

@@ -2,7 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "bun:test";
-import { passHatK, servedModel, type Tau2Results, tau2ToHarness } from "../benchmarks/tau2/convert";
+import {
+  infrastructureErrors,
+  passHatK,
+  servedModel,
+  type Tau2Results,
+  tau2ToHarness,
+} from "../benchmarks/tau2/convert";
 import { ledgerFromHarnessResult } from "../src/engine/benchmark-ledger";
 
 // Synthetic: 2 tasks × 2 trials; task 0 passes twice, task 1 once.
@@ -57,6 +63,24 @@ describe("tau2 adapter", () => {
     expect(passHatK(results, 1)).toBeCloseTo(0.75, 9); // (1 + 0.5) / 2
     expect(passHatK(results, 2)).toBeCloseTo(0.5, 9); // (1 + 0) / 2
     expect(passHatK(results, 3)).toBeUndefined();
+  });
+
+  it("excludes infrastructure errors from pass^k and the ledger, as τ²'s metrics do", () => {
+    const withErrors: Tau2Results = {
+      ...results,
+      simulations: [
+        ...(results.simulations ?? []),
+        { task_id: 2, trial: 0, termination_reason: "infrastructure_error", reward_info: null },
+        { task_id: 2, trial: 1, termination_reason: "infrastructure_error", reward_info: null },
+      ],
+    };
+    expect(infrastructureErrors(withErrors)).toBe(2);
+    // Task 2 never ran: the score is the same as without it, not diluted by two zeros.
+    expect(passHatK(withErrors, 1)).toBeCloseTo(0.75, 9);
+    const h = tau2ToHarness(withErrors);
+    expect(h.items?.length).toBe(4);
+    expect(h.items?.some((i) => String(i.id).startsWith("2#"))).toBe(false);
+    expect((h.config as Record<string, unknown>).infrastructureErrors).toBe(2);
   });
 
   it("names the model Marina served, not LiteLLM's routing prefix", () => {

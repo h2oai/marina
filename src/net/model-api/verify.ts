@@ -9,10 +9,14 @@
 // proposer. Every call goes through `proxyToUpstream`, so spend, the daily cap,
 // lifecycle traces and cost headers apply exactly as for passthru.
 //
+// `marina/verify:default` resolves to this installation's first available model
+// (a single local model checks its own drafts — a self-check, still a review).
+//
 // Fails open: a checker outage, an unparseable verdict or a failed revision
 // returns the proposer's draft unchanged (the verifier accepts on outage, as
 // in `src/decisions/policy.ts`).
 
+import { availableModels } from "../../agent/available-models";
 import type { Engine } from "../../engine/engine";
 import { getErrorMessage } from "../../engine/errors";
 import { Logger } from "../../engine/logger";
@@ -63,7 +67,17 @@ export function parseVerifyModel(
   const explicitChecker = plus > 0 ? rest.slice(plus + 1).trim() : "";
   const checker = explicitChecker || env.MARINA_VERIFY_CHECKER_MODEL?.trim() || proposer;
   if (!proposer || !checker) return undefined;
-  return { proposer, checker };
+  return { proposer: sized(proposer, env), checker: sized(checker, env) };
+}
+
+/**
+ * `default` names this installation's first available model (a configured
+ * local runtime first, see `availableModels`), so `marina/verify:default`
+ * works on a Marina with a single model: it checks its own drafts.
+ */
+function sized(id: string, env: Record<string, string | undefined>): string {
+  if (id !== "default") return id;
+  return availableModels(env as NodeJS.ProcessEnv)[0]?.spec ?? id;
 }
 
 /** Max revision rounds (`MARINA_VERIFY_ROUNDS`, default 1, clamped 0..3; 0 = review only). */

@@ -4,6 +4,7 @@
 import { RateLimiter } from "../../auth/rate-limiter";
 import type { AnswerSpec } from "../../forecast/answer-types";
 import type { ForecastAnswer } from "../../forecast/question";
+import type { ForecastScale } from "../../forecast/service";
 import type { TypedForecastAnswer } from "../../forecast/typed";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
@@ -140,7 +141,9 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
           const saved = name && deps.db ? saveTypedAnswer(deps.db, name, a, sampleId) : undefined;
           ctx.send(
             input.entity,
-            renderTyped(a) + (saved === undefined ? "" : `\n${dim(`saved as forecast #${saved}`)}`),
+            renderTyped(a) +
+              scaleNote(made.scale) +
+              (saved === undefined ? "" : `\n${dim(`saved as forecast #${saved}`)}`),
           );
         })().catch((err) =>
           ctx.send(
@@ -162,6 +165,7 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
         ctx.send(
           input.entity,
           render(a) +
+            scaleNote(made.scale) +
             (saved === undefined
               ? ""
               : `\n${dim(`saved as forecast #${saved}${sampleId ? ` · scored when ${sampleId} resolves` : " · forecast track <id> <venue>/<ticker> to score it"}`)}`),
@@ -239,6 +243,11 @@ export function saveTypedAnswer(
     logger.warn("forecast", "Forecast answer not saved", { error: getErrorMessage(err) });
     return undefined;
   }
+}
+
+/** One honest line when the forecaster ran on less than its full multi-vendor setup. */
+export function scaleNote(scale: ForecastScale): string {
+  return scale.tier === "degraded" ? `\n${dim(`degraded: ${scale.notes.join("; ")}`)}` : "";
 }
 
 export function renderTyped(a: TypedForecastAnswer): string {
