@@ -4,7 +4,7 @@
 import { accessSync, existsSync, constants as fsConstants, readdirSync, statSync } from "node:fs";
 import { basename, delimiter, join } from "node:path";
 import { LocalWorkspace, type WorkspaceRuntime } from "../../../coding/local-workspace";
-import { detectPackageScripts, recommendedVerify } from "../../../coding/project-detection";
+import { detectPackageScripts, detectWorkspaceRunner } from "../../../coding/project-detection";
 import {
   loadProjectInstructions,
   projectInstructionMetadata,
@@ -21,6 +21,7 @@ import type { CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
 import { checkGateForExecution, recordGateExecution } from "../../safety-gates";
 import { resolveVerificationCommands } from "./artifacts";
+import { applySessionRunner } from "./runner";
 import {
   CODE_WORKSPACE_KEY,
   type CodeCheckRow,
@@ -466,7 +467,8 @@ export async function doctor(
     output: err instanceof Error ? err.message : String(err),
   }));
   const gitState = formatGitState(git.exitCode, git.output);
-  const verify = recommendedVerify(scripts);
+  const runner = await detectWorkspaceRunner(workspace);
+  const verify = runner.verify;
   const executionTarget = session?.execution_target ?? "local";
   const recipe = session
     ? await resolveVerificationCommands(deps.db, session, workspace)
@@ -544,6 +546,7 @@ export async function doctor(
     `Binaries: ${formatBinaryAvailability(binaries)}`,
     `Search: ${binaries.find((item) => item.binary === "rg")?.available ? "rg" : "built-in fallback"}`,
     `Recommended verify: ${verify.length > 0 ? verify.map((cmd) => `code run ${cmd}`).join(" -> ") : "code run git diff --check"}`,
+    `Test runner: ${runner.language === "unknown" ? dim("not detected") : `${runner.language} (${runner.reason})`}`,
     `Effective verification recipe: ${recipe.join(" -> ")}`,
     ...(recipe.every((cmd) => /^git diff(?: --cached)? --check$/.test(cmd))
       ? [
@@ -705,11 +708,21 @@ export function workspaceForSession(deps: CodeDeps, session: CodingSessionRow): 
   // registry allowlist and constructs a LocalWorkspace pinned to that subtree —
   // path confinement still applies, just relative to the worktree. Default (no
   // worktree) is byte-identical to before.
+  // A session-level container runner (`code workspace runner container …`)
+  // keeps files on the host and moves finite commands into the image; it never
+  // falls back to host execution (src/engine/commands/code/runner.ts).
   if (session.worktree_path && existsSync(session.worktree_path)) {
-    return stampHostExecPolicy(new LocalWorkspace(session.worktree_path), deps);
+    return stampHostExecPolicy(
+      applySessionRunner(new LocalWorkspace(session.worktree_path), deps.db, session),
+      deps,
+    );
   }
   return stampHostExecPolicy(
-    getWorkspaceRegistry(deps).workspaceForRoot(session.workspace_root),
+    applySessionRunner(
+      getWorkspaceRegistry(deps).workspaceForRoot(session.workspace_root),
+      deps.db,
+      session,
+    ),
     deps,
   );
 }

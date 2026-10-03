@@ -6,7 +6,7 @@
  * SWE-bench — a thin adapter over Marina's one-shot coding entry point.
  *
  *   bun run swebench subset --n 50 --seed 7                 seeded, repo-mixed instance ids
- *   bun run swebench run --arm single --model <m> --replicate 1 [--review-model <m2>]
+ *   bun run swebench run --arm single --model <m> --replicate 1 [--review-model <m2>] [--env-image]
  *   bun run swebench score --arm single --replicate 1       official harness, unmodified
  *   bun run swebench file --arm single --replicate 1        scored run → benchmark ledger
  *
@@ -49,6 +49,9 @@ const { positionals, values } = parseArgs({
     workers: { type: "string", default: "4" },
     db: { type: "string" },
     group: { type: "string" },
+    // Opt-in: the agent's commands run inside the instance's environment image
+    // (Marina's container runner), so it can run the project's existing tests.
+    "env-image": { type: "boolean" },
   },
 });
 const cmd = positionals[0];
@@ -115,6 +118,7 @@ async function runCmd(): Promise<number> {
           replicate,
           timeoutMs,
           slug: projectSlug,
+          ...(values["env-image"] ? { mode: "env-image" as const } : {}),
         });
         appendFileSync(predsPath, `${JSON.stringify(prediction)}\n`);
         appendFileSync(attemptsPath, `${JSON.stringify(attempt)}\n`);

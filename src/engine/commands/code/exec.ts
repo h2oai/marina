@@ -14,6 +14,7 @@ import {
   settleExecApproval,
 } from "../../../coding/exec-approver";
 import type { WorkspaceRunResult, WorkspaceRuntime } from "../../../coding/local-workspace";
+import { detectWorkspaceRunner } from "../../../coding/project-detection";
 import { summarizeFlywheelEvents, WorkspaceGateway } from "../../../coding/workspace-gateway";
 import { dim, error as fmtError, header, separator, success } from "../../../net/ansi";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../../../persistence/database";
@@ -39,7 +40,7 @@ import {
   sendCode,
   updateCodeContext,
 } from "./shared";
-import { detectPackageScripts, recommendedVerify, workspaceForSession } from "./workspace";
+import { detectPackageScripts, workspaceForSession } from "./workspace";
 
 export async function runWorkspaceCommand(
   ctx: RoomContext,
@@ -63,7 +64,7 @@ export async function runWorkspaceCommand(
     return;
   }
 
-  const command = normalizeCodeRunArgs(args);
+  const command = await resolveTestShorthand(deps, session, args);
   const { artifact, result } = await executeWorkspaceCommand(entity, deps, session, command);
   updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
 
@@ -82,6 +83,27 @@ export async function runWorkspaceCommand(
     truncated: result.truncated,
     type: "command",
   });
+}
+
+/**
+ * `code test` / `code run test` follows the project's detected runner when the
+ * project (or the touched files) is not JavaScript — `python -m pytest`,
+ * `python tests/runtests.py`, `cargo test`, `go test ./...` — instead of
+ * always meaning `bun run test`. Other shorthands are unchanged.
+ */
+async function resolveTestShorthand(
+  deps: CodeDeps & { db: MarinaDB },
+  session: CodingSessionRow,
+  args: string[],
+): Promise<string[]> {
+  if (args.length === 1 && args[0]?.toLowerCase() === "test") {
+    const runner = await detectWorkspaceRunner(workspaceForSession(deps, session)).catch(
+      () => null,
+    );
+    const test = runner && runner.language !== "javascript" ? runner.verify.at(-1) : undefined;
+    if (test) return test.split(/\s+/).filter(Boolean);
+  }
+  return normalizeCodeRunArgs(args);
 }
 
 async function showRunAllowlist(
@@ -323,15 +345,14 @@ export async function recipe(
     return;
   }
   const workspace = workspaceForSession(deps, session);
-  const packageJson = await workspace.read("package.json").catch(() => null);
-  const scripts = packageJson ? detectPackageScripts(packageJson.content) : [];
-  const detected = recommendedVerify(scripts);
+  const runner = await detectWorkspaceRunner(workspace);
+  const detected = runner.verify;
   const stored = deps.db
     .listCodingArtifacts(session.id, 50)
     .filter((artifact) => artifact.kind === "run_recipe" && artifact.status === "active");
   const lines = [header("Code Recipes"), separator()];
   lines.push(
-    `Detected verify: ${detected.length > 0 ? detected.join(" then ") : "git diff --check"}`,
+    `Detected verify: ${detected.length > 0 ? detected.join(" then ") : "git diff --check"}${detected.length > 0 ? dim(` (${runner.reason})`) : ""}`,
   );
   for (const artifact of stored) {
     const meta = parseJsonObject(artifact.metadata_json);

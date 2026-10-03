@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   collectPatch,
+  envImageRunnerEnv,
   ledgerResult,
   prepareWorkspace,
   reviewPrompt,
@@ -11,6 +12,7 @@ import {
   selectSubset,
   sessionSpend,
   spawnRun,
+  sweEnvImage,
   taskPrompt,
 } from "../benchmarks/swebench/adapter";
 
@@ -120,5 +122,35 @@ describe("ledgerResult and spend", () => {
 
   it("reads 0 spend from a missing or schema-less database", () => {
     expect(sessionSpend(join(tmpdir(), "does-not-exist.db"))).toBe(0);
+  });
+});
+
+describe("env-image mode (opt-in)", () => {
+  it("names the official environment image for an instance", () => {
+    expect(sweEnvImage("django__django-11099")).toBe(
+      "docker.io/swebench/sweb.eval.x86_64.django_1776_django-11099:latest",
+    );
+    expect(sweEnvImage("Sympy__Sympy-1", "localhost/x")).toBe(
+      "localhost/x/sweb.eval.x86_64.sympy_1776_sympy-1:latest",
+    );
+  });
+
+  it("configures Marina's container runner in patch sync at /testbed", () => {
+    expect(envImageRunnerEnv("pylint-dev__pylint-7080")).toEqual({
+      MARINA_CODE_CONTAINER_IMAGE:
+        "docker.io/swebench/sweb.eval.x86_64.pylint-dev_1776_pylint-7080:latest",
+      MARINA_CODE_CONTAINER_SYNC: "patch",
+      MARINA_CODE_CONTAINER_WORKDIR: "/testbed",
+      MARINA_CODE_CONTAINER_SHELL: "bash",
+      MARINA_CODE_CONTAINER_INIT: "source /opt/miniconda3/bin/activate testbed",
+    });
+  });
+
+  it("tells the agent it may run existing tests only in env-image mode", () => {
+    const i = inst("django__django-1", "django/django");
+    expect(taskPrompt(i)).toContain("cannot run here");
+    expect(taskPrompt(i, "env-image")).toContain("EXISTING tests");
+    expect(taskPrompt(i, "env-image")).not.toContain("cannot run here");
+    expect(reviewPrompt(i, "env-image")).toContain("environment image");
   });
 });

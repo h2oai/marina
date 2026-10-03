@@ -56,6 +56,7 @@ import {
 } from "./code/files";
 import { formatHelp, handleProfile } from "./code/profiles";
 import { projectLifecycle } from "./code/project";
+import { handleRunner } from "./code/runner";
 import { sandboxLifecycle } from "./code/sandbox";
 import { serviceLifecycle } from "./code/service";
 import {
@@ -229,6 +230,12 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
   world: exitHandler,
   worktree: async (c) => {
     await handleWorktree(c.ctx, c.eid, c.entity, c.deps, c.args);
+  },
+  /** `code workspace runner …` (also `code runner …`): host or container execution. */
+  runner: (c) => {
+    const raw =
+      c.args[0]?.toLowerCase() === "runner" ? restAfterSubcommand(c.rawAfterSub) : c.rawAfterSub;
+    handleRunner(c.ctx, c.eid, c.entity, c.deps, raw);
   },
   "exec-mode": (c) => {
     execModeCommand(c.ctx, c.eid, c.entity, c.deps, c.args);
@@ -578,6 +585,9 @@ export function codeCommand(deps: CodeDeps): CommandDef {
       "code workspace discover",
       "code workspace list",
       "code workspace show",
+      "code workspace runner",
+      "code workspace runner local",
+      "code workspace runner container image:<ref> [sync:mount|patch] [workdir:<path>] [network:on] [-- <init>]",
       "code workspace use <path>",
       "code worktree",
       "code worktree merge",
@@ -628,7 +638,10 @@ export function codeCommand(deps: CodeDeps): CommandDef {
           handleProfile(ctx, input.entity, entity, depsWithDb, args);
           return;
         }
-        if (sub === "workspace") {
+        // `code workspace runner …` changes WHERE commands execute, so it skips the
+        // ungated workspace pre-dispatch and takes the gated `runner` path below.
+        const workspaceRunner = sub === "workspace" && args[0]?.toLowerCase() === "runner";
+        if (sub === "workspace" && !workspaceRunner) {
           handleWorkspace(ctx, input.entity, entity, depsWithDb, args);
           return;
         }
@@ -638,7 +651,7 @@ export function codeCommand(deps: CodeDeps): CommandDef {
         }
 
         const profile = getCodeProfile(entity);
-        const canonicalSub = canonicalCodeSubcommand(profile, sub);
+        const canonicalSub = workspaceRunner ? "runner" : canonicalCodeSubcommand(profile, sub);
 
         // Gate the host-execution / workspace-mutation surface behind code.exec.
         // The `code` command is rank 0 (read/inspect/propose stay open), but

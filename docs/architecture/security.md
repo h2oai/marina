@@ -19,6 +19,21 @@
 - **Dashboard scoping**: broadcasts filter sensitive data (connectionId, raw command input stripped)
 - **Adapter persistence**: Discord/Telegram user mappings persisted to DB, auto-reconnect on restart
 
+## Container workspaces (Code Mode)
+
+`src/coding/container-workspace.ts`, configured per session by `code workspace runner …` (`src/engine/commands/code/runner.ts`) or for every local session by `MARINA_CODE_CONTAINER_IMAGE`. Files stay on the host; finite commands run inside an image.
+
+- **Same gates, one spawn step swapped.** `ContainerWorkspace` extends `LocalWorkspace` and overrides only `spawnNormalized`. The allowlist (`normalizeAllowedCodeCommand`), the per-call `ExecApprover` and its `exec_decision` artifacts, the telnet chokepoint (`HostExecForbiddenError`) and the per-root lock run first, unchanged. Configuring a runner is in `CODE_EXEC_SUBCOMMANDS` (the `code.exec` gate, LAYER-0 telnet refusal, no-code-root refusal).
+- **No host fallback.** A configured runner that cannot resolve (no podman/docker, an invalid image reference) becomes `UnavailableContainerWorkspace`: file operations work, every command fails with the reason. Host-side candidate dependency installation is refused too.
+- **Containment flags** (`containerRunArgv`, unit-tested): `--rm`, `--network none` unless the runner opts in, `--cap-drop=ALL`, `--security-opt no-new-privileges`, `--pids-limit`, `--cpus`, `--memory`, a private `/tmp` tmpfs, and a timeout that also removes the container by name.
+- **Mount sync**: the worktree is the only host path mounted (read-write at the workdir) on a `--read-only` root; the process runs as the host user (`--userns=keep-id` on Podman, `--user uid:gid` on Docker).
+- **Patch sync**: nothing from the host is mounted. The pending diff (`git diff HEAD --binary` plus untracked files, capped at 20 MB, refused rather than truncated) is fed on stdin and applied inside the throwaway container.
+- **The command stays an argv.** Only the operator-set one-line `init` preamble is shell text; the validated command follows as `"$@"`.
+
+## Test-runner allowlist shapes
+
+`code test` / `code verify` follow the detected project runner (`src/coding/project-detection.ts`). Like `bun run test`, a project's test suite executes repository code, so the non-JavaScript runners join the allowlist only in fixed shapes: `python -m pytest` with relative selectors or node ids and `-q -x -v -rA --no-header --tb=short|line`; `python manage.py test` and `python <path>/runtests.py` with dotted labels and `--verbosity=N` / `--parallel=N`; `cargo test [--quiet] [filter]`; `go test` with relative package patterns and `-count=N -short -v`. Selectors are confined to the workspace like `bun test` paths; `python -c`, other modules, other scripts, absolute paths and bare `pytest` stay off the list (an exec approver can still approve them per call).
+
 See also: `docs/authentication.md`, `docs/guides/identity.md`, `docs/guides/deployment.md`, `SECURITY.md`; `docs/architecture/civic-substrate.md` (gates, trust profile, exec approval).
 
 ## Dashboard Content-Security-Policy (2026-09-22)
