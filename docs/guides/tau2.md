@@ -59,6 +59,8 @@ A revision that breaks any of these is discarded, the draft is returned, and the
 
 **Response metadata.** The response carries `x-marina-verify` (`approved`, `revised`, `held-write`, `checker-unavailable`, `revision-failed` or `flagged`) and the summed `x-marina-cost-usd` and `usage` of every call.
 
+**Lessons.** With outcome learning armed, judged `tools`/`code` lessons matching the last user turn ride as one system message after the caller's and are shown to the checker; `x-marina-lessons` names them (`0` for none, `observe:` under `MARINA_LESSONS=observe`). Set `MARINA_LESSONS=off` for a lessons-free ablation arm.
+
 **Limits.** `stream` and `n > 1` are refused with `unsupported_parameter`.
 
 ## Into the ledger
