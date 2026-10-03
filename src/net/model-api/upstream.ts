@@ -16,6 +16,7 @@ import { Logger } from "../../engine/logger";
 import { settleProxyCall } from "../../engine/proxy-settlement";
 import { dailyCapRefusal, recordSpend } from "../../engine/spend-ledger";
 import type { EngineEvent, EntityId } from "../../types";
+import { estimatePrefixTokens, minCacheableTokens } from "../anthropic-tools";
 import { getDefaultUpstreamModel } from "../default-models";
 import {
   encodeMemoryReceiptAttribute,
@@ -36,7 +37,11 @@ import {
   type StreamEvent,
   ToolCallStreamParser,
 } from "../tool-call-normalize";
-import { proxyToAnthropic, streamUsageSidecar } from "./anthropic-bridge";
+import {
+  anthropicAutoCacheEnabled,
+  proxyToAnthropic,
+  streamUsageSidecar,
+} from "./anthropic-bridge";
 import {
   CACHE_READ_TOKENS_HEADER,
   CACHE_WRITE_TOKENS_HEADER,
@@ -917,17 +922,113 @@ export function stripCacheControl(body: Record<string, unknown>): Record<string,
   };
 }
 
+/**
+ * An OpenAI-compatible upstream that forwards `cache_control` on content parts
+ * to Anthropic: OpenRouter serving an `anthropic/*` model. Everything else on
+ * OpenRouter (OpenAI, Gemini, … — implicit/automatic caching) is stripped like
+ * any other OpenAI-compatible provider.
+ */
+export function honorsCacheControl(provider: string, model: unknown): boolean {
+  return provider === "openrouter" && typeof model === "string" && /^~?anthropic\//.test(model);
+}
+
+function hasCacheControl(value: unknown): boolean {
+  return !!value && typeof value === "object" && "cache_control" in (value as object);
+}
+
+/** Any `cache_control` the client placed: message, content part or tool. */
+function clientCacheMarked(body: Record<string, unknown>): boolean {
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  for (const m of messages) {
+    if (hasCacheControl(m)) return true;
+    const content = (m as { content?: unknown } | null)?.content;
+    if (Array.isArray(content) && content.some(hasCacheControl)) return true;
+  }
+  const tools = Array.isArray(body.tools) ? body.tools : [];
+  return tools.some(
+    (t) => hasCacheControl(t) || hasCacheControl((t as { function?: unknown } | null)?.function),
+  );
+}
+
+const EPHEMERAL = { type: "ephemeral" } as const;
+
+function markOpenAIMessage(message: unknown): unknown {
+  if (!message || typeof message !== "object") return message;
+  const msg = message as Record<string, unknown>;
+  if (typeof msg.content === "string") {
+    if (!msg.content) return message;
+    return { ...msg, content: [{ type: "text", text: msg.content, cache_control: EPHEMERAL }] };
+  }
+  if (!Array.isArray(msg.content)) return message;
+  for (let i = msg.content.length - 1; i >= 0; i--) {
+    const part = msg.content[i] as { type?: unknown; text?: unknown } | null;
+    if (part?.type !== "text" || typeof part.text !== "string" || !part.text) continue;
+    const content = [...msg.content];
+    content[i] = { ...part, cache_control: EPHEMERAL };
+    return { ...msg, content };
+  }
+  return message;
+}
+
+/**
+ * Auto-cache breakpoints in the OpenAI chat shape, for an upstream that
+ * forwards them to Anthropic (`honorsCacheControl`). Mirrors
+ * `placeCacheBreakpoints`: the last STABLE leading system message (the one
+ * before the proxy's memory addendum when `injectedSystemTail`), the memory
+ * addendum itself, and a ROLLING breakpoint on the latest message's last text
+ * part (a string content becomes one text part) once the request reaches the
+ * model's minimum cacheable length — at most three markers, under Anthropic's
+ * four. A body whose client already placed any marker is returned unchanged.
+ */
+export function placeOpenAICacheBreakpoints(
+  body: Record<string, unknown>,
+  opts: { injectedSystemTail?: boolean } = {},
+): Record<string, unknown> {
+  if (!Array.isArray(body.messages) || body.messages.length === 0) return body;
+  if (clientCacheMarked(body)) return body;
+  const messages = [...body.messages];
+  const isSystem = (m: unknown) => {
+    const role = (m as { role?: unknown } | null)?.role;
+    return role === "system" || role === "developer";
+  };
+  let leading = 0;
+  while (leading < messages.length && isSystem(messages[leading])) leading++;
+  const last = leading - 1;
+  const stable = opts.injectedSystemTail ? last - 1 : last;
+  if (stable >= 0) messages[stable] = markOpenAIMessage(messages[stable]);
+  if (stable !== last && last >= 0) messages[last] = markOpenAIMessage(messages[last]);
+  if (
+    messages.length > leading &&
+    estimatePrefixTokens(body.tools, body.messages) >= minCacheableTokens(String(body.model))
+  ) {
+    for (let i = messages.length - 1; i >= leading; i--) {
+      const marked = markOpenAIMessage(messages[i]);
+      if (marked !== messages[i]) {
+        messages[i] = marked;
+        break;
+      }
+    }
+  }
+  return { ...body, messages };
+}
+
 export function prepareUpstreamBody(
   body: Record<string, unknown>,
   provider: string,
   defaultRoute = false,
+  cache: { injectedSystemTail?: boolean } = {},
 ): Record<string, unknown> {
-  // Anthropic upstreams take the markers through proxyToAnthropic; every
-  // OpenAI-compatible provider must not see them.
-  let prepared = prepareLlamaBody(
-    provider === "anthropic" ? body : stripCacheControl(body),
-    provider,
-  );
+  // Anthropic upstreams take the markers through proxyToAnthropic; OpenRouter
+  // serving `anthropic/*` forwards them on content parts (the client's own, or
+  // auto-cache's); every other OpenAI-compatible provider must not see them.
+  const cacheBody = honorsCacheControl(provider, body.model)
+    ? anthropicAutoCacheEnabled()
+      ? placeOpenAICacheBreakpoints(body, cache)
+      : body
+    : provider === "anthropic"
+      ? body
+      : stripCacheControl(body);
+  let prepared = prepareLlamaBody(cacheBody, provider);
   // The Luna family (gpt-5.6-luna, gpt-6-luna, their -pro variants): accepts
   // reasoning_effort "none" and rejects legacy max_tokens (verified live
   // 2026-09-24 for gpt-6-luna on OpenAI and OpenRouter).
@@ -1032,12 +1133,22 @@ export async function proxyToUpstream(
   // Correlate the upstream call with Marina's traced request id (OpenAI echoes
   // `x-request-id`; `prompt_cache_key` in the body passes through untouched).
   const upstreamHeaders: Record<string, string> = requestId ? { "x-request-id": requestId } : {};
+  const cacheHints = { injectedSystemTail: hints?.injectedSystemTail };
   const anthropic = async (key: string, model: string): Promise<Response> => {
     try {
-      return await proxyToAnthropic(body, key, model, wantStream, hints?.anthropicNative, {
-        injectedSystemTail: hints?.injectedSystemTail,
-        clientSignal,
-      });
+      // `model` is the resolved Anthropic id (`anthropic/claude-x` → `claude-x`);
+      // the body's own id may still carry the provider prefix Anthropic 404s on.
+      return await proxyToAnthropic(
+        { ...body, model },
+        key,
+        model,
+        wantStream,
+        hints?.anthropicNative,
+        {
+          injectedSystemTail: hints?.injectedSystemTail,
+          clientSignal,
+        },
+      );
     } catch (e) {
       // A parameter Anthropic cannot honor is a 400 the CLIENT must see, not
       // a reason to try the next provider (which would honor it differently).
@@ -1123,7 +1234,7 @@ export async function proxyToUpstream(
       const r = await dispatchOpenAICompatible(
         cfg.url,
         key ?? "",
-        prepareUpstreamBody({ ...body, model: upstreamModel }, provider, isDefault),
+        prepareUpstreamBody({ ...body, model: upstreamModel }, provider, isDefault, cacheHints),
         wantStream,
         upstreamHeaders,
         clientSignal,
@@ -1164,7 +1275,7 @@ export async function proxyToUpstream(
         const r = await dispatchOpenAICompatible(
           cfg.url,
           key ?? "",
-          prepareUpstreamBody({ ...body, model: upstreamModel }, provider, isDefault),
+          prepareUpstreamBody({ ...body, model: upstreamModel }, provider, isDefault, cacheHints),
           wantStream,
           upstreamHeaders,
           clientSignal,
@@ -1212,7 +1323,7 @@ export async function proxyToUpstream(
     const r = await dispatchOpenAICompatible(
       cfg.url,
       key ?? "",
-      prepareUpstreamBody({ ...body, model: requestModel }, provider, isDefault),
+      prepareUpstreamBody({ ...body, model: requestModel }, provider, isDefault, cacheHints),
       wantStream,
       upstreamHeaders,
       clientSignal,

@@ -70,8 +70,10 @@ export function anthropicSystemPrompt(
 }
 
 /**
- * Whether the proxy adds a `cache_control: ephemeral` breakpoint to the LAST
- * system block of every Anthropic request that has none. Default: on under
+ * Whether the proxy places `cache_control: ephemeral` breakpoints on Anthropic
+ * requests — direct (`placeCacheBreakpoints`: stable system block, memory
+ * block, last tool, rolling latest-message breakpoint) and `anthropic/*` via
+ * OpenRouter (`placeOpenAICacheBreakpoints`). Default: on under
  * the `local` trust profile (one operator, repeated prompts, their own bill),
  * off otherwise. `MARINA_ANTHROPIC_AUTO_CACHE=true|false` overrides. A client
  * that places its own markers (pi-ai with `cacheControlFormat: "anthropic"`,
