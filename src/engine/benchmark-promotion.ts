@@ -38,6 +38,7 @@ import type {
   BenchmarkRunRow,
 } from "../persistence/db-benchmarks";
 import type { BenchmarksStore } from "../persistence/interfaces/benchmarks-store";
+import { invalidReason } from "./benchmark-ledger";
 import {
   comparePooledGroups,
   type LoadedGroup,
@@ -353,6 +354,7 @@ type PromotionStore = Pick<
   | "getBenchmarkRun"
   | "queryBenchmarkRuns"
   | "getBenchmarkItems"
+  | "listBenchmarkRunValidity"
   | "getBenchmarkDefault"
   | "listBenchmarkDefaults"
   | "listBenchmarkPromotions"
@@ -375,7 +377,8 @@ export function attemptsBefore(db: PromotionStore, slot: string, challengerRunId
 
 /** The parsed value of a slot's promoted default, or undefined when none / unreadable. */
 export function getPromotedDefault<T = unknown>(
-  db: Pick<BenchmarksStore, "getBenchmarkDefault">,
+  db: Pick<BenchmarksStore, "getBenchmarkDefault"> &
+    Partial<Pick<BenchmarksStore, "getBenchmarkRun">>,
   slot: string,
 ): T | undefined {
   let row: BenchmarkDefaultRow | undefined;
@@ -386,6 +389,11 @@ export function getPromotedDefault<T = unknown>(
     return undefined;
   }
   if (!row) return undefined;
+  // A default whose incumbent run was invalidated rests on no valid evidence:
+  // it reads as unset (env and built-ins apply) until a valid run re-seeds it.
+  if (row.incumbent_run_id && db.getBenchmarkRun?.(row.incumbent_run_id)?.status === "invalid") {
+    return undefined;
+  }
   try {
     return JSON.parse(row.value_json) as T;
   } catch {
@@ -402,6 +410,12 @@ export type ChallengeLookup =
       items: BenchmarkItemRow[];
       holdoutFraction: number;
       replicates: number;
+      /**
+       * The slot's incumbent, when it was invalidated and no earlier incumbent in
+       * the slot's history is still valid (re-seeding replaces it), with the
+       * account that invalidated it (null for an automatic check).
+       */
+      invalidIncumbent?: InvalidatedIncumbent;
     }
   | {
       kind: "contest";
@@ -410,7 +424,58 @@ export type ChallengeLookup =
       def: BenchmarkDefaultRow;
       evaluation: ChallengeEvaluation;
       replicates: { challenger: number; incumbent: number; minimum: number };
+      /**
+       * Set when the slot's incumbent was invalidated: the challenger contests
+       * the best earlier incumbent that is still valid instead.
+       */
+      invalidIncumbent?: InvalidatedIncumbent;
     };
+
+/** An invalidated incumbent and who invalidated it (a durable key, `operator`, or null = auto). */
+export interface InvalidatedIncumbent {
+  id: string;
+  invalidatedBy: string | null;
+}
+
+/**
+ * The best earlier incumbent of a slot that is still valid — highest accuracy,
+ * the most recent on a tie — or undefined when the slot never had another.
+ * A slot whose incumbent was invalidated contests this run, so invalidating
+ * an incumbent never hands its slot to the next promoter for free.
+ */
+export function bestValidPriorIncumbent(
+  db: Pick<BenchmarksStore, "listBenchmarkPromotions" | "getBenchmarkRun">,
+  slot: string,
+  exclude: string,
+): BenchmarkRunRow | undefined {
+  const ids = db
+    .listBenchmarkPromotions(slot)
+    .filter(
+      (r) => r.outcome !== "refused" && r.challenger_run_id && r.challenger_run_id !== exclude,
+    )
+    .map((r) => r.challenger_run_id as string)
+    .reverse(); // newest first, so a tie keeps the most recent
+  let best: BenchmarkRunRow | undefined;
+  for (const id of new Set(ids)) {
+    const run = db.getBenchmarkRun(id);
+    if (run?.status !== "completed") continue;
+    if (!best || (run.score ?? 0) > (best.score ?? 0)) best = run;
+  }
+  return best;
+}
+
+/** Who invalidated a run: the actor of its latest invalidation (null = automatic). */
+export function invalidatedBy(
+  db: Pick<BenchmarksStore, "listBenchmarkRunValidity">,
+  runId: string,
+): string | null {
+  return (
+    db
+      .listBenchmarkRunValidity(runId)
+      .filter((r) => r.action === "invalidate")
+      .at(-1)?.actor ?? null
+  );
+}
 
 /** Load and evaluate a challenger for a slot on the given split. */
 export function lookupChallenge(
@@ -428,6 +493,12 @@ export function lookupChallenge(
   }
   const challenger = db.getBenchmarkRun(runId);
   if (!challenger) return { kind: "error", message: `No run ${runId}.` };
+  if (challenger.status === "invalid") {
+    return {
+      kind: "error",
+      message: `Run ${runId} is invalid (${invalidReason(db, challenger)}) — an invalid run is never a challenger.`,
+    };
+  }
   if (challenger.status !== "completed") {
     return { kind: "error", message: `Run ${runId} is ${challenger.status}, not completed.` };
   }
@@ -453,16 +524,27 @@ export function lookupChallenge(
     };
   }
   const def = db.getBenchmarkDefault(slot);
-  if (!def?.incumbent_run_id) {
+  const current = def?.incumbent_run_id ? db.getBenchmarkRun(def.incumbent_run_id) : undefined;
+  // An invalidated incumbent is no evidence, but invalidating it never frees
+  // the slot: the challenger must beat the best earlier incumbent still valid.
+  // Only a slot that never had another valid incumbent re-seeds from replicates.
+  const invalidIncumbent: InvalidatedIncumbent | undefined =
+    current?.status === "invalid"
+      ? { id: current.id, invalidatedBy: invalidatedBy(db, current.id) }
+      : undefined;
+  const incumbent = invalidIncumbent
+    ? bestValidPriorIncumbent(db, slot, invalidIncumbent.id)
+    : current;
+  if (!def?.incumbent_run_id || (invalidIncumbent && !incumbent)) {
     return {
       kind: "seed",
       challenger,
       items,
       holdoutFraction: def?.holdout_fraction ?? DEFAULT_HOLDOUT_FRACTION,
       replicates: replicated,
+      ...(invalidIncumbent ? { invalidIncumbent } : {}),
     };
   }
-  const incumbent = db.getBenchmarkRun(def.incumbent_run_id);
   if (!incumbent) {
     return {
       kind: "error",
@@ -500,5 +582,6 @@ export function lookupChallenge(
       incumbent: incumbentGroup.replicates.length,
       minimum,
     },
+    ...(invalidIncumbent ? { invalidIncumbent } : {}),
   };
 }

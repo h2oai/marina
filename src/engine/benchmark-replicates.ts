@@ -122,9 +122,14 @@ export interface LoadedGroup {
   warnings: string[];
 }
 
-/** Load a run's replicate group with every replicate's item outcomes. */
+/**
+ * Load a run's replicate group with every replicate's item outcomes. An
+ * `invalid` run never counts as a replicate — not even of its own group.
+ */
 export function loadReplicateGroup(db: ReplicateStore, run: BenchmarkRunRow): LoadedGroup {
-  const runs = replicatesOf(db, run).filter((r) => r.id === run.id || r.status === "completed");
+  const runs = replicatesOf(db, run).filter(
+    (r) => r.status === "completed" || (r.id === run.id && r.status !== "invalid"),
+  );
   const loaded = runs
     .map((r) => ({ run: r, items: db.getBenchmarkItems(r.id) }))
     .filter((x) => x.items.length > 0);

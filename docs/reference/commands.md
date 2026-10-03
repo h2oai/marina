@@ -707,6 +707,17 @@ Usage:
                                                      the challenger needs MARINA_PROMOTION_MIN_REPLICATES
                                                      replicates (default 2) before the holdout is read.
                                                      Needs role.edit; never the run's own author.
+  benchmark invalidate <run> reason:<text>         — retire a run that measured the infrastructure,
+                                                     not the target (spend cap, outage): status
+                                                     invalid, excluded from every ranking, pooling,
+                                                     comparison, promotion and route evidence; items
+                                                     kept; an append-only audit row records who,
+                                                     when and why. Needs role.edit. An invalidated
+                                                     incumbent never frees its slot: a challenger must
+                                                     beat the best earlier valid incumbent, and the
+                                                     invalidator can't fill the slot.
+  benchmark revalidate <run> reason:<text>         — undo an invalidation (audited the same way);
+                                                     needs role.edit, never the run's own author.
 
 Benchmarks: smoke (15-item prompt A/B, always ready), mmlu-pro, truthfulqa, arc-challenge,
   hellaswag, musr, bbh, gsm8k, math, simple-qa, humaneval, ifeval, frames, aime
@@ -717,8 +728,12 @@ Benchmarks: smoke (15-item prompt A/B, always ready), mmlu-pro, truthfulqa, arc-
 
 Note: "run" and "sweep" need rank 4 — they burn real tokens. Discovery commands
   (list, runs, result, leaderboard, frontier, compare, replicates, participants, reference,
-  orchestrations, defaults, challenge) are rank 0. Results recorded outside the world
-  are imported by the operator with `bun run benchmark:import`. Promoted defaults are
+  orchestrations, defaults, challenge) are rank 0. Invalid runs are listed by runs and
+  result, marked with their reason; every other reader skips them. A run whose items were
+  more than MARINA_BENCHMARK_MAX_FALLBACK_RATE (default 25%) fallbacks — errors, spend-cap
+  or provider failures instead of answers — is recorded invalid automatically. Results
+  recorded outside the world are imported by the operator with `bun run benchmark:import`
+  (which also takes --invalidate|--revalidate <run> --reason). Promoted defaults are
   read by worlds (e.g. slot showcase:crew sets the showcase crew's model when
   MARINA_CREW_MODEL is unset); environment variables always win.
 
@@ -773,6 +788,13 @@ Effect: unknown.
 
 - `field-0` (`benchmark`): text, required.
 
+### `benchmark invalidate <run> reason:<text>`
+
+Effect: unknown.
+
+- `field-0` (`run`): text, required.
+- `field-1` (`reason`): text, required.
+
 ### `benchmark leaderboard <benchmark> [--limit N]`
 
 Effect: unknown.
@@ -823,6 +845,13 @@ Effect: unknown.
 Effect: unknown.
 
 - `field-0` (`id`): text, required.
+
+### `benchmark revalidate <run> reason:<text>`
+
+Effect: unknown.
+
+- `field-0` (`run`): text, required.
+- `field-1` (`reason`): text, required.
 
 ### `benchmark run <name> [--limit N] [--seed N] [--model M]`
 

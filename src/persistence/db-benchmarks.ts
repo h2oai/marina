@@ -137,6 +137,11 @@ export interface BenchmarkLedgerRunInput {
   content_hash: string | null;
   /** Replicate group key (migration 148); null ⇒ grouped by target/slice/judge when read. */
   replicate_group?: string | null;
+  /**
+   * Set ⇒ the run is recorded `invalid` (migration 153) with this reason and an
+   * automatic audit row — e.g. too many items were fallbacks, not answers.
+   */
+  invalid_reason?: string | null;
 }
 
 export type BenchmarkTargetKind = "model" | "crew" | "population";
@@ -173,7 +178,7 @@ export function recordBenchmarkLedgerRun(
       `INSERT INTO benchmark_runs (id, benchmark, config_hash, config_json, score, answered, total,
          status, agent_id, started_at, completed_at, duration_ms, cost_usd, n, ci_low, ci_high, seed,
          slice_hash, judge, target_kind, target_json, label, source, content_hash, replicate_group)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         run.id,
         run.benchmark,
@@ -182,6 +187,7 @@ export function recordBenchmarkLedgerRun(
         run.score,
         run.answered,
         run.total,
+        run.invalid_reason ? "invalid" : "completed",
         run.agent_id ?? null,
         run.started_at,
         run.completed_at,
@@ -218,8 +224,95 @@ export function recordBenchmarkLedgerRun(
         it.judge_verdict,
       );
     }
+    if (run.invalid_reason) {
+      insertValidityRow(db, {
+        run_id: run.id,
+        action: "invalidate",
+        reason: run.invalid_reason,
+        actor: null,
+        source: "auto",
+        created_at: run.completed_at,
+      });
+    }
     return { id: run.id, created: true };
   })();
+}
+
+// ─── Run validity (migration 153) ──────────────────────────────────────────
+//
+// A run that measured the infrastructure rather than the target (spend cap,
+// provider outage, mostly fallbacks) is retired by setting its status to
+// `invalid`; every reader of the ledger ranks only `completed` runs. Nothing
+// is deleted: item rows stay, and every invalidate / revalidate is an
+// append-only audit row with who, when and why.
+
+export type BenchmarkValidityAction = "invalidate" | "revalidate";
+/** `in-world` = the `benchmark` command; `operator` = the import script; `auto` = a harness threshold. */
+export type BenchmarkValiditySource = "in-world" | "operator" | "auto";
+
+export interface BenchmarkValidityInput {
+  run_id: string;
+  action: BenchmarkValidityAction;
+  reason: string;
+  /** Durable account key (in-world), `operator`, or null for an automatic check. */
+  actor: string | null;
+  source: BenchmarkValiditySource;
+  created_at: number;
+}
+
+export interface BenchmarkValidityRow extends BenchmarkValidityInput {
+  id: number;
+}
+
+function insertValidityRow(db: Database, row: BenchmarkValidityInput): number {
+  const res = db.run(
+    `INSERT INTO benchmark_run_validity (run_id, action, reason, actor, source, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [row.run_id, row.action, row.reason, row.actor, row.source, row.created_at],
+  );
+  return Number(res.lastInsertRowid);
+}
+
+export type BenchmarkValidityResult =
+  | { ok: true; id: number; status: "invalid" | "completed" }
+  | { ok: false; error: string };
+
+/**
+ * Invalidate a completed run, or revalidate an invalid one: the status change
+ * and its audit row commit together. Any other starting status is refused.
+ */
+export function setBenchmarkRunValidity(
+  db: Database,
+  row: BenchmarkValidityInput,
+): BenchmarkValidityResult {
+  return db.transaction((): BenchmarkValidityResult => {
+    const run = db.query("SELECT status FROM benchmark_runs WHERE id = ?").get(row.run_id) as {
+      status: string;
+    } | null;
+    if (!run) return { ok: false, error: `No run ${row.run_id}.` };
+    const [from, to] =
+      row.action === "invalidate"
+        ? (["completed", "invalid"] as const)
+        : (["invalid", "completed"] as const);
+    if (run.status !== from) {
+      return {
+        ok: false,
+        error:
+          row.action === "invalidate"
+            ? `Run ${row.run_id} is ${run.status}; only a completed run can be invalidated.`
+            : `Run ${row.run_id} is ${run.status}, not invalid — nothing to revalidate.`,
+      };
+    }
+    db.run("UPDATE benchmark_runs SET status = ? WHERE id = ?", [to, row.run_id]);
+    return { ok: true, id: insertValidityRow(db, row), status: to };
+  })();
+}
+
+/** A run's validity history, oldest first. */
+export function listBenchmarkRunValidity(reader: Database, runId: string): BenchmarkValidityRow[] {
+  return reader
+    .query("SELECT * FROM benchmark_run_validity WHERE run_id = ? ORDER BY id")
+    .all(runId) as BenchmarkValidityRow[];
 }
 
 /**

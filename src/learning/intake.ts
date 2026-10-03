@@ -83,6 +83,8 @@ export function benchmarkRunOutcome(db: MarinaDB, run: RunLike): Outcome | undef
 
 /** Feed a just-recorded benchmark run to the learning loop (no-op unless armed). */
 export function noteBenchmarkRun(db: MarinaDB, run: RunLike): void {
+  // An invalid run measured the infrastructure, not the target: no lesson.
+  if (db.getBenchmarkRun(run.id)?.status === "invalid") return;
   const outcome = benchmarkRunOutcome(db, run);
   if (outcome) noteOutcome(db, outcome);
 }

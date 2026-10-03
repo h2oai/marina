@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { localHttpBase } from "../net/listen-ports";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent, EntityId } from "../types";
+import { fallbackInvalidReason, isFallbackItem } from "./benchmark-ledger";
 
 interface BenchmarkSpec {
   name: string;
@@ -384,7 +385,31 @@ export class BenchmarkRunner {
     });
 
     const now = Date.now();
-    if (status === "completed" && score !== null) {
+    // Too many items errored instead of answering (spend cap, provider
+    // outage): the run is kept, but recorded invalid so no reader ranks it.
+    const invalid =
+      status === "completed"
+        ? fallbackInvalidReason(resultItems.length, resultItems.filter(isFallbackItem).length)
+        : undefined;
+    if (invalid) {
+      this.db.setBenchmarkRunValidity({
+        run_id: id,
+        action: "invalidate",
+        reason: invalid,
+        actor: null,
+        source: "auto",
+        created_at: now,
+      });
+      this.emitFeed({
+        type: "feed_event",
+        kind: "benchmark_invalidated",
+        entity: opts.agentId as EntityId | undefined,
+        ref: id,
+        summary: `benchmark ${opts.benchmark} run ${id} recorded invalid: ${invalid}`,
+        payload: { id, benchmark: opts.benchmark, reason: invalid, source: "auto" },
+        timestamp: now,
+      });
+    } else if (status === "completed" && score !== null) {
       // Learning loop: for every item the harness answered, deposit a note
       // into the benchmark:<name> pool so subsequent runs can recall prior
       // wrong-answers and successful-recipes. This is the feedback path

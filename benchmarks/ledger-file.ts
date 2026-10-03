@@ -8,8 +8,8 @@
  * event log, so a run against a Marina crew lands ranked and attributed.
  *
  * What is sent: the credential-free config and per-item ids, outcomes, scores,
- * latency, cost, judge verdict and trace id — never the question, expected
- * answer or response text.
+ * latency, cost, judge verdict, trace id and a `fallback` flag for items that
+ * errored — never the question, expected answer or response text.
  */
 
 import { resultForDisk } from "./result-file";
@@ -53,6 +53,8 @@ export function ledgerFileBody(result: BenchmarkResult, opts: LedgerFileOptions)
         ...(typeof it.usage?.costUsd === "number" ? { usage: { costUsd: it.usage.costUsd } } : {}),
         ...(it.judge ? { judge: it.judge } : {}),
         ...(it.traceId ? { traceId: it.traceId } : {}),
+        // An item that errored is a fallback, not an answer (the server counts the rate).
+        ...(it.actual?.startsWith("ERROR:") ? { fallback: true } : {}),
       })),
     },
   };
@@ -65,6 +67,9 @@ export interface LedgerFileOutcome {
   created?: boolean;
   attribution?: Record<string, number>;
   replicateGroup?: string | null;
+  /** `invalid` when the server recorded the run invalid (too many fallbacks). */
+  runStatus?: string;
+  invalidReason?: string;
   error?: string;
 }
 
@@ -102,6 +107,8 @@ export async function fileToLedger(
         ? { attribution: body.attribution as Record<string, number> }
         : {}),
       ...(typeof body.replicateGroup === "string" ? { replicateGroup: body.replicateGroup } : {}),
+      ...(typeof body.status === "string" ? { runStatus: body.status } : {}),
+      ...(typeof body.invalidReason === "string" ? { invalidReason: body.invalidReason } : {}),
     };
   } catch (e) {
     return { ok: false, status: 0, error: e instanceof Error ? e.message : String(e) };

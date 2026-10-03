@@ -11,7 +11,14 @@ import {
 import { bold, category, dim, status as fmtStatus, header, separator } from "../../net/ansi";
 import type { BenchmarkRunRow, MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
-import { compareRuns, paretoFrontier, participantCredit, runLabel } from "../benchmark-ledger";
+import {
+  compareRuns,
+  invalidReason,
+  MAX_VALIDITY_REASON,
+  paretoFrontier,
+  participantCredit,
+  runLabel,
+} from "../benchmark-ledger";
 import { type ChallengeEvaluation, lookupChallenge, type SplitStats } from "../benchmark-promotion";
 import {
   comparePooledGroups,
@@ -33,6 +40,7 @@ function fmtId(s: string): string {
 function variantFromStatus(s: string): "active" | "done" | "fail" | "info" | "warn" {
   if (s === "completed") return "done";
   if (s === "failed") return "fail";
+  if (s === "invalid") return "warn";
   if (s === "running") return "active";
   return "info";
 }
@@ -72,6 +80,17 @@ Usage:
                                                      the challenger needs MARINA_PROMOTION_MIN_REPLICATES
                                                      replicates (default 2) before the holdout is read.
                                                      Needs role.edit; never the run's own author.
+  benchmark invalidate <run> reason:<text>         — retire a run that measured the infrastructure,
+                                                     not the target (spend cap, outage): status
+                                                     invalid, excluded from every ranking, pooling,
+                                                     comparison, promotion and route evidence; items
+                                                     kept; an append-only audit row records who,
+                                                     when and why. Needs role.edit. An invalidated
+                                                     incumbent never frees its slot: a challenger must
+                                                     beat the best earlier valid incumbent, and the
+                                                     invalidator can't fill the slot.
+  benchmark revalidate <run> reason:<text>         — undo an invalidation (audited the same way);
+                                                     needs role.edit, never the run's own author.
 
 Benchmarks: smoke (15-item prompt A/B, always ready), mmlu-pro, truthfulqa, arc-challenge,
   hellaswag, musr, bbh, gsm8k, math, simple-qa, humaneval, ifeval, frames, aime
@@ -82,8 +101,12 @@ Benchmarks: smoke (15-item prompt A/B, always ready), mmlu-pro, truthfulqa, arc-
 
 Note: "run" and "sweep" need rank 4 — they burn real tokens. Discovery commands
   (list, runs, result, leaderboard, frontier, compare, replicates, participants, reference,
-  orchestrations, defaults, challenge) are rank 0. Results recorded outside the world
-  are imported by the operator with \`bun run benchmark:import\`. Promoted defaults are
+  orchestrations, defaults, challenge) are rank 0. Invalid runs are listed by runs and
+  result, marked with their reason; every other reader skips them. A run whose items were
+  more than MARINA_BENCHMARK_MAX_FALLBACK_RATE (default 25%) fallbacks — errors, spend-cap
+  or provider failures instead of answers — is recorded invalid automatically. Results
+  recorded outside the world are imported by the operator with \`bun run benchmark:import\`
+  (which also takes --invalidate|--revalidate <run> --reason). Promoted defaults are
   read by worlds (e.g. slot showcase:crew sets the showcase crew's model when
   MARINA_CREW_MODEL is unset); environment variables always win.
 
@@ -99,9 +122,11 @@ Examples:
 
 function formatRunLine(row: BenchmarkRunRow): string {
   const score =
-    row.score === null || row.score === undefined
-      ? fmtStatus(row.status.padEnd(10), variantFromStatus(row.status))
-      : `${(row.score * 100).toFixed(1)}%`.padStart(6);
+    row.status === "invalid"
+      ? fmtStatus("invalid".padEnd(6), "warn")
+      : row.score === null || row.score === undefined
+        ? fmtStatus(row.status.padEnd(10), variantFromStatus(row.status))
+        : `${(row.score * 100).toFixed(1)}%`.padStart(6);
   const age = dim(`${formatAge(Date.now() - row.started_at)} ago`.padStart(8));
   const ans = row.total > 0 ? `${row.answered}/${row.total}` : "-";
   const id = fmtId(row.id);
@@ -133,6 +158,7 @@ export function benchmarkCommand(deps: {
       "benchmark defaults",
       "benchmark promote <slot> <run> [--max-cost-ratio R] [--holdout F]",
       "benchmark frontier <benchmark>",
+      "benchmark invalidate <run> reason:<text>",
       "benchmark leaderboard <benchmark> [--limit N]",
       "benchmark participants <benchmark>",
       "benchmark replicates <run>",
@@ -142,6 +168,7 @@ export function benchmarkCommand(deps: {
       "benchmark reference benchmark",
       "benchmark reference model",
       "benchmark result <id>",
+      "benchmark revalidate <run> reason:<text>",
       "benchmark run <name> [--limit N] [--seed N] [--model M]",
       "benchmark run <name> [--limit N] [--seed N] [--model M] [--judge M] [--concurrency N] [--partition holdout|tune]",
       "benchmark runs [--benchmark X] [--limit N]",
@@ -397,6 +424,7 @@ export function benchmarkCommand(deps: {
             separator(),
             `  ${bold("benchmark")}:   ${category(row.benchmark)}`,
             `  ${bold("status")}:      ${fmtStatus(row.status, variantFromStatus(row.status))}`,
+            ...validityLines(db, row),
             `  ${bold("started")}:     ${new Date(row.started_at).toISOString()} (${formatAge(Date.now() - row.started_at)} ago)`,
           ];
           if (row.duration_ms) {
@@ -479,7 +507,12 @@ export function benchmarkCommand(deps: {
             ),
             separator(),
             `  ${dim("age".padStart(8))}  ${dim("score".padStart(6))}  ${dim("benchmark".padEnd(16))}  ${dim("ans/tot".padEnd(7))}  ${dim("agent".padEnd(18))}  ${dim("id")}`,
-            ...rows.map(formatRunLine),
+            ...rows.flatMap((row) => {
+              const why = invalidReason(db, row);
+              return why
+                ? [formatRunLine(row), `            ${fmtStatus("INVALID", "warn")} ${dim(why)}`]
+                : [formatRunLine(row)];
+            }),
           ];
           ctx.send(input.entity, lines.join("\n"));
           return;
@@ -616,6 +649,14 @@ export function benchmarkCommand(deps: {
             ctx.send(input.entity, `No run ${runA ? b : a}.`);
             return;
           }
+          const invalid = [runA, runB].find((r) => r.status === "invalid");
+          if (invalid) {
+            ctx.send(
+              input.entity,
+              `Run ${invalid.id} is invalid (${invalidReason(db, invalid)}) — invalid runs are never compared. \`benchmark revalidate\` restores it if the reason no longer holds.`,
+            );
+            return;
+          }
           const itemsA = db.getBenchmarkItems(a);
           const itemsB = db.getBenchmarkItems(b);
           if (itemsA.length === 0 || itemsB.length === 0) {
@@ -656,7 +697,29 @@ export function benchmarkCommand(deps: {
             ctx.send(input.entity, `No run ${id}.`);
             return;
           }
-          ctx.send(input.entity, renderReplicates(loadReplicateGroup(db, run)));
+          const why = invalidReason(db, run);
+          const body = renderReplicates(loadReplicateGroup(db, run));
+          ctx.send(
+            input.entity,
+            why
+              ? `${fmtStatus("INVALID", "warn")} ${id} is invalid (${why}) and is excluded from its group.\n${body}`
+              : body,
+          );
+          return;
+        }
+
+        case "invalidate":
+        case "revalidate": {
+          const id = tokens[1];
+          const reason = freeTextModifier(tokens.slice(2), "reason");
+          if (!id || !reason) {
+            ctx.send(input.entity, `Usage: benchmark ${sub} <run> reason:<text>`);
+            return;
+          }
+          ctx.send(
+            input.entity,
+            setValidity(db, entity, sub, id, reason.slice(0, MAX_VALIDITY_REASON), deps.logEvent),
+          );
           return;
         }
 
@@ -815,6 +878,92 @@ function ledgerColumns(row: BenchmarkRunRow): string {
   return `  ${dim(`n=${row.n ?? row.total} CI [${pct(row.ci_low).trim()}, ${pct(row.ci_high).trim()}]`)}  ${cost === null ? "" : `${usd(cost)}/item  `}${dim(runLabel(row))}`;
 }
 
+// ─── Run validity ──────────────────────────────────────────────────────────
+
+/**
+ * The free text of a `key:<text>` modifier to the end of the input: `key:a b c`,
+ * `key=a b c`, `--key a b c` or `--key=a b c` all give "a b c" (the tokenizer
+ * has no quotes, so a reason is everything after its key).
+ */
+export function freeTextModifier(tokens: readonly string[], key: string): string | undefined {
+  const re = new RegExp(`^(?:--)?${key}(?:[:=](.*))?$`, "i");
+  for (let i = 0; i < tokens.length; i++) {
+    const m = re.exec(tokens[i] ?? "");
+    if (!m) continue;
+    const text = [m[1] ?? "", ...tokens.slice(i + 1)].join(" ").trim();
+    return text || undefined;
+  }
+  return undefined;
+}
+
+/** The validity block of `benchmark result`: the reason and the audit history. */
+function validityLines(db: MarinaDB, row: BenchmarkRunRow): string[] {
+  const history = db.listBenchmarkRunValidity(row.id);
+  if (history.length === 0) return [];
+  const lines: string[] = [];
+  const why = invalidReason(db, row);
+  if (why) {
+    lines.push(
+      `  ${bold("INVALID")}:     ${why} — excluded from leaderboard, frontier, compare, replicates, participants, promotion and route evidence`,
+    );
+  }
+  lines.push(`  ${bold("validity")}:`);
+  for (const h of history) {
+    lines.push(
+      `    ${dim(new Date(h.created_at).toISOString())}  ${h.action}  ${dim(`by ${h.actor ?? h.source} (${h.source})`)}  ${h.reason}`,
+    );
+  }
+  return lines;
+}
+
+/** `benchmark invalidate|revalidate`: role.edit, audited, never deletes anything. */
+function setValidity(
+  db: MarinaDB,
+  entity: Entity,
+  action: "invalidate" | "revalidate",
+  runId: string,
+  reason: string,
+  logEvent: ((event: EngineEvent) => void) | undefined,
+): string {
+  const gate = checkRoleEdit(db, entity, `benchmark ${action} ${runId}`);
+  if ("reason" in gate) return gate.reason;
+  const run = db.getBenchmarkRun(runId);
+  if (!run) return `No run ${runId}.`;
+  // Re-admitting your own run as valid is self-attestation; retiring it is not.
+  const author = run.agent_id;
+  if (
+    action === "revalidate" &&
+    author &&
+    (author === entity.id || db.durableEntityKey(author) === db.durableEntityKey(entity.id))
+  ) {
+    return `Refused: you ran ${runId}. Someone else must revalidate it — self-attestation is never accepted.`;
+  }
+  const now = Date.now();
+  const res = db.setBenchmarkRunValidity({
+    run_id: runId,
+    action,
+    reason,
+    // Append-only: the opaque durable account key, never a display name.
+    actor: db.durableEntityKey(entity.id),
+    source: "in-world",
+    created_at: now,
+  });
+  if (!res.ok) return res.error;
+  gate.record();
+  logEvent?.({
+    type: "feed_event",
+    kind: action === "invalidate" ? "benchmark_invalidated" : "benchmark_revalidated",
+    entity: entity.id,
+    ref: runId,
+    summary: `benchmark run ${runId} (${run.benchmark}) ${action}d: ${reason.slice(0, 200)}`,
+    payload: { id: runId, benchmark: run.benchmark, reason, source: "in-world" },
+    timestamp: now,
+  });
+  return action === "invalidate"
+    ? `Invalidated ${runId} (${run.benchmark}, ${runLabel(run)}): ${reason}\n  Its items are kept; every ranking, pooling, comparison, promotion and route evidence now skips it. Audit row ${res.id}.`
+    : `Revalidated ${runId} (${run.benchmark}, ${runLabel(run)}): ${reason}\n  It counts again in every ledger reader. Audit row ${res.id}.`;
+}
+
 // ─── Earned promotion of defaults ──────────────────────────────────────────
 
 function statsLine(s: SplitStats): string {
@@ -847,7 +996,7 @@ function renderChallenge(
   );
   if (found.kind === "error") return found.message;
   if (found.kind === "seed") {
-    return `Slot ${slot} has no incumbent: \`benchmark promote ${slot} ${runId}\` seeds it with this run (needs role.edit and enough replicates; it has ${found.replicates}). Its holdout is ${pct(found.holdoutFraction).trim()} of items by item-id hash.`;
+    return `Slot ${slot} has no ${found.invalidIncumbent ? `valid incumbent (${found.invalidIncumbent.id} was invalidated, and no earlier one is valid)` : "incumbent"}: \`benchmark promote ${slot} ${runId}\` seeds it with this run (needs role.edit and enough replicates; it has ${found.replicates}). Its holdout is ${pct(found.holdoutFraction).trim()} of items by item-id hash.`;
   }
   const e = found.evaluation;
   const blockers = e.reasons.filter((r) => !r.startsWith("selection split"));
@@ -856,6 +1005,11 @@ function renderChallenge(
     separator(),
     `  challenger ${bold(runLabel(found.challenger))} ${fmtId(found.challenger.id)}`,
     `  incumbent  ${bold(runLabel(found.incumbent))} ${fmtId(found.incumbent.id)}`,
+    ...(found.invalidIncumbent
+      ? [
+          `  ${dim(`(${found.invalidIncumbent.id} was invalidated — the challenger must beat the best earlier incumbent still valid)`)}`,
+        ]
+      : []),
     `  replicates: challenger ${found.replicates.challenger}, incumbent ${found.replicates.incumbent} (promotion needs ≥ ${found.replicates.minimum} of the challenger)`,
     statsLine(e.stats),
     costLine(e),
@@ -891,6 +1045,16 @@ function promote(
   ) {
     return `Refused: you ran ${runId}. Someone else must promote it — self-attestation is never accepted.`;
   }
+  // Invalidating an incumbent and then filling its slot is self-attestation
+  // too: neither the promoter nor the challenger's author may be the account
+  // that invalidated it.
+  const by = found.invalidIncumbent?.invalidatedBy;
+  if (
+    by &&
+    (by === db.durableEntityKey(entity.id) || (author && by === db.durableEntityKey(author)))
+  ) {
+    return `Refused: ${by === db.durableEntityKey(entity.id) ? "you" : `the author of ${runId}`} invalidated the incumbent ${found.invalidIncumbent?.id}. Someone else must fill ${slot} — self-attestation is never accepted.`;
+  }
   const value = found.challenger.target_json;
   if (!value) {
     return `Run ${runId} records no target configuration (target_json) — nothing to promote as the default.`;
@@ -900,6 +1064,9 @@ function promote(
   const actor = db.durableEntityKey(entity.id);
   const now = Date.now();
   if (found.kind === "seed") {
+    if (found.invalidIncumbent && opts.holdout) {
+      return "--holdout is fixed once a slot exists (moving it would move items between splits).";
+    }
     const fraction = opts.holdout ? Number.parseFloat(opts.holdout) : found.holdoutFraction;
     if (!(fraction > 0 && fraction < 1)) return "--holdout must be between 0 and 1 (exclusive).";
     db.recordBenchmarkPromotion({
@@ -910,12 +1077,14 @@ function promote(
       value_json: value,
       actor,
       stats_json: null,
-      reason: "first incumbent",
+      reason: found.invalidIncumbent
+        ? `re-seeded: incumbent ${found.invalidIncumbent.id} was invalidated and no earlier incumbent is valid`
+        : "first incumbent",
       holdout_fraction: fraction,
       created_at: now,
     });
     gate.record();
-    return `Seeded ${slot} with ${runLabel(found.challenger)} (${runId}, ${found.replicates} replicate(s)); holdout ${pct(fraction).trim()} of items. Later challengers must earn it.`;
+    return `${found.invalidIncumbent ? `Re-seeded ${slot} (its incumbent ${found.invalidIncumbent.id} was invalidated and no earlier incumbent is valid)` : `Seeded ${slot}`} with ${runLabel(found.challenger)} (${runId}, ${found.replicates} replicate(s)); holdout ${pct(fraction).trim()} of items. Later challengers must earn it.`;
   }
   if (opts.holdout) {
     return "--holdout is fixed once a slot exists (moving it would move items between splits).";
@@ -942,14 +1111,16 @@ function promote(
   const body = [statsLine(e.stats), costLine(e)];
   if (!e.ok) {
     return [
-      `Not promoted — ${slot} keeps ${found.incumbent.id}. Recorded as attempt ${e.triedBefore + 1}.`,
+      found.invalidIncumbent
+        ? `Not promoted — the challenger did not beat ${found.incumbent.id}, the best earlier incumbent of ${slot} still valid (${found.invalidIncumbent.id} was invalidated). Recorded as attempt ${e.triedBefore + 1}.`
+        : `Not promoted — ${slot} keeps ${found.incumbent.id}. Recorded as attempt ${e.triedBefore + 1}.`,
       ...body,
       ...e.reasons.map((r) => `  ${fmtStatus("BLOCK", "warn")} ${r}`),
     ].join("\n");
   }
   gate.record();
   return [
-    `Promoted ${runLabel(found.challenger)} (${runId}) to ${slot}, replacing ${found.incumbent.id}.`,
+    `Promoted ${runLabel(found.challenger)} (${runId}) to ${slot}, replacing ${found.invalidIncumbent ? `the invalidated ${found.invalidIncumbent.id} (beat ${found.incumbent.id}, the best earlier incumbent still valid)` : found.incumbent.id}.`,
     ...body,
     `  margin ${(e.margin * 100).toFixed(1)} pts (${e.triedBefore} earlier attempt(s))`,
   ].join("\n");

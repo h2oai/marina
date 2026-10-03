@@ -214,6 +214,11 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     note: "earned-promotion history of benchmark defaults (seeds, wins, refusals)",
   },
   {
+    table: "benchmark_run_validity",
+    kind: "append-only",
+    note: "who invalidated or revalidated a ledger run, when and why",
+  },
+  {
     table: "external_submissions",
     kind: "append-only",
     note: "what was filed to outside evaluations, by batch, identity and file hash",

@@ -23,6 +23,7 @@ import type {
   BenchmarkRunRow,
   BenchmarkTargetKind,
 } from "../persistence/db-benchmarks";
+import type { BenchmarksStore } from "../persistence/interfaces/benchmarks-store";
 
 export const TARGET_KINDS: readonly BenchmarkTargetKind[] = ["model", "crew", "population"];
 
@@ -270,7 +271,63 @@ export interface HarnessResultFile {
     judge?: string;
     traceId?: string;
     participants?: ItemParticipant[];
+    /**
+     * True when the item is a fallback rather than a real answer (spend cap,
+     * provider outage, an unparseable reply replaced by a default). Read only
+     * for the run's fallback rate; never stored per item.
+     */
+    fallback?: boolean;
+    /** The harness's response text — read only to spot its `ERROR:` marker, never stored. */
+    actual?: string;
   }[];
+}
+
+// ─── Fallback rate → invalid run ───────────────────────────────────────────
+
+/**
+ * Default share of items that may be fallbacks before a run is recorded
+ * `invalid` (`MARINA_BENCHMARK_MAX_FALLBACK_RATE`). Conservative on purpose:
+ * an ordinary run has a few timeouts or unparseable replies, which are the
+ * target's own failures and stay scored; a run where more than a quarter of
+ * the items never reached a real answer measured the infrastructure.
+ */
+export const DEFAULT_MAX_FALLBACK_RATE = 0.25;
+
+/**
+ * `MARINA_BENCHMARK_MAX_FALLBACK_RATE`: a share in [0, 1); `off` / `none` / `1`
+ * disables the check (null). Unset, blank or junk is the default — a typo never
+ * turns the check off.
+ */
+export function benchmarkMaxFallbackRate(env: NodeJS.ProcessEnv = process.env): number | null {
+  const raw = env.MARINA_BENCHMARK_MAX_FALLBACK_RATE?.trim().toLowerCase();
+  if (!raw) return DEFAULT_MAX_FALLBACK_RATE;
+  if (raw === "off" || raw === "none") return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0 || n > 1) return DEFAULT_MAX_FALLBACK_RATE;
+  return n === 1 ? null : n;
+}
+
+/** Whether a harness result item is a fallback: flagged, or the harness's `ERROR:` marker. */
+export function isFallbackItem(item: { fallback?: unknown; actual?: unknown }): boolean {
+  return (
+    item.fallback === true || (typeof item.actual === "string" && item.actual.startsWith("ERROR:"))
+  );
+}
+
+/**
+ * The invalidation reason when more than `maxRate` of `n` items were fallbacks,
+ * else undefined (and always undefined when the check is off or `n` is 0).
+ */
+export function fallbackInvalidReason(
+  n: number,
+  fallbacks: number,
+  maxRate: number | null = benchmarkMaxFallbackRate(),
+): string | undefined {
+  if (maxRate === null || n <= 0) return undefined;
+  const rate = fallbacks / n;
+  if (rate <= maxRate) return undefined;
+  const pct = (x: number) => `${(x * 100).toFixed(1).replace(/\.0$/, "")}%`;
+  return `fallback rate ${pct(rate)} exceeds threshold ${pct(maxRate)} (${fallbacks} of ${n} items were fallbacks, not answers)`;
 }
 
 /** Config keys never written to the ledger (credentials, endpoints with tokens). */
@@ -300,6 +357,11 @@ export interface LedgerImportOptions {
   costUsd?: number;
   /** Explicit replicate group (migration 148); omitted ⇒ grouped by target/slice/judge. */
   replicateGroup?: string;
+  /**
+   * Fallback share above which the run is recorded `invalid`; null disables
+   * the check. Default: `MARINA_BENCHMARK_MAX_FALLBACK_RATE` (0.25).
+   */
+  maxFallbackRate?: number | null;
   /** Raw file bytes, hashed for idempotent re-import. */
   raw: string;
   /** Fresh run id (the caller supplies it so this stays pure). */
@@ -315,22 +377,21 @@ export function ledgerFromHarnessResult(
   const config = file.config ?? {};
   const benchmark = config.dataset ?? config.name;
   if (!benchmark) throw new Error("result file has no config.dataset / config.name");
-  const raw = file.items ?? [];
-  const items: BenchmarkItemInput[] = raw
-    .filter((it) => typeof it.id === "string" && it.id.length > 0)
-    .map((it) => ({
-      item_id: it.id as string,
-      correct: it.correct === true,
-      score: typeof it.score === "number" ? it.score : null,
-      latency_ms: typeof it.latencyMs === "number" ? it.latencyMs : null,
-      cost_usd: typeof it.usage?.costUsd === "number" ? it.usage.costUsd : null,
-      trace_id: typeof it.traceId === "string" ? it.traceId : null,
-      participants_json:
-        Array.isArray(it.participants) && it.participants.length > 0
-          ? JSON.stringify(it.participants)
-          : null,
-      judge_verdict: typeof it.judge === "string" ? it.judge : null,
-    }));
+  const raw = (file.items ?? []).filter((it) => typeof it.id === "string" && it.id.length > 0);
+  const fallbacks = raw.filter(isFallbackItem).length;
+  const items: BenchmarkItemInput[] = raw.map((it) => ({
+    item_id: it.id as string,
+    correct: it.correct === true,
+    score: typeof it.score === "number" ? it.score : null,
+    latency_ms: typeof it.latencyMs === "number" ? it.latencyMs : null,
+    cost_usd: typeof it.usage?.costUsd === "number" ? it.usage.costUsd : null,
+    trace_id: typeof it.traceId === "string" ? it.traceId : null,
+    participants_json:
+      Array.isArray(it.participants) && it.participants.length > 0
+        ? JSON.stringify(it.participants)
+        : null,
+    judge_verdict: typeof it.judge === "string" ? it.judge : null,
+  }));
   if (items.length === 0) throw new Error("result file has no items with ids");
   const runCost =
     opts.costUsd ??
@@ -371,6 +432,12 @@ export function ledgerFromHarnessResult(
       source: "import",
       content_hash: createHash("sha256").update(opts.raw).digest("hex"),
       replicate_group: opts.replicateGroup ?? null,
+      invalid_reason:
+        fallbackInvalidReason(
+          items.length,
+          fallbacks,
+          opts.maxFallbackRate === undefined ? benchmarkMaxFallbackRate() : opts.maxFallbackRate,
+        ) ?? null,
     },
     items,
   };
@@ -393,4 +460,22 @@ export function runLabel(run: BenchmarkRunRow): string {
     }
   }
   return run.agent_id ?? run.config_hash;
+}
+
+// ─── Validity ──────────────────────────────────────────────────────────────
+
+/** Longest reason an invalidate / revalidate records. */
+export const MAX_VALIDITY_REASON = 500;
+
+/** The reason a run is invalid (its latest invalidation), or undefined for a run that is not. */
+export function invalidReason(
+  db: Pick<BenchmarksStore, "listBenchmarkRunValidity">,
+  run: Pick<BenchmarkRunRow, "id" | "status">,
+): string | undefined {
+  if (run.status !== "invalid") return undefined;
+  const last = db
+    .listBenchmarkRunValidity(run.id)
+    .filter((r) => r.action === "invalidate")
+    .at(-1);
+  return last?.reason ?? "no reason recorded";
 }

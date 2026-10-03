@@ -9,6 +9,9 @@ import type {
   BenchmarkPromotionInput,
   BenchmarkPromotionRow,
   BenchmarkRunRow,
+  BenchmarkValidityInput,
+  BenchmarkValidityResult,
+  BenchmarkValidityRow,
   ExternalSubmissionInput,
   ExternalSubmissionRow,
 } from "../db-benchmarks";
@@ -53,6 +56,10 @@ export interface BenchmarksStore {
   ): { id: string; created: boolean };
   /** Put runs into one replicate group (migration 148); returns rows changed. */
   setBenchmarkReplicateGroup(runIds: readonly string[], group: string): number;
+  /** Invalidate a completed run / revalidate an invalid one, with its audit row (migration 153). */
+  setBenchmarkRunValidity(row: BenchmarkValidityInput): BenchmarkValidityResult;
+  /** A run's append-only validity history, oldest first. */
+  listBenchmarkRunValidity(runId: string): BenchmarkValidityRow[];
   getBenchmarkItems(runId: string): BenchmarkItemRow[];
   getBenchmarkItemsForBenchmark(benchmark: string, limit?: number): BenchmarkItemRow[];
   /** The slot's promoted default (migration 147), if one was ever seeded. */
@@ -85,6 +92,8 @@ export const BENCHMARKS_STORE_METHODS = [
   "leaderboardBenchmark",
   "recordBenchmarkLedgerRun",
   "setBenchmarkReplicateGroup",
+  "setBenchmarkRunValidity",
+  "listBenchmarkRunValidity",
   "getBenchmarkItems",
   "getBenchmarkItemsForBenchmark",
   "getBenchmarkDefault",

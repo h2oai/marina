@@ -235,6 +235,9 @@ export type {
   BenchmarkPromotionRow,
   BenchmarkRunRow,
   BenchmarkTargetKind,
+  BenchmarkValidityInput,
+  BenchmarkValidityResult,
+  BenchmarkValidityRow,
   ExternalSubmissionInput,
   ExternalSubmissionRow,
 } from "./db-benchmarks";
@@ -299,6 +302,9 @@ import type {
   BenchmarkPromotionInput,
   BenchmarkPromotionRow,
   BenchmarkRunRow,
+  BenchmarkValidityInput,
+  BenchmarkValidityResult,
+  BenchmarkValidityRow,
   ExternalSubmissionInput,
   ExternalSubmissionRow,
 } from "./db-benchmarks";
@@ -2299,6 +2305,14 @@ export class MarinaDB implements MarinaStores {
 
   setBenchmarkReplicateGroup(runIds: readonly string[], group: string): number {
     return benchmarksDb.setBenchmarkReplicateGroup(this.db, runIds, group);
+  }
+
+  setBenchmarkRunValidity(row: BenchmarkValidityInput): BenchmarkValidityResult {
+    return benchmarksDb.setBenchmarkRunValidity(this.db, row);
+  }
+
+  listBenchmarkRunValidity(runId: string): BenchmarkValidityRow[] {
+    return benchmarksDb.listBenchmarkRunValidity(this.reader, runId);
   }
 
   getBenchmarkItems(runId: string): BenchmarkItemRow[] {

@@ -504,6 +504,13 @@ async function cleanBacktestCmd(batch: FuturexBatch): Promise<number> {
       outDir: join(dir, "clean", batch.sha),
       ...(db ? { ledger: db } : {}),
     });
+    for (const s of summaries) {
+      const run = s.ledgerId ? db?.getBenchmarkRun(s.ledgerId) : undefined;
+      if (run?.status === "invalid") {
+        const reason = db?.listBenchmarkRunValidity(run.id).at(-1)?.reason;
+        console.log(`  ledger ${run.id} recorded INVALID: ${reason ?? "no reason recorded"}`);
+      }
+    }
     writeFileSync(
       join(dir, "clean", batch.sha, `summary-${Date.now()}.json`),
       JSON.stringify(summaries, null, 1),
@@ -565,7 +572,9 @@ async function backtestCmd(): Promise<number> {
           score,
           horizonDays,
         });
-        console.log(`  ledger ${rec.id}${rec.created ? "" : " (already recorded)"}`);
+        console.log(
+          `  ledger ${rec.id}${rec.created ? "" : " (already recorded)"}${rec.invalidReason ? ` — recorded INVALID: ${rec.invalidReason}` : ""}`,
+        );
       } finally {
         db.close();
       }
