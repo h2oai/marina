@@ -91,4 +91,4 @@ Inspect further from any Marina pointed at the ledger:
 
 Nothing is submitted to any leaderboard. Each benchmark's own guide describes its submission
 process: [SWE-bench](swebench.md), [τ²-bench](tau2.md), [FutureX](futurex.md),
-[Arena](arena.md).
+[Arena](arena.md), [ForecastBench](forecastbench.md), [Metaculus](metaculus.md).
