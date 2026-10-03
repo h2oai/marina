@@ -222,9 +222,11 @@ export function auditRow(
   // the event; a day AFTER the event in its reasoning, or any post-cutoff day
   // in the kept evidence, is a sign it saw later pages.
   const afterEvent = end ? new Date(Date.parse(end) + 86_400_000).toISOString().slice(0, 10) : cutoffDay;
+  // Explicit calendar days only: "as of August 2026" states the cutoff month.
+  const exact = (s: string) => daysMentioned(s, { monthOnly: false });
   const later = [
-    ...daysMentioned(reasons).filter((d) => d > afterEvent && !own.has(d)),
-    ...daysMentioned(evidence).filter((d) => d > cutoffDay && !own.has(d)),
+    ...exact(reasons).filter((d) => d > afterEvent && !own.has(d)),
+    ...exact(evidence).filter((d) => d > cutoffDay && !own.has(d)),
   ];
   if (later.length) out.push(`later date ${later[0]}`);
   let truthQuoted = false;

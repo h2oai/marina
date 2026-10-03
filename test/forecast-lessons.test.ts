@@ -126,6 +126,34 @@ describe("lesson visibility (the leakage rule)", () => {
   });
 });
 
+describe("durable store under contention", () => {
+  it("retries a busy store with the same request key, and gives up on other errors", async () => {
+    const keys: Array<string | undefined> = [];
+    let calls = 0;
+    const store = durableLessonStore(
+      async (req) => {
+        keys.push(req.key);
+        calls++;
+        if (calls < 3) throw Object.assign(new Error("busy"), { status: 503, retryAfterMs: 1 });
+        return { ok: true as const, result: { id: "r1" } };
+      },
+      { sleep: async () => {} },
+    );
+    expect(await store.write(lesson("x", "2026-09-01T00:00:00.000Z"))).toEqual({ id: "r1" });
+    expect(calls).toBe(3);
+    expect(new Set(keys).size).toBe(1);
+    const failing = durableLessonStore(
+      async () => {
+        throw Object.assign(new Error("forbidden"), { status: 403 });
+      },
+      { sleep: async () => {} },
+    );
+    await expect(failing.write(lesson("x", "2026-09-01T00:00:00.000Z"))).rejects.toThrow(
+      /forbidden/,
+    );
+  });
+});
+
 describe("lessons from outcomes", () => {
   it("names the failure mode mechanically", () => {
     const base = { question: "q", truth: "100", resolvedAt: "2026-09-01T00:00:00.000Z" };

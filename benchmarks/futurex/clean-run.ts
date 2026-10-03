@@ -80,6 +80,7 @@ export interface CleanRunSummary {
   };
   lessonsUsed: number;
   lessonsWritten: number;
+  lessonFailures: number;
   retrieval: { linesIn: number; linesKept: number };
   weeks: Array<{ week: string; n: number; overall: number; reference?: ReferenceScores[string] }>;
   costUsd: number;
@@ -201,6 +202,7 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
         opts.lessons === "on" && opts.lessonStore ? await opts.lessonStore(label) : undefined;
       const retrieval = { linesIn: 0, linesKept: 0 };
       let lessonsWritten = 0;
+      let lessonFailures = 0;
       const run: BatchRun = await runBatch(
         rows,
         variant,
@@ -252,8 +254,14 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
               },
               opts.lessonWriter,
             );
-            await store.write(lesson);
-            lessonsWritten++;
+            try {
+              await store.write(lesson);
+              lessonsWritten++;
+            } catch (err) {
+              // A lost lesson costs later rows a hint; it never voids the run.
+              lessonFailures++;
+              log(`  lesson write failed for ${row.id}: ${(err as Error).message.slice(0, 120)}`);
+            }
           },
         },
       );
@@ -295,6 +303,7 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
         },
         lessonsUsed: run.results.reduce((s, r) => s + (r.answer.lessons?.length ?? 0), 0),
         lessonsWritten,
+        lessonFailures,
         retrieval,
         weeks: [...weeks.entries()]
           .sort(([a], [b]) => a.localeCompare(b))

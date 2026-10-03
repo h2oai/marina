@@ -178,10 +178,29 @@ function fromRecord(r: RecordLike): ForecastLesson | undefined {
  * `DurableMemoryAPI.run` or a bound `residentMemoryOperation`). `spaceId`
  * selects a shared space; absent, the caller's resident space is used.
  * Recall over-fetches lexical matches and applies `visibleAt` itself, so the
- * leakage rule never depends on the store's own temporal filters.
+ * leakage rule never depends on the store's own temporal filters. A busy
+ * store (HTTP 503 / 429, e.g. another writer holds the database) is retried
+ * with the same request key after the delay it asks for.
  */
-export function durableLessonStore(run: MemoryRun, opts: { spaceId?: string } = {}): LessonStore {
+export function durableLessonStore(
+  rawRun: MemoryRun,
+  opts: { spaceId?: string; retries?: number; sleep?: (ms: number) => Promise<void> } = {},
+): LessonStore {
   const space = opts.spaceId ? { space_id: opts.spaceId } : {};
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const run: MemoryRun = async (request) => {
+    const keyed = request.key ? request : { ...request, key: crypto.randomUUID() };
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await rawRun(keyed);
+      } catch (err) {
+        const e = err as { status?: number; retryAfterMs?: number };
+        const busy = e?.status === 503 || e?.status === 429;
+        if (!busy || attempt >= (opts.retries ?? 6)) throw err;
+        await sleep(Math.min(10_000, (e.retryAfterMs ?? 500) * (attempt + 1)));
+      }
+    }
+  };
   return {
     async write(lesson) {
       const reply = await run({

@@ -106,9 +106,11 @@ export function urlPublishedDay(url: string): string | undefined {
  * Every calendar day a line of text names (ISO dates, "September 14, 2026",
  * "14 Sep 2026"). Month-only and year-only mentions are reported as the LAST
  * day of that month / year, so "October 2026" counts as after a cutoff inside
- * October.
+ * October — conservative for filtering evidence. `{ monthOnly: false }` keeps
+ * only explicit calendar days (for auditing reasoning, where "as of August
+ * 2026" is a statement of the cutoff, not a later date).
  */
-export function daysMentioned(text: string): string[] {
+export function daysMentioned(text: string, opts: { monthOnly?: boolean } = {}): string[] {
   const out: string[] = [];
   for (const m of text.matchAll(/\b(\d{4})-(\d{2})-(\d{2})\b/g)) {
     const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
@@ -127,6 +129,7 @@ export function daysMentioned(text: string): string[] {
     const [d, y] = [Number(m[1]), Number(m[3])];
     if (mo && valid(y, mo, d)) out.push(`${y}-${pad(mo)}-${pad(d)}`);
   }
+  if (opts.monthOnly === false) return out;
   // Month + year with no day ("October 2026"); "14 Sep 2026" was read above.
   for (const m of text.matchAll(new RegExp(`(?<!\\d\\s)\\b${monthWord}\\s+(\\d{4})\\b`, "gi"))) {
     const mo = MONTHS[m[1]!.toLowerCase().slice(0, 3)];

@@ -97,7 +97,9 @@ describe("leak audit", () => {
   it("does not flag the event's own schedule, history or option names", () => {
     const a = auditRow(
       r,
-      result("The release on 2026-09-08 follows a team that has won three of the last four"),
+      result(
+        "As of September 2026, the release on 2026-09-08 follows a team that has won three of the last four",
+      ),
       "",
       new Set(["A"]),
     );

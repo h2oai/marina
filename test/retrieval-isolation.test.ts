@@ -46,6 +46,9 @@ describe("publication dates", () => {
     ]);
     expect(daysMentioned("expected in October 2026")).toEqual(["2026-10-31"]);
     expect(daysMentioned("on 14 Sep 2026")).toEqual(["2026-09-14"]);
+    expect(daysMentioned("as of August 2026, on 2026-08-02", { monthOnly: false })).toEqual([
+      "2026-08-02",
+    ]);
   });
 
   it("finds cited URLs in markdown links and bare", () => {
