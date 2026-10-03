@@ -70,7 +70,9 @@ describe("Anthropic translation keeps images", () => {
       ]),
     ).toThrow(UnsupportedParameterError);
     expect(() =>
-      openaiMessagesToAnthropic([{ role: "user", content: [{ type: "image_url", image_url: {} }] }]),
+      openaiMessagesToAnthropic([
+        { role: "user", content: [{ type: "image_url", image_url: {} }] },
+      ]),
     ).toThrow(UnsupportedParameterError);
   });
 });
