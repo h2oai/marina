@@ -485,6 +485,91 @@ export const ANTHROPIC_CACHE_BREAKPOINT_LIMIT = 4;
 export interface CacheBreakpointOptions {
   /** The last system block is the proxy's injected memory addendum. */
   injectedSystemTail?: boolean;
+  /**
+   * Also place a ROLLING breakpoint on the last cacheable block of the latest
+   * message, so a multi-turn conversation (an agentic tool loop) reads its
+   * growing history from cache instead of re-billing it every turn. Only when
+   * the client set no marker of its own, and only when the request is long
+   * enough to be cached at all (`minCacheableTokens(model)`).
+   */
+  rollingMessages?: boolean;
+  /** Upstream model id — selects the minimum cacheable prefix length. */
+  model?: string;
+}
+
+/**
+ * Minimum prefix (tokens) Anthropic caches for a model; shorter prefixes are
+ * silently not cached. Not monotonic across generations: 512 on the Claude 5
+ * Opus/Fable/Mythos line, 1024 on Sonnet 4.x/5 and Opus 4.0/4.1/4.8, 2048 on
+ * Opus 4.7 and Haiku 3.5, 4096 on Opus 4.5/4.6 and Haiku 4.5. Unknown ids get
+ * the common 1024. A provider prefix (`anthropic/…`) is ignored.
+ */
+export function minCacheableTokens(model: string | undefined): number {
+  const id = (model ?? "").toLowerCase().replace(/^.*\//, "");
+  if (/haiku-4[-.]5|opus-4[-.][56]/.test(id)) return 4096;
+  if (/opus-4[-.]7|haiku-3[-.]5|mythos-preview/.test(id)) return 2048;
+  if (/(opus|fable|mythos)-5/.test(id)) return 512;
+  return 1024;
+}
+
+/**
+ * Rough token estimate of a request prefix (serialized length / 4). Used only
+ * to skip a breakpoint on a prompt that is clearly too short to cache; a
+ * borderline prompt still gets its marker (an uncacheable marker costs
+ * nothing — the API simply does not cache it).
+ */
+export function estimatePrefixTokens(...parts: unknown[]): number {
+  let chars = 0;
+  for (const part of parts) {
+    if (part === undefined) continue;
+    chars += typeof part === "string" ? part.length : (JSON.stringify(part)?.length ?? 0);
+  }
+  return Math.ceil(chars / 4);
+}
+
+/** Message content block types that accept `cache_control`. */
+const MARKABLE_MESSAGE_BLOCKS = new Set(["text", "image", "document", "tool_use", "tool_result"]);
+
+function markableMessageBlock(block: unknown): boolean {
+  if (!isRec(block) || typeof block.type !== "string") return false;
+  if (!MARKABLE_MESSAGE_BLOCKS.has(block.type)) return false;
+  // An empty text block cannot carry a breakpoint (the API rejects it).
+  return block.type !== "text" || (typeof block.text === "string" && block.text.length > 0);
+}
+
+/**
+ * `messages` with a rolling `cache_control` breakpoint on the last markable
+ * block of the latest message that has one (string content becomes one text
+ * block), or undefined when no message can carry it. Works on both the
+ * Anthropic block shape and OpenAI content parts (`text`/`image_url` parts of
+ * user/tool/assistant messages). Never mutates its input.
+ */
+export function markLatestMessage(
+  messages: readonly unknown[],
+  markable: (block: unknown) => boolean = markableMessageBlock,
+): unknown[] | undefined {
+  for (let m = messages.length - 1; m >= 0; m--) {
+    const message = messages[m];
+    if (!isRec(message)) continue;
+    const content = message.content;
+    let next: unknown[] | undefined;
+    if (typeof content === "string") {
+      if (!content) continue;
+      next = [{ type: "text", text: content, cache_control: { type: "ephemeral" } }];
+    } else if (Array.isArray(content)) {
+      for (let b = content.length - 1; b >= 0; b--) {
+        if (!markable(content[b])) continue;
+        next = [...content];
+        next[b] = { ...(content[b] as Rec), cache_control: { type: "ephemeral" } };
+        break;
+      }
+    }
+    if (!next) continue;
+    const out = [...messages];
+    out[m] = { ...message, content: next };
+    return out;
+  }
+  return undefined;
 }
 
 function isTextBlock(value: unknown): value is Rec {
@@ -522,7 +607,11 @@ function countMessageMarkers(messages: unknown): number {
  *      toggles between requests;
  *   2. the last system block (the memory addendum) — only when the client set
  *      no marker anywhere, so identical memory also reads from cache;
- *   3. the last tool — only when the client set no marker anywhere.
+ *   3. the last tool — only when the client set no marker anywhere;
+ *   4. (`rollingMessages`) the last markable block of the latest message —
+ *      only when the client set no marker anywhere and the request reaches
+ *      the model's minimum cacheable length. Each turn of a tool loop then
+ *      writes only the new tail and reads everything before it from cache.
  *
  * A client that placed its own markers (pi-ai with
  * `cacheControlFormat: "anthropic"`, an Anthropic SDK on `/v1/messages`) keeps
@@ -533,7 +622,7 @@ function countMessageMarkers(messages: unknown): number {
 export function placeCacheBreakpoints(
   request: { system?: unknown; tools?: unknown; messages?: unknown },
   opts: CacheBreakpointOptions = {},
-): { system?: unknown; tools?: unknown } {
+): { system?: unknown; tools?: unknown; messages?: unknown[] } {
   const system = Array.isArray(request.system) ? [...request.system] : undefined;
   const tools = Array.isArray(request.tools) ? [...request.tools] : undefined;
   let used =
@@ -558,9 +647,22 @@ export function placeCacheBreakpoints(
   }
   if (!clientMarked && tools && tools.length > 0) mark(tools, tools.length - 1);
 
+  let messages: unknown[] | undefined;
+  if (
+    opts.rollingMessages &&
+    !clientMarked &&
+    used < ANTHROPIC_CACHE_BREAKPOINT_LIMIT &&
+    Array.isArray(request.messages) &&
+    request.messages.length > 0 &&
+    estimatePrefixTokens(system, tools, request.messages) >= minCacheableTokens(opts.model)
+  ) {
+    messages = markLatestMessage(request.messages);
+  }
+
   return {
     ...(system ? { system } : {}),
     ...(tools ? { tools } : {}),
+    ...(messages ? { messages } : {}),
   };
 }
 
@@ -732,13 +834,15 @@ export function buildAnthropicRequest(
   const stops = stopSequences(body.stop);
   const config = outputConfig(body.response_format);
   let system: unknown = translated.system;
+  let messages: AnthropicMessage[] = translated.messages;
   if (opts.autoCache) {
     const placed = placeCacheBreakpoints(
-      { system, tools, messages: translated.messages },
-      { injectedSystemTail: opts.injectedSystemTail },
+      { system, tools, messages },
+      { injectedSystemTail: opts.injectedSystemTail, rollingMessages: true, model },
     );
     system = placed.system ?? system;
     if (Array.isArray(placed.tools)) tools = placed.tools as AnthropicToolDef[];
+    if (placed.messages) messages = placed.messages as AnthropicMessage[];
   }
   // Only a cap the CLIENT set clamps the thinking budget; the 4096 default is
   // raised to fit the requested depth instead.
@@ -763,7 +867,7 @@ export function buildAnthropicRequest(
     ...(stops ? { stop_sequences: stops } : {}),
     ...(typeof body.user === "string" && body.user ? { metadata: { user_id: body.user } } : {}),
     ...(Array.isArray(system) && system.length > 0 ? { system } : {}),
-    messages: translated.messages,
+    messages,
     ...(tools.length > 0 ? { tools } : {}),
     ...(tools.length > 0 && toolChoice ? { tool_choice: toolChoice } : {}),
     ...(config ? { output_config: config } : {}),

@@ -845,7 +845,7 @@
 # MARINA_PASSTHRU_RESPONSE_CACHE=off
 # MARINA_PASSTHRU_RESPONSE_CACHE_TTL_MS=3600000
 
-# Add an ephemeral cache marker to the last system block of Anthropic passthru requests that carry none. Default true under the local profile, false otherwise.
+# Place ephemeral cache breakpoints on Anthropic passthru requests (direct, or anthropic/* via OpenRouter): the stable system block, the memory block, the last tool and a rolling breakpoint on the latest message, within Anthropic's limit of four. A client that sets its own markers keeps them and gets at most the stable-system breakpoint. Default true under the local profile, false otherwise.
 # MARINA_ANTHROPIC_AUTO_CACHE=false
 
 # `marina/verify:<proposer>[+<checker>]` model ids: the checker used when the id names none. Default: the proposer reviews its own draft.

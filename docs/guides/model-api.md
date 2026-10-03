@@ -535,11 +535,22 @@ with the nonce in its arguments. A provider that answers in text fails with `too
   1. the **last stable system block** — the caller's own prompt (the block before the memory block
      when memory was injected, else the last block);
   2. the **last system block** (the memory block) — only when the client set no marker anywhere;
-  3. the **last tool** — only when the client set no marker anywhere.
+  3. the **last tool** — only when the client set no marker anywhere;
+  4. a **rolling breakpoint** on the last cacheable block of the latest message — only when the
+     client set no marker anywhere and the request reaches the model's minimum cacheable length
+     (512–4096 tokens by model). In a multi-turn tool loop each turn then reads the whole earlier
+     conversation from cache and writes only the new tail. Not added to native `/v1/messages`
+     bodies, whose messages are forwarded as sent.
 
   A client's markers are always preserved; with any present, the proxy adds only breakpoint 1 and
   only if that block has none. A native `/v1/messages` body whose last system block is already
   marked is forwarded untouched.
+- **Claude via OpenRouter** (`openrouter/anthropic/<model>`): OpenRouter forwards `cache_control`
+  on content parts to Anthropic, so these requests keep the client's markers and, under the same
+  auto-cache rule, get the stable-system, memory and rolling breakpoints as text parts (a string
+  content becomes one text part). Every other OpenAI-compatible upstream — OpenAI, Gemini or any
+  other model on OpenRouter, local runtimes — has `cache_control` stripped; those providers cache
+  automatically.
 - **OpenAI upstreams**: Marina forwards its traced `x-request-id` as a request header and leaves
   `prompt_cache_key` in the body untouched.
 - Cache counters (`cache_read_input_tokens`, `cache_creation_input_tokens`,
