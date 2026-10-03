@@ -192,9 +192,17 @@ export function requestFor(row: FuturexRow, opts: { asOf?: string } = {}): Typed
     answer: specFor(row),
     ...(endTime ? { endTime } : {}),
     ...(opts.asOf ? { asOf: opts.asOf } : {}),
-    context: row.prompt
-      .replace(/IMPORTANT: End with[^\n]*/g, "")
-      .trim()
-      .slice(0, 4_000),
+    context: `${TIME_NOTE}\n\n${row.prompt.replace(/IMPORTANT: End with[^\n]*/g, "").trim()}`.slice(
+      0,
+      4_000,
+    ),
   };
 }
+
+/**
+ * The batch writes dates in UTC+8 ("20 September 2026 GMT+8"); a US evening
+ * event is the next calendar day there. Said up front, so a one-day shift is
+ * never read as "no such event on that date".
+ */
+const TIME_NOTE =
+  "Dates and times in this question are in UTC+8 (Beijing time) unless it says otherwise. An event listed for the evening of one day in the Americas falls on the next calendar day in UTC+8 — that is the same event.";
