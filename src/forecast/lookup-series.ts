@@ -36,6 +36,31 @@ const HISTORY_POINTS = 60;
 
 const day = (d: Date) => d.toISOString().slice(0, 10);
 
+/** FRED's own calendar: its "today" is the date in US Central time. */
+const FRED_TIME_ZONE = "America/Chicago";
+
+/** `now`'s calendar date in FRED's time zone (YYYY-MM-DD). */
+export function fredToday(now: Date): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: FRED_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+}
+
+/**
+ * The real-time date to read FRED as of: the cutoff's UTC date, but never
+ * after FRED's own today — FRED rejects a `realtime_start` later than its
+ * current (US Central) date, which a UTC cutoff of "now" can be for a few
+ * hours each evening.
+ */
+export function fredAsOfDay(cutoff: Date, now: Date): string {
+  const c = day(cutoff);
+  const t = fredToday(now);
+  return c < t ? c : t;
+}
+
 function readingLine(r: Reading, url: string, sourceTitle: string): string {
   const label = r.label ? ` (${r.label})` : "";
   const unit = r.unit ? ` ${r.unit}` : "";
@@ -69,7 +94,7 @@ export function fredLookup(
         ids = await searchSeries(http, apiKey, query);
       }
       if (ids.length === 0) return skippedResult(name, "no series named for this question");
-      const d = day(cutoff);
+      const d = fredAsOfDay(cutoff, now);
       const readings: Reading[] = [];
       for (const id of ids) {
         const r = apiKey

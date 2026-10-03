@@ -10,6 +10,12 @@
  *   fetch <url> asof:<date>          — the page as archived at or before the date
  *   wiki <title> [asof:<date>]       — the article's revision as of the date
  *   sources                          — engines, and how each enforces a date bound
+ *   markets <query> [asof:<date>]    — prediction-market prices (Polymarket, Kalshi)
+ *   odds <sport_key|team…>           — pre-game sports odds, de-vigged (ODDS_API_KEY)
+ *   series <id|query> [asof:<date>]  — official series (FRED, BLS)
+ *
+ * The data verbs are the same general surface as the `data` command
+ * (src/forecast/data-query.ts): the sources forecasts consult, asked directly.
  *
  * `searchRoom()` is a dedicated room with those verbs. `searchToolCommands()`
  * mounts the same tool on an existing room under other verbs (the default and
@@ -39,6 +45,12 @@ import {
 } from "../../engine/search-providers/index";
 import { waybackFetch } from "../../engine/search-providers/wayback";
 import { wikipediaRevision } from "../../engine/search-providers/wikipedia";
+import {
+  type DataQueryOptions,
+  dataMarkets,
+  dataOdds,
+  dataSeries,
+} from "../../forecast/data-query";
 import type { CommandInput, EntityId, RoomContext, RoomId, RoomModule } from "../../types";
 
 /** Cached replies live this long (ms). */
@@ -66,8 +78,12 @@ export interface SearchToolOptions {
   /** HTTP surface (tests inject one); default: SSRF-guarded standalone fetch. */
   http?: SearchHttp;
   now?: () => number;
-  /** Verb names (default search / fetch / wiki / sources). */
-  verbs?: Partial<Record<"search" | "fetch" | "wiki" | "sources", string>>;
+  /** Verb names (default search / fetch / wiki / sources / markets / odds / series). */
+  verbs?: Partial<
+    Record<"search" | "fetch" | "wiki" | "sources" | "markets" | "odds" | "series", string>
+  >;
+  /** Data-lookup options (tests inject lookups and a clock). */
+  data?: DataQueryOptions;
 }
 
 export interface SearchRoomOptions extends SearchToolOptions {
@@ -104,6 +120,9 @@ export function searchToolCommands(opts: SearchToolOptions = {}): {
     fetch: opts.verbs?.fetch ?? "fetch",
     wiki: opts.verbs?.wiki ?? "wiki",
     sources: opts.verbs?.sources ?? "sources",
+    markets: opts.verbs?.markets ?? "markets",
+    odds: opts.verbs?.odds ?? "odds",
+    series: opts.verbs?.series ?? "series",
   };
   const http = opts.http ?? standaloneSearchHttp();
   const now = opts.now ?? Date.now;
@@ -252,13 +271,57 @@ export function searchToolCommands(opts: SearchToolOptions = {}): {
     ctx.send(input.entity, lines.join("\n"));
   };
 
+  const dataOpts: DataQueryOptions = {
+    ...opts.data,
+    ...(opts.data?.now ? {} : { now: () => new Date(now()) }),
+  };
+  const dataCmd =
+    (kind: "markets" | "odds" | "series") =>
+    async (ctx: RoomContext, input: CommandInput): Promise<void> => {
+      const mods = parseModifiers(input.args.trim().split(/\s+/).filter(Boolean), ASOF_SPEC);
+      const rest = mods.rest.join(" ").trim();
+      if (mods.errors.length > 0 || !rest) {
+        const usage =
+          kind === "markets"
+            ? `${verb.markets} <query> [asof:<date>]`
+            : kind === "odds"
+              ? `${verb.odds} <sport_key> [team…] | ${verb.odds} <team…>`
+              : `${verb.series} <FRED or BLS id | query> [asof:<date>]`;
+        ctx.send(input.entity, `Usage: ${usage}`);
+        return;
+      }
+      let asOf: string | undefined;
+      if (typeof mods.values.asof === "string") {
+        asOf = parseBound(mods.values.asof);
+        if (!asOf) {
+          ctx.send(input.entity, `asof:${mods.values.asof} is not a date (YYYY-MM-DD or ISO).`);
+          return;
+        }
+      }
+      if (throttled(ctx, input.entity)) return;
+      // Live answers move: cache them for minutes; a past asof: never changes.
+      const bucket = asOf ?? new Date(now()).toISOString().slice(0, 15);
+      const at = asOf ? new Date(asOf) : undefined;
+      const out = await cached(ctx, `data|${kind}|${rest}|${bucket}`, () =>
+        kind === "markets"
+          ? dataMarkets(rest, at, dataOpts)
+          : kind === "odds"
+            ? dataOdds(rest, at, dataOpts)
+            : dataSeries(rest, at, dataOpts),
+      );
+      reply(ctx, input.entity, out);
+    };
+
   return {
-    catalog: `Search tool here: \`${verb.search} <q> [before:<date>] [engine:<name>]\`, \`${verb.fetch} <url> asof:<date>\` (archived page), \`${verb.wiki} <title> [asof:<date>]\`, \`${verb.sources}\`.`,
+    catalog: `Search tool here: \`${verb.search} <q> [before:<date>] [engine:<name>]\`, \`${verb.fetch} <url> asof:<date>\` (archived page), \`${verb.wiki} <title> [asof:<date>]\`, \`${verb.sources}\`. Data: \`${verb.markets} <q>\`, \`${verb.odds} <sport|team>\`, \`${verb.series} <id|q>\` (asof:<date> on each).`,
     commands: {
       [verb.search]: searchCmd,
       [verb.fetch]: fetchCmd,
       [verb.wiki]: wikiCmd,
       [verb.sources]: sourcesCmd,
+      [verb.markets]: dataCmd("markets"),
+      [verb.odds]: dataCmd("odds"),
+      [verb.series]: dataCmd("series"),
     },
   };
 }

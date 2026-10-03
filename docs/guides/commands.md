@@ -307,6 +307,22 @@ See [Search](search.md) for the date-strict engines and the Search Room.
 
 Security: SSRF protection (blocks private IPs), 5s rate limit per entity, 10s timeout, 20KB response cap.
 
+## Structured Data
+
+```
+> data sources                            Which sources are ready here and what each needs
+> data markets fed rate cut october       Prediction-market prices (Polymarket, Kalshi)
+> data odds americanfootball_nfl ravens   Pre-game odds, implied probabilities, margin removed
+> data odds titans ravens                 Every upcoming game naming those teams
+> data series UNRATE                      Official series (FRED, BLS): latest reading and recent history
+> data series CPIAUCSL asof:2026-06-30    FRED as published on that date (vintage data)
+```
+
+The same sources forecasts consult automatically (see [Forecasting](forecasting.md#lookups)).
+Read-only and rank 0; an agent's `data markets|odds|series` call is an outbound read (`egress`),
+like `web search`. Nothing returned is dated after now or after `asof:`. One query per entity
+every few seconds; keys (`ODDS_API_KEY`, `FRED_API_KEY`) are read from the environment only.
+
 ## Use-Case Recipes
 
 ```
