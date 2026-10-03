@@ -19,6 +19,7 @@ import {
   downloadGSM8K,
   downloadHellaSwag,
   downloadHLEVerifiedGold,
+  downloadHLEVerifiedGoldImages,
   downloadHumanEval,
   downloadMATH,
   downloadMTBench,
@@ -52,6 +53,7 @@ const JOBS: Job[] = [
   // with accepted terms. Downloader returns a clear error if missing.
   { name: "gpqa-diamond", run: () => downloadGPQA(DATASETS_DIR, 200) },
   { name: "hle-verified-gold", run: () => downloadHLEVerifiedGold(DATASETS_DIR) },
+  { name: "hle-verified-gold-mm", run: () => downloadHLEVerifiedGoldImages(DATASETS_DIR) },
 ];
 
 async function main() {
