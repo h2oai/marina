@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "bun:test";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawnSync } from "bun";
 import {
   infrastructureErrors,
   passHatK,
@@ -81,6 +85,43 @@ describe("tau2 adapter", () => {
     expect(h.items?.length).toBe(4);
     expect(h.items?.some((i) => String(i.id).startsWith("2#"))).toBe(false);
     expect((h.config as Record<string, unknown>).infrastructureErrors).toBe(2);
+  });
+
+  it("--require-clean refuses to score or convert a run with infrastructure errors", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tau2-clean-"));
+    try {
+      const dirty = join(dir, "dirty.json");
+      const clean = join(dir, "clean.json");
+      writeFileSync(
+        dirty,
+        JSON.stringify({
+          ...results,
+          simulations: [
+            ...(results.simulations ?? []),
+            { task_id: 2, trial: 0, termination_reason: "infrastructure_error", reward_info: null },
+          ],
+        }),
+      );
+      writeFileSync(clean, JSON.stringify(results));
+      const script = join(import.meta.dir, "../scripts/tau2.ts");
+      const run = (...args: string[]) =>
+        spawnSync(["bun", script, ...args], { stdout: "pipe", stderr: "pipe" });
+      for (const cmd of ["summary", "convert"]) {
+        const out = join(dir, `${cmd}.ledger.json`);
+        const r = run(cmd, dirty, "--out", out, "--require-clean");
+        expect(r.exitCode).toBe(3);
+        expect(r.stderr.toString()).toContain("INVALID: 1 infrastructure error(s)");
+        expect(r.stdout.toString()).not.toContain("pass^");
+        expect(existsSync(out)).toBe(false);
+      }
+      const ok = run("convert", clean, "--out", join(dir, "new", "ok.json"), "--require-clean");
+      expect(ok.exitCode).toBe(0);
+      expect(existsSync(join(dir, "new", "ok.json"))).toBe(true); // creates the directory
+      // Without the flag the run still converts (errors excluded and reported).
+      expect(run("summary", dirty).stdout.toString()).toContain("1 infrastructure error(s)");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("names the model Marina served, not LiteLLM's routing prefix", () => {

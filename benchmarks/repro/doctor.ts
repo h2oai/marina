@@ -260,6 +260,30 @@ function tau2Check(p: Probe): Check {
   };
 }
 
+/**
+ * τ² runs its NL-assertion judge (OpenAI gpt-4.1 by default) and anything else it
+ * calls outside the agent/user `api_base` with keys from the environment. The kit
+ * gives the τ² process the `.env` provider keys and no base-URL override; without
+ * OPENAI_API_KEY those calls fail and every affected simulation is an infrastructure
+ * error, which `--require-clean` then refuses to score.
+ */
+function tau2EvaluatorCheck(p: Probe): Check {
+  const ok = has(p.env, "OPENAI_API_KEY");
+  return {
+    id: "tau2-evaluator",
+    title: "τ² evaluator keys and effort",
+    status: ok ? "ok" : "missing",
+    detail: ok
+      ? "OPENAI_API_KEY set (τ²'s own judge runs as shipped); agent and user effort go in extra_body; runs with infrastructure errors are refused"
+      : "OPENAI_API_KEY not set: τ²'s NL-assertion judge (gpt-4.1) cannot run and its simulations become infrastructure errors",
+    ...(ok
+      ? {}
+      : {
+          fix: "add OPENAI_API_KEY to .env (the kit exports .env provider keys into the τ² process, never printing them)",
+        }),
+  };
+}
+
 export interface DoctorOptions {
   runDir: string;
   /** Free disk (GB) wanted for the chosen setup. */
@@ -279,6 +303,7 @@ export function doctor(p: Probe, opts: DoctorOptions): { tier: ModelTier; checks
     disk: () => diskCheck(p, opts.runDir, opts.needGb ?? 20),
     "python-swebench": () => pythonSwebenchCheck(p),
     tau2: () => tau2Check(p),
+    "tau2-evaluator": () => tau2EvaluatorCheck(p),
   };
   const ids = opts.only?.length
     ? [
