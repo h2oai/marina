@@ -16,6 +16,7 @@ import { Logger } from "../../engine/logger";
 import { settleProxyCall } from "../../engine/proxy-settlement";
 import { dailyCapRefusal, recordSpend } from "../../engine/spend-ledger";
 import type { EngineEvent, EntityId } from "../../types";
+import { getDefaultUpstreamModel } from "../default-models";
 import {
   encodeMemoryReceiptAttribute,
   encodeMemoryReceiptHeader,
@@ -27,7 +28,6 @@ import {
   LOCAL_PROVIDERS,
   localProviderBaseUrl,
   localProviderContextWindow,
-  localProviderDefaultModel,
 } from "../model-discovery";
 import { openaiErrorBody, UnsupportedParameterError } from "../openai-errors";
 import type { InjectionFormat } from "../passthru-context";
@@ -60,47 +60,11 @@ const logger = new Logger();
 
 // --- Direct upstream proxy (fallback when no model agents are online) ---
 
-/**
- * Built-in defaults for the direct-upstream proxy fallback (used when no
- * model agent is online on the requested channel). These are intentionally
- * conservative — production-deployed model IDs that have been curl-confirmed
- * against each provider's live API. Override per-provider with
- * `MARINA_DEFAULT_<PROVIDER>_MODEL` (see `config/environment.reference`).
- */
-const BUILTIN_DEFAULT_MODELS: Record<string, string> = {
-  ANTHROPIC_API_KEY: "claude-sonnet-5",
-  OPENAI_API_KEY: "gpt-6-luna",
-  GEMINI_API_KEY: "gemini-3.1-flash-lite",
-  OPENROUTER_API_KEY: "openai/gpt-6-luna",
-  GROQ_API_KEY: "openai/gpt-oss-120b",
-  HUGGINGFACE_API_KEY: "zai-org/GLM-5.3-Flash",
-  // Ids from pi-ai's bundled catalog (native ids, priced there).
-  CEREBRAS_API_KEY: "gpt-oss-120b",
-  DEEPSEEK_API_KEY: "deepseek-flash",
-  MISTRAL_API_KEY: "mistral-small-latest",
-  XAI_API_KEY: "grok-4.7",
-};
-
-/** Local runtimes resolve their default at call time (Ollama's is detected at boot). */
-const LOCAL_DEFAULT_MODEL_KEYS: Record<string, string> = {
-  LLAMA_API_KEY: "llama",
-  OLLAMA_API_KEY: "ollama",
-  VIBETHINKER_API_KEY: "vibethinker",
-};
+// Built-in default model per provider key (direct-upstream proxy fallback, used
+// when no model agent is online on the requested channel): `../default-models`.
 
 /** OpenAI's Luna tier, current and previous generation (optionally `-pro`). */
 const LUNA_MODEL = /^gpt-(?:5\.6|6)-luna(?:-pro)?$/;
-
-function getDefaultUpstreamModel(envKey: string): string {
-  // Per-provider override: e.g. ANTHROPIC_API_KEY → MARINA_DEFAULT_ANTHROPIC_MODEL.
-  const providerName = envKey.replace(/_API_KEY$/, "");
-  const overrideKey = `MARINA_DEFAULT_${providerName}_MODEL`;
-  const override = process.env[overrideKey];
-  if (override && override.trim().length > 0) return override.trim();
-  const local = LOCAL_DEFAULT_MODEL_KEYS[envKey];
-  if (local) return localProviderDefaultModel(local) ?? "default";
-  return BUILTIN_DEFAULT_MODELS[envKey] ?? "gpt-6-luna";
-}
 
 /** provider → upstream endpoint. `anthropic` uses a non-OpenAI request format. */
 const PROVIDER_UPSTREAM: Record<string, { url: string; envKeys: string[]; anthropic?: boolean }> = {

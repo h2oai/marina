@@ -9,13 +9,20 @@
 // proposer. Every call goes through `proxyToUpstream`, so spend, the daily cap,
 // lifecycle traces and cost headers apply exactly as for passthru.
 //
+// `marina/verify:default` resolves to this installation's first available model
+// (a single local model checks its own drafts — a self-check, still a review).
+//
 // Fails open: a checker outage, an unparseable verdict or a failed revision
 // returns the proposer's draft unchanged (the verifier accepts on outage, as
 // in `src/decisions/policy.ts`).
 
+import { availableModels } from "../../agent/available-models";
 import type { Engine } from "../../engine/engine";
 import { getErrorMessage } from "../../engine/errors";
 import { Logger } from "../../engine/logger";
+import { lessonsBlock, recallAcross } from "../../learning/service";
+import type { RepairLabel } from "../../repair/output-repair";
+import { repairToolCallMessage } from "../../repair/tool-call-repair";
 import {
   COST_USD_HEADER,
   errorJson,
@@ -27,6 +34,14 @@ import {
 import { explicitUpstreamModel, proxyToUpstream } from "./upstream";
 
 const log = new Logger();
+
+/** Lessons ride as one extra system message right after the caller's own system messages. */
+export function withLessons(messages: Msg[], block: string): Msg[] {
+  if (!block) return messages;
+  const at = messages.findIndex((m) => m.role !== "system");
+  const i = at < 0 ? messages.length : at;
+  return [...messages.slice(0, i), { role: "system", content: block }, ...messages.slice(i)];
+}
 
 export const VERIFY_MODEL_PREFIX = "marina/verify:";
 
@@ -54,7 +69,17 @@ export function parseVerifyModel(
   const explicitChecker = plus > 0 ? rest.slice(plus + 1).trim() : "";
   const checker = explicitChecker || env.MARINA_VERIFY_CHECKER_MODEL?.trim() || proposer;
   if (!proposer || !checker) return undefined;
-  return { proposer, checker };
+  return { proposer: sized(proposer, env), checker: sized(checker, env) };
+}
+
+/**
+ * `default` names this installation's first available model (a configured
+ * local runtime first, see `availableModels`), so `marina/verify:default`
+ * works on a Marina with a single model: it checks its own drafts.
+ */
+function sized(id: string, env: Record<string, string | undefined>): string {
+  if (id !== "default") return id;
+  return availableModels(env as NodeJS.ProcessEnv)[0]?.spec ?? id;
 }
 
 /** Max revision rounds (`MARINA_VERIFY_ROUNDS`, default 1, clamped 0..3; 0 = review only). */
@@ -506,6 +531,24 @@ function firstMessage(body: Record<string, unknown> | undefined): Msg | undefine
   return choices?.[0]?.message;
 }
 
+/** `body` with its first choice's message replaced (finish_reason follows the tool calls). */
+function withFirstMessage(body: Record<string, unknown>, message: Msg): Record<string, unknown> {
+  const choices = Array.isArray(body.choices) ? [...(body.choices as unknown[])] : [];
+  const first = (choices[0] ?? {}) as Record<string, unknown>;
+  choices[0] = {
+    ...first,
+    message,
+    ...(message.tool_calls?.length ? { finish_reason: "tool_calls" } : {}),
+  };
+  return { ...body, choices };
+}
+
+/** The repair shot's model: `MARINA_REPAIR_MODEL` when it is reachable, else the proposer. */
+function repairModelFor(engine: Engine, proposer: string): string {
+  const configured = process.env.MARINA_REPAIR_MODEL?.trim();
+  return configured && explicitUpstreamModel(engine, configured) ? configured : proposer;
+}
+
 type Usage = { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
 
 function addUsage(a: Usage | undefined, b: unknown): Usage | undefined {
@@ -551,13 +594,35 @@ export async function maybeVerifyChat(
       });
     }
   }
-  const messages = Array.isArray(body.messages) ? (body.messages as Msg[]) : [];
+  const callerMessages = Array.isArray(body.messages) ? (body.messages as Msg[]) : [];
   const tools = Array.isArray(body.tools) ? (body.tools as unknown[]) : undefined;
   const signal = req.signal;
   const requestId = generateRequestId();
 
+  // 0. Lessons from past outcomes: the proposer (the lead) and the checker see
+  // the relevant ones (MARINA_LESSONS=observe recalls without injecting).
+  const lastUser = [...callerMessages].reverse().find((m) => m.role === "user");
+  const lessons = await recallAcross(
+    engine.db,
+    ["tools", "code"],
+    textOf(lastUser?.content).slice(0, 500),
+    { limit: 4, maxBytes: 800 },
+  );
+  const block = lessonsBlock(lessons.inject);
+  const messages = withLessons(callerMessages, block);
+  const lessonsHeader =
+    lessons.recalled.length === 0
+      ? "0"
+      : `${lessons.mode === "on" ? "" : "observe:"}${lessons.recalled.map((l) => l.id ?? "?").join(",")}`;
+
   // 1. Proposer draft.
-  const first = await callUpstream(engine, body, spec.proposer, signal, "verify:proposer");
+  const first = await callUpstream(
+    engine,
+    block ? { ...body, messages } : body,
+    spec.proposer,
+    signal,
+    "verify:proposer",
+  );
   if (!first.ok || !first.body) {
     return new Response(first.text ?? "", {
       status: first.status,
@@ -582,7 +647,10 @@ export async function maybeVerifyChat(
             { role: "system", content: CHECKER_SYSTEM },
             {
               role: "user",
-              content: reviewContent(renderReview(messages, tools, draft), messages),
+              content: reviewContent(
+                `${block ? `${block}\n\n` : ""}${renderReview(callerMessages, tools, draft)}`,
+                callerMessages,
+              ),
             },
           ],
         },
@@ -640,6 +708,42 @@ export async function maybeVerifyChat(
     verdictLabel = "revised";
   }
 
+  // 4. Output repair: the final message owed a tool call but carries it as
+  // text or with malformed arguments (`tool-call-repair` — meaning unchanged,
+  // write calls under the write-guard rules). Off with MARINA_OUTPUT_REPAIR=off.
+  let repairLabel: RepairLabel | undefined;
+  const finalMessage = firstMessage(final);
+  if (tools?.length && finalMessage) {
+    const repairModel = repairModelFor(engine, spec.proposer);
+    const repaired = await repairToolCallMessage({
+      message: finalMessage,
+      tools,
+      isWrite: (name) => !isReadOnlyToolCall(name, tools),
+      shot: async (system, user) => {
+        const r = await callUpstream(
+          engine,
+          {
+            messages: [
+              { role: "system", content: system },
+              { role: "user", content: user },
+            ],
+          },
+          repairModel,
+          signal,
+          "verify:repair",
+        );
+        cost += r.costUsd ?? 0;
+        usage = addUsage(usage, r.body?.usage);
+        return r.ok ? textOf(firstMessage(r.body)?.content) : "";
+      },
+    }).catch(() => undefined);
+    if (repaired) {
+      repairLabel = repaired.label;
+      final = withFirstMessage(final, repaired.message);
+      log.info("model-api", `verify: ${repaired.label} — ${repaired.detail}`);
+    }
+  }
+
   engine.logEvent({
     type: "model_request_lifecycle",
     phase: "completed",
@@ -648,12 +752,14 @@ export async function maybeVerifyChat(
     model,
     target: spec.proposer,
     routeKind: "passthru",
-    routeReason: `verify:${verdictLabel}`,
+    routeReason: `verify:${verdictLabel}${repairLabel ? `+${repairLabel}` : ""}`,
     timestamp: Date.now(),
   });
   return json({ ...final, model, ...(usage ? { usage } : {}) }, 200, {
     "x-request-id": requestId,
     "x-marina-verify": verdictLabel,
+    "x-marina-lessons": lessonsHeader,
+    ...(repairLabel ? { "x-marina-repair": repairLabel } : {}),
     [COST_USD_HEADER]: cost.toFixed(8),
   });
 }

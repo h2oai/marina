@@ -8,41 +8,71 @@
  *   bun run tau2 summary <results.json>              pass^1..pass^k and reward per run
  *   bun run tau2 convert <results.json> --out f.json harness-shaped file for `bun run benchmark:import`
  *
+ * `--require-clean` refuses (exit 3, no scores, no ledger file) when any simulation
+ * ended in an infrastructure error: τ²'s metrics exclude those, so such a run is not
+ * comparable and must be re-run after fixing the cause.
+ *
  * τ²-bench itself runs unmodified: point its `--agent-llm` / `--user-llm` at a
  * Marina `/v1` (LiteLLM `openai/<model>` with `api_base`). Nothing here talks to
  * a leaderboard.
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { parseArgs } from "node:util";
-import { passHatK, servedModel, type Tau2Results, tau2ToHarness } from "../benchmarks/tau2/convert";
+import {
+  infrastructureErrors,
+  isScored,
+  passHatK,
+  servedModel,
+  type Tau2Results,
+  tau2ToHarness,
+} from "../benchmarks/tau2/convert";
 
 const { positionals, values } = parseArgs({
   args: process.argv.slice(2),
   allowPositionals: true,
-  options: { out: { type: "string" }, benchmark: { type: "string" } },
+  options: {
+    out: { type: "string" },
+    benchmark: { type: "string" },
+    "require-clean": { type: "boolean" },
+  },
 });
 const [cmd, file] = positionals;
 if (!cmd || !file || (cmd !== "summary" && cmd !== "convert")) {
   console.error(
-    "usage: bun run tau2 summary|convert <results.json> [--out file.json] [--benchmark id]",
+    "usage: bun run tau2 summary|convert <results.json> [--out file.json] [--benchmark id] [--require-clean]",
   );
   process.exit(2);
 }
 const results = JSON.parse(readFileSync(file, "utf8")) as Tau2Results;
+const infraErrors = infrastructureErrors(results);
+if (values["require-clean"] && infraErrors > 0) {
+  console.error(
+    `INVALID: ${infraErrors} infrastructure error(s) of ${results.simulations?.length ?? 0} simulations — no scores reported; fix the cause and re-run`,
+  );
+  process.exit(3);
+}
 if (cmd === "summary") {
   const trials = results.info?.num_trials ?? 1;
-  const sims = results.simulations ?? [];
+  const all = results.simulations ?? [];
+  const sims = all.filter(isScored);
+  const errors = infraErrors;
   const reward =
     sims.reduce((t, s) => t + (s.reward_info?.reward ?? 0), 0) / Math.max(1, sims.length);
   console.log(
-    `${results.info?.environment_info?.domain_name ?? "?"} · agent ${servedModel(results.info?.agent_info?.llm)} · user ${servedModel(results.info?.user_info?.llm)} · ${sims.length} simulations`,
+    `${results.info?.environment_info?.domain_name ?? "?"} · agent ${servedModel(results.info?.agent_info?.llm)} · user ${servedModel(results.info?.user_info?.llm)} · ${sims.length} scored simulations`,
   );
+  if (errors > 0)
+    console.log(
+      `${errors} infrastructure error(s) excluded, as τ²'s metrics do — fix the cause before comparing runs`,
+    );
   console.log(`mean reward ${reward.toFixed(3)}`);
   for (let k = 1; k <= trials; k++)
     console.log(`pass^${k} ${passHatK(results, k)?.toFixed(3) ?? "n/a"}`);
 } else {
   const out = values.out ?? file.replace(/\.json$/, ".ledger.json");
+  mkdirSync(dirname(out), { recursive: true });
   writeFileSync(
     out,
     JSON.stringify(tau2ToHarness(results, { benchmark: values.benchmark }), null, 1),

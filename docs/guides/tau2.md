@@ -20,6 +20,24 @@ Marina runs τ²-bench **unmodified**: τ²'s own CLI, agent scaffold, user simu
 
    The model after `openai/` is any id Marina serves. That includes an explicit upstream id, a `marina:<crew>` endpoint, or `marina/verify:…` (see below).
 
+## Match the leaderboard's settings
+
+Results are only comparable to the board when the run matches its settings. Three of them are easy to get wrong, and all three fail silently.
+
+1. **Agent reasoning effort.** Board entries run the agent at `high` (or `xhigh`) reasoning. τ² sets LiteLLM's `drop_params = True`, and LiteLLM drops `reasoning_effort` for any model id it doesn't recognise as a reasoning model, without a warning. That includes every id routed through Marina. Pass it in `extra_body`, which LiteLLM always forwards:
+
+   ```bash
+   AGENT_ARGS='{"api_base":"http://localhost:3300/v1","api_key":"<marina key>","extra_body":{"reasoning_effort":"high"}}'
+   ```
+
+   Marina's passthru forwards `reasoning_effort` unchanged.
+2. **User simulator.** The board uses `gpt-5.2` with `reasoning_effort: low`. Passing `--user-llm-args` replaces τ²'s defaults entirely, so state it: `"reasoning_effort":"low"`.
+3. **Evaluator and helper models.** τ² calls some models of its own, the NL-assertion judge among them. These use their default ids with LiteLLM's environment credentials, not the `--agent-llm-args`. Without `OPENAI_API_KEY` in τ²'s environment, those tasks end as `infrastructure_error` before the conversation starts. Export the provider keys into the shell that runs `tau2`.
+
+Also run the `base` task split (the default) for board comparisons. Named splits such as `test` are smaller subsets with their own difficulty.
+
+**Infrastructure errors are never scores.** τ²'s metrics drop simulations that ended in `infrastructure_error`. `bun run tau2 summary` and `convert` do the same and report how many they excluded. A non-zero count means fix the cause and re-run before comparing arms. `--require-clean` turns that into a refusal: with any infrastructure error, `summary` and `convert` print `INVALID: N infrastructure error(s)`, report no scores, write no ledger file and exit 3. `bun run repro tau2` always uses it.
+
 ## The verification formation as a model: `marina/verify:`
 
 `marina/verify:<proposer>[+<checker>]` is an OpenAI-compatible model id, with tool calling supported. For each request:
@@ -40,6 +58,8 @@ A revision that breaks any of these is discarded, the draft is returned, and the
 **Checker choice.** The checker defaults to `MARINA_VERIFY_CHECKER_MODEL`, else the proposer itself.
 
 **Response metadata.** The response carries `x-marina-verify` (`approved`, `revised`, `held-write`, `checker-unavailable`, `revision-failed` or `flagged`) and the summed `x-marina-cost-usd` and `usage` of every call.
+
+**Lessons.** With outcome learning armed, judged `tools`/`code` lessons matching the last user turn ride as one system message after the caller's and are shown to the checker; `x-marina-lessons` names them (`0` for none, `observe:` under `MARINA_LESSONS=observe`). Set `MARINA_LESSONS=off` for a lessons-free ablation arm.
 
 **Limits.** `stream` and `n > 1` are refused with `unsupported_parameter`.
 

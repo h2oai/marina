@@ -68,6 +68,8 @@ export interface ResultItem {
   traceId?: string;
   /** The judge call's `x-request-id`, when the judge reported one. */
   judgeTraceId?: string;
+  /** The answer arrived through Marina's output repair (`repaired:parse|shot`). */
+  repaired?: string;
 }
 
 /** Usage of one model call. Undefined fields were not reported — never estimated. */
@@ -102,9 +104,14 @@ export interface DatasetItem {
   metadata?: Record<string, unknown>;
 }
 
+export type ContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
 export interface Message {
   role: "system" | "user" | "assistant";
-  content: string;
+  /** Plain text, or OpenAI content parts (text + `image_url`) for multimodal items. */
+  content: string | ContentPart[];
 }
 
 export interface BenchmarkDefinition {

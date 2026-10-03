@@ -58,6 +58,12 @@ export interface CleanOptions {
   retriever?: string;
   after?: string;
   until?: string;
+  /**
+   * Restrict to these row ids (still subject to the knowledge bound) — to run a
+   * new configuration on exactly an earlier run's rows, for a subset-paired
+   * comparison.
+   */
+  onlyIds?: Set<string>;
   limit: number;
   horizonDays: number;
   concurrency: number;
@@ -206,7 +212,8 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
       );
     }
   }
-  const rows = selectCleanRows(opts.rows, {
+  const only = opts.onlyIds;
+  const rows = selectCleanRows(only ? opts.rows.filter((r) => only.has(r.id)) : opts.rows, {
     after,
     limit: opts.limit,
     ...(opts.until ? { until: opts.until } : {}),

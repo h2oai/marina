@@ -8,12 +8,13 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import {
   extractChoiceLetter,
   extractFinalAnswer,
+  formatHLEPrompt,
   normalizeShortAnswer,
   runHLE,
 } from "../benchmarks/adapters/hle";
 import { extractLetter, shuffleChoices } from "../benchmarks/adapters/multiple-choice";
 import { compareRuns, formatCompareReport } from "../benchmarks/compare";
-import { hleGoldTextItems } from "../benchmarks/download";
+import { hleGoldImageItems, hleGoldTextItems } from "../benchmarks/download";
 import { defaultTimeoutMs, usageFromResponse } from "../benchmarks/modes/passthrough";
 import { resultForDisk } from "../benchmarks/result-file";
 import { parseEquivalenceVerdict } from "../benchmarks/scoring/judge";
@@ -176,6 +177,30 @@ describe("HLE adapter parsing", () => {
     expect(items.map((i) => i.id)).toEqual(["hle-g1", "hle-g3"]);
     expect(items[0]?.metadata?.answerType).toBe("exactMatch");
     expect(items[1]?.metadata?.answerType).toBe("multipleChoice");
+
+    const images = hleGoldImageItems([
+      row("g1", "Gold subset", { image: "", answer_type: "exactMatch" }),
+      row("g2", "Gold subset", { image: "data:image/png;base64,AAAA", answer_type: "exactMatch" }),
+      row("g5", "Gold subset", { image: "javascript:alert(1)", answer_type: "exactMatch" }),
+      row("r2", "Revision subset", { image: "data:image/png;base64,BBBB" }),
+    ]);
+    expect(images.map((i) => i.id)).toEqual(["hle-g2"]);
+    expect(images[0]?.metadata?.image).toBe("data:image/png;base64,AAAA");
+  });
+
+  it("sends a multimodal item's image as an image_url part; text items stay strings", () => {
+    const text = formatHLEPrompt({ id: "t", question: "q?", answer: "a" });
+    expect(text[1]?.content).toBe("q?");
+    const mm = formatHLEPrompt({
+      id: "m",
+      question: "what is shown?",
+      answer: "a",
+      metadata: { image: "data:image/png;base64,AAAA" },
+    });
+    expect(mm[1]?.content).toEqual([
+      { type: "text", text: "what is shown?" },
+      { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } },
+    ]);
   });
 
   it("parses strict judge verdicts", () => {

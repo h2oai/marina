@@ -334,6 +334,7 @@ export async function runOpenaiChat(
 
       const extra: Record<string, string> = { "x-request-id": result.requestId };
       if (result.conversationId) extra["X-Conversation-Id"] = result.conversationId;
+      if (result.repaired) extra["x-marina-repair"] = result.repaired;
       return json(
         openaiCompletion(model, result.content, usageFromTrace(engine, result.requestId)),
         200,

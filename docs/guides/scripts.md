@@ -25,6 +25,7 @@ The terminal client is `bun run scripts/connect.ts <name>` (`-c "<command>"` for
 |---|---|
 | `forecast "<question>"` | Forecast any question with no server running: a probability or a number, with sources, verified figures, each analyst's answer and the cost. See [Forecasting](forecasting.md). |
 | `arena <sub>` | Social Simulation Arena operator CLI: `keygen`, `registration`, `status`, `rounds`, `show`, `submit`, `backtest`, `evaluate`, `research`, `shadow run\|list\|score`, `discover`, `signals`. See [Arena](arena.md). |
+| `repro doctor\|list\|<setup>` | Reproduce a published benchmark setup (`hle-verified`, `swebench-verified`, `tau2`, `futurex-backtest`, `arena-backtest`): prerequisite checks with fixes, `--dry-run` plans with estimated spend, replicated arms, a pooled comparison from the ledger. See [Reproduce](reproduce.md). |
 
 ## Memory service
 

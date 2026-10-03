@@ -111,16 +111,20 @@ describe("AgentRuntime.spawn with model:route", () => {
     cleanupDb(DB);
   });
 
-  it("refuses without both tier models configured", async () => {
+  it("without tier models, routes to the one available model instead of refusing", async () => {
     delete process.env.MARINA_ROUTE_FAST_MODEL;
     delete process.env.MARINA_ROUTE_POWERFUL_MODEL;
     const db = new MarinaDB(DB);
+    const runtime = new AgentRuntime({ db, wsPort: 39998 });
     try {
-      const runtime = new AgentRuntime({ db, wsPort: 39998 });
-      await expect(runtime.spawn({ name: "Routed", model: "route", goal: "x" })).rejects.toThrow(
-        /MARINA_ROUTE_FAST_MODEL and MARINA_ROUTE_POWERFUL_MODEL/,
+      // The spawn may still fail later (no server on the port) — never on the route.
+      const outcome = await runtime.spawn({ name: "Routed", model: "route", goal: "x" }).then(
+        () => "spawned",
+        (e: unknown) => (e instanceof Error ? e.message : String(e)),
       );
+      expect(outcome).not.toMatch(/MARINA_ROUTE/);
     } finally {
+      await runtime.stopAll();
       db.close();
     }
   });

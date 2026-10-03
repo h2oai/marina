@@ -4630,6 +4630,29 @@ Effect: unknown.
 
 - `field-0` (`run`): text, required.
 
+## lessons
+
+Recall lessons Marina learned from past outcomes (benchmark runs, resolved forecasts, code verifications, arena rounds), trusted first.
+Usage: lessons <topic> [domain:<forecast|code|tools|benchmark|arena>]
+
+Every verdict becomes a candidate lesson; the decision layer judges it and only passing (trusted) or unjudged (unverified, labelled) lessons are served. Read-only.
+
+Category: Knowledge. Minimum rank: 0.
+Aliases: none.
+
+### `lessons <topic>`
+
+Effect: unknown.
+
+- `field-0` (`topic`): text, required.
+
+### `lessons <topic> domain:<forecast|code|tools|benchmark|arena>`
+
+Effect: unknown.
+
+- `field-0` (`topic`): text, required.
+- `field-1` (`domain`): text, required, choices `forecast`, `code`, `tools`, `benchmark`, `arena`.
+
 ## link
 
 Link an external account (Telegram/Discord). Usage: link | link status | link unlink <adapter>

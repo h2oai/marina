@@ -1,11 +1,13 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
+import { modelSourceEnvKeys } from "../src/agent/available-models";
 import type { Retriever } from "../src/arena/research/retrieve";
 import type { DecisionProvider } from "../src/decisions/types";
 import { forecastQuestion, inferKind } from "../src/forecast/question";
 import { handleForecast } from "../src/net/forecast-api";
+import { scopeProcessState } from "./process-state";
 
 const retriever: Retriever = async () => ({
   report: "- Fed hiked on Sep 16 to 3.75% ([fed](https://federalreserve.example/p))",
@@ -168,20 +170,23 @@ describe("forecast any question", () => {
 });
 
 describe("POST /v1/forecast", () => {
-  const saved = process.env.OPENROUTER_API_KEY;
-  afterEach(() => {
-    if (saved === undefined) delete process.env.OPENROUTER_API_KEY;
-    else process.env.OPENROUTER_API_KEY = saved;
-  });
+  /** No model at all — the one case /v1/forecast refuses (a single model is enough). */
+  const noModels = () =>
+    scopeProcessState({
+      env: {
+        ...Object.fromEntries(modelSourceEnvKeys().map((k) => [k, undefined])),
+        MARINA_FORECAST_ANALYSTS: undefined,
+      },
+    });
   const post = (body: unknown) =>
     handleForecast(
       new Request("http://x/v1/forecast", { method: "POST", body: JSON.stringify(body) }),
     );
 
-  it("validates the request and refuses cleanly without the keys it needs", async () => {
+  it("validates the request and refuses cleanly only when no model is available", async () => {
+    using _ = noModels();
     expect((await post({})).status).toBe(400);
     expect((await post({ question: "q", kind: "maybe" })).status).toBe(400);
-    delete process.env.OPENROUTER_API_KEY;
     const res = await post({ question: "Will X happen?" });
     expect(res.status).toBe(503);
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
@@ -190,6 +195,7 @@ describe("POST /v1/forecast", () => {
   });
 
   it("validates typed answer specs and options before spending anything", async () => {
+    using _ = noModels();
     expect((await post({ question: "q", answer: { type: "guess" } })).status).toBe(400);
     expect((await post({ question: "q", answer: { type: "choice", options: ["A"] } })).status).toBe(
       400,
@@ -201,7 +207,6 @@ describe("POST /v1/forecast", () => {
     expect((await post({ question: "q", answer: { type: "text" }, critique: "yes" })).status).toBe(
       400,
     );
-    delete process.env.OPENROUTER_API_KEY;
     const res = await post({ question: "q", answer: { type: "choice", options: ["A", "B"] } });
     expect(res.status).toBe(503);
   });

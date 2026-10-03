@@ -33,6 +33,7 @@ import { type AttributionKind, resolveParticipants } from "../engine/benchmark-p
 import { validReplicateGroup } from "../engine/benchmark-replicates";
 import type { Engine } from "../engine/engine";
 import { isLocalUngated } from "../engine/trust-profile";
+import { noteBenchmarkRun } from "../learning/intake";
 import type { BenchmarkTargetKind } from "../persistence/db-benchmarks";
 import { errorJson, json, type PassthruAuthResult } from "./model-api/shared";
 
@@ -202,6 +203,7 @@ export async function handleBenchmarkFile(
     // allow-empty-catch: config_json is always our own JSON; leave it as built
   }
   const saved = db.recordBenchmarkLedgerRun(ledger.run, ledger.items);
+  if (saved.created) noteBenchmarkRun(db, { ...ledger.run, id: saved.id });
   return json(
     {
       runId: saved.id,
