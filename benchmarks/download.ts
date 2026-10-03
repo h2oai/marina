@@ -416,26 +416,52 @@ export function hleGoldTextItems(rows: HLEVerifiedRow[]): DatasetItem[] {
 }
 
 /**
- * HLE-Verified Gold, text-only (`skylenage-ai/HLE-Verified`, arXiv 2602.13964).
- * The dataset is one `train` split of 2,500 audited HLE items; `Verified_Classes`
- * marks the 668-item Gold subset (validated without modification). Image items
- * are dropped. Only the fields the adapter needs are cached (no rationale).
- *
- * Gold rows lead the split, so paging stops at the first page without a Gold
- * row once Gold rows have been seen; a count other than the published 668 Gold
- * rows is reported, not hidden.
+ * The image Gold items of an HLE-Verified page — the complement of
+ * `hleGoldTextItems`. The record's image (a data URL or an http(s) URL) rides
+ * on `metadata.image`; the adapter sends it as an `image_url` part. Pure —
+ * exported for tests.
  */
-export async function downloadHLEVerifiedGold(
-  _dir: string,
-  _limit?: number,
+export function hleGoldImageItems(rows: HLEVerifiedRow[]): DatasetItem[] {
+  const items: DatasetItem[] = [];
+  for (const r of rows) {
+    if (r.Verified_Classes !== "Gold subset") continue;
+    let record: { image?: unknown; answer_type?: unknown } = {};
+    try {
+      record = r.json ? JSON.parse(r.json) : {};
+    } catch {
+      continue; // unreadable record: no image to send
+    }
+    const image = typeof record.image === "string" ? record.image.trim() : "";
+    if (!/^(data:image\/|https?:\/\/)/i.test(image)) continue;
+    const answerType = record.answer_type === "multipleChoice" ? "multipleChoice" : "exactMatch";
+    items.push({
+      id: `hle-${r.id}`,
+      question: String(r.question ?? "").trim(),
+      answer: String(r.answer ?? "").trim(),
+      category: r.category || "unknown",
+      metadata: { answerType, rawSubject: r.raw_subject, image },
+    });
+  }
+  return items;
+}
+
+/**
+ * Page through HLE-Verified's `train` split collecting Gold items with
+ * `select`. Gold rows lead the split, so paging stops at the first page
+ * without a Gold row once Gold rows have been seen; a count other than the
+ * published 668 Gold rows is reported, not hidden.
+ */
+async function downloadHLEGold(
+  name: string,
+  select: (rows: HLEVerifiedRow[]) => DatasetItem[],
+  label: string,
 ): Promise<DatasetItem[]> {
-  const name = "hle-verified-gold";
   const cached = loadCache(name);
   if (cached && cached.length > 0) {
     console.log(`  Using cached ${name} (${cached.length} items)`);
     return cached;
   }
-  console.log("  Downloading HLE-Verified (Gold subset) from HuggingFace...");
+  console.log(`  Downloading HLE-Verified (Gold subset, ${label}) from HuggingFace...`);
   const headers: Record<string, string> = {};
   const token = hfToken();
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -449,7 +475,7 @@ export async function downloadHLEVerifiedGold(
     if (rows.length === 0) break;
     const gold = rows.filter((r) => r.Verified_Classes === "Gold subset").length;
     goldRows += gold;
-    items.push(...hleGoldTextItems(rows));
+    items.push(...select(rows));
     if (gold === 0 && goldRows > 0) break;
   }
   if (goldRows !== HLE_VERIFIED_GOLD_SIZE) {
@@ -459,8 +485,32 @@ export async function downloadHLEVerifiedGold(
   }
   items.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   saveCache(name, items);
-  console.log(`  Downloaded ${items.length} text-only Gold items (of ${goldRows} Gold rows)`);
+  console.log(`  Downloaded ${items.length} ${label} Gold items (of ${goldRows} Gold rows)`);
   return items;
+}
+
+/**
+ * HLE-Verified Gold, text-only (`skylenage-ai/HLE-Verified`, arXiv 2602.13964).
+ * The dataset is one `train` split of 2,500 audited HLE items; `Verified_Classes`
+ * marks the 668-item Gold subset (validated without modification). Image items
+ * are dropped. Only the fields the adapter needs are cached (no rationale).
+ */
+export async function downloadHLEVerifiedGold(
+  _dir: string,
+  _limit?: number,
+): Promise<DatasetItem[]> {
+  return downloadHLEGold("hle-verified-gold", hleGoldTextItems, "text-only");
+}
+
+/**
+ * HLE-Verified Gold, image items only — the multimodal complement of
+ * `downloadHLEVerifiedGold`. Images stay in the gitignored dataset cache.
+ */
+export async function downloadHLEVerifiedGoldImages(
+  _dir: string,
+  _limit?: number,
+): Promise<DatasetItem[]> {
+  return downloadHLEGold("hle-verified-gold-mm", hleGoldImageItems, "image");
 }
 
 /** ARC-Challenge — 1172 grade-school science MC. */

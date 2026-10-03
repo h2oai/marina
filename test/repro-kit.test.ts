@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "bun:test";
 import { blocking, doctor, modelTier, type Probe, subuidWidth } from "../benchmarks/repro/doctor";
-import { budgetRefusal, renderPlan } from "../benchmarks/repro/run";
+import { budgetRefusal, parseDotEnv, renderPlan, withProviderEnv } from "../benchmarks/repro/run";
 import { LEDGER_KEY, resolveModels, SETUPS, setupNamed } from "../benchmarks/repro/setups";
 import type { CommandStep, ReproFlags, ServerStep } from "../benchmarks/repro/types";
 
@@ -139,13 +139,81 @@ describe("plans", () => {
     expect(new Set(servers.map((s) => (s as ServerStep).port)).size).toBe(3);
   });
 
-  it("τ² exports the base URL and key for components that ignore api_base", () => {
+  it("τ² runs the evaluator as shipped, with effort in extra_body and a stated user simulator", () => {
     const plan = setupNamed("tau2")!.plan(flags(), "frontier");
     const run = plan.steps.find(
       (s): s is CommandStep => s.kind === "command" && s.label.includes("τ²"),
     )!;
-    expect(run.env?.OPENAI_BASE_URL).toMatch(/^http:\/\/localhost:\d+\/v1$/);
-    expect(run.env?.OPENAI_API_KEY).toBe(LEDGER_KEY);
+    // Provider keys from .env, no base-URL override: τ²'s own judge reaches OpenAI.
+    expect(run.providerEnv).toBe(true);
+    expect(run.env?.OPENAI_BASE_URL).toBeUndefined();
+    expect(run.env?.OPENAI_API_KEY).toBeUndefined();
+    const arg = (flag: string) => JSON.parse(run.argv[run.argv.indexOf(flag) + 1]!);
+    expect(arg("--agent-llm-args").extra_body).toEqual({ reasoning_effort: "high" });
+    expect(arg("--agent-llm-args").reasoning_effort).toBeUndefined();
+    expect(arg("--user-llm-args").extra_body).toEqual({ reasoning_effort: "low" });
+    expect(run.argv[run.argv.indexOf("--user-llm") + 1]).toBe("openai/openrouter/openai/gpt-5.2");
+    expect(plan.labels).toContain("agent reasoning_effort = high (extra_body)");
+    expect(
+      plan.labels.some((l) => l.startsWith("user simulator = openrouter/openai/gpt-5.2")),
+    ).toBe(true);
+    const convert = plan.steps.filter(
+      (s): s is CommandStep => s.kind === "command" && s.argv.includes("convert"),
+    );
+    expect(convert.length).toBe(2);
+    for (const c of convert) expect(c.argv).toContain("--require-clean");
+  });
+
+  it("τ² --split runs the whole named split, sized for the estimate", () => {
+    const setup = setupNamed("tau2")!;
+    const plan = setup.plan(
+      flags({ domain: "retail", split: "test", effort: "medium", userEffort: "minimal" }),
+      "frontier",
+    );
+    expect(plan.limit).toBe(40);
+    const run = plan.steps.find(
+      (s): s is CommandStep => s.kind === "command" && s.label.includes("τ²"),
+    )!;
+    expect(run.argv).toContain("--task-split-name");
+    expect(run.argv).not.toContain("--num-tasks");
+    const arg = (flag: string) => JSON.parse(run.argv[run.argv.indexOf(flag) + 1]!);
+    expect(arg("--agent-llm-args").extra_body.reasoning_effort).toBe("medium");
+    expect(arg("--user-llm-args").extra_body.reasoning_effort).toBe("minimal");
+    // Each run directory gets its own τ² save name (τ² offers to resume an existing one).
+    expect(run.argv[run.argv.indexOf("--save-to") + 1]).toBe("marina-repro-x-retail-test-single");
+    expect(setup.plan(flags({ split: "test", limit: 5 }), "frontier").limit).toBe(5);
+  });
+
+  it("the doctor requires the key τ²'s own judge reads, reporting it by name only", () => {
+    const only = setupNamed("tau2")!.requires;
+    expect(only).toContain("tau2-evaluator");
+    const missing = doctor(probe(), { runDir: "/runs", only }).checks.find(
+      (c) => c.id === "tau2-evaluator",
+    )!;
+    expect(missing.status).toBe("missing");
+    expect(missing.fix).toContain("OPENAI_API_KEY");
+    const ok = doctor(probe({ env: { OPENAI_API_KEY: "sk-hidden" } }), {
+      runDir: "/runs",
+      only,
+    }).checks.find((c) => c.id === "tau2-evaluator")!;
+    expect(ok.status).toBe("ok");
+    expect(JSON.stringify(ok)).not.toContain("sk-hidden");
+  });
+
+  it("provider env fills keys from .env without overriding, and drops base-URL overrides", () => {
+    const parsed = parseDotEnv(
+      '# c\nexport OPENAI_API_KEY="sk-a"\nOPENROUTER_API_KEY=sk-b\nMARINA_WORLD=x\nBAD LINE\n',
+    );
+    expect(parsed).toEqual({
+      OPENAI_API_KEY: "sk-a",
+      OPENROUTER_API_KEY: "sk-b",
+      MARINA_WORLD: "x",
+    });
+    const env = withProviderEnv(
+      { OPENROUTER_API_KEY: "inherited", OPENAI_BASE_URL: "http://x/v1", OPENAI_API_BASE: "y" },
+      parsed,
+    );
+    expect(env).toEqual({ OPENROUTER_API_KEY: "inherited", OPENAI_API_KEY: "sk-a" });
   });
 
   it("a single local model runs every arm, labelled honestly", () => {

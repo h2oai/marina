@@ -16,10 +16,18 @@
  *   a server request timeout above it;
  * - every replicate of a crew arm is a fresh server (independent draws);
  * - scratch lives under the run directory on disk (`TMPDIR`), never a tmpfs;
- * - τ² reads `OPENAI_BASE_URL` / `OPENAI_API_KEY` for components that ignore `api_base`.
+ * - τ²'s own evaluator (the NL-assertion judge) calls its shipped default model with
+ *   the provider keys from the ENVIRONMENT, ignoring `api_base`: the τ² process gets the
+ *   operator's `.env` provider keys and no base-URL override, or those tasks end as
+ *   infrastructure errors;
+ * - τ² sets LiteLLM `drop_params`, which silently strips a top-level `reasoning_effort`
+ *   for model ids LiteLLM does not know (every Marina-routed id): effort goes in
+ *   `extra_body`, stated for the agent and the user simulator alike;
+ * - a τ² run with any infrastructure error is invalid: `tau2 convert --require-clean`
+ *   writes no ledger file, so nothing is compared or reported from it.
  */
 
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type {
   ArmSpec,
   CommandStep,
@@ -392,6 +400,28 @@ const swebench: Setup = {
 
 // ─── τ²-bench: one model vs marina/verify ────────────────────────────────────
 
+/** τ²'s recommended user simulator (shown on its leaderboard). */
+const TAU2_USER_SIMULATOR = "openrouter/openai/gpt-5.2";
+
+/** Task counts of the τ² splits this kit names, for the cost estimate. */
+const TAU2_SPLIT_SIZES: Record<string, number> = {
+  "airline/test": 20,
+  "retail/test": 40,
+};
+
+/**
+ * LiteLLM args for a Marina-routed τ² model. `reasoning_effort` rides in `extra_body`:
+ * τ² sets `drop_params`, and LiteLLM drops a top-level `reasoning_effort` for ids it
+ * does not recognise, which is every id routed through Marina.
+ */
+export function tau2LlmArgs(apiBase: string, effort: string): string {
+  return JSON.stringify({
+    api_base: apiBase,
+    api_key: LEDGER_KEY,
+    extra_body: { reasoning_effort: effort },
+  });
+}
+
 const tau2: Setup = {
   name: "tau2",
   summary:
@@ -406,12 +436,18 @@ const tau2: Setup = {
       usdPerItem: 0.24,
     },
   ],
-  requires: ["models", "tau2", "tmpdir"],
+  requires: ["models", "tau2", "tau2-evaluator", "tmpdir"],
   plan(flags, tier) {
     const arms = armsOf(this, flags);
-    const limit = flags.limit ?? this.smoke;
-    const m = resolveModels(tier, flags, FRONTIER.value, FRONTIER.value);
     const domain = flags.domain ?? "airline";
+    // A named split without --limit runs the whole split (sized for the estimate).
+    const splitSize = flags.split ? TAU2_SPLIT_SIZES[`${domain}/${flags.split}`] : undefined;
+    const limit = flags.limit ?? splitSize ?? this.smoke;
+    const m = resolveModels(tier, flags, FRONTIER.value, FRONTIER.value);
+    // τ²'s recommended user simulator at the frontier tier; --judge overrides it.
+    if (tier === "frontier" && !flags.judge) m.judge = TAU2_USER_SIMULATOR;
+    const effort = flags.effort ?? "high";
+    const userEffort = flags.userEffort ?? "low";
     const port = BASE_PORT + 50;
     const base = `http://localhost:${port}/v1`;
     const steps: Step[] = [plainServer("tau2", port, flags.budgetUsd)];
@@ -420,51 +456,65 @@ const tau2: Setup = {
         arm.name === "single"
           ? m.answer
           : `marina/verify:${m.answer}${m.checker !== m.answer ? `+${m.checker}` : ""}`;
-      // τ² writes data/simulations/<name>/results.json under its own checkout.
-      const name = `marina-repro-${domain}-${arm.name}`;
+      // τ² writes data/simulations/<name>/results.json under its own checkout and offers
+      // to resume an existing one, so the name carries the run directory's.
+      const name = `marina-repro-${basename(flags.runDir)}-${domain}${flags.split ? `-${flags.split}` : ""}-${arm.name}`;
       const results = `$TAU2_HOME/data/simulations/${name}/results.json`;
       const ledgerFile = join(flags.runDir, "results", `${name}-ledger.json`);
-      const args = JSON.stringify({ api_base: base, api_key: LEDGER_KEY });
+      const agentArgs = tau2LlmArgs(base, effort);
+      const userArgs = tau2LlmArgs(base, userEffort);
       steps.push({
         kind: "command",
-        label: `${arm.name}: τ² ${domain} × ${flags.replicates} trials`,
+        label: `${arm.name}: τ² ${domain}${flags.split ? ` (${flags.split})` : ""} × ${flags.replicates} trials`,
         argv: [
           "$TAU2_HOME/.venv/bin/tau2",
           "run",
           "--domain",
           domain,
+          ...(flags.split ? ["--task-split-name", flags.split] : []),
           "--agent-llm",
           `openai/${agent}`,
           "--agent-llm-args",
-          args,
+          agentArgs,
           "--user-llm",
           `openai/${m.judge}`,
           "--user-llm-args",
-          args,
+          userArgs,
           "--num-trials",
           String(flags.replicates),
-          "--num-tasks",
-          String(limit),
+          ...(flags.limit !== undefined || !splitSize ? ["--num-tasks", String(limit)] : []),
           "--max-concurrency",
           "4",
           "--save-to",
           name,
         ],
         cwd: "$TAU2_HOME",
-        // Some τ² components ignore api_base; point them at Marina too.
-        env: { OPENAI_BASE_URL: base, OPENAI_API_KEY: LEDGER_KEY },
+        providerEnv: true,
         needs: ["tau2"],
       });
       steps.push({
         kind: "command",
-        label: `${arm.name}: convert for the ledger`,
-        argv: ["bun", "scripts/tau2.ts", "convert", results, "--out", ledgerFile],
+        label: `${arm.name}: convert for the ledger (refused on infrastructure errors)`,
+        argv: [
+          "bun",
+          "scripts/tau2.ts",
+          "convert",
+          results,
+          "--out",
+          ledgerFile,
+          "--require-clean",
+        ],
       });
       steps.push(importStep(flags, ledgerFile, "model", agent, `tau2-${domain}-${arm.name}`));
     }
     steps.push({ kind: "stop", id: "tau2" });
     steps.push(...comparisons(`tau2-${domain}`, `tau2-${domain}`, arms));
-    const labels = [...m.labels, `user simulator = ${m.judge}`];
+    const labels = [
+      ...m.labels,
+      `agent reasoning_effort = ${effort} (extra_body)`,
+      `user simulator = ${m.judge} (reasoning_effort = ${userEffort}, extra_body)`,
+      "evaluator = τ² as shipped, with the operator's provider keys",
+    ];
     return finish(this, flags, tier, arms, limit, labels, steps);
   },
 };
