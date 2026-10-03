@@ -183,3 +183,12 @@ Trajectory-level truth (a violated run whose harmful call is not identified) is 
 ## Status
 
 Spike (2026-09-24): wire format, both backends, the three policies, the pi tool gate, `/v1/decisions`, events and readiness. Followed by spawn-time routing and the route table, the task-submission verifier, owner approvals for `ask`, TypeSafe compatibility (`/v1/systemone`, `typesafe` preset), gate authorization context, calibration-aware thresholds, and the Admin → Ops → Decisions view. A qualification harness (`qualify:decisions`) compares backends on labeled cases before any default is recommended.
+
+## Lesson judging (`src/learning/outcomes.ts`)
+
+The outcome-learning loop asks the harness backend (`harnessDecisionProvider`) four `noul` questions about each candidate lesson (`LESSON_JUDGE_QUESTIONS`): grounded, general, leak_free, consistent.
+- **Calibrated backend:** bars of 0.6, 0.55, 0.7 and 0.5.
+- **No backend configured:** a chat-classifier on the operator's own model through this Marina's `/v1` (`MARINA_LESSONS_JUDGE_MODEL`, default `marina/default`). It's uncalibrated, so it gets one cut at 0.5, and every lesson it passes carries the judge label `… (uncalibrated)`.
+- **Outage:** it never promotes; the lesson stays `unverified`.
+- **Leak checks:** a mechanical leak (the lesson quotes the case text) is rejected before any judge is asked.
+- **Request content:** the request carries the outcome's general fields and the candidate, never the case text.

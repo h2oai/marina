@@ -7,8 +7,10 @@
  * its agent and user models pointed at a Marina `/v1`; this module only reads
  * the official `results.json` it writes.
  *
- * Each (task, trial) simulation becomes one ledger item `<task>#<trial>`:
- * correct when the official reward is 1, score = the reward. Conversation text,
+ * Each scored (task, trial) simulation becomes one ledger item `<task>#<trial>`:
+ * correct when the official reward is 1, score = the reward. Simulations that
+ * ended in an infrastructure error are excluded, as τ²'s own metrics do, and
+ * counted in `config.infrastructureErrors`. Conversation text,
  * task instructions and simulator prompts are never copied — ids and outcomes
  * only, like every ledger import.
  */
@@ -37,16 +39,39 @@ export interface Tau2Results {
   }>;
 }
 
+/** τ²'s termination reason for a simulation that never ran (auth, network, provider). */
+export const INFRASTRUCTURE_ERROR = "infrastructure_error";
+
+type Simulation = NonNullable<Tau2Results["simulations"]>[number];
+
+/**
+ * Whether a simulation counts toward the score. τ²'s own metrics drop
+ * infrastructure errors before computing reward and pass^k
+ * (`tau2/metrics/agent_metrics.py`); counting them as failures understates
+ * every arm by the error rate.
+ */
+export function isScored(s: Simulation): boolean {
+  return s.termination_reason !== INFRASTRUCTURE_ERROR;
+}
+
+/** Simulations that never ran; report them, never score them. */
+export function infrastructureErrors(results: Tau2Results): number {
+  return (results.simulations ?? []).filter((s) => !isScored(s)).length;
+}
+
 /** Strip LiteLLM's `openai/` routing prefix so the ledger names the model Marina served. */
 export function servedModel(llm: string | undefined): string {
   if (!llm) return "unknown";
   return llm.startsWith("openai/") ? llm.slice("openai/".length) : llm;
 }
 
-/** pass^k: mean over tasks of C(c, k) / C(n, k) (c successes in n trials), as τ² defines it. */
+/**
+ * pass^k: mean over tasks of C(c, k) / C(n, k) (c successes in n trials), as τ²
+ * defines it, over scored simulations only (infrastructure errors excluded).
+ */
 export function passHatK(results: Tau2Results, k: number): number | undefined {
   const byTask = new Map<string, { n: number; c: number }>();
-  for (const s of results.simulations ?? []) {
+  for (const s of (results.simulations ?? []).filter(isScored)) {
     const id = String(s.task_id);
     const t = byTask.get(id) ?? { n: 0, c: 0 };
     t.n += 1;
@@ -73,7 +98,7 @@ export function tau2ToHarness(
   opts: { benchmark?: string } = {},
 ): HarnessResultFile {
   const domain = results.info?.environment_info?.domain_name ?? "unknown";
-  const sims = results.simulations ?? [];
+  const sims = (results.simulations ?? []).filter(isScored);
   const items = sims.map((s) => {
     const reward = s.reward_info?.reward ?? 0;
     const cost = (s.agent_cost ?? 0) + (s.user_cost ?? 0);
@@ -96,6 +121,7 @@ export function tau2ToHarness(
       },
       tau2Commit: results.info?.git_commit,
       trials: results.info?.num_trials,
+      infrastructureErrors: infrastructureErrors(results),
     },
     timestamp: results.timestamp ? Date.parse(results.timestamp) || Date.now() : Date.now(),
     duration_ms: Math.round(totalMs),

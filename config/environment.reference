@@ -800,6 +800,18 @@
 # MARINA_MEMORY_EMBEDDING_MODEL=
 # MARINA_MEMORY_EMBEDDING_REVISION=
 
+# Outcome learning (src/learning/): every verdict — a benchmark run scored, a forecast resolved, a Code Mode verification, an arena round — becomes a candidate lesson that the decision layer judges (grounded, general, leak-free, consistent); passing lessons are served by recall in pools `lessons:<domain>`, rejected ones stay as audit records. `on` (default) learns and injects; `observe` learns and records what recall WOULD inject without injecting (the ablation arm); `off` neither learns nor recalls. A lesson is never visible to work whose cutoff precedes the outcome it came from.
+# MARINA_LESSONS=on
+
+# Model that writes a lesson's rule. `marina/default` (default) asks this Marina's own /v1, i.e. whatever model the operator runs, local included; a provider/model id uses that vendor (falling back to marina/default when its key is missing); `none` keeps mechanical lessons only. No vendor key is ever required.
+# MARINA_LESSONS_WRITER=marina/default
+
+# The judge when no decision backend is configured: a chat-classifier on this model through this Marina's /v1, uncalibrated (one cut at 0.5) and labelled as such on every lesson it passes. With no model reachable, lessons are recorded unverified and never promoted.
+# MARINA_LESSONS_JUDGE_MODEL=marina/default
+
+# Outcomes processed per hour (writer + judge calls are bounded by it); excess outcomes are dropped and counted.
+# MARINA_LESSONS_MAX_PER_HOUR=120
+
 # ── Passthru and prompt caching ──────────────────────────────────────────────
 
 # Comma-separated pool names shared with passthru (external OpenAI-SDK) callers. Empty shares none.

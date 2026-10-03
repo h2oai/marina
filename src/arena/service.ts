@@ -651,7 +651,20 @@ export async function learnFromResolutions(
     const body = JSON.parse(row.body) as { topline?: { mean: number; sd: number } };
     const round = await deps.data.round(row.round_id);
     if (!body.topline || !round) continue;
-    learn(store, round, await deps.data.lock(row.round_id), body.topline, value);
+    const summary = learn(store, round, await deps.data.lock(row.round_id), body.topline, value);
+    if (summary) {
+      const { noteOutcome } = await import("../learning/service");
+      noteOutcome(store, {
+        domain: "arena",
+        source: `arena:${round.tracker ?? "round"}`,
+        succeeded: summary.beat,
+        score: Math.max(0, Math.min(1, (summary.skill + 1) / 2)),
+        resolvedAt: new Date().toISOString(),
+        attempted: `${round.tracker ?? "tracker"} topline forecast against persistence`,
+        detail: `skill ${summary.skill.toFixed(2)} vs persistence; ${summary.lean}`,
+        refs: [`arena:${row.round_id}`],
+      });
+    }
     known.add(row.round_id);
     written++;
   }

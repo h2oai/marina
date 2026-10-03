@@ -20,6 +20,7 @@ import { recordScoreOutcome } from "../coordination/score-outcome";
 import { loadScore } from "../coordination/score-store";
 import { positionSettlementFinder } from "../engine/commands/position";
 import { Logger } from "../engine/logger";
+import { noteOutcome } from "../learning/service";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent, EntityId, RoomId } from "../types";
 import type { Sample } from "./types";
@@ -382,6 +383,18 @@ export const forecastQuestionFinder: CalibrationFinder = {
           brier,
           sample.ts,
         );
+        if (brier !== null)
+          noteOutcome(db, {
+            domain: "forecast",
+            source: "forecast:probability",
+            succeeded: (f.probability ?? 0) >= 0.5 === (outcome === "yes"),
+            score: 1 - brier,
+            resolvedAt: new Date(sample.ts).toISOString(),
+            attempted: "probability forecast of a yes/no question",
+            detail: `brier ${brier.toFixed(3)} (said ${Math.round((f.probability ?? 0) * 100)}%)`,
+            refs: [`forecast:${f.id}`, `sample:${sample.id}`],
+            privateContext: f.question,
+          });
       } else if (f.kind === "number") {
         if (actual === undefined) continue;
         const crps = f.mean === null || f.sd === null ? null : crpsNormal(f.mean, f.sd, actual);
@@ -399,6 +412,17 @@ export const forecastQuestionFinder: CalibrationFinder = {
           crps,
           sample.ts,
         );
+        if (crps !== null && f.mean !== null)
+          noteOutcome(db, {
+            domain: "forecast",
+            source: "forecast:number",
+            succeeded: within80 === true,
+            resolvedAt: new Date(sample.ts).toISOString(),
+            attempted: "numeric forecast with an uncertainty band",
+            detail: `${within80 ? "inside" : "outside"} the 80% band; error ${actual === 0 ? "n/a" : `${(((f.mean - actual) / Math.abs(actual)) * 100).toFixed(1)}%`}`,
+            refs: [`forecast:${f.id}`, `sample:${sample.id}`],
+            privateContext: f.question,
+          });
       }
     }
   },
