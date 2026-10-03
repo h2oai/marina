@@ -4663,8 +4663,10 @@ Effect: unknown.
 
 Recall lessons Marina learned from past outcomes (benchmark runs, resolved forecasts, code verifications, arena rounds), trusted first.
 Usage: lessons <topic> [domain:<forecast|code|tools|benchmark|arena>]
+       lessons retire <id> reason:<text> [domain:<forecast|code|tools|benchmark|arena>] | lessons retire source:<s>|match:<text> [domain:<d>] [confirm:yes] reason:<text>
+       lessons supersede <id> reason:<text> -- <replacement lesson>
 
-Every verdict becomes a candidate lesson; the decision layer judges it and only passing (trusted) or unjudged (unverified, labelled) lessons are served. Read-only.
+Every verdict becomes a candidate lesson; the decision layer judges it and only passing (trusted) or unjudged (unverified, labelled) lessons are served. A wrong lesson is retired, never erased: retire/supersede close its validity (recall stops serving it; its history stays readable) and need role.edit — a lesson steers every agent it is recalled for. Criteria retirements preview until confirm:yes.
 
 Category: Knowledge. Minimum rank: 0.
 Aliases: none.
@@ -4681,6 +4683,43 @@ Effect: unknown.
 
 - `field-0` (`topic`): text, required.
 - `field-1` (`domain`): text, required, choices `forecast`, `code`, `tools`, `benchmark`, `arena`.
+
+### `lessons retire <id> reason:<text>`
+
+Effect: unknown.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`reason`): text, required.
+
+### `lessons retire source:<source> [domain:<d>] [confirm:yes] reason:<text>`
+
+Effect: unknown.
+
+- `field-0` (`source`): text, required.
+- `field-1` (`domain`): text, optional group `option-0`.
+- `field-2` (`confirm`): text, optional group `option-1`.
+- `field-3` (`reason`): text, required.
+- Group `option-0`: `domain:d`.
+- Group `option-1`: `confirm:yes`.
+
+### `lessons retire match:<text> [domain:<d>] [confirm:yes] reason:<text>`
+
+Effect: unknown.
+
+- `field-0` (`match`): text, required.
+- `field-1` (`domain`): text, optional group `option-0`.
+- `field-2` (`confirm`): text, optional group `option-1`.
+- `field-3` (`reason`): text, required.
+- Group `option-0`: `domain:d`.
+- Group `option-1`: `confirm:yes`.
+
+### `lessons supersede <id> reason:<text> -- <replacement lesson>`
+
+Effect: unknown.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`reason`): text, required.
+- `field-2` (`replacement lesson`): text, required.
 
 ## link
 
