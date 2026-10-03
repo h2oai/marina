@@ -41,6 +41,7 @@ import {
   tierIds,
 } from "./fixtures/unified-memory-fixture";
 import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 const TEST_DB = "test_unified_context.db";
 
@@ -478,6 +479,52 @@ describe("relevance gate and validity filter (HISTORY §8: recall pollution)", (
     expect(servableRecord({ valid_time: { from: 0, until: Date.now() - 1 } })).toBe(false);
     expect(servableRecord({ valid_time: { from: 0, until: null } })).toBe(true);
     expect(servableRecord({})).toBe(true);
+  });
+
+  it("retired records neither appear as evidence nor crowd out a live record", async () => {
+    // 120 memory operations in one burst: past the per-principal request budget.
+    using _state = scopeProcessState({ rateLimitBypass: true });
+    const fx = await seedUnifiedFixture(engine, db);
+    const op = (request: Parameters<typeof residentMemoryOperation>[2]) =>
+      residentMemoryOperation(db, fx.owner, request);
+    const retired: string[] = [];
+    for (let i = 0; i < 40; i++) {
+      const r = (
+        await op({
+          operation: "remember",
+          key: `tomb-${i}`,
+          input: { content: `Amber deployment relay colour colour relay amber variant ${i}` },
+        })
+      ).result as { id: string; version: number };
+      const cur = (await op({ operation: "get", id: r.id })).result as {
+        version: number;
+        content: string;
+        metadata: Record<string, unknown>;
+      };
+      await op({
+        operation: "revise",
+        id: r.id,
+        key: `tomb-${i}-retire`,
+        input: {
+          expected_version: cur.version,
+          content: cur.content,
+          metadata: { ...cur.metadata, retired_reason: "test" },
+          valid_time: { from: null, until: Date.now() - 1 },
+        },
+      });
+      retired.push(r.id);
+    }
+    const live = (
+      await op({
+        operation: "remember",
+        key: "live-relay",
+        input: { content: "Amber deployment relay colour is teal since the October repaint" },
+      })
+    ).result as { id: string };
+    const result = await buildUnifiedContext(db, fx.owner, "Amber deployment relay colour");
+    const evidence = result.tiers.find((t) => t.tier === "evidence")!.items.map((i) => i.id);
+    expect(evidence).toContain(live.id);
+    expect(evidence.some((id) => retired.includes(id))).toBe(false);
   });
 
   it("the header tells the model how to use the block instead of asserting relevance", () => {

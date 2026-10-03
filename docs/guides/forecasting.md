@@ -96,7 +96,9 @@ over 6.0%`, …) and one corrective rule — written only after the outcome is k
 service. Recall is lexical and byte-budgeted, and a lesson is visible to a forecast only when its
 outcome was known at that forecast's evidence cutoff (`visibleAt`) — so a forecast made "as of"
 September never sees a lesson learned from an October result. The lessons used are recorded on
-the answer (`lessons`), and the plan, the runs and the critic all see them.
+the answer (`lessons`), and the plan, the runs and the critic all see them. A lesson retired by a
+`revise` that closes its `valid_time` (history kept) is never recalled; the memory service's
+`search` excludes it before ranking, so retired lessons don't crowd out live ones.
 
 **Retrieval isolation** (for past cutoffs). Date-filtered engines (`tavily:`, `exa:` with
 `EXA_API_KEY`) only return pages published inside the window. Any other engine can be wrapped with

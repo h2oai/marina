@@ -109,7 +109,8 @@ export function planSteps(value: unknown): MemoryPlanStep[] {
         "include_stale",
       ],
       join: ["patterns", "select", "valid_at", "limit"],
-      search: ["query", "mode", "subject", "limit", "include_stale", "expansion"],
+      // `valid_at` (valid time) is plannable; `include_ended` (the history read) is not.
+      search: ["query", "mode", "subject", "limit", "include_stale", "expansion", "valid_at"],
       source_search: ["query", "match", "session_id", "limit", "expansion"],
     };
     const allowed =
@@ -160,6 +161,8 @@ export function planSteps(value: unknown): MemoryPlanStep[] {
           throw new MemoryError(400, "invalid_plan", "Invalid retrieval mode");
         output.mode = input.mode ?? "lexical";
         if (input.subject !== undefined) output.subject = textValue(input.subject, "subject", 256);
+        if (input.valid_at !== undefined)
+          output.valid_at = integer(input.valid_at, "valid_at", 0, Number.MAX_SAFE_INTEGER);
       } else {
         output.match = input.match ?? "all";
         if (typeof output.match !== "string" || !["all", "any", "phrase"].includes(output.match))

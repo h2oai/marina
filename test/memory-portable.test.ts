@@ -214,7 +214,8 @@ it("expands model text discovery across both stores but rejects unsupported sema
   expect(explicit.steps).toHaveLength(1);
   for (const invalid of [
     [{ operation: "forget", input: {} }],
-    [{ operation: "search", input: { query: "modelneedle", valid_at: 150 } }],
+    // Search takes a valid time, but the history read is never part of a plan.
+    [{ operation: "search", input: { query: "modelneedle", include_ended: true } }],
     [{ operation: "search", input: { query: "modelneedle", mode: ["lexical"] } }],
   ]) {
     steps = invalid;

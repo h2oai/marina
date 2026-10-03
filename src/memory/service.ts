@@ -5,7 +5,7 @@ import { tryLog, tryLogAsync } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import type { MarinaDB } from "../persistence/database";
 import { applyReputationRerank } from "../persistence/db-memory-ranking";
-import type { MemoryRepository } from "../persistence/db-memory-service";
+import { type MemoryRepository, memoryValidityFilter } from "../persistence/db-memory-service";
 import type { MemoryActor } from "../persistence/db-principals";
 import { withMemoryAbort } from "../sdk/memory-abort";
 import type {
@@ -380,6 +380,10 @@ export class MemoryService {
   ): Promise<MemorySearchResult> {
     signal?.throwIfAborted();
     this.repository.authorize(actor, space);
+    // One instant judges "ended" for every candidate list of this search;
+    // validated before any network await (the embedding call).
+    const filter = { ...input, now: Date.now() };
+    memoryValidityFilter(filter);
     const mode = input.mode ?? "lexical";
     const expansion = memoryQueryExpansion(input.query, input.expansion);
     const degraded: string[] = [];
@@ -403,9 +407,9 @@ export class MemoryService {
     // network await; neither permission nor a revision is frozen across it.
     return this.repository.readSnapshot(() => {
       const current = this.repository.authorize(actor, space);
-      const lexical = this.repository.lexical(actor, space, input.query, input);
+      const lexical = this.repository.lexical(actor, space, input.query, filter);
       const alternatives =
-        expansion?.queries.map((query) => this.repository.lexical(actor, space, query, input)) ??
+        expansion?.queries.map((query) => this.repository.lexical(actor, space, query, filter)) ??
         [];
       let semantic: string[] = [];
       let coverage: { scored: number; missing: number; invalid: number } | undefined;
@@ -415,7 +419,7 @@ export class MemoryService {
           space,
           this.embeddings.id,
           queryVector,
-          input,
+          filter,
         );
         semantic = ranked.ids;
         coverage = { scored: ranked.scored, missing: ranked.missing, invalid: ranked.invalid };

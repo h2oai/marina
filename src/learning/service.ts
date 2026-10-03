@@ -37,6 +37,7 @@ import { modelComplete } from "../arena/model-backend";
 import { harnessDecisionProvider } from "../decisions/engines";
 import { chatClassifierProvider } from "../decisions/providers";
 import type { DecisionProvider } from "../decisions/types";
+import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import { recordSpend } from "../engine/spend-ledger";
 import { residentMemoryOperation } from "../memory/resident-service";
@@ -45,6 +46,8 @@ import type { MemoryOperationRequest } from "../sdk/memory-operations";
 import {
   formatLesson,
   type Lesson,
+  type LessonRetirement,
+  type LessonSelector,
   type LessonSink,
   type LessonWriter,
   type Outcome,
@@ -416,6 +419,101 @@ export async function recallAcross(
     },
   );
   return { inject: mode === "on" ? recalled : [], recalled, mode };
+}
+
+// ─── Curation: retire and supersede ─────────────────────────────────────────
+//
+// A wrong or harmful lesson is retired, never erased: the record gets a new
+// version with validity closed and `retired_reason` / `retired_at` /
+// `retired_by` (+ `superseded_by`) in metadata, written through the memory
+// service's audited `revise` (a `memory.revised` event and receipt per
+// change). Recall never serves it again; `get` with a version reads every
+// earlier version. Callers gate it (`lessons retire|supersede` checks
+// `role.edit`: a lesson steers every agent it is recalled for).
+
+/** The sink curation acts on: the armed one, else the durable sink over `db`. */
+function curationSink(db: MarinaDB, sink?: LessonSink): LessonSink {
+  return sink ?? armed.get(db)?.sink ?? lessonSinkFor(db);
+}
+
+/** Current lessons matching `selector` across `domains` (any trust), capped at `limit`. */
+export async function findLessons(
+  db: MarinaDB,
+  domains: readonly OutcomeDomain[],
+  selector: LessonSelector,
+  opts: { limit?: number; sink?: LessonSink } = {},
+): Promise<Lesson[]> {
+  const sink = curationSink(db, opts.sink);
+  if (!sink.find) throw new Error("this lesson store cannot list lessons");
+  const limit = opts.limit ?? 200;
+  const out: Lesson[] = [];
+  for (const domain of domains) {
+    if (out.length >= limit) break;
+    out.push(...(await sink.find(domain, selector, limit - out.length)));
+  }
+  return out;
+}
+
+export interface RetireResult {
+  retired: Lesson[];
+  failed: Array<{ lesson: Lesson; error: string }>;
+}
+
+/** Retire each given lesson (from `findLessons`). Per-lesson failures are reported, not thrown. */
+export async function retireLessons(
+  db: MarinaDB,
+  lessons: readonly Lesson[],
+  retirement: LessonRetirement,
+  opts: { sink?: LessonSink } = {},
+): Promise<RetireResult> {
+  const sink = curationSink(db, opts.sink);
+  if (!sink.retire) throw new Error("this lesson store cannot retire lessons");
+  const result: RetireResult = { retired: [], failed: [] };
+  for (const lesson of lessons) {
+    if (!lesson.id) {
+      result.failed.push({ lesson, error: "no id" });
+      continue;
+    }
+    try {
+      await sink.retire(lesson.domain, lesson.id, retirement);
+      result.retired.push(lesson);
+    } catch (err) {
+      result.failed.push({ lesson, error: getErrorMessage(err) });
+    }
+  }
+  return result;
+}
+
+/**
+ * Replace one lesson's text: write the replacement (same domain, kind,
+ * category and `resolvedAt`, so the leakage rule is unchanged; labelled
+ * `unverified` — curated text was not judged; `source` = `supersede:<old id>`)
+ * and retire the original with `superseded_by` pointing at it.
+ */
+export async function supersedeLesson(
+  db: MarinaDB,
+  old: Lesson,
+  text: string,
+  retirement: Omit<LessonRetirement, "supersededBy">,
+  opts: { sink?: LessonSink } = {},
+): Promise<Lesson> {
+  const sink = curationSink(db, opts.sink);
+  if (!sink.retire) throw new Error("this lesson store cannot retire lessons");
+  if (!old.id) throw new Error("the lesson has no id");
+  const replacement: Lesson = {
+    domain: old.domain,
+    text,
+    kind: old.kind,
+    ...(old.category ? { category: old.category } : {}),
+    trust: "unverified",
+    resolvedAt: old.resolvedAt,
+    source: `supersede:${old.id}`,
+    refs: [old.id, ...(old.refs ?? [])],
+  };
+  const { id } = await sink.write(replacement);
+  if (!id) throw new Error("the replacement lesson was not stored");
+  await sink.retire(old.domain, old.id, { ...retirement, supersededBy: id });
+  return { ...replacement, id };
 }
 
 /** A prompt block for injected lessons, or "" when none. */

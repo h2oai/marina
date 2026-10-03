@@ -562,9 +562,10 @@ async function fetchDurable(
     out.items.evidence!.push(
       ...result.results
         .filter((record) => !jobArtifacts.has(record.id) && !representedRecords.has(record.id))
-        // Lexical `search` is not validity-filtered: a record whose interval a
-        // `resolve` closed (a superseded loser) or a historical version is
-        // still reachable by keyword. Never serve it as evidence.
+        // `search` already excludes records whose validity ended (a `resolve`
+        // loser, a tombstone `revise`) before ranking, so they take no slot.
+        // `servableRecord` stays as the evidence guard: it also drops a
+        // historical version and holds over any other search backend.
         .filter((record) => servableRecord(record, now))
         .filter((record) => relevantToQuery(record.content, terms, distinctive))
         .slice(0, limits.records)

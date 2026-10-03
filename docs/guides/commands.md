@@ -191,6 +191,7 @@ invent outcomes; mutations do not bypass subsystem activation or safety boundari
 - **Judging:** the decision layer (or the operator's own model, uncalibrated) judges each candidate.
 - **What recall returns:** passing lessons come first, then unjudged ones labelled `(unverified)`. Rejected candidates are never served.
 - **Leakage rule:** a lesson is never visible to work whose cutoff precedes its outcome.
+- **Retiring a wrong lesson:** `lessons retire <id> reason:<text>` (the id or its 8-character prefix, as listed) or `lessons retire source:<s>|match:<text> [domain:<d>] [confirm:yes] reason:<text>` (criteria preview the matches until `confirm:yes`). `lessons supersede <id> reason:<text> -- <replacement>` writes a corrected lesson (labelled `unverified`) and retires the original. Both need `role.edit`. Nothing is erased: recall stops serving the lesson and its history stays readable.
 
 The same lessons also reach the people and agents doing the work:
 - the forecaster;

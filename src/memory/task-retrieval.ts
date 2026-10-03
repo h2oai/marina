@@ -51,7 +51,9 @@ export async function retrieveMemory(
       step.input.expansion = body.expansion;
     if (step.operation === "search" && step.input.mode !== "lexical")
       throw new MemoryError(400, "invalid_plan", "Retrieval requires lexical search");
-    if (["query", "graph", "join"].includes(step.operation)) {
+    // `search` takes the same instant, so records invalid at `valid_at` are
+    // excluded before ranking instead of consuming slots and being dropped below.
+    if (["query", "graph", "join", "search"].includes(step.operation)) {
       if (step.input.valid_at !== undefined && step.input.valid_at !== validAt)
         throw new MemoryError(400, "invalid_plan", "Use retrieval valid_at for all steps");
       step.input.valid_at = validAt;
