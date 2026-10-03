@@ -15,7 +15,13 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { passHatK, servedModel, type Tau2Results, tau2ToHarness } from "../benchmarks/tau2/convert";
+import {
+  isScored,
+  passHatK,
+  servedModel,
+  type Tau2Results,
+  tau2ToHarness,
+} from "../benchmarks/tau2/convert";
 
 const { positionals, values } = parseArgs({
   args: process.argv.slice(2),
@@ -32,12 +38,18 @@ if (!cmd || !file || (cmd !== "summary" && cmd !== "convert")) {
 const results = JSON.parse(readFileSync(file, "utf8")) as Tau2Results;
 if (cmd === "summary") {
   const trials = results.info?.num_trials ?? 1;
-  const sims = results.simulations ?? [];
+  const all = results.simulations ?? [];
+  const sims = all.filter(isScored);
+  const errors = all.length - sims.length;
   const reward =
     sims.reduce((t, s) => t + (s.reward_info?.reward ?? 0), 0) / Math.max(1, sims.length);
   console.log(
-    `${results.info?.environment_info?.domain_name ?? "?"} · agent ${servedModel(results.info?.agent_info?.llm)} · user ${servedModel(results.info?.user_info?.llm)} · ${sims.length} simulations`,
+    `${results.info?.environment_info?.domain_name ?? "?"} · agent ${servedModel(results.info?.agent_info?.llm)} · user ${servedModel(results.info?.user_info?.llm)} · ${sims.length} scored simulations`,
   );
+  if (errors > 0)
+    console.log(
+      `${errors} infrastructure error(s) excluded, as τ²'s metrics do — fix the cause before comparing runs`,
+    );
   console.log(`mean reward ${reward.toFixed(3)}`);
   for (let k = 1; k <= trials; k++)
     console.log(`pass^${k} ${passHatK(results, k)?.toFixed(3) ?? "n/a"}`);
