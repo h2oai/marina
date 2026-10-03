@@ -75,6 +75,13 @@ const videoGenerateSchema = Type.Object({
   ),
 });
 
+const lookSchema = Type.Object({
+  source: Type.String({
+    description: "Canvas node id, asset id, or http(s) URL of an image, PDF, video or text",
+  }),
+  question: Type.Optional(Type.String({ description: "What to look for or answer" })),
+});
+
 function sanitizePrompt(prompt: string): string {
   return prompt.replace(/\s+/g, " ").trim();
 }
@@ -122,6 +129,20 @@ export function createMediaTools(ctx: ToolContext): AgentTool[] {
         if (p.aspect) command += ` --aspect ${p.aspect}`;
         if (p.canvas) command += ` --canvas ${p.canvas}`;
         return execCommand(ctx, command, signal);
+      },
+    },
+    {
+      name: "marina_see",
+      label: "See",
+      description:
+        "See an image, PDF page, video keyframes or text on the canvas (or at a URL) and answer a question about it; canvas results are written back as a linked node.",
+      parameters: lookSchema,
+      execute: async (_id: string, params: unknown, signal?: AbortSignal) => {
+        const p = params as Static<typeof lookSchema>;
+        const source = p.source.trim();
+        if (!source || /\s/.test(source)) throw new Error("source must be one id or URL.");
+        const question = sanitizePrompt(p.question ?? "");
+        return execCommand(ctx, `canvas look ${source}${question ? ` ${question}` : ""}`, signal);
       },
     },
   ];
