@@ -5,6 +5,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
+import { fallbackInvalidReason } from "../src/engine/benchmark-ledger";
 import { loadSmoke, runChecks } from "./adapters/checks";
 import { runCodeGen } from "./adapters/code-gen";
 import { runFreeForm } from "./adapters/free-form";
@@ -829,6 +830,11 @@ Options:
       items: resultItems,
     };
 
+    // A run that mostly errored measured the infrastructure (spend cap, outage),
+    // not the target: the ledger records it invalid (MARINA_BENCHMARK_MAX_FALLBACK_RATE).
+    const invalid = fallbackInvalidReason(resultItems.length, errors);
+    if (invalid) console.log(`\n  WARNING: ${invalid} — the ledger records this run invalid.`);
+
     // Save and print
     replicateResults.push(result);
     const resultPath = saveResult(result, replicates > 1 ? { rep, total: replicates } : undefined);
@@ -859,6 +865,9 @@ Options:
         console.log(
           `  Ledger: ${filed.created === false ? "already filed as" : "filed"} ${filed.runId} @ ${fileTo} (participants: ${attrib})${filed.replicateGroup ? ` group ${filed.replicateGroup}` : ""}`,
         );
+        if (filed.runStatus === "invalid") {
+          console.log(`  Ledger: recorded INVALID — ${filed.invalidReason ?? "no reason given"}`);
+        }
       } else {
         console.log(`  Ledger: filing failed (${filed.status}): ${filed.error}`);
       }

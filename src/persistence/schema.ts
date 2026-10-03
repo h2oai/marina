@@ -394,6 +394,29 @@ CREATE TRIGGER external_submissions_no_update BEFORE UPDATE ON external_submissi
 BEGIN SELECT RAISE(ABORT, 'external_submissions is append-only'); END;
 `,
   },
+  // Benchmark run validity (src/engine/commands/benchmark.ts `invalidate` /
+  // `revalidate`, the import script's operator path, and the automatic
+  // fallback-rate check): a run that measured the infrastructure rather than
+  // the target is retired by status `invalid` — every ledger reader ranks only
+  // `completed` runs — and every change is an append-only audit row. Item
+  // rows are never deleted.
+  {
+    version: 153,
+    sql: `
+CREATE TABLE benchmark_run_validity (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL,
+  action TEXT NOT NULL CHECK (action IN ('invalidate', 'revalidate')),
+  reason TEXT NOT NULL,
+  actor TEXT,
+  source TEXT NOT NULL CHECK (source IN ('in-world', 'operator', 'auto')),
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_benchmark_run_validity_run ON benchmark_run_validity(run_id, id);
+CREATE TRIGGER benchmark_run_validity_no_update BEFORE UPDATE ON benchmark_run_validity
+BEGIN SELECT RAISE(ABORT, 'benchmark_run_validity is append-only'); END;
+`,
+  },
 ];
 
 /** Migration 143 body — self-contained so later edits to db-notes never change it. */

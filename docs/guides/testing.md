@@ -490,6 +490,12 @@ single comparison's p-value moves with them. Don't draw a conclusion from one ru
   `MARINA_PROMOTION_MIN_REPLICATES` replicates (default 2) before reading the holdout.
 - **Regrouping:** recorded runs can be put into one group with
   `bun run benchmark:import --regroup <ids> --group <key>`.
+- **Invalid runs:** a replicate that measured the infrastructure (spend cap, outage) is
+  retired, never deleted: `benchmark invalidate <run> reason:<text>` (role.edit) or
+  `bun run benchmark:import --invalidate <run> --reason "<why>"`. It then drops out of its
+  group's pooling. The harness records a run invalid automatically when more than
+  `MARINA_BENCHMARK_MAX_FALLBACK_RATE` (default 0.25) of its items errored; its summary
+  prints a warning, and the filing reply says so.
 
 Method: [persistence.md → Replicate groups](../architecture/persistence.md#replicate-groups-migration-148).
 

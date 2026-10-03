@@ -145,6 +145,10 @@ and numbers stay mechanical, and both overalls are reported.
 per batch week compared with `--reference <file.json>` (week → `top`, `median`, `h2o`, entered by
 hand; the website is never scraped). `--replicates N` repeats a run. Every run is filed into the
 benchmark ledger under a replicate group, `futurex-clean:<variant>:<isolation>:lessons-<on|off>`.
+A run in which more than `MARINA_BENCHMARK_MAX_FALLBACK_RATE` (default 25 %) of the rows got a
+fallback instead of an answer is recorded `invalid` and drops out of pooling and comparison; retire
+or restore a run by hand with `benchmark invalidate|revalidate <run> reason:<text>` or
+`bun run benchmark:import --invalidate <run> --reason "<why>"`.
 
 ## Backtests without `--clean` are smoke tests
 

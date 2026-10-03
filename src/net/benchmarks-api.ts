@@ -14,7 +14,11 @@
  * item; an unpriced item is charged the cost its exclusive participants
  * reported. Only item ids and outcomes are stored — no question, answer or
  * response text, whatever the body carries. Re-filing the same document is a
- * no-op (content hash). `replicateGroup` puts the run into a named group of
+ * no-op (content hash). An item flagged `fallback: true` (or whose `actual`
+ * carries the harness's `ERROR:` marker) is a fallback, not an answer; when
+ * more than `MARINA_BENCHMARK_MAX_FALLBACK_RATE` of the items are, the run is
+ * recorded `invalid` with the reason (status and reason in the reply).
+ * `replicateGroup` puts the run into a named group of
  * replicates (`src/engine/benchmark-replicates.ts`); without it the run joins
  * the automatic group of its target, item slice and judge.
  *
@@ -26,6 +30,7 @@
 import { randomUUID } from "node:crypto";
 import {
   type HarnessResultFile,
+  isFallbackItem,
   ledgerFromHarnessResult,
   TARGET_KINDS,
 } from "../engine/benchmark-ledger";
@@ -53,6 +58,8 @@ function slimItem(it: Record<string, unknown>): Record<string, unknown> {
     ...(typeof usage?.costUsd === "number" ? { usage: { costUsd: usage.costUsd } } : {}),
     ...(typeof it.judge === "string" ? { judge: it.judge } : {}),
     ...(typeof it.traceId === "string" ? { traceId: it.traceId } : {}),
+    // Only the flag survives — never the response text it may be derived from.
+    ...(isFallbackItem(it) ? { fallback: true } : {}),
   };
 }
 
@@ -215,6 +222,8 @@ export async function handleBenchmarkFile(
       ciHigh: ledger.run.ci_high,
       costUsd: ledger.run.cost_usd,
       replicateGroup: ledger.run.replicate_group ?? null,
+      status: ledger.run.invalid_reason ? "invalid" : "completed",
+      ...(ledger.run.invalid_reason ? { invalidReason: ledger.run.invalid_reason } : {}),
       attribution: counts,
       overlappingItems,
       tracedSharedItems,

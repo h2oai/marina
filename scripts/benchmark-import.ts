@@ -11,6 +11,8 @@
  *     [--label name] [--judge "<model> @ <route>"] [--cost-usd N] [--dry-run] \
  *     [--group key | --replicate-of <runId>] [--learn]
  *   DB_PATH=marina.db bun run benchmark:import --regroup <runId,runId,…> --group key
+ *   DB_PATH=marina.db bun run benchmark:import --invalidate <runId> --reason "<why>"
+ *   DB_PATH=marina.db bun run benchmark:import --revalidate <runId> --reason "<why>"
  *
  * A file is one `benchmarks/harness.ts` result; a directory is a Tier-0 output
  * (`summary.json` plus one result per set). Credentials in the result's config
@@ -25,6 +27,15 @@
  * moves already-recorded runs into one group (e.g. replicates whose recorded
  * targets differ only in a label) — item outcomes are never touched.
  *
+ * `--invalidate` retires a completed run that measured the infrastructure
+ * rather than the target (spend cap, provider outage): its status becomes
+ * `invalid`, so no ledger reader ranks, pools, compares or promotes it, and an
+ * append-only audit row records the operator, the time and the reason (migration
+ * 153). Item outcomes are kept. `--revalidate` reverses it, with its own row.
+ * This is the operator path; in-world it is `benchmark invalidate|revalidate`
+ * (role.edit). A result whose items are more than
+ * `MARINA_BENCHMARK_MAX_FALLBACK_RATE` fallbacks is recorded invalid on import.
+ *
  * `--learn` also feeds each newly recorded run to the outcome-learning loop
  * (src/learning/): a judged lesson about which configuration won or lost on
  * that benchmark. It uses this Marina's own model and decision backend when
@@ -38,6 +49,7 @@ import { parseArgs } from "node:util";
 import {
   type HarnessResultFile,
   ledgerFromHarnessResult,
+  MAX_VALIDITY_REASON,
   TARGET_KINDS,
 } from "../src/engine/benchmark-ledger";
 import { replicateGroupOf, validReplicateGroup } from "../src/engine/benchmark-replicates";
@@ -60,6 +72,9 @@ const { positionals, values } = parseArgs({
     group: { type: "string" },
     "replicate-of": { type: "string" },
     regroup: { type: "string" },
+    invalidate: { type: "string" },
+    revalidate: { type: "string" },
+    reason: { type: "string" },
   },
 });
 
@@ -89,6 +104,36 @@ if (values.regroup !== undefined) {
     if (missing.length > 0) fail(`no such run(s): ${missing.join(", ")}`);
     const changed = db.setBenchmarkReplicateGroup(ids, values.group as string);
     console.log(`regrouped ${changed} run(s) into ${values.group}`);
+  } finally {
+    db.close();
+  }
+  process.exit(0);
+}
+
+// --invalidate / --revalidate: change one run's validity with an audit row, then stop.
+if (values.invalidate !== undefined || values.revalidate !== undefined) {
+  if (values.invalidate !== undefined && values.revalidate !== undefined) {
+    fail("give --invalidate or --revalidate, not both");
+  }
+  const action = values.invalidate !== undefined ? "invalidate" : "revalidate";
+  const runId = (values.invalidate ?? values.revalidate ?? "").trim();
+  const reason = values.reason?.trim();
+  if (!runId) fail(`--${action} needs a run id`);
+  if (!reason) fail(`--${action} needs --reason "<why>" (it is recorded in the audit row)`);
+  if (reason.length > MAX_VALIDITY_REASON)
+    fail(`--reason is at most ${MAX_VALIDITY_REASON} characters`);
+  const db = new MarinaDB(process.env.DB_PATH || "marina.db");
+  try {
+    const res = db.setBenchmarkRunValidity({
+      run_id: runId,
+      action,
+      reason,
+      actor: "operator",
+      source: "operator",
+      created_at: Date.now(),
+    });
+    if (!res.ok) fail(res.error);
+    console.log(`${runId}: ${res.status} (audit row ${res.id}) — ${reason}`);
   } finally {
     db.close();
   }
@@ -171,8 +216,11 @@ try {
         now: Date.now(),
       });
       const acc = `${(run.score * 100).toFixed(1)}% (${items.filter((i) => i.correct).length}/${run.n})`;
+      const invalid = run.invalid_reason ? ` — INVALID: ${run.invalid_reason}` : "";
       if (!db) {
-        console.log(`${file}: would record ${run.benchmark} ${acc} slice ${run.slice_hash}`);
+        console.log(
+          `${file}: would record ${run.benchmark} ${acc} slice ${run.slice_hash}${invalid}`,
+        );
         continue;
       }
       const res = db.recordBenchmarkLedgerRun(run, items);
@@ -182,7 +230,7 @@ try {
       }
       console.log(
         res.created
-          ? `${file}: recorded ${res.id} — ${run.benchmark} ${acc}${replicateGroup ? ` (group ${replicateGroup})` : ""}`
+          ? `${file}: recorded ${res.id} — ${run.benchmark} ${acc}${replicateGroup ? ` (group ${replicateGroup})` : ""}${invalid}`
           : `${file}: already recorded as ${res.id}`,
       );
     } catch (e) {

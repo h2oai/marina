@@ -255,7 +255,9 @@ export function renderComparison(step: CompareStep, ledgerDb: string): string {
   const db = new MarinaDB(ledgerDb);
   try {
     const runs = db.queryBenchmarkRuns({ limit: 10_000 });
-    const pick = (group: string) => runs.find((r) => replicateGroupOf(r) === group);
+    // Only completed runs represent a group — an invalidated run never does.
+    const pick = (group: string) =>
+      runs.find((r) => r.status === "completed" && replicateGroupOf(r) === group);
     const a = pick(step.a);
     const b = pick(step.b);
     if (!a || !b) {

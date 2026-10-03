@@ -75,7 +75,7 @@ export function recordScoredRun(
     extra?: Record<string, unknown>;
     now?: number;
   },
-): { id: string; created: boolean; benchmark: string } {
+): { id: string; created: boolean; benchmark: string; invalidReason?: string } {
   const { run, score } = input;
   const byId = new Map(run.results.map((r) => [r.id, r]));
   const file: HarnessResultFile = {
@@ -101,6 +101,9 @@ export function recordScoredRun(
         correct: it.score >= 0.5,
         score: it.score,
         ...(r ? { latencyMs: r.latencyMs, usage: { costUsd: r.costUsd } } : {}),
+        // A row with no usable answer was filled by a fallback: past
+        // MARINA_BENCHMARK_MAX_FALLBACK_RATE the run is recorded invalid.
+        ...(r?.fallback ? { fallback: true } : {}),
         judge: it.metric,
       };
     }),
@@ -130,5 +133,9 @@ export function recordScoredRun(
     now,
   });
   const r = db.recordBenchmarkLedgerRun(built.run, built.items);
-  return { ...r, benchmark: input.benchmark };
+  return {
+    ...r,
+    benchmark: input.benchmark,
+    ...(built.run.invalid_reason ? { invalidReason: built.run.invalid_reason } : {}),
+  };
 }

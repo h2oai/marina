@@ -234,7 +234,10 @@ export function evolveCommand(deps: {
       if (runs.length > 0) {
         lines.push(category("Recent benchmark runs"));
         for (const r of runs) {
-          const score = r.score != null ? `${(r.score * 100).toFixed(1)}%` : r.status;
+          const score =
+            r.score != null
+              ? `${(r.score * 100).toFixed(1)}%${r.status === "invalid" ? " (invalid)" : ""}`
+              : r.status;
           lines.push(`  ${r.benchmark.padEnd(14)} ${score}  ${dim(r.id)}`);
         }
       }
