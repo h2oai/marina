@@ -196,6 +196,27 @@ function reasoningText(r: RowResult): string {
     .join("\n");
 }
 
+const EVIDENCE_LINE_DAY = /^\s*-\s*(\d{4}-\d{2}-\d{2})\s+—/;
+
+/**
+ * Split kept evidence by each line's publication day: lines published after
+ * `cutoffDay` (their days), and the lines NOT proven to predate the cutoff
+ * (undated ones), which still get the content checks.
+ */
+export function evidenceByDate(
+  evidence: string,
+  cutoffDay: string,
+): { afterCutoff: string[]; unproven: string } {
+  const afterCutoff: string[] = [];
+  const unproven: string[] = [];
+  for (const line of evidence.split("\n")) {
+    const day = line.match(EVIDENCE_LINE_DAY)?.[1];
+    if (!day) unproven.push(line);
+    else if (day > cutoffDay) afterCutoff.push(day);
+  }
+  return { afterCutoff, unproven: unproven.join("\n") };
+}
+
 /**
  * Flag a row whose stored reasoning or kept evidence shows signs of knowing the
  * outcome. Conservative by design: an option label alone is never a flag (a
@@ -229,9 +250,16 @@ export function auditRow(
     : cutoffDay;
   // Explicit calendar days only: "as of August 2026" states the cutoff month.
   const exact = (s: string) => daysMentioned(s, { monthOnly: false });
+  // Evidence lines carry their page's publication day ("- 2026-08-11 — …"). A
+  // page published on or before the cutoff cannot report the outcome: a later
+  // day in it is a schedule, past-tense wording is history. Such lines are
+  // checked only for their own date; a line dated after the cutoff is a leak,
+  // and undated lines get the full content checks.
+  const dated = evidenceByDate(evidence, cutoffDay);
   const later = [
+    ...dated.afterCutoff,
     ...exact(reasons).filter((d) => d > afterEvent && !own.has(d)),
-    ...exact(evidence).filter((d) => d > cutoffDay && !own.has(d)),
+    ...exact(dated.unproven).filter((d) => d > cutoffDay && !own.has(d)),
   ];
   if (later.length) out.push(`later date ${later[0]}`);
   let truthQuoted = false;
@@ -254,7 +282,7 @@ export function auditRow(
   // in the reasoning it is usually history ("has won three of the last four")
   // or the question's own wording, so there it is only a weak signal.
   const promptLower = `${row.en_title ?? ""} ${row.prompt}`.toLowerCase();
-  const inEvidence = evidence.match(RESULT_LANGUAGE);
+  const inEvidence = dated.unproven.match(RESULT_LANGUAGE);
   const inReasons = reasons.match(RESULT_LANGUAGE);
   const lang =
     inEvidence && !promptLower.includes(inEvidence[0].toLowerCase()) ? inEvidence : undefined;
