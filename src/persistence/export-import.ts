@@ -177,6 +177,7 @@ export const EXPORT_TABLES = [
   "benchmark_items",
   "benchmark_defaults",
   "benchmark_promotions",
+  "external_submissions",
   "adapters",
   "adapter_user_mappings",
   "app_settings",
