@@ -336,6 +336,8 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 | `MARINA_PASSTHRU_INJECT_BYTES=2048` | Bytes of memory context injected into a proxied request for an identified passthru caller (clamped 256–65536). The entity property passthruInjectBytes overrides it per key. |  |
 | `MARINA_PASSTHRU_RESPONSE_CACHE=off`<br>`MARINA_PASSTHRU_RESPONSE_CACHE_TTL_MS=3600000` | Exact-match response cache for identified passthru callers. `on` applies only under the local profile; elsewhere a caller opts in with the entity property passthruResponseCache. Streaming, tool-call and non-2xx responses are never cached. |  |
 | `MARINA_ANTHROPIC_AUTO_CACHE=false` | Add an ephemeral cache marker to the last system block of Anthropic passthru requests that carry none. Default true under the local profile, false otherwise. |  |
+| `MARINA_VERIFY_CHECKER_MODEL=openrouter/openai/gpt-6.1-sol` | `marina/verify:<proposer>[+<checker>]` model ids: the checker used when the id names none. Default: the proposer reviews its own draft. |  |
+| `MARINA_VERIFY_ROUNDS=1` | `marina/verify:` revision rounds after a flagged draft (0 = review only and return the draft; max 3). Default 1. |  |
 | `MARINA_COMPAT=openai` | Comma-separated drop-in compatibility profiles whose model-id aliases appear in /v1/models (`openai` exposes `assistant`). Default all; `none` disables. |  |
 
 ## HTTP hardening

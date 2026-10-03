@@ -782,6 +782,12 @@
 # Add an ephemeral cache marker to the last system block of Anthropic passthru requests that carry none. Default true under the local profile, false otherwise.
 # MARINA_ANTHROPIC_AUTO_CACHE=false
 
+# `marina/verify:<proposer>[+<checker>]` model ids: the checker used when the id names none. Default: the proposer reviews its own draft.
+# MARINA_VERIFY_CHECKER_MODEL=openrouter/openai/gpt-6.1-sol
+
+# `marina/verify:` revision rounds after a flagged draft (0 = review only and return the draft; max 3). Default 1.
+# MARINA_VERIFY_ROUNDS=1
+
 # Comma-separated drop-in compatibility profiles whose model-id aliases appear in /v1/models (`openai` exposes `assistant`). Default all; `none` disables.
 # MARINA_COMPAT=openai
 
