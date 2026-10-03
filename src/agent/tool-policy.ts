@@ -11,7 +11,8 @@
  *   pace|rest|channel_sends|focus_persistent|autonomy …`, `memory delete
  *   rest`): nobody else can see or be affected by them.
  * - `communicate` — a message.
- * - `egress` — an outbound read (`web search|fetch|read|multisearch`). It
+ * - `egress` — an outbound read (`web search|fetch|read|multisearch`,
+ *   `data markets|odds|series`). It
  *   changes nothing in the world, and the URL guard (`src/net/url-guard.ts`)
  *   already fences WHERE it can go. It leaves the process with arguments the
  *   agent chose, so it is still gated. But reaching an external system is what
@@ -134,6 +135,9 @@ const SELF_LOOP_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 /** `web` subcommands that only read from outside (all go through the URL guard). */
+/** `data` subcommands that read a third-party source (src/engine/commands/data.ts). */
+const EGRESS_DATA_SUBCOMMANDS: ReadonlySet<string> = new Set(["markets", "odds", "series"]);
+
 const EGRESS_WEB_SUBCOMMANDS: ReadonlySet<string> = new Set([
   "search",
   "fetch",
@@ -295,6 +299,14 @@ export function classifyCommandRisk(raw: string): ToolRisk {
   if (READ_VERBS.has(verb)) return "read";
   if (verb === "web") {
     return EGRESS_WEB_SUBCOMMANDS.has(tail[0]?.toLowerCase() ?? "") ? "egress" : "mutate";
+  }
+  if (verb === "data") {
+    // `data markets|odds|series` reads a third-party source with the agent's
+    // arguments (egress, like `web search`); bare `data` / `data sources` /
+    // `data help` only print local text.
+    const sub = tail[0]?.toLowerCase() ?? "";
+    if (sub === "" || sub === "sources" || sub === "help") return "read";
+    return EGRESS_DATA_SUBCOMMANDS.has(sub) ? "egress" : "mutate";
   }
   if (verb === "memory") return classifyMemoryCommand(tail);
   const readSub = READ_SUBCOMMANDS[SUBCOMMAND_ALIASES[verb] ?? verb];

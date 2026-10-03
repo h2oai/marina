@@ -3231,6 +3231,70 @@ Effect: unknown.
 - `field-2` (`reason`): text, optional group `option-0`.
 - Group `option-0`: `reason`.
 
+## data
+
+Structured data — the sources forecasts use, asked directly.
+Usage:
+  data sources                              — which sources are ready here and what each needs
+  data markets <query> [asof:<date>]        — prediction-market prices (Polymarket, Kalshi);
+                                              a past asof: reads the price then, never a result
+  data odds <sport_key> [team…]             — pre-game sports odds, implied probabilities with the
+                                              bookmaker margin removed (ODDS_API_KEY)
+  data odds <team…>                         — every upcoming game naming those teams
+  data series <id|query> [asof:<date>]      — official series (FRED, BLS): latest reading and recent
+                                              history; a past asof: reads FRED as published then
+Read-only. Nothing returned is dated after now or after asof:.
+
+Category: Information. Minimum rank: 0.
+Aliases: none.
+
+### `data sources`
+
+Effect: unknown.
+
+
+### `data markets <query> [asof:<date>]`
+
+Effect: unknown.
+
+- `field-0` (`query`): text, required.
+- `field-1` (`asof`): text, optional group `option-0`.
+- Group `option-0`: `asof:date`.
+
+### `data odds <sport_key> [team…] [asof:<date>]`
+
+Effect: unknown.
+
+- `field-0` (`sport key`): text, required.
+- `field-1` (`team…`): text, optional group `option-0`.
+- `field-2` (`asof`): text, optional group `option-1`.
+- Group `option-0`: `team…`.
+- Group `option-1`: `asof:date`.
+
+### `data odds <team…>`
+
+Effect: unknown.
+
+- `field-0` (`team…`): text, required.
+
+### `data series <id|query> [asof:<date>]`
+
+Effect: unknown.
+
+- `field-0` (`id|query`): text, required, choices `id`, `query`.
+- `field-1` (`asof`): text, optional group `option-0`.
+- Group `option-0`: `asof:date`.
+
+### `data series UNRATE`
+
+Effect: unknown.
+
+
+### `data series CPIAUCSL asof:2026-06-30`
+
+Effect: unknown.
+
+
 ## debate
 
 debate <goal> — launch an observable debate project with tasks, shared memory, a fitting orchestration pattern, and an agent.

@@ -69,7 +69,13 @@ find <query> [before:<date>] [engine:<name|category>] [limit:N]
 archive <url> asof:<date>       the page as archived at or before the date
 wiki <title> [asof:<date>]      the article's revision as of the date
 sources                         engines, and how each enforces a date bound
+markets <query> [asof:<date>]   prediction-market prices (Polymarket, Kalshi)
+odds <sport_key|team…>          pre-game sports odds, margin removed (ODDS_API_KEY)
+series <id|query> [asof:<date>] official series (FRED, BLS)
 ```
+
+The data verbs are the `data` command's sources (see [Commands](commands.md#structured-data)),
+cached per query for ten minutes when live and six hours for a past `asof:`.
 
 A world can also add a dedicated room, `searchRoom({ exits })`, whose verbs are `search`, `fetch`,
 `wiki` and `sources`. To mount the tool on any existing room under verbs of your choosing, use

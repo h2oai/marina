@@ -354,8 +354,14 @@ describe("forecastTyped", () => {
 });
 
 describe("forecast lookups", () => {
-  it("is opt-in by name", () => {
-    expect(lookupsFromSpec(undefined)).toEqual([]);
+  it("defaults to every available lookup; off and explicit lists win", () => {
+    expect(lookupsFromSpec(undefined, {}).map((l) => l.name)).toEqual([
+      "polymarket",
+      "kalshi",
+      "fred",
+      "bls",
+    ]);
+    expect(lookupsFromSpec("off", {})).toEqual([]);
     expect(lookupsFromSpec("polymarket, unknown").map((l) => l.name)).toEqual(["polymarket"]);
   });
 
