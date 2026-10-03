@@ -61,7 +61,7 @@ import {
   submissionBody,
   submissionFileName,
 } from "../benchmarks/futurex/submission";
-import { durableLessonStore, type LessonStore } from "../src/forecast/lessons";
+import { durableLessonStore, type LessonStore, retryingMemoryRun } from "../src/forecast/lessons";
 import {
   dueRun,
   nextWeeklyDeadline,
@@ -102,6 +102,8 @@ const { positionals, values } = parseArgs({
     clean: { type: "boolean" },
     after: { type: "string" },
     until: { type: "string" },
+    // A file of row ids (one per line, or an answers.json) — run exactly those rows.
+    rows: { type: "string" },
     isolation: { type: "string", default: "post-filtered" },
     "allow-contaminated": { type: "boolean" },
     retriever: { type: "string" },
@@ -163,6 +165,21 @@ function loadBatch(repo: string, which?: string): FuturexBatch | undefined {
   return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as FuturexBatch) : undefined;
 }
 
+/** Row ids from a plain list (one per line) or an answers.json (`{ results: [{ id }] }`). */
+function readRowIds(path: string): Set<string> {
+  const text = readFileSync(path, "utf8").trim();
+  if (text.startsWith("{")) {
+    const parsed = JSON.parse(text) as { results: Array<{ id: string }> };
+    return new Set(parsed.results.map((r) => String(r.id)));
+  }
+  return new Set(
+    text
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean),
+  );
+}
+
 /**
  * The durable lesson memory for `account` (created as a world account when
  * missing), in the named space — canonical memory records through the
@@ -170,8 +187,10 @@ function loadBatch(repo: string, which?: string): FuturexBatch | undefined {
  */
 async function lessonStoreFor(db: MarinaDB, account: string, space: string): Promise<LessonStore> {
   if (!db.getUserByName(account)) db.createUser({ id: crypto.randomUUID(), name: account });
-  const run = (request: MemoryOperationRequest) =>
-    residentMemoryOperation(db, account, request) as Promise<{ ok: true; result: unknown }>;
+  const run = retryingMemoryRun(
+    (request: MemoryOperationRequest) =>
+      residentMemoryOperation(db, account, request) as Promise<{ ok: true; result: unknown }>,
+  );
   const spaces = (await run({ operation: "spaces" })).result as {
     spaces?: Array<{ id: string; name: string }>;
   };
@@ -453,6 +472,7 @@ async function cleanBacktestCmd(batch: FuturexBatch): Promise<number> {
       ...(values.retriever ? { retriever: values.retriever } : {}),
       ...(values.after ? { after: values.after } : {}),
       ...(values.until ? { until: values.until } : {}),
+      ...(values.rows ? { onlyIds: readRowIds(values.rows) } : {}),
       limit: Number(values.limit ?? 80),
       horizonDays: Number(values["horizon-days"]),
       concurrency: Number(values.concurrency),

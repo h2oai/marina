@@ -7,6 +7,7 @@ import type { ForecastAnswer } from "../../forecast/question";
 import type { ForecastScale } from "../../forecast/service";
 import type { TypedForecastAnswer } from "../../forecast/typed";
 import { bold, dim, header, separator } from "../../net/ansi";
+import type { MarinaDB } from "../../persistence/database";
 import type { ForecastAnswerRow } from "../../persistence/db-markets";
 import type { MarinaStores } from "../../persistence/interfaces";
 import { parseSampleId } from "../../resolvers/calibration";
@@ -118,11 +119,19 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
       );
       if (typed) {
         return (async () => {
-          const [{ forecastTyped }, { typedForecastDeps }] = await Promise.all([
-            import("../../forecast/typed"),
-            import("../../forecast/service"),
-          ]);
-          const made = typedForecastDeps();
+          const [{ forecastTyped }, { typedForecastDeps }, { forecastLessonsFor }] =
+            await Promise.all([
+              import("../../forecast/typed"),
+              import("../../forecast/service"),
+              import("../../learning/forecast-bridge"),
+            ]);
+          // The wired store is the full MarinaDB; a narrowed test store has no lesson pool.
+          const full = deps.db as unknown as MarinaDB | undefined;
+          const made = typedForecastDeps(process.env, {
+            ...(typeof full?.getUserByName === "function"
+              ? { lessons: forecastLessonsFor(full) }
+              : {}),
+          });
           if ("error" in made) return ctx.send(input.entity, made.error);
           const a = await forecastTyped(
             { question, answer: typed.spec, ...(typed.endTime ? { endTime: typed.endTime } : {}) },

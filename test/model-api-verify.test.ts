@@ -12,6 +12,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Engine } from "../src/engine/engine";
+import { memoryLessonSink } from "../src/learning/outcomes";
+import { disableOutcomeLearning, enableOutcomeLearning } from "../src/learning/service";
 import { handleModelApi } from "../src/net/model-api";
 import {
   guardRevision,
@@ -235,6 +237,31 @@ describe("POST /v1/chat/completions with marina/verify", () => {
     };
     expect(j.choices[0]!.message.tool_calls?.[0]?.function.name).toBe("cancel_order");
     expect(calls.length).toBe(3); // proposer, checker, revision (discarded)
+  });
+
+  it("injects recalled lessons for the proposer and the checker, and names them", async () => {
+    const sink = memoryLessonSink([
+      {
+        id: "L1",
+        domain: "tools",
+        text: "confirm before you cancel an order",
+        kind: "failure",
+        trust: "trusted",
+        resolvedAt: "2026-09-01T00:00:00.000Z",
+        source: "tau2:retail",
+      },
+    ]);
+    enableOutcomeLearning(db, { sink, writer: null, judge: null, env: {} });
+    try {
+      const resp = await post(request("marina/verify:openrouter/openai/gpt-6.1-sol"));
+      expect(resp?.headers.get("x-marina-lessons")).toBe("L1");
+      expect(calls[0]!.system).toContain("LESSONS (from past outcomes");
+      expect(calls[0]!.system).toContain("confirm before you cancel an order");
+    } finally {
+      disableOutcomeLearning(db);
+    }
+    const plain = await post(request("marina/verify:openrouter/openai/gpt-6.1-sol"));
+    expect(plain?.headers.get("x-marina-lessons")).toBe("0");
   });
 
   it("refuses streaming and unreachable models explicitly", async () => {

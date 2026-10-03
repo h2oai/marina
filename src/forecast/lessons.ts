@@ -174,6 +174,30 @@ function fromRecord(r: RecordLike): ForecastLesson | undefined {
 }
 
 /**
+ * `rawRun` retried on a busy store (HTTP 503 / 429) with the same request key,
+ * after the delay the store asks for.
+ */
+export function retryingMemoryRun(
+  rawRun: MemoryRun,
+  opts: { retries?: number; sleep?: (ms: number) => Promise<void> } = {},
+): MemoryRun {
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  return async (request) => {
+    const keyed = request.key ? request : { ...request, key: crypto.randomUUID() };
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await rawRun(keyed);
+      } catch (err) {
+        const e = err as { status?: number; retryAfterMs?: number };
+        const busy = e?.status === 503 || e?.status === 429;
+        if (!busy || attempt >= (opts.retries ?? 6)) throw err;
+        await sleep(Math.min(10_000, (e.retryAfterMs ?? 500) * (attempt + 1)));
+      }
+    }
+  };
+}
+
+/**
  * Lessons as canonical memory records through a memory-service `run` (a
  * `DurableMemoryAPI.run` or a bound `residentMemoryOperation`). `spaceId`
  * selects a shared space; absent, the caller's resident space is used.
@@ -187,20 +211,7 @@ export function durableLessonStore(
   opts: { spaceId?: string; retries?: number; sleep?: (ms: number) => Promise<void> } = {},
 ): LessonStore {
   const space = opts.spaceId ? { space_id: opts.spaceId } : {};
-  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  const run: MemoryRun = async (request) => {
-    const keyed = request.key ? request : { ...request, key: crypto.randomUUID() };
-    for (let attempt = 0; ; attempt++) {
-      try {
-        return await rawRun(keyed);
-      } catch (err) {
-        const e = err as { status?: number; retryAfterMs?: number };
-        const busy = e?.status === 503 || e?.status === 429;
-        if (!busy || attempt >= (opts.retries ?? 6)) throw err;
-        await sleep(Math.min(10_000, (e.retryAfterMs ?? 500) * (attempt + 1)));
-      }
-    }
-  };
+  const run = retryingMemoryRun(rawRun, opts);
   return {
     async write(lesson) {
       const reply = await run({
