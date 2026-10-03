@@ -29,18 +29,16 @@ The compact recent-activity strip shows the newest curated entries. **More → P
 live event stream; map heat shows local activity, while **Observe** holds narrative and
 conversation history.
 
-### Canvas panel-host preview
+### One Canvas workspace
 
-Open `/dashboard?surface=canvas` to try the existing Chat, Workspace, and Context panes hosted
-on the Canvas renderer. The preview keeps the same proportions, panel styling, workspace tabs,
-mobile pane switcher, and named layout presets. Drag headers and resize corners on desktop;
-maximizing or switching panes keeps drafts mounted. Embedded Canvas boards retain their own
-pan, zoom, selection, and editing controls.
+Chat, Workspace and Context now use one Canvas panel host with the same default proportions,
+panel styling, tabs and mobile pane switcher. The old grid renderer has been removed. Older
+`?surface=canvas` links and saved **Previous grid** arrangements remain readable in this host.
+Drag headers and resize corners on desktop; maximizing or switching panes keeps drafts mounted.
+Embedded Canvas boards retain their own pan, zoom, selection and editing controls.
 
-The normal `/dashboard` remains the default. Remove `surface=canvas` and reload to return to
-it. Both renderers read the same local presets, including older **Previous grid** arrangements.
-The preview changes only presentation: layout edits do not change shared Canvas documents,
-grant permissions, or start or stop agents. Existing `/canvas` links still work.
+Layout edits change only your local arrangement. They do not change shared documents, grant
+permissions, or start or stop agents. Existing `/canvas` links still open the full-screen board.
 
 To keep the world visible beside your work, select **Workspace → Map**, then use **Open map
 below** in the Workspace header. It splits the pane when there is room and uses vertical
@@ -71,7 +69,7 @@ beside your work. A panel can combine coding activity, task evidence, memory, pa
 and world events. Repeated views keep separate drafts and share authorized live reads. Save a
 layout preset to restore the same targets and geometry; drafts are not restored after a page reload.
 
-Choose **Create coding desk**, select an existing Marina coding session, optionally attach a task
+Select a coding session in **Work** to open a personal desk without publishing it. The desk displays its repository, which may be Marina itself or any external project. To share a desk, choose **Create coding desk**, select an existing Marina coding session, optionally attach a task
 and participant, then **Publish and open desk**. One coder is sufficient. The desk's request button
 opens a review and addresses the displayed session without switching Chat's selected session.
 Recorded verification describes the candidate checked; later edits can make it stale.

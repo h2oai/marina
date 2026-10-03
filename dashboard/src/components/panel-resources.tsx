@@ -28,11 +28,11 @@ export function usePanelSources(sources: Record<string, PanelSource>, active: bo
 export function PanelResource({
   reference,
   active,
-  renderNested,
+  renderNested = () => null,
 }: {
   reference: unknown;
   active: boolean;
-  renderNested: (canvasId: string, nodeId: string, data: Record<string, unknown>) => ReactNode;
+  renderNested?: (canvasId: string, nodeId: string, data: Record<string, unknown>) => ReactNode;
 }) {
   const source = parsePanelSource(reference);
   return source ? (
@@ -55,6 +55,16 @@ function Resource({
   if (query.isError)
     return <p role="alert">This {source.kind} is unavailable or you do not have access.</p>;
   if (query.isPending) return <p role="status">Loading {source.kind}…</p>;
+  if (source.kind === "resource")
+    return (
+      <section
+        aria-label={source.resource}
+        className="max-h-80 overflow-auto rounded border border-border p-2 text-sm"
+      >
+        <h3>{source.resource}</h3>
+        <pre className="whitespace-pre-wrap break-words">{JSON.stringify(query.data, null, 2)}</pre>
+      </section>
+    );
   const value = query.data as Record<string, unknown>;
   if (source.kind === "coding") return <CodingDeskResource value={value} />;
   if (source.kind === "canvas") {

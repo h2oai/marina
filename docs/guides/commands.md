@@ -613,8 +613,13 @@ The `feed` canvas auto-populates from board posts, channel messages, task events
 
 ### A2UI (Interactive Widgets)
 
+Use `canvas resources [filter]` to discover live data adapters, including coding sessions,
+coordination, participant messages, memory and world activity. A reference such as
+`{kind: "resource", resource: "coding.session", params: {id: sessionId}}` supplies a Resource
+component or named bindings. The same catalog is available in the SDK and panel library.
+
 Open publications beside your work from **Workspace → Canvas → Published panels**, or select
-**Create coding desk** for an existing Marina coding session. Panels combine authorized resources
+**Create coding desk** to publish an existing Marina coding session. Select a session in **Work** for a personal desk that does not publish anything. Panels combine authorized resources
 and reviewed actions without starting another worker. See [Published panels](published-panels.md)
 for the schema and SDK. The coding terminal's `/panel` controls and F8 view use the same publications;
 they are local terminal controls, not additional world commands.

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 export type PanelBinding =
   | { kind: "canvas-node"; canvasId: string; nodeId: string }
+  | { kind: "coding"; id: string }
   | { kind: "participant"; id: string };
 export type PanelBindings = Record<string, { resident: string | null; target: PanelBinding }>;
 
@@ -17,6 +18,8 @@ export function parsePanelBinding(value: unknown): PanelBinding | null {
   if (b.kind === "canvas-node" && identifier(b.canvasId) && identifier(b.nodeId))
     return { kind: b.kind, canvasId: b.canvasId, nodeId: b.nodeId };
   if (b.kind === "participant" && identifier(b.id)) return { kind: b.kind, id: b.id };
+  if (b.kind === "coding" && identifier(b.id) && /^[A-Za-z0-9_-]+$/.test(b.id))
+    return { kind: b.kind, id: b.id };
   return null;
 }
 

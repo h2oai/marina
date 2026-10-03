@@ -3,6 +3,111 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
+test("open a personal coding desk and an authored multi-source publication without launching another worker", async ({
+  page,
+  request,
+}) => {
+  const commands: Array<{ command: string; coding_target?: { sessionId: string } }> = [];
+  page.on("websocket", (socket) =>
+    socket.on("framesent", (frame) => {
+      const value = JSON.parse(String(frame.payload));
+      if (value.type === "command") commands.push(value);
+    }),
+  );
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/dashboard");
+  await page.getByRole("button", { name: "Dismiss getting-started guide" }).click();
+  await page.getByPlaceholder("Enter your name...").fill("PersonalDeskResident");
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  const input = page.locator("#marina-command-input");
+  await input.fill("code start Personal development");
+  await input.press("Enter");
+  const token = await page.evaluate(() => localStorage.getItem("marina_chat_token"));
+  const headers = { Authorization: `Bearer ${token}` };
+  await expect
+    .poll(async () =>
+      (await (await request.get("/api/coding/sessions?limit=100", { headers })).json()).items.some(
+        (s: { title: string }) => s.title === "Personal development",
+      ),
+    )
+    .toBe(true);
+  const session = (
+    await (await request.get("/api/coding/sessions?limit=100", { headers })).json()
+  ).items.find((s: { title: string }) => s.title === "Personal development");
+  await page.getByRole("button", { name: "Refresh work", exact: true }).click();
+  await page.getByRole("button", { name: /Personal development/ }).click();
+  const desk = page.locator('[data-pane-key="view:coding-desk:1"]');
+  await expect(
+    desk.getByText(`Repository: ${session.workspace_root}`, { exact: true }),
+  ).toBeVisible();
+  await desk.getByLabel("Request for coder").fill("Unsent Marina self-development request");
+  await desk.getByRole("button", { name: "Review coding request" }).click();
+  await expect(desk.getByRole("region", { name: "Review coding request" })).toContainText(
+    session.id,
+  );
+  expect(commands.map((c) => c.command)).toEqual(["code start Personal development"]);
+
+  const catalog = await (await request.get("/api/panel-resources", { headers })).json();
+  expect(catalog.resources.map((r: { id: string }) => r.id)).toContain("coding.sessions");
+  const canvas = await (
+    await request.post("/api/canvases", { headers, data: { name: "Authored development panels" } })
+  ).json();
+  const created = await request.post(`/api/canvases/${canvas.id}/nodes`, {
+    headers,
+    data: {
+      type: "a2ui",
+      data: {
+        title: "Composed development",
+        sources: {
+          coding: {
+            kind: "resource",
+            resource: "coding.sessions",
+            query: { createdBy: "PersonalDeskResident", limit: 25 },
+          },
+        },
+        components: [
+          { id: "root", component: "Column", children: ["sessions", "world"] },
+          {
+            id: "sessions",
+            component: "DataTable",
+            columns: ["title", "status", "workspace_root"],
+            bindings: { rows: { source: "coding", path: ["items"] } },
+          },
+          {
+            id: "world",
+            component: "Resource",
+            reference: { kind: "resource", resource: "world" },
+          },
+        ],
+      },
+    },
+  });
+  expect(created.status()).toBe(201);
+  await page.getByRole("tab", { name: "Canvas", exact: true }).click();
+  await page.getByRole("button", { name: "Published panels", exact: true }).click();
+  const library = page.getByRole("region", { name: "Published panels" });
+  await library.getByText("Compose a panel", { exact: true }).click();
+  await library.getByLabel("Find a data source").fill("coding.sessions");
+  await expect(library.getByText("coding.sessions", { exact: true })).toBeVisible();
+  await library.getByRole("combobox", { name: "Canvas", exact: true }).selectOption(canvas.id);
+  await library.getByRole("button", { name: "Open beside my work" }).click();
+  const published = page.locator('[data-pane-key="view:published:1"]');
+  await expect(
+    published.getByRole("cell", { name: "Personal development", exact: true }),
+  ).toBeVisible();
+  await expect(desk.getByLabel("Request for coder")).toHaveValue(
+    "Unsent Marina self-development request",
+  );
+  await expect(desk.getByRole("region", { name: "Review coding request" })).toBeVisible();
+  await page.screenshot({ path: test.info().outputPath("composed-coding-workspace.png") });
+  expect(commands.map((c) => c.command)).toEqual(["code start Personal development"]);
+  await desk.getByRole("button", { name: /Close Coding desk/ }).click();
+  expect(
+    (await (await request.get(`/api/coding/session/${session.id}`, { headers })).json()).session
+      .status,
+  ).toBe("active");
+});
+
 test("publish a coding desk, exchange live output and messages, reconnect and close without stopping work", async ({
   page,
   request,

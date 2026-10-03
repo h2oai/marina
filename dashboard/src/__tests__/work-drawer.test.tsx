@@ -53,8 +53,10 @@ describe("WorkDrawer", () => {
   it("projects active work into clickable canonical destinations", () => {
     const close = vi.fn();
     const opened: string[] = [];
-    window.addEventListener("marina:open-coding", ((event: CustomEvent<{ sessionId: string }>) => {
-      opened.push(event.detail.sessionId);
+    window.addEventListener("marina:open-panel", ((
+      event: CustomEvent<{ kind: string; id: string }>,
+    ) => {
+      if (event.detail.kind === "coding") opened.push(event.detail.id);
     }) as EventListener);
 
     render(<WorkDrawer open onClose={close} />);

@@ -4,13 +4,13 @@ A published panel is an A2UI Canvas node containing a declarative view of Marina
 
 ## Open and arrange
 
-In the dashboard, select **Canvas → Published panels**, choose a canvas and select **Open beside my work**. Canvas nodes and rich chat previews also have **Open as panel**. The existing layout and the opt-in `?surface=canvas` workspace both accept these views. Save a layout preset to restore its resource targets and geometry. Targets are bound to the resident who saved them; another resident does not inherit those private references.
+In the dashboard, select **Canvas → Published panels**, choose a canvas and select **Open beside my work**. Canvas nodes and rich chat previews also have **Open as panel**. The dashboard uses one Canvas panel host, with the familiar tiled layout. Older `?surface=canvas` links open the same workspace. Save a layout preset to restore its resource targets and geometry. Targets are bound to the resident who saved them; another resident does not inherit those private references.
 
 You can open the same publication twice. Closing a tile removes only that view. Up to four additional tiles are supported. Referenced publications can expand inside a panel, with a four-level nesting limit and cycle detection. Nothing expands or rearranges the workspace merely because an agent publishes it.
 
 ## Create a coding desk
 
-Start a coding session with the normal `code start` workflow, then choose **Canvas → Published panels → Create coding desk**. Select the existing session, optionally attach a task and a visible participant, and select **Publish and open desk**. One coder is enough; additional participants are optional.
+Start a coding session with the normal `code start` workflow. Select it in **Work** to open a personal Coding desk without publishing anything. It shows the target repository: Marina itself or any project you are working on. To share a composition, choose **Canvas → Published panels → Create coding desk**. Select the existing session, optionally attach a task and a visible participant, and select **Publish and open desk**. One coder is enough; additional participants are optional.
 
 The desk shows recent coding activity, artifacts and recorded verification, a request composer, optional task evidence and participant messages, and world activity. The request button opens a review and targets that exact coding session, even if Chat is currently working in another session. The same ownership and command gates still apply. A recorded passing check describes the candidate that was checked; it does not establish that later filesystem edits passed.
 
@@ -58,12 +58,46 @@ Use real resource IDs from your world. Read a publication with `panels.get(canva
 
 Public Canvas definitions are public content. Store references to private resources rather than copying their contents into a definition. Each reader's credentials determine whether a source resolves. The author does not grant access by mentioning an ID.
 
+## Discover and compose data
+
+Agents and humans use the same catalog: `canvas resources [filter]`, `GET /api/panel-resources`, `panels.resources()`, or **Published panels → Compose a panel**. The terminal also offers `/panel resources [filter]`. Each entry declares an ID, path parameters and accepted query fields. Sources span coding sessions and artifacts, participant output and messages, coordination, memory, world activity, canvases, media, operations and experiments. Catalog entries describe readers; they do not grant access.
+
+Here is a coded composition that keeps an existing coder alongside coordination data. Run it against the same Marina instance that owns the session, whether its repository is Marina or an external project:
+
+```typescript
+import { codingDesk, MarinaPanelClient } from "@marina/agent-sdk";
+
+const panels = new MarinaPanelClient({ url: marinaUrl, token: residentToken });
+const desk = codingDesk({ sessionId });
+await panels.publish(canvasId, {
+  ...desk,
+  title: "Development and coordination",
+  sources: {
+    channels: { kind: "resource", resource: "channels" },
+    coding: { kind: "resource", resource: "coding.session", params: { id: sessionId } },
+  },
+  components: [
+    ...desk.components.map((c) => c.id === "root"
+      ? { ...c, children: [...c.children as string[], "repository", "channels"] } : c),
+    { id: "repository", component: "Text",
+      bindings: { text: { source: "coding", path: ["session", "workspace_root"] } } },
+    { id: "channels", component: "DataTable", columns: ["name", "type"],
+      bindings: { rows: { source: "channels", path: [] } } },
+  ],
+});
+```
+
+Use `query: {limit: 25}` on adapters declaring `limit`, and inspect the canonical API response to choose binding paths. Detail IDs go in `params`; a Resource component can also render the whole response. Coded panel documents are validated data, not executable browser JavaScript. Agents can author them in any coding workspace, upload and publish an A2UI asset, or use the SDK directly. Publication leaves everyone else's layout and autonomous work untouched.
+
+The catalog exposes existing read APIs, not raw database tables or arbitrary network paths. Credentials, side-effecting reads and unpublished internal state are not panel sources. To expose a new domain, first provide its authorized read API, then add its adapter to `src/sdk/panel-resource-catalog.ts`; all clients discover the same contract. Durable memory records also use the resident memory adapter below. The original short references remain semantic adapters for richer coding, participant and task views.
+
 ## Sources and components
 
 Existing components remain supported: `Text`, `Button`, `TextField`, `CheckBox`, `DateTimeInput`, `Row`, `Column`, `Card`, `Surface`, `DataTable` and `Timeline`. `Resource` adds a view of an existing resource. Historical `Text.value` and string table columns normalize to `Text.text` and `{key, label}` columns.
 
 | Source | Reference |
 |---|---|
+| Any catalog resource | `{kind: "resource", resource: "channels"}`; detail sources also accept `params`, collections accept declared `query` fields |
 | Task and its evidence | `{kind: "task", id: "42"}` |
 | Numeric note | `{kind: "note", id: "123"}` |
 | Durable memory record | `{kind: "memory", id, spaceId}` |
@@ -120,7 +154,11 @@ The existing Marina coding terminal has a separate panel view. Coding, world out
 ```text
 /panel list
 /panel list <canvas-id>
-/panel desk <canvas-id>
+/panel desk
+/panel publish <canvas-id>
+/panel views
+/panel use 2
+/panel resources coding
 /panel open <canvas-id> <node-id>
 /panel field request Please review the latest verification evidence
 /panel act send <my-sending-participant-id>
@@ -131,6 +169,6 @@ The existing Marina coding terminal has a separate panel view. Coding, world out
 /panel close
 ```
 
-`/panel desk <canvas-id>` publishes a desk for the terminal's selected coding session; an explicit session ID may follow the canvas ID. In the full-screen TUI, **F8** focuses the panel. **Tab / Shift+Tab** move between fields and actions; type directly in a selected text field, use **Space** for a checkbox, and **Enter** to review an action. Reviews initially focus **Cancel**. Select **Confirm action** separately to submit, or use **Escape** to close the review. For messages, choose the sending participant with the arrow keys. **F6** returns to Coding/World, and **F7** opens requests. Each conversation retains its draft.
+`/panel desk [session-id]` opens a personal view of the selected or explicit coding session. `/panel publish <canvas-id> [session-id]` explicitly publishes and opens a shared desk; it replaces the former publishing meaning of `/panel desk`. Up to four local views preserve separate drafts and captured reviews. Use `/panel views` and `/panel use <number>`, or **Alt+Left / Alt+Right** in the panel form, to switch. Only the selected, visible view reads live data. Closing it returns to another open view. In the full-screen TUI, **F8** focuses the panel. **Tab / Shift+Tab** move between fields and actions; type directly in a selected text field, use **Space** for a checkbox, and **Enter** to review an action. Reviews initially focus **Cancel**. Select **Confirm action** separately to submit, or use **Escape** to close the review. For messages, choose the sending participant with the arrow keys. **F6** returns to Coding/World, and **F7** opens requests. Each conversation retains its draft.
 
 The slash controls remain available in the scrollback terminal: `act` captures and displays the action; `confirm` submits it. A failed routing delivery can be retried with `confirm` using the same identity. Active views refresh on world change notices with a five-second fallback; `/panel refresh` requests an update. Terminal projections show semantic text, resources and actions rather than reproducing graphical geometry or media playback. Closing the view does not stop its producer.

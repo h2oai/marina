@@ -93,6 +93,7 @@ signature remain supported. See the repository's coding guide for the supported 
 import { codingDesk, MarinaPanelClient } from "@marina/agent-sdk";
 
 const panels = new MarinaPanelClient({ url: marinaUrl, token: residentToken });
+const catalog = await panels.resources(); // Shared with canvas resources and the dashboard
 const node = await panels.publish(canvasId, codingDesk({
   sessionId,
   // Optional: taskId, participantId, title.
@@ -115,3 +116,5 @@ See [Published panels](../../docs/guides/published-panels.md) for source types, 
 action contracts, browser layouts and terminal controls.
 
 These clients and helpers are exported from `./index.ts`.
+
+Catalog references (`{kind: "resource", resource: "coding.session", params: {id: sessionId}}`) can supply component bindings or Resource views. The source reads the existing API as the viewer. Use `codingDesk` for rich coding activity and reviewed, explicitly targeted requests, whether the repository is Marina itself or another project.

@@ -638,11 +638,23 @@ export class CodeConsole {
           if (!result.ok) throw new Error("Memory unavailable");
           return result.result;
         },
-        { present: (state) => this.terminal?.setPanelState(state) },
+        {
+          present: (state) => this.terminal?.setPanelState(state),
+          ask: async (sessionId, request) => {
+            const result = await this.options.agent.command(`code ask ${request}`, {
+              codingTarget: { sessionId },
+            });
+            return result.completion === "confirmed"
+              ? "Coding request completed; inspect the session activity for its outcome."
+              : "Outcome unconfirmed. Reconcile session activity before submitting again.";
+          },
+        },
       );
       const parts = argument.trim().split(/\s+/);
       await this.panels.command(
-        parts[0] === "desk" && parts.length === 2 && this.sessionId
+        ((parts[0] === "desk" && parts.length === 1) ||
+          (parts[0] === "publish" && parts.length === 2)) &&
+          this.sessionId
           ? `${argument} ${this.sessionId}`
           : argument,
       );

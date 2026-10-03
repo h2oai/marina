@@ -9,6 +9,7 @@ import { useChatState } from "../hooks/use-chat-state";
 import { getToken } from "../lib/api";
 import { openBoundPanel } from "../lib/panel-bindings";
 import { CodingDeskPublisher } from "./CodingDeskPublisher";
+import { PanelResourceCatalog } from "./PanelResourceCatalog";
 
 export function PublishedPanelLibrary() {
   const [open, setOpen] = useState(false);
@@ -47,6 +48,7 @@ export function PublishedPanelLibrary() {
           aria-label="Published panels"
           className="absolute right-0 top-7 z-50 w-80 max-h-96 overflow-auto rounded border border-border bg-bg p-3 shadow-xl space-y-3"
         >
+          <PanelResourceCatalog client={client} identity={identity} />
           <label className="block text-sm">
             Canvas
             <select

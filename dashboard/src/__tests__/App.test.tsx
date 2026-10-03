@@ -13,15 +13,22 @@ vi.mock("../hooks/use-websocket", () => ({
   useDashboardWebSocket: () => ({ connected: false }),
 }));
 
-// Mock react-grid-layout: the real component needs measured container widths
-// which jsdom cannot provide. Replace with a simple div that renders children.
-vi.mock("react-grid-layout", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("react-grid-layout")>();
+// Geometry is covered by the browser suite; jsdom cannot measure the panel host.
+vi.mock("../components/workspace-canvas", async () => {
   const React = await import("react");
   return {
+    WorkspaceCanvas: ({ panels }: { panels: Array<[string, ReactNode]> }) =>
+      React.createElement(
+        "div",
+        { "data-testid": "grid-layout" },
+        panels.map(([key, content]) => React.createElement("div", { key }, content)),
+      ),
+  };
+});
+vi.mock("react-grid-layout", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-grid-layout")>();
+  return {
     ...actual,
-    ResponsiveGridLayout: ({ children }: { children: ReactNode }) =>
-      React.createElement("div", { "data-testid": "grid-layout" }, children),
     useContainerWidth: () => ({
       width: 1200,
       containerRef: { current: null },

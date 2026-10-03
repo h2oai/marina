@@ -8,6 +8,7 @@ import {
 } from "../lib/panel-registry";
 import { panelInstance } from "../lib/workspace-panel-instances";
 import { AdminPanel } from "./AdminPanel";
+import { CodingDeskPanel } from "./CodingDeskPanel";
 import { ConversationInsights } from "./ConversationInsights";
 import { CoordinationCard } from "./CoordinationCard";
 import { EntityRoster } from "./EntityRoster";
@@ -45,6 +46,14 @@ const unregisterBuiltins = (
   }),
 );
 unregisterBuiltins.push(
+  dashboardPanels.register({
+    id: "coding-desk",
+    title: "Coding desk",
+    component: CodingDeskPanel,
+    modes: [],
+    slot: "grid",
+    repeatable: { fromView: "work", actionLabel: "Open coding desk below" },
+  }),
   dashboardPanels.register({
     id: "published",
     title: "Published panel",

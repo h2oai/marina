@@ -5,7 +5,12 @@ import { DiffViewer } from "./DiffViewer";
 
 /** Read existing session/evidence rows; an artifact's status is never promoted into proof. */
 export function CodingDeskResource({ value }: { value: Record<string, unknown> }) {
-  const session = value.session as { title: string; status: string; agent: string | null };
+  const session = value.session as {
+    title: string;
+    status: string;
+    agent: string | null;
+    workspace_root?: string;
+  };
   const artifacts = (value.artifacts ?? []) as CodingArtifactEntry[];
   const events = (value.events ?? []) as Array<{
     id: string;
@@ -22,6 +27,7 @@ export function CodingDeskResource({ value }: { value: Record<string, unknown> }
       <p>
         {session.status} · {session.agent ?? "No coder attached"}
       </p>
+      <p className="break-all">Repository: {session.workspace_root ?? "Not recorded"}</p>
       <details open>
         <summary>Recent activity</summary>
         <ol className="max-h-48 overflow-auto space-y-2">

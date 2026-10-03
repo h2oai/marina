@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { create } from "zustand";
+import {
+  type CodingCommandTarget,
+  parseCodingCommandTarget,
+} from "../../../src/sdk/command-target";
 import type { ParticipantOrientation } from "../../../src/sdk/onboarding";
 
 /** Fired after this client creates or deletes a macro. */
@@ -34,12 +38,17 @@ interface ChatState {
   connected: boolean;
   entityName: string | null;
   commandHistory: string[];
+  codingTargetSupported: boolean;
 
   appendMessage: (msg: ChatMessage) => void;
   setLoggedIn: (v: boolean, name?: string) => void;
   setConnected: (v: boolean) => void;
   pushCommand: (cmd: string) => void;
-  sendCommand: (cmd: string, recordHistory?: boolean) => boolean;
+  sendCommand: (
+    cmd: string,
+    recordHistory?: boolean,
+    codingTarget?: CodingCommandTarget,
+  ) => boolean;
 }
 
 export const useChatState = create<ChatState>((set) => ({
@@ -49,19 +58,35 @@ export const useChatState = create<ChatState>((set) => ({
   connected: false,
   entityName: null,
   commandHistory: [],
+  codingTargetSupported: false,
 
   appendMessage: (msg) =>
     set((s) => ({ messages: [...s.messages.slice(-(MAX_MESSAGES - 1)), msg] })),
   setLoggedIn: (v, name) => set({ loggedIn: v, entityName: name ?? null, orientation: null }),
   setConnected: (v) =>
-    set((_s) => (v ? { connected: v } : { connected: v, loggedIn: false, entityName: null })),
+    set((_s) =>
+      v
+        ? { connected: v }
+        : { connected: v, loggedIn: false, entityName: null, codingTargetSupported: false },
+    ),
   pushCommand: (cmd) => set((s) => ({ commandHistory: [cmd, ...s.commandHistory.slice(0, 99)] })),
-  sendCommand: (cmd, recordHistory = true) => {
+  sendCommand: (cmd, recordHistory = true, codingTarget) => {
     const trimmed = cmd.trim();
     if (!trimmed) return false;
     const ws = getChatWs();
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
-    ws.send(JSON.stringify({ type: "command", command: trimmed }));
+    if (
+      codingTarget &&
+      (!useChatState.getState().loggedIn || !useChatState.getState().codingTargetSupported)
+    )
+      return false;
+    ws.send(
+      JSON.stringify({
+        type: "command",
+        command: trimmed,
+        ...(codingTarget ? { coding_target: parseCodingCommandTarget(codingTarget) } : {}),
+      }),
+    );
     // Macros live server-side; tell their views to refetch once the engine has
     // processed the change (it replies in-tick).
     if (/^macro\s+(create|delete)\b/i.test(trimmed)) {
@@ -114,6 +139,14 @@ export function ensureChatWs(onPerception: (data: unknown) => void): WebSocket {
   sock.onmessage = (e) => {
     try {
       const parsed = JSON.parse(e.data as string);
+      if (
+        parsed.kind === "system" &&
+        typeof parsed.data?.token === "string" &&
+        typeof parsed.data?.entityId === "string"
+      )
+        useChatState.setState({
+          codingTargetSupported: parsed.data.codingTargetProtocol === "session-run-v1",
+        });
       for (const listener of perceptionListeners) {
         listener(parsed);
       }

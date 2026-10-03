@@ -14,6 +14,9 @@ export interface PanelChangeEvent {
   spaceId?: string;
 }
 export function panelSourceAffected(source: PanelSource, event: PanelChangeEvent): boolean {
+  // Catalog views span domains. Coalesce hints in the host and reread with the current
+  // viewer credential; events never contain the snapshot or confer read authority.
+  if (source.kind === "resource") return true;
   if (["rank_change", "coordination_change", "entity_leave"].includes(event.type)) return true;
   if (event.type === "resource_changed") {
     if (event.resource === "coding")

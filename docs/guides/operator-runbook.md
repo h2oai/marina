@@ -93,6 +93,12 @@ representative storage and corpus sizes before choosing production concurrency.
 
 ## Published panel freshness and actions
 
+`GET /api/panel-resources` lists the deployed source adapters. Catalog sources call the original
+read APIs with the viewer's credential, including their existing rate limits and permissions.
+Check those endpoint responses when a binding is unavailable. Personal Coding desks have no
+Canvas node: `/panel desk` or Work opens a view; `/panel publish` explicitly creates a shared one.
+The target repository remains a property of the canonical coding session, never of the layout.
+
 Published panels reuse the dashboard and Canvas WebSockets plus existing authorized resource reads.
 If a Coding desk or participant resource appears stale, check that the resident is signed in, the
 socket has reconnected with that credential, and the corresponding resource request succeeds.
