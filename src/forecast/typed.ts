@@ -48,6 +48,7 @@ import {
   validateAnswer,
 } from "./answer-types";
 import { askAnalyst, type JudgeRecord, judgeAudit, judgeClaim, newJudgeRecord } from "./judge";
+import type { LessonStore } from "./lessons";
 import {
   anchorLine,
   type DataHints,
@@ -80,6 +81,13 @@ export interface TypedForecastOptions {
   critique?: boolean;
   /** How far back research looks before the cutoff, in days (default 45). */
   lookbackDays?: number;
+  /**
+   * Verify every run's draft with `deps.verifier` before it is combined — the
+   * verification formation inside one forecast: an independent model checks
+   * the draft against the dossier and the resolution rules and may correct it
+   * (default false).
+   */
+  verify?: boolean;
 }
 
 export interface ModelPart {
@@ -95,6 +103,13 @@ export interface TypedForecastDeps {
   planner?: ModelPart;
   /** The disconfirmation pass (default: the planner). */
   critic?: ModelPart;
+  /** Checks each run's draft when `options.verify` (default: the critic). */
+  verifier?: ModelPart;
+  /**
+   * Lessons from resolved questions. Only lessons whose outcome was known at
+   * the evidence cutoff are recalled (`visibleAt`); the ones used are recorded.
+   */
+  lessons?: LessonStore;
   judge?: DecisionProvider;
   pageText?: PageText;
   lookups?: ForecastLookup[];
@@ -136,6 +151,14 @@ export interface TypedRun {
   quality?: number;
   judgeError?: string;
   status: string;
+  /** The verifier's check of this draft (`options.verify`). */
+  verified?: {
+    model: string;
+    verdict: "accept" | "correct" | "error";
+    /** The draft before a correction replaced it. */
+    draft?: string;
+    reason?: string;
+  };
 }
 
 export interface Critique {
@@ -165,6 +188,8 @@ export interface TypedForecastAnswer {
   plan?: ForecastPlan;
   research: ResearchRound[];
   lookups?: LookupResult[];
+  /** Lessons recalled for this forecast (all resolved at or before the cutoff). */
+  lessons?: Array<{ id?: string; text: string; resolvedAt: string }>;
   /** For a number: the freshest official reading the runs started from, and its horizon spread. */
   anchor?: NumericAnchor;
   critique?: Critique;
@@ -289,6 +314,7 @@ export async function forecastTyped(
   const lookbackDays = clampInt(opts.lookbackDays, 1, 3650, 45);
   const planner = deps.planner ?? deps.analysts[0];
   const critic = deps.critic ?? planner;
+  const verifier = deps.verifier ?? critic;
 
   const cutoff = chooseCutoff(req, now);
   const cutoffDay = cutoff.at.slice(0, 10);
@@ -322,11 +348,30 @@ export async function forecastTyped(
   };
   if (deps.analysts.length === 0 || !planner) return finish("no analyst models configured");
 
+  // ── Lessons (only those whose outcome was known at the cutoff) ────────────
+  if (deps.lessons) {
+    try {
+      const recalled = await deps.lessons.recall(`${req.question} ${req.answer.type}`, cutoff.at);
+      out.lessons = recalled.map((l) => ({
+        ...(l.id ? { id: l.id } : {}),
+        text: l.text,
+        resolvedAt: l.resolvedAt,
+      }));
+    } catch (err) {
+      earlier.push(
+        `lesson recall failed: ${(err instanceof Error ? err.message : String(err)).slice(0, 120)}`,
+      );
+    }
+  }
+
   const header = [
     `Question: ${req.question}`,
     req.context ? `How it resolves / notes:\n${req.context.slice(0, 4_000)}` : "",
     req.endTime ? `The question closes: ${req.endTime}` : "",
     `Forecast made as of: ${cutoff.at} (the evidence cutoff — use nothing published after it; the event itself happens later)`,
+    out.lessons?.length
+      ? `Lessons from earlier resolved questions (apply where relevant):\n${out.lessons.map((l) => `- ${l.text}`).join("\n")}`
+      : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -468,6 +513,7 @@ export async function forecastTyped(
       if (Number.isFinite(c)) run.confidence = Math.min(1, Math.max(0, c));
       if (typeof reply?.reason === "string") run.reason = reply.reason.slice(0, 500);
       run.weight = 1;
+      if (opts.verify && verifier) await verifyRun(req, verifier, user, run);
       if (judge) {
         const judged = await judgeClaim(
           judge,
@@ -526,6 +572,51 @@ export async function forecastTyped(
   return finish(
     lowGrounding ? "the judge found little verified evidence behind every run" : undefined,
   );
+}
+
+function verifierSystem(spec: AnswerSpec): string {
+  return [
+    "You verify a forecaster's draft answer before it counts. Check it against the dossier and the question's resolution rules: the right option semantics, the right unit and scale, the latest reading, arithmetic.",
+    TIMING,
+    "Accept the draft unless you find a concrete error; then give the corrected answer.",
+    'Reply with ONE JSON object: {"verdict": "accept" | "correct", "answer": <only on correct, same format as below>, "reason": "<one sentence>"}.',
+    "Answer format:",
+    answerInstruction(spec),
+  ].join("\n");
+}
+
+/** One run's draft checked by the verifier; a valid correction replaces the run's value. */
+async function verifyRun(
+  req: TypedForecastRequest,
+  verifier: ModelPart,
+  user: string,
+  run: TypedRun,
+): Promise<void> {
+  const { reply, error } = await askAnalyst(
+    verifier,
+    verifierSystem(req.answer),
+    `${user}\n\nDRAFT ANSWER: ${run.formatted}\nDRAFT REASON: ${run.reason ?? "(none)"}`,
+  );
+  if (error !== undefined) {
+    run.verified = { model: verifier.name, verdict: "error", reason: error.slice(0, 120) };
+    return;
+  }
+  const reason = typeof reply?.reason === "string" ? reply.reason.slice(0, 300) : undefined;
+  if (reply?.verdict === "correct") {
+    const v = validateAnswer(req.answer, reply.answer);
+    if (!("error" in v) && formatAnswer(v.value) !== run.formatted) {
+      run.verified = {
+        model: verifier.name,
+        verdict: "correct",
+        draft: run.formatted!,
+        ...(reason ? { reason } : {}),
+      };
+      run.value = v.value;
+      run.formatted = formatAnswer(v.value);
+      return;
+    }
+  }
+  run.verified = { model: verifier.name, verdict: "accept", ...(reason ? { reason } : {}) };
 }
 
 async function critique(

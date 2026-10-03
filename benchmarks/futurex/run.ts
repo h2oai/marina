@@ -31,19 +31,55 @@ export interface Variant {
   analysts: string[];
   planner?: string;
   critic?: string;
+  /** Checks each run's draft (the verification formation inside one forecast). */
+  verifier?: string;
+  verify?: boolean;
   runs?: number;
   researchRounds?: number;
   critique?: boolean;
 }
 
-/** Built-in variants on current models; override with a JSON file of `Variant`s. */
+/**
+ * Built-in variants on current models; override with a JSON file of `Variant`s.
+ * Model ids are pinned (no floating aliases) so a run is reproducible and a
+ * clean backtest can bound what each model could have known.
+ */
 export const BUILTIN_VARIANTS: Record<string, Variant> = {
   cheap: {
     label: "cheap",
     model: "deepseek-v4-pro",
-    analysts: ["openrouter/deepseek/deepseek-v4-pro"],
-    planner: "openrouter/deepseek/deepseek-v4-pro",
-    critic: "openrouter/deepseek/deepseek-v4-pro",
+    analysts: ["openrouter/deepseek/deepseek-v4-pro-0813"],
+    planner: "openrouter/deepseek/deepseek-v4-pro-0813",
+    critic: "openrouter/deepseek/deepseek-v4-pro-0813",
+    runs: 3,
+    researchRounds: 2,
+  },
+  /**
+   * The verification formation inside each forecast: cheap runs, every draft
+   * checked by a different-vendor verifier before it counts, then the critic.
+   */
+  verify: {
+    label: "verify",
+    model: "deepseek-v4-pro-verified",
+    analysts: ["openrouter/deepseek/deepseek-v4-pro-0813"],
+    planner: "openrouter/deepseek/deepseek-v4-pro-0813",
+    verifier: "openrouter/anthropic/claude-opus-5",
+    critic: "openrouter/anthropic/claude-opus-5",
+    verify: true,
+    runs: 3,
+    researchRounds: 2,
+  },
+  /** A frontier mix released before the latest resolved rows: backtestable cleanly. */
+  "frontier-2607": {
+    label: "frontier-2607",
+    model: "claude-opus-5",
+    analysts: [
+      "openrouter/anthropic/claude-opus-5",
+      "openrouter/deepseek/deepseek-v4-pro-0813",
+      "openrouter/moonshotai/kimi-k3",
+    ],
+    planner: "openrouter/deepseek/deepseek-v4-pro-0813",
+    critic: "openrouter/anthropic/claude-opus-5",
     runs: 3,
     researchRounds: 2,
   },
@@ -84,6 +120,8 @@ export interface RowResult {
   costUsd: number;
   latencyMs: number;
   caveat?: string;
+  /** The research lines the forecast actually kept (for a leak audit), when captured. */
+  evidence?: string;
   answer: TypedForecastAnswer;
 }
 
@@ -102,10 +140,19 @@ export interface RunOptions {
   now?: () => Date;
   /** Called after each row (progress). */
   onRow?: (r: RowResult, done: number, total: number) => void;
+  /**
+   * Awaited after each row, before its worker takes the next one — e.g. score a
+   * resolved row and write its lesson, so later rows can recall it.
+   */
+  afterRow?: (row: FuturexRow, r: RowResult) => Promise<void>;
 }
 
-/** Deps for one row: fresh per row so cost is attributable to it. */
-export type DepsFactory = () => { deps: TypedForecastDeps; costUsd: () => number };
+/** Deps for one row: fresh per row so cost (and, when captured, evidence) is attributable to it. */
+export type DepsFactory = () => {
+  deps: TypedForecastDeps;
+  costUsd: () => number;
+  evidence?: () => string;
+};
 
 export async function runBatch(
   rows: FuturexRow[],
@@ -123,6 +170,7 @@ export async function runBatch(
       const i = next++;
       const row = rows[i]!;
       results[i] = await runRow(row, makeDeps, now(), opts.horizonDays);
+      if (opts.afterRow) await opts.afterRow(row, results[i]!);
       done++;
       opts.onRow?.(results[i]!, done, rows.length);
     }
@@ -170,6 +218,7 @@ async function runRow(
     costUsd: answer.costUsd,
     latencyMs: answer.latencyMs,
     ...(answer.caveat ? { caveat: answer.caveat } : {}),
+    ...(made.evidence ? { evidence: made.evidence() } : {}),
     answer,
   };
 }

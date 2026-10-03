@@ -663,6 +663,14 @@
 # MARINA_FORECAST_CRITIQUE=on
 # MARINA_FORECAST_LOOKUPS=
 
+# Verification inside a typed forecast: with VERIFY=on each run's draft is checked by VERIFIER (default: the critic) against the dossier and the resolution rules before it is combined, and a concrete correction replaces it. RETRIEVAL_FILTER=strict keeps only research lines whose every cited page is provably published on or before the evidence cutoff (engine date, else a date in the URL) and that name no later day; undated and live-result pages are dropped. Use it for past-cutoff forecasts (replays, backtests); date-filtered engines (tavily:, exa:) need no filter, and `closed-book` as the retriever disables retrieval.
+# MARINA_FORECAST_VERIFY=off
+# MARINA_FORECAST_VERIFIER=openrouter/anthropic/claude-opus-5
+# MARINA_FORECAST_RETRIEVAL_FILTER=none
+
+# Exa search for forecast and arena retrieval (`exa:auto`, `exa:neural`, `exa:keyword`): filtered server-side by publication date to the brief's window, so it is a date-filtered engine.
+# @restart
+# EXA_API_KEY=
 # Keys for forecast lookups (each lookup is skipped when its key is unset): The Odds API (sports odds), FRED (St. Louis Fed; vintage data for a past cutoff), and BLS (optional; raises the public API's quota).
 # @protected
 # ODDS_API_KEY=

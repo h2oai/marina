@@ -69,6 +69,10 @@ export function recordScoredRun(
     run: BatchRun;
     score: BatchScore;
     horizonDays?: number;
+    /** Replicate group: runs of the same configuration pool in `benchmark compare`. */
+    replicateGroup?: string;
+    /** More run facts for the config and target (isolation, lessons, replicate number). */
+    extra?: Record<string, unknown>;
     now?: number;
   },
 ): { id: string; created: boolean; benchmark: string } {
@@ -84,6 +88,7 @@ export function recordScoredRun(
       ...(input.horizonDays !== undefined ? { horizonDays: input.horizonDays } : {}),
       overall: score.overall,
       byLevel: score.byLevel,
+      ...(input.extra ?? {}),
     },
     timestamp: Date.parse(run.finishedAt),
     duration_ms: Date.parse(run.finishedAt) - Date.parse(run.startedAt),
@@ -109,11 +114,16 @@ export function recordScoredRun(
       analysts: input.variant.analysts,
       planner: input.variant.planner,
       critic: input.variant.critic,
+      ...(input.variant.verifier ? { verifier: input.variant.verifier } : {}),
+      ...(input.variant.verify ? { verify: true } : {}),
       runs: input.variant.runs,
       researchRounds: input.variant.researchRounds,
       critique: input.variant.critique ?? true,
+      ...(input.extra?.isolation ? { isolation: input.extra.isolation } : {}),
+      ...(input.extra?.lessons ? { lessons: input.extra.lessons } : {}),
     },
-    label: `${input.variant.label} ${input.batchSha.slice(0, 8)}`,
+    ...(input.replicateGroup ? { replicateGroup: input.replicateGroup } : {}),
+    label: `${input.variant.label} ${input.batchSha.slice(0, 8)}${input.extra?.replicate ? ` r${input.extra.replicate}` : ""}`,
     judge: "local mechanical scorer (published metric definitions)",
     raw,
     id: `bench_${randomUUID().slice(0, 13)}`,
