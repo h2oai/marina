@@ -186,6 +186,20 @@ invent outcomes; mutations do not bypass subsystem activation or safety boundari
 
 ## Knowledge & Cognition
 
+`lessons <topic> [domain:<forecast|code|tools|benchmark|arena>]` recalls what past outcomes taught.
+- **Where lessons come from:** every verdict becomes a candidate lesson, including a benchmark run filed, a forecast resolved, a Code Mode verification, and an arena round scored.
+- **Judging:** the decision layer (or the operator's own model, uncalibrated) judges each candidate.
+- **What recall returns:** passing lessons come first, then unjudged ones labelled `(unverified)`. Rejected candidates are never served.
+- **Leakage rule:** a lesson is never visible to work whose cutoff precedes its outcome.
+
+The same lessons also reach the people and agents doing the work:
+- the forecaster;
+- `marina/verify` (the proposer and the checker);
+- `marina:<crew>` requests (as a `lessons` field);
+- failed `code verify` runs.
+
+`MARINA_LESSONS=observe` records which lessons recall WOULD use without injecting them; `off` disables it.
+
 Evidence-aware memory extends the existing `note <text>` workflow:
 
 ```text
