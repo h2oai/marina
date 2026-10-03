@@ -9,7 +9,7 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { mkdirSync, openSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { type Subprocess, spawn, spawnSync } from "bun";
 import {
@@ -86,6 +86,61 @@ async function waitFor(url: string, key: string, want: string | undefined, secon
   return false;
 }
 
+/** `KEY=value` pairs from a dotenv file (comments, `export ` and quotes handled). */
+export function parseDotEnv(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const raw of text.split("\n")) {
+    const line = raw.trim().replace(/^export\s+/, "");
+    if (!line || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq).trim();
+    let value = line.slice(eq + 1).trim();
+    if (
+      value.length >= 2 &&
+      ((value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'")))
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) out[key] = value;
+  }
+  return out;
+}
+
+const PROVIDER_KEY = /_(API_KEY|API_TOKEN)$/;
+/** Base-URL overrides that would reroute a third-party evaluator's own provider calls. */
+const BASE_URL_OVERRIDES = ["OPENAI_BASE_URL", "OPENAI_API_BASE"] as const;
+
+/**
+ * Environment for a step that runs a third-party evaluator (`providerEnv`): the
+ * operator's provider keys from `.env` fill any the inherited env lacks, and
+ * base-URL overrides are removed, so the evaluator's own calls reach the provider it
+ * ships with. Values are copied, never logged.
+ */
+export function withProviderEnv(
+  env: Record<string, string>,
+  dotenv: Record<string, string>,
+): Record<string, string> {
+  const out = { ...env };
+  for (const [k, v] of Object.entries(dotenv)) {
+    if (PROVIDER_KEY.test(k) && v && !out[k]) out[k] = v;
+  }
+  for (const k of BASE_URL_OVERRIDES) delete out[k];
+  return out;
+}
+
+function readDotEnv(): Record<string, string> {
+  const path = join(REPO, ".env");
+  if (!existsSync(path)) return {};
+  try {
+    return parseDotEnv(readFileSync(path, "utf8"));
+  } catch {
+    // allow-empty-catch: an unreadable .env adds no keys; the doctor reports what is missing
+    return {};
+  }
+}
+
 export interface RunOptions {
   runDir: string;
   ledgerDb: string;
@@ -129,7 +184,7 @@ export async function executePlan(plan: Plan, opts: RunOptions): Promise<number>
           continue;
         }
         log(`> ${step.label}`);
-        const env = { ...baseEnv };
+        const env = step.providerEnv ? withProviderEnv(baseEnv, readDotEnv()) : { ...baseEnv };
         for (const [k, v] of Object.entries(step.env ?? {})) env[k] = expand(v, vars);
         const res = spawnSync(
           step.argv.map((a) => expand(a, vars)),
@@ -202,7 +257,9 @@ export function renderComparison(step: CompareStep, ledgerDb: string): string {
     const pick = (group: string) => runs.find((r) => replicateGroupOf(r) === group);
     const a = pick(step.a);
     const b = pick(step.b);
-    if (!a || !b) return `compare ${step.a} vs ${step.b}: missing runs in the ledger`;
+    if (!a || !b) {
+      return `compare ${step.a} vs ${step.b}: no valid run in the ledger for ${!a ? step.a : step.b} (failed, or refused for infrastructure errors)`;
+    }
     const ga = loadReplicateGroup(db, a);
     const gb = loadReplicateGroup(db, b);
     const c = comparePooledGroups(ga, gb);

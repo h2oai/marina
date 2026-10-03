@@ -26,6 +26,16 @@ export interface ReproFlags {
   judge?: string;
   /** τ² domain, SWE-bench env-image mode, FutureX isolation … (setup-specific). */
   domain?: string;
+  /** τ² task split (e.g. `test`); default: the domain's full task set, capped by `--limit`. */
+  split?: string;
+  /**
+   * Agent reasoning effort (τ²). Sent in `extra_body`: LiteLLM's `drop_params` silently
+   * strips a top-level `reasoning_effort` for model ids it does not know (every
+   * Marina-routed id). Default `high`, as the τ² board runs agents.
+   */
+  effort?: string;
+  /** User-simulator reasoning effort (τ²), stated explicitly; default `low`. */
+  userEffort?: string;
   envImage?: boolean;
   seed: number;
   /** Where servers, databases, scratch and results live (on disk, never a tmpfs). */
@@ -58,6 +68,13 @@ export interface CommandStep {
   cwd?: string;
   /** Servers that must be up while this runs. */
   needs?: string[];
+  /**
+   * Give the process the operator's provider keys from `.env` (never printed) and
+   * drop any `OPENAI_BASE_URL` / `OPENAI_API_BASE` override, so a third-party
+   * evaluator's own model calls (τ²'s NL-assertion judge) reach the provider it ships
+   * with instead of failing as infrastructure errors.
+   */
+  providerEnv?: boolean;
 }
 
 export interface CompareStep {
