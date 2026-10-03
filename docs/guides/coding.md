@@ -157,7 +157,7 @@ does **not** replay uncertain work or resume a native process automatically.
 
 ### Keep a Coding desk beside your work
 
-In the dashboard, choose **Workspace → Canvas → Published panels → Create coding desk**.
+In the dashboard, select an existing session in **Work** to open a personal desk. Its repository may be Marina itself or any external project. To publish a shared desk, choose **Workspace → Canvas → Published panels → Create coding desk**.
 Select an existing Marina coding session; optionally attach a task and a visible participant.
 **Publish and open desk** opens its activity, artifacts, recorded verification, request composer
 and world feed beside Chat. Each coding request is reviewed and targets that exact session,
@@ -168,14 +168,17 @@ The same publication is usable from the coding terminal:
 
 ```text
 /panel list
-/panel desk <canvas-id>
+/panel desk
+/panel views
+/panel publish <canvas-id>
 /view panel
 ```
 
-`/panel list` supplies canvas IDs; `/panel desk <canvas-id>` publishes and opens a desk for the
-selected Marina coding session. Supply an explicit session with
-`/panel desk <canvas-id> <session-id>`, or open an existing publication with
-`/panel open <canvas-id> <node-id>`.
+`/panel desk [session-id]` opens a personal view of the current or explicit session without
+publishing it. `/panel publish <canvas-id> [session-id]` explicitly publishes a shared desk;
+`/panel list` supplies canvas IDs. Open a publication with `/panel open <canvas-id> <node-id>`.
+Up to four open views keep independent drafts and captured reviews. `/panel use <number>` or
+Alt+Left / Alt+Right in the TUI panel form switches views; `/panel close` closes only the current view.
 
 In `--tui`, F8 focuses the panel. Tab/Shift+Tab selects fields and buttons; type into a field,
 use Space for a checkbox, and Enter to review an action. Review starts on **Cancel**; select

@@ -45,7 +45,7 @@ for (const viewport of [
   { width: 1024, height: 768 },
   { width: 390, height: 844 },
 ]) {
-  test(`Canvas panel host preserves dashboard geometry and chrome at ${viewport.width}px`, async ({
+  test(`Default workspace and former preview links share geometry and chrome at ${viewport.width}px`, async ({
     browser,
   }) => {
     const context = await browser.newContext({ viewport, reducedMotion: "reduce" });
@@ -210,7 +210,7 @@ test("Canvas layout edits preserve one chat connection, drafts, focus and saved 
     "Canvas parity arrangement",
   );
   await expect.poll(() => geometry(page)).toEqual(savedGeometry);
-  await expect(page.locator("[data-workspace-surface=canvas]")).toHaveCount(0);
+  await expect(page.locator("[data-workspace-surface=canvas]")).toHaveCount(1);
   expect(errors).toEqual([]);
 });
 

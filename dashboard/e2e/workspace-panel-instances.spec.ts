@@ -12,7 +12,7 @@ async function openMap(page: Page) {
   await expect(page.locator("#view-map").getByLabel("World map", { exact: true })).toBeVisible();
 }
 
-test("mixed map and Streams tiles restore through the same presets in both renderers", async ({
+test("mixed map and Streams tiles restore through the same presets through default and former preview links", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -182,7 +182,7 @@ test("repeated maps have independent controls while chat and live world connecti
   expect(errors).toEqual([]);
 });
 
-test("extra maps save in existing presets, restore on both renderers and remain reachable on phones", async ({
+test("extra maps save in existing presets, restore through both entry links and remain reachable on phones", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });

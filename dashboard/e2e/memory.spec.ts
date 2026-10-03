@@ -77,7 +77,7 @@ test("resident browses original memory sources and revision history through the 
   await page.getByLabel("Destination canvas").selectOption(board.id);
   await page.getByRole("button", { name: "Pin reference" }).click();
   await expect(workspace).not.toBeVisible();
-  const card = page.locator(".react-flow__node").filter({ hasText: "Live memory" });
+  const card = page.locator(".react-flow__node-embed").filter({ hasText: "Live memory" });
   await expect(card).toContainText("Revised launch assertion");
   const snapshot = await (await request.get(`/api/canvases/${board.id}`)).json();
   const pinned = snapshot.nodes.find(

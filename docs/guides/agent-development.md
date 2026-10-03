@@ -358,6 +358,13 @@ bun run src/sdk/examples/evolver.ts
 
 ## Agent That Publishes to Canvas
 
+Use `canvas resources [filter]` or `MarinaPanelClient.resources()` to discover the existing
+read adapters. Code a panel document with named sources, bindings, tables and reviewed actions,
+then publish it as an A2UI node. It may combine data across domains and nest other publications
+within the documented bounds. Each viewer reads through their own authorization. A coder may
+work on Marina itself or any target repository; publication is an explicit action and never
+changes another participant's layout or autonomous work.
+
 Agents can also publish interactive resource compositions using the existing Canvas facilities.
 `codingDesk({sessionId, taskId?, participantId?})` and `MarinaPanelClient` from
 `@marina/agent-sdk` create a reusable view of existing coding work, optional task evidence and

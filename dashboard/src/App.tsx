@@ -1,17 +1,13 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getBreakpointFromWidth,
   type Layout,
-  ResponsiveGridLayout,
   type ResponsiveLayouts,
   useContainerWidth,
-  verticalCompactor,
 } from "react-grid-layout";
-import "react-grid-layout/css/styles.css";
-import "react-resizable/css/styles.css";
 import { AttentionDrawer } from "./components/AttentionDrawer";
 import { PinToCanvasDialog } from "./components/CanvasReference";
 import { DiscoveryPalette } from "./components/DiscoveryPalette";
@@ -25,6 +21,7 @@ import {
   RecentActivity,
   ShortcutHelp,
 } from "./components/OperatorFeedback";
+import { WorkspaceCanvas as CanvasWorkspace } from "./components/workspace-canvas";
 import { useWorkspacePanels } from "./components/workspace-panels-registry";
 import { useSystem, useWorld } from "./hooks/use-api";
 import { useChatState } from "./hooks/use-chat-state";
@@ -56,9 +53,6 @@ import {
 
 type Bp = "lg" | "md";
 const PANES: WorkspacePane[] = ["webchat", "workspace", "context"];
-const CanvasWorkspace = lazy(() =>
-  import("./components/workspace-canvas").then((module) => ({ default: module.WorkspaceCanvas })),
-);
 
 export default function App() {
   const { connected } = useDashboardWebSocket();
@@ -80,10 +74,6 @@ export default function App() {
   );
   const [panelNotice, setPanelNotice] = useState("");
   const [focused, setFocused] = useState<string | null>(null);
-  // Opt-in renderer qualification; the standard layout and saved presets remain compatible.
-  const [canvasPreview] = useState(
-    () => new URLSearchParams(window.location.search).get("surface") === "canvas",
-  );
   const [height, setHeight] = useState(650);
   const pane = useWorkspaceState((s) => s.pane);
   const fullscreen = useWorkspaceState((s) => s.fullscreen);
@@ -243,7 +233,11 @@ export default function App() {
       if (target)
         openBoundRef.current(
           legacy ? "worldmap" : "workspace",
-          target.kind === "canvas-node" ? "published" : "streams",
+          target.kind === "canvas-node"
+            ? "published"
+            : target.kind === "coding"
+              ? "coding-desk"
+              : "streams",
           target,
         );
     };
@@ -288,7 +282,8 @@ export default function App() {
           definition.slot === "grid" &&
           definition.repeatable &&
           (key === "workspace"
-            ? definition.id !== "published" && definition.repeatable.fromView === view
+            ? !["published", "coding-desk"].includes(definition.id) &&
+              definition.repeatable.fromView === view
             : definition.id === (panelInstance(key)?.panelId ?? key)),
       );
     return {
@@ -303,14 +298,13 @@ export default function App() {
       isFocused: focused === key,
       onToggleFocus: () => focus(key),
       active: fullscreen ? key === "workspace" : width >= 800 || pane === key,
-      openBelow:
-        canvasPreview && repeatable
-          ? {
-              label: repeatable.repeatable!.actionLabel,
-              run: () => openViewBelow(key, repeatable.id),
-              disabled: instanceIds.length >= MAX_EXTRA_PANELS,
-            }
-          : undefined,
+      openBelow: repeatable
+        ? {
+            label: repeatable.repeatable!.actionLabel,
+            run: () => openViewBelow(key, repeatable.id),
+            disabled: instanceIds.length >= MAX_EXTRA_PANELS,
+          }
+        : undefined,
       onCloseView: panelInstance(key) ? () => closeView(key) : undefined,
     };
   };
@@ -420,59 +414,24 @@ export default function App() {
         ref={containerRef}
         className={`dashboard-grid min-h-0 min-w-0 flex-1 overflow-auto ${legacy ? "legacy-grid" : "workspace-grid"}`}
       >
-        {mounted && canvasPreview ? (
-          <Suspense fallback={<p role="status">Loading workspace…</p>}>
-            <CanvasWorkspace
-              panels={panels}
-              layout={effectiveLayouts[breakpoint] ?? effectiveLayouts.lg ?? []}
-              width={width}
-              height={height}
-              cols={columns[breakpoint]}
-              rowHeight={rowHeight}
-              focused={focused}
-              visiblePane={
-                legacy ? undefined : fullscreen ? "workspace" : width < 800 ? pane : undefined
-              }
-              editable={width >= 800 && !fullscreen && !focused}
-              panelRef={assignPanelRef}
-              onLayoutChange={(layout) =>
-                handleLayoutChange(layout, { ...layouts, [breakpoint]: layout })
-              }
-            />
-          </Suspense>
-        ) : (
-          mounted && (
-            <ResponsiveGridLayout
-              width={width}
-              layouts={effectiveLayouts}
-              breakpoints={{ lg: 1200, md: 0 }}
-              cols={columns}
-              rowHeight={rowHeight}
-              margin={[4, 4]}
-              autoSize={false}
-              dragConfig={{
-                enabled: width >= 800 && !fullscreen,
-                handle: ".drag-handle",
-                cancel: "button, input, select, textarea, a",
-              }}
-              resizeConfig={{ enabled: width >= 800 && !fullscreen, handles: ["se"] }}
-              compactor={verticalCompactor}
-              onLayoutChange={handleLayoutChange}
-            >
-              {panels.map(([key, content]) => (
-                <div
-                  key={key}
-                  data-pane-key={key}
-                  ref={(el) => {
-                    assignPanelRef(key, el);
-                  }}
-                  className={`${focused === key ? "panel-focused" : ""} ${pane === key ? "pane-active" : ""}`}
-                >
-                  {content}
-                </div>
-              ))}
-            </ResponsiveGridLayout>
-          )
+        {mounted && (
+          <CanvasWorkspace
+            panels={panels}
+            layout={effectiveLayouts[breakpoint] ?? effectiveLayouts.lg ?? []}
+            width={width}
+            height={height}
+            cols={columns[breakpoint]}
+            rowHeight={rowHeight}
+            focused={focused}
+            visiblePane={
+              legacy ? undefined : fullscreen ? "workspace" : width < 800 ? pane : undefined
+            }
+            editable={width >= 800 && !fullscreen && !focused}
+            panelRef={assignPanelRef}
+            onLayoutChange={(layout) =>
+              handleLayoutChange(layout, { ...layouts, [breakpoint]: layout })
+            }
+          />
         )}
       </div>
     </div>

@@ -4,6 +4,7 @@ import { type Component, type Editor, matchesKey, truncateToWidth } from "@earen
 import { terminalText } from "./code-presentation";
 
 export type PanelInput =
+  | { type: "view"; id: string }
   | { type: "field"; id: string; value: string | boolean }
   | { type: "action"; id: string }
   | { type: "sender"; id: string }
@@ -11,6 +12,8 @@ export type PanelInput =
   | { type: "cancel" };
 export interface TerminalPanelState {
   key: string;
+  views?: Array<{ id: string; label: string }>;
+  view?: string;
   fields: Array<{
     id: string;
     label: string;
@@ -96,6 +99,14 @@ export class CodePanelForm implements Component {
   handleInput(data: string) {
     if (!this.state) return;
     const pasted = data.startsWith("\x1b[200~");
+    if (!pasted && (matchesKey(data, "alt+left") || matchesKey(data, "alt+right"))) {
+      const views = this.state.views ?? [];
+      const index = views.findIndex((v) => v.id === this.state!.view);
+      const delta = matchesKey(data, "alt+left") ? -1 : 1;
+      const next = views[(index + delta + views.length) % views.length];
+      if (next) this.input({ type: "view", id: next.id });
+      return;
+    }
     if (!pasted && matchesKey(data, "tab")) {
       this.move(1);
       return;
@@ -165,6 +176,16 @@ export class CodePanelForm implements Component {
     const editor = selected?.kind === "field" ? this.editors.get(selected.id) : undefined;
     for (const e of this.editors.values()) e.focused = this.focused && e === editor;
     if (editor) lines.push(...editor.render(width));
+    if ((this.state?.views?.length ?? 0) > 1)
+      lines.unshift(
+        truncateToWidth(
+          terminalText(
+            `Alt+←/→ · ${this.state!.views!.map((v) => `${v.id === this.state!.view ? "● " : ""}${v.label}`).join(" | ")}`,
+          ),
+          Math.max(1, width),
+          "…",
+        ),
+      );
     if (!lines.length) lines.push("No available controls. F6 returns to conversations.");
     return lines;
   }

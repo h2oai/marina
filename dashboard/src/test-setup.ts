@@ -33,6 +33,10 @@ class ResizeObserverStub {
 }
 globalThis.ResizeObserver = ResizeObserverStub as unknown as typeof ResizeObserver;
 
+// jsdom has no viewport scrolling. The real canvas host's desktop/touch scroll
+// behavior is exercised in workspace-canvas.spec.ts, including nested panels.
+window.scrollTo = () => {};
+
 // Stub requestAnimationFrame / cancelAnimationFrame if missing
 if (typeof globalThis.requestAnimationFrame === "undefined") {
   globalThis.requestAnimationFrame = (cb: FrameRequestCallback) =>

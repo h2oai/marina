@@ -697,6 +697,7 @@ export type { ParticipantOrientation } from "./onboarding.js";
 export * from "./panel-actions.js";
 export * from "./panel-client.js";
 export * from "./panel-document.js";
+export * from "./panel-resource-catalog.js";
 export * from "./panel-resources.js";
 export { panelText } from "./panel-text.js";
 export type { BroadcastPerception, Entity, EntityId, EntityKind, EntityRank, ErrorPerception, MessagePerception, MovementPerception, Perception, PerceptionKind, RoomId, RoomPerception, SystemPerception, } from "./protocol.js";
@@ -2539,6 +2540,7 @@ export declare function panelOperationLabel(operation: PanelOperation): string;
 ```typescript
 import { type A2UINodeData } from "./panel-document.js";
 import type { PanelChangeEvent } from "./panel-events.js";
+import type { PanelResourceDefinition } from "./panel-resource-catalog.js";
 export interface PublishedPanelNode {
     id: string;
     canvas_id: string;
@@ -2571,6 +2573,10 @@ export declare class MarinaPanelClient {
         id: string;
         name: string;
     }[]>;
+    resources(signal?: AbortSignal): Promise<{
+        schema: "marina.panel-resources.v1";
+        resources: PanelResourceDefinition[];
+    }>;
     /** Existing dashboard transport, scoped with this client's credential. Reconnect requires a
      * fresh authorized snapshot; missed events are never treated as a complete history. */
     watchChanges(onEvent: (event: PanelChangeEvent) => void, onReconnect: () => void): () => void;
@@ -2665,13 +2671,43 @@ export interface PanelChangeEvent {
 export declare function panelSourceAffected(source: PanelSource, event: PanelChangeEvent): boolean;
 ```
 
+## panel-resource-catalog
+
+[Source](../../src/sdk/panel-resource-catalog.ts)
+
+```typescript
+/** Read adapters, not grants. Every fetch still passes through the resource's own authorization.
+ * Keep side-effecting GETs (notably entities/:name/canvas), credentials and arbitrary URLs out.
+ * Parameters are encoded as individual path segments; query keys are declared per adapter.
+ */
+export interface PanelResourceDefinition {
+    id: string;
+    path: string;
+    parameters: readonly string[];
+    query: readonly string[];
+}
+/** The same discovery document is consumed by agents, SDKs and panel editors. */
+export declare const PANEL_RESOURCE_CATALOG: readonly PanelResourceDefinition[];
+export interface CatalogPanelSource {
+    kind: "resource";
+    resource: string;
+    params?: Record<string, string>;
+    query?: Record<string, string | number | boolean>;
+}
+/** Normalize untrusted authored references before they can reach an authenticated fetch. */
+export declare function parseCatalogPanelSource(input: unknown): CatalogPanelSource | null;
+/** Throws even for an invalid typed input: SDK consumers can be JavaScript callers. */
+export declare function panelResourcePath(input: CatalogPanelSource): string;
+```
+
 ## panel-resources
 
 [Source](../../src/sdk/panel-resources.ts)
 
 ```typescript
 import type { A2UINodeData } from "./panel-document.js";
-export type PanelSource = {
+import { type CatalogPanelSource } from "./panel-resource-catalog.js";
+export type PanelSource = CatalogPanelSource | {
     kind: "task" | "note" | "participant" | "run" | "coding";
     id: string;
 } | {

@@ -194,10 +194,10 @@ Follow **[First autonomous fix (copy and paste)](docs/guides/coding.md#first-aut
 for the exact prompt, expected lifecycle, independent verification, troubleshooting, and cleanup.
 
 Add `--tui` for the fullscreen terminal: `bun run code /tmp/marina-coding-agent-demo --tui`.
-F6 switches Coding/World, F7 opens pending requests, and F8 opens a published panel. One coding
+F6 switches Coding/World, F7 opens pending requests, and F8 opens your panel views. `/panel desk` opens a personal coding desk; `/panel publish <canvas-id>` shares one. One coding
 session is enough; other conversations and autonomous agents continue alongside your work.
 
-In the dashboard, **Workspace → Canvas → Published panels → Create coding desk** composes an
+In the dashboard, select a session in **Work** to open a personal desk for Marina itself or an external repository. **Workspace → Canvas → Published panels → Create coding desk** publishes an
 existing coding session, recorded checks, optional task evidence and participant messages, and
 world activity in one panel. Requests require review and target that specific session. Closing
 the panel leaves its worker running. See [Published panels](docs/guides/published-panels.md)
@@ -371,7 +371,7 @@ Anyone can create new world templates — just add a TypeScript file to `worlds/
 ## Canvas
 
 Open **Workspace → Canvas** inside the dashboard for rich media, threaded discussions, and
-interactive A2UI panels, updated in real time over WebSocket. The standalone
+interactive A2UI panels, updated in real time over WebSocket. `canvas resources` discovers data adapters for composing coding, memory, coordination, participant and world resources; each viewer retains their own permissions. The standalone
 `http://localhost:3300/canvas` entry point remains available. Published panels can sit beside
 Chat, maps and participant streams without navigating away from your work.
 

@@ -7,6 +7,7 @@ import { useProjects, useTasks } from "../hooks/use-api";
 import { useCodingSessionsSnapshot } from "../hooks/use-coding";
 import { openCanvas, openMemory } from "../hooks/use-workspace-state";
 import { draftCommand } from "../lib/command-discovery";
+import { openBoundPanel } from "../lib/panel-bindings";
 import { WorkLauncher } from "./WorkLauncher";
 
 const TERMINAL_TASKS = new Set(["completed", "cancelled", "failed"]);
@@ -168,11 +169,7 @@ export function WorkOverview({
                 type="button"
                 key={session.id}
                 onClick={() => {
-                  window.dispatchEvent(
-                    new CustomEvent("marina:open-coding", {
-                      detail: { sessionId: session.id },
-                    }),
-                  );
+                  openBoundPanel({ kind: "coding", id: session.id });
                   onClose();
                 }}
                 className="mb-1 flex w-full items-center justify-between gap-3 rounded border border-border bg-bg/70 p-2 text-left hover:border-primary/50"

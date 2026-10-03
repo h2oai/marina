@@ -92,7 +92,8 @@ export class CodeTerminal {
     this.redraw();
   }
 
-  private panelContent = "Use /panel list to find a published panel.";
+  private panelContent =
+    "Use /panel desk to open your coding session, or /panel list to find a published panel.";
   private panelState?: TerminalPanelState;
   setPanelState(state?: TerminalPanelState) {
     this.panelState = state;

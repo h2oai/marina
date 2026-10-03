@@ -160,35 +160,47 @@ Fields read here: `Math.min(Number(url.searchParams.get("limit")) &#124;&#124; 5
 
 ## src/net/dashboard-api.ts
 
-### `url.pathname === "/api/traces"`
+### `url.pathname === "/api/panel-resources"`
 
 [Source](../../src/net/dashboard-api.ts#L102)
 
+- Guard: `url.pathname === "/api/panel-resources" && method === "GET"`
+- Guard: `method === "GET"`
+
+### `url.pathname === "/api/traces"`
+
+[Source](../../src/net/dashboard-api.ts#L105)
+
 - Guard: `(url.pathname === "/api/traces" &#124;&#124; url.pathname === "/api/logs" &#124;&#124; url.pathname.startsWith("/api/evidence/")) && !memory.privilegedRead`
+- Guard: `url.pathname === "/api/panel-resources" && method === "GET"`
 
 ### `url.pathname === "/api/logs"`
 
-[Source](../../src/net/dashboard-api.ts#L103)
+[Source](../../src/net/dashboard-api.ts#L106)
 
 - Guard: `(url.pathname === "/api/traces" &#124;&#124; url.pathname === "/api/logs" &#124;&#124; url.pathname.startsWith("/api/evidence/")) && !memory.privilegedRead`
+- Guard: `url.pathname === "/api/panel-resources" && method === "GET"`
 
 ### `url.pathname.startsWith("/api/evidence/")`
 
-[Source](../../src/net/dashboard-api.ts#L104)
+[Source](../../src/net/dashboard-api.ts#L107)
 
 - Guard: `(url.pathname === "/api/traces" &#124;&#124; url.pathname === "/api/logs" &#124;&#124; url.pathname.startsWith("/api/evidence/")) && !memory.privilegedRead`
+- Guard: `url.pathname === "/api/panel-resources" && method === "GET"`
 
 ### `url.pathname === "/api/extensions/widgets"`
 
-[Source](../../src/net/dashboard-api.ts#L109)
+[Source](../../src/net/dashboard-api.ts#L112)
 
 - Guard: `url.pathname === "/api/extensions/widgets" && method === "GET"`
 - Guard: `method === "GET"`
+- Guard: `url.pathname === "/api/panel-resources" && method === "GET"`
 
 ### `url.pathname.startsWith("/api/")`
 
-[Source](../../src/net/dashboard-api.ts#L137)
+[Source](../../src/net/dashboard-api.ts#L140)
 
+- Guard: `url.pathname === "/api/panel-resources" && method === "GET"`
 - Guard: `url.pathname === "/api/extensions/widgets" && method === "GET"`
 
 ## src/net/dashboard-api/agents.ts
