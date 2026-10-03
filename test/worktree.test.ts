@@ -21,6 +21,7 @@ import {
   sessionWorktreeBranch,
   worktreeHasChanges,
 } from "../src/coding/worktree";
+import { git, gitInit } from "./git-helpers";
 
 // Each test gets an isolated $HOME so the Marina-managed worktrees dir
 // (~/.marina/worktrees) lands in a throwaway location, never the real home.
@@ -49,27 +50,9 @@ afterEach(() => {
 function makeGitRepoWithCommit(): string {
   const root = tempDir("marina-wt-repo-");
   writeFileSync(join(root, "example.txt"), "hello\n");
-  const env = {
-    ...process.env,
-    GIT_AUTHOR_NAME: "Test",
-    GIT_AUTHOR_EMAIL: "test@example.com",
-    GIT_COMMITTER_NAME: "Test",
-    GIT_COMMITTER_EMAIL: "test@example.com",
-  };
-  const run = (args: string[]) => {
-    const proc = Bun.spawnSync(["git", ...args], {
-      cwd: root,
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    if (proc.exitCode !== 0) {
-      throw new Error(`git ${args.join(" ")}: ${new TextDecoder().decode(proc.stderr)}`);
-    }
-  };
-  run(["init", "-q"]);
-  run(["add", "example.txt"]);
-  run(["commit", "-q", "-m", "initial"]);
+  gitInit(root);
+  git(root, "add", "example.txt");
+  git(root, "commit", "-q", "-m", "initial");
   return root;
 }
 

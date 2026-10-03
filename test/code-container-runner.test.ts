@@ -33,6 +33,7 @@ import {
   type RoomContext,
   roomId,
 } from "../src/types";
+import { git, gitInit } from "./git-helpers";
 import { cleanupDb, stripAnsi } from "./helpers";
 
 const markers = (...names: string[]) => new Set(names);
@@ -283,39 +284,10 @@ describe("ContainerWorkspace execution (fake runtime)", () => {
     rtDir = fakeRuntimeDir();
     savedPath = process.env.PATH;
     process.env.PATH = `${rtDir}:${savedPath}`;
-    Bun.spawnSync(["git", "init", "-q"], { cwd: root });
+    gitInit(root);
     writeFileSync(join(root, "a.py"), "x = 1\n");
-    Bun.spawnSync(
-      [
-        "git",
-        "-c",
-        "user.email=t@t",
-        "-c",
-        "user.name=t",
-        "-c",
-        "maintenance.auto=false",
-        "add",
-        ".",
-      ],
-      { cwd: root },
-    );
-    Bun.spawnSync(
-      [
-        "git",
-        "-c",
-        "user.email=t@t",
-        "-c",
-        "user.name=t",
-        "-c",
-        "maintenance.auto=false",
-        "-c",
-        "gc.auto=0",
-        "commit",
-        "-qm",
-        "init",
-      ],
-      { cwd: root },
-    );
+    git(root, "add", ".");
+    git(root, "commit", "-qm", "init");
   });
   afterEach(() => {
     process.env.PATH = savedPath;
@@ -395,7 +367,7 @@ describe("code workspace runner (command)", () => {
   beforeEach(() => {
     db = new MarinaDB(DB);
     root = realpathSync(mkdtempSync(join(tmpdir(), "marina-runner-cmd-")));
-    Bun.spawnSync(["git", "init", "-q"], { cwd: root });
+    gitInit(root);
     rtDir = fakeRuntimeDir();
     savedPath = process.env.PATH;
     process.env.PATH = `${rtDir}:${savedPath}`;
@@ -489,7 +461,7 @@ describe.skipIf(!IT_IMAGE || !itRuntime)("ContainerWorkspace (real runtime, opt-
   it("mount sync: the container sees the host worktree, including uncommitted files", async () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), "marina-cw-it-")));
     try {
-      Bun.spawnSync(["git", "init", "-q"], { cwd: root });
+      gitInit(root);
       writeFileSync(join(root, "probe_marker.txt"), "hello\n");
       const ws = new ContainerWorkspace(
         root,

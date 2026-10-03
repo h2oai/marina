@@ -9,13 +9,13 @@
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
-import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AgentOptions, BUILTIN_AGENT_ADAPTERS } from "../src/routing/agent-adapters";
 import { prepareAgentWorkspace } from "../src/routing/agent-workspace";
 import type { RuntimeState } from "../src/sdk/routing-runtime-types";
+import { git as gitIn } from "./git-helpers";
 import { until } from "./helpers";
 
 const scratch = mkdtempSync(join(tmpdir(), "marina-adapters-"));
@@ -209,9 +209,9 @@ describe("pi adapter", () => {
 describe("prepareAgentWorkspace", () => {
   it("shares the directory in shared mode and adds a detached worktree otherwise", async () => {
     const root = realpathSync(mkdtempSync(join(scratch, "repo-")));
-    const git = (...args: string[]) => execFileSync("git", ["-C", root, ...args]).toString();
+    const git = (...args: string[]) => gitIn(root, ...args);
     git("init", "-q");
-    git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "i");
+    git("commit", "-q", "--allow-empty", "-m", "i");
     mkdirSync(join(root, "sub"));
     writeFileSync(join(root, "sub", "f.txt"), "x");
 

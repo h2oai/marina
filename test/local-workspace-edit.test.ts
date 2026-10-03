@@ -6,23 +6,13 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LocalWorkspace } from "../src/coding/local-workspace";
+import { git as gitIn } from "./git-helpers";
 
 let root: string;
 let workspace: LocalWorkspace;
 
 function git(...args: string[]): void {
-  const result = Bun.spawnSync(["git", "-C", root, ...args], {
-    env: {
-      ...process.env,
-      GIT_AUTHOR_NAME: "Test",
-      GIT_AUTHOR_EMAIL: "test@example.com",
-      GIT_COMMITTER_NAME: "Test",
-      GIT_COMMITTER_EMAIL: "test@example.com",
-    },
-  });
-  if (result.exitCode !== 0) {
-    throw new Error(`git ${args.join(" ")} failed: ${result.stderr.toString()}`);
-  }
+  gitIn(root, ...args);
 }
 
 beforeEach(() => {
