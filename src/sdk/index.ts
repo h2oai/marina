@@ -32,6 +32,7 @@ export type { ParticipantOrientation } from "./onboarding";
 export * from "./panel-actions";
 export * from "./panel-client";
 export * from "./panel-document";
+export * from "./panel-resource-catalog";
 export * from "./panel-resources";
 export { panelText } from "./panel-text";
 // Re-export core types

@@ -16,6 +16,7 @@ export function panelResourceText(source: PanelSource, value: unknown): string {
     if (!session.id) return "Coding session unavailable or access denied.";
     return [
       `${session.title} · ${session.status} · ${session.agent ?? "No coder attached"}`,
+      `Repository: ${session.workspace_root ?? "Not recorded"}`,
       "Recent activity:",
       ...rows(data.events)
         .slice(-10)

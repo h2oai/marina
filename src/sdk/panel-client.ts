@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type A2UINodeData, validatePanelDocument } from "./panel-document";
 import type { PanelChangeEvent } from "./panel-events";
+import type { PanelResourceDefinition } from "./panel-resource-catalog";
 
 export interface PublishedPanelNode {
   id: string;
@@ -52,6 +53,12 @@ export class MarinaPanelClient {
       undefined,
       signal,
     );
+  }
+  resources(signal?: AbortSignal) {
+    return this.request<{
+      schema: "marina.panel-resources.v1";
+      resources: PanelResourceDefinition[];
+    }>("/api/panel-resources", "GET", undefined, signal);
   }
   /** Existing dashboard transport, scoped with this client's credential. Reconnect requires a
    * fresh authorized snapshot; missed events are never treated as a complete history. */

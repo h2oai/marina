@@ -32,7 +32,7 @@ test("operator discovers commands, drafts work, searches entities, and restores 
     .poll(async () => (await page.request.get("/api/search?q=Review%20dashboard")).json())
     .toContainEqual(expect.objectContaining({ kind: "task", title: "Review dashboard" }));
   await page.getByRole("button", { name: /^Maximize Workspace/ }).click();
-  await expect(page.locator(".react-grid-item")).toHaveCount(3);
+  await expect(page.locator("[data-pane-key]")).toHaveCount(3);
   await page.getByRole("button", { name: /^Restore Workspace/ }).click();
   await page.getByRole("button", { name: "Search Marina (Ctrl or Command K)" }).click();
   await search.fill("DiscoveryBrowser");

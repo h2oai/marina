@@ -212,36 +212,6 @@ select optgroup {
   animation: fade-in 0.2s ease-out;
 }
 
-/* react-grid-layout overrides */
-.react-grid-item {
-  transition: all 300ms ease;
-}
-
-.react-grid-item > div {
-  height: 100%;
-}
-
-.react-grid-placeholder {
-  background: var(--color-primary);
-  opacity: 0.08;
-  border: 1px dashed var(--color-primary);
-  border-radius: 4px;
-}
-
-.react-resizable-handle {
-  z-index: 10;
-}
-
-.react-resizable-handle-se::after {
-  border-right-color: var(--color-text-dim);
-  border-bottom-color: var(--color-text-dim);
-}
-
-.react-grid-item > .react-resizable-handle::after {
-  width: 6px;
-  height: 6px;
-}
-
 /* Gradient text — theme-aware */
 .gradient-text {
   background: linear-gradient(135deg, var(--gradient-stops, #ffdd00, #ffb800, #ff9500));
@@ -448,7 +418,6 @@ select.mission-field { padding-right: 24px; }
 }
 
 /* Keep work within the available viewport; each pane owns its scrolling. */
-.workspace-shell .react-grid-layout { height: 100%; min-height: 0; }
 .workspace-shell .workspace-view[hidden] { display: none; }
 /* The Canvas panel host projects the same rectangles and panel chrome as the
    grid. Scope these rules to its direct renderer: embedded Canvas boards own
@@ -495,20 +464,15 @@ select.mission-field { padding-right: 24px; }
 .workspace-shell .glass-panel h2 { font-size: 12px; letter-spacing: 0.035em; }
 .workspace-shell #marina-command-input { min-width: 0; font-size: 14px; padding-block: 8px; }
 .workspace-shell .mobile-pane-tabs { display: none; }
-.workspace-shell .workspace-grid .react-grid-item { min-width: 0; min-height: 0; }
 .canvas-fullscreen .workspace-grid [data-pane-key="workspace"] { position: absolute !important; inset: 0 !important; width: 100% !important; height: 100% !important; transform: none !important; }
 .canvas-fullscreen .workspace-grid [data-pane-key="webchat"],
 .canvas-fullscreen .workspace-grid [data-pane-key="context"] { display: none; }
 .canvas-fullscreen .workspace-grid [data-pane-key^="view:"] { display: none; }
-.canvas-fullscreen .workspace-grid .react-resizable-handle { display: none; }
 @media (max-width: 799px) {
   .workspace-shell .mobile-pane-tabs { display: flex; }
-  .workspace-grid .react-grid-item { position: absolute !important; inset: 0 !important; width: 100% !important; height: 100% !important; transform: none !important; display: none; }
   .workspace-shell[data-pane="webchat"] .workspace-grid [data-pane-key="webchat"],
   .workspace-shell[data-pane="workspace"] .workspace-grid [data-pane-key="workspace"],
   .workspace-shell[data-pane="context"] .workspace-grid [data-pane-key="context"] { display: block; }
-  .workspace-grid .react-grid-item.pane-active { display: block; }
-  .workspace-grid .react-resizable-handle { display: none; }
 }
 .workspace-shell .text-sm { font-size: 14px; }
 .workspace-shell header { font-size: 12px; }

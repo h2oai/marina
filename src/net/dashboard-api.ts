@@ -10,6 +10,7 @@
 import type { Engine } from "../engine/engine";
 import { extensionWidgets } from "../extensions/loader";
 import type { MarinaDB } from "../persistence/database";
+import { PANEL_RESOURCE_CATALOG } from "../sdk/panel-resource-catalog";
 import { authenticateRequest, isSentinelPrincipal } from "./auth-middleware";
 import { handleAgentRoutes } from "./dashboard-api/agents";
 import { handlePreAuthRoutes } from "./dashboard-api/command";
@@ -98,6 +99,8 @@ async function dispatchDashboardApi(
     return rateLimitedResponse(req.headers.get("Origin"));
   }
   const memory = memoryObserver(engine, callerId);
+  if (url.pathname === "/api/panel-resources" && method === "GET")
+    return json({ schema: "marina.panel-resources.v1", resources: PANEL_RESOURCE_CATALOG });
   if (
     (url.pathname === "/api/traces" ||
       url.pathname === "/api/logs" ||

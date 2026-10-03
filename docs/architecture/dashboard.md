@@ -1,5 +1,34 @@
 # Dashboard Live-Visualization Stack, Canvas Intents, and Memory Observability
 
+## Composable workspace and coding views
+
+The default dashboard uses `components/workspace-canvas.tsx` as its single panel host.
+`App.tsx` no longer mounts a second React Grid Layout renderer; the grid utilities remain
+for layout coordinates and compaction. Existing presets, including older grid arrangements,
+retain their geometry and panel references. Embedded board canvases keep their own interaction
+boundary. The standalone experimental visualization interface retains its specialized views.
+
+`src/sdk/panel-resource-catalog.ts` names fixed read adapters over canonical APIs. Its discovery
+contract is shared by `canvas resources`, `GET /api/panel-resources`, the SDK and the panel library.
+`kind: resource` sources provide JSON to existing bindings and Resource components. Each read uses
+the viewer's credential and the underlying endpoint's authorization; publishing an ID confers
+no grant. Do not add raw database readers, credential endpoints, side-effecting GETs or arbitrary
+publisher URLs to this catalog. New data domains must first establish an authorized read API.
+
+Work opens personal Coding desks through resident-bound `{kind: coding, id}` layout references.
+They send reviewed requests over the existing resident socket with an explicit `coding_target`,
+and refuse servers that do not advertise that protocol. Targets may be Marina's own repository
+or another project; view lifecycle never changes the selected coding session or worker lifecycle.
+Shared desk publication remains an explicit Canvas action. Both retain canonical evidence and
+verification semantics.
+
+The terminal's `scripts/code-panels.ts` manages at most four local views; `code-panel-view.ts`
+owns one view's reads, drafts and captured review. Only the visible selection polls. Switching
+preserves independent drafts; closing removes one view and leaves producers running. Personal
+`/panel desk` and explicit `/panel publish` have separate meanings. Terminal and browser views
+consume the same panel document, source catalog and canonical operations.
+
+
 **When to read this:** you are changing the dashboard's live layers (WORLD/CANVAS/GRAPH/FEED/MEMORY), the WebSocket event taxonomy that feeds them, the canvas intent system, the Admin → Memory tab, or the `/api/memory/*` observability API. `CLAUDE.md` → "Dashboard, Canvas, and Memory Observability" states the invariants; this page is the implementation reference. The user-facing walkthrough (what you see, layouts, web chat, log viewer, the "Memory Observability API" route table) is [`docs/guides/dashboard.md`](../guides/dashboard.md) — link to it rather than duplicating route tables here.
 
 ## Dashboard API source layout

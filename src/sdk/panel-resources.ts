@@ -2,8 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { A2UINodeData } from "./panel-document";
+import {
+  type CatalogPanelSource,
+  panelResourcePath,
+  parseCatalogPanelSource,
+} from "./panel-resource-catalog";
 
 export type PanelSource =
+  | CatalogPanelSource
   | { kind: "task" | "note" | "participant" | "run" | "coding"; id: string }
   | { kind: "artifact"; id: string; sessionId: string }
   | { kind: "memory"; id: string; spaceId: string }
@@ -13,10 +19,13 @@ export type PanelSource =
 export function parsePanelSource(input: unknown): PanelSource | null {
   if (!input || typeof input !== "object" || Array.isArray(input)) return null;
   const r = input as Record<string, unknown>;
+  if (r.kind === "resource") return parseCatalogPanelSource(input);
   const id = (value: unknown): value is string =>
     typeof value === "string" &&
     value.length > 0 &&
     value.length <= 200 &&
+    value !== "." &&
+    value !== ".." &&
     ![...value].some((c) => c.charCodeAt(0) < 32);
   if (
     r.kind === "feed" &&
@@ -83,8 +92,13 @@ export async function resolvePanelSource(
   read: (path: string) => Promise<unknown>,
   memory?: (id: string, spaceId: string) => Promise<unknown>,
 ): Promise<unknown> {
+  const normalized = parsePanelSource(source);
+  if (!normalized) throw new Error("Invalid panel source reference.");
+  source = normalized;
   const e = encodeURIComponent;
   switch (source.kind) {
+    case "resource":
+      return read(panelResourcePath(source));
     case "memory":
       if (!memory)
         throw new Error("Use an authenticated resident memory connection for this source.");

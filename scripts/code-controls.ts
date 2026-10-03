@@ -23,7 +23,7 @@ export const TERMINAL_CONTROLS = [
   },
   {
     name: "/panel",
-    usage: "/panel desk|list|open|refresh|field|act|confirm|close",
+    usage: "/panel desk|publish|list|open|views|use|resources|refresh|field|act|confirm|close",
     help: "Inspect and use published panels beside coding and world conversations",
   },
   ...WORKFLOW_CONTROLS,
@@ -72,7 +72,10 @@ ${terminalControls(connected)
 /harness save <name>                    Remember this harness for future launches here
 /harness use <name-or-path>              Load a saved or explicitly supplied JSON harness
 /panel list                             List canvases; /panel list <canvas> lists publications
-/panel desk <canvas> [session]           Publish/open a desk (defaults to selected Marina session)
+/panel desk [session]                    Open a personal desk (defaults to selected Marina session)
+/panel publish <canvas> [session]        Publish and open a shared coding desk
+/panel views | use <number>              Switch local views; drafts and reviews stay independent
+/panel resources [filter]                Discover data sources for coded panel compositions
 /panel open <canvas> <node>              Open an existing publication; /panel close closes only its view
 F6 switches coding/world; F7 opens pending requests; F8 focuses the published panel. Switching preserves each draft.
 Tab completes terminal commands. Ctrl+C interrupts active work; again exits.
