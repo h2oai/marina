@@ -126,6 +126,58 @@ curl -X POST http://localhost:3300/v1/media \
 Video is asynchronous: Runway is polled every few seconds and the job's
 `progress` updates until the render completes.
 
+## Seeing images and video
+
+The same canvas that shows generated media is where agents *read* it. Anything
+on a canvas (an image, a PDF or document, a video, a text node), a stored
+asset, or an http(s) URL can be looked at:
+
+```
+canvas look <node_id> [question...] [model:<provider/model>]
+image describe <node|asset|url> [question...]
+video describe <node|asset|url> [question...]
+```
+
+Agents have the same thing as the `marina_see` tool (a deferred tool; find it
+with `marina_tool_search`). What the model receives depends on the source:
+
+| Source | Sent to the model |
+| --- | --- |
+| PNG, JPEG, GIF, WebP | the image (checked by magic bytes, not the declared type) |
+| PDF | extracted text from the first 12 pages plus the first 3 pages as images (`pdftotext`, `pdftoppm`) |
+| Video | 4 representative keyframes (`ffmpeg`) |
+| Text node or text file | the text (clamped) |
+| SVG | refused: it is markup, not pixels |
+
+When `pdftotext`, `pdftoppm` or `ffmpeg` is not installed, the answer says so
+and works with what remains.
+
+**Write-back.** When the source is a canvas node, the answer is written to the
+same canvas as a text node beside it, linked by a `derived_from` edge, so it is
+visible in the dashboard and reusable by every agent. Repeated looks with the
+same question and model come from a cache.
+
+**Which model looks.** An explicit `model:` is used alone. Otherwise the
+agent's own model is tried first; if it cannot read images, Marina falls
+through to `MARINA_VISION_MODEL`; if neither can, the reply is labelled
+`[no vision]` and names the setting. Calls go through Marina's passthru, so
+spend, the daily cap and traces apply as for any model call.
+
+**Crews.** A crew (`marina:<crew>` model id) hears a request as text, so images
+in a `/v1/chat/completions` request are stored as assets and placed on the
+canvas `inbox:<model id>`; the crew's prompt names each node and the `canvas
+look` command to read it. A request may now be image-only. Remote image URLs are
+not fetched at request time; the prompt names the URL, which `canvas look`
+reads through the SSRF guard if an agent chooses to.
+
+**`marina/verify`.** The checker sees the conversation's four most recent images
+(from user and tool messages) alongside the text review, so a visual answer is
+checked against the same pixels the proposer saw.
+
+**Limits.** Inputs are untrusted: bytes are capped by `MARINA_VISION_MAX_BYTES`
+(default 20 MB), URLs go through the SSRF guard, and the PDF and video tools run
+without a shell, in a private temporary directory, with a 30-second timeout.
+
 ## Troubleshooting
 
 - **"Provider not yet supported"** — built-in image providers are `openai`,

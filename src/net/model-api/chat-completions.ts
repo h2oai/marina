@@ -7,6 +7,7 @@
 // 503 → upstream fallback.
 
 import type { Engine } from "../../engine/engine";
+import { stageRequestImages } from "../../engine/media/vision";
 import { getEndpointConfig } from "../model-endpoint";
 import {
   applyInjection,
@@ -137,7 +138,7 @@ export async function runOpenaiChat(
     // Extract last user message
     const userMsg = [...messages].reverse().find((m) => m.role === "user");
     if (!userMsg) return errorJson(400, "No user message found");
-    const userText = messageText(userMsg.content);
+    let userText = messageText(userMsg.content);
     // NOTE: the empty-userText guard lives BELOW the passthru branch — passthru is
     // a thin gateway that must forward multimodal / image-only bodies (which have
     // no textual user content) unchanged. Requiring text here would break them and
@@ -221,15 +222,29 @@ export async function runOpenaiChat(
       return resp;
     }
 
-    // Non-passthru routing modes synthesize an answer from the user's text, so it
-    // must be present. (Passthru already returned above without this requirement.)
-    if (!userText) return errorJson(400, "User message has no textual content");
+    // Non-passthru routing modes synthesize an answer from the user's text (or
+    // its images, staged below), so one must be present. (Passthru already
+    // returned above without this requirement.)
+    const hasImages =
+      Array.isArray(userMsg.content) &&
+      userMsg.content.some((p) => {
+        const t = (p as { type?: unknown })?.type;
+        return t === "image_url" || t === "input_image";
+      });
+    if (!userText && !hasImages) return errorJson(400, "User message has no textual content");
 
     // Agents answer in text over a channel: tools / n / response_format cannot
     // be honored here. Refuse explicitly (code `unsupported_parameter`) rather
     // than return a plain answer the client will misread as "no tool call".
     const rejected = rejectUnsupportedForAgents(body);
     if (rejected) return rejected;
+
+    // Agents hear the request as clamped text, so its images go on the canvas
+    // (one canvas per model id) and the text names each node for `canvas look`.
+    if (hasImages) {
+      const staged = await stageRequestImages(engine, userMsg.content, `inbox:${model}`);
+      userText = [userText, ...staged].filter(Boolean).join("\n");
+    }
 
     const opts: RouteOptions = {
       context,
