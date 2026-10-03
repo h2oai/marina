@@ -67,8 +67,11 @@ What happens:
    fact is still missing and the next queries, or stops when the dossier is enough. If every round
    fails (an engine outage, an exhausted search quota), the runs still answer from the question and
    its notes, and the answer carries a caveat saying so.
-3. **Lookups** (opt-in) — structured sources such as prediction-market prices join the dossier as
-   ordinary cited lines.
+3. **Lookups** (opt-in) — structured sources join the dossier as ordinary cited lines, steered by
+   the plan's `data` hints (a market search phrase, a sports key and teams, official series ids).
+   For a number, the freshest official reading becomes the answer's **anchor**: the runs start
+   there, with the spread of that series' own changes over the question's horizon, and move
+   further only for specific dated evidence. See [Lookups](#lookups).
 4. **Citation check** — as above.
 5. **Runs** — K independent answers (analyst models used in turn), each validated against the
    answer's shape and, with a judge, weighted by how well the verified facts support it.
@@ -79,10 +82,35 @@ What happens:
    may propose another. The proposal replaces the runs' answer only when the critic's confidence
    exceeds the runs' agreement; both are kept in the record.
 
+**Verification** (`MARINA_FORECAST_VERIFY=on`, opt-in) — the verification formation inside one
+forecast: before a run counts, an independent verifier (`MARINA_FORECAST_VERIFIER`, default the
+critic) checks its draft against the dossier and the resolution rules — option semantics, unit and
+scale, the latest reading, arithmetic — and a concrete correction replaces the draft. Each run
+records the verdict and, on a correction, the draft it replaced.
+
+**Lessons.** A forecast can recall lessons from questions that have already resolved: a terse,
+typed record per outcome — answer type, a category, the failure mode (`wrong option`, `numeric
+over 6.0%`, …) and one corrective rule — written only after the outcome is known
+(`src/forecast/lessons.ts`). They are canonical memory records (reflection tier, subject
+`forecast-lesson`, `valid_time.from` = when the outcome became known) written through the memory
+service. Recall is lexical and byte-budgeted, and a lesson is visible to a forecast only when its
+outcome was known at that forecast's evidence cutoff (`visibleAt`) — so a forecast made "as of"
+September never sees a lesson learned from an October result. The lessons used are recorded on
+the answer (`lessons`), and the plan, the runs and the critic all see them.
+
+**Retrieval isolation** (for past cutoffs). Date-filtered engines (`tavily:`, `exa:` with
+`EXA_API_KEY`) only return pages published inside the window. Any other engine can be wrapped with
+`MARINA_FORECAST_RETRIEVAL_FILTER=strict`, which keeps a research line only when every page it
+cites has a known publication day on or before the cutoff (the engine's date, else a date in the
+URL), it cites no live-result page (encyclopedias, scoreboards, markets, charts) and it names no
+later day (`src/arena/research/isolation.ts`). `closed-book` as the retriever does no retrieval at
+all — a lower bound.
+
 **Evidence cutoff.** Each answer uses nothing published after a cutoff: `asOf` when given, else
 the earlier of now and the question's `endTime`. Research asks for nothing later, search engines
 that filter by date (Tavily) drop later results, sources dated after the cutoff are discarded,
-and lookups that only know current values are skipped when the cutoff is in the past. The cutoff
+lookups read values as of the cutoff, and lookups that only know current values are skipped when
+the cutoff is in the past. The cutoff
 and how it was chosen are recorded on the answer; a past cutoff adds a caveat, because engines
 without date filters can still surface later pages.
 
@@ -111,7 +139,7 @@ are saved with their answer as one string (`prediction`).
 | `MARINA_FORECAST_RUNS` | `3` | typed answers: independent runs (1–9) |
 | `MARINA_FORECAST_RESEARCH_ROUNDS` | `2` | typed answers: research rounds (1–4) |
 | `MARINA_FORECAST_CRITIQUE` | `on` | `off` skips the critique |
-| `MARINA_FORECAST_LOOKUPS` | none | `polymarket` adds current market prices |
+| `MARINA_FORECAST_LOOKUPS` | none | structured sources: `polymarket`, `kalshi`, `odds`, `fred`, `bls`, or `markets` / `all` (see [Lookups](#lookups)) |
 | `MARINA_FORECAST_MARINA_URL` / `_KEY` | `http://localhost:3300` | where `marina:<crew>` analysts are asked |
 
 An analyst may be a crew: `MARINA_FORECAST_ANALYSTS=marina:answerer` asks the `answerer` crew on a
@@ -122,6 +150,27 @@ date-strict: GDELT news, Wikipedia revisions, Hacker News and arXiv, each bounde
 forecast's cutoff instant, with news read from its Wayback capture at or before it. It is the
 retriever to use for a backtest, since nothing published after the cutoff can reach the dossier;
 see [Search](search.md).
+
+### Lookups
+
+Each lookup is a plain data request through the URL guard (no model spend). One that is not
+configured, fails or times out contributes nothing, and the answer records why. None of them
+reads anything published after the cutoff: each either reads values *as of* the cutoff or, when
+its source only knows current values, runs for a live cutoff only.
+
+| Name | Source | Live cutoff | Past cutoff | Key |
+|---|---|---|---|---|
+| `polymarket` | Polymarket markets | current prices of open markets | the last price at or before the cutoff (CLOB price history); never the resolution | none |
+| `kalshi` | Kalshi markets | bid/ask midpoint | the last hourly candle at or before the cutoff; never the result | none |
+| `odds` | The Odds API head-to-head | current pre-game odds, margin removed, averaged across bookmakers | the snapshot at or before the cutoff (`/historical`, a paid-plan endpoint) | `ODDS_API_KEY` |
+| `fred` | FRED (St. Louis Fed) | latest observations | as published on the cutoff date (ALFRED vintages) | `FRED_API_KEY` for a past cutoff; keyless works live |
+| `bls` | BLS public API | latest monthly observations | skipped (BLS serves only the latest revision) | `BLS_API_KEY` optional (raises the quota) |
+
+Markets are matched to the question by their words (and by date when both sides know one) with a
+conservative threshold, so an unrelated market's price is never shown. Sports odds show only games
+that start after the cutoff, so every price is a pre-game price. Each lookup's result is kept on
+the answer with its mode (`live` or `historical`) and the time its data reflects; a number's
+anchor is kept as `anchor` (value, date, horizon in days and steps, spread).
 
 ## How good is it?
 

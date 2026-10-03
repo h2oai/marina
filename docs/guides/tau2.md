@@ -1,0 +1,60 @@
+# τ²-bench with Marina
+
+[τ²-bench](https://github.com/sierra-research/tau2-bench) (MIT) evaluates customer-service agents. An agent follows a domain policy, calls tools against a simulated database and talks with an LLM-simulated user. Its official evaluator scores the final database state and the required communication.
+
+Marina runs τ²-bench **unmodified**: τ²'s own CLI, agent scaffold, user simulator and evaluator. Its agent and user models are pointed at a Marina `/v1`, so every model call goes through Marina's passthru, spend ledger and traces. A thin adapter turns the official `results.json` into a [benchmark ledger](commands.md) run.
+
+## Run
+
+1. Start a Marina server. Any world works; the model API needs `MODEL_API_KEYS`, or `MARINA_OPEN_API=true` for local development.
+2. Install τ²-bench as its README describes (`uv sync`). It needs Python 3.12; 3.13 removed `audioop`, which τ² imports.
+3. Point both models at Marina through LiteLLM's OpenAI provider:
+
+   ```bash
+   ARGS='{"api_base":"http://localhost:3300/v1","api_key":"<marina key>"}'
+   tau2 run --domain airline \
+     --agent-llm openai/openrouter/openai/gpt-6.1-sol --agent-llm-args "$ARGS" \
+     --user-llm  openai/openrouter/openai/gpt-5.2    --user-llm-args  "$ARGS" \
+     --num-trials 4 --save-to my-run
+   ```
+
+   The model after `openai/` is any id Marina serves. That includes an explicit upstream id, a `marina:<crew>` endpoint, or `marina/verify:…` (see below).
+
+## The verification formation as a model: `marina/verify:`
+
+`marina/verify:<proposer>[+<checker>]` is an OpenAI-compatible model id, with tool calling supported. For each request:
+
+1. **Draft.** The proposer drafts the next message, which may be a tool call.
+2. **Review.** A checker reviews the draft against the conversation: the system rules, the user's requests and earlier tool results. It answers `approve`, or `revise` with a concrete fix.
+3. **Revise.** On `revise`, the proposer writes the corrected message once, with the reviewer's note as a trailing system message (`MARINA_VERIFY_ROUNDS`, default 1).
+
+**Fails open.** A checker outage or an unreadable verdict returns the draft.
+
+**Checker choice.** The checker defaults to `MARINA_VERIFY_CHECKER_MODEL`, else the proposer itself.
+
+**Response metadata.** The response carries `x-marina-verify` (`approved`, `revised`, `checker-unavailable`, `revision-failed` or `flagged`) and the summed `x-marina-cost-usd` and `usage` of every call.
+
+**Limits.** `stream` and `n > 1` are refused with `unsupported_parameter`.
+
+## Into the ledger
+
+```bash
+bun run tau2 summary data/simulations/my-run/results.json    # reward, pass^1..pass^k
+bun run tau2 convert data/simulations/my-run/results.json --out my-run.ledger.json
+DB_PATH=marina.db bun run benchmark:import my-run.ledger.json --target-kind model \
+  --target 'marina/verify:openrouter/openai/gpt-6.1-sol' --group tau2-airline-verify
+```
+
+**Items.** Each (task, trial) simulation is one item, `<task>#<trial>`. It is correct when the official reward is 1. Conversations are never copied into the ledger.
+
+**Comparisons.** Pair runs on the same domain and seed with `benchmark compare`.
+
+**Cost.** Prefer the target server's `spend_daily` as `--cost-usd`. LiteLLM cannot price ids it does not know.
+
+## Leaderboard notes
+
+τ²'s [submission guide](https://github.com/sierra-research/tau2-bench/blob/main/docs/leaderboard-submission.md) wants every text domain, ≥ 4 trials and one configuration.
+
+**Submission type.** A single upstream model through Marina's passthru is a standard text submission. A `marina/verify:` model or a crew endpoint adds an agent and control flow, so it is a **custom** submission and must document its methodology.
+
+**Credentials.** τ² writes `llm_args` (including `api_key`) into `results.json`. Never publish a results file that holds a real key.

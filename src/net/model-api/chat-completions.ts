@@ -49,6 +49,7 @@ import {
   requestTrace,
 } from "./shared";
 import { explicitUpstreamModel, passthruForceModel, proxyToUpstream } from "./upstream";
+import { maybeVerifyChat, VERIFY_MODEL_PREFIX } from "./verify";
 
 /** Resolve only an explicit, single binary arithmetic expression. This is
  * intentionally conservative: no precedence, variables, units, or inferred
@@ -125,6 +126,13 @@ export async function runOpenaiChat(
       runOpts?.stream !== undefined ? { ...requestBody, stream: runOpts.stream } : requestBody;
     const model = typeof body.model === "string" ? body.model : "marina";
     const messages = Array.isArray(body.messages) ? (body.messages as OpenAIMessage[]) : [];
+
+    // `marina/verify:<proposer>[+<checker>]` — the verification formation as a
+    // model id (proposer → checker review → bounded revision), tools included.
+    if (model.startsWith(VERIFY_MODEL_PREFIX)) {
+      const verified = await maybeVerifyChat(engine, req, body);
+      if (verified) return verified;
+    }
 
     // Extract last user message
     const userMsg = [...messages].reverse().find((m) => m.role === "user");

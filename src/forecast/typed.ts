@@ -9,7 +9,10 @@
  *              the search queries, what would change the answer
  *   research   bounded rounds of search (the forecast retriever); after each,
  *              the planner names what is still missing, or stops
- *   lookups    optional structured sources (prediction markets), opt-in
+ *   lookups    optional structured sources (market prices, sports odds, official
+ *              series), opt-in, steered by the plan's `data` hints; a number
+ *              is anchored on the freshest official reading with a spread
+ *              from that series' own changes over the question's horizon
  *   verify     cited figures checked mechanically against the cited pages
  *   runs       K independent answers (analyst models used round-robin), each
  *              weighted by the judge's grounding score when a judge is set
@@ -24,8 +27,9 @@
  *
  * Evidence is frozen at a cutoff: the request's `asOf`, else the earlier of now
  * and the question's `endTime`. Retrieval is asked for nothing after it (engines
- * that filter by date drop later results), lookups that only know current
- * values are skipped for a past cutoff, and the cutoff is recorded.
+ * that filter by date drop later results), lookups read values as of the
+ * cutoff or, when they only know current values, are skipped for a past
+ * cutoff, and the cutoff is recorded.
  *
  * Every stage is returned — the answer object is the audit trail. Pure
  * orchestration over injected parts; `service.ts` wires the real ones.
@@ -44,7 +48,16 @@ import {
   validateAnswer,
 } from "./answer-types";
 import { askAnalyst, type JudgeRecord, judgeAudit, judgeClaim, newJudgeRecord } from "./judge";
-import { type ForecastLookup, type LookupResult, runLookups } from "./lookups";
+import type { LessonStore } from "./lessons";
+import {
+  anchorLine,
+  type DataHints,
+  type ForecastLookup,
+  type LookupResult,
+  type NumericAnchor,
+  numericAnchor,
+  runLookups,
+} from "./lookups";
 
 export interface TypedForecastRequest {
   question: string;
@@ -68,6 +81,13 @@ export interface TypedForecastOptions {
   critique?: boolean;
   /** How far back research looks before the cutoff, in days (default 45). */
   lookbackDays?: number;
+  /**
+   * Verify every run's draft with `deps.verifier` before it is combined — the
+   * verification formation inside one forecast: an independent model checks
+   * the draft against the dossier and the resolution rules and may correct it
+   * (default false).
+   */
+  verify?: boolean;
 }
 
 export interface ModelPart {
@@ -83,6 +103,13 @@ export interface TypedForecastDeps {
   planner?: ModelPart;
   /** The disconfirmation pass (default: the planner). */
   critic?: ModelPart;
+  /** Checks each run's draft when `options.verify` (default: the critic). */
+  verifier?: ModelPart;
+  /**
+   * Lessons from resolved questions. Only lessons whose outcome was known at
+   * the evidence cutoff are recalled (`visibleAt`); the ones used are recorded.
+   */
+  lessons?: LessonStore;
   judge?: DecisionProvider;
   pageText?: PageText;
   lookups?: ForecastLookup[];
@@ -96,6 +123,8 @@ export interface ForecastPlan {
   keyQuantities?: string[];
   queries: string[];
   whatWouldChange?: string[];
+  /** Where structured lookups should look (markets, sports odds, official series). */
+  data?: DataHints;
   error?: string;
 }
 
@@ -122,6 +151,14 @@ export interface TypedRun {
   quality?: number;
   judgeError?: string;
   status: string;
+  /** The verifier's check of this draft (`options.verify`). */
+  verified?: {
+    model: string;
+    verdict: "accept" | "correct" | "error";
+    /** The draft before a correction replaced it. */
+    draft?: string;
+    reason?: string;
+  };
 }
 
 export interface Critique {
@@ -151,6 +188,10 @@ export interface TypedForecastAnswer {
   plan?: ForecastPlan;
   research: ResearchRound[];
   lookups?: LookupResult[];
+  /** Lessons recalled for this forecast (all resolved at or before the cutoff). */
+  lessons?: Array<{ id?: string; text: string; resolvedAt: string }>;
+  /** For a number: the freshest official reading the runs started from, and its horizon spread. */
+  anchor?: NumericAnchor;
   critique?: Critique;
   /** The evidence cutoff (ISO) and how it was chosen. */
   cutoff: { at: string; basis: "asOf" | "endTime" | "now"; pastCutoff: boolean };
@@ -210,7 +251,13 @@ function plannerSystem(): string {
     '"resolutionSource": "<who or what publishes the answer, and when>",',
     '"keyQuantities": ["<the facts that decide it>"],',
     '"queries": ["<up to 6 short web search queries, most useful first>"],',
-    '"whatWouldChange": ["<events or readings that would move the answer>"]}.',
+    '"whatWouldChange": ["<events or readings that would move the answer>"],',
+    '"data": {"markets": "<a short prediction-market search phrase, or empty>",',
+    '"sport": "<a The Odds API sport key such as basketball_nba or soccer_epl when this is a sports match, else empty>",',
+    '"teams": ["<the competitors, as the sport names them>"],',
+    '"fred": ["<FRED series ids when the answer is an official US statistic, e.g. UNRATE>"],',
+    '"bls": ["<BLS series ids, e.g. CUUR0000SA0>"]}}.',
+    "Leave a data field empty when it does not apply.",
   ].join(" ");
 }
 
@@ -267,6 +314,7 @@ export async function forecastTyped(
   const lookbackDays = clampInt(opts.lookbackDays, 1, 3650, 45);
   const planner = deps.planner ?? deps.analysts[0];
   const critic = deps.critic ?? planner;
+  const verifier = deps.verifier ?? critic;
 
   const cutoff = chooseCutoff(req, now);
   const cutoffDay = cutoff.at.slice(0, 10);
@@ -300,11 +348,30 @@ export async function forecastTyped(
   };
   if (deps.analysts.length === 0 || !planner) return finish("no analyst models configured");
 
+  // ── Lessons (only those whose outcome was known at the cutoff) ────────────
+  if (deps.lessons) {
+    try {
+      const recalled = await deps.lessons.recall(`${req.question} ${req.answer.type}`, cutoff.at);
+      out.lessons = recalled.map((l) => ({
+        ...(l.id ? { id: l.id } : {}),
+        text: l.text,
+        resolvedAt: l.resolvedAt,
+      }));
+    } catch (err) {
+      earlier.push(
+        `lesson recall failed: ${(err instanceof Error ? err.message : String(err)).slice(0, 120)}`,
+      );
+    }
+  }
+
   const header = [
     `Question: ${req.question}`,
     req.context ? `How it resolves / notes:\n${req.context.slice(0, 4_000)}` : "",
     req.endTime ? `The question closes: ${req.endTime}` : "",
     `Forecast made as of: ${cutoff.at} (the evidence cutoff — use nothing published after it; the event itself happens later)`,
+    out.lessons?.length
+      ? `Lessons from earlier resolved questions (apply where relevant):\n${out.lessons.map((l) => `- ${l.text}`).join("\n")}`
+      : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -374,10 +441,25 @@ export async function forecastTyped(
       plan.restatement ?? req.question,
       new Date(cutoff.at),
       now,
+      {
+        ...(plan.data ? { hints: plan.data } : {}),
+        answerType: req.answer.type,
+        ...(req.endTime ? { endTime: req.endTime } : {}),
+      },
     );
     for (const l of out.lookups) {
       lines.push(...l.lines);
       for (const s of l.sources) if (!sources.has(s.url)) sources.set(s.url, s);
+    }
+    // A number starts from the freshest official reading, with the spread of
+    // that series' own changes over the question's horizon.
+    if (req.answer.type === "number") {
+      const readings = out.lookups.flatMap((l) => l.readings ?? []);
+      const anchor = numericAnchor(readings, new Date(cutoff.at), req.endTime);
+      if (anchor) {
+        out.anchor = anchor;
+        lines.push(anchorLine(anchor));
+      }
     }
   }
   out.sources = [...sources.values()].map(({ url, title }) => ({
@@ -431,6 +513,7 @@ export async function forecastTyped(
       if (Number.isFinite(c)) run.confidence = Math.min(1, Math.max(0, c));
       if (typeof reply?.reason === "string") run.reason = reply.reason.slice(0, 500);
       run.weight = 1;
+      if (opts.verify && verifier) await verifyRun(req, verifier, user, run);
       if (judge) {
         const judged = await judgeClaim(
           judge,
@@ -489,6 +572,51 @@ export async function forecastTyped(
   return finish(
     lowGrounding ? "the judge found little verified evidence behind every run" : undefined,
   );
+}
+
+function verifierSystem(spec: AnswerSpec): string {
+  return [
+    "You verify a forecaster's draft answer before it counts. Check it against the dossier and the question's resolution rules: the right option semantics, the right unit and scale, the latest reading, arithmetic.",
+    TIMING,
+    "Accept the draft unless you find a concrete error; then give the corrected answer.",
+    'Reply with ONE JSON object: {"verdict": "accept" | "correct", "answer": <only on correct, same format as below>, "reason": "<one sentence>"}.',
+    "Answer format:",
+    answerInstruction(spec),
+  ].join("\n");
+}
+
+/** One run's draft checked by the verifier; a valid correction replaces the run's value. */
+async function verifyRun(
+  req: TypedForecastRequest,
+  verifier: ModelPart,
+  user: string,
+  run: TypedRun,
+): Promise<void> {
+  const { reply, error } = await askAnalyst(
+    verifier,
+    verifierSystem(req.answer),
+    `${user}\n\nDRAFT ANSWER: ${run.formatted}\nDRAFT REASON: ${run.reason ?? "(none)"}`,
+  );
+  if (error !== undefined) {
+    run.verified = { model: verifier.name, verdict: "error", reason: error.slice(0, 120) };
+    return;
+  }
+  const reason = typeof reply?.reason === "string" ? reply.reason.slice(0, 300) : undefined;
+  if (reply?.verdict === "correct") {
+    const v = validateAnswer(req.answer, reply.answer);
+    if (!("error" in v) && formatAnswer(v.value) !== run.formatted) {
+      run.verified = {
+        model: verifier.name,
+        verdict: "correct",
+        draft: run.formatted!,
+        ...(reason ? { reason } : {}),
+      };
+      run.value = v.value;
+      run.formatted = formatAnswer(v.value);
+      return;
+    }
+  }
+  run.verified = { model: verifier.name, verdict: "accept", ...(reason ? { reason } : {}) };
 }
 
 async function critique(
@@ -611,7 +739,26 @@ function parsePlan(reply: Record<string, unknown> | undefined): ForecastPlan {
     keyQuantities: strings(reply.keyQuantities).slice(0, 8),
     queries: strings(reply.queries).slice(0, 6),
     whatWouldChange: strings(reply.whatWouldChange).slice(0, 8),
+    ...dataHints(reply.data),
   };
+}
+
+function dataHints(v: unknown): { data?: DataHints } {
+  if (!v || typeof v !== "object") return {};
+  const d = v as Record<string, unknown>;
+  const text = (x: unknown) => (typeof x === "string" && x.trim() ? x.trim().slice(0, 120) : "");
+  const hints: DataHints = {};
+  const markets = text(d.markets);
+  if (markets) hints.markets = markets;
+  const sport = text(d.sport);
+  if (sport) hints.sport = sport;
+  const teams = strings(d.teams).slice(0, 4);
+  if (teams.length) hints.teams = teams;
+  const fred = strings(d.fred).slice(0, 3);
+  if (fred.length) hints.fred = fred;
+  const bls = strings(d.bls).slice(0, 3);
+  if (bls.length) hints.bls = bls;
+  return Object.keys(hints).length ? { data: hints } : {};
 }
 
 function strings(v: unknown): string[] {

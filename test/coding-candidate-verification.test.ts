@@ -29,9 +29,22 @@ describe("candidate-bound coding verification", () => {
   let output: Perception[];
   let run: CodingArtifactRow;
   let protocol: "websocket" | "telnet";
+  // `git commit` otherwise starts a detached `git maintenance run --auto` that keeps writing
+  // inside `.git` after the command returns, racing the test that deletes `.git`.
   function git(...args: string[]) {
     const result = Bun.spawnSync(
-      ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", ...args],
+      [
+        "git",
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "-c",
+        "maintenance.auto=false",
+        "-c",
+        "gc.auto=0",
+        ...args,
+      ],
       { cwd: root },
     );
     if (result.exitCode) throw new Error(result.stderr.toString());

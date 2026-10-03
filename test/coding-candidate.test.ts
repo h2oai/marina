@@ -21,9 +21,22 @@ import { until } from "./helpers";
 describe("immutable Git source candidates", () => {
   let root: string;
   const snapshots: Awaited<ReturnType<typeof captureGitCandidate>>[] = [];
+  // `git commit` otherwise starts a detached `git maintenance run --auto` that keeps writing
+  // inside `.git` after the command returns, racing tests that delete `.git` right away.
   function git(...args: string[]) {
     const result = Bun.spawnSync(
-      ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", ...args],
+      [
+        "git",
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "-c",
+        "maintenance.auto=false",
+        "-c",
+        "gc.auto=0",
+        ...args,
+      ],
       {
         cwd: root,
         env: { PATH: process.env.PATH, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },

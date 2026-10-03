@@ -30,6 +30,7 @@ and operate the environment. Start with one path below; the full catalog follows
 | Enter Marina in FutureX (weekly future-prediction benchmark) | [FutureX](futurex.md) | [Forecasting](forecasting.md) |
 | Run Marina's coding agent on SWE-bench | [SWE-bench](swebench.md) | [Coding](coding.md) |
 | Search the web as of a date, or give agents a search room | [Search](search.md) | [Forecasting](forecasting.md) |
+| Run τ²-bench through Marina; use the verification formation as a model (`marina/verify:`) | [τ²-bench](tau2.md) | [Model API](model-api.md) |
 | Find the right `bun run` script | [Scripts reference](scripts.md) | [Release qualification](release-qualification.md) |
 | Follow a desire from expression to evidence | [Journeys](journeys.md) | [Cognitive Provenance](cognitive-provenance.md) |
 | Create portable intellects and associations | [Intellect Lifecycle](intellect-lifecycle.md) | [Associations](associations.md) |

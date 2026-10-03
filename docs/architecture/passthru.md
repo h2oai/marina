@@ -17,6 +17,14 @@
   - **After the named provider fails, the full id goes only to an aggregator** (`openrouter`, `huggingface`). A first-party API cannot serve another vendor's `<vendor>/<model>` id, so it is never tried. The trace target therefore never names a provider that was handed an id it could not serve.
 
   Tests: `test/upstream-explicit-provider.test.ts`.
+- **`marina/verify:<proposer>[+<checker>]` (2026-10-03)** — the verification formation as a model id (`src/net/model-api/verify.ts`, reached from `runOpenaiChat` before any routing).
+  - **Flow:** proposer draft (tools allowed) → checker review of the draft against the rules, requests and tool results (JSON verdict) → at most `MARINA_VERIFY_ROUNDS` (default 1) proposer revisions with the reviewer's note as a trailing system message.
+  - **Plumbing:** every call goes through `proxyToUpstream`, so spend, the daily cap and lifecycle traces apply.
+  - **Response:** sums `usage` and `x-marina-cost-usd`, and sets `x-marina-verify`.
+  - **Fails open** to the draft.
+  - **Refusals:** `stream` and `n > 1` get `unsupported_parameter`; non-upstream ids get `model_not_found`.
+  - **Checker:** the default is `MARINA_VERIFY_CHECKER_MODEL`, else the proposer.
+  - **Tests:** `test/model-api-verify.test.ts`. Guide: [τ²-bench](../guides/tau2.md).
 - **OpenAI surface** (`src/net/model-api.ts`) — `/v1/chat/completions`, `/v1/responses`, `/v1/models`, `/v1/health`. The Responses API has server-side state: each response_id maps to a conversation channel (`model-conv-{id}`); `previous_response_id` threads continuations onto the same channel. In-memory id index, 24h retention, channel lazily garbage-collected on DELETE when no responses reference it.
 - **Explicit orchestrations route to their agents in every mode (2026-09-26)** — `liveOrchestrationChannel` (`model-api/shared.ts`): a `marina:<name>` / `marina/<name>` id naming a `model-<name>` channel with an ONLINE member goes to those agents even in `passthru` endpoint mode and from an internal caller (previously both proxied it upstream, which can only 404 — so in-world `benchmark run --model marina:<crew>` / `sweep` / `evolve trial` never reached agents in a default world). `marina`, `marina/default` (the internal agents' proxy model), conversation channels and ids with no live channel keep their route; a caller that is itself a member of the channel (`X-Marina-Agent`) is never routed back into it.
 - **Explicit upstream ids route upstream in every mode (2026-10-01)**: this is the mirror rule.
