@@ -127,9 +127,11 @@ Each of the three ways an outcome can leak has a guard (`benchmarks/futurex/clea
   shared space for live runs.
 
 **Leak audit.** After scoring, each row is audited. A row is suspicious if its reasoning names a
-day after the event, its kept evidence names any day after the cutoff, it quotes the exact numeric
-outcome, or its evidence reports a result. Headline scores are given with suspicious rows in and
-out.
+day after the event, it quotes the exact numeric outcome, or its kept evidence includes a page
+published after the cutoff. An evidence line dated on or before the cutoff counts as history and
+schedule, so past-tense wording and future dates in it are not flags. Undated evidence is suspicious
+if it names a day after the cutoff or reports a result. Headline scores are given with suspicious
+rows in and out.
 
 **Upper bracket.** `--allow-contaminated --isolation contaminated` runs an unfiltered engine on
 past cutoffs. It can see outcomes, so it is filed under `futurex-past-contaminated` as an upper
