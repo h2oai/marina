@@ -111,7 +111,7 @@ require `Idempotency-Key: KEY`. JSON bodies are limited to 2 MiB. Errors have
 | `PATCH /spaces/:space/records/:id` | Full replacement content plus `expected_version`; omitted attributes are retained |
 | `POST /spaces/:space/query` | Exact `{subject?, predicate?, object?, type?, tier?, valid_at?, limit?, cursor?}`; no embeddings; current records and generation-bound pagination |
 | `POST /spaces/:space/graph` | `{subject, predicates?, direction?, max_depth?, valid_at?, limit?}`; asserted relationships with record-cited paths; no inference |
-| `POST /spaces/:space/search` | `{query, expansion?, mode?, limit?, subject?, type?, tier?, allow_degraded?}`; current records, source IDs, component ranks and generation |
+| `POST /spaces/:space/search` | `{query, expansion?, mode?, limit?, subject?, type?, tier?, allow_degraded?, valid_at?, include_ended?}`; current records still valid now (or at `valid_at`; `include_ended` = history read), source IDs, component ranks and generation |
 | `POST /spaces/:space/context` | Search plus `budget_tokens`; bounded evidence text, revision citations and truncation flags |
 | `POST /spaces/:space/sources` | Original JSON `{content, session_id?}`; returns durable source ID and cursor |
 | `GET /spaces/:space/sources?after=N&limit=100` | Ordered source replay with `next_cursor` |
@@ -315,7 +315,13 @@ const at150 = await client.query(spaceId, {subject: "project:river", predicate: 
 ```
 
 Valid time uses half-open intervals `[from, until)` in nonnegative UTC milliseconds; null bounds
-are unbounded. `query` and `graph` accept `valid_at`; ordinary text search does not filter time.
+are unbounded. `query` and `graph` accept `valid_at`. Record `search` (and `context`, which uses
+it) excludes records whose validity has **ended** — a tombstone `revise` (`note delete`, a retired
+lesson) or a `resolve` loser — before ranking, so a retired record never takes a result slot;
+`valid_at: T` serves the records valid at `T` instead (the same `[from, until)` test as `query`),
+and `include_ended: true` is the explicit history read that ranks every active record regardless
+of validity (it can't be combined with `valid_at`). `query`/`graph` without `valid_at` stay
+unfiltered exact reads; task retrieval passes its `valid_at` to every step, `search` included.
 A cardinality-one predicate rejects different objects whose intervals overlap; adjacent intervals
 are allowed. It reports conflicts without choosing a winner. This describes assertions, not
 verified truth. Current queries use current revisions; explicit `get(..., version)` preserves
@@ -335,6 +341,7 @@ existing contract rather than a second timeline:
   own `valid_time`, `claim` and `metadata`. There is no space-wide `as_of` filter on `query`/
   `search`: it would have to reconstruct every head at `T`, which the versioned store does not
   index, so the version-based path is the supported one and a filter is deliberately not faked.
+  (`search`'s `valid_at` is valid time over current heads, not transaction time.)
 
 ## Inspectable task retrieval
 

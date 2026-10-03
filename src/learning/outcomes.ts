@@ -295,16 +295,61 @@ export async function judgeLesson(
 
 // ─── Storage and recall ──────────────────────────────────────────────────────
 
+/** Why and by whom a lesson was retired. Recorded on the lesson's history; never erased. */
+export interface LessonRetirement {
+  reason: string;
+  /** Opaque durable account key of the curator (never a display name). */
+  by: string;
+  /** The replacement lesson's id when the retirement is a supersession. */
+  supersededBy?: string;
+}
+
+/** Which current lessons a curation command addresses. Every given field must match. */
+export interface LessonSelector {
+  /** A full lesson id, or a prefix of at least 8 characters (as `lessons` displays). */
+  id?: string;
+  /** Exact `source` (e.g. a run or round id). */
+  source?: string;
+  /** Case-insensitive substring of the lesson text or category. */
+  match?: string;
+}
+
+export const MIN_LESSON_ID_PREFIX = 8;
+
+export function lessonMatches(l: Lesson, sel: LessonSelector): boolean {
+  if (sel.id !== undefined) {
+    if (!l.id) return false;
+    if (l.id !== sel.id && !(sel.id.length >= MIN_LESSON_ID_PREFIX && l.id.startsWith(sel.id)))
+      return false;
+  }
+  if (sel.source !== undefined && l.source !== sel.source) return false;
+  if (sel.match !== undefined) {
+    const needle = sel.match.toLowerCase();
+    if (!`${l.text}\n${l.category ?? ""}`.toLowerCase().includes(needle)) return false;
+  }
+  return true;
+}
+
 export interface LessonSink {
   /** Persist a lesson (trusted / unverified served; rejected kept as audit only). */
   write(lesson: Lesson): Promise<{ id?: string }>;
-  /** Served lessons of `domain` known at `asOf` matching `query`, newest first, byte-budgeted. */
+  /**
+   * Served lessons of `domain` known at `asOf` matching `query`, newest first,
+   * byte-budgeted. A retired lesson (validity closed) is never served.
+   */
   recall(
     domain: OutcomeDomain,
     query: string,
     asOf: string,
     opts?: { limit?: number; maxBytes?: number; includeUnverified?: boolean },
   ): Promise<Lesson[]>;
+  /** Current (not retired) lessons of `domain` matching `selector`, any trust — for curation. */
+  find?(domain: OutcomeDomain, selector: LessonSelector, limit: number): Promise<Lesson[]>;
+  /**
+   * Retire one current lesson: a new version with validity closed and the
+   * retirement in its metadata. Recall stops serving it; its history stays readable.
+   */
+  retire?(domain: OutcomeDomain, id: string, retirement: LessonRetirement): Promise<void>;
 }
 
 /** The leakage rule: a lesson exists for work only once its outcome was known. */
@@ -378,19 +423,36 @@ export const lessonTokens = (s: string) =>
   new Set([...(s.toLowerCase().match(TOKEN) ?? [])].filter((t) => !STOP.has(t)));
 
 /** In-process sink for tests and one-off runs: token overlap, then `selectServed`. */
-export function memoryLessonSink(initial: Lesson[] = []): LessonSink & { all(): Lesson[] } {
+export function memoryLessonSink(initial: Lesson[] = []): LessonSink & {
+  all(): Lesson[];
+  retirements(): Map<string, LessonRetirement>;
+} {
   const lessons = [...initial];
+  const retired = new Map<string, LessonRetirement>();
+  const current = (l: Lesson) => !(l.id && retired.has(l.id));
   return {
     all: () => [...lessons],
+    retirements: () => new Map(retired),
     async write(lesson) {
       const id = lesson.id ?? `lesson-${lessons.length + 1}`;
       lessons.push({ ...lesson, id });
       return { id };
     },
+    async find(domain, selector, limit) {
+      return lessons
+        .filter((l) => l.domain === domain && current(l) && lessonMatches(l, selector))
+        .slice(0, limit);
+    },
+    async retire(domain, id, retirement) {
+      const l = lessons.find((x) => x.id === id && x.domain === domain);
+      if (!l) throw new Error(`no lesson ${id} in ${domain}`);
+      if (retired.has(id)) throw new Error(`lesson ${id} is already retired`);
+      retired.set(id, retirement);
+    },
     async recall(domain, query, asOf, opts) {
       const q = lessonTokens(query);
       const ranked = lessons
-        .filter((l) => l.domain === domain)
+        .filter((l) => l.domain === domain && current(l))
         .map((l) => ({
           l,
           hits: [...lessonTokens(`${l.text} ${l.category ?? ""}`)].filter((t) => q.has(t)).length,

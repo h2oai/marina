@@ -966,6 +966,48 @@ export function memoryFilters(filter: MemoryFilter) {
   return { sql: conditions.length ? ` AND ${conditions.join(" AND ")}` : "", values };
 }
 
+/** Validity options of ranked recall (`search`), resolved against one `now`. */
+export interface MemoryValidityFilter {
+  valid_at?: number;
+  include_ended?: boolean;
+  /** The instant "ended" is judged at when `valid_at` is absent (default `Date.now()`). */
+  now?: number;
+}
+/**
+ * The search-layer validity predicate, applied before ranking so a retired
+ * record (validity closed by a tombstone `revise` or a `resolve` loser) never
+ * consumes a candidate slot. Default: drop records whose interval ended at
+ * `now`. Explicit `valid_at`: the full interval at that instant (same
+ * predicate as `queryMemory`). `include_ended`: no temporal filter — the
+ * explicit history/audit read.
+ */
+export function memoryValidityFilter(filter: MemoryValidityFilter): {
+  sql: string;
+  values: number[];
+} {
+  if (filter.include_ended !== undefined && typeof filter.include_ended !== "boolean")
+    throw new MemoryError(400, "invalid_input", "include_ended must be boolean");
+  if (filter.valid_at !== undefined) {
+    if (filter.include_ended === true)
+      throw new MemoryError(400, "invalid_input", "Use include_ended or valid_at, not both");
+    if (
+      typeof filter.valid_at !== "number" ||
+      !Number.isSafeInteger(filter.valid_at) ||
+      filter.valid_at < 0
+    )
+      throw new MemoryError(400, "invalid_input", "valid_at must be UTC milliseconds");
+    return {
+      sql: " AND (r.valid_from IS NULL OR r.valid_from<=?) AND (r.valid_until IS NULL OR r.valid_until>?)",
+      values: [filter.valid_at, filter.valid_at],
+    };
+  }
+  if (filter.include_ended === true) return { sql: "", values: [] };
+  return {
+    sql: " AND (r.valid_until IS NULL OR r.valid_until>?)",
+    values: [filter.now ?? Date.now()],
+  };
+}
+
 export function memoryCandidates(
   db: Database,
   actor: MemoryActor,
@@ -1004,9 +1046,10 @@ export function lexicalMemoryCandidates(
   actor: MemoryActor,
   space: string,
   query: string,
-  filter: MemoryFilter = {},
+  filter: MemoryFilter & MemoryValidityFilter = {},
 ): string[] {
   authorizeMemorySpace(db, actor, space);
+  const validity = memoryValidityFilter(filter);
   const fts = buildFtsQuery(query, "or");
   if (!fts) return [];
   return (
@@ -1014,7 +1057,7 @@ export function lexicalMemoryCandidates(
       .query(`SELECT r.id FROM notes_fts f CROSS JOIN memory_records r INDEXED BY idx_memory_records_note ON r.current_note_id=f.rowid CROSS JOIN notes n ON n.id=f.rowid
     WHERE notes_fts MATCH ? AND r.space_id=? AND r.status='active' AND n.verification_status!='superseded'
     ${filter.include_stale === true ? "" : "AND r.stale=0"}
-    AND (? IS NULL OR r.subject=?) AND (? IS NULL OR n.note_type=?) AND (? IS NULL OR n.tier=?)
+    AND (? IS NULL OR r.subject=?) AND (? IS NULL OR n.note_type=?) AND (? IS NULL OR n.tier=?)${validity.sql}
     ORDER BY f.rank LIMIT 200`)
       .all(
         fts,
@@ -1025,6 +1068,7 @@ export function lexicalMemoryCandidates(
         filter.type ?? null,
         filter.tier ?? null,
         filter.tier ?? null,
+        ...validity.values,
       ) as { id: string }[]
   ).map((x) => x.id);
 }
@@ -1671,14 +1715,18 @@ export function memoryRepository(db: Database) {
       readCurrentMemoryRecords(db, actor, space, ids),
     candidates: (actor: MemoryActor, space: string, filter?: MemoryFilter) =>
       memoryCandidates(db, actor, space, filter),
-    lexical: (actor: MemoryActor, space: string, query: string, filter?: MemoryFilter) =>
-      lexicalMemoryCandidates(db, actor, space, query, filter),
+    lexical: (
+      actor: MemoryActor,
+      space: string,
+      query: string,
+      filter?: MemoryFilter & MemoryValidityFilter,
+    ) => lexicalMemoryCandidates(db, actor, space, query, filter),
     rankVectors: (
       actor: MemoryActor,
       space: string,
       model: string,
       vector: number[],
-      filter?: MemoryFilter,
+      filter?: MemoryFilter & MemoryValidityFilter,
     ) => rankMemoryVectors(db, actor, space, model, vector, filter),
     vectors: (actor: MemoryActor, space: string, model: string) =>
       memoryVectors(db, actor, space, model),

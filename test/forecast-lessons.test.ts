@@ -120,6 +120,28 @@ describe("lesson visibility (the leakage rule)", () => {
       expect((await store.recall("tennis match winner", "2026-09-20T00:00:00.000Z")).length).toBe(
         2,
       );
+      // Retired through `revise` (validity closed, history kept): never served again.
+      const current = (await run({ operation: "get", space_id: space.id, id: w.id! })).result as {
+        version: number;
+        content: string;
+        metadata: Record<string, unknown>;
+        valid_time: { from: number | null };
+      };
+      await run({
+        operation: "revise",
+        space_id: space.id,
+        id: w.id!,
+        input: {
+          expected_version: current.version,
+          content: current.content,
+          metadata: { ...current.metadata, retired_reason: "test" },
+          valid_time: { from: current.valid_time.from, until: Date.now() - 1 },
+        },
+      });
+      const after = await store.recall("tennis match winner", "2026-09-20T00:00:00.000Z");
+      expect(after.map((l) => l.text)).toEqual([
+        "[lesson] choice · tennis match winner · rule: upsets cluster on clay",
+      ]);
     } finally {
       db.close();
     }
