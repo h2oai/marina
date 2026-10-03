@@ -670,13 +670,13 @@
 # MARINA_FORECAST_RETRIEVER=openrouter-web:openai/gpt-6-luna
 # MARINA_FORECAST_JUDGE=jev
 
-# Typed forecasts (a choice, a set of options, a number, a ranking or a short string; `forecast … type:<t>`, `bun run forecast --type`, POST /v1/forecast with `answer`). The retriever also accepts sonar:<model>, tavily:<basic|advanced> (TAVILY_API_KEY) and asof[:<providers>] (keyless and date-strict, bounded to each forecast's cutoff: gdelt, wikipedia, hn, arxiv, wayback; docs/guides/search.md), comma-separated to merge. The planner decomposes the question and names research gaps (default: the first analyst); the critic searches for evidence against the leading answer and may revise it only when its confidence exceeds the runs' agreement (default: the planner). RUNS independent answers (1–9, analysts used round-robin) are combined by type; RESEARCH_ROUNDS bounds the search loop (1–4); CRITIQUE=off skips the disconfirmation pass. LOOKUPS adds optional structured sources, a comma list (empty means none): polymarket and kalshi (market prices; a past cutoff reads the last price at or before it, never the resolution), odds (sports head-to-head odds via ODDS_API_KEY; historical snapshots need a paid plan), fred (official series; vintage-correct for a past cutoff with FRED_API_KEY, live-only without), bls (live-only), or markets / all. A number is anchored on the freshest official reading with a horizon-scaled spread.
+# Typed forecasts (a choice, a set of options, a number, a ranking or a short string; `forecast … type:<t>`, `bun run forecast --type`, POST /v1/forecast with `answer`). The retriever also accepts sonar:<model>, tavily:<basic|advanced> (TAVILY_API_KEY) and asof[:<providers>] (keyless and date-strict, bounded to each forecast's cutoff: gdelt, wikipedia, hn, arxiv, wayback; docs/guides/search.md), comma-separated to merge. The planner decomposes the question and names research gaps (default: the first analyst); the critic searches for evidence against the leading answer and may revise it only when its confidence exceeds the runs' agreement (default: the planner). RUNS independent answers (1–9, analysts used round-robin) are combined by type; RESEARCH_ROUNDS bounds the search loop (1–4); CRITIQUE=off skips the disconfirmation pass. LOOKUPS picks structured sources (also answerable directly with the `data` command): unset or `auto` (the default) turns on every one that can run here — polymarket, kalshi, fred and bls (keyless) plus odds when ODDS_API_KEY is set; `off` or `none` (or empty) turns them off; otherwise a comma list: polymarket and kalshi (market prices; a past cutoff reads the last price at or before it, never the resolution), odds (sports head-to-head odds via ODDS_API_KEY; historical snapshots need a paid plan), fred (official series; vintage-correct for a past cutoff with FRED_API_KEY, live-only without), bls (live-only), or markets / all. Every lookup reads as of the earlier of the cutoff and now. A number is anchored on the freshest official reading with a horizon-scaled spread.
 # MARINA_FORECAST_PLANNER=openrouter/deepseek/deepseek-v4-pro
 # MARINA_FORECAST_CRITIC=openrouter/deepseek/deepseek-v4-pro
 # MARINA_FORECAST_RUNS=3
 # MARINA_FORECAST_RESEARCH_ROUNDS=2
 # MARINA_FORECAST_CRITIQUE=on
-# MARINA_FORECAST_LOOKUPS=
+# MARINA_FORECAST_LOOKUPS=auto
 
 # Verification inside a typed forecast: with VERIFY=on each run's draft is checked by VERIFIER (default: the critic) against the dossier and the resolution rules before it is combined, and a concrete correction replaces it. RETRIEVAL_FILTER=strict keeps only research lines whose every cited page is provably published on or before the evidence cutoff (engine date, else a date in the URL) and that name no later day; undated and live-result pages are dropped. Use it for past-cutoff forecasts (replays, backtests); date-filtered engines (tavily:, exa:) need no filter, and `closed-book` as the retriever disables retrieval.
 # MARINA_FORECAST_VERIFY=off
@@ -730,6 +730,9 @@
 # MARINA_ARENA_RESEARCH_RETRIEVER=openrouter-web:openai/gpt-6-luna
 # MARINA_ARENA_RESEARCH_JUDGE=jev
 # MARINA_ARENA_RESEARCH_TRUST=0.5
+
+# Structured data in arena research dossiers (default off; same spec as MARINA_FORECAST_LOOKUPS, odds excluded): prediction-market prices for every round, and an official series only where the round has a close relative (src/arena/research/data-evidence.ts). Read as of the brief's cutoff, headed as evidence of CHANGES only — the round's own history sets the level.
+# MARINA_ARENA_RESEARCH_LOOKUPS=off
 
 # Record a candidate forecaster hourly in shadow, never filed (`bun run arena shadow score`).
 # MARINA_ARENA_SHADOW=

@@ -1989,6 +1989,12 @@ Fields read here: `model`, `name`.
 
 - Guard: `rest === "*"`
 
+## src/net/model-api/verify.ts
+
+### `path.split(".")`
+
+[Source](../../src/net/model-api/verify.ts#L296)
+
 ## src/net/orchestration-api.ts
 
 ### `url.pathname.startsWith('${PREFIX}/')`

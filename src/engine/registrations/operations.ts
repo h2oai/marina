@@ -14,6 +14,7 @@ import { buildCommand } from "../commands/build";
 import { canvasCommand } from "../commands/canvas";
 import { codeCommand } from "../commands/code";
 import { connectCommand } from "../commands/connect";
+import { dataCommand } from "../commands/data";
 import { demoCommand } from "../commands/demo";
 import { gatewayCommand } from "../commands/gateway";
 import { keyCommand } from "../commands/key";
@@ -76,6 +77,9 @@ export function registerOperationCommands(engine: Engine): void {
       connectorRuntime: engine.connectorRuntime,
     }),
   );
+
+  // Data command (markets, sports odds, official series — the forecast lookups, asked directly)
+  engine.commands.registerBuiltin(dataCommand());
 
   // Gateway command (only if db-backed)
   if (engine.db) {
