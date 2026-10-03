@@ -25,6 +25,7 @@ The terminal client is `bun run scripts/connect.ts <name>` (`-c "<command>"` for
 |---|---|
 | `forecast "<question>"` | Forecast any question with no server running: a probability or a number, with sources, verified figures, each analyst's answer and the cost. See [Forecasting](forecasting.md). |
 | `arena <sub>` | Social Simulation Arena operator CLI: `keygen`, `registration`, `status`, `rounds`, `show`, `submit`, `backtest`, `evaluate`, `research`, `shadow run\|list\|score`, `discover`, `signals`. See [Arena](arena.md). |
+| `forecastbench fetch\|estimate\|run\|write\|upload\|resolve\|select\|status` | ForecastBench: forecast a round's 500 questions (resumable), write the set file, choose up to 3 configurations by backtest; `upload` needs `FORECASTBENCH_GCS_FOLDER` and `--yes`. See [ForecastBench](forecastbench.md). |
 | `metaculus select\|pass\|forecast\|resolve\|status\|timer` | Metaculus tournament bot: choose a configuration by held-out backtest, forecast open questions with a reasoning comment (`--dry-run` posts nothing), learn from resolved ones, write the 20-minute systemd units (never enabled). Needs `METACULUS_TOKEN`. See [Metaculus](metaculus.md). |
 | `repro doctor\|list\|<setup>` | Reproduce a published benchmark setup (`hle-verified`, `swebench-verified`, `tau2`, `futurex-backtest`, `arena-backtest`): prerequisite checks with fixes, `--dry-run` plans with estimated spend, replicated arms, a pooled comparison from the ledger. See [Reproduce](reproduce.md). |
 
