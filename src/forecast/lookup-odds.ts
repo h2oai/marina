@@ -152,3 +152,81 @@ export function impliedProbabilities(
     .sort((a, b) => b[1] - a[1]);
   return { books, probs };
 }
+
+/** One game on an odds board. */
+export interface OddsGame {
+  sport: string;
+  start: string;
+  away: string;
+  home: string;
+  books: number;
+  probs: Array<[string, number]>;
+}
+
+/**
+ * An odds board: upcoming games (pre-game only) with de-vigged implied
+ * probabilities, for a sport key (else every upcoming game) and optionally
+ * only games naming one of `teams`. A past `asOf` reads the historical
+ * snapshot at or before it (a paid-plan endpoint; it needs a sport key).
+ * The general surface behind `data odds` and the search room's `odds` verb.
+ */
+export async function oddsBoard(
+  apiKey: string | undefined,
+  opts: { sport?: string; teams?: string[]; asOf?: Date; now: Date; limit?: number },
+  http: LookupFetch = lookupFetch("odds"),
+): Promise<{ games: OddsGame[]; asOf: string; mode: "live" | "historical" } | { error: string }> {
+  if (!apiKey) return { error: "ODDS_API_KEY not set" };
+  const at = opts.asOf && opts.asOf.getTime() < opts.now.getTime() ? opts.asOf : opts.now;
+  const live = isLiveCutoff(at, opts.now);
+  const sport = opts.sport?.trim().toLowerCase();
+  if (sport && !SPORT_KEY.test(sport)) return { error: `not a sport key: ${opts.sport}` };
+  if (!live && !sport)
+    return { error: "a past asof: needs a sport key (e.g. americanfootball_nfl)" };
+  const params = new URLSearchParams({
+    regions: "us,uk,eu",
+    markets: "h2h",
+    oddsFormat: "decimal",
+    apiKey,
+  });
+  let events: OddsEvent[];
+  let asOf = opts.now.toISOString();
+  if (live) {
+    const r = await http.json<OddsEvent[]>(`${BASE}/sports/${sport ?? "upcoming"}/odds?${params}`);
+    if (!r.ok) return { error: r.error };
+    events = Array.isArray(r.value) ? r.value : [];
+  } else {
+    params.set("date", `${at.toISOString().slice(0, 19)}Z`);
+    const r = await http.json<{ timestamp?: string; data?: OddsEvent[] }>(
+      `${BASE}/historical/sports/${sport}/odds?${params}`,
+    );
+    if (!r.ok) return { error: `${r.error} (historical odds need a paid plan)` };
+    const snap = r.value.timestamp ? Date.parse(r.value.timestamp) : Number.NaN;
+    if (!Number.isFinite(snap) || snap > at.getTime()) {
+      return { error: "no odds snapshot at or before that date" };
+    }
+    asOf = new Date(snap).toISOString();
+    events = r.value.data ?? [];
+  }
+  const wanted = (opts.teams ?? []).flatMap((t) => [...tokens(t)]);
+  const games: OddsGame[] = [];
+  for (const ev of events) {
+    if (games.length >= (opts.limit ?? 10)) break;
+    const start = Date.parse(ev.commence_time);
+    if (!Number.isFinite(start) || start <= at.getTime()) continue; // pre-game only
+    if (wanted.length > 0) {
+      const names = tokens(`${ev.home_team} ${ev.away_team}`);
+      if (!wanted.some((w) => names.has(w))) continue;
+    }
+    const implied = impliedProbabilities(ev);
+    if (!implied) continue;
+    games.push({
+      sport: ev.sport_key,
+      start: ev.commence_time,
+      away: ev.away_team,
+      home: ev.home_team,
+      books: implied.books,
+      probs: implied.probs,
+    });
+  }
+  return { games, asOf, mode: live ? "live" : "historical" };
+}

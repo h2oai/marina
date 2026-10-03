@@ -443,7 +443,15 @@ describe("search room", () => {
 
   it("mounts on an existing room under other verbs", () => {
     const tool = searchToolCommands({ verbs: { search: "find", fetch: "archive" } });
-    expect(Object.keys(tool.commands).sort()).toEqual(["archive", "find", "sources", "wiki"]);
+    expect(Object.keys(tool.commands).sort()).toEqual([
+      "archive",
+      "find",
+      "markets",
+      "odds",
+      "series",
+      "sources",
+      "wiki",
+    ]);
     expect(tool.catalog).toContain("`find <q> [before:<date>]");
   });
 

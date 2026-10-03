@@ -457,11 +457,15 @@ async function formationForecasterFor(
       import("./research/verify"),
     ]);
     const orKey = env.OPENROUTER_API_KEY;
+    const { arenaResearchLookups, withDataLookups } = await import("./research/data-evidence");
     research = retrieve.withProvidedText(
-      retrieve.retrieverFromSpec(researchPart.slice("research@".length), {
-        ...(orKey ? { openrouter: orKey } : {}),
-        ...(env.TAVILY_API_KEY?.trim() ? { tavily: env.TAVILY_API_KEY.trim() } : {}),
-      }),
+      withDataLookups(
+        retrieve.retrieverFromSpec(researchPart.slice("research@".length), {
+          ...(orKey ? { openrouter: orKey } : {}),
+          ...(env.TAVILY_API_KEY?.trim() ? { tavily: env.TAVILY_API_KEY.trim() } : {}),
+        }),
+        arenaResearchLookups(env),
+      ),
       defaultPageText(),
     );
   }
@@ -685,11 +689,15 @@ async function researchForecasterFor(
     "openrouter-web:openai/gpt-6-luna";
   const { defaultPageText } = await import("./research/verify");
   // Page text a retriever already fetched (Tavily) is checked in place of a fetch.
+  const { arenaResearchLookups, withDataLookups } = await import("./research/data-evidence");
   const { retriever, pageText } = retrieve.withProvidedText(
-    retrieve.retrieverFromSpec(retrieverSpec, {
-      ...(orKey ? { openrouter: orKey } : {}),
-      ...(env.TAVILY_API_KEY?.trim() ? { tavily: env.TAVILY_API_KEY.trim() } : {}),
-    }),
+    withDataLookups(
+      retrieve.retrieverFromSpec(retrieverSpec, {
+        ...(orKey ? { openrouter: orKey } : {}),
+        ...(env.TAVILY_API_KEY?.trim() ? { tavily: env.TAVILY_API_KEY.trim() } : {}),
+      }),
+      arenaResearchLookups(env),
+    ),
     defaultPageText(),
   );
   const models = analystsPart.split(",");

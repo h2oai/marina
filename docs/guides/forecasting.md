@@ -67,7 +67,7 @@ What happens:
    fact is still missing and the next queries, or stops when the dossier is enough. If every round
    fails (an engine outage, an exhausted search quota), the runs still answer from the question and
    its notes, and the answer carries a caveat saying so.
-3. **Lookups** (opt-in) — structured sources join the dossier as ordinary cited lines, steered by
+3. **Lookups** (on by default where available) — structured sources join the dossier as ordinary cited lines, steered by
    the plan's `data` hints (a market search phrase, a sports key and teams, official series ids).
    For a number, the freshest official reading becomes the answer's **anchor**: the runs start
    there, with the spread of that series' own changes over the question's horizon, and move
@@ -139,7 +139,7 @@ are saved with their answer as one string (`prediction`).
 | `MARINA_FORECAST_RUNS` | `3` | typed answers: independent runs (1–9) |
 | `MARINA_FORECAST_RESEARCH_ROUNDS` | `2` | typed answers: research rounds (1–4) |
 | `MARINA_FORECAST_CRITIQUE` | `on` | `off` skips the critique |
-| `MARINA_FORECAST_LOOKUPS` | none | structured sources: `polymarket`, `kalshi`, `odds`, `fred`, `bls`, or `markets` / `all` (see [Lookups](#lookups)) |
+| `MARINA_FORECAST_LOOKUPS` | `auto` | structured sources: `auto` (every one that can run here), `off`, or a list of `polymarket`, `kalshi`, `odds`, `fred`, `bls`, `markets` / `all` (see [Lookups](#lookups)) |
 | `MARINA_FORECAST_MARINA_URL` / `_KEY` | `http://localhost:3300` | where `marina:<crew>` analysts are asked |
 
 An analyst may be a crew: `MARINA_FORECAST_ANALYSTS=marina:answerer` asks the `answerer` crew on a
@@ -153,10 +153,22 @@ see [Search](search.md).
 
 ### Lookups
 
+Lookups are on by default wherever they can run: `MARINA_FORECAST_LOOKUPS` unset (or `auto`)
+turns on every keyless lookup (`polymarket`, `kalshi`, `fred`, `bls`) plus `odds` when
+`ODDS_API_KEY` is set; `off` turns them all off, and an explicit list picks some. Every surface
+that forecasts — the `forecast` command, `bun run forecast`, `POST /v1/forecast`, and any benchmark
+adapter built on the typed forecaster (FutureX, for one) — gets them through this one default, with
+no adapter-specific code. Benchmarks that are not forecasting tasks (τ²-bench, SWE-bench) do not
+use them. The same sources answer directly through the `data` command and the search room's
+`markets` / `odds` / `series` verbs.
+
 Each lookup is a plain data request through the URL guard (no model spend). One that is not
 configured, fails or times out contributes nothing, and the answer records why. None of them
 reads anything published after the cutoff: each either reads values *as of* the cutoff or, when
-its source only knows current values, runs for a live cutoff only.
+its source only knows current values, runs for a live cutoff only. The cutoff a lookup sees is
+never later than now: a question that closes next week is looked up as of now (a data source
+refuses a future as-of date, and FRED's "today" is the US Central date — a UTC cutoff of now is
+read as FRED's current date).
 
 | Name | Source | Live cutoff | Past cutoff | Key |
 |---|---|---|---|---|
