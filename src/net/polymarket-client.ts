@@ -28,6 +28,7 @@ import { CONNECTOR_HTTP_TIMEOUT_MS } from "../engine/constants";
 import { guardedFetch, validateFetchUrl } from "./url-guard";
 
 const DEFAULT_GAMMA_BASE = "https://gamma-api.polymarket.com";
+const DEFAULT_CLOB_BASE = "https://clob.polymarket.com";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -190,16 +191,53 @@ export async function getEvents(
   return await jsonGet<PolymarketEvent[]>(url, opts);
 }
 
-/** Free-text search over events (gamma `public-search`); read-only, no key. */
+/**
+ * Free-text search over events (gamma `public-search`); read-only, no key.
+ * `includeClosed` also asks for closed events (a backtest's market may have
+ * resolved since) — best effort: gamma may ignore the hint.
+ */
 export async function searchEvents(
   query: string,
   limit = 5,
   opts: PolymarketClientOpts = {},
+  includeClosed = false,
 ): Promise<PolymarketResult<PolymarketEvent[]>> {
   const base = opts.gammaBase ?? process.env.POLYMARKET_GAMMA_BASE ?? DEFAULT_GAMMA_BASE;
   const params = new URLSearchParams({ q: query, limit_per_type: String(limit) });
+  if (includeClosed) {
+    params.set("events_status", "all");
+    params.set("keep_closed_markets", "1");
+  }
   const r = await jsonGet<{ events?: PolymarketEvent[] }>(`${base}/public-search?${params}`, opts);
   return r.ok ? { ...r, response: r.response.events ?? [] } : r;
+}
+
+/** One point of a token's price history: `t` unix seconds, `p` price 0–1. */
+export interface PolymarketPricePoint {
+  t: number;
+  p: number;
+}
+
+/** A CLOB token's price history in [startTs, endTs] (unix seconds); read-only, no key. */
+export async function pricesHistory(
+  tokenId: string,
+  startTs: number,
+  endTs: number,
+  fidelityMinutes = 60,
+  opts: PolymarketClientOpts = {},
+): Promise<PolymarketResult<PolymarketPricePoint[]>> {
+  const base = opts.clobBase ?? process.env.POLYMARKET_CLOB_BASE ?? DEFAULT_CLOB_BASE;
+  const params = new URLSearchParams({
+    market: tokenId,
+    startTs: String(Math.floor(startTs)),
+    endTs: String(Math.floor(endTs)),
+    fidelity: String(fidelityMinutes),
+  });
+  const r = await jsonGet<{ history?: PolymarketPricePoint[] }>(
+    `${base}/prices-history?${params}`,
+    opts,
+  );
+  return r.ok ? { ...r, response: r.response.history ?? [] } : r;
 }
 
 export async function getEvent(

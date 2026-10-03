@@ -366,7 +366,7 @@ describe("forecast lookups", () => {
       response: [
         {
           id: "1",
-          title: "Event",
+          title: "Lakers NBA Championship",
           slug: "event",
           markets: [
             {
@@ -382,10 +382,11 @@ describe("forecast lookups", () => {
       ],
     }));
     const now = new Date("2026-10-05T00:00:00Z");
-    const live = await lookup.lookup("x", now, now);
+    const q = "Will the Lakers win the NBA title?";
+    const live = await lookup.lookup(q, now, now);
     expect(live.lines[0]).toContain("Will X? — Yes 65%, No 35%");
     expect(live.sources[0]?.url).toBe("https://polymarket.com/event/event");
-    const past = await lookup.lookup("x", new Date("2026-09-01T00:00:00Z"), now);
+    const past = await lookup.lookup(q, new Date("2026-09-01T00:00:00Z"), now);
     expect(past.skipped).toBe("cutoff in the past");
     expect(past.lines).toEqual([]);
   });

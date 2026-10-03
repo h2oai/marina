@@ -21,7 +21,9 @@
  *   MARINA_FORECAST_RUNS       independent answer runs, 1–9 (default 3)
  *   MARINA_FORECAST_RESEARCH_ROUNDS  research rounds, 1–4 (default 2)
  *   MARINA_FORECAST_CRITIQUE   on | off (default on)
- *   MARINA_FORECAST_LOOKUPS    optional structured sources: polymarket (default none)
+ *   MARINA_FORECAST_LOOKUPS    optional structured sources: polymarket, kalshi, odds, fred,
+ *                              bls, markets, all (default none; keys ODDS_API_KEY,
+ *                              FRED_API_KEY, BLS_API_KEY)
  *
  * Retrieval and the Jev judge go through OpenRouter today, so OPENROUTER_API_KEY
  * is required; analysts may be any model Marina routes. Every model call is
@@ -223,7 +225,7 @@ export function typedForecastDeps(
       ...(critic ? { critic } : {}),
       ...(w.judge ? { judge: w.judge } : {}),
       pageText: defaultPageText(),
-      lookups: lookupsFromSpec(env.MARINA_FORECAST_LOOKUPS),
+      lookups: lookupsFromSpec(env.MARINA_FORECAST_LOOKUPS, env),
       options: typedOptionsFromEnv(env, options),
     },
     costUsd: () =>
