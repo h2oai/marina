@@ -558,6 +558,16 @@ function parsePositiveInt(raw: string | undefined): number | undefined {
 /** Lowest context window we'll ever shrink to during overflow recovery. */
 const MIN_EFFECTIVE_CONTEXT = 4096;
 
+/** Default wall-clock bound on one prompt (all its turns), and how far an automatic bound grows. */
+const DEFAULT_PROMPT_TIMEOUT_MS = 120_000;
+const MAX_PROMPT_TIMEOUT_MS = 600_000;
+
+/** The prompt bound after a timeout: doubled toward the ceiling; never for an explicit bound. */
+export function grownPromptTimeoutMs(current: number, explicit: boolean): number | undefined {
+  if (explicit || current >= MAX_PROMPT_TIMEOUT_MS) return undefined;
+  return Math.min(MAX_PROMPT_TIMEOUT_MS, current * 2);
+}
+
 /** Output cap for the one re-encoding shot of an owed-reply salvage (`output-repair`). */
 const REPAIR_SHOT_MAX_TOKENS = 2048;
 
@@ -1368,7 +1378,9 @@ export class LeanAgentAdapter implements AgentHandle {
   private attentionMode: "focused" | "balanced" | "open";
   private attentionThreshold: number;
   private droppedPerceptions = 0;
-  private readonly promptTimeoutMs: number;
+  private promptTimeoutMs: number;
+  /** True when the operator set `promptTimeoutMs`; an explicit bound never grows. */
+  private readonly promptTimeoutExplicit: boolean;
 
   // ─── Cognition State ────────────────────────────────────────────────
   private idleCycles = 0;
@@ -1475,7 +1487,8 @@ export class LeanAgentAdapter implements AgentHandle {
     this.perceptionBufferCap = config.perceptionBufferCap ?? 20;
     this.attentionMode = config.attentionMode ?? "balanced";
     this.attentionThreshold = Math.max(10, Math.min(90, config.attentionThreshold ?? 50));
-    this.promptTimeoutMs = config.promptTimeoutMs ?? 120_000;
+    this.promptTimeoutMs = config.promptTimeoutMs ?? DEFAULT_PROMPT_TIMEOUT_MS;
+    this.promptTimeoutExplicit = config.promptTimeoutMs !== undefined;
 
     // Initialize components
     this.gameState = new GameStateManager();
@@ -2664,6 +2677,17 @@ export class LeanAgentAdapter implements AgentHandle {
             error: `Prompt timeout (${this.promptTimeoutMs}ms)`,
             context: "autonomous_loop",
           });
+          // A model that reasons at length (more so with reasoning headroom)
+          // can need longer than the default bound: grow an automatic bound
+          // toward MAX_PROMPT_TIMEOUT_MS so a slow answer is not aborted every
+          // cycle. A hung upstream is still cut off at the ceiling.
+          const grown = grownPromptTimeoutMs(this.promptTimeoutMs, this.promptTimeoutExplicit);
+          if (grown) {
+            this.promptTimeoutMs = grown;
+            this.log.warn(LEAN_AGENT_LOG_CATEGORY, `prompt bound → ${this.promptTimeoutMs}ms`, {
+              agent: this.name,
+            });
+          }
         }
 
         // Check for LLM error

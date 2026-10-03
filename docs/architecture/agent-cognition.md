@@ -132,6 +132,7 @@ With thinking off, Marina sends no reasoning directive, but many OpenRouter rout
 
 - **Headroom.** An automatic crew or compact cap for a model that may reason unasked gets at least `REASONING_HEADROOM_TOKENS` (8192), bounded by the model's ceiling. This covers any OpenRouter route, an id the registry does not know, or a registry reasoning model with thinking off.
 - **Growth.** A turn that ends with `stopReason: "length"` and no tool call doubles an automatic cap toward its ceiling, and emits an `output_cap` event. An explicit `maxTokens`, `AGENT_CREW_MAX_TOKENS` or `AGENT_COMPACT_MAX_TOKENS` cap never grows.
+- **Prompt bound.** Longer reasoning can outlast the 120 s bound on one prompt. After a timeout, an automatic bound doubles toward 600 s (`grownPromptTimeoutMs`), so a slow answer is not aborted every cycle. An explicit `promptTimeoutMs` never grows.
 - **Request shaping (OpenRouter only).** The Agent's `onPayload` composes `withPromptCacheKey` with `shapeOpenRouterPayload`:
   - Tool requests ask for `provider.require_parameters`, so a provider that ignores `tools` is never chosen.
   - `reasoning: {enabled: false}` is sent only for a model whose spawn-time probe still called a tool without reasoning. An explicit disable is not a universal fix: some models reject it with "Reasoning is mandatory", and some accept it but stop calling tools.

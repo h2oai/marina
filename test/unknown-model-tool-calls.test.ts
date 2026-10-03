@@ -19,7 +19,11 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import { AgentRuntime } from "../src/agent/agent-runtime";
-import { LeanAgentAdapter, resolveModel } from "../src/agent/lean-agent-adapter";
+import {
+  grownPromptTimeoutMs,
+  LeanAgentAdapter,
+  resolveModel,
+} from "../src/agent/lean-agent-adapter";
 import {
   grownOutputCap,
   isReasoningOffVerified,
@@ -192,6 +196,13 @@ describe("output cap for models that reason unasked", () => {
       (pinned as unknown as Internals).growOutputCapAfterLengthStop({ stopReason: "length" }),
     ).toBeUndefined();
     expect(pinned.getStatus().maxOutputTokens).toBe(2048);
+  });
+
+  it("a timed-out prompt bound grows toward 10 minutes unless the operator set it", () => {
+    expect(grownPromptTimeoutMs(120_000, false)).toBe(240_000);
+    expect(grownPromptTimeoutMs(480_000, false)).toBe(600_000);
+    expect(grownPromptTimeoutMs(600_000, false)).toBeUndefined();
+    expect(grownPromptTimeoutMs(120_000, true)).toBeUndefined();
   });
 
   it("an operator's env cap is never grown", () => {
