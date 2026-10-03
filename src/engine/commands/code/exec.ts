@@ -16,6 +16,7 @@ import {
 import type { WorkspaceRunResult, WorkspaceRuntime } from "../../../coding/local-workspace";
 import { detectWorkspaceRunner } from "../../../coding/project-detection";
 import { summarizeFlywheelEvents, WorkspaceGateway } from "../../../coding/workspace-gateway";
+import { noteOutcome } from "../../../learning/service";
 import { dim, error as fmtError, header, separator, success } from "../../../net/ansi";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Connection, Entity, EntityId, RoomContext } from "../../../types";
@@ -495,6 +496,19 @@ export async function runVerificationCommands(
       stoppedAt: failed?.result.command,
     },
     createdBy: entity.name,
+  });
+  noteOutcome(deps.db, {
+    domain: "code",
+    source: "code:verify",
+    succeeded: !failed,
+    resolvedAt: new Date().toISOString(),
+    attempted: `verify a change with ${results.map((item) => item.result.command[0]).join(", ") || "dependency preparation"}`,
+    signals: results.map((item) => item.result.command.join(" ")),
+    detail: failed
+      ? `failed at ${failed.result.command?.join(" ") || "preparation"} (exit ${failed.result.exitCode}${failed.result.timedOut ? ", timed out" : ""})`
+      : `passed ${results.length} check${results.length === 1 ? "" : "s"}`,
+    refs: [`artifact:${artifact.id}`],
+    ...(failed ? { privateContext: (failed.result.output ?? "").slice(-1_200) } : {}),
   });
   deps.db.createCodingEvent({
     sessionId: session.id,

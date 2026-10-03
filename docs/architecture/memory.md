@@ -93,3 +93,26 @@ institutional publications are distinct semantics, not deprecated duplicates.
 retrieval and observability. The old `legacy-bridge.ts`, compatibility wrappers,
 queue API and retry tick job have been removed. In the combined context, a record
 already represented by a numeric tier is not repeated in the evidence tier.
+
+## Outcome lessons (`src/learning/`)
+
+Every verdict on something Marina did becomes a candidate lesson:
+- **Producers:**
+  - a benchmark run filed (`POST /v1/benchmarks/runs`, `benchmark:import --learn`);
+  - a forecast settled by the `forecast-question` finder;
+  - a Code Mode verification;
+  - an arena round resolved (`learnFromResolutions`).
+- **Hand-off:** each producer calls `noteOutcome(db, outcome)`. That never blocks or throws, it queues, and it's a no-op unless `enableOutcomeLearning(db)` armed the database (`main.ts` does; tests and library code don't).
+
+The loop:
+
+| step | what happens |
+|---|---|
+| **Candidate** | A mechanical summary (domain, success or failure, score, detail), plus a category and an imperative rule from the writer (`MARINA_LESSONS_WRITER`, default `marina/default` through this Marina's `/v1`). |
+| **Content rule** | An outcome carries only general fields. The case text (a question, an error excerpt) travels as `privateContext`: the writer may read it, it's never stored, and a mechanical check rejects any lesson that quotes it. |
+| **Judge** | The decision layer answers four `noul` questions: grounded, general, leak-free, consistent with the domain's current trusted lessons. A calibrated backend uses per-question bars; an uncalibrated one (the single-model fallback, `MARINA_LESSONS_JUDGE_MODEL`) one cut at 0.5. The judge is labelled on the lesson. |
+| **Storage** | A canonical reflection-tier record (subject `lesson`) in the shared space `lessons:<domain>`, owned by the server account `marina:lessons`. Login can't produce that name, so no participant can claim or edit the pool. |
+| **Trust** | `trusted` and `unverified` lessons are served; `rejected` ones are audit records recall never serves. No judge reachable ⇒ `unverified`: nothing is promoted without one. |
+| **Recall** | `recallLessons(db, domain, query, { asOf })` is lexical, trusted first then newest, and byte-budgeted. It applies `visibleAt`: a lesson resolved at T is invisible to work whose cutoff precedes T, the same leakage rule as the forecast lessons in `src/forecast/lessons.ts`. |
+| **Modes** | `MARINA_LESSONS=observe` recalls without injecting (the ablation arm); `off` disables both writing and recall. |
+| **Budget** | `MARINA_LESSONS_MAX_PER_HOUR` bounds writer and judge calls. Judge spend is recorded as `decision`, writer spend through `modelComplete`. |
