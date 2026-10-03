@@ -135,6 +135,9 @@ describe("canvas look and request staging", () => {
     const storage = new LocalStorageProvider(assets);
     await storage.init();
     fixture = createTestEngine({ assetStorage: storage });
+    // The fixture mocks OpenRouter's wire format; local provider keys must not
+    // make the default `marina` route select a different provider.
+    fixture.db.setSetting("default_model", "openrouter/vision/model");
     clearVisionCache();
     saved = {
       OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
