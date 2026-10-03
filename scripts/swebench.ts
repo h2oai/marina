@@ -7,12 +7,12 @@
  *
  *   bun run swebench subset --n 50 --seed 7                 seeded, repo-mixed instance ids
  *   bun run swebench run --arm single --model <m> --replicate 1 [--review-model <m2>]
- *   bun run swebench eval --arm single --replicate 1        official harness, unmodified
+ *   bun run swebench score --arm single --replicate 1       official harness, unmodified
  *   bun run swebench file --arm single --replicate 1        scored run → benchmark ledger
  *
  * Common flags: --data <dir> (default ~/.local/share/marina-swebench/data, outside the
  * repository), --instances <file.jsonl> (from benchmarks/swebench/export.py),
- * --concurrency N, --timeout-min M. `eval` needs SWEBENCH_PYTHON (a Python with the
+ * --concurrency N, --timeout-min M. `score` needs SWEBENCH_PYTHON (a Python with the
  * `swebench` package) and, for Podman, DOCKER_HOST pointing at the Podman socket.
  * Nothing is submitted anywhere; leaderboard submission is a separate, approved act.
  */
@@ -130,7 +130,7 @@ async function runCmd(): Promise<number> {
   return 0;
 }
 
-async function evalCmd(): Promise<number> {
+async function scoreCmd(): Promise<number> {
   const py = process.env.SWEBENCH_PYTHON;
   if (!py) throw new Error("SWEBENCH_PYTHON must point at a Python with the swebench package");
   const preds = join(runDir, "predictions.jsonl");
@@ -160,7 +160,7 @@ async function fileCmd(): Promise<number> {
   const arm = JSON.parse(readFileSync(join(runDir, "arm.json"), "utf8")) as SweArm;
   const reportName = `marina-${arm.name}-r${replicate}.marina-${values.arm}-r${replicate}.json`;
   const reportPath = [join(runDir, reportName)].find((p) => existsSync(p));
-  if (!reportPath) throw new Error(`no harness report in ${runDir} (run eval first)`);
+  if (!reportPath) throw new Error(`no harness report in ${runDir} (run score first)`);
   const report = JSON.parse(readFileSync(reportPath, "utf8")) as { resolved_ids?: string[] };
   const attempts = readFileSync(join(runDir, "attempts.jsonl"), "utf8")
     .split("\n")
@@ -213,13 +213,13 @@ async function main(): Promise<number> {
       return subsetCmd();
     case "run":
       return runCmd();
-    case "eval":
-      return evalCmd();
+    case "score":
+      return scoreCmd();
     case "file":
       return fileCmd();
     default:
       console.error(
-        "usage: bun run swebench subset|run|eval|file [flags] (see scripts/swebench.ts)",
+        "usage: bun run swebench subset|run|score|file [flags] (see scripts/swebench.ts)",
       );
       return 2;
   }

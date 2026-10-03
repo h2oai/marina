@@ -28,7 +28,7 @@ python benchmarks/swebench/export.py ~/.local/share/marina-swebench/data/verifie
 bun run swebench subset --n 50 --seed 7                    # seeded ids, mixed across repositories
 bun run swebench run --arm single --model <model> --replicate 1
 bun run swebench run --arm verify --model <model> --review-model <model2> --replicate 1
-SWEBENCH_PYTHON=<venv>/bin/python bun run swebench eval --arm single --replicate 1
+SWEBENCH_PYTHON=<venv>/bin/python bun run swebench score --arm single --replicate 1
 bun run swebench file --arm single --replicate 1 --db marina.db
 ```
 

@@ -327,7 +327,7 @@ export function ledgerResult(
   const correct = items.filter((i) => i.correct).length;
   return {
     config: {
-      benchmark: "swe-bench-verified",
+      dataset: "swe-bench-verified",
       mode: "agent",
       model: meta.arm.model,
       ...(meta.arm.reviewModel ? { reviewModel: meta.arm.reviewModel } : {}),
