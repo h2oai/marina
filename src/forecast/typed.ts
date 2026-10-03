@@ -40,6 +40,13 @@ import { type PageText, verifyDossier } from "../arena/research/verify";
 import type { Evidence } from "../decisions/evidence";
 import type { DecisionProvider } from "../decisions/types";
 import {
+  extractJsonValue,
+  groundedIn,
+  type Repaired,
+  type RepairLabel,
+  repairOutput,
+} from "../repair/output-repair";
+import {
   type AnswerOption,
   type AnswerSpec,
   type AnswerValue,
@@ -169,6 +176,8 @@ export interface TypedRun {
   quality?: number;
   judgeError?: string;
   status: string;
+  /** The answer met its format only after output repair (`output-repair`). */
+  repaired?: RepairLabel;
   /** The verifier's check of this draft (`options.verify`). */
   verified?: {
     model: string;
@@ -536,13 +545,26 @@ export async function forecastTyped(
     Array.from({ length: k }, async (_, i): Promise<TypedRun> => {
       const analyst = deps.analysts[i % deps.analysts.length]!;
       const run: TypedRun = { run: i + 1, model: analyst.name, weight: 0, status: "ok" };
-      const { reply, error } = await askAnalyst(
+      const asked = await askAnalyst(
         analyst,
         runSystem(req.answer),
         `${user}\n\n(Independent run ${i + 1} of ${k}: reason from the evidence yourself.)`,
       );
-      if (error !== undefined) return { ...run, status: `error: ${error.slice(0, 100)}` };
-      const v = validateAnswer(req.answer, reply?.answer);
+      if (asked.error !== undefined) {
+        return { ...run, status: `error: ${asked.error.slice(0, 100)}` };
+      }
+      let reply = asked.reply;
+      let v = validateAnswer(req.answer, reply?.answer);
+      if ("error" in v && asked.raw) {
+        // The run answered, but not in the required shape: repair the format
+        // (deterministic, else one re-encoding shot on the same analyst).
+        const repaired = await repairRunAnswer(req.answer, asked.raw, analyst);
+        if (repaired) {
+          reply = repaired.value.reply;
+          v = { value: repaired.value.value };
+          run.repaired = repaired.label ?? "repaired:parse";
+        }
+      }
       if ("error" in v) return { ...run, status: `invalid: ${v.error}` };
       run.value = v.value;
       run.formatted = formatAnswer(v.value);
@@ -872,6 +894,34 @@ function researchRequest(
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+/**
+ * A run's answer in the required shape from raw text that missed it: the JSON
+ * reply anywhere in the text, else ONE re-encoding shot on the same analyst
+ * whose answer (and reason) must appear verbatim in the original text.
+ */
+async function repairRunAnswer(
+  spec: AnswerSpec,
+  raw: string,
+  analyst: { complete: (system: string, user: string) => Promise<string> },
+): Promise<Repaired<{ reply: Record<string, unknown>; value: AnswerValue }> | undefined> {
+  return repairOutput({
+    raw,
+    parse: (text) => {
+      const json = extractJsonValue(text);
+      if (!json || typeof json !== "object" || Array.isArray(json)) return undefined;
+      const reply = json as Record<string, unknown>;
+      const v = validateAnswer(spec, reply.answer);
+      return "error" in v ? undefined : { reply, value: v.value };
+    },
+    contract: `ONE JSON object {"answer": …, "reason": "…"} where ${answerInstruction(spec)}`,
+    shot: (system, user) => analyst.complete(system, user),
+    // Every field the run reports must be in its own words: answer, reason,
+    // confidence and sd — a shot never supplies one.
+    preserves: ({ reply }, source) =>
+      groundedIn([reply.answer, reply.reason, reply.confidence, reply.sd], source),
+  });
 }
 
 function parsePlan(reply: Record<string, unknown> | undefined): ForecastPlan {

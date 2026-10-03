@@ -36,7 +36,7 @@ Results are only comparable to the board when the run matches its settings. Thre
 
 Also run the `base` task split (the default) for board comparisons. Named splits such as `test` are smaller subsets with their own difficulty.
 
-**Infrastructure errors are never scores.** τ²'s metrics drop simulations that ended in `infrastructure_error`. `bun run tau2 summary` and `convert` do the same and report how many they excluded. A non-zero count means fix the cause and re-run before comparing arms.
+**Infrastructure errors are never scores.** τ²'s metrics drop simulations that ended in `infrastructure_error`. `bun run tau2 summary` and `convert` do the same and report how many they excluded. A non-zero count means fix the cause and re-run before comparing arms. `--require-clean` turns that into a refusal: with any infrastructure error, `summary` and `convert` print `INVALID: N infrastructure error(s)`, report no scores, write no ledger file and exit 3. `bun run repro tau2` always uses it.
 
 ## The verification formation as a model: `marina/verify:`
 
@@ -58,6 +58,8 @@ A revision that breaks any of these is discarded, the draft is returned, and the
 **Checker choice.** The checker defaults to `MARINA_VERIFY_CHECKER_MODEL`, else the proposer itself.
 
 **Response metadata.** The response carries `x-marina-verify` (`approved`, `revised`, `held-write`, `checker-unavailable`, `revision-failed` or `flagged`) and the summed `x-marina-cost-usd` and `usage` of every call.
+
+**Lessons.** With outcome learning armed, judged `tools`/`code` lessons matching the last user turn ride as one system message after the caller's and are shown to the checker; `x-marina-lessons` names them (`0` for none, `observe:` under `MARINA_LESSONS=observe`). Set `MARINA_LESSONS=off` for a lessons-free ablation arm.
 
 **Limits.** `stream` and `n > 1` are refused with `unsupported_parameter`.
 

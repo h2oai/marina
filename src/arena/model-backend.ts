@@ -19,7 +19,7 @@ import {
   type TokenUsage,
 } from "../agent/provider-cost";
 import { dailyCapRefusal, recordSpend } from "../engine/spend-ledger";
-import { HUGGINGFACE_ENV_KEYS } from "../net/model-discovery";
+import { HUGGINGFACE_ENV_KEYS, LOCAL_PROVIDERS } from "../net/model-discovery";
 import type { Complete } from "./model-forecaster";
 
 const PROVIDER_KEYS: Record<string, readonly string[]> = {
@@ -69,7 +69,12 @@ export function modelComplete(
   opts: { maxTokens?: number; timeoutMs?: number } = {},
 ): { complete: Complete; usage: Usage } {
   const provider = spec.split("/")[0] ?? "";
-  const apiKey = (PROVIDER_KEYS[provider] ?? []).map((k) => env[k]).find(Boolean);
+  // A self-hosted runtime (llama.cpp / Ollama / vLLM) needs no vendor key: its
+  // key is optional and the transport is local (`resolveModel` builds it).
+  const local = LOCAL_PROVIDERS[provider];
+  const apiKey = local
+    ? env[local.keyEnv]?.trim() || "local"
+    : (PROVIDER_KEYS[provider] ?? []).map((k) => env[k]).find(Boolean);
   if (!apiKey) {
     throw new Error(
       `no API key for ${provider} (set ${(PROVIDER_KEYS[provider] ?? ["?"]).join(" or ")})`,

@@ -43,16 +43,25 @@ import {
   type AgentThinkingLevel,
   parseAgentThinkingLevel,
 } from "./agent-types";
+import { availableModels } from "./available-models";
 import { AgentExecutionTracer } from "./execution-trace";
 import {
   classifyModelResolution,
   LeanAgentAdapter,
   operatorStatusOf,
+  resolveModel,
   type SpendGuard,
 } from "./lean-agent-adapter";
 import { assertMarinaRemoteTargetAllowed, detectModelLimits } from "./model-probe";
 import { getRolePrompt, inferTaskCategory } from "./roles";
 import { isSeedDisabled } from "./seed-registry";
+import {
+  type ProbeComplete,
+  probeToolCalling,
+  shouldProbeTools,
+  type ToolProbeResult,
+  toolProbeMode,
+} from "./tool-call-probe";
 
 /** Module logger. */
 const logger = new Logger();
@@ -210,8 +219,9 @@ export function inferCrewResponder(role: string | null | undefined): boolean {
  * role, and measured benchmark evidence (`MARINA_ROUTE_EVIDENCE`) may prefer
  * another of the same candidates. Emits the `agent_decision` route event and
  * returns the chosen model id. The spawn path persists that id, so respawns
- * never re-route mid-history. Throws the configuration error when neither a
- * route table nor tiers are set.
+ * never re-route mid-history. With neither a route table nor tiers set, the
+ * router has ONE candidate — this installation's first available model, else
+ * `marina/default` — and says so in the route event (degraded, not an error).
  */
 export async function resolveRouteModel(
   config: Pick<AgentConfig, "name" | "goal" | "role">,
@@ -221,9 +231,19 @@ export async function resolveRouteModel(
   const table = routeTableFromEnv(); // throws RouteConfigError on a malformed table
   const tiers = table ? undefined : routeTiersFromEnv();
   if (!table && !tiers) {
-    throw new Error(
-      "model:route needs MARINA_ROUTES (a route table) or MARINA_ROUTE_FAST_MODEL and MARINA_ROUTE_POWERFUL_MODEL (see config/environment.reference).",
-    );
+    const only = availableModels()[0]?.spec ?? MARINA_DEFAULT_MODEL;
+    onEvent?.({
+      type: "agent_decision",
+      name: config.name,
+      stage: "route",
+      verdict: "single",
+      subject: only,
+      reason:
+        "no route table or tiers (MARINA_ROUTES / MARINA_ROUTE_*_MODEL): one candidate, this installation's first available model",
+      signals: { candidates: 1 },
+      timestamp: Date.now(),
+    });
+    return only;
   }
   const routed = table
     ? await routeModelWithTable(config.goal, config.role, table)
@@ -429,6 +449,9 @@ export class AgentRuntime {
   /** Running agent → the entity that spawned it (`config.spawnedBy`, default "system"). */
   private spawnedByOf = new Map<string, string>();
   private readonly spendLimits: SpendLimits;
+  private readonly toolProbeComplete?: ProbeComplete;
+  /** Spawn-time tool-calling probes still running (tests await them). */
+  private readonly toolProbes = new Set<Promise<void>>();
 
   constructor(opts: {
     db?: MarinaDB;
@@ -436,7 +459,10 @@ export class AgentRuntime {
     onEvent?: (event: EngineEvent) => void;
     /** Override the env-derived spend ceilings (tests / embedders). */
     spendLimits?: SpendLimits;
+    /** Model call behind the spawn-time tool-calling probe (tests inject one). */
+    toolProbeComplete?: ProbeComplete;
   }) {
+    this.toolProbeComplete = opts.toolProbeComplete;
     this.db = opts.db;
     this.wsPort = opts.wsPort ?? 3300;
     this.onEvent = opts.onEvent;
@@ -639,8 +665,21 @@ export class AgentRuntime {
       const routedModel = isRouteModel(config.model)
         ? await resolveRouteModel(config, this.db, this.onEvent)
         : undefined;
-      const resolvedModel =
+      const requestedModel =
         routedModel ?? config.model ?? this.db?.getDefaultModel() ?? MARINA_DEFAULT_MODEL;
+      // A boot respawn (seeded/saved agent) whose vendor has no key on THIS
+      // installation runs on `marina/default` — whatever intelligence is here,
+      // down to one local model — instead of not existing. The saved config
+      // keeps the requested model, so adding the key later restores it. An
+      // explicit `agent spawn` still fails fast (the caller named the model).
+      const sizedDown = opts.systemRespawn && this.missingVendorKey(requestedModel, config.keyName);
+      const resolvedModel = sizedDown ? "marina/default" : requestedModel;
+      if (sizedDown) {
+        logger.warn(
+          "agents",
+          `"${config.name}" asks for ${requestedModel}, but this installation has no key for it — running on marina/default (degraded; add the key to restore it).`,
+        );
+      }
       const supports = resolveSupports(resolvedModel, config.supports);
 
       // Autodetect the real context window for local models so the compactor
@@ -791,6 +830,7 @@ export class AgentRuntime {
 
       // Spawn succeeded — now consume the cooldown window.
       this.lastSpawnAt = Date.now();
+      this.startToolProbe(config.name, effectiveConfig, apiKeyAtSpawn);
 
       // Track it (and its lineage, for cascade stop)
       this.agents.set(config.name, adapter);
@@ -803,8 +843,9 @@ export class AgentRuntime {
         this.db.saveAgentConfig({
           name: config.name,
           // Snapshot the resolved model so respawns are stable even if the
-          // operator later changes the runtime default.
-          model: effectiveConfig.model ?? MARINA_DEFAULT_MODEL,
+          // operator later changes the runtime default. A sized-down respawn
+          // keeps the model it asked for (restored once its key exists).
+          model: sizedDown ? requestedModel : (effectiveConfig.model ?? MARINA_DEFAULT_MODEL),
           role: config.role,
           goal: config.goal,
           keyName: config.keyName,
@@ -822,6 +863,51 @@ export class AgentRuntime {
       }
       this.spawnsInFlight.delete(config.name);
     }
+  }
+
+  /**
+   * Probe, in the background, whether the agent's model makes tool calls (an
+   * unlisted id, or any OpenRouter route — `tool-call-probe`). A model that
+   * answered without one is reported to the operator; under
+   * `MARINA_TOOL_PROBE=refuse` a crew lead on it is stopped, since a lead that
+   * cannot call tools never delivers a reply.
+   */
+  private startToolProbe(name: string, config: AgentConfig, apiKey: string | undefined): void {
+    const modelStr = config.model ?? MARINA_DEFAULT_MODEL;
+    const mode = toolProbeMode();
+    if (mode === "off" || !shouldProbeTools(modelStr, classifyModelResolution(modelStr))) return;
+    const run: Promise<void> = probeToolCalling(modelStr, resolveModel(modelStr), apiKey, {
+      ...(this.toolProbeComplete ? { complete: this.toolProbeComplete } : {}),
+    })
+      .then((result) => this.onToolProbeResult(name, config, result, mode))
+      .catch((err) => logger.warn("agents", `tool probe failed for "${name}": ${String(err)}`))
+      .finally(() => this.toolProbes.delete(run));
+    this.toolProbes.add(run);
+  }
+
+  private async onToolProbeResult(
+    name: string,
+    config: AgentConfig,
+    result: ToolProbeResult,
+    mode: "warn" | "refuse",
+  ): Promise<void> {
+    if (result.outcome !== "no-tool-call") return;
+    const refuse = mode === "refuse" && config.crewResponder === true;
+    const error =
+      `model ${result.model} answered a tool-calling probe without a tool call (${result.detail}); ` +
+      (refuse
+        ? "stopped this crew lead (MARINA_TOOL_PROBE=refuse) — choose a model that calls tools"
+        : "the agent may stay silent — choose a model that calls tools, or watch `agent status`");
+    logger.warn("agents", `"${name}": ${error}`);
+    this.onEvent?.({ type: "agent_error", name, error, timestamp: Date.now() });
+    if (refuse && this.agents.has(name)) {
+      await this.stop(name, { keepConfig: true }).catch(() => undefined);
+    }
+  }
+
+  /** Test hook: wait for every spawn-time tool probe to settle. */
+  async settleToolProbes(): Promise<void> {
+    await Promise.all([...this.toolProbes]);
   }
 
   /**
@@ -1311,6 +1397,21 @@ export class AgentRuntime {
     }
 
     return undefined;
+  }
+
+  /**
+   * True when `model` names a keyed vendor this installation cannot call (no
+   * key) while SOME intelligence is available (a key or a local runtime), so a
+   * boot respawn can size down to `marina/default`. Local runtimes and
+   * `marina` ids never count as missing; with nothing available at all the
+   * normal spawn error stands.
+   */
+  private missingVendorKey(model: string, keyName?: string): boolean {
+    const provider = this.extractProvider(model);
+    if (provider === "marina" || isLocalProvider(provider)) return false;
+    if (!KNOWN_PROVIDERS.has(provider)) return false;
+    if (this.resolveApiKey(model, keyName)) return false;
+    return this.hasAnyApiKey();
   }
 
   private extractProvider(model: string): string {

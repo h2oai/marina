@@ -102,10 +102,13 @@ describe("isRouteModel", () => {
 });
 
 describe("resolveRouteModel", () => {
-  it("refuses with the configuration error when no table or tiers are set", async () => {
-    await expect(resolveRouteModel({ name: "A", goal: "x" }, undefined)).rejects.toThrow(
-      /MARINA_ROUTES/,
+  it("with no table or tiers, routes to the one available model (single candidate)", async () => {
+    const events: EngineEvent[] = [];
+    const model = await resolveRouteModel({ name: "A", goal: "x" }, undefined, (e) =>
+      events.push(e),
     );
+    expect(model.length).toBeGreaterThan(0);
+    expect(events[0]).toMatchObject({ type: "agent_decision", stage: "route", verdict: "single" });
   });
 
   it("uses the table's fallback with no decision backend and records the route", async () => {

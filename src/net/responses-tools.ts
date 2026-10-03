@@ -180,6 +180,68 @@ function contentText(content: unknown): string {
     .join("\n");
 }
 
+/** Text-bearing content part types (Responses and chat spellings). */
+const TEXT_PART_TYPES = new Set(["text", "input_text", "output_text", "refusal"]);
+
+/**
+ * Responses message `content` → chat-completions content. Text-only content
+ * stays a string (widest compatibility); an `input_image` (or chat-style
+ * `image_url`) part becomes a chat `image_url` part with its URL — http(s) or a
+ * `data:` URL — and `detail` kept. Any other non-text part (`input_file`,
+ * `input_audio`, an image by `file_id`) is refused, never silently dropped.
+ */
+function messageContent(content: unknown, param: string): { content: unknown; text: string } {
+  if (typeof content === "string") return { content, text: content };
+  if (!Array.isArray(content)) return { content: "", text: "" };
+  const parts: Rec[] = [];
+  const text: string[] = [];
+  let images = 0;
+  content.forEach((part, j) => {
+    if (typeof part === "string") {
+      if (part) {
+        parts.push({ type: "text", text: part });
+        text.push(part);
+      }
+      return;
+    }
+    if (!isRec(part)) return;
+    const type = typeof part.type === "string" ? part.type : "text";
+    if (TEXT_PART_TYPES.has(type)) {
+      const t = typeof part.text === "string" ? part.text : "";
+      if (t) {
+        parts.push({ type: "text", text: t });
+        text.push(t);
+      }
+      return;
+    }
+    if (type === "input_image" || type === "image_url") {
+      const raw = isRec(part.image_url) ? part.image_url.url : part.image_url;
+      const url = typeof raw === "string" ? raw : "";
+      if (!url) {
+        throw new UnsupportedParameterError(
+          `${param}[${j}]`,
+          "Images are forwarded by `image_url` (an http(s) or data: URL); `file_id` images are not supported on this route.",
+        );
+      }
+      const detail = isRec(part.image_url) ? part.image_url.detail : part.detail;
+      parts.push({
+        type: "image_url",
+        image_url: typeof detail === "string" ? { url, detail } : { url },
+      });
+      images++;
+      return;
+    }
+    throw new UnsupportedParameterError(
+      `${param}[${j}].type`,
+      `Content part type '${type}' is not forwarded on this route; send text or input_image parts.`,
+    );
+  });
+  const joined = text.join("\n");
+  if (images === 0) return { content: joined, text: joined };
+  const label = `[${images} image${images === 1 ? "" : "s"}]`;
+  return { content: parts, text: joined ? `${joined}\n${label}` : label };
+}
+
 function outputText(output: unknown): string {
   if (typeof output === "string") return output;
   if (output === undefined || output === null) return "";
@@ -270,9 +332,9 @@ export function responsesInputToMessages(input: unknown): ResponsesTurn {
 
     if (type === "message") {
       const role = typeof item.role === "string" && item.role ? item.role : "user";
-      const body = contentText(item.content);
+      const { content, text: body } = messageContent(item.content, `input[${i}].content`);
       if (!body) return;
-      messages.push({ role, content: body });
+      messages.push({ role, content });
       text.push(role === "user" ? body : `${role}: ${body}`);
       return;
     }

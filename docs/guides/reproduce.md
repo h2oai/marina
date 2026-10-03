@@ -35,6 +35,8 @@ bootstrap over runs, then items). A single run is labelled "not replicated".
 | `--budget-usd X` | refuse to start when the estimate exceeds X (default 10) |
 | `--model`, `--checker`, `--judge` | the answer model, the reviewer or checker, and the judge or user simulator |
 | `--domain` | τ²-bench domain (default `airline`) |
+| `--split` | τ²-bench task split (e.g. `test`); runs the whole split unless `--limit` is given |
+| `--effort`, `--user-effort` | τ²-bench agent and user-simulator reasoning effort (default `high` and `low`), sent in `extra_body` |
 | `--env-image` | SWE-bench: run the agent's tests inside each instance's environment image (full agent rather than agentless) |
 | `--run-dir`, `--ledger` | where runs, servers and the ledger live (default under `~/.local/share/marina-repro/`, on disk) |
 | `--dry-run` | print the plan and the estimate, then stop |
@@ -62,6 +64,7 @@ changed, so a single small model can still run everything:
 - **Scratch space:** runs keep scratch under the run directory on disk. `/tmp` is often a RAM-backed tmpfs, too small for images and databases.
 - **SWE-bench harness:** a Python with the `swebench` package, named by `SWEBENCH_PYTHON`.
 - **τ²-bench:** a checkout with its virtualenv, named by `TAU2_HOME`.
+- **τ²-bench evaluator:** `OPENAI_API_KEY` in `.env`. τ²'s NL-assertion judge calls OpenAI's `gpt-4.1` with keys from the environment; without one, those simulations end as infrastructure errors.
 
 ## What the kit does for you
 
@@ -70,7 +73,7 @@ These are the mechanics that otherwise trip a reproduction:
 - **Server keys:** each server gets a fresh random `MODEL_API_KEYS` key, and the benchmark uses that same key. A shared "open" key is refused once keys are set, so nothing could file into the ledger. The key is never printed.
 - **Judging through Marina:** graded answers are judged through a Marina server, not by calling a vendor directly.
 - **Time limits:** crews get a long per-item limit, and the server's request timeout is set above it.
-- **τ²-bench:** some τ² components ignore `api_base`, so `OPENAI_BASE_URL` and `OPENAI_API_KEY` are exported to point at Marina too.
+- **τ²-bench:** the agent and user simulator go through Marina, and τ²'s own evaluator runs as shipped. The τ² process gets the provider keys from `.env` (never printed) and no `OPENAI_BASE_URL` override. Reasoning effort travels in `extra_body`, because τ² sets LiteLLM's `drop_params`, which strips a top-level `reasoning_effort` for Marina-routed ids. The agent effort, user simulator and its effort appear in the plan's labels. A run with any infrastructure error is **invalid**: `tau2 convert --require-clean` reports the count, writes no scores, and the run never reaches the ledger.
 - **Spend:** each server's daily spend cap is set from your budget.
 - **The ledger:** results are imported into one ledger, grouped by arm, so `benchmark compare`, `leaderboard` and `replicates` work on them afterwards.
 

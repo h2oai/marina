@@ -127,6 +127,11 @@ export const BENCHMARKS: Record<string, BenchmarkSpec> = {
     description: "HLE-Verified Gold subset, text-only (exact match, else equivalence judge)",
     datasetFile: "hle-verified-gold.json",
   },
+  "hle-verified-gold-mm": {
+    name: "hle-verified-gold-mm",
+    description: "HLE-Verified Gold image items (image_url parts; exact match, else judge)",
+    datasetFile: "hle-verified-gold-mm.json",
+  },
 };
 
 export interface BenchmarkRunOptions {

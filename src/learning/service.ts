@@ -50,6 +50,7 @@ import {
   type Outcome,
   type OutcomeDomain,
   recordOutcomes,
+  selectServed,
 } from "./outcomes";
 import { durableLessonSink } from "./store";
 
@@ -363,7 +364,9 @@ export async function recallLessons(
 ): Promise<RecalledLessons> {
   const mode = lessonsMode(opts.env);
   if (mode === "off") return { inject: [], recalled: [], mode };
-  const sink = opts.sink ?? (db ? (armed.get(db)?.sink ?? lessonSinkFor(db)) : undefined);
+  // Inert unless learning is armed for `db` (or a sink is given): recall never
+  // creates the lessons account or its spaces as a side effect.
+  const sink = opts.sink ?? (db ? armed.get(db)?.sink : undefined);
   if (!sink) return { inject: [], recalled: [], mode };
   try {
     const recalled = await sink.recall(domain, query, opts.asOf ?? new Date().toISOString(), {
@@ -374,6 +377,45 @@ export async function recallLessons(
   } catch {
     return { inject: [], recalled: [], mode };
   }
+}
+
+/**
+ * Lessons across several domains for one query (a crew request, a reviewed
+ * draft): each domain recalled, merged, then the one shared budget applied.
+ */
+export async function recallAcross(
+  db: MarinaDB | undefined,
+  domains: readonly OutcomeDomain[],
+  query: string,
+  opts: {
+    asOf?: string;
+    limit?: number;
+    maxBytes?: number;
+    env?: NodeJS.ProcessEnv;
+    sink?: LessonSink;
+  } = {},
+): Promise<RecalledLessons> {
+  const mode = lessonsMode(opts.env);
+  if (mode === "off" || (!db && !opts.sink)) return { inject: [], recalled: [], mode };
+  const asOf = opts.asOf ?? new Date().toISOString();
+  const per = await Promise.all(
+    domains.map((d) =>
+      recallLessons(db, d, query, {
+        asOf,
+        ...(opts.env ? { env: opts.env } : {}),
+        ...(opts.sink ? { sink: opts.sink } : {}),
+      }),
+    ),
+  );
+  const recalled = selectServed(
+    per.flatMap((r) => r.recalled),
+    asOf,
+    {
+      ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
+      ...(opts.maxBytes !== undefined ? { maxBytes: opts.maxBytes } : {}),
+    },
+  );
+  return { inject: mode === "on" ? recalled : [], recalled, mode };
 }
 
 /** A prompt block for injected lessons, or "" when none. */

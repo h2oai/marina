@@ -1,6 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { intelligenceScale } from "../agent/available-models";
+import { listToolProbeResults } from "../agent/tool-call-probe";
 import { arenaStatus } from "../arena/service";
 import { earnedGateCalibration, loadCalibration } from "../decisions/calibrate";
 import { decisionConfigFromEnv } from "../decisions/config";
@@ -144,6 +146,49 @@ export function computeReadiness(engine: Engine): ReadinessReport {
             "Set a supported provider key, add one in Admin → Keys, or configure LLAMA_BASE_URL for a local runtime.",
         },
   );
+
+  // ── Intelligence scale — Marina sizes every feature to what is configured ──
+  // A single model is a working (degraded) tier, never an error: verification
+  // self-checks, decisions use an uncalibrated classifier on that model,
+  // forecasts use one analyst × K runs, routing has one candidate.
+  const scale = intelligenceScale(env);
+  if (scale.tier !== "none") {
+    checks.push({
+      id: "intelligence-scale",
+      label: "Intelligence scale",
+      status: scale.tier === "multi" ? "ok" : "degraded",
+      detail: scale.summary,
+      ...(scale.tier === "single"
+        ? {
+            remediation:
+              "Optional: add a second provider (any key, or OPENROUTER_API_KEY for many vendors) for cross-vendor analysts, checkers and routing.",
+          }
+        : {}),
+    });
+  }
+
+  // ── Tool calling — spawn-time probes of unlisted / OpenRouter models ──────
+  const probes = listToolProbeResults();
+  if (probes.length > 0) {
+    const silent = probes.filter((p) => p.outcome === "no-tool-call");
+    checks.push(
+      silent.length > 0
+        ? {
+            id: "tool-calling",
+            label: "Model tool calling",
+            status: "degraded",
+            detail: `no tool call from ${silent.map((p) => `${p.model} (${p.detail})`).join(", ")}`,
+            remediation:
+              "Agents on these models may stay silent. Choose a model that calls tools; MARINA_TOOL_PROBE=refuse stops such crew leads at spawn.",
+          }
+        : {
+            id: "tool-calling",
+            label: "Model tool calling",
+            status: "ok",
+            detail: `probed models call tools: ${probes.map((p) => p.model).join(", ")}`,
+          },
+    );
+  }
 
   // ── Agent auto-respawn — whether seeded/saved agents start on boot ────────
   const autoRespawn = autoRespawnEnabled(engine.agentRuntime.isAvailable(), env);

@@ -119,11 +119,13 @@ export async function runMultipleChoice(
       let score: number | undefined;
       let usage: ItemUsage | undefined;
       let traceId: string | undefined;
+      let repaired: string | undefined;
 
       try {
         const reply = await queryWithUsage(config.endpoint, config.model, messages, config.apiKey);
         usage = addCallUsage(undefined, reply.usage);
         traceId = reply.requestId;
+        repaired = reply.repaired;
         actual = extractLetter(reply.content, item.choices?.length);
         if (reasoning) rawResponse = reply.content.slice(0, 4000);
 
@@ -152,6 +154,7 @@ export async function runMultipleChoice(
         category: item.category,
         ...(usage ? { usage } : {}),
         ...(traceId ? { traceId } : {}),
+        ...(repaired ? { repaired } : {}),
       });
 
       completed++;
