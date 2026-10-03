@@ -330,6 +330,11 @@ export class PlatformMemoryBackend {
     await this.durable.journal(message, signal, completedRequests);
   }
 
+  /** Durably settle reply obligations delivered outside a journaled tool result. */
+  async completeOutstandingRequests(ids: readonly string[], signal?: AbortSignal): Promise<void> {
+    await this.durable.completeRequests(ids, signal);
+  }
+
   async saveOutstandingRequests(
     requests: OutstandingRequest[],
     signal?: AbortSignal,

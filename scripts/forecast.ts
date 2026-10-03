@@ -17,7 +17,8 @@
  *   bun run forecast "Factory orders, $bn?" --type number --unit '$bn' --runs 5 --context "Census M3, first print"
  *
  * Research (web, cited) → citation verification → analysts → Jev judge →
- * aggregate. Needs OPENROUTER_API_KEY. Typical cost $0.05–0.10 (typed: more,
+ * aggregate. Runs on whatever models are configured (OpenRouter's three-vendor
+ * default, other provider keys, or one local model); a degraded setup says so. Typical cost $0.05–0.10 (typed: more,
  * by runs and research rounds).
  */
 
@@ -104,9 +105,10 @@ async function typed(): Promise<void> {
   );
   a.costUsd = made.costUsd();
   if (values.json) {
-    console.log(JSON.stringify(a, null, 2));
+    console.log(JSON.stringify({ ...a, scale: made.scale }, null, 2));
     return;
   }
+  if (made.scale.tier === "degraded") console.log(`  degraded: ${made.scale.notes.join("; ")}`);
   console.log(
     `\n${question}\n→ ${a.formatted ?? "no answer"}${a.confidence === undefined ? "" : `  (confidence ${a.confidence.toFixed(2)})`}${a.caveat ? `\n  caveat: ${a.caveat}` : ""}\n`,
   );
@@ -147,9 +149,10 @@ async function probabilistic(): Promise<void> {
   );
   answer.costUsd = made.costUsd();
   if (values.json) {
-    console.log(JSON.stringify(answer, null, 2));
+    console.log(JSON.stringify({ ...answer, scale: made.scale }, null, 2));
     return;
   }
+  if (made.scale.tier === "degraded") console.log(`  degraded: ${made.scale.notes.join("; ")}`);
   const headline =
     answer.kind === "probability"
       ? answer.probability === undefined

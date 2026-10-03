@@ -66,7 +66,7 @@ export async function handleForecast(req: Request): Promise<Response> {
     made.deps,
   );
   answer.costUsd = made.costUsd();
-  return json(answer);
+  return json({ ...answer, scale: made.scale });
 }
 
 const isoOrUndefined = (v: unknown) =>
@@ -141,5 +141,5 @@ async function typed(
     formationFromEnv(),
   );
   answer.costUsd = made.costUsd();
-  return json(answer);
+  return json({ ...answer, scale: made.scale });
 }

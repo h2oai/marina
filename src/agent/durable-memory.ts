@@ -91,6 +91,17 @@ export class DurableResidentMemory {
     const snapshot = JSON.parse(JSON.stringify(data));
     return this.updateCheckpoint((previous) => ({ ...previous, ...snapshot }), signal);
   }
+  /** Remove settled requests from the durable ledger (no transcript entry). */
+  completeRequests(ids: readonly string[], signal?: AbortSignal): Promise<void> {
+    const completed = [...ids];
+    return this.updateCheckpoint(
+      (previous) => ({
+        ...previous,
+        outstandingRequests: updateRequestLedger(previous?.outstandingRequests, [], completed),
+      }),
+      signal,
+    );
+  }
   saveRequests(requests: OutstandingRequest[], signal?: AbortSignal): Promise<void> {
     const snapshot = requests.map((r) => ({ ...r }));
     return this.updateCheckpoint(

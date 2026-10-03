@@ -11,6 +11,7 @@
  *   bun run repro <setup> --dry-run              the plan and estimated spend, no model calls
  *   bun run repro <setup> [--arm a,b] [--replicates 2] [--limit N] [--budget-usd 10]
  *                         [--model m] [--checker m] [--judge m] [--domain d] [--env-image]
+ *                         [--split test] [--effort high] [--user-effort low]   (τ²)
  *
  * Setups: hle-verified, swebench-verified, tau2, futurex-backtest, arena-backtest.
  * Runs live under --run-dir (default ~/.local/share/marina-repro/<setup>-<time>), on
@@ -83,6 +84,9 @@ async function main(): Promise<number> {
       checker: { type: "string" },
       judge: { type: "string" },
       domain: { type: "string" },
+      split: { type: "string" },
+      effort: { type: "string" },
+      "user-effort": { type: "string" },
       "env-image": { type: "boolean" },
       seed: { type: "string", default: "42" },
       "run-dir": { type: "string" },
@@ -142,6 +146,9 @@ async function main(): Promise<number> {
     ...(values.checker ? { checker: values.checker } : {}),
     ...(values.judge ? { judge: values.judge } : {}),
     ...(values.domain ? { domain: values.domain } : {}),
+    ...(values.split ? { split: values.split } : {}),
+    ...(values.effort ? { effort: values.effort } : {}),
+    ...(values["user-effort"] ? { userEffort: values["user-effort"] } : {}),
     ...(values["env-image"] ? { envImage: true } : {}),
     seed: Number(values.seed) || 42,
     runDir,

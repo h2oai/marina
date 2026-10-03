@@ -16,7 +16,7 @@ import {
 import type { WorkspaceRunResult, WorkspaceRuntime } from "../../../coding/local-workspace";
 import { detectWorkspaceRunner } from "../../../coding/project-detection";
 import { summarizeFlywheelEvents, WorkspaceGateway } from "../../../coding/workspace-gateway";
-import { noteOutcome } from "../../../learning/service";
+import { lessonsBlock, noteOutcome, recallLessons } from "../../../learning/service";
 import { dim, error as fmtError, header, separator, success } from "../../../net/ansi";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Connection, Entity, EntityId, RoomContext } from "../../../types";
@@ -526,13 +526,32 @@ export async function runVerificationCommands(
   if (currentEntity && (!background || canAdoptCodingSession(currentSession, currentEntity)))
     updateCodeContext(currentEntity, deps.db, currentSession);
 
-  sendCode(ctx, eid, `${summary}\n${dim(`verification artifact: ${artifact.id}`)}`, {
+  // A failure brings back what earlier verifications taught about this kind of
+  // work (MARINA_LESSONS; observe records the ids without showing them).
+  const lessons = failed
+    ? await recallLessons(
+        deps.db,
+        "code",
+        `${results.map((item) => item.result.command.join(" ")).join(" ")} ${(failed.result.output ?? "").slice(-300)}`,
+        { limit: 3, maxBytes: 600 },
+      )
+    : undefined;
+  const lessonText = lessons?.inject.length ? `\n${lessonsBlock(lessons.inject)}` : "";
+  sendCode(ctx, eid, `${summary}${lessonText}\n${dim(`verification artifact: ${artifact.id}`)}`, {
     artifactId: artifact.id,
     artifactKind: artifact.kind,
     commands: ["code show last", "code verify"],
-    content: summary,
+    content: `${summary}${lessonText}`,
     event: "verification_ran",
-    metadata: { runId: JSON.parse(artifact.metadata_json).runId },
+    metadata: {
+      runId: JSON.parse(artifact.metadata_json).runId,
+      ...(lessons?.recalled.length
+        ? {
+            lessons: lessons.recalled.map((l) => l.id ?? "?"),
+            lessonsMode: lessons.mode,
+          }
+        : {}),
+    },
     exitCode: failed?.result.exitCode ?? 0,
     sessionId: session.id,
     status,

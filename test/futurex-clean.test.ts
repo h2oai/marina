@@ -91,8 +91,16 @@ describe("leak audit", () => {
       true,
     );
     expect(auditRow(r, result("revised on 2026-09-20"), "", new Set()).flags.laterDate).toBe(true);
-    const ev = "- 2026-08-30 — the figure closed at 120000 [a](https://a.example.com/2026/08/30/x)";
-    expect(auditRow(r, result("trend"), ev, new Set()).flags.resultLanguage).toBe(true);
+    const undated = "- the figure closed at 120000 [a](https://a.example.com/x)";
+    expect(auditRow(r, result("trend"), undated, new Set()).flags.resultLanguage).toBe(true);
+    const late = "- 2026-09-02 — preview [a](https://a.example.com/x)";
+    expect(auditRow(r, result("trend"), late, new Set()).flags.laterDate).toBe(true);
+  });
+
+  it("treats a page dated before the cutoff as history and schedule, not a leak", () => {
+    const ev =
+      "- 2026-08-30 — the figure closed at 120000; the next release is on 2026-10-10 [a](https://a.example.com/x)";
+    expect(auditRow(r, result("trend"), ev, new Set()).suspicious).toBe(false);
   });
 
   it("does not flag the event's own schedule, history or option names", () => {

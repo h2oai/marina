@@ -125,3 +125,41 @@ commands before dispatch. See [SDK reference](../../src/sdk/README.md).
 Tool-result text blocks default to 15% of the live effective prompt window, with a 2000-token floor. `MARINA_MAX_TOOL_RESULT_TOKENS` selects a fixed positive cap; an explicit context-manager option takes precedence. Each transform reads the current window, so model changes and overflow recovery update the allowance. Truncated output includes an incomplete-output notice and a request for narrower retrieval, with the notice counted inside the text allowance. Original messages go through the existing archive-before-compaction path.
 
 Cloud crew responders keep a 2048-token output default with thinking off; the compact crew profile keeps 4096. When thinking is enabled, automatic caps use pi-ai’s `thinkingBudgetForLevel` (including custom budgets) plus 2048 tokens for the answer or tool call, bounded by the model output limit and half its context window. The synthesized Marina proxy has no known upstream output limit at this layer. Explicit `maxTokens`, `AGENT_CREW_MAX_TOKENS`, and `AGENT_COMPACT_MAX_TOKENS` caps are honored; insufficient room emits a warning. Changing thinking level recalculates the cap while retaining the calibrated context window. Effort-based providers ultimately decide how many reasoning tokens to spend; this allowance is a capacity policy, not a guarantee of a completed answer.
+
+### Models that reason unasked (2026-10-03)
+
+With thinking off, Marina sends no reasoning directive, but many OpenRouter routes still reason by default and spend those hidden tokens from `max_tokens`. On a 2048-token crew cap the reasoning can fill the completion, so the turn ends on its length limit before any tool call and the agent looks silent. `src/agent/reasoning-control.ts` handles this in three ways:
+
+- **Headroom.** An automatic crew or compact cap for a model that may reason unasked gets at least `REASONING_HEADROOM_TOKENS` (8192), bounded by the model's ceiling. This covers any OpenRouter route, an id the registry does not know, or a registry reasoning model with thinking off.
+- **Growth.** A turn that ends with `stopReason: "length"` and no tool call doubles an automatic cap toward its ceiling, and emits an `output_cap` event. An explicit `maxTokens`, `AGENT_CREW_MAX_TOKENS` or `AGENT_COMPACT_MAX_TOKENS` cap never grows.
+- **Prompt bound.** Longer reasoning can outlast the 120 s bound on one prompt. After a timeout, an automatic bound doubles toward 600 s (`grownPromptTimeoutMs`), so a slow answer is not aborted every cycle. An explicit `promptTimeoutMs` never grows.
+- **Request shaping (OpenRouter only).** The Agent's `onPayload` composes `withPromptCacheKey` with `shapeOpenRouterPayload`:
+  - Tool requests ask for `provider.require_parameters`, so a provider that ignores `tools` is never chosen.
+  - `reasoning: {enabled: false}` is sent only for a model whose spawn-time probe still called a tool without reasoning. An explicit disable is not a universal fix: some models reject it with "Reasoning is mandatory", and some accept it but stop calling tools.
+  - An upstream refusal of either field is learned per model (`noteUpstreamRejection`). The next cycle retries at once without the field, and it does not count as an upstream error.
+  - `MARINA_OPENROUTER_REQUIRE_PARAMETERS=off` and `MARINA_OPENROUTER_REASONING_OFF=off` turn the shaping off.
+
+**Spawn-time tool probe.** `src/agent/tool-call-probe.ts` probes, in the background, each unlisted id or OpenRouter model once per process. It sends one tiny request with one tool, then a variant with reasoning disabled.
+
+- The result is one of `tools`, `no-tool-call` or `unknown`. An inconclusive probe is not cached.
+- Results appear in `agent status` (Tool probe) and in `readiness` (`tool-calling`, degraded for a prose-only model).
+- `MARINA_TOOL_PROBE=refuse` stops a crew lead whose model answered without a tool call. The default `warn` only reports it, and the probe is `off` under a test runner.
+
+**Owed-reply salvage** (`output-repair`, below). Once the in-run recovery nudge is spent and a silent turn's prose holds the answer to the one owed `model_request`, the adapter sends that answer as the `model_response`. The envelope carries `repaired: "repaired:parse" | "repaired:shot"`. The adapter then settles the obligation durably (`completeOutstandingRequests`) and emits a `decision` event with stage `repair`.
+
+### Output repair (`src/repair/`)
+
+Output repair applies when a model's output misses its required shape. It is a general layer, not a per-model workaround, and it runs in three steps:
+
+1. **Deterministic parse.** The output is tried as-is, then mechanical candidates: reasoning blocks stripped, fenced bodies, the first balanced JSON span with trailing commas dropped, and an explicitly marked final answer or `\boxed{}`.
+2. **One bounded re-encoding shot.** The shot uses the caller's own model (`MARINA_REPAIR_MODEL` for `marina/verify`). Its result is kept only when every value appears verbatim in the original (`groundedIn`; short tokens and numbers must stand alone). A shot therefore cannot answer, solve or invent.
+3. **Labelled delivery.** Repaired output carries `repaired:parse` or `repaired:shot`.
+
+The layer is wired into four places:
+
+- the lean-agent owed-reply salvage;
+- `marina/verify` final messages (`tool-call-repair.ts`). Malformed arguments are re-parsed, and a fenced or bare JSON call for a declared tool becomes a tool call. A state-changing call follows the write-guard rules: no new ids, and only argument names present in the draft. The response sets `x-marina-repair`;
+- typed-forecast runs (`TypedRun.repaired`);
+- routed `model_response` labels. These surface as `x-marina-repair` on `/v1/chat/completions` and as `ResultItem.repaired` in the benchmark harness, so a run can be scored with or without repaired answers.
+
+`MARINA_OUTPUT_REPAIR=parse` skips the shot and `off` returns raw output. Tests: `test/output-repair.test.ts`, `test/agent-reply-salvage.test.ts`, `test/unknown-model-tool-calls.test.ts`.

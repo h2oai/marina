@@ -276,6 +276,34 @@ describe("Model API", () => {
     expect(data.model).toBe("marina");
   });
 
+  it("carries a responder's repair label to x-marina-repair (unknown labels dropped)", async () => {
+    engine.processCommand(conn1.entity!, "channel join model");
+    let label = "repaired:shot";
+    cm.onMessage((channelId, senderId, _senderName, content) => {
+      if (senderId !== "__model_api__") return;
+      const parsed = JSON.parse(content);
+      if (parsed.type !== "model_request") return;
+      cm.send(
+        channelId,
+        conn1.entity!,
+        "Agent1",
+        JSON.stringify({ type: "model_response", id: parsed.id, content: "5117", repaired: label }),
+      );
+    });
+    const ask = async () => {
+      const [url, method, req] = makeRequest("/v1/chat/completions", "POST", {
+        model: "marina",
+        messages: [{ role: "user", content: "sum?" }],
+      });
+      return (await handleModelApi(url, method, req, engine))!;
+    };
+    const resp = await ask();
+    expect(resp.headers.get("x-marina-repair")).toBe("repaired:shot");
+    expect((await resp.json()).choices[0].message.content).toBe("5117");
+    label = "trust-me";
+    expect((await ask()).headers.get("x-marina-repair")).toBeNull();
+  });
+
   it("POST /v1/chat/completions accepts plaintext bracket response", async () => {
     engine.processCommand(conn1.entity!, "channel join model");
 

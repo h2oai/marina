@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import {
+  recordToolProbeResultForTests,
+  resetToolProbeForTests,
+} from "../src/agent/tool-call-probe";
 import { readinessCommand, renderTrustProfileLine } from "../src/engine/commands/readiness";
 import { Engine } from "../src/engine/engine";
 import { computeReadiness, computeTrustProfile } from "../src/engine/readiness";
@@ -97,6 +101,30 @@ describe("computeReadiness", () => {
     // Room agents enabled-by-default but no key → degraded, not off.
     expect(find("room-agents").status).toBe("degraded");
     expect(computeReadiness(engine).demo.status).toBe("degraded");
+  });
+
+  it("reports tool-calling probes: absent until one ran, degraded for a prose-only model", () => {
+    resetToolProbeForTests();
+    try {
+      expect(computeReadiness(engine).checks.find((c) => c.id === "tool-calling")).toBeUndefined();
+      recordToolProbeResultForTests({
+        model: "openrouter/a/tools",
+        outcome: "tools",
+        detail: "ok",
+        at: 1,
+      });
+      expect(find("tool-calling").status).toBe("ok");
+      recordToolProbeResultForTests({
+        model: "openrouter/b/prose",
+        outcome: "no-tool-call",
+        detail: "no tool call (stop=stop, 40 output tokens)",
+        at: 2,
+      });
+      expect(find("tool-calling").status).toBe("degraded");
+      expect(find("tool-calling").detail).toContain("openrouter/b/prose");
+    } finally {
+      resetToolProbeForTests();
+    }
   });
 
   it("flips llm-key and room-agents to ok when a provider key is present", () => {

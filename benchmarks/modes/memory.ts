@@ -23,7 +23,11 @@ async function getAgentClass() {
 }
 
 function topicFrom(messages: Message[]): string {
-  const lastUser = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
+  const content = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
+  const lastUser =
+    typeof content === "string"
+      ? content
+      : content.map((p) => (p.type === "text" ? p.text : "")).join(" ");
   return lastUser.slice(0, 200).replace(/\s+/g, " ").trim();
 }
 

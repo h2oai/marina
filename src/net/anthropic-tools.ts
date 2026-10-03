@@ -89,7 +89,7 @@ export type AnthropicBlock =
   | {
       type: "tool_result";
       tool_use_id: string;
-      content?: string | AnthropicTextBlock[];
+      content?: string | AnthropicBlock[];
       is_error?: boolean;
       cache_control?: CacheControl;
     };
@@ -217,6 +217,12 @@ export function openaiToolChoiceToAnthropic(
 // ─── Messages ───────────────────────────────────────────────────────────────
 
 /** Text of an OpenAI content value (string or content-part array). */
+/** A text-bearing content part (or one with no type, treated as text). */
+function isTextPart(part: Rec): boolean {
+  const kind = part.type;
+  return kind === undefined || kind === "text" || kind === "refusal" || kind === "input_text";
+}
+
 function textPartsOf(content: unknown): AnthropicTextBlock[] {
   if (typeof content === "string") {
     return content ? [{ type: "text", text: content }] : [];
@@ -244,7 +250,12 @@ function textPartsOf(content: unknown): AnthropicTextBlock[] {
 
 function imageBlock(part: Rec): AnthropicBlock | undefined {
   const img = isRec(part.image_url) ? part.image_url : part;
-  const url = typeof img.url === "string" ? img.url : undefined;
+  const url =
+    typeof img.url === "string"
+      ? img.url
+      : typeof part.image_url === "string"
+        ? part.image_url
+        : undefined;
   if (!url) return undefined;
   const cc = cacheControlOf(part);
   const dataUrl = /^data:([^;,]+);base64,(.+)$/s.exec(url);
@@ -272,12 +283,18 @@ function userContent(content: unknown, messageCc?: CacheControl): string | Anthr
       continue;
     }
     if (!isRec(part)) continue;
-    if (part.type === "image_url" || part.type === "image") {
+    if (part.type === "image_url" || part.type === "image" || part.type === "input_image") {
       const block = imageBlock(part);
-      if (block) blocks.push(block);
+      if (!block) {
+        throw new UnsupportedParameterError(
+          `messages[].content[].image_url`,
+          "An image part needs a url (http(s) or data:).",
+        );
+      }
+      blocks.push(block);
       continue;
     }
-    if (part.type === "input_audio" || part.type === "file" || part.type === "audio") {
+    if (!isTextPart(part)) {
       throw new UnsupportedParameterError(
         `messages[].content[].type`,
         `Content part type '${String(part.type)}' cannot be forwarded to Anthropic Messages.`,
@@ -292,11 +309,38 @@ function userContent(content: unknown, messageCc?: CacheControl): string | Anthr
   return blocks;
 }
 
-function toolResultContent(content: unknown): string | AnthropicTextBlock[] {
+/**
+ * Tool-result content: text parts stay text, image parts (a screenshot a tool
+ * returned) become image blocks — Anthropic `tool_result` accepts both. Any
+ * other part type is refused rather than silently dropped.
+ */
+function toolResultContent(content: unknown): string | AnthropicBlock[] {
   if (typeof content === "string") return content;
   if (content === null || content === undefined) return "";
   if (Array.isArray(content)) {
-    const blocks = textPartsOf(content);
+    const blocks: AnthropicBlock[] = [];
+    for (const part of content) {
+      if (
+        isRec(part) &&
+        (part.type === "image_url" || part.type === "image" || part.type === "input_image")
+      ) {
+        const block = imageBlock(part);
+        if (!block) {
+          throw new UnsupportedParameterError(
+            `messages[].content[].image_url`,
+            "An image part needs a url (http(s) or data:).",
+          );
+        }
+        blocks.push(block);
+      } else if (isRec(part) && !isTextPart(part)) {
+        throw new UnsupportedParameterError(
+          `messages[].content[].type`,
+          `Content part type '${String(part.type)}' cannot be forwarded to Anthropic tool results.`,
+        );
+      } else {
+        blocks.push(...textPartsOf([part]));
+      }
+    }
     return blocks.length > 0 ? blocks : "";
   }
   return JSON.stringify(content);
