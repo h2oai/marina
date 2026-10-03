@@ -314,6 +314,19 @@ describe("run", () => {
     expect(bad.results[0]?.prediction).toBe("A");
   });
 
+  it("stops cleanly when shouldStop gives a reason, starting no further row", async () => {
+    const rows = ["a", "b", "c"].map((id) =>
+      row({ id, level: 1, prompt: lettered("Q?", ["Yes", "No"]) }),
+    );
+    let started = 0;
+    const stop = runBatch(rows, variant, fakeDeps('{"answer":"A"}'), {
+      concurrency: 1,
+      now: () => new Date("2026-12-01T00:00:00Z"),
+      shouldStop: () => (started++ >= 1 ? "budget" : undefined),
+    });
+    await expect(stop).rejects.toThrow("batch stopped after 1/3 rows: budget");
+  });
+
   it("moves a backtest's cutoff horizonDays before each end time", async () => {
     const rows = [row({ id: "p", level: 1, prompt: lettered("Q?", ["Yes", "No"]) })];
     const r = await runBatch(rows, variant, fakeDeps('{"answer":"A"}'), {

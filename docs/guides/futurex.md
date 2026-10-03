@@ -145,6 +145,13 @@ and numbers stay mechanical, and both overalls are reported.
 per batch week compared with `--reference <file.json>` (week → `top`, `median`, `h2o`, entered by
 hand; the website is never scraped). `--replicates N` repeats a run. Every run is filed into the
 benchmark ledger under a replicate group, `futurex-clean:<variant>:<isolation>:lessons-<on|off>`.
+`--first-replicate N` numbers new replicates from N, so a later run adds replicates without reusing
+an earlier run's name or lesson space.
+
+**Spend cap.** A run stops starting new rows when its spend plus a reserve (1.5 × concurrency ×
+the average row cost, at least $2) would reach the process's daily cap
+(`MARINA_DAILY_SPEND_CAP_USD`). A run stopped this way is not filed. Rows that fall back because
+the cap or a provider refused them write no lessons.
 
 ## Backtests without `--clean` are smoke tests
 
