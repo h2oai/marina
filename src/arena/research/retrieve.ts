@@ -267,7 +267,7 @@ function linkTitle(title: string): string {
  * opening line), news published since `brief.since`, with each page's raw
  * text. The report is one line per result:
  *   `- <date> — <snippet> [<title>](<url>)`
- * Results dated before `since` are dropped; `NO_FETCH_DOMAINS` pages keep their
+ * Results dated before `since` (or after `until`) are dropped; `NO_FETCH_DOMAINS` pages keep their
  * line but never carry page text.
  */
 export function tavilyRetriever(opts: TavilyOptions): Retriever {
@@ -297,6 +297,7 @@ export function tavilyRetriever(opts: TavilyOptions): Retriever {
             search_depth: opts.depth,
             max_results: opts.maxResults ?? 8,
             start_date: brief.since,
+            ...(brief.until ? { end_date: brief.until } : {}),
             include_answer: false,
             include_raw_content: "text",
             include_usage: true,
@@ -322,6 +323,7 @@ export function tavilyRetriever(opts: TavilyOptions): Retriever {
         if (!r.url || !/^https?:\/\//.test(r.url) || !r.content) continue;
         const day = isoDay(r.published_date);
         if (day && day < brief.since) continue;
+        if (day && brief.until && day > brief.until) continue;
         const had = best.get(r.url);
         if (!had || (r.score ?? 0) > (had.score ?? 0)) best.set(r.url, r);
       }

@@ -354,8 +354,9 @@ export function extractNumericOutcome(sample: Sample): number | undefined {
  * `forecast track <id> <sampleId>`). When that Sample resolves, each open
  * answer is settled once: a probability gets its Brier score against the
  * yes/no outcome, a number its CRPS against the numeric outcome. An answer
- * that produced no value is settled with the outcome and no score. The row
- * is the record — `forecast list` shows the track record.
+ * that produced no value is settled with the outcome and no score. Typed
+ * answers (choice / multi / ranking / text) stay open: this finder does not
+ * score them. The row is the record — `forecast list` shows the track record.
  */
 export const forecastQuestionFinder: CalibrationFinder = {
   name: "forecast-question",
@@ -381,7 +382,7 @@ export const forecastQuestionFinder: CalibrationFinder = {
           brier,
           sample.ts,
         );
-      } else {
+      } else if (f.kind === "number") {
         if (actual === undefined) continue;
         const crps = f.mean === null || f.sd === null ? null : crpsNormal(f.mean, f.sd, actual);
         const within80 =
