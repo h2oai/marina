@@ -4,8 +4,10 @@
 /**
  * Typed answers for forecasting any question (src/forecast/typed.ts):
  *
- *   choice   — exactly one option id               ("B")
- *   multi    — a set of option ids                 (["A", "C"])
+ *   choice   — exactly one option id               ("B"); with `probabilities: true`
+ *              the forecast also carries a probability for every option
+ *   multi    — a set of option ids                 (["A", "C"]); with `probabilities: true`
+ *              also each option's own probability of being true
  *   number   — a point estimate, optional spread   (1234.5 ± 12)
  *   ranking  — an ordered list of items            (["X", "Y", "Z"])
  *   text     — a short string                      ("Jane Doe")
@@ -24,8 +26,20 @@ export interface AnswerOption {
 }
 
 export type AnswerSpec =
-  | { type: "choice"; options: AnswerOption[] }
-  | { type: "multi"; options: AnswerOption[]; minPicks?: number; maxPicks?: number }
+  | {
+      type: "choice";
+      options: AnswerOption[];
+      /** Ask for a probability on every option too (binary and multiple-choice forecasts). */
+      probabilities?: boolean;
+    }
+  | {
+      type: "multi";
+      options: AnswerOption[];
+      minPicks?: number;
+      maxPicks?: number;
+      /** Ask for each option's own probability of being true too (independent yes/no outcomes). */
+      probabilities?: boolean;
+    }
   | { type: "number"; unit?: string; integer?: boolean }
   | { type: "ranking"; size?: number; candidates?: string[] }
   | { type: "text"; maxLength?: number };
@@ -52,7 +66,15 @@ export function parseAnswerSpec(raw: unknown): { spec: AnswerSpec } | { error: s
     const options = parseOptions(r?.options);
     if ("error" in options) return options;
     if (options.options.length < 2) return { error: `a ${type} answer needs at least 2 options` };
-    if (type === "choice") return { spec: { type, options: options.options } };
+    if (type === "choice") {
+      return {
+        spec: {
+          type,
+          options: options.options,
+          ...(r?.probabilities === true ? { probabilities: true } : {}),
+        },
+      };
+    }
     const minPicks = intOrUndefined(r?.minPicks);
     const maxPicks = intOrUndefined(r?.maxPicks);
     return {
@@ -61,6 +83,7 @@ export function parseAnswerSpec(raw: unknown): { spec: AnswerSpec } | { error: s
         options: options.options,
         ...(minPicks !== undefined ? { minPicks } : {}),
         ...(maxPicks !== undefined ? { maxPicks } : {}),
+        ...(r?.probabilities === true ? { probabilities: true } : {}),
       },
     };
   }
@@ -140,7 +163,7 @@ export function normalizeText(s: string): string {
     .replace(/^[\s"'`.,;:!?()[\]]+|[\s"'`.,;:!?()[\]]+$/g, "");
 }
 
-function matchOption(raw: string, options: AnswerOption[]): AnswerOption | undefined {
+export function matchOption(raw: string, options: AnswerOption[]): AnswerOption | undefined {
   const t = raw.trim();
   const byId = options.find((o) => normalizeId(o.id) === normalizeId(t));
   if (byId) return byId;

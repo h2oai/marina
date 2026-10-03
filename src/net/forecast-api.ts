@@ -5,7 +5,8 @@
  * `POST /v1/forecast` — {question, kind?, resolveBy?, unit?} → the full,
  * auditable ForecastAnswer (src/forecast). With `answer` (a typed answer spec:
  * choice / multi / number / ranking / text) it runs the typed pipeline instead
- * — plan, research rounds, K runs, critique — and also takes `endTime`,
+ * — plan, research rounds, K runs, critique, combined by the operator's formation
+ * (`MARINA_FORECAST_FORMATION`) — and also takes `endTime`,
  * `asOf`, `context`, `runs`, `researchRounds` and `critique`. Models stay
  * operator-configured (env), never chosen by the caller. Behind the model
  * API's auth and per-IP limit like every /v1 route.
@@ -114,8 +115,8 @@ async function typed(
   if (body.critique !== undefined && typeof body.critique !== "boolean") {
     return errorJson(400, "critique must be a boolean", { code: "invalid_request_error" });
   }
-  const [{ forecastTyped }, { typedForecastDeps }] = await Promise.all([
-    import("../forecast/typed"),
+  const [{ forecastFormed, formationFromEnv }, { typedForecastDeps }] = await Promise.all([
+    import("../forecast/formations"),
     import("../forecast/service"),
   ]);
   const capped = dailyCapRefusal();
@@ -128,7 +129,7 @@ async function typed(
   if ("error" in made) return errorJson(503, made.error, { code: "forecast_unavailable" });
   const endTime = isoOrUndefined(body.endTime);
   const asOf = isoOrUndefined(body.asOf);
-  const answer = await forecastTyped(
+  const answer = await forecastFormed(
     {
       question,
       answer: parsed.spec,
@@ -137,6 +138,7 @@ async function typed(
       ...(typeof body.context === "string" && body.context.trim() ? { context: body.context } : {}),
     },
     made.deps,
+    formationFromEnv(),
   );
   answer.costUsd = made.costUsd();
   return json(answer);
