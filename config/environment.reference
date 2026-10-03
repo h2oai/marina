@@ -821,6 +821,12 @@
 # `marina/verify:` revision rounds after a flagged draft (0 = review only and return the draft; max 3). Default 1.
 # MARINA_VERIFY_ROUNDS=1
 
+# Vision model for `canvas look` / `image describe` / `video describe` / `marina_see` when the agent's own model cannot read images. Unset: the agent's model, else Marina's default route.
+# MARINA_VISION_MODEL=openrouter/openai/gpt-6.1-sol
+
+# Byte cap on an image, PDF, video or text a vision call will load (max 100 MB). Default 20 MB.
+# MARINA_VISION_MAX_BYTES=20971520
+
 # Comma-separated drop-in compatibility profiles whose model-id aliases appear in /v1/models (`openai` exposes `assistant`). Default all; `none` disables.
 # MARINA_COMPAT=openai
 

@@ -345,6 +345,8 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 | `MARINA_ANTHROPIC_AUTO_CACHE=false` | Add an ephemeral cache marker to the last system block of Anthropic passthru requests that carry none. Default true under the local profile, false otherwise. |  |
 | `MARINA_VERIFY_CHECKER_MODEL=openrouter/openai/gpt-6.1-sol` | `marina/verify:<proposer>[+<checker>]` model ids: the checker used when the id names none. Default: the proposer reviews its own draft. |  |
 | `MARINA_VERIFY_ROUNDS=1` | `marina/verify:` revision rounds after a flagged draft (0 = review only and return the draft; max 3). Default 1. |  |
+| `MARINA_VISION_MODEL=openrouter/openai/gpt-6.1-sol` | Vision model for `canvas look` / `image describe` / `video describe` / `marina_see` when the agent's own model cannot read images. Unset: the agent's model, else Marina's default route. |  |
+| `MARINA_VISION_MAX_BYTES=20971520` | Byte cap on an image, PDF, video or text a vision call will load (max 100 MB). Default 20 MB. |  |
 | `MARINA_COMPAT=openai` | Comma-separated drop-in compatibility profiles whose model-id aliases appear in /v1/models (`openai` exposes `assistant`). Default all; `none` disables. |  |
 
 ## HTTP hardening

@@ -72,6 +72,11 @@ type Msg = {
   tool_call_id?: string;
 };
 
+function isImagePart(p: unknown): boolean {
+  const t = p && typeof p === "object" ? (p as { type?: unknown }).type : undefined;
+  return t === "image_url" || t === "input_image" || t === "image";
+}
+
 function textOf(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
@@ -79,12 +84,41 @@ function textOf(content: unknown): string {
       .map((p) =>
         p && typeof p === "object" && typeof (p as { text?: unknown }).text === "string"
           ? (p as { text: string }).text
-          : "",
+          : isImagePart(p)
+            ? "[image]"
+            : "",
       )
       .filter(Boolean)
       .join("\n");
   }
   return "";
+}
+
+/** The most recent image parts the checker should see alongside the text review. */
+const REVIEW_MAX_IMAGES = 4;
+
+/**
+ * The checker's user content: the text review, plus the conversation's most
+ * recent image parts (user and tool messages) so a verifier of a visual task
+ * can see what the proposer saw. Text-only conversations stay a plain string.
+ */
+export function reviewContent(
+  review: string,
+  messages: Msg[],
+): string | Array<Record<string, unknown>> {
+  const images: Array<Record<string, unknown>> = [];
+  for (const m of messages) {
+    if (m.role !== "user" && m.role !== "tool") continue;
+    if (!Array.isArray(m.content)) continue;
+    for (const p of m.content) if (isImagePart(p)) images.push(p as Record<string, unknown>);
+  }
+  if (images.length === 0) return review;
+  const shown = images.slice(-REVIEW_MAX_IMAGES);
+  const note =
+    images.length > shown.length
+      ? `\n\n(The last ${shown.length} of ${images.length} images in the conversation follow.)`
+      : `\n\n(The conversation's ${shown.length} image${shown.length === 1 ? "" : "s"} follow${shown.length === 1 ? "s" : ""}.)`;
+  return [{ type: "text", text: review + note }, ...shown];
 }
 
 function clamp(s: string, n: number): string {
@@ -546,7 +580,10 @@ export async function maybeVerifyChat(
         {
           messages: [
             { role: "system", content: CHECKER_SYSTEM },
-            { role: "user", content: renderReview(messages, tools, draft) },
+            {
+              role: "user",
+              content: reviewContent(renderReview(messages, tools, draft), messages),
+            },
           ],
         },
         spec.checker,
