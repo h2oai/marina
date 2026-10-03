@@ -7943,6 +7943,8 @@ Usage:
                                               a bare date is the start of that UTC day; also asof:)
   web fetch <url>                           — fetch and extract text from a URL
   web fetch <url> asof:2026-09-30           — the page as archived at or before then (Wayback)
+  web search engines:corpus:<name> <query>  — a local corpus (offline BM25; bun run corpus)
+  web fetch corpus://<name>/<docid>         — one document of a local corpus
   web multisearch <q1> | <q2>               — parallel multi-query search
 
 Category: Information. Minimum rank: 0.

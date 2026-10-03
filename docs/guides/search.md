@@ -86,6 +86,27 @@ A world can also add a dedicated room, `searchRoom({ exits })`, whose verbs are 
 - **Tracing:** commands run through the normal command path, so they are recorded and traced like
   any other action.
 
+## Local corpora
+
+A local corpus is a fixed document collection with an offline BM25 index (SQLite FTS5, Porter stemming). It needs no network and no key. Use it for a benchmark's closed corpus, an archive or a team's documents.
+
+```bash
+bun run corpus build <name> <docs.jsonl> [--replace] [--source <label>]   # {"docid","text","title"?,"url"?} per line
+bun run corpus list
+bun run corpus search <name> <query> [--k 5]
+bun run corpus get <name> <docid>
+```
+
+- **Location:** indexes live in `MARINA_CORPUS_DIR` (default `~/.local/share/marina/corpora`), one `<name>.db` each. Building writes a side file and renames it into place, so a half-built index is never served. Large corpora need a real disk: set `SQLITE_TMPDIR` too, if `/tmp` is small.
+- **Search:** `web search engines:corpus:<name> <query>`. In a search room, use `search engine:corpus:<name> <query>` (in the Library, `find`).
+- **Read:** `web fetch corpus://<name>/<docid>`, or the room's fetch verb (`fetch` / `archive`) with the same URL.
+- **Research:** the research retriever takes `corpus:<name>` (`MARINA_FORECAST_RETRIEVER`, `MARINA_ARENA_RESEARCH_RETRIEVER`). It searches the brief's queries and cites `corpus://` URLs.
+- **Discovery:** a corpus built after startup is picked up the first time it is named.
+- **Not in open searches:** a corpus answers only searches that name it. It has no date bound, so it never answers a `before:` search.
+- **Queries:** free text is reduced to its words, without English stopwords (Lucene's set, as in Anserini's BM25), so FTS5 syntax in a query is harmless and common words do not slow ranking.
+
+[BrowseComp-Plus](browsecomp-plus.md) uses a local corpus.
+
 ## Building your own tool rooms
 
 A room is a natural home for a tool: its commands, KV state and room agents are scoped to the room.

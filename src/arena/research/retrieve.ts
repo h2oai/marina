@@ -22,6 +22,9 @@
  *     the Wayback capture at or before the cutoff. Such a retriever carries
  *     `dateStrict: true`, and `retrieverFromSpec(…, { requireDateStrict })`
  *     refuses any spec that mixes in an unfiltered engine.
+ *   - `corpus:<name>` — a local corpus (offline BM25, `bun run corpus`); each
+ *     brief query is searched and the best documents are cited as
+ *     `corpus://<name>/<docid>`. Free; never date-strict (no publication dates).
  * `retrieverFromSpec` accepts a comma-separated list and merges the reports
  * (every source kept, costs summed), so several engines can research one brief.
  */
@@ -31,6 +34,7 @@ import {
   DATE_BOUND_PROVIDER_NAMES,
   dateBoundProvider,
 } from "../../engine/search-providers/asof-providers";
+import { corpusUrl, isCorpusName, searchCorpus } from "../../engine/search-providers/corpus";
 import {
   type SearchHttp,
   type SearchResult,
@@ -522,6 +526,55 @@ export function isDateStrict(r: Retriever): r is DateStrictRetriever {
   return (r as Partial<DateStrictRetriever>).dateStrict === true;
 }
 
+// ─── Local corpus ────────────────────────────────────────────────────────────
+
+/** Documents kept per brief from a local corpus. */
+const CORPUS_MAX_DOCS = 12;
+/** Text carried per corpus source for the citation check. */
+const CORPUS_SOURCE_CHARS = 20_000;
+
+/**
+ * Research over a local corpus (`corpus:<name>`, offline BM25 — see
+ * src/engine/search-providers/corpus.ts). Each brief query is searched; the
+ * best documents become report lines citing `corpus://<name>/<docid>`, with
+ * their text attached so the citation check reads the same text. Free. A
+ * corpus has no publication dates, so it is never date-strict.
+ */
+export function corpusRetriever(name: string): Retriever {
+  if (!isCorpusName(name)) throw new Error(`invalid corpus name "${name}"`);
+  return async (brief) => {
+    const queries = (brief.queries?.length ? brief.queries : [brief.request.split("\n")[0] ?? ""])
+      .map((q) => q.trim())
+      .filter(Boolean)
+      .slice(0, ASOF_MAX_QUERIES);
+    if (queries.length === 0) throw new Error("corpus retrieval: the brief has no query");
+    const byDoc = new Map<string, ReturnType<typeof searchCorpus>[number]>();
+    for (const q of queries) {
+      for (const h of searchCorpus(name, q, { k: 5, leadChars: CORPUS_SOURCE_CHARS })) {
+        const had = byDoc.get(h.docid);
+        if (!had || h.score > had.score) byDoc.set(h.docid, h);
+      }
+    }
+    const hits = [...byDoc.values()].sort((a, b) => b.score - a.score).slice(0, CORPUS_MAX_DOCS);
+    const lines: string[] = [];
+    const sources: Source[] = [];
+    for (const h of hits) {
+      const url = corpusUrl(name, h.docid);
+      lines.push(
+        `- ${tavilySnippet(h.passage || h.lead)} [${linkTitle(h.title || h.docid)}](${url})`,
+      );
+      sources.push({ url, ...(h.title ? { title: h.title } : {}), text: h.lead });
+    }
+    return {
+      report: lines.length ? lines.join("\n") : `Nothing in corpus ${name} matched.`,
+      sources,
+      costUsd: 0,
+      searches: queries.length,
+      retriever: `corpus:${name}`,
+    };
+  };
+}
+
 // ─── Exa ─────────────────────────────────────────────────────────────────────
 
 const EXA_SEARCH_URL = "https://api.exa.ai/search";
@@ -719,6 +772,7 @@ export function retrieverFromSpec(
           ...(opts.http ? { http: opts.http } : {}),
         });
       }
+      if (part.startsWith("corpus:")) return corpusRetriever(part.slice("corpus:".length));
       const [kind, ...rest] = part.split(":");
       const model = rest.join(":");
       if (!model) throw new Error(`MARINA_ARENA_RESEARCH_RETRIEVER entry "${part}" names no model`);
@@ -747,7 +801,7 @@ export function retrieverFromSpec(
           : openRouterWebRetriever({ model, apiKey: k.openrouter });
       }
       throw new Error(
-        `unknown MARINA_ARENA_RESEARCH_RETRIEVER entry "${part}" (openrouter-web:<model>, sonar:<model>, tavily:<basic|advanced>, exa:<auto|neural|keyword>, asof[:<providers>] or closed-book)`,
+        `unknown MARINA_ARENA_RESEARCH_RETRIEVER entry "${part}" (openrouter-web:<model>, sonar:<model>, tavily:<basic|advanced>, exa:<auto|neural|keyword>, asof[:<providers>], corpus:<name> or closed-book)`,
       );
     }),
   );

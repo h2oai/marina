@@ -141,7 +141,9 @@ export function splitEnginesAndProviders(
   for (const raw of list) {
     const e = raw.trim().toLowerCase();
     if (!e) continue;
-    if (names.has(e) && !categories.has(e)) named.push(e);
+    // `corpus:<name>` always names a local corpus provider (it may be built after startup).
+    if (e.startsWith("corpus:")) named.push(e);
+    else if (names.has(e) && !categories.has(e)) named.push(e);
     else engines.push(e);
   }
   return { engines, providers: named };
@@ -243,6 +245,7 @@ export async function search(
   }
   if (opts.providers?.length) {
     const named = opts.providers.map((n) => n.toLowerCase());
+    ensureCorpusProviders(named);
     const batches = await Promise.all(
       providers
         .filter((p) => named.includes(p.name))
@@ -322,6 +325,11 @@ export function initProviders(): void {
   import("./asof-providers").then((m) => {
     for (const p of m.dateBoundProviders()) registerProvider(p);
   });
+
+  // Local corpora (offline BM25), named searches only.
+  import("./corpus").then((m) => {
+    for (const p of m.corpusProviders()) registerProvider(p);
+  });
 }
 
 /**
@@ -349,4 +357,26 @@ export function initProvidersSync(): void {
 
   const { dateBoundProviders } = require("./asof-providers");
   for (const p of dateBoundProviders() as SearchProvider[]) registerProvider(p);
+
+  const { corpusProviders } = require("./corpus");
+  for (const p of corpusProviders() as SearchProvider[]) registerProvider(p);
+}
+
+/**
+ * Register `corpus:<name>` providers named in a search that were built after
+ * startup (or never registered). Unknown names are left for the caller to
+ * report as "no results".
+ */
+export function ensureCorpusProviders(names: readonly string[]): void {
+  const missing = names.filter(
+    (n) => n.startsWith("corpus:") && !providers.some((p) => p.name === n),
+  );
+  if (missing.length === 0) return;
+  const { corpusProvider, isCorpusName, listCorpora } =
+    require("./corpus") as typeof import("./corpus");
+  const present = new Set(listCorpora().map((c) => c.name));
+  for (const n of missing) {
+    const name = n.slice("corpus:".length);
+    if (isCorpusName(name) && present.has(name)) registerProvider(corpusProvider(name));
+  }
 }

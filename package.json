@@ -63,6 +63,8 @@
     "src/sdk"
   ],
   "scripts": {
+    "browsecomp-plus": "bun run scripts/browsecomp-plus.ts",
+    "corpus": "bun run scripts/corpus.ts",
     "forecast": "bun run scripts/forecast.ts",
     "arena": "bun run scripts/arena.ts",
     "futurex": "bun run scripts/futurex.ts",

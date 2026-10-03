@@ -34,6 +34,7 @@ and operate the environment. Start with one path below; the full catalog follows
 | Answer a ForecastBench round (500 questions, up to 3 sets) | [ForecastBench](forecastbench.md) | [Forecasting](forecasting.md) |
 | Run Marina's coding agent on SWE-bench | [SWE-bench](swebench.md) | [Coding](coding.md) |
 | Search the web as of a date, or give agents a search room | [Search](search.md) | [Forecasting](forecasting.md) |
+| Run BrowseComp-Plus (deep research over a fixed corpus); search a local corpus | [BrowseComp-Plus](browsecomp-plus.md) | [Search](search.md) |
 | Run τ²-bench through Marina; use the verification formation as a model (`marina/verify:`) | [τ²-bench](tau2.md) | [Model API](model-api.md) |
 | Reproduce any published Marina benchmark setup with one command | [Reproduce](reproduce.md) | [Testing](testing.md) |
 | Find the right `bun run` script | [Scripts reference](scripts.md) | [Release qualification](release-qualification.md) |
