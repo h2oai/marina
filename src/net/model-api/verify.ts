@@ -16,6 +16,7 @@
 import type { Engine } from "../../engine/engine";
 import { getErrorMessage } from "../../engine/errors";
 import { Logger } from "../../engine/logger";
+import { lessonsBlock, recallAcross } from "../../learning/service";
 import {
   COST_USD_HEADER,
   errorJson,
@@ -27,6 +28,14 @@ import {
 import { explicitUpstreamModel, proxyToUpstream } from "./upstream";
 
 const log = new Logger();
+
+/** Lessons ride as one extra system message right after the caller's own system messages. */
+export function withLessons(messages: Msg[], block: string): Msg[] {
+  if (!block) return messages;
+  const at = messages.findIndex((m) => m.role !== "system");
+  const i = at < 0 ? messages.length : at;
+  return [...messages.slice(0, i), { role: "system", content: block }, ...messages.slice(i)];
+}
 
 export const VERIFY_MODEL_PREFIX = "marina/verify:";
 
@@ -517,13 +526,35 @@ export async function maybeVerifyChat(
       });
     }
   }
-  const messages = Array.isArray(body.messages) ? (body.messages as Msg[]) : [];
+  const callerMessages = Array.isArray(body.messages) ? (body.messages as Msg[]) : [];
   const tools = Array.isArray(body.tools) ? (body.tools as unknown[]) : undefined;
   const signal = req.signal;
   const requestId = generateRequestId();
 
+  // 0. Lessons from past outcomes: the proposer (the lead) and the checker see
+  // the relevant ones (MARINA_LESSONS=observe recalls without injecting).
+  const lastUser = [...callerMessages].reverse().find((m) => m.role === "user");
+  const lessons = await recallAcross(
+    engine.db,
+    ["tools", "code"],
+    textOf(lastUser?.content).slice(0, 500),
+    { limit: 4, maxBytes: 800 },
+  );
+  const block = lessonsBlock(lessons.inject);
+  const messages = withLessons(callerMessages, block);
+  const lessonsHeader =
+    lessons.recalled.length === 0
+      ? "0"
+      : `${lessons.mode === "on" ? "" : "observe:"}${lessons.recalled.map((l) => l.id ?? "?").join(",")}`;
+
   // 1. Proposer draft.
-  const first = await callUpstream(engine, body, spec.proposer, signal, "verify:proposer");
+  const first = await callUpstream(
+    engine,
+    block ? { ...body, messages } : body,
+    spec.proposer,
+    signal,
+    "verify:proposer",
+  );
   if (!first.ok || !first.body) {
     return new Response(first.text ?? "", {
       status: first.status,
@@ -546,7 +577,10 @@ export async function maybeVerifyChat(
         {
           messages: [
             { role: "system", content: CHECKER_SYSTEM },
-            { role: "user", content: renderReview(messages, tools, draft) },
+            {
+              role: "user",
+              content: `${block ? `${block}\n\n` : ""}${renderReview(callerMessages, tools, draft)}`,
+            },
           ],
         },
         spec.checker,
@@ -617,6 +651,7 @@ export async function maybeVerifyChat(
   return json({ ...final, model, ...(usage ? { usage } : {}) }, 200, {
     "x-request-id": requestId,
     "x-marina-verify": verdictLabel,
+    "x-marina-lessons": lessonsHeader,
     [COST_USD_HEADER]: cost.toFixed(8),
   });
 }

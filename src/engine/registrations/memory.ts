@@ -11,6 +11,7 @@ import { debriefCommand } from "../commands/debrief";
 import { digCommand } from "../commands/dig";
 import { evolveCommand } from "../commands/evolve";
 import { guideCommand } from "../commands/guide";
+import { lessonsCommand } from "../commands/lessons";
 import { marketCommand } from "../commands/market";
 import { memoryCommand } from "../commands/memory";
 import { nextCommand } from "../commands/next";
@@ -113,6 +114,7 @@ export function registerMemoryCommands(engine: Engine): void {
         engine.commands.allBuiltins().flatMap((cmd) => [cmd.name, ...(cmd.aliases ?? [])]),
     }),
   );
+  engine.commands.registerBuiltin(lessonsCommand({ db: engine.db }));
   engine.commands.registerBuiltin(
     noveltyCommand({
       getEntity: (id) => engine.entities.get(id as EntityId),
