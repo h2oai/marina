@@ -41,7 +41,7 @@ function canvasOwners(
 }
 
 const HELP =
-  "Canvas management. Subcommands: canvas create <name> [desc] | canvas list | canvas info <name> | canvas visit <self|entity|name> | canvas post [on:<canvas>] [reply:<node_id>] <text> | canvas publish <type> <asset_id> [canvas] [reply:<node_id>] | canvas nodes <name> | canvas edges <name> | canvas layout <grid|timeline|feed> <name> | canvas delete <name> | canvas asset upload|list|info|delete | canvas intent list [canvas] | canvas intent claim <node_id> | canvas intent fail <node_id> [reason] | canvas intent complete <node_id> [--type <type>] <result> | canvas intent complete-rich <node_id> <json> | canvas connect <src_node_id> <tgt_node_id> <relationship> [canvas] | canvas disconnect <edge_id>" +
+  "Canvas management. Subcommands: canvas create <name> [desc] | canvas list | canvas info <name> | canvas visit <self|entity|name> | canvas post [on:<canvas>] [reply:<node_id>] <text> | canvas publish <type> <asset_id> [canvas] [reply:<node_id>] | canvas nodes <name> | canvas look <node_id> [question] | canvas edges <name> | canvas layout <grid|timeline|feed> <name> | canvas delete <name> | canvas asset upload|list|info|delete | canvas intent list [canvas] | canvas intent claim <node_id> | canvas intent fail <node_id> [reason] | canvas intent complete <node_id> [--type <type>] <result> | canvas intent complete-rich <node_id> <json> | canvas connect <src_node_id> <tgt_node_id> <relationship> [canvas] | canvas disconnect <edge_id>" +
   "\n\nUse canvas resources [filter] to discover authorized data adapters for panel sources (kind: resource). Publish an A2UI JSON asset to compose Marina resources. Open it beside Chat from Workspace → Canvas → Published panels, or use Create coding desk for an existing coding session." +
   "\nResource reads use each viewer’s permissions; operational buttons require review. Opening or closing a panel leaves agents running. The coding terminal also supports these publications through /panel and F8.";
 
@@ -52,6 +52,8 @@ export function canvasCommand(deps: {
   storage?: StorageProvider;
   logEvent?: (event: { type: string; entity: EntityId; [k: string]: unknown }) => void;
   scratchRoot?: string;
+  /** `canvas look` — see a node's image, document or video (src/engine/media/vision.ts). */
+  look?: (who: { entityId: EntityId; name: string }, tokens: string[]) => Promise<string>;
 }): CommandDef {
   return {
     category: "Canvas & Media",
@@ -81,6 +83,7 @@ export function canvasCommand(deps: {
       "canvas layout <grid|timeline|feed> <canvas_name>",
       "canvas layout <grid|timeline|feed> <name>",
       "canvas list",
+      "canvas look <node_id> [question...] [model:<provider/model>]",
       "canvas resources [filter]",
       "canvas nodes <name>",
       "canvas post [on:<canvas>] [reply:<node_id>] <text>",
@@ -170,6 +173,15 @@ export function canvasCommand(deps: {
         case "intent":
           await handleIntent(ctx, eid, entity, db, deps.storage, deps.logEvent, tokens.slice(1));
           return;
+        case "look":
+        case "see": {
+          if (!deps.look) {
+            ctx.send(eid, "Looking at canvas nodes is not available on this server.");
+            return;
+          }
+          ctx.send(eid, await deps.look({ entityId: eid, name: entity.name }, tokens.slice(1)));
+          return;
+        }
         case "connect":
           handleConnect(ctx, eid, entity, db, deps.logEvent, tokens.slice(1));
           return;

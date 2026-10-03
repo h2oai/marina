@@ -3,6 +3,7 @@
 
 import type { CommandDef } from "../../types";
 import type { Engine } from "../engine";
+import { lookAndReply } from "../media/vision";
 import { sendMediaJobStatus } from "./image";
 
 export function videoCommand(_engine: Engine): CommandDef {
@@ -11,14 +12,31 @@ export function videoCommand(_engine: Engine): CommandDef {
     usage: [
       "video generate <prompt...>",
       "video generate <prompt...> [--model provider/model] [--duration <s>] [--fps <frames>] [--reference <asset>] [--canvas <name>]",
+      "video describe <node|asset|url> [question...] [model:<provider/model>]",
     ],
     name: "video",
-    help: "Generate videos. Usage: video generate <prompt...> [--model provider/model] [--duration <s>] [--fps <frames>] [--reference <asset>] [--canvas <name>]",
+    help: "Generate or read videos. Usage: video generate <prompt...> [--model provider/model] [--duration <s>] [--fps <frames>] [--reference <asset>] [--canvas <name>] | video describe <node|asset|url> [question] (sampled keyframes)",
     handler: async (ctx, input) => {
       const engine = _engine;
       const sub = input.tokens[0];
+      if (sub === "describe" || sub === "look") {
+        const who = ctx.findEntity(input.entity);
+        ctx.send(
+          input.entity,
+          await lookAndReply(
+            engine,
+            { entityId: input.entity, name: who?.name ?? String(input.entity) },
+            input.tokens.slice(1),
+            "video",
+          ),
+        );
+        return;
+      }
       if (sub !== "generate") {
-        ctx.send(input.entity, "Usage: video generate <prompt...>");
+        ctx.send(
+          input.entity,
+          "Usage: video generate <prompt...> | video describe <node|asset|url> [question]",
+        );
         return;
       }
       if (!engine.db || !engine.storage) {

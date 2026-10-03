@@ -696,6 +696,9 @@
 # MARINA_FORECAST_CRITIQUE=on
 # MARINA_FORECAST_LOOKUPS=auto
 
+# How POST /v1/forecast combines a typed forecast's runs (src/forecast/formations.ts): `ensemble` (default — combined by type, then the critique), `delphi` (each member revises once after an anonymous panel summary; median of the revisions) or `tournament` (pairwise knockout judged by the critic; the champion's answer). The research and cutoff are the same for all three.
+# MARINA_FORECAST_FORMATION=ensemble
+
 # Verification inside a typed forecast: with VERIFY=on each run's draft is checked by VERIFIER (default: the critic) against the dossier and the resolution rules before it is combined, and a concrete correction replaces it. RETRIEVAL_FILTER=strict keeps only research lines whose every cited page is provably published on or before the evidence cutoff (engine date, else a date in the URL) and that name no later day; undated and live-result pages are dropped. Use it for past-cutoff forecasts (replays, backtests); date-filtered engines (tavily:, exa:) need no filter, and `closed-book` as the retriever disables retrieval.
 # MARINA_FORECAST_VERIFY=off
 # MARINA_FORECAST_VERIFIER=openrouter/anthropic/claude-opus-5
@@ -850,6 +853,12 @@
 
 # `marina/verify:` revision rounds after a flagged draft (0 = review only and return the draft; max 3). Default 1.
 # MARINA_VERIFY_ROUNDS=1
+
+# Vision model for `canvas look` / `image describe` / `video describe` / `marina_see` when the agent's own model cannot read images. Unset: the agent's model, else Marina's default route.
+# MARINA_VISION_MODEL=openrouter/openai/gpt-6.1-sol
+
+# Byte cap on an image, PDF, video or text a vision call will load (max 100 MB). Default 20 MB.
+# MARINA_VISION_MAX_BYTES=20971520
 
 # Comma-separated drop-in compatibility profiles whose model-id aliases appear in /v1/models (`openai` exposes `assistant`). Default all; `none` disables.
 # MARINA_COMPAT=openai
