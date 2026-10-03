@@ -12,6 +12,7 @@ import {
 import { bootstrapOverall, weightedOverall } from "../benchmarks/futurex/clean-run";
 import type { FuturexRow } from "../benchmarks/futurex/dataset";
 import { BUILTIN_VARIANTS, type RowResult } from "../benchmarks/futurex/run";
+import { scoreBatchJudged } from "../benchmarks/futurex/score";
 
 const row = (id: string, level: number, end: string, truth: unknown = "['A']"): FuturexRow => ({
   id,
@@ -104,6 +105,45 @@ describe("leak audit", () => {
       new Set(["A"]),
     );
     expect(a.suspicious).toBe(false);
+  });
+});
+
+describe("judged scoring", () => {
+  it("grades strings and lists with the judge, leaves options mechanical, survives an outage", async () => {
+    const rows: FuturexRow[] = [
+      { id: "s", level: 3, end_time: "2026-09-01", prompt: "Who wins?", ground_truth: "Jane Doe" },
+      {
+        id: "l",
+        level: 4,
+        end_time: "2026-09-01",
+        prompt: "Top three, ordered",
+        ground_truth: "['X', 'Y', 'Z']",
+      },
+      row("o", 1, "2026-09-01 12:00:00", "['A']"),
+    ];
+    const preds = new Map([
+      ["s", "Ms. Jane Doe"],
+      ["l", "X, Z, Q"],
+      ["o", "B"],
+    ]);
+    const judge = {
+      name: "j",
+      complete: async (_s: string, user: string) =>
+        user.includes("Kind: list") ? '{"matched": 2, "same_order": false}' : '{"match": true}',
+    };
+    const s = await scoreBatchJudged(rows, preds, judge);
+    const by = new Map(s.items.map((i) => [i.id, i.score]));
+    expect(by.get("s")).toBe(1);
+    expect(by.get("l")).toBeCloseTo(0.5333, 3);
+    expect(by.get("o")).toBe(0);
+    expect(s.judged).toBe(2);
+    const down = await scoreBatchJudged(rows, preds, {
+      name: "j",
+      complete: async () => {
+        throw new Error("down");
+      },
+    });
+    expect(new Map(down.items.map((i) => [i.id, i.score])).get("s")).toBe(0);
   });
 });
 

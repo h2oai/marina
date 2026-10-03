@@ -80,12 +80,14 @@ const { positionals, values } = parseArgs({
     after: { type: "string" },
     until: { type: "string" },
     isolation: { type: "string", default: "post-filtered" },
+    "allow-contaminated": { type: "boolean" },
     retriever: { type: "string" },
     replicates: { type: "string", default: "1" },
     lessons: { type: "string" },
     "lessons-account": { type: "string", default: "Forecaster" },
     "lesson-writer": { type: "string", default: "openrouter/deepseek/deepseek-v4-pro-0813" },
     reference: { type: "string" },
+    judge: { type: "string" },
   },
 });
 const [cmd] = positionals;
@@ -266,9 +268,17 @@ async function runCmd(): Promise<number> {
 const SHARED_LESSONS = "forecast-lessons";
 
 async function cleanBacktestCmd(batch: FuturexBatch): Promise<number> {
-  const isolation = values.isolation as "date-filtered" | "post-filtered" | "closed-book";
-  if (!["date-filtered", "post-filtered", "closed-book"].includes(isolation)) {
-    throw new Error("--isolation date-filtered | post-filtered | closed-book");
+  const isolation = values.isolation as
+    | "date-filtered"
+    | "post-filtered"
+    | "closed-book"
+    | "contaminated";
+  const allowed = ["date-filtered", "post-filtered", "closed-book"];
+  if (values["allow-contaminated"]) allowed.push("contaminated");
+  if (!allowed.includes(isolation)) {
+    throw new Error(
+      "--isolation date-filtered | post-filtered | closed-book (contaminated only with --allow-contaminated, as an upper bracket)",
+    );
   }
   const lessons = values.lessons === "on" ? "on" : "off";
   const db = values["no-ledger"] ? undefined : openDb();
@@ -307,6 +317,7 @@ async function cleanBacktestCmd(batch: FuturexBatch): Promise<number> {
           }
         : {}),
       ...(writer ? { lessonWriter: writer } : {}),
+      ...(values.judge ? { judge: modelPart(values.judge) } : {}),
       ...(values.reference
         ? { reference: JSON.parse(readFileSync(values.reference, "utf8")) as ReferenceScores }
         : {}),

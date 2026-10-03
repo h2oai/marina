@@ -184,3 +184,82 @@ export function scoreBatch(
 }
 
 const round = (x: number) => Math.round(x * 10_000) / 10_000;
+
+// ─── Judged scoring (the official weekly scoring grades strings with a model) ─
+
+export interface JudgeModel {
+  name: string;
+  complete: (system: string, user: string) => Promise<string>;
+}
+
+const STRING_JUDGE = [
+  "You grade a forecast against the resolved answer. Reply with ONE JSON object.",
+  'For a single answer: {"match": true|false} — true when the forecast names the same entity, outcome or value as the answer (case, punctuation, abbreviations, honorifics and a trailing qualifier do not matter; a different entity or outcome is false).',
+  'For lists: {"matched": <how many answer items the forecast contains, each counted once>, "same_order": true|false}.',
+].join(" ");
+
+/**
+ * Like `scoreBatch`, but strings and lists are graded by `judge` (the official
+ * scoring uses a model judge; mechanical string matching under-credits
+ * paraphrases). Options and numbers stay mechanical. A judge failure keeps the
+ * mechanical score.
+ */
+export async function scoreBatchJudged(
+  rows: FuturexRow[],
+  predictions: Map<string, string>,
+  judge: JudgeModel,
+  opts: { sigma?: "relative" | "dataset"; concurrency?: number } = {},
+): Promise<BatchScore & { judged: number; changed: number }> {
+  const base = scoreBatch(rows, predictions, opts);
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const todo = base.items.filter(
+    (i) => (i.metric === "string" || i.metric === "list") && i.score < 1,
+  );
+  let judged = 0;
+  let changed = 0;
+  let next = 0;
+  const worker = async () => {
+    while (next < todo.length) {
+      const it = todo[next++]!;
+      const row = byId.get(it.id)!;
+      const truth = parseTruth(row.ground_truth);
+      const pred = predictions.get(it.id) ?? "";
+      try {
+        const reply = await judge.complete(
+          STRING_JUDGE,
+          `Question: ${(row.en_title ?? row.prompt).slice(0, 500)}\nResolved answer: ${truth.join(" | ")}\nForecast: ${pred.slice(0, 500)}\nKind: ${it.metric === "list" ? "list" : "single answer"}`,
+        );
+        const m = reply.match(/\{[\s\S]*\}/);
+        const v = m
+          ? (JSON.parse(m[0]) as { match?: unknown; matched?: unknown; same_order?: unknown })
+          : {};
+        judged++;
+        let score = it.score;
+        if (it.metric === "string" && typeof v.match === "boolean") score = v.match ? 1 : 0;
+        if (it.metric === "list" && typeof v.matched === "number") {
+          const k = Math.max(0, Math.min(truth.length, Math.round(v.matched)));
+          score = k === truth.length && v.same_order === true ? 1 : round((0.8 * k) / truth.length);
+        }
+        if (score !== it.score) {
+          changed++;
+          it.score = score;
+        }
+      } catch {
+        // allow-empty-catch: a judge outage keeps the mechanical score
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, opts.concurrency ?? 6) }, worker));
+  const byLevel: Record<number, { n: number; mean: number }> = {};
+  for (const lvl of [1, 2, 3, 4]) {
+    const at = base.items.filter((i) => i.level === lvl);
+    if (at.length)
+      byLevel[lvl] = { n: at.length, mean: round(at.reduce((s, i) => s + i.score, 0) / at.length) };
+  }
+  const present = Object.keys(byLevel).map(Number);
+  const w = present.reduce((s, l) => s + (LEVEL_WEIGHTS[l] ?? 0), 0);
+  const overall = w
+    ? present.reduce((s, l) => s + (LEVEL_WEIGHTS[l] ?? 0) * byLevel[l]!.mean, 0) / w
+    : 0;
+  return { overall: round(overall), byLevel, items: base.items, judged, changed };
+}

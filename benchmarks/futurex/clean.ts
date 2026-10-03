@@ -221,7 +221,9 @@ export function auditRow(
   // A forecaster legitimately talks about the schedule between the cutoff and
   // the event; a day AFTER the event in its reasoning, or any post-cutoff day
   // in the kept evidence, is a sign it saw later pages.
-  const afterEvent = end ? new Date(Date.parse(end) + 86_400_000).toISOString().slice(0, 10) : cutoffDay;
+  const afterEvent = end
+    ? new Date(Date.parse(end) + 86_400_000).toISOString().slice(0, 10)
+    : cutoffDay;
   // Explicit calendar days only: "as of August 2026" states the cutoff month.
   const exact = (s: string) => daysMentioned(s, { monthOnly: false });
   const later = [

@@ -33,7 +33,15 @@ import type { FuturexRow } from "./dataset";
 import { recordScoredRun } from "./ledger";
 import { endTimeIso, parseOptions, requestFor } from "./map";
 import { type BatchRun, runBatch, type Variant } from "./run";
-import { type BatchScore, LEVEL_WEIGHTS, parseTruth, scoreBatch, scoreItem } from "./score";
+import {
+  type BatchScore,
+  type JudgeModel,
+  LEVEL_WEIGHTS,
+  parseTruth,
+  scoreBatch,
+  scoreBatchJudged,
+  scoreItem,
+} from "./score";
 
 export const CLEAN_BENCHMARK = "futurex-past-clean";
 
@@ -41,7 +49,11 @@ export interface CleanOptions {
   rows: FuturexRow[];
   batchSha: string;
   variants: Variant[];
-  isolation: Exclude<IsolationLevel, "contaminated">;
+  /**
+   * `contaminated` (an unfiltered engine on past cutoffs) is accepted only as
+   * an explicit upper bracket: it can see outcomes, so it is never a headline.
+   */
+  isolation: IsolationLevel;
   /** Retriever spec for date-filtered / post-filtered runs. */
   retriever?: string;
   after?: string;
@@ -55,6 +67,8 @@ export interface CleanOptions {
   lessonStore?: (runLabel: string) => Promise<LessonStore>;
   lessonWriter?: LessonWriter;
   reference?: ReferenceScores;
+  /** Also grade strings and lists with a model judge, as the official scoring does. */
+  judge?: JudgeModel;
   outDir: string;
   ledger?: Parameters<typeof recordScoredRun>[0];
   env?: NodeJS.ProcessEnv;
@@ -71,6 +85,8 @@ export interface CleanRunSummary {
   ci: [number, number];
   byLevel: BatchScore["byLevel"];
   clean: { rows: number; overall: number };
+  /** The overall with strings and lists graded by the judge (when one is given). */
+  judged?: { overall: number; byLevel: BatchScore["byLevel"]; changed: number };
   audit: {
     suspicious: number;
     laterDate: number;
@@ -164,6 +180,11 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
     const level = isolationOfSpec(spec, opts.isolation === "post-filtered");
     if (opts.isolation === "date-filtered" && level !== "date-filtered") {
       throw new Error(`${spec} is not a date-filtered engine (it would be ${level}); refused`);
+    }
+    if (opts.isolation === "contaminated") {
+      log(
+        `CONTAMINATED BRACKET: ${spec} is unfiltered on past cutoffs and can see outcomes — an upper bound, never a headline score.`,
+      );
     }
   }
   // ── Rows: one set for every variant (the latest knowledge bound) ──
@@ -265,7 +286,9 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
           },
         },
       );
-      const score = scoreBatch(rows, new Map(run.results.map((r) => [r.id, r.prediction])));
+      const predictions = new Map(run.results.map((r) => [r.id, r.prediction]));
+      const score = scoreBatch(rows, predictions);
+      const judged = opts.judge ? await scoreBatchJudged(rows, predictions, opts.judge) : undefined;
       const byId = new Map(rows.map((r) => [r.id, r]));
       const audits: RowAudit[] = run.results.map((r) => {
         const row = byId.get(r.id)!;
@@ -294,6 +317,11 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
         ci: bootstrapOverall(score.items),
         byLevel: score.byLevel,
         clean: { rows: cleanItems.length, overall: round(weightedOverall(cleanItems)) },
+        ...(judged
+          ? {
+              judged: { overall: judged.overall, byLevel: judged.byLevel, changed: judged.changed },
+            }
+          : {}),
         audit: {
           suspicious: suspicious.size,
           laterDate: audits.filter((a) => a.flags.laterDate).length,
@@ -335,7 +363,8 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
       writeFileSync(join(out, "summary.json"), JSON.stringify(summary, null, 1));
       if (opts.ledger) {
         const rec = recordScoredRun(opts.ledger, {
-          benchmark: CLEAN_BENCHMARK,
+          benchmark:
+            opts.isolation === "contaminated" ? "futurex-past-contaminated" : CLEAN_BENCHMARK,
           batchSha: opts.batchSha,
           variant,
           run,

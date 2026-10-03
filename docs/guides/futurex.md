@@ -103,6 +103,14 @@ day after the event, its kept evidence names any day after the cutoff, it quotes
 outcome, or its evidence reports a result. Headline scores are given with suspicious rows in and
 out.
 
+**Upper bracket.** `--allow-contaminated --isolation contaminated` runs an unfiltered engine on
+past cutoffs. It can see outcomes, so it is filed under `futurex-past-contaminated` as an upper
+bound, never as a clean score. Between it and closed-book lies the range a live run can fall in.
+
+**Judged scoring.** `--judge <model>` also grades string and list answers with a model judge, as
+the official weekly scoring does (mechanical string matching under-credits paraphrases). Options
+and numbers stay mechanical, and both overalls are reported.
+
 **Results.** Each run gets the overall and per-level scores with a bootstrap interval, plus a score
 per batch week compared with `--reference <file.json>` (week → `top`, `median`, `h2o`, entered by
 hand; the website is never scraped). `--replicates N` repeats a run. Every run is filed into the
