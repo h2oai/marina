@@ -22,6 +22,12 @@
   - **Plumbing:** every call goes through `proxyToUpstream`, so spend, the daily cap and lifecycle traces apply.
   - **Response:** sums `usage` and `x-marina-cost-usd`, and sets `x-marina-verify`.
   - **Fails open** to the draft.
+  - **Write-action guard** (`guardRevision`): a revision may change text and read-only calls freely, but a state-changing tool call stays as drafted unless the verdict carries a `conflict` (`kind`, verbatim `quote`, `call`, `field`).
+    - The quote must be found in the conversation.
+    - Only the cited call may be added or dropped, and only the cited argument of a modified call may change.
+    - No id may appear that is absent from the conversation and its tool results.
+    - A guarded revision is discarded and the response says `x-marina-verify: held-write`.
+    - Read-only: `annotations.readOnlyHint`, else a lookup-style name.
   - **Refusals:** `stream` and `n > 1` get `unsupported_parameter`; non-upstream ids get `model_not_found`.
   - **Checker:** the default is `MARINA_VERIFY_CHECKER_MODEL`, else the proposer.
   - **Tests:** `test/model-api-verify.test.ts`. Guide: [τ²-bench](../guides/tau2.md).
