@@ -414,3 +414,66 @@ export function recordBenchmarkPromotion(db: Database, row: BenchmarkPromotionIn
     return Number(res.lastInsertRowid);
   })();
 }
+
+// ─── External submissions (migration 152) ──────────────────────────────────
+
+export interface ExternalSubmissionInput {
+  benchmark: string;
+  /** The batch the submission answers (e.g. a dataset commit sha). */
+  batch_ref: string;
+  variant: string;
+  identity_json: string;
+  file_name: string;
+  file_sha256: string;
+  items: number;
+  answered: number;
+  cost_usd: number | null;
+  meta_json: string | null;
+  created_at: number;
+}
+
+export interface ExternalSubmissionRow extends ExternalSubmissionInput {
+  id: number;
+}
+
+/** Append one submission; the same file (by hash) is recorded once. */
+export function recordExternalSubmission(
+  db: Database,
+  row: ExternalSubmissionInput,
+): { id: number; created: boolean } {
+  const existing = db
+    .query("SELECT id FROM external_submissions WHERE benchmark = ? AND file_sha256 = ?")
+    .get(row.benchmark, row.file_sha256) as { id: number } | null;
+  if (existing) return { id: existing.id, created: false };
+  const r = db.run(
+    `INSERT INTO external_submissions (benchmark, batch_ref, variant, identity_json, file_name,
+       file_sha256, items, answered, cost_usd, meta_json, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      row.benchmark,
+      row.batch_ref,
+      row.variant,
+      row.identity_json,
+      row.file_name,
+      row.file_sha256,
+      row.items,
+      row.answered,
+      row.cost_usd,
+      row.meta_json,
+      row.created_at,
+    ],
+  );
+  return { id: Number(r.lastInsertRowid), created: true };
+}
+
+export function listExternalSubmissions(
+  db: Database,
+  benchmark: string,
+  limit = 50,
+): ExternalSubmissionRow[] {
+  return db
+    .query(
+      "SELECT * FROM external_submissions WHERE benchmark = ? ORDER BY created_at DESC, id DESC LIMIT ?",
+    )
+    .all(benchmark, limit) as ExternalSubmissionRow[];
+}

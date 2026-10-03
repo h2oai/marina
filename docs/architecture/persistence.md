@@ -195,5 +195,8 @@ so image/video generation (`media`) joins the daily spend ledger. Migration 143 
 secret is never stored. Migration 144 gives `markets` a stable INTEGER key for its FTS index, and
 migration 145 adds `forecast_answers`; migration 151 rebuilds it (SQLite cannot widen a CHECK in
 place) so typed answers — `choice`, `multi`, `ranking`, `text` — join `probability` and `number`,
-with a `prediction` column holding the typed answer as one string. Do not edit the baseline
+with a `prediction` column holding the typed answer as one string; migration 152 adds the
+append-only `external_submissions` (what was filed to an outside evaluation: batch, variant,
+identity, file hash — one row per file; the scored run joins the benchmark ledger once the batch
+resolves). Do not edit the baseline
 or archived migrations to implement a new feature.
