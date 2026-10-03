@@ -14,6 +14,7 @@ export type {
   SessionInfo,
 } from "./client";
 export { CommandError, MarinaAgent, MarinaClient } from "./client";
+export { codingDesk } from "./coding-desk";
 export type { CommandField, CommandForm, CommandUsage } from "./command-forms";
 export {
   commandFormPrefix,
@@ -28,6 +29,11 @@ export { EXTENSION_API_VERSION } from "./extensions";
 export type { UnifiedContextResult } from "./memory-context";
 export type { DurableMemoryAPI, MemoryOperationRequest } from "./memory-operations";
 export type { ParticipantOrientation } from "./onboarding";
+export * from "./panel-actions";
+export * from "./panel-client";
+export * from "./panel-document";
+export * from "./panel-resources";
+export { panelText } from "./panel-text";
 // Re-export core types
 export type {
   BroadcastPerception,

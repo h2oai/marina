@@ -4,7 +4,7 @@
 /**
  * Where FutureX work lands in Marina's own records:
  *
- *   a submission  → `external_submissions` (migration 150): batch sha, variant,
+ *   a submission  → `external_submissions` (migration 152): batch sha, variant,
  *                   identity, file hash, counts, cost — append-only, one row per file;
  *   a scored run  → the benchmark ledger (`benchmark_runs` + `benchmark_items`),
  *                   like every other benchmark, so `benchmark compare / frontier /

@@ -12,7 +12,7 @@ import {
   Plus,
 } from "lucide-react";
 import { type AnimationPlaybackControlsWithThen, animate, motion } from "motion/react";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useOperationalAlerts } from "../hooks/use-api";
 import { useWorldState } from "../hooks/use-world-state";
 import { prefersReducedMotion } from "../lib/motion-prefs";
@@ -35,6 +35,7 @@ function avg(nums: number[]): number {
 
 // ── Memoized Room Node ────────────────────────────────────────────────
 interface RoomNodeProps {
+  svgPrefix: string;
   room: RoomPosition;
   pop: number;
   isSelected: boolean;
@@ -48,6 +49,7 @@ interface RoomNodeProps {
 }
 
 const RoomNode = React.memo(function RoomNode({
+  svgPrefix,
   room,
   pop,
   isSelected,
@@ -109,7 +111,7 @@ const RoomNode = React.memo(function RoomNode({
           stroke={color}
           strokeWidth={1.5}
           opacity={0.7}
-          filter="url(#glow-sm)"
+          filter={`url(#${svgPrefix}-glow-sm)`}
           transition={{ type: "spring", stiffness: 280, damping: 26 }}
         />
       )}
@@ -182,12 +184,19 @@ const RoomNode = React.memo(function RoomNode({
         stroke={color}
         strokeWidth={isSelected ? 2 : isHub ? 1.5 : 1}
         opacity={isSelected ? 1 : 0.75}
-        filter={pop > 0 || isHub ? "url(#glow-sm)" : undefined}
+        filter={pop > 0 || isHub ? `url(#${svgPrefix}-glow-sm)` : undefined}
       />
 
       {/* Hub inner core glow */}
       {isHub && (
-        <circle cx={room.x} cy={room.y} r={4} fill={color} opacity={0.6} filter="url(#glow-md)">
+        <circle
+          cx={room.x}
+          cy={room.y}
+          r={4}
+          fill={color}
+          opacity={0.6}
+          filter={`url(#${svgPrefix}-glow-md)`}
+        >
           <animate attributeName="opacity" values="0.4;0.8;0.4" dur="3s" repeatCount="indefinite" />
         </circle>
       )}
@@ -220,6 +229,7 @@ const RoomNode = React.memo(function RoomNode({
 
 // ── Memoized Entity Dots ──────────────────────────────────────────────
 interface EntityDotsProps {
+  svgPrefix: string;
   roomId: string;
   entities: { id: string; name: string; kind: string }[];
   pos: RoomPosition;
@@ -228,6 +238,7 @@ interface EntityDotsProps {
 }
 
 const EntityDots = React.memo(function EntityDots({
+  svgPrefix,
   entities,
   pos,
   isHub,
@@ -257,7 +268,7 @@ const EntityDots = React.memo(function EntityDots({
               r={3.5}
               fill={dotColor}
               opacity={0.9}
-              filter="url(#glow-sm)"
+              filter={`url(#${svgPrefix}-glow-sm)`}
               className="cursor-pointer"
             />
             <circle
@@ -296,8 +307,12 @@ export function WorldMap({
   backContent,
   isFocused,
   onToggleFocus,
+  viewTitle,
+  openBelow,
+  onCloseView,
   showTimeline = true,
 }: WorldMapProps) {
+  const svgPrefix = useId();
   const selectedRoom = useWorldState((s) => s.selectedRoom);
   const selectRoom = useWorldState((s) => s.selectRoom);
   const selectEntity = useWorldState((s) => s.selectEntity);
@@ -481,7 +496,7 @@ export function WorldMap({
             const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
             circle.setAttribute("r", "3");
             circle.setAttribute("fill", color);
-            circle.setAttribute("filter", "url(#glow-sm)");
+            circle.setAttribute("filter", `url(#${svgPrefix}-glow-sm)`);
             circle.setAttribute("cx", String(from.x));
             circle.setAttribute("cy", String(from.y));
             trailsRef.current.appendChild(circle);
@@ -515,7 +530,7 @@ export function WorldMap({
       if (state.eventFeed !== prev.eventFeed) processMovement(state.eventFeed);
     });
     return unsub;
-  }, [posMap, allPositions]);
+  }, [posMap, allPositions, svgPrefix]);
 
   // ── 2.3: Room Activity Breathing ──────────────────────────────────
   useEffect(() => {
@@ -812,6 +827,9 @@ export function WorldMap({
       backContent={backContent}
       isFocused={isFocused}
       onToggleFocus={onToggleFocus}
+      viewTitle={viewTitle}
+      openBelow={openBelow}
+      onCloseView={onCloseView}
       headerExtra={
         <button
           type="button"
@@ -845,14 +863,14 @@ export function WorldMap({
           >
             {/* ── Definitions ─────────────────────────────────── */}
             <defs>
-              <filter id="glow-sm" x="-50%" y="-50%" width="200%" height="200%">
+              <filter id={`${svgPrefix}-glow-sm`} x="-50%" y="-50%" width="200%" height="200%">
                 <feGaussianBlur stdDeviation="2" result="b" />
                 <feMerge>
                   <feMergeNode in="b" />
                   <feMergeNode in="SourceGraphic" />
                 </feMerge>
               </filter>
-              <filter id="glow-md" x="-50%" y="-50%" width="200%" height="200%">
+              <filter id={`${svgPrefix}-glow-md`} x="-50%" y="-50%" width="200%" height="200%">
                 <feGaussianBlur stdDeviation="4" result="b" />
                 <feMerge>
                   <feMergeNode in="b" />
@@ -862,7 +880,7 @@ export function WorldMap({
 
               {/* District zone radial gradients */}
               {districtZones.map((z) => (
-                <radialGradient key={`zg-${z.district}`} id={`zg-${z.district}`}>
+                <radialGradient key={`zg-${z.district}`} id={`${svgPrefix}-zg-${z.district}`}>
                   <stop offset="0%" stopColor={z.color} stopOpacity="0.07" />
                   <stop offset="60%" stopColor={z.color} stopOpacity="0.025" />
                   <stop offset="100%" stopColor={z.color} stopOpacity="0" />
@@ -873,7 +891,7 @@ export function WorldMap({
               {crossEdges.map((g) => (
                 <linearGradient
                   key={g.id}
-                  id={g.id}
+                  id={`${svgPrefix}-${g.id}`}
                   x1={g.from.x}
                   y1={g.from.y}
                   x2={g.to.x}
@@ -887,7 +905,7 @@ export function WorldMap({
 
               {/* Arrowhead markers for directional edges */}
               <marker
-                id="arrow-cyan"
+                id={`${svgPrefix}-arrow-cyan`}
                 viewBox="0 0 6 6"
                 refX="5"
                 refY="3"
@@ -898,7 +916,7 @@ export function WorldMap({
                 <path d="M0,0 L6,3 L0,6 Z" fill="var(--color-primary)" opacity="0.6" />
               </marker>
               <marker
-                id="arrow-dim"
+                id={`${svgPrefix}-arrow-dim`}
                 viewBox="0 0 6 6"
                 refX="5"
                 refY="3"
@@ -917,7 +935,7 @@ export function WorldMap({
                 cx={z.cx}
                 cy={z.cy}
                 r={z.radius}
-                fill={`url(#zg-${z.district})`}
+                fill={`url(#${svgPrefix}-zg-${z.district})`}
               />
             ))}
 
@@ -955,7 +973,7 @@ export function WorldMap({
                     r={26 + intensity * 24}
                     fill={getDistrictColor(room.district)}
                     opacity={0.04 + intensity * 0.1}
-                    filter="url(#glow-md)"
+                    filter={`url(#${svgPrefix}-glow-md)`}
                     style={{ pointerEvents: "none" }}
                   />
                 );
@@ -1006,7 +1024,7 @@ export function WorldMap({
                     opacity={0.25}
                     fill="none"
                     strokeDasharray="6 3"
-                    markerEnd={!edge.bidirectional ? "url(#arrow-dim)" : undefined}
+                    markerEnd={!edge.bidirectional ? `url(#${svgPrefix}-arrow-dim)` : undefined}
                   />
                 );
               })}
@@ -1029,7 +1047,7 @@ export function WorldMap({
                     strokeWidth={0.8}
                     opacity={0.15}
                     strokeDasharray="4 4"
-                    markerEnd={!edge.bidirectional ? "url(#arrow-dim)" : undefined}
+                    markerEnd={!edge.bidirectional ? `url(#${svgPrefix}-arrow-dim)` : undefined}
                   />
                 );
               })}
@@ -1042,11 +1060,11 @@ export function WorldMap({
                 y1={g.from.y}
                 x2={g.to.x}
                 y2={g.to.y}
-                stroke={`url(#${g.id})`}
+                stroke={`url(#${svgPrefix}-${g.id})`}
                 strokeWidth={1.5}
                 opacity={0.5}
                 strokeDasharray="8 4"
-                markerEnd={!g.edge.bidirectional ? "url(#arrow-cyan)" : undefined}
+                markerEnd={!g.edge.bidirectional ? `url(#${svgPrefix}-arrow-cyan)` : undefined}
               />
             ))}
 
@@ -1060,8 +1078,13 @@ export function WorldMap({
               const y2 = reverse ? g.from.y : g.to.y;
               const color = reverse ? g.toColor : g.fromColor;
               return (
-                // biome-ignore lint/suspicious/noArrayIndexKey: pulse animation index is the visual identity
-                <circle key={`pulse-${i}`} r={1.8} fill={color} opacity={0} filter="url(#glow-sm)">
+                <circle
+                  key={`pulse-${g.id}`}
+                  r={1.8}
+                  fill={color}
+                  opacity={0}
+                  filter={`url(#${svgPrefix}-glow-sm)`}
+                >
                   <animate
                     attributeName="cx"
                     from={x1}
@@ -1137,6 +1160,7 @@ export function WorldMap({
               const short = roomShorts.get(room.id) ?? room.id.split("/")[1] ?? room.id;
               return (
                 <RoomNode
+                  svgPrefix={svgPrefix}
                   key={room.id}
                   room={room}
                   pop={pop}
@@ -1168,7 +1192,7 @@ export function WorldMap({
                       fill="var(--color-bg-card)"
                       stroke={color}
                       strokeWidth={1.5}
-                      filter="url(#glow-sm)"
+                      filter={`url(#${svgPrefix}-glow-sm)`}
                     >
                       {alert.critical > 0 && (
                         <animate
@@ -1209,6 +1233,7 @@ export function WorldMap({
                 if (!pos) return null;
                 return (
                   <EntityDots
+                    svgPrefix={svgPrefix}
                     key={roomId}
                     roomId={roomId}
                     entities={ents}

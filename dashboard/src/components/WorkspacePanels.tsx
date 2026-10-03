@@ -12,6 +12,7 @@ import {
   type WorkspaceView,
 } from "../hooks/use-workspace-state";
 import { useWorldState } from "../hooks/use-world-state";
+import type { DashboardPanelProps } from "../lib/panel-registry";
 import { AdminPanel } from "./AdminPanel";
 import { WorldMapHeatmap } from "./back-faces/WorldMapHeatmap";
 import { ReferenceContent } from "./CanvasReference";
@@ -24,6 +25,7 @@ import { MemoryContextCard } from "./MemoryContextCard";
 import { MyInventory } from "./MyInventory";
 import { NarrativePlayback } from "./NarrativePlayback";
 import { ParticipantStreams } from "./ParticipantStreams";
+import { PublishedPanelLibrary } from "./PublishedPanelLibrary";
 import { RoomDetail } from "./RoomDetail";
 import { WorkOverview } from "./WorkOverview";
 import { WorldMap } from "./WorldMap";
@@ -37,7 +39,12 @@ const VIEWS: Array<[WorkspaceView, string]> = [
   ["streams", "Streams"],
   ["admin", "Admin"],
 ];
-export function WorkspacePanel(props: PanelFocusProps) {
+export function WorkspacePanel({
+  active = true,
+  binding,
+  onBindingChange,
+  ...props
+}: DashboardPanelProps) {
   const view = useWorkspaceState((s) => s.view);
   const fullscreen = useWorkspaceState((s) => s.fullscreen);
   const origin = useWorkspaceState((s) => s.canvasOrigin);
@@ -52,6 +59,7 @@ export function WorkspacePanel(props: PanelFocusProps) {
       headerExtra={
         view === "canvas" && (
           <div className="flex gap-3">
+            <PublishedPanelLibrary />
             {origin && (
               <button type="button" className="text-xs text-primary" onClick={returnFromCanvas}>
                 ← Back to {origin.view}
@@ -147,7 +155,13 @@ export function WorkspacePanel(props: PanelFocusProps) {
                 <ConversationInsights />
               </div>
             )}
-            {id === "streams" && <ParticipantStreams active={view === "streams"} />}
+            {id === "streams" && (
+              <ParticipantStreams
+                active={active && view === "streams"}
+                targetId={binding?.kind === "participant" ? binding.id : undefined}
+                onTargetChange={(id) => onBindingChange?.(id ? { kind: "participant", id } : null)}
+              />
+            )}
             {id === "admin" && <AdminPanel />}
           </div>
         ))}

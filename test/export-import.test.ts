@@ -6,7 +6,15 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { resumeActionForRunState } from "../src/agent/run-state-resume";
 import { MarinaDB, MIGRATIONS } from "../src/persistence/database";
+import { getRunState, putRunState, type RunState } from "../src/persistence/db-run-state";
+import {
+  beginSubmission,
+  getSubmission,
+  listPendingSubmissions,
+  settleSubmission,
+} from "../src/persistence/db-submissions";
 import {
   EXPORT_TABLES,
   exportState,
@@ -1039,6 +1047,65 @@ describe("Export/Import", () => {
   });
 
   // ─── Coverage / drift guard ────────────────────────────────────────
+
+  it("preserves pending effects and submission retry receipts across restore", () => {
+    const states: RunState[] = ["safe", "never"].map((replay) => ({
+      agentName: replay === "safe" ? "Reader" : "Writer",
+      phase: "tool_call",
+      toolCallId: `call-${replay}`,
+      toolName: replay === "safe" ? "marina_look" : "marina_say",
+      argsJson: JSON.stringify({ text: "original arguments" }),
+      replay: replay as RunState["replay"],
+      partialOutputJson: JSON.stringify(["partial result"]),
+      updatedAt: 1000,
+    }));
+    const raw = new Database(SRC_DB);
+    try {
+      for (const state of states) putRunState(raw, state);
+      beginSubmission(raw, "pending", "command", 1000);
+      beginSubmission(raw, "resolved", "command", 1001);
+      settleSubmission(raw, "resolved", '{"ok":true}', 1002);
+    } finally {
+      raw.close();
+    }
+    const snapshot = exportState(SRC_DB);
+    expect(snapshot.tables.run_state).toHaveLength(2);
+    expect(snapshot.tables.submission_requests).toHaveLength(2);
+    const destination = new MarinaDB(DST_DB);
+    destination.close();
+    expect(importState(DST_DB, snapshot).errors).toEqual([]);
+    const restored = new Database(DST_DB);
+    try {
+      for (const state of states) expect(getRunState(restored, state.agentName)).toEqual(state);
+      expect(resumeActionForRunState(getRunState(restored, "Reader"))).toEqual({ kind: "rerun" });
+      expect(resumeActionForRunState(getRunState(restored, "Writer"))).toEqual({
+        kind: "report_interrupted",
+      });
+      expect(listPendingSubmissions(restored)).toEqual([
+        {
+          requestId: "pending",
+          kind: "command",
+          status: "pending",
+          resultJson: null,
+          createdAt: 1000,
+          settledAt: null,
+        },
+      ]);
+      for (const id of ["pending", "resolved"])
+        expect(beginSubmission(restored, id, "command", 2000).started).toBe(false);
+      expect(settleSubmission(restored, "resolved", '{"ok":false}', 2001)).toBe(false);
+      expect(getSubmission(restored, "resolved")).toEqual({
+        requestId: "resolved",
+        kind: "command",
+        status: "resolved",
+        resultJson: '{"ok":true}',
+        createdAt: 1001,
+        settledAt: 1002,
+      });
+    } finally {
+      restored.close();
+    }
+  });
 
   describe("table coverage", () => {
     it("every persistent table is either in EXPORT_TABLES or explicitly excluded", () => {

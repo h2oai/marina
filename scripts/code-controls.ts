@@ -13,13 +13,18 @@ export const TERMINAL_CONTROLS = [
   { name: "/help", usage: "/help", help: "Show terminal controls and keyboard shortcuts" },
   {
     name: "/view",
-    usage: "/view coding|world|approvals|older|newer",
+    usage: "/view coding|world|approvals|panel|older|newer",
     help: "Switch conversation or read local history",
   },
   {
     name: "/task",
     usage: "/task <request>",
     help: "Work toward candidate verification before review",
+  },
+  {
+    name: "/panel",
+    usage: "/panel desk|list|open|refresh|field|act|confirm|close",
+    help: "Inspect and use published panels beside coding and world conversations",
   },
   ...WORKFLOW_CONTROLS,
   { name: "/agents", usage: "/agents", help: "Show agents, status and workspace" },
@@ -66,10 +71,15 @@ ${terminalControls(connected)
 /verify candidate dependencies:bun      Explicitly prepare locked Bun dependencies in the snapshot
 /harness save <name>                    Remember this harness for future launches here
 /harness use <name-or-path>              Load a saved or explicitly supplied JSON harness
-F6 switches coding/world; F7 opens pending requests. Switching preserves each draft.
+/panel list                             List canvases; /panel list <canvas> lists publications
+/panel desk <canvas> [session]           Publish/open a desk (defaults to selected Marina session)
+/panel open <canvas> <node>              Open an existing publication; /panel close closes only its view
+F6 switches coding/world; F7 opens pending requests; F8 focuses the published panel. Switching preserves each draft.
 Tab completes terminal commands. Ctrl+C interrupts active work; again exits.
 Workspace (--tui): type / for suggestions. Tab or Enter inserts; another Enter sends.
 F1 opens this help; PageUp/PageDown scroll; Alt+Up/Down reads older/newer retained pages.
+In the panel, Tab/Shift+Tab selects controls; type to edit; Space toggles a checkbox.
+Enter on a button opens review, initially on Cancel. Select Confirm to submit; Escape cancels.
 Ctrl+D exits an empty composer. Omit --tui for ordinary terminal scrollback.
 Use /world during a launch or approval prompt to keep participating; the approval stays pending.
 ${connected ? "" : "Native agents retain their own tools and permission rules. Additional worktrees start at committed HEAD."}`;

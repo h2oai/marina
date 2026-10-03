@@ -1,9 +1,9 @@
-import { useWorkspacePanels } from "./components/workspace-panels-registry";
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import {
+  getBreakpointFromWidth,
   type Layout,
   ResponsiveGridLayout,
   type ResponsiveLayouts,
@@ -25,6 +25,7 @@ import {
   RecentActivity,
   ShortcutHelp,
 } from "./components/OperatorFeedback";
+import { useWorkspacePanels } from "./components/workspace-panels-registry";
 import { useSystem, useWorld } from "./hooks/use-api";
 import { useChatState } from "./hooks/use-chat-state";
 import { useDashboardNavigation } from "./hooks/use-dashboard-navigation";
@@ -37,10 +38,27 @@ import {
   type WorkspacePane,
 } from "./hooks/use-workspace-state";
 import { isEditing } from "./lib/command-discovery";
+import {
+  boundPanel,
+  type PanelBinding,
+  type PanelBindings,
+  parsePanelBinding,
+} from "./lib/panel-bindings";
+import { dashboardPanels } from "./lib/panel-registry";
 import { BUILTIN_PRESETS, WORKSPACE_LAYOUTS } from "./lib/workspace-layouts";
+import {
+  closePanelInstance,
+  MAX_EXTRA_PANELS,
+  openPanelBelow,
+  panelInstance,
+  panelInstanceIds,
+} from "./lib/workspace-panel-instances";
 
 type Bp = "lg" | "md";
 const PANES: WorkspacePane[] = ["webchat", "workspace", "context"];
+const CanvasWorkspace = lazy(() =>
+  import("./components/workspace-canvas").then((module) => ({ default: module.WorkspaceCanvas })),
+);
 
 export default function App() {
   const { connected } = useDashboardWebSocket();
@@ -56,13 +74,37 @@ export default function App() {
   const [layouts, setLayouts] = useState<ResponsiveLayouts<Bp>>(
     () => preset.presets.find((p) => p.id === preset.activeId)?.layouts ?? WORKSPACE_LAYOUTS,
   );
+  const resident = useChatState((s) => (s.loggedIn ? s.entityName : null));
+  const [bindings, setBindings] = useState<PanelBindings>(
+    () => preset.presets.find((p) => p.id === preset.activeId)?.bindings ?? {},
+  );
+  const [panelNotice, setPanelNotice] = useState("");
   const [focused, setFocused] = useState<string | null>(null);
+  // Opt-in renderer qualification; the standard layout and saved presets remain compatible.
+  const [canvasPreview] = useState(
+    () => new URLSearchParams(window.location.search).get("surface") === "canvas",
+  );
   const [height, setHeight] = useState(650);
   const pane = useWorkspaceState((s) => s.pane);
   const fullscreen = useWorkspaceState((s) => s.fullscreen);
   const view = useWorkspaceState((s) => s.view);
   const legacy = !(layouts.lg ?? layouts.md ?? []).some((item) => item.i === "workspace");
+  const instanceIds = panelInstanceIds(layouts).slice(0, MAX_EXTRA_PANELS);
+  const columns = legacy ? { lg: 12, md: 10 } : { lg: 20, md: 20 };
   const panelRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const pendingPanelFocus = useRef<string | null>(null);
+  const assignPanelRef = useCallback((id: string, element: HTMLDivElement | null) => {
+    panelRefs.current[id] = element;
+    if (!element || pendingPanelFocus.current !== id) return;
+    pendingPanelFocus.current = null;
+    requestAnimationFrame(() => {
+      if (!element.isConnected) return;
+      element.scrollIntoView({ block: "nearest", inline: "nearest" });
+      element
+        .querySelector<HTMLElement>("button, input, [tabindex='0']")
+        ?.focus({ preventScroll: true });
+    });
+  }, []);
   const initialPreset = useRef(preset.presets.find((p) => p.id === preset.activeId));
   useEffect(() => {
     if (
@@ -83,7 +125,7 @@ export default function App() {
 
   const focus = useCallback((key: string) => {
     setFocused((current) => (current === key ? null : key));
-    if (PANES.includes(key as WorkspacePane))
+    if (PANES.includes(key as WorkspacePane) || panelInstance(key))
       useWorkspaceState.setState({ pane: key as WorkspacePane });
   }, []);
   const openView = useCallback(
@@ -100,7 +142,9 @@ export default function App() {
   useDashboardNavigation(openView, setDrawer, setMemoryDestination);
 
   useEffect(() => {
-    const keys = legacy ? (layouts.lg ?? []).map((l) => l.i) : PANES;
+    const keys = legacy
+      ? (layouts.lg ?? []).map((l) => l.i)
+      : [...PANES, ...panelInstanceIds(layouts).slice(0, MAX_EXTRA_PANELS)];
     const selectPane = (key: string) => {
       useWorkspaceState.setState({ pane: key as WorkspacePane });
       requestAnimationFrame(() =>
@@ -149,6 +193,7 @@ export default function App() {
     setLayouts(next);
     setFocused(null);
     const selected = preset.presets.find((p) => p.id === id);
+    setBindings(selected?.bindings ?? {});
     useWorkspaceState.setState({ fullscreen: false });
     useWorkspaceState.getState().setView(selected?.view ?? "work");
     const url = new URL(window.location.href);
@@ -161,7 +206,50 @@ export default function App() {
     setLayouts(all);
     preset.updateActiveLayouts(all);
   };
-  const columns = legacy ? { lg: 12, md: 10 } : { lg: 20, md: 20 };
+  const openViewBelow = (sourceId: string, panelId: string, target?: PanelBinding | null) => {
+    const next = openPanelBelow(layouts, sourceId, panelId, columns);
+    if (!next) {
+      setPanelNotice("Close an extra view before opening another panel.");
+      return;
+    }
+    setPanelNotice("");
+    const copiedTarget = target ?? boundPanel(bindings, sourceId, resident);
+    const nextBindings = { ...bindings };
+    if (copiedTarget) nextBindings[next.id] = { resident, target: copiedTarget };
+    setBindings(nextBindings);
+    pendingPanelFocus.current = next.id;
+    setLayouts(next.layouts);
+    preset.updateActiveLayouts(next.layouts, nextBindings);
+    setFocused(null);
+    useWorkspaceState.setState({ pane: next.id, fullscreen: false });
+  };
+  const closeView = (id: string) => {
+    const next = closePanelInstance(layouts, id, columns);
+    const destination = legacy ? "worldmap" : "workspace";
+    pendingPanelFocus.current = destination;
+    const nextBindings = { ...bindings };
+    delete nextBindings[id];
+    setBindings(nextBindings);
+    setLayouts(next);
+    preset.updateActiveLayouts(next, nextBindings);
+    if (focused === id) setFocused(null);
+    useWorkspaceState.setState({ pane: destination as WorkspacePane });
+  };
+  const openBoundRef = useRef(openViewBelow);
+  openBoundRef.current = openViewBelow;
+  useEffect(() => {
+    const open = (event: Event) => {
+      const target = parsePanelBinding((event as CustomEvent).detail);
+      if (target)
+        openBoundRef.current(
+          legacy ? "worldmap" : "workspace",
+          target.kind === "canvas-node" ? "published" : "streams",
+          target,
+        );
+    };
+    window.addEventListener("marina:open-panel", open);
+    return () => window.removeEventListener("marina:open-panel", open);
+  }, [legacy]);
   const effectiveLayouts = focused
     ? Object.fromEntries(
         (["lg", "md"] as const).map((bp) => {
@@ -185,15 +273,50 @@ export default function App() {
         }),
       )
     : layouts;
-  const rows = Math.max(
-    12,
-    ...(effectiveLayouts[width >= 1200 ? "lg" : "md"] ?? []).map((l) => l.y + l.h),
-  );
-  const panelProps = (key: string) => ({
-    isFocused: focused === key,
-    onToggleFocus: () => focus(key),
-  });
-  const panels = useWorkspacePanels(legacy, panelProps, worldData);
+  const rows =
+    instanceIds.length && !focused
+      ? 12
+      : Math.max(
+          12,
+          ...(effectiveLayouts[width >= 1200 ? "lg" : "md"] ?? []).map((l) => l.y + l.h),
+        );
+  const panelProps = (key: string) => {
+    const repeatable = dashboardPanels
+      .getSnapshot()
+      .find(
+        (definition) =>
+          definition.slot === "grid" &&
+          definition.repeatable &&
+          (key === "workspace"
+            ? definition.id !== "published" && definition.repeatable.fromView === view
+            : definition.id === (panelInstance(key)?.panelId ?? key)),
+      );
+    return {
+      binding: boundPanel(bindings, key, resident),
+      onBindingChange: (target: PanelBinding | null) => {
+        const next = { ...bindings };
+        if (target) next[key] = { resident, target };
+        else delete next[key];
+        setBindings(next);
+        preset.updateActiveLayouts(layouts, next);
+      },
+      isFocused: focused === key,
+      onToggleFocus: () => focus(key),
+      active: fullscreen ? key === "workspace" : width >= 800 || pane === key,
+      openBelow:
+        canvasPreview && repeatable
+          ? {
+              label: repeatable.repeatable!.actionLabel,
+              run: () => openViewBelow(key, repeatable.id),
+              disabled: instanceIds.length >= MAX_EXTRA_PANELS,
+            }
+          : undefined,
+      onCloseView: panelInstance(key) ? () => closeView(key) : undefined,
+    };
+  };
+  const panels = useWorkspacePanels(legacy, panelProps, worldData, instanceIds);
+  const breakpoint = getBreakpointFromWidth<Bp>({ lg: 1200, md: 0 }, width);
+  const rowHeight = Math.max(20, (height - (rows + 1) * 4) / rows);
 
   return (
     <div
@@ -211,7 +334,7 @@ export default function App() {
         onSelectLayoutPreset={selectPreset}
         onSaveLayoutPreset={() => {
           const name = window.prompt("Name this workspace layout", "New workspace");
-          if (name?.trim()) preset.savePreset(name, layouts, view);
+          if (name?.trim()) preset.savePreset(name, layouts, view, bindings);
         }}
         onRenameLayoutPreset={(id) => {
           const name = window.prompt(
@@ -238,6 +361,11 @@ export default function App() {
       />
       <ConnectionBanner connected={connected} />
       <ApiFeedback />
+      {panelNotice && (
+        <p role="status" className="text-sm">
+          {panelNotice}
+        </p>
+      )}
       <EntityPreviewTooltip />
       <RecentActivity onOpen={() => setDrawer("pulse")} />
       {searchOpen && <DiscoveryPalette onClose={() => setSearchOpen(false)} />}
@@ -270,16 +398,20 @@ export default function App() {
         onOpenKeys={() => window.dispatchEvent(new CustomEvent("marina:open-keys"))}
       />
       {!legacy && (
-        <nav aria-label="Dashboard panes" className="mobile-pane-tabs gap-1">
-          {PANES.map((key, i) => (
+        <nav
+          aria-label="Dashboard panes"
+          className="mobile-pane-tabs shrink-0 overflow-x-auto gap-1"
+        >
+          {[...PANES, ...instanceIds].map((key, i) => (
             <button
               type="button"
               key={key}
               aria-pressed={pane === key}
               onClick={() => useWorkspaceState.setState({ pane: key })}
-              className={`flex-1 rounded px-3 py-2 text-sm ${pane === key ? "bg-primary/15 text-primary" : "text-text-dim"}`}
+              className={`shrink-0 grow whitespace-nowrap rounded px-3 py-2 text-sm ${pane === key ? "bg-primary/15 text-primary" : "text-text-dim"}`}
             >
-              {["Chat", "Workspace", "Context"][i]}
+              {["Chat", "Workspace", "Context"][i] ??
+                `${dashboardPanels.getSnapshot().find((definition) => definition.id === panelInstance(key)?.panelId)?.title ?? "View"} ${panelInstance(key)?.number}`}
             </button>
           ))}
         </nav>
@@ -288,37 +420,59 @@ export default function App() {
         ref={containerRef}
         className={`dashboard-grid min-h-0 min-w-0 flex-1 overflow-auto ${legacy ? "legacy-grid" : "workspace-grid"}`}
       >
-        {mounted && (
-          <ResponsiveGridLayout
-            width={width}
-            layouts={effectiveLayouts}
-            breakpoints={{ lg: 1200, md: 0 }}
-            cols={columns}
-            rowHeight={Math.max(20, (height - (rows + 1) * 4) / rows)}
-            margin={[4, 4]}
-            autoSize={false}
-            dragConfig={{
-              enabled: width >= 800 && !fullscreen,
-              handle: ".drag-handle",
-              cancel: "button, input, select, textarea, a",
-            }}
-            resizeConfig={{ enabled: width >= 800 && !fullscreen, handles: ["se"] }}
-            compactor={verticalCompactor}
-            onLayoutChange={handleLayoutChange}
-          >
-            {panels.map(([key, content]) => (
-              <div
-                key={key}
-                data-pane-key={key}
-                ref={(el) => {
-                  panelRefs.current[key] = el;
-                }}
-                className={focused === key ? "panel-focused" : undefined}
-              >
-                {content}
-              </div>
-            ))}
-          </ResponsiveGridLayout>
+        {mounted && canvasPreview ? (
+          <Suspense fallback={<p role="status">Loading workspace…</p>}>
+            <CanvasWorkspace
+              panels={panels}
+              layout={effectiveLayouts[breakpoint] ?? effectiveLayouts.lg ?? []}
+              width={width}
+              height={height}
+              cols={columns[breakpoint]}
+              rowHeight={rowHeight}
+              focused={focused}
+              visiblePane={
+                legacy ? undefined : fullscreen ? "workspace" : width < 800 ? pane : undefined
+              }
+              editable={width >= 800 && !fullscreen && !focused}
+              panelRef={assignPanelRef}
+              onLayoutChange={(layout) =>
+                handleLayoutChange(layout, { ...layouts, [breakpoint]: layout })
+              }
+            />
+          </Suspense>
+        ) : (
+          mounted && (
+            <ResponsiveGridLayout
+              width={width}
+              layouts={effectiveLayouts}
+              breakpoints={{ lg: 1200, md: 0 }}
+              cols={columns}
+              rowHeight={rowHeight}
+              margin={[4, 4]}
+              autoSize={false}
+              dragConfig={{
+                enabled: width >= 800 && !fullscreen,
+                handle: ".drag-handle",
+                cancel: "button, input, select, textarea, a",
+              }}
+              resizeConfig={{ enabled: width >= 800 && !fullscreen, handles: ["se"] }}
+              compactor={verticalCompactor}
+              onLayoutChange={handleLayoutChange}
+            >
+              {panels.map(([key, content]) => (
+                <div
+                  key={key}
+                  data-pane-key={key}
+                  ref={(el) => {
+                    assignPanelRef(key, el);
+                  }}
+                  className={`${focused === key ? "panel-focused" : ""} ${pane === key ? "pane-active" : ""}`}
+                >
+                  {content}
+                </div>
+              ))}
+            </ResponsiveGridLayout>
+          )
         )}
       </div>
     </div>

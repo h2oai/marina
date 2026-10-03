@@ -270,6 +270,7 @@ export function registerCoordinationCommands(engine: Engine): void {
           tryLog(engine.logger, "decisions", "Judge observation not recorded", () => {
             engine.db?.recordJudgeObservation(row);
           }),
+        (work) => engine.trackBackground(work),
       ),
     );
   }

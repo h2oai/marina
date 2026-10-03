@@ -91,6 +91,25 @@ Both emit latency percentiles and fail on correctness violations. These are repr
 local qualifications, not universal throughput or power-loss guarantees. Measure on
 representative storage and corpus sizes before choosing production concurrency.
 
+## Published panel freshness and actions
+
+Published panels reuse the dashboard and Canvas WebSockets plus existing authorized resource reads.
+If a Coding desk or participant resource appears stale, check that the resident is signed in, the
+socket has reconnected with that credential, and the corresponding resource request succeeds.
+Content-free change notices trigger rereads; reconnect also refreshes the snapshot. Visible views
+have a five-second polling fallback. Hidden views suspend reads until reopened, so lack of hidden
+polling is expected. Repeated dashboard views share reads while retaining separate drafts.
+
+Access failures hide cached private content and show an error. Fix the credential or source access;
+opening a public panel does not authorize private resources. A missing or deleted publication is not
+an empty successful result. Browser layout presets restore targets and geometry, not unsent drafts.
+
+Operational buttons show a review before submission. After a command timeout or lost response,
+inspect canonical activity before sending again: a started command may have committed. Participant
+message retries preserve the captured delivery ID and payload; a delivery receipt is not proof of
+completed work. Closing a panel only closes its view. See [Published panels](published-panels.md)
+for authoring limits and [Participant routing](participant-routing.md) for delivery semantics.
+
 ## SQLite pressure and WAL
 
 Marina uses one writer connection and one read-only connection per `MarinaDB`.

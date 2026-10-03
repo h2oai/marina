@@ -62,6 +62,7 @@ import * as mutationsDb from "./db-mutations";
 import * as notesDb from "./db-notes";
 import * as principalsDb from "./db-principals";
 import * as reproductionDb from "./db-reproduction";
+import { type ResourceChange, subscribeResourceChanges } from "./db-resource-changes";
 import * as roomsDb from "./db-rooms";
 import * as routingDb from "./db-routing";
 import * as shellDb from "./db-shell";
@@ -357,6 +358,7 @@ export class MarinaDB implements MarinaStores {
   }
   private db: Database;
   private reader: Database;
+  private readonly closeHooks = new DisposableStack();
 
   readonly durability: "normal" | "full";
 
@@ -3907,17 +3909,33 @@ export class MarinaDB implements MarinaStores {
     return maintenanceDb.snapshotCompacted(this.db, targetPath, opts);
   }
 
+  /** Release synchronous bindings to this database before its handles close.
+   * Asynchronous writers must still be drained by their owner first. */
+  onClose(release: () => void): void {
+    this.closeHooks.defer(release);
+  }
+
+  onResourceChange(listener: (change: ResourceChange) => void): () => void {
+    const release = subscribeResourceChanges(this.db, listener);
+    this.onClose(release);
+    return release;
+  }
+
   close(): void {
     try {
-      if (this.reader !== this.db) this.reader.close();
-    } catch {
-      /* already closed */
-    }
-    try {
-      this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-      this.db.close();
-    } catch {
-      /* already closed */
+      this.closeHooks.dispose();
+    } finally {
+      try {
+        if (this.reader !== this.db) this.reader.close();
+      } catch {
+        /* already closed */
+      }
+      try {
+        this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+        this.db.close();
+      } catch {
+        /* already closed */
+      }
     }
   }
   // External routing participants (durable account ids; independent of world sessions).

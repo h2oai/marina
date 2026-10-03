@@ -62,7 +62,7 @@ export interface BenchmarksStore {
   listBenchmarkPromotions(slot: string): BenchmarkPromotionRow[];
   /** Append a history row; `seeded`/`promoted` also moves the slot's incumbent. */
   recordBenchmarkPromotion(row: BenchmarkPromotionInput): number;
-  /** Append a submission to an outside evaluation (migration 150); one row per file hash. */
+  /** Append a submission to an outside evaluation (migration 152); one row per file hash. */
   recordExternalSubmission(row: ExternalSubmissionInput): { id: number; created: boolean };
   listExternalSubmissions(benchmark: string, limit?: number): ExternalSubmissionRow[];
   traceNoteGraph(

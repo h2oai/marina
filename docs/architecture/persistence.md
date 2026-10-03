@@ -193,9 +193,9 @@ capability across to the `world.lineage` / `world.code` gates, migration 141 add
 so image/video generation (`media`) joins the daily spend ledger. Migration 143 rewrites
 `mem_api_keys.secret` as a `sha256:<hex>` digest; keys are looked up by digest and the raw
 secret is never stored. Migration 144 gives `markets` a stable INTEGER key for its FTS index, and
-migration 145 adds `forecast_answers`; migration 149 rebuilds it (SQLite cannot widen a CHECK in
+migration 145 adds `forecast_answers`; migration 151 rebuilds it (SQLite cannot widen a CHECK in
 place) so typed answers — `choice`, `multi`, `ranking`, `text` — join `probability` and `number`,
-with a `prediction` column holding the typed answer as one string; migration 150 adds the
+with a `prediction` column holding the typed answer as one string; migration 152 adds the
 append-only `external_submissions` (what was filed to an outside evaluation: batch, variant,
 identity, file hash — one row per file; the scored run joins the benchmark ledger once the batch
 resolves). Do not edit the baseline

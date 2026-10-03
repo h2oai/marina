@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ResponsiveLayouts } from "react-grid-layout";
 
+import type { PanelBindings } from "../lib/panel-bindings";
 import type { WorkspaceView } from "./use-workspace-state";
 
 type Bp = "lg" | "md";
@@ -17,6 +18,7 @@ export interface LayoutPreset {
   locked?: boolean;
   version?: number;
   view?: WorkspaceView;
+  bindings?: PanelBindings;
 }
 
 interface StoredState {
@@ -144,13 +146,19 @@ export function useLayoutPresets(defaultLayouts: ResponsiveLayouts<Bp>, builtins
   );
 
   const savePreset = useCallback(
-    (name: string, layouts: ResponsiveLayouts<Bp>, view?: WorkspaceView) => {
+    (
+      name: string,
+      layouts: ResponsiveLayouts<Bp>,
+      view?: WorkspaceView,
+      bindings?: PanelBindings,
+    ) => {
       const now = Date.now();
       const preset: LayoutPreset = {
         id: createId(),
         name: name.trim() || `Workspace ${new Date(now).toLocaleTimeString()}`,
         layouts,
         view,
+        bindings,
         createdAt: now,
         updatedAt: now,
       };
@@ -185,19 +193,35 @@ export function useLayoutPresets(defaultLayouts: ResponsiveLayouts<Bp>, builtins
     });
   }, []);
 
-  const updateActiveLayouts = useCallback((layouts: ResponsiveLayouts<Bp>) => {
-    setState((prev) => {
-      const active = prev.presets.find((p) => p.id === prev.activeId);
-      if (!active || active.locked || JSON.stringify(active.layouts) === JSON.stringify(layouts))
-        return prev;
-      return {
-        ...prev,
-        presets: prev.presets.map((p) =>
-          p.id === prev.activeId ? { ...p, layouts, updatedAt: Date.now() } : p,
-        ),
-      };
-    });
-  }, []);
+  const updateActiveLayouts = useCallback(
+    (layouts: ResponsiveLayouts<Bp>, bindings?: PanelBindings) => {
+      setState((prev) => {
+        const active = prev.presets.find((p) => p.id === prev.activeId);
+        if (
+          !active ||
+          active.locked ||
+          (JSON.stringify(active.layouts) === JSON.stringify(layouts) &&
+            (bindings === undefined ||
+              JSON.stringify(active.bindings) === JSON.stringify(bindings)))
+        )
+          return prev;
+        return {
+          ...prev,
+          presets: prev.presets.map((p) =>
+            p.id === prev.activeId
+              ? {
+                  ...p,
+                  layouts,
+                  ...(bindings !== undefined ? { bindings } : {}),
+                  updatedAt: Date.now(),
+                }
+              : p,
+          ),
+        };
+      });
+    },
+    [],
+  );
 
   return {
     presets,

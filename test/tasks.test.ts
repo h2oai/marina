@@ -2,22 +2,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { Engine } from "../src/engine/engine";
-import { MarinaDB } from "../src/persistence/database";
+import type { Engine } from "../src/engine/engine";
 import { roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
-
-const TEST_DB = "test_tasks.db";
+import { createTestEngine } from "./engine-fixture";
+import { MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 describe("Tasks", () => {
-  let db: MarinaDB;
+  let fixture: ReturnType<typeof createTestEngine>;
+  let processState: DisposableStack;
   let engine: Engine;
   let conn1: MockConnection;
   let conn2: MockConnection;
 
   beforeEach(() => {
-    db = new MarinaDB(TEST_DB);
-    engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
+    processState = scopeProcessState({ env: { MARINA_DECISION_VERIFY: "off" } });
+    fixture = createTestEngine();
+    engine = fixture.engine;
     engine.registerRoom(roomId("test/start"), makeTestRoom({ short: "Start" }));
 
     conn1 = new MockConnection("c1");
@@ -30,9 +31,12 @@ describe("Tasks", () => {
     conn2.clear();
   });
 
-  afterEach(() => {
-    db.close();
-    cleanupDb(TEST_DB);
+  afterEach(async () => {
+    try {
+      await fixture.dispose();
+    } finally {
+      processState.dispose();
+    }
   });
 
   it("should create a task", () => {

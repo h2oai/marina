@@ -528,7 +528,10 @@ Usage:
   code exit                   Leave Code Mode
 
 In Code Mode, omit the "code" prefix: start, files, read <path>, run test, exit.
-This first cut is local-CWD only and path-confined. Writes happen only by applying a stored patch.`;
+The selected workspace and execution backend govern file access and execution. Requested sandbox execution never falls back silently to the host.
+For a shared view, use Workspace → Canvas → Published panels → Create coding desk with an existing session.
+The coding terminal offers /panel desk <canvas-id> [session-id] and F8. These are local terminal controls, not world commands.
+Desk actions require review and retain server permissions. Closing a desk leaves its worker running.`;
 
 export function handleProfile(
   ctx: RoomContext,

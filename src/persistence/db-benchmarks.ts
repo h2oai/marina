@@ -415,7 +415,7 @@ export function recordBenchmarkPromotion(db: Database, row: BenchmarkPromotionIn
   })();
 }
 
-// ─── External submissions (migration 150) ──────────────────────────────────
+// ─── External submissions (migration 152) ──────────────────────────────────
 
 export interface ExternalSubmissionInput {
   benchmark: string;

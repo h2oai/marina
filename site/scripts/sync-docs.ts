@@ -4,13 +4,14 @@
 /**
  * Sync the repo's user guides into Starlight's content collection at build
  * time. Keeps docs/guides/ as the single source of truth — the generated
- * copies under src/content/docs/guides/ are gitignored.
+ * copies under src/content/docs/docs/guides/ are gitignored.
  *
  * For each guide: derive the Starlight `title` from the first H1, strip that
  * H1 (Starlight renders the title), and write the rest with frontmatter.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { rewriteGuideLinks } from "./guide-links";
 
 const REPO = join(import.meta.dir, "..", "..");
 const SRC = join(REPO, "docs", "guides");
@@ -37,29 +38,18 @@ function yamlEscape(s: string): string {
   return s.replace(/"/g, '\\"');
 }
 
-/**
- * Rewrite same-directory `guide.md` links to the routes Starlight serves.
- * In the repo, guides link to each other as `[Memory](memory.md)` — correct
- * on GitHub, but a 404 on the site where pages live at /docs/guides/<slug>/.
- * From a page directory, the sibling guide is `../<slug>/`. Anchors survive.
- * Absolute URLs, root-relative paths, and bare anchors are left untouched.
- */
-function rewriteGuideLinks(md: string): string {
-  return md.replace(/\]\(([A-Za-z0-9_-]+)\.md(#[^)]*)?\)/g, "](../$1/$2)");
-}
-
 if (existsSync(DEST)) rmSync(DEST, { recursive: true, force: true });
 mkdirSync(DEST, { recursive: true });
 
+const guides = new Set(readdirSync(SRC).filter((file) => file.endsWith(".md") && !SKIP.has(file)));
 let count = 0;
-for (const file of readdirSync(SRC)) {
-  if (!file.endsWith(".md") || SKIP.has(file)) continue;
+for (const file of guides) {
   const raw = readFileSync(join(SRC, file), "utf8");
   const slug = file.replace(/\.md$/, "");
   const { title, body } = titleFromMarkdown(raw, slug);
-  const out = `---\ntitle: "${yamlEscape(title)}"\n---\n\n${rewriteGuideLinks(body)}`;
+  const out = `---\ntitle: "${yamlEscape(title)}"\n---\n\n${rewriteGuideLinks(body, guides)}`;
   writeFileSync(join(DEST, file), out, "utf8");
   count++;
 }
 
-console.log(`[sync-docs] wrote ${count} guides → src/content/docs/guides/`);
+console.log(`[sync-docs] wrote ${count} guides → src/content/docs/docs/guides/`);

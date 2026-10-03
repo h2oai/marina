@@ -72,6 +72,28 @@ reply:<node-id>` command after explicit Send; `canvas post` resolves both ids an
 The editor cancels obsolete snapshot requests, retains viewport state, surfaces failed writes,
 and keeps property drafts when saving fails.
 
+## Published resource panels
+
+`src/sdk/panel-document.ts` validates declarative A2UI documents; `panel-resources.ts` and
+`panel-actions.ts` define typed references and reviewed operations. `coding-desk.ts` is a factory
+for that same document format, not another workspace or agent store. `src/net/canvas-panel-api.ts`
+resolves sources and actions through existing authorization and command admission. Optional
+`codingTarget` addresses a session without changing the resident's selected session.
+
+The dashboard's `PublishedPanelLibrary`, `CodingDeskPublisher`, `PublishedPanel` and
+`InteractivePanel` reuse the Canvas node and workspace instance machinery. `use-panel-source.ts`
+keys shared resource reads by identity, credential and source; `use-panel-realtime.ts` coalesces
+content-free invalidations from the existing dashboard transport. Canonical coding and routing DB
+writes emit `resource_changed` hints through `db-resource-changes.ts`. Hints never carry private
+resource contents. Reconnect rereads snapshots; active views poll at five seconds as a fallback.
+Hidden views suspend reads, and access failures hide cached private content.
+
+Each mounted view owns its fields and review state. Presets store targets and geometry, not drafts.
+The terminal uses `MarinaPanelClient`, `CodePanels` and `CodePanelForm` over the same APIs; it presents
+bounded semantic resource text and explicit reviews. Closing either view does not change worker
+lifecycle. The [published-panel guide](../guides/published-panels.md) is the canonical schema,
+limits, authoring and user workflow reference.
+
 ## Canvas intent system
 - **Intents**: work requests attached to canvas nodes — humans set them (double-click node in dashboard), agents discover and fulfill
 - **Lifecycle**: pending → active (claimed) → done/failed. An active claim older than 5 min (`CANVAS_INTENT_CLAIM_TIMEOUT_MS`) is listed as pending and may be claimed by another worker; `listCanvasIntents` is a pure read (status filter + limit in SQL), and the takeover is written by `claimCanvasIntent`

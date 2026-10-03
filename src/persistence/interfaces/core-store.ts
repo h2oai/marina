@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ResourceChange } from "../db-resource-changes";
 import type { ExactKeys } from "./exact-keys";
 
 /** Facade-owned primitives: durable identity key, transactions, checkpoint and close. */
@@ -12,6 +13,8 @@ export interface CoreStore {
   /** Checkpoint WAL file to reduce its size */
   checkpoint(): void;
   close(): void;
+  onClose(release: () => void): void;
+  onResourceChange(listener: (change: ResourceChange) => void): () => void;
 }
 
 /** Runtime mirror of `CoreStore`'s method names — the drift test compares it to the facade. */
@@ -21,6 +24,8 @@ export const CORE_STORE_METHODS = [
   "transaction",
   "checkpoint",
   "close",
+  "onClose",
+  "onResourceChange",
 ] as const satisfies readonly (keyof CoreStore)[];
 
 export const CORE_STORE_COMPLETE: ExactKeys<CoreStore, typeof CORE_STORE_METHODS> = true;

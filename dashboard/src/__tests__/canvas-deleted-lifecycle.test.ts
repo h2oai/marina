@@ -8,7 +8,7 @@ import { type CanvasEvent, parseCanvasEvent } from "../canvas/hooks/use-canvas-w
 import { authFetch } from "../lib/api";
 import { useCanvasIntegration } from "../unified/hooks/use-canvas-integration";
 
-vi.mock("../lib/api", () => ({ authFetch: vi.fn() }));
+vi.mock("../lib/api", () => ({ authFetch: vi.fn(), getToken: () => null }));
 
 /**
  * `canvas delete` lifecycle: the backend broadcasts `canvas_deleted` on the

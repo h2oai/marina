@@ -56,7 +56,7 @@ requested format), and the row's end time becomes the evidence cutoff.
 
 ## Records
 
-- Each submission is appended to `external_submissions` (migration 150): batch sha, variant,
+- Each submission is appended to `external_submissions` (migration 152): batch sha, variant,
   identity, file name and hash, rows answered, cost. The same file is recorded once.
 - A backtest — and a live batch once it resolves — is a scored run in the
   [benchmark ledger](../architecture/persistence.md), so `benchmark compare`, `frontier`,

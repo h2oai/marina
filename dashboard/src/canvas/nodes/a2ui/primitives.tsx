@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { memo, useCallback, useState } from "react";
+import { panelOperationLabel, parsePanelOperation } from "../../../../../src/sdk/panel-actions";
 import type { A2UIAction, A2UIComponent } from "./types";
 
 // ── Text ────────────────────────────────────────────────────────────────────
@@ -37,23 +38,27 @@ export const A2UIButton = memo(function A2UIButton({
   renderChild,
 }: {
   component: A2UIComponent;
-  onAction: (action: A2UIAction) => void;
+  onAction?: (action: A2UIAction) => void;
   renderChild: (id: string) => React.ReactNode;
 }) {
   const label = (component.label as string) ?? "";
   const variant = (component.variant as string) ?? "filled";
   const disabled = (component.disabled as boolean) ?? false;
-  const action = component.action as A2UIAction | undefined;
+  const operation = parsePanelOperation(component.operation);
+  const action =
+    (component.action as A2UIAction | undefined) ??
+    (operation ? { event: { name: "invoke" } } : undefined);
 
   const handleClick = useCallback(() => {
-    if (action && !disabled) onAction(action);
-  }, [action, disabled, onAction]);
+    if (action && !disabled) onAction?.({ ...action, componentId: component.id });
+  }, [action, component.id, disabled, onAction]);
 
   return (
     <button
+      title={operation ? panelOperationLabel(operation) : undefined}
       type="button"
       onClick={handleClick}
-      disabled={disabled}
+      disabled={disabled || !onAction || !action}
       className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
         BTN_VARIANTS[variant] ?? BTN_VARIANTS.filled
       } ${disabled ? "opacity-40 cursor-not-allowed" : "cursor-pointer"}`}
@@ -68,27 +73,38 @@ export const A2UIButton = memo(function A2UIButton({
 export const A2UITextField = memo(function A2UITextField({
   component,
   onAction,
+  onFieldChange,
 }: {
   component: A2UIComponent;
-  onAction: (action: A2UIAction) => void;
+  onAction?: (action: A2UIAction) => void;
+  onFieldChange?: (id: string, value: string | boolean) => void;
 }) {
   const label = (component.label as string) ?? "";
   const placeholder = (component.placeholder as string) ?? "";
   const initialValue = (component.value as string) ?? "";
   const fieldId = (component.fieldId as string) ?? component.id;
-  const [value, setValue] = useState(initialValue);
+  const [draft, setValue] = useState<string>();
+  const value = draft ?? initialValue;
 
   const submit = useCallback(() => {
-    onAction({ event: { name: "field_change", payload: { fieldId, value } } });
-  }, [fieldId, value, onAction]);
+    onAction?.({
+      componentId: component.id,
+      event: { name: "field_change", payload: { fieldId, value } },
+    });
+  }, [component.id, fieldId, value, onAction]);
 
   return (
     <label className="flex flex-col gap-1">
       {label && <span className="text-xs text-text">{label}</span>}
       <input
+        disabled={!onAction && !onFieldChange}
+        aria-label={label || fieldId}
         type="text"
         value={value}
-        onChange={(e) => setValue(e.target.value)}
+        onChange={(e) => {
+          setValue(e.target.value);
+          onFieldChange?.(component.id, e.target.value);
+        }}
         onBlur={submit}
         onKeyDown={(e) => e.key === "Enter" && submit()}
         placeholder={placeholder}
@@ -103,24 +119,38 @@ export const A2UITextField = memo(function A2UITextField({
 export const A2UICheckBox = memo(function A2UICheckBox({
   component,
   onAction,
+  onFieldChange,
 }: {
   component: A2UIComponent;
-  onAction: (action: A2UIAction) => void;
+  onAction?: (action: A2UIAction) => void;
+  onFieldChange?: (id: string, value: string | boolean) => void;
 }) {
   const label = (component.label as string) ?? "";
   const initialChecked = (component.checked as boolean) ?? false;
   const fieldId = (component.fieldId as string) ?? component.id;
-  const [checked, setChecked] = useState(initialChecked);
+  const [draft, setChecked] = useState<boolean>();
+  const checked = draft ?? initialChecked;
 
   const toggle = useCallback(() => {
     const next = !checked;
     setChecked(next);
-    onAction({ event: { name: "field_change", payload: { fieldId, value: next } } });
-  }, [checked, fieldId, onAction]);
+    onFieldChange?.(component.id, next);
+    onAction?.({
+      componentId: component.id,
+      event: { name: "field_change", payload: { fieldId, value: next } },
+    });
+  }, [component.id, checked, fieldId, onAction, onFieldChange]);
 
   return (
     <label className="flex items-center gap-2 cursor-pointer text-sm text-text">
-      <input type="checkbox" checked={checked} onChange={toggle} className="accent-indigo-500" />
+      <input
+        disabled={!onAction && !onFieldChange}
+        aria-label={label || fieldId}
+        type="checkbox"
+        checked={checked}
+        onChange={toggle}
+        className="accent-indigo-500"
+      />
       {label}
     </label>
   );
@@ -131,26 +161,37 @@ export const A2UICheckBox = memo(function A2UICheckBox({
 export const A2UIDateTimeInput = memo(function A2UIDateTimeInput({
   component,
   onAction,
+  onFieldChange,
 }: {
   component: A2UIComponent;
-  onAction: (action: A2UIAction) => void;
+  onAction?: (action: A2UIAction) => void;
+  onFieldChange?: (id: string, value: string | boolean) => void;
 }) {
   const label = (component.label as string) ?? "";
   const initialValue = (component.value as string) ?? "";
   const fieldId = (component.fieldId as string) ?? component.id;
-  const [value, setValue] = useState(initialValue);
+  const [draft, setValue] = useState<string>();
+  const value = draft ?? initialValue;
 
   const submit = useCallback(() => {
-    onAction({ event: { name: "field_change", payload: { fieldId, value } } });
-  }, [fieldId, value, onAction]);
+    onAction?.({
+      componentId: component.id,
+      event: { name: "field_change", payload: { fieldId, value } },
+    });
+  }, [component.id, fieldId, value, onAction]);
 
   return (
     <label className="flex flex-col gap-1">
       {label && <span className="text-xs text-text">{label}</span>}
       <input
+        disabled={!onAction && !onFieldChange}
+        aria-label={label || fieldId}
         type="datetime-local"
         value={value}
-        onChange={(e) => setValue(e.target.value)}
+        onChange={(e) => {
+          setValue(e.target.value);
+          onFieldChange?.(component.id, e.target.value);
+        }}
         onBlur={submit}
         className="bg-bg-hover border border-border rounded px-2 py-1 text-sm text-text-bright focus:border-indigo-500 focus:outline-none"
       />

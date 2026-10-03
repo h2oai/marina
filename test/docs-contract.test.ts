@@ -3,6 +3,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { renderEnvironmentReference } from "../scripts/generate-environment-reference";
+import { rewriteGuideLinks } from "../site/scripts/guide-links";
 import { ENVIRONMENT_REFERENCE_PATH, environmentCatalog } from "../src/config/environment";
 import { Engine } from "../src/engine/engine";
 import { SAFETY_GATES } from "../src/engine/safety-gates";
@@ -33,6 +34,25 @@ const currentDocs = [
 ];
 
 describe("documentation contract", () => {
+  it("preserves guide navigation and repository references on GitHub Pages", () => {
+    const guides = new Set(["coding.md", "published-panels.md"]);
+    expect(rewriteGuideLinks("[Desk](published-panels.md#terminal)", guides)).toBe(
+      "[Desk](../published-panels/#terminal)",
+    );
+    expect(rewriteGuideLinks("[Coding](../guides/coding.md)", guides)).toBe("[Coding](../coding/)");
+    expect(rewriteGuideLinks("[SDK](../../src/sdk/README.md#api)", guides)).toBe(
+      "[SDK](https://github.com/h2oai/marina/blob/main/src/sdk/README.md#api)",
+    );
+    expect(rewriteGuideLinks("[Example](../../examples/coding-quickstart/)", guides)).toBe(
+      "[Example](https://github.com/h2oai/marina/tree/main/examples/coding-quickstart/)",
+    );
+    expect(rewriteGuideLinks("[Index](README.md)", guides)).toBe(
+      "[Index](https://github.com/h2oai/marina/blob/main/docs/guides/README.md)",
+    );
+    const unchanged = "[Web](https://example.com/path.md) [Here](#section) [API](/api)";
+    expect(rewriteGuideLinks(unchanged, guides)).toBe(unchanged);
+  });
+
   it("keeps README pointed at SKILL.md as the command field guide", async () => {
     const readme = await readDoc("README.md");
 

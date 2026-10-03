@@ -18,6 +18,7 @@ import type {
   RoutingSessionPage,
 } from "../sdk/routing-types";
 import * as channelsDb from "./db-channels";
+import { notifyResourceChange } from "./db-resource-changes";
 
 const SESSION_COLUMNS = `id, owner_id AS ownerId, client_key AS clientKey, label, kind,
   group_id AS groupId, capabilities, state, created_at AS createdAt,
@@ -67,6 +68,7 @@ export function joinRoutingSession(
         Date.now(),
         existing.id,
       ]);
+      notifyResourceChange(db, { resource: "participant", id: existing.id });
       return getRoutingSession(db, existing.id)!;
     }
     const id = crypto.randomUUID();
@@ -87,6 +89,7 @@ export function joinRoutingSession(
         now,
       ],
     );
+    notifyResourceChange(db, { resource: "participant", id });
     return getRoutingSession(db, id)!;
   })();
 }
@@ -117,6 +120,7 @@ export function setRoutingSessionState(
     Date.now(),
     id,
   ]);
+  notifyResourceChange(db, { resource: "participant", id });
   return getRoutingSession(db, id)!;
 }
 
@@ -149,6 +153,7 @@ export function appendRoutingEvents(
       VALUES (?, ?, ?, ?, ?, ?)`,
         [sessionId, event.id, next.sequence, event.kind, encoded, createdAt],
       );
+      notifyResourceChange(db, { resource: "participant", id: sessionId });
       return { ...event, sessionId, sequence: next.sequence, createdAt };
     }),
   )();
@@ -241,6 +246,8 @@ export function sendRoutingMessage(
         message.createdAt,
       ],
     );
+    notifyResourceChange(db, { resource: "participant", id: sourceId });
+    notifyResourceChange(db, { resource: "participant", id: input.targetId });
     return message;
   })();
 }
@@ -274,7 +281,10 @@ export function acknowledgeRoutingMessage(
     [Date.now(), id, sessionId],
   );
   const message = getRoutingMessage(db, id);
-  return message?.targetId === sessionId ? message : null;
+  if (message?.targetId !== sessionId) return null;
+  notifyResourceChange(db, { resource: "participant", id: sessionId });
+  notifyResourceChange(db, { resource: "participant", id: message.sourceId });
+  return message;
 }
 
 export function getRoutingChannelAccess(

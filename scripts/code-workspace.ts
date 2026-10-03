@@ -16,6 +16,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { inputGuidance, terminalCompletionFor } from "./code-completion";
 import type { CodeEditor, CodeEditorOptions, CodeEditorState } from "./code-editor";
+import { CodePanelForm } from "./code-panel-form";
 import { terminalText } from "./code-presentation";
 import type { TerminalView } from "./code-views";
 
@@ -46,6 +47,7 @@ class DraftEditor extends Editor {
 export class WorkspaceCodeEditor implements CodeEditor {
   private readonly tui: TuiAltScreen;
   private readonly editors: Record<TerminalView, DraftEditor>;
+  private readonly panelForm: CodePanelForm;
   private readonly transcript = new Text("", 0, 0);
   private readonly scroll = new ScrollView(this.transcript, {
     follow: "end",
@@ -71,14 +73,22 @@ export class WorkspaceCodeEditor implements CodeEditor {
       coding: this.makeEditor("coding"),
       world: this.makeEditor("world"),
       approvals: this.makeEditor("approvals"),
+      panel: this.makeEditor("panel"),
     };
+    this.panelForm = new CodePanelForm(
+      () => new Editor(this.tui, theme),
+      (input) => {
+        options.panelInput?.(input);
+        this.tui.requestRender();
+      },
+    );
     const line = (value: (width: number) => string): Component => ({
       invalidate() {},
       render: (width) => [truncateToWidth(value(width), Math.max(1, width), "…")],
     });
     const input: Component = {
-      invalidate: () => this.editors[this.focusView].invalidate(),
-      render: (width) => this.editors[this.focusView].render(width),
+      invalidate: () => this.inputComponent().invalidate(),
+      render: (width) => this.inputComponent().render(width),
     };
     this.tui.setLayoutRoot(
       new VStack([
@@ -109,7 +119,9 @@ export class WorkspaceCodeEditor implements CodeEditor {
               ? "Answering only the displayed request"
               : this.focusView === "world"
                 ? "World command · messages and events stay live"
-                : `Coding · ${this.state?.status ?? "ready"} · ${this.state?.target ?? "marina"}`,
+                : this.focusView === "panel"
+                  ? "Published panel · actions require explicit confirmation"
+                  : `Coding · ${this.state?.status ?? "ready"} · ${this.state?.target ?? "marina"}`,
           ),
           basis: 1,
         },
@@ -117,20 +129,20 @@ export class WorkspaceCodeEditor implements CodeEditor {
           component: line(() =>
             this.focusView === "approvals"
               ? "Enter sends this answer · F6 leaves it pending"
-              : inputGuidance(
-                  this.editors[this.focusView].getText(),
-                  this.focusView === "world",
-                  this.options.connected,
-                ),
+              : this.focusView === "panel" && this.state?.panel
+                ? "Tab / Shift+Tab select · Enter edit/review · Esc cancels review"
+                : inputGuidance(
+                    this.editors[this.focusView].getText(),
+                    this.focusView === "world",
+                    this.options.connected,
+                  ),
           ),
           basis: 1,
           visible: ({ height }) => (height ?? 0) >= 14,
         },
         { component: input, basis: "auto", minSize: 3, maxSize: 10, shrink: 1 },
         {
-          component: line(
-            () => "F1 help · F6 Coding/World · F7 requests · Alt+↑/↓ history · Ctrl+D exit",
-          ),
+          component: line(() => "F1 help · F6 Coding/World · F7 requests · F8 panel · Ctrl+D exit"),
           basis: 1,
           visible: ({ height }) => (height ?? 0) >= 10,
         },
@@ -144,7 +156,11 @@ export class WorkspaceCodeEditor implements CodeEditor {
         options.interrupt();
         return { consume: true };
       }
-      if (matchesKey(data, "ctrl+d") && !this.editors[this.focusView].getText()) {
+      if (
+        matchesKey(data, "ctrl+d") &&
+        !(this.focusView === "panel" && this.state?.panel) &&
+        !this.editors[this.focusView].getText()
+      ) {
         this.close();
         return { consume: true };
       }
@@ -158,11 +174,13 @@ export class WorkspaceCodeEditor implements CodeEditor {
           : "world"
         : matchesKey(data, "f7")
           ? "approvals"
-          : matchesKey(data, "alt+up")
-            ? "older"
-            : matchesKey(data, "alt+down")
-              ? "newer"
-              : undefined;
+          : matchesKey(data, "f8")
+            ? "panel"
+            : matchesKey(data, "alt+up")
+              ? "older"
+              : matchesKey(data, "alt+down")
+                ? "newer"
+                : undefined;
       if (view) {
         options.navigate(view);
         return { consume: true };
@@ -194,6 +212,8 @@ export class WorkspaceCodeEditor implements CodeEditor {
     if (this.closed) return;
     const changedRequest = state.answer && state.transcript !== this.state?.transcript;
     this.state = state;
+    if (state.panel) this.panelForm.update(state.panel);
+    this.tui.setFocus(this.inputComponent());
     this.transcript.setText(terminalText(state.transcript ?? ""));
     if (changedRequest) this.scroll.scrollToStart();
     this.tui.requestRender();
@@ -203,7 +223,7 @@ export class WorkspaceCodeEditor implements CodeEditor {
     if (view === this.focusView || this.closed) return;
     this.focusView = view;
     this.notice = "";
-    this.tui.setFocus(this.editors[view]);
+    this.tui.setFocus(this.inputComponent());
     this.scroll.scrollToEnd();
     this.tui.requestRender();
   }
@@ -213,6 +233,11 @@ export class WorkspaceCodeEditor implements CodeEditor {
     this.editors[view] = this.makeEditor(view);
     if (view === this.focusView) this.tui.setFocus(this.editors[view]);
     this.tui.requestRender();
+  }
+  private inputComponent() {
+    return this.focusView === "panel" && this.state?.panel
+      ? this.panelForm
+      : this.editors[this.focusView];
   }
 
   print(text: string) {

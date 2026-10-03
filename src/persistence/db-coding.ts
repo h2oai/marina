@@ -3,6 +3,7 @@
 
 import type { Database } from "bun:sqlite";
 import { codingRunContext } from "./coding-run-context";
+import { notifyResourceChange } from "./db-resource-changes";
 
 // ─── Coding sessions, events and artifacts ─────────────────────────────────
 
@@ -49,6 +50,7 @@ export function createCodingSession(
       row.updated_at,
     ],
   );
+  notifyResourceChange(db, { resource: "coding", id: row.id });
   return row;
 }
 
@@ -128,6 +130,7 @@ export function updateCodingSession(
   sets.push("updated_at = ?");
   values.push(Date.now(), id);
   db.run(`UPDATE coding_sessions SET ${sets.join(", ")} WHERE id = ?`, values);
+  notifyResourceChange(db, { resource: "coding", id });
 }
 
 export function createCodingEvent(
@@ -164,6 +167,7 @@ export function createCodingEvent(
         metadata: { ...JSON.parse(run.metadata_json), workspaceEventId: row.id },
       });
   }
+  notifyResourceChange(db, { resource: "coding", id: row.session_id });
   return row;
 }
 
@@ -235,6 +239,7 @@ export function createCodingArtifact(
     ],
   );
   db.run("UPDATE coding_sessions SET updated_at = ? WHERE id = ?", [now, row.session_id]);
+  notifyResourceChange(db, { resource: "coding", id: row.session_id });
   return row;
 }
 
@@ -297,6 +302,8 @@ export function updateCodingArtifact(
   sets.push("updated_at = ?");
   values.push(Date.now(), id);
   db.run(`UPDATE coding_artifacts SET ${sets.join(", ")} WHERE id = ?`, values);
+  const artifact = getCodingArtifact(db, id);
+  if (artifact) notifyResourceChange(db, { resource: "coding", id: artifact.session_id });
 }
 
 // ─── Row types ────────────────────────────────────────────────────────────
