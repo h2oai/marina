@@ -104,6 +104,8 @@ export interface WorkspaceDescriptor {
   target: "local" | "flywheel";
   persistence: "host" | "durable-sandbox";
   capabilities: WorkspaceCapability[];
+  /** Present when finite commands run inside a container instead of on the host. */
+  runner?: { kind: "container"; runtime: string; image: string; sync: "mount" | "patch" };
 }
 
 /**
@@ -220,7 +222,7 @@ export class LocalWorkspace implements WorkspaceRuntime {
   readonly root: string;
   private execApprover?: ExecApprover;
   private execApproverEntityId?: string;
-  private hostExecForbidden = false;
+  protected hostExecForbidden = false;
 
   constructor(root = process.cwd()) {
     this.root = realpathSync(root);
@@ -559,15 +561,29 @@ export class LocalWorkspace implements WorkspaceRuntime {
     return withRootLock(this.root, async () => {
       beforeSpawn?.();
       const started = Date.now();
-      const result = await runWorkspaceCommand(
-        normalized,
-        this.root,
-        Math.min(timeoutMs, MAX_RUN_TIMEOUT_MS),
-        maxBytes,
-        this.hostExecForbidden,
-      );
+      const result = await this.spawnNormalized(normalized, timeoutMs, maxBytes);
       return { ...result, command: normalized, durationMs: Math.max(0, Date.now() - started) };
     });
+  }
+
+  /**
+   * The single spawn step behind `run` / `runAllowlisted`, called inside the
+   * per-root lock AFTER allowlist/approver validation. A runtime that executes
+   * elsewhere (a container) overrides only this; validation, the approver, the
+   * host-exec chokepoint and the lock stay inherited.
+   */
+  protected spawnNormalized(
+    normalized: string[],
+    timeoutMs: number,
+    maxBytes: number,
+  ): Promise<Omit<WorkspaceRunResult, "command" | "durationMs">> {
+    return runWorkspaceCommand(
+      normalized,
+      this.root,
+      Math.min(timeoutMs, MAX_RUN_TIMEOUT_MS),
+      maxBytes,
+      this.hostExecForbidden,
+    );
   }
 
   runPolicy(): CodeRunPolicy {
@@ -619,6 +635,11 @@ export function codeRunPolicy(): CodeRunPolicy {
     commands: [
       ...bunScripts.map((script) => `bun run ${script}`),
       "bun test [relative-test-path...]",
+      "python -m pytest [relative-path|node-id...] [-q|-x|-v]",
+      "python manage.py test [labels...]",
+      "python tests/runtests.py [labels...]",
+      "cargo test [filter]",
+      "go test ./... [-count=N|-short|-v]",
       ...gitCommands.map((cmd) => `git ${cmd}`),
     ],
     timeoutMs: DEFAULT_RUN_TIMEOUT_MS,
@@ -710,10 +731,83 @@ export function normalizeAllowedCodeCommand(root: string, command: string[]): st
   if (binary === "git") {
     return normalizeGitCommand(args);
   }
+  const testRunner = normalizeTestRunnerCommand(root, binary, args);
+  if (testRunner) return testRunner;
 
   throw new Error(
-    'Command is not allowed. Try "code run typecheck", "code run lint", "code run test", "code run bun test test/file.test.ts", or "code run git status --short".',
+    'Command is not allowed. Try "code run typecheck", "code run lint", "code run test", "code run bun test test/file.test.ts", "code run python -m pytest tests/", or "code run git status --short".',
   );
+}
+
+// Detected test runners for non-JavaScript projects (src/coding/project-detection.ts).
+// Like `bun run test`, a project's own test suite executes repository code, so
+// these join the allowlist only in fixed shapes: a known binary, a test verb,
+// relative selectors that stay inside the workspace, and a few inert flags.
+// Nothing here accepts an arbitrary script, an absolute path, or a shell.
+const PYTEST_FLAGS = new Set(["-q", "-x", "-v", "-rA", "--no-header", "--tb=short", "--tb=line"]);
+const PYTEST_SELECTOR = /^[A-Za-z0-9_./-]+(::[A-Za-z0-9_.[\]-]+)*$/;
+const DJANGO_LABEL = /^[A-Za-z0-9_.]+$/;
+const DJANGO_FLAG = /^--(verbosity|parallel)=[0-9]{1,2}$/;
+const CARGO_FILTER = /^[A-Za-z0-9_:]+$/;
+const GO_PACKAGE = /^\.\/([A-Za-z0-9_.-]+\/)*(\.\.\.|[A-Za-z0-9_.-]*)$/;
+const GO_FLAG = /^-(count=[0-9]{1,3}|short|v)$/;
+
+function normalizeTestRunnerCommand(root: string, binary: string, args: string[]): string[] | null {
+  if (binary === "python" || binary === "python3") {
+    if (args[0] === "-m" && args[1] === "pytest") {
+      return [binary, "-m", "pytest", ...pytestArgs(root, args.slice(2))];
+    }
+    if (args[0] === "manage.py" && args[1] === "test") {
+      validateRelativeRunPath(root, "manage.py");
+      return [binary, "manage.py", "test", ...djangoArgs(args.slice(2))];
+    }
+    if (args[0] && /(^|\/)runtests\.py$/.test(args[0])) {
+      validateRelativeRunPath(root, args[0]);
+      if (!existsSync(resolve(root, args[0]))) throw new Error(`No such test runner: ${args[0]}`);
+      return [binary, args[0], ...djangoArgs(args.slice(1))];
+    }
+    throw new Error(
+      'Allowed python commands: "python -m pytest [paths]", "python manage.py test [labels]", "python tests/runtests.py [labels]".',
+    );
+  }
+  if (binary === "cargo") {
+    if (args[0] !== "test") throw new Error('Allowed cargo command: "cargo test [filter]".');
+    const rest = args.slice(1);
+    for (const arg of rest) {
+      if (arg !== "--quiet" && !CARGO_FILTER.test(arg))
+        throw new Error(`cargo test accepts --quiet and a test-name filter only: ${arg}`);
+    }
+    return ["cargo", "test", ...rest];
+  }
+  if (binary === "go") {
+    if (args[0] !== "test") throw new Error('Allowed go command: "go test ./...".');
+    const rest = args.slice(1);
+    if (rest.length === 0) throw new Error('go test needs a package pattern, e.g. "./...".');
+    for (const arg of rest) {
+      if (!GO_PACKAGE.test(arg) && !GO_FLAG.test(arg))
+        throw new Error(`go test accepts relative package patterns and -count/-short/-v: ${arg}`);
+    }
+    return ["go", "test", ...rest];
+  }
+  return null;
+}
+
+function pytestArgs(root: string, args: string[]): string[] {
+  for (const arg of args) {
+    if (PYTEST_FLAGS.has(arg)) continue;
+    if (!PYTEST_SELECTOR.test(arg))
+      throw new Error(`pytest accepts relative test paths, node ids and -q/-x/-v: ${arg}`);
+    validateRelativeRunPath(root, arg.split("::")[0]!);
+  }
+  return args;
+}
+
+function djangoArgs(args: string[]): string[] {
+  for (const arg of args) {
+    if (!DJANGO_LABEL.test(arg) && !DJANGO_FLAG.test(arg))
+      throw new Error(`Django test labels are dotted module names: ${arg}`);
+  }
+  return args;
 }
 
 function normalizeBunCommand(root: string, args: string[]): string[] {
@@ -934,13 +1028,20 @@ function withApplyModeNote(content: string, mode?: string, failedRetries?: strin
   return content.trim() ? `${content.trimEnd()}\n${note}` : note;
 }
 
-async function runWorkspaceCommand(
+/**
+ * Bounded process execution: scrubbed env, output cap, timeout with SIGTERM →
+ * SIGKILL escalation, and the host-exec chokepoint. Exported for runtimes that
+ * spawn a different front-end process (the container runner) under the same
+ * guards; `stdin` feeds a fixed payload (e.g. a patch) without a shell.
+ */
+export async function runWorkspaceCommand(
   cmd: string[],
   cwd: string,
   timeoutMs: number,
   maxBytes: number,
   hostExecForbidden = false,
   environment: Record<string, string> = {},
+  stdin?: string,
 ): Promise<Omit<WorkspaceRunResult, "command" | "durationMs">> {
   assertHostExecAllowed(hostExecForbidden); // chokepoint: telnet-origin never spawns
   mkdirSync(CODE_RUN_HOME, { recursive: true });
@@ -959,7 +1060,14 @@ async function runWorkspaceCommand(
 
   try {
     const grouped = process.platform !== "win32";
-    const proc = Bun.spawn(cmd, { cwd, env, stdout: "pipe", stderr: "pipe", detached: grouped });
+    const proc = Bun.spawn(cmd, {
+      cwd,
+      env,
+      stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
+      stdout: "pipe",
+      stderr: "pipe",
+      detached: grouped,
+    });
     const stop = (signal: "SIGTERM" | "SIGKILL") => {
       try {
         if (grouped) process.kill(-proc.pid, signal);
@@ -1033,7 +1141,8 @@ async function runWorkspaceCommand(
   };
 }
 
-async function runCapture(
+/** Capture a short host command's output (git diff, rg) under the host-exec chokepoint. */
+export async function runCapture(
   cmd: string[],
   cwd: string,
   maxBytes: number,

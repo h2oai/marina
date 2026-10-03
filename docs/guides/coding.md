@@ -853,6 +853,56 @@ Then `code workspace list`, `code workspace discover` (find likely projects), an
 `code workspace use <path>` choose where new sessions open. `code doctor` confirms git + ripgrep
 are present (they power `diff`/`checkpoint`/`revert` and fast `search`).
 
+### The project's own test runner
+
+`code test`, `code verify` and `code recipe run detected` follow the project's language rather
+than assuming JavaScript. Detection reads root markers (`pyproject.toml`, `setup.py`, `setup.cfg`,
+`tox.ini`, `pytest.ini`, `manage.py`, `tests/runtests.py`, `Cargo.toml`, `go.mod`,
+`package.json`) and prefers the language of the files you changed, so a Python repository that
+also carries a `package.json` for tooling is tested with its Python runner:
+
+| Project | Runner |
+| --- | --- |
+| Django's own repository (`tests/runtests.py`) | `python tests/runtests.py [labels]` |
+| Django project (`manage.py`) | `python manage.py test [labels]` |
+| Other Python | `python -m pytest [paths or node ids] [-q -x -v]` |
+| Rust | `cargo test [filter]` |
+| Go | `go test ./... [-count=N -short -v]` |
+| JavaScript / TypeScript | the `typecheck` / `lint` / `test` / `build` package scripts |
+
+These join the `code run` allowlist only in those fixed shapes: relative selectors that stay
+inside the workspace and a few inert flags, never an arbitrary script or interpreter. `code doctor`
+shows the detected runner and why. A saved `default` recipe (`code recipe save default …`)
+overrides detection for a workspace.
+
+### Run commands in a container image
+
+`code workspace runner container image:<ref>` keeps the session's files on the host but runs its
+finite commands (tests, scripts, `code verify`) inside a container image: a project's CI image, a
+language toolchain, or a benchmark environment. Podman or Docker is required.
+
+```text
+code workspace runner                                   # where commands run now
+code workspace runner container image:python:3.12 workdir:/work
+code workspace runner container image:<ref> sync:patch workdir:/testbed shell:bash -- source /opt/conda/bin/activate env
+code workspace runner local                             # back to the host
+```
+
+- **`sync:mount`** (default) binds the worktree at `workdir` read-write on a read-only container
+  root. The process runs as your user.
+- **`sync:patch`** mounts nothing from the host. The image already holds the project at `workdir`;
+  Marina applies the session's pending diff (tracked changes and new files) inside a throwaway
+  container before each command.
+- Text after `--` is a one-line environment preamble (for example activating a conda env).
+
+The same `code.exec` gate, allowlist and exec approvals apply as for host runs; configuring a
+runner is itself gated. There is no network unless you add `network:on`, all capabilities are
+dropped, CPU, memory and process limits apply (`cpus:`, `memory:` in MB, `timeout:`), and every
+container is removed after its command. If the runtime or image is missing, commands fail. Marina
+never quietly runs them on the host instead. Operators can set a default image for every local
+session with `MARINA_CODE_CONTAINER_IMAGE` (and `_SYNC`, `_WORKDIR`, `_INIT`, `_SHELL`,
+`_NETWORK`, `_RUNTIME`); an explicit `code workspace runner local` still pins the host.
+
 ### Optional isolated execution with Flywheel
 
 When the Marina server has `FLYWHEEL_TOKEN`, each entity can create one durable isolated workspace.

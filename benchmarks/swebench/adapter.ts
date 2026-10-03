@@ -111,14 +111,26 @@ export function selectSubset(rows: SweInstance[], n: number, seed: number): SweI
   return out;
 }
 
+/** How the agent may check its work: agentless (reason from code) or in the instance's image. */
+export type SweMode = "agentless" | "env-image";
+
+const AGENTLESS_NOTE = [
+  "This checkout has no installed dependencies, so its tests cannot run here: reason from the code,",
+  "and submit a short summary as soon as the fix is in place (do not block on verification).",
+];
+const ENV_IMAGE_NOTE = [
+  "Commands run inside this project's own environment image (dependencies installed, no network).",
+  "You may run the project's EXISTING tests to check your change (code test, or code run python -m",
+  "pytest <path> / python tests/runtests.py <label>). Keep runs short and targeted, then submit.",
+];
+
 /** The task text the coding agent receives: the issue, nothing else. */
-export function taskPrompt(inst: SweInstance): string {
+export function taskPrompt(inst: SweInstance, mode: SweMode = "agentless"): string {
   return [
     `Resolve this issue in the ${inst.repo} repository checked out in the current workspace.`,
     "Change the library source so the described problem is fixed. Keep the change minimal and",
     "consistent with the codebase; do not edit or add test files.",
-    "This checkout has no installed dependencies, so its tests cannot run here: reason from the code,",
-    "and submit a short summary as soon as the fix is in place (do not block on verification).",
+    ...(mode === "env-image" ? ENV_IMAGE_NOTE : AGENTLESS_NOTE),
     "",
     "ISSUE:",
     inst.problem_statement.trim(),
@@ -126,17 +138,44 @@ export function taskPrompt(inst: SweInstance): string {
 }
 
 /** The reviewer's task: judge and, if needed, correct the implementer's change. */
-export function reviewPrompt(inst: SweInstance): string {
+export function reviewPrompt(inst: SweInstance, mode: SweMode = "agentless"): string {
   return [
     `Review the uncommitted change in this ${inst.repo} checkout against the issue below.`,
     "Read the diff (code diff) and the code it touches. If the change does not fully and correctly",
     "fix the issue, or could break existing behavior, fix it with a minimal edit to library source",
-    "(never tests). If it is already correct, change nothing. Tests cannot run in this checkout;",
+    mode === "env-image"
+      ? "(never tests). If it is already correct, change nothing. You may run the project's existing tests inside its environment image to check;"
+      : "(never tests). If it is already correct, change nothing. Tests cannot run in this checkout;",
     "reason from the code, then submit a one-line verdict (do not block on verification).",
     "",
     "ISSUE:",
     inst.problem_statement.trim(),
   ].join("\n");
+}
+
+/**
+ * The official SWE-bench environment image for an instance (the harness's
+ * `sweb.eval.x86_64.<id>` naming, `__` → `_1776_`). The repository sits at
+ * `/testbed` at the base commit with the `testbed` conda env installed.
+ */
+export function sweEnvImage(instanceId: string, namespace = "docker.io/swebench"): string {
+  return `${namespace}/sweb.eval.x86_64.${instanceId.toLowerCase().replace(/__/g, "_1776_")}:latest`;
+}
+
+/**
+ * Environment that puts a `marina -p` session's finite commands in the instance's
+ * own image (Marina's general container runner, `MARINA_CODE_CONTAINER_*`):
+ * patch sync applies the agent's pending diff to /testbed inside a throwaway
+ * container per command; no network; nothing on the host is mounted.
+ */
+export function envImageRunnerEnv(instanceId: string): Record<string, string> {
+  return {
+    MARINA_CODE_CONTAINER_IMAGE: sweEnvImage(instanceId),
+    MARINA_CODE_CONTAINER_SYNC: "patch",
+    MARINA_CODE_CONTAINER_WORKDIR: "/testbed",
+    MARINA_CODE_CONTAINER_SHELL: "bash",
+    MARINA_CODE_CONTAINER_INIT: "source /opt/miniconda3/bin/activate testbed",
+  };
 }
 
 type Run = (
@@ -231,6 +270,8 @@ export interface AttemptOptions {
   timeoutMs: number;
   slug: (p: string) => string;
   run?: Run;
+  /** Opt-in: run the agent's commands inside the instance's environment image. */
+  mode?: SweMode;
 }
 
 /** One instance × arm × replicate: checkout → implement (→ review) → patch, trajectory, cost. */
@@ -248,9 +289,11 @@ export async function attemptInstance(
   await prepareWorkspace(inst, o.dataDir, workDir, run);
   const home = sessionHome(workDir, o.slug);
   rmSync(home, { recursive: true, force: true });
+  const mode = o.mode ?? "agentless";
   const env = {
     MARINA_CODE_TASK_TIMEOUT_MS: String(o.timeoutMs),
     MARINA_DAILY_SPEND_CAP_USD: "25",
+    ...(mode === "env-image" ? envImageRunnerEnv(inst.instance_id) : {}),
   };
   const marina = (task: string, model: string) =>
     run(["bun", "run", "scripts/marina.ts", "-p", task, workDir, "--model", model], {
@@ -258,9 +301,9 @@ export async function attemptInstance(
       env,
       timeoutMs: o.timeoutMs + 120_000,
     });
-  const impl = await marina(taskPrompt(inst), arm.model);
+  const impl = await marina(taskPrompt(inst, mode), arm.model);
   let review: Awaited<ReturnType<Run>> | undefined;
-  if (arm.reviewModel) review = await marina(reviewPrompt(inst), arm.reviewModel);
+  if (arm.reviewModel) review = await marina(reviewPrompt(inst, mode), arm.reviewModel);
   const patch = await collectPatch(workDir, run);
   const dbPath = join(home, "marina.db");
   const costUsd = sessionSpend(dbPath);

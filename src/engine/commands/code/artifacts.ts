@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { WorkspaceRuntime } from "../../../coding/local-workspace";
-import { detectPackageScripts, recommendedVerify } from "../../../coding/project-detection";
+import { detectWorkspaceRunner } from "../../../coding/project-detection";
 import { dim, header, separator, success } from "../../../net/ansi";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
@@ -830,10 +830,11 @@ export async function resolveRecipeCommands(
   name: string,
 ): Promise<string[] | null> {
   if (name === "detected") {
-    const packageJson = await workspace.read("package.json").catch(() => null);
-    const scripts = packageJson ? detectPackageScripts(packageJson.content) : [];
-    const commands = recommendedVerify(scripts);
-    return commands.length > 0 ? commands : ["git diff --check"];
+    // The runner follows the project's language (and the touched files'), so a
+    // Python repository that also carries a package.json is verified with its
+    // Python runner. A stored `default` recipe overrides detection.
+    const { verify } = await detectWorkspaceRunner(workspace);
+    return verify.length > 0 ? verify : ["git diff --check"];
   }
   const stored = findStoredRecipe(db, session.id, name);
   if (!stored) {

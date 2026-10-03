@@ -311,6 +311,9 @@ export const CODE_EXEC_SUBCOMMANDS = new Set<string>([
   "service",
   "edit",
   "write",
+  // Choosing where commands execute (host vs a container image) is an
+  // execution change, so configuring a runner is earned like running.
+  "runner",
 ]);
 
 // Subcommands that touch the HOST working tree or spawn HOST processes against

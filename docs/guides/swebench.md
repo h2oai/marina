@@ -38,6 +38,11 @@ bun run swebench file --arm single --replicate 1 --db marina.db
 - **Resuming:** `run` skips instances already recorded in the run's `attempts.jsonl`, so an
   interrupted run picks up where it stopped.
 - **Location:** everything is written under `--data` (default `~/.local/share/marina-swebench/data`).
+- **`--env-image` (opt-in):** the agent's commands run inside the instance's official environment
+  image (`swebench/sweb.eval.x86_64.<id>`, pulled or built beforehand) through Marina's general
+  container runner, in patch sync at `/testbed` with the `testbed` conda env and no network. The
+  agent can then run the project's existing tests while it works (a full agent run instead of
+  agentless). Without the flag, runs stay agentless.
 
 ## Running the official harness with Podman
 
@@ -59,11 +64,12 @@ netns = "pasta"
 
 ## Limits
 
-- **No tests during the agent's work.** The agent cannot run the project's tests, because a host
-  checkout has no installed dependencies. Running them inside the instance's environment image needs
-  a container-backed workspace, which Marina does not have yet (the Flywheel sandbox is the only
-  isolated execution backend). Until then, runs are in the "agentless" setting: the agent reasons from
-  the code.
+- **Tests during the agent's work need `--env-image`.** A host checkout has no installed
+  dependencies, so by default runs are agentless: the agent reasons from the code. With
+  `--env-image`, Marina's container runner (`docs/guides/coding.md` → "Run commands in a container
+  image") executes the agent's commands in the instance's environment image; the images must already
+  be present (the harness builds or pulls them), and each image needs a supported test runner shape
+  (`python -m pytest`, `python tests/runtests.py`, …) to be useful.
 - **No submission.** Nothing is submitted anywhere. A leaderboard submission (a pull request to
   `SWE-bench/experiments` with predictions, logs and trajectories) is a separate act that its owner
   approves.

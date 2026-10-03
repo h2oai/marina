@@ -483,6 +483,17 @@
 # Interactive exec-approval prompt timeout in milliseconds.
 # MARINA_CODE_EXEC_APPROVAL_TIMEOUT_MS=120000
 
+# Container runtime for container-backed workspaces (`podman` or `docker`). Unset picks podman, then docker. With neither installed, a container runner refuses every command; it never falls back to host execution.
+# MARINA_CODE_CONTAINER_RUNTIME=
+
+# Operator default container runner for local Code Mode sessions without an explicit `code workspace runner` setting: finite commands (tests, scripts) run inside this image instead of on the host. Same allowlist, approvals and code.exec gate as host runs; no network unless MARINA_CODE_CONTAINER_NETWORK is on; capabilities dropped; CPU/memory/pid limits. SYNC=mount (default) binds the worktree at WORKDIR (default /work) on a read-only root; SYNC=patch mounts nothing and applies the pending diff inside a throwaway container whose image already holds the project at WORKDIR. INIT is a one-line environment preamble (e.g. activating a conda env) run by SHELL (sh or bash).
+# MARINA_CODE_CONTAINER_IMAGE=
+# MARINA_CODE_CONTAINER_SYNC=mount
+# MARINA_CODE_CONTAINER_WORKDIR=/work
+# MARINA_CODE_CONTAINER_INIT=
+# MARINA_CODE_CONTAINER_SHELL=sh
+# MARINA_CODE_CONTAINER_NETWORK=off
+
 # ── Flywheel sandboxes ───────────────────────────────────────────────────────
 
 # Flywheel isolated execution: the operator token (kept server-side; Marina mints short-lived per-entity capabilities), RPC endpoint and guest image. Unset token disables Flywheel.
