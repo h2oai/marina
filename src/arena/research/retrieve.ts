@@ -42,6 +42,7 @@ import {
 } from "../../engine/search-providers/index";
 import { waybackFetch } from "../../engine/search-providers/wayback";
 import { dailyCapRefusal, recordSpend } from "../../engine/spend-ledger";
+import type { LookupResult } from "../../forecast/lookup-types";
 import { guardedFetch } from "../../net/url-guard";
 import type { ResearchBrief } from "./briefs";
 import { closedBookRetriever } from "./isolation";
@@ -67,6 +68,8 @@ export interface ResearchReport {
   costUsd: number;
   searches: number;
   retriever: string;
+  /** Structured observations and lookup failure reasons, frozen with this dossier. */
+  data?: LookupResult[];
 }
 
 export type Retriever = (brief: ResearchBrief) => Promise<ResearchReport>;

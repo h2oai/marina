@@ -344,6 +344,55 @@ describe("filing a round", () => {
     ]);
   });
 
+  it("keeps complete local evidence beside the signed body and preserves it on retry", async () => {
+    const traced = {
+      ...deps(),
+      forecasterConfig: { spec: "test", fingerprint: "abc" },
+      forecaster: async (r: ArenaRound, l: Parameters<typeof forecastRound>[1]) => ({
+        ...forecastRound(r, l),
+        proposals: { quant: { mean: -26, sd: 1 } },
+        fallback: "example",
+      }),
+    };
+    reply = () => {
+      throw new Error("network down");
+    };
+    expect((await submitRound(traced, round.round_id)).kind).toBe("error");
+    const row = db.latestArenaSubmission("marina-test", round.round_id)!;
+    const detail = JSON.parse(row.detail);
+    expect(detail.schema).toBe("marina.arena.forecast.v1");
+    expect(detail.lock.answer_history).toBeArray();
+    expect(detail.lockHash).toHaveLength(64);
+    expect(detail.config.fingerprint).toBe("abc");
+    expect(detail.forecast.proposals.quant.mean).toBe(-26);
+    expect(JSON.parse(posts[0]!.body).proposals).toBeUndefined();
+    reply = () => Response.json({ status: "accepted" }, { status: 201 });
+    await submitRound(traced, round.round_id);
+    expect(db.latestArenaSubmission("marina-test", round.round_id)!.detail).toBe(row.detail);
+  });
+
+  it("signs at completion and refuses a forecast that crosses the lock margin", async () => {
+    let clock = now;
+    const slow = {
+      ...deps(),
+      now: () => clock,
+      forecaster: async (r: ArenaRound, l: Parameters<typeof forecastRound>[1]) => {
+        clock += 6 * 60_000;
+        return forecastRound(r, l);
+      },
+    };
+    expect((await submitRound(slow, round.round_id)).kind).toBe("accepted");
+    expect(Date.parse(posts[0]!.headers["X-SSA-timestamp"]!)).toBe(clock);
+    clock = Date.parse(round.lock_at) - 10 * 60_000;
+    const crossed = await submitRound(slow, round.round_id, { replace: true });
+    expect(crossed).toMatchObject({
+      kind: "skipped",
+      reason: expect.stringContaining("too close"),
+    });
+    expect(posts).toHaveLength(1);
+    expect(db.listArenaSubmissions()).toHaveLength(1);
+  });
+
   it("re-sends the SAME signed request after a transport failure, and records a 4xx as final", async () => {
     reply = () => {
       throw new Error("socket hang up");

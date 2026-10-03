@@ -5,6 +5,9 @@ import { describe, expect, it } from "bun:test";
 import { ArenaData } from "../src/arena/data";
 import { applySignal, validateSignal } from "../src/arena/discovery/signals";
 import { forecastRound } from "../src/arena/forecast";
+import { forecastSettings } from "../src/arena/forecast-config";
+import { recordHorizonShadows } from "../src/arena/horizon-shadow";
+import { startLine } from "../src/arena/prompt-context";
 import {
   dampedSteps,
   dampingFromEnv,
@@ -13,6 +16,7 @@ import {
   horizonDays,
   horizonModeFromEnv,
   horizonNowcast,
+  horizonOptionsFromEnv,
   horizonSd,
   hStepErrors,
   olsSlope,
@@ -108,7 +112,10 @@ function snapshot(endDate: string, fetchedAt: string, bump = 0) {
 }
 
 function archive(): { data: ArenaData; requested: string[] } {
-  const files: Record<string, unknown> = {};
+  const files: Record<string, unknown> = {
+    "questions/season0.json": { rounds: [round] },
+    [`locks/${round.round_id}.json`]: lock,
+  };
   for (let t = Date.parse("2026-09-01"); t <= Date.parse("2026-09-29"); t += DAY) {
     const day = iso(t);
     files[`civiqs/economy_us_now/${day}.json`] = snapshot(iso(t - 3 * DAY), `${day}T10:00:00Z`);
@@ -140,6 +147,108 @@ const history = Array.from({ length: 20 }, (_, i) => ({
 const lock: ArenaLock = { round_id: round.round_id, answer_history: history };
 
 describe("horizon nowcast on the archive", () => {
+  it("records five distinct prospective policies on shared inputs, including drift-only", async () => {
+    const { data, requested } = archive();
+    const rows: Array<{ forecaster: string; forecast: string; detail: string }> = [];
+    const store = {
+      recordArenaShadow: (row: (typeof rows)[number]) => {
+        rows.push(row);
+        return true;
+      },
+    };
+    const result = await recordHorizonShadows(store, data, [round.round_id], {
+      now: () => Date.parse(round.lock_at) - 3600_000,
+    });
+    expect(result.filter((r) => r.recorded)).toHaveLength(5);
+    expect(new Set(rows.map((r) => r.forecaster)).size).toBe(5);
+    const details = rows.map((r) => JSON.parse(r.detail));
+    expect(new Set(details.map((d) => d.origins[round.series!].source)).size).toBe(1);
+    expect(details.filter((d) => d.settings.horizon.mode === "drift")).toHaveLength(2);
+    expect(requested.filter((p) => p === "civiqs/economy_us_now/2026-09-29.json")).toHaveLength(1);
+    expect(JSON.parse(rows[1]!.forecast).topline.mean).toBeLessThan(
+      JSON.parse(rows[0]!.forecast).topline.mean,
+    );
+    expect(
+      (
+        await recordHorizonShadows(store, data, [round.round_id], {
+          now: () => Date.parse(round.lock_at),
+        })
+      )[0]?.error,
+    ).toBe("already locked");
+    expect(rows).toHaveLength(5);
+  });
+
+  it("records nothing when a comparison crosses its lock", async () => {
+    const { data } = archive();
+    let ticks = 0;
+    let writes = 0;
+    const result = await recordHorizonShadows(
+      {
+        recordArenaShadow: () => {
+          writes++;
+          return true;
+        },
+      },
+      data,
+      [round.round_id],
+      {
+        now: () => Date.parse(round.lock_at) + (++ticks >= 3 ? 1 : -60_000),
+      },
+    );
+    expect(result[0]?.error).toBe("comparison finished after lock");
+    expect(writes).toBe(0);
+  });
+  it("scopes corrections to selected series and tells model roles about the applied projection", async () => {
+    const { data } = archive();
+    const settings = horizonOptionsFromEnv({
+      MARINA_ARENA_NOWCAST_HORIZON: "drift",
+      MARINA_ARENA_NOWCAST_DAMPING: "0.8",
+      MARINA_ARENA_NOWCAST_SERIES: " civiqs_net_econ_now ",
+    });
+    const selected = await nowcastForecaster(data, forecastRound, { horizon: settings })(
+      round,
+      lock,
+    );
+    const excluded = await nowcastForecaster(data, forecastRound, {
+      horizon: { ...settings, series: ["civiqs_net_approval"] },
+    })(round, lock);
+    expect(selected.topline!.mean).toBeLessThan(excluded.topline!.mean);
+    expect(selected.topline!.sd).toBe(excluded.topline!.sd);
+    const origin = selected.origins?.[round.series!];
+    expect(origin).toMatchObject({ selected: "daily", horizonDays: 6, mode: "drift" });
+    expect(origin?.projection?.points).toBeArray();
+    expect(excluded.origins?.[round.series!]?.reason).toBe("series outside horizon policy");
+    const prompt = startLine(round, selected, history);
+    expect(prompt).toContain("projected start");
+    expect(prompt).toContain("do not apply an already included trend twice");
+    expect(prompt).toContain("different revisions");
+  });
+
+  it("keeps a newer weekly anchor and records why stale daily evidence was not projected", async () => {
+    const { data } = archive();
+    const f = await nowcastForecaster(data, forecastRound, { horizon: { mode: "drift" } })(round, {
+      ...lock,
+      answer_history: [...history, { date: "2026-09-27", value: -40 }],
+    });
+    expect(f.topline?.mean).toBe(-40);
+    expect(f.origins?.[round.series!]).toMatchObject({
+      selected: "weekly",
+      reading: { date: "2026-09-27", value: -40 },
+      horizonDays: 5,
+      reason: "daily reading predates weekly anchor",
+    });
+  });
+
+  it("fingerprints strategy settings without persisting secrets or merging horizon candidates", () => {
+    const a = forecastSettings("nowcast", { FRED_API_KEY: "secret" });
+    const b = forecastSettings("nowcast", { FRED_API_KEY: "another-secret" });
+    expect(a.fingerprint).toBe(b.fingerprint);
+    expect(JSON.stringify(a)).not.toContain("secret");
+    expect(
+      forecastSettings("nowcast", { MARINA_ARENA_NOWCAST_HORIZON: "drift" }).fingerprint,
+    ).not.toBe(a.fingerprint);
+    expect(horizonOptionsFromEnv({ MARINA_ARENA_NOWCAST_SERIES: "" }).series).toEqual([]);
+  });
   it("drifts to the release day from snapshots fetched by the lock only", async () => {
     const { data, requested } = archive();
     const hz = await horizonNowcast(data, round, "both", 1);

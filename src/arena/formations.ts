@@ -1288,6 +1288,7 @@ export interface ResearchDossier {
   costUsd: number;
   retriever?: string;
   error?: string;
+  data?: import("./research/retrieve").ResearchReport["data"];
 }
 
 /**
@@ -1319,6 +1320,7 @@ export async function buildDossier(
       sources: report.sources.length,
       costUsd: report.costUsd ?? 0,
       ...(report.retriever ? { retriever: report.retriever } : {}),
+      ...(report.data ? { data: report.data } : {}),
     };
   } catch (err) {
     return {

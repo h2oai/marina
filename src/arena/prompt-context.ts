@@ -68,6 +68,14 @@ export function datedLines(points: ArenaPoint[] | Reading[], n: number): string 
 export function startLine(round: ArenaRound, start: RoundForecast, history: ArenaPoint[]): string {
   const base = start.topline;
   const dist = base ? `{"mean": ${base.mean}, "sd": ${base.sd}}` : "(none)";
+  const origin = round.series ? start.origins?.[round.series] : undefined;
+  if (origin) {
+    const p = origin.projection;
+    const rule = p
+      ? `horizon policy ${origin.mode}, drift ${p.drift}, damping ${p.phi}; the projected start is ${JSON.stringify(origin.start)}`
+      : origin.reason;
+    return `Start forecast ${dist}: ${origin.selected === "daily" ? "NOWCAST" : "weekly anchor"} reading ${origin.reading.value} dated ${origin.reading.date}; ${origin.horizonDays} day(s) to resolution ${origin.targetDate}. ${rule}. The reading is an observation, not the future outcome. Project any further change from the start distribution above; do not apply an already included trend twice. Compare changes within the same snapshot: the weekly history and daily snapshot can have different revisions.`;
+  }
   const fresh = freshestReading(start, round.series);
   if (fresh) {
     const lead = Math.round(

@@ -21,6 +21,7 @@ export type ArenaFetch = (url: string) => Promise<Response>;
 
 export class ArenaData {
   private cache = new Map<string, { at: number; value: unknown }>();
+  private pending = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly baseUrl: string = DEFAULT_ARENA_DATA_URL,
@@ -32,6 +33,18 @@ export class ArenaData {
   private async json<T>(path: string): Promise<T> {
     const hit = this.cache.get(path);
     if (hit && this.now() - hit.at < CACHE_MS) return hit.value as T;
+    const pending = this.pending.get(path);
+    if (pending) return pending as Promise<T>;
+    const request = this.readJson<T>(path);
+    this.pending.set(path, request);
+    try {
+      return await request;
+    } finally {
+      this.pending.delete(path);
+    }
+  }
+
+  private async readJson<T>(path: string): Promise<T> {
     const res = await this.fetcher(`${this.baseUrl.replace(/\/$/, "")}/${path}`);
     if (!res.ok) throw new Error(`arena data ${path}: HTTP ${res.status}`);
     const text = await res.text();
@@ -39,6 +52,20 @@ export class ArenaData {
     const value = JSON.parse(text) as T;
     this.cache.set(path, { at: this.now(), value });
     return value;
+  }
+
+  /** Per-experiment view: each requested path is read once, without TTL expiry. */
+  frozen(): ArenaData {
+    const at = this.now();
+    const base = this.baseUrl.replace(/\/$/, "");
+    return new ArenaData(
+      base,
+      async (url) => {
+        const path = url.slice(base.length + 1);
+        return Response.json(await this.json(path));
+      },
+      () => at,
+    );
   }
 
   /** The published registration for an entrant (entrants/<id>.json), or undefined when absent. */

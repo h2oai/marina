@@ -14,6 +14,7 @@ import { type ArenaConfig, arenaConfigFromEnv, loadArenaKey } from "./config";
 import { ArenaData, DEFAULT_ARENA_DATA_URL } from "./data";
 import type { Forecaster, Learner } from "./evaluate";
 import { forecastRound } from "./forecast";
+import { forecastSettings } from "./forecast-config";
 import type { Usage } from "./model-backend";
 import { publicKeyBase64 } from "./protocol";
 import {
@@ -161,9 +162,13 @@ async function lockForModels(
 /** Live Civiqs reads for open rounds (on unless MARINA_ARENA_CIVIQS_LIVE=off). */
 async function liveCiviqs(env: NodeJS.ProcessEnv = process.env) {
   const { civiqsLiveEnabled, fetchCiviqsLive } = await import("./research/civiqs-live");
-  return civiqsLiveEnabled(env)
-    ? { live: (n: string, f?: Record<string, string>) => fetchCiviqsLive(n, f) }
-    : {};
+  const { horizonOptionsFromEnv } = await import("./research/civiqs-horizon");
+  return {
+    horizon: horizonOptionsFromEnv(env),
+    ...(civiqsLiveEnabled(env)
+      ? { live: (n: string, f?: Record<string, string>) => fetchCiviqsLive(n, f) }
+      : {}),
+  };
 }
 
 /**
@@ -570,7 +575,7 @@ export async function arenaDepsWithForecaster(
     // The world's notes are the crew's memory when the store carries them.
     const notes = "getNotesByType" in store ? (store as unknown as NotesStore) : undefined;
     const { forecaster } = await forecasterFor(spec, { weight, env, ...(notes ? { notes } : {}) });
-    return { ...deps, forecaster };
+    return { ...deps, forecaster, forecasterConfig: forecastSettings(spec, env, weight) };
   } catch (err) {
     return { error: `Forecaster: ${(err as Error).message}` };
   }
@@ -788,7 +793,6 @@ async function researchForecasterFor(
   };
 }
 
-/** Record what `spec` would file for each round (first record per round wins). */
 /** A shadow record younger than this is not re-recorded (the latest before lock is scored). */
 export const SHADOW_RERECORD_MS = 6 * 3_600_000;
 
@@ -803,11 +807,13 @@ export async function recordShadow(
   // `discovered` reads — without them it silently degrades to the nowcast.
   const notes = "getNotesByType" in store ? (store as unknown as NotesStore) : undefined;
   const { forecaster, usage } = await forecasterFor(spec, { env, ...(notes ? { notes } : {}) });
+  const settings = forecastSettings(spec, env);
+  const variant = `${spec}#${settings.fingerprint.slice(0, 16)}`;
   // Re-recording is how a forecast stays current until lock (the one that
   // counts is the last before lock, like a filing); a record from the last
   // few hours is fresh enough, so hourly runs don't pile up duplicates.
   const latest = new Map<string, number>();
-  for (const r of store.listArenaShadow({ forecaster: spec, limit: 2_000 })) {
+  for (const r of store.listArenaShadow({ forecaster: variant, limit: 2_000 })) {
     latest.set(r.round_id, Math.max(latest.get(r.round_id) ?? 0, r.created_at));
   }
   const now = Date.now();
@@ -832,11 +838,12 @@ export async function recordShadow(
         unknown
       >;
       const { topline, profile, ranking, rules: _rules, note: _note, ...detail } = f;
+      if (Date.parse(round.lock_at) <= Date.now()) throw new Error("forecast finished after lock");
       const recorded = store.recordArenaShadow({
         roundId,
-        forecaster: spec,
+        forecaster: variant,
         forecast: JSON.stringify({ topline, profile, ranking }),
-        detail: JSON.stringify(detail),
+        detail: JSON.stringify({ ...detail, settings }),
         costUsd: (usage?.costUsd ?? 0) - before,
       });
       out.push({ roundId, recorded });

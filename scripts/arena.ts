@@ -25,6 +25,7 @@
  *   bun run arena signals [--tracker T]         every discovery attempt and its verdict
  *   bun run arena shadow run <round_id|due> | list | score
  *                                               record / list / score shadow forecasts (never filed)
+ *   bun run arena shadow horizons <round_id|due> shared-input comparison of five horizon policies
  *   bun run arena evaluate [--forecaster model:<m>|crew:<m>[,<m>,<m>]|formation:<pattern>:<m>[,<m>…]|tabh2o[:forecast][@nowcast]]
  *                          [--no-learn] [--limit N] [--tracker T] [--shape profile|ranking] [--out FILE]
  *                                               score forecasters on already-resolved rounds (files nothing);
@@ -436,6 +437,31 @@ async function main(): Promise<number> {
       const db = openDb();
       try {
         const action = arg ?? "list";
+        if (action === "horizons") {
+          const target = positionals[2];
+          if (!target) throw new Error("usage: bun run arena shadow horizons <round_id|due>");
+          const { recordHorizonShadows } = await import("../src/arena/horizon-shadow");
+          const { civiqsLiveEnabled, fetchCiviqsLive } = await import(
+            "../src/arena/research/civiqs-live"
+          );
+          const data = arenaData();
+          const ids =
+            target === "due"
+              ? (await data.openRounds())
+                  .filter(
+                    (r) =>
+                      r.tracker === "civiqs" &&
+                      Date.parse(r.lock_at) <= Date.now() + arenaWindowHours() * 3_600_000,
+                  )
+                  .map((r) => r.round_id)
+              : [target];
+          const results = await recordHorizonShadows(db, data, ids, {
+            ...(civiqsLiveEnabled() ? { live: fetchCiviqsLive } : {}),
+          });
+          for (const r of results)
+            console.log(`${r.roundId} ${r.variant ?? ""}: ${r.recorded ? "recorded" : r.error}`);
+          return results.some((r) => !r.recorded) ? 1 : 0;
+        }
         if (action === "run") {
           const target = positionals[2];
           if (!target)
@@ -452,7 +478,9 @@ async function main(): Promise<number> {
           const results = await recordShadow(db, data, spec, ids);
           for (const r of results)
             console.log(`${r.roundId}: ${r.recorded ? "recorded" : r.error}`);
-          const rows = db.listArenaShadow({ forecaster: spec, limit: 2_000 });
+          const { forecastSettings } = await import("../src/arena/forecast-config");
+          const variant = `${spec}#${forecastSettings(spec, process.env).fingerprint.slice(0, 16)}`;
+          const rows = db.listArenaShadow({ forecaster: variant, limit: 2_000 });
           const cost = rows
             .filter((r) => ids.includes(r.round_id))
             .reduce((t, r) => t + r.cost_usd, 0);
@@ -489,7 +517,7 @@ async function main(): Promise<number> {
           }
           return 0;
         }
-        throw new Error("usage: bun run arena shadow run|list|score");
+        throw new Error("usage: bun run arena shadow run|horizons|list|score");
       } finally {
         db.close();
       }

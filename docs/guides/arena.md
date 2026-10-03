@@ -185,10 +185,36 @@ the signal language as the `nowcast-drift:<φ>` centre and the `horizon` spread,
 `bun run arena discover` and `evaluate` can measure them. Keep the default off until a backtest
 earns the switch.
 
+Scope a measured correction with `MARINA_ARENA_NOWCAST_SERIES`, a comma-separated list of
+Civiqs series ids (for example `civiqs_net_econ_now`). Unset means every series; an empty list
+means none. Each forecast retains its observation date, target horizon, selected daily or weekly
+anchor, snapshot reference, and projection decision. Model prompts distinguish the raw reading
+from the projected start so they do not apply the trend twice. A daily snapshot older than the
+weekly anchor does not replace it; the trace records that decision.
+
+`bun run arena shadow horizons <round_id|due>` compares off, drift at damping 0.8 and 1.0,
+spread-only, and combined correction. It makes no model calls and files nothing. Candidates
+share frozen archive reads and one live read per tracker for each round; a batch finishing after
+the lock records nothing. Every variant has its own configuration fingerprint and is scored
+against future published outcomes through `shadow score`.
+
 **Replacing a filing.** The arena's signed intake keeps every version and scores the newest one
 accepted before the lock (up to 120 per round). `bun run arena submit <round|due> --replace` files
 a newer version of an accepted round; an unchanged forecast is not re-sent, and the autopilot never
 replaces.
+
+Keep an early accepted forecast, then schedule an operator refresh closer to the lock. For
+example, an hourly `MARINA_ARENA_WINDOW_HOURS=1.1 bun run arena submit due --replace` selects
+rounds locking within 66 minutes, while preserving the five-minute safety margin. Allow enough
+time for the selected formation and any simultaneous deadlines. Runners sharing a checkout or
+submission ledger should use one exclusive lock; a refresh failure leaves the earlier accepted
+forecast in place.
+
+Submissions also retain a local `detail` trace (migration 154): the frozen lock and its hash,
+forecast origin, model proposals and fallbacks, research evidence, explicit nonsecret strategy
+settings, and start/completion timestamps. It is separate from the signed wire body and survives
+retries unchanged. Signing uses the completion time, and the five-minute deadline margin is
+checked again after forecasting so slow retrieval cannot silently consume the filing window.
 
 **How the board ranks.** An entrant's row is its mean skill over the rounds it answered —
 unanswered rounds are not counted — and skill is `1 − CRPS / persistence CRPS` against a
@@ -334,6 +360,22 @@ persistence and the baseline, `shadow list` shows the record, `bun run arena res
 runs it once and prints everything. `MARINA_ARENA_SHADOW=<spec>` records hourly from the tick
 job — no entrant or key needed.
 
+Shadow variants include a fingerprint of the forecaster's strategy settings. Different horizon
+modes, damping, selected series, routes and lookup settings no longer share a deduplication key.
+
+**Structured evidence.** `FRED_API_KEY` makes vintage-aware series available, but arena research
+also needs `MARINA_ARENA_RESEARCH_LOOKUPS=fred` and a research-consuming route. A formation
+with `+research@closed-book` uses the existing empty web retriever plus these structured lookups;
+it adds no web-search model. The explicit related-series map selects evidence for Civiqs economic
+questions and SCE inflation expectations. The arena's own history remains the level anchor.
+FRED evidence includes current/previous observations, their same-vintage change, units and
+vintage date. A comparison with the vintage available at the start reading distinguishes new
+information from a monthly change that was already known. Verification uses the frozen structured
+payload rather than a mutable HTML page;
+the dossier retains the typed observations and failure/skip reasons. Historical intraday cutoffs
+use the prior UTC day's FRED vintage because its API does not provide exact release instants.
+Live reads use currently available data. Sports odds are excluded from arena research.
+
 ## Signal discovery
 
 `bun run arena discover [--tracker T] [--proposer provider/model] [--n N]` runs the loop that found
@@ -451,7 +493,8 @@ match the arena's continuous, profile and ranking targets.
 | `arena shadow [list]` · `arena shadow score` | in-world | the shadow ledger, and its score on outcomes no one had seen |
 | `arena shadow run <round_id\|due> [forecaster:F]` | in-world | record a free forecaster's forecast for rounds about to lock (never filed) |
 | `arena discover [tracker:T] [n:N]` · `arena signals [tracker:T]` | in-world | run signal discovery (one proposer call per family, rate limited), list every attempt |
-| `bun run arena submit <round_id\|due> [--dry-run] [--forecaster …] [--weight w]` | operator CLI | sign and file now |
+| `bun run arena submit <round_id\|due> [--dry-run] [--replace] [--forecaster …] [--weight w]` | operator CLI | sign and file now, optionally replacing an earlier accepted version |
+| `bun run arena shadow horizons <round_id\|due>` | operator CLI | compare five statistical horizon policies on shared inputs; never file |
 | `bun run arena evaluate [--forecaster …] [--weight w] [--out FILE]` | operator CLI | score forecasters on resolved rounds; files nothing |
 | `bun run arena keygen <path>` / `registration` | operator CLI | key and registration file |
 

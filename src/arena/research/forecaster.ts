@@ -114,7 +114,10 @@ export interface JudgedProposal extends Distribution {
 }
 
 export interface ResearchForecast extends RoundForecast {
-  dossier?: Pick<ResearchReport, "report" | "sources" | "costUsd" | "searches" | "retriever"> & {
+  dossier?: Pick<
+    ResearchReport,
+    "report" | "sources" | "costUsd" | "searches" | "retriever" | "data"
+  > & {
     since: string;
     verification?: Record<string, number>;
   };
@@ -329,6 +332,7 @@ export async function researchForecastRound(
     costUsd: research.costUsd,
     searches: research.searches,
     retriever: research.retriever,
+    ...(research.data ? { data: research.data } : {}),
     ...(checked ? { verification: checked.stats } : {}),
   };
 
@@ -550,6 +554,7 @@ export async function noAnchorForecastRound(
     costUsd: research.costUsd,
     searches: research.searches,
     retriever: research.retriever,
+    ...(research.data ? { data: research.data } : {}),
     ...(checked ? { verification: checked.stats } : {}),
   };
   const bounds = questionBounds(round);
@@ -693,6 +698,7 @@ async function researchProfileRound(
     costUsd: research.costUsd,
     searches: research.searches,
     retriever: research.retriever,
+    ...(research.data ? { data: research.data } : {}),
     ...(checked ? { verification: checked.stats } : {}),
   };
   const histories = cellHistories(round, lock);

@@ -29,6 +29,13 @@ import { CIVIQS_SERIES, civiqsDailySeries, type LiveCiviqs } from "./civiqs-nowc
 
 export type HorizonMode = "off" | "drift" | "sd" | "both";
 
+export interface HorizonOptions {
+  mode: HorizonMode;
+  phi?: number;
+  /** Unset applies to every series; an explicit list scopes an experiment. */
+  series?: string[];
+}
+
 /** Readings the slope is fitted on. */
 export const DRIFT_WINDOW = 7;
 /** Default damping: each further day adds φ× the previous day's drift. */
@@ -218,6 +225,7 @@ export async function horizonNowcast(
       phi,
       ...(rev !== undefined ? { revisionSd: r(rev) } : {}),
       source: daily?.source,
+      points: pts,
     },
   };
 }
@@ -232,4 +240,21 @@ export function horizonModeFromEnv(env: NodeJS.ProcessEnv = process.env): Horizo
 export function dampingFromEnv(env: NodeJS.ProcessEnv = process.env): number {
   const v = Number(env.MARINA_ARENA_NOWCAST_DAMPING);
   return Number.isFinite(v) && v > 0 && v <= 1 ? v : DEFAULT_DAMPING;
+}
+
+/** Read the complete policy from the caller's environment, not process globals. */
+export function horizonOptionsFromEnv(env: NodeJS.ProcessEnv = process.env): HorizonOptions {
+  const raw = env.MARINA_ARENA_NOWCAST_SERIES;
+  return {
+    mode: horizonModeFromEnv(env),
+    phi: dampingFromEnv(env),
+    ...(raw === undefined
+      ? {}
+      : {
+          series: raw
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
+        }),
+  };
 }

@@ -736,7 +736,7 @@
 # What answers (default nowcast — no model calls; the baseline for non-Civiqs rounds): nowcast (freshest Civiqs reading), baseline, discovered (best promoted signal, else nowcast), tabh2o[:forecast][@nowcast] (experimental; TabH2O on the lock's own history, needs TABH2O_API_KEY), model:<provider/model>, crew:<m>[,<m>,<m>] (statistician, analyst, skeptic) or research:<m>[,<m>,<m>]. A model's answer is shrunk toward the baseline by MARINA_ARENA_MODEL_WEIGHT. Measure with `bun run arena evaluate` before switching.
 # MARINA_ARENA_FORECASTER=nowcast
 
-# Per-family routing for MARINA_ARENA_FORECASTER=routed (or a literal route:… spec): one forecaster per tracker family, `skip` to leave a family unanswered (the board averages only answered rounds), `*` for the rest. Unset uses the measured default: civiqs=nowcast; aaii and umich_sentiment on multi-model formations; economist_yougov, umich_party and morning_consult skipped; *=nowcast.
+# Per-family routing for MARINA_ARENA_FORECASTER=routed (or a literal route:… spec): one forecaster per tracker family, `skip` to leave a family unanswered (the board averages only answered rounds), `*` for the rest. Unset uses *=nowcast; every family is answered.
 # MARINA_ARENA_ROUTES=civiqs=nowcast;economist_yougov=skip;*=nowcast
 # MARINA_ARENA_MODEL_WEIGHT=0.5
 
@@ -749,6 +749,9 @@
 # Horizon-aware Civiqs nowcast (experimental, off until a backtest earns it): `drift` adds a damped local trend to the release day where the series' own history says trends persist, `sd` widens the spread to the h-day-ahead error plus revision noise, `both` does both. Applies wherever the nowcast is the start forecast (nowcast, formations, research). DAMPING is φ in (0, 1]. Measure with `bun run arena evaluate` or the `nowcast-drift:<φ>` / `horizon` signals before switching.
 # MARINA_ARENA_NOWCAST_HORIZON=off
 # MARINA_ARENA_NOWCAST_DAMPING=0.8
+
+# Optional comma-separated Civiqs series ids to receive horizon correction (for example civiqs_net_econ_now). Unset applies the selected mode to all series; an empty list applies to none. Scope experimental corrections before extending them to other series or profile cells.
+# MARINA_ARENA_NOWCAST_SERIES=civiqs_net_econ_now
 
 # Research forecaster: retriever (default openrouter-web:openai/gpt-6-luna with OPENROUTER_API_KEY, else tavily:basic with TAVILY_API_KEY, else keyless asof), judge (jev, decisions or none; default jev, which without OPENROUTER_API_KEY uses the MARINA_DECISIONS backend or no judge) and the trust given to verified research lines. Retrievers: openrouter-web:<model> (any model with OpenRouter's web search) or sonar:<Perplexity model> (sonar, sonar-pro, sonar-pro-search, sonar-reasoning-pro, sonar-deep-research); tavily:basic or tavily:advanced calls Tavily's search API directly (needs TAVILY_API_KEY; its page text is used for citation checks); asof[:<providers>] uses keyless date-strict engines (gdelt, wikipedia, hn, arxiv, wayback) bounded to the brief's cutoff; list several, comma-separated, to merge their reports.
 # MARINA_ARENA_RESEARCH_RETRIEVER=openrouter-web:openai/gpt-6-luna

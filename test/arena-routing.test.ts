@@ -20,6 +20,9 @@ describe("per-family routing", () => {
     const spec = "route:civiqs=nowcast;economist_yougov=skip;*=baseline";
     expect(parseForecasterSpec(spec)).toBe(spec);
     expect(parseForecasterSpec("routed")).toBe("routed");
+    expect(
+      parseForecasterSpec("formation:delphi:openrouter/vendor/model+research@closed-book"),
+    ).toBe("formation:delphi:openrouter/vendor/model+research@closed-book");
     const routes = parseRoutes(spec);
     expect(routeFor(routes, "civiqs")).toBe("nowcast");
     expect(routeFor(routes, "economist_yougov")).toBe("skip");

@@ -23,6 +23,8 @@ export interface ArenaSubmissionRow {
   meta: string;
   /** The exact body bytes (UTF-8 JSON) that were signed. */
   body: string;
+  /** Local forecast inputs, configuration and reasoning; never sent as signed headers. */
+  detail: string;
   status: ArenaSubmissionStatus;
   http_status: number | null;
   response: string | null;
@@ -37,6 +39,7 @@ export interface InsertArenaSubmission {
   url: string;
   meta: string;
   body: string;
+  detail?: string;
 }
 
 const MAX_RESPONSE_CHARS = 4_000;
@@ -44,9 +47,19 @@ const MAX_RESPONSE_CHARS = 4_000;
 export function insertArenaSubmission(db: Database, row: InsertArenaSubmission): number {
   const now = Date.now();
   const result = db.run(
-    `INSERT INTO arena_submissions (entrant, round_id, request_id, url, meta, body, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, 'prepared', ?, ?)`,
-    [row.entrant, row.roundId, row.requestId, row.url, row.meta, row.body, now, now],
+    `INSERT INTO arena_submissions (entrant, round_id, request_id, url, meta, body, detail, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'prepared', ?, ?)`,
+    [
+      row.entrant,
+      row.roundId,
+      row.requestId,
+      row.url,
+      row.meta,
+      row.body,
+      row.detail ?? "{}",
+      now,
+      now,
+    ],
   );
   return Number(result.lastInsertRowid);
 }
@@ -114,7 +127,7 @@ export interface ArenaShadowRow {
   created_at: number;
 }
 
-/** First record per (round, forecaster) wins — a shadow forecast is never revised. */
+/** Append a new observation; scoring selects the latest pre-lock record per variant. */
 export function recordArenaShadow(
   db: Database,
   row: { roundId: string; forecaster: string; forecast: string; detail: string; costUsd: number },
@@ -135,8 +148,9 @@ export function listArenaShadow(
   return (
     opts.forecaster
       ? db
-          .query("SELECT * FROM arena_shadow WHERE forecaster = ? ORDER BY id DESC LIMIT ?")
-          .all(opts.forecaster, limit)
+          .query(`SELECT * FROM arena_shadow
+            WHERE forecaster = ? OR substr(forecaster, 1, ?) = ? ORDER BY id DESC LIMIT ?`)
+          .all(opts.forecaster, opts.forecaster.length + 1, `${opts.forecaster}#`, limit)
       : db.query("SELECT * FROM arena_shadow ORDER BY id DESC LIMIT ?").all(limit)
   ) as ArenaShadowRow[];
 }
