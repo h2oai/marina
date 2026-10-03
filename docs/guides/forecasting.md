@@ -130,9 +130,9 @@ are saved with their answer as one string (`prediction`).
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `OPENROUTER_API_KEY` | required | retrieval and the Jev judge run through OpenRouter |
-| `MARINA_FORECAST_ANALYSTS` | three vendors via OpenRouter | comma-separated `provider/model` ids |
-| `MARINA_FORECAST_RETRIEVER` | `openrouter-web:openai/gpt-6-luna` | the research engine(s) |
+| `OPENROUTER_API_KEY` | optional | retrieval and the Jev judge run through OpenRouter; without it the forecast runs degraded on whatever models are configured ([Single model](single-model.md)) |
+| `MARINA_FORECAST_ANALYSTS` | three vendors via OpenRouter; else up to three configured models (a local runtime first) | comma-separated `provider/model` ids |
+| `MARINA_FORECAST_RETRIEVER` | `openrouter-web:openai/gpt-6-luna` with an OpenRouter key; else `tavily:basic` with a Tavily key; else `asof` (keyless) | the research engine(s) |
 | `MARINA_FORECAST_JUDGE` | `jev` | `jev`, `decisions` (the configured `MARINA_DECISIONS` backend — OpenJev, TypeSafe, a chat classifier; falls back to `jev` when none is set) or `none` (equal weights) |
 | `MARINA_FORECAST_PLANNER` | the first analyst | typed answers: plans and names research gaps |
 | `MARINA_FORECAST_CRITIC` | the planner | typed answers: the disconfirmation pass |

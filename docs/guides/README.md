@@ -25,7 +25,9 @@ and operate the environment. Start with one path below; the full catalog follows
 | Review human and agent identity controls | [Identity and workload security](identity.md) | [Authentication](../authentication.md) |
 | Run isolated A/B Marina variants | [World Collective](world-collective.md) | [Execution Traces](observability.md) |
 | Register another Marina without assuming trust | [Federation discovery](federation-discovery.md) | [Inheritance](inheritance.md) |
-| Forecast a question (probability or number, with evidence) | [Forecasting](forecasting.md) | [Model API](model-api.md) |
+| Run on one local model (Ollama, llama.cpp) or a single key | [Single model](single-model.md) | [Configuration](configuration.md) |
+| Forecast a question (probability or number, with evidence) | [Single model](single-model.md) | What every model-using feature does with one local model or one key, and how `readiness` reports it |
+| [Forecasting](forecasting.md) | [Model API](model-api.md) |
 | Enter Marina in the Social Simulation Arena | [Arena](arena.md) | [Forecasting](forecasting.md) |
 | Enter Marina in FutureX (weekly future-prediction benchmark) | [FutureX](futurex.md) | [Forecasting](forecasting.md) |
 | Run Marina's coding agent on SWE-bench | [SWE-bench](swebench.md) | [Coding](coding.md) |

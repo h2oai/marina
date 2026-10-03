@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { intelligenceScale } from "../agent/available-models";
 import { arenaStatus } from "../arena/service";
 import { earnedGateCalibration, loadCalibration } from "../decisions/calibrate";
 import { decisionConfigFromEnv } from "../decisions/config";
@@ -144,6 +145,26 @@ export function computeReadiness(engine: Engine): ReadinessReport {
             "Set a supported provider key, add one in Admin → Keys, or configure LLAMA_BASE_URL for a local runtime.",
         },
   );
+
+  // ── Intelligence scale — Marina sizes every feature to what is configured ──
+  // A single model is a working (degraded) tier, never an error: verification
+  // self-checks, decisions use an uncalibrated classifier on that model,
+  // forecasts use one analyst × K runs, routing has one candidate.
+  const scale = intelligenceScale(env);
+  if (scale.tier !== "none") {
+    checks.push({
+      id: "intelligence-scale",
+      label: "Intelligence scale",
+      status: scale.tier === "multi" ? "ok" : "degraded",
+      detail: scale.summary,
+      ...(scale.tier === "single"
+        ? {
+            remediation:
+              "Optional: add a second provider (any key, or OPENROUTER_API_KEY for many vendors) for cross-vendor analysts, checkers and routing.",
+          }
+        : {}),
+    });
+  }
 
   // ── Agent auto-respawn — whether seeded/saved agents start on boot ────────
   const autoRespawn = autoRespawnEnabled(engine.agentRuntime.isAvailable(), env);
