@@ -416,6 +416,21 @@
 # `off` sends tools without `strict: true`. On by default for closed, all-required schemas; upstreams that do not implement strict mode ignore it.
 # MARINA_STRICT_TOOLS=on
 
+# `off` stops asking OpenRouter for `provider.require_parameters` on agent requests that carry tools. On by default, so a request is never served by a provider that ignores `tools`; dropped per model when no endpoint supports every parameter.
+# MARINA_OPENROUTER_REQUIRE_PARAMETERS=on
+
+# `off` never sends `reasoning: {enabled: false}` to OpenRouter. By default an agent with thinking off sends it only for a model whose spawn-time tool probe still made a tool call without reasoning; a model that says reasoning is mandatory stops receiving it.
+# MARINA_OPENROUTER_REASONING_OFF=on
+
+# Spawn-time tool-calling probe for an unlisted model id or any OpenRouter model: `warn` reports a model that answered without a tool call (readiness, `agent status`), `refuse` also stops a crew lead on it, `off` skips the probe. Default `warn` (`off` under a test runner).
+# MARINA_TOOL_PROBE=warn
+
+# Output repair when a model's output misses its required shape (prose where a reply or tool call was owed, malformed JSON or arguments): `on` = deterministic parse, then one re-encoding shot whose values must appear verbatim in the original; `parse` = deterministic only; `off` = raw output. Repaired deliveries carry `repaired:parse` / `repaired:shot`.
+# MARINA_OUTPUT_REPAIR=on
+
+# Model for server-side repair shots (`marina/verify` final output); must be a reachable upstream id. Default: the model whose output is repaired. Agents and forecast runs repair with their own model.
+# MARINA_REPAIR_MODEL=openrouter/google/gemini-3.5-flash-lite
+
 # `off` omits the tools prose section from the lean agent system prompt.
 # MARINA_SYSTEM_TOOLS_PROSE=on
 

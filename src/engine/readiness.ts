@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { intelligenceScale } from "../agent/available-models";
+import { listToolProbeResults } from "../agent/tool-call-probe";
 import { arenaStatus } from "../arena/service";
 import { earnedGateCalibration, loadCalibration } from "../decisions/calibrate";
 import { decisionConfigFromEnv } from "../decisions/config";
@@ -164,6 +165,29 @@ export function computeReadiness(engine: Engine): ReadinessReport {
           }
         : {}),
     });
+  }
+
+  // ── Tool calling — spawn-time probes of unlisted / OpenRouter models ──────
+  const probes = listToolProbeResults();
+  if (probes.length > 0) {
+    const silent = probes.filter((p) => p.outcome === "no-tool-call");
+    checks.push(
+      silent.length > 0
+        ? {
+            id: "tool-calling",
+            label: "Model tool calling",
+            status: "degraded",
+            detail: `no tool call from ${silent.map((p) => `${p.model} (${p.detail})`).join(", ")}`,
+            remediation:
+              "Agents on these models may stay silent. Choose a model that calls tools; MARINA_TOOL_PROBE=refuse stops such crew leads at spawn.",
+          }
+        : {
+            id: "tool-calling",
+            label: "Model tool calling",
+            status: "ok",
+            detail: `probed models call tools: ${probes.map((p) => p.model).join(", ")}`,
+          },
+    );
   }
 
   // ── Agent auto-respawn — whether seeded/saved agents start on boot ────────

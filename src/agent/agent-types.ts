@@ -232,6 +232,8 @@ export interface AgentStatus {
   attentionThreshold?: number;
   queuedPerceptions?: number;
   droppedPerceptions?: number;
+  /** Spawn-time tool-calling probe of the model (`tool-call-probe`), when one ran. */
+  toolProbe?: string;
 }
 
 // ─── Agent Handle ───────────────────────────────────────────────────────────
@@ -317,7 +319,7 @@ export type AgentEvent =
   // it, so every block / hold / route / retry is explainable and tunable.
   | {
       type: "decision";
-      stage: "gate" | "route" | "verify";
+      stage: "gate" | "route" | "verify" | "repair";
       verdict: string;
       subject: string;
       reason: string;

@@ -77,6 +77,7 @@ import {
   localProviderBaseUrl,
   localProviderContextWindow,
 } from "../net/model-discovery";
+import { outputRepairMode, repairFinalAnswer } from "../repair/output-repair";
 import { MarinaClient, TELL_NOTICE_PREFIX } from "../sdk/client";
 import type { Perception } from "../types";
 import { suggestPatterns } from "../world/templates/orchestration";
@@ -96,7 +97,6 @@ import {
   type AgentThinkingLevel,
   resolveAgentThinkingLevel,
 } from "./agent-types";
-
 import {
   type ConversationTokenCap,
   computeContextBudget,
@@ -144,7 +144,15 @@ import {
 } from "./prompts/lean-system";
 import { COMPACTION_SYSTEM_PROMPT, formatUntrustedContext } from "./prompts/support-prompts";
 import { defaultModelPrice, isUnpricedModel, sniffProviderCost } from "./provider-cost";
+import {
+  grownOutputCap,
+  isOpenRouterModel,
+  noteUpstreamRejection,
+  reasoningHeadroomCap,
+  shapeOpenRouterPayload,
+} from "./reasoning-control";
 import { SocialAwareness } from "./social";
+import { describeToolProbe } from "./tool-call-probe";
 import {
   type GatedRisk,
   gateScopedArgs,
@@ -549,6 +557,9 @@ function parsePositiveInt(raw: string | undefined): number | undefined {
 
 /** Lowest context window we'll ever shrink to during overflow recovery. */
 const MIN_EFFECTIVE_CONTEXT = 4096;
+
+/** Output cap for the one re-encoding shot of an owed-reply salvage (`output-repair`). */
+const REPAIR_SHOT_MAX_TOKENS = 2048;
 
 /**
  * Backstop poll while the world connection is down. A reconnect wakes the
@@ -1162,6 +1173,14 @@ export class LeanAgentAdapter implements AgentHandle {
    * override). Recomputed on a model change.
    */
   private outputMaxTokens: number | undefined;
+  /**
+   * Ceiling an AUTOMATIC output cap may grow to after a turn ended on its
+   * length limit without a tool call (`grownOutputCap`). Undefined when the cap
+   * is explicit (operator config/env), local, or the provider default.
+   */
+  private outputCapCeiling: number | undefined;
+  /** The agent's API key, resolved per call (rotation-safe); set in the constructor. */
+  private resolveKeyNow: () => Promise<string | undefined> = async () => undefined;
 
   private focus: Focus | null = null;
   /** The focus text the action directive last carried in full (see `focusDirective`). */
@@ -1523,6 +1542,7 @@ export class LeanAgentAdapter implements AgentHandle {
       if (!apiKey) return undefined;
       return typeof apiKey === "function" ? await apiKey() : apiKey;
     };
+    this.resolveKeyNow = resolveKeyNow;
 
     // Emergence-preserving summarizer. Rule-based summaries strip texture
     // ("moved north, moved south") — intent, surprise, relationships, and
@@ -1663,8 +1683,14 @@ export class LeanAgentAdapter implements AgentHandle {
       prepareNextTurnWithContext: (context, signal) => this.prepareNextTurn(context, signal),
       // Fill `prompt_cache_key` for OpenAI upstreams behind the proxy (see
       // `withPromptCacheKey`); registry models keep pi-ai's own behaviour.
-      onPayload: (payload, model) =>
-        withPromptCacheKey(payload, model as Model<Api>, `marina-agent:${this.name}`),
+      // OpenRouter routes also get `reasoning-control` shaping: only providers
+      // that honour every parameter (tools included), and the reasoning disable
+      // for a model a probe verified still calls tools without reasoning.
+      onPayload: (payload, model) => {
+        const keyed =
+          withPromptCacheKey(payload, model as Model<Api>, `marina-agent:${this.name}`) ?? payload;
+        return shapeOpenRouterPayload(keyed, model as Model<Api>, this.thinkingLevel) ?? keyed;
+      },
       // Inject the output cap into every request. pi-agent-core never sets
       // `maxTokens`, and the openai-completions path only sends `max_tokens`
       // when it's present — so without this a local server uses its own
@@ -2698,6 +2724,24 @@ export class LeanAgentAdapter implements AgentHandle {
             continue;
           }
 
+          // A request field this model's upstream refuses (a reasoning disable
+          // it cannot honour, or `require_parameters` no endpoint satisfies):
+          // learn it once and retry at once without the field — not an outage.
+          const lesson = noteUpstreamRejection(this.model.id, errorMessage);
+          if (lesson) {
+            this.log.warn(
+              LEAN_AGENT_LOG_CATEGORY,
+              `upstream refused a request field [${model}] (${lesson}) — retrying without it`,
+              { agent: this.name },
+            );
+            this.emitEvent({
+              type: "error",
+              error: `Request shaping adjusted [${model}]: ${lesson}`,
+              context: "autonomous_loop",
+            });
+            continue;
+          }
+
           consecutiveErrors++;
           this.consecutiveLoopErrors = consecutiveErrors;
           // Include the model so the dashboard error line names the failing
@@ -2826,18 +2870,43 @@ export class LeanAgentAdapter implements AgentHandle {
       Math.floor(this.model.contextWindow / 2),
       isMarinaProxyModel(this.model) ? Number.POSITIVE_INFINITY : this.model.maxTokens,
     );
-    const cloudDefault = (base: number) =>
-      Math.min(automaticCeiling, Math.max(base, requiredOutput));
+    // A model that may reason without being asked (any OpenRouter route, an id
+    // the registry does not know, or a registry reasoning model with thinking
+    // off) spends hidden reasoning tokens from the same cap; a compact default
+    // leaves it no room to reach a tool call (`reasoning-control`).
+    const mayReasonUnasked =
+      thinkingBudget === 0 &&
+      (this.model.reasoning ||
+        isOpenRouterModel(this.model) ||
+        classifyModelResolution(modelStr) === "synthesized");
+    const cloudDefault = (base: number) => {
+      const cap = Math.min(automaticCeiling, Math.max(base, requiredOutput));
+      return mayReasonUnasked ? reasoningHeadroomCap(cap, automaticCeiling) : cap;
+    };
+    const configCap =
+      this.config.maxTokens && this.config.maxTokens > 0 ? this.config.maxTokens : undefined;
+    const envCap = isLocal
+      ? undefined
+      : this.config.crewResponder
+        ? crewOverride
+        : this.config.toolProfile === "crew"
+          ? compactOverride
+          : undefined;
     this.outputMaxTokens =
-      this.config.maxTokens && this.config.maxTokens > 0
-        ? this.config.maxTokens
-        : isLocal
-          ? localOutputBudget(this.model.contextWindow)
-          : this.config.crewResponder
-            ? (crewOverride ?? cloudDefault(2048))
-            : this.config.toolProfile === "crew"
-              ? (compactOverride ?? cloudDefault(4096))
-              : undefined;
+      configCap ??
+      (isLocal
+        ? localOutputBudget(this.model.contextWindow)
+        : this.config.crewResponder
+          ? (crewOverride ?? cloudDefault(2048))
+          : this.config.toolProfile === "crew"
+            ? (compactOverride ?? cloudDefault(4096))
+            : undefined);
+    // Only an automatic cap may grow after a length-limited silent turn; an
+    // operator's explicit cap (config or env) is never overridden.
+    this.outputCapCeiling =
+      configCap === undefined && envCap === undefined && !isLocal && this.outputMaxTokens
+        ? automaticCeiling
+        : undefined;
     const actualOutput = this.outputMaxTokens ?? this.model.maxTokens;
     if (requiredOutput > actualOutput) {
       this.log.warn(
@@ -2853,6 +2922,116 @@ export class LeanAgentAdapter implements AgentHandle {
       this.effectiveContextWindow = this.model.contextWindow;
       this.peakAcceptedInputTokens = 0;
     }
+  }
+
+  /**
+   * A turn that ended on its output-length limit without a tool call spent its
+   * whole completion before acting — typically hidden reasoning on a compact
+   * cap. Grow an AUTOMATIC cap (never an operator's explicit one) toward its
+   * ceiling so the next turn has room. Returns the new cap, if it grew.
+   */
+  private growOutputCapAfterLengthStop(message: unknown): number | undefined {
+    const stop = (message as { stopReason?: unknown } | undefined)?.stopReason;
+    if (stop !== "length" || !this.outputMaxTokens || !this.outputCapCeiling) return undefined;
+    const next = grownOutputCap(this.outputMaxTokens, this.outputCapCeiling);
+    if (!next) return undefined;
+    const before = this.outputMaxTokens;
+    this.outputMaxTokens = next;
+    this.model = { ...this.model, maxTokens: next } as Model<Api>;
+    const reason = `output cap ${before} reached before any tool call [${this.model.id}] — cap → ${next}`;
+    this.log.warn(LEAN_AGENT_LOG_CATEGORY, reason, { agent: this.name });
+    this.emitEvent({ type: "error", error: reason, context: "output_cap" });
+    return next;
+  }
+
+  /**
+   * Output repair for an owed `model_request`: the run ended on a silent turn
+   * whose prose holds the answer, but no tool call delivered it. Extract the
+   * final answer (deterministically, else ONE re-encoding shot on this agent's
+   * own model whose answer must appear verbatim in the prose), send it as the
+   * `model_response` with its `repaired` label, and settle the obligation.
+   * Only with exactly one owed model request, so the answer cannot go to the
+   * wrong caller. Returns true when a reply was delivered.
+   */
+  private async salvageOwedModelReply(message: unknown): Promise<boolean> {
+    const mode = outputRepairMode();
+    if (mode === "off") return false;
+    const owed = this.outstandingRequests
+      .entries()
+      .filter((r) => r.presented && r.modelRequestId && r.kind === "channel");
+    if (owed.length !== 1) return false;
+    const request = owed[0] as OutstandingRequest;
+    const content = (message as { content?: unknown } | undefined)?.content;
+    const prose = Array.isArray(content)
+      ? content
+          .filter((b): b is TextContent => (b as { type?: string }).type === "text")
+          .map((b) => b.text)
+          .join("\n")
+          .trim()
+      : typeof content === "string"
+        ? content.trim()
+        : "";
+    if (!prose) return false;
+    const shot = async (system: string, user: string): Promise<string> => {
+      const result = await piModels.completeSimple(
+        this.model,
+        {
+          systemPrompt: system,
+          messages: [{ role: "user", content: user, timestamp: Date.now() }] as Message[],
+        },
+        { apiKey: await this.resolveKeyNow(), maxTokens: REPAIR_SHOT_MAX_TOKENS },
+      );
+      this.recordTurnUsage(extractTurnUsage(result), Date.now());
+      if (result.stopReason === "error") throw new Error(result.errorMessage ?? "repair failed");
+      return result.content
+        .filter((b): b is TextContent => b.type === "text")
+        .map((b) => b.text)
+        .join("\n");
+    };
+    const repaired = await repairFinalAnswer(prose, { mode, shot }).catch(() => undefined);
+    if (!repaired) return false;
+    const label = repaired.label ?? "repaired:parse";
+    const envelope = JSON.stringify({
+      type: "model_response",
+      id: request.modelRequestId,
+      content: repaired.value,
+      repaired: label,
+    });
+    try {
+      const perceptions = await this.client.command(`channel send ${request.target} ${envelope}`);
+      for (const p of perceptions) this.gameState.handlePerception(p);
+      if (perceptions.some((p) => p.kind === "error")) return false;
+      const deliveries = perceptions.flatMap((p) => (p.data.delivery ? [p.data.delivery] : []));
+      const completed = this.outstandingRequests.completedIds(
+        { deliveries },
+        new Set([request.id]),
+      );
+      if (completed.length > 0) {
+        await this.platformMemory.completeOutstandingRequests(completed);
+        this.outstandingRequests.complete(completed);
+      }
+    } catch (err) {
+      this.log.warn(LEAN_AGENT_LOG_CATEGORY, `reply salvage failed: ${getErrorMessage(err)}`, {
+        agent: this.name,
+      });
+      return false;
+    }
+    this.currentPromptActionable = this.outstandingRequests.presentedIds().size > 0;
+    this.log.info(
+      LEAN_AGENT_LOG_CATEGORY,
+      `delivered owed model_response ${request.modelRequestId} (${label})`,
+      { agent: this.name },
+    );
+    this.emitEvent({
+      type: "decision",
+      stage: "repair",
+      verdict: label,
+      subject: "model_response",
+      reason: "silent turn: prose answer delivered to the owed model_request",
+      signals: { chars: repaired.value.length },
+      model: this.model.id,
+    });
+    return true;
   }
 
   /**
@@ -4125,6 +4304,7 @@ The goal is a smaller, sharper memory — not more notes.`;
               `(LLM returned 0 tool calls; model=${this.model.id})`,
             { agent: this.name },
           );
+          this.growOutputCapAfterLengthStop(event.message);
 
           // Crossing the circuit-breaker threshold: surface the likely cause
           // once (instead of every cycle) so an operator sees WHY the agent
@@ -4147,7 +4327,13 @@ The goal is a smaller, sharper memory — not more notes.`;
           // run end and the next cycle's prompt carries the forced-action
           // section. Instant self-correction when the model just needed
           // a nudge; graceful fallback when it didn't.
+          // Recoveries spent and a model_request is still owed: deliver the
+          // answer the prose already gives (`output-repair`), labelled.
+          const salvaged =
+            this.inRunRecoveries >= LeanAgentAdapter.MAX_IN_RUN_RECOVERIES &&
+            (await this.salvageOwedModelReply(event.message));
           if (
+            !salvaged &&
             this.currentPromptActionable &&
             !this.runYielded &&
             this.inRunRecoveries < LeanAgentAdapter.MAX_IN_RUN_RECOVERIES
@@ -4462,6 +4648,7 @@ The goal is a smaller, sharper memory — not more notes.`;
       capacity: this.perceptionBufferCap,
       errorReason: this.lastErrorReason,
     });
+    const toolProbe = describeToolProbe(this.config.model ?? MARINA_DEFAULT_MODEL);
     return {
       name: this.name,
       entityId: this.gameState.getState().connection.entityId ?? null,
@@ -4496,6 +4683,7 @@ The goal is a smaller, sharper memory — not more notes.`;
       attentionThreshold: this.attentionThreshold,
       queuedPerceptions: this.pendingPerceptions.length,
       droppedPerceptions: this.droppedPerceptions,
+      ...(toolProbe ? { toolProbe } : {}),
     };
   }
 

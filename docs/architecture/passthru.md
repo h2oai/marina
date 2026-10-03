@@ -27,6 +27,9 @@
     - Only the cited call may be added or dropped, and only the cited argument of a modified call may change.
     - No id may appear that is absent from the conversation and its tool results.
     - A guarded revision is discarded and the response says `x-marina-verify: held-write`.
+  - **Output repair** (`src/repair/tool-call-repair.ts`, `MARINA_OUTPUT_REPAIR`). The final message is repaired when tools were sent and the message carries its call as fenced or bare JSON for a declared tool, or has malformed arguments. `<tool_call>` tags are already normalized upstream.
+    - The repair is mechanical first, then one re-encoding shot (`MARINA_REPAIR_MODEL`, else the proposer). The shot's values must appear verbatim in the message, and a write call may use only argument names the message wrote.
+    - The response says `x-marina-repair: repaired:parse|repaired:shot`.
     - Read-only: `annotations.readOnlyHint`, else a lookup-style name.
   - **Refusals:** `stream` and `n > 1` get `unsupported_parameter`; non-upstream ids get `model_not_found`.
   - **Checker:** the default is `MARINA_VERIFY_CHECKER_MODEL`, else the proposer.
