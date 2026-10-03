@@ -156,6 +156,7 @@ export async function executePlan(plan: Plan, opts: RunOptions): Promise<number>
   const scratch = join(opts.runDir, "tmp");
   mkdirSync(scratch, { recursive: true });
   mkdirSync(join(opts.runDir, "servers"), { recursive: true });
+  mkdirSync(join(opts.runDir, "results"), { recursive: true });
   const baseEnv: Record<string, string> = {};
   for (const [k, v] of Object.entries(opts.env)) if (v !== undefined) baseEnv[k] = v;
   // Scratch on disk, never a tmpfs.

@@ -114,9 +114,9 @@ describe("tau2 adapter", () => {
         expect(r.stdout.toString()).not.toContain("pass^");
         expect(existsSync(out)).toBe(false);
       }
-      const ok = run("convert", clean, "--out", join(dir, "ok.json"), "--require-clean");
+      const ok = run("convert", clean, "--out", join(dir, "new", "ok.json"), "--require-clean");
       expect(ok.exitCode).toBe(0);
-      expect(existsSync(join(dir, "ok.json"))).toBe(true);
+      expect(existsSync(join(dir, "new", "ok.json"))).toBe(true); // creates the directory
       // Without the flag the run still converts (errors excluded and reported).
       expect(run("summary", dirty).stdout.toString()).toContain("1 infrastructure error(s)");
     } finally {

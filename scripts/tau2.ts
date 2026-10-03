@@ -17,7 +17,8 @@
  * a leaderboard.
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { parseArgs } from "node:util";
 import {
   infrastructureErrors,
@@ -71,6 +72,7 @@ if (cmd === "summary") {
     console.log(`pass^${k} ${passHatK(results, k)?.toFixed(3) ?? "n/a"}`);
 } else {
   const out = values.out ?? file.replace(/\.json$/, ".ledger.json");
+  mkdirSync(dirname(out), { recursive: true });
   writeFileSync(
     out,
     JSON.stringify(tau2ToHarness(results, { benchmark: values.benchmark }), null, 1),
