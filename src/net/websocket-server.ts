@@ -136,6 +136,7 @@ interface WSData {
   isDashboard?: boolean;
   isCanvas?: boolean;
   canvasId?: string;
+  canvasToken?: string;
   ip?: string;
   /** Real, unspoofable TCP peer address from `server.requestIP` — the exec/loopback trust anchor. */
   peerIp?: string;
@@ -464,7 +465,18 @@ export class WebSocketServer {
               }
               const connId = `canvas_${++wsIdCounter}`;
               const upgraded = server.upgrade(req, {
-                data: { connId, isCanvas: true, canvasId, ip, peerIp, principal },
+                data: {
+                  connId,
+                  isCanvas: true,
+                  canvasId,
+                  ip,
+                  peerIp,
+                  principal,
+                  canvasToken:
+                    req.headers.get("Authorization")?.replace(/^Bearer /, "") ??
+                    url.searchParams.get("token") ??
+                    undefined,
+                },
               });
               if (!upgraded) {
                 return new Response("WebSocket upgrade failed", { status: 400 });
@@ -733,6 +745,11 @@ export class WebSocketServer {
             const admitted = self.canvasBroadcaster.addClient(ws, ws.data.canvasId, {
               db: canvasDb,
               principal,
+              revalidate: () => {
+                if (ws.data.canvasToken && !engine.authenticate(ws.data.canvasToken))
+                  return undefined;
+                return self.buildCanvasPrincipal(ws.data.principal, canvasDb);
+              },
             });
             if (!admitted) ws.close();
             return;

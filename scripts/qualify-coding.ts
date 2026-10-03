@@ -26,13 +26,18 @@ import { Logger } from "../src/engine/logger";
 import { grant } from "../src/engine/safety-gates";
 import { spentTodayUsd } from "../src/engine/spend-ledger";
 import { closeWorldMemoryService } from "../src/memory/world-service";
+import { DashboardBroadcaster } from "../src/net/dashboard-ws";
 import { setEndpointConfig } from "../src/net/model-endpoint";
 import { WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
 import type { CodingEventRow } from "../src/persistence/db-coding";
 import { MarinaClient } from "../src/sdk/client";
+import { codingDesk } from "../src/sdk/coding-desk";
+import { MarinaPanelClient } from "../src/sdk/panel-client";
 import { type EntityId, roomId } from "../src/types";
 import { scopeProcessState, scopeProperty } from "../test/process-state";
+import type { TerminalPanelState } from "./code-panel-form";
+import { CodePanels } from "./code-panels";
 import { evaluationBudgetFetch } from "./research/memory-evaluation-budget";
 
 const SCENARIOS = ["bugfix", "feature", "refactor", "workspace"] as const;
@@ -374,6 +379,10 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
       MARINA_CODE_DEFAULT_ROOT: directory,
       MARINA_AUTONOMY: "guarded",
       MARINA_CHALLENGES: "off",
+      // Qualify the core coding contract in this disposable world. Do not inherit
+      // an operator's optional external judge: the fixture's network policy permits
+      // only its bounded coding provider. This does not test decision-gate policy.
+      MARINA_DECISION_GATE: "off",
       MARINA_ROOM_AGENTS: "false",
       MARINA_DAILY_SPEND_CAP_USD: String(options.budgetUsd),
     },
@@ -411,6 +420,9 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
   });
   const server = new WebSocketServer(engine, 0);
   server.setDb(db);
+  const broadcaster = new DashboardBroadcaster();
+  server.setBroadcaster(broadcaster);
+  engine.addEventListener((event) => broadcaster.broadcastEvent(event));
   cleanup.defer(() => server.stop());
   server.start();
   engine.agentRuntime.setWsPort(server.getPort());
@@ -431,6 +443,12 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
     passed: false,
     provider: `openai/${spending.model}`,
     model_loop: "native Marina worker",
+    policy: {
+      autonomy: "guarded",
+      trust: "shared",
+      decision_gate: "off (optional judge excluded from this fixture)",
+      command_gates: "enforced",
+    },
     scenarios: [],
     limits:
       "Small functional fixtures; workspace uses captured local packages only. No general coding-quality or hermetic-build claim.",
@@ -522,6 +540,80 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
         "candidate",
         "Dispatch lost the owner completion contract",
       );
+      // An external participant publishes an ordinary desk; this is SDK composition,
+      // not a claim that the model authored the UI. The native worker does the coding.
+      const panels = new MarinaPanelClient({
+        url: url.replace("ws:", "http:"),
+        token: owner.getSession()!.token,
+      });
+      const publisher = new MarinaPanelClient({
+        url: url.replace("ws:", "http:"),
+        token: peer.getSession()!.token,
+      });
+      const canvas = await panels.request<{ id: string }>("/api/canvases", "POST", {
+        name: `Coding desk ${scenario}`,
+      });
+      const publication = await publisher.publish(
+        canvas.id,
+        codingDesk({ sessionId, taskId: String(codingRunMetadata(run).taskId) }),
+      );
+      let deskState: TerminalPanelState | undefined;
+      const renders: string[] = [];
+      const desk = new CodePanels(
+        panels,
+        (text) => renders.push(text),
+        async () => null,
+        {
+          present: (state) => {
+            deskState = state;
+          },
+        },
+      );
+      cleanup.defer(() => desk.dispose());
+      await desk.command(`open ${canvas.id} ${publication.id}`);
+      assert.ok(deskState, "Published desk failed to open through the canonical APIs");
+      desk.input({
+        type: "field",
+        id: "request",
+        value: "Preserve my draft while the worker runs",
+      });
+      const beforeEvent = renders.length;
+      await owner.command("code observe Coding desk live refresh proof", {
+        codingTarget: { sessionId },
+      });
+      const refreshDeadline = Date.now() + 3000; // Shorter than the five-second recovery poll.
+      while (
+        !renders
+          .slice(beforeEvent)
+          .some((text) => text.includes("Coding desk live refresh proof")) &&
+        Date.now() < refreshDeadline
+      )
+        await Bun.sleep(20);
+      writeFileSync(join(directory, `desk-${scenario}.txt`), renders.join("\n---\n"), {
+        mode: 0o600,
+      });
+      assert.ok(
+        renders.slice(beforeEvent).some((text) => text.includes("Coding desk live refresh proof")),
+        "Desk missed its live invalidation",
+      );
+      assert.equal(
+        deskState.fields.find((field) => field.id === "request")?.value,
+        "Preserve my draft while the worker runs",
+      );
+      await desk.command("close");
+      assert.equal(
+        db.getCodingSession(sessionId)?.status,
+        "active",
+        "Closing a view stopped its session",
+      );
+      assert.ok(engine.agentRuntime.get(name), "Closing a view stopped its worker");
+      const deskProof = {
+        publication: publication.id,
+        source: "ordinary SDK publisher + terminal CodePanels",
+        live_refresh: true,
+        local_draft_preserved: true,
+        close_preserved_worker: true,
+      };
       const marker = `world-responsive-${scenario}`;
       const sent = performance.now();
       await peer.command(`tell CodingOwner ${marker}`);
@@ -553,6 +645,7 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
         world_message_latency_ms: worldLatency,
         worker: handle.getStatus(),
         failure,
+        desk: deskProof,
       };
       (report.scenarios as unknown[]).push(result);
       assert.equal(submitted.status, "submitted", `${scenario}: ${failure}`);

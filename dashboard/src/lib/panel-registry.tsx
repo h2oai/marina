@@ -4,15 +4,23 @@
 import { type ComponentType, useSyncExternalStore } from "react";
 import type { PanelFocusProps } from "../components/GlassPanel";
 import type { WorldMap } from "../components/WorldMap";
+import type { WorkspaceView } from "../hooks/use-workspace-state";
+import type { PanelBinding } from "./panel-bindings";
 
 export interface DashboardPanelProps extends PanelFocusProps {
   worldData?: Parameters<typeof WorldMap>[0]["worldData"];
+  /** A hidden view keeps its local state but can suspend transport reads. */
+  active?: boolean;
+  binding?: PanelBinding | null;
+  onBindingChange?: (binding: PanelBinding | null) => void;
 }
 export interface DashboardPanelDefinition {
   id: string;
   title: string;
   slot: "grid" | "sidebar" | "admin-tab";
   modes?: readonly ("workspace" | "legacy")[];
+  /** Opt in only after instance-local controls and DOM identity are qualified. */
+  repeatable?: { fromView: WorkspaceView; actionLabel: string };
   /** A statically imported local React component, never a URL or module name. */
   component: ComponentType<DashboardPanelProps>;
 }
@@ -46,6 +54,7 @@ export function createDashboardPanelRegistry() {
       const panel = Object.freeze({
         ...definition,
         modes: definition.modes && Object.freeze([...definition.modes]),
+        repeatable: definition.repeatable && Object.freeze({ ...definition.repeatable }),
       });
       panels = Object.freeze([...panels, panel]);
       changed();

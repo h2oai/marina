@@ -450,6 +450,48 @@ select.mission-field { padding-right: 24px; }
 /* Keep work within the available viewport; each pane owns its scrolling. */
 .workspace-shell .react-grid-layout { height: 100%; min-height: 0; }
 .workspace-shell .workspace-view[hidden] { display: none; }
+/* The Canvas panel host projects the same rectangles and panel chrome as the
+   grid. Scope these rules to its direct renderer: embedded Canvas boards own
+   their own pan/zoom, selection, sizing and keyboard interaction. */
+.workspace-canvas { width: 100%; min-height: 0; }
+.workspace-canvas > .react-flow { background: transparent; }
+.workspace-canvas > .react-flow > .react-flow__renderer > .react-flow__pane {
+  cursor: default;
+  touch-action: auto;
+}
+.workspace-canvas .react-flow__node-workspacePanel {
+  user-select: auto;
+  cursor: default;
+  /* d3-drag writes an inline touch-action:none on touch-capable devices.
+     Only the header/resize handle owns dragging; panel bodies must scroll. */
+  touch-action: auto !important;
+}
+.workspace-panel-host > .glass-panel > .drag-handle { touch-action: none; }
+.workspace-panel-host { position: relative; }
+.workspace-panel-host > .workspace-panel-resize {
+  z-index: 10;
+  width: 20px;
+  height: 20px;
+  right: 0;
+  bottom: 0;
+  transform: none;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  opacity: 0;
+  cursor: se-resize;
+}
+.workspace-panel-host:hover > .workspace-panel-resize { opacity: 1; }
+.workspace-panel-host > .workspace-panel-resize::after {
+  content: "";
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 6px;
+  height: 6px;
+  border-right: 2px solid rgb(0 0 0 / 40%);
+  border-bottom: 2px solid rgb(0 0 0 / 40%);
+}
 .workspace-shell .glass-panel h2 { font-size: 12px; letter-spacing: 0.035em; }
 .workspace-shell #marina-command-input { min-width: 0; font-size: 14px; padding-block: 8px; }
 .workspace-shell .mobile-pane-tabs { display: none; }
@@ -457,6 +499,7 @@ select.mission-field { padding-right: 24px; }
 .canvas-fullscreen .workspace-grid [data-pane-key="workspace"] { position: absolute !important; inset: 0 !important; width: 100% !important; height: 100% !important; transform: none !important; }
 .canvas-fullscreen .workspace-grid [data-pane-key="webchat"],
 .canvas-fullscreen .workspace-grid [data-pane-key="context"] { display: none; }
+.canvas-fullscreen .workspace-grid [data-pane-key^="view:"] { display: none; }
 .canvas-fullscreen .workspace-grid .react-resizable-handle { display: none; }
 @media (max-width: 799px) {
   .workspace-shell .mobile-pane-tabs { display: flex; }
@@ -464,10 +507,23 @@ select.mission-field { padding-right: 24px; }
   .workspace-shell[data-pane="webchat"] .workspace-grid [data-pane-key="webchat"],
   .workspace-shell[data-pane="workspace"] .workspace-grid [data-pane-key="workspace"],
   .workspace-shell[data-pane="context"] .workspace-grid [data-pane-key="context"] { display: block; }
+  .workspace-grid .react-grid-item.pane-active { display: block; }
   .workspace-grid .react-resizable-handle { display: none; }
 }
 .workspace-shell .text-sm { font-size: 14px; }
 .workspace-shell header { font-size: 12px; }
+/* A tile's available width, rather than the browser width, determines its
+   navigation layout. Narrow extra views retain a usable output/composer column. */
+.participant-streams { container: participant-streams / inline-size; }
+@container participant-streams (min-width: 480px) {
+  .participant-streams-layout { flex-direction: row; }
+  .participant-streams-layout > aside {
+    max-height: 100%;
+    width: 14rem;
+    border-bottom-width: 0;
+    border-right-width: 1px;
+  }
+}
 @media (max-width: 799px) {
   .workspace-shell #marina-command-input { font-size: 16px; }
 }

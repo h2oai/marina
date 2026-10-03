@@ -3,17 +3,16 @@
 
 import { ExternalLink, Loader2, RefreshCcw, TriangleAlert, Video, Volume2 } from "lucide-react";
 import type { ReactElement } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { canvasPermalink } from "../canvas/lib/canvas-links";
 import type { CanvasNodeData } from "../canvas/lib/types";
-import { A2UIRenderer } from "../canvas/nodes/a2ui/A2UIRenderer";
-import type { A2UIAction, A2UINodeData } from "../canvas/nodes/a2ui/types";
 import { useCanvasNode } from "../hooks/use-canvas-node";
-import { authFetch } from "../lib/api";
+import { openBoundPanel } from "../lib/panel-bindings";
 import { formatTime } from "../lib/utils";
 import { useAssetViewer, type ViewableAsset } from "./AssetLightbox";
 
-const API_BASE = window.location.origin;
+import { parseCanvasReference, ReferenceContent } from "./CanvasReference";
+import { InteractivePanel } from "./InteractivePanel";
 
 interface CanvasNodeEmbedProps {
   canvasId: string;
@@ -22,9 +21,8 @@ interface CanvasNodeEmbedProps {
   summary?: string;
   kind?: string;
   timestamp?: number;
+  active?: boolean;
 }
-
-type NodeData = Record<string, unknown>;
 
 export function CanvasNodeEmbed({
   canvasId,
@@ -33,49 +31,11 @@ export function CanvasNodeEmbed({
   summary,
   kind,
   timestamp,
+  active = true,
 }: CanvasNodeEmbedProps) {
-  const { data, isLoading, isError, refetch } = useCanvasNode(canvasId, nodeId);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [localData, setLocalData] = useState<NodeData | null>(null);
+  const { data, isLoading, isError, refetch } = useCanvasNode(canvasId, nodeId, active);
   const { open: openAsset } = useAssetViewer();
-
-  useEffect(() => {
-    if (data) {
-      setLocalData(data.data);
-    }
-  }, [data]);
-
-  const node = useMemo(() => {
-    if (!data) return null;
-    return { ...data, data: localData ?? data.data };
-  }, [data, localData]);
-
-  const handleA2UIAction = useCallback(
-    async (action: A2UIAction) => {
-      if (!node) return;
-      try {
-        const updated = {
-          ...node.data,
-          lastAction: {
-            name: action.event.name,
-            payload: action.event.payload,
-            timestamp: Date.now(),
-          },
-        };
-        const response = await authFetch(`${API_BASE}/api/canvases/${canvasId}/nodes/${nodeId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ data: updated }),
-        });
-        if (!response.ok) throw new Error(`Could not save canvas action (${response.status}).`);
-        setActionError(null);
-        setLocalData(updated);
-      } catch (error) {
-        setActionError(error instanceof Error ? error.message : "Could not save canvas action.");
-      }
-    },
-    [canvasId, node, nodeId],
-  );
+  const node = useMemo(() => (isError ? null : (data ?? null)), [data, isError]);
 
   const nodeHeader = (
     <div className="flex items-center justify-between text-[10px] uppercase text-text-dim">
@@ -111,7 +71,7 @@ export function CanvasNodeEmbed({
     body = (
       <div className="mt-2 space-y-2">
         {summary && <div className="text-[12px] text-text-bright">{summary}</div>}
-        {renderNodePreview(node, handleA2UIAction, openAsset)}
+        {renderNodePreview(node, openAsset, active)}
       </div>
     );
   }
@@ -119,13 +79,15 @@ export function CanvasNodeEmbed({
   return (
     <div className="group relative my-1.5 rounded-md border border-border bg-bg/80 p-2 shadow-sm">
       {nodeHeader}
-      {actionError && (
-        <p role="alert" className="text-xs text-danger">
-          {actionError} Try the action again.
-        </p>
-      )}
       {body}
       <div className="mt-2 flex items-center gap-2 text-[10px] text-text-dim">
+        <button
+          type="button"
+          className="text-primary"
+          onClick={() => openBoundPanel({ kind: "canvas-node", canvasId, nodeId })}
+        >
+          Open as panel
+        </button>
         <a
           href={canvasPermalink({ canvasId, nodeId }, window.location.href)}
           target="_blank"
@@ -150,8 +112,8 @@ export function CanvasNodeEmbed({
 
 function renderNodePreview(
   node: CanvasNodeData & { data: Record<string, unknown> },
-  onA2UIAction: (action: A2UIAction) => void,
   openAsset: (asset: ViewableAsset) => void,
+  active: boolean,
 ): ReactElement {
   const data = node.data ?? {};
   const title = (data.title as string) ?? (data.name as string) ?? node.type;
@@ -245,6 +207,8 @@ function renderNodePreview(
       );
     }
     case "embed": {
+      const reference = parseCanvasReference(data.reference);
+      if (reference) return <ReferenceContent reference={reference} active={active} />;
       const url = data.url as string | undefined;
       if (!url) return placeholder("Embed URL not available.");
       return (
@@ -265,20 +229,11 @@ function renderNodePreview(
         </div>
       );
     }
-    case "a2ui": {
-      const components = (data.components as A2UINodeData["components"]) ?? [];
-      const nodeData: A2UINodeData = {
-        components,
-        rootId: (data.rootId as string) ?? undefined,
-        dataModel: (data.dataModel as Record<string, unknown>) ?? undefined,
-      };
+    case "a2ui":
       return (
-        <div className="rounded border border-indigo-800/40 bg-indigo-950/30 p-2 text-[11px] text-text">
-          <div className="mb-2 text-[11px] font-semibold text-indigo-200">{title}</div>
-          <A2UIRenderer nodeData={nodeData} onAction={onA2UIAction} />
-        </div>
+        <InteractivePanel active={active} canvasId={node.canvas_id} nodeId={node.id} data={data} />
       );
-    }
+
     default:
       return placeholder(`Preview for node type "${node.type}" is not available.`);
   }

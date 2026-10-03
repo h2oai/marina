@@ -53,6 +53,7 @@ it("rejects URL/string components and collisions without modifying existing regi
     title: "Health",
     slot: "sidebar",
     component: () => <p>health</p>,
+    repeatable: { fromView: "map", actionLabel: "Open health below" },
   };
   registry.register(definition);
   const snapshot = registry.getSnapshot();
@@ -75,10 +76,13 @@ it("freezes metadata and a stale disposer cannot remove a replacement", () => {
     title: "Health",
     slot: "sidebar",
     component: () => <p>health</p>,
+    repeatable: { fromView: "map", actionLabel: "Open health below" },
   };
   const dispose = registry.register(definition);
   definition.title = "Mutated";
+  definition.repeatable!.actionLabel = "Mutated";
   expect(registry.getSnapshot()[0]!.title).toBe("Health");
+  expect(registry.getSnapshot()[0]!.repeatable?.actionLabel).toBe("Open health below");
   dispose();
   registry.register(definition);
   dispose();

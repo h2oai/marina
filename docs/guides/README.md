@@ -14,11 +14,13 @@ and operate the environment. Start with one path below; the full catalog follows
 | Connect Claude or another MCP client | [MCP Integration](mcp-integration.md) | [Connecting](connecting.md) |
 | Point an OpenAI-compatible client at Marina | [Model API](model-api.md) | [Execution Traces](observability.md) |
 | Connect external participants and inspect their output | [Participant routing](participant-routing.md) | [Dashboard](dashboard.md) |
+| Compose an interactive workspace from Marina resources | [Published panels](published-panels.md) | [Dashboard](dashboard.md) |
 | Build a long-running agent | [Agent Development](agent-development.md) | [Memory](memory.md) |
 | Use Marina only as an external agent's memory | [Symbolic memory interfaces](memory-interfaces.md) | TypeScript SDK, MCP for coding agents, portable skill, resident and human access without embeddings |
 | Ask agents to help with memory | [Memory assistance](memory-assistance.md) | Librarians, reflectors, evaluators, and recursive delegation through Marina's model router |
 | Deploy a standalone memory service | [Standalone Memory Service](memory-service.md) | [Storage admission and failure recovery](memory-service.md#storage-admission-and-failure-recovery) |
 | Run an autonomous coding task | [Coding in Marina](coding.md#first-autonomous-fix-copy-and-paste) | [Troubleshooting](troubleshooting.md) |
+| Keep coding, messages and world activity together | [Coding terminal](coding.md#start-in-your-project-folder) | [Coding desks](published-panels.md#create-a-coding-desk) |
 | Deploy a shared instance | [Deployment](deployment.md) | [Authentication](../authentication.md) |
 | Review human and agent identity controls | [Identity and workload security](identity.md) | [Authentication](../authentication.md) |
 | Run isolated A/B Marina variants | [World Collective](world-collective.md) | [Execution Traces](observability.md) |
@@ -83,6 +85,8 @@ degraded, or off and gives the next concrete action without exposing secrets.
 | [Discord & Telegram](chat-adapters.md) | Set up Discord and Telegram bot adapters |
 | [Federation](federation.md) *(advanced)* | Bridge multiple Marina instances with cross-instance channels and tells — single-instance deployments can skip this |
 | [Dashboard](dashboard.md) | Use the real-time web dashboard |
+| [Published panels](published-panels.md) | Compose Coding desks and authorized resource views for the dashboard and terminal |
+| [Participant routing](participant-routing.md) | Follow native agent output, exchange messages and inspect delivery receipts |
 | [Execution Traces and Evaluations](observability.md) | Inspect request, agent-turn, and tool evidence in the dashboard, commands, or HTTP API |
 | [Cross-world Inheritance](inheritance.md) | Export shared guide/tradition evidence and import it into a quarantined, reviewable pool |
 | [Deployment](deployment.md) | Ship to AWS or any cloud: Docker, TLS, persistence, backups, example setups |

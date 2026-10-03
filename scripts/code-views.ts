@@ -5,7 +5,7 @@ import type { Perception } from "../src/sdk/client";
 import { terminalText } from "./code-presentation";
 
 export type ConversationView = "coding" | "world";
-export type TerminalView = ConversationView | "approvals";
+export type TerminalView = ConversationView | "approvals" | "panel";
 export type TranscriptView = ConversationView | "all";
 
 export const TERMINAL_HISTORY_LIMITS = {
@@ -110,15 +110,18 @@ export class TerminalViews {
   navigation(questions: number): string {
     const label = (view: TerminalView, name: string, count: number) =>
       `${view === this.focus ? "● " : ""}${name}${count ? ` (${count})` : ""}`;
-    return `${label("coding", "Coding", this.unread.coding)}  ·  ${label("world", "World", this.unread.world)}  ·  ${label("approvals", "Requests", questions)}`;
+    return `${label("coding", "Coding", this.unread.coding)}  ·  ${label("world", "World", this.unread.world)}  ·  ${label("approvals", "Requests", questions)}  ·  ${label("panel", "Panel", 0)}`;
   }
 
   select(view: TerminalView): void {
     this.focus = view;
-    if (view !== "approvals" && this.pageEnd[view] === undefined) this.unread[view] = 0;
+    if (view !== "approvals" && view !== "panel" && this.pageEnd[view] === undefined)
+      this.unread[view] = 0;
   }
 
   page(direction: "older" | "newer"): string {
+    if (this.focus === "panel")
+      return "This view shows the current publication. /panel refresh reloads it; F6 returns to conversations.";
     if (this.focus === "approvals")
       return "Approval details are attached to the pending request; F6 returns to conversations.";
     const view = this.focus;

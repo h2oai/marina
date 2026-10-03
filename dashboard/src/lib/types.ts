@@ -275,7 +275,18 @@ export interface DashboardEvent {
   owner?: string;
   // Coordination container lifecycle (coordination_change): project / group /
   // channel / pool / board / connector / command create / update / delete.
-  resource?: "project" | "group" | "channel" | "pool" | "board" | "connector" | "command";
+  /** Identifier carried by content-free coding/participant invalidation hints. */
+  id?: string;
+  resource?:
+    | "coding"
+    | "participant"
+    | "project"
+    | "group"
+    | "channel"
+    | "pool"
+    | "board"
+    | "connector"
+    | "command";
   action?: "create" | "update" | "delete";
   timestamp: number;
 }

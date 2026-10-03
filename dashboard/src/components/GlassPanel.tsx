@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Maximize2, Minimize2, Plus, RefreshCw, X } from "lucide-react";
+import { CopyPlus, Maximize2, Minimize2, Plus, RefreshCw, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { type ReactNode, useState } from "react";
 import { cn } from "../lib/utils";
@@ -13,17 +13,17 @@ import { cn } from "../lib/utils";
 export interface PanelFocusProps {
   isFocused?: boolean;
   onToggleFocus?: () => void;
+  viewTitle?: string;
+  openBelow?: { label: string; run: () => void; disabled?: boolean };
+  onCloseView?: () => void;
 }
 
-interface GlassPanelProps {
+interface GlassPanelProps extends PanelFocusProps {
   title?: string;
   icon?: ReactNode;
   children: ReactNode;
   backContent?: ReactNode;
   className?: string;
-  isFocused?: boolean;
-  /** When provided, renders an explicit pop-out/restore button in the header. */
-  onToggleFocus?: () => void;
   headerExtra?: ReactNode;
   /**
    * Whether the front face scrolls its own overflow (default true). Panels that
@@ -41,7 +41,7 @@ interface GlassPanelProps {
 const FLIP_TRANSITION = { duration: 0.4, ease: [0.4, 0, 0.2, 1] as const };
 
 export function GlassPanel({
-  title,
+  title: panelTitle,
   icon,
   children,
   backContent,
@@ -51,7 +51,11 @@ export function GlassPanel({
   headerExtra,
   bodyScroll = true,
   flipMode = "data",
+  viewTitle,
+  openBelow,
+  onCloseView,
 }: GlassPanelProps) {
+  const title = viewTitle ?? panelTitle;
   const [isFlipped, setIsFlipped] = useState(false);
 
   return (
@@ -73,7 +77,32 @@ export function GlassPanel({
           <h2 className="flex-1 font-display text-[11px] font-semibold tracking-wider text-primary uppercase">
             {title}
           </h2>
-          {headerExtra}
+          {headerExtra && <span className="nodrag contents">{headerExtra}</span>}
+          {openBelow && (
+            <button
+              type="button"
+              className="nodrag text-text-dim hover:text-primary disabled:opacity-40"
+              aria-label={openBelow.label}
+              title={
+                openBelow.disabled ? "Close an extra panel before opening another" : openBelow.label
+              }
+              disabled={openBelow.disabled}
+              onClick={openBelow.run}
+            >
+              <CopyPlus size={11} />
+            </button>
+          )}
+          {onCloseView && (
+            <button
+              type="button"
+              className="nodrag text-text-dim hover:text-primary"
+              aria-label={`Close ${title} view`}
+              title="Close this view"
+              onClick={onCloseView}
+            >
+              <X size={11} />
+            </button>
+          )}
           {backContent &&
             (flipMode === "create" ? (
               <button
@@ -83,7 +112,7 @@ export function GlassPanel({
                   setIsFlipped((f) => !f);
                 }}
                 className={cn(
-                  "transition-colors",
+                  "nodrag transition-colors",
                   isFlipped ? "text-primary" : "text-text-dim hover:text-primary",
                 )}
                 title={isFlipped ? "Close" : "New agent"}
@@ -100,7 +129,7 @@ export function GlassPanel({
                 }}
                 animate={{ rotate: isFlipped ? 180 : 0 }}
                 transition={FLIP_TRANSITION}
-                className="text-text-dim hover:text-primary transition-colors"
+                className="nodrag text-text-dim hover:text-primary transition-colors"
                 title={isFlipped ? "Show front" : "Show data"}
               >
                 <RefreshCw size={10} />
@@ -113,7 +142,7 @@ export function GlassPanel({
                 e.stopPropagation();
                 onToggleFocus();
               }}
-              className="text-text-dim transition-colors hover:text-primary"
+              className="nodrag text-text-dim transition-colors hover:text-primary"
               title={isFocused ? "Restore panel size (Esc)" : "Pop out — enlarge this panel"}
               aria-label={isFocused ? `Restore ${title} panel` : `Maximize ${title} panel`}
             >

@@ -21,7 +21,12 @@ import type { Logger } from "./logger";
  * thread — and `tick` alone is 86k rows/day. Nothing reads any of these back
  * from the DB (trace projection uses turn/tool/lifecycle events only).
  */
-const EPHEMERAL_EVENT_TYPES = new Set(["agent_text_delta", "agent_thinking_delta", "tick"]);
+const EPHEMERAL_EVENT_TYPES = new Set([
+  "agent_text_delta",
+  "agent_thinking_delta",
+  "tick",
+  "resource_changed",
+]);
 
 export class EventLog {
   private events: EngineEvent[] = [];

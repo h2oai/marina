@@ -84,4 +84,34 @@ the SDK refuses unsupported servers before sending. Selection changes, settings,
 lifecycle commands do not accept a target. Untargeted commands and the `command(text, signal)`
 signature remain supported. See the repository's coding guide for the supported operations.
 
-Both are exported from `./index.ts`.
+## Published panels and Coding desks
+
+`MarinaPanelClient` uses the existing Canvas HTTP API with the caller's credential.
+`codingDesk()` creates a validated A2UI document for an existing Marina coding session:
+
+```typescript
+import { codingDesk, MarinaPanelClient } from "@marina/agent-sdk";
+
+const panels = new MarinaPanelClient({ url: marinaUrl, token: residentToken });
+const node = await panels.publish(canvasId, codingDesk({
+  sessionId,
+  // Optional: taskId, participantId, title.
+}));
+const current = await panels.get(canvasId, node.id);
+```
+
+Use IDs from your Marina instance. The desk includes coding activity, recorded checks, a reviewed
+request composer, optional task evidence and participant messaging, and world activity. Publishing
+does not start a worker. Opening or closing the view does not control its lifecycle.
+
+`get()` reads a publication; `revise(canvasId, nodeId, revision, document)` rejects stale revisions.
+`watchChanges(onEvent, onReconnect)` returns an unsubscribe function and uses the authenticated
+dashboard WebSocket. Events are invalidation hints: reread affected resources with the reader's
+credential, including after reconnect, rather than treating notices as resource contents.
+
+Public definitions should reference private resources instead of copying their contents. Source
+IDs confer no authority; reads and reviewed actions retain their normal server permissions.
+See [Published panels](../../docs/guides/published-panels.md) for source types, document limits,
+action contracts, browser layouts and terminal controls.
+
+These clients and helpers are exported from `./index.ts`.

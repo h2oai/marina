@@ -8,6 +8,7 @@
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type Static, Type } from "@sinclair/typebox";
+import type { ToolReplay } from "../../persistence/db-run-state";
 import type { AgentSupports } from "../agent-types";
 import type { PlatformMemoryBackend } from "../memory-platform";
 import { createCommandTool } from "./command";
@@ -329,6 +330,30 @@ export function agentToolExecutionMode(
   return policy === "auto" ? undefined : policy;
 }
 
+// ─── Replay contract ────────────────────────────────────────────────────────
+//
+// pi-agent-core's AgentTool already carries `replay?: "never" | "safe"` — the
+// recovery policy for an effect whose durable intent exists but whose outcome
+// is unknown. Marina stamps it centrally instead of asking each tool factory
+// to declare it: read-only tools are `safe` (re-running after a crash only
+// observes), everything else is left unset, which the resume path
+// (src/agent/run-state-resume.ts) treats as `never` (report, do not repeat).
+
+export type { ToolReplay };
+
+/** The replay policy a tool should carry when none was declared explicitly. */
+export function replayPolicyFor(name: string): ToolReplay | undefined {
+  return READ_ONLY_TOOL_NAMES.has(name) ? "safe" : undefined;
+}
+
+/** Stamp `replay: "safe"` on read-only tools unless an explicit policy exists. */
+export function applyToolReplayPolicy<T extends AgentTool>(tools: T[]): T[] {
+  return tools.map((tool) => {
+    const replay = replayPolicyFor(tool.name);
+    return replay === undefined || tool.replay !== undefined ? tool : { ...tool, replay };
+  });
+}
+
 /**
  * Build the resident + deferred tool sets for a profile. `full` with deferral
  * on = core set + `marina_tool_search`; the rest are deferred. `onLoadTools`
@@ -343,12 +368,14 @@ export function createProfileToolset(
   options?: { onLoadTools?: (tools: AgentTool[]) => void },
 ): ProfileToolset {
   const all = applyStrictToolSchemas(
-    applyToolExecutionModes(
-      createAllTools(ctx, platformMemory).filter((tool) => {
-        if (!supports.image && tool.name === "marina_generate_image") return false;
-        if (!supports.video && tool.name === "marina_generate_video") return false;
-        return true;
-      }),
+    applyToolReplayPolicy(
+      applyToolExecutionModes(
+        createAllTools(ctx, platformMemory).filter((tool) => {
+          if (!supports.image && tool.name === "marina_generate_image") return false;
+          if (!supports.video && tool.name === "marina_generate_video") return false;
+          return true;
+        }),
+      ),
     ),
   );
   if (profile !== "full") {

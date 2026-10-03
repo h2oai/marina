@@ -291,15 +291,57 @@ ALTER TABLE benchmark_runs ADD COLUMN replicate_group TEXT;
 CREATE INDEX idx_benchmark_runs_replicate_group ON benchmark_runs(replicate_group) WHERE replicate_group IS NOT NULL;
 `,
   },
+  // Migration 149: durable execution checkpoint for the agent loop
+  // (src/persistence/db-run-state.ts). One row per agent describing the
+  // single in-flight effect (a tool call) whose outcome has not been
+  // committed; written before the loop advances, read back at boot so a
+  // crash resumes the step instead of restarting from a summary. `phase`,
+  // `replay` are code-validated unions; the CHECK keeps bad rows out of
+  // the store even though the code is the authority.
+  {
+    version: 149,
+    sql: `
+CREATE TABLE run_state (
+  agent_name TEXT PRIMARY KEY,
+  phase TEXT NOT NULL CHECK (phase IN ('tool_call', 'model_request')),
+  tool_call_id TEXT NOT NULL DEFAULT '',
+  tool_name TEXT NOT NULL DEFAULT '',
+  args_json TEXT NOT NULL DEFAULT '{}',
+  replay TEXT NOT NULL CHECK (replay IN ('safe', 'never')),
+  partial_output_json TEXT NOT NULL DEFAULT '[]',
+  updated_at INTEGER NOT NULL
+);
+`,
+  },
+  // Migration 150: exactly-once submission ledger
+  // (src/persistence/db-submissions.ts). A `requestId` is claimed `pending`
+  // before its work runs and flipped `resolved` once the result commits, so a
+  // client retry after a crash/connection loss gets the original result back
+  // instead of the work being performed twice.
+  {
+    version: 150,
+    sql: `
+CREATE TABLE submission_requests (
+  request_id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'resolved')),
+  result_json TEXT,
+  created_at INTEGER NOT NULL,
+  settled_at INTEGER
+);
+CREATE INDEX idx_submission_requests_pending ON submission_requests(status, created_at)
+  WHERE status = 'pending';
+`,
+  },
   // Typed forecast answers (src/forecast/typed.ts): a saved forecast may be a
   // choice, a set of options, a ranking or a short string, not only a
   // probability or a number. SQLite cannot widen a CHECK in place, so the
   // table is rebuilt with the wider kind list and a `prediction` column (the
   // typed answer as one string); every existing row is copied unchanged.
   {
-    version: 149,
+    version: 151,
     sql: `
-CREATE TABLE forecast_answers_v149 (
+CREATE TABLE forecast_answers_v151 (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   entity_name TEXT NOT NULL,
   question TEXT NOT NULL,
@@ -315,12 +357,12 @@ CREATE TABLE forecast_answers_v149 (
   outcome_json TEXT,
   score REAL
 );
-INSERT INTO forecast_answers_v149
+INSERT INTO forecast_answers_v151
   (id, entity_name, question, kind, probability, mean, sd, answer_json, sample_id, created_at, resolved_at, outcome_json, score)
   SELECT id, entity_name, question, kind, probability, mean, sd, answer_json, sample_id, created_at, resolved_at, outcome_json, score
   FROM forecast_answers;
 DROP TABLE forecast_answers;
-ALTER TABLE forecast_answers_v149 RENAME TO forecast_answers;
+ALTER TABLE forecast_answers_v151 RENAME TO forecast_answers;
 CREATE INDEX idx_forecast_answers_open_sample ON forecast_answers(sample_id) WHERE resolved_at IS NULL;
 CREATE INDEX idx_forecast_answers_entity ON forecast_answers(entity_name, created_at);
 `,

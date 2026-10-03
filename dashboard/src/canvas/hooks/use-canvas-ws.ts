@@ -3,8 +3,15 @@
 
 import type { Node } from "@xyflow/react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useChatState } from "../../hooks/use-chat-state";
+import { getToken } from "../../lib/api";
+import type { CanvasEvent } from "../lib/canvas-events";
+import { resyncCanvas, subscribeCanvas } from "../lib/canvas-subscription";
+
+export { type CanvasEvent, parseCanvasEvent } from "../lib/canvas-events";
+
 import { defaultSize, nextTilePosition } from "../lib/layout";
-import { type CanvasEdgeData, type CanvasNodeData, normalizeNodeType } from "../lib/types";
+import { type CanvasNodeData, normalizeNodeType } from "../lib/types";
 
 /**
  * Connection state of the canvas WebSocket. `live` means the socket is open;
@@ -12,78 +19,6 @@ import { type CanvasEdgeData, type CanvasNodeData, normalizeNodeType } from "../
  * `idle` is the pre-connect / no-canvas state.
  */
 export type CanvasWsStatus = "idle" | "live" | "reconnecting";
-
-const RECONNECT_DELAY_MS = 1500;
-const RECONNECT_MAX_DELAY_MS = 15000;
-
-export interface CanvasEvent {
-  type:
-    | "node_added"
-    | "node_updated"
-    | "node_deleted"
-    | "edge_added"
-    | "edge_deleted"
-    | "canvas_deleted";
-  canvasId: string;
-  node?: CanvasNodeData;
-  nodeId?: string;
-  changes?: CanvasNodeData;
-  edge?: CanvasEdgeData;
-  edgeId?: string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isCompleteNode(value: unknown): value is CanvasNodeData {
-  if (!isRecord(value) || !isRecord(value.data)) return false;
-  return (
-    typeof value.id === "string" &&
-    typeof value.canvas_id === "string" &&
-    typeof value.type === "string" &&
-    typeof value.x === "number" &&
-    typeof value.y === "number" &&
-    typeof value.width === "number" &&
-    typeof value.height === "number" &&
-    typeof value.creator_name === "string" &&
-    typeof value.created_at === "number" &&
-    typeof value.updated_at === "number"
-  );
-}
-
-/** Reject malformed or cross-subscription events before they can corrupt rendered state. */
-export function parseCanvasEvent(payload: unknown, canvasId: string): CanvasEvent | null {
-  if (!isRecord(payload) || payload.canvasId !== canvasId || typeof payload.type !== "string") {
-    return null;
-  }
-  switch (payload.type) {
-    case "node_added":
-      return isCompleteNode(payload.node) ? (payload as unknown as CanvasEvent) : null;
-    case "node_updated":
-      return typeof payload.nodeId === "string" && isCompleteNode(payload.changes)
-        ? (payload as unknown as CanvasEvent)
-        : null;
-    case "node_deleted":
-      return typeof payload.nodeId === "string" ? (payload as unknown as CanvasEvent) : null;
-    case "edge_added":
-      return isRecord(payload.edge) &&
-        typeof payload.edge.id === "string" &&
-        typeof payload.edge.sourceId === "string" &&
-        typeof payload.edge.targetId === "string" &&
-        typeof payload.edge.relationship === "string"
-        ? (payload as unknown as CanvasEvent)
-        : null;
-    case "edge_deleted":
-      return typeof payload.edgeId === "string" ? (payload as unknown as CanvasEvent) : null;
-    case "canvas_deleted":
-      // The subscribed canvas itself is gone — the canvasId guard above
-      // already ensured this event targets our subscription.
-      return payload as unknown as CanvasEvent;
-    default:
-      return null;
-  }
-}
 
 /**
  * Race-free fetch + live event stream.
@@ -130,9 +65,8 @@ export function useCanvasEventSocket(
   canvasId: string | null,
   onEvent: (event: CanvasEvent) => void,
 ): CanvasEventSocketHandle {
-  const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const reconnectAttemptRef = useRef(0);
+  const identity = useChatState((state) => `${state.loggedIn}:${state.entityName}`);
+  const token = identity ? getToken() : null;
   const onEventRef = useRef(onEvent);
   const bufferRef = useRef<CanvasEvent[]>([]);
   const readyRef = useRef(false);
@@ -165,79 +99,32 @@ export function useCanvasEventSocket(
       setStatus("idle");
       return;
     }
-    let teardown = false;
-    // New canvas — go back to buffered mode until the consumer's next snapshot lands.
     bufferRef.current = [];
     readyRef.current = false;
-
-    function connect() {
-      if (teardown) return;
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const ws = new WebSocket(`${protocol}//${window.location.host}/canvas-ws?canvas=${canvasId}`);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        reconnectAttemptRef.current = 0;
-        setStatus("live");
-        setConnectionGeneration((generation) => generation + 1);
-      };
-
-      ws.onmessage = (msg) => {
-        let payload: unknown;
-        try {
-          payload = JSON.parse(msg.data);
-        } catch {
-          return;
-        }
-        if (!canvasId) return;
-        const event = parseCanvasEvent(payload, canvasId);
-        if (!event) return;
+    const release = subscribeCanvas(canvasId, token, {
+      event(event) {
         if (!readyRef.current) {
-          bufferRef.current.push(event);
-          return;
+          if (bufferRef.current.length >= 1024) {
+            bufferRef.current = [];
+            resyncCanvas(canvasId, token);
+          } else bufferRef.current.push(event);
+        } else onEventRef.current(event);
+      },
+      status(next) {
+        setStatus(next);
+        if (next === "live") setConnectionGeneration((generation) => generation + 1);
+        else {
+          readyRef.current = false;
+          bufferRef.current = [];
         }
-        onEventRef.current(event);
-      };
-
-      ws.onerror = () => {
-        setStatus("reconnecting");
-      };
-
-      ws.onclose = () => {
-        wsRef.current = null;
-        if (teardown) return;
-        // A reconnect must converge through a fresh snapshot. Buffer anything
-        // delivered by the replacement socket until that snapshot completes.
-        readyRef.current = false;
-        bufferRef.current = [];
-        setStatus("reconnecting");
-        const attempt = reconnectAttemptRef.current++;
-        const delay = Math.min(RECONNECT_DELAY_MS * 2 ** attempt, RECONNECT_MAX_DELAY_MS);
-        reconnectTimerRef.current = setTimeout(connect, delay);
-      };
-    }
-
-    connect();
-
+      },
+    });
     return () => {
-      teardown = true;
-      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
-      reconnectTimerRef.current = null;
-      reconnectAttemptRef.current = 0;
+      release();
       bufferRef.current = [];
       readyRef.current = false;
-      const ws = wsRef.current;
-      wsRef.current = null;
-      if (ws) {
-        ws.onopen = null;
-        ws.onmessage = null;
-        ws.onerror = null;
-        ws.onclose = null;
-        ws.close();
-      }
-      setStatus("idle");
     };
-  }, [canvasId]);
+  }, [canvasId, token]);
 
   return { status, connectionGeneration, markReady, resetForFetch };
 }

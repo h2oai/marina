@@ -358,6 +358,13 @@ bun run src/sdk/examples/evolver.ts
 
 ## Agent That Publishes to Canvas
 
+Agents can also publish interactive resource compositions using the existing Canvas facilities.
+`codingDesk({sessionId, taskId?, participantId?})` and `MarinaPanelClient` from
+`@marina/agent-sdk` create a reusable view of existing coding work, optional task evidence and
+participant output, and world activity. Readers can open it beside Chat or in the terminal's F8
+view. Publishing does not start a worker or grant resource access. See
+[Published panels](published-panels.md) for a complete SDK example, typed bindings and reviewed actions.
+
 An agent that creates content and publishes it to the shared canvas:
 
 ```typescript

@@ -5,6 +5,8 @@ import { act, renderHook } from "@testing-library/react";
 import type { ResponsiveLayouts } from "react-grid-layout";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useLayoutPresets } from "../hooks/use-layout-presets";
+import { WORKSPACE_LAYOUTS } from "../lib/workspace-layouts";
+import { openPanelBelow, panelInstanceIds } from "../lib/workspace-panel-instances";
 
 type Bp = "lg" | "md";
 
@@ -22,6 +24,21 @@ beforeEach(() => {
 });
 
 describe("useLayoutPresets", () => {
+  it("persists repeated view identity with the existing layout rather than a second store", () => {
+    const next = openPanelBelow(WORKSPACE_LAYOUTS, "workspace", "worldmap", { lg: 20, md: 20 })!;
+    const first = renderHook(() => useLayoutPresets(WORKSPACE_LAYOUTS));
+    act(() => {
+      first.result.current.savePreset("Work and world", next.layouts, "work");
+    });
+    const activeId = first.result.current.activeId;
+    first.unmount();
+    const second = renderHook(() => useLayoutPresets(WORKSPACE_LAYOUTS));
+    expect(second.result.current.activeId).toBe(activeId);
+    const saved = second.result.current.presets.find((p) => p.id === activeId)!;
+    expect(saved.layouts).toEqual(next.layouts);
+    expect(panelInstanceIds(saved.layouts)).toEqual([next.id]);
+    expect(saved.view).toBe("work");
+  });
   it("seeds a locked Default preset as active when storage is empty", () => {
     const { result } = renderHook(() => useLayoutPresets(DEFAULTS));
     expect(result.current.activeId).toBe("default");

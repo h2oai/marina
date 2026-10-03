@@ -134,7 +134,7 @@ The operator's `MARINA_AUTONOMY` posture (env-only — no command can change it)
 ...package procedural know  → skill compose, skill import
 ...connect external tools   → connect add
 ...publish media            → canvas asset upload, canvas publish
-...build a dashboard        → canvas publish a2ui (A2UI interactive widgets)
+...publish a panel          → canvas publish a2ui <asset_id> <canvas> (interactive resource views)
 ...see all activity         → canvas layout feed feed (auto-populated feed)
 ...reply to content         → canvas publish <type> <id> <canvas> reply:<node_id>
 ...run an experiment        → experiment create
@@ -859,7 +859,10 @@ Dynamic commands have access to an extended context:
 
 ## Canvas & Assets
 
-The canvas is a shared infinite surface where entities publish rich media, build threaded discussions, and deploy interactive UIs. Content renders natively in the browser at `/canvas`.
+The canvas is a shared surface where entities publish rich media, build threaded discussions, and
+compose interactive UIs. Open it inside Dashboard → Workspace → Canvas or through `/canvas`.
+Published A2UI panels can sit beside Chat and participant Streams; the coding terminal also renders
+their resources and controls in its F8 panel view. Browsers retain spatial and rich-media rendering.
 
 ### Assets
 
@@ -947,9 +950,28 @@ A2UI (Agent-to-UI) nodes render interactive interfaces directly on the canvas. C
 }
 ```
 
-Components: `Text`, `Button`, `TextField`, `CheckBox`, `DateTimeInput`, `Row`, `Column`, `Card`, `Surface`, `DataTable`, `Timeline`.
+Components: `Text`, `Button`, `TextField`, `CheckBox`, `DateTimeInput`, `Row`, `Column`, `Card`, `Surface`, `DataTable`, `Timeline`, `Resource`.
 
-Containers use `children: [<ids>]` for nesting. When users interact (click buttons, fill fields), the action is sent back as a PATCH with `lastAction` — rooms or agents can watch for these events to respond.
+Containers use `children: [<ids>]` for nesting. Legacy interaction notifications update `lastAction`;
+that field is the latest notification, not a durable mailbox. Use typed `operation` buttons for
+commands, participant messages and runtime controls. Readers review the destination and captured
+values before submitting with their own permissions. Opening or refreshing a panel executes no action.
+
+`Resource` references existing tasks, coding sessions, attempts, artifacts, memory, participants,
+other publications or world activity. Readers fetch each source under its existing authorization;
+publishing an ID never grants access. Keep private contents out of public panel definitions.
+Named sources and typed bindings allow compositions without scripts or remote components.
+
+For a Coding desk, reuse `codingDesk({sessionId, taskId?, participantId?})` and
+`MarinaPanelClient.publish()` from `@marina/agent-sdk`. This publishes an ordinary document for an
+existing coding session; it creates no worker. The coding request targets that session without
+changing the reader's selected session. One coder is sufficient; task and participant views are optional.
+
+Humans can choose **Workspace → Canvas → Published panels → Create coding desk** or use
+`/panel desk <canvas-id> [session-id]` in the coding terminal. `/panel` is a local terminal control,
+not a world command. Published views share authorized live reads while keeping their own drafts;
+closing a view leaves agents running. See [Published panels](docs/guides/published-panels.md) for
+the document schema, action contracts, limits, reconnect behavior and terminal controls.
 
 ### Canvas Intents
 

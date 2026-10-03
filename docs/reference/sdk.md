@@ -438,6 +438,21 @@ export declare class MarinaAgent extends MarinaClient {
 }
 ```
 
+## coding-desk
+
+[Source](../../src/sdk/coding-desk.ts)
+
+```typescript
+import { type A2UINodeData } from "./panel-document.js";
+/** An ordinary publication: no new workspace, agent, routing session or execution authority. */
+export declare function codingDesk(input: {
+    sessionId: string;
+    taskId?: string;
+    participantId?: string;
+    title?: string;
+}): A2UINodeData;
+```
+
 ## command-forms
 
 [Source](../../src/sdk/command-forms.ts)
@@ -669,6 +684,7 @@ export type { CapabilityManifest, CommandCatalogEntry } from "./capabilities.js"
 export { renderCapabilityRoster } from "./capabilities.js";
 export type { ClientOptions, CommandOptions, CommandResult, ConnectionState, RoomView, SessionInfo, } from "./client.js";
 export { CommandError, MarinaAgent, MarinaClient } from "./client.js";
+export { codingDesk } from "./coding-desk.js";
 export type { CommandField, CommandForm, CommandUsage } from "./command-forms.js";
 export { commandFormPrefix, compileCommandForms, composeCommand, matchCommandForm, } from "./command-forms.js";
 export { commandInputSchema } from "./command-schema.js";
@@ -678,6 +694,11 @@ export { EXTENSION_API_VERSION } from "./extensions.js";
 export type { UnifiedContextResult } from "./memory-context.js";
 export type { DurableMemoryAPI, MemoryOperationRequest } from "./memory-operations.js";
 export type { ParticipantOrientation } from "./onboarding.js";
+export * from "./panel-actions.js";
+export * from "./panel-client.js";
+export * from "./panel-document.js";
+export * from "./panel-resources.js";
+export { panelText } from "./panel-text.js";
 export type { BroadcastPerception, Entity, EntityId, EntityKind, EntityRank, ErrorPerception, MessagePerception, MovementPerception, Perception, PerceptionKind, RoomId, RoomPerception, SystemPerception, } from "./protocol.js";
 export type { RoutingClientOptions } from "./routing-client.js";
 export { MarinaRoutingClient, RoutingApiError } from "./routing-client.js";
@@ -2478,6 +2499,221 @@ export interface ParticipantOrientation {
         description: string;
     }[];
 }
+```
+
+## panel-actions
+
+[Source](../../src/sdk/panel-actions.ts)
+
+```typescript
+import { type CodingCommandTarget } from "./command-target.js";
+export type PanelInputValue = string | boolean | {
+    field: string;
+};
+export type PanelOperation = {
+    kind: "message";
+    targetId: string;
+    message: PanelInputValue;
+} | {
+    kind: "control";
+    targetId: string;
+    control: "prompt" | "interrupt" | "stop" | "resume" | "respond";
+    values?: Record<string, PanelInputValue>;
+} | {
+    kind: "command";
+    command: string;
+    syntax: string;
+    values?: Record<string, PanelInputValue>;
+    enabled?: string[];
+    codingTarget?: CodingCommandTarget;
+};
+export declare function parsePanelOperation(value: unknown): PanelOperation | null;
+export declare function panelInput(value: PanelInputValue, fields: Record<string, string | boolean>): string | boolean;
+export declare function panelOperationLabel(operation: PanelOperation): string;
+```
+
+## panel-client
+
+[Source](../../src/sdk/panel-client.ts)
+
+```typescript
+import { type A2UINodeData } from "./panel-document.js";
+import type { PanelChangeEvent } from "./panel-events.js";
+export interface PublishedPanelNode {
+    id: string;
+    canvas_id: string;
+    type: string;
+    creator_name: string;
+    updated_at: number;
+    data: Record<string, unknown> & {
+        panelRevision?: string;
+    };
+}
+export interface PanelInteractionInput {
+    revision: string;
+    componentId: string;
+    fields?: Record<string, string | boolean>;
+    value?: string | boolean;
+    requestId?: string;
+    sourceId?: string;
+    capabilityRevision?: number;
+}
+/** Small adapter over existing Canvas HTTP resources; no resident connection or new store. */
+export declare class MarinaPanelClient {
+    private options;
+    constructor(options: {
+        url: string;
+        token: string | (() => string | undefined);
+        fetch?: typeof fetch;
+    });
+    request<T>(path: string, method?: string, body?: unknown, signal?: AbortSignal): Promise<T>;
+    canvases(signal?: AbortSignal): Promise<{
+        id: string;
+        name: string;
+    }[]>;
+    /** Existing dashboard transport, scoped with this client's credential. Reconnect requires a
+     * fresh authorized snapshot; missed events are never treated as a complete history. */
+    watchChanges(onEvent: (event: PanelChangeEvent) => void, onReconnect: () => void): () => void;
+    list(canvasId: string, signal?: AbortSignal): Promise<PublishedPanelNode[]>;
+    get(canvasId: string, nodeId: string, signal?: AbortSignal): Promise<PublishedPanelNode>;
+    publish(canvasId: string, document: A2UINodeData): Promise<PublishedPanelNode>;
+    revise(canvasId: string, nodeId: string, revision: string, document: A2UINodeData): Promise<PublishedPanelNode>;
+    interact(canvasId: string, nodeId: string, input: PanelInteractionInput): Promise<{
+        status: string;
+        message?: string;
+        receipt?: {
+            id: string;
+            status: string;
+        };
+    }>;
+    private path;
+}
+```
+
+## panel-document
+
+[Source](../../src/sdk/panel-document.ts)
+
+```typescript
+import { type PanelSource } from "./panel-resources.js";
+export declare const PANEL_SCHEMA = "marina.panel.v1";
+export declare const PANEL_LIMITS: {
+    readonly bytes: 262144;
+    readonly components: 128;
+    readonly depth: 20;
+    readonly rendered: 512;
+};
+export declare const PANEL_COMPONENTS: readonly ["Text", "Button", "TextField", "CheckBox", "DateTimeInput", "Row", "Column", "Card", "Surface", "DataTable", "Timeline", "Resource"];
+export type A2UIComponentType = (typeof PANEL_COMPONENTS)[number];
+export interface A2UIAction {
+    componentId?: string;
+    event: {
+        name: string;
+        payload?: Record<string, unknown>;
+    };
+}
+export interface A2UIComponent {
+    id: string;
+    component: A2UIComponentType;
+    child?: string;
+    children?: string[];
+    [key: string]: unknown;
+}
+export interface A2UINodeData {
+    schema?: typeof PANEL_SCHEMA;
+    components: A2UIComponent[];
+    rootId?: string;
+    dataModel?: Record<string, unknown>;
+    sources?: Record<string, PanelSource>;
+    title?: string;
+    lastAction?: {
+        name: string;
+        payload?: Record<string, unknown>;
+        timestamp: number;
+    };
+}
+export type PanelValidation = {
+    ok: true;
+    document: A2UINodeData;
+} | {
+    ok: false;
+    error: string;
+};
+export declare function panelRecord(value: unknown): value is Record<string, unknown>;
+export declare function validPanelAction(value: unknown): value is A2UIAction;
+/** Normalize the two historically documented aliases; reject malformed documents as a unit. */
+export declare function validatePanelDocument(input: unknown): PanelValidation;
+```
+
+## panel-events
+
+[Source](../../src/sdk/panel-events.ts)
+
+```typescript
+import type { PanelSource } from "./panel-resources.js";
+/** A hint to reread; never use stream payloads as resource content or authority. */
+export interface PanelChangeEvent {
+    type: string;
+    resource?: string;
+    id?: string;
+    taskId?: number;
+    noteId?: number;
+    canvasId?: string;
+    nodeId?: string;
+    spaceId?: string;
+}
+export declare function panelSourceAffected(source: PanelSource, event: PanelChangeEvent): boolean;
+```
+
+## panel-resources
+
+[Source](../../src/sdk/panel-resources.ts)
+
+```typescript
+import type { A2UINodeData } from "./panel-document.js";
+export type PanelSource = {
+    kind: "task" | "note" | "participant" | "run" | "coding";
+    id: string;
+} | {
+    kind: "artifact";
+    id: string;
+    sessionId: string;
+} | {
+    kind: "memory";
+    id: string;
+    spaceId: string;
+} | {
+    kind: "canvas";
+    id: string;
+    canvasId: string;
+} | {
+    kind: "feed";
+    limit?: number;
+    filter?: string;
+};
+export declare function parsePanelSource(input: unknown): PanelSource | null;
+export interface PanelValueBinding {
+    source: string;
+    path: string[];
+}
+export declare function isPanelValueBinding(value: unknown): value is PanelValueBinding;
+export declare function readPanelValue(data: unknown, path: string[]): unknown;
+/** Fixed adapters to canonical APIs. Credentials/authorization are owned by the caller. */
+export declare function resolvePanelSource(source: PanelSource, read: (path: string) => Promise<unknown>, memory?: (id: string, spaceId: string) => Promise<unknown>): Promise<unknown>;
+/** Materialize a view without modifying the published definition or granting source authority. */
+export declare function resolvePanelBindings(document: A2UINodeData, sources: Record<string, unknown>): A2UINodeData;
+```
+
+## panel-text
+
+[Source](../../src/sdk/panel-text.ts)
+
+```typescript
+import { type PanelSource } from "./panel-resources.js";
+/** Compact readable snapshots, preserving recorded statuses rather than inferring success. */
+export declare function panelResourceText(source: PanelSource, value: unknown): string;
+/** Bounded semantic projection for terminals, agents and accessible exports. */
+export declare function panelText(input: unknown, sources?: Record<string, unknown>): string;
 ```
 
 ## protocol

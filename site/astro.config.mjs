@@ -9,7 +9,6 @@ import { defineConfig } from "astro/config";
 // deployments can override this with SITE_BASE=/.
 const base = process.env.SITE_BASE ?? "/";
 const site = process.env.SITE_URL ?? "https://h2oai.github.io";
-const asset = (path) => `${base === "/" ? "" : base}/${path.replace(/^\//, "")}`;
 
 export default defineConfig({
   site,
@@ -20,7 +19,8 @@ export default defineConfig({
       title: "Marina",
       description:
         "A civilization for the future — a persistent world where humans and autonomous AI agents share memory, tools, reputation, and the same interface.",
-      favicon: asset("favicon.png"),
+      // Starlight adds Astro's base to root-relative configuration URLs.
+      favicon: "/favicon.png",
       logo: {
         src: "./src/assets/logo.png",
         alt: "Marina",
@@ -83,10 +83,12 @@ export default defineConfig({
         {
           label: "Interfaces",
           items: [
-            { label: "API Explorer", link: asset("api") },
+            { label: "API Explorer", link: "/api" },
             { label: "Model API (OpenAI-compatible)", slug: "docs/guides/model-api" },
             { label: "MCP Integration", slug: "docs/guides/mcp-integration" },
             { label: "Dashboard", slug: "docs/guides/dashboard" },
+            { label: "Published Panels & Coding Desks", slug: "docs/guides/published-panels" },
+            { label: "Participant Routing", slug: "docs/guides/participant-routing" },
             { label: "Execution Traces", slug: "docs/guides/observability" },
             { label: "Identity & Workload Security", slug: "docs/guides/identity" },
             { label: "Discord & Telegram", slug: "docs/guides/chat-adapters" },
@@ -98,6 +100,9 @@ export default defineConfig({
             { label: "Building Worlds", slug: "docs/guides/building-worlds" },
             { label: "Configuration", slug: "docs/guides/configuration" },
             { label: "Deployment", slug: "docs/guides/deployment" },
+            { label: "Operator Runbook", slug: "docs/guides/operator-runbook" },
+            { label: "Testing", slug: "docs/guides/testing" },
+            { label: "Dashboard Accessibility", slug: "docs/guides/dashboard-accessibility" },
             { label: "Federation", slug: "docs/guides/federation" },
             { label: "Federation Discovery", slug: "docs/guides/federation-discovery" },
             { label: "World Collective", slug: "docs/guides/world-collective" },

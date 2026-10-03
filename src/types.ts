@@ -887,6 +887,8 @@ export type EngineEvent =
       kind: "map" | "reduce" | "synthesis" | "draft";
       timestamp: number;
     }
+  // Content-free hints. Readers fetch fresh, caller-authorized resource snapshots.
+  | { type: "resource_changed"; resource: "coding" | "participant"; id?: string; timestamp: number }
   // Memory observability (src/net/memory-observability.ts): polled from the
   // durable service's `memory_service_events` and broadcast to dashboard
   // clients. Both carry ids, names and states ONLY — never task/answer text or

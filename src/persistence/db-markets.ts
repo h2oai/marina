@@ -148,7 +148,7 @@ export function getEntityMarketScore(
   );
 }
 
-// ─── Forecast answers (migration 145; typed kinds, migration 149) ─────────
+// ─── Forecast answers (migration 145; typed kinds, migration 151) ─────────
 
 export type ForecastAnswerKind = "probability" | "number" | "choice" | "multi" | "ranking" | "text";
 
@@ -160,7 +160,7 @@ export interface ForecastAnswerRow {
   probability: number | null;
   mean: number | null;
   sd: number | null;
-  /** A typed answer (choice, set, ranking, text, or a number's point) as one string (migration 149). */
+  /** A typed answer (choice, set, ranking, text, or a number's point) as one string (migration 151). */
   prediction: string | null;
   /** The full answer object (analysts, judge, sources, verification, cost). */
   answer_json: string;

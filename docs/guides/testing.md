@@ -138,7 +138,12 @@ real focus, WebSockets, login/onboarding, autocomplete and memory correction.
 Install a browser once with `cd dashboard && bunx playwright install --with-deps chromium`.
 The config uses `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`, local `/usr/bin/chromium` when
 present, or Playwright's installed Chromium. `bun run test:browser` builds first.
-CI runs the same six journeys and retains traces/screenshots on failure.
+CI runs the configured participation journeys and retains traces/screenshots on failure.
+`coding-desk.spec.ts` covers publishing a desk, editing a draft during live changes, recovering
+after a real socket disconnect, and closing the view without stopping work. Published-panel and
+workspace journeys cover reviewed actions, repeated views, layout persistence and access failures.
+The critical journey list is the root `package.json`'s `test:browser` script;
+`dashboard/playwright.config.ts` configures the shared fixture and browser.
 
 ## Shutdown and generated adversarial cases
 
@@ -502,6 +507,12 @@ and never connects to a running world. It asks the worker to edit, verify a capt
 inspect the receipt and submit through normal coding tools. It then independently checks the
 result, preserves the original acceptance tests, and performs canonical owner review. World
 messages must still arrive while coding runs. Reports and traces remain in the supplied directory.
+An SDK participant also publishes an ordinary Coding desk for the active session. The terminal
+must observe a canonical resource change without a manual refresh, preserve its draft, and leave
+the worker running after closing the desk. This proves SDK composition and consumption; it does
+not claim that the model designed the panel. The fixture explicitly disables the optional external
+decision judge to isolate coding behavior; normal ownership, command gates, guarded autonomy and
+candidate freshness checks remain enforced. It does not qualify that optional judge.
 Failures, missing credentials and timeouts are failures; this is a small functional smoke test,
 not a general coding-quality benchmark. The default scenario is `bugfix`; `--timeout-ms` controls
 the deadline per scenario (default 240000, maximum 600000).

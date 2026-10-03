@@ -312,10 +312,7 @@ const A2uiViewer = memo(function A2uiViewer({ content }: { content?: string }) {
         borderRadius: "4px",
       }}
     >
-      <A2UIRenderer
-        nodeData={parsed as import("../../canvas/nodes/a2ui/types").A2UINodeData}
-        onAction={() => {}}
-      />
+      <A2UIRenderer nodeData={parsed as import("../../canvas/nodes/a2ui/types").A2UINodeData} />
     </div>
   );
 });

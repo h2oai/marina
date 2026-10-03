@@ -1,11 +1,15 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { canvasDocumentData, panelRevision } from "../engine/canvas-document";
 import type { Engine } from "../engine/engine";
+import { getErrorMessage } from "../engine/errors";
 import type { MarinaDB } from "../persistence/database";
+import { validatePanelDocument } from "../sdk/panel-document";
 import type { StorageProvider } from "../storage/provider";
 import type { EntityId } from "../types";
 import { authenticateRequest, refuseOpenApiWrite } from "./auth-middleware";
+import { handlePanelInteraction } from "./canvas-panel-api";
 import { buildCanvasPrincipal, resolveCanvasHttpPrincipal } from "./canvas-principal";
 import { authorizeCanvasSubscription, type CanvasBroadcaster } from "./canvas-ws";
 import { corsHeaders } from "./cors";
@@ -64,6 +68,7 @@ export function enrichNodeData(
   const asset = node.asset_id ? db.getAsset(node.asset_id) : undefined;
   return {
     ...parsed,
+    ...(Array.isArray(parsed.components) ? { panelRevision: panelRevision(parsed) } : {}),
     url: resolveNodeUrl(node, db, storage),
     filename: asset?.filename ?? parsed.filename,
     mime: asset?.mime_type ?? parsed.mime,
@@ -167,6 +172,32 @@ export async function handleCanvasApi(
     : { isOperator: true };
   const canAccessCanvas = (canvasId: string): boolean =>
     authorizeCanvasSubscription(db, canvasId, canvasPrincipal);
+
+  const interactionMatch = url.pathname.match(
+    /^\/api\/canvases\/([^/]+)\/nodes\/([^/]+)\/interaction$/,
+  );
+  if (interactionMatch && method === "POST") {
+    return handlePanelInteraction({
+      req,
+      db,
+      storage,
+      broadcaster,
+      engine,
+      json,
+      canvasId: decodeURIComponent(interactionMatch[1]!),
+      nodeId: decodeURIComponent(interactionMatch[2]!),
+      entityId: authenticatedEntityId,
+      canAccess: () =>
+        authorizeCanvasSubscription(
+          db,
+          decodeURIComponent(interactionMatch[1]!),
+          engine
+            ? buildCanvasPrincipal(resolveCanvasHttpPrincipal(req, engine, peerIp), engine, db)
+            : canvasPrincipal,
+        ),
+      enrich: (node, data) => enrichNodeData(node, data, db, storage),
+    });
+  }
 
   const intentActionMatch = url.pathname.match(
     /^\/api\/canvases\/([^/]+)\/nodes\/([^/]+)\/intent\/(claim|complete|fail)$/,
@@ -302,10 +333,16 @@ export async function handleCanvasApi(
         body.data && typeof body.data === "object" && !Array.isArray(body.data)
           ? (body.data as Record<string, unknown>)
           : undefined;
+      let completedData = resultData;
+      if (body.type === "a2ui") {
+        const parsed = validatePanelDocument(resultData);
+        if (!parsed.ok) return json({ error: parsed.error }, 400);
+        completedData = { ...resultData, ...parsed.document };
+      }
       const result = db.completeCanvasIntent(node.id, {
         result: resultText,
         resultType: typeof body.type === "string" ? body.type : undefined,
-        resultData,
+        resultData: completedData,
         completerName: actorName,
       });
       if (!result.ok) return intentErrorResponse(json, result);
@@ -385,12 +422,36 @@ export async function handleCanvasApi(
       const jsonBody = await readJsonBody(req);
       if (!jsonBody.ok) return jsonBody.response;
       const body = jsonBody.body;
+      let nodeData = encodeNodeDataForUpdate(body.data);
+      if (existingNode.type === "a2ui" && body.data !== undefined) {
+        try {
+          if (body.revision !== undefined) {
+            const before = await canvasDocumentData(
+              JSON.parse(existingNode.data),
+              existingNode.asset_id,
+              db,
+              storage,
+            );
+            if (body.revision !== panelRevision(before))
+              return json({ error: "Panel changed. Reload before revising." }, 409);
+          }
+          const document = await canvasDocumentData(body.data, existingNode.asset_id, db, storage);
+          if (!canAccessCanvas(canvasId) || db.getNode(nodeId)?.data !== existingNode.data)
+            return json({ error: "Panel changed. Reload before revising." }, 409);
+          nodeData = JSON.stringify({
+            ...document,
+            panelEditor: actorNameForRequest(body, engine, authenticatedEntityId),
+          });
+        } catch (error) {
+          return json({ error: getErrorMessage(error) }, 400);
+        }
+      }
       const updated = db.updateNode(nodeId, {
         x: body.x as number | undefined,
         y: body.y as number | undefined,
         width: body.width as number | undefined,
         height: body.height as number | undefined,
-        data: encodeNodeDataForUpdate(body.data),
+        data: nodeData,
       });
       if (!updated) return json({ error: "Node not found" }, 404);
       const node = db.getNode(nodeId)!;
@@ -426,7 +487,14 @@ export async function handleCanvasApi(
     if (method === "GET") {
       const node = db.getNode(nodeId);
       if (!node || node.canvas_id !== canvasId) return json({ error: "Node not found" }, 404);
-      const parsed = JSON.parse(node.data);
+      let parsed = JSON.parse(node.data);
+      if (node.type === "a2ui") {
+        try {
+          parsed = await canvasDocumentData(parsed, node.asset_id, db, storage);
+        } catch (error) {
+          parsed = { ...parsed, panelError: getErrorMessage(error) };
+        }
+      }
       return json({ ...node, data: enrichNodeData(node, parsed, db, storage) });
     }
   }
@@ -454,6 +522,19 @@ export async function handleCanvasApi(
         return json({ error: "Parent node not found on this canvas" }, 400);
       }
     }
+    let nodeData = body.data as Record<string, unknown> | undefined;
+    if (requestedType === "a2ui") {
+      try {
+        nodeData = await canvasDocumentData(
+          body.data ?? {},
+          typeof body.asset_id === "string" ? body.asset_id : undefined,
+          db,
+          storage,
+        );
+      } catch (error) {
+        return json({ error: getErrorMessage(error) }, 400);
+      }
+    }
     const id = crypto.randomUUID();
     db.createNode({
       id,
@@ -464,7 +545,7 @@ export async function handleCanvasApi(
       width: body.width as number | undefined,
       height: body.height as number | undefined,
       assetId: body.asset_id as string | undefined,
-      data: body.data as Record<string, unknown> | undefined,
+      data: nodeData,
       creatorName: actorNameForRequest(body, engine, authenticatedEntityId),
       parentNodeId,
     });

@@ -140,7 +140,12 @@ export const TimelineStrip = memo(function TimelineStrip({
   }
 
   return (
-    <div className={inline ? undefined : "uc-timeline"} style={containerStyle}>
+    <section
+      aria-label="Activity timeline"
+      tabIndex={inline ? 0 : undefined}
+      className={inline ? undefined : "uc-timeline"}
+      style={containerStyle}
+    >
       {/* Filter chips */}
       <div
         style={{
@@ -292,6 +297,6 @@ export const TimelineStrip = memo(function TimelineStrip({
           );
         })}
       </svg>
-    </div>
+    </section>
   );
 });

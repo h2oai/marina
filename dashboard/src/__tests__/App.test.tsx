@@ -15,12 +15,13 @@ vi.mock("../hooks/use-websocket", () => ({
 
 // Mock react-grid-layout: the real component needs measured container widths
 // which jsdom cannot provide. Replace with a simple div that renders children.
-vi.mock("react-grid-layout", async () => {
+vi.mock("react-grid-layout", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-grid-layout")>();
   const React = await import("react");
   return {
+    ...actual,
     ResponsiveGridLayout: ({ children }: { children: ReactNode }) =>
       React.createElement("div", { "data-testid": "grid-layout" }, children),
-    verticalCompactor: () => {},
     useContainerWidth: () => ({
       width: 1200,
       containerRef: { current: null },

@@ -613,13 +613,19 @@ The `feed` canvas auto-populates from board posts, channel messages, task events
 
 ### A2UI (Interactive Widgets)
 
+Open publications beside your work from **Workspace → Canvas → Published panels**, or select
+**Create coding desk** for an existing Marina coding session. Panels combine authorized resources
+and reviewed actions without starting another worker. See [Published panels](published-panels.md)
+for the schema and SDK. The coding terminal's `/panel` controls and F8 view use the same publications;
+they are local terminal controls, not additional world commands.
+
 A2UI nodes render interactive UIs on the canvas. Create a JSON asset with component definitions:
 
 ```json
 {
   "components": [
     { "id": "root", "component": "Card", "children": ["title", "btn"] },
-    { "id": "title", "component": "Text", "value": "Status Dashboard" },
+    { "id": "title", "component": "Text", "text": "Status Dashboard" },
     { "id": "btn", "component": "Button", "label": "Refresh" }
   ],
   "rootId": "root"

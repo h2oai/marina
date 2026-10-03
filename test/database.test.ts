@@ -21,6 +21,26 @@ describe("MarinaDB", () => {
     cleanupDb(TEST_DB);
   });
 
+  it("releases all close bindings once, even if one fails, before closing both handles", () => {
+    const calls: string[] = [];
+    db.onClose(() => {
+      expect(db.loadAllEntities()).toEqual([]);
+      calls.push("last");
+    });
+    db.onClose(() => {
+      calls.push("failed");
+      throw new Error("release failed");
+    });
+    db.onClose(() => calls.push("first"));
+    expect(() => db.close()).toThrow("release failed");
+    expect(calls).toEqual(["first", "failed", "last"]);
+    expect(() => db.loadAllEntities()).toThrow();
+    expect(() => db.setMetaValue("after-close", "value")).toThrow();
+    expect(() => db.close()).not.toThrow();
+    expect(calls).toHaveLength(3);
+    expect(() => db.onClose(() => {})).toThrow();
+  });
+
   describe("entity persistence", () => {
     const testEntity: Entity = {
       id: entityId("e_1"),

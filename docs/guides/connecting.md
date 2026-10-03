@@ -20,6 +20,14 @@ A focused workspace for turning intent into verified outcomes...
 
 Best for: first-time use, visual exploration, and human operators.
 
+The dashboard keeps Chat beside Work, Canvas and participant Streams. Open **Workspace →
+Canvas → Published panels** to place interactive resource views beside those conversations;
+**Create coding desk** uses an existing Marina coding session. See [Published panels](published-panels.md).
+
+For project work in a fullscreen terminal, use `marina --tui`. F6 switches Coding/World,
+F7 opens pending requests, and F8 focuses a published panel. The [coding guide](coding.md)
+covers local and connected sessions, native runtimes, verification and review.
+
 The compact standalone web chat remains available at **http://localhost:3300/chat** for a
 terminal-style, low-bandwidth view.
 

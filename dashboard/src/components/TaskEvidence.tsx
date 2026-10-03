@@ -1,11 +1,10 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
-import { useQuery } from "@tanstack/react-query";
 import { CheckCheck, FileCode2, History, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { useChatState } from "../hooks/use-chat-state";
+import { usePanelSource } from "../hooks/use-panel-source";
 import { openMemory, useWorkspaceState } from "../hooks/use-workspace-state";
-import { fetchApi, getToken } from "../lib/api";
 import type { CodingArtifactEntry, TaskDetail } from "../lib/types";
 import { PinToCanvas } from "./CanvasReference";
 import { DiffViewer } from "./DiffViewer";
@@ -18,7 +17,7 @@ function metadata(artifact: CodingArtifactEntry): Record<string, unknown> {
     return {};
   }
 }
-export function TaskEvidence({ task }: { task: TaskDetail }) {
+export function TaskEvidence({ task, active = true }: { task: TaskDetail; active?: boolean }) {
   const [selected, setSelected] = useState<string>();
   const runs = task.codingRuns ?? [];
   const run = runs.find((item) => item.id === selected) ?? runs[0];
@@ -51,7 +50,7 @@ export function TaskEvidence({ task }: { task: TaskDetail }) {
         </label>
       )}
       {run ? (
-        <RunEvidence key={run.id} run={run} task={task} />
+        <RunEvidence key={run.id} run={run} task={task} active={active} />
       ) : (
         <>
           <p className="text-xs text-text-dim">
@@ -73,20 +72,24 @@ export function TaskEvidence({ task }: { task: TaskDetail }) {
     </section>
   );
 }
-function RunEvidence({ run, task }: { run: CodingArtifactEntry; task: TaskDetail }) {
+function RunEvidence({
+  run,
+  task,
+  active,
+}: {
+  run: CodingArtifactEntry;
+  task: TaskDetail;
+  active: boolean;
+}) {
   const identity = useChatState((state) => state.entityName);
   const loggedIn = useChatState((state) => state.loggedIn);
   const [notice, setNotice] = useState("");
   const [pending, setPending] = useState(false);
   const [artifactId, setArtifact] = useState<string>();
-  const query = useQuery({
-    queryKey: ["coding-run-evidence", identity, getToken(), run.id],
-    queryFn: () =>
-      fetchApi<{ run: CodingArtifactEntry; artifacts: CodingArtifactEntry[] }>(
-        `/api/coding/runs/${encodeURIComponent(run.id)}`,
-      ),
-    refetchInterval: 5000,
-  });
+  const query = usePanelSource<{ run: CodingArtifactEntry; artifacts: CodingArtifactEntry[] }>(
+    { kind: "run", id: run.id },
+    active,
+  );
   const meta = metadata(query.data?.run ?? run);
   const artifacts = query.isError ? [] : (query.data?.artifacts ?? []);
   const selected =

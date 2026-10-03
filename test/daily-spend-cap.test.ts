@@ -8,7 +8,7 @@
  * and readiness reporting it.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -65,6 +65,55 @@ afterEach(() => {
 });
 
 describe("spend ledger", () => {
+  it("detaches only the owned attachment and preserves the in-memory cap", () => {
+    const additions: number[] = [];
+    const sink = {
+      add: (_day: string, _source: string, usd: number) => {
+        additions.push(usd);
+      },
+      totalFor: () => 3,
+    };
+    const releaseOld = attachSpendLedger(sink);
+    // Even reattaching the same sink creates a distinct ownership scope.
+    const releaseCurrent = attachSpendLedger(sink);
+    releaseOld();
+    recordSpend("decision", 2);
+    expect(additions).toEqual([2]);
+    expect(spentTodayUsd()).toBe(5);
+    releaseCurrent();
+    releaseCurrent();
+    recordSpend("decision", 1);
+    expect(additions).toEqual([2]);
+    expect(spentTodayUsd()).toBe(6);
+  });
+
+  it("releases a closed world's ledger without detaching a newer world", async () => {
+    const first = new MarinaDB(":memory:");
+    const second = new MarinaDB(":memory:");
+    const oldEngine = new Engine({ db: first });
+    const engine = new Engine({ db: second });
+    const oldWrite = spyOn(first, "addDailySpend");
+    const currentWrite = spyOn(second, "addDailySpend");
+    try {
+      await oldEngine.shutdown();
+      first.close();
+      recordSpend("decision", 2);
+      expect(oldWrite).not.toHaveBeenCalled();
+      expect(second.getDailySpend(utcDay())[0]?.cost_usd).toBe(2);
+      expect(currentWrite).toHaveBeenCalledTimes(1);
+      await engine.shutdown();
+      second.close();
+      recordSpend("decision", 1);
+      expect(currentWrite).toHaveBeenCalledTimes(1);
+      expect(spentTodayUsd()).toBe(3);
+    } finally {
+      oldWrite.mockRestore();
+      currentWrite.mockRestore();
+      first.close();
+      second.close();
+    }
+  });
+
   it("sums the day, refuses at the cap, and starts fresh the next UTC day", () => {
     const day1 = Date.parse("2026-09-26T10:00:00Z");
     recordSpend("model_api", 30, day1);

@@ -87,15 +87,18 @@ export function PinToCanvas({ reference }: { reference: CanvasReference }) {
 export function ReferenceContent({
   reference,
   compact = false,
+  active = true,
 }: {
   reference: CanvasReference;
   compact?: boolean;
+  active?: boolean;
 }) {
   const viewer = useChatState((s) => s.entityName);
   const query = useQuery({
     queryKey: ["canvas-reference", viewer, getToken(), reference],
     queryFn: () => resolveCanvasReference(reference),
-    refetchInterval: 10_000,
+    enabled: active,
+    refetchInterval: active ? 10_000 : false,
   });
   if (query.isPending) return <p role="status">Loading {reference.kind}…</p>;
   if (query.isError)

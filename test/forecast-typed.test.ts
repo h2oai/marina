@@ -407,7 +407,7 @@ describe("forecast command: typed questions", () => {
     expect("error" in (typedSpec({ type: "text", ends: "soon" }) ?? {})).toBe(true);
   });
 
-  it("saves a typed answer (migration 149 widens the kinds) and lists it", async () => {
+  it("saves a typed answer (migration 151 widens the kinds) and lists it", async () => {
     const { saveTypedAnswer, renderHistory } = await import("../src/engine/commands/forecast");
     const { MarinaDB } = await import("../src/persistence/database");
     const db = new MarinaDB(":memory:");

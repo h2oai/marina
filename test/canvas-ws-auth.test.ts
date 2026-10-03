@@ -70,4 +70,30 @@ describe("canvas-ws subscription authorization", () => {
     expect(b.addClient(fakeWs(), "alice-private")).toBe(true);
     expect(b.clientCount("alice-private")).toBe(1);
   });
+  it("revokes an existing private subscription before broadcasting more content", () => {
+    const b = new CanvasBroadcaster();
+    let authorized = true;
+    let sent = 0;
+    let closed = 0;
+    const ws = {
+      readyState: 1,
+      send: () => {
+        sent++;
+        return 1;
+      },
+      close: () => {
+        closed++;
+      },
+    };
+    b.addClient(ws as never, "alice-private", {
+      db,
+      principal: { entityId: "e_alice" },
+      revalidate: () => (authorized ? { entityId: "e_alice" } : undefined),
+    });
+    authorized = false;
+    b.broadcast({ type: "node_deleted", canvasId: "alice-private", nodeId: "secret" });
+    expect(sent).toBe(0);
+    expect(closed).toBe(1);
+    expect(b.clientCount("alice-private")).toBe(0);
+  });
 });

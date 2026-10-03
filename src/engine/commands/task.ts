@@ -75,6 +75,8 @@ export function taskCommand(
   resolveEvidence?: (actor: { name: string; id: string }, text: string) => Evidence[],
   /** Durable judge opinions for `decision agreement` (db-decisions.ts). */
   recordObservation?: (row: JudgeObservationInput) => void,
+  /** Observe-only verification must settle before persistence closes. */
+  trackBackground?: (work: Promise<void>) => void,
 ): CommandDef {
   return {
     category: "Coordination",
@@ -528,12 +530,13 @@ export function taskCommand(
             });
           if (mode === "observe") {
             record();
-            void verifySubmission(provider, task, text, 1, evidence)
+            const observation = verifySubmission(provider, task, text, 1, evidence)
               .then((verdict) => {
                 logVerify(verdict, "observed");
                 observe(verdict);
               })
               .catch(() => undefined);
+            trackBackground?.(observation);
             return;
           }
           const attempt = nextSubmissionAttempt(id, input.entity);

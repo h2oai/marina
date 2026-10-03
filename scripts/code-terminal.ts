@@ -4,14 +4,10 @@
 import type { Terminal } from "@earendil-works/pi-tui";
 import { isWorldInput, TERMINAL_COMMANDS } from "./code-controls";
 import type { CodeEditor, CodeEditorOptions } from "./code-editor";
+import type { PanelInput, TerminalPanelState } from "./code-panel-form";
 import { terminalText } from "./code-presentation";
 import { ReadlineCodeEditor } from "./code-readline";
-import {
-  type ConversationView,
-  type TerminalView,
-  TerminalViews,
-  type TranscriptView,
-} from "./code-views";
+import { type TerminalView, TerminalViews, type TranscriptView } from "./code-views";
 import { WorkspaceCodeEditor } from "./code-workspace";
 
 export { isWorldInput, TERMINAL_COMMANDS, TERMINAL_HELP, terminalHelp } from "./code-controls";
@@ -35,6 +31,8 @@ export interface CodeTerminalOptions {
   connected?: boolean;
   /** Terminal device injection for renderer tests; no world/session authority. */
   screen?: Terminal;
+  panelInput?: (input: PanelInput) => void;
+  viewChanged?: (view: TerminalView) => void;
 }
 
 /** One routing/approval controller for both renderers. A view never owns a world action. */
@@ -46,10 +44,15 @@ export class CodeTerminal {
   private readonly tty: boolean;
   private readonly workspace: boolean;
   private readonly views?: TerminalViews;
-  private returnView: ConversationView = "coding";
+  private returnView: Exclude<TerminalView, "approvals"> = "coding";
   private pending: { text: string; resolve: (answer: string) => void }[] = [];
   private question?: { text: string; resolve: (answer: string) => void };
-  private multiline: Record<TerminalView, string[]> = { coding: [], world: [], approvals: [] };
+  private multiline: Record<TerminalView, string[]> = {
+    coding: [],
+    world: [],
+    approvals: [],
+    panel: [],
+  };
   private redrawTimer?: ReturnType<typeof setTimeout>;
 
   constructor(private options: CodeTerminalOptions) {
@@ -66,6 +69,7 @@ export class CodeTerminal {
       input,
       output,
       connected: options.connected,
+      panelInput: options.panelInput,
       line: (text) => this.line(text),
       interrupt: options.interrupt,
       navigate: (view) => {
@@ -86,6 +90,19 @@ export class CodeTerminal {
       ? new WorkspaceCodeEditor(editorOptions, options.screen)
       : new ReadlineCodeEditor(editorOptions);
     this.redraw();
+  }
+
+  private panelContent = "Use /panel list to find a published panel.";
+  private panelState?: TerminalPanelState;
+  setPanelState(state?: TerminalPanelState) {
+    this.panelState = state;
+    this.redraw();
+  }
+  setPanelContent(text: string, focus = false) {
+    this.panelContent = terminalText(text);
+    if (focus) this.selectView("panel");
+    if (this.workspace) this.redraw();
+    else if (focus || this.views?.focus === "panel") this.print(this.panelContent);
   }
 
   private line(line: string) {
@@ -111,6 +128,10 @@ export class CodeTerminal {
       this.editor.reset("approvals");
       current.resolve(line);
       this.nextQuestion();
+      return;
+    }
+    if (this.views?.focus === "panel") {
+      this.options.line(line.trim().startsWith("/") ? line.trim() : `/panel ${line.trim()}`);
       return;
     }
     const view = this.views?.focus === "world" ? "world" : "coding";
@@ -146,9 +167,9 @@ export class CodeTerminal {
       else this.print(page);
       return true;
     }
-    if (name !== "coding" && name !== "world" && name !== "approvals") {
+    if (name !== "coding" && name !== "world" && name !== "approvals" && name !== "panel") {
       this.print(
-        "Views: /view coding | /view world | /view approvals | /view older | /view newer. F6 switches conversations; F7 opens requests.",
+        "Views: /view coding | /view world | /view approvals | /view panel | /view older | /view newer. F6 switches conversations; F7 opens requests; F8 opens the panel.",
       );
       return false;
     }
@@ -159,8 +180,16 @@ export class CodeTerminal {
     this.views.select(name);
     if (name !== "approvals") this.returnView = name;
     this.editor.focus(name);
+    this.options.viewChanged?.(name);
     if (this.workspace) this.redraw();
-    else this.print(name === "approvals" ? this.questionDetails() : this.views.snapshot(name));
+    else
+      this.print(
+        name === "approvals"
+          ? this.questionDetails()
+          : name === "panel"
+            ? this.panelContent
+            : this.views.snapshot(name),
+      );
     return true;
   }
 
@@ -188,10 +217,13 @@ export class CodeTerminal {
       transcript: this.workspace
         ? focus === "approvals"
           ? this.questionDetails()
-          : this.views!.snapshot(focus, true)
+          : focus === "panel"
+            ? this.panelContent
+            : this.views!.snapshot(focus, true)
         : undefined,
       answer: !!this.question && focus === "approvals",
       multiline: this.multiline[focus].length > 0,
+      panel: this.panelState,
     });
   }
 
