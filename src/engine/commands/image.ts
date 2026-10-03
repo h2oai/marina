@@ -5,6 +5,7 @@ import type { MediaJobRow } from "../../persistence/database";
 import type { CommandDef, EntityId, RoomContext } from "../../types";
 import type { Engine } from "../engine";
 import { defaultImageModel } from "../media/providers/image-registry";
+import { lookAndReply } from "../media/vision";
 import { type ModifierSpec, parseModifiers } from "../parse-input";
 
 interface GenerateOptions {
@@ -23,9 +24,10 @@ export function imageCommand(engine: Engine): CommandDef {
       "image generate <prompt...>",
       "image generate <prompt...> [model:<provider/model>] [style:<style>] [width:<px>] [height:<px>] [canvas:<name>]",
       "image generate <prompt...> [style:synthwave] [width:1024] [canvas:name]",
+      "image describe <node|asset|url> [question...] [model:<provider/model>]",
     ],
     name: "image",
-    help: "Generate images. Usage: image generate <prompt...> [model:<provider/model>] [style:<style>] [width:<px>] [height:<px>] [canvas:<name>] (also --width 1024)",
+    help: "Generate or read images. Usage: image generate <prompt...> [model:<provider/model>] [style:<style>] [width:<px>] [height:<px>] [canvas:<name>] (also --width 1024) | image describe <node|asset|url> [question] [model:<provider/model>]",
     handler: async (ctx, input) => {
       const sub = input.tokens[0];
       if (!sub) {
@@ -35,8 +37,24 @@ export function imageCommand(engine: Engine): CommandDef {
         );
         return;
       }
+      if (sub === "describe" || sub === "look") {
+        const who = ctx.findEntity(input.entity);
+        ctx.send(
+          input.entity,
+          await lookAndReply(
+            engine,
+            { entityId: input.entity, name: who?.name ?? String(input.entity) },
+            input.tokens.slice(1),
+            "image",
+          ),
+        );
+        return;
+      }
       if (sub !== "generate") {
-        ctx.send(input.entity, "Unknown subcommand. Usage: image generate <prompt...>");
+        ctx.send(
+          input.entity,
+          "Unknown subcommand. Usage: image generate <prompt...> | image describe <node|asset|url> [question]",
+        );
         return;
       }
       const parsed = parseImageGenerateArgs(input.tokens.slice(1));
