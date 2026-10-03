@@ -18,6 +18,7 @@ import {
   strictDateFilter,
 } from "../../src/arena/research/isolation";
 import type { Retriever } from "../../src/arena/research/retrieve";
+import { dailySpend } from "../../src/engine/spend-ledger";
 import { type LessonStore, type LessonWriter, lessonFromOutcome } from "../../src/forecast/lessons";
 import { typedForecastDeps } from "../../src/forecast/service";
 import {
@@ -68,6 +69,8 @@ export interface CleanOptions {
   horizonDays: number;
   concurrency: number;
   replicates: number;
+  /** Number of the first replicate (default 1) — to add replicates without reusing a label. */
+  firstReplicate?: number;
   lessons: "on" | "off";
   /** A fresh lesson store per (variant, replicate) — keeps the ablation honest. */
   lessonStore?: (runLabel: string) => Promise<LessonStore>;
@@ -224,12 +227,15 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
   );
   const summaries: CleanRunSummary[] = [];
   for (const variant of opts.variants) {
-    for (let rep = 1; rep <= opts.replicates; rep++) {
+    const first = opts.firstReplicate ?? 1;
+    for (let rep = first; rep < first + opts.replicates; rep++) {
       const label = `${variant.label}-${opts.isolation}-lessons-${opts.lessons}-r${rep}`;
       const store =
         opts.lessons === "on" && opts.lessonStore ? await opts.lessonStore(label) : undefined;
       const retrieval = { linesIn: 0, linesKept: 0 };
       let lessonsWritten = 0;
+      let costSum = 0;
+      let rowsCosted = 0;
       let lessonFailures = 0;
       const run: BatchRun = await runBatch(
         rows,
@@ -258,12 +264,26 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
         {
           horizonDays: opts.horizonDays,
           concurrency: opts.concurrency,
+          shouldStop: () => {
+            const s = dailySpend();
+            if (s.capUsd === undefined) return undefined;
+            // Stop while every row in flight can still finish under the cap.
+            const mean = rowsCosted ? costSum / rowsCosted : 0;
+            const reserve = Math.max(2, 1.5 * opts.concurrency * mean);
+            return s.spentUsd + reserve >= s.capUsd
+              ? `spend $${s.spentUsd.toFixed(2)} + reserve $${reserve.toFixed(2)} would reach the daily cap $${s.capUsd}`
+              : undefined;
+          },
           onRow: (r, done, total) =>
             log(
               `  [${label} ${done}/${total}] L${r.level} ${r.spec} → ${(r.prediction || "(empty)").slice(0, 60)} · lessons ${r.answer.lessons?.length ?? 0} · $${r.costUsd.toFixed(3)}`,
             ),
           afterRow: async (row, r) => {
-            if (!store) return;
+            costSum += r.costUsd;
+            rowsCosted++;
+            // A fallback is an infrastructure outcome (no run answered), not a
+            // forecast to learn from.
+            if (!store || r.fallback) return;
             const end = endTimeIso(row.end_time);
             if (!end) return;
             const item = scoreItem(row, r.prediction);

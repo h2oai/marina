@@ -145,6 +145,12 @@ export interface RunOptions {
    * resolved row and write its lesson, so later rows can recall it.
    */
   afterRow?: (row: FuturexRow, r: RowResult) => Promise<void>;
+  /**
+   * Checked before each row is started: a reason stops the batch cleanly (rows in
+   * flight finish, no new row starts) and `runBatch` rejects with it — e.g. a
+   * spend budget about to run out, which would otherwise turn rows into fallbacks.
+   */
+  shouldStop?: () => string | undefined;
 }
 
 /** Deps for one row: fresh per row so cost (and, when captured, evidence) is attributable to it. */
@@ -165,8 +171,11 @@ export async function runBatch(
   const results: RowResult[] = new Array(rows.length);
   let next = 0;
   let done = 0;
+  let stopped: string | undefined;
   const worker = async () => {
-    while (next < rows.length) {
+    while (next < rows.length && !stopped) {
+      stopped = opts.shouldStop?.();
+      if (stopped) break;
       const i = next++;
       const row = rows[i]!;
       results[i] = await runRow(row, makeDeps, now(), opts.horizonDays);
@@ -178,6 +187,7 @@ export async function runBatch(
   await Promise.all(
     Array.from({ length: Math.max(1, Math.min(opts.concurrency ?? 4, rows.length)) }, worker),
   );
+  if (stopped) throw new Error(`batch stopped after ${done}/${rows.length} rows: ${stopped}`);
   return {
     variant: variant.label,
     results,

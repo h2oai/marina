@@ -150,6 +150,14 @@ fallback instead of an answer is recorded `invalid` and drops out of pooling and
 or restore a run by hand with `benchmark invalidate|revalidate <run> reason:<text>` or
 `bun run benchmark:import --invalidate <run> --reason "<why>"`.
 
+`--first-replicate N` numbers new replicates from N, so a later run adds replicates without reusing
+an earlier run's name or lesson space.
+
+**Spend cap.** A run stops starting new rows when its spend plus a reserve (1.5 × concurrency ×
+the average row cost, at least $2) would reach the process's daily cap
+(`MARINA_DAILY_SPEND_CAP_USD`). A run stopped this way is not filed. Rows that fall back because
+the cap or a provider refused them write no lessons.
+
 ## Backtests without `--clean` are smoke tests
 
 The resolved dataset's outcomes are public. A backtest moves each cutoff `--horizon-days` before
