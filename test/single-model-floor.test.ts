@@ -181,12 +181,12 @@ describe("intelligence scale", () => {
 describe("forecasting on a single local model", () => {
   it("wires without OpenRouter: keyless retrieval, one analyst, labelled degraded", () => {
     using _ = scopeProcessState({ env: localOnly() });
-    expect(defaultRetrieverSpec()).toBe("asof");
+    expect(defaultRetrieverSpec()).toBe("search");
     const made = forecastDeps();
     if ("error" in made) throw new Error(made.error);
     expect(made.scale.tier).toBe("degraded");
     expect(made.scale.analysts).toEqual(["llama/test-model"]);
-    expect(made.scale.retriever).toBe("asof");
+    expect(made.scale.retriever).toBe("search");
     expect(made.scale.judge).toBe("none");
     expect(made.scale.notes.join(" ")).toContain("single model");
   });

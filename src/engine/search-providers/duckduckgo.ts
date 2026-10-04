@@ -28,11 +28,16 @@ export function duckDuckGoProvider(): SearchProvider {
       entityId?: string,
     ): Promise<SearchResult[]> {
       const max = opts.maxResults ?? 10;
-      const results = await ddgHtmlSearch(query, max, runtime, entityId);
-      if (results.length > 0) return results;
+      const html = await ddgHtmlSearch(query, max, runtime, entityId);
+      if ("results" in html && html.results.length > 0) return html.results;
 
       // Fallback: instant answers API (less useful but very reliable)
-      return ddgInstantAnswers(query, max, runtime, entityId);
+      const instant = await ddgInstantAnswers(query, max, runtime, entityId);
+      // Both endpoints failing (DuckDuckGo throttles or stalls bulk callers) is
+      // an outage, not "no results": throw so the caller falls through to the
+      // next backend and the failure shows in `readiness`.
+      if (instant === undefined && "failed" in html) throw new Error(`duckduckgo: ${html.failed}`);
+      return instant ?? [];
     },
   };
 }
@@ -48,13 +53,14 @@ async function ddgHtmlSearch(
   maxResults: number,
   runtime: ConnectorRuntime,
   entityId?: string,
-): Promise<SearchResult[]> {
+): Promise<{ results: SearchResult[] } | { failed: string }> {
   const url = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`;
   const result = await runtime.httpGet(url, entityId);
 
-  if ("error" in result || result.status !== 200) return [];
+  if ("error" in result) return { failed: result.error.slice(0, 160) };
+  if (result.status !== 200) return { failed: `HTTP ${result.status}` };
 
-  return parseHtmlResults(result.body, maxResults);
+  return { results: parseHtmlResults(result.body, maxResults) };
 }
 
 /**
@@ -151,17 +157,18 @@ async function ddgInstantAnswers(
   maxResults: number,
   runtime: ConnectorRuntime,
   entityId?: string,
-): Promise<SearchResult[]> {
+): Promise<SearchResult[] | undefined> {
   const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
   const result = await runtime.httpGet(url, entityId);
 
-  if ("error" in result || result.status !== 200) return [];
+  // undefined = the endpoint failed (as opposed to answering with nothing).
+  if ("error" in result || result.status !== 200) return undefined;
 
   let data: DdgInstantResult;
   try {
     data = JSON.parse(result.body) as DdgInstantResult;
   } catch {
-    return [];
+    return undefined;
   }
 
   const results: SearchResult[] = [];

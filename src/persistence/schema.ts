@@ -477,6 +477,40 @@ ALTER TABLE benchmark_items ADD COLUMN verification TEXT CHECK (verification IS 
 CREATE INDEX idx_benchmark_items_answer ON benchmark_items(item_id, answer_hash) WHERE answer_hash IS NOT NULL;
 `,
   },
+  // Migration 158: paid search API calls (Tavily, Exa, OpenRouter's search
+  // plugin — the `web search` command and research retrieval) join the daily
+  // spend ledger and the budget scopes as source 'search'. Both tables are
+  // rebuilt like migration 142, every existing row carried over.
+  {
+    version: 158,
+    sql: `
+CREATE TABLE spend_daily_v158 (
+  day TEXT NOT NULL,
+  source TEXT NOT NULL CHECK (source IN ('model_api', 'agent', 'decision', 'forecast', 'media', 'search')),
+  cost_usd REAL NOT NULL DEFAULT 0,
+  calls INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (day, source)
+);
+INSERT INTO spend_daily_v158 (day, source, cost_usd, calls, updated_at)
+  SELECT day, source, cost_usd, calls, updated_at FROM spend_daily;
+DROP TABLE spend_daily;
+ALTER TABLE spend_daily_v158 RENAME TO spend_daily;
+CREATE TABLE spend_scope_daily_v158 (
+  day TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  source TEXT NOT NULL CHECK (source IN ('model_api', 'agent', 'decision', 'forecast', 'media', 'search')),
+  cost_usd REAL NOT NULL DEFAULT 0,
+  calls INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (day, scope, source)
+);
+INSERT INTO spend_scope_daily_v158 (day, scope, source, cost_usd, calls, updated_at)
+  SELECT day, scope, source, cost_usd, calls, updated_at FROM spend_scope_daily;
+DROP TABLE spend_scope_daily;
+ALTER TABLE spend_scope_daily_v158 RENAME TO spend_scope_daily;
+`,
+  },
 ];
 
 /** Migration 143 body — self-contained so later edits to db-notes never change it. */

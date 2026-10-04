@@ -122,9 +122,20 @@ the cutoff is in the past. The cutoff
 and how it was chosen are recorded on the answer; a past cutoff adds a caveat, because engines
 without date filters can still surface later pages.
 
-The typed answer object keeps every stage — plan, each research round, lookups, every run with
-its reason and weight, the combination and its support, the critique, the cutoff, sources,
-verification, judge record, cost and time. In-world answers are saved like any other forecast.
+**Evidence depth.** The citation check verifies a line with figures when every figure is on a
+cited page (read in either the English or the continental-European number format) and a line
+without figures when its whole text is on the page verbatim; anything else is never evidence. The
+dossier each run reads is sized to the analysts' context window, and the judge reads up to twelve
+chunks of verified text. The question's named resolution page is read first and its
+source searched first. When fewer than five lines verify, one more round searches before the runs;
+otherwise, when no run is grounded in verified evidence, that round searches for what the runs and
+the judge left unverified, and the runs are redone only if it verified something new (the first
+runs stay in `initialRuns`). When the runs disagree, one round searches the point they disagree on
+and one more run reads it (`crux: true`), pooled with the others.
+
+The typed answer object keeps every stage — plan, each research round (with its retrieval funnel
+and warnings), lookups, every run with its reason and weight, the combination and its support, the
+critique, the cutoff, sources, verification, evidence budget, judge record, cost and time. In-world answers are saved like any other forecast.
 
 ## Keeping score
 
@@ -140,7 +151,10 @@ are saved with their answer as one string (`prediction`).
 |---|---|---|
 | `OPENROUTER_API_KEY` | optional | retrieval and the Jev judge run through OpenRouter; without it the forecast runs degraded on whatever models are configured ([Single model](single-model.md)) |
 | `MARINA_FORECAST_ANALYSTS` | three vendors via OpenRouter; else up to three configured models (a local runtime first) | comma-separated `provider/model` ids |
-| `MARINA_FORECAST_RETRIEVER` | `openrouter-web:openai/gpt-6-luna` with an OpenRouter key; else `tavily:basic` with a Tavily key; else `asof` (keyless) | the research engine(s) |
+| `MARINA_FORECAST_RETRIEVER` | `openrouter-web:openai/gpt-6-luna@exa,search` with an OpenRouter key; else `search` (the search backend chain, keyless DuckDuckGo at the end) | the research engine(s) |
+| `MARINA_FORECAST_DOSSIER_CHARS` | sized to the analysts' context window (12 000–60 000) | typed answers: research characters each run reads; verified lines are kept first |
+| `MARINA_FORECAST_FOLLOWUP` | `on` | typed answers: one extra research round — before the runs when fewer than `MARINA_FORECAST_MIN_EVIDENCE` (5) lines verify, else after them when no run is grounded |
+| `MARINA_FORECAST_DISAGREEMENT` | `on` | typed answers: when the runs disagree, search the crux and pool one more run |
 | `MARINA_FORECAST_JUDGE` | `jev` | `jev`, `decisions` (the configured `MARINA_DECISIONS` backend — OpenJev, TypeSafe, a chat classifier; falls back to `jev` when none is set) or `none` (equal weights) |
 | `MARINA_FORECAST_PLANNER` | the first analyst | typed answers: plans and names research gaps |
 | `MARINA_FORECAST_CRITIC` | the planner | typed answers: the disconfirmation pass |
@@ -154,8 +168,10 @@ are saved with their answer as one string (`prediction`).
 
 An analyst may be a crew: `MARINA_FORECAST_ANALYSTS=marina:answerer` asks the `answerer` crew on a
 Marina server, so a crew in, say, the verification formation answers every run. The retriever
-accepts `openrouter-web:<model>`, `sonar:<model>`, `tavily:<basic|advanced>` (with
-`TAVILY_API_KEY`) and `asof[:<providers>]`, comma-separated to merge. `asof` is keyless and
+accepts `openrouter-web:<model>[@exa|@native]`, `sonar:<model>`, `tavily:<basic|advanced>` (with
+`TAVILY_API_KEY`), `search[:<backends>]` (see [Search](search.md)) and `asof[:<providers>]`,
+comma-separated to merge; an engine that fails while others answer is named in the round's
+`warnings`. `asof` is keyless and
 date-strict: GDELT news, Wikipedia revisions, Hacker News and arXiv, each bounded to the
 forecast's cutoff instant, with news read from its Wayback capture at or before it. It is the
 retriever to use for a backtest, since nothing published after the cutoff can reach the dossier;

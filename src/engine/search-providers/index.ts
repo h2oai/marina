@@ -8,6 +8,10 @@
  *   1. Tavily (if TAVILY_API_KEY set) — AI-native, highest quality
  *   2. SearXNG (if SEARXNG_URL set) — self-hosted meta-search, 150+ engines
  *   3. DuckDuckGo (always available) — free, no key needed
+ * A provider that fails (a key out of credit, an outage) throws; its engines
+ * fall through to the next provider in this order, and the failure lands in
+ * the search-health ledger (`./health`, shown by `readiness`). A provider that
+ * keeps failing is skipped for a backoff period.
  *
  * Academic providers (arXiv, PubMed, Semantic Scholar) are always available
  * alongside the primary web provider — free, no keys.
@@ -24,6 +28,7 @@
  */
 
 import type { ConnectorRuntime } from "../connector-runtime";
+import { recordSearchOutcome, searchBackendDown } from "./health";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -53,6 +58,10 @@ export interface SearchOpts {
   after?: string;
   /** Restrict to these provider names (e.g. `gdelt`, `wikipedia`). */
   providers?: string[];
+  /** Filled with one `<provider>: <error>` line per provider call that failed. */
+  failures?: string[];
+  /** Paid providers add each call's price here (it is also recorded in the spend ledger). */
+  spend?: { usd: number };
 }
 
 /** The HTTP surface a provider needs — a `ConnectorRuntime`, or `standaloneSearchHttp()`. */
@@ -114,11 +123,70 @@ export function registerProvider(provider: SearchProvider): void {
 }
 
 /**
- * Find the best provider for a given engine category.
- * Returns the first registered provider that supports the engine.
+ * The best provider for an engine category not yet tried: the first
+ * registered one that serves it, skipping a provider that is currently down
+ * (`searchBackendDown`) while another can answer.
  */
-function providerForEngine(engine: string): SearchProvider | undefined {
-  return providers.find((p) => !p.boundOnly && p.engines.includes(engine));
+function providerForEngine(
+  engine: string,
+  tried: ReadonlySet<SearchProvider> = new Set(),
+): SearchProvider | undefined {
+  const candidates = providers.filter(
+    (p) => !p.boundOnly && p.engines.includes(engine) && !tried.has(p),
+  );
+  return candidates.find((p) => !searchBackendDown(p.name)) ?? candidates[0];
+}
+
+/**
+ * One search across the engines, each served by its best provider; a provider
+ * that fails (throws — e.g. a key out of credit) is recorded in the health
+ * ledger and its engines go to the next provider that serves them, so one
+ * dead backend never turns into a silent "no results".
+ */
+async function searchWithFallback(
+  query: string,
+  engines: string[],
+  maxResults: number,
+  runtime: SearchHttp,
+  entityId?: string,
+  failures?: string[],
+): Promise<SearchResult[][]> {
+  const tried = new Set<SearchProvider>();
+  const out: SearchResult[][] = [];
+  let pending = engines;
+  while (pending.length > 0) {
+    // Group engines by their provider to avoid duplicate calls.
+    const providerEngines = new Map<SearchProvider, string[]>();
+    for (const engine of pending) {
+      const provider = providerForEngine(engine, tried);
+      if (provider)
+        providerEngines.set(provider, [...(providerEngines.get(provider) ?? []), engine]);
+    }
+    if (providerEngines.size === 0) break;
+    const failed: string[] = [];
+    await Promise.all(
+      Array.from(providerEngines.entries()).map(async ([provider, engineList]) => {
+        tried.add(provider);
+        try {
+          const batch = await provider.search(
+            query,
+            { engines: engineList, maxResults },
+            runtime,
+            entityId,
+          );
+          recordSearchOutcome(provider.name);
+          out.push(batch);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          recordSearchOutcome(provider.name, message);
+          failures?.push(`${provider.name}: ${message.slice(0, 160)}`);
+          failed.push(...engineList);
+        }
+      }),
+    );
+    pending = failed;
+  }
+  return out;
 }
 
 /** Every registered provider (for `sources` listings). */
@@ -258,24 +326,13 @@ export async function search(
     return mergeResults(batches, maxResults);
   }
 
-  // Group engines by their provider to avoid duplicate calls
-  const providerEngines = new Map<SearchProvider, string[]>();
-  for (const engine of engines) {
-    const provider = providerForEngine(engine);
-    if (provider) {
-      const existing = providerEngines.get(provider) ?? [];
-      existing.push(engine);
-      providerEngines.set(provider, existing);
-    }
-  }
-
-  // Execute all provider searches in parallel
-  const allResults = await Promise.all(
-    Array.from(providerEngines.entries()).map(([provider, engineList]) =>
-      provider
-        .search(query, { engines: engineList, maxResults }, runtime, entityId)
-        .catch((): SearchResult[] => []),
-    ),
+  const allResults = await searchWithFallback(
+    query,
+    engines,
+    maxResults,
+    runtime,
+    entityId,
+    opts.failures,
   );
 
   // Flatten and deduplicate by URL

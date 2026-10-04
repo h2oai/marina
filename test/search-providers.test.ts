@@ -14,13 +14,19 @@ import type { ConnectorRuntime } from "../src/engine/connector-runtime";
 import { academicProvider } from "../src/engine/search-providers/academic";
 import { duckDuckGoProvider } from "../src/engine/search-providers/duckduckgo";
 import {
+  resetSearchHealthForTests,
+  searchBackendDown,
+  searchBackendHealth,
+} from "../src/engine/search-providers/health";
+import {
   detectIntent,
   initProvidersSync,
   registerProvider,
   search,
 } from "../src/engine/search-providers/index";
 import { searxngProvider } from "../src/engine/search-providers/searxng";
-import { tavilyProvider } from "../src/engine/search-providers/tavily";
+import { TAVILY_USD_PER_CREDIT, tavilyProvider } from "../src/engine/search-providers/tavily";
+import { resetSpendLedgerForTests, spentTodayUsd } from "../src/engine/spend-ledger";
 import { scopeProcessState } from "./process-state";
 
 type Reply = { status: number; body: string } | { error: string };
@@ -101,7 +107,7 @@ describe("duckduckgo provider", () => {
     expect(results.map((r) => r.title)).toEqual(["Wikipedia", "Topic one", "Nested"]);
   });
 
-  it("stops at maxResults in instant answers and survives errors / junk JSON", async () => {
+  it("stops at maxResults in instant answers and throws when both endpoints fail", async () => {
     const many = {
       AbstractSource: "Src",
       AbstractText: "a",
@@ -116,10 +122,16 @@ describe("duckduckgo provider", () => {
       url.includes("lite.") ? ok("<html></html>") : ok(many),
     );
     expect(await duckDuckGoProvider().search("q", { maxResults: 2 }, runtime)).toHaveLength(2);
+    // An empty lite page with a working instant API is "no results", not a failure.
+    ({ runtime } = fakeRuntime((url) => (url.includes("lite.") ? ok("<html></html>") : ok({}))));
+    expect(await duckDuckGoProvider().search("q", {}, runtime)).toEqual([]);
+    // Both endpoints failing (throttled, stalled, junk) is an outage: it throws.
     ({ runtime } = fakeRuntime((url) => (url.includes("lite.") ? { error: "blocked" } : ok("{"))));
-    expect(await duckDuckGoProvider().search("q", {}, runtime)).toEqual([]);
-    ({ runtime } = fakeRuntime(() => ({ error: "blocked" })));
-    expect(await duckDuckGoProvider().search("q", {}, runtime)).toEqual([]);
+    await expect(duckDuckGoProvider().search("q", {}, runtime)).rejects.toThrow(
+      "duckduckgo: blocked",
+    );
+    ({ runtime } = fakeRuntime(() => ({ status: 202, body: "" })));
+    await expect(duckDuckGoProvider().search("q", {}, runtime)).rejects.toThrow("HTTP 202");
   });
 });
 
@@ -213,16 +225,16 @@ describe("searxng provider", () => {
     expect(results[1]).toMatchObject({ title: "", url: "", source: "searxng:unknown" });
   });
 
-  it("omits engines for plain web and returns [] on errors", async () => {
+  it("omits engines for plain web and throws on errors (so the next provider answers)", async () => {
     let { runtime, calls } = fakeRuntime(() => ok({}));
     expect(await searxngProvider("http://s").search("q", {}, runtime)).toEqual([]);
     expect(new URL(calls[0]!.url).searchParams.has("engines")).toBe(false);
     ({ runtime, calls } = fakeRuntime(() => ({ error: "blocked" })));
-    expect(await searxngProvider("http://s").search("q", {}, runtime)).toEqual([]);
+    await expect(searxngProvider("http://s").search("q", {}, runtime)).rejects.toThrow("blocked");
     ({ runtime } = fakeRuntime(() => ({ status: 502, body: "" })));
-    expect(await searxngProvider("http://s").search("q", {}, runtime)).toEqual([]);
+    await expect(searxngProvider("http://s").search("q", {}, runtime)).rejects.toThrow("502");
     ({ runtime } = fakeRuntime(() => ok("<html>")));
-    expect(await searxngProvider("http://s").search("q", {}, runtime)).toEqual([]);
+    await expect(searxngProvider("http://s").search("q", {}, runtime)).rejects.toThrow();
   });
 });
 
@@ -248,16 +260,27 @@ describe("tavily provider", () => {
     expect(results[1]).toMatchObject({ title: "", url: "", snippet: "" });
   });
 
-  it("uses the general topic by default and returns [] on errors", async () => {
+  it("uses the general topic by default and throws on errors, naming the status", async () => {
     let { runtime, calls } = fakeRuntime(() => ok({}));
     expect(await tavilyProvider("k").search("q", {}, runtime)).toEqual([]);
     expect(JSON.parse(calls[0]!.body!).topic).toBe("general");
     ({ runtime, calls } = fakeRuntime(() => ({ error: "x" })));
-    expect(await tavilyProvider("k").search("q", {}, runtime)).toEqual([]);
-    ({ runtime } = fakeRuntime(() => ({ status: 401, body: "" })));
-    expect(await tavilyProvider("k").search("q", {}, runtime)).toEqual([]);
+    await expect(tavilyProvider("k").search("q", {}, runtime)).rejects.toThrow("tavily");
+    ({ runtime } = fakeRuntime(() => ({
+      status: 432,
+      body: '{"detail":{"error":"This request exceeds your plan\'s set usage limit"}}',
+    })));
+    await expect(tavilyProvider("k").search("q", {}, runtime)).rejects.toThrow("HTTP 432");
     ({ runtime } = fakeRuntime(() => ok("{bad")));
-    expect(await tavilyProvider("k").search("q", {}, runtime)).toEqual([]);
+    await expect(tavilyProvider("k").search("q", {}, runtime)).rejects.toThrow();
+  });
+
+  it("prices each call into the daily spend ledger as source search", async () => {
+    resetSpendLedgerForTests();
+    const { runtime } = fakeRuntime(() => ok({ results: [], usage: { credits: 2 } }));
+    await tavilyProvider("k").search("q", {}, runtime);
+    expect(spentTodayUsd()).toBeCloseTo(2 * TAVILY_USD_PER_CREDIT);
+    resetSpendLedgerForTests();
   });
 });
 
@@ -328,5 +351,36 @@ describe("search orchestrator", () => {
       runtime,
     );
     expect(capped).toHaveLength(1);
+  });
+
+  it("falls through to the next provider when one fails, and reports the failure", async () => {
+    resetSearchHealthForTests();
+    let deadCalls = 0;
+    registerProvider({
+      name: "test-dead-keyed",
+      engines: ["test-only-chain-engine"],
+      search: async () => {
+        deadCalls++;
+        throw new Error('test-dead-keyed HTTP 432: {"detail":"usage limit"}');
+      },
+    });
+    registerProvider({
+      name: "test-free",
+      engines: ["test-only-chain-engine"],
+      search: async () => [{ title: "free", url: "https://free/", snippet: "", source: "free" }],
+    });
+    const { runtime } = fakeRuntime(() => ({ error: "unused" }));
+    const failures: string[] = [];
+    const results = await search("q", { engines: ["test-only-chain-engine"], failures }, runtime);
+    expect(results.map((r) => r.title)).toEqual(["free"]);
+    expect(failures).toEqual([expect.stringContaining("test-dead-keyed HTTP 432")]);
+    const health = searchBackendHealth().find((h) => h.name === "test-dead-keyed");
+    expect(health).toMatchObject({ calls: 1, failures: 1, consecutiveFailures: 1 });
+    // A quota error takes the backend out of the chain for the backoff period.
+    expect(searchBackendDown("test-dead-keyed")).toBe(true);
+    await search("q2", { engines: ["test-only-chain-engine"] }, runtime);
+    expect(deadCalls).toBe(1);
+    expect(searchBackendDown("test-dead-keyed", Date.now() + 11 * 60_000)).toBe(false);
+    resetSearchHealthForTests();
   });
 });

@@ -21,7 +21,6 @@ COPY marina-desktop/package.json ./marina-desktop/
 COPY examples/usecase-ui/package.json ./examples/usecase-ui/
 COPY examples/coding-agent-demo/package.json ./examples/coding-agent-demo/
 COPY src/sdk/package.json ./src/sdk/
-COPY marina-desktop/patches ./marina-desktop/patches
 # Only the server and the dashboard are built in this image; --filter keeps the
 # site/desktop/example dependency trees out of the layer (frozen against the
 # same root lockfile).
@@ -47,7 +46,6 @@ COPY marina-desktop/package.json ./marina-desktop/
 COPY examples/usecase-ui/package.json ./examples/usecase-ui/
 COPY examples/coding-agent-demo/package.json ./examples/coding-agent-demo/
 COPY src/sdk/package.json ./src/sdk/
-COPY marina-desktop/patches ./marina-desktop/patches
 RUN bun install --frozen-lockfile --production --filter "marina"
 
 # ── runtime: lean image that runs the server from source ────────────────────

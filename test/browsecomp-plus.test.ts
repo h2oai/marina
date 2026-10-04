@@ -20,6 +20,7 @@ import {
   runToolAgent,
   shapeFor,
   shardOf,
+  toolSchemas,
 } from "../benchmarks/browsecomp-plus/agent";
 import { workerPool } from "../benchmarks/browsecomp-plus/corpus-pool";
 import {
@@ -745,5 +746,41 @@ describe("spend guard", () => {
     expect(resolveArmGroup(old, { resume: true, replicateDirs: oldReps, fresh: next })).toBe(
       "rep:old:1",
     );
+  });
+});
+
+describe("Marina harness options (off = the official harness)", () => {
+  it("pages long documents and search results, and shows the matching window when asked", async () => {
+    const paged = {
+      ...opts,
+      docChars: 20,
+      docPaging: true,
+      searchPaging: true,
+      snippet: "matched" as const,
+    };
+    const first = JSON.parse(await executeTool("get_document", '{"docid":"101"}', paged)) as {
+      text: string;
+      next_offset: number;
+      total_chars: number;
+    };
+    expect(first.text).toHaveLength(20);
+    expect(first.total_chars).toBe(DOCS[0]!.text.length);
+    const next = JSON.parse(
+      await executeTool("get_document", `{"docid":"101","offset":${first.next_offset}}`, paged),
+    ) as { text: string; offset: number };
+    expect(next.offset).toBe(20);
+    expect(DOCS[0]!.text.slice(20, 40)).toBe(next.text);
+    const page2 = JSON.parse(
+      await executeTool("search", '{"query":"Ada Morrow engineer","page":2}', { ...paged, k: 1 }),
+    ) as { docid: string }[];
+    const page1 = JSON.parse(
+      await executeTool("search", '{"query":"Ada Morrow engineer"}', { ...paged, k: 1 }),
+    ) as { docid: string; snippet: string }[];
+    expect(page2[0]?.docid).not.toBe(page1[0]?.docid);
+    expect(
+      toolSchemas(5, { docPaging: true }).at(1)?.function.parameters.properties,
+    ).toHaveProperty("offset");
+    // The official tool schema is unchanged.
+    expect(Object.keys(toolSchemas(5)[1]!.function.parameters.properties)).toEqual(["docid"]);
   });
 });

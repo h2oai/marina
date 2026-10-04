@@ -11,11 +11,17 @@
  *                              `marina:<crew>` asks a crew on a Marina server
  *                              (MARINA_FORECAST_MARINA_URL / _KEY) — e.g. a crew
  *                              in the verification formation.
- *   MARINA_FORECAST_RETRIEVER  one or more of openrouter-web:<model>, sonar:<model>,
- *                              tavily:<basic|advanced>, asof[:<providers>] (keyless and
- *                              date-strict: gdelt, wikipedia, hn, arxiv, wayback)
- *                              (default openrouter-web:openai/gpt-6-luna; tavily:basic with
- *                              only a Tavily key; keyless asof with neither)
+ *   MARINA_FORECAST_RETRIEVER  one or more of openrouter-web:<model>[@exa|@native],
+ *                              sonar:<model>, tavily:<basic|advanced>, search[:<backends>]
+ *                              (every planned query through a backend chain, pages read and
+ *                              quoted), asof[:<providers>] (keyless and date-strict: gdelt,
+ *                              wikipedia, hn, arxiv, wayback)
+ *                              (default openrouter-web:openai/gpt-6-luna@exa,search; `search`
+ *                              alone without an OpenRouter key)
+ *   MARINA_FORECAST_DOSSIER_CHARS  evidence characters given to each run (default: sized to
+ *                              the analysts' context window, 12 000–60 000)
+ *   MARINA_FORECAST_FOLLOWUP   on | off (default on): one extra research round on the gaps
+ *                              when no run is grounded in verified evidence
  *   MARINA_FORECAST_JUDGE      jev (default when an OpenRouter key is set) |
  *                              decisions (the configured MARINA_DECISIONS backend,
  *                              falling back to jev) | none
@@ -55,15 +61,16 @@ import { SELECTION_MODES, type SelectionMode } from "./answer-types";
 import type { LessonStore } from "./lessons";
 import { lookupsFromSpec } from "./lookups";
 import type { ForecastDeps } from "./question";
+import { DEFAULT_RETRIEVER, defaultRetrieverSpec } from "./retriever-default";
 import type { ModelPart, TypedForecastDeps, TypedForecastOptions } from "./typed";
+
+export { DEFAULT_RETRIEVER, defaultRetrieverSpec };
 
 export const DEFAULT_ANALYSTS = [
   "openrouter/deepseek/deepseek-v4-pro",
   "openrouter/anthropic/claude-sonnet-5",
   "openrouter/openai/gpt-6-luna",
 ];
-
-export const DEFAULT_RETRIEVER = "openrouter-web:openai/gpt-6-luna";
 
 /**
  * What the forecaster runs on, for the answer's audit trail and the operator:
@@ -85,17 +92,6 @@ interface Wired {
   judge?: ReturnType<typeof researchJudge>;
   researchCost: () => number;
   scale: ForecastScale;
-}
-
-/**
- * The retriever spec when MARINA_FORECAST_RETRIEVER is unset: OpenRouter web
- * search with a key, else Tavily with a key, else keyless date-bounded search
- * (`asof`: GDELT, Wikipedia, HN, arXiv, Wayback) — never an error.
- */
-export function defaultRetrieverSpec(env: NodeJS.ProcessEnv = process.env): string {
-  if (env.OPENROUTER_API_KEY?.trim()) return DEFAULT_RETRIEVER;
-  if (env.TAVILY_API_KEY?.trim()) return "tavily:basic";
-  return "asof";
 }
 
 /**
@@ -126,11 +122,15 @@ function wire(env: NodeJS.ProcessEnv): Wired | { error: string } {
   }
   let base: Retriever;
   try {
-    base = retrieverFromSpec(retrieverSpec, {
-      ...(key ? { openrouter: key } : {}),
-      ...(env.TAVILY_API_KEY?.trim() ? { tavily: env.TAVILY_API_KEY.trim() } : {}),
-      ...(env.EXA_API_KEY?.trim() ? { exa: env.EXA_API_KEY.trim() } : {}),
-    });
+    base = retrieverFromSpec(
+      retrieverSpec,
+      {
+        ...(key ? { openrouter: key } : {}),
+        ...(env.TAVILY_API_KEY?.trim() ? { tavily: env.TAVILY_API_KEY.trim() } : {}),
+        ...(env.EXA_API_KEY?.trim() ? { exa: env.EXA_API_KEY.trim() } : {}),
+      },
+      { env },
+    );
     if (retrievalFilterFromEnv(env) === "strict") base = strictDateFilter(base);
   } catch (err) {
     return {
@@ -202,7 +202,12 @@ export function modelPart(
 ): ModelPart & { usage?: { costUsd: number } } {
   if (spec.startsWith("marina:")) return crewPart(spec, env);
   const made = modelComplete(spec, env);
-  return { name: spec.replace(/^openrouter\//, ""), complete: made.complete, usage: made.usage };
+  return {
+    name: spec.replace(/^openrouter\//, ""),
+    complete: made.complete,
+    usage: made.usage,
+    ...(made.contextWindow ? { contextWindow: made.contextWindow } : {}),
+  };
 }
 
 /**
@@ -279,12 +284,22 @@ export function typedOptionsFromEnv(
   const verify = env.MARINA_FORECAST_VERIFY?.trim().toLowerCase();
   const budgetS = intEnv(env.MARINA_FORECAST_BUDGET_S);
   const selection = env.MARINA_FORECAST_SELECTION?.trim().toLowerCase();
+  const dossierChars = intEnv(env.MARINA_FORECAST_DOSSIER_CHARS);
+  const followUp = env.MARINA_FORECAST_FOLLOWUP?.trim().toLowerCase();
+  const minEvidence = intEnv(env.MARINA_FORECAST_MIN_EVIDENCE);
+  const disagreement = env.MARINA_FORECAST_DISAGREEMENT?.trim().toLowerCase();
   return {
     ...(SELECTION_MODES.includes(selection as SelectionMode)
       ? { selection: selection as SelectionMode }
       : {}),
     ...(budgetS !== undefined && budgetS > 0 ? { budgetMs: budgetS * 1000 } : {}),
     ...(runs !== undefined ? { runs } : {}),
+    ...(dossierChars !== undefined && dossierChars > 0 ? { dossierChars } : {}),
+    ...(followUp === "off" || followUp === "false" || followUp === "0" ? { followUp: false } : {}),
+    ...(minEvidence !== undefined && minEvidence >= 0 ? { minEvidenceLines: minEvidence } : {}),
+    ...(disagreement === "off" || disagreement === "false" || disagreement === "0"
+      ? { disagreementRound: false }
+      : {}),
     ...(rounds !== undefined ? { researchRounds: rounds } : {}),
     ...(critique === "off" || critique === "false" || critique === "0" ? { critique: false } : {}),
     ...(verify === "on" || verify === "true" || verify === "1" ? { verify: true } : {}),
@@ -359,7 +374,11 @@ export function typedForecastDeps(
     scale: w.scale,
     deps: {
       retriever: wrapRetriever ? wrapRetriever(w.retriever) : w.retriever,
-      analysts: w.analysts.map((m) => ({ name: m.name, complete: m.complete })),
+      analysts: w.analysts.map((m) => ({
+        name: m.name,
+        complete: m.complete,
+        ...(m.contextWindow ? { contextWindow: m.contextWindow } : {}),
+      })),
       ...(planner ? { planner } : {}),
       ...(critic ? { critic } : {}),
       ...(verifier ? { verifier } : {}),

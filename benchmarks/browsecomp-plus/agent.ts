@@ -31,6 +31,7 @@ import {
   budgetSteerNote,
   DEADLINE_HEADER,
 } from "../../src/agent/budget-terminal";
+import { firstMove } from "../../src/arena/research/decompose";
 import {
   type CorpusDoc,
   type CorpusHit,
@@ -59,14 +60,20 @@ export interface ChatEndpoint {
 
 /** Where tool calls are answered. In-process by default; `corpus-pool.ts` runs them in workers. */
 export interface CorpusBackend {
-  search(query: string, k: number, leadChars: number): Promise<CorpusHit[]>;
-  get(docid: string, maxChars: number): Promise<CorpusDoc | undefined>;
+  search(query: string, k: number, leadChars: number, offset?: number): Promise<CorpusHit[]>;
+  get(
+    docid: string,
+    maxChars: number,
+    offset?: number,
+  ): Promise<(CorpusDoc & { totalChars?: number }) | undefined>;
 }
 
 export function localBackend(corpus: string, dir?: string): CorpusBackend {
   return {
-    search: async (query, k, leadChars) => searchCorpus(corpus, query, { dir, k, leadChars }),
-    get: async (docid, maxChars) => getCorpusDocument(corpus, docid, { dir, maxChars }),
+    search: async (query, k, leadChars, offset) =>
+      searchCorpus(corpus, query, { dir, k, leadChars, ...(offset ? { offset } : {}) }),
+    get: async (docid, maxChars, offset) =>
+      getCorpusDocument(corpus, docid, { dir, maxChars, ...(offset ? { offset } : {}) }),
   };
 }
 
@@ -91,6 +98,22 @@ export interface AgentOptions {
    * incomplete).
    */
   finalAnswer?: boolean;
+  /**
+   * Marina harness options (all off = the official harness):
+   *   snippet: "matched" shows each hit's best-matching window instead of the
+   *     document's opening characters;
+   *   docPaging: get_document takes an `offset` and reports the document's
+   *     full length, so a reader can page past `docChars`;
+   *   searchPaging: search takes a `page`, served from the cached ranking.
+   */
+  snippet?: "lead" | "matched";
+  docPaging?: boolean;
+  searchPaging?: boolean;
+  /**
+   * First move: decompose the question into clues, search each `depth` deep,
+   * fuse, rerank with `model` and show the top `k` before the first turn.
+   */
+  firstMove?: { model: string; depth?: number; k?: number };
   maxTokens?: number;
   temperature?: number;
   /** Per-request timeout. */
@@ -142,16 +165,23 @@ interface ChatReply {
   budgetForced?: string;
 }
 
-export function toolSchemas(k: number) {
+export function toolSchemas(k: number, more: { docPaging?: boolean; searchPaging?: boolean } = {}) {
   return [
     {
       type: "function",
       function: {
         name: "search",
-        description: searchToolDescription(k),
+        description: more.searchPaging
+          ? `${searchToolDescription(k)} Pass page (1, 2, …) to see the next results of the same query.`
+          : searchToolDescription(k),
         parameters: {
           type: "object",
-          properties: { query: { type: "string", description: "Search query string" } },
+          properties: {
+            query: { type: "string", description: "Search query string" },
+            ...(more.searchPaging
+              ? { page: { type: "integer", description: "Result page, 1 = the first (default)" } }
+              : {}),
+          },
           required: ["query"],
         },
       },
@@ -160,10 +190,22 @@ export function toolSchemas(k: number) {
       type: "function",
       function: {
         name: "get_document",
-        description: GET_DOCUMENT_DESCRIPTION,
+        description: more.docPaging
+          ? `${GET_DOCUMENT_DESCRIPTION} Long documents are returned in parts: pass offset (a character position, from next_offset) to read on.`
+          : GET_DOCUMENT_DESCRIPTION,
         parameters: {
           type: "object",
-          properties: { docid: { type: "string", description: "Document ID to retrieve" } },
+          properties: {
+            docid: { type: "string", description: "Document ID to retrieve" },
+            ...(more.docPaging
+              ? {
+                  offset: {
+                    type: "integer",
+                    description: "Character offset to start at (default 0)",
+                  },
+                }
+              : {}),
+          },
           required: ["docid"],
         },
       },
@@ -197,22 +239,35 @@ export async function executeTool(
   const backend = opts.backend ?? localBackend(opts.corpus, opts.corpusDir);
   if (name === "search") {
     const query = typeof args.query === "string" ? args.query : "";
+    const page = opts.searchPaging ? Math.max(1, Math.floor(Number(args.page) || 1)) : 1;
     // A shard reads deeper into the ranking and keeps only its own documents.
-    const depth = shard && shard.of > 1 ? Math.min(50, opts.k * shard.of * 2) : opts.k;
-    let hits = await backend.search(query, depth, opts.snippetChars);
+    const depth = shard && shard.of > 1 ? Math.min(100, opts.k * shard.of * 2) : opts.k;
+    let hits = await backend.search(query, depth, opts.snippetChars, (page - 1) * depth);
     if (shard && shard.of > 1)
       hits = hits.filter((h) => shardOf(h.docid, shard.of) === shard.index);
     return JSON.stringify(
-      hits
-        .slice(0, opts.k)
-        .map((h) => ({ docid: h.docid, score: Number(h.score.toFixed(4)), snippet: h.lead })),
+      hits.slice(0, opts.k).map((h) => ({
+        docid: h.docid,
+        score: Number(h.score.toFixed(4)),
+        snippet: opts.snippet === "matched" ? h.window || h.lead : h.lead,
+      })),
     );
   }
   if (name === "get_document") {
     const docid = String(args.docid ?? "");
-    const doc = await backend.get(docid, opts.docChars);
+    const offset = opts.docPaging ? Math.max(0, Math.floor(Number(args.offset) || 0)) : 0;
+    const doc = await backend.get(docid, opts.docChars, offset);
     if (!doc) return JSON.stringify({ error: `Document with docid '${docid}' not found` });
-    return JSON.stringify({ docid: doc.docid, text: doc.text });
+    if (!opts.docPaging) return JSON.stringify({ docid: doc.docid, text: doc.text });
+    const total = doc.totalChars ?? offset + doc.text.length;
+    const next = offset + doc.text.length;
+    return JSON.stringify({
+      docid: doc.docid,
+      offset,
+      total_chars: total,
+      ...(next < total ? { next_offset: next } : {}),
+      text: doc.text,
+    });
   }
   return JSON.stringify({ error: `unknown tool ${name}` });
 }
@@ -337,7 +392,10 @@ export async function toolLoop(
     finalAnswer?: boolean;
   } = {},
 ): Promise<LoopResult> {
-  const tools = more.tools === false ? undefined : toolSchemas(opts.k);
+  const tools =
+    more.tools === false
+      ? undefined
+      : toolSchemas(opts.k, { docPaging: opts.docPaging, searchPaging: opts.searchPaging });
   const turns = more.maxTurns ?? opts.maxTurns;
   const tag = more.agent ? { agent: more.agent } : {};
   const forceAnswer = Boolean(tools) && (more.finalAnswer ?? opts.finalAnswer ?? false);
@@ -433,12 +491,14 @@ export async function runToolAgent(
     doc_chars: opts.docChars,
     max_turns: opts.maxTurns,
     ...(opts.finalAnswer ? { final_answer: true } : {}),
+    ...harnessMetadata(opts),
   });
   try {
+    const opening = opts.firstMove ? await openingContext(ep, question, opts, run) : "";
     const out = await toolLoop(
       ep,
       model,
-      [{ role: "user", content: queryPrompt(question) }],
+      [{ role: "user", content: `${queryPrompt(question)}${opening}` }],
       opts,
       run,
     );
@@ -459,6 +519,82 @@ export function failRun(run: QueryRun, e: unknown): void {
   }
   run.record.status = "error";
   run.error = e instanceof Error ? e.message : String(e);
+}
+
+/** A model on the Marina endpoint as a first-move helper; its cost joins the run. */
+function endpointModel(ep: ChatEndpoint, model: string, run: QueryRun, timeoutMs: number) {
+  return {
+    name: model,
+    complete: async (system: string, user: string) => {
+      const reply = await chat(
+        ep,
+        {
+          model,
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: user },
+          ],
+        },
+        timeoutMs,
+      );
+      run.calls++;
+      run.costUsd += reply.costUsd;
+      run.promptTokens += reply.promptTokens;
+      run.completionTokens += reply.completionTokens;
+      if (reply.traceId) run.traceIds.push(reply.traceId);
+      return reply.message.content ?? "";
+    },
+  };
+}
+
+/**
+ * The first move (`firstMove`): clues searched deeply, fused, reranked by the
+ * given model, and the top documents shown before the agent's first turn.
+ * Recorded as a `first_move_search` tool call, so recall counts what it showed.
+ */
+async function openingContext(
+  ep: ChatEndpoint,
+  question: string,
+  opts: AgentOptions,
+  run: QueryRun,
+): Promise<string> {
+  const fm = opts.firstMove!;
+  const backend = opts.backend ?? localBackend(opts.corpus, opts.corpusDir);
+  const helper = endpointModel(ep, fm.model, run, opts.timeoutMs);
+  const move = await firstMove(question, {
+    search: async (q, depth) =>
+      (await backend.search(q, depth, opts.snippetChars)).map((h) => ({
+        id: h.docid,
+        title: h.title,
+        text: h.window || h.lead,
+      })),
+    decomposer: helper,
+    reranker: helper,
+    depth: fm.depth ?? 50,
+    k: fm.k ?? opts.k,
+  });
+  const shown = move.candidates.map((c) => ({ docid: c.id, snippet: c.text }));
+  run.record.result.push({
+    type: "tool_call",
+    tool_name: "first_move_search",
+    arguments: JSON.stringify({ clues: move.clues, order: move.order }),
+    output: JSON.stringify(shown),
+  });
+  if (shown.length === 0) return "";
+  return `\n\nOpening context — a first search pass over the question's clues found these documents (use get_document to read one in full):\n${JSON.stringify(shown)}`;
+}
+
+/** Marina harness options in a run's metadata (absent = the official harness). */
+export function harnessMetadata(opts: AgentOptions): Record<string, unknown> {
+  return {
+    ...(opts.snippet === "matched" ? { snippet: "matched" } : {}),
+    ...(opts.docPaging ? { doc_paging: true } : {}),
+    ...(opts.searchPaging ? { search_paging: true } : {}),
+    ...(opts.firstMove ? { first_move: opts.firstMove.model } : {}),
+    ...(process.env.MARINA_CORPUS_BM25_K1 && process.env.MARINA_CORPUS_BM25_B
+      ? { bm25: `k1=${process.env.MARINA_CORPUS_BM25_K1},b=${process.env.MARINA_CORPUS_BM25_B}` }
+      : {}),
+  };
 }
 
 /** The crew's instructions: the official prompt plus how to reach the corpus in-world. */

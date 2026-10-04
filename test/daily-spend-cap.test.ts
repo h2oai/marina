@@ -193,12 +193,14 @@ describe("spend ledger", () => {
       recordSpend("model_api", 0.75);
       recordSpend("decision", 0.01);
       recordSpend("media", 0.04); // migration 142 widened the source CHECK
+      recordSpend("search", 0.008); // migration 158: paid search API calls
       const rows = db.getDailySpend(utcDay());
+      expect(rows.find((r) => r.source === "search")).toMatchObject({ cost_usd: 0.008, calls: 1 });
       expect(rows.find((r) => r.source === "model_api")).toMatchObject({ cost_usd: 2, calls: 2 });
       resetSpendLedgerForTests(); // a restart…
       attachSpendLedger(sink); // …reloads today's total from the ledger
       expect(rows.find((r) => r.source === "media")).toMatchObject({ cost_usd: 0.04, calls: 1 });
-      expect(spentTodayUsd()).toBeCloseTo(2.05);
+      expect(spentTodayUsd()).toBeCloseTo(2.058);
     } finally {
       db.close();
       rmSync(dir, { recursive: true, force: true });

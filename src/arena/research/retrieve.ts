@@ -35,11 +35,13 @@ import {
   dateBoundProvider,
 } from "../../engine/search-providers/asof-providers";
 import { corpusUrl, isCorpusName, searchCorpus } from "../../engine/search-providers/corpus";
+import { recordSearchOutcome } from "../../engine/search-providers/health";
 import {
   type SearchHttp,
   type SearchResult,
   withinBound,
 } from "../../engine/search-providers/index";
+import { TAVILY_USD_PER_CREDIT } from "../../engine/search-providers/tavily";
 import { waybackFetch } from "../../engine/search-providers/wayback";
 import { dailyCapRefusal, recordSpend } from "../../engine/spend-ledger";
 import type { LookupResult } from "../../forecast/lookup-types";
@@ -47,6 +49,17 @@ import { guardedFetch } from "../../net/url-guard";
 import type { ResearchBrief } from "./briefs";
 import { closedBookRetriever } from "./isolation";
 import { fetchAllowed, type PageText } from "./verify";
+import {
+  EXA_USD_PER_SEARCH,
+  type RetrievalFunnel,
+  searchBackendsFromEnv,
+  WEB_SEARCH_BACKEND_NAMES,
+  WEB_SEARCH_DEFAULTS,
+  webSearchRetriever,
+} from "./web-search";
+
+export type { RetrievalFunnel };
+export { EXA_USD_PER_SEARCH, TAVILY_USD_PER_CREDIT };
 
 export interface Source {
   url: string;
@@ -70,6 +83,10 @@ export interface ResearchReport {
   retriever: string;
   /** Structured observations and lookup failure reasons, frozen with this dossier. */
   data?: LookupResult[];
+  /** Where evidence was found and lost, per engine that reports it (`search`). */
+  funnels?: RetrievalFunnel[];
+  /** Engines that failed while others answered (a combined retriever), one line each. */
+  warnings?: string[];
 }
 
 export type Retriever = (brief: ResearchBrief) => Promise<ResearchReport>;
@@ -81,6 +98,12 @@ export interface OpenRouterWebOptions {
   model: string;
   /** The model searches by itself (Perplexity Sonar): no `web` plugin, no reasoning knob. */
   nativeSearch?: boolean;
+  /**
+   * The web plugin's search engine: `native` (the model vendor's own search),
+   * `exa` (Exa results with page excerpts — which then serve the citation
+   * check), or unset (OpenRouter picks: native where the vendor has one).
+   */
+  engine?: "native" | "exa";
   apiKey: string;
   maxResults?: number;
   maxTokens?: number;
@@ -101,6 +124,9 @@ export function openRouterWebRetriever(opts: OpenRouterWebOptions): Retriever {
   return async (brief) => {
     const capped = dailyCapRefusal();
     if (capped) throw new Error(capped);
+    const health = opts.nativeSearch
+      ? "sonar"
+      : `openrouter-web${opts.engine ? `@${opts.engine}` : ""}`;
     const res = await fetcher("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${opts.apiKey}`, "Content-Type": "application/json" },
@@ -113,20 +139,36 @@ export function openRouterWebRetriever(opts: OpenRouterWebOptions): Retriever {
         ...(opts.nativeSearch
           ? {}
           : {
-              plugins: [{ id: "web", max_results: opts.maxResults ?? 8 }],
+              plugins: [
+                {
+                  id: "web",
+                  max_results: opts.maxResults ?? 8,
+                  ...(opts.engine ? { engine: opts.engine } : {}),
+                },
+              ],
               // Reasoning models otherwise spend the whole budget thinking and return nothing.
               reasoning: { effort: "low" },
             }),
         max_completion_tokens: opts.maxTokens ?? 5_000,
       }),
+    }).catch((err: unknown) => {
+      recordSearchOutcome(health, err instanceof Error ? err.message : String(err));
+      throw err;
     });
     const text = await res.text();
-    if (!res.ok) throw new Error(`research retrieval HTTP ${res.status}: ${text.slice(0, 200)}`);
+    if (!res.ok) {
+      const message = `research retrieval HTTP ${res.status}: ${text.slice(0, 200)}`;
+      recordSearchOutcome(health, message);
+      throw new Error(message);
+    }
+    recordSearchOutcome(health);
     const data = JSON.parse(text) as {
       choices?: Array<{
         message?: {
           content?: string;
-          annotations?: Array<{ url_citation?: { url?: string; title?: string } }>;
+          annotations?: Array<{
+            url_citation?: { url?: string; title?: string; content?: string };
+          }>;
         };
       }>;
       usage?: { cost?: number; server_tool_use_details?: { web_search_requests?: number } };
@@ -143,7 +185,14 @@ export function openRouterWebRetriever(opts: OpenRouterWebOptions): Retriever {
       const url = a.url_citation?.url;
       if (!url || seen.has(url)) continue;
       seen.add(url);
-      sources.push({ url, ...(a.url_citation?.title ? { title: a.url_citation.title } : {}) });
+      // The page excerpt the search engine returned (Exa) is the page's own
+      // text: the citation check may read it instead of fetching the page.
+      const excerpt = a.url_citation?.content?.trim();
+      sources.push({
+        url,
+        ...(a.url_citation?.title ? { title: a.url_citation.title } : {}),
+        ...(excerpt && excerpt.length >= 200 && fetchAllowed(url) ? { text: excerpt } : {}),
+      });
     }
     recordSpend("forecast", data.usage?.cost);
     return {
@@ -151,7 +200,7 @@ export function openRouterWebRetriever(opts: OpenRouterWebOptions): Retriever {
       sources,
       costUsd: data.usage?.cost ?? 0,
       searches: data.usage?.server_tool_use_details?.web_search_requests ?? 0,
-      retriever: `${opts.nativeSearch ? "sonar" : "openrouter-web"}:${opts.model}`,
+      retriever: `${opts.nativeSearch ? "sonar" : "openrouter-web"}:${opts.model}${opts.engine ? `@${opts.engine}` : ""}`,
     };
   };
 }
@@ -211,12 +260,30 @@ export function combineRetrievers(retrievers: Retriever[]): Retriever {
       }
     }
     const sources = [...byUrl.values()];
+    const funnels = settled.flatMap((s) =>
+      s.status === "fulfilled"
+        ? (s.value.funnels ?? [])
+        : (s.reason as { funnel?: RetrievalFunnel })?.funnel
+          ? [(s.reason as { funnel: RetrievalFunnel }).funnel]
+          : [],
+    );
+    // An engine that failed while others answered is named, never dropped silently.
+    const warnings = [
+      ...ok.flatMap((r) => r.warnings ?? []),
+      ...settled.flatMap((s) =>
+        s.status === "rejected"
+          ? [(s.reason instanceof Error ? s.reason.message : String(s.reason)).slice(0, 200)]
+          : [],
+      ),
+    ];
     return {
       report: ok.map((r) => `## ${r.retriever}\n${r.report}`).join("\n\n"),
       sources,
       costUsd: ok.reduce((sum, r) => sum + r.costUsd, 0),
       searches: ok.reduce((sum, r) => sum + r.searches, 0),
       retriever: ok.map((r) => r.retriever).join("+"),
+      ...(funnels.length ? { funnels } : {}),
+      ...(warnings.length ? { warnings } : {}),
     };
   };
   return strict ? Object.assign(combined, { dateStrict: true as const }) : combined;
@@ -225,12 +292,6 @@ export function combineRetrievers(retrievers: Retriever[]): Retriever {
 // ─── Tavily ──────────────────────────────────────────────────────────────────
 
 const TAVILY_SEARCH_URL = "https://api.tavily.com/search";
-/**
- * Tavily's pay-as-you-go list price per API credit (basic search = 1 credit,
- * advanced = 2; https://docs.tavily.com/documentation/api-credits). An
- * estimate — plans with bundled credits cost less per credit.
- */
-export const TAVILY_USD_PER_CREDIT = 0.008;
 /** Result lines kept per brief (best-scored first), across all its queries. */
 const TAVILY_MAX_LINES = 12;
 /** Longest snippet quoted in a report line. */
@@ -336,6 +397,9 @@ export function tavilyRetriever(opts: TavilyOptions): Retriever {
         return JSON.parse(text) as { results?: TavilyResult[]; usage?: { credits?: number } };
       }),
     );
+    for (const s of settled) {
+      recordSearchOutcome("tavily", s.status === "rejected" ? String(s.reason) : undefined);
+    }
     const ok = settled.flatMap((s) => (s.status === "fulfilled" ? [s.value] : []));
     const perCall = opts.depth === "advanced" ? 2 : 1;
     const credits = ok.reduce((sum, d) => sum + (d.usage?.credits ?? perCall), 0);
@@ -581,8 +645,6 @@ export function corpusRetriever(name: string): Retriever {
 // ─── Exa ─────────────────────────────────────────────────────────────────────
 
 const EXA_SEARCH_URL = "https://api.exa.ai/search";
-/** Exa's list price per search with contents (an estimate; plans differ). */
-export const EXA_USD_PER_SEARCH = 0.006;
 
 export interface ExaOptions {
   type: "auto" | "neural" | "keyword";
@@ -643,6 +705,9 @@ export function exaRetriever(opts: ExaOptions): Retriever {
         return JSON.parse(text) as { results?: ExaResult[]; costDollars?: { total?: number } };
       }),
     );
+    for (const s of settled) {
+      recordSearchOutcome("exa", s.status === "rejected" ? String(s.reason) : undefined);
+    }
     const ok = settled.flatMap((s) => (s.status === "fulfilled" ? [s.value] : []));
     const costUsd = ok.reduce((sum, d) => sum + (d.costDollars?.total ?? EXA_USD_PER_SEARCH), 0);
     recordSpend("forecast", costUsd);
@@ -748,7 +813,7 @@ export interface RetrieverKeys {
 export function retrieverFromSpec(
   spec: string,
   keys: string | RetrieverKeys,
-  opts: { requireDateStrict?: boolean; http?: SearchHttp } = {},
+  opts: { requireDateStrict?: boolean; http?: SearchHttp; env?: NodeJS.ProcessEnv } = {},
 ): Retriever {
   const k: RetrieverKeys = typeof keys === "string" ? { openrouter: keys } : keys;
   const parts = specParts(spec);
@@ -776,8 +841,24 @@ export function retrieverFromSpec(
         });
       }
       if (part.startsWith("corpus:")) return corpusRetriever(part.slice("corpus:".length));
+      if (part === "search" || part.startsWith("search:")) {
+        return searchRetrieverFromSpec(part, k, opts.env ?? process.env, opts.http);
+      }
       const [kind, ...rest] = part.split(":");
-      const model = rest.join(":");
+      let model = rest.join(":");
+      // `openrouter-web:<model>@exa|native` picks the web plugin's search engine.
+      let engine: "exa" | "native" | undefined;
+      const at = model.lastIndexOf("@");
+      if (kind === "openrouter-web" && at > 0) {
+        const e = model.slice(at + 1).toLowerCase();
+        if (e !== "exa" && e !== "native") {
+          throw new Error(
+            `MARINA_ARENA_RESEARCH_RETRIEVER entry "${part}": the engine after @ is exa or native`,
+          );
+        }
+        engine = e;
+        model = model.slice(0, at);
+      }
       if (!model) throw new Error(`MARINA_ARENA_RESEARCH_RETRIEVER entry "${part}" names no model`);
       if (kind === "tavily") {
         if (model !== "basic" && model !== "advanced") {
@@ -801,13 +882,66 @@ export function retrieverFromSpec(
         if (!k.openrouter) throw new Error(`the ${part} retriever needs OPENROUTER_API_KEY`);
         return kind === "sonar"
           ? sonarRetriever({ model, apiKey: k.openrouter })
-          : openRouterWebRetriever({ model, apiKey: k.openrouter });
+          : openRouterWebRetriever({
+              model,
+              apiKey: k.openrouter,
+              ...(engine ? { engine, maxResults: 10 } : {}),
+            });
       }
       throw new Error(
-        `unknown MARINA_ARENA_RESEARCH_RETRIEVER entry "${part}" (openrouter-web:<model>, sonar:<model>, tavily:<basic|advanced>, exa:<auto|neural|keyword>, asof[:<providers>], corpus:<name> or closed-book)`,
+        `unknown MARINA_ARENA_RESEARCH_RETRIEVER entry "${part}" (openrouter-web:<model>[@exa|@native], sonar:<model>, tavily:<basic|advanced>, exa:<auto|neural|keyword>, search[:<backends>], asof[:<providers>], corpus:<name> or closed-book)`,
       );
     }),
   );
+}
+
+/**
+ * `search` (the configured backend chain, `MARINA_RESEARCH_SEARCH_BACKENDS`)
+ * or `search:<backend>+<backend>…` (that chain). Breadth and budget knobs come
+ * from `MARINA_RESEARCH_*`; unset, the defaults in `WEB_SEARCH_DEFAULTS`.
+ */
+function searchRetrieverFromSpec(
+  part: string,
+  keys: RetrieverKeys,
+  env: NodeJS.ProcessEnv,
+  http: SearchHttp | undefined,
+): Retriever {
+  const list = part.includes(":") ? part.slice(part.indexOf(":") + 1) : "";
+  const named = list
+    .split("+")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  for (const n of named) {
+    if (!(WEB_SEARCH_BACKEND_NAMES as readonly string[]).includes(n)) {
+      throw new Error(
+        `MARINA_ARENA_RESEARCH_RETRIEVER entry "${part}": unknown search backend "${n}" (${WEB_SEARCH_BACKEND_NAMES.join(", ")})`,
+      );
+    }
+  }
+  const chainEnv: NodeJS.ProcessEnv = {
+    ...env,
+    ...(keys.tavily ? { TAVILY_API_KEY: keys.tavily } : {}),
+    ...(keys.exa ? { EXA_API_KEY: keys.exa } : {}),
+    ...(named.length ? { MARINA_RESEARCH_SEARCH_BACKENDS: named.join(",") } : {}),
+  };
+  const { backends, skipped } = searchBackendsFromEnv(chainEnv);
+  if (backends.length === 0) {
+    throw new Error(`the ${part} retriever has no usable backend (${skipped.join("; ")})`);
+  }
+  const int = (name: string) => {
+    const v = Number(env[name]);
+    return env[name]?.trim() && Number.isFinite(v) && v > 0 ? Math.floor(v) : undefined;
+  };
+  const passageChars = int("MARINA_RESEARCH_PASSAGE_CHARS");
+  return webSearchRetriever({
+    backends,
+    ...(http ? { http } : {}),
+    perQuery: int("MARINA_RESEARCH_RESULTS_PER_QUERY") ?? WEB_SEARCH_DEFAULTS.perQuery,
+    domainCap: int("MARINA_RESEARCH_DOMAIN_CAP") ?? WEB_SEARCH_DEFAULTS.domainCap,
+    maxPages: int("MARINA_RESEARCH_MAX_PAGES") ?? WEB_SEARCH_DEFAULTS.maxPages,
+    maxPassages: int("MARINA_RESEARCH_MAX_PASSAGES") ?? WEB_SEARCH_DEFAULTS.maxPassages,
+    ...(passageChars ? { passageChars } : {}),
+  });
 }
 
 function isAsOfPart(part: string): boolean {
