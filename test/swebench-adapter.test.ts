@@ -196,6 +196,22 @@ describe("workspace and patch", () => {
       expect(problems).toContain(`forbidden object ${gold} is resolvable`);
       await expect(assertWorkspaceIsolated(old, base)).rejects.toThrow(/history beyond/);
 
+      // Strip every ref, remote and packed ref: the alternates still expose the later objects.
+      await g(old, ["remote", "remove", "origin"]);
+      rmSync(join(old, ".git", "packed-refs"), { force: true });
+      for (const ref of (await g(old, ["for-each-ref", "--format=%(refname)"])).stdout.split(
+        "\n",
+      )) {
+        if (ref.trim()) await g(old, ["update-ref", "-d", ref.trim()]);
+      }
+      rmSync(join(old, ".git", "logs"), { recursive: true, force: true });
+      const viaAlternates = await workspaceLeaks(old, base);
+      expect(viaAlternates).toContain(".git/objects/info/alternates present");
+      expect(viaAlternates.some((p) => p.startsWith("objects not reachable from the base"))).toBe(
+        true,
+      );
+      expect(viaAlternates.some((p) => p.startsWith("refs present"))).toBe(false);
+
       // A stray unreachable object (e.g. a later blob left in the store) is caught too.
       const clean = join(root, "clean");
       mkdirSync(clean);
