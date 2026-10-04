@@ -12,7 +12,12 @@
  */
 
 import { Electroview } from "electrobun/view";
-import type { DashboardRPCSchema } from "../../bun/rpc-schema";
+import type {
+  AgentSpawnParams,
+  ApiKeyParams,
+  CreateCanvasParams,
+  DashboardRPCSchema,
+} from "../../bun/rpc-schema";
 
 // ─── Debug helpers ──────────────────────────────────────────────────────────
 
@@ -26,7 +31,7 @@ function showFatalError(msg: string): void {
       "position:fixed;top:0;left:0;right:0;padding:16px;background:#1a1a2e;color:#ff4444;font:13px/1.5 monospace;z-index:99999;white-space:pre-wrap;max-height:50vh;overflow:auto";
     document.body?.prepend(el);
   }
-  el.textContent += msg + "\n";
+  el.textContent += `${msg}\n`;
 }
 
 /** Auto-dismissing toast for transient warnings (game WS errors, etc.) */
@@ -94,7 +99,7 @@ try {
 // ─── WebSocket Message Relay ────────────────────────────────────────────────
 
 type WsMessageHandler = (ev: MessageEvent) => void;
-const wsMessageHandlers: WsMessageHandler[] = [];
+const wsMessageHandlers = new Set<WsMessageHandler>();
 
 function dispatchWsMessage(data: unknown): void {
   const msgEvent = new MessageEvent("message", {
@@ -121,11 +126,7 @@ const originalFetch = window.fetch.bind(window);
   init?: RequestInit,
 ): Promise<Response> {
   const url =
-    typeof input === "string"
-      ? input
-      : input instanceof URL
-        ? input.toString()
-        : input.url;
+    typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
 
   // Extract pathname — handle both relative (/api/...) and absolute URLs
   let pathname: string;
@@ -186,10 +187,7 @@ const originalFetch = window.fetch.bind(window);
 };
 
 /** Convert multipart or raw asset upload into a base64 RPC call. */
-async function handleAssetUpload(
-  input: RequestInfo | URL,
-  init?: RequestInit,
-): Promise<unknown> {
+async function handleAssetUpload(input: RequestInfo | URL, init?: RequestInit): Promise<unknown> {
   const contentType =
     (init?.headers as Record<string, string>)?.["Content-Type"] ??
     (init?.headers as Record<string, string>)?.["content-type"] ??
@@ -213,7 +211,8 @@ async function handleAssetUpload(
     entity = (formData.get("entity") as string) ?? "system";
   } else {
     // Raw body upload
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url =
+      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const parsed = new URL(url, window.location.origin);
     filename = parsed.searchParams.get("filename") ?? "upload";
     mime = contentType || "application/octet-stream";
@@ -243,9 +242,7 @@ async function routeApiRequest(
     if (keyDeleteMatch) return rpc.request.deleteKey(decodeURIComponent(keyDeleteMatch[1]!));
     const entityDeleteMatch = pathname.match(/^\/api\/entities\/(.+)$/);
     if (entityDeleteMatch) {
-      return rpc.request.deleteEntity(
-        decodeURIComponent(entityDeleteMatch[1]!),
-      );
+      return rpc.request.deleteEntity(decodeURIComponent(entityDeleteMatch[1]!));
     }
     // DELETE /api/canvases/:id/nodes/:nodeId
     const nodeDeleteMatch = pathname.match(/^\/api\/canvases\/([^/]+)\/nodes\/([^/]+)$/);
@@ -296,10 +293,10 @@ async function routeApiRequest(
 
   // ── POST routes ──
   if (method === "POST") {
-    if (pathname === "/api/keys") return rpc.request.addKey(body as any);
+    if (pathname === "/api/keys") return rpc.request.addKey(body as ApiKeyParams);
     const keyTestMatch = pathname.match(/^\/api\/keys\/(.+)\/test$/);
     if (keyTestMatch) return rpc.request.testKey(decodeURIComponent(keyTestMatch[1]!));
-    if (pathname === "/api/agents/spawn") return rpc.request.spawnAgent(body as any);
+    if (pathname === "/api/agents/spawn") return rpc.request.spawnAgent(body as AgentSpawnParams);
     const agentStopMatch = pathname.match(/^\/api\/agents\/(.+)\/stop$/);
     if (agentStopMatch) return rpc.request.stopAgent(decodeURIComponent(agentStopMatch[1]!));
     const attentionMatch = pathname.match(/^\/api\/agents\/(.+)\/attention$/);
@@ -327,7 +324,7 @@ async function routeApiRequest(
     }
     // POST /api/canvases — create canvas
     if (pathname === "/api/canvases") {
-      return rpc.request.createCanvas(body as any);
+      return rpc.request.createCanvas(body as CreateCanvasParams);
     }
     // POST /api/assets — upload asset (handled separately in fetch interceptor)
     return proxyApiRequest(apiPath, method, body, init);
@@ -340,11 +337,9 @@ async function routeApiRequest(
   if (pathname === "/api/events") return rpc.request.getEvents(100);
   if (pathname === "/api/coordination/boards") return rpc.request.getBoards();
   if (pathname === "/api/coordination/tasks") return rpc.request.getTasks();
-  if (pathname === "/api/coordination/channels")
-    return rpc.request.getChannels();
+  if (pathname === "/api/coordination/channels") return rpc.request.getChannels();
   if (pathname === "/api/coordination/groups") return rpc.request.getGroups();
-  if (pathname === "/api/coordination/projects")
-    return rpc.request.getProjects();
+  if (pathname === "/api/coordination/projects") return rpc.request.getProjects();
   if (pathname === "/api/connectors") return rpc.request.getConnectors();
   if (pathname === "/api/commands") return rpc.request.getCommands();
   if (pathname === "/api/memory/pools") return rpc.request.getMemoryPools();
@@ -357,38 +352,24 @@ async function routeApiRequest(
   if (pathname === "/api/agents") return rpc.request.getAgents();
 
   // ── GET: Parameterized detail routes ──
-  const taskDetailMatch = pathname.match(
-    /^\/api\/coordination\/tasks\/(\d+)$/,
-  );
+  const taskDetailMatch = pathname.match(/^\/api\/coordination\/tasks\/(\d+)$/);
   if (taskDetailMatch) {
     return rpc.request.getTaskDetail(Number(taskDetailMatch[1]));
   }
 
-  const boardDetailMatch = pathname.match(
-    /^\/api\/coordination\/boards\/(.+)$/,
-  );
+  const boardDetailMatch = pathname.match(/^\/api\/coordination\/boards\/(.+)$/);
   if (boardDetailMatch) {
-    return rpc.request.getBoardDetail(
-      decodeURIComponent(boardDetailMatch[1]!),
-    );
+    return rpc.request.getBoardDetail(decodeURIComponent(boardDetailMatch[1]!));
   }
 
-  const groupDetailMatch = pathname.match(
-    /^\/api\/coordination\/groups\/(.+)$/,
-  );
+  const groupDetailMatch = pathname.match(/^\/api\/coordination\/groups\/(.+)$/);
   if (groupDetailMatch) {
-    return rpc.request.getGroupDetail(
-      decodeURIComponent(groupDetailMatch[1]!),
-    );
+    return rpc.request.getGroupDetail(decodeURIComponent(groupDetailMatch[1]!));
   }
 
-  const channelDetailMatch = pathname.match(
-    /^\/api\/coordination\/channels\/(.+)$/,
-  );
+  const channelDetailMatch = pathname.match(/^\/api\/coordination\/channels\/(.+)$/);
   if (channelDetailMatch) {
-    return rpc.request.getChannelDetail(
-      decodeURIComponent(channelDetailMatch[1]!),
-    );
+    return rpc.request.getChannelDetail(decodeURIComponent(channelDetailMatch[1]!));
   }
 
   const roomMatch = pathname.match(/^\/api\/rooms\/(.+)$/);
@@ -461,7 +442,7 @@ async function proxyApiRequest(
 
 // ─── Game WebSocket Message Relay ──────────────────────────────────────────
 
-const gameMessageHandlers: WsMessageHandler[] = [];
+const gameMessageHandlers = new Set<WsMessageHandler>();
 
 function dispatchGameMessage(data: unknown): void {
   const msgEvent = new MessageEvent("message", {
@@ -474,7 +455,7 @@ function dispatchGameMessage(data: unknown): void {
 
 // ─── Canvas WebSocket Message Relay ───────────────────────────────────────
 
-const canvasMessageHandlers: WsMessageHandler[] = [];
+const canvasMessageHandlers = new Set<WsMessageHandler>();
 
 function dispatchCanvasMessage(data: unknown): void {
   const msgEvent = new MessageEvent("message", {
@@ -494,6 +475,7 @@ class RpcWebSocket extends EventTarget {
   protocol = "";
   binaryType: BinaryType = "blob";
   url: string;
+  private detach: () => void = () => {};
 
   onopen: ((ev: Event) => void) | null = null;
   onmessage: ((ev: MessageEvent) => void) | null = null;
@@ -517,7 +499,8 @@ class RpcWebSocket extends EventTarget {
       this.onmessage?.(ev);
       this.dispatchEvent(new MessageEvent("message", { data: ev.data }));
     };
-    wsMessageHandlers.push(handler);
+    wsMessageHandlers.add(handler);
+    this.detach = () => wsMessageHandlers.delete(handler);
 
     if (rpcConnected) {
       rpc.send.ready();
@@ -525,6 +508,7 @@ class RpcWebSocket extends EventTarget {
 
     // Simulate async open
     queueMicrotask(() => {
+      if (this.readyState === OriginalWebSocket.CLOSED) return;
       const openEvent = new Event("open");
       this.onopen?.(openEvent);
       this.dispatchEvent(openEvent);
@@ -536,6 +520,8 @@ class RpcWebSocket extends EventTarget {
   }
 
   close(_code?: number, _reason?: string): void {
+    if (this.readyState === OriginalWebSocket.CLOSED) return;
+    this.detach();
     this.readyState = OriginalWebSocket.CLOSED;
     const closeEvent = new CloseEvent("close", {
       code: 1000,
@@ -555,6 +541,7 @@ class RpcGameWebSocket extends EventTarget {
   protocol = "";
   binaryType: BinaryType = "blob";
   url: string;
+  private detach: () => void = () => {};
 
   onopen: ((ev: Event) => void) | null = null;
   onmessage: ((ev: MessageEvent) => void) | null = null;
@@ -579,21 +566,25 @@ class RpcGameWebSocket extends EventTarget {
       this.onmessage?.(ev);
       this.dispatchEvent(new MessageEvent("message", { data: ev.data }));
     };
-    gameMessageHandlers.push(handler);
+    gameMessageHandlers.add(handler);
+    this.detach = () => gameMessageHandlers.delete(handler);
 
     // Establish the virtual game connection on the bun side
     if (rpcConnected) {
       rpc.request
         .gameConnect()
         .then(() => {
+          if (this.readyState === OriginalWebSocket.CLOSED) return;
           this.readyState = OriginalWebSocket.OPEN;
           queueMicrotask(() => {
+            if (this.readyState === OriginalWebSocket.CLOSED) return;
             const openEvent = new Event("open");
             this.onopen?.(openEvent);
             this.dispatchEvent(openEvent);
           });
         })
         .catch((err) => {
+          if (this.readyState === OriginalWebSocket.CLOSED) return;
           showToast(`Game connection failed: ${err instanceof Error ? err.message : String(err)}`);
           const errorEvent = new Event("error");
           this.onerror?.(errorEvent);
@@ -611,6 +602,8 @@ class RpcGameWebSocket extends EventTarget {
   }
 
   close(_code?: number, _reason?: string): void {
+    if (this.readyState === OriginalWebSocket.CLOSED) return;
+    this.detach();
     this.readyState = OriginalWebSocket.CLOSED;
     if (rpcConnected) {
       rpc.request.gameDisconnect().catch(() => {});
@@ -633,6 +626,7 @@ class RpcCanvasWebSocket extends EventTarget {
   protocol = "";
   binaryType: BinaryType = "blob";
   url: string;
+  private detach: () => void = () => {};
 
   onopen: ((ev: Event) => void) | null = null;
   onmessage: ((ev: MessageEvent) => void) | null = null;
@@ -656,9 +650,11 @@ class RpcCanvasWebSocket extends EventTarget {
       this.onmessage?.(ev);
       this.dispatchEvent(new MessageEvent("message", { data: ev.data }));
     };
-    canvasMessageHandlers.push(handler);
+    canvasMessageHandlers.add(handler);
+    this.detach = () => canvasMessageHandlers.delete(handler);
 
     queueMicrotask(() => {
+      if (this.readyState === OriginalWebSocket.CLOSED) return;
       const openEvent = new Event("open");
       this.onopen?.(openEvent);
       this.dispatchEvent(openEvent);
@@ -670,6 +666,8 @@ class RpcCanvasWebSocket extends EventTarget {
   }
 
   close(_code?: number, _reason?: string): void {
+    if (this.readyState === OriginalWebSocket.CLOSED) return;
+    this.detach();
     this.readyState = OriginalWebSocket.CLOSED;
     const closeEvent = new CloseEvent("close", {
       code: 1000,

@@ -23,6 +23,7 @@
  */
 
 import { parseArgs } from "node:util";
+import { attachCliSpendLedger } from "../src/engine/cli-spend-ledger";
 import { type AnswerSpec, parseAnswerSpec } from "../src/forecast/answer-types";
 import { type ForecastKind, forecastQuestion } from "../src/forecast/question";
 import { forecastDeps, typedForecastDeps } from "../src/forecast/service";
@@ -60,6 +61,8 @@ if (!question) {
   process.exit(2);
 }
 
+// Count against the world's daily spend cap (DB_PATH), not a fresh per-run one.
+attachCliSpendLedger("bun run forecast");
 if (values.type) await typed();
 else await probabilistic();
 

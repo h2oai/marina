@@ -63,6 +63,7 @@ import {
   trialGateQuestions,
 } from "../src/decisions/question-trial";
 import type { DecisionProvider } from "../src/decisions/types";
+import { attachCliSpendLedger } from "../src/engine/cli-spend-ledger";
 
 function backendFor(spec: string, method?: ClassifierMethod): DecisionProvider {
   const tuning = method ? { method } : {};
@@ -139,6 +140,8 @@ function backendFor(spec: string, method?: ClassifierMethod): DecisionProvider {
 }
 
 async function main() {
+  // Metered backends count against the world's daily spend cap (DB_PATH).
+  attachCliSpendLedger("qualify-decisions");
   const { values } = parseArgs({
     options: {
       backend: { type: "string", multiple: true },

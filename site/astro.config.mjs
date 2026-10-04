@@ -81,6 +81,16 @@ export default defineConfig({
           ],
         },
         {
+          label: "Integrations",
+          items: [
+            { label: "Choose an integration", slug: "docs/guides/integrations" },
+            { label: "LangChain & LangGraph", slug: "docs/guides/langchain" },
+            { label: "n8n Workflows", slug: "docs/guides/n8n" },
+            { label: "Coding Agents & Editors", slug: "docs/guides/coding-agent-integrations" },
+            { label: "Desktop, Web & Terminal", slug: "docs/guides/interfaces" },
+          ],
+        },
+        {
           label: "Interfaces",
           items: [
             { label: "API Explorer", link: "/api" },

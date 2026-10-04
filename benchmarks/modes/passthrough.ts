@@ -47,6 +47,27 @@ export interface QueryResult {
   requestId?: string;
   /** Marina's `x-marina-repair` label: the answer reached the endpoint through output repair. */
   repaired?: string;
+  /**
+   * From Marina's `x-marina-verify` label (the verification formation): the
+   * checker approved (`passed`), found issues (`failed`), or never ran
+   * (`not_run`: checker unavailable — the draft went out unchecked).
+   */
+  verification?: "passed" | "failed" | "not_run";
+}
+
+/** The ledger's verification state for a `x-marina-verify` label; undefined when absent. */
+export function verificationFromLabel(
+  label: string | null | undefined,
+): QueryResult["verification"] {
+  if (!label) return undefined;
+  if (label === "approved") return "passed";
+  if (label === "checker-unavailable") return "not_run";
+  return "failed"; // revised, flagged, revision-failed, held-write: the check found a problem
+}
+
+/** The per-item labels a reply carries for the ledger (spread into a `ResultItem`). */
+export function replyLabels(reply: QueryResult): { verification?: QueryResult["verification"] } {
+  return reply.verification ? { verification: reply.verification } : {};
 }
 
 /**
@@ -152,6 +173,7 @@ export async function queryWithUsage(
       // `content: null`: an empty answer (scored wrong), never a crash.
       const requestId = resp.headers.get("x-request-id") ?? undefined;
       const repaired = resp.headers.get("x-marina-repair") ?? undefined;
+      const verification = verificationFromLabel(resp.headers.get("x-marina-verify"));
       consecutiveTimeouts.delete(endpoint);
       deadUntil.delete(endpoint);
       return {
@@ -159,6 +181,7 @@ export async function queryWithUsage(
         usage: usageFromResponse(data, resp.headers.get(MARINA_COST_HEADER)),
         ...(requestId ? { requestId } : {}),
         ...(repaired ? { repaired } : {}),
+        ...(verification ? { verification } : {}),
       };
     } catch (err) {
       if (controller.signal.aborted || (err instanceof Error && err.name === "TimeoutError")) {

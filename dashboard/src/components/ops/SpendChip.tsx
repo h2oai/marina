@@ -23,12 +23,20 @@ export function spendChipVisible(overview: OpsOverview): boolean {
   );
 }
 
+/** "Today $3.20 of $50.00 (futurex-live $2.10, backtest $0.40)" — privileged overviews only. */
+export function dailySpendSummary(daily: OpsOverview["spend"]["daily"]): string | undefined {
+  if (!daily) return undefined;
+  const scopes = daily.scopes.map((s) => `${s.scope} ${formatUsd(s.spentUsd)}`).join(", ");
+  return `Today ${formatUsd(daily.spentUsd)}${daily.capUsd !== null ? ` of ${formatUsd(daily.capUsd)}` : ""}${scopes ? ` (${scopes})` : ""}`;
+}
+
 export function SpendChip({ overview: override }: { overview?: OpsOverview } = {}) {
   const query = useOpsOverview();
   const overview = override ?? query.data;
   if (!overview || !spendChipVisible(overview)) return null;
   const atRisk = spendAtRisk(overview.spend, overview.agents);
   const cap = overview.spend.caps.globalUsd;
+  const daily = dailySpendSummary(overview.spend.daily);
   return (
     <button
       type="button"
@@ -38,11 +46,11 @@ export function SpendChip({ overview: override }: { overview?: OpsOverview } = {
           ? "border-danger/50 bg-danger/10 text-danger hover:border-danger/70"
           : "border-border bg-bg/40 text-text-dim hover:border-primary/60 hover:text-primary"
       }`}
-      title={
+      title={`${
         atRisk
-          ? "Spend is within 20 % of a cap — open Admin → Ops"
-          : `Rolling-hour spend${cap !== null ? ` (cap ${formatUsd(cap)}/h)` : ""} — open Admin → Ops`
-      }
+          ? "Spend is within 20 % of a cap"
+          : `Rolling-hour spend${cap !== null ? ` (cap ${formatUsd(cap)}/h)` : ""}`
+      }${daily ? `. ${daily}` : ""} — open Admin → Ops`}
       data-testid="spend-chip"
       data-at-risk={atRisk ? "true" : "false"}
     >

@@ -60,6 +60,12 @@ function slimItem(it: Record<string, unknown>): Record<string, unknown> {
     ...(typeof it.traceId === "string" ? { traceId: it.traceId } : {}),
     // Only the flag survives — never the response text it may be derived from.
     ...(isFallbackItem(it) ? { fallback: true } : {}),
+    // The answer's digest only (the ledger stores a hash keyed per ledger); never text.
+    ...(typeof it.answerDigest === "string" && /^[0-9a-f]{64}$/.test(it.answerDigest)
+      ? { answerDigest: it.answerDigest }
+      : {}),
+    ...(typeof it.budgetForced === "boolean" ? { budgetForced: it.budgetForced } : {}),
+    ...(typeof it.verification === "string" ? { verification: it.verification } : {}),
   };
 }
 

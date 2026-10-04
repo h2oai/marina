@@ -32,7 +32,7 @@ bootstrap over runs, then items). A single run is labelled "not replicated".
 | `--arm a,b` | which arms to run (default: all) |
 | `--replicates N` | independent runs per arm (default 2); a crew arm gets a fresh server per replicate |
 | `--limit N` | items per arm and replicate (default: the smoke size); the full sizes are in `repro list` |
-| `--budget-usd X` | refuse to start when the estimate exceeds X (default 10) |
+| `--budget-usd X` | refuse to start when the estimate exceeds X (default 10); X is also a hard total, split evenly across the run's servers or SWE-bench runs |
 | `--model`, `--checker`, `--judge` | the answer model, the reviewer or checker, and the judge or user simulator |
 | `--domain` | τ²-bench domain (default `airline`) |
 | `--split` | τ²-bench task split (`test` or `base`); runs the whole split unless `--limit` is given. `base` is the leaderboard split: every task, so `--limit` is refused with it. A re-run with the same `--run-dir` resumes an interrupted τ² run (`--auto-resume`) |
@@ -74,7 +74,7 @@ These are the mechanics that otherwise trip a reproduction:
 - **Judging through Marina:** graded answers are judged through a Marina server, not by calling a vendor directly.
 - **Time limits:** crews get a long per-item limit, and the server's request timeout is set above it.
 - **τ²-bench:** the agent and user simulator go through Marina, and τ²'s own evaluator runs as shipped. The τ² process gets the provider keys from `.env` (never printed) and no `OPENAI_BASE_URL` override. Reasoning effort travels in `extra_body`, because τ² sets LiteLLM's `drop_params`, which strips a top-level `reasoning_effort` for Marina-routed ids. The agent effort, user simulator and its effort appear in the plan's labels. A run with any infrastructure error is **invalid**: `tau2 convert --require-clean` reports the count, writes no scores, and the run never reaches the ledger.
-- **Spend:** each server's daily spend cap is set from your budget.
+- **Spend:** the budget is a true total. Each server's daily spend cap, and each SWE-bench run's `--max-usd`, is an even share of `--budget-usd`, rounded down, with no per-server minimum, so together they never exceed it.
 - **The ledger:** results are imported into one ledger, grouped by arm, so `benchmark compare`, `leaderboard` and `replicates` work on them afterwards.
 
 ## Reading the output

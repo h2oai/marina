@@ -4,10 +4,10 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { LocalWorkspace } from "../src/coding/local-workspace";
 import { beginCodingRun, endCodingRun } from "../src/coding/task-run";
 import type { WorkspaceRegistry } from "../src/coding/workspace-registry";
-import { listRaisedBy, settleChallenge } from "../src/engine/challenges";
+import { listRaisedBy, resetChallengesForTests, settleChallenge } from "../src/engine/challenges";
 import { withCommandResponse } from "../src/engine/command-response";
 import { codeCommand } from "../src/engine/commands/code";
-import { grantCommandPass } from "../src/engine/gate-context";
+import { grantCommandPass, resetGateContextForTests } from "../src/engine/gate-context";
 import { grant } from "../src/engine/safety-gates";
 import { parseCodingCommandTarget } from "../src/sdk/command-target";
 import type { EntityId, Perception } from "../src/types";
@@ -52,10 +52,15 @@ function fixture() {
 describe("request-local coding destinations", () => {
   let f: ReturnType<typeof fixture>;
   beforeEach(() => {
+    // These serial fixtures reuse entity IDs; challenges/passes are process-scoped.
+    resetChallengesForTests();
+    resetGateContextForTests();
     f = fixture();
   });
   afterEach(async () => {
     await f.dispose();
+    resetChallengesForTests();
+    resetGateContextForTests();
   });
 
   it("writes and inspects another owned session without changing saved selection or legacy routing", async () => {

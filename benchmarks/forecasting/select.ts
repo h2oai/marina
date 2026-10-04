@@ -33,8 +33,9 @@
 
 import { randomUUID } from "node:crypto";
 import type { IsolationLevel } from "../../src/arena/research/isolation";
-import { ledgerFromHarnessResult } from "../../src/engine/benchmark-ledger";
-import { dailyCapRefusal, dailySpend } from "../../src/engine/spend-ledger";
+import { answerDigest, ledgerFromHarnessResult } from "../../src/engine/benchmark-ledger";
+import { SpendGuard } from "../../src/engine/spend-guard";
+import { dailyCapRefusal } from "../../src/engine/spend-ledger";
 import type { TypedForecastAnswer, TypedForecastRequest } from "../../src/forecast/typed";
 import type { MarinaStores } from "../../src/persistence/interfaces";
 import { defaultReplicateGroup } from "../replicates";
@@ -232,29 +233,28 @@ export async function selectConfiguration(opts: SelectOptions): Promise<Selectio
       // Stop starting items while every item in flight can still finish under the
       // selection budget and the daily cap: past either, the forecaster's calls
       // would be refused and the items would score as fallbacks.
-      const shouldStop = (): string | undefined => {
-        const per = finished ? runCost / finished : 0;
-        const reserve = Math.max(STOP_RESERVE_USD, 1.5 * concurrency * per);
-        if (spent + runCost + reserve >= opts.budgetUsd) {
-          return `selection budget $${opts.budgetUsd}: $${(spent + runCost).toFixed(2)} spent + $${reserve.toFixed(2)} reserve`;
-        }
-        const s = dailySpend(env);
-        if (s.capUsd !== undefined && s.spentUsd + reserve >= s.capUsd) {
-          return `daily spend cap $${s.capUsd}: $${s.spentUsd.toFixed(2)} spent + $${reserve.toFixed(2)} reserve`;
-        }
-        return undefined;
-      };
+      const guard = new SpendGuard({
+        label: "selection budget",
+        budgetUsd: opts.budgetUsd,
+        spentUsd: spent,
+        concurrency,
+        minReserveUsd: STOP_RESERVE_USD,
+        env,
+      });
       const answers = await mapLimit(common, concurrency, async (item) => {
-        halt ??= shouldStop();
+        halt ??= guard.stopReason();
         if (halt) return undefined;
+        let itemCost = 0;
         try {
           const answer = await forecast(item.request);
-          runCost += answer.costUsd ?? 0;
+          itemCost = answer.costUsd ?? 0;
+          runCost += itemCost;
           return answer;
         } catch {
           return undefined;
         } finally {
           finished++;
+          guard.record(itemCost);
         }
       });
       if (halt) {
@@ -411,6 +411,10 @@ function fileRun(
       score: scores.get(it.id) ?? 0,
       // Scored as the board's fallback, flagged so the ledger can see the run's fallback rate.
       ...(isFallback(answers[i]) ? { fallback: true } : {}),
+      // A digest of the answer, never its text (stored keyed per ledger).
+      ...(answers[i]?.formatted && answerDigest(answers[i]!.formatted)
+        ? { answerDigest: answerDigest(answers[i]!.formatted) }
+        : {}),
       usage: { costUsd: answers[i]?.costUsd ?? 0 },
       judge: "1-brier",
     })),

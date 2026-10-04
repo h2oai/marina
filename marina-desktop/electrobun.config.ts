@@ -4,12 +4,13 @@
 import { readFileSync } from "node:fs";
 
 const bunVersion = readFileSync(new URL("../.bun-version", import.meta.url), "utf8").trim();
+const { version } = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
 
 export default {
   app: {
     name: "Marina",
     identifier: "dev.marina.desktop",
-    version: "0.4.2",
+    version,
   },
 
   build: {

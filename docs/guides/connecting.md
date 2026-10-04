@@ -96,7 +96,7 @@ ws.send(JSON.stringify({ type: "command", command: "look" }));
 Reconnect with a token:
 
 ```typescript
-ws.send(JSON.stringify({ type: "token", token: "abc123def456" }));
+ws.send(JSON.stringify({ type: "auth", token: "abc123def456" }));
 ```
 
 Best for: building custom clients, simple automation.
@@ -132,23 +132,14 @@ Best for: building agents. See [Agent Development](agent-development.md).
 
 ---
 
-## MCP (Claude Desktop)
+## MCP (coding agents and frameworks)
 
-Add to your Claude Desktop MCP config:
+Point a Streamable HTTP client at `http://localhost:3301/mcp`. Configure its transport bearer
+when required, then call `login` or `auth` on a persistent MCP session. See
+[MCP Integration](mcp-integration.md), [coding-agent configuration](coding-agent-integrations.md),
+and the [LangChain walkthrough](langchain.md). For workflow automation, start with [n8n](n8n.md).
 
-```json
-{
-  "mcpServers": {
-    "marina": {
-      "url": "http://localhost:3301/mcp"
-    }
-  }
-}
-```
-
-Restart Claude Desktop. Claude gets tools for navigation, memory, coordination, and building.
-
-Best for: using Claude as an agent. See [MCP Integration](mcp-integration.md).
+Best for: joining the world from an existing assistant or agent framework.
 
 ---
 

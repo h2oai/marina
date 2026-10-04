@@ -16,12 +16,14 @@
 
 import { createHash } from "node:crypto";
 import { mcnemarExact, wilsonInterval } from "../../benchmarks/stats";
-import type {
-  BenchmarkItemInput,
-  BenchmarkItemRow,
-  BenchmarkLedgerRunInput,
-  BenchmarkRunRow,
-  BenchmarkTargetKind,
+import {
+  BENCHMARK_VERIFICATION_STATES,
+  type BenchmarkItemInput,
+  type BenchmarkItemRow,
+  type BenchmarkLedgerRunInput,
+  type BenchmarkRunRow,
+  type BenchmarkTargetKind,
+  type BenchmarkVerification,
 } from "../persistence/db-benchmarks";
 import type { BenchmarksStore } from "../persistence/interfaces/benchmarks-store";
 
@@ -248,6 +250,75 @@ export function participantCredit(items: readonly BenchmarkItemRow[]): {
   return { credit, withParticipants };
 }
 
+// ─── Answer identity (migration 157) ───────────────────────────────────────
+
+/**
+ * An answer reduced to what makes two answers the same: NFKC, lower case,
+ * TeX wrappers (`\boxed{}`, `\text{}`, `$`) dropped, whitespace collapsed,
+ * surrounding quotes and punctuation trimmed, a list's items trimmed, and a
+ * plain number written canonically (`1,234.50` → `1234.5`). Empty ⇒ no answer.
+ */
+export function normalizeAnswerForHash(answer: string): string {
+  const s = answer
+    .normalize("NFKC")
+    .replace(/\\boxed\{([^{}]*)\}/g, "$1")
+    .replace(/\\text\{([^{}]*)\}/g, "$1")
+    .replace(/\\[()[\]]/g, "")
+    .replace(/\$/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/^[\s"'`.,;:!?()[\]*]+|[\s"'`.,;:!?()[\]*]+$/g, "");
+  const num = s.replace(/[,_\s]/g, "").replace(/^−/, "-");
+  if (/^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/.test(num)) {
+    const n = Number(num);
+    if (Number.isFinite(n)) return String(n);
+  }
+  return s
+    .split(/\s*,\s*/)
+    .map((x) => x.trim())
+    .join(",");
+}
+
+/**
+ * The digest a harness sends for one item's answer: sha256 of the normalised
+ * answer, or undefined for an empty answer or an `ERROR:` marker. The ledger
+ * never stores it — only a hash keyed per ledger (`keyedAnswerHash`), so
+ * answers compare across runs without the answer being recoverable.
+ */
+export function answerDigest(answer: string | undefined | null): string | undefined {
+  if (typeof answer !== "string" || answer.startsWith("ERROR:")) return undefined;
+  const normal = normalizeAnswerForHash(answer);
+  return normal ? createHash("sha256").update(normal).digest("hex") : undefined;
+}
+
+/** Verification states across a run's items: a check that never ran is not a failure. */
+export interface VerificationCounts {
+  passed: number;
+  failed: number;
+  notRun: number;
+  /** Items with no verification reported. */
+  unreported: number;
+}
+
+export function verificationCounts(
+  items: readonly { verification?: string | null }[],
+): VerificationCounts {
+  const out: VerificationCounts = { passed: 0, failed: 0, notRun: 0, unreported: 0 };
+  for (const it of items) {
+    if (it.verification === "passed") out.passed++;
+    else if (it.verification === "failed") out.failed++;
+    else if (it.verification === "not_run") out.notRun++;
+    else out.unreported++;
+  }
+  return out;
+}
+
+/** One line for a run's verification states, or undefined when none were reported. */
+export function formatVerificationCounts(c: VerificationCounts): string | undefined {
+  if (c.passed + c.failed + c.notRun === 0) return undefined;
+  return `verification: ${c.passed} passed · ${c.failed} failed · ${c.notRun} not run${c.unreported ? ` · ${c.unreported} unreported` : ""}`;
+}
+
 // ─── Harness result → ledger ───────────────────────────────────────────────
 
 /** The subset of a `benchmarks/harness.ts` result file the ledger reads. */
@@ -277,8 +348,17 @@ export interface HarnessResultFile {
      * for the run's fallback rate; never stored per item.
      */
     fallback?: boolean;
-    /** The harness's response text — read only to spot its `ERROR:` marker, never stored. */
+    /**
+     * The harness's response text — read only to spot its `ERROR:` marker and
+     * to derive the answer digest when none is given; never stored.
+     */
     actual?: string;
+    /** `answerDigest` of the item's answer (preferred over deriving it from `actual`). */
+    answerDigest?: string;
+    /** The answer was forced at a turn, step or time budget. */
+    budgetForced?: boolean;
+    /** `passed` | `failed` | `not_run` — checks that never ran are not failures. */
+    verification?: string;
   }[];
 }
 
@@ -442,6 +522,14 @@ export function ledgerFromHarnessResult(
         ? JSON.stringify(it.participants)
         : null,
     judge_verdict: typeof it.judge === "string" ? it.judge : null,
+    answer_digest:
+      typeof it.answerDigest === "string" && /^[0-9a-f]{64}$/.test(it.answerDigest)
+        ? it.answerDigest
+        : (answerDigest(it.actual) ?? null),
+    budget_forced: typeof it.budgetForced === "boolean" ? it.budgetForced : null,
+    verification: BENCHMARK_VERIFICATION_STATES.includes(it.verification as BenchmarkVerification)
+      ? (it.verification as BenchmarkVerification)
+      : null,
   }));
   if (items.length === 0) throw new Error("result file has no items with ids");
   const runCost =

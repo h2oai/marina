@@ -444,6 +444,39 @@ CREATE TRIGGER benchmark_run_regroups_no_update BEFORE UPDATE ON benchmark_run_r
 BEGIN SELECT RAISE(ABORT, 'benchmark_run_regroups is append-only'); END;
 `,
   },
+  // Budget scopes (src/engine/spend-ledger.ts): a process with
+  // MARINA_SPEND_SCOPE=<name> records its dollars here as well as in
+  // spend_daily (same transaction), capped by MARINA_SPEND_SCOPE_CAP_USD.
+  {
+    version: 156,
+    sql: `
+CREATE TABLE spend_scope_daily (
+  day TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  source TEXT NOT NULL CHECK (source IN ('model_api', 'agent', 'decision', 'forecast', 'media')),
+  cost_usd REAL NOT NULL DEFAULT 0,
+  calls INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (day, scope, source)
+);
+`,
+  },
+  // Per-item answer identity and outcome labels for the benchmark ledger:
+  // `answer_hash` is a keyed hash of the normalised answer (never the answer —
+  // the key is per ledger, so a short answer cannot be recovered by hashing
+  // guesses), so plurality and offline selectors can be measured across runs;
+  // `budget_forced` marks an answer the harness forced at a turn, step or time
+  // budget; `verification` separates checks that never ran from checks that
+  // ran and failed. NULL = not reported (every row recorded before this).
+  {
+    version: 157,
+    sql: `
+ALTER TABLE benchmark_items ADD COLUMN answer_hash TEXT;
+ALTER TABLE benchmark_items ADD COLUMN budget_forced INTEGER CHECK (budget_forced IS NULL OR budget_forced IN (0, 1));
+ALTER TABLE benchmark_items ADD COLUMN verification TEXT CHECK (verification IS NULL OR verification IN ('passed', 'failed', 'not_run'));
+CREATE INDEX idx_benchmark_items_answer ON benchmark_items(item_id, answer_hash) WHERE answer_hash IS NOT NULL;
+`,
+  },
 ];
 
 /** Migration 143 body — self-contained so later edits to db-notes never change it. */
