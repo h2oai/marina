@@ -123,6 +123,17 @@ class Shapes(unittest.TestCase):
         self.assertIn("ensemble of a/x · checked by b/y", m.rationale_from(answer))
 
 
+class Manifest(unittest.TestCase):
+    def test_arena_toml_has_the_agent_table_the_cli_reads(self):
+        import tomllib
+        from pathlib import Path
+
+        data = tomllib.loads((Path(__file__).parent / "arena.toml").read_text())
+        self.assertEqual(data["agent"]["name"], "h2oai-marina")
+        self.assertEqual(data["agent"]["track"], "agentic")
+        self.assertEqual(data["agent"]["display_name"], "H2O.ai Marina")
+
+
 class Server(unittest.TestCase):
     def test_calls_v1_forecast_with_the_key(self):
         seen: dict = {}
