@@ -73,9 +73,33 @@ export function requestFor(q: FbQuestion, due: string): TypedForecastRequest {
   const freeze = q.freeze_datetime?.slice(0, 10);
   const value = clip(q.freeze_datetime_value, 60);
   const close = clip(q.market_info_close_datetime, 40);
+  const price = Number(q.freeze_datetime_value);
+  const frozenAt = q.freeze_datetime ? Date.parse(q.freeze_datetime) : Number.NaN;
   return {
     question: clip(questionText(q, due), 1_500),
     answer: specFor(q, due),
+    id: `forecastbench:${due}/${q.source}/${q.id}`,
+    // The reference class for base rates and calibration evidence: market or dataset, by source.
+    category: `forecastbench:${market ? "market" : "dataset"}:${q.source}`,
+    // A market question's freeze-date price is its market prior (the forecaster
+    // rejects a prior observed after its cutoff).
+    ...(market &&
+    q.freeze_datetime_value?.trim() &&
+    Number.isFinite(price) &&
+    price >= 0 &&
+    price <= 1 &&
+    Number.isFinite(frozenAt)
+      ? {
+          priors: [
+            {
+              source: "market" as const,
+              distribution: { Yes: price, No: 1 - price },
+              at: new Date(frozenAt).toISOString(),
+              label: q.source,
+            },
+          ],
+        }
+      : {}),
     ...(market && close && Number.isFinite(Date.parse(close)) ? { endTime: close } : {}),
     context: [
       clip(q.source_intro, 600),

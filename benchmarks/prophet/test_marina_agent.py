@@ -50,6 +50,10 @@ class Mapping(unittest.TestCase):
         past = datetime.now(timezone.utc) - timedelta(days=30)
         body, _ = m.request_for(event(True, past))
         self.assertTrue(body["asOf"].endswith("Z"))
+        # The crowd's prices go in as the market prior, observed at the frozen window.
+        self.assertEqual(body["priors"][0]["source"], "market")
+        self.assertEqual(body["priors"][0]["distribution"], {"A": 0.6, "B": 0.4})
+        self.assertEqual(body["priors"][0]["at"], body["asOf"])
 
     def test_probabilities_and_rationale(self):
         answer = {
@@ -81,6 +85,10 @@ class Shapes(unittest.TestCase):
         self.assertEqual(by_id, {"A": "Before 2026"})
         probs = m.probabilities_from({"distribution": {"A": 0.8, "B": 0.2}}, by_id)
         self.assertEqual(probs, {"Before 2026": 0.8})
+        # Its crowd price is the yes side of the market prior (the server fills the no side).
+        e.crowd = {"Before 2026": 0.3}
+        body, _ = m.request_for(e)
+        self.assertEqual(body["priors"][0]["distribution"], {"A": 0.3})
 
     def test_wide_events_are_asked_in_balanced_parts(self):
         self.assertEqual([len(p) for p in m.parts_of(64)], [64])
@@ -98,6 +106,9 @@ class Shapes(unittest.TestCase):
         self.assertIn("Outcome 0 0.01", asked[0][0]["context"])
         self.assertNotIn("Outcome 74 0.01", asked[0][0]["context"])
         self.assertIn("Outcome 74 0.01", asked[1][0]["context"])
+        # ... and its market prior prices only its own options.
+        for body, by_id in asked:
+            self.assertEqual(set(body["priors"][0]["distribution"]), set(by_id))
 
     def test_a_wide_exclusive_event_is_normalized(self):
         calls = []

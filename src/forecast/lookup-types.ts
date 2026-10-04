@@ -62,6 +62,20 @@ export interface LookupResult {
   asOf?: string;
   /** Official numeric readings, for the numeric anchor. */
   readings?: Reading[];
+  /**
+   * Market lookups: each priced market's first-outcome ("Yes") price and the
+   * time it was read (never after the cutoff), for a forecast's prior.
+   */
+  prices?: MarketPrice[];
+}
+
+export interface MarketPrice {
+  venue: string;
+  market: string;
+  outcome: string;
+  p: number;
+  /** ISO time of the price (the cutoff's last trade or candle, or now for a live read). */
+  at: string;
 }
 
 export interface ForecastLookup {

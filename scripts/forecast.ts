@@ -27,7 +27,7 @@ import { attachCliSpendLedger } from "../src/engine/cli-spend-ledger";
 import { type AnswerSpec, parseAnswerSpec } from "../src/forecast/answer-types";
 import { type ForecastKind, forecastQuestion } from "../src/forecast/question";
 import { forecastDeps, typedForecastDeps } from "../src/forecast/service";
-import { forecastTyped } from "../src/forecast/typed";
+import { forecastFormed } from "../src/forecast/formations";
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -96,7 +96,7 @@ async function typed(): Promise<void> {
     console.error(made.error);
     process.exit(1);
   }
-  const a = await forecastTyped(
+  const a = await forecastFormed(
     {
       question,
       answer: spec,
@@ -105,6 +105,7 @@ async function typed(): Promise<void> {
       ...(values.context ? { context: values.context } : {}),
     },
     made.deps,
+    "ensemble",
   );
   a.costUsd = made.costUsd();
   if (values.json) {

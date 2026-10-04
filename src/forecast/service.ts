@@ -39,6 +39,9 @@
  *   MARINA_FORECAST_RETRIEVAL_FILTER  strict | none (default none): keep only report lines
  *                              whose cited pages are provably published by the cutoff
  *                              (src/arena/research/isolation.ts)
+ *   MARINA_FORECAST_PRIOR, _PRIOR_WEIGHT, _CALIBRATION, _CALIBRATION_MARGIN,
+ *   _CALIBRATION_SCORE, _HISTORY, _HISTORY_MIN   prior shrink and recalibration from
+ *                              resolved history (`./adjust.ts`; all off by default)
  *
  * No vendor key is required. Unset, every part resolves to what this
  * installation has (`src/agent/available-models.ts`): OpenRouter's three-vendor
@@ -57,7 +60,9 @@ import { type Retriever, retrieverFromSpec } from "../arena/research/retrieve";
 import { defaultPageText } from "../arena/research/verify";
 import { researchJudge } from "../decisions/config";
 import { dailyCapRefusal } from "../engine/spend-ledger";
+import { type AdjustSettings, adjustSettingsFromEnv } from "./adjust";
 import { SELECTION_MODES, type SelectionMode } from "./answer-types";
+import type { ForecastHistory } from "./history";
 import type { LessonStore } from "./lessons";
 import { lookupsFromSpec } from "./lookups";
 import type { ForecastDeps } from "./question";
@@ -288,11 +293,13 @@ export function typedOptionsFromEnv(
   const followUp = env.MARINA_FORECAST_FOLLOWUP?.trim().toLowerCase();
   const minEvidence = intEnv(env.MARINA_FORECAST_MIN_EVIDENCE);
   const disagreement = env.MARINA_FORECAST_DISAGREEMENT?.trim().toLowerCase();
+  const pool = env.MARINA_FORECAST_POOL?.trim().toLowerCase();
   return {
     ...(SELECTION_MODES.includes(selection as SelectionMode)
       ? { selection: selection as SelectionMode }
       : {}),
     ...(budgetS !== undefined && budgetS > 0 ? { budgetMs: budgetS * 1000 } : {}),
+    ...(pool === "logodds" ? { pool: "logodds" as const } : {}),
     ...(runs !== undefined ? { runs } : {}),
     ...(dossierChars !== undefined && dossierChars > 0 ? { dossierChars } : {}),
     ...(followUp === "off" || followUp === "false" || followUp === "0" ? { followUp: false } : {}),
@@ -321,6 +328,10 @@ export function typedForecastDeps(
     /** Wrap the wired retriever (an audit, a capture, a custom filter). */
     wrapRetriever?: (r: Retriever) => Retriever;
     lessons?: LessonStore;
+    /** Prior shrink / recalibration settings instead of the environment's (`false`: none). */
+    adjust?: Partial<AdjustSettings> | false;
+    /** Resolved history instead of MARINA_FORECAST_HISTORY. */
+    history?: ForecastHistory;
   } = {},
 ): { deps: TypedForecastDeps; costUsd: () => number; scale: ForecastScale } | { error: string } {
   const analystEnv: NodeJS.ProcessEnv = {
@@ -368,8 +379,18 @@ export function typedForecastDeps(
     strictRetrieval: _s,
     wrapRetriever,
     lessons,
+    adjust: adjustOverride,
+    history,
     ...options
   } = overrides;
+  const adjust: AdjustSettings | undefined =
+    adjustOverride === false
+      ? undefined
+      : {
+          ...adjustSettingsFromEnv(env),
+          ...(adjustOverride ?? {}),
+          ...(history ? { history } : {}),
+        };
   return {
     scale: w.scale,
     deps: {
@@ -387,6 +408,7 @@ export function typedForecastDeps(
       pageText: defaultPageText(),
       lookups: lookupsFromSpec(env.MARINA_FORECAST_LOOKUPS, env),
       options: typedOptionsFromEnv(env, options),
+      ...(adjust ? { adjust } : {}),
     },
     costUsd: () =>
       w.researchCost() +
