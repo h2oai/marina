@@ -185,6 +185,7 @@ async function handleSearch(
     return;
   }
 
+  const failures: string[] = [];
   const results = await providerSearch(
     query,
     {
@@ -192,10 +193,13 @@ async function handleSearch(
       ...(providers ? { providers } : {}),
       maxResults,
       ...(before ? { before } : {}),
+      failures,
     },
     runtime,
     eid,
   );
+  // A backend that failed is named, never hidden behind "no results".
+  const failed = failures.length ? `\n${dim(`search backend failed: ${failures.join("; ")}`)}` : "";
 
   if (results.length === 0) {
     ctx.send(
@@ -204,12 +208,15 @@ async function handleSearch(
         before
           ? `No dated results published before ${before}. Only date-strict engines answer a bounded search.`
           : "No results found. Try a different query or use 'web fetch <url>' on a known URL.",
-      )}`,
+      )}${failed}`,
     );
     return;
   }
 
-  ctx.send(eid, formatSearchResults(before ? `${query} (before ${before})` : query, results));
+  ctx.send(
+    eid,
+    `${formatSearchResults(before ? `${query} (before ${before})` : query, results)}${failed}`,
+  );
 }
 
 // ─── Multi-Search ───────────────────────────────────────────────────────────

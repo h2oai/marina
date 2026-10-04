@@ -16,6 +16,7 @@ interface Request {
   docid?: string;
   k?: number;
   chars?: number;
+  offset?: number;
 }
 
 self.onmessage = (ev: MessageEvent<Request>) => {
@@ -23,8 +24,17 @@ self.onmessage = (ev: MessageEvent<Request>) => {
   try {
     const result =
       r.op === "search"
-        ? searchCorpus(r.corpus, r.query ?? "", { dir: r.dir, k: r.k, leadChars: r.chars })
-        : (getCorpusDocument(r.corpus, r.docid ?? "", { dir: r.dir, maxChars: r.chars }) ?? null);
+        ? searchCorpus(r.corpus, r.query ?? "", {
+            dir: r.dir,
+            k: r.k,
+            leadChars: r.chars,
+            ...(r.offset ? { offset: r.offset } : {}),
+          })
+        : (getCorpusDocument(r.corpus, r.docid ?? "", {
+            dir: r.dir,
+            maxChars: r.chars,
+            ...(r.offset ? { offset: r.offset } : {}),
+          }) ?? null);
     self.postMessage({ id: r.id, result });
   } catch (e) {
     self.postMessage({ id: r.id, error: e instanceof Error ? e.message : String(e) });

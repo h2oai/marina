@@ -104,6 +104,11 @@ const { positionals, values } = parseArgs({
     "doc-chars": { type: "string", default: "20000" },
     "max-turns": { type: "string", default: "30" },
     "final-answer": { type: "boolean", default: false },
+    // Marina harness options (unset = the official harness; recorded in each run's metadata).
+    snippet: { type: "string", default: "lead" },
+    "doc-paging": { type: "boolean" },
+    "search-paging": { type: "boolean" },
+    "first-move": { type: "string" },
     "max-tokens": { type: "string" },
     concurrency: { type: "string", default: "4" },
     "timeout-s": { type: "string", default: "600" },
@@ -115,6 +120,24 @@ const { positionals, values } = parseArgs({
     resume: { type: "boolean", default: false },
   },
 });
+
+/** Marina harness options from the flags (none set = the official harness). */
+function harnessFlags(): {
+  snippet?: "matched";
+  docPaging?: boolean;
+  searchPaging?: boolean;
+  firstMove?: { model: string };
+} {
+  if (values.snippet !== "lead" && values.snippet !== "matched") {
+    throw new Error("--snippet lead | matched");
+  }
+  return {
+    ...(values.snippet === "matched" ? { snippet: "matched" as const } : {}),
+    ...(values["doc-paging"] ? { docPaging: true } : {}),
+    ...(values["search-paging"] ? { searchPaging: true } : {}),
+    ...(values["first-move"] ? { firstMove: { model: values["first-move"] } } : {}),
+  };
+}
 
 function int(name: string, raw: string | undefined, min = 1): number {
   const n = Number(raw);
@@ -230,6 +253,7 @@ async function run(): Promise<number> {
         maxTurns: int("max-turns", values["max-turns"]),
         ...(finalAnswer ? { finalAnswer } : {}),
         ...(values["max-tokens"] ? { maxTokens: int("max-tokens", values["max-tokens"]) } : {}),
+        ...harnessFlags(),
         timeoutMs,
       },
       judge: { endpoint, model: values["judge-model"]!, timeoutMs: 180_000 },

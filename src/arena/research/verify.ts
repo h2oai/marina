@@ -10,12 +10,16 @@
  * (fetched through the SSRF guard, or the text the search engine already
  * fetched when a source carries it — see `PageText.provided`). Lines are tagged
  *
- *   [verified]    every figure found on a cited page
+ *   [verified]    every figure found on a cited page (in the English or the
+ *                 continental-European number reading)
+ *   [verified]    also: a line with no figure whose whole text is on a cited
+ *                 page, verbatim up to case, quote marks and whitespace
  *   [unverified]  a cited page was read and a figure is not on it
  *   [unreachable] no cited page could be read (paywall, bot block, timeout)
  *
- * and only [verified] lines count as evidence for the judge. Deterministic
- * given the fetched pages; no model involved.
+ * and only [verified] lines count as evidence for the judge. A figureless
+ * line that is not on its page stays untagged and is never evidence.
+ * Deterministic given the fetched pages; no model involved.
  */
 
 import { extractReadableText } from "../../engine/html-text";
@@ -51,6 +55,8 @@ export interface VerifiedLine {
   status: LineStatus;
   figures: string[];
   missing?: string[];
+  /** Verified because the line's whole text is on the cited page (it has no figure). */
+  quoted?: boolean;
 }
 
 export interface VerifiedDossier {
@@ -74,7 +80,9 @@ export type PageText = ((url: string) => Promise<string | undefined>) & {
 
 const LINK = /\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g;
 /** Pages fetched per dossier (provided texts are free and uncapped). */
-const MAX_PAGES = 12;
+const MAX_PAGES = 20;
+/** Pages fetched at once. */
+const FETCH_CONCURRENCY = 6;
 /**
  * Bytes read per fetched page. Larger pages are truncated, not rejected: the
  * figures a report cites are near the top (Civiqs results pages are 2–12 MB,
@@ -106,10 +114,73 @@ function normalize(page: string): string {
   return page.replace(/(\d),(\d)/g, "$1$2").replace(/−/g, "-");
 }
 
+/**
+ * The page's numbers as a continental-European page writes them read the
+ * English way: `3.702` (thousands) → `3702`, `25,5` (decimal) → `25.5`. A
+ * figure counts as present when it is on the page in either reading — the
+ * digits are the same digits, only the separators differ (a Portuguese poll
+ * page says "3.702 eleitores", the report "3,702 voters").
+ */
+function normalizeEuropean(page: string): string {
+  return page
+    .replace(/(\d)\.(?=\d{3}(?!\d))/g, "$1")
+    .replace(/(\d),(\d{1,2})(?!\d)/g, "$1.$2")
+    .replace(/−/g, "-");
+}
+
 /** Does `figure` appear in `page` as a number (not as part of a longer one)? */
 function hasFigure(page: string, figure: string): boolean {
   const escaped = figure.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/^-/, "[-−]?");
   return new RegExp(`(?<![\\d.])${escaped}(?![\\d]|\\.\\d)`).test(page);
+}
+
+/**
+ * Text folded for quote matching: lower case, accents kept, apostrophes and
+ * dashes unified, double quotes, markdown links/emphasis, brackets and
+ * ellipses dropped, whitespace collapsed. Applied the same way to the line and
+ * to the page, so quoting a passage verbatim always matches its page.
+ */
+export function foldForQuote(text: string): string {
+  return text
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .toLowerCase()
+    .replace(/[\u2018\u2019\u201a\u201b\u2032`´]/g, "'")
+    .replace(/["\u201c\u201d\u201e\u201f\u2033«»]/g, "")
+    .replace(/[\u2010-\u2015\u2212]/g, "-")
+    .replace(/\*\*|__|[*_[\]]/g, "")
+    .replace(/…|\.\.\./g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Shortest line body accepted as a quote: shorter text matches too easily by chance. */
+export const MIN_QUOTE_CHARS = 30;
+
+/**
+ * The claim a cited line makes, without its citation: links, a leading
+ * bullet and `<date> —` prefix, and surrounding quote marks removed. Lines
+ * the `search` retriever writes are exactly `- <date> — "<passage>" [title](url)`.
+ */
+export function quoteBody(line: string): string {
+  return line
+    .replace(LINK, " ")
+    .replace(/\(\s*\)/g, " ")
+    .replace(/^\s*(?:[-*•]|\d+\.)\s+/, "")
+    .replace(/^(?:\[[^\]]*\]\s*)?(?:\d{4}-\d{2}-\d{2}|undated)\s*[—–-]\s*/i, "")
+    .trim()
+    .replace(/^["“”']+|["“”']+$/g, "")
+    .replace(/[\s.;:,]+$/, "")
+    .trim();
+}
+
+/**
+ * True when the line's WHOLE claim (`quoteBody`) is on one of the pages,
+ * verbatim up to `foldForQuote`. Part of a line never vouches for the rest.
+ */
+function quotedOnPage(line: string, foldedPages: string[]): boolean {
+  const body = foldForQuote(quoteBody(line));
+  if (body.length < MIN_QUOTE_CHARS) return false;
+  return foldedPages.some((p) => p.includes(body));
 }
 
 /** Up to `maxBytes` of a response body as text; the rest is cancelled, not read. */
@@ -184,14 +255,26 @@ export async function verifyDossier(
       reads.provided++;
     } else toFetch.push(u);
   }
+  const queue = toFetch.slice(0, MAX_PAGES);
   await Promise.all(
-    toFetch.slice(0, MAX_PAGES).map(async (u) => {
-      const text = await pageText(u);
-      pages.set(u, text);
-      if (text) reads.fetched++;
-      else reads.failed++;
+    Array.from({ length: Math.min(FETCH_CONCURRENCY, queue.length) }, async () => {
+      for (let u = queue.shift(); u !== undefined; u = queue.shift()) {
+        const text = await pageText(u);
+        pages.set(u, text);
+        if (text) reads.fetched++;
+        else reads.failed++;
+      }
     }),
   );
+  const folded = new Map<string, string>();
+  const foldedPage = (u: string) => {
+    let f = folded.get(u);
+    if (f === undefined) {
+      f = foldForQuote(pages.get(u) ?? "");
+      folded.set(u, f);
+    }
+    return f;
+  };
 
   const lines: VerifiedLine[] = [];
   const annotated: string[] = [];
@@ -205,6 +288,21 @@ export async function verifyDossier(
   for (const text of rawLines) {
     const cited = [...text.matchAll(LINK)].map((m) => m[2]!);
     const figures = figuresIn(text);
+    if (cited.length > 0 && figures.length === 0) {
+      // No figure to check: the line counts only when its whole claim is on a
+      // cited page, verbatim (a quoted passage). Otherwise it stays untagged
+      // and is never evidence, exactly as before.
+      const readable = cited.filter((u) => pages.get(u));
+      if (readable.length > 0 && quotedOnPage(text, readable.map(foldedPage))) {
+        stats.verified++;
+        lines.push({ text, status: "verified", figures, quoted: true });
+        annotated.push(`[verified] ${text}`);
+        verified.push(text);
+      } else {
+        annotated.push(text);
+      }
+      continue;
+    }
     if (cited.length === 0 || figures.length === 0) {
       annotated.push(text);
       if (cited.length === 0 && figures.length > 0) {
@@ -216,7 +314,7 @@ export async function verifyDossier(
     const readable = cited
       .map((u) => pages.get(u))
       .filter((p): p is string => !!p)
-      .map(normalize);
+      .flatMap((p) => [normalize(p), normalizeEuropean(p)]);
     let status: LineStatus;
     let missing: string[] | undefined;
     if (readable.length === 0) {

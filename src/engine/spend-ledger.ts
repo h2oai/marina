@@ -35,7 +35,8 @@
  * refuses all spend rather than silently dropping the scope cap.
  */
 
-export type SpendSource = "model_api" | "agent" | "decision" | "forecast" | "media";
+/** Where a dollar left Marina. `search` is a paid search API call (Tavily, Exa) — migration 158. */
+export type SpendSource = "model_api" | "agent" | "decision" | "forecast" | "media" | "search";
 
 export interface SpendSink {
   /** Record `usd` for the day (and, when given, the scope) atomically. */

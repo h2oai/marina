@@ -35,7 +35,7 @@ Resolution order is the same everywhere: explicit configuration first, then any 
 
 | Feature | With several models | With one model |
 |---|---|---|
-| `forecast`, `bun run forecast`, `POST /v1/forecast` | One analyst per vendor; web retrieval through OpenRouter; Jev judge | The one model as the only analyst, run K times; keyless as-of search (`asof`: DuckDuckGo / SearXNG); judged by the world's decision backend if one is set, otherwise equal weights. The answer carries `scale: { tier: "degraded", notes }` |
+| `forecast`, `bun run forecast`, `POST /v1/forecast` | One analyst per vendor; web retrieval through OpenRouter plus `search`; Jev judge | The one model as the only analyst, run K times; `search` over the configured backends (keyless DuckDuckGo at the end), its evidence budget sized to the model's context window; judged by the world's decision backend if one is set, otherwise equal weights. The answer carries `scale: { tier: "degraded", notes }` |
 | Decisions (`MARINA_DECISIONS=classifier`) | Classifier on OpenRouter or a chosen host | The chat-classifier runs on the local runtime (base URL, model and key filled in). It is uncalibrated, so it gets the single-cut gate policy |
 | Research judge (arena research, forecasts) | Jev through OpenRouter | The world's decision backend; none set ⇒ no judge, equal weights |
 | `marina/verify:<model>` | `+<checker>` picks an independent checker | The proposer checks itself; `marina/verify:default` resolves to the available model |

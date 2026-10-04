@@ -67,7 +67,7 @@ export function modelComplete(
   spec: string,
   env: NodeJS.ProcessEnv = process.env,
   opts: { maxTokens?: number; timeoutMs?: number; signal?: AbortSignal } = {},
-): { complete: Complete; usage: Usage } {
+): { complete: Complete; usage: Usage; contextWindow?: number } {
   const provider = spec.split("/")[0] ?? "";
   // A self-hosted runtime (llama.cpp / Ollama / vLLM) needs no vendor key: its
   // key is optional and the transport is local (`resolveModel` builds it).
@@ -111,5 +111,10 @@ export function modelComplete(
       .map((b) => b.text)
       .join("\n");
   };
-  return { complete, usage };
+  const window = (model as { contextWindow?: number }).contextWindow;
+  return {
+    complete,
+    usage,
+    ...(window && Number.isFinite(window) && window > 0 ? { contextWindow: window } : {}),
+  };
 }

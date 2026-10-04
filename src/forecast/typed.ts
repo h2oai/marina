@@ -13,11 +13,17 @@
  *              series), opt-in, steered by the plan's `data` hints; a number
  *              is anchored on the freshest official reading with a spread
  *              from that series' own changes over the question's horizon
- *   verify     cited figures checked mechanically against the cited pages
+ *   verify     cited figures (and quoted passages) checked mechanically against
+ *              the cited pages; the dossier is sized to the analysts' context
+ *              window and, when it must be cut, keeps verified lines first
  *   runs       K independent answers (analyst models used round-robin), each
  *              weighted by the judge's grounding score when a judge is set
  *   combine    by type: plurality / per-option frequency / median / Borda;
  *              agreement between the runs is the confidence
+ *   follow-up  when no run is grounded in verified evidence, ONE more research
+ *              round on the gaps the runs and the judge leave; the runs are
+ *              redone only if it verified something new (the first runs stay in
+ *              `initialRuns`)
  *   critique   a disconfirmation pass searches for evidence AGAINST the leading
  *              answer; the critic may revise it only when its own confidence
  *              exceeds the runs' agreement
@@ -36,10 +42,11 @@
  */
 
 import { type BudgetForced, budgetPhase } from "../agent/budget-terminal";
-import type { ResearchReport, Retriever } from "../arena/research/retrieve";
+import type { ResearchReport, RetrievalFunnel, Retriever } from "../arena/research/retrieve";
 import { type PageText, verifyDossier } from "../arena/research/verify";
 import type { Evidence } from "../decisions/evidence";
 import type { DecisionProvider } from "../decisions/types";
+import { maxToolResultTokensForWindow } from "../engine/constants";
 import {
   extractJsonValue,
   groundedIn,
@@ -126,11 +133,35 @@ export interface TypedForecastOptions {
    * `confidence` takes the most self-confident run with its own confidence.
    */
   selection?: SelectionMode;
+  /**
+   * Characters of research dossier each run reads (default: sized to the
+   * analysts' context windows — `dossierBudgetChars`).
+   */
+  dossierChars?: number;
+  /**
+   * When no run is grounded in verified evidence, one more research round on
+   * the gaps the runs and the judge leave; the runs are redone only if it
+   * verified something new (default true).
+   */
+  followUp?: boolean;
+  /**
+   * Verified dossier lines wanted before the runs; fewer triggers one more
+   * research round (default 5; 0 = off). Shares the single extra round with
+   * `followUp`.
+   */
+  minEvidenceLines?: number;
+  /**
+   * When the runs disagree (agreement below 0.7 — a 2–1 split), one research round on the
+   * crux and one more run that reads it, pooled with the others (default true).
+   */
+  disagreementRound?: boolean;
 }
 
 export interface ModelPart {
   name: string;
   complete: (system: string, user: string) => Promise<string>;
+  /** The model's context window in tokens, when known (sizes the dossier). */
+  contextWindow?: number;
 }
 
 export interface TypedForecastDeps {
@@ -175,6 +206,16 @@ export interface ResearchRound {
   error?: string;
   /** What the planner said was still missing after this round. */
   missing?: string;
+  /** Where evidence was found and lost in this round, per engine that reports it. */
+  funnels?: RetrievalFunnel[];
+  /** Engines that failed while others answered. */
+  warnings?: string[];
+  /** The follow-up round on the gaps left after the runs (`followUp`). */
+  followUp?: boolean;
+  /** Verified dossier lines this follow-up round added. */
+  verifiedAdded?: number;
+  /** Why an extra round ran: too little verified evidence, ungrounded runs, or disagreeing runs. */
+  trigger?: "evidence" | "grounding" | "disagreement";
 }
 
 export interface TypedRun {
@@ -193,6 +234,8 @@ export interface TypedRun {
   quality?: number;
   judgeError?: string;
   status: string;
+  /** The extra run made on the crux after the runs disagreed. */
+  crux?: boolean;
   /** The answer met its format only after output repair (`output-repair`). */
   repaired?: RepairLabel;
   /** The verifier's check of this draft (`options.verify`). */
@@ -249,6 +292,15 @@ export interface TypedForecastAnswer {
   /** For a number: the freshest official reading the runs started from, and its horizon spread. */
   anchor?: NumericAnchor;
   critique?: Critique;
+  /** The first runs, when a follow-up round added verified evidence and the runs were redone. */
+  initialRuns?: TypedRun[];
+  /** How much evidence the runs read: the budget, the dossier, the verified part. */
+  evidence?: {
+    budgetChars: number;
+    dossierChars: number;
+    verifiedLines: number;
+    verifiedChars: number;
+  };
   /** The evidence cutoff (ISO) and how it was chosen. */
   cutoff: { at: string; basis: "asOf" | "endTime" | "now"; pastCutoff: boolean };
   sources: Array<{ url: string; title?: string }>;
@@ -319,7 +371,7 @@ function plannerSystem(): string {
     'Reply with ONE JSON object: {"restatement": "<the question in one precise sentence>",',
     '"resolutionSource": "<who or what publishes the answer, and when>",',
     '"keyQuantities": ["<the facts that decide it>"],',
-    '"queries": ["<up to 6 short web search queries, most useful first>"],',
+    '"queries": ["<up to 8 short web search queries, most useful first, each a different angle: the named entities and their latest results; recent news; the resolution source by name; official data or schedules; base rates and past editions; what markets, polls or experts expect — in the local language too when the event is local>"],',
     '"whatWouldChange": ["<events or readings that would move the answer>"],',
     '"data": {"markets": "<a short prediction-market search phrase, or empty>",',
     '"sport": "<a The Odds API sport key such as basketball_nba or soccer_epl when this is a sports match, else empty>",',
@@ -390,6 +442,10 @@ export async function forecastTyped(
   const phase = () => (budgetMs ? budgetPhase(Date.now() - started, budgetMs) : "work");
   const skipped: string[] = [];
   let forced = false;
+  const budget = dossierBudgetChars(
+    deps.analysts.map((a) => a.contextWindow),
+    opts.dossierChars,
+  );
 
   const cutoff = chooseCutoff(req, now);
   const cutoffDay = cutoff.at.slice(0, 10);
@@ -475,17 +531,20 @@ export async function forecastTyped(
   // ── Research rounds ───────────────────────────────────────────────────────
   const lines: string[] = [];
   const sources = new Map<string, { url: string; title?: string; text?: string }>();
-  let queries = plan.queries.slice(0, 6);
-  for (let r = 1; r <= rounds && queries.length; r++) {
+  /** One research round through the retriever; its lines and sources join the dossier. */
+  const settlement = settlementUrls(req, plan);
+  const research = async (round: ResearchRound, request: string): Promise<void> => {
     const brief = {
       roundId: "forecast",
       since,
       until: cutoffDay,
       untilAt: cutoff.at,
-      queries,
-      request: researchRequest(req, plan, queries, cutoffDay, r),
+      queries: round.queries,
+      request,
+      maxChars: Math.floor(budget / (rounds + 1)),
+      // The question's named resolution source is read before anything else.
+      ...(round.round === 1 && settlement.length ? { readFirst: settlement } : {}),
     };
-    const round: ResearchRound = { round: r, queries, sources: 0, chars: 0, costUsd: 0 };
     let report: ResearchReport | undefined;
     try {
       report = await deps.retriever(brief);
@@ -495,6 +554,8 @@ export async function forecastTyped(
     if (report) {
       round.costUsd = report.costUsd;
       round.chars = report.report.length;
+      if (report.funnels?.length) round.funnels = report.funnels;
+      if (report.warnings?.length) round.warnings = report.warnings.map((w) => w.slice(0, 200));
       for (const s of report.sources) {
         if (s.published && s.published.slice(0, 10) > cutoffDay) continue;
         if (!sources.has(s.url)) {
@@ -505,6 +566,11 @@ export async function forecastTyped(
       lines.push(...report.report.split("\n").filter((l) => l.trim()));
     }
     out.research.push(round);
+  };
+  let queries = researchQueries(plan);
+  for (let r = 1; r <= rounds && queries.length; r++) {
+    const round: ResearchRound = { round: r, queries, sources: 0, chars: 0, costUsd: 0 };
+    await research(round, researchRequest(req, plan, queries, cutoffDay, r));
     if (r === rounds) break;
     if (phase() !== "work") {
       skipped.push(`research rounds ${r + 1}–${rounds}`);
@@ -513,12 +579,9 @@ export async function forecastTyped(
     const { reply } = await askAnalyst(
       planner,
       gapSystem(),
-      `${header}\n\nDOSSIER SO FAR:\n${clip(lines.join("\n"))}`,
+      `${header}\n\nDOSSIER SO FAR:\n${clip(lines.join("\n"), budget)}`,
     );
-    const asked = new Set(out.research.flatMap((x) => x.queries.map((q) => q.toLowerCase())));
-    const next = strings(reply?.queries)
-      .filter((q) => !asked.has(q.toLowerCase()))
-      .slice(0, 4);
+    const next = newQueries(reply?.queries, out.research, 4);
     if (typeof reply?.missing === "string") round.missing = reply.missing.slice(0, 300);
     if (reply?.done === true || next.length === 0) break;
     queries = next;
@@ -555,10 +618,6 @@ export async function forecastTyped(
       }
     }
   }
-  out.sources = [...sources.values()].map(({ url, title }) => ({
-    url,
-    ...(title ? { title } : {}),
-  }));
   // A research outage is not a reason to give up: the runs still answer from
   // the question, its resolution notes and what the models know — with a caveat.
   const researchDown = lines.length === 0 && out.research.every((r) => r.error);
@@ -569,100 +628,213 @@ export async function forecastTyped(
   }
 
   // ── Verify ────────────────────────────────────────────────────────────────
-  const report = lines.join("\n");
-  const checked = deps.pageText
-    ? await verifyDossier(report, deps.pageText, [...sources.values()])
-    : undefined;
-  if (checked) out.verification = checked.stats;
-  const dossier = clip(checked ? checked.annotated : report);
-  const evidence: Evidence[] = [];
-  const verifiedText = checked ? checked.verifiedText : report;
-  for (let i = 0; i < verifiedText.length && evidence.length < 4; i += 1_400) {
-    evidence.push({
-      ref: `dossier:${evidence.length + 1}`,
-      text: verifiedText.slice(i, i + 1_400),
-    });
+  /** The dossier as the runs see it, and the verified evidence the judge reads. */
+  const assemble = async () => {
+    const report = lines.join("\n");
+    const checked = deps.pageText
+      ? await verifyDossier(report, deps.pageText, [...sources.values()])
+      : undefined;
+    const dossier = budgetDossier(checked ? checked.annotated : report, budget);
+    const verifiedText = checked ? checked.verifiedText : report;
+    const evidence: Evidence[] = [];
+    const maxChunks = Math.max(4, Math.min(12, Math.floor(budget / 4 / EVIDENCE_CHUNK)));
+    for (let i = 0; i < verifiedText.length && evidence.length < maxChunks; i += EVIDENCE_CHUNK) {
+      evidence.push({
+        ref: `dossier:${evidence.length + 1}`,
+        text: verifiedText.slice(i, i + EVIDENCE_CHUNK),
+      });
+    }
+    const user = `${header}\n\nRESEARCH DOSSIER${checked ? " (cited lines tagged by a mechanical check against the cited page)" : ""}:\n${dossier || (researchDown ? "(research unavailable — answer from the question, its notes and what you know as of the cutoff)" : "(nothing found)")}`;
+    return { checked, dossier, evidence, verifiedChars: verifiedText.length, user };
+  };
+  let assembled = await assemble();
+  /** One extra research round per forecast, at most: for missing evidence or for the gaps. */
+  let extraRound = false;
+  const minEvidence = clampInt(opts.minEvidenceLines, 0, 50, MIN_EVIDENCE_LINES);
+  if (
+    opts.followUp !== false &&
+    !researchDown &&
+    phase() === "work" &&
+    assembled.checked !== undefined &&
+    assembled.checked.stats.verified < minEvidence
+  ) {
+    // Too little verified evidence to answer from: search again before the runs.
+    extraRound = true;
+    const { reply } = await askAnalyst(
+      planner,
+      gapSystem(),
+      `${header}\n\nOnly ${assembled.checked.stats.verified} dossier line(s) could be verified against their cited pages; find the decisive facts where they are published.\n\nDOSSIER SO FAR:\n${clip(assembled.dossier, Math.min(budget, 12_000))}`,
+    );
+    const next = newQueries(reply?.queries, out.research, 4);
+    if (next.length > 0) {
+      const round: ResearchRound = {
+        round: out.research.length + 1,
+        queries: next,
+        sources: 0,
+        chars: 0,
+        costUsd: 0,
+        followUp: true,
+        trigger: "evidence",
+        ...(typeof reply?.missing === "string" ? { missing: reply.missing.slice(0, 300) } : {}),
+      };
+      const before = assembled.checked.stats.verified;
+      await research(round, researchRequest(req, plan, next, cutoffDay, round.round));
+      assembled = await assemble();
+      round.verifiedAdded = Math.max(0, (assembled.checked?.stats.verified ?? 0) - before);
+    }
   }
-  const judge = evidence.length ? deps.judge : undefined;
-  const judgeRecord = newJudgeRecord(judge);
-
-  // ── K independent runs ────────────────────────────────────────────────────
-  const user = `${header}\n\nRESEARCH DOSSIER${checked ? " (cited lines tagged by a mechanical check against the cited page)" : ""}:\n${dossier || (researchDown ? "(research unavailable — answer from the question, its notes and what you know as of the cutoff)" : "(nothing found)")}`;
-  const runJobs = Array.from({ length: k }, async (_, i): Promise<TypedRun> => {
-    const analyst = deps.analysts[i % deps.analysts.length]!;
-    const run: TypedRun = { run: i + 1, model: analyst.name, weight: 0, status: "ok" };
-    const asked = await askAnalyst(
-      analyst,
-      runSystem(req.answer),
-      `${user}\n\n(Independent run ${i + 1} of ${k}: reason from the evidence yourself.)`,
-    );
-    if (asked.error !== undefined) {
-      return { ...run, status: `error: ${asked.error.slice(0, 100)}` };
-    }
-    let reply = asked.reply;
-    let v = validateAnswer(req.answer, reply?.answer);
-    if ("error" in v && asked.raw) {
-      // The run answered, but not in the required shape: repair the format
-      // (deterministic, else one re-encoding shot on the same analyst).
-      const repaired = await repairRunAnswer(req.answer, asked.raw, analyst);
-      if (repaired) {
-        reply = repaired.value.reply;
-        v = { value: repaired.value.value };
-        run.repaired = repaired.label ?? "repaired:parse";
-      }
-    }
-    if ("error" in v) return { ...run, status: `invalid: ${v.error}` };
-    run.value = v.value;
-    run.formatted = formatAnswer(v.value);
-    const c = Number(reply?.confidence);
-    if (Number.isFinite(c)) run.confidence = Math.min(1, Math.max(0, c));
-    if (typeof reply?.reason === "string") run.reason = reply.reason.slice(0, 500);
-    readUncertainty(req.answer, reply, run);
-    run.weight = 1;
-    if (opts.verify && verifier) {
-      if (phase() === "final") {
-        // The budget is spent: the draft counts unchecked, and says so.
-        run.verified = { model: verifier.name, verdict: "not_run", reason: "time budget spent" };
-        forced = true;
-      } else {
-        await verifyRun(req, verifier, user, run);
-      }
-    }
-    if (judge) {
-      const judged = await judgeClaim(
-        judge,
-        judgeRecord,
-        `Answer: ${run.formatted}. ${run.reason ?? ""}`,
-        evidence,
-        req.question,
-        (g, q) => Math.max(0.05, (g ?? 0) * ((q ?? 0) / 2)),
-      );
-      run.weight = judged.weight;
-      if (judged.grounded !== undefined) run.grounded = judged.grounded;
-      if (judged.quality !== undefined) run.quality = judged.quality;
-      if (judged.judgeError) run.judgeError = judged.judgeError;
-    }
-    return run;
-  });
-  if (budgetMs) {
-    const settled = await settleWithinBudget(runJobs, started + budgetMs);
-    out.runs = settled.map(
-      (r, i) =>
-        r ?? {
-          run: i + 1,
-          model: deps.analysts[i % deps.analysts.length]!.name,
-          weight: 0,
-          status: "budget: unfinished at the cap",
-        },
-    );
-    if (settled.some((r) => r === undefined)) {
-      skipped.push("unfinished runs");
+  const judgeRecord = newJudgeRecord(deps.judge);
+  /** Budget-terminal answering inside the runs: an unchecked draft at the cap, unfinished runs dropped. */
+  const runBudget: RunBudget = {
+    phase,
+    ...(budgetMs ? { deadline: started + budgetMs } : {}),
+    spent: (what) => {
+      if (!skipped.includes(what)) skipped.push(what);
       forced = true;
+    },
+  };
+  const runAll = (a: typeof assembled) =>
+    runIndependent(
+      req,
+      deps,
+      opts,
+      k,
+      verifier,
+      a.user,
+      a.evidence.length ? deps.judge : undefined,
+      a.evidence,
+      judgeRecord,
+      runBudget,
+    );
+  out.runs = await runAll(assembled);
+
+  // ── Follow-up: one bounded round on the gaps the runs and judge leave ─────
+  const thin = (a: typeof assembled, runs: TypedRun[]) =>
+    (a.checked !== undefined && a.checked.stats.verified === 0) ||
+    (a.evidence.length > 0 && !!deps.judge && runs.every((r) => (r.grounded ?? 0) < 0.3));
+  if (
+    opts.followUp !== false &&
+    !extraRound &&
+    !researchDown &&
+    phase() === "work" &&
+    thin(assembled, out.runs)
+  ) {
+    const { reply } = await askAnalyst(
+      planner,
+      followUpSystem(),
+      [
+        header,
+        "",
+        "THE RUNS' ANSWERS AND REASONS:",
+        ...out.runs
+          .filter((r) => r.formatted !== undefined)
+          .map((r) => `- ${r.formatted}: ${r.reason ?? "(no reason)"}`),
+        "",
+        assembled.checked?.stats.verified
+          ? "A judge found little of this reasoning backed by the verified dossier lines."
+          : "No dossier line could be verified against its cited page.",
+        "",
+        `DOSSIER SO FAR:\n${clip(assembled.dossier, Math.min(budget, 12_000))}`,
+      ].join("\n"),
+    );
+    const next = newQueries(reply?.queries, out.research, 4);
+    if (next.length > 0) {
+      const round: ResearchRound = {
+        round: out.research.length + 1,
+        queries: next,
+        sources: 0,
+        chars: 0,
+        costUsd: 0,
+        followUp: true,
+        trigger: "grounding",
+        ...(typeof reply?.missing === "string" ? { missing: reply.missing.slice(0, 300) } : {}),
+      };
+      const before = assembled.checked?.stats.verified ?? 0;
+      await research(round, researchRequest(req, plan, next, cutoffDay, round.round));
+      const again = await assemble();
+      round.verifiedAdded = Math.max(0, (again.checked?.stats.verified ?? 0) - before);
+      // The runs are redone only when the round added verified evidence.
+      if (round.verifiedAdded > 0) {
+        out.initialRuns = out.runs;
+        assembled = again;
+        out.runs = await runAll(assembled);
+      }
     }
-  } else {
-    out.runs = await Promise.all(runJobs);
   }
-  Object.assign(out, judgeAudit(judgeRecord));
+
+  // ── Disagreement: search the crux, and one more run on it ─────────────────
+  const agreed = combineAnswers(
+    req.answer,
+    out.runs
+      .filter((r) => r.value !== undefined)
+      .map((r) => ({ value: r.value!, weight: r.weight || 1 })),
+  );
+  const answered = out.runs.filter((r) => r.formatted !== undefined);
+  if (
+    opts.disagreementRound !== false &&
+    !researchDown &&
+    phase() === "work" &&
+    answered.length >= 2 &&
+    agreed !== undefined &&
+    (agreed.agreement ?? 1) < DISAGREEMENT_BELOW
+  ) {
+    const { reply } = await askAnalyst(
+      planner,
+      cruxSystem(),
+      [
+        header,
+        "",
+        "THE RUNS DISAGREE:",
+        ...answered.map((r) => `- ${r.formatted}: ${r.reason ?? "(no reason)"}`),
+      ].join("\n"),
+    );
+    const next = newQueries(reply?.queries, out.research, 3);
+    if (next.length > 0) {
+      const round: ResearchRound = {
+        round: out.research.length + 1,
+        queries: next,
+        sources: 0,
+        chars: 0,
+        costUsd: 0,
+        trigger: "disagreement",
+        ...(typeof reply?.crux === "string" ? { missing: reply.crux.slice(0, 300) } : {}),
+      };
+      const before = assembled.checked?.stats.verified ?? 0;
+      await research(round, researchRequest(req, plan, next, cutoffDay, round.round));
+      assembled = await assemble();
+      round.verifiedAdded = Math.max(0, (assembled.checked?.stats.verified ?? 0) - before);
+      // One more run reads the crux evidence; it is pooled with the others.
+      const [extra] = await runIndependent(
+        req,
+        deps,
+        opts,
+        1,
+        verifier,
+        `${assembled.user}\n\nThe earlier runs disagreed on: ${typeof reply?.crux === "string" ? reply.crux.slice(0, 300) : "the answer"}. Weigh the newest evidence on that point.`,
+        assembled.evidence.length ? deps.judge : undefined,
+        assembled.evidence,
+        judgeRecord,
+        runBudget,
+        out.runs.length,
+      );
+      if (extra) out.runs.push({ ...extra, crux: true });
+    }
+  }
+
+  const { checked, dossier } = assembled;
+  if (checked) out.verification = checked.stats;
+  out.evidence = {
+    budgetChars: budget,
+    dossierChars: dossier.length,
+    verifiedLines: checked?.stats.verified ?? 0,
+    verifiedChars: assembled.verifiedChars,
+  };
+  out.sources = [...sources.values()].map(({ url, title }) => ({
+    url,
+    ...(title ? { title } : {}),
+  }));
+  const judge = assembled.evidence.length ? deps.judge : undefined;
+  Object.assign(out, judgeAudit(judgeRecord?.calls ? judgeRecord : undefined));
 
   const selection = opts.selection ?? "agreement";
   const combined = combineAnswers(
@@ -783,6 +955,220 @@ export async function settleWithinBudget<T>(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** K independent runs on one dossier, each judged against the verified evidence. */
+async function runIndependent(
+  req: TypedForecastRequest,
+  deps: TypedForecastDeps,
+  opts: TypedForecastOptions,
+  k: number,
+  verifier: ModelPart | undefined,
+  user: string,
+  judge: DecisionProvider | undefined,
+  evidence: Evidence[],
+  judgeRecord: JudgeRecord | undefined,
+  budget: RunBudget,
+  /** Runs already made (an extra run continues the numbering and the analyst rotation). */
+  offset = 0,
+): Promise<TypedRun[]> {
+  const jobs = Array.from({ length: k }, async (_, j): Promise<TypedRun> => {
+    const i = j + offset;
+    const analyst = deps.analysts[i % deps.analysts.length]!;
+    const run: TypedRun = { run: i + 1, model: analyst.name, weight: 0, status: "ok" };
+    const asked = await askAnalyst(
+      analyst,
+      runSystem(req.answer),
+      `${user}\n\n(Independent run ${i + 1} of ${k + offset}: reason from the evidence yourself.)`,
+    );
+    if (asked.error !== undefined) {
+      return { ...run, status: `error: ${asked.error.slice(0, 100)}` };
+    }
+    let reply = asked.reply;
+    let v = validateAnswer(req.answer, reply?.answer);
+    if ("error" in v && asked.raw) {
+      // The run answered, but not in the required shape: repair the format
+      // (deterministic, else one re-encoding shot on the same analyst).
+      const repaired = await repairRunAnswer(req.answer, asked.raw, analyst);
+      if (repaired) {
+        reply = repaired.value.reply;
+        v = { value: repaired.value.value };
+        run.repaired = repaired.label ?? "repaired:parse";
+      }
+    }
+    if ("error" in v) return { ...run, status: `invalid: ${v.error}` };
+    run.value = v.value;
+    run.formatted = formatAnswer(v.value);
+    const c = Number(reply?.confidence);
+    if (Number.isFinite(c)) run.confidence = Math.min(1, Math.max(0, c));
+    if (typeof reply?.reason === "string") run.reason = reply.reason.slice(0, 500);
+    readUncertainty(req.answer, reply, run);
+    run.weight = 1;
+    if (opts.verify && verifier) {
+      if (budget.phase() === "final") {
+        // The budget is spent: the draft counts unchecked, and says so.
+        run.verified = { model: verifier.name, verdict: "not_run", reason: "time budget spent" };
+        budget.spent("verification");
+      } else {
+        await verifyRun(req, verifier, user, run);
+      }
+    }
+    if (judge) {
+      const judged = await judgeClaim(
+        judge,
+        judgeRecord,
+        `Answer: ${run.formatted}. ${run.reason ?? ""}`,
+        evidence,
+        req.question,
+        (g, q) => Math.max(0.05, (g ?? 0) * ((q ?? 0) / 2)),
+      );
+      run.weight = judged.weight;
+      if (judged.grounded !== undefined) run.grounded = judged.grounded;
+      if (judged.quality !== undefined) run.quality = judged.quality;
+      if (judged.judgeError) run.judgeError = judged.judgeError;
+    }
+    return run;
+  });
+  if (!budget.deadline) return Promise.all(jobs);
+  const settled = await settleWithinBudget(jobs, budget.deadline);
+  if (settled.some((r) => r === undefined)) budget.spent("unfinished runs");
+  return settled.map(
+    (r, j) =>
+      r ?? {
+        run: j + offset + 1,
+        model: deps.analysts[(j + offset) % deps.analysts.length]!.name,
+        weight: 0,
+        status: "budget: unfinished at the cap",
+      },
+  );
+}
+
+/** The time budget as the runs see it (budget-terminal answering). */
+interface RunBudget {
+  phase: () => ReturnType<typeof budgetPhase> | "work";
+  /** The cap as an instant (ms since epoch); unset = no time budget. */
+  deadline?: number;
+  /** Record a step skipped because the budget was spent (the answer is then labelled forced). */
+  spent: (what: string) => void;
+}
+
+/** Verified lines wanted before the runs (`minEvidenceLines`). */
+const MIN_EVIDENCE_LINES = 5;
+/** Run agreement below which the runs count as disagreeing. */
+const DISAGREEMENT_BELOW = 0.7;
+
+/**
+ * Pages the question names as where it resolves — URLs in the question, its
+ * resolution notes or the plan's resolution source — read before searching.
+ */
+export function settlementUrls(
+  req: Pick<TypedForecastRequest, "question" | "context">,
+  plan: Pick<ForecastPlan, "resolutionSource">,
+): string[] {
+  const text = [req.question, req.context ?? "", plan.resolutionSource ?? ""].join("\n");
+  const urls = new Set<string>();
+  for (const m of text.matchAll(/https?:\/\/[^\s)<>"'\]]+/g)) {
+    const url = m[0].replace(/[.,;:]+$/, "");
+    try {
+      new URL(url);
+      urls.add(url);
+    } catch {
+      // allow-empty-catch: not a URL after all
+    }
+    if (urls.size >= 3) break;
+  }
+  return [...urls];
+}
+
+function cruxSystem(): string {
+  return [
+    "Independent forecasters disagree. Do not forecast.",
+    "Name the single factual point their disagreement turns on, and how to settle it from published sources.",
+    'Reply with ONE JSON object: {"crux": "<the point in one sentence>", "queries": ["<up to 3 short web search queries that would settle it>"]}.',
+  ].join(" ");
+}
+
+/** Characters of verified evidence per judge evidence item. */
+const EVIDENCE_CHUNK = 1_400;
+/** Planned queries searched per research round. */
+const MAX_QUERIES = 8;
+
+/**
+ * Characters of research dossier each run reads: `explicit` (the
+ * `dossierChars` option), else sized to the smallest analyst context window
+ * with the agent tool-result allowance (`maxToolResultTokensForWindow`, ~15 %
+ * of the window) at ~3.5 characters per token, between 12 000 and 60 000;
+ * the historical 24 000 when no window is known.
+ */
+export function dossierBudgetChars(
+  windows: ReadonlyArray<number | undefined>,
+  explicit?: number,
+): number {
+  if (explicit !== undefined && Number.isFinite(explicit) && explicit > 0) {
+    return Math.max(2_000, Math.floor(explicit));
+  }
+  const known = windows.filter((w): w is number => !!w && Number.isFinite(w) && w > 0);
+  if (known.length === 0) return MAX_DOSSIER_CHARS;
+  const tokens = maxToolResultTokensForWindow(Math.min(...known));
+  return Math.max(12_000, Math.min(60_000, Math.floor(tokens * 3.5)));
+}
+
+/**
+ * The dossier within `budget` characters. When it is longer, every
+ * [verified] line is kept first, then the rest in their original order, so
+ * clipping drops unverified text before evidence; kept lines keep their order.
+ */
+export function budgetDossier(text: string, budget: number): string {
+  if (text.length <= budget) return text;
+  const all = text.split("\n");
+  const keep = new Set<number>();
+  let used = 0;
+  const take = (pick: (line: string) => boolean) => {
+    all.forEach((line, i) => {
+      if (keep.has(i) || !pick(line) || used + line.length + 1 > budget) return;
+      keep.add(i);
+      used += line.length + 1;
+    });
+  };
+  take((l) => l.startsWith("[verified]"));
+  take(() => true);
+  return `${all.filter((_, i) => keep.has(i)).join("\n")}\n…(${all.length - keep.size} lines over the evidence budget left out)`;
+}
+
+/** The plan's queries, plus the named resolution source when the planner left room. */
+function researchQueries(plan: ForecastPlan): string[] {
+  const qs = plan.queries.slice(0, MAX_QUERIES);
+  const source = plan.resolutionSource?.replace(/\s+/g, " ").trim();
+  if (source) {
+    const named = source
+      .split(/[,;(]| — | - /)[0]!
+      .trim()
+      .slice(0, 80);
+    const topic = (plan.keyQuantities?.[0] ?? plan.restatement ?? "").slice(0, 100);
+    const q = `${named} ${topic}`.trim().slice(0, 200);
+    const at = qs.findIndex((x) => x.toLowerCase().includes(named.toLowerCase()));
+    // The settlement source is searched first.
+    if (at > 0) qs.unshift(qs.splice(at, 1)[0]!);
+    else if (at < 0 && named.length >= 3) qs.unshift(q);
+  }
+  return qs.slice(0, MAX_QUERIES);
+}
+
+/** Up to `max` queries from a model reply that no earlier round already asked. */
+function newQueries(raw: unknown, done: ResearchRound[], max: number): string[] {
+  const asked = new Set(done.flatMap((x) => x.queries.map((q) => q.toLowerCase())));
+  return strings(raw)
+    .filter((q) => !asked.has(q.toLowerCase()))
+    .slice(0, max);
+}
+
+function followUpSystem(): string {
+  return [
+    "You direct one last research round for a forecaster. Do not forecast.",
+    "Independent runs answered, but their reasoning is not backed by verified evidence.",
+    "Name the decisive facts they relied on or lacked, and search for them where they are published: the resolution source itself, official data, the latest dated reports.",
+    'Reply with ONE JSON object: {"missing": "<the decisive facts still unverified>", "queries": ["<up to 4 NEW short web search queries>"]}.',
+  ].join(" ");
 }
 
 function verifierSystem(spec: AnswerSpec): string {
@@ -1095,7 +1481,7 @@ function parsePlan(reply: Record<string, unknown> | undefined): ForecastPlan {
       ? { resolutionSource: reply.resolutionSource.slice(0, 300) }
       : {}),
     keyQuantities: strings(reply.keyQuantities).slice(0, 8),
-    queries: strings(reply.queries).slice(0, 6),
+    queries: strings(reply.queries).slice(0, MAX_QUERIES),
     whatWouldChange: strings(reply.whatWouldChange).slice(0, 8),
     ...dataHints(reply.data),
   };
