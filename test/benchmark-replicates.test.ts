@@ -261,10 +261,33 @@ describe("replicate groups in the ledger", () => {
     const x = record("x1", (i) => i < 40, { group: "civ" });
     record("x2", (i) => i < 39, { target: { crew: "answerer", note: "relabelled" } });
     expect(replicatesOf(db, x).map((r) => r.id)).toEqual(["x1"]);
-    expect(db.setBenchmarkReplicateGroup(["x2"], "civ")).toBe(1);
+    const audit = {
+      reason: "relabelled replicate",
+      actor: "operator",
+      source: "operator" as const,
+      created_at: 5,
+    };
+    expect(db.setBenchmarkReplicateGroup(["x2"], "civ", audit)).toBe(1);
     const g = loadReplicateGroup(db, x);
     expect(g.runs.map((r) => r.id)).toEqual(["x1", "x2"]);
     expect(g.warnings).toContain("replicates record different targets");
+    // Every move is an append-only audit row; a no-op move writes none.
+    expect(db.setBenchmarkReplicateGroup(["x2"], "civ", audit)).toBe(0);
+    const history = db.listBenchmarkRunRegroups("x2");
+    expect(history).toHaveLength(1);
+    expect(history[0]).toMatchObject({
+      run_id: "x2",
+      from_group: null,
+      to_group: "civ",
+      reason: "relabelled replicate",
+      actor: "operator",
+      source: "operator",
+    });
+    expect(() =>
+      (db as unknown as { db: { run: (sql: string) => void } }).db.run(
+        "UPDATE benchmark_run_regroups SET to_group = 'x'",
+      ),
+    ).toThrow("append-only");
   });
 
   it("compare shows the pooled view with replicates, and flags single runs", () => {

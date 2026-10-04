@@ -60,12 +60,15 @@ A default configuration — a crew formation, a per-agent model map, a world's c
 - **Replicated:** the challenger's replicate group (below) must hold at least `MARINA_PROMOTION_MIN_REPLICATES` runs (default 2) — seeding included.
   - The check runs BEFORE the holdout is read, so an unreplicated attempt neither sees the holdout nor counts as a try.
   - With replicates on either side, the interval is the two-stage bootstrap on pooled per-item outcomes, not Agresti–Min. A challenger in the incumbent's own group is refused.
+  - **Only one configuration pools.** A group label is something anyone filing a run can set, so a promotion refuses a challenger group with any member whose benchmark, target (canonical JSON), item slice or judge differs from the challenger's — before the holdout is read, recording nothing. A run with no recorded target or slice never counts as another run's replicate. The incumbent's group is restricted to the incumbent's own configuration instead, so a stray run filed under its label can neither pad, dilute nor freeze the slot.
+  - **Self-attestation covers the pool:** the promoter may author no run pooled as the challenger (every replicate, durable keys compared), and the account that invalidated the incumbent may author none of them.
 - **Consumers:** `getPromotedDefault(db, slot)`. The showcase world reads slot `showcase:crew`'s `model` for its crew when `MARINA_CREW_MODEL` is unset; environment variables always win.
 
 ## Replicate groups (migration 148)
 Identical runs differ: two runs of one crew on the same 200 items can disagree on a dozen. So one run — and one McNemar p-value — is a single draw. `benchmark_runs.replicate_group` lets repeated runs of ONE configuration pool (`src/engine/benchmark-replicates.ts`; statistics in `benchmarks/replicate-stats.ts`).
 - **Membership:**
-  - A run belongs to the group it names. It gets one from `--group` on the harness and import, `replicateGroup` on `POST /v1/benchmarks/runs`, or `--replicate-of <run>`; `bun run benchmark:import --regroup <ids> --group <key>` moves recorded runs.
+  - A run belongs to the group it names. It gets one from `--group` on the harness and import, `replicateGroup` on `POST /v1/benchmarks/runs`, or `--replicate-of <run>`; `bun run benchmark:import --regroup <ids> --group <key> --reason "<why>"` moves recorded runs.
+  - **Regroups are audited (migration 155):** every run a regroup actually moves (also `--replicate-of` naming a group for a run that had none) gets an append-only `benchmark_run_regroups` row — `run_id`, `from_group`, `to_group`, `reason`, `actor`, `source`, `created_at` — in the same transaction as the move. A trigger refuses `UPDATE`; retention never prunes it; it is part of export and restore. Item outcomes are never touched.
   - A run that names none belongs to the automatic group of its benchmark, target (canonical JSON), item slice and judge. A run with no target or slice is its own group.
   - Groups never cross benchmarks. Members whose target, slice or judge differ are flagged.
 - **Pooled view:**
@@ -75,6 +78,7 @@ Identical runs differ: two runs of one crew on the same 200 items can disagree o
   - Every replicate pair's exact McNemar p is listed, to show how far one draw can swing.
   - A side with one replicate is flagged "not replicated".
 - **Surface:** `benchmark compare` adds the pooled section, `benchmark leaderboard` lists replicate groups pooled, and `benchmark replicates <run>` shows one group.
+- **Re-filing is a no-op:** a run's `content_hash` covers its STABLE content only — config, metadata and every item outcome in canonical key order, without the wall-clock `timestamp` / `duration_ms` (kept only when no item carries a latency or trace id, so identical unmeasured replicates stay distinct). A resumed harness or a repeated `file` step therefore matches the run already recorded (`created: false`), and the filing reply reports the STORED run's group, status and numbers. A run recorded under the earlier raw-bytes hash still matches. The harnesses keep the rest: BrowseComp-Plus records each replicate's filing (`filed.json`) and the arm's group (`group.json`) and files only new replicates into that group on `--resume`; SWE-bench's ledger result is stamped with the last attempt's write, not the filing time, and every replicate of an arm records the same target.
 
 ## Invalid runs (migration 153)
 A run can measure the infrastructure instead of the target: the spend cap was hit, a provider was down, most items fell back to a default. Such a run must not rank, pool or promote — but the record of it must not disappear either.

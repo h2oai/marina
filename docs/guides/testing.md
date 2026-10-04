@@ -488,8 +488,12 @@ single comparison's p-value moves with them. Don't draw a conclusion from one ru
   - A single-run side is flagged "not replicated".
 - **Promotion:** `benchmark promote` refuses a challenger with fewer than
   `MARINA_PROMOTION_MIN_REPLICATES` replicates (default 2) before reading the holdout.
+- **Promotion pools one configuration:** a challenger group with a member of another
+  benchmark, target, slice or judge is refused before the holdout is read, and the promoter
+  may have authored none of the pooled runs.
 - **Regrouping:** recorded runs can be put into one group with
-  `bun run benchmark:import --regroup <ids> --group <key>`.
+  `bun run benchmark:import --regroup <ids> --group <key> --reason "<why>"`; each move is an
+  append-only audit row (migration 155).
 - **Invalid runs:** a replicate that measured the infrastructure (spend cap, outage) is
   retired, never deleted: `benchmark invalidate <run> reason:<text>` (role.edit) or
   `bun run benchmark:import --invalidate <run> --reason "<why>"`. It then drops out of its

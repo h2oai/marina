@@ -65,6 +65,9 @@ bun run browsecomp-plus run --queries $DATA/data/queries.jsonl \
 - A stopped replicate is reported incomplete, with the count of queries not run in `summary.json` (`Marina.stopped_by`, `Marina.not_run`). It is not filed to the ledger, and no later replicate starts.
 
 `--resume` reuses every query already answered and judged in the output directory and runs only the rest. It continues a stopped or interrupted replicate without paying again for finished queries.
+- An errored query (transport, HTTP or timeout) or a failed judge call is never reused: it runs again, so an outage can be repaired. An incomplete answer (turn cap, empty reply) is the target's own outcome and is kept. `summary.json` counts re-run errors in `Marina.retried_errors`.
+- Each replicate directory records its configuration in `config.json`: model, formation, lead model and turns, judge model, corpus, `--k`, snippet and document sizes, turn and token caps, seed, offset, limit and a hash of the sampled query ids. `--resume` refuses a directory recorded under a different configuration, naming the fields. A directory from before this record is adopted with a warning.
+- A replicate already filed to the ledger (`filed.json`) is not run or filed again on resume. New replicates file into the group the arm started with (`group.json`); a contradicting `--group` is refused.
 
 Price an arm on **hard** queries before setting its cap. Easy queries answer in a few turns, and hard ones run to the turn cap with a growing context, so a cost per query measured on easy ones can be several times too low.
 

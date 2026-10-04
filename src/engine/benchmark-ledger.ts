@@ -362,11 +362,62 @@ export interface LedgerImportOptions {
    * the check. Default: `MARINA_BENCHMARK_MAX_FALLBACK_RATE` (0.25).
    */
   maxFallbackRate?: number | null;
-  /** Raw file bytes, hashed for idempotent re-import. */
+  /** Raw file bytes, hashed over their stable fields for idempotent re-import (`stableResultHash`). */
   raw: string;
   /** Fresh run id (the caller supplies it so this stays pure). */
   id: string;
   now: number;
+}
+
+/** JSON with object keys sorted, so equal values serialize equally whatever their key order. */
+export function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const o = value as Record<string, unknown>;
+    return `{${Object.keys(o)
+      .sort()
+      .filter((k) => o[k] !== undefined)
+      .map((k) => `${JSON.stringify(k)}:${canonicalJson(o[k])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value ?? null);
+}
+
+/** Wall-clock fields of a result document: when it was filed, not what it measured. */
+const VOLATILE_RESULT_FIELDS = ["timestamp", "duration_ms"] as const;
+
+/**
+ * The content hash of a result document over its STABLE fields only — the
+ * config, metadata and every item outcome, in canonical key order, without the
+ * wall-clock `timestamp` / `duration_ms` — so re-filing the same run (a resumed
+ * harness, a repeated `file` step) is a no-op instead of a second replicate.
+ * Items that carry no per-item measurement (no latency, no trace id) cannot
+ * tell two genuine replicates apart, so their timestamp stays in the hash.
+ * A body that is not a JSON object hashes as its raw bytes.
+ */
+export function stableResultHash(raw: string): string {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(raw) as unknown;
+  } catch {
+    // allow-empty-catch: a non-JSON body hashes as its raw bytes below
+  }
+  if (!doc || typeof doc !== "object" || Array.isArray(doc)) {
+    return createHash("sha256").update(raw).digest("hex");
+  }
+  const o = { ...(doc as Record<string, unknown>) };
+  const items = Array.isArray(o.items) ? (o.items as Record<string, unknown>[]) : [];
+  const measured = items.some(
+    (it) =>
+      it && (typeof it.latencyMs === "number" || (typeof it.traceId === "string" && it.traceId)),
+  );
+  for (const k of VOLATILE_RESULT_FIELDS) {
+    if (k === "timestamp" && !measured) continue;
+    delete o[k];
+  }
+  return createHash("sha256")
+    .update(`stable:v1\n${canonicalJson(o)}`)
+    .digest("hex");
 }
 
 /** Build the ledger run + item rows for one harness result file. */
@@ -430,7 +481,9 @@ export function ledgerFromHarnessResult(
       target_json: JSON.stringify(opts.target ?? null),
       label: opts.label ?? null,
       source: "import",
-      content_hash: createHash("sha256").update(opts.raw).digest("hex"),
+      content_hash: stableResultHash(opts.raw),
+      // Runs filed before the stable hash were keyed by the raw bytes: still a match.
+      legacy_content_hash: createHash("sha256").update(opts.raw).digest("hex"),
       replicate_group: opts.replicateGroup ?? null,
       invalid_reason:
         fallbackInvalidReason(
