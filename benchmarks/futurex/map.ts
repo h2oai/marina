@@ -8,11 +8,20 @@
  *
  *   lettered options ("A. …")                 → choice (L1, and option-bearing L3/L4)
  *                                                or multi (L2, unless the options
- *                                                are mutually exclusive ranges)
+ *                                                are mutually exclusive ranges or
+ *                                                count buckets)
  *   "how many" / "Report the value in …" /
- *   a numeric "what … value"                   → number (integer for counts)
- *   ordered or "which N" lists                 → ranking (size when stated)
+ *   an inline unit (", in knots,") /
+ *   a numeric "what … value" /
+ *   a statistic titled by series and period    → number (integer for counts)
+ *   "which club will be first"                 → text (one top entry)
+ *   ordered, "which N", "which <plural>" or
+ *   "winners of the N …" lists                  → ranking (size when stated)
  *   anything else                              → text
+ *
+ * Checked against every resolved row's truth shape (the 2026-10 failure
+ * analysis found 15 of 160 clean-backtest rows mistyped; 14 are fixed, the
+ * 15th resolved to a void outcome, which no answer shape expresses).
  *
  * The full prompt rides along as `context` (it carries the settlement rules
  * and the requested format); the row's end time becomes the evidence cutoff.
@@ -116,16 +125,45 @@ export function listSize(title: string): number | undefined {
   return Number.isInteger(n) && n >= 1 && n <= 50 ? n : undefined;
 }
 
+/**
+ * A list is asked for: an ordering, a top-N, "which <plural>", or the winners
+ * of several events.
+ */
 const LISTY =
-  /\b(ordered|rank\b|rank first|ranking|ranked from|top \w+|which (two|three|four|five|six|seven|eight|nine|ten|individual|persons|people|assignees|monitors|lists|tickets|candidates|countries|teams|films|songs|albums)|largest|highest|lowest|laureates)\b/i;
+  /\b(ordered|rank\b|rank first|ranking|ranked from|top \w+|which (two|three|four|five|six|seven|eight|nine|ten|individual|persons|people|assignees|monitors|lists|tickets|candidates|countries|teams|films|songs|albums)|largest|highest|lowest|laureates)\b|\bwhich (?:[A-Za-z-]+ ){0,2}(?:identifiers|IDs|codes|names|entries|titles|players|winners|companies|tickers|products|models|apps|games|books|vulnerabilities|CVEs)\b|\b(?:official )?winners of (?:the |all )?(?:two|three|four|five|six|seven|eight|nine|ten|\d{1,2})\b/i;
 const COUNTY = /^\s*(?:[\d-]+,\s*)?how many\b|\bnumber of\b|\bcount\b/i;
-/** The single top entry of a chart or ranking. */
+/** The single top entry of a chart or ranking: one name, never a list. */
 const SINGLE_TOP =
-  /\b(?:rank|be|finish)\s+(?:No\.?|#|number)\s*1\b|\bwhich (?:artist|song|album|film|movie|book|person|player|team|candidate|horse|driver)\b(?! and)/i;
+  /\b(?:rank|be|finish|place)\s+(?:first|1st|(?:No\.?|#|number)\s*1)\b(?!\s*(?:and|,|through|to)\b)|\bwhich (?:artist|song|album|film|movie|book|person|player|team|club|candidate|horse|driver|company|country)\b(?! and)/i;
 
 /** A number is asked for: a measured quantity, a unit, a price point. */
 const VALUEY =
-  /\bReport the value in\b|\((?:in|as) [^)]{1,40}\)|\bin (?:US\$|USD|U\.S\. dollars|dollars|yuan|CNY|billions?|millions?)\b|\bas a percentage\b|\bpercentage\b|\b(?:day's )?(?:open|close|high|low)\b(?: of| for)|\b(?:value|level|rate|price|index|average|total|amount|figure|gross|deficit|surplus|revenue|expenditures?|earnings|EPS|capitali[sz]ation|yield|temperature|reading|count)\b/i;
+  /\bReport the value in\b|\((?:in|as) [^)]{1,40}\)|,\s*in [^,?]{1,30},|\bin (?:US\$|USD|U\.S\. dollars|dollars|yuan|CNY|billions?|millions?|thousands?)\b|\bas a percentage\b|\bpercentage\b|\b(?:day's )?(?:open|close|high|low)\b(?: of| for)|\b(?:value|level|rate|price|index|average|total|amount|figure|gross|deficit|surplus|revenue|expenditures?|earnings|EPS|capitali[sz]ation|yield|temperature|reading|count)\b/i;
+
+/**
+ * An official statistic named by its series and reference period, with no
+ * question word ("Job openings — July 2026", "Construction spending, July
+ * 2026", "Patents issued in the gazette dated 1 September 2026"): the answer
+ * is the published figure.
+ */
+const STATISTIC =
+  /\b(?:staff|staffing|employment|payrolls?|jobs|openings|vacancies|sales|spending|turnover|output|production|orders|shipments|inventories|exports?|imports?|permits|starts|claims|patents|arrivals|visitors|passengers|revision|change|growth|inflation|balance|reserves|wind|pressure|rainfall|precipitation)\b/i;
+const PERIOD =
+  /\b(?:January|February|March|April|May|June|July|August|September|October|November|December|Q[1-4]|quarter|week \d+)\b[^?]*\b(?:19|20)\d\d\b|\bdated \d/i;
+const QUESTION_WORD = /\?|^\s*(?:who|which|what|when|where|will|whose)\b/i;
+
+function isStatisticTitle(title: string): boolean {
+  const head = title.replace(/\s*\(resolved around[\s\S]*$/i, "");
+  return !QUESTION_WORD.test(head) && STATISTIC.test(head) && PERIOD.test(head);
+}
+
+/** The unit a title names inline: "…, in knots, …" or "(in thousands)". */
+export function titleUnit(title: string): string | undefined {
+  return (
+    title.match(/,\s*in ([^,?]{1,30}),/)?.[1]?.trim() ??
+    title.match(/\((?:in|as) ([^)]{1,40})\)/)?.[1]?.trim()
+  );
+}
 
 /** The answer shape a row asks for. */
 export function specFor(row: FuturexRow): AnswerSpec {
@@ -133,10 +171,12 @@ export function specFor(row: FuturexRow): AnswerSpec {
   const options = parseOptions(row.prompt);
   if (options.length >= 2) {
     // Most level-2 questions have one true option (a range, a winner); a set
-    // only when the question is a bundle of independent outcomes.
+    // only when the question is a bundle of independent outcomes. A count
+    // ("how many …") falls in exactly one bucket, whatever else the title says.
     if (
       row.level === 2 &&
-      (isThresholdSet(options) || (MULTI_CUE.test(title) && !isRangeChoice(title, options)))
+      (isThresholdSet(options) ||
+        (MULTI_CUE.test(title) && !isRangeChoice(title, options) && !COUNTY.test(title)))
     ) {
       return { type: "multi", options };
     }
@@ -148,9 +188,11 @@ export function specFor(row: FuturexRow): AnswerSpec {
     const size = listSize(title);
     return { type: "ranking", ...(size ? { size } : {}) };
   }
-  const unit = row.prompt.match(/Report the value in ([^.\n]+)\./)?.[1]?.trim();
+  const unit = row.prompt.match(/Report the value in ([^.\n]+)\./)?.[1]?.trim() ?? titleUnit(title);
   if (COUNTY.test(title)) return { type: "number", integer: true, ...(unit ? { unit } : {}) };
-  if (unit || VALUEY.test(title)) return { type: "number", ...(unit ? { unit } : {}) };
+  if (unit || VALUEY.test(title) || isStatisticTitle(title)) {
+    return { type: "number", ...(unit ? { unit } : {}) };
+  }
   return { type: "text" };
 }
 

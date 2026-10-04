@@ -78,9 +78,15 @@ What happens:
 6. **Combine** — by type: weighted plurality for a choice or a short string, per-option frequency
    (≥ half the weight) for a set, the median (a 20 % trimmed mean from five runs) for a number,
    Borda count for a ranking. The runs' agreement is the answer's `confidence`.
+   - Numbers are read with their scale and sign: "1.2 million", "$3.4bn", "68k", "(79,000)", "down 0.4", a Unicode minus.
+   - When the unit names a scale ("USD billions"), an answer written with a scale word is converted to it.
+   - From three runs, a run written at another power-of-ten scale than the runs' median (a thousands/millions confusion) is brought to the median's scale first. The method then says `scale-aligned`.
+   - With `MARINA_FORECAST_SELECTION=confidence` (opt-in), the run with the highest self-reported confidence is the answer, and that confidence is the answer's `confidence`. Agreement among same-model runs measures consistency, not correctness, while a run's own stated confidence is much better calibrated.
+   - `bun benchmarks/futurex/rescore-selection.ts` re-scores saved forecasts under each mode offline, with no model calls. The default changes only when `confidence` beats `agreement` on a held-out split by the promotion margin.
 7. **Critique** — a second search looks for evidence *against* the leading answer, and a critic
    may propose another. The proposal replaces the runs' answer only when the critic's confidence
-   exceeds the runs' agreement; both are kept in the record.
+   exceeds the answer's `confidence` (the runs' agreement, or the chosen run's own confidence
+   under confidence selection); both are kept in the record.
 
 **Verification** (`MARINA_FORECAST_VERIFY=on`, opt-in) — the verification formation inside one
 forecast: before a run counts, an independent verifier (`MARINA_FORECAST_VERIFIER`, default the
@@ -141,6 +147,7 @@ are saved with their answer as one string (`prediction`).
 | `MARINA_FORECAST_RUNS` | `3` | typed answers: independent runs (1–9) |
 | `MARINA_FORECAST_RESEARCH_ROUNDS` | `2` | typed answers: research rounds (1–4) |
 | `MARINA_FORECAST_CRITIQUE` | `on` | `off` skips the critique |
+| `MARINA_FORECAST_SELECTION` | `agreement` | typed answers: `confidence` takes the most self-confident run instead of combining by agreement (see Combine) |
 | `MARINA_FORECAST_BUDGET_S` | unset (none) | typed answers: wall-clock budget per forecast. From about 75 % no further research round starts. At the cap, lookups, verification and the critique are skipped and the answer is combined from the runs that have finished (the first to finish, when none has). The answer then carries `budgetForced`, and a skipped check is `verified.verdict: "not_run"` |
 | `MARINA_FORECAST_LOOKUPS` | `auto` | structured sources: `auto` (every one that can run here), `off`, or a list of `polymarket`, `kalshi`, `odds`, `fred`, `bls`, `markets` / `all` (see [Lookups](#lookups)) |
 | `MARINA_FORECAST_MARINA_URL` / `_KEY` | `http://localhost:3300` | where `marina:<crew>` analysts are asked |
