@@ -52,6 +52,7 @@ import { type LoadedRoom, RoomManager } from "../world/room-manager";
 import type { WorldDefinition } from "../world/world-definition";
 import { BenchmarkRunner } from "./benchmark-runner";
 import { BriefManager } from "./brief-manager";
+import { CanvasReadGrants } from "./canvas-access";
 import { recordEngineCognition } from "./cognitive-provenance";
 import { registerBuiltinCommands } from "./command-registry";
 import { CommandRouter } from "./command-router";
@@ -143,6 +144,8 @@ export class Engine {
   readonly flywheel?: FlywheelToolBackend;
   readonly benchmarkRunner?: BenchmarkRunner;
   readonly mediaManager?: MediaManager;
+  /** Expiring read grants on single private canvas nodes (`canvas-access.ts`). */
+  readonly canvasGrants = new CanvasReadGrants();
   /** @internal */ db?: MarinaDB;
   private startedAt = Date.now();
   private fetchLastCall = new Map<string, number>(); // roomId -> timestamp

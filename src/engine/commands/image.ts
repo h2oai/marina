@@ -3,6 +3,7 @@
 
 import type { MediaJobRow } from "../../persistence/database";
 import type { CommandDef, EntityId, RoomContext } from "../../types";
+import { canvasReaderFor, mayReadCanvasRow } from "../canvas-access";
 import type { Engine } from "../engine";
 import { defaultImageModel } from "../media/providers/image-registry";
 import { lookAndReply } from "../media/vision";
@@ -86,7 +87,7 @@ export function imageCommand(engine: Engine): CommandDef {
 
       const defaultModel = defaultImageModel(engine.db?.getDefaultModel());
       const model = parsed.model ?? defaultModel;
-      const canvas = resolveCanvas(engine, parsed.canvas);
+      const canvas = resolveMediaCanvas(engine, parsed.canvas, input.entity);
 
       try {
         const job = await engine.mediaManager.startJob({
@@ -172,10 +173,20 @@ export function parseImageGenerateArgs(
   };
 }
 
-function resolveCanvas(engine: Engine, canvas?: string): string | undefined {
+/**
+ * The target canvas for generated media, by name or id. A private canvas the
+ * caller may not read is treated as missing (the output goes to the caller's
+ * own canvas), so the reply never confirms it exists.
+ */
+export function resolveMediaCanvas(
+  engine: Engine,
+  canvas: string | undefined,
+  entityId: EntityId,
+): string | undefined {
   if (!canvas || !engine.db) return undefined;
-  const byName = engine.db.getCanvasByName(canvas);
-  if (byName) return byName.id;
-  const byId = engine.db.getCanvas(canvas);
-  return byId?.id ?? undefined;
+  const row = engine.db.getCanvasByName(canvas) ?? engine.db.getCanvas(canvas);
+  if (!row) return undefined;
+  return mayReadCanvasRow(row, canvasReaderFor(engine, entityId), "media canvas")
+    ? row.id
+    : undefined;
 }

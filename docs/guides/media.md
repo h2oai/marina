@@ -171,7 +171,10 @@ in an agents-mode `/v1/chat/completions` or `/v1/responses` request are stored
 as assets and placed on the caller's private inbox canvas (`inbox:<entity id>`
 for a bound key or name-mapped agent, `inbox:model-key-<hash>` for any other
 API key; only the owner and operators see it in the dashboard). The crew's
-prompt names each node and the `canvas look` command to read it. A request's
+prompt names each node and the `canvas look` command to read it. The agents
+serving the request (the endpoint channel's members and its crew) get a read
+grant on those nodes that expires 60 s after the request deadline. Anyone else
+who uses the node id gets "not found". A request's
 images are capped at `MARINA_VISION_MAX_BYTES` in total, and staged images are
 deleted after 7 days (`MARINA_RETENTION_OVERRIDES` entries `assets` and
 `canvas_nodes`, which apply to request images only). An open-API caller outside

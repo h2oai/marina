@@ -158,6 +158,29 @@ export function getNode(db: Database, id: string): CanvasNodeRow | undefined {
   );
 }
 
+/** A node showing an asset, and the scope of the canvas it is on. */
+export interface AssetNodeScope {
+  node_id: string;
+  canvas_id: string;
+  scope: string;
+  scope_id: string | null;
+}
+
+/**
+ * Every canvas node that shows an asset, with its canvas's scope — what the
+ * shared canvas read check (`src/engine/canvas-access.ts`) needs to decide
+ * whether an asset is private.
+ */
+export function listAssetNodeScopes(db: Database, assetId: string): AssetNodeScope[] {
+  return db
+    .query(
+      `SELECT n.id AS node_id, n.canvas_id AS canvas_id, c.scope AS scope, c.scope_id AS scope_id
+         FROM canvas_nodes n JOIN canvases c ON c.id = n.canvas_id
+        WHERE n.asset_id = ?`,
+    )
+    .all(assetId) as AssetNodeScope[];
+}
+
 export function getNodesByCanvas(db: Database, canvasId: string): CanvasNodeRow[] {
   return db
     .query("SELECT * FROM canvas_nodes WHERE canvas_id = ? ORDER BY created_at ASC")

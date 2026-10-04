@@ -3207,6 +3207,10 @@ export class MarinaDB implements MarinaStores {
     return canvasDb.getNodesByCanvas(this.db, canvasId);
   }
 
+  listAssetNodeScopes(assetId: string): canvasDb.AssetNodeScope[] {
+    return canvasDb.listAssetNodeScopes(this.db, assetId);
+  }
+
   /**
    * Delete all but the most recent `max` nodes on a canvas. Returns the
    * number of rows deleted. Used by FeedPublisher to bound the feed canvas

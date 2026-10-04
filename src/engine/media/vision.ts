@@ -33,6 +33,7 @@ import { RateLimiter } from "../../auth/rate-limiter";
 import { proxyToUpstream } from "../../net/model-api/upstream";
 import { guardedFetch } from "../../net/url-guard";
 import type { EntityId } from "../../types";
+import { type CanvasReader, canvasReaderFor, mayReadAsset, readableNode } from "../canvas-access";
 import type { Engine } from "../engine";
 
 /** The kinds of visual input a source can be prepared into. */
@@ -156,16 +157,22 @@ export function classifyVisual(data: Uint8Array, mime: string): VisualKind | nul
   return null;
 }
 
-/** Load a stored asset's bytes (size-capped). */
+/**
+ * Load a stored asset's bytes (size-capped). A private asset the reader may
+ * not read (`mayReadAsset`) is "not found", exactly like a missing one.
+ */
 export async function loadAsset(
   engine: Engine,
   assetId: string,
+  reader: CanvasReader,
   env: Record<string, string | undefined> = process.env,
 ): Promise<VisualSource> {
   const db = engine.db;
   if (!db || !engine.storage) throw new Error("Asset storage is not configured.");
   const asset = db.getAsset(assetId);
-  if (!asset) throw new Error(`Asset "${assetId}" not found.`);
+  if (!asset || !mayReadAsset(engine, asset, reader, "look asset")) {
+    throw new Error(`Asset "${assetId}" not found.`);
+  }
   if (asset.size > visionMaxBytes(env))
     throw new Error("Asset is larger than the vision size cap.");
   const stored = await engine.storage.get(asset.storage_key);
@@ -178,15 +185,20 @@ export async function loadAsset(
   };
 }
 
-/** Load the asset behind a canvas node. */
+/**
+ * Load the asset behind a canvas node. A node on a private canvas the reader
+ * may not read (no ownership, operator standing or live grant) is "not found",
+ * exactly like a missing one (`src/engine/canvas-access.ts`).
+ */
 export async function loadCanvasNode(
   engine: Engine,
   nodeId: string,
+  reader: CanvasReader,
   env: Record<string, string | undefined> = process.env,
 ): Promise<VisualSource> {
   const db = engine.db;
   if (!db) throw new Error("Persistence is not configured.");
-  const node = db.getNode(nodeId);
+  const node = readableNode(engine, nodeId, reader, "look node");
   if (!node) throw new Error(`Canvas node "${nodeId}" not found.`);
   if (!node.asset_id) {
     let text = "";
@@ -205,7 +217,9 @@ export async function loadCanvasNode(
       canvasId: node.canvas_id,
     };
   }
-  const src = await loadAsset(engine, node.asset_id, env);
+  // Reading the node grants reading what it shows: the node check above is the
+  // decision, so the asset is loaded without a second (asset-level) check.
+  const src = await loadAsset(engine, node.asset_id, { isOperator: true }, env);
   return { ...src, nodeId: node.id, canvasId: node.canvas_id };
 }
 
@@ -254,17 +268,25 @@ async function readBodyCapped(resp: Response, cap: number): Promise<Uint8Array> 
   return out;
 }
 
-/** Resolve `node:<id>`, `asset:<id>`, an http(s) URL, a canvas node id or an asset id. */
+/**
+ * Resolve `node:<id>`, `asset:<id>`, an http(s) URL, a canvas node id or an
+ * asset id, as `reader`. A bare id the reader may not read as a node falls
+ * through to the asset lookup, the same as an id that names no node, so the
+ * reply never tells a private node apart from a missing one.
+ */
 export async function loadVisualSource(
   engine: Engine,
   ref: string,
+  reader: CanvasReader,
   env: Record<string, string | undefined> = process.env,
 ): Promise<VisualSource> {
   if (/^https?:\/\//i.test(ref)) return loadUrl(ref, env);
-  if (ref.startsWith("node:")) return loadCanvasNode(engine, ref.slice(5), env);
-  if (ref.startsWith("asset:")) return loadAsset(engine, ref.slice(6), env);
-  if (engine.db?.getNode(ref)) return loadCanvasNode(engine, ref, env);
-  return loadAsset(engine, ref, env);
+  if (ref.startsWith("node:")) return loadCanvasNode(engine, ref.slice(5), reader, env);
+  if (ref.startsWith("asset:")) return loadAsset(engine, ref.slice(6), reader, env);
+  if (readableNode(engine, ref, reader, "look node")) {
+    return loadCanvasNode(engine, ref, reader, env);
+  }
+  return loadAsset(engine, ref, reader, env);
 }
 
 // ─── Preparation ────────────────────────────────────────────────────────────
@@ -754,7 +776,7 @@ export async function lookAndReply(
   }
   let src: VisualSource;
   try {
-    src = await loadVisualSource(engine, args.ref);
+    src = await loadVisualSource(engine, args.ref, canvasReaderFor(engine, who.entityId));
   } catch (e) {
     return e instanceof Error ? e.message : String(e);
   }
@@ -833,8 +855,11 @@ export function requestInboxName(ownerId: string): string {
  * size-capped per image and per request) and published as an image node on
  * the requesting principal's PRIVATE inbox canvas (`scope: "entity"`, owned by
  * the principal — operators and the owner see it on the dashboard, the world
- * does not). The returned lines name each node; the crew reads it by that id
- * with `canvas look`. Staged images age out with the `assets` / `canvas_nodes`
+ * does not). The returned lines name each node. Knowing the id is not enough
+ * to read it: `grant` names the principals serving the request (the endpoint
+ * channel's members and its crew), and each gets an expiring read grant on
+ * exactly these nodes (`src/engine/canvas-access.ts`), so they can `canvas look`
+ * them for the request's lifetime and nobody else can. Staged images age out with the `assets` / `canvas_nodes`
  * request-image retention policies (`src/engine/retention.ts`). Without a
  * principal (an open-API caller outside the local profile) nothing is stored
  * and each image is labelled as not staged. Remote URLs are not fetched here —
@@ -845,8 +870,10 @@ export async function stageRequestImages(
   engine: Engine,
   content: unknown,
   principal: RequestImagePrincipal | undefined,
+  grant?: { principals: readonly string[]; ttlMs: number; reason: string },
 ): Promise<string[]> {
   if (!Array.isArray(content)) return [];
+  const stagedNodeIds: string[] = [];
   const urls = content.map(partImageUrl).filter((u): u is string => !!u);
   if (urls.length === 0) return [];
   const lines: string[] = [];
@@ -940,10 +967,19 @@ export async function stageRequestImages(
       nodeId,
       timestamp: Date.now(),
     });
+    stagedNodeIds.push(nodeId);
     lines.push(`[image ${k} → canvas node ${nodeId}; read with: canvas look ${nodeId} <question>]`);
   }
   if (urls.length > STAGE_MAX_IMAGES) {
     lines.push(`[${urls.length - STAGE_MAX_IMAGES} more image(s) not staged]`);
+  }
+  if (grant && stagedNodeIds.length > 0) {
+    engine.canvasGrants.grant({
+      nodeIds: stagedNodeIds,
+      principals: grant.principals,
+      ttlMs: grant.ttlMs,
+      reason: grant.reason,
+    });
   }
   return lines;
 }

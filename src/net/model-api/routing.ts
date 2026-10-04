@@ -46,6 +46,44 @@ import { proxyToUpstream } from "./upstream";
 
 const REQUEST_TIMEOUT_MS = Number.parseInt(process.env.MODEL_REQUEST_TIMEOUT_MS ?? "600000", 10);
 
+/** How long a request image's read grant outlives the request deadline. */
+export const REQUEST_IMAGE_GRANT_MARGIN_MS = 60_000;
+
+/**
+ * The read grant for an agents-mode request's staged images: every member of
+ * the endpoint's `model-<name>` channel (any of them may answer — see
+ * `isEndpointResponder`) plus every member of the crew serving it, for the
+ * request deadline plus {@link REQUEST_IMAGE_GRANT_MARGIN_MS}. Undefined when
+ * nobody serves the model (the request then fails before anyone reads).
+ */
+export function requestImageGrant(
+  engine: Engine,
+  model: string,
+): { principals: string[]; ttlMs: number; reason: string } | undefined {
+  const cm = engine.channelManager;
+  const channelName = modelToChannelName(model);
+  const channel = cm?.getChannelByName(channelName);
+  const principals = new Set<string>();
+  if (cm && channel) {
+    for (const m of cm.getMembers(channel.id)) if (m !== "__model_api__") principals.add(m);
+  }
+  if (channelName.startsWith("model-")) {
+    const crew = engine.crewManager?.getByName(channelName.slice("model-".length));
+    if (crew && crew.state !== "dissolved") {
+      for (const m of crew.members) {
+        const id = engine.entities.findAgentByName(m.agentName)?.id;
+        if (id) principals.add(id);
+      }
+    }
+  }
+  if (principals.size === 0) return undefined;
+  return {
+    principals: [...principals],
+    ttlMs: REQUEST_TIMEOUT_MS + REQUEST_IMAGE_GRANT_MARGIN_MS,
+    reason: `model request images (${channelName})`,
+  };
+}
+
 /**
  * Per-request socket idle limit (seconds) for model-API calls. Bun's server
  * `idleTimeout` caps at 255 s, but a routed request (a crew deliberating on a

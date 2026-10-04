@@ -1,11 +1,13 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isRequestAsset, mayReadAsset } from "../engine/canvas-access";
 import type { Engine } from "../engine/engine";
 import type { MarinaDB } from "../persistence/database";
 import type { StorageProvider } from "../storage/provider";
 import type { EntityId } from "../types";
 import { authenticateRequest, refuseOpenApiWrite } from "./auth-middleware";
+import { buildCanvasPrincipal, resolveCanvasHttpPrincipal } from "./canvas-principal";
 import { corsHeaders } from "./cors";
 import {
   consumeHttpRate,
@@ -210,12 +212,21 @@ export async function handleAssetApi(
   db: MarinaDB,
   storage: StorageProvider,
   engine: Engine,
+  peerIp?: string,
 ): Promise<Response> {
   // Reads are public so canvas assets (image metadata/listing) render for a
   // fresh, not-yet-logged-in visitor — consistent with public canvas reads and
-  // the open dashboard broadcast. Mutations (POST upload, DELETE) require a
+  // the open dashboard broadcast — EXCEPT private assets (shown only on
+  // private canvases, or staged request images): those follow the shared
+  // canvas read check (src/engine/canvas-access.ts) and are "not found" to
+  // anyone else. Mutations (POST upload, DELETE) require a
   // valid session token: the dev-open sentinel is read-only, and each principal
   // is rate-limited so an authenticated client cannot flood storage.
+  const reader =
+    method === "GET"
+      ? buildCanvasPrincipal(resolveCanvasHttpPrincipal(req, engine, peerIp), engine, db)
+      : undefined;
+  const host = { db, entities: engine.entities, canvasGrants: engine.canvasGrants };
   let writerName: string | undefined;
   let writerId: EntityId | undefined;
   if (method !== "GET") {
@@ -248,7 +259,9 @@ export async function handleAssetApi(
   if (idMatch && method === "GET") {
     const id = decodeURIComponent(idMatch[1]!);
     const asset = db.getAsset(id);
-    if (!asset) return json({ error: "Asset not found" }, 404);
+    if (!asset || !mayReadAsset(host, asset, reader, "http GET asset")) {
+      return json({ error: "Asset not found" }, 404);
+    }
     return json({
       ...asset,
       metadata: JSON.parse(asset.metadata),
@@ -265,7 +278,9 @@ export async function handleAssetApi(
   if (url.pathname === "/api/assets" && method === "GET") {
     const limit = Math.min(Number(url.searchParams.get("limit")) || 50, 200);
     const mime = url.searchParams.get("mime") ?? undefined;
-    const assets = db.listAssets({ limit, mime });
+    const assets = db
+      .listAssets({ limit, mime })
+      .filter((a) => mayReadAsset(host, a, reader, "http list assets", { log: false }));
     return json(
       assets.map((a) => ({
         ...a,
@@ -370,20 +385,40 @@ export async function handleAssetServing(
   url: URL,
   storage: StorageProvider,
   db?: MarinaDB,
+  access?: { engine: Engine; req: Request; peerIp?: string },
 ): Promise<Response> {
   const key = url.pathname.replace(/^\/assets\//, "");
   if (!key) {
     return new Response("Not found", { status: 404 });
   }
 
+  // Storage keys are `<asset id><ext>` (see handleUpload), so the row is
+  // addressable without a new DB accessor.
+  const row = db?.getAsset(key.replace(/\.[^./]*$/, ""));
+  // A staged request image's bytes follow the shared canvas read check (the
+  // owner, operators, or a live grant on its node); without a caller to check,
+  // they are refused. Other assets stay capability URLs, so `<img>` tags (which
+  // cannot send a bearer token) keep rendering.
+  if (db && row && isRequestAsset(row)) {
+    const reader = access
+      ? buildCanvasPrincipal(
+          resolveCanvasHttpPrincipal(access.req, access.engine, access.peerIp),
+          access.engine,
+          db,
+        )
+      : undefined;
+    const host = access
+      ? { db, entities: access.engine.entities, canvasGrants: access.engine.canvasGrants }
+      : { db, entities: { get: () => undefined } };
+    if (!mayReadAsset(host, row, reader, "http GET asset bytes")) {
+      return new Response("Not found", { status: 404 });
+    }
+  }
+
   const result = await storage.get(key);
   if (!result) {
     return new Response("Not found", { status: 404 });
   }
-
-  // Storage keys are `<asset id><ext>` (see handleUpload), so the row is
-  // addressable without a new DB accessor.
-  const row = db?.getAsset(key.replace(/\.[^./]*$/, ""));
   // Re-normalize on the way out so a row written before the allowlist existed
   // can never hand a browser an executable content type.
   const mime = normalizeAssetMime(row?.mime_type ?? result.mime, result.data);
