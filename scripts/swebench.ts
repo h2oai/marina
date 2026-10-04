@@ -210,11 +210,19 @@ async function fileCmd(): Promise<number> {
     .split("\n")
     .filter(Boolean)
     .map((l) => JSON.parse(l) as SweAttempt);
+  // The ids this run was asked to attempt (recorded by `run` in arm.json): one with no
+  // recorded attempt is filed as unresolved, never dropped.
+  const armIds = (arm as SweArm & { ids?: string }).ids;
+  const expectedIds =
+    armIds && existsSync(armIds)
+      ? readFileSync(armIds, "utf8").split("\n").filter(Boolean)
+      : undefined;
   const result = ledgerResult(report, attempts, {
     arm,
     replicate,
     subsetSeed: Number(values.seed),
     benchmark,
+    ...(expectedIds ? { expectedIds } : {}),
   });
   const resultPath = join(runDir, "ledger-result.json");
   writeFileSync(resultPath, JSON.stringify(result, null, 2));
@@ -236,7 +244,7 @@ async function fileCmd(): Promise<number> {
       "--label",
       `swebench-${arm.name}-r${replicate}`,
       "--judge",
-      "swebench-harness",
+      SWE_BENCHMARKS[benchmark].judge,
       "--cost-usd",
       cost.toFixed(4),
       "--group",

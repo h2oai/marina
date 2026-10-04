@@ -34,9 +34,25 @@ export interface SweInstance {
 /** Which SWE-bench dataset a run belongs to (its ledger name and default instance file). */
 export type SweBenchmark = "verified" | "pro";
 
-export const SWE_BENCHMARKS: Record<SweBenchmark, { dataset: string; instances: string }> = {
-  verified: { dataset: "swe-bench-verified", instances: "verified.jsonl" },
-  pro: { dataset: "swe-bench-pro", instances: "pro.jsonl" },
+/**
+ * `judge` names the grader honestly in the ledger: Verified runs the official harness itself;
+ * Pro runs the task's own verifier through `pro_grade.py`, a local replay of the official
+ * patch-replay grader, not the official harness.
+ */
+export const SWE_BENCHMARKS: Record<
+  SweBenchmark,
+  { dataset: string; instances: string; judge: string }
+> = {
+  verified: {
+    dataset: "swe-bench-verified",
+    instances: "verified.jsonl",
+    judge: "swebench-harness",
+  },
+  pro: {
+    dataset: "swe-bench-pro",
+    instances: "pro.jsonl",
+    judge: "swebench-pro verifier (local replay of the official verifier)",
+  },
 };
 
 /** One way of solving an instance with Marina. */
@@ -392,12 +408,38 @@ export async function attemptInstance(
 export function ledgerResult(
   report: { resolved_ids?: string[]; error_ids?: string[] },
   attempts: SweAttempt[],
-  meta: { arm: SweArm; replicate: number; subsetSeed: number; benchmark?: SweBenchmark },
+  meta: {
+    arm: SweArm;
+    replicate: number;
+    subsetSeed: number;
+    benchmark?: SweBenchmark;
+    /**
+     * The instance ids the run was asked to attempt. An id with no recorded
+     * attempt (the agent run threw before recording one) is an agent failure:
+     * it is filed as unresolved at zero recorded cost, never silently dropped.
+     */
+    expectedIds?: string[];
+  },
 ) {
   const resolved = new Set(report.resolved_ids ?? []);
   const errored = new Set(report.error_ids ?? []);
-  const graded = attempts.filter((a) => !errored.has(a.instance_id));
-  const excluded = attempts.filter((a) => errored.has(a.instance_id)).map((a) => a.instance_id);
+  const recorded = new Set(attempts.map((a) => a.instance_id));
+  const missingAttempts = (meta.expectedIds ?? []).filter((id) => !recorded.has(id));
+  const all: SweAttempt[] = [
+    ...attempts,
+    ...missingAttempts.map((id) => ({
+      instance_id: id,
+      arm: meta.arm.name,
+      replicate: meta.replicate,
+      exitCode: -1,
+      patchBytes: 0,
+      costUsd: 0,
+      durationMs: 0,
+      trajectory: "",
+    })),
+  ];
+  const graded = all.filter((a) => !errored.has(a.instance_id));
+  const excluded = all.filter((a) => errored.has(a.instance_id)).map((a) => a.instance_id);
   const items = graded.map((a) => ({
     id: a.instance_id,
     correct: resolved.has(a.instance_id),
@@ -418,7 +460,12 @@ export function ledgerResult(
     timestamp: new Date().toISOString(),
     duration_ms: graded.reduce((t, a) => t + a.durationMs, 0),
     scores: { overall: items.length ? correct / items.length : 0 },
-    metadata: { arm: meta.arm.name, judge: "swebench-harness", excluded },
+    metadata: {
+      arm: meta.arm.name,
+      judge: SWE_BENCHMARKS[meta.benchmark ?? "verified"].judge,
+      excluded,
+      missingAttempts,
+    },
     items,
   };
 }

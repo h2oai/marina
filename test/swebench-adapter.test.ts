@@ -167,6 +167,34 @@ describe("ledgerResult and spend", () => {
     expect(r.config.dataset).toBe("swe-bench-pro");
   });
 
+  it("files an expected instance with no recorded attempt as unresolved, never drops it", () => {
+    const attempts = ["a"].map((id) => ({
+      instance_id: id,
+      arm: "single",
+      replicate: 1,
+      exitCode: 0,
+      patchBytes: 10,
+      costUsd: 0.1,
+      durationMs: 1000,
+      trajectory: `${id}.md`,
+    }));
+    const r = ledgerResult({ resolved_ids: ["a"], error_ids: ["c"] }, attempts, {
+      arm: { name: "single", model: "m" },
+      replicate: 1,
+      subsetSeed: 7,
+      expectedIds: ["a", "b", "c"],
+    });
+    // b crashed before recording: unresolved. c was never attempted AND errored in the
+    // grader: still an infrastructure exclusion.
+    expect(r.items.map((i) => [i.id, i.correct])).toEqual([
+      ["a", true],
+      ["b", false],
+    ]);
+    expect(r.metadata.missingAttempts).toEqual(["b", "c"]);
+    expect(r.metadata.excluded).toEqual(["c"]);
+    expect(r.scores.overall).toBeCloseTo(1 / 2);
+  });
+
   it("reads 0 spend from a missing or schema-less database", () => {
     expect(sessionSpend(join(tmpdir(), "does-not-exist.db"))).toBe(0);
   });
