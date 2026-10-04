@@ -182,6 +182,15 @@ export interface TypedForecastOptions {
    * run's system prompt — how a crew formation gives its members their parts.
    */
   roles?: string[];
+  /**
+   * When a run's answer has the right type but is incomplete — a ranking short
+   * of its size, a multi-select short of its minimum, a probability missing for
+   * some option, no answer at all — ONE more call to the same analyst names
+   * exactly what is missing and shows it its own answer; the reply is used
+   * only if it now validates, labelled `repaired:completion` (default true).
+   * Skipped in the budget's final phase.
+   */
+  completion?: boolean;
 }
 
 export interface ModelPart {
@@ -268,8 +277,13 @@ export interface TypedRun {
   status: string;
   /** The extra run made on the crux after the runs disagreed. */
   crux?: boolean;
-  /** The answer met its format only after output repair (`output-repair`). */
-  repaired?: RepairLabel;
+  /**
+   * The answer met its format only after output repair (`output-repair`), or
+   * only after the completion call (`repaired:completion`).
+   */
+  repaired?: RepairLabel | "repaired:completion";
+  /** The completion call (`options.completion`): what was missing, and whether its reply was used. */
+  completion?: { missing: string; accepted: boolean; error?: string };
   /** The verifier's check of this draft (`options.verify`). */
   verified?: {
     model: string;
@@ -1020,7 +1034,10 @@ async function runIndependent(
     }
     let reply = asked.reply;
     let v = validateAnswer(req.answer, reply?.answer);
-    if ("error" in v && asked.raw) {
+    // A parsed reply that is merely incomplete goes to the completion call:
+    // re-encoding cannot add what is missing.
+    const incomplete = opts.completion !== false && completionGap(req.answer, reply) !== undefined;
+    if ("error" in v && asked.raw && !incomplete) {
       // The run answered, but not in the required shape: repair the format
       // (deterministic, else one re-encoding shot on the same analyst).
       const repaired = await repairRunAnswer(req.answer, asked.raw, analyst);
@@ -1028,6 +1045,33 @@ async function runIndependent(
         reply = repaired.value.reply;
         v = { value: repaired.value.value };
         run.repaired = repaired.label ?? "repaired:parse";
+      }
+    }
+    // Right type, but incomplete (a short ranking, a missing probability, no
+    // answer): one more call that names what is missing — never in the final phase.
+    const gap = asked.raw !== undefined ? completionGap(req.answer, reply) : undefined;
+    if (gap && opts.completion !== false) {
+      if (budget.phase() === "final") {
+        budget.spent("completion");
+      } else {
+        const done = await completeRunAnswer(
+          req.answer,
+          analyst,
+          role ? `${runSystem(req.answer)}\n${role}` : runSystem(req.answer),
+          user,
+          asked.raw!,
+          gap,
+        );
+        run.completion = {
+          missing: gap,
+          accepted: done.value !== undefined,
+          ...(done.error ? { error: done.error } : {}),
+        };
+        if (done.value !== undefined) {
+          reply = done.reply;
+          v = { value: done.value };
+          run.repaired = "repaired:completion";
+        }
       }
     }
     if ("error" in v) return { ...run, status: `invalid: ${v.error}` };
@@ -1503,6 +1547,113 @@ async function repairRunAnswer(
     preserves: ({ reply }, source) =>
       groundedIn([reply.answer, reply.reason, reply.confidence, reply.sd], source),
   });
+}
+
+/**
+ * What a run's answer is missing, when it has the right type but is incomplete:
+ * a ranking short of its size, a multi-select short of its minimum, a choice
+ * or number with no answer, or a probability missing for some option of a
+ * probabilistic choice or multi-select. Undefined when complete — or when it is
+ * wrong rather than incomplete (an unknown option, too many picks), or when
+ * there is no JSON reply at all (output repair's job): asking again would not
+ * be adding what is missing.
+ */
+export function completionGap(
+  spec: AnswerSpec,
+  reply: Record<string, unknown> | undefined,
+): string | undefined {
+  // No JSON reply at all is a format failure (output repair's job), not a gap.
+  if (!reply) return undefined;
+  const raw = reply.answer;
+  const absent =
+    raw === undefined ||
+    raw === null ||
+    (typeof raw === "string" && !raw.trim()) ||
+    (Array.isArray(raw) && raw.every((x) => !String(x ?? "").trim()));
+  const optionList = (ids: string[]) =>
+    ids
+      .map((id) => {
+        const o = spec.type === "choice" || spec.type === "multi" ? spec.options : [];
+        const label = o.find((x) => x.id === id)?.label;
+        return label ? `${id} (${label})` : id;
+      })
+      .join("; ");
+  const v = validateAnswer(spec, raw);
+  if ("error" in v) {
+    switch (spec.type) {
+      case "ranking": {
+        const n = Array.isArray(raw)
+          ? raw.length
+          : typeof raw === "string"
+            ? raw.split(/[,;|\n]/).filter((x) => x.trim()).length
+            : 0;
+        const size = spec.size;
+        return [
+          size
+            ? `rank all ${size} places: "answer" must be an array of exactly ${size} items, first = top (your answer had ${n})`
+            : `"answer" must be a non-empty ranked array, first = top`,
+          spec.candidates?.length ? `choose from these items: ${spec.candidates.join("; ")}` : "",
+        ]
+          .filter(Boolean)
+          .join("; ");
+      }
+      case "multi":
+        if (absent || v.error === "too few options picked") {
+          return `pick at least ${Math.max(1, spec.minPicks ?? 1)} option(s) from: ${optionList(spec.options.map((o) => o.id))}`;
+        }
+        return undefined;
+      case "choice":
+        return absent
+          ? `pick exactly ONE option id from: ${optionList(spec.options.map((o) => o.id))}`
+          : undefined;
+      case "number":
+        return `give "answer" as ONE number${spec.unit ? ` in ${spec.unit}` : ""} (your single most likely value) and "sd"`;
+      case "text":
+        return absent ? `give "answer" as a short string` : undefined;
+    }
+  }
+  if (probabilistic(spec)) {
+    const covered = new Set(Object.keys(parseMarginals(spec.options, reply.probabilities) ?? {}));
+    const missing = spec.options.filter((o) => !covered.has(o.id)).map((o) => o.id);
+    if (missing.length > 0) {
+      return `give a probability for EACH option in "probabilities": ${optionList(spec.options.map((o) => o.id))} (missing: ${missing.join(", ")})`;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The completion call: the run's own answer and reasons back to the same
+ * analyst with exactly what is missing. Its reply counts only when the answer
+ * now validates (and, for a probabilistic question, covers every option).
+ */
+async function completeRunAnswer(
+  spec: AnswerSpec,
+  analyst: ModelPart,
+  system: string,
+  user: string,
+  prior: string,
+  missing: string,
+): Promise<{ reply?: Record<string, unknown>; value?: AnswerValue; error?: string }> {
+  const asked = await askAnalyst(
+    analyst,
+    system,
+    [
+      user,
+      "",
+      "YOUR EARLIER ANSWER (with its reasons):",
+      prior.slice(0, 4_000),
+      "",
+      `It is INCOMPLETE: ${missing}.`,
+      "Keep your reasoning; reply again with the COMPLETE JSON object in the required format.",
+    ].join("\n"),
+  );
+  if (asked.error !== undefined) return { error: asked.error.slice(0, 200) };
+  const reply = asked.reply;
+  const v = validateAnswer(spec, reply?.answer);
+  if ("error" in v) return { error: `still invalid: ${v.error}` };
+  if (completionGap(spec, reply)) return { error: "still incomplete" };
+  return { reply: reply!, value: v.value };
 }
 
 function parsePlan(reply: Record<string, unknown> | undefined): ForecastPlan {

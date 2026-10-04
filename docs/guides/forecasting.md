@@ -75,6 +75,15 @@ What happens:
 4. **Citation check** — as above.
 5. **Runs** — K independent answers (analyst models used in turn), each validated against the
    answer's shape and, with a judge, weighted by how well the verified facts support it.
+   - A run whose answer misses the JSON shape gets output repair (a parse, then one re-encoding
+     shot, labelled `repaired:parse` / `repaired:shot`). Repair never adds content.
+   - A run whose answer has the right type but is incomplete — a ranking short of its size, a
+     multi-select short of its minimum, no answer, or a probability missing for some option —
+     gets ONE more call to the same analyst. The call shows the run's own answer and reasons and
+     names exactly what is missing. Its reply is used only if it now validates, labelled
+     `repaired:completion` (the run's `completion` record keeps what was missing and whether it
+     was accepted); its cost is the run's. It is skipped in the time budget's final phase, and a
+     spend-cap refusal leaves the run as it was. `options.completion: false` turns it off.
 6. **Combine** — by type: weighted plurality for a choice or a short string, per-option frequency
    (≥ half the weight) for a set, the median (a 20 % trimmed mean from five runs) for a number,
    Borda count for a ranking. The runs' agreement is the answer's `confidence`.
