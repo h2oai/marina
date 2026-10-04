@@ -221,6 +221,13 @@ They are not silently replaced by an older successful batch. A batch finishing a
 recorded as prospective evidence. The ordinary `shadow score` remains a per-variant view; use
 `paired-score` to compare these experiments on identical rounds.
 
+For eligible resolved scalar batches, each candidate also reports `attributionFromStart`.
+It swaps the forecast mean and spread independently, then averages both swap orders to
+attribute the skill difference to each parameter. Contributions are skill fractions
+(multiply by 100 for leaderboard points), include negative effects, and sum to the total
+improvement. This explains an observed result; it is not evidence that the same parameter
+change will help future questions. Unresolved and incomplete batches have no attribution.
+
 Uncertainty calibration is **shadow-only**. It uses recorded errors from complete forecasts of
 the exact same estimator/configuration, within the same family and unit, weighted by similarity
 of horizon and source age. It needs at least twelve distinct resolved rounds: at least eight in
@@ -421,6 +428,34 @@ payload rather than a mutable HTML page;
 the dossier retains the typed observations and failure/skip reasons. Historical intraday cutoffs
 use the prior UTC day's FRED vintage because its API does not provide exact release instants.
 Live reads use currently available data. Sports odds are excluded from arena research.
+Check each source's publication cadence: [FRED's Michigan sentiment series](https://fred.stlouisfed.org/series/UMCSENT)
+is delayed by one month. A successful lookup is not necessarily new information for a weekly
+forecast; use the observation date and change since the anchor vintage when interpreting it.
+
+Programmatic shadow experiments can pass a `hints(brief)` selector to `withDataLookups` to
+compare alternative related series on frozen inputs. This leaves the default related-series map
+unchanged and applies the same evidence cutoffs and anchor-vintage comparison to both arms.
+Record the selector's series, inputs and policy fingerprint with each forecast; retain failed
+attempts and repeated runs rather than selecting the best result. Research briefs use the
+nowcast reading selected by the forecaster, including same-day revisions, for scalar and
+profile targets.
+
+**Settlement experiments without new model calls.** `replayDelphiSettlement` in
+`src/arena/settlement-shadow.ts` accepts the original start distribution, a complete two-round
+Delphi trace, and `{ meanWeight, spreadWeight, sdScale? }`. Both weights multiply the existing
+proposal-agreement factor; the default rule is `0.5` for each weight and scale `1`. The helper
+first reconstructs the recorded forecast exactly, refusing partial, failed or incompatible
+traces. It reuses the existing movement cap and spread floor. Vary one weight at a time to
+distinguish a better centre from better uncertainty; increasing both weights can widen the
+spread even when the mean improves.
+
+These are new shadow candidates: record their policy and creation time **before lock**, retain
+the parent trace and input hash, and compare all planned arms on matched resolved rounds.
+Reusing model replies makes the incremental model cost zero; it does not make the original
+forecast free. Multiple repeats or parameter settings are correlated evidence, not additional
+independent questions. Preserve every repeat when reporting scores, and use a declared repeat
+or prospective ensemble when collecting calibration errors rather than counting repeats as
+separate rounds. No settlement experiment changes the live default.
 
 ## Signal discovery
 
@@ -534,9 +569,18 @@ Audited 2026-09-25 (`src/arena/evaluate.ts`, `test/arena-*.test.ts`):
   review; Marina reads the arena's public archive of them. The research agent's citation check
   never fetches publishers whose terms bar bots or forwarding (YouGov, AAII, Conference Board,
   CivicScience — `NO_FETCH_DOMAINS`).
-- **The ranking is hypothetical.** Leaderboard entrants forecast live; Marina's numbers are
-  simulations on the same frozen inputs plus public archives available at each lock. Only filed
-  forecasts count.
+- **Backtest rankings are hypothetical.** `arena evaluate` simulates forecasts on frozen inputs
+  plus public archives available at each lock. These scores do not replace Marina's accepted
+  live forecasts. Only forecasts filed before lock count on the official leaderboard.
+
+When checking a leaderboard change, compare the same board, time window, question shapes and
+round IDs. An entrant's mean over a specialist subset is not directly comparable to another
+entrant's mean over every task; use their shared resolved questions for a matched comparison.
+An accepted forecast can remain sealed or await an outcome before it receives a score. Multiple
+accepted versions of a question still produce one scored forecast: the newest on-time version.
+Reconcile that version's distribution or ranking in `arena_submissions` with the public forecast
+and inspect the site's generation time before concluding that a submission was omitted.
+Retrospective replays, unresolved rehearsals and unfiled shadows never update the official score.
 
 ## Enter Marina (one time)
 

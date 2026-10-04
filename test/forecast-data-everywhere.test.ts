@@ -375,6 +375,47 @@ describe("arena research data evidence", () => {
     expect(out.data?.map((r) => r.skipped)).toEqual(["no match", "down"]);
   });
 
+  it("scopes experimental series to the retriever and preserves both vintage cutoffs", async () => {
+    const now = new Date("2026-10-05T00:00:00Z");
+    const seen: Array<{ cutoff: string; ids?: string[] }> = [];
+    const fred: ForecastLookup = {
+      name: "fred",
+      async lookup(_query, cutoff, _now, ctx) {
+        seen.push({ cutoff: cutoff.toISOString(), ids: ctx?.hints?.fred });
+        return {
+          name: "fred",
+          lines: [],
+          sources: [],
+          readings: (ctx?.hints?.fred ?? []).map((series) => ({
+            source: "FRED",
+            series,
+            date: "2026-09-18",
+            value: 3.5,
+            asOf: cutoff.toISOString(),
+          })),
+        };
+      },
+    };
+    const defaultRetriever = withDataLookups(async () => report, [fred], { now: () => now });
+    const experiment = withDataLookups(async () => report, [fred], {
+      now: () => now,
+      hints: () => ({ hints: { fred: ["GASREGW", "ICSA"] }, related: "experimental drivers" }),
+    });
+    const request = brief("civiqs-2026-w41-family-finances", "2026-10-04T14:00:00Z");
+    const out = await experiment(request);
+    expect(seen).toEqual([
+      { cutoff: "2026-10-03T23:59:59.999Z", ids: ["GASREGW", "ICSA"] },
+      { cutoff: "2026-09-19T23:59:59.999Z", ids: ["GASREGW", "ICSA"] },
+    ]);
+    expect(out.report).toContain("experimental drivers");
+    expect(out.data?.[1]?.name).toBe("fred-anchor-vintage");
+    seen.length = 0;
+    await defaultRetriever(request);
+    expect(seen).toEqual([]);
+    await defaultRetriever(brief("civiqs-2026-w41-econ-now"));
+    expect(seen.map((s) => s.ids)).toEqual([["UMCSENT"], ["UMCSENT"]]);
+  });
+
   it("verifies dated FRED changes against its frozen payload without fetching a revised page", async () => {
     const now = new Date("2026-10-03T20:00:00Z");
     let reads = 0;

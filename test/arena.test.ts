@@ -26,7 +26,7 @@ import {
   signingBytes,
   signRequest,
 } from "../src/arena/protocol";
-import { crpsNormal, skill } from "../src/arena/score";
+import { crpsNormal, normalSkillAttribution, skill } from "../src/arena/score";
 import { arenaStatus } from "../src/arena/service";
 import { dueRounds, submitRound, validateForecastBody } from "../src/arena/submit";
 import type { ArenaPoint, ArenaRound } from "../src/arena/types";
@@ -182,6 +182,37 @@ describe("baseline forecaster", () => {
   it("scores like the arena", () => {
     expect(crpsNormal(0, 1, 0)).toBeCloseTo(0.2337, 3);
     expect(skill(1, 2)).toBe(0.5);
+  });
+
+  it("attributes mean and spread changes symmetrically, retaining losses", () => {
+    const control = { mean: 1.2, sd: 1.154 };
+    const candidate = { mean: -0.1, sd: 1.4 };
+    const persistence = crpsNormal(1.1, 1.5, 0);
+    const a = normalSkillAttribution(control, candidate, 0, persistence);
+    const b = normalSkillAttribution(candidate, control, 0, persistence);
+    expect(a.controlSkill).toBeLessThan(0);
+    expect(a.meanContribution).toBeGreaterThan(0);
+    expect(a.spreadContribution).toBeLessThan(0);
+    expect(a.meanContribution + a.spreadContribution).toBeCloseTo(a.improvement, 12);
+    expect(a.meanContribution).toBeCloseTo(-b.meanContribution, 12);
+    expect(a.spreadContribution).toBeCloseTo(-b.spreadContribution, 12);
+    expect(a.meanOnlySkill).toBeCloseTo(skill(crpsNormal(-0.1, 1.154, 0), persistence), 12);
+    expect(a.spreadOnlySkill).toBeCloseTo(skill(crpsNormal(1.2, 1.4, 0), persistence), 12);
+    const unchanged = normalSkillAttribution(control, control, 0, persistence);
+    expect(unchanged.meanContribution).toBe(0);
+    expect(unchanged.spreadContribution).toBe(0);
+    const spreadOnly = normalSkillAttribution(control, { ...control, sd: 0.8 }, 0, persistence);
+    expect(spreadOnly.meanContribution).toBe(0);
+    expect(spreadOnly.spreadContribution).toBe(spreadOnly.improvement);
+  });
+
+  it("refuses invalid attribution inputs instead of inventing evidence", () => {
+    const f = { mean: 0, sd: 1 };
+    for (const invalid of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => normalSkillAttribution(f, f, 0, invalid)).toThrow("attribution requires");
+      expect(() => normalSkillAttribution(f, { ...f, sd: invalid }, 0, 1)).toThrow();
+    }
+    expect(() => normalSkillAttribution(f, f, Number.NaN, 1)).toThrow();
   });
 });
 

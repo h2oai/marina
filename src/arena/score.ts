@@ -3,6 +3,8 @@
 
 /** The arena's scoring rules, as far as Marina needs them to choose and to learn. Pure. */
 
+import type { Distribution } from "./types";
+
 const SQRT_2PI = Math.sqrt(2 * Math.PI);
 const SQRT_PI = Math.sqrt(Math.PI);
 
@@ -30,4 +32,42 @@ export function crpsNormal(mean: number, sd: number, outcome: number): number {
 /** The arena's skill: 1 − CRPS / persistence CRPS (0 = persistence, 1 = perfect). */
 export function skill(entrantCrps: number, persistenceCrps: number): number {
   return persistenceCrps === 0 ? 0 : 1 - entrantCrps / persistenceCrps;
+}
+
+/**
+ * Explain a resolved scalar comparison by swapping mean and spread separately.
+ * Average both swap orders (two-feature Shapley attribution), so the two
+ * contributions sum to candidate minus control skill without depending on
+ * which parameter was changed first. Values are skill fractions, not points.
+ * This is retrospective error attribution, not a forecast or promotion rule.
+ */
+export function normalSkillAttribution(
+  control: Distribution,
+  candidate: Distribution,
+  outcome: number,
+  persistenceCrps: number,
+) {
+  if (
+    ![control.mean, control.sd, candidate.mean, candidate.sd, outcome, persistenceCrps].every(
+      Number.isFinite,
+    ) ||
+    control.sd <= 0 ||
+    candidate.sd <= 0 ||
+    persistenceCrps <= 0
+  )
+    throw new Error("attribution requires finite normal forecasts and positive persistence CRPS");
+  const score = (mean: number, sd: number) => skill(crpsNormal(mean, sd, outcome), persistenceCrps);
+  const controlSkill = score(control.mean, control.sd);
+  const candidateSkill = score(candidate.mean, candidate.sd);
+  const meanOnlySkill = score(candidate.mean, control.sd);
+  const spreadOnlySkill = score(control.mean, candidate.sd);
+  return {
+    controlSkill,
+    candidateSkill,
+    meanOnlySkill,
+    spreadOnlySkill,
+    meanContribution: (meanOnlySkill - controlSkill + candidateSkill - spreadOnlySkill) / 2,
+    spreadContribution: (spreadOnlySkill - controlSkill + candidateSkill - meanOnlySkill) / 2,
+    improvement: candidateSkill - controlSkill,
+  };
 }

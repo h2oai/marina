@@ -140,9 +140,9 @@ export function familyOf(round: ArenaRound): keyof typeof PLAYBOOKS {
 
 /**
  * `opts.nowcast` — the base forecast's daily reading for this series (the
- * Civiqs nowcast, `RoundForecast.nowcast[round.series]`): when it is newer than
- * the last published value, the search window starts at ITS date, not the
- * week-old history point.
+ * Civiqs nowcast, `RoundForecast.nowcast[round.series]`): when it is at least
+ * as recent as the last published value, use the reading selected by the
+ * forecaster, including same-day revisions. Older readings never replace it.
  */
 export function buildResearchBrief(
   round: ArenaRound,
@@ -163,7 +163,7 @@ export function buildResearchBrief(
   const obsDay = lock.answer_obs?.at(-1)?.date;
   if (!last && !obsDay && !opts.nowcast) return noHistoryBrief(round, opts.now ?? Date.now());
   const nowcast =
-    opts.nowcast && (!last || opts.nowcast.date > last.date) ? opts.nowcast : undefined;
+    opts.nowcast && (!last || opts.nowcast.date >= last.date) ? opts.nowcast : undefined;
   const since = nowcast?.date ?? last?.date ?? obsDay ?? round.lock_at.slice(0, 10);
   const lastLine = nowcast
     ? `The benchmark is a smoothed daily tracker; its reading on ${nowcast.date} is ${nowcast.value} ${round.unit ?? ""} and is ALREADY known — the question is where it stands on the release day.`.trim()
@@ -228,7 +228,7 @@ const MAX_ITEM_QUERIES = 8;
  * The brief for a profile round (a Trends basket, subgroup profiles): the
  * family's playbook, asked ITEM BY ITEM for the round's cells, bounded to the
  * window since the latest known value of any cell (a cell's nowcast reading
- * where it is newer than its history). For an attention basket every item
+ * where it is at least as recent as its history). For an attention basket every item
  * also gets its own search query, since scheduled events — launches,
  * premieres, earnings, finals — move one item's share of the basket. Undefined
  * when no cell has any value (the no-history brief then applies).
@@ -244,7 +244,7 @@ function profileBrief(
   for (const c of cells) {
     const last = lock.answer_history_by_cell?.[c]?.at(-1);
     const n = nowcasts[c];
-    const pick = n && (!last || n.date > last.date) ? n : last;
+    const pick = n && (!last || n.date >= last.date) ? n : last;
     if (pick) latest[c] = { date: pick.date, value: pick.value };
   }
   const dates = Object.values(latest).map((p) => p.date);

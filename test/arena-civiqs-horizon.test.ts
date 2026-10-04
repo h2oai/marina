@@ -112,7 +112,10 @@ function snapshot(endDate: string, fetchedAt: string, bump = 0) {
   return { choices, end_date: endDate, fetched_at: fetchedAt, points };
 }
 
-function archive(): { data: ArenaData; requested: string[] } {
+function archive(transform?: (snap: ReturnType<typeof snapshot>) => void): {
+  data: ArenaData;
+  requested: string[];
+} {
   const files: Record<string, unknown> = {
     "questions/season0.json": { rounds: [round] },
     [`locks/${round.round_id}.json`]: lock,
@@ -132,6 +135,9 @@ function archive(): { data: ArenaData; requested: string[] } {
     "2026-10-01T10:00:00Z",
     +20,
   );
+  for (const [path, value] of Object.entries(files)) {
+    if (path.startsWith("civiqs/")) transform?.(value as ReturnType<typeof snapshot>);
+  }
   const requested: string[] = [];
   const data = new ArenaData("https://example.test", async (url) => {
     const path = url.replace("https://example.test/", "");
@@ -148,6 +154,44 @@ const history = Array.from({ length: 20 }, (_, i) => ({
 const lock: ArenaLock = { round_id: round.round_id, answer_history: history };
 
 describe("horizon nowcast on the archive", () => {
+  it("retains the carry forecast when missing or duplicate dates break daily spacing", async () => {
+    const corruptions: Array<(snap: ReturnType<typeof snapshot>) => void> = [
+      (snap) => {
+        snap.points.splice(-3, 1);
+      },
+      (snap) => {
+        snap.points.at(-3)![0] = snap.points.at(-4)![0];
+      },
+      (snap) => {
+        snap.points.at(-3)![0] = "invalid";
+      },
+    ];
+    for (const corrupt of corruptions) {
+      const { data } = archive(corrupt);
+      expect(await horizonNowcast(data, round, "both", 1)).toBeUndefined();
+      expect(
+        await weeklyAnchorNowcast(data, round, { date: "2026-09-27", value: -40 }, 1),
+      ).toBeUndefined();
+      const off = await nowcastForecaster(data, forecastRound, { horizon: { mode: "off" } })(
+        round,
+        lock,
+      );
+      const on = await nowcastForecaster(data, forecastRound, { horizon: { mode: "both" } })(
+        round,
+        lock,
+      );
+      expect(on.topline).toEqual(off.topline);
+      expect(on.origins?.[round.series!]?.projection).toBeUndefined();
+    }
+  });
+
+  it("rejects invalid damping and release dates before producing a projection", async () => {
+    const { data } = archive();
+    for (const phi of [0, -1, 2, Number.NaN])
+      expect(await horizonNowcast(data, round, "both", phi)).toBeUndefined();
+    expect(await horizonNowcast(data, { ...round, release_at: "invalid" }, "both")).toBeUndefined();
+  });
+
   it("projects a newer weekly anchor without importing the daily snapshot's revised level", async () => {
     const { data } = archive();
     const weekly = { date: "2026-09-27", value: -40 };
