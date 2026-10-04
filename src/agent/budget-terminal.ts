@@ -16,7 +16,7 @@
  *
  * A forced answer is a labelled best effort, not a failure and not a free
  * answer: callers record `BudgetForced` in the trace and in benchmark items
- * (`budget_forced`, migration 155) so it is never counted as either silently.
+ * (`budget_forced`, migration 157) so it is never counted as either silently.
  *
  * Pure: no I/O. Each loop owns how it injects the note and the final request.
  */
