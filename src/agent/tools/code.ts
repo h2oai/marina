@@ -54,10 +54,15 @@ const codeWriteSchema = Type.Object({
   content: Type.String({ description: "For write: full file content, including newlines" }),
 });
 
+// The resident `marina_code` tool keeps these compact (prompt budget); the
+// typed `marina_code_verify` wrapper carries the full enums. Both validate in
+// verificationCommand.
 const codeSchema = Type.Object({
   verificationMode,
-  dependencies,
-  scope,
+  dependencies: Type.Optional(
+    Type.String({ description: "verify: check (default), none, auto or a manager" }),
+  ),
+  scope: Type.Optional(Type.String({ description: "verify: auto, changed, full, changed+full" })),
   action: Type.Union(
     [
       Type.Literal("status"),
