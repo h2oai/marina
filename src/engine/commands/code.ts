@@ -10,6 +10,10 @@
 
 import { CodeSessionDriver } from "../../coding/code-session-driver";
 import { codingRunMetadata } from "../../coding/task-run";
+import {
+  resolveVerificationOptions,
+  type VerificationOptions,
+} from "../../coding/verification-plan";
 import { error as fmtError } from "../../net/ansi";
 import { codingRunContext } from "../../persistence/coding-run-context";
 import type { MarinaDB } from "../../persistence/database";
@@ -203,6 +207,8 @@ const codingNoteHandler: SubcommandHandler = async (c) => {
 const stopHandler: SubcommandHandler = async (c) => {
   await stopSessionAgent(c.ctx, c.eid, c.entity, c.deps);
 };
+const VERIFY_USAGE =
+  "code verify [start|candidate] [dependencies:none|check|auto|<manager>] [scope:auto|changed|full|changed+full] [typecheck:auto|off] [budget:<duration>]";
 
 /**
  * Subcommand dispatch table, keyed by the profile-canonical subcommand name.
@@ -334,28 +340,35 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
     await runWorkspaceCommand(c.ctx, c.eid, c.entity, c.deps, c.args);
   },
   verify: async (c) => {
-    const parsed = parseModifiers(c.args, { dependencies: { type: "string" } });
+    const parsed = parseModifiers(c.args, {
+      dependencies: { type: "string" },
+      scope: { type: "string" },
+      typecheck: { type: "string" },
+      budget: { type: "string" },
+    });
     const mode = parsed.rest[0]?.toLowerCase();
-    const dependencies = parsed.values.dependencies;
     if (
       parsed.errors.length ||
       parsed.rest.length > 1 ||
-      (dependencies !== undefined && (dependencies !== "bun" || mode !== "candidate"))
+      (mode !== undefined && mode !== "start" && mode !== "candidate")
     )
-      throw new Error("Usage: code verify [start|candidate [dependencies:bun]]");
+      throw new Error(`Usage: ${VERIFY_USAGE}`);
+    let options: VerificationOptions;
+    try {
+      options = resolveVerificationOptions({
+        dependencies: parsed.values.dependencies as string | undefined,
+        scope: parsed.values.scope as string | undefined,
+        typecheck: parsed.values.typecheck as string | undefined,
+        budget: parsed.values.budget as string | undefined,
+      });
+    } catch (error) {
+      throw new Error(`${getErrorMessage(error)}\nUsage: ${VERIFY_USAGE}`);
+    }
     if (mode === "start" || mode === "candidate") {
-      await startVerification(
-        c.ctx,
-        c.eid,
-        c.entity,
-        c.deps,
-        mode === "candidate",
-        dependencies === "bun" ? "bun" : undefined,
-      );
+      await startVerification(c.ctx, c.eid, c.entity, c.deps, mode === "candidate", options);
       return;
     }
-    if (c.args.length) throw new Error("Usage: code verify [start|candidate [dependencies:bun]]");
-    await verifyWorkspace(c.ctx, c.eid, c.entity, c.deps);
+    await verifyWorkspace(c.ctx, c.eid, c.entity, c.deps, options);
   },
   test: namedRunHandler,
   lint: namedRunHandler,
@@ -580,7 +593,8 @@ export function codeCommand(deps: CodeDeps): CommandDef {
       "code verify",
       "code verify start",
       "code verify candidate",
-      "code verify candidate dependencies:bun",
+      "code verify candidate dependencies:auto",
+      "code verify scope:changed+full budget:10m",
       "code workspace",
       "code workspace discover",
       "code workspace list",

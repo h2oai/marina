@@ -18,7 +18,12 @@
  * before every call; the server's own daily cap trips it too. Queries it stops
  * are NOT RUN — left out of scoring, never counted wrong — and a stopped
  * replicate is reported incomplete and not filed. `--resume` reuses the queries
- * already answered and judged in the output directory.
+ * already answered and judged in the output directory — never an errored run or
+ * a failed judge call, which run again. Each replicate directory records its
+ * configuration (`config.json`: models, judge, k, turn and size caps, seed,
+ * offset, the query slice); `--resume` refuses a directory recorded under
+ * another one. A replicate already filed (`filed.json`) is not run or filed
+ * again, and new replicates join the arm's recorded group (`group.json`).
  *
  * `--model` is any id the Marina at `--endpoint` serves: a passthru model
  * (`openrouter/openai/gpt-6-luna`), the verification formation
@@ -32,18 +37,24 @@
  * SUBMITTED: submission is a manual, operator-approved step.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { workerPool } from "../benchmarks/browsecomp-plus/corpus-pool";
 import { formationLabel, parseFormation } from "../benchmarks/browsecomp-plus/formations";
 import { parseQrels } from "../benchmarks/browsecomp-plus/official";
 import {
+  type ArmConfig,
   loadQueries,
+  prepareReplicateDir,
+  readFiled,
+  resolveArmGroup,
   runArm,
   sampleQueries,
   submissionSummary,
   toBenchmarkResult,
+  writeFiled,
 } from "../benchmarks/browsecomp-plus/run";
 import { fileToLedger } from "../benchmarks/ledger-file";
 import { comparePooled, seedFromIds } from "../benchmarks/replicate-stats";
@@ -116,13 +127,40 @@ async function run(): Promise<number> {
   const label =
     values.label ??
     (formation.kind === "single" ? values.model : `${formationLabel(formation)}:${values.model}`);
-  const group =
-    values.group ??
-    (reps > 1 ? defaultReplicateGroup(`browsecomp-plus:${label}`, Date.now()) : undefined);
-  if (group && !validGroupKey(group)) throw new Error(`invalid --group ${group}`);
+  if (values.group && !validGroupKey(values.group))
+    throw new Error(`invalid --group ${values.group}`);
   const out =
     values.out ?? join("data", "browsecomp-plus", label.replace(/[^A-Za-z0-9._-]+/g, "_"));
   const queries = sampleQueries(loadQueries(values.queries), limit, seed, offset);
+  const repDir = (rep: number) => (reps > 1 ? join(out, `rep${rep}`) : out);
+  // A resumed arm keeps its group, so new replicates join the ones already filed.
+  const group = resolveArmGroup(out, {
+    ...(values.group ? { explicit: values.group } : {}),
+    resume: values.resume === true,
+    replicateDirs: Array.from({ length: reps }, (_, i) => repDir(i + 1)),
+    fresh: () =>
+      reps > 1 ? defaultReplicateGroup(`browsecomp-plus:${label}`, Date.now()) : undefined,
+  });
+  const config: ArmConfig = {
+    model: values.model,
+    formation: formationLabel(formation),
+    leadModel: lead ?? null,
+    leadTurns: int("lead-turns", values["lead-turns"]),
+    judgeModel: values["judge-model"]!,
+    corpus: values.corpus!,
+    k: int("k", values.k),
+    snippetChars: int("snippet-chars", values["snippet-chars"], 0),
+    docChars: int("doc-chars", values["doc-chars"]),
+    maxTurns: int("max-turns", values["max-turns"]),
+    maxTokens: values["max-tokens"] ? int("max-tokens", values["max-tokens"]) : null,
+    seed,
+    offset,
+    limit: limit ?? null,
+    queriesHash: createHash("sha256")
+      .update(queries.map((q) => q.query_id).join("\n"))
+      .digest("hex")
+      .slice(0, 16),
+  };
   const qrels = values.qrels ? parseQrels(readFileSync(values.qrels, "utf8")) : undefined;
   const goldQrels = values["gold-qrels"]
     ? parseQrels(readFileSync(values["gold-qrels"], "utf8"))
@@ -140,8 +178,28 @@ async function run(): Promise<number> {
   );
   const results: BenchmarkResult[] = [];
   for (let rep = 1; rep <= reps; rep++) {
-    const dir = reps > 1 ? join(out, `rep${rep}`) : out;
-    mkdirSync(dir, { recursive: true });
+    const dir = repDir(rep);
+    const resultPath = join(dir, "result.json");
+    // A replicate already filed is final: re-running it would file a second,
+    // different copy of the same replicate. It is pooled from its result file.
+    const filedBefore = values.resume ? readFiled(dir) : undefined;
+    if (filedBefore && existsSync(resultPath)) {
+      results.push(JSON.parse(readFileSync(resultPath, "utf8")) as BenchmarkResult);
+      console.log(
+        `rep ${rep}: already filed as ${filedBefore.runId} (group ${filedBefore.group ?? "auto"}) — not run or filed again`,
+      );
+      continue;
+    }
+    const { adopted } = prepareReplicateDir(dir, config, values.resume === true);
+    if (adopted) {
+      console.error(
+        `  rep ${rep}: ${dir} predates config.json — resuming under the current configuration, which is now recorded`,
+      );
+    }
+    const prior =
+      values.resume && existsSync(resultPath)
+        ? (JSON.parse(readFileSync(resultPath, "utf8")) as BenchmarkResult)
+        : undefined;
     const arm = await runArm(queries, {
       model: values.model,
       endpoint,
@@ -198,6 +256,7 @@ async function run(): Promise<number> {
           gold_recall_pct: goldRecall,
           incomplete: arm.items.filter((i) => i.run.record.status !== "completed").length,
           ...(arm.resumed.length ? { resumed: arm.resumed.length } : {}),
+          ...(arm.retried.length ? { retried_errors: arm.retried.length } : {}),
           ...(arm.stoppedBy ? { stopped_by: arm.stoppedBy, not_run: arm.notRun.length } : {}),
         },
       },
@@ -211,10 +270,21 @@ async function run(): Promise<number> {
       limit,
       target,
     });
-    writeFileSync(join(dir, "result.json"), JSON.stringify(result, null, 1));
+    // Fully resumed (nothing re-run): the same run as before, with the same
+    // timestamp and duration, so filing it again is the same document.
+    if (prior && arm.resumed.length === arm.items.length && arm.items.length > 0) {
+      result.timestamp = prior.timestamp;
+      result.duration_ms = prior.duration_ms;
+    }
+    writeFileSync(resultPath, JSON.stringify(result, null, 1));
     const n = arm.items.length;
     const k = arm.items.filter((i) => i.eval.correct).length;
     const ci = wilsonInterval(k, n);
+    if (arm.retried.length) {
+      console.log(
+        `  rep ${rep}: re-ran ${arm.retried.length} errored quer(ies) from the earlier run`,
+      );
+    }
     console.log(
       `rep ${rep}: accuracy ${summary["Accuracy (%)"]}% [${(ci.low * 100).toFixed(1)}, ${(ci.high * 100).toFixed(1)}] · recall ${summary["Recall (%)"] ?? "n/a"}% (gold ${goldRecall ?? "n/a"}%) · search calls ${summary["Search Calls"]} · cost $${arm.costUsd.toFixed(2)} (+ judge $${arm.judgeCostUsd.toFixed(2)}) → ${dir}`,
     );
@@ -236,9 +306,12 @@ async function run(): Promise<number> {
         costUsd: arm.costUsd,
         ...(group ? { replicateGroup: group } : {}),
       });
+      if (filed.ok && filed.runId) {
+        writeFiled(dir, { runId: filed.runId, group: filed.replicateGroup ?? group ?? null });
+      }
       console.log(
         filed.ok
-          ? `  filed run ${filed.runId} (group ${filed.replicateGroup ?? "auto"})`
+          ? `  ${filed.created === false ? "already recorded as" : "filed run"} ${filed.runId} (group ${filed.replicateGroup ?? "auto"})`
           : `  ledger filing failed: ${filed.error}`,
       );
     }

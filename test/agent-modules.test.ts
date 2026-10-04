@@ -1520,12 +1520,21 @@ describe("tool profiles", () => {
       "code verify candidate dependencies:bun",
       "code verify candidate dependencies:bun",
     ]);
+    await typedVerify.execute("typed-scope", {
+      verificationMode: "start",
+      dependencies: "check",
+      scope: "changed+full",
+    });
+    expect(commands.at(-1)).toBe("code verify start dependencies:check scope:changed+full");
     await expect(
       typedVerify.execute("invalid-preparation", {
         verificationMode: "start",
-        dependencies: "bun",
+        dependencies: "brew; rm",
       }),
-    ).rejects.toThrow("dependencies must be bun with verificationMode candidate");
+    ).rejects.toThrow("dependencies must be one of");
+    await expect(typedVerify.execute("invalid-scope", { scope: "everything" })).rejects.toThrow(
+      "scope must be one of",
+    );
   });
 
   it("resident coding tools expose edit/write and share safe command composition with deferred wrappers", async () => {

@@ -572,7 +572,7 @@ export async function doctor(
         ]
       : []),
     `Candidate checks: ${candidateReason}`,
-    "Candidate dependencies: not installed automatically. Request code verify candidate dependencies:bun for a captured Bun lockfile; lifecycle scripts remain disabled.",
+    "Dependencies: verification probes the environment for the detected project type and reports not_run when it is not ready. dependencies:auto installs locked dependencies only where isolated (a candidate's captured Bun lockfile without lifecycle scripts, or a container runner with sync:mount and network:on).",
     `Local policy: host-safe allowlist`,
     `Flywheel: ${deps.flywheel ? (flywheel ? `${flywheel.state} (${flywheel.image})` : "configured; no workspace") : "not configured; local Code Mode available"}`,
     `Next: ${nextSteps.join(" | ")}`,

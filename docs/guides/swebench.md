@@ -70,13 +70,28 @@ bun run swebench file --arm single --replicate 1 --db marina.db
   implementer, a reviewer (usually another vendor) reads the change against the issue. It edits only
   when the change is wrong or incomplete.
 - **Resuming:** `run` skips instances already recorded in the run's `attempts.jsonl`, so an
-  interrupted run picks up where it stopped.
+  interrupted run picks up where it stopped. It records the arm, mode and subset (`--n`/`--seed`
+  or `--ids`) in `arm.json` and refuses to continue a replicate under another configuration.
+- **One subset per run:** `run` and `file` read the ids `subset` wrote, so give every step the
+  same `--n` and `--seed` (or `--ids`); `file` records the seed from `arm.json`. `bun run swebench
+  export` writes the task fields with `SWEBENCH_PYTHON` when `<data>/verified.jsonl` is missing.
+- **Re-filing is a no-op:** the ledger result is stamped with the last attempt's write, never the
+  filing time, and every replicate of an arm records the same target (no replicate number or path).
 - **Location:** everything is written under `--data` (default `~/.local/share/marina-swebench/data`).
 - **`--env-image` (opt-in):** the agent's commands run inside the instance's official environment
   image (`swebench/sweb.eval.x86_64.<id>`, pulled or built beforehand) through Marina's general
   container runner, in patch sync at `/testbed` with the `testbed` conda env and no network. The
   agent can then run the project's existing tests while it works (a full agent run instead of
   agentless). Without the flag, runs stay agentless.
+- **In-loop verification:** with `--env-image`, `code verify` and `code test` run in that same
+  image, including candidate checks. Preparation follows the detected project type: for a Python
+  repository it probes the image's environment (the instance image already has it) and never runs a
+  JavaScript installer, even when the repository carries a `package.json` or the agent asks for
+  `dependencies:bun`. Tests relevant to the change run first. Each verification ends `passed`,
+  `failed`, `not_run` (nothing could be checked, with the reason) or `error` (the runtime failed).
+  Each attempt in `attempts.jsonl` carries these counts (`verification`), and the filed ledger result
+  sums them in `metadata.verification`. They describe the agent's process only: grading is the
+  harness's alone, and a `not_run` is never counted as a failed or passed check.
 
 ## SWE-bench Pro
 
@@ -140,7 +155,9 @@ netns = "pasta"
   `--env-image`, Marina's container runner (`docs/guides/coding.md` → "Run commands in a container
   image") executes the agent's commands in the instance's environment image; the images must already
   be present (the harness builds or pulls them), and each image needs a supported test runner shape
-  (`python -m pytest`, `python tests/runtests.py`, …) to be useful.
+  (`python -m pytest`, `python tests/runtests.py`, `go test`, `npm run test`, …) to be useful.
+  Patch sync starts every command from the image, so verification never installs dependencies
+  there: an image without the project environment yields `not_run`, not a failure.
 - **No submission.** Nothing is submitted anywhere. A leaderboard submission (a pull request to
   `SWE-bench/experiments` with predictions, logs and trajectories) is a separate act that its owner
   approves.

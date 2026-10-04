@@ -29,6 +29,7 @@ import {
 import { validGroupKey } from "../../benchmarks/replicates";
 import type { BenchmarkItemRow, BenchmarkRunRow } from "../persistence/db-benchmarks";
 import type { BenchmarksStore } from "../persistence/interfaces/benchmarks-store";
+import { canonicalJson } from "./benchmark-ledger";
 
 /** Fewest replicates of a challenger a promotion accepts (`MARINA_PROMOTION_MIN_REPLICATES`). */
 export const DEFAULT_PROMOTION_MIN_REPLICATES = 2;
@@ -44,19 +45,6 @@ export function promotionMinReplicates(env: NodeJS.ProcessEnv = process.env): nu
 /** A valid explicit group key (labels, not free text) — the harness applies the same rule. */
 export function validReplicateGroup(group: string): boolean {
   return validGroupKey(group);
-}
-
-/** JSON with object keys sorted, so equal targets hash equally whatever their key order. */
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  if (value && typeof value === "object") {
-    const o = value as Record<string, unknown>;
-    return `{${Object.keys(o)
-      .sort()
-      .map((k) => `${JSON.stringify(k)}:${canonicalJson(o[k])}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value ?? null);
 }
 
 /**
@@ -113,6 +101,66 @@ export function groupInconsistencies(runs: readonly BenchmarkRunRow[]): string[]
   if (distinct((r) => r.slice_hash) > 1) out.push("replicates answered different item slices");
   if (distinct((r) => r.judge) > 1) out.push("replicates were graded by different judges");
   return out;
+}
+
+/** A run's target in canonical form (key order ignored), or null when it records none. */
+function canonicalTarget(run: BenchmarkRunRow): string | null {
+  if (!run.target_json) return null;
+  try {
+    return canonicalJson(JSON.parse(run.target_json) as unknown);
+  } catch {
+    // allow-empty-catch: a non-JSON target compares as the raw string
+    return run.target_json;
+  }
+}
+
+/**
+ * Why `other` is not a replicate of `base` — a different benchmark, target,
+ * item slice or judge — or an empty list when it is. A run that records no
+ * target or slice cannot be shown to be the same configuration, so it never
+ * qualifies as another run's replicate.
+ */
+export function configurationMismatches(base: BenchmarkRunRow, other: BenchmarkRunRow): string[] {
+  if (other.id === base.id) return [];
+  const out: string[] = [];
+  if (other.benchmark !== base.benchmark) out.push("benchmark");
+  const a = canonicalTarget(base);
+  const b = canonicalTarget(other);
+  if (a === null || b === null || a !== b) out.push("target");
+  if (!base.slice_hash || !other.slice_hash || base.slice_hash !== other.slice_hash) {
+    out.push("slice");
+  }
+  if ((base.judge ?? "") !== (other.judge ?? "")) out.push("judge");
+  return out;
+}
+
+/**
+ * The members of a loaded group that are NOT the same configuration as `base`,
+ * with what differs — the runs a promotion refuses to pool.
+ */
+export function mismatchedReplicates(
+  g: LoadedGroup,
+  base: BenchmarkRunRow,
+): { run: BenchmarkRunRow; differs: string[] }[] {
+  return g.runs
+    .map((run) => ({ run, differs: configurationMismatches(base, run) }))
+    .filter((m) => m.differs.length > 0);
+}
+
+/**
+ * Restrict a loaded group to the runs that are the same configuration as
+ * `base` (benchmark, target, slice, judge), so an unrelated run filed under
+ * the same label can neither pad nor dilute the pool.
+ */
+export function restrictToConfiguration(g: LoadedGroup, base: BenchmarkRunRow): LoadedGroup {
+  const keep = g.runs.map((run) => configurationMismatches(base, run).length === 0);
+  const runs = g.runs.filter((_, i) => keep[i]);
+  return {
+    group: g.group,
+    runs,
+    replicates: g.replicates.filter((_, i) => keep[i]),
+    warnings: groupInconsistencies(runs),
+  };
 }
 
 export interface LoadedGroup {

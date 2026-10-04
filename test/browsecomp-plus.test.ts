@@ -9,7 +9,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -41,7 +41,16 @@ import {
   retrievedDocids,
   summarize,
 } from "../benchmarks/browsecomp-plus/official";
-import { runArm, sampleQueries, toBenchmarkResult } from "../benchmarks/browsecomp-plus/run";
+import {
+  type ArmConfig,
+  prepareReplicateDir,
+  readFiled,
+  resolveArmGroup,
+  runArm,
+  sampleQueries,
+  toBenchmarkResult,
+  writeFiled,
+} from "../benchmarks/browsecomp-plus/run";
 import { ledgerFileBody } from "../benchmarks/ledger-file";
 import {
   BudgetExhausted,
@@ -607,5 +616,134 @@ describe("spend guard", () => {
       ["2", true],
     ]);
     expect(arm.costUsd).toBeCloseTo(0.02, 6);
+  });
+
+  it("resume re-runs errored and judge-errored queries, and reuses genuine outcomes", async () => {
+    const out = join(dir, "resume-errors");
+    let outage = true;
+    let agentCalls = 0;
+    const fetchFn = (async (_url: string, init: RequestInit) => {
+      const req = JSON.parse(String(init.body)) as Record<string, unknown>;
+      const judging = req.model === "judge/qwen";
+      if (!judging) agentCalls++;
+      const prompt = JSON.stringify(req.messages);
+      // During the outage query 1's agent call and query 2's judge call fail.
+      if (
+        outage &&
+        ((!judging && prompt.includes("query one")) || (judging && prompt.includes("query two")))
+      ) {
+        return new Response("upstream down", { status: 502 });
+      }
+      const message = judging
+        ? { role: "assistant", content: "extracted_final_answer: Galway\ncorrect: yes" }
+        : { role: "assistant", content: "Exact Answer: Galway\nConfidence: 80%" };
+      return new Response(JSON.stringify({ choices: [{ message }] }), {
+        status: 200,
+        headers: { "x-marina-cost-usd": "0.01" },
+      });
+    }) as unknown as typeof fetch;
+    const endpoint = { baseUrl: "http://m", fetch: fetchFn };
+    const queries = [
+      { query_id: "1", query: "query one", answer: "Galway" },
+      { query_id: "2", query: "query two", answer: "Galway" },
+      { query_id: "3", query: "query three", answer: "Galway" },
+    ];
+    const base = {
+      model: "openrouter/x",
+      endpoint,
+      agent: opts,
+      judge: { endpoint, model: "judge/qwen", timeoutMs: 5000 },
+      concurrency: 1,
+      outDir: out,
+    };
+    const first = await runArm(queries, base);
+    expect(first.items.map((i) => [i.query.query_id, i.eval.correct])).toEqual([
+      ["1", false],
+      ["2", false],
+      ["3", true],
+    ]);
+    outage = false;
+    const callsBefore = agentCalls;
+    const again = await runArm(queries, { ...base, resume: true });
+    // Only query 3 is reused; the run error and the judge error are run again.
+    expect(again.resumed).toEqual(["3"]);
+    expect(again.retried.sort()).toEqual(["1", "2"]);
+    expect(agentCalls - callsBefore).toBe(2);
+    expect(again.items.map((i) => i.eval.correct)).toEqual([true, true, true]);
+  });
+
+  const config = (over: Partial<ArmConfig> = {}): ArmConfig => ({
+    model: "openrouter/x",
+    formation: "single",
+    leadModel: null,
+    leadTurns: 12,
+    judgeModel: "judge/qwen",
+    corpus: "browsecomp-plus",
+    k: 5,
+    snippetChars: 512,
+    docChars: 20000,
+    maxTurns: 30,
+    maxTokens: null,
+    seed: 1,
+    offset: 0,
+    limit: 10,
+    queriesHash: "abc",
+    ...over,
+  });
+
+  it("refuses to resume a replicate under another configuration", () => {
+    const rep = join(dir, "cfg", "rep1");
+    expect(prepareReplicateDir(rep, config(), false).adopted).toBe(false);
+    expect(prepareReplicateDir(rep, config(), true).adopted).toBe(false);
+    for (const change of [
+      { judgeModel: "judge/other" },
+      { k: 10 },
+      { maxTurns: 12 },
+      { seed: 2 },
+      { queriesHash: "def" },
+    ] satisfies Partial<ArmConfig>[]) {
+      expect(() => prepareReplicateDir(rep, config(change), true)).toThrow(
+        `different configuration (${Object.keys(change)[0]})`,
+      );
+    }
+    // Without --resume the replicate starts over and records the new configuration;
+    // an earlier filing marker no longer describes it.
+    writeFiled(rep, { runId: "bench_old", group: "g" });
+    prepareReplicateDir(rep, config({ k: 10 }), false);
+    expect(readFiled(rep)).toBeUndefined();
+    expect(() => prepareReplicateDir(rep, config({ k: 10 }), true)).not.toThrow();
+  });
+
+  it("adopts a replicate directory from before the configuration was recorded", () => {
+    const rep = join(dir, "legacy", "rep1");
+    mkdirSync(join(rep, "runs"), { recursive: true });
+    expect(prepareReplicateDir(rep, config(), true).adopted).toBe(true);
+    expect(() => prepareReplicateDir(rep, config({ k: 3 }), true)).toThrow("different");
+  });
+
+  it("a resumed arm keeps its replicate group, so new replicates join the filed ones", () => {
+    const out = join(dir, "grouped");
+    const reps = [join(out, "rep1"), join(out, "rep2")];
+    let fresh = 0;
+    const next = () => `rep:g:${++fresh}`;
+    expect(resolveArmGroup(out, { resume: false, replicateDirs: reps, fresh: next })).toBe(
+      "rep:g:1",
+    );
+    // An interrupted run resumed later files rep 2 into the SAME group.
+    expect(resolveArmGroup(out, { resume: true, replicateDirs: reps, fresh: next })).toBe(
+      "rep:g:1",
+    );
+    expect(() =>
+      resolveArmGroup(out, { explicit: "other", resume: true, replicateDirs: reps, fresh: next }),
+    ).toThrow("files into group rep:g:1");
+    // A directory with only a filing marker (no group.json) recovers the group from it.
+    const old = join(dir, "marker-only");
+    const oldReps = [join(old, "rep1")];
+    mkdirSync(oldReps[0]!, { recursive: true });
+    writeFiled(oldReps[0]!, { runId: "bench_1", group: "rep:old:1" });
+    expect(readFiled(oldReps[0]!)).toEqual({ runId: "bench_1", group: "rep:old:1" });
+    expect(resolveArmGroup(old, { resume: true, replicateDirs: oldReps, fresh: next })).toBe(
+      "rep:old:1",
+    );
   });
 });

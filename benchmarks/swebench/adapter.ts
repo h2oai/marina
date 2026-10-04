@@ -85,6 +85,16 @@ export interface SweAttempt {
   costUsd: number;
   durationMs: number;
   trajectory: string;
+  /** `code verify` results in the session, by outcome (not_run/error are neither pass nor fail). */
+  verification?: VerificationCounts;
+}
+
+/** Code Mode verification outcomes recorded in one session. */
+export interface VerificationCounts {
+  passed: number;
+  failed: number;
+  not_run: number;
+  error: number;
 }
 
 export function loadInstances(path: string): SweInstance[] {
@@ -437,6 +447,34 @@ export function sessionSpend(dbPath: string): number {
   }
 }
 
+/**
+ * The session's `code verify` outcomes (Code Mode's `verification` artifacts).
+ * Legacy rows store `complete`/`failed`; a check that never ran is `not_run`,
+ * a broken runner `error`. Descriptive only: never a grading signal.
+ */
+export function sessionVerification(dbPath: string): VerificationCounts {
+  const counts: VerificationCounts = { passed: 0, failed: 0, not_run: 0, error: 0 };
+  if (!existsSync(dbPath)) return counts;
+  const { Database } = require("bun:sqlite") as typeof import("bun:sqlite");
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    const rows = db
+      .query(
+        "SELECT status, COUNT(*) AS n FROM coding_artifacts WHERE kind = 'verification' GROUP BY status",
+      )
+      .all() as { status: string; n: number }[];
+    for (const row of rows) {
+      const outcome = row.status === "complete" ? "passed" : row.status;
+      if (outcome in counts) counts[outcome as keyof VerificationCounts] += row.n;
+    }
+  } catch {
+    // allow-empty-catch: an older or partial session DB without coding artifacts recorded none
+  } finally {
+    db.close();
+  }
+  return counts;
+}
+
 export interface AttemptOptions {
   repoRoot: string;
   dataDir: string;
@@ -482,6 +520,7 @@ export async function attemptInstance(
   const patch = await collectPatch(workDir, run);
   const dbPath = join(home, "marina.db");
   const costUsd = sessionSpend(dbPath);
+  const verification = sessionVerification(dbPath);
   const trajectory = join(trajDir, `${inst.instance_id}.md`);
   writeFileSync(
     trajectory,
@@ -519,6 +558,7 @@ export async function attemptInstance(
       costUsd,
       durationMs: Date.now() - started,
       trajectory,
+      verification,
     },
     prediction: {
       instance_id: inst.instance_id,
@@ -540,7 +580,8 @@ export function ledgerResult(
   meta: {
     arm: SweArm;
     replicate: number;
-    subsetSeed: number;
+    /** The subset's seed; null when the ids were given explicitly (`--ids`). */
+    subsetSeed: number | null;
     benchmark?: SweBenchmark;
     /**
      * The instance ids the run was asked to attempt. An id with no recorded
@@ -548,6 +589,12 @@ export function ledgerResult(
      * it is filed as unresolved at zero recorded cost, never silently dropped.
      */
     expectedIds?: string[];
+    /**
+     * When the run finished (epoch ms) — e.g. the last attempt's write. Fixed for
+     * a finished run, so filing it again is the same document; never the time of
+     * filing.
+     */
+    completedAt?: number;
   },
 ) {
   const resolved = new Set(report.resolved_ids ?? []);
@@ -577,6 +624,12 @@ export function ledgerResult(
     usage: { costUsd: a.costUsd },
   }));
   const correct = items.filter((i) => i.correct).length;
+  // In-loop verification outcomes, summed over graded attempts. Descriptive: a
+  // not_run or error never counts as a failed (or passed) verification.
+  const verification: VerificationCounts = { passed: 0, failed: 0, not_run: 0, error: 0 };
+  for (const a of graded)
+    for (const key of Object.keys(verification) as (keyof VerificationCounts)[])
+      verification[key] += a.verification?.[key] ?? 0;
   return {
     config: {
       dataset: SWE_BENCHMARKS[meta.benchmark ?? "verified"].dataset,
@@ -586,7 +639,7 @@ export function ledgerResult(
       seed: meta.subsetSeed,
       replicate: meta.replicate,
     },
-    timestamp: new Date().toISOString(),
+    ...(meta.completedAt !== undefined ? { timestamp: Math.round(meta.completedAt) } : {}),
     duration_ms: graded.reduce((t, a) => t + a.durationMs, 0),
     scores: { overall: items.length ? correct / items.length : 0 },
     metadata: {
@@ -594,6 +647,7 @@ export function ledgerResult(
       judge: SWE_BENCHMARKS[meta.benchmark ?? "verified"].judge,
       excluded,
       missingAttempts,
+      verification,
     },
     items,
   };

@@ -5,6 +5,7 @@ import {
   Activity,
   Check,
   CheckCircle2,
+  CircleMinus,
   Code2,
   Copy,
   FileText,
@@ -14,11 +15,13 @@ import {
   Network,
   Sparkles,
   Terminal,
+  TriangleAlert,
   Users,
   XCircle,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import type { ChatMessage, StoredPerception } from "../hooks/use-chat-state";
+import { verificationLabel } from "../lib/verification-outcome";
 import {
   approvalBadgeTone,
   type CodeMessageData,
@@ -423,19 +426,26 @@ export function createCodeRenderers({
   ) => {
     const type = code.type ?? "artifact";
     const status = code.status ?? (code.exitCode === 0 ? "complete" : undefined);
+    // Checks that never ran (not_run) or whose runner broke (error) are not failures.
+    const unverified = type === "verification" && (status === "not_run" || status === "error");
     const failed =
-      status === "failed" ||
-      code.event?.includes("failed") ||
-      (typeof code.exitCode === "number" && code.exitCode !== 0);
+      !unverified &&
+      (status === "failed" ||
+        code.event?.includes("failed") ||
+        (typeof code.exitCode === "number" && code.exitCode !== 0));
     const Icon =
       type === "lifecycle"
         ? Activity
         : type === "command"
           ? Terminal
           : type === "verification"
-            ? failed
-              ? XCircle
-              : CheckCircle2
+            ? status === "not_run"
+              ? CircleMinus
+              : status === "error"
+                ? TriangleAlert
+                : failed
+                  ? XCircle
+                  : CheckCircle2
             : type === "readiness"
               ? CheckCircle2
               : type === "patch"
@@ -565,9 +575,7 @@ export function createCodeRenderers({
                 {renderSessionTaskChip(cardMeta, code.title)}
                 <p className="mt-1 text-xs text-text-dim">
                   Recorded verification:{" "}
-                  {typeof cardMeta.verification === "string"
-                    ? cardMeta.verification
-                    : "not yet submitted"}
+                  {verificationLabel(cardMeta.verification, "not yet submitted")}
                 </p>
               </div>
             ) : null}

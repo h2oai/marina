@@ -6,6 +6,11 @@ import { useChatState } from "../hooks/use-chat-state";
 import { usePanelSource } from "../hooks/use-panel-source";
 import { openMemory, useWorkspaceState } from "../hooks/use-workspace-state";
 import type { CodingArtifactEntry, TaskDetail } from "../lib/types";
+import {
+  VERIFICATION_TONE_CLASS,
+  verificationLabel,
+  verificationTone,
+} from "../lib/verification-outcome";
 import { PinToCanvas } from "./CanvasReference";
 import { DiffViewer } from "./DiffViewer";
 
@@ -126,8 +131,8 @@ function RunEvidence({
         <p className="flex items-center gap-2 text-xs">
           <CheckCheck size={14} />
           Recorded verification:{" "}
-          <strong className={meta.verification === "passed" ? "text-success" : "text-warning"}>
-            {String(meta.verification ?? "not recorded")}
+          <strong className={VERIFICATION_TONE_CLASS[verificationTone(meta.verification)]}>
+            {verificationLabel(meta.verification)}
           </strong>
         </p>
         <p className="text-xs text-text-dim">

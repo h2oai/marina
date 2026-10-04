@@ -17,6 +17,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { captureGitCandidate } from "./candidate";
 import { prepareCandidateBunDependencies } from "./candidate-dependencies";
 import type { ExecApprover } from "./exec-approver";
+import { preparationStepKind } from "./verification-plan";
 
 const DEFAULT_MAX_READ_BYTES = 64 * 1024;
 const DEFAULT_MAX_LIST_ENTRIES = 200;
@@ -153,7 +154,21 @@ export interface WorkspaceExec {
   run(command: string[], timeoutMs?: number, maxBytes?: number): Promise<WorkspaceRunResult>;
   /** Finite background checks never consult an interactive or ambient exec approver.
    * Revalidate authority inside the root lock, immediately before spawning. */
-  runAllowlisted?(command: string[], beforeSpawn: () => void): Promise<WorkspaceRunResult>;
+  runAllowlisted?(
+    command: string[],
+    beforeSpawn: () => void,
+    timeoutMs?: number,
+  ): Promise<WorkspaceRunResult>;
+  /** Paths changed against HEAD (tracked, staged and untracked), for verification scoping. */
+  changedPaths?(): Promise<string[]>;
+  /**
+   * Run one fixed verification-preparation argv from the closed table in
+   * `verification-plan.ts`: an environment probe anywhere, a dependency install
+   * only where `installsPermitted()`. Never a caller-supplied command.
+   */
+  runPreparationStep?(argv: string[], beforeSpawn?: () => void): Promise<WorkspaceRunResult>;
+  /** Whether a dependency install may run here: an isolated runner that persists it, with network. */
+  installsPermitted?(): boolean;
   runPolicy(): CodeRunPolicy;
   describe(): WorkspaceDescriptor;
   /**
@@ -519,12 +534,63 @@ export class LocalWorkspace implements WorkspaceRuntime {
     return this.runNormalized(normalized, timeoutMs, maxBytes);
   }
 
-  async runAllowlisted(command: string[], beforeSpawn: () => void): Promise<WorkspaceRunResult> {
+  async runAllowlisted(
+    command: string[],
+    beforeSpawn: () => void,
+    timeoutMs = DEFAULT_RUN_TIMEOUT_MS,
+  ): Promise<WorkspaceRunResult> {
     assertHostExecAllowed(this.hostExecForbidden);
     const normalized = normalizeAllowedCodeCommand(this.root, command);
+    return this.runNormalized(normalized, timeoutMs, DEFAULT_MAX_OUTPUT_BYTES, beforeSpawn);
+  }
+
+  async changedPaths(): Promise<string[]> {
+    assertHostExecAllowed(this.hostExecForbidden);
+    const out = new Set<string>();
+    const head = await runCapture(
+      ["git", "diff", "--name-only", "--no-renames", "HEAD", "--"],
+      this.root,
+      256 * 1024,
+      this.hostExecForbidden,
+    );
+    // An unborn branch has no HEAD: fall back to the index.
+    const tracked =
+      head.exitCode === 0
+        ? head
+        : await runCapture(
+            ["git", "diff", "--name-only", "--no-renames", "--cached", "--"],
+            this.root,
+            256 * 1024,
+            this.hostExecForbidden,
+          );
+    if (tracked.exitCode !== 0) throw new Error("git diff --name-only failed.");
+    const untracked = await runCapture(
+      ["git", "ls-files", "--others", "--exclude-standard"],
+      this.root,
+      256 * 1024,
+      this.hostExecForbidden,
+    );
+    for (const line of `${tracked.content}\n${untracked.exitCode === 0 ? untracked.content : ""}`.split(
+      "\n",
+    ))
+      if (line.trim()) out.add(line.trim());
+    return [...out];
+  }
+
+  /** Host workspaces never install dependencies here; only the hardened Bun candidate path does. */
+  installsPermitted(): boolean {
+    return false;
+  }
+
+  async runPreparationStep(argv: string[], beforeSpawn?: () => void): Promise<WorkspaceRunResult> {
+    assertHostExecAllowed(this.hostExecForbidden);
+    const kind = preparationStepKind(argv);
+    if (!kind) throw new Error(`Not a verification preparation step: ${argv.join(" ")}`);
+    if (kind === "install" && !this.installsPermitted())
+      throw new Error("Dependency installation is not permitted in this workspace runner.");
     return this.runNormalized(
-      normalized,
-      DEFAULT_RUN_TIMEOUT_MS,
+      [...argv],
+      kind === "install" ? MAX_RUN_TIMEOUT_MS : 60_000,
       DEFAULT_MAX_OUTPUT_BYTES,
       beforeSpawn,
     );
@@ -638,6 +704,14 @@ export function codeRunPolicy(): CodeRunPolicy {
       "python -m pytest [relative-path|node-id...] [-q|-x|-v]",
       "python manage.py test [labels...]",
       "python tests/runtests.py [labels...]",
+      "bun|npm|pnpm|yarn run test [--] [relative-test-path...]",
+      ...["npm", "pnpm", "yarn"].flatMap((pm) => bunScripts.map((script) => `${pm} run ${script}`)),
+      "python -m mypy [relative-path...]",
+      "pyright [relative-path...]",
+      "npx --no-install tsc --noEmit [-p tsconfig]",
+      "uv run --frozen --no-sync <allowed python command>",
+      "mvn -B -q test [-Dtest=Class,...]",
+      "gradle test -q [--tests Class...]",
       "cargo test [filter]",
       "go test ./... [-count=N|-short|-v]",
       ...gitCommands.map((cmd) => `git ${cmd}`),
@@ -731,6 +805,19 @@ export function normalizeAllowedCodeCommand(root: string, command: string[]): st
   if (binary === "git") {
     return normalizeGitCommand(args);
   }
+  if (binary === "npm" || binary === "pnpm" || binary === "yarn") {
+    return normalizePackageScriptCommand(root, binary, args);
+  }
+  if (binary === "uv") {
+    // `uv run --frozen --no-sync <allowlisted python check>`: the project's own
+    // environment, never a sync or an arbitrary program.
+    if (args[0] !== "run" || args[1] !== "--frozen" || args[2] !== "--no-sync")
+      throw new Error('Allowed uv command: "uv run --frozen --no-sync python -m pytest [paths]".');
+    const wrapped = normalizeTestRunnerCommand(root, args[3] ?? "", args.slice(4));
+    if (!wrapped || (wrapped[0] !== "python" && wrapped[0] !== "python3"))
+      throw new Error("uv run wraps an allowed python test or type-check command only.");
+    return ["uv", "run", "--frozen", "--no-sync", ...wrapped];
+  }
   const testRunner = normalizeTestRunnerCommand(root, binary, args);
   if (testRunner) return testRunner;
 
@@ -766,9 +853,46 @@ function normalizeTestRunnerCommand(root: string, binary: string, args: string[]
       if (!existsSync(resolve(root, args[0]))) throw new Error(`No such test runner: ${args[0]}`);
       return [binary, args[0], ...djangoArgs(args.slice(1))];
     }
+    if (args[0] === "-m" && args[1] === "mypy") {
+      return [binary, "-m", "mypy", ...relativePathArgs(root, args.slice(2), "mypy")];
+    }
     throw new Error(
-      'Allowed python commands: "python -m pytest [paths]", "python manage.py test [labels]", "python tests/runtests.py [labels]".',
+      'Allowed python commands: "python -m pytest [paths]", "python manage.py test [labels]", "python tests/runtests.py [labels]", "python -m mypy [paths]".',
     );
+  }
+  if (binary === "pyright") {
+    return ["pyright", ...relativePathArgs(root, args, "pyright")];
+  }
+  if (binary === "npx") {
+    // The project's own TypeScript compiler, never a download (`--no-install`).
+    const [noInstall, tsc, noEmit, ...rest] = args;
+    if (noInstall !== "--no-install" || tsc !== "tsc" || noEmit !== "--noEmit")
+      throw new Error('Allowed npx command: "npx --no-install tsc --noEmit [-p <tsconfig>]".');
+    if (rest.length === 0) return ["npx", "--no-install", "tsc", "--noEmit"];
+    if (rest.length === 2 && rest[0] === "-p") {
+      validateRelativeRunPath(root, rest[1]!);
+      return ["npx", "--no-install", "tsc", "--noEmit", "-p", rest[1]!];
+    }
+    throw new Error('Allowed npx command: "npx --no-install tsc --noEmit [-p <tsconfig>]".');
+  }
+  if (binary === "mvn") {
+    const [batch, quiet, verb, ...rest] = args;
+    if (batch !== "-B" || quiet !== "-q" || verb !== "test")
+      throw new Error('Allowed mvn command: "mvn -B -q test [-Dtest=Name,...]".');
+    if (rest.length === 0) return ["mvn", "-B", "-q", "test"];
+    if (rest.length === 1 && JAVA_TEST_SELECTION.test(rest[0]!))
+      return ["mvn", "-B", "-q", "test", rest[0]!];
+    throw new Error("mvn test accepts one -Dtest=<Class>[,<Class>...] selector.");
+  }
+  if (binary === "gradle") {
+    if (args[0] !== "test" || args[1] !== "-q")
+      throw new Error('Allowed gradle command: "gradle test -q [--tests Name ...]".');
+    const rest = args.slice(2);
+    for (let i = 0; i < rest.length; i += 2) {
+      if (rest[i] !== "--tests" || !JAVA_TEST_NAME.test(rest[i + 1] ?? ""))
+        throw new Error("gradle test accepts --tests <Class> selectors only.");
+    }
+    return ["gradle", "test", "-q", ...rest];
   }
   if (binary === "cargo") {
     if (args[0] !== "test") throw new Error('Allowed cargo command: "cargo test [filter]".');
@@ -802,6 +926,48 @@ function pytestArgs(root: string, args: string[]): string[] {
   return args;
 }
 
+const JAVA_TEST_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const JAVA_TEST_SELECTION = /^-Dtest=[A-Za-z_][A-Za-z0-9_]*(,[A-Za-z_][A-Za-z0-9_]*)*$/;
+
+/** Relative, in-workspace path arguments (no flags) for a fixed checker command. */
+function relativePathArgs(root: string, args: string[], tool: string): string[] {
+  for (const arg of args) {
+    if (arg.startsWith("-") || !PYTEST_SELECTOR.test(arg) || arg.includes("::"))
+      throw new Error(`${tool} accepts relative paths only: ${arg}`);
+    validateRelativeRunPath(root, arg);
+  }
+  return args;
+}
+
+/**
+ * `npm|pnpm|yarn run <script>` for the same fixed script names as `bun run`,
+ * plus `run test [--] <relative test paths>` so verification can scope a run to
+ * the tests relevant to a change. The script itself is the project's own, as
+ * with `bun run test`.
+ */
+function normalizePackageScriptCommand(root: string, binary: string, args: string[]): string[] {
+  if (args[0] !== "run" || !args[1] || !CODE_RUN_BUN_SCRIPTS.has(args[1]))
+    throw new Error(
+      `Allowed ${binary} commands: ${[...CODE_RUN_BUN_SCRIPTS]
+        .sort((a, b) => a.localeCompare(b))
+        .map((script) => `${binary} run ${script}`)
+        .join(", ")}, ${binary} run test [--] [relative-test-path...]`,
+    );
+  if (args.length === 2) return [binary, "run", args[1]];
+  return [binary, "run", "test", ...scopedTestPaths(root, args[1], args.slice(2))];
+}
+
+function scopedTestPaths(root: string, script: string, rest: string[]): string[] {
+  if (script !== "test") throw new Error("Only the test script accepts test paths.");
+  const paths = rest[0] === "--" ? rest.slice(1) : rest;
+  if (paths.length === 0) throw new Error("Expected relative test paths after the test script.");
+  for (const path of paths) {
+    if (path.startsWith("-")) throw new Error(`Test paths must be relative paths: ${path}`);
+    validateRelativeRunPath(root, path);
+  }
+  return rest[0] === "--" ? ["--", ...paths] : paths;
+}
+
 function djangoArgs(args: string[]): string[] {
   for (const arg of args) {
     if (!DJANGO_LABEL.test(arg) && !DJANGO_FLAG.test(arg))
@@ -811,6 +977,9 @@ function djangoArgs(args: string[]): string[] {
 }
 
 function normalizeBunCommand(root: string, args: string[]): string[] {
+  if (args[0] === "run" && args[1] === "test" && args.length > 2) {
+    return ["bun", "run", "test", ...scopedTestPaths(root, "test", args.slice(2))];
+  }
   if (args[0] === "run") {
     const script = args[1];
     if (!script || !CODE_RUN_BUN_SCRIPTS.has(script) || args.length !== 2) {

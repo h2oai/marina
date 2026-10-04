@@ -211,19 +211,33 @@ export async function handleBenchmarkFile(
   }
   const saved = db.recordBenchmarkLedgerRun(ledger.run, ledger.items);
   if (saved.created) noteBenchmarkRun(db, { ...ledger.run, id: saved.id });
+  // A re-file of content already recorded reports the STORED run (its group,
+  // status and numbers), never the values this request would have written.
+  const stored = saved.created ? undefined : db.getBenchmarkRun(saved.id);
+  const status = stored?.status ?? (ledger.run.invalid_reason ? "invalid" : "completed");
+  const invalidReason = stored
+    ? stored.status === "invalid"
+      ? db
+          .listBenchmarkRunValidity(saved.id)
+          .filter((r) => r.action === "invalidate")
+          .at(-1)?.reason
+      : undefined
+    : (ledger.run.invalid_reason ?? undefined);
   return json(
     {
       runId: saved.id,
       created: saved.created,
-      benchmark: ledger.run.benchmark,
-      n: ledger.run.n,
-      accuracy: ledger.run.score,
-      ciLow: ledger.run.ci_low,
-      ciHigh: ledger.run.ci_high,
-      costUsd: ledger.run.cost_usd,
-      replicateGroup: ledger.run.replicate_group ?? null,
-      status: ledger.run.invalid_reason ? "invalid" : "completed",
-      ...(ledger.run.invalid_reason ? { invalidReason: ledger.run.invalid_reason } : {}),
+      benchmark: stored?.benchmark ?? ledger.run.benchmark,
+      n: stored ? (stored.n ?? null) : ledger.run.n,
+      accuracy: stored ? stored.score : ledger.run.score,
+      ciLow: stored ? (stored.ci_low ?? null) : ledger.run.ci_low,
+      ciHigh: stored ? (stored.ci_high ?? null) : ledger.run.ci_high,
+      costUsd: stored ? (stored.cost_usd ?? null) : ledger.run.cost_usd,
+      replicateGroup: stored
+        ? (stored.replicate_group ?? null)
+        : (ledger.run.replicate_group ?? null),
+      status,
+      ...(invalidReason ? { invalidReason } : {}),
       attribution: counts,
       overlappingItems,
       tracedSharedItems,

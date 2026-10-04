@@ -945,7 +945,10 @@ export async function recordCodingNote(
     const run = await submitSessionRun(deps, session.id, entity, artifact);
     if (run?.status === "active") {
       const meta = codingRunMetadata(run);
-      const text = `Summary saved as progress; task remains active. Candidate verification is ${meta.verification}. ${meta.verificationReason ?? "Inspect the check output, fix the problem, and run code verify candidate again."} After checks pass, submit code summary again. If blocked, use code blocked <reason>.`;
+      const text =
+        meta.verification === "not_run" || meta.verification === "error"
+          ? `Summary saved as progress; task remains active. Candidate checks ${meta.verification === "not_run" ? "were not run" : "could not complete"}: ${meta.verificationReason ?? "see the verification artifact"}. This is not a test failure. If the environment cannot run them, use code blocked <reason> so the owner can decide, or the owner may accept the work unverified.`
+          : `Summary saved as progress; task remains active. Candidate verification is ${meta.verification}. ${meta.verificationReason ?? "Inspect the check output, fix the problem, and run code verify candidate again."} After checks pass, submit code summary again. If blocked, use code blocked <reason>.`;
       const message = {
         type: "verification" as const,
         event: "verification_required",

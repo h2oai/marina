@@ -43,7 +43,9 @@ import {
   comparePooledGroups,
   type LoadedGroup,
   loadReplicateGroup,
+  mismatchedReplicates,
   promotionMinReplicates,
+  restrictToConfiguration,
 } from "./benchmark-replicates";
 import { promotionMargin } from "./fishing-margin";
 
@@ -410,6 +412,8 @@ export type ChallengeLookup =
       items: BenchmarkItemRow[];
       holdoutFraction: number;
       replicates: number;
+      /** Every run pooled as the challenger (it and its replicates). */
+      pooledRuns: BenchmarkRunRow[];
       /**
        * The slot's incumbent, when it was invalidated and no earlier incumbent in
        * the slot's history is still valid (re-seeding replaces it), with the
@@ -424,6 +428,8 @@ export type ChallengeLookup =
       def: BenchmarkDefaultRow;
       evaluation: ChallengeEvaluation;
       replicates: { challenger: number; incumbent: number; minimum: number };
+      /** Every run pooled as the challenger (it and its replicates). */
+      pooledRuns: BenchmarkRunRow[];
       /**
        * Set when the slot's incumbent was invalidated: the challenger contests
        * the best earlier incumbent that is still valid instead.
@@ -511,6 +517,19 @@ export function lookupChallenge(
   }
   const minimum = opts.minReplicates ?? promotionMinReplicates();
   const challengerGroup = loadReplicateGroup(db, challenger);
+  // A replicate group is a label anyone filing a run can set, so pooling it is
+  // safe only when every member is the challenger's own configuration: refuse
+  // (before the holdout is read) rather than pool an unrelated run.
+  const mismatched = mismatchedReplicates(challengerGroup, challenger);
+  if (mismatched.length > 0) {
+    return {
+      kind: "error",
+      message:
+        `Inconsistent replicate group — ${challengerGroup.group} pools runs that are not ${runId}'s configuration: ` +
+        mismatched.map((m) => `${m.run.id} (different ${m.differs.join(", ")})`).join("; ") +
+        ". Every pooled replicate must share the benchmark, target, item slice and judge; regroup or invalidate the stray run(s). The holdout stays unread until then.",
+    };
+  }
   const replicated = challengerGroup.replicates.length;
   // A default never rests on one noisy draw: refuse BEFORE the holdout is read,
   // so an unreplicated attempt neither sees the holdout nor counts as a try.
@@ -542,6 +561,7 @@ export function lookupChallenge(
       items,
       holdoutFraction: def?.holdout_fraction ?? DEFAULT_HOLDOUT_FRACTION,
       replicates: replicated,
+      pooledRuns: challengerGroup.runs,
       ...(invalidIncumbent ? { invalidIncumbent } : {}),
     };
   }
@@ -551,7 +571,9 @@ export function lookupChallenge(
       message: `The incumbent run ${def.incumbent_run_id} no longer resolves.`,
     };
   }
-  const incumbentGroup = loadReplicateGroup(db, incumbent);
+  // The incumbent's pool keeps only its own configuration: a stray run filed
+  // under its label can neither pad nor dilute it (nor freeze the slot).
+  const incumbentGroup = restrictToConfiguration(loadReplicateGroup(db, incumbent), incumbent);
   const evaluation = evaluateChallenge({
     slot,
     holdoutFraction: def.holdout_fraction,
@@ -582,6 +604,7 @@ export function lookupChallenge(
       incumbent: incumbentGroup.replicates.length,
       minimum,
     },
+    pooledRuns: challengerGroup.runs,
     ...(invalidIncumbent ? { invalidIncumbent } : {}),
   };
 }
