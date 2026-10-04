@@ -60,6 +60,8 @@ export interface SearchOpts {
   providers?: string[];
   /** Filled with one `<provider>: <error>` line per provider call that failed. */
   failures?: string[];
+  /** Paid providers add each call's price here (it is also recorded in the spend ledger). */
+  spend?: { usd: number };
 }
 
 /** The HTTP surface a provider needs — a `ConnectorRuntime`, or `standaloneSearchHttp()`. */

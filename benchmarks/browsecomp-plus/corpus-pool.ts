@@ -50,10 +50,12 @@ export function workerPool(corpus: string, dir: string | undefined, size: number
     });
   };
   return {
-    search: async (query, k, chars) =>
-      (await call({ op: "search", query, k, chars })) as CorpusHit[],
-    get: async (docid, chars) =>
-      ((await call({ op: "get", docid, chars })) as CorpusDoc | null) ?? undefined,
+    search: async (query, k, chars, offset) =>
+      (await call({ op: "search", query, k, chars, ...(offset ? { offset } : {}) })) as CorpusHit[],
+    get: async (docid, chars, offset) =>
+      ((await call({ op: "get", docid, chars, ...(offset ? { offset } : {}) })) as
+        | (CorpusDoc & { totalChars?: number })
+        | null) ?? undefined,
     close: () => {
       for (const w of workers) w.terminate();
       for (const p of pending.values()) p.reject(new Error("corpus pool closed"));

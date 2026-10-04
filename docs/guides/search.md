@@ -132,6 +132,14 @@ bun run corpus get <name> <docid>
 - **Research:** the research retriever takes `corpus:<name>` (`MARINA_FORECAST_RETRIEVER`, `MARINA_ARENA_RESEARCH_RETRIEVER`). It searches the brief's queries and cites `corpus://` URLs.
 - **Discovery:** a corpus built after startup is picked up the first time it is named.
 - **Not in open searches:** a corpus answers only searches that name it. It has no date bound, so it never answers a `before:` search.
+- **Ranking:** FTS5's `bm25()` fixes k1 = 1.2 and b = 0.75. Set `MARINA_CORPUS_BM25_K1` and
+  `MARINA_CORPUS_BM25_B` to rescore each query's top 1,000 candidates with other parameters (long
+  documents favour k1 ≈ 10–25, b ≈ 1). A quoted phrase in a query is an extra term that boosts
+  documents holding it; its words still match on their own. Rankings are cached, so later pages
+  (`searchCorpusPage(…, { offset })`) cost nothing.
+- **Hits** carry the window of the document that best matches the query (`window`), and research
+  quotes it instead of the document's opening. `getCorpusDocument(…, { offset })` reads past the
+  character cap and reports the document's full length.
 - **Queries:** free text is reduced to its words, without English stopwords (Lucene's set, as in Anserini's BM25), so FTS5 syntax in a query is harmless and common words do not slow ranking.
 
 [BrowseComp-Plus](browsecomp-plus.md) uses a local corpus.

@@ -588,6 +588,10 @@
 # Where local corpora live: offline BM25 indexes built with `bun run corpus build <name> <docs.jsonl>` and searched with `web search engines:corpus:<name>`, the search room, or the `corpus:<name>` research retriever. Keep it on a disk with room (a 100k-document corpus is several GB), not a small temp filesystem.
 # MARINA_CORPUS_DIR=~/.local/share/marina/corpora
 
+# Corpus ranking. FTS5's built-in bm25() fixes k1 = 1.2 and b = 0.75, tuned for short passages. Set BOTH to rescore each query's top 1,000 FTS5 candidates with these parameters instead (Porter-stemmed term counts, document length in characters; long documents favour k1 ≈ 10–25, b ≈ 1). Unset: FTS5's own ranking. Rankings are cached, so paging through results (`offset`) is cheap; a rescored search costs about 1–2 s on a 100k-document corpus.
+# MARINA_CORPUS_BM25_K1=
+# MARINA_CORPUS_BM25_B=
+
 # ── Chat adapters ────────────────────────────────────────────────────────────
 
 # Telegram bot token (from @BotFather). Unset leaves the adapter off.

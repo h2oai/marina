@@ -191,7 +191,9 @@ export function exaSearchProvider(
       } catch {
         throw new Error("exa: unreadable reply");
       }
-      recordSpend("search", data.costDollars?.total ?? EXA_USD_PER_SEARCH);
+      const usd = data.costDollars?.total ?? EXA_USD_PER_SEARCH;
+      recordSpend("search", usd);
+      if (opts.spend) opts.spend.usd += usd;
       return (data.results ?? []).flatMap((r) =>
         r.url
           ? [
@@ -268,6 +270,7 @@ export function openRouterSearchProvider(
         throw new Error("openrouter: unreadable reply");
       }
       recordSpend("search", data.usage?.cost);
+      if (opts.spend) opts.spend.usd += data.usage?.cost ?? 0;
       return (data.choices?.[0]?.message?.annotations ?? []).flatMap((a) => {
         const c = a.url_citation;
         if (!c?.url) return [];
@@ -582,6 +585,7 @@ export function webSearchRetriever(opts: WebSearchOptions = {}): Retriever {
       backends.map((b) => [b.name, { name: b.name, calls: 0, results: 0, failures: 0 }]),
     );
     const failedHere = new Set<string>();
+    const spend = { usd: 0 };
     const batches: Array<{ query: number; results: SearchResult[] }> = [];
     let answered = 0;
 
@@ -596,7 +600,7 @@ export function webSearchRetriever(opts: WebSearchOptions = {}): Retriever {
           try {
             const results = await backend.search(
               q,
-              { maxResults: perQuery, engines: ["web", "news"] },
+              { maxResults: perQuery, engines: ["web", "news"], spend },
               http,
             );
             recordSearchOutcome(backend.name);
@@ -806,7 +810,8 @@ export function webSearchRetriever(opts: WebSearchOptions = {}): Retriever {
         ? lines.join("\n")
         : `Nothing relevant found on the ${funnel.read} pages read for: ${queries.join(" | ")}`,
       sources,
-      costUsd: 0,
+      // What the paid backends charged for this brief (also in the spend ledger).
+      costUsd: spend.usd,
       searches: funnel.backends.reduce((s, b) => s + b.calls, 0),
       retriever: label,
       funnels: [funnel],

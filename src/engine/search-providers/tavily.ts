@@ -70,7 +70,9 @@ export function tavilyProvider(apiKey: string): SearchProvider {
       } catch {
         throw new Error("tavily: unreadable reply");
       }
-      recordSpend("search", (data.usage?.credits ?? 1) * TAVILY_USD_PER_CREDIT);
+      const usd = (data.usage?.credits ?? 1) * TAVILY_USD_PER_CREDIT;
+      recordSpend("search", usd);
+      if (opts.spend) opts.spend.usd += usd;
 
       return (data.results ?? []).slice(0, max).map((r) => ({
         title: r.title ?? "",

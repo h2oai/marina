@@ -112,6 +112,21 @@ The tool loop follows the official harness:
   - The arm is its own configuration. Its label ends in `+final-answer` and its ledger target carries `finalAnswer`, so its runs are never pooled with official-protocol runs.
 - Against a crew (`marina:<crew>`), each request carries the client's timeout as `x-marina-deadline-ms`. The crew answers with its best draft before that deadline, and the answer is labelled `x-marina-budget-forced`.
 
+**Marina harness options.** Off by default, so a plain run is the official harness. Each one used
+is recorded in the run's metadata; report such a run as a Marina harness, not the official one.
+
+- `--snippet matched`: each hit shows the window of the document that best matches the query,
+  not its opening characters.
+- `--doc-paging`: `get_document` takes an `offset` and returns `total_chars` / `next_offset`, so the
+  agent can read past `--doc-chars`.
+- `--search-paging`: `search` takes a `page`, served from the cached ranking.
+- `--first-move <model>`: before the first turn, the question is split into clues by `<model>`,
+  each clue is searched 50 deep, the rankings are fused and reranked by the same model, and the
+  top `--k` documents are shown as opening context (recorded as a `first_move_search` call, so
+  recall counts them).
+- `MARINA_CORPUS_BM25_K1` / `MARINA_CORPUS_BM25_B`: rescore the corpus ranking with other BM25
+  parameters (see [Search](search.md)); the run's metadata records them.
+
 **The judge.** It is the official grader prompt, with the official sampling: temperature 0.7, top-p 0.8, top-k 20, 4,096 tokens, thinking off. It runs through the same Marina server under `--judge-model` (default `openrouter/qwen/qwen3-32b`, the official Qwen3-32B). As in the official evaluator, an incomplete run is never judged.
 
 **Metrics.** These match `evaluate_run.py`:

@@ -298,7 +298,9 @@ describe("search backends", () => {
         }),
       );
     });
-    const results = await or.search("q", { maxResults: 5 }, {} as never);
+    const spend = { usd: 0 };
+    const results = await or.search("q", { maxResults: 5, spend }, {} as never);
+    expect(spend.usd).toBeCloseTo(0.007);
     expect(sent.plugins).toEqual([{ id: "web", engine: "exa", max_results: 5 }]);
     expect(results).toEqual([
       {
