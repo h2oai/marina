@@ -513,6 +513,12 @@
 # MARINA_CODE_CONTAINER_STORAGE=
 # MARINA_CODE_CONTAINER_RUNROOT=
 
+# Defaults for `code verify` (each overridable per call with the modifier of the same name). SCOPE: `auto` runs the tests relevant to the change (touched tests, tests named after touched files, tests that import them) and falls back to the full suite when none are found; `changed` runs only relevant tests (not_run when there are none); `full` runs the whole suite; `changed+full` runs relevant tests, then the full suite within FULL_BUDGET. DEPENDENCIES: `check` probes the environment for the detected project type and reports not_run when it is not ready; `none` skips the probe; `auto` (or the project's own manager) also installs locked dependencies where isolated (a candidate's Bun text lockfile without scripts, or a container runner with sync mount and network on). A manager for another language is never run. TYPECHECK: `auto` runs the project's configured tsc / mypy / pyright; `off` skips it. Invalid values fall back to the defaults.
+# MARINA_CODE_VERIFY_SCOPE=auto
+# MARINA_CODE_VERIFY_DEPENDENCIES=check
+# MARINA_CODE_VERIFY_TYPECHECK=auto
+# MARINA_CODE_VERIFY_FULL_BUDGET=10m
+
 # ── Flywheel sandboxes ───────────────────────────────────────────────────────
 
 # Flywheel isolated execution: the operator token (kept server-side; Marina mints short-lived per-entity capabilities), RPC endpoint and guest image. Unset token disables Flywheel.

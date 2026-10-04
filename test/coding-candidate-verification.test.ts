@@ -246,25 +246,33 @@ describe("candidate-bound coding verification", () => {
     expect(meta().verification).toBe("passed");
   });
 
-  it("records missing dependency prerequisites as failure and runs no checks", async () => {
+  it("records unmet dependency prerequisites as not run (never a failure) and runs no checks", async () => {
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ dependencies: { "left-pad": "1.3.0" }, scripts: { test: "bun check.ts" } }),
+    );
     await verify("--dependencies bun");
-    expect(artifact("verification").status).toBe("failed");
+    expect(artifact("verification").status).toBe("not_run");
     expect(artifact("verification").content_text).not.toContain("Verification passed");
+    expect(artifact("verification").content_text).toContain("Checks were not run");
     const evidence = JSON.parse(artifact("verification").metadata_json);
+    expect(evidence.outcome).toBe("not_run");
     expect(evidence.commands).toEqual([]);
     expect(evidence.preparation.status).toBe("failed");
+    expect(evidence.preparation.outcome).toBe("not_run");
     expect(f.db.getCodingArtifact(evidence.preparationArtifactId)!.content_text).toContain(
       "bun.lock",
     );
     await send("code summary Preparation failed");
-    expect(meta().verification).toBe("failed");
+    expect(meta().verification).toBe("not_run");
+    expect(meta().verificationReason).toContain("Dependency preparation failed");
   });
 
-  it("rejects dependency preparation outside candidate mode and unsupported installers", async () => {
+  it("rejects unknown preparation, scope and type-check modes", async () => {
     for (const command of [
-      "code verify start dependencies:bun",
-      "code verify dependencies:bun",
-      "code verify candidate dependencies:npm",
+      "code verify candidate dependencies:brew",
+      "code verify scope:sideways",
+      "code verify start typecheck:maybe",
     ])
       await send(command);
     expect(artifact("verification_request")).toBeUndefined();

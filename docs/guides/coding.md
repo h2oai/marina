@@ -108,7 +108,7 @@ unverified acceptance. Unverified acceptance remains the deliberate owner comman
 `/verify live` starts background checks in the live workspace; those results remain unbound to
 an immutable candidate. For a Bun project needing dependencies, `/verify candidate dependencies:bun`
 explicitly prepares the captured lockfile inside the candidate with lifecycle scripts disabled.
-There is no automatic install. These shortcuts use the same server commands and permissions as other
+There is no automatic install; a project whose environment is not ready reports `not_run`. These shortcuts use the same server commands and permissions as other
 interfaces. Native runtimes retain their own tools. Redirected output stays plain text.
 
 The prompt also shows worker pauses, budget exhaustion and upstream recovery when reported
@@ -659,7 +659,58 @@ $ bun test
 exit 0 · 8.1s
 ```
 
-`code verify` runs the whole detected chain (typecheck → lint → test → build) in one go.
+`code verify` runs the detected chain in one go, where the session runs (the host, or its
+container runner):
+
+1. **Prepare** for the detected project type. A probe checks that the environment has what the
+   checks need (`python -m pytest --version`, `go version`, `node_modules` for a package with
+   dependencies, and so on). A JavaScript installer never runs on a Python project, and the
+   reverse.
+2. **Type-check**, when the project configures it and the chain does not already run it:
+   `tsc --noEmit` for a `tsconfig.json`, `mypy` or `pyright` on the changed Python files.
+3. **Checks and tests**: typecheck → lint → test → build for JavaScript, the project's test
+   runner otherwise. Tests relevant to the change run first (see below).
+
+Every verification ends in one of four states:
+
+| State | Meaning |
+| --- | --- |
+| `passed` | the checks ran and passed |
+| `failed` | the checks ran and at least one failed (a timed-out check counts as failed) |
+| `not_run` | nothing could be checked: no tests were found, the runner is missing, or the environment is not ready. The reason is recorded. |
+| `error` | the infrastructure failed: the container runtime could not start, or the pending diff did not apply |
+
+`not_run` and `error` are never counted as a pass or a failure: not by task submission, not in
+lessons, and not by the SWE-bench adapter's counts. A task that requires candidate verification
+stays active on `not_run`; report it with `code blocked <reason>`, or the owner may accept the
+work unverified.
+
+Options (each also has an operator default, `MARINA_CODE_VERIFY_*`):
+
+```text
+code verify scope:auto            # default: relevant tests, else the full suite
+code verify scope:changed         # relevant tests only (not_run when there are none)
+code verify scope:full            # the whole suite
+code verify scope:changed+full budget:10m   # relevant tests, then the full suite within 10 minutes
+code verify dependencies:check    # default: probe the environment, never install
+code verify dependencies:none     # skip the probe
+code verify dependencies:auto     # also install locked dependencies where that is isolated
+code verify typecheck:off         # skip the configured type-check
+```
+
+**Relevant tests** are the test files you changed, tests named after the files you changed
+(`test_parser.py`, `parser.test.ts`, `ParserTest.java`), and tests that import them. Go runs the
+packages you changed. JavaScript is scoped only when the `test` script's runner accepts file
+paths (Jest, Vitest, Mocha, `bun test`, `node --test`). Rust runs the whole suite. At most 25
+test targets are selected.
+
+**Installing dependencies.** `dependencies:auto`, or the project's own manager
+(`dependencies:npm`, `uv`, …), installs locked dependencies only where the install is isolated
+and persists: a candidate snapshot's Bun text lockfile on the host (below), or a container runner
+with `sync:mount` and `network:on` (`npm ci --ignore-scripts`, `pnpm`/`yarn`/`bun install
+--frozen-lockfile --ignore-scripts`, `uv sync --frozen`). Elsewhere, a missing environment is
+reported as `not_run` with the reason. A `sync:patch` runner starts every command from its image,
+so the image must already hold the environment (SWE-bench instance images do).
 
 For a local workspace, `code verify start` starts that same chain and returns a durable
 `verification_request` artifact immediately. Its command completion acknowledges admission;
@@ -704,12 +755,17 @@ Capture is bounded to 8,192 paths, 16 MiB per file and 128 MiB total. Ignored un
 (including `node_modules`, generated files and ignored secrets) are excluded. Included
 credential-shaped files such as `.env.local`, `.npmrc` and private-key files cause refusal;
 this filename rule is not a content secret scanner. External dependencies are excluded by
-default. A recipe that needs unavailable dependencies fails.
+default. When the checks need dependencies the snapshot lacks, verification reports `not_run`.
 
-For a Bun project, explicitly opt into preparation with:
+Candidate checks run where the session runs: with a container runner, the snapshot is mounted
+(`sync:mount`) or its diff applied (`sync:patch`) inside the same image, under the same allowlist,
+approvals and gates. They never fall back to the host. The verification artifact records the
+runner (`executionRunner`).
+
+For a Bun project on the host, opt into preparation with:
 
 ```text
-code verify candidate dependencies:bun
+code verify candidate dependencies:auto      # or dependencies:bun
 # From the terminal:
 /world code verify candidate dependencies:bun
 ```
@@ -722,8 +778,8 @@ workspaces. Repository/global install settings and credentials are not inherited
 registries, Git/URL/file dependencies, uncaptured workspaces, unsafe patch paths and captured
 `node_modules` are refused. Native packages that need install scripts may therefore fail their
 checks. Preparation has a 120-second deadline and the existing background admission limits.
-A preparation failure stops the check chain and produces failed evidence, with an inspectable
-output artifact. Successful evidence records the preparation policy and lockfile SHA-256;
+A preparation failure stops the check chain and produces `not_run` evidence, with an
+inspectable output artifact. Successful evidence records the preparation policy and lockfile SHA-256;
 generated dependencies are excluded from source freshness only inside the private copy.
 
 The source tree does not certify the external environment, services or dependencies, and the
@@ -740,7 +796,8 @@ unavailable. Refs are local Git metadata and are not pushed automatically.
 
 Agents can use `marina_code` with `action: "verify", verificationMode: "candidate"`, or the same
 optional `verificationMode` on `marina_code_verify`. The default remains live verification.
-With user authorization, add `dependencies: "bun"` to either tool in candidate mode.
+Both tools also take `dependencies` (`none`, `check`, `auto` or a manager) and `scope`; ask for
+user authorization before installing dependencies.
 For either background mode, inspect the receipt's result before writing the final summary.
 
 **6. Propose a change.** You (or an agent) propose a unified diff as a reviewable *patch*, rather
@@ -857,9 +914,11 @@ are present (they power `diff`/`checkpoint`/`revert` and fast `search`).
 
 `code test`, `code verify` and `code recipe run detected` follow the project's language rather
 than assuming JavaScript. Detection reads root markers (`pyproject.toml`, `setup.py`, `setup.cfg`,
-`tox.ini`, `pytest.ini`, `manage.py`, `tests/runtests.py`, `Cargo.toml`, `go.mod`,
-`package.json`) and prefers the language of the files you changed, so a Python repository that
-also carries a `package.json` for tooling is tested with its Python runner:
+`tox.ini`, `pytest.ini`, `manage.py`, `tests/runtests.py`, `Cargo.toml`, `go.mod`, `pom.xml`,
+`build.gradle`, `package.json`) and prefers the language of the files you changed, so a Python
+repository that also carries a `package.json` for tooling is tested with its Python runner.
+Lockfiles name the dependency manager (`bun.lock`, `pnpm-lock.yaml`, `yarn.lock`,
+`package-lock.json`, `uv.lock`, `poetry.lock`):
 
 | Project | Runner |
 | --- | --- |
@@ -868,7 +927,8 @@ also carries a `package.json` for tooling is tested with its Python runner:
 | Other Python | `python -m pytest [paths or node ids] [-q -x -v]` |
 | Rust | `cargo test [filter]` |
 | Go | `go test ./... [-count=N -short -v]` |
-| JavaScript / TypeScript | the `typecheck` / `lint` / `test` / `build` package scripts |
+| Java (Maven / Gradle) | `mvn -B -q test [-Dtest=Class,…]` / `gradle test -q [--tests Class]` |
+| JavaScript / TypeScript | the `typecheck` / `lint` / `test` / `build` package scripts, run with the lockfile's manager (`bun run`, `npm run`, `pnpm run`, `yarn run`) |
 
 These join the `code run` allowlist only in those fixed shapes: relative selectors that stay
 inside the workspace and a few inert flags, never an arbitrary script or interpreter. `code doctor`
@@ -902,6 +962,7 @@ container is removed after its command. If the runtime or image is missing, comm
 never quietly runs them on the host instead. Operators can set a default image for every local
 session with `MARINA_CODE_CONTAINER_IMAGE` (and `_SYNC`, `_WORKDIR`, `_INIT`, `_SHELL`,
 `_NETWORK`, `_RUNTIME`); an explicit `code workspace runner local` still pins the host.
+`code test`, `code verify` and `code verify start|candidate` all use the session's runner.
 
 The container runtime uses your own container setup: the images you have already pulled, your
 `containers.conf`/`storage.conf` (or Docker context), and your registry logins, taken from the

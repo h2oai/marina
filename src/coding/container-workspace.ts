@@ -374,6 +374,16 @@ export class ContainerWorkspace extends LocalWorkspace {
     );
   }
 
+  /**
+   * Verification may install the project's locked dependencies here only when
+   * the install persists to the next command (the worktree is mounted) and the
+   * operator gave the runner network. Patch sync starts every command from the
+   * image, so its image must already hold the environment.
+   */
+  override installsPermitted(): boolean {
+    return this.runner.sync === "mount" && this.runner.network;
+  }
+
   protected override async spawnNormalized(
     normalized: string[],
     timeoutMs: number,
@@ -459,6 +469,10 @@ export class UnavailableContainerWorkspace extends LocalWorkspace {
 
   override prepareCandidateDependencies(): never {
     throw new Error(`Container runner unavailable: ${this.reason}`);
+  }
+
+  override installsPermitted(): boolean {
+    return false;
   }
 
   protected override spawnNormalized(): Promise<
