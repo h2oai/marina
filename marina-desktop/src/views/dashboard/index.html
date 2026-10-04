@@ -4,37 +4,6 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Marina — Mission Control</title>
-    <!-- Catch JS errors and display them visually (dev debug) -->
-    <script>
-      window.onerror = function (msg, url, line, col, error) {
-        var el = document.getElementById("__err");
-        if (!el) {
-          el = document.createElement("pre");
-          el.id = "__err";
-          el.style.cssText =
-            "position:fixed;top:0;left:0;right:0;padding:16px;background:#1a1a2e;color:#ff4444;font:13px/1.5 monospace;z-index:99999;white-space:pre-wrap;max-height:50vh;overflow:auto";
-          document.body.prepend(el);
-        }
-        el.textContent +=
-          "ERROR: " + msg + "\n" + url + ":" + line + ":" + col + "\n";
-        if (error && error.stack) el.textContent += error.stack + "\n\n";
-        return false;
-      };
-      window.addEventListener("unhandledrejection", function (e) {
-        var el = document.getElementById("__err");
-        if (!el) {
-          el = document.createElement("pre");
-          el.id = "__err";
-          el.style.cssText =
-            "position:fixed;top:0;left:0;right:0;padding:16px;background:#1a1a2e;color:#ff4444;font:13px/1.5 monospace;z-index:99999;white-space:pre-wrap;max-height:50vh;overflow:auto";
-          document.body.prepend(el);
-        }
-        el.textContent +=
-          "UNHANDLED REJECTION: " +
-          (e.reason ? e.reason.stack || e.reason : e) +
-          "\n\n";
-      });
-    </script>
     <!-- Dashboard CSS (Vite build output, stable filename) -->
     <link rel="stylesheet" href="./app/assets/index.css" />
     <style>
@@ -145,6 +114,7 @@
     <div id="splash">
       <div class="mark">
         <svg viewBox="0 0 280 280" xmlns="http://www.w3.org/2000/svg">
+          <title>Marina is starting</title>
           <defs>
             <radialGradient id="coreGrad" cx="50%" cy="50%" r="50%">
               <stop offset="0%"   stop-color="#00ffe7" stop-opacity="1"/>
@@ -270,23 +240,23 @@
 
     <!-- Splash dismissal: fade out once React mounts into #root -->
     <script>
-      (function () {
+      (() => {
         var splash = document.getElementById("splash");
         if (!splash) return;
-        var observer = new MutationObserver(function () {
+        var observer = new MutationObserver(() => {
           var root = document.getElementById("root");
           if (root && root.children.length > 0) {
             observer.disconnect();
             splash.classList.add("fade-out");
-            setTimeout(function () { splash.remove(); }, 700);
+            setTimeout(() => { splash.remove(); }, 700);
           }
         });
         observer.observe(document.getElementById("root"), { childList: true });
         // Fallback: remove after 6s even if React doesn't mount
-        setTimeout(function () {
+        setTimeout(() => {
           if (splash.parentNode) {
             splash.classList.add("fade-out");
-            setTimeout(function () { splash.remove(); }, 700);
+            setTimeout(() => { splash.remove(); }, 700);
           }
         }, 6000);
       })();
@@ -294,7 +264,6 @@
 
     <!-- Electroview entry: sets up RPC transport + patches fetch/WS -->
     <script type="module" src="./index.js"></script>
-    <!-- Dashboard SPA (Vite build) — fetch/WS patched by the time this runs -->
-    <script type="module" src="./app/index.js"></script>
+    <!-- The adapter loads the SPA after installing native fetch/WS routing. -->
   </body>
 </html>

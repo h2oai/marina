@@ -1,5 +1,6 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
+import { apiOrigin } from "../../lib/api-origin";
 
 /**
  * Right-click menu for UnifiedCanvas nodes: inspect, bring to front, add a
@@ -186,19 +187,16 @@ export function NodeContextMenu({
                       try {
                         const { authFetch } = await import("../../lib/api");
                         const existingData = (node?.data as Record<string, unknown>) ?? {};
-                        await authFetch(
-                          `${window.location.origin}/api/canvases/${canvasId}/nodes/${rawId}`,
-                          {
-                            method: "PATCH",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({
-                              data: {
-                                ...existingData,
-                                intent: { prompt: noteText.trim(), status: "pending" },
-                              },
-                            }),
-                          },
-                        );
+                        await authFetch(`${apiOrigin()}/api/canvases/${canvasId}/nodes/${rawId}`, {
+                          method: "PATCH",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            data: {
+                              ...existingData,
+                              intent: { prompt: noteText.trim(), status: "pending" },
+                            },
+                          }),
+                        });
                         commandBarRef.current?.addMessage(
                           null,
                           `Intent set: "${noteText.trim()}"`,
@@ -465,7 +463,7 @@ export function NodeContextMenu({
                   : null;
                 if (canvasId) {
                   const res = await authFetch(
-                    `${window.location.origin}/api/canvases/${canvasId}/nodes/${rawNodeId}`,
+                    `${apiOrigin()}/api/canvases/${canvasId}/nodes/${rawNodeId}`,
                     {
                       method: "DELETE",
                     },

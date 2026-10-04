@@ -1,5 +1,6 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
+
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { panelOperationLabel, parsePanelOperation } from "../../../src/sdk/panel-actions";
@@ -7,6 +8,7 @@ import { MarinaPanelClient } from "../../../src/sdk/panel-client";
 import { validatePanelDocument } from "../../../src/sdk/panel-document";
 import { useChatState } from "../hooks/use-chat-state";
 import { getToken } from "../lib/api";
+import { apiOrigin } from "../lib/api-origin";
 import { openBoundPanel } from "../lib/panel-bindings";
 import { CodingDeskPublisher } from "./CodingDeskPublisher";
 import { PanelResourceCatalog } from "./PanelResourceCatalog";
@@ -17,7 +19,7 @@ export function PublishedPanelLibrary() {
   const [search, setSearch] = useState("");
   const identity = useChatState((s) => `${s.loggedIn}:${s.entityName}`);
   const client = new MarinaPanelClient({
-    url: window.location.origin,
+    url: apiOrigin(),
     token: () => getToken() ?? undefined,
   });
   const canvases = useQuery({

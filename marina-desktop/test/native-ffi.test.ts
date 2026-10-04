@@ -3,15 +3,16 @@
 
 import * as bunFFI from "bun:ffi";
 import { afterAll, describe, expect, mock, test } from "bun:test";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// Exercise the installed SDK patch without creating OS windows. Keep Bun's
+// Exercise the pinned v2 devkit without creating OS windows. Keep Bun's
 // real pointer/string and callback machinery; substitute only the native DLL
 // and window registries, whose constructors require a running desktop app.
-const sdk = dirname(fileURLToPath(import.meta.resolve("electrobun/bun")));
+const sdk = fileURLToPath(new URL("../.hutch/devkit/api/sdks/main/", import.meta.url));
 let dialogResult: string | null = null;
-let trayPointer: bigint | null = 0x20_0000_0000_0001n;
+// V2 owns native pointers in the core and exposes numeric object IDs to JS.
+let trayId = 7;
 const openFileDialog = mock(() => dialogResult);
 let mimeCallback: bunFFI.JSCallback;
 let trayCallback: bunFFI.JSCallback;
@@ -28,8 +29,8 @@ mock.module("bun:ffi", () => ({
     symbols: {
       openFileDialog,
       createTray: (...args: unknown[]) => {
-        trayCallback = args[6] as bunFFI.JSCallback;
-        return trayPointer;
+        trayCallback = args[5] as bunFFI.JSCallback;
+        return trayId;
       },
       setJSUtils: (mime: bunFFI.JSCallback) => {
         mimeCallback = mime;
@@ -38,12 +39,16 @@ mock.module("bun:ffi", () => ({
       setGlobalShortcutCallback: () => {},
       setURLOpenHandler: () => {},
       setAppReopenHandler: () => {},
+      setRuntimeCallbacksAsync: () => {},
+      getHostMessageWakeupReadFD: () => -1,
+      popQueuedHostMessageBatch: () => null,
     },
   }),
 }));
 for (const name of ["BrowserWindow", "BrowserView", "GpuWindow", "WGPUView", "Tray"]) {
   mock.module(join(sdk, "core", `${name}.ts`), () => ({
     [name]: { getById: () => undefined },
+    ...(name === "BrowserView" ? { emitWebviewTagBrowserViewCreated: () => {} } : {}),
   }));
 }
 const { ffi } = await import(join(sdk, "proc/native.ts"));
@@ -64,19 +69,19 @@ describe("Electrobun compatibility with current Bun FFI", () => {
 
   test("cancelled file dialogs return an empty selection without throwing", () => {
     dialogResult = null;
-    expect(ffi.request.openFileDialog(dialogOptions)).toBe("");
+    expect(JSON.parse(ffi.request.openFileDialog(dialogOptions))).toEqual([]);
     expect(openFileDialog.mock.calls.length).toBeGreaterThan(0);
   });
 
   test("selected file paths survive the native string boundary", () => {
-    dialogResult = "/tmp/notes.txt";
-    expect(ffi.request.openFileDialog(dialogOptions)).toBe("/tmp/notes.txt");
+    dialogResult = JSON.stringify(["/tmp/notes.txt"]);
+    expect(JSON.parse(ffi.request.openFileDialog(dialogOptions))).toEqual(["/tmp/notes.txt"]);
   });
 
-  test("opaque pointers pass through without losing bigint precision", () => {
+  test("native tray IDs pass through and failed creation is rejected", () => {
     const options = { id: 1, title: "Marina", image: "", template: false, width: 16, height: 16 };
-    expect(ffi.request.createTray(options)).toBe(trayPointer);
-    trayPointer = null;
+    expect(ffi.request.createTray(options)).toBe(trayId);
+    trayId = 0;
     expect(() => ffi.request.createTray(options)).toThrow("Failed to create tray");
   });
 

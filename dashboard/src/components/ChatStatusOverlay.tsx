@@ -14,6 +14,7 @@ import {
 } from "../hooks/use-status-cards";
 import { useWorkspaceState } from "../hooks/use-workspace-state";
 import { authFetch } from "../lib/api";
+import { apiOrigin } from "../lib/api-origin";
 import type { OverlayState } from "../lib/chat-overlay";
 import { draftCommand } from "../lib/command-discovery";
 import type { MediaJob } from "../lib/types";
@@ -31,7 +32,7 @@ import { renderChatText as renderTextContent } from "./chat-render-text";
 import { MediaJobsList } from "./MediaJobsList";
 import { StatusOverlay } from "./StatusOverlay";
 
-const API_BASE = window.location.origin;
+const API_BASE = apiOrigin();
 type OverlayType = OverlayState["type"];
 
 export function ChatStatusOverlay({

@@ -1,5 +1,6 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
+import { apiOrigin } from "../../lib/api-origin";
 
 /**
  * Hook that bridges canvas data into the unified world map view.
@@ -36,7 +37,7 @@ export interface IntentMeta {
   failReason?: string;
 }
 
-const API_BASE = window.location.origin;
+const API_BASE = apiOrigin();
 
 /** How long a newly-created canvas edge stays flashed (`activated: true`). */
 const EDGE_FLASH_MS = 4000;

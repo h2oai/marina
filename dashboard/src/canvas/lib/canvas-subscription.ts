@@ -1,5 +1,6 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
+import { apiOrigin } from "../../lib/api-origin";
 import { type CanvasEvent, parseCanvasEvent } from "./canvas-events";
 
 interface Listener {
@@ -37,7 +38,7 @@ export function subscribeCanvas(canvasId: string, token: string | null, listener
   const connect = () => {
     subscription.timer = undefined;
     if (!subscription.listeners.size) return;
-    const url = new URL("/canvas-ws", window.location.origin);
+    const url = new URL("/canvas-ws", apiOrigin());
     url.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     url.searchParams.set("canvas", canvasId);
     // Existing upgrade authentication; credential stays in memory, never in saved links/presets.

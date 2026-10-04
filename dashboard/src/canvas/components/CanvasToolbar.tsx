@@ -4,6 +4,7 @@
 import type { Node } from "@xyflow/react";
 import { motion } from "motion/react";
 import { authFetch } from "../../lib/api";
+import { apiOrigin } from "../../lib/api-origin";
 import { defaultSize } from "../lib/layout";
 
 const HOVER = { scale: 1.05 };
@@ -22,7 +23,7 @@ interface CanvasToolbarProps {
   ) => Promise<void>;
 }
 
-const API_BASE = window.location.origin;
+const API_BASE = apiOrigin();
 
 export function CanvasToolbar({
   canvasId,

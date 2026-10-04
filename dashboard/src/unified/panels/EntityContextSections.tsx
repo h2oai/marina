@@ -1,5 +1,6 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
+import { apiOrigin } from "../../lib/api-origin";
 
 /**
  * Entity inspector sections for the ContextPanel: activity, compass (brief),
@@ -17,7 +18,7 @@ import { authFetch } from "../../lib/api";
 import type { DashboardEvent, MediaJob } from "../../lib/types";
 import { CascadeSection, PropRow } from "./context-panel-sections";
 
-const API_BASE = window.location.origin;
+const API_BASE = apiOrigin();
 
 /** Events that meaningfully change an entity's brief aggregate. */
 const BRIEF_MUTATION_TYPES = new Set([

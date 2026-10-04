@@ -6,9 +6,10 @@ import { useEffect } from "react";
 import { useCanvasEventSocket } from "../canvas/hooks/use-canvas-ws";
 import type { CanvasNodeData } from "../canvas/lib/types";
 import { authFetch, getToken } from "../lib/api";
+import { apiOrigin } from "../lib/api-origin";
 import { useChatState } from "./use-chat-state";
 
-const API_BASE = window.location.origin;
+const API_BASE = apiOrigin();
 
 function parseNodeData(raw: unknown): Record<string, unknown> {
   if (!raw) return {};

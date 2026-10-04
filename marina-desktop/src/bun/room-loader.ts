@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { existsSync } from "node:fs";
-import { relative } from "node:path";
+import { basename, relative } from "node:path";
+import { pathToFileURL } from "node:url";
 import { Glob } from "bun";
 import type { Engine } from "../../../src/engine/engine";
 import type { RoomId, RoomModule } from "../../../src/types";
@@ -16,20 +17,24 @@ import type { RoomId, RoomModule } from "../../../src/types";
  * e.g. {roomsDir}/world/2-2.ts → "world/2-2"
  * Gracefully skips if the directory does not exist.
  */
-export async function loadRooms(engine: Engine, roomsDir: string): Promise<void> {
+export async function loadRooms(
+  engine: Pick<Engine, "registerRoom">,
+  roomsDir: string,
+): Promise<void> {
   if (!existsSync(roomsDir)) return;
-  const glob = new Glob("**/*.ts");
+  const glob = new Glob("**/*.{ts,js}");
 
   for await (const file of glob.scan({ cwd: roomsDir, absolute: true })) {
     // Skip files starting with underscore
-    const basename = file.split("/").pop() ?? "";
-    if (basename.startsWith("_")) continue;
+    if (basename(file).startsWith("_")) continue;
 
-    const rel = relative(roomsDir, file).replace(/\.ts$/, "");
+    const rel = relative(roomsDir, file)
+      .replace(/\\/g, "/")
+      .replace(/\.(ts|js)$/, "");
     const id = rel as RoomId;
 
     try {
-      const mod = await import(file);
+      const mod = await import(pathToFileURL(file).href);
       const room: RoomModule = mod.default ?? mod;
 
       if (!room.short || !room.long) {

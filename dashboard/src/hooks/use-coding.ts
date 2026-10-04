@@ -3,9 +3,10 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { authFetch } from "../lib/api";
+import { apiOrigin } from "../lib/api-origin";
 import type { CodingSessionDetail, CodingSessionEntry } from "../lib/types";
 
-const API_BASE = window.location.origin;
+const API_BASE = apiOrigin();
 
 export function useCodingSessionsSnapshot(enabled: boolean) {
   return useQuery({

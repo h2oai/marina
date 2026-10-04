@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { existsSync, mkdirSync } from "node:fs";
-import { join, resolve } from "node:path";
 import { homedir } from "node:os";
+import { isAbsolute, join, resolve } from "node:path";
 
 export interface AppPaths {
   /** OS-appropriate application data directory */
@@ -28,10 +28,10 @@ export interface AppPaths {
  * - Linux:  ~/.local/share/marina/
  *
  * Room directory resolution order:
- * 1. Bundled Electrobun app: Contents/Resources/app/resources/rooms/
- *    (cwd is Contents/MacOS/, so ../Resources/app/resources/rooms)
- * 2. Dev mode from desktop/: ../../rooms relative to this file
- * 3. Dev mode from repo root: ./rooms
+ * 1. Bundled Electrobun app: ../Resources/app/resources/worlds/
+ *    relative to Contents/MacOS/ (macOS) or bin/ (Linux/Windows)
+ * 2. Dev mode: the checkout's worlds/ relative to this module
+ * 3. Dev mode from repo root: ./worlds
  */
 export function getAppPaths(): AppPaths {
   const home = homedir();
@@ -41,12 +41,10 @@ export function getAppPaths(): AppPaths {
   if (platform === "darwin") {
     dataDir = join(home, "Library", "Application Support", "Marina");
   } else if (platform === "win32") {
-    dataDir = join(
-      process.env.APPDATA || join(home, "AppData", "Roaming"),
-      "Marina",
-    );
+    dataDir = join(process.env.APPDATA || join(home, "AppData", "Roaming"), "Marina");
   } else {
-    dataDir = join(home, ".local", "share", "marina");
+    const xdg = process.env.XDG_DATA_HOME;
+    dataDir = join(xdg && isAbsolute(xdg) ? xdg : join(home, ".local", "share"), "marina");
   }
 
   // Ensure data directory exists

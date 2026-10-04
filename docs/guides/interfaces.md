@@ -41,6 +41,7 @@ session handoff, not a way to create two independent workers with identical cred
 ```bash
 bun install --frozen-lockfile
 cd marina-desktop
+bun run sync
 bun run typecheck
 bun run test
 bun run build:dashboard
@@ -54,11 +55,13 @@ discovery, context previews, correlated commands and explicit coding session/run
 The local host drains work before closing persistence. Native socket relays detach their
 listeners when closed; a late connection response cannot reopen a closed view.
 
-Electrobun is deliberately pinned to **1.18.1** with a checked-in Bun FFI compatibility patch.
-It is not a claim to track the newest Electrobun major. Version 2 changes toolchain/configuration
-and SDK resolution; upgrading requires checking platform coverage and native packaging, not
-just editing the dependency version. See the [upstream migration guide](https://framework.blackboard.sh/electrobun/guides/migrating-to-v2/)
-and [desktop development notes](../../marina-desktop/README.md).
+Desktop packaging uses **Electrobun 2.0.2** and Hutch's generated SDK. Marina retains its
+Bun main process and packages the exact `.bun-version` runtime through a verified pre-packaging
+hook. The v1 FFI patch is removed. Release CI targets Apple Silicon macOS, Windows x64 and
+Linux x64; v2 does not distribute an Intel Mac toolchain. On Intel Macs, use the web dashboard
+or terminal. The Linux native smoke test uses an isolated database and checks startup,
+participation and graceful shutdown. See the [desktop development notes](../../marina-desktop/README.md)
+for prerequisites, SDK synchronization, runtime provenance and release validation.
 
 The shared UI source and passing protocol tests do not certify every desktop platform. Before
 distributing an installer, validate native startup, reconnect, Coding desk/targeted commands,

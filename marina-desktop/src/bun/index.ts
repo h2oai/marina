@@ -1,17 +1,18 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { BrowserWindow, defineElectrobunRPC } from "electrobun/bun";
+import Electrobun, { BrowserWindow, defineElectrobunRPC, Utils } from "electrobun/main";
+import type { EngineEvent, Perception } from "../../../src/types";
 import { EngineHost } from "./engine-host";
 import { ensureDesktopKeySecret } from "./key-secret";
 import { initMenu } from "./menu";
 import { getAppPaths } from "./paths";
 import { loadPreferences, savePreferences } from "./preferences";
+import { createQuitHandler } from "./quit-handler";
 import { createRpcHandlers } from "./rpc-handlers";
 import type { DashboardRPCSchema, PreferencesData } from "./rpc-schema";
-import { initTray } from "./tray";
+import { destroyTray, initTray } from "./tray";
 import { resolveWorld } from "./worlds";
-import type { EngineEvent, Perception } from "../../../src/types";
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
@@ -20,7 +21,7 @@ const prefs = loadPreferences(paths.prefsFile);
 
 ensureDesktopKeySecret(paths.keySecretFile);
 // Capability shared only by the native main process and its embedded server.
-// The webview never receives it; generic RPC proxy requests overwrite auth.
+// The webview never receives it; signed-in requests keep their resident identity.
 process.env.MARINA_DESKTOP_API_TOKEN = crypto.randomUUID() + crypto.randomUUID();
 
 // ─── Engine ─────────────────────────────────────────────────────────────────
@@ -87,10 +88,7 @@ function wireRpcPush(): void {
       short: r.module.short,
       district: (r.id as string).split("/")[0] ?? "",
       exits: Object.fromEntries(
-        Object.entries(r.module.exits ?? {}).map(([k, v]) => [
-          k,
-          v as string,
-        ]),
+        Object.entries(r.module.exits ?? {}).map(([k, v]) => [k, v as string]),
       ),
     }));
 
@@ -198,18 +196,14 @@ rpc = defineElectrobunRPC<DashboardRPCSchema, "bun">("bun", {
             }));
             const roomPopulations: Record<string, number> = {};
             for (const e of entities) {
-              roomPopulations[e.room] =
-                (roomPopulations[e.room] ?? 0) + 1;
+              roomPopulations[e.room] = (roomPopulations[e.room] ?? 0) + 1;
             }
             const rooms = eng.rooms.all().map((r) => ({
               id: r.id as string,
               short: r.module.short,
               district: (r.id as string).split("/")[0] ?? "",
               exits: Object.fromEntries(
-                Object.entries(r.module.exits ?? {}).map(([k, v]) => [
-                  k,
-                  v as string,
-                ]),
+                Object.entries(r.module.exits ?? {}).map(([k, v]) => [k, v as string]),
               ),
             }));
             const mem = process.memoryUsage();
@@ -239,7 +233,7 @@ function getDashboardUrl(): string {
   return "views://dashboard/index.html";
 }
 
-async function createMainWindow(): Promise<void> {
+function createMainWindow(): void {
   const bounds = prefs.windowBounds ?? { width: 1280, height: 800 };
   mainWindow = new BrowserWindow({
     title: "Marina",
@@ -256,8 +250,9 @@ async function createMainWindow(): Promise<void> {
 
 function reloadWindow(): void {
   if (mainWindow) {
-    mainWindow.close();
+    const previous = mainWindow;
     createMainWindow();
+    previous.close();
   }
 }
 
@@ -304,6 +299,20 @@ export const app = {
 };
 
 // Boot sequence
+Electrobun.events.on(
+  "before-quit",
+  createQuitHandler(
+    async () => {
+      await stopLocalEngine();
+      destroyTray();
+    },
+    () => Utils.quit(),
+    (error) => {
+      console.error("[desktop] Shutdown failed; quit cancelled:", error);
+    },
+  ),
+);
+
 async function main(): Promise<void> {
   // Start engine in local mode
   if (prefs.mode === "local") {
@@ -318,7 +327,12 @@ async function main(): Promise<void> {
   initTray(app);
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error("[desktop] Fatal startup error:", err);
-  process.exit(1);
+  try {
+    await stopLocalEngine();
+    destroyTray();
+  } finally {
+    process.exit(1);
+  }
 });

@@ -16,6 +16,7 @@ import {
   useNodesInitialized,
   useReactFlow,
 } from "@xyflow/react";
+import { apiOrigin } from "../lib/api-origin";
 import "@xyflow/react/dist/style.css";
 import { AnimatePresence } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -43,7 +44,7 @@ interface CanvasPageProps {
   embedded?: boolean;
   active?: boolean;
 }
-const API_BASE = window.location.origin;
+const API_BASE = apiOrigin();
 
 const MIME_TO_NODE_TYPE: Record<string, string> = {
   "image/": "image",

@@ -10,7 +10,7 @@
  * - webview.requests: handlers on webview side, called by bun
  * - webview.messages: messages the webview listens for (sent by bun)
  */
-import type { ElectrobunRPCSchema } from "electrobun/bun";
+import type { ElectrobunRPCSchema } from "electrobun/main";
 import type { EngineEvent, Perception } from "../../../src/types";
 
 // ─── Data shapes ────────────────────────────────────────────────────────────

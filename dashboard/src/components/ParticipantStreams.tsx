@@ -8,6 +8,7 @@ import { useChatState } from "../hooks/use-chat-state";
 import { useParticipantOutput } from "../hooks/use-participant-output";
 import { useWorkspaceState } from "../hooks/use-workspace-state";
 import { getToken } from "../lib/api";
+import { apiOrigin } from "../lib/api-origin";
 import { openBoundPanel } from "../lib/panel-bindings";
 import type { DashboardPanelProps } from "../lib/panel-registry";
 import { GlassPanel } from "./GlassPanel";
@@ -149,7 +150,7 @@ export function ParticipantStreamWorkspace({
   targetId?: string;
   onTargetChange?: (id: string | undefined) => void;
 }) {
-  const [client] = useState(() => new MarinaRoutingClient({ url: window.location.origin, token }));
+  const [client] = useState(() => new MarinaRoutingClient({ url: apiOrigin(), token }));
   const [page, setPage] = useState<RoutingSessionPage>();
   const [after, setAfter] = useState("");
   const [filter, setFilter] = useState("");

@@ -8,10 +8,11 @@ import { useCallback, useEffect, useState } from "react";
 import { parseCanvasReference, ReferenceContent } from "../../components/CanvasReference";
 import { useWorkspaceState } from "../../hooks/use-workspace-state";
 import { authFetch } from "../../lib/api";
+import { apiOrigin } from "../../lib/api-origin";
 import { resolveAuthor, resolveTitle } from "../lib/node-fields";
 import type { CanvasEdgeData } from "../lib/types";
 
-const API_BASE = window.location.origin;
+const API_BASE = apiOrigin();
 
 function formatTimestamp(ts: unknown): string {
   if (!ts) return "—";

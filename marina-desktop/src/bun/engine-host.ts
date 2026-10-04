@@ -54,12 +54,15 @@ export class EngineHost {
   private eventListener: ((event: import("../../../src/types").EngineEvent) => void) | null = null;
   private adapters: Adapter[] = [];
   private running = false;
+  private shutdownPending: Promise<void> | null = null;
 
   constructor(private config: EngineHostConfig) {}
 
   /** Start the engine and all network servers. */
   async start(): Promise<void> {
+    if (this.shutdownPending) await this.shutdownPending;
     if (this.running) return;
+    if (this.engine || this.db) await this.shutdown();
 
     this.logger.info("desktop", "Starting engine...");
 
@@ -99,9 +102,8 @@ export class EngineHost {
     // Load the world's rooms. The world definition owns its room directory
     // (e.g. worlds/default/), exactly like src/main.ts. In dev that absolute
     // path exists in the repo; in a packaged app it won't, so we fall back to
-    // the bundled resources copy: <roomsDir>/<world-folder>. Room files import
-    // only types, so they carry no runtime deps and import cleanly from either
-    // location.
+    // the bundled resources copy: <roomsDir>/<world-folder>. Packaged room
+    // modules include their runtime imports; inline-only worlds need no scan.
     const { join: joinPath, basename } = await import("node:path");
     const { existsSync } = await import("node:fs");
     let roomsDir: string | undefined = this.config.world?.roomsDir;
@@ -109,7 +111,8 @@ export class EngineHost {
       const bundled = joinPath(this.config.roomsDir, basename(roomsDir));
       if (existsSync(bundled)) roomsDir = bundled;
     }
-    await loadRooms(this.engine, roomsDir ?? this.config.roomsDir);
+    if (roomsDir) await loadRooms(this.engine, roomsDir);
+    else if (!this.config.world) await loadRooms(this.engine, this.config.roomsDir);
     this.logger.info(
       "desktop",
       `Loaded ${this.engine.rooms.size} rooms (world: ${this.config.world?.name ?? "none"}).`,
@@ -232,9 +235,18 @@ export class EngineHost {
   }
 
   /** Graceful shutdown — does NOT call process.exit(). */
-  async shutdown(): Promise<void> {
-    if (!this.running) return;
+  shutdown(): Promise<void> {
+    if (this.shutdownPending) return this.shutdownPending;
+    if (!this.engine && !this.db) return Promise.resolve();
+    // `running` is already false during a drain and may never become true on a
+    // failed startup. Resource ownership, not ingress state, governs cleanup.
+    this.shutdownPending = this.drain().finally(() => {
+      this.shutdownPending = null;
+    });
+    return this.shutdownPending;
+  }
 
+  private async drain(): Promise<void> {
     this.logger.info("desktop", "Shutting down engine...");
     // Refuse new desktop RPC work while admitted commands/checkpoints drain.
     this.running = false;

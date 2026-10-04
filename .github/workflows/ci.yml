@@ -104,7 +104,7 @@ jobs:
         run: bun run build
 
   desktop:
-    name: Typecheck and test desktop SDK
+    name: Build and test desktop v2
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -114,10 +114,28 @@ jobs:
           bun-version-file: .bun-version
       - name: Install dependencies
         run: bun install --frozen-lockfile
+      - name: Sync Electrobun SDK
+        run: cd marina-desktop && bun run sync
       - name: Typecheck
         run: cd marina-desktop && bun run typecheck
       - name: Test native SDK boundaries
         run: cd marina-desktop && bun run test
+      - name: Install native smoke dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-0 libwebkit2gtk-4.1-0 libayatana-appindicator3-1 librsvg2-2 xvfb imagemagick
+      - name: Build native app
+        run: cd marina-desktop && bun run build:dev
+      - name: Launch and drain the native app
+        run: cd marina-desktop && xvfb-run -a -s '-screen 0 1440x1000x24' bun scripts/native-smoke.ts
+      - name: Preserve native smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: desktop-native-smoke
+          path: |
+            marina-desktop/build/native-smoke-*/native.log
+            marina-desktop/build/native-smoke-*/desktop.png
 
   participation-browser:
     name: Participation browser journeys

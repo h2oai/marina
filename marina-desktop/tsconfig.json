@@ -1,5 +1,5 @@
 {
-  "extends": "../tsconfig.json",
+  "extends": ["./.hutch/tsconfig.sdk.json", "../tsconfig.json"],
   "compilerOptions": {
     "rootDir": "..",
     "outDir": "dist",
@@ -8,6 +8,12 @@
     "declaration": false,
     "declarationMap": false
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "include": [
+    "src/**/*.ts",
+    "test/**/*.ts",
+    "electrobun.config.ts",
+    "hutch.config.ts",
+    "scripts/**/*.ts"
+  ],
   "exclude": ["node_modules", "dist", "build"]
 }

@@ -5,15 +5,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "electrobun build --env=dev --run",
-    "build:canary": "electrobun build --env=canary",
-    "build:stable": "electrobun build --env=stable",
-    "build:dashboard": "bunx vite build --config vite.desktop.config.ts",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "bun test test/"
-  },
-  "dependencies": {
-    "electrobun": "1.18.1"
+    "start": "bun run sync && bun run build:dashboard && bun scripts/electrobun.ts dev",
+    "build:canary": "bun run sync && bun run build:dashboard && bun scripts/electrobun.ts build --env=canary",
+    "build:stable": "bun run sync && bun run build:dashboard && bun scripts/electrobun.ts build --env=stable",
+    "build:dashboard": "bunx --no-install vite build --config vite.desktop.config.ts && bun scripts/prepare-assets.ts",
+    "typecheck": "bun scripts/configure-sdk.ts && tsc --noEmit -p tsconfig.json",
+    "test": "bun scripts/configure-sdk.ts && bun test test/",
+    "sync": "bun scripts/electrobun.ts sync && bun scripts/configure-sdk.ts",
+    "build:dev": "bun run sync && bun run build:dashboard && bun scripts/electrobun.ts build --env=dev"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
@@ -22,6 +21,7 @@
     "@vitejs/plugin-react": "^6.1.1",
     "tailwindcss": "^4.3.3",
     "typescript": "7.0.2",
-    "vite": "^8.3.0"
+    "vite": "^8.3.0",
+    "electrobun": "2.0.2"
   }
 }

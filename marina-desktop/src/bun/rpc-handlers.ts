@@ -686,9 +686,15 @@ export function createRpcHandlers(
         };
       }
       const prefs = appActions.getPreferences();
-      const headers = { ...params.headers };
-      delete headers["x-marina-desktop-token"];
-      headers["x-marina-desktop-token"] = process.env.MARINA_DESKTOP_API_TOKEN ?? "";
+      const headers = new Headers(params.headers);
+      headers.delete("x-marina-desktop-token");
+      // A signed-in resident must retain its own identity for private streams,
+      // context and inventory. The operator sentinel has no world account.
+      // Explicit credentials (including expired tokens) go through normal auth;
+      // never silently replace them with the native operator credential.
+      if (!headers.has("authorization")) {
+        headers.set("x-marina-desktop-token", process.env.MARINA_DESKTOP_API_TOKEN ?? "");
+      }
       const response = await fetch(`http://127.0.0.1:${prefs.wsPort}${params.path}`, {
         method: params.method,
         headers,

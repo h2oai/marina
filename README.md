@@ -520,9 +520,10 @@ For shipping to AWS or any other cloud — TLS, persistence, the security checkl
 
 ## Desktop App
 
-The repository includes an Electrobun desktop application for macOS, Windows, and Linux. Packaged
-builds bundle the engine and dashboard into one application; availability and platform artifacts
-depend on the corresponding desktop release.
+The repository includes an **Electrobun 2** desktop application with a Bun main process and the
+shared dashboard. Release CI targets Apple Silicon macOS, Windows x64, and Linux x64; Intel Mac
+users can use the web dashboard or terminal. See [desktop development](marina-desktop/README.md)
+for SDK setup, runtime pinning, Linux libraries and native release validation.
 
 The packaged app's local mode is designed for point-and-click setup:
 

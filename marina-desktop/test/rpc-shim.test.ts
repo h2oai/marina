@@ -6,9 +6,20 @@ import { expect, mock, test } from "bun:test";
 test("native socket relays detach on close and a late connect cannot reopen a closed socket", async () => {
   const connect = Promise.withResolvers<void>();
   const disconnect = mock(async () => {});
+  const networkFetch = mock(async () => new Response("external"));
+  const getWorld = mock(async () => ({ name: "Desktop world" }));
+  const proxyApi = mock(async (_params: unknown) => ({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ privateVisible: true, inventory: [] }),
+  }));
   let messages: Record<string, (data: unknown) => void> = {};
   const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
-  const windowStub = { WebSocket, fetch, location: { origin: "http://desktop.invalid" } };
+  const windowStub = {
+    WebSocket,
+    fetch: networkFetch as unknown as typeof fetch,
+    location: { protocol: "views:", origin: "null" },
+  };
   Object.defineProperty(globalThis, "window", { configurable: true, value: windowStub });
   mock.module("electrobun/view", () => ({
     Electroview: class {
@@ -16,7 +27,12 @@ test("native socket relays detach on close and a late connect cannot reopen a cl
       static defineRPC(options: { handlers: { messages: typeof messages } }) {
         messages = options.handlers.messages;
         return {
-          request: { gameConnect: () => connect.promise, gameDisconnect: disconnect },
+          request: {
+            gameConnect: () => connect.promise,
+            gameDisconnect: disconnect,
+            getWorld,
+            proxyApi,
+          },
           send: { ready: () => {} },
         };
       }
@@ -25,6 +41,19 @@ test("native socket relays detach on close and a late connect cannot reopen a cl
   const sockets: WebSocket[] = [];
   try {
     await import("../src/views/dashboard/rpc-shim");
+    expect(
+      await (await windowStub.fetch("http://marina.desktop.invalid/api/world")).json(),
+    ).toEqual({ name: "Desktop world" });
+    expect(await (await windowStub.fetch("/api/world")).json()).toEqual({ name: "Desktop world" });
+    expect(getWorld).toHaveBeenCalledTimes(2);
+    expect(await (await windowStub.fetch("https://example.org/api/world")).text()).toBe("external");
+    expect(networkFetch).toHaveBeenCalledTimes(1);
+    expect(await (await windowStub.fetch("/api/entities/Resident/preview")).json()).toMatchObject({
+      privateVisible: true,
+    });
+    expect(proxyApi).toHaveBeenCalledWith(
+      expect.objectContaining({ path: "/api/entities/Resident/preview" }),
+    );
     for (const [path, push] of [
       ["dashboard-ws", "snapshot"],
       ["canvas-ws", "canvasEvent"],

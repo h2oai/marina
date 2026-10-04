@@ -201,9 +201,6 @@
     "ws": "^8.20.1",
     "zod": "4.6.4"
   },
-  "patchedDependencies": {
-    "electrobun@1.18.1": "marina-desktop/patches/electrobun@1.18.1.patch"
-  },
   "optionalDependencies": {
     "better-auth": "^1.7.4",
     "jose": "^6.2.12"

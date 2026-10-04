@@ -6,9 +6,10 @@ import StarterKit from "@tiptap/starter-kit";
 import { Handle, type NodeProps, NodeResizer, Position } from "@xyflow/react";
 import { useCallback, useState } from "react";
 import { authFetch } from "../../lib/api";
+import { apiOrigin } from "../../lib/api-origin";
 import { NodeMeta } from "./NodeMeta";
 
-const API_BASE = window.location.origin;
+const API_BASE = apiOrigin();
 
 export function DocumentNode({ data, id, selected }: NodeProps) {
   const content = (data.content as string) ?? (data.body as string) ?? "";

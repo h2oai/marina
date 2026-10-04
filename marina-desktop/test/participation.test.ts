@@ -3,15 +3,17 @@
 
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { authenticateRequest, DESKTOP_OPERATOR_ENTITY_ID } from "../../src/net/auth-middleware";
 import type { Perception } from "../../src/types";
 import { createTestEngine } from "../../test/engine-fixture";
 import { until } from "../../test/helpers";
+import { scopeProcessState, scopeProperty } from "../../test/process-state";
 import config from "../electrobun.config";
 import { EngineHost } from "../src/bun/engine-host";
 import { loadPreferences } from "../src/bun/preferences";
 import { createRpcHandlers } from "../src/bun/rpc-handlers";
 
-function fixture() {
+function fixture(wsPort?: number) {
   const world = createTestEngine();
   const messages: Perception[] = [];
   const rpc = createRpcHandlers(
@@ -22,7 +24,10 @@ function fixture() {
         getDb: () => world.db,
       }) as unknown as EngineHost,
     {
-      getPreferences: () => loadPreferences("/nonexistent-marina-preferences.json"),
+      getPreferences: () => ({
+        ...loadPreferences("/nonexistent-marina-preferences.json"),
+        ...(wsPort === undefined ? {} : { wsPort }),
+      }),
       setPreferences: () => {},
       switchToRemote: async () => {},
       switchToLocal: async () => {},
@@ -40,12 +45,45 @@ function fixture() {
   return { ...world, rpc, send, messages, login };
 }
 
-test("desktop release metadata follows its package and pinned Bun runtime", () => {
+test("native proxy preserves explicit resident credentials without operator fallback", async () => {
+  using _state = scopeProcessState({
+    env: { MARINA_DESKTOP_API_TOKEN: "native-test-secret".repeat(3), MARINA_OPEN_API: "false" },
+  });
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: (request) => {
+      const auth = authenticateRequest(request, f.engine);
+      return "error" in auth ? auth.error : Response.json(auth);
+    },
+  });
+  const f = fixture(server.port!);
+  try {
+    const login = await f.login();
+    const request = (headers: Record<string, string>) =>
+      f.rpc.proxyApi({ path: "/api/identity", method: "GET", headers });
+    const operator = await request({ "X-Marina-Desktop-Token": "untrusted-view-value" });
+    expect(JSON.parse(operator.body).entityId).toBe(DESKTOP_OPERATOR_ENTITY_ID);
+    const resident = await request({
+      Authorization: `Bearer ${login.data.token}`,
+      "X-Marina-Desktop-Token": "untrusted-view-value",
+    });
+    expect(resident.status).toBe(200);
+    expect(JSON.parse(resident.body).entityId).toBe(
+      f.engine.authenticate(String(login.data.token)),
+    );
+    expect((await request({ Authorization: "Bearer expired" })).status).toBe(401);
+  } finally {
+    server.stop(true);
+    f.rpc.gameDisconnect();
+    await f.dispose();
+  }
+});
+
+test("desktop release metadata follows its package and selects the Bun main process", () => {
   const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
   expect(config.app.version).toBe(pkg.version);
-  expect(config.build.bunVersion).toBe(
-    readFileSync(new URL("../../.bun-version", import.meta.url), "utf8").trim(),
-  );
+  expect(config.build.mainProcess).toBe("bun");
 });
 
 test("desktop shutdown refuses ingress and awaits background writes before closing persistence", async () => {
@@ -73,18 +111,54 @@ test("desktop shutdown refuses ingress and awaits background writes before closi
   const shutdown = host.shutdown().then(() => {
     stopped = true;
   });
+  let secondStopped = false;
+  const secondShutdown = host.shutdown().then(() => {
+    secondStopped = true;
+  });
   try {
     await until(() => !host.isRunning);
     expect(stopped).toBe(false);
     expect(wrote).toBe(false);
+    expect(secondStopped).toBe(false);
     release.resolve();
-    await shutdown;
+    await Promise.all([shutdown, secondShutdown]);
     expect(wrote).toBe(true);
     expect(host.getEngine()).toBeNull();
     expect(() => f.db.listCodingSessions()).toThrow();
   } finally {
     release.resolve();
-    await shutdown;
+    await Promise.all([shutdown, secondShutdown]);
+  }
+});
+
+test("desktop retries a failed drain even after ingress stopped or startup was incomplete", async () => {
+  const f = createTestEngine();
+  const host = new EngineHost({
+    dbPath: ":memory:",
+    wsPort: 0,
+    telnetPort: 0,
+    mcpPort: 0,
+    tickMs: 60_000,
+    startRoom: "test/start",
+    roomsDir: "",
+  });
+  Object.assign(host, { engine: f.engine, db: f.db, running: false });
+  const originalDrain = f.engine.drainCommands.bind(f.engine);
+  let attempts = 0;
+  using _patch = scopeProperty(f.engine, "drainCommands", async () => {
+    if (++attempts === 1) throw new Error("retryable drain failure");
+    await originalDrain();
+  });
+  try {
+    await expect(host.shutdown()).rejects.toThrow("retryable drain failure");
+    expect(host.getEngine()).toBe(f.engine);
+    expect(() => f.db.listCodingSessions()).not.toThrow();
+    await host.shutdown();
+    expect(attempts).toBe(2);
+    expect(host.getEngine()).toBeNull();
+    expect(() => f.db.listCodingSessions()).toThrow();
+  } finally {
+    await host.shutdown();
   }
 });
 

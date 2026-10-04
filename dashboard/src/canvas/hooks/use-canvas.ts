@@ -5,10 +5,11 @@ import type { Node, NodeChange } from "@xyflow/react";
 import { applyNodeChanges } from "@xyflow/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { authFetch } from "../../lib/api";
+import { apiOrigin } from "../../lib/api-origin";
 import { defaultSize, tilePosition } from "../lib/layout";
 import { type CanvasData, type CanvasNodeData, normalizeNodeType } from "../lib/types";
 
-const API_BASE = window.location.origin;
+const API_BASE = apiOrigin();
 
 function toFlowNode(n: CanvasNodeData, index: number): Node {
   const type = normalizeNodeType(n.type);

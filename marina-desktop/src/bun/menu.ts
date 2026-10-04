@@ -1,18 +1,14 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { ApplicationMenu, Utils } from "electrobun/bun";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import {
-  exportState,
-  importState,
-  validateSnapshot,
-} from "../../../src/persistence/export-import";
+import { ApplicationMenu, Utils } from "electrobun/main";
+import { exportState, importState, validateSnapshot } from "../../../src/persistence/export-import";
 import type { EngineHost } from "./engine-host";
+import type { AppPaths } from "./paths";
 import type { Preferences } from "./preferences";
 import { savePreferences } from "./preferences";
-import type { AppPaths } from "./paths";
 
 interface AppContext {
   engineHost: EngineHost | null;
@@ -103,7 +99,7 @@ export function initMenu(app: AppContext): void {
     const action =
       typeof event === "string"
         ? event
-        : (event as { data?: { action?: string } })?.data?.action ?? "";
+        : ((event as { data?: { action?: string } })?.data?.action ?? "");
 
     try {
       switch (action) {
@@ -138,14 +134,10 @@ export function initMenu(app: AppContext): void {
           handleToggleFullscreen(app);
           break;
         case "help:docs":
-          Utils.openExternal(
-            "https://github.com/h2oai/Marina#readme",
-          );
+          Utils.openExternal("https://github.com/h2oai/Marina#readme");
           break;
         case "help:issue":
-          Utils.openExternal(
-            "https://github.com/h2oai/Marina/issues",
-          );
+          Utils.openExternal("https://github.com/h2oai/Marina/issues");
           break;
         case "help:open-data":
           Utils.openPath(app.paths.dataDir);
@@ -244,22 +236,19 @@ async function handleOpenDatabase(app: AppContext): Promise<void> {
 async function handleConnectRemote(app: AppContext): Promise<void> {
   // Use message box to get URL since Electrobun doesn't have a text input dialog
   // Show recent servers if available
-  const recentList =
-    app.prefs.recentServers.length > 0
-      ? app.prefs.recentServers.slice(0, 3)
-      : [];
+  const recentList = app.prefs.recentServers.length > 0 ? app.prefs.recentServers.slice(0, 3) : [];
 
   const defaultUrl = process.env.MARINA_DEFAULT_REMOTE_URL ?? "http://localhost:3300";
-  const buttons =
-    recentList.length > 0 ? [...recentList, "Cancel"] : [defaultUrl, "Cancel"];
+  const buttons = recentList.length > 0 ? [...recentList, "Cancel"] : [defaultUrl, "Cancel"];
 
   const result = await Utils.showMessageBox({
     type: "question",
     title: "Connect to Server",
     message: "Select a server to connect to:",
-    detail: recentList.length > 0
-      ? "Choose a recent server or cancel to enter a custom URL in the dashboard settings."
-      : "Connect to the default local server, or cancel to configure in settings.",
+    detail:
+      recentList.length > 0
+        ? "Choose a recent server or cancel to enter a custom URL in the dashboard settings."
+        : "Connect to the default local server, or cancel to configure in settings.",
     buttons,
     cancelId: buttons.length - 1,
   });
@@ -316,14 +305,8 @@ async function handleExportState(app: AppContext): Promise<void> {
     const json = JSON.stringify(snapshot, null, 2);
 
     // Save to data directory with timestamp
-    const timestamp = new Date()
-      .toISOString()
-      .replace(/[:.]/g, "-")
-      .slice(0, 19);
-    const exportPath = join(
-      app.paths.dataDir,
-      `marina-export-${timestamp}.json`,
-    );
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const exportPath = join(app.paths.dataDir, `marina-export-${timestamp}.json`);
 
     const dir = dirname(exportPath);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
@@ -488,8 +471,7 @@ async function handleStopEngine(app: AppContext): Promise<void> {
     type: "question",
     title: "Stop Engine",
     message: "Stop the Marina engine?",
-    detail:
-      "All connected agents will be disconnected. World state will be saved.",
+    detail: "All connected agents will be disconnected. World state will be saved.",
     buttons: ["Stop Engine", "Cancel"],
     defaultId: 1,
     cancelId: 1,
@@ -522,8 +504,7 @@ async function handleEngineStatus(app: AppContext): Promise<void> {
   const hours = Math.floor(uptime / 3600);
   const minutes = Math.floor((uptime % 3600) / 60);
   const seconds = uptime % 60;
-  const uptimeStr =
-    hours > 0 ? `${hours}h ${minutes}m ${seconds}s` : `${minutes}m ${seconds}s`;
+  const uptimeStr = hours > 0 ? `${hours}h ${minutes}m ${seconds}s` : `${minutes}m ${seconds}s`;
 
   const heapMB = (status.memory.heapUsed / 1024 / 1024).toFixed(1);
   const rssMB = (status.memory.rss / 1024 / 1024).toFixed(1);
@@ -548,11 +529,10 @@ async function handleEngineStatus(app: AppContext): Promise<void> {
 // ─── View Actions ────────────────────────────────────────────────────────────
 
 function handleToggleFullscreen(app: AppContext): void {
-  const win = app.mainWindow as any;
+  const win = app.mainWindow;
   if (!win) return;
   if (typeof win.setFullScreen === "function") {
-    const isFull =
-      typeof win.isFullScreen === "function" ? win.isFullScreen() : false;
+    const isFull = typeof win.isFullScreen === "function" ? win.isFullScreen() : false;
     win.setFullScreen(!isFull);
   }
 }

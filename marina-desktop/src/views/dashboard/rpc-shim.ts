@@ -12,6 +12,7 @@
  */
 
 import { Electroview } from "electrobun/view";
+import { apiOrigin } from "../../../../dashboard/src/lib/api-origin";
 import type {
   AgentSpawnParams,
   ApiKeyParams,
@@ -61,6 +62,9 @@ let rpcConnected = false;
 try {
   // Define RPC with bun→webview push message handlers
   rpc = Electroview.defineRPC<DashboardRPCSchema>({
+    // Native startup can queue several snapshots and a large capability catalog.
+    // Use the same bounded window as other interactive desktop operations.
+    maxRequestTime: 15_000,
     handlers: {
       requests: {},
       messages: {
@@ -132,7 +136,8 @@ const originalFetch = window.fetch.bind(window);
   let pathname: string;
   let apiPath: string;
   try {
-    const parsed = new URL(url, window.location.origin);
+    const parsed = new URL(url, apiOrigin());
+    if (parsed.origin !== apiOrigin()) return originalFetch(input, init);
     pathname = parsed.pathname;
     apiPath = `${parsed.pathname}${parsed.search}`;
   } catch {
@@ -178,7 +183,10 @@ const originalFetch = window.fetch.bind(window);
   } catch (err) {
     // Silently return 503 — React Query handles retries/error states.
     // RPC timeouts are expected when native dialogs block the event loop.
-    console.warn(`[rpc-shim] RPC request failed: ${pathname}`, err);
+    console.warn(
+      `[rpc-shim] RPC request failed: ${pathname}`,
+      err instanceof Error ? err.message : String(err),
+    );
     return new Response(JSON.stringify({ error: "RPC unavailable" }), {
       status: 503,
       headers: { "Content-Type": "application/json" },
@@ -240,7 +248,7 @@ async function routeApiRequest(
     if (pathname === "/api/default-model") return rpc.request.clearDefaultModel();
     const keyDeleteMatch = pathname.match(/^\/api\/keys\/(.+)$/);
     if (keyDeleteMatch) return rpc.request.deleteKey(decodeURIComponent(keyDeleteMatch[1]!));
-    const entityDeleteMatch = pathname.match(/^\/api\/entities\/(.+)$/);
+    const entityDeleteMatch = pathname.match(/^\/api\/entities\/([^/]+)$/);
     if (entityDeleteMatch) {
       return rpc.request.deleteEntity(decodeURIComponent(entityDeleteMatch[1]!));
     }
@@ -372,12 +380,12 @@ async function routeApiRequest(
     return rpc.request.getChannelDetail(decodeURIComponent(channelDetailMatch[1]!));
   }
 
-  const roomMatch = pathname.match(/^\/api\/rooms\/(.+)$/);
+  const roomMatch = pathname.match(/^\/api\/rooms\/([^/]+)$/);
   if (roomMatch) {
     return rpc.request.getRoomDetail(decodeURIComponent(roomMatch[1]!));
   }
 
-  const entityMatch = pathname.match(/^\/api\/entities\/(.+)$/);
+  const entityMatch = pathname.match(/^\/api\/entities\/([^/]+)$/);
   if (entityMatch) {
     return rpc.request.getEntityDetail(decodeURIComponent(entityMatch[1]!));
   }
@@ -589,6 +597,9 @@ class RpcGameWebSocket extends EventTarget {
           const errorEvent = new Event("error");
           this.onerror?.(errorEvent);
           this.dispatchEvent(errorEvent);
+          // The shared chat reconnect loop listens for close. A timeout must
+          // not strand the virtual socket in CONNECTING forever.
+          this.close();
         });
     }
   }

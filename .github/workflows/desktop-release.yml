@@ -19,177 +19,85 @@ permissions:
   contents: read
 
 jobs:
-  build-macos:
+  build:
     if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/desktop-v')
     permissions:
       contents: read
       id-token: write
       attestations: write
     strategy:
+      fail-fast: false
       matrix:
         include:
           - runner: macos-15
-            arch: arm64
-          - runner: macos-15-intel
-            arch: x64
+            platform: macos-arm64
+          - runner: windows-latest
+            platform: win-x64
+          - runner: ubuntu-24.04
+            platform: linux-x64
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v7.0.1
-
       - uses: oven-sh/setup-bun@v2.2.0
         with:
           bun-version-file: .bun-version
-
-      - name: Install dependencies
-        # One workspace install covers root + dashboard + marina-desktop.
+      - name: Install Linux runtime libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-0 libwebkit2gtk-4.1-0 libayatana-appindicator3-1 librsvg2-2
+      - name: Install workspace dependencies
         run: bun install --frozen-lockfile
-
-      - name: Run tests (verify no regressions)
-        run: bun run test
-
-      - name: Build desktop app
+      - name: Sync Electrobun SDK
+        working-directory: marina-desktop
+        run: bun run sync
+      - name: Validate desktop
+        working-directory: marina-desktop
+        run: |
+          bun run typecheck
+          bun run test
+      - name: Build native release
+        working-directory: marina-desktop
         env:
+          BUILD_ENV: ${{ github.event.inputs.env || 'stable' }}
           ELECTROBUN_DEVELOPER_ID: ${{ secrets.ELECTROBUN_DEVELOPER_ID }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-        run: |
-          ENV="${{ github.event.inputs.env || 'stable' }}"
-          bash marina-desktop/scripts/build.sh "$ENV"
-
+        run: bun run "build:$BUILD_ENV"
       - uses: ./.github/actions/setup-syft
       - name: Inventory build inputs
-        run: bun run sbom marina-desktop/build/source-macos-${{ matrix.arch }}.cdx.json
+        run: bun run sbom marina-desktop/build/source-${{ matrix.platform }}.cdx.json
+      # Sign every v2 payload and channel metadata file, before adding evidence.
       - uses: ./.github/actions/attest-release
         id: attest
         with:
-          subject-path: marina-desktop/build/*.dmg
-          sbom-path: marina-desktop/build/source-macos-${{ matrix.arch }}.cdx.json
+          subject-path: marina-desktop/artifacts/*
+          sbom-path: marina-desktop/build/source-${{ matrix.platform }}.cdx.json
       - name: Preserve verification bundles
-        shell: bash
         env:
           PROVENANCE_BUNDLE: ${{ steps.attest.outputs.provenance-bundle }}
           SBOM_BUNDLE: ${{ steps.attest.outputs.sbom-bundle }}
-          ARTIFACT_PLATFORM: macos-${{ matrix.arch }}
+          ARTIFACT_PLATFORM: ${{ matrix.platform }}
         run: |
-          cp "$PROVENANCE_BUNDLE" "marina-desktop/build/provenance-$ARTIFACT_PLATFORM.sigstore.json"
-          cp "$SBOM_BUNDLE" "marina-desktop/build/sbom-$ARTIFACT_PLATFORM.sigstore.json"
-      - name: Upload attested artifact
+          cp "marina-desktop/build/source-$ARTIFACT_PLATFORM.cdx.json" marina-desktop/artifacts/
+          cp "$PROVENANCE_BUNDLE" "marina-desktop/artifacts/provenance-$ARTIFACT_PLATFORM.sigstore.json"
+          cp "$SBOM_BUNDLE" "marina-desktop/artifacts/sbom-$ARTIFACT_PLATFORM.sigstore.json"
+      - name: Upload all release payloads without renaming
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: marina-macos-${{ matrix.arch }}
-          path: |
-            marina-desktop/build/*.dmg
-            marina-desktop/build/source-macos-${{ matrix.arch }}.cdx.json
-            marina-desktop/build/provenance-macos-${{ matrix.arch }}.sigstore.json
-            marina-desktop/build/sbom-macos-${{ matrix.arch }}.sigstore.json
-          if-no-files-found: error
-
-  build-windows:
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/desktop-v')
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7.0.1
-
-      - uses: oven-sh/setup-bun@v2.2.0
-        with:
-          bun-version-file: .bun-version
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Build desktop app
-        run: bash marina-desktop/scripts/build.sh ${{ github.event.inputs.env || 'stable' }}
-
-      - uses: ./.github/actions/setup-syft
-      - name: Inventory build inputs
-        run: bun run sbom marina-desktop/build/source-windows-x64.cdx.json
-      - uses: ./.github/actions/attest-release
-        id: attest
-        with:
-          subject-path: marina-desktop/build/*.exe
-          sbom-path: marina-desktop/build/source-windows-x64.cdx.json
-      - name: Preserve verification bundles
-        shell: bash
-        env:
-          PROVENANCE_BUNDLE: ${{ steps.attest.outputs.provenance-bundle }}
-          SBOM_BUNDLE: ${{ steps.attest.outputs.sbom-bundle }}
-          ARTIFACT_PLATFORM: windows-x64
-        run: |
-          cp "$PROVENANCE_BUNDLE" "marina-desktop/build/provenance-$ARTIFACT_PLATFORM.sigstore.json"
-          cp "$SBOM_BUNDLE" "marina-desktop/build/sbom-$ARTIFACT_PLATFORM.sigstore.json"
-      - name: Upload attested artifact
-        uses: actions/upload-artifact@v7.0.1
-        with:
-          name: marina-windows-x64
-          path: |
-            marina-desktop/build/*.exe
-            marina-desktop/build/source-windows-x64.cdx.json
-            marina-desktop/build/provenance-windows-x64.sigstore.json
-            marina-desktop/build/sbom-windows-x64.sigstore.json
-          if-no-files-found: error
-
-  build-linux:
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/desktop-v')
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v7.0.1
-
-      - uses: oven-sh/setup-bun@v2.2.0
-        with:
-          bun-version-file: .bun-version
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Build desktop app
-        run: bash marina-desktop/scripts/build.sh ${{ github.event.inputs.env || 'stable' }}
-
-      - uses: ./.github/actions/setup-syft
-      - name: Inventory build inputs
-        run: bun run sbom marina-desktop/build/source-linux-x64.cdx.json
-      - uses: ./.github/actions/attest-release
-        id: attest
-        with:
-          subject-path: marina-desktop/build/*.deb
-          sbom-path: marina-desktop/build/source-linux-x64.cdx.json
-      - name: Preserve verification bundles
-        shell: bash
-        env:
-          PROVENANCE_BUNDLE: ${{ steps.attest.outputs.provenance-bundle }}
-          SBOM_BUNDLE: ${{ steps.attest.outputs.sbom-bundle }}
-          ARTIFACT_PLATFORM: linux-x64
-        run: |
-          cp "$PROVENANCE_BUNDLE" "marina-desktop/build/provenance-$ARTIFACT_PLATFORM.sigstore.json"
-          cp "$SBOM_BUNDLE" "marina-desktop/build/sbom-$ARTIFACT_PLATFORM.sigstore.json"
-      - name: Upload attested artifact
-        uses: actions/upload-artifact@v7.0.1
-        with:
-          name: marina-linux-x64
-          path: |
-            marina-desktop/build/*.deb
-            marina-desktop/build/source-linux-x64.cdx.json
-            marina-desktop/build/provenance-linux-x64.sigstore.json
-            marina-desktop/build/sbom-linux-x64.sigstore.json
+          name: marina-${{ matrix.platform }}
+          path: marina-desktop/artifacts/*
           if-no-files-found: error
 
   release:
     permissions:
       contents: write
-    needs: [build-macos, build-windows, build-linux]
+    needs: [build]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     steps:

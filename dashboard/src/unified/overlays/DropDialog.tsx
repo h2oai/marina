@@ -1,5 +1,6 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
+import { apiOrigin } from "../../lib/api-origin";
 
 /**
  * DropDialog -- Modal that opens after a drag-and-drop file upload, prompting
@@ -18,7 +19,7 @@ import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { authFetch } from "../../lib/api";
 import type { DroppedFileResult } from "../hooks/use-canvas-integration";
 
-const API_BASE = window.location.origin;
+const API_BASE = apiOrigin();
 
 /** MIME-prefix-keyed default intent suggestions. Order matters: specific first. */
 const MIME_INTENT_SUGGESTIONS: [string, string][] = [

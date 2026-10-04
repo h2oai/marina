@@ -18,6 +18,7 @@ marina-desktop/node_modules/
 marina-desktop/build/
 marina-desktop/dist/
 marina-desktop/.font-cache/
+marina-desktop/assets/icon.iconset/
 benchmarks/datasets/
 benchmarks/results/
 benchmarks/.tmp-humaneval/
@@ -29,6 +30,7 @@ artifacts/flywheel/
 *.key
 *.p12
 marina-desktop/artifacts/
+.hutch/
 
 # Generated Python client bytecode
 __pycache__/

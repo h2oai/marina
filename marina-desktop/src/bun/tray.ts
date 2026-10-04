@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Tray } from "electrobun/bun";
+import { type MenuItemConfig, Tray, Utils } from "electrobun/main";
 
 interface AppContext {
   engineHost: {
@@ -38,8 +38,10 @@ export function initTray(app: AppContext): void {
   updateTrayMenu(app);
 
   // Handle tray click — show/focus the main window
-  tray.on("tray-clicked", () => {
-    app.mainWindow?.focus?.();
+  tray.on("tray-clicked", (event: unknown) => {
+    const action = (event as { data?: { action?: string } })?.data?.action;
+    if (action === "tray:quit") Utils.quit();
+    else app.mainWindow?.focus?.();
   });
 
   // Update tray status every 5 seconds
@@ -48,14 +50,7 @@ export function initTray(app: AppContext): void {
   }, 5000);
 }
 
-function buildTrayMenu(
-  app: AppContext,
-): Array<{
-  label?: string;
-  action?: string;
-  type?: string;
-  enabled?: boolean;
-}> {
+function buildTrayMenu(app: AppContext): MenuItemConfig[] {
   const status = app.engineHost?.getStatus();
 
   const statusLine = status?.running
@@ -63,16 +58,16 @@ function buildTrayMenu(
     : "Engine stopped";
 
   return [
-    { label: statusLine, action: "tray:status", enabled: false },
+    { type: "normal", label: statusLine, action: "tray:status", enabled: false },
     { type: "separator" },
-    { label: "Show Window", action: "tray:show" },
+    { type: "normal", label: "Show Window", action: "tray:show" },
     { type: "separator" },
-    { label: "Quit", action: "tray:quit" },
+    { type: "normal", label: "Quit", action: "tray:quit" },
   ];
 }
 
 function updateTrayMenu(app: AppContext): void {
-  tray?.setMenu(buildTrayMenu(app) as any);
+  tray?.setMenu(buildTrayMenu(app));
 }
 
 function updateTray(app: AppContext): void {
@@ -81,9 +76,7 @@ function updateTray(app: AppContext): void {
   const status = app.engineHost?.getStatus();
   const isActive = status?.running && status.agentCount > 0;
 
-  tray.setImage(
-    isActive ? "resources/tray-icon-active.png" : "resources/tray-icon.png",
-  );
+  tray.setImage(isActive ? "resources/tray-icon-active.png" : "resources/tray-icon.png");
 
   const title = status?.running
     ? `${status.agentCount} agent${status.agentCount !== 1 ? "s" : ""}`

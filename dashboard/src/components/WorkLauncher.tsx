@@ -1,5 +1,6 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
+
 import { ArrowUpRight, Bot, Layers3, Rocket, Save, Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
 import { MarinaRoutingClient } from "../../../src/sdk/routing-client";
@@ -9,6 +10,7 @@ import { runtimeState, useRoutingOverview } from "../hooks/use-routing-overview"
 import { useRuntimeCommand } from "../hooks/use-runtime-command";
 import { openParticipant, useWorkspaceState } from "../hooks/use-workspace-state";
 import { getToken } from "../lib/api";
+import { apiOrigin } from "../lib/api-origin";
 
 interface Harness {
   mode: "solo" | "crew" | "native";
@@ -81,10 +83,7 @@ function LaunchForm({
   const adapter =
     adapters.find((value) => value.id === harness.adapter)?.id ?? adapters[0]?.id ?? "";
   const token = getToken() ?? "";
-  const client = useMemo(
-    () => new MarinaRoutingClient({ url: window.location.origin, token }),
-    [token],
-  );
+  const client = useMemo(() => new MarinaRoutingClient({ url: apiOrigin(), token }), [token]);
   const command = useRuntimeCommand(client, selected?.session.id ?? "");
   const locked = command.busy || !!command.pending;
   const patch = (value: Partial<Harness>) => {

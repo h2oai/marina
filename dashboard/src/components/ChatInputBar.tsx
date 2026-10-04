@@ -350,6 +350,8 @@ export function ChatInputBar({
             <button
               type="button"
               onClick={doLogin}
+              disabled={!connected}
+              title={connected ? undefined : "Connecting to Marina…"}
               className="rounded bg-primary px-2 py-1 text-[11px] font-bold text-bg"
             >
               Connect
