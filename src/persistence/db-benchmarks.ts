@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Database } from "bun:sqlite";
+import { createHmac, randomBytes } from "node:crypto";
 
 // ─── Benchmark runs ────────────────────────────────────────────────────────
 
@@ -160,6 +161,55 @@ export interface BenchmarkItemInput {
   trace_id: string | null;
   participants_json: string | null;
   judge_verdict: string | null;
+  /**
+   * Unkeyed digest of the normalised answer (`answerDigest` in
+   * `src/engine/benchmark-ledger.ts`); the ledger stores only a keyed hash of
+   * it (`answer_hash`, migration 157). Omitted = no answer reported.
+   */
+  answer_digest?: string | null;
+  /** The answer was forced at a turn, step or time budget (migration 157). */
+  budget_forced?: boolean | 0 | 1 | null;
+  /** Verification outcome: checks passed, ran and failed, or never ran (migration 157). */
+  verification?: BenchmarkVerification | null;
+}
+
+/** Verification states the ledger keeps apart: a check that never ran is not a failed check. */
+export type BenchmarkVerification = "passed" | "failed" | "not_run";
+export const BENCHMARK_VERIFICATION_STATES: readonly BenchmarkVerification[] = [
+  "passed",
+  "failed",
+  "not_run",
+];
+
+/** `app_settings` key of the per-ledger answer-hash key (created on first use). */
+export const ANSWER_HASH_KEY_SETTING = "benchmark.answer_hash_key";
+
+/**
+ * The ledger's answer-hash key: random, per database, created on first use.
+ * Hashes compare within one ledger (and its exports, which carry
+ * `app_settings`), but a short answer such as a choice letter cannot be
+ * recovered by hashing guesses.
+ */
+export function benchmarkAnswerHashKey(db: Database): string {
+  const read = () =>
+    (
+      db.query("SELECT value FROM app_settings WHERE key = ?").get(ANSWER_HASH_KEY_SETTING) as {
+        value: string;
+      } | null
+    )?.value;
+  const existing = read();
+  if (existing) return existing;
+  db.run("INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)", [
+    ANSWER_HASH_KEY_SETTING,
+    randomBytes(32).toString("hex"),
+    Date.now(),
+  ]);
+  return read() as string;
+}
+
+/** The stored answer hash of one item's digest: keyed by the ledger, bound to the item id. */
+export function keyedAnswerHash(key: string, itemId: string, digest: string): string {
+  return createHmac("sha256", key).update(`${itemId}\u0000${digest}`).digest("hex").slice(0, 32);
 }
 
 /**
@@ -219,8 +269,10 @@ export function recordBenchmarkLedgerRun(
     );
     const insert = db.prepare(
       `INSERT INTO benchmark_items (run_id, item_id, correct, score, latency_ms, cost_usd, trace_id,
-         participants_json, judge_verdict) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         participants_json, judge_verdict, answer_hash, budget_forced, verification)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
+    const key = items.some((it) => it.answer_digest) ? benchmarkAnswerHashKey(db) : "";
     for (const it of items) {
       insert.run(
         run.id,
@@ -232,6 +284,15 @@ export function recordBenchmarkLedgerRun(
         it.trace_id,
         it.participants_json,
         it.judge_verdict,
+        it.answer_digest ? keyedAnswerHash(key, it.item_id, it.answer_digest) : null,
+        it.budget_forced === null || it.budget_forced === undefined
+          ? null
+          : it.budget_forced
+            ? 1
+            : 0,
+        it.verification && BENCHMARK_VERIFICATION_STATES.includes(it.verification)
+          ? it.verification
+          : null,
       );
     }
     if (run.invalid_reason) {
@@ -455,6 +516,12 @@ export interface BenchmarkItemRow {
   trace_id: string | null;
   participants_json: string | null;
   judge_verdict: string | null;
+  /** Keyed hash of the normalised answer (migration 157); null = not reported. */
+  answer_hash?: string | null;
+  /** 1 = the answer was forced at a budget, 0 = not; null = not reported. */
+  budget_forced?: 0 | 1 | null;
+  /** Checks passed, ran and failed, or never ran; null = not reported. */
+  verification?: BenchmarkVerification | null;
 }
 
 // ─── Promoted defaults (migration 147) ────────────────────────────────────

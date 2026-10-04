@@ -70,6 +70,18 @@ export interface ResultItem {
   judgeTraceId?: string;
   /** The answer arrived through Marina's output repair (`repaired:parse|shot`). */
   repaired?: string;
+  /**
+   * `answerDigest` of the item's answer when `actual` is not the answer itself
+   * (an adapter that keeps `actual` empty). Filed as a digest, never as text.
+   */
+  answerDigest?: string;
+  /**
+   * The answer was forced at a turn, step or time budget (Marina's
+   * `x-marina-budget-forced` header, or the adapter's own loop).
+   */
+  budgetForced?: boolean;
+  /** Verification outcome: `not_run` (infrastructure never ran the checks) is not `failed`. */
+  verification?: "passed" | "failed" | "not_run";
 }
 
 /** Usage of one model call. Undefined fields were not reported — never estimated. */

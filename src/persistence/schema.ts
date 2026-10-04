@@ -461,6 +461,22 @@ CREATE TABLE spend_scope_daily (
 );
 `,
   },
+  // Per-item answer identity and outcome labels for the benchmark ledger:
+  // `answer_hash` is a keyed hash of the normalised answer (never the answer —
+  // the key is per ledger, so a short answer cannot be recovered by hashing
+  // guesses), so plurality and offline selectors can be measured across runs;
+  // `budget_forced` marks an answer the harness forced at a turn, step or time
+  // budget; `verification` separates checks that never ran from checks that
+  // ran and failed. NULL = not reported (every row recorded before this).
+  {
+    version: 157,
+    sql: `
+ALTER TABLE benchmark_items ADD COLUMN answer_hash TEXT;
+ALTER TABLE benchmark_items ADD COLUMN budget_forced INTEGER CHECK (budget_forced IS NULL OR budget_forced IN (0, 1));
+ALTER TABLE benchmark_items ADD COLUMN verification TEXT CHECK (verification IS NULL OR verification IN ('passed', 'failed', 'not_run'));
+CREATE INDEX idx_benchmark_items_answer ON benchmark_items(item_id, answer_hash) WHERE answer_hash IS NOT NULL;
+`,
+  },
 ];
 
 /** Migration 143 body — self-contained so later edits to db-notes never change it. */

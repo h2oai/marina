@@ -18,6 +18,10 @@
 - **Items:** `benchmark_items` keeps one outcome per item: id, correct, score, latency, cost, `trace_id`, `participants_json` (agents and models) and the judge verdict.
   - Item ids only: case content (questions, answers, responses) is never stored.
   - Rows are never rewritten; a trigger refuses `UPDATE`.
+  - Migration 157 adds three per-item labels, NULL when a run did not report them:
+    - `answer_hash`: the harness sends `answerDigest` (sha256 of the normalised answer, `normalizeAnswerForHash`); the ledger stores an HMAC of it keyed by a random per-ledger key (`app_settings` `benchmark.answer_hash_key`) and bound to the item id. Equal answers to one item match across runs, so plurality voting and offline selectors can be measured, but a short answer (a choice letter) cannot be recovered by hashing guesses.
+    - `budget_forced`: 1 when the answer was forced at a turn, step or time budget.
+    - `verification`: `passed` | `failed` | `not_run`. A check that never ran (dependency preparation failed, the checker was unavailable) is `not_run`, never `failed`. `benchmark result` and the SWE-bench adapter report the three counts apart.
 - **Writes:** one transaction through `recordBenchmarkLedgerRun`. Re-importing the same file returns the existing run.
 - **Import:** `bun run benchmark:import` (`scripts/benchmark-import.ts`) records harness or Tier-0 results. It is an operator script, never an in-world command, and it drops any credential in the result's config.
 - **Ranking:** the pure functions live in `src/engine/benchmark-ledger.ts` (paired comparison with exact McNemar, Pareto frontier, participant credit). They back `benchmark compare | frontier | participants` and the ledger columns of `benchmark leaderboard`.

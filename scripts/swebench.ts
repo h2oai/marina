@@ -395,6 +395,13 @@ async function fileCmd(): Promise<number> {
   console.log(
     `${arm.name} r${replicate}: ${result.items.filter((i) => i.correct).length}/${result.items.length} resolved · $${cost.toFixed(2)}`,
   );
+  const checks = result.metadata.itemVerification;
+  if (checks.passed + checks.failed + checks.not_run > 0) {
+    // A check that never ran (dependency preparation, runner) is infrastructure, not a failure.
+    console.log(
+      `  verification: ${checks.passed} passed · ${checks.failed} failed · ${checks.not_run} not run · ${checks.never_requested} never requested`,
+    );
+  }
   // Every replicate of one arm records the SAME target, so they pool (and promote) together.
   const target = JSON.stringify(ledgerTarget(arm));
   const proc = Bun.spawn(
