@@ -10,8 +10,15 @@
  *       [--replicates 2] [--group <key>] [--out <dir>] [--qrels qrel_evidence.txt]
  *       [--judge-model openrouter/qwen/qwen3-32b] [--file-to http://localhost:3300]
  *       [--formation single|ensemble:N|mapreduce:N|sharding:N|blackboard:NxR]
- *       [--lead-model <id>] [--offset N]
+ *       [--lead-model <id>] [--offset N] [--max-usd N] [--resume]
  *   bun run browsecomp-plus compare <armA-dir> <armB-dir>   pooled paired comparison
+ *
+ * `--max-usd` is a hard spend stop for the whole invocation (every replicate,
+ * agents and judge), summed from each call's `x-marina-cost-usd` and checked
+ * before every call; the server's own daily cap trips it too. Queries it stops
+ * are NOT RUN — left out of scoring, never counted wrong — and a stopped
+ * replicate is reported incomplete and not filed. `--resume` reuses the queries
+ * already answered and judged in the output directory.
  *
  * `--model` is any id the Marina at `--endpoint` serves: a passthru model
  * (`openrouter/openai/gpt-6-luna`), the verification formation
@@ -48,6 +55,7 @@ import {
   replicateFromResult,
   validGroupKey,
 } from "../benchmarks/replicates";
+import { parseMaxUsd, SpendGuard } from "../benchmarks/spend-guard";
 import { wilsonInterval } from "../benchmarks/stats";
 import type { BenchmarkResult } from "../benchmarks/types";
 import { CORPUS_LEAD_CHARS, corpusDir } from "../src/engine/search-providers/corpus";
@@ -84,6 +92,8 @@ const { positionals, values } = parseArgs({
     label: { type: "string" },
     llm: { type: "string" },
     link: { type: "string", default: "https://github.com/h2oai/marina" },
+    "max-usd": { type: "string" },
+    resume: { type: "boolean", default: false },
   },
 });
 
@@ -117,7 +127,8 @@ async function run(): Promise<number> {
   const goldQrels = values["gold-qrels"]
     ? parseQrels(readFileSync(values["gold-qrels"], "utf8"))
     : undefined;
-  const endpoint = { baseUrl: values.endpoint!, apiKey };
+  const guard = new SpendGuard(parseMaxUsd(values["max-usd"]));
+  const endpoint = { baseUrl: values.endpoint!, apiKey, guard };
   const timeoutMs = int("timeout-s", values["timeout-s"]) * 1000;
   const backend = workerPool(values.corpus!, corpusDir(), int("workers", values.workers));
   const target =
@@ -125,7 +136,7 @@ async function run(): Promise<number> {
       ? values.model
       : { formation: formationLabel(formation), model: values.model, lead: lead ?? values.model };
   console.error(
-    `${queries.length} queries × ${reps} replicate(s) · ${typeof target === "string" ? target : JSON.stringify(target)} · corpus ${values.corpus} (${corpusDir()})`,
+    `${queries.length} queries × ${reps} replicate(s) · ${typeof target === "string" ? target : JSON.stringify(target)} · corpus ${values.corpus} (${corpusDir()})${guard.maxUsd !== undefined ? ` · spend cap $${guard.maxUsd}` : ""}`,
   );
   const results: BenchmarkResult[] = [];
   for (let rep = 1; rep <= reps; rep++) {
@@ -154,10 +165,11 @@ async function run(): Promise<number> {
       qrels,
       goldQrels,
       outDir: dir,
+      resume: values.resume,
       onProgress: (done, total, ev) => {
         if (done % 10 === 0 || done === total)
           console.error(
-            `  rep ${rep}: ${done}/${total} (last ${ev.query_id}: ${ev.correct ? "correct" : "wrong"})`,
+            `  rep ${rep}: ${done}/${total} (last ${ev.query_id}: ${ev.correct ? "correct" : "wrong"}) · spent $${guard.spent.toFixed(2)}`,
           );
       },
     });
@@ -185,6 +197,8 @@ async function run(): Promise<number> {
           judge_cost_usd: Number(arm.judgeCostUsd.toFixed(4)),
           gold_recall_pct: goldRecall,
           incomplete: arm.items.filter((i) => i.run.record.status !== "completed").length,
+          ...(arm.resumed.length ? { resumed: arm.resumed.length } : {}),
+          ...(arm.stoppedBy ? { stopped_by: arm.stoppedBy, not_run: arm.notRun.length } : {}),
         },
       },
     });
@@ -198,13 +212,19 @@ async function run(): Promise<number> {
       target,
     });
     writeFileSync(join(dir, "result.json"), JSON.stringify(result, null, 1));
-    results.push(result);
     const n = arm.items.length;
     const k = arm.items.filter((i) => i.eval.correct).length;
     const ci = wilsonInterval(k, n);
     console.log(
       `rep ${rep}: accuracy ${summary["Accuracy (%)"]}% [${(ci.low * 100).toFixed(1)}, ${(ci.high * 100).toFixed(1)}] · recall ${summary["Recall (%)"] ?? "n/a"}% (gold ${goldRecall ?? "n/a"}%) · search calls ${summary["Search Calls"]} · cost $${arm.costUsd.toFixed(2)} (+ judge $${arm.judgeCostUsd.toFixed(2)}) → ${dir}`,
     );
+    if (arm.stoppedBy) {
+      console.log(
+        `  STOPPED (${arm.stoppedBy}): ${arm.notRun.length} of ${queries.length} queries not run — replicate incomplete, not filed, not pooled; --resume continues it`,
+      );
+      break;
+    }
+    results.push(result);
     if (values["file-to"]) {
       const filed = await fileToLedger(result, {
         fileTo: values["file-to"],
@@ -223,7 +243,8 @@ async function run(): Promise<number> {
       );
     }
   }
-  if (reps > 1) console.log(formatPooled(label, poolResults(results)));
+  if (results.length > 1) console.log(formatPooled(label, poolResults(results)));
+  console.log(`spent $${guard.spent.toFixed(2)} (agents + judge, from x-marina-cost-usd)`);
   backend.close();
   return 0;
 }

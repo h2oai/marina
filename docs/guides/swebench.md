@@ -65,7 +65,7 @@ bun run swebench file --benchmark pro --data <data> --arm single --replicate 1 -
 - **Task text:** a Pro task is the PR description plus its `requirements` and `interface` sections,
   as in the official task text. The exporter writes those fields and nothing else: no gold patch, no
   test patch and no test lists.
-- **Grading:** `benchmarks/swebench/pro_grade.py` runs each task's own verifier, unmodified
+- **Grading** (ledger judge: "swebench-pro verifier (local replay of the official verifier)"): `benchmarks/swebench/pro_grade.py` runs each task's own verifier, unmodified
   (`tests/test.sh`, `run_script.sh`, `parser.py`, `config.json`), in a fresh container of the task's
   pristine image (`ghcr.io/scaleapi/swe-bench_pro-v2:<instance_id>`).
   - **Patch:** applied with the harness's patch-replay fallback chain.

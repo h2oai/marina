@@ -55,6 +55,19 @@ bun run browsecomp-plus run --queries $DATA/data/queries.jsonl \
 | Verification formation | `marina/verify:<proposer>[+<checker>]` | Each step is drafted, reviewed by a checker and revised once on a flag (see [τ²-bench](tau2.md#the-verification-formation-as-a-model-marinaverify)). |
 | Crew | `marina:<crew>` | A Marina crew answers in text. Its agents search the same corpus in-world with `web search engines:corpus:browsecomp-plus <q>` and `web fetch corpus://browsecomp-plus/<docid>`. |
 
+## Spend cap and resuming
+
+`--max-usd <N>` is a hard spend stop for the whole invocation: every replicate, every agent and the judge.
+
+- Each call's cost comes from Marina's `x-marina-cost-usd` header. The running total is checked **before** every call, so the overshoot is at most the calls already in flight.
+- A `429 spend_cap_reached` from the server's own daily cap (`MARINA_DAILY_SPEND_CAP_USD`) stops the run the same way, with or without `--max-usd`.
+- A query the stop cuts off is **not run**. No run or eval file is written for it, it is never judged and it is never counted wrong. A turn-cap incomplete is different: it is a real outcome and counts as wrong, as in the official evaluator.
+- A stopped replicate is reported incomplete, with the count of queries not run in `summary.json` (`Marina.stopped_by`, `Marina.not_run`). It is not filed to the ledger, and no later replicate starts.
+
+`--resume` reuses every query already answered and judged in the output directory and runs only the rest. It continues a stopped or interrupted replicate without paying again for finished queries.
+
+Price an arm on **hard** queries before setting its cap. Easy queries answer in a few turns, and hard ones run to the turn cap with a growing context, so a cost per query measured on easy ones can be several times too low.
+
 ## Research formations
 
 `--formation` turns one agent into a research team. Every member uses the same tools through the same Marina server:

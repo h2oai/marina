@@ -10,6 +10,7 @@
  * one files. A configuration is DATA; `describeConfig` is how it is disclosed.
  */
 
+import type { Retriever } from "../../src/arena/research/retrieve";
 import { forecastFormed, type TypedFormation, typedFormation } from "../../src/forecast/formations";
 import type { LessonStore } from "../../src/forecast/lessons";
 import { typedForecastDeps } from "../../src/forecast/service";
@@ -187,7 +188,12 @@ export function parseConfigs(raw: unknown): ForecastConfig[] {
   });
 }
 
-export type DepsFactory = () => { deps: TypedForecastDeps; costUsd: () => number };
+export type DepsFactory = () => {
+  deps: TypedForecastDeps;
+  costUsd: () => number;
+  /** The research reports this question's forecast read (with `captureEvidence`). */
+  evidence?: () => string[];
+};
 
 export interface DepsOptions {
   lessons?: LessonStore;
@@ -195,6 +201,8 @@ export interface DepsOptions {
   strictRetrieval?: boolean;
   /** A retriever spec instead of MARINA_FORECAST_RETRIEVER (backtests: a date-strict `asof:`). */
   retriever?: string;
+  /** Keep each question's research reports (for a leak audit). */
+  captureEvidence?: boolean;
   env?: NodeJS.ProcessEnv;
 }
 
@@ -205,6 +213,7 @@ export function depsForConfig(c: ForecastConfig, opts: DepsOptions = {}): DepsFa
     ...(c.lookups ? { MARINA_FORECAST_LOOKUPS: c.lookups } : {}),
   };
   return () => {
+    const reports: string[] = [];
     const made = typedForecastDeps(env, {
       analysts: c.analysts,
       ...(c.planner ? { planner: c.planner } : {}),
@@ -217,20 +226,39 @@ export function depsForConfig(c: ForecastConfig, opts: DepsOptions = {}): DepsFa
       ...(c.runs !== undefined ? { runs: c.runs } : {}),
       ...(c.researchRounds !== undefined ? { researchRounds: c.researchRounds } : {}),
       ...(c.critique === false ? { critique: false } : {}),
+      ...(opts.captureEvidence
+        ? {
+            wrapRetriever:
+              (inner: Retriever): Retriever =>
+              async (brief) => {
+                const r = await inner(brief);
+                reports.push(r.report);
+                return r;
+              },
+          }
+        : {}),
     });
     if ("error" in made) throw new Error(made.error);
-    return made;
+    return opts.captureEvidence ? { ...made, evidence: () => reports } : made;
   };
 }
 
 /** A forecaster: one typed request in, the full answer (formation record and cost included) out. */
 export type Forecaster = (req: TypedForecastRequest) => Promise<TypedForecastAnswer>;
 
-export function forecasterFor(c: ForecastConfig, makeDeps: DepsFactory): Forecaster {
+export function forecasterFor(
+  c: ForecastConfig,
+  makeDeps: DepsFactory,
+  opts: {
+    /** Every finished forecast, with the research reports it read when captured. */
+    onAnswer?: (req: TypedForecastRequest, answer: TypedForecastAnswer, reports: string[]) => void;
+  } = {},
+): Forecaster {
   return async (req) => {
     const made = makeDeps();
     const answer = await forecastFormed(req, made.deps, c.formation);
     answer.costUsd = Math.round(made.costUsd() * 1e6) / 1e6;
+    opts.onAnswer?.(req, answer, made.evidence?.() ?? []);
     return answer;
   };
 }

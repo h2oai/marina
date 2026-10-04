@@ -406,8 +406,18 @@ const TAU2_USER_SIMULATOR = "openrouter/openai/gpt-5.2";
 /** Task counts of the τ² splits this kit names, for the cost estimate. */
 const TAU2_SPLIT_SIZES: Record<string, number> = {
   "airline/test": 20,
+  "airline/base": 50,
   "retail/test": 40,
+  "retail/base": 114,
+  "telecom/test": 40,
+  "telecom/base": 114,
 };
+
+/**
+ * The leaderboard's split: every task, no `--num-tasks` / `--task-ids` filter
+ * (τ²'s `tau2 submit` verification fails on any missing base task).
+ */
+const TAU2_FULL_SPLIT = "base";
 
 /**
  * LiteLLM args for a Marina-routed τ² model. `reasoning_effort` rides in `extra_body`:
@@ -440,6 +450,11 @@ const tau2: Setup = {
   plan(flags, tier) {
     const arms = armsOf(this, flags);
     const domain = flags.domain ?? "airline";
+    if (flags.split === TAU2_FULL_SPLIT && flags.limit !== undefined) {
+      throw new Error(
+        `--split ${TAU2_FULL_SPLIT} runs every task (leaderboard rule); drop --limit, or smoke with --split test --limit N`,
+      );
+    }
     // A named split without --limit runs the whole split (sized for the estimate).
     const splitSize = flags.split ? TAU2_SPLIT_SIZES[`${domain}/${flags.split}`] : undefined;
     const limit = flags.limit ?? splitSize ?? this.smoke;
@@ -482,11 +497,16 @@ const tau2: Setup = {
           userArgs,
           "--num-trials",
           String(flags.replicates),
-          ...(flags.limit !== undefined || !splitSize ? ["--num-tasks", String(limit)] : []),
+          ...(flags.split !== TAU2_FULL_SPLIT && (flags.limit !== undefined || !splitSize)
+            ? ["--num-tasks", String(limit)]
+            : []),
           "--max-concurrency",
           "4",
           "--save-to",
           name,
+          // Re-running with the same --run-dir continues an interrupted run instead of
+          // stopping at τ²'s interactive resume prompt.
+          "--auto-resume",
         ],
         cwd: "$TAU2_HOME",
         providerEnv: true,

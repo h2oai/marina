@@ -11,10 +11,12 @@
 
 import { describe, expect, test } from "bun:test";
 import {
+  adaptiveEffort,
   anthropicThinking,
   buildAnthropicRequest,
   MIN_ANSWER_TOKENS,
   THINKING_BUDGET_TOKENS,
+  usesAdaptiveThinking,
 } from "../src/net/anthropic-tools";
 
 const base = {
@@ -84,22 +86,23 @@ describe("anthropicThinking", () => {
 });
 
 describe("buildAnthropicRequest with thinking", () => {
-  test("reasoning_effort → thinking; temperature/top_p omitted; default max_tokens raised", () => {
+  test("Claude 4: reasoning_effort → thinking budget; sampling omitted; default max_tokens raised", () => {
     const req = buildAnthropicRequest(
       { ...base, reasoning_effort: "high", temperature: 0.2, top_p: 0.9 },
-      "claude-sonnet-5",
+      "claude-sonnet-4-5",
       false,
     );
     expect(req.thinking).toEqual({ type: "enabled", budget_tokens: 16384 });
     expect(req).not.toHaveProperty("temperature");
     expect(req).not.toHaveProperty("top_p");
+    expect(req).not.toHaveProperty("output_config");
     expect(req.max_tokens).toBe(16384 + MIN_ANSWER_TOKENS);
   });
 
   test("an explicit client max_tokens is honored and the budget fits under it", () => {
     const req = buildAnthropicRequest(
       { ...base, reasoning_effort: "medium", max_tokens: 6000 },
-      "claude-sonnet-5",
+      "claude-sonnet-4-5",
       true,
     );
     expect(req.max_tokens).toBe(6000);
@@ -110,11 +113,60 @@ describe("buildAnthropicRequest with thinking", () => {
   test("a too-small explicit cap is raised above the budget rather than truncating thinking", () => {
     const req = buildAnthropicRequest(
       { ...base, reasoning_effort: "low", max_completion_tokens: 1200 },
-      "claude-sonnet-5",
+      "claude-sonnet-4-5",
       false,
     );
     expect(req.thinking).toEqual({ type: "enabled", budget_tokens: 2048 });
     expect(req.max_tokens).toBe(2048 + MIN_ANSWER_TOKENS);
+  });
+
+  test("Claude 5 thinks adaptively: effort in output_config, never a budget", () => {
+    for (const model of ["claude-sonnet-5", "claude-opus-5-5", "claude-fable-5-1"]) {
+      const req = buildAnthropicRequest(
+        { ...base, reasoning_effort: "high", temperature: 0.2 },
+        model,
+        false,
+      );
+      expect(req.thinking).toEqual({ type: "adaptive" });
+      expect(req.output_config).toEqual({ effort: "high" });
+      expect(req).not.toHaveProperty("temperature");
+      expect(req.max_tokens).toBe(16384 + MIN_ANSWER_TOKENS);
+    }
+  });
+
+  test("Claude 5: level spellings, budgets and response_format merge into output_config", () => {
+    expect(adaptiveEffort({ reasoning_effort: "minimal" })).toBe("low");
+    expect(adaptiveEffort({ reasoning_effort: "xhigh" })).toBe("xhigh");
+    expect(adaptiveEffort({ thinking: { type: "enabled", budget_tokens: 8000 } })).toBe("medium");
+    expect(adaptiveEffort({ thinking: { type: "enabled", budget_tokens: 40000 } })).toBe("max");
+    expect(
+      adaptiveEffort({ thinking: { type: "disabled" }, reasoning_effort: "high" }),
+    ).toBeUndefined();
+    expect(adaptiveEffort({ reasoning_effort: "none" })).toBeUndefined();
+    const req = buildAnthropicRequest(
+      {
+        ...base,
+        reasoning_effort: "medium",
+        max_tokens: 3000,
+        response_format: { type: "json_schema", json_schema: { schema: { type: "object" } } },
+      },
+      "claude-opus-5-5",
+      false,
+    );
+    expect(req.output_config).toEqual({
+      format: { type: "json_schema", schema: { type: "object" } },
+      effort: "medium",
+    });
+    expect(req.max_tokens).toBe(3000); // an explicit cap is the client's
+    const off = buildAnthropicRequest(
+      { ...base, reasoning_effort: "none" },
+      "claude-opus-5-5",
+      false,
+    );
+    expect(off).not.toHaveProperty("thinking");
+    expect(off).not.toHaveProperty("output_config");
+    expect(usesAdaptiveThinking("anthropic/claude-fable-5-1")).toBe(true);
+    expect(usesAdaptiveThinking("claude-sonnet-4-5")).toBe(false);
   });
 
   test("thinking off keeps temperature and the plain body", () => {

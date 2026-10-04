@@ -206,6 +206,21 @@ describe("forecastbench: a round", () => {
     expect(s.questions).toHaveLength(3);
     expect(seen[0]).toEndWith(`/question_sets/${due}-llm.json`);
   });
+
+  it("follows latest-llm.json when it is served as a symlink pointer", async () => {
+    const seen: string[] = [];
+    const s = await fetchQuestionSet("latest", async (url) => {
+      seen.push(url);
+      return new Response(
+        url.endsWith("latest-llm.json") ? `${due}-llm.json\n` : JSON.stringify(set),
+      );
+    });
+    expect(s.questions).toHaveLength(3);
+    expect(seen.map((u) => u.split("/").at(-1))).toEqual(["latest-llm.json", `${due}-llm.json`]);
+    // A served JSON body is still read directly.
+    const direct = await fetchQuestionSet("latest", async () => new Response(JSON.stringify(set)));
+    expect(direct.questions).toHaveLength(3);
+  });
 });
 
 describe("forecastbench: outcomes teach", () => {

@@ -34,7 +34,7 @@
 import { randomUUID } from "node:crypto";
 import type { IsolationLevel } from "../../src/arena/research/isolation";
 import { ledgerFromHarnessResult } from "../../src/engine/benchmark-ledger";
-import { dailyCapRefusal } from "../../src/engine/spend-ledger";
+import { dailyCapRefusal, dailySpend } from "../../src/engine/spend-ledger";
 import type { TypedForecastAnswer, TypedForecastRequest } from "../../src/forecast/typed";
 import type { MarinaStores } from "../../src/persistence/interfaces";
 import { defaultReplicateGroup } from "../replicates";
@@ -204,30 +204,78 @@ export async function selectConfiguration(opts: SelectOptions): Promise<Selectio
   const stamp = now().getTime();
   const scores = new Map<string, Array<Map<string, number>>>();
   const costs = new Map<string, number[]>();
+  const env = opts.env ?? process.env;
+  const concurrency = opts.concurrency ?? 4;
+  // `eligible` is sorted by release bound for the window; run in the caller's order.
+  const runOrder = opts.candidates.filter((c) => eligible.some((e) => e.c === c));
   let spent = 0;
   let stopped = "";
   for (let rep = 1; rep <= reps && !stopped; rep++) {
-    for (const { c } of eligible) {
-      const capped = dailyCapRefusal(opts.env ?? process.env);
+    for (const c of runOrder) {
+      const capped = dailyCapRefusal(env);
       if (capped) stopped = capped;
       else if (spent >= opts.budgetUsd) stopped = `selection budget $${opts.budgetUsd} reached`;
       if (stopped) break;
+      // A further replicate whose measured cost would overrun the budget is not started.
+      const measuredPer = average(costs.get(c.label) ?? []);
+      if (measuredPer !== undefined && spent + measuredPer * common.length > opts.budgetUsd) {
+        log(
+          `  ${c.label} r${rep}: skipped — ≈ $${(measuredPer * common.length).toFixed(2)} would overrun the selection budget ($${(opts.budgetUsd - spent).toFixed(2)} left)`,
+        );
+        continue;
+      }
       const forecast = opts.makeForecaster(c);
       const started = now();
-      const answers = await mapLimit(common, opts.concurrency ?? 4, async (item) => {
+      let runCost = 0;
+      let finished = 0;
+      let halt: string | undefined;
+      // Stop starting items while every item in flight can still finish under the
+      // selection budget and the daily cap: past either, the forecaster's calls
+      // would be refused and the items would score as fallbacks.
+      const shouldStop = (): string | undefined => {
+        const per = finished ? runCost / finished : 0;
+        const reserve = Math.max(STOP_RESERVE_USD, 1.5 * concurrency * per);
+        if (spent + runCost + reserve >= opts.budgetUsd) {
+          return `selection budget $${opts.budgetUsd}: $${(spent + runCost).toFixed(2)} spent + $${reserve.toFixed(2)} reserve`;
+        }
+        const s = dailySpend(env);
+        if (s.capUsd !== undefined && s.spentUsd + reserve >= s.capUsd) {
+          return `daily spend cap $${s.capUsd}: $${s.spentUsd.toFixed(2)} spent + $${reserve.toFixed(2)} reserve`;
+        }
+        return undefined;
+      };
+      const answers = await mapLimit(common, concurrency, async (item) => {
+        halt ??= shouldStop();
+        if (halt) return undefined;
         try {
-          return await forecast(item.request);
+          const answer = await forecast(item.request);
+          runCost += answer.costUsd ?? 0;
+          return answer;
         } catch {
           return undefined;
+        } finally {
+          finished++;
         }
       });
+      if (halt) {
+        // A partial run is never scored or filed: its missing items would count as fallbacks.
+        spent += runCost;
+        stopped = halt;
+        log(
+          `  ${c.label} r${rep}: stopped after ${finished}/${common.length} items — partial run discarded ($${runCost.toFixed(2)})`,
+        );
+        break;
+      }
       const runScores = new Map<string, number>();
       let cost = 0;
+      let fallbacks = 0;
       common.forEach((item, i) => {
         runScores.set(item.id, item.score(answers[i]));
         cost += answers[i]?.costUsd ?? 0;
+        if (isFallback(answers[i])) fallbacks++;
       });
       spent += cost;
+      if (fallbacks) log(`  ${c.label} r${rep}: ${fallbacks}/${common.length} items had no answer`);
       scores.set(c.label, [...(scores.get(c.label) ?? []), runScores]);
       costs.set(c.label, [...(costs.get(c.label) ?? []), cost / Math.max(1, common.length)]);
       const r = ranking.get(c.label)!;
@@ -361,6 +409,8 @@ function fileRun(
       // Better than the board's own fallback (a coin flip scores 0.75 on 1 − Brier).
       correct: (scores.get(it.id) ?? 0) > 0.75,
       score: scores.get(it.id) ?? 0,
+      // Scored as the board's fallback, flagged so the ledger can see the run's fallback rate.
+      ...(isFallback(answers[i]) ? { fallback: true } : {}),
       usage: { costUsd: answers[i]?.costUsd ?? 0 },
       judge: "1-brier",
     })),
@@ -381,3 +431,12 @@ function fileRun(
 }
 
 const round = (x: number, d = 4) => Math.round(x * 10 ** d) / 10 ** d;
+
+const average = (xs: number[]) =>
+  xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : undefined;
+
+/** No usable answer: the forecaster threw, or no run produced a prediction. */
+const isFallback = (a: TypedForecastAnswer | undefined) => a?.prediction === undefined;
+
+/** The least spend kept in reserve before starting another item. */
+const STOP_RESERVE_USD = 0.5;

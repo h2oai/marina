@@ -806,6 +806,46 @@ export function anthropicThinking(
 }
 
 /**
+ * True for models that take ADAPTIVE thinking: the Claude 5 family rejects
+ * `thinking: { type: "enabled", budget_tokens }` ("Use thinking.type.adaptive
+ * and output_config.effort", verified live on Fable 5.1, Opus 5.5 and Sonnet 5).
+ */
+export function usesAdaptiveThinking(model: string): boolean {
+  return omitsSamplingParams(model);
+}
+
+/** Anthropic `output_config.effort` values. */
+const ADAPTIVE_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+
+/**
+ * The requested thinking depth as an `output_config.effort` level, for a
+ * model that thinks adaptively. A level name passes through (`minimal` → `low`,
+ * the lowest Anthropic accepts); an explicit `budget_tokens` maps to the
+ * nearest level of `THINKING_BUDGET_TOKENS`.
+ */
+export function adaptiveEffort(body: Record<string, unknown>): string | undefined {
+  const raw = body.thinking;
+  let level: string | undefined;
+  if (raw && typeof raw === "object") {
+    const obj = raw as { type?: unknown; budget_tokens?: unknown; effort?: unknown };
+    if (obj.type === "disabled") return undefined;
+    if (typeof obj.effort === "string") level = obj.effort;
+    else if (typeof obj.budget_tokens === "number" && Number.isFinite(obj.budget_tokens)) {
+      const b = obj.budget_tokens;
+      level = b <= 2048 ? "low" : b <= 8192 ? "medium" : b <= 16384 ? "high" : "max";
+    } else if (obj.type === "enabled" || obj.type === "adaptive") level = "medium";
+  } else if (typeof raw === "string") {
+    level = raw;
+  }
+  if (level === undefined && typeof body.reasoning_effort === "string") {
+    level = body.reasoning_effort;
+  }
+  if (level === undefined) return undefined;
+  const normalized = level.toLowerCase() === "minimal" ? "low" : level.toLowerCase();
+  return (ADAPTIVE_EFFORTS as readonly string[]).includes(normalized) ? normalized : undefined;
+}
+
+/**
  * The Claude 5 family rejects `top_p` and any `temperature` other than 1
  * ("… is deprecated for this model"). OpenAI clients send both routinely, so
  * the translated path drops them rather than fail every call.
@@ -881,8 +921,19 @@ export function buildAnthropicRequest(
   }
   // Only a cap the CLIENT set clamps the thinking budget; the 4096 default is
   // raised to fit the requested depth instead.
-  const thinking = anthropicThinking(body, explicitMaxTokens);
-  const sampling = !thinking && !omitsSamplingParams(model);
+  // Claude 5 thinks adaptively: the requested depth becomes output_config.effort
+  // (a budget would be refused outright). The 4096 default is still raised to
+  // the level's budget so a deep answer is not truncated.
+  const effort = usesAdaptiveThinking(model) ? adaptiveEffort(body) : undefined;
+  const thinking = usesAdaptiveThinking(model)
+    ? undefined
+    : anthropicThinking(body, explicitMaxTokens);
+  const sampling = !thinking && !effort && !omitsSamplingParams(model);
+  const adaptiveFloor = effort
+    ? (THINKING_BUDGET_TOKENS[effort] ?? THINKING_BUDGET_TOKENS.high!) + MIN_ANSWER_TOKENS
+    : 0;
+  const outputConfigWithEffort =
+    config || effort ? { ...(config ?? {}), ...(effort ? { effort } : {}) } : undefined;
 
   return {
     model,
@@ -891,9 +942,12 @@ export function buildAnthropicRequest(
     // cap would not fit the budget.
     max_tokens: thinking
       ? Math.max(maxTokens, thinking.budget_tokens + MIN_ANSWER_TOKENS)
-      : maxTokens,
+      : effort && explicitMaxTokens === undefined
+        ? Math.max(maxTokens, adaptiveFloor)
+        : maxTokens,
     stream,
     ...(thinking ? { thinking } : {}),
+    ...(effort ? { thinking: { type: "adaptive" } } : {}),
     // Claude rejects sampling overrides while thinking is enabled
     // ("temperature may only be set to 1", top_p likewise), and the Claude 5
     // family rejects them outright — omit both.
@@ -905,7 +959,7 @@ export function buildAnthropicRequest(
     messages,
     ...(tools.length > 0 ? { tools } : {}),
     ...(tools.length > 0 && toolChoice ? { tool_choice: toolChoice } : {}),
-    ...(config ? { output_config: config } : {}),
+    ...(outputConfigWithEffort ? { output_config: outputConfigWithEffort } : {}),
   };
 }
 
