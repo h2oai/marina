@@ -944,25 +944,36 @@ language toolchain, or a benchmark environment. Podman or Docker is required.
 ```text
 code workspace runner                                   # where commands run now
 code workspace runner container image:python:3.12 workdir:/work
-code workspace runner container image:<ref> sync:patch workdir:/testbed shell:bash -- source /opt/conda/bin/activate env
-code workspace runner local                             # back to the host
+code workspace runner container image:<ref> sync:patch workdir:/testbed shell:bash
+code workspace runner local                             # back to the host (if the operator allows)
 ```
 
 - **`sync:mount`** (default) binds the worktree at `workdir` read-write on a read-only container
-  root. The process runs as your user.
+  root, with the repository's `.git` bound read-only so code in the container cannot change git
+  metadata that Marina's host git reads. The workspace root must be a repository root. The process
+  runs as your user.
 - **`sync:patch`** mounts nothing from the host. The image already holds the project at `workdir`;
   Marina applies the session's pending diff (tracked changes and new files) inside a throwaway
   container before each command.
-- Text after `--` is a one-line environment preamble (for example activating a conda env).
+- An environment preamble (for example activating a conda env) is operator configuration:
+  `MARINA_CODE_CONTAINER_INIT`. Text after `--` is refused in-world, because a preamble would run
+  outside the allowlist and approvals.
 
 The same `code.exec` gate, allowlist and exec approvals apply as for host runs; configuring a
-runner is itself gated. There is no network unless you add `network:on`, all capabilities are
+runner is itself gated. Choosing an image yourself, or adding `network:on`, also needs the
+`code.exec.unrestricted` gate (a refusal asks your creator or an admin). All capabilities are
 dropped, CPU, memory and process limits apply (`cpus:`, `memory:` in MB, `timeout:`), and every
 container is removed after its command. If the runtime or image is missing, commands fail. Marina
-never quietly runs them on the host instead. Operators can set a default image for every local
-session with `MARINA_CODE_CONTAINER_IMAGE` (and `_SYNC`, `_WORKDIR`, `_INIT`, `_SHELL`,
-`_NETWORK`, `_RUNTIME`); an explicit `code workspace runner local` still pins the host.
-`code test`, `code verify` and `code verify start|candidate` all use the session's runner.
+never quietly runs them on the host instead. `code test`, `code verify` and
+`code verify start|candidate` all use the session's runner; a verification dependency install runs
+only in a mount-sync container with network, otherwise it is reported as not run.
+
+Operators set the container for every local session with `MARINA_CODE_CONTAINER_IMAGE` (and
+`_SYNC`, `_WORKDIR`, `_INIT`, `_SHELL`, `_NETWORK`, `_RUNTIME`). That is policy, not a default:
+`code workspace runner local` is refused and sessions may change only `cpus:`, `memory:` and
+`timeout:`. `MARINA_CODE_CONTAINER_REQUIRED=false` makes the image a default a session may leave
+for the host; `MARINA_CODE_CONTAINER_REQUIRED=true` requires a container even without an operator
+image. Neither can be changed in-world.
 
 The container runtime uses your own container setup: the images you have already pulled, your
 `containers.conf`/`storage.conf` (or Docker context), and your registry logins, taken from the

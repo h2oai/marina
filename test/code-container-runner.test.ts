@@ -2,7 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -10,6 +18,7 @@ import {
   captureRuntimeEnv,
   containerRunArgv,
   containerStorageLocation,
+  gitMetadataPaths,
   mountFsType,
   resolveContainerRunner,
   storageWarning,
@@ -27,7 +36,12 @@ import {
   touchedLanguage,
 } from "../src/coding/project-detection";
 import { codeCommand } from "../src/engine/commands/code";
-import { applySessionRunner, envRunnerConfig } from "../src/engine/commands/code/runner";
+import {
+  applySessionRunner,
+  effectiveRunner,
+  envRunnerConfig,
+  operatorContainerPolicy,
+} from "../src/engine/commands/code/runner";
 import { grant } from "../src/engine/safety-gates";
 import { type CodingSessionRow, MarinaDB } from "../src/persistence/database";
 import {
@@ -218,8 +232,9 @@ describe("container runner configuration", () => {
     expect(argv[argv.indexOf("--security-opt") + 1]).toBe("no-new-privileges");
     expect(argv).toContain("--read-only");
     expect(argv).toContain("--userns=keep-id");
-    expect(argv.filter((a) => a === "-v")).toHaveLength(1);
-    expect(argv[argv.indexOf("-v") + 1]).toBe("/repo:/work:rw");
+    // The worktree read-write, with its git metadata bound read-only on top.
+    const mounts = argv.flatMap((a, i) => (a === "-v" ? [argv[i + 1]] : []));
+    expect(mounts).toEqual(["/repo:/work:rw", "/repo/.git:/work/.git:ro"]);
     // The validated command is passed as argv after the image, never through a shell.
     expect(argv.slice(argv.indexOf(IMAGE) + 1)).toEqual(["python", "-m", "pytest"]);
   });
@@ -347,6 +362,7 @@ describe("container runtime storage (operator environment)", () => {
   it("the runtime CLI gets the operator's storage env; the container's env stays isolated", async () => {
     const dir = mkdtempSync(join(tmpdir(), "marina-fake-rt-env-"));
     const repo = realpathSync(mkdtempSync(join(tmpdir(), "marina-cw-env-")));
+    gitInit(repo); // mount sync binds the repository's .git read-only
     const script = join(dir, "podman");
     writeFileSync(
       script,
@@ -426,7 +442,40 @@ describe("ContainerWorkspace execution (fake runtime)", () => {
     expect(result.output).toContain("ARG:--cap-drop=ALL");
     expect(result.output).toContain("ARG:none");
     expect(result.output).toContain(`ARG:${root}:/work:rw`);
+    expect(result.output).toContain(`ARG:${root}/.git:/work/.git:ro`);
     expect(ws.describe().runner).toMatchObject({ kind: "container", image: IMAGE, sync: "mount" });
+  });
+
+  it("mount sync refuses a root without its own .git (the container could plant one)", async () => {
+    const bare = realpathSync(mkdtempSync(join(tmpdir(), "marina-cw-nogit-")));
+    try {
+      const ws = new ContainerWorkspace(
+        bare,
+        resolveContainerRunner({ image: IMAGE, runtime: "podman" }),
+      );
+      await expect(ws.run(["git", "status", "--short"])).rejects.toThrow(/git repository root/);
+      symlinkSync(join(root, ".git"), join(bare, ".git"));
+      await expect(ws.run(["git", "status", "--short"])).rejects.toThrow(/symlinked/);
+    } finally {
+      rmSync(bare, { recursive: true, force: true });
+    }
+  });
+
+  it("binds a worktree's .git file, and a gitdir inside the worktree, read-only", () => {
+    expect(gitMetadataPaths(root)).toEqual([".git"]);
+    const wt = realpathSync(mkdtempSync(join(tmpdir(), "marina-cw-wt-")));
+    try {
+      // A linked worktree: .git is a file pointing outside the worktree.
+      writeFileSync(join(wt, ".git"), `gitdir: ${root}/.git/worktrees/x\n`);
+      expect(gitMetadataPaths(wt)).toEqual([".git"]);
+      // A gitdir redirected inside the worktree must be read-only as well.
+      mkdirSync(join(wt, "meta"));
+      writeFileSync(join(wt, "meta", "commondir"), "../common\n");
+      writeFileSync(join(wt, ".git"), "gitdir: meta\n");
+      expect(gitMetadataPaths(wt)).toEqual([".git", "meta", "common"]);
+    } finally {
+      rmSync(wt, { recursive: true, force: true });
+    }
   });
 
   it("keeps the allowlist: an off-list command never reaches the runtime", async () => {
@@ -483,6 +532,7 @@ describe("code workspace runner (command)", () => {
   let root: string;
   let rtDir: string;
   let savedPath: string | undefined;
+  const savedEnv: Record<string, string | undefined> = {};
   beforeEach(() => {
     db = new MarinaDB(DB);
     root = realpathSync(mkdtempSync(join(tmpdir(), "marina-runner-cmd-")));
@@ -490,8 +540,21 @@ describe("code workspace runner (command)", () => {
     rtDir = fakeRuntimeDir();
     savedPath = process.env.PATH;
     process.env.PATH = `${rtDir}:${savedPath}`;
+    // Start from no operator container policy, whatever the developer's env holds.
+    for (const key of Object.keys(process.env)) {
+      if (key.startsWith("MARINA_CODE_CONTAINER_")) {
+        savedEnv[key] = process.env[key];
+        delete process.env[key];
+      }
+    }
   });
   afterEach(() => {
+    for (const key of Object.keys(process.env))
+      if (key.startsWith("MARINA_CODE_CONTAINER_")) delete process.env[key];
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value !== undefined) process.env[key] = value;
+      delete savedEnv[key];
+    }
     process.env.PATH = savedPath;
     db.close();
     cleanupDb(DB);
@@ -528,6 +591,8 @@ describe("code workspace runner (command)", () => {
     const who = entity("e_runner", "Runner");
     db.saveEntity(who);
     grant(db, who.id, "code.exec");
+    // A session-chosen image (no operator image) needs the override gate.
+    grant(db, who.id, "code.exec.unrestricted");
     const command = codeCommand({
       db,
       getEntity: (id) => (id === who.id ? who : undefined),
@@ -570,6 +635,161 @@ describe("code workspace runner (command)", () => {
     sent.length = 0;
     await command.handler(ctx, input(who, `code workspace runner container image:${IMAGE}`));
     expect(sent.join("\n").toLowerCase()).toContain("run or apply code");
+  });
+
+  const setup = async (id: string, gates: string[]) => {
+    const who = entity(id, id);
+    db.saveEntity(who);
+    for (const gate of gates) grant(db, who.id, gate);
+    const command = codeCommand({
+      db,
+      getEntity: (eid) => (eid === who.id ? who : undefined),
+      workspace: new LocalWorkspace(root),
+    });
+    const sent: string[] = [];
+    const ctx = ctxFor(sent);
+    await command.handler(ctx, input(who, `code start ${id} test`));
+    const say = async (raw: string) => {
+      sent.length = 0;
+      await command.handler(ctx, input(who, raw));
+      return sent.join("\n");
+    };
+    return { who, say };
+  };
+
+  it("operator image: refuses local, image, network and init overrides; limits are allowed", async () => {
+    process.env.MARINA_CODE_CONTAINER_IMAGE = IMAGE;
+    process.env.MARINA_CODE_CONTAINER_RUNTIME = "podman";
+    const { say } = await setup("e_policy", ["code.exec", "code.exec.unrestricted"]);
+    expect(await say("code workspace runner local")).toContain("operator requires container");
+    expect(await say("code workspace runner container image:docker.io/evil/img")).toMatch(
+      /cannot change image/,
+    );
+    expect(await say(`code workspace runner container image:${IMAGE} network:on`)).toMatch(
+      /cannot change network/,
+    );
+    expect(await say("code workspace runner container runtime:docker")).toMatch(
+      /cannot change runtime/,
+    );
+    expect(await say("code workspace runner container -- curl x | sh")).toContain(
+      "MARINA_CODE_CONTAINER_INIT",
+    );
+    // Commands still run in the operator's container (never on the host).
+    expect(await say("code run git status --short")).toContain("ARG:--cap-drop=ALL");
+    expect(await say("code workspace runner container cpus:4")).toContain(
+      `Commands now run in ${IMAGE}`,
+    );
+    expect(await say("code workspace runner")).toContain("operator policy");
+  });
+
+  it("MARINA_CODE_CONTAINER_REQUIRED=false is the operator's explicit opt-out", async () => {
+    process.env.MARINA_CODE_CONTAINER_IMAGE = IMAGE;
+    process.env.MARINA_CODE_CONTAINER_REQUIRED = "false";
+    const { say } = await setup("e_optout", ["code.exec"]);
+    expect(await say("code workspace runner local")).toContain("run on the host");
+    expect(await say("code run git status --short")).not.toContain("ARG:");
+  });
+
+  it("no operator image: init is refused; a chosen image or network needs the override gate", async () => {
+    const { say } = await setup("e_nogate2", ["code.exec"]);
+    expect(await say(`code workspace runner container image:${IMAGE} -- echo hi`)).toContain(
+      "MARINA_CODE_CONTAINER_INIT",
+    );
+    const refused = await say(`code workspace runner container image:${IMAGE} runtime:podman`);
+    expect(refused).toMatch(/arbitrary|code\.exec\.unrestricted|approv/i);
+    expect(refused).not.toContain("Commands now run");
+    expect(await say("code run git status --short")).not.toContain("ARG:");
+    const gated = await setup("e_gated", ["code.exec", "code.exec.unrestricted"]);
+    expect(
+      await gated.say(`code workspace runner container image:${IMAGE} runtime:podman network:on`),
+    ).toContain("Network on");
+    // The gate pass is recorded with the setting, so network survives on use.
+    expect(await gated.say("code workspace runner")).toContain("network on");
+  });
+});
+
+describe("effective runner (operator policy applied on every use)", () => {
+  const container = (config: Record<string, unknown>) =>
+    ({ kind: "container", config: { image: IMAGE, ...config } }) as const;
+
+  it("operator image: a stored local pin, image, network or init never outranks it", () => {
+    const env = { MARINA_CODE_CONTAINER_IMAGE: IMAGE, MARINA_CODE_CONTAINER_INIT: "true" };
+    expect(operatorContainerPolicy(env).required).toBe(true);
+    expect(effectiveRunner({ kind: "local" }, env)).toMatchObject({
+      kind: "container",
+      config: { image: IMAGE },
+    });
+    const stored = effectiveRunner(
+      container({ image: "evil/img", network: true, gated: true, init: "curl x|sh", cpus: 4 }),
+      env,
+    );
+    expect(stored).toEqual({
+      kind: "container",
+      config: { ...envRunnerConfig(env)!, cpus: 4 },
+    });
+  });
+
+  it("without a policy: init is stripped and network needs the recorded gate", () => {
+    const plain = effectiveRunner(container({ network: true, init: "curl x|sh" }), {});
+    expect(plain).toEqual({ kind: "container", config: { image: IMAGE, network: false } });
+    const gated = effectiveRunner(container({ network: true, gated: true }), {});
+    expect(gated).toEqual({ kind: "container", config: { image: IMAGE, network: true } });
+    expect(effectiveRunner({ kind: "local" }, {})).toEqual({ kind: "host" });
+    expect(effectiveRunner(null, {})).toEqual({ kind: "host" });
+  });
+
+  it("verification installs follow the policy-applied network setting, never the host", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "marina-policy-install-")));
+    const rtDir = fakeRuntimeDir();
+    const savedPath = process.env.PATH;
+    process.env.PATH = `${rtDir}:${savedPath}`;
+    try {
+      gitInit(root);
+      const session = { id: "s1", execution_target: "local" } as unknown as CodingSessionRow;
+      const stored = (runner: Record<string, unknown>) =>
+        ({
+          listCodingArtifacts: () => [
+            {
+              kind: "workspace_runner",
+              status: "active",
+              metadata_json: JSON.stringify({ runner }),
+            },
+          ],
+        }) as unknown as MarinaDB;
+      const host = new LocalWorkspace(root);
+      const operator = {
+        MARINA_CODE_CONTAINER_IMAGE: IMAGE,
+        MARINA_CODE_CONTAINER_RUNTIME: "podman",
+      };
+      const permitted = (db: MarinaDB | undefined, env: NodeJS.ProcessEnv) =>
+        applySessionRunner(host, db, session, env).installsPermitted?.() === true;
+      // Operator image without network: no install, even if a stored setting asks for network.
+      expect(permitted(undefined, operator)).toBe(false);
+      expect(permitted(stored({ image: IMAGE, network: true, gated: true }), operator)).toBe(false);
+      // The operator turns network on: installs may run in the (mounted) container.
+      expect(permitted(undefined, { ...operator, MARINA_CODE_CONTAINER_NETWORK: "on" })).toBe(true);
+      // No operator image: network only with the recorded override-gate pass.
+      const env = { MARINA_CODE_CONTAINER_RUNTIME: "podman" };
+      expect(permitted(stored({ image: IMAGE, network: true }), env)).toBe(false);
+      expect(permitted(stored({ image: IMAGE, network: true, gated: true }), env)).toBe(true);
+      // An install where none is permitted is refused before anything spawns.
+      const ws = applySessionRunner(host, undefined, session, operator);
+      await expect(
+        ws.runPreparationStep?.(["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"]) ??
+          Promise.resolve(),
+      ).rejects.toThrow(/not permitted/);
+    } finally {
+      process.env.PATH = savedPath;
+      rmSync(root, { recursive: true, force: true });
+      rmSync(rtDir, { recursive: true, force: true });
+    }
+  });
+
+  it("REQUIRED without an image: never the host", () => {
+    const env = { MARINA_CODE_CONTAINER_REQUIRED: "true" };
+    expect(effectiveRunner(null, env).kind).toBe("unavailable");
+    expect(effectiveRunner({ kind: "local" }, env).kind).toBe("unavailable");
+    expect(effectiveRunner(container({}), env)).toMatchObject({ kind: "container" });
   });
 });
 
@@ -637,7 +857,15 @@ describe("operator default runner (MARINA_CODE_CONTAINER_*)", () => {
           },
         ],
       } as unknown as MarinaDB;
-      expect(applySessionRunner(host, pinned, session("s1"), env)).toBe(host);
+      // Operator policy wins: a stored `local` pin does not leave the operator image...
+      expect(applySessionRunner(host, pinned, session("s1"), env)).not.toBe(host);
+      // ...unless the operator explicitly allows it.
+      expect(
+        applySessionRunner(host, pinned, session("s1"), {
+          ...env,
+          MARINA_CODE_CONTAINER_REQUIRED: "false",
+        }),
+      ).toBe(host);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
