@@ -544,7 +544,9 @@ Call admission and concurrency are shared across all branches and child plans. F
 consume attempts. The timeout includes selection and graph execution; input retrieval has its
 own existing fetch deadlines. Output tokens are bounded per model call. These are invocation
 limits, not guaranteed dollar ceilings: cancelled requests may still be billed, and configured
-decision providers may make internal requests. The normal daily spend guard still applies.
+decision providers may make internal requests. The normal daily spend guard still applies:
+`arena:portfolio` and the spending `arena` subcommands attach the world database's ledger
+(`DB_PATH`), so their spend counts against the same daily total as the server.
 The trace reports in-flight calls if a transport has not settled when cancellation returns;
 `costFinal: false` means reported spend can still increase upstream.
 

@@ -52,6 +52,7 @@ import {
   type SweBenchmark,
   selectSubset,
 } from "../benchmarks/swebench/adapter";
+import { SpendGuard } from "../src/engine/spend-guard";
 import { projectSlug } from "./code";
 
 const REPO_ROOT = resolve(import.meta.dir, "..");
@@ -69,6 +70,9 @@ const { positionals, values } = parseArgs({
     replicate: { type: "string", default: "1" },
     concurrency: { type: "string", default: "3" },
     "timeout-min": { type: "string", default: "25" },
+    // A hard total for this run (every attempt, including ones already recorded):
+    // each attempt gets an even share of what is left as its session's cap.
+    "max-usd": { type: "string" },
     workers: { type: "string", default: "4" },
     db: { type: "string" },
     group: { type: "string" },
@@ -238,6 +242,24 @@ async function runCmd(): Promise<number> {
   const queue = ids.filter((id) => !done.has(id));
   console.log(`${arm.name} r${replicate}: ${queue.length} to run (${done.size} already done)`);
   const timeoutMs = Number(values["timeout-min"]) * 60_000;
+  const concurrency = Number(values.concurrency);
+  const maxUsd = values["max-usd"] === undefined ? undefined : Number(values["max-usd"]);
+  if (maxUsd !== undefined && !(maxUsd >= 0))
+    throw new Error("--max-usd must be a non-negative USD amount");
+  const priorUsd = existsSync(attemptsPath)
+    ? readFileSync(attemptsPath, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .reduce((t, l) => t + ((JSON.parse(l) as SweAttempt).costUsd ?? 0), 0)
+    : 0;
+  const budget = new SpendGuard({
+    label: "--max-usd",
+    ...(maxUsd !== undefined ? { budgetUsd: maxUsd } : {}),
+    spentUsd: priorUsd,
+    concurrency,
+    daily: false, // each attempt's session keeps its own ledger
+  });
+  let running = 0;
   async function worker(): Promise<void> {
     for (let id = queue.shift(); id; id = queue.shift()) {
       const inst = all.get(id);
@@ -245,6 +267,17 @@ async function runCmd(): Promise<number> {
         console.error(`unknown instance ${id}`);
         continue;
       }
+      // Split what is left among the attempts that may run at once.
+      const share = budget.share(concurrency - running);
+      if (!share) {
+        console.error(
+          `${id}: not started — --max-usd ${maxUsd} spent ($${budget.spentUsd.toFixed(2)})`,
+        );
+        queue.length = 0;
+        return;
+      }
+      running++;
+      let costUsd = 0;
       try {
         const { attempt, prediction } = await attemptInstance(inst, arm, {
           repoRoot: REPO_ROOT,
@@ -254,7 +287,9 @@ async function runCmd(): Promise<number> {
           timeoutMs,
           slug: projectSlug,
           ...(values["env-image"] ? { mode: "env-image" as const } : {}),
+          ...(Number.isFinite(share.capUsd) ? { capUsd: share.capUsd } : {}),
         });
+        costUsd = attempt.costUsd;
         appendFileSync(predsPath, `${JSON.stringify(prediction)}\n`);
         appendFileSync(attemptsPath, `${JSON.stringify(attempt)}\n`);
         console.log(
@@ -262,10 +297,13 @@ async function runCmd(): Promise<number> {
         );
       } catch (error) {
         console.error(`${id}: ${String(error).slice(0, 300)}`);
+      } finally {
+        running--;
+        share.settle(costUsd);
       }
     }
   }
-  await Promise.all(Array.from({ length: Number(values.concurrency) }, () => worker()));
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
   return 0;
 }
 

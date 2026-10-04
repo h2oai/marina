@@ -18,7 +18,7 @@ import {
   strictDateFilter,
 } from "../../src/arena/research/isolation";
 import type { Retriever } from "../../src/arena/research/retrieve";
-import { dailyBudget } from "../../src/engine/spend-ledger";
+import { SpendGuard } from "../../src/engine/spend-guard";
 import { type LessonStore, type LessonWriter, lessonFromOutcome } from "../../src/forecast/lessons";
 import { typedForecastDeps } from "../../src/forecast/service";
 import {
@@ -234,8 +234,13 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
         opts.lessons === "on" && opts.lessonStore ? await opts.lessonStore(label) : undefined;
       const retrieval = { linesIn: 0, linesKept: 0 };
       let lessonsWritten = 0;
-      let costSum = 0;
-      let rowsCosted = 0;
+      // Only the daily caps bound a backtest; the guard holds a reserve for the rows in flight.
+      const guard = new SpendGuard({
+        label: "backtest",
+        concurrency: opts.concurrency,
+        minReserveUsd: 2,
+        env,
+      });
       let lessonFailures = 0;
       const run: BatchRun = await runBatch(
         rows,
@@ -264,24 +269,15 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
         {
           horizonDays: opts.horizonDays,
           concurrency: opts.concurrency,
-          shouldStop: () => {
-            // The tighter of the world's cap and this process's MARINA_SPEND_SCOPE cap.
-            const s = dailyBudget();
-            if (s === undefined) return undefined;
-            // Stop while every row in flight can still finish under the cap.
-            const mean = rowsCosted ? costSum / rowsCosted : 0;
-            const reserve = Math.max(2, 1.5 * opts.concurrency * mean);
-            return s.spentUsd + reserve >= s.capUsd
-              ? `spend $${s.spentUsd.toFixed(2)} + reserve $${reserve.toFixed(2)} would reach the ${s.label} cap $${s.capUsd}`
-              : undefined;
-          },
+          // Stop while every row in flight can still finish under the tighter of
+          // the world's cap and this process's MARINA_SPEND_SCOPE cap.
+          shouldStop: () => guard.stopReason(),
           onRow: (r, done, total) =>
             log(
               `  [${label} ${done}/${total}] L${r.level} ${r.spec} → ${(r.prediction || "(empty)").slice(0, 60)} · lessons ${r.answer.lessons?.length ?? 0} · $${r.costUsd.toFixed(3)}`,
             ),
           afterRow: async (row, r) => {
-            costSum += r.costUsd;
-            rowsCosted++;
+            guard.record(r.costUsd);
             // A fallback is an infrastructure outcome (no run answered), not a
             // forecast to learn from.
             if (!store || r.fallback) return;

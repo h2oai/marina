@@ -36,6 +36,7 @@ import {
 } from "../src/agent/reasoning-control";
 import {
   describeToolProbe,
+  INCONCLUSIVE_PROBE_RETRY_MS,
   listToolProbeResults,
   type ProbeComplete,
   probeToolCalling,
@@ -45,6 +46,7 @@ import {
   toolProbeMode,
   toolProbeResult,
 } from "../src/agent/tool-call-probe";
+import { recordSpend, resetSpendLedgerForTests } from "../src/engine/spend-ledger";
 import { scopeProcessState } from "./process-state";
 
 const OR_MODEL = {
@@ -334,6 +336,46 @@ describe("spawn-time tool-calling probe", () => {
     });
     expect(failed.outcome).toBe("unknown");
     expect(toolProbeResult("openrouter/moonshotai/kimi-k3")).toBeUndefined();
+  });
+
+  it("backs off an inconclusive probe and sends none at the daily spend cap", async () => {
+    let calls = 0;
+    let clock = 1_000;
+    const failing: ProbeComplete = async () => {
+      calls++;
+      throw new Error("network down");
+    };
+    const id = "openrouter/moonshotai/kimi-k3";
+    const model = resolveModel(id);
+    const opts = { complete: failing, now: () => clock, env: {} as NodeJS.ProcessEnv };
+    expect((await probeToolCalling(id, model, "k", opts)).outcome).toBe("unknown");
+    expect(calls).toBe(1);
+    // A respawn inside the back-off reuses the inconclusive result: no new request.
+    clock += INCONCLUSIVE_PROBE_RETRY_MS - 1;
+    expect((await probeToolCalling(id, model, "k", opts)).outcome).toBe("unknown");
+    expect(calls).toBe(1);
+    clock += 2;
+    await probeToolCalling(id, model, "k", opts);
+    expect(calls).toBe(2);
+
+    resetSpendLedgerForTests();
+    try {
+      recordSpend("model_api", 5);
+      let capped = 0;
+      const result = await probeToolCalling("openrouter/example/new-model", model, "k", {
+        complete: async () => {
+          capped++;
+          return TOOL_REPLY;
+        },
+        env: { MARINA_DAILY_SPEND_CAP_USD: "5" } as NodeJS.ProcessEnv,
+      });
+      expect(capped).toBe(0);
+      expect(result.outcome).toBe("unknown");
+      expect(result.detail).toContain("daily spend cap reached");
+      expect(toolProbeResult("openrouter/example/new-model")).toBeUndefined();
+    } finally {
+      resetSpendLedgerForTests();
+    }
   });
 
   it("shares one probe between concurrent spawns", async () => {

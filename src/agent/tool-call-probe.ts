@@ -19,7 +19,7 @@
  * stops a crew lead whose model made no tool call.
  */
 import type { Api, AssistantMessage, Context, Message, Model } from "@earendil-works/pi-ai";
-import { recordSpend } from "../engine/spend-ledger";
+import { dailyCapRefusal, recordSpend } from "../engine/spend-ledger";
 import { isLocalProvider } from "../net/model-discovery";
 import { piModels } from "./pi-models";
 import {
@@ -67,6 +67,10 @@ export function shouldProbeTools(
 }
 
 const results = new Map<string, ToolProbeResult>();
+/** Inconclusive probes, kept apart from `results` and retried only after a back-off. */
+const inconclusive = new Map<string, ToolProbeResult>();
+/** How long an inconclusive probe stands before a spawn on that model probes again. */
+export const INCONCLUSIVE_PROBE_RETRY_MS = 10 * 60_000;
 const inflight = new Map<string, Promise<ToolProbeResult>>();
 
 /** The cached probe result for `modelStr`, if any. */
@@ -82,6 +86,7 @@ export function listToolProbeResults(): ToolProbeResult[] {
 /** Test hook. */
 export function resetToolProbeForTests(): void {
   results.clear();
+  inconclusive.clear();
   inflight.clear();
 }
 
@@ -194,12 +199,32 @@ export function probeToolCalling(
   modelStr: string,
   model: Model<Api>,
   apiKey: string | undefined,
-  opts: { complete?: ProbeComplete; timeoutMs?: number; now?: () => number } = {},
+  opts: {
+    complete?: ProbeComplete;
+    timeoutMs?: number;
+    now?: () => number;
+    env?: NodeJS.ProcessEnv;
+  } = {},
 ): Promise<ToolProbeResult> {
   const cached = results.get(modelStr);
   if (cached) return Promise.resolve(cached);
   const pending = inflight.get(modelStr);
   if (pending) return pending;
+  const now = opts.now ?? Date.now;
+  // An inconclusive probe (network, auth, timeout) is not re-sent on every
+  // spawn: each probe costs money, so it waits out a back-off first.
+  const recent = inconclusive.get(modelStr);
+  if (recent && now() - recent.at < INCONCLUSIVE_PROBE_RETRY_MS) return Promise.resolve(recent);
+  // The probe is a paid request like any other: none at the daily cap.
+  const capped = dailyCapRefusal(opts.env);
+  if (capped) {
+    return Promise.resolve({
+      model: modelStr,
+      outcome: "unknown",
+      detail: `not probed: ${capped.split(";")[0]}`,
+      at: now(),
+    });
+  }
   const complete = opts.complete ?? defaultComplete;
   const timeoutMs = opts.timeoutMs ?? PROBE_TIMEOUT_MS;
   const run = (async (): Promise<ToolProbeResult> => {
@@ -216,10 +241,14 @@ export function probeToolCalling(
       outcome,
       ...(reasoningOff ? { reasoningOff } : {}),
       detail: first.detail,
-      at: (opts.now ?? Date.now)(),
+      at: now(),
     };
-    // An inconclusive probe is not cached, so the next spawn tries again.
-    if (outcome !== "unknown") results.set(modelStr, result);
+    // An inconclusive probe is not a result; a spawn after the back-off tries again.
+    if (outcome === "unknown") inconclusive.set(modelStr, result);
+    else {
+      results.set(modelStr, result);
+      inconclusive.delete(modelStr);
+    }
     return result;
   })().finally(() => inflight.delete(modelStr));
   inflight.set(modelStr, run);
