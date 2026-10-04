@@ -27,6 +27,8 @@
  *   writes no ledger file, so nothing is compared or reported from it.
  */
 
+import { createHash } from "node:crypto";
+import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import type {
   ArmSpec,
@@ -324,21 +326,19 @@ const swebench: Setup = {
     const limit = flags.limit ?? this.smoke;
     const m = resolveModels(tier, flags);
     const data = join(flags.runDir, "swebench");
-    const common = ["--data", data];
+    // Every step reads the SAME subset (`subset-n<limit>-s<seed>.txt` under the run's
+    // data directory): `run` attempts it, `file` records its seed from arm.json.
+    const common = ["--data", data, "--n", String(limit), "--seed", String(flags.seed)];
     const steps: Step[] = [
       {
         kind: "command",
+        label: "export SWE-bench Verified task fields (no gold patch or tests)",
+        argv: ["bun", "scripts/swebench.ts", "export", ...common],
+      },
+      {
+        kind: "command",
         label: `subset ${limit} (seed ${flags.seed})`,
-        argv: [
-          "bun",
-          "scripts/swebench.ts",
-          "subset",
-          "--n",
-          String(limit),
-          "--seed",
-          String(flags.seed),
-          ...common,
-        ],
+        argv: ["bun", "scripts/swebench.ts", "subset", ...common],
       },
     ];
     for (const arm of arms) {
@@ -355,6 +355,9 @@ const swebench: Setup = {
           String(r),
           ...(arm.name === "verify" ? ["--review-model", m.checker] : []),
           ...(flags.envImage ? ["--env-image"] : []),
+          // Repository mirrors are shared with the default data directory, never re-cloned.
+          "--mirror-cache",
+          join(homedir(), ".local/share/marina-swebench/data/mirrors"),
           ...common,
         ];
         steps.push({ kind: "command", label: `${arm.name} r${r}: patches`, argv: run });
@@ -420,6 +423,19 @@ const TAU2_SPLIT_SIZES: Record<string, number> = {
 const TAU2_FULL_SPLIT = "base";
 
 /**
+ * A short hash of everything that makes a τ² run one configuration. τ²'s
+ * `--auto-resume` continues any results file under the same `--save-to` name,
+ * so the name carries this tag: re-running with another model, effort, user
+ * simulator, trial count or task count starts a fresh run instead of mixing two
+ * configurations into one results file.
+ */
+export function tau2ConfigTag(config: Record<string, unknown>): string {
+  const keys = Object.keys(config).sort();
+  const canonical = JSON.stringify(keys.map((k) => [k, config[k] ?? null]));
+  return createHash("sha256").update(canonical).digest("hex").slice(0, 8);
+}
+
+/**
  * LiteLLM args for a Marina-routed τ² model. `reasoning_effort` rides in `extra_body`:
  * τ² sets `drop_params`, and LiteLLM drops a top-level `reasoning_effort` for ids it
  * does not recognise, which is every id routed through Marina.
@@ -471,9 +487,22 @@ const tau2: Setup = {
         arm.name === "single"
           ? m.answer
           : `marina/verify:${m.answer}${m.checker !== m.answer ? `+${m.checker}` : ""}`;
+      const numTasks =
+        flags.split !== TAU2_FULL_SPLIT && (flags.limit !== undefined || !splitSize) ? limit : null;
       // τ² writes data/simulations/<name>/results.json under its own checkout and offers
-      // to resume an existing one, so the name carries the run directory's.
-      const name = `marina-repro-${basename(flags.runDir)}-${domain}${flags.split ? `-${flags.split}` : ""}-${arm.name}`;
+      // to resume an existing one, so the name carries the run directory's — and a tag
+      // of the configuration, so a changed configuration never resumes another's file.
+      const tag = tau2ConfigTag({
+        agent,
+        user: m.judge,
+        effort,
+        userEffort,
+        trials: flags.replicates,
+        numTasks,
+        split: flags.split ?? null,
+        domain,
+      });
+      const name = `marina-repro-${basename(flags.runDir)}-${domain}${flags.split ? `-${flags.split}` : ""}-${arm.name}-${tag}`;
       const results = `$TAU2_HOME/data/simulations/${name}/results.json`;
       const ledgerFile = join(flags.runDir, "results", `${name}-ledger.json`);
       const agentArgs = tau2LlmArgs(base, effort);
@@ -497,9 +526,7 @@ const tau2: Setup = {
           userArgs,
           "--num-trials",
           String(flags.replicates),
-          ...(flags.split !== TAU2_FULL_SPLIT && (flags.limit !== undefined || !splitSize)
-            ? ["--num-tasks", String(limit)]
-            : []),
+          ...(numTasks !== null ? ["--num-tasks", String(numTasks)] : []),
           "--max-concurrency",
           "4",
           "--save-to",

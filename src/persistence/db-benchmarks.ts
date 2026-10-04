@@ -135,6 +135,11 @@ export interface BenchmarkLedgerRunInput {
   label: string | null;
   source: "in-world" | "import";
   content_hash: string | null;
+  /**
+   * A second hash that also identifies this content (the raw-bytes hash runs
+   * were filed under before the stable hash); matched on write, never stored.
+   */
+  legacy_content_hash?: string | null;
   /** Replicate group key (migration 148); null ⇒ grouped by target/slice/judge when read. */
   replicate_group?: string | null;
   /**
@@ -159,8 +164,8 @@ export interface BenchmarkItemInput {
 
 /**
  * Record a completed run and its items in one transaction. A run whose
- * `content_hash` is already recorded is not written again: the existing id is
- * returned with `created: false`.
+ * `content_hash` (or `legacy_content_hash`) is already recorded is not written
+ * again: the existing id is returned with `created: false`.
  */
 export function recordBenchmarkLedgerRun(
   db: Database,
@@ -168,10 +173,15 @@ export function recordBenchmarkLedgerRun(
   items: readonly BenchmarkItemInput[],
 ): { id: string; created: boolean } {
   return db.transaction(() => {
-    if (run.content_hash) {
+    const hashes = [run.content_hash, run.legacy_content_hash].filter((h): h is string =>
+      Boolean(h),
+    );
+    if (hashes.length > 0) {
       const existing = db
-        .query("SELECT id FROM benchmark_runs WHERE content_hash = ?")
-        .get(run.content_hash) as { id: string } | null;
+        .query(
+          `SELECT id FROM benchmark_runs WHERE content_hash IN (${hashes.map(() => "?").join(", ")}) ORDER BY started_at, id LIMIT 1`,
+        )
+        .get(...hashes) as { id: string } | null;
       if (existing) return { id: existing.id, created: false };
     }
     db.run(
@@ -315,27 +325,69 @@ export function listBenchmarkRunValidity(reader: Database, runId: string): Bench
     .all(runId) as BenchmarkValidityRow[];
 }
 
+// ─── Replicate regrouping (migration 155) ──────────────────────────────────
+//
+// Moving a run between replicate groups changes what pools and promotes, so a
+// regroup never rewrites a run silently: each move commits with an append-only
+// audit row naming the old and new group, the actor and the reason.
+
+/** `in-world` = a world command; `operator` = the import script on the operator's database. */
+export type BenchmarkRegroupSource = "in-world" | "operator";
+
+export interface BenchmarkRegroupAudit {
+  reason: string;
+  /** Durable account key (in-world) or `operator`. */
+  actor: string | null;
+  source: BenchmarkRegroupSource;
+  created_at: number;
+}
+
+export interface BenchmarkRegroupRow extends BenchmarkRegroupAudit {
+  id: number;
+  run_id: string;
+  from_group: string | null;
+  to_group: string;
+}
+
 /**
  * Put runs into one replicate group (operator regrouping, e.g. replicates
  * recorded before groups existed or with slightly different target labels).
- * Item outcomes are untouched — only the run's group key changes.
+ * Item outcomes are untouched — only the run's group key changes — and every
+ * run that actually moves gets an audit row in the same transaction.
  */
 export function setBenchmarkReplicateGroup(
   db: Database,
   runIds: readonly string[],
   group: string,
+  audit: BenchmarkRegroupAudit,
 ): number {
   if (runIds.length === 0) return 0;
   return db.transaction(() => {
     let changed = 0;
     for (const id of runIds) {
+      const row = db.query("SELECT replicate_group FROM benchmark_runs WHERE id = ?").get(id) as {
+        replicate_group: string | null;
+      } | null;
+      if (!row || row.replicate_group === group) continue;
       changed += db.run("UPDATE benchmark_runs SET replicate_group = ? WHERE id = ?", [
         group,
         id,
       ]).changes;
+      db.run(
+        `INSERT INTO benchmark_run_regroups (run_id, from_group, to_group, reason, actor, source, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [id, row.replicate_group, group, audit.reason, audit.actor, audit.source, audit.created_at],
+      );
     }
     return changed;
   })();
+}
+
+/** A run's append-only regroup history, oldest first. */
+export function listBenchmarkRunRegroups(reader: Database, runId: string): BenchmarkRegroupRow[] {
+  return reader
+    .query("SELECT * FROM benchmark_run_regroups WHERE run_id = ? ORDER BY id")
+    .all(runId) as BenchmarkRegroupRow[];
 }
 
 /** Every recorded item outcome of one run, in insertion order. */

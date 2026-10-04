@@ -36,7 +36,13 @@ bun run swebench file --arm single --replicate 1 --db marina.db
   implementer, a reviewer (usually another vendor) reads the change against the issue. It edits only
   when the change is wrong or incomplete.
 - **Resuming:** `run` skips instances already recorded in the run's `attempts.jsonl`, so an
-  interrupted run picks up where it stopped.
+  interrupted run picks up where it stopped. It records the arm, mode and subset (`--n`/`--seed`
+  or `--ids`) in `arm.json` and refuses to continue a replicate under another configuration.
+- **One subset per run:** `run` and `file` read the ids `subset` wrote, so give every step the
+  same `--n` and `--seed` (or `--ids`); `file` records the seed from `arm.json`. `bun run swebench
+  export` writes the task fields with `SWEBENCH_PYTHON` when `<data>/verified.jsonl` is missing.
+- **Re-filing is a no-op:** the ledger result is stamped with the last attempt's write, never the
+  filing time, and every replicate of an arm records the same target (no replicate number or path).
 - **Location:** everything is written under `--data` (default `~/.local/share/marina-swebench/data`).
 - **`--env-image` (opt-in):** the agent's commands run inside the instance's official environment
   image (`swebench/sweb.eval.x86_64.<id>`, pulled or built beforehand) through Marina's general

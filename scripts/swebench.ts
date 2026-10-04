@@ -5,10 +5,19 @@
 /**
  * SWE-bench — a thin adapter over Marina's one-shot coding entry point.
  *
+ *   bun run swebench export                                  task fields → <data>/verified.jsonl (once)
  *   bun run swebench subset --n 50 --seed 7                 seeded, repo-mixed instance ids
  *   bun run swebench run --arm single --model <m> --replicate 1 [--review-model <m2>] [--env-image]
  *   bun run swebench score --arm single --replicate 1       official harness, unmodified
  *   bun run swebench file --arm single --replicate 1        scored run → benchmark ledger
+ *
+ * `run` and `file` read the subset `subset` wrote, so give them the same `--n` and
+ * `--seed` (or the same `--ids` file). `run` records the subset and configuration in
+ * the replicate's `arm.json` and refuses to continue a replicate under a different
+ * one; `file` takes the seed from there. `file` is idempotent: the ledger result's
+ * timestamp is the last attempt's write, never the filing time, so filing a
+ * finished replicate again is a no-op. `--mirror-cache <dir>` shares repository
+ * mirrors across data directories (the reproduction kit's fresh run directories).
  *
  * Common flags: --data <dir> (default ~/.local/share/marina-swebench/data, outside the
  * repository), --instances <file.jsonl> (from benchmarks/swebench/export.py),
@@ -21,7 +30,15 @@
  * Nothing is submitted anywhere; leaderboard submission is a separate, approved act.
  */
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
@@ -61,6 +78,8 @@ const { positionals, values } = parseArgs({
     benchmark: { type: "string", default: "verified" },
     // SWE-bench Pro: the harness's v2 task directories (per-task verifier).
     tasks: { type: "string" },
+    // Repository mirrors shared across data directories (symlinked as <data>/mirrors).
+    "mirror-cache": { type: "string" },
   },
 });
 const cmd = positionals[0];
@@ -83,6 +102,85 @@ function armFromFlags(): SweArm {
   };
 }
 
+/** What `run` records in a replicate's arm.json: the arm, its mode and the exact subset. */
+interface ArmRecord extends SweArm {
+  replicate: number;
+  /** The ids file the replicate attempts. */
+  ids: string;
+  /** The subset's seed and size; null when the ids were given explicitly. */
+  seed: number | null;
+  n: number | null;
+  mode: "agentless" | "env-image";
+  benchmark: SweBenchmark;
+}
+
+/**
+ * The fields where a recorded replicate and this invocation differ — those that
+ * make two invocations the same replicate. A field an older arm.json never
+ * recorded is not compared (the review model always is: absent means none).
+ */
+function armMismatch(prior: Partial<ArmRecord>, next: ArmRecord): string[] {
+  const keys = ["name", "model", "reviewModel", "ids", "seed", "n", "mode", "benchmark"] as const;
+  return keys.filter(
+    (k) =>
+      (k === "reviewModel" || k in prior) &&
+      JSON.stringify(prior[k] ?? null) !== JSON.stringify(next[k] ?? null),
+  );
+}
+
+/** The ledger target: what was run — never the replicate number or a local path. */
+function ledgerTarget(a: Partial<ArmRecord> & SweArm) {
+  return {
+    harness: "marina -p",
+    name: a.name,
+    model: a.model,
+    ...(a.reviewModel ? { reviewModel: a.reviewModel } : {}),
+    ...(a.mode === "env-image" ? { mode: "env-image" } : {}),
+  };
+}
+
+/** Python with the `datasets` package (the swebench venv has it). */
+function python(): string {
+  const py = process.env.SWEBENCH_PYTHON;
+  if (!py) throw new Error("SWEBENCH_PYTHON must point at a Python with the swebench package");
+  return py;
+}
+
+const HF_DATASETS: Record<SweBenchmark, string> = {
+  verified: "SWE-bench/SWE-bench_Verified",
+  pro: "ScaleAI/SWE-bench_Pro",
+};
+
+async function exportCmd(): Promise<number> {
+  if (existsSync(instancesPath)) {
+    console.log(`${instancesPath} exists — not exported again`);
+    return 0;
+  }
+  mkdirSync(dataDir, { recursive: true });
+  const proc = Bun.spawn(
+    [
+      python(),
+      join(REPO_ROOT, "benchmarks/swebench/export.py"),
+      instancesPath,
+      process.env.SWEBENCH_DATASET ?? HF_DATASETS[benchmark],
+      "test",
+    ],
+    { cwd: REPO_ROOT, stdout: "inherit", stderr: "inherit" },
+  );
+  return proc.exited;
+}
+
+/** Point <data>/mirrors at a shared cache so a fresh data directory never re-clones. */
+function linkMirrorCache(): void {
+  const cache = values["mirror-cache"];
+  if (!cache) return;
+  const link = join(dataDir, "mirrors");
+  if (existsSync(link)) return;
+  mkdirSync(resolve(cache), { recursive: true });
+  mkdirSync(dataDir, { recursive: true });
+  symlinkSync(resolve(cache), link, "dir");
+}
+
 async function subsetCmd(): Promise<number> {
   const rows = loadInstances(instancesPath);
   const picked = selectSubset(rows, Number(values.n), Number(values.seed));
@@ -96,13 +194,37 @@ async function subsetCmd(): Promise<number> {
 
 async function runCmd(): Promise<number> {
   const arm = armFromFlags();
+  if (!existsSync(idsPath)) {
+    throw new Error(
+      `no subset ids at ${idsPath} — run \`subset\` with the same --n/--seed first, or pass --ids`,
+    );
+  }
   const ids = readFileSync(idsPath, "utf8").split("\n").filter(Boolean);
   const all = new Map(loadInstances(instancesPath).map((r) => [r.instance_id, r]));
   mkdirSync(runDir, { recursive: true });
-  writeFileSync(
-    join(runDir, "arm.json"),
-    JSON.stringify({ ...arm, replicate, ids: idsPath }, null, 2),
-  );
+  linkMirrorCache();
+  const record: ArmRecord = {
+    ...arm,
+    replicate,
+    ids: idsPath,
+    seed: values.ids ? null : Number(values.seed),
+    n: values.ids ? null : Number(values.n),
+    mode: values["env-image"] ? "env-image" : "agentless",
+    benchmark,
+  };
+  // A replicate continues only under its own configuration: attempts made by
+  // another model, mode or subset must never be mixed into it.
+  const armPath = join(runDir, "arm.json");
+  if (existsSync(armPath) && existsSync(join(runDir, "attempts.jsonl"))) {
+    const prior = JSON.parse(readFileSync(armPath, "utf8")) as Partial<ArmRecord>;
+    const differs = armMismatch(prior, record);
+    if (differs.length > 0) {
+      throw new Error(
+        `${runDir} holds attempts of another configuration (different ${differs.join(", ")}); use another --arm/--replicate or --data`,
+      );
+    }
+  }
+  writeFileSync(armPath, JSON.stringify(record, null, 2));
   const attemptsPath = join(runDir, "attempts.jsonl");
   const predsPath = join(runDir, "predictions.jsonl");
   const done = new Set(
@@ -151,8 +273,7 @@ async function runCmd(): Promise<number> {
 const proReportDir = join(runDir, "pro-grade");
 
 async function scoreCmd(): Promise<number> {
-  const py = process.env.SWEBENCH_PYTHON;
-  if (!py) throw new Error("SWEBENCH_PYTHON must point at a Python with the swebench package");
+  const py = python();
   const preds = join(runDir, "predictions.jsonl");
   if (benchmark === "pro") {
     if (!values.tasks) throw new Error("--tasks <SWE-bench_Pro-os>/v2/tasks is required for Pro");
@@ -196,7 +317,8 @@ async function scoreCmd(): Promise<number> {
 }
 
 async function fileCmd(): Promise<number> {
-  const arm = JSON.parse(readFileSync(join(runDir, "arm.json"), "utf8")) as SweArm;
+  const arm = JSON.parse(readFileSync(join(runDir, "arm.json"), "utf8")) as Partial<ArmRecord> &
+    SweArm;
   const reportName = `marina-${arm.name}-r${replicate}.marina-${values.arm}-r${replicate}.json`;
   const reportPath = [join(runDir, reportName), join(proReportDir, "report.json")].find((p) =>
     existsSync(p),
@@ -206,13 +328,14 @@ async function fileCmd(): Promise<number> {
     resolved_ids?: string[];
     error_ids?: string[];
   };
-  const attempts = readFileSync(join(runDir, "attempts.jsonl"), "utf8")
+  const attemptsPath = join(runDir, "attempts.jsonl");
+  const attempts = readFileSync(attemptsPath, "utf8")
     .split("\n")
     .filter(Boolean)
     .map((l) => JSON.parse(l) as SweAttempt);
   // The ids this run was asked to attempt (recorded by `run` in arm.json): one with no
   // recorded attempt is filed as unresolved, never dropped.
-  const armIds = (arm as SweArm & { ids?: string }).ids;
+  const armIds = arm.ids;
   const expectedIds =
     armIds && existsSync(armIds)
       ? readFileSync(armIds, "utf8").split("\n").filter(Boolean)
@@ -220,9 +343,13 @@ async function fileCmd(): Promise<number> {
   const result = ledgerResult(report, attempts, {
     arm,
     replicate,
-    subsetSeed: Number(values.seed),
+    // The seed the replicate's subset was drawn with (recorded by `run`); an arm.json
+    // from before that record falls back to the flag.
+    subsetSeed: arm.seed !== undefined ? arm.seed : Number(values.seed),
     benchmark,
     ...(expectedIds ? { expectedIds } : {}),
+    // The last attempt's write: fixed for a finished replicate, so re-filing is a no-op.
+    completedAt: statSync(attemptsPath).mtimeMs,
   });
   const resultPath = join(runDir, "ledger-result.json");
   writeFileSync(resultPath, JSON.stringify(result, null, 2));
@@ -230,7 +357,8 @@ async function fileCmd(): Promise<number> {
   console.log(
     `${arm.name} r${replicate}: ${result.items.filter((i) => i.correct).length}/${result.items.length} resolved · $${cost.toFixed(2)}`,
   );
-  const target = JSON.stringify({ harness: "marina -p", ...arm });
+  // Every replicate of one arm records the SAME target, so they pool (and promote) together.
+  const target = JSON.stringify(ledgerTarget(arm));
   const proc = Bun.spawn(
     [
       "bun",
@@ -262,6 +390,8 @@ async function fileCmd(): Promise<number> {
 
 async function main(): Promise<number> {
   switch (cmd) {
+    case "export":
+      return exportCmd();
     case "subset":
       return subsetCmd();
     case "run":
@@ -272,7 +402,7 @@ async function main(): Promise<number> {
       return fileCmd();
     default:
       console.error(
-        "usage: bun run swebench subset|run|score|file [flags] (see scripts/swebench.ts)",
+        "usage: bun run swebench export|subset|run|score|file [flags] (see scripts/swebench.ts)",
       );
       return 2;
   }

@@ -12,7 +12,7 @@
  * result carries item ids and outcomes only.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BudgetExhausted, isSpendCapRefusal } from "../spend-guard";
 import { mulberry32 } from "../stats";
@@ -225,6 +225,8 @@ export interface ArmRun {
   notRun: string[];
   /** Query ids reused from an earlier run in the same directory (`resume`). */
   resumed: string[];
+  /** Query ids whose earlier record was an error (run or judge) and were run again (`resume`). */
+  retried: string[];
 }
 
 function evalFor(
@@ -248,6 +250,41 @@ function evalFor(
   };
 }
 
+/**
+ * Why an earlier record cannot be reused as a final answer: a budget stop, an
+ * errored run (transport, HTTP, timeout) or a judge call that failed. Such a
+ * record measured the infrastructure, not the target, so `--resume` runs the
+ * query again instead of carrying the error forward forever. An incomplete run
+ * (turn cap, empty answer) is the target's own outcome and is reused.
+ */
+export function priorErrorKind(
+  record: RunRecord,
+  ev: Record<string, unknown>,
+): "stopped" | "run-error" | "judge-error" | undefined {
+  if (record.metadata?.stopped_by) return "stopped";
+  if (record.status === "error") return "run-error";
+  const jr = (ev.judge_result ?? {}) as Record<string, unknown>;
+  // A judge that ran and failed (its response is recorded, with an error).
+  if (typeof ev.judge_response === "string" && typeof jr.error === "string") return "judge-error";
+  return undefined;
+}
+
+/** Whether `outDir` holds an earlier record of `q` that `priorItem` refuses as an error. */
+export function priorErrored(q: Query, outDir: string): boolean {
+  const runFile = join(outDir, "runs", `run_${q.query_id}.json`);
+  const evalFile = join(outDir, "evals", `run_${q.query_id}_eval.json`);
+  if (!existsSync(runFile) || !existsSync(evalFile)) return false;
+  try {
+    const record = JSON.parse(readFileSync(runFile, "utf8")) as RunRecord;
+    const ev = JSON.parse(readFileSync(evalFile, "utf8")) as Record<string, unknown>;
+    const kind = priorErrorKind(record, ev);
+    return kind === "run-error" || kind === "judge-error";
+  } catch {
+    // allow-empty-catch: an unreadable earlier file is simply run again
+    return false;
+  }
+}
+
 /** A query answered and judged by an earlier run in `outDir`, rebuilt from its files. */
 export function priorItem(
   q: Query,
@@ -261,7 +298,7 @@ export function priorItem(
   try {
     const record = JSON.parse(readFileSync(runFile, "utf8")) as RunRecord;
     const ev = JSON.parse(readFileSync(evalFile, "utf8")) as Record<string, unknown>;
-    if (record.metadata?.stopped_by) return undefined;
+    if (priorErrorKind(record, ev)) return undefined;
     const jr = (ev.judge_result ?? {}) as Record<string, unknown>;
     const judge: JudgeOutcome | null =
       typeof ev.judge_response === "string"
@@ -309,6 +346,7 @@ export async function runArm(queries: readonly Query[], opts: ArmOptions): Promi
   mkdirSync(evalsDir, { recursive: true });
   const guard = opts.endpoint.guard;
   const resumed: string[] = [];
+  const retried: string[] = [];
   let done = 0;
   const slots = await pool(queries, opts.concurrency, async (q): Promise<ArmItem | null> => {
     if (opts.resume) {
@@ -318,6 +356,7 @@ export async function runArm(queries: readonly Query[], opts: ArmOptions): Promi
         opts.onProgress?.(++done, queries.length, prior.eval);
         return prior;
       }
+      if (priorErrored(q, opts.outDir)) retried.push(q.query_id);
     }
     if (guard?.stoppedBy) return null;
     const run =
@@ -393,7 +432,141 @@ export async function runArm(queries: readonly Query[], opts: ArmOptions): Promi
     ...(notRun.length ? { stoppedBy: guard?.stoppedBy ?? "spend guard" } : {}),
     notRun,
     resumed,
+    retried,
   };
+}
+
+// ─── Resume safety ──────────────────────────────────────────────────────────
+
+/** The file in a replicate directory that records the configuration it ran under. */
+export const REPLICATE_CONFIG_FILE = "config.json";
+/** The file in a replicate directory that records its ledger filing. */
+export const REPLICATE_FILED_FILE = "filed.json";
+/** The file in an arm's output directory that records its replicate group. */
+export const ARM_GROUP_FILE = "group.json";
+
+/** What makes two invocations one configuration: everything that can change an answer or a verdict. */
+export interface ArmConfig {
+  model: string;
+  formation: string;
+  leadModel: string | null;
+  leadTurns: number;
+  judgeModel: string;
+  corpus: string;
+  k: number;
+  snippetChars: number;
+  docChars: number;
+  maxTurns: number;
+  maxTokens: number | null;
+  seed: number;
+  offset: number;
+  limit: number | null;
+  /** The sampled query ids, hashed: the slice itself, whatever produced it. */
+  queriesHash: string;
+}
+
+/** The fields where a recorded configuration differs from this one. */
+export function configDifferences(recorded: Record<string, unknown>, next: ArmConfig): string[] {
+  const keys = new Set([...Object.keys(recorded), ...Object.keys(next)]);
+  return [...keys]
+    .filter(
+      (k) =>
+        JSON.stringify(recorded[k] ?? null) !==
+        JSON.stringify((next as unknown as Record<string, unknown>)[k] ?? null),
+    )
+    .sort();
+}
+
+/**
+ * Check (and record) a replicate directory's configuration before running it.
+ * Without `resume` the configuration is written fresh. With `resume`, a
+ * directory recorded under another configuration is REFUSED — a replicate is
+ * never half one configuration and half another. A directory from before this
+ * record existed is adopted with a warning.
+ */
+export function prepareReplicateDir(
+  dir: string,
+  config: ArmConfig,
+  resume: boolean,
+): { adopted: boolean } {
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, REPLICATE_CONFIG_FILE);
+  if (resume && existsSync(path)) {
+    const recorded = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    const differs = configDifferences(recorded, config);
+    if (differs.length > 0) {
+      throw new Error(
+        `refusing --resume: ${dir} was run with a different configuration (${differs.join(", ")}); ` +
+          "use another --out, or run without --resume to start it over",
+      );
+    }
+    return { adopted: false };
+  }
+  const adopted = resume && existsSync(join(dir, "runs"));
+  // A replicate started over is a new run: an earlier filing marker no longer describes it.
+  if (!resume) rmSync(join(dir, REPLICATE_FILED_FILE), { force: true });
+  writeFileSync(path, JSON.stringify(config, null, 2));
+  return { adopted };
+}
+
+/** A replicate's recorded ledger filing, if it was filed. */
+export function readFiled(dir: string): { runId: string; group: string | null } | undefined {
+  const path = join(dir, REPLICATE_FILED_FILE);
+  if (!existsSync(path)) return undefined;
+  try {
+    const f = JSON.parse(readFileSync(path, "utf8")) as { runId?: unknown; group?: unknown };
+    return typeof f.runId === "string"
+      ? { runId: f.runId, group: typeof f.group === "string" ? f.group : null }
+      : undefined;
+  } catch {
+    // allow-empty-catch: an unreadable marker reads as not filed (the server's content hash still dedupes)
+    return undefined;
+  }
+}
+
+export function writeFiled(dir: string, filed: { runId: string; group: string | null }): void {
+  writeFileSync(
+    join(dir, REPLICATE_FILED_FILE),
+    JSON.stringify({ ...filed, filedAt: new Date().toISOString() }, null, 2),
+  );
+}
+
+/**
+ * The replicate group an arm files into. A resumed arm keeps the group it
+ * started with (recorded in `group.json`, else a replicate's filing marker), so
+ * new replicates join the earlier ones; an explicit `--group` that contradicts
+ * it is refused. A fresh arm uses `--group`, else `fresh()` (for replicated
+ * arms), and records it.
+ */
+export function resolveArmGroup(
+  out: string,
+  opts: {
+    explicit?: string;
+    resume: boolean;
+    replicateDirs: string[];
+    fresh: () => string | undefined;
+  },
+): string | undefined {
+  const path = join(out, ARM_GROUP_FILE);
+  let recorded: string | undefined;
+  if (opts.resume) {
+    if (existsSync(path)) {
+      const g = (JSON.parse(readFileSync(path, "utf8")) as { group?: unknown }).group;
+      if (typeof g === "string") recorded = g;
+    }
+    recorded ??= opts.replicateDirs.map((d) => readFiled(d)?.group).find((g) => g) ?? undefined;
+  }
+  if (recorded && opts.explicit && opts.explicit !== recorded) {
+    throw new Error(
+      `refusing --resume: ${out} files into group ${recorded}, not --group ${opts.explicit}`,
+    );
+  }
+  const group = recorded ?? opts.explicit ?? opts.fresh();
+  if (group) {
+    mkdirSync(out, { recursive: true });
+    writeFileSync(path, JSON.stringify({ group }, null, 2));
+  }
+  return group;
 }
 
 /** The leaderboard summary for one replicate. */

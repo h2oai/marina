@@ -411,7 +411,8 @@ export function ledgerResult(
   meta: {
     arm: SweArm;
     replicate: number;
-    subsetSeed: number;
+    /** The subset's seed; null when the ids were given explicitly (`--ids`). */
+    subsetSeed: number | null;
     benchmark?: SweBenchmark;
     /**
      * The instance ids the run was asked to attempt. An id with no recorded
@@ -419,6 +420,12 @@ export function ledgerResult(
      * it is filed as unresolved at zero recorded cost, never silently dropped.
      */
     expectedIds?: string[];
+    /**
+     * When the run finished (epoch ms) — e.g. the last attempt's write. Fixed for
+     * a finished run, so filing it again is the same document; never the time of
+     * filing.
+     */
+    completedAt?: number;
   },
 ) {
   const resolved = new Set(report.resolved_ids ?? []);
@@ -457,7 +464,7 @@ export function ledgerResult(
       seed: meta.subsetSeed,
       replicate: meta.replicate,
     },
-    timestamp: new Date().toISOString(),
+    ...(meta.completedAt !== undefined ? { timestamp: Math.round(meta.completedAt) } : {}),
     duration_ms: graded.reduce((t, a) => t + a.durationMs, 0),
     scores: { overall: items.length ? correct / items.length : 0 },
     metadata: {

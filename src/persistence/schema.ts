@@ -423,6 +423,27 @@ BEGIN SELECT RAISE(ABORT, 'benchmark_run_validity is append-only'); END;
     version: 154,
     sql: "ALTER TABLE arena_submissions ADD COLUMN detail TEXT NOT NULL DEFAULT '{}';",
   },
+  // Replicate regrouping (benchmark:import --regroup / --replicate-of): moving a
+  // run between replicate groups changes what pools and promotes, so every move
+  // is an append-only audit row with the old and new group, who and why.
+  {
+    version: 155,
+    sql: `
+CREATE TABLE benchmark_run_regroups (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL,
+  from_group TEXT,
+  to_group TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  actor TEXT,
+  source TEXT NOT NULL CHECK (source IN ('in-world', 'operator')),
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_benchmark_run_regroups_run ON benchmark_run_regroups(run_id, id);
+CREATE TRIGGER benchmark_run_regroups_no_update BEFORE UPDATE ON benchmark_run_regroups
+BEGIN SELECT RAISE(ABORT, 'benchmark_run_regroups is append-only'); END;
+`,
+  },
 ];
 
 /** Migration 143 body — self-contained so later edits to db-notes never change it. */
