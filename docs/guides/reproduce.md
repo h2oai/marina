@@ -35,7 +35,7 @@ bootstrap over runs, then items). A single run is labelled "not replicated".
 | `--budget-usd X` | refuse to start when the estimate exceeds X (default 10) |
 | `--model`, `--checker`, `--judge` | the answer model, the reviewer or checker, and the judge or user simulator |
 | `--domain` | τ²-bench domain (default `airline`) |
-| `--split` | τ²-bench task split (e.g. `test`); runs the whole split unless `--limit` is given |
+| `--split` | τ²-bench task split (`test` or `base`); runs the whole split unless `--limit` is given. `base` is the leaderboard split: every task, so `--limit` is refused with it. A re-run with the same `--run-dir` resumes an interrupted τ² run (`--auto-resume`) |
 | `--effort`, `--user-effort` | τ²-bench agent and user-simulator reasoning effort (default `high` and `low`), sent in `extra_body` |
 | `--env-image` | SWE-bench: run the agent's tests inside each instance's environment image (full agent rather than agentless) |
 | `--run-dir`, `--ledger` | where runs, servers and the ledger live (default under `~/.local/share/marina-repro/`, on disk) |

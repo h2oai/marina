@@ -184,6 +184,28 @@ describe("plans", () => {
     expect(setup.plan(flags({ split: "test", limit: 5 }), "frontier").limit).toBe(5);
   });
 
+  it("τ² --split base runs every task (leaderboard rule) and resumes an interrupted run", () => {
+    const setup = setupNamed("tau2")!;
+    for (const [domain, size] of [
+      ["airline", 50],
+      ["retail", 114],
+      ["telecom", 114],
+    ] as const) {
+      const plan = setup.plan(flags({ domain, split: "base", replicates: 4 }), "frontier");
+      expect(plan.limit).toBe(size);
+      const run = plan.steps.find(
+        (s): s is CommandStep => s.kind === "command" && s.label.includes("τ²"),
+      )!;
+      expect(run.argv[run.argv.indexOf("--task-split-name") + 1]).toBe("base");
+      expect(run.argv).not.toContain("--num-tasks");
+      expect(run.argv).not.toContain("--task-ids");
+      expect(run.argv).toContain("--auto-resume");
+    }
+    expect(() => setup.plan(flags({ split: "base", limit: 2 }), "frontier")).toThrow(
+      /runs every task/,
+    );
+  });
+
   it("the doctor requires the key τ²'s own judge reads, reporting it by name only", () => {
     const only = setupNamed("tau2")!.requires;
     expect(only).toContain("tau2-evaluator");
