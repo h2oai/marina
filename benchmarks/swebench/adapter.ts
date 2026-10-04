@@ -265,9 +265,19 @@ async function git(run: Run, args: string[], cwd?: string): Promise<string> {
 }
 
 /**
- * A clean, isolated checkout at the base commit. Repositories are mirrored once
- * per data directory and cloned with `--shared` per attempt, so each attempt
- * gets its own working tree and nothing touches the host's Marina checkout.
+ * A clean, isolated checkout that holds the base commit and nothing else.
+ *
+ * Repositories are mirrored once per data directory, but the mirror never
+ * becomes part of the workspace: each attempt gets a fresh `git init` and a
+ * depth-1 fetch of the base commit alone (no tags, no FETCH_HEAD, no remote,
+ * no alternates). Commits after the base, including the gold fix, are therefore
+ * not in the workspace under any ref, reflog entry or loose object, so the
+ * agent cannot recover them with `git log --all`, `git show <sha>`, `reflog`,
+ * `fsck` or `cat-file`. HEAD is detached at the real base sha, so `git diff
+ * HEAD` is a patch against the base the grader applies it to.
+ *
+ * {@link assertWorkspaceIsolated} then checks the result and throws (the
+ * instance fails, unrecorded) if anything beyond the base is reachable.
  */
 export async function prepareWorkspace(
   inst: SweInstance,
@@ -281,12 +291,131 @@ export async function prepareWorkspace(
     await git(run, ["clone", "--quiet", "--mirror", `https://github.com/${inst.repo}.git`, mirror]);
   }
   rmSync(workDir, { recursive: true, force: true });
-  await git(run, ["clone", "--quiet", "--shared", "--no-checkout", mirror, workDir]);
+  mkdirSync(workDir, { recursive: true });
+  // `--template=` keeps the default template (sample hooks, description) out of the workspace.
+  await git(run, ["init", "--quiet", "--template=", workDir]);
+  // Nothing the agent does later should start a reflog either.
+  await git(run, ["config", "core.logAllRefUpdates", "false"], workDir);
   await git(
     run,
-    ["-c", "advice.detachedHead=false", "checkout", "--quiet", inst.base_commit],
+    [
+      // Older servers refuse a bare sha `want` unless allowed; the mirror is local.
+      "-c",
+      "uploadpack.allowAnySHA1InWant=true",
+      "fetch",
+      "--quiet",
+      "--depth=1",
+      "--no-tags",
+      "--no-write-fetch-head",
+      "--no-recurse-submodules",
+      mirror,
+      inst.base_commit,
+    ],
     workDir,
   );
+  await git(
+    run,
+    ["-c", "advice.detachedHead=false", "checkout", "--quiet", "--detach", inst.base_commit],
+    workDir,
+  );
+  // The checkout records "moving from … to <base>" in logs/HEAD; drop every leftover
+  // pointer the checkout or fetch could have written.
+  for (const leftover of ["logs", "FETCH_HEAD", "ORIG_HEAD"]) {
+    rmSync(join(workDir, ".git", leftover), { recursive: true, force: true });
+  }
+  await assertWorkspaceIsolated(workDir, inst.base_commit, run);
+}
+
+/** Files and directories inside `.git` that could point past the base commit. */
+const HISTORY_POINTERS = [
+  "objects/info/alternates",
+  "objects/info/http-alternates",
+  "packed-refs",
+  "logs",
+  "FETCH_HEAD",
+  "ORIG_HEAD",
+  "MERGE_HEAD",
+  "CHERRY_PICK_HEAD",
+  "REVERT_HEAD",
+  "worktrees",
+  "modules",
+];
+
+async function gitLines(run: Run, args: string[], cwd: string): Promise<string[]> {
+  return (await git(run, args, cwd)).split("\n").filter((l) => l.trim());
+}
+
+/**
+ * Everything in a prepared workspace that could expose history beyond `base`
+ * (an empty list means the workspace holds the base commit and nothing else):
+ * HEAD elsewhere, any ref, remote, reflog, stash, alternates or pointer file,
+ * any commit or tag object other than the base, any object not reachable from
+ * the base, or a resolvable `forbidden` sha (e.g. a known gold commit).
+ */
+export async function workspaceLeaks(
+  workDir: string,
+  base: string,
+  run: Run = spawnRun,
+  forbidden: string[] = [],
+): Promise<string[]> {
+  const problems: string[] = [];
+  const head = (await git(run, ["rev-parse", "--verify", "HEAD^{commit}"], workDir)).trim();
+  const baseSha = (await git(run, ["rev-parse", "--verify", `${base}^{commit}`], workDir)).trim();
+  if (head !== baseSha) problems.push(`HEAD is ${head}, not the base ${baseSha}`);
+  const refs = await gitLines(run, ["for-each-ref", "--format=%(refname)"], workDir);
+  if (refs.length) problems.push(`refs present: ${refs.join(", ")}`);
+  const remotes = await gitLines(run, ["remote"], workDir);
+  if (remotes.length) problems.push(`remotes present: ${remotes.join(", ")}`);
+  for (const p of HISTORY_POINTERS) {
+    if (existsSync(join(workDir, ".git", p))) problems.push(`.git/${p} present`);
+  }
+  const reflog = await gitLines(run, ["reflog", "--all", "--format=%H"], workDir);
+  if (reflog.length) problems.push(`reflog entries present: ${reflog.length}`);
+  // Every commit any ref or reflog reaches must be the base itself.
+  const reachable = await gitLines(run, ["rev-list", "--all", "--reflog", "HEAD"], workDir);
+  const beyond = reachable.filter((sha) => sha !== baseSha);
+  if (beyond.length) problems.push(`commits other than the base reachable: ${beyond.length}`);
+  // Every object in the store (loose, packed or unreachable) must come from the base tree.
+  const fromBase = new Set(
+    (await gitLines(run, ["rev-list", "--objects", baseSha], workDir)).map((l) => l.slice(0, 40)),
+  );
+  const stored = await gitLines(
+    run,
+    ["cat-file", "--batch-all-objects", "--batch-check=%(objectname) %(objecttype)"],
+    workDir,
+  );
+  const extra = stored.filter((l) => !fromBase.has(l.slice(0, l.indexOf(" "))));
+  if (extra.length) {
+    const kinds = new Map<string, number>();
+    for (const l of extra) {
+      const kind = l.slice(l.indexOf(" ") + 1);
+      kinds.set(kind, (kinds.get(kind) ?? 0) + 1);
+    }
+    problems.push(
+      `objects not reachable from the base: ${[...kinds].map(([k, n]) => `${n} ${k}`).join(", ")}`,
+    );
+  }
+  for (const sha of forbidden) {
+    const r = await run(["git", "cat-file", "-e", `${sha}^{object}`], {
+      cwd: workDir,
+      timeoutMs: 60_000,
+    });
+    if (r.code === 0) problems.push(`forbidden object ${sha} is resolvable`);
+  }
+  return problems;
+}
+
+/** Fail closed: throw unless the workspace holds the base commit's history only. */
+export async function assertWorkspaceIsolated(
+  workDir: string,
+  base: string,
+  run: Run = spawnRun,
+  forbidden: string[] = [],
+): Promise<void> {
+  const problems = await workspaceLeaks(workDir, base, run, forbidden);
+  if (problems.length) {
+    throw new Error(`workspace exposes history beyond ${base}: ${problems.join("; ")}`);
+  }
 }
 
 /** The working-tree change (including new files) as a unified diff. */
@@ -451,7 +580,8 @@ export function ledgerResult(
   meta: {
     arm: SweArm;
     replicate: number;
-    subsetSeed: number;
+    /** The subset's seed; null when the ids were given explicitly (`--ids`). */
+    subsetSeed: number | null;
     benchmark?: SweBenchmark;
     /**
      * The instance ids the run was asked to attempt. An id with no recorded
@@ -459,6 +589,12 @@ export function ledgerResult(
      * it is filed as unresolved at zero recorded cost, never silently dropped.
      */
     expectedIds?: string[];
+    /**
+     * When the run finished (epoch ms) — e.g. the last attempt's write. Fixed for
+     * a finished run, so filing it again is the same document; never the time of
+     * filing.
+     */
+    completedAt?: number;
   },
 ) {
   const resolved = new Set(report.resolved_ids ?? []);
@@ -503,7 +639,7 @@ export function ledgerResult(
       seed: meta.subsetSeed,
       replicate: meta.replicate,
     },
-    timestamp: new Date().toISOString(),
+    ...(meta.completedAt !== undefined ? { timestamp: Math.round(meta.completedAt) } : {}),
     duration_ms: graded.reduce((t, a) => t + a.durationMs, 0),
     scores: { overall: items.length ? correct / items.length : 0 },
     metadata: {

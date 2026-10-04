@@ -179,9 +179,38 @@ describe("plans", () => {
     const arg = (flag: string) => JSON.parse(run.argv[run.argv.indexOf(flag) + 1]!);
     expect(arg("--agent-llm-args").extra_body.reasoning_effort).toBe("medium");
     expect(arg("--user-llm-args").extra_body.reasoning_effort).toBe("minimal");
-    // Each run directory gets its own τ² save name (τ² offers to resume an existing one).
-    expect(run.argv[run.argv.indexOf("--save-to") + 1]).toBe("marina-repro-x-retail-test-single");
+    // Each run directory AND configuration gets its own τ² save name (τ² auto-resumes one).
+    const saveTo = (p: ReturnType<typeof setup.plan>, arm = "single") =>
+      p.steps
+        .filter((s): s is CommandStep => s.kind === "command" && s.label.startsWith(`${arm}: τ²`))
+        .map((s) => s.argv[s.argv.indexOf("--save-to") + 1])[0];
+    expect(saveTo(plan)).toMatch(/^marina-repro-x-retail-test-single-[0-9a-f]{8}$/);
     expect(setup.plan(flags({ split: "test", limit: 5 }), "frontier").limit).toBe(5);
+  });
+
+  it("τ² never auto-resumes a results file of another configuration", () => {
+    const setup = setupNamed("tau2")!;
+    const saveTo = (f: Partial<ReproFlags>) =>
+      setup
+        .plan(flags({ domain: "retail", split: "test", ...f }), "frontier")
+        .steps.filter(
+          (s): s is CommandStep => s.kind === "command" && s.label.startsWith("single: τ²"),
+        )
+        .map((s) => s.argv[s.argv.indexOf("--save-to") + 1])[0];
+    const base = saveTo({});
+    // The same configuration resumes the same file …
+    expect(saveTo({})).toBe(base);
+    // … any change that alters the run starts another.
+    for (const change of [
+      { model: "openrouter/other/model" },
+      { judge: "openrouter/other/judge" },
+      { effort: "low" },
+      { userEffort: "high" },
+      { replicates: 3 },
+      { limit: 7 },
+    ] satisfies Partial<ReproFlags>[]) {
+      expect(saveTo(change)).not.toBe(base);
+    }
   });
 
   it("τ² --split base runs every task (leaderboard rule) and resumes an interrupted run", () => {
@@ -250,6 +279,29 @@ describe("plans", () => {
     expect(() => setupNamed("tau2")!.plan(flags({ arms: ["nope"] }), "frontier")).toThrow(
       /single, verify/,
     );
+  });
+
+  it("swebench-verified: every step reads the same subset, after an export step", () => {
+    const plan = setupNamed("swebench-verified")!.plan(
+      flags({ limit: 10, seed: 42, replicates: 1, arms: ["single"] }),
+      "frontier",
+    );
+    const cmds = plan.steps.filter((s): s is CommandStep => s.kind === "command");
+    const sub = (c: CommandStep) => c.argv[2];
+    expect(cmds.map(sub)).toEqual(["export", "subset", "run", "score", "file"]);
+    for (const c of cmds) {
+      const arg = (flag: string) => c.argv[c.argv.indexOf(flag) + 1];
+      // run and file must name the subset `subset` wrote (subset-n10-s42.txt), so the
+      // ids file exists and the ledger records the seed actually used.
+      expect(arg("--n")).toBe("10");
+      expect(arg("--seed")).toBe("42");
+      expect(arg("--data")).toBe("/runs/x/swebench");
+    }
+    const run = cmds.find((c) => sub(c) === "run")!;
+    expect(run.argv).toContain("--mirror-cache");
+    const file = cmds.find((c) => sub(c) === "file")!;
+    expect(file.argv[file.argv.indexOf("--db") + 1]).toBe("/runs/x/ledger.db");
+    expect(renderPlan(plan, 100)).toContain("--n 10 --seed 42");
   });
 
   it("compares each arm against the first, by replicate group", () => {

@@ -8,6 +8,8 @@ import type {
   BenchmarkLedgerRunInput,
   BenchmarkPromotionInput,
   BenchmarkPromotionRow,
+  BenchmarkRegroupAudit,
+  BenchmarkRegroupRow,
   BenchmarkRunRow,
   BenchmarkValidityInput,
   BenchmarkValidityResult,
@@ -54,8 +56,14 @@ export interface BenchmarksStore {
     run: BenchmarkLedgerRunInput,
     items: readonly BenchmarkItemInput[],
   ): { id: string; created: boolean };
-  /** Put runs into one replicate group (migration 148); returns rows changed. */
-  setBenchmarkReplicateGroup(runIds: readonly string[], group: string): number;
+  /** Put runs into one replicate group (migration 148), audited (migration 155); returns rows changed. */
+  setBenchmarkReplicateGroup(
+    runIds: readonly string[],
+    group: string,
+    audit: BenchmarkRegroupAudit,
+  ): number;
+  /** A run's append-only regroup history, oldest first. */
+  listBenchmarkRunRegroups(runId: string): BenchmarkRegroupRow[];
   /** Invalidate a completed run / revalidate an invalid one, with its audit row (migration 153). */
   setBenchmarkRunValidity(row: BenchmarkValidityInput): BenchmarkValidityResult;
   /** A run's append-only validity history, oldest first. */
@@ -92,6 +100,7 @@ export const BENCHMARKS_STORE_METHODS = [
   "leaderboardBenchmark",
   "recordBenchmarkLedgerRun",
   "setBenchmarkReplicateGroup",
+  "listBenchmarkRunRegroups",
   "setBenchmarkRunValidity",
   "listBenchmarkRunValidity",
   "getBenchmarkItems",

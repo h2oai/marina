@@ -12,6 +12,7 @@ import {
   checkCitations,
   composeForecastRound,
   delphiSummary,
+  type FormationForecast,
   type FormationMember,
   formationForecastRound,
   formationPattern,
@@ -23,6 +24,7 @@ import {
   verificationScales,
 } from "../src/arena/formations";
 import type { Retriever } from "../src/arena/research/retrieve";
+import { replayDelphiSettlement } from "../src/arena/settlement-shadow";
 import type { ArenaLock, ArenaPoint, ArenaRound } from "../src/arena/types";
 import type { DecisionProvider } from "../src/decisions/types";
 
@@ -69,6 +71,62 @@ function crew(
 }
 
 const at = (move: number, sd = base.sd) => ({ mean: base.mean + move, sd, reason: "r" });
+
+describe("frozen Delphi settlement experiments", () => {
+  async function recorded(move = 1, spread = 0.8) {
+    const c = crew(3, () => at(base.sd * move, base.sd * spread));
+    return formationForecastRound("delphi", round, lock, c.members);
+  }
+
+  it("reconstructs the live rule and varies centre and spread independently without model calls", async () => {
+    const f = await recorded();
+    const original = structuredClone(f);
+    const control = replayDelphiSettlement(base, f, { meanWeight: 0.5, spreadWeight: 0.5 });
+    expect(control.forecast).toEqual(f.topline!);
+    const mean = replayDelphiSettlement(base, f, { meanWeight: 1, spreadWeight: 0.5 });
+    expect(mean.forecast.mean).toBeGreaterThan(f.topline!.mean);
+    expect(mean.forecast.sd).toBe(f.topline!.sd);
+    const spread = replayDelphiSettlement(base, f, {
+      meanWeight: 0.5,
+      spreadWeight: 0.5,
+      sdScale: 0.8,
+    });
+    expect(spread.forecast.mean).toBe(f.topline!.mean);
+    expect(spread.forecast.sd).toBeLessThan(f.topline!.sd);
+    expect(f).toEqual(original);
+  });
+
+  it("preserves the existing displacement cap and spread floor", async () => {
+    const f = await recorded(3.5, 0.001);
+    const replay = replayDelphiSettlement(base, f, {
+      meanWeight: 1,
+      spreadWeight: 1,
+      sdScale: 0.5,
+    });
+    expect(replay.forecast.mean).toBeCloseTo(base.mean + 2 * base.sd, 3);
+    expect(replay.forecast.sd).toBeCloseTo(base.sd * 0.5, 3);
+  });
+
+  it("refuses failed, partial, incompatible and invalid traces or policies", async () => {
+    const f = await recorded();
+    const policy = { meanWeight: 0.5, spreadWeight: 0.5 };
+    const damaged: FormationForecast[] = [
+      { ...f, formation: "tournament" as const },
+      { ...f, fallback: "no proposals" },
+      { ...f, rounds: f.rounds!.slice(1) },
+      { ...f, rounds: f.rounds!.map((s, i) => (i ? s : { ...s, status: "error" })) },
+      { ...f, topline: { mean: 999, sd: 1 } },
+      { ...f, proposals: { a: { mean: Number.NaN, sd: 1 } } },
+      { ...f, proposals: {} },
+    ];
+    for (const trace of damaged)
+      expect(() => replayDelphiSettlement(base, trace, policy)).toThrow();
+    for (const meanWeight of [Number.NaN, -1, 1.01])
+      expect(() => replayDelphiSettlement(base, f, { ...policy, meanWeight })).toThrow();
+    for (const sdScale of [Number.POSITIVE_INFINITY, 0, 3])
+      expect(() => replayDelphiSettlement(base, f, { ...policy, sdScale })).toThrow();
+  });
+});
 
 describe("formation aggregation primitives", () => {
   it("median, agreement and settle shrink toward the start and cap the move", () => {

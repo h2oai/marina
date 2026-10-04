@@ -233,6 +233,8 @@ export type {
   BenchmarkLedgerRunInput,
   BenchmarkPromotionInput,
   BenchmarkPromotionRow,
+  BenchmarkRegroupAudit,
+  BenchmarkRegroupRow,
   BenchmarkRunRow,
   BenchmarkTargetKind,
   BenchmarkValidityInput,
@@ -301,6 +303,8 @@ import type {
   BenchmarkLedgerRunInput,
   BenchmarkPromotionInput,
   BenchmarkPromotionRow,
+  BenchmarkRegroupAudit,
+  BenchmarkRegroupRow,
   BenchmarkRunRow,
   BenchmarkValidityInput,
   BenchmarkValidityResult,
@@ -2303,8 +2307,16 @@ export class MarinaDB implements MarinaStores {
     return benchmarksDb.recordBenchmarkLedgerRun(this.db, run, items);
   }
 
-  setBenchmarkReplicateGroup(runIds: readonly string[], group: string): number {
-    return benchmarksDb.setBenchmarkReplicateGroup(this.db, runIds, group);
+  setBenchmarkReplicateGroup(
+    runIds: readonly string[],
+    group: string,
+    audit: BenchmarkRegroupAudit,
+  ): number {
+    return benchmarksDb.setBenchmarkReplicateGroup(this.db, runIds, group, audit);
+  }
+
+  listBenchmarkRunRegroups(runId: string): BenchmarkRegroupRow[] {
+    return benchmarksDb.listBenchmarkRunRegroups(this.reader, runId);
   }
 
   setBenchmarkRunValidity(row: BenchmarkValidityInput): BenchmarkValidityResult {

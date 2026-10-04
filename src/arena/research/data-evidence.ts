@@ -73,13 +73,18 @@ export function briefCutoff(brief: ResearchBrief, now: Date): Date {
 export function withDataLookups(
   inner: Retriever,
   lookups: ForecastLookup[],
-  opts: { now?: () => Date; query?: (brief: ResearchBrief) => string } = {},
+  opts: {
+    now?: () => Date;
+    query?: (brief: ResearchBrief) => string;
+    /** Explicit experiment inputs; default mappings and live routes stay unchanged. */
+    hints?: (brief: ResearchBrief) => ReturnType<typeof arenaLookupHints>;
+  } = {},
 ): Retriever {
   if (lookups.length === 0) return inner;
   return async (brief: ResearchBrief): Promise<ResearchReport> => {
     const report = await inner(brief);
     const now = (opts.now ?? (() => new Date()))();
-    const { hints, related } = arenaLookupHints(brief);
+    const { hints, related } = (opts.hints ?? arenaLookupHints)(brief);
     const query =
       opts.query?.(brief) ?? brief.queries?.slice(0, 2).join(" ") ?? brief.request.slice(0, 200);
     let lines: string[] = [];

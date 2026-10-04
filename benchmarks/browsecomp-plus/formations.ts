@@ -23,11 +23,13 @@
  * can be another model (`--lead-model`).
  */
 
+import { BudgetExhausted } from "../spend-guard";
 import {
   type AgentOptions,
   type ChatEndpoint,
   type ChatMessage,
   emptyRun,
+  failRun,
   finishRun,
   type QueryRun,
   toolLoop,
@@ -158,10 +160,14 @@ async function researchers(
           agent: `researcher-${i + 1}`,
           ...(sharded ? { shard: { index: i, of: notes.length } } : {}),
         },
-      ).catch((e: unknown) => ({
-        text: `(researcher failed: ${e instanceof Error ? e.message : String(e)})`,
-        messages: [],
-      })),
+      ).catch((e: unknown) => {
+        // A budget stop ends the whole query; any other failure is one researcher's.
+        if (e instanceof BudgetExhausted) throw e;
+        return {
+          text: `(researcher failed: ${e instanceof Error ? e.message : String(e)})`,
+          messages: [],
+        };
+      }),
     ),
   );
   return outs.map((o) => o.text ?? "(no answer before the turn limit)");
@@ -201,7 +207,10 @@ async function blackboard(
         toolLoop(ep, fo.model, conv, opts, run, {
           agent: `researcher-${i + 1}`,
           maxTurns: perRound,
-        }).catch(() => ({ messages: conv }) as { text?: string; messages: ChatMessage[] }),
+        }).catch((e: unknown) => {
+          if (e instanceof BudgetExhausted) throw e;
+          return { messages: conv } as { text?: string; messages: ChatMessage[] };
+        }),
       ),
     );
     posts = outs.map((o, i) => o.text ?? posts[i] ?? "(nothing yet)");
@@ -289,8 +298,7 @@ export async function runFormation(
     );
     run.record.status = final.text ? "completed" : "incomplete";
   } catch (e) {
-    run.record.status = "error";
-    run.error = e instanceof Error ? e.message : String(e);
+    failRun(run, e);
   }
   return finishRun(run, started);
 }

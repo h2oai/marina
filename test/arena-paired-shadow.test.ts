@@ -24,7 +24,7 @@ const round: ArenaRound = {
   release_at: "2026-10-06T14:00:00Z",
 };
 const at = Date.parse("2026-10-04T12:00:00Z");
-function fixture() {
+function fixture(resolved = true) {
   const rows: ArenaShadowRow[] = [];
   const lock = {
     round_id: round.round_id,
@@ -36,13 +36,15 @@ function fixture() {
   const files: Record<string, unknown> = {
     "questions/season0.json": { rounds: [round] },
     [`locks/${round.round_id}.json`]: lock,
-    "resolutions/resolved.json": {
-      [round.round_id]: {
-        value: 42,
-        observed_date: "2026-10-05",
-        resolved_at: "2026-10-06T15:00:00Z",
-      },
-    },
+    "resolutions/resolved.json": resolved
+      ? {
+          [round.round_id]: {
+            value: 42,
+            observed_date: "2026-10-05",
+            resolved_at: "2026-10-06T15:00:00Z",
+          },
+        }
+      : {},
   };
   const data = new ArenaData("https://example.test", async (url) => {
     const path = url.replace("https://example.test/", "");
@@ -72,6 +74,24 @@ const dossier = async () => ({
   costUsd: 0,
 });
 const spec = "formation:delphi:mock/a,mock/b,mock/c";
+
+test("unresolved comparisons have no score or retrospective attribution", async () => {
+  const { data, store, rows } = fixture(false);
+  await recordPairedShadow(store, data, round.round_id, spec, {
+    now: () => at,
+    env: {},
+    dossier,
+    run: async (inputs) => inputs.start,
+  });
+  const score = (await scorePairedShadows(data, rows))[0]!;
+  expect(score.complete).toBe(true);
+  expect(score.resolved).toBe(false);
+  expect(score.eligible).toBe(false);
+  for (const result of Object.values(score.results)) {
+    expect(result.skill).toBeUndefined();
+    expect(result.attributionFromStart).toBeUndefined();
+  }
+});
 
 test("paired candidates share the captured start, isolate mutation and reuse the final forecast for calibration", async () => {
   const { data, store, rows } = fixture();
@@ -104,6 +124,12 @@ test("paired candidates share the captured start, isolate mutation and reuse the
   expect(scores[0]!.complete).toBe(true);
   expect(scores[0]!.eligible).toBe(true);
   expect(scores[0]!.results.fred!.skill).toBeGreaterThan(0);
+  const attribution = scores[0]!.results.fred!.attributionFromStart!;
+  expect(attribution.meanContribution + attribution.spreadContribution).toBeCloseTo(
+    scores[0]!.results.fred!.skill! - scores[0]!.results.start!.skill!,
+    12,
+  );
+  expect(scores[0]!.results.start!.attributionFromStart!.improvement).toBe(0);
 });
 
 test("a failed candidate remains visible and vetoes the whole matched comparison", async () => {
@@ -123,6 +149,7 @@ test("a failed candidate remains visible and vetoes the whole matched comparison
   expect(score.eligible).toBe(false);
   expect(score.results.delphi!.error).toBe("provider failure");
   expect(score.results.fred!.skill).toBeUndefined();
+  expect(score.results.fred!.attributionFromStart).toBeUndefined();
 });
 
 test("late completion records no prospective evidence and rejects closed rounds before model calls", async () => {

@@ -63,6 +63,50 @@ describe("research briefs", () => {
     expect(brief.request).toContain("ALREADY known");
     expect(brief.request).toContain("previous reading");
   });
+
+  it("uses the selected same-day nowcast revision and refuses an older reading", () => {
+    const sameDayLock = { ...lock, answer_history: [{ date: "2026-10-02", value: -33.1 }] };
+    const fresh = buildResearchBrief(round, sameDayLock, {
+      nowcast: { date: "2026-10-02", value: -34.5 },
+    });
+    expect(fresh.since).toBe("2026-10-02");
+    expect(fresh.request).toContain("is -34.5");
+    expect(fresh.request).not.toContain("is -33.1");
+    const stale = buildResearchBrief(round, sameDayLock, {
+      nowcast: { date: "2026-10-01", value: -34.5 },
+    });
+    expect(stale.since).toBe("2026-10-02");
+    expect(stale.request).toContain("is -33.1");
+    expect(stale.request).not.toContain("is -34.5");
+  });
+
+  it("selects same-day revisions independently for each profile cell", () => {
+    const profile: ArenaRound = {
+      ...round,
+      target_type: "profile_energy",
+      cells: ["civiqs_net_approval", "civiqs_net_family_finances"],
+    };
+    const brief = buildResearchBrief(
+      profile,
+      {
+        round_id: profile.round_id,
+        answer_history_by_cell: {
+          civiqs_net_approval: [{ date: "2026-10-02", value: -26.7 }],
+          civiqs_net_family_finances: [{ date: "2026-10-02", value: -33.1 }],
+        },
+      },
+      {
+        cellNowcasts: {
+          civiqs_net_approval: { date: "2026-10-01", value: -26.0 },
+          civiqs_net_family_finances: { date: "2026-10-02", value: -34.5 },
+        },
+      },
+    );
+    expect(brief.since).toBe("2026-10-02");
+    expect(brief.request).toContain("-26.7");
+    expect(brief.request).toContain("-34.5");
+    expect(brief.request).not.toContain("-33.1");
+  });
 });
 
 describe("OpenRouter web retriever", () => {

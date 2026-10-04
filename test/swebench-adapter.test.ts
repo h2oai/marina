@@ -1,8 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  assertWorkspaceIsolated,
   collectPatch,
   envImageRunnerEnv,
   ledgerResult,
@@ -15,6 +16,7 @@ import {
   spawnRun,
   sweEnvImage,
   taskPrompt,
+  workspaceLeaks,
 } from "../benchmarks/swebench/adapter";
 
 const inst = (id: string, repo: string): SweInstance => ({
@@ -88,14 +90,144 @@ describe("workspace and patch", () => {
     const data = mkdtempSync(join(tmpdir(), "swe-data-"));
     try {
       // Pretend the mirror is already there.
-      const { mkdirSync } = await import("node:fs");
       mkdirSync(join(data, "mirrors", "x__y.git"), { recursive: true });
       await prepareWorkspace(inst("x__y-1", "x/y"), data, join(data, "work", "a"), fake);
       expect(calls.some((c) => c.includes("--mirror"))).toBe(false);
-      expect(calls.some((c) => c.includes("--shared"))).toBe(true);
-      expect(calls.at(-1)).toContain("abc123");
+      // The mirror is fetched from (base commit only), never cloned or shared.
+      expect(calls.some((c) => c.includes("clone") || c.includes("--shared"))).toBe(false);
+      const fetch = calls.find((c) => c.includes("fetch"));
+      expect(fetch).toContain("abc123");
+      expect(fetch).toContain("--depth=1");
+      expect(fetch).toContain("--no-tags");
     } finally {
       rmSync(data, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps every commit after the base, including the gold fix, out of the workspace", async () => {
+    const root = mkdtempSync(join(tmpdir(), "swe-leak-"));
+    const g = async (cwd: string, args: string[]) => {
+      const r = await spawnRun(
+        ["git", "-c", "user.email=t@example.com", "-c", "user.name=t", ...args],
+        {
+          cwd,
+        },
+      );
+      return { ...r, stdout: r.stdout.trim() };
+    };
+    try {
+      // Upstream: base → gold (the fix) on main, plus a branch and tags reaching past the base.
+      const up = join(root, "up");
+      mkdirSync(up);
+      await g(up, ["init", "-q", "-b", "main"]);
+      writeFileSync(join(up, "a.py"), "x = 1\n");
+      await g(up, ["add", "a.py"]);
+      await g(up, ["commit", "-q", "-m", "older"]);
+      writeFileSync(join(up, "a.py"), "x = 1\ny = 1\n");
+      await g(up, ["commit", "-q", "-am", "base"]);
+      const base = (await g(up, ["rev-parse", "HEAD"])).stdout;
+      writeFileSync(join(up, "a.py"), "x = 2\ny = 1\n");
+      writeFileSync(join(up, "fix.py"), "FIXED = True\n");
+      await g(up, ["add", "fix.py"]);
+      await g(up, ["commit", "-q", "-am", "gold fix"]);
+      const gold = (await g(up, ["rev-parse", "HEAD"])).stdout;
+      await g(up, ["tag", "-a", "v2", "-m", "release with the fix"]);
+      await g(up, ["branch", "later", gold]);
+      const data = join(root, "data");
+      mkdirSync(join(data, "mirrors"), { recursive: true });
+      await g(root, ["clone", "-q", "--mirror", up, join(data, "mirrors", "x__y.git")]);
+
+      const work = join(data, "work", "a");
+      await prepareWorkspace({ ...inst("x__y-1", "x/y"), base_commit: base }, data, work);
+
+      // No route a solver might try reaches the gold commit.
+      expect((await g(work, ["log", "--all", "--format=%H"])).stdout).toBe(base);
+      expect((await g(work, ["reflog"])).stdout).toBe("");
+      expect((await g(work, ["reflog", "--all"])).stdout).toBe("");
+      expect((await g(work, ["cat-file", "-e", gold])).code).not.toBe(0);
+      expect((await g(work, ["show", gold])).code).not.toBe(0);
+      expect((await g(work, ["show-ref"])).stdout).toBe("");
+      expect((await g(work, ["remote", "-v"])).stdout).toBe("");
+      const fsck = await g(work, ["fsck", "--lost-found"]);
+      expect(fsck.stdout + fsck.stderr).not.toContain(gold);
+      expect(existsSync(join(work, ".git", "objects", "info", "alternates"))).toBe(false);
+      expect(await workspaceLeaks(work, base, spawnRun, [gold])).toEqual([]);
+
+      // The solver's change round-trips: `collectPatch` applied to the base reproduces gold.
+      writeFileSync(join(work, "a.py"), "x = 2\ny = 1\n");
+      writeFileSync(join(work, "fix.py"), "FIXED = True\n");
+      const patch = await collectPatch(work);
+      const grader = join(root, "grader");
+      await g(root, ["clone", "-q", up, grader]);
+      await g(grader, ["checkout", "-q", "--detach", base]);
+      writeFileSync(join(root, "model.patch"), patch);
+      const applied = await g(grader, ["apply", join(root, "model.patch")]);
+      expect(applied.code).toBe(0);
+      await g(grader, ["add", "-A"]);
+      expect((await g(grader, ["diff", "--cached", gold, "--stat"])).stdout).toBe("");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed on a workspace that can reach history past the base", async () => {
+    const root = mkdtempSync(join(tmpdir(), "swe-leak-"));
+    const g = (cwd: string, args: string[]) =>
+      spawnRun(["git", "-c", "user.email=t@example.com", "-c", "user.name=t", ...args], { cwd });
+    try {
+      const up = join(root, "up");
+      mkdirSync(up);
+      await g(up, ["init", "-q", "-b", "main"]);
+      writeFileSync(join(up, "a.py"), "x = 1\n");
+      await g(up, ["add", "a.py"]);
+      await g(up, ["commit", "-q", "-m", "base"]);
+      const base = (await g(up, ["rev-parse", "HEAD"])).stdout.trim();
+      writeFileSync(join(up, "a.py"), "x = 2\n");
+      await g(up, ["commit", "-q", "-am", "gold fix"]);
+      const gold = (await g(up, ["rev-parse", "HEAD"])).stdout.trim();
+      // The old layout: a --shared clone of the full repository, checked out at the base.
+      const old = join(root, "old");
+      await g(root, ["clone", "-q", "--shared", "--no-checkout", up, old]);
+      await g(old, ["-c", "advice.detachedHead=false", "checkout", "-q", base]);
+      const problems = await workspaceLeaks(old, base, spawnRun, [gold]);
+      expect(problems.some((p) => p.startsWith("refs present"))).toBe(true);
+      expect(problems.some((p) => p.startsWith("remotes present"))).toBe(true);
+      expect(problems).toContain(".git/objects/info/alternates present");
+      expect(problems.some((p) => p.startsWith("commits other than the base"))).toBe(true);
+      expect(problems).toContain(`forbidden object ${gold} is resolvable`);
+      await expect(assertWorkspaceIsolated(old, base)).rejects.toThrow(/history beyond/);
+
+      // Strip every ref, remote and packed ref: the alternates still expose the later objects.
+      await g(old, ["remote", "remove", "origin"]);
+      rmSync(join(old, ".git", "packed-refs"), { force: true });
+      for (const ref of (await g(old, ["for-each-ref", "--format=%(refname)"])).stdout.split(
+        "\n",
+      )) {
+        if (ref.trim()) await g(old, ["update-ref", "-d", ref.trim()]);
+      }
+      rmSync(join(old, ".git", "logs"), { recursive: true, force: true });
+      const viaAlternates = await workspaceLeaks(old, base);
+      expect(viaAlternates).toContain(".git/objects/info/alternates present");
+      expect(viaAlternates.some((p) => p.startsWith("objects not reachable from the base"))).toBe(
+        true,
+      );
+      expect(viaAlternates.some((p) => p.startsWith("refs present"))).toBe(false);
+
+      // A stray unreachable object (e.g. a later blob left in the store) is caught too.
+      const clean = join(root, "clean");
+      mkdirSync(clean);
+      await g(clean, ["init", "-q"]);
+      await g(clean, ["fetch", "-q", "--depth=1", "--no-write-fetch-head", up, base]);
+      await g(clean, ["-c", "advice.detachedHead=false", "checkout", "-q", "--detach", base]);
+      rmSync(join(clean, ".git", "logs"), { recursive: true, force: true });
+      expect(await workspaceLeaks(clean, base)).toEqual([]);
+      writeFileSync(join(root, "later.txt"), "later content\n");
+      await g(clean, ["hash-object", "-w", join(root, "later.txt")]);
+      expect(await workspaceLeaks(clean, base)).toEqual([
+        "objects not reachable from the base: 1 blob",
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 

@@ -10,7 +10,7 @@
  *     --target-kind model|crew|population --target '<json or model id>' \
  *     [--label name] [--judge "<model> @ <route>"] [--cost-usd N] [--dry-run] \
  *     [--group key | --replicate-of <runId>] [--learn]
- *   DB_PATH=marina.db bun run benchmark:import --regroup <runId,runId,…> --group key
+ *   DB_PATH=marina.db bun run benchmark:import --regroup <runId,runId,…> --group key --reason "<why>"
  *   DB_PATH=marina.db bun run benchmark:import --invalidate <runId> --reason "<why>"
  *   DB_PATH=marina.db bun run benchmark:import --revalidate <runId> --reason "<why>"
  *
@@ -25,7 +25,10 @@
  * group; `--replicate-of <runId>` joins that run's group. Without either, a run
  * joins the automatic group of its target, item slice and judge. `--regroup`
  * moves already-recorded runs into one group (e.g. replicates whose recorded
- * targets differ only in a label) — item outcomes are never touched.
+ * targets differ only in a label) — item outcomes are never touched, and every
+ * move is an append-only audit row (migration 155: from, to, operator, reason).
+ * A promotion still pools only runs of the identical configuration (benchmark,
+ * target, slice, judge): regrouping relabelled runs serves comparison, not promotion.
  *
  * `--invalidate` retires a completed run that measured the infrastructure
  * rather than the target (spend cap, provider outage): its status becomes
@@ -93,6 +96,10 @@ if (values.group !== undefined && values["replicate-of"] !== undefined) {
 // --regroup: move recorded runs into one replicate group, then stop.
 if (values.regroup !== undefined) {
   if (!values.group) fail("--regroup needs --group <key>");
+  const reason = values.reason?.trim();
+  if (!reason) fail('--regroup needs --reason "<why>" (it is recorded in the audit row)');
+  if (reason.length > MAX_VALIDITY_REASON)
+    fail(`--reason is at most ${MAX_VALIDITY_REASON} characters`);
   const ids = values.regroup
     .split(",")
     .map((s) => s.trim())
@@ -102,8 +109,13 @@ if (values.regroup !== undefined) {
   try {
     const missing = ids.filter((id) => !db.getBenchmarkRun(id));
     if (missing.length > 0) fail(`no such run(s): ${missing.join(", ")}`);
-    const changed = db.setBenchmarkReplicateGroup(ids, values.group as string);
-    console.log(`regrouped ${changed} run(s) into ${values.group}`);
+    const changed = db.setBenchmarkReplicateGroup(ids, values.group as string, {
+      reason,
+      actor: "operator",
+      source: "operator",
+      created_at: Date.now(),
+    });
+    console.log(`regrouped ${changed} run(s) into ${values.group} (audited)`);
   } finally {
     db.close();
   }
@@ -188,7 +200,12 @@ if (values["replicate-of"] !== undefined) {
   if (replicateGroup.startsWith("run:")) {
     // A run with no group of its own: name one after it and move it in too.
     replicateGroup = `rep:${peer.id}`;
-    db.setBenchmarkReplicateGroup([peer.id], replicateGroup);
+    db.setBenchmarkReplicateGroup([peer.id], replicateGroup, {
+      reason: "named a group for --replicate-of",
+      actor: "operator",
+      source: "operator",
+      created_at: Date.now(),
+    });
   }
 }
 let failed = 0;

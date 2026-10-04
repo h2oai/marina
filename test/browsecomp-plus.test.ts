@@ -9,7 +9,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -41,8 +41,23 @@ import {
   retrievedDocids,
   summarize,
 } from "../benchmarks/browsecomp-plus/official";
-import { runArm, sampleQueries, toBenchmarkResult } from "../benchmarks/browsecomp-plus/run";
+import {
+  type ArmConfig,
+  prepareReplicateDir,
+  readFiled,
+  resolveArmGroup,
+  runArm,
+  sampleQueries,
+  toBenchmarkResult,
+  writeFiled,
+} from "../benchmarks/browsecomp-plus/run";
 import { ledgerFileBody } from "../benchmarks/ledger-file";
+import {
+  BudgetExhausted,
+  isSpendCapRefusal,
+  parseMaxUsd,
+  SpendGuard,
+} from "../benchmarks/spend-guard";
 import { buildCorpus, closeCorpora } from "../src/engine/search-providers/corpus";
 
 const DOCS = [
@@ -474,5 +489,261 @@ describe("arm run", () => {
     const held = sampleQueries(qs, 10, 3, 10).map((q) => q.query_id);
     expect(held).toHaveLength(10);
     expect(held.filter((id) => a.includes(id))).toEqual([]);
+  });
+});
+
+describe("spend guard", () => {
+  it("trips at the cap, on the server's daily cap, and validates --max-usd", () => {
+    const g = new SpendGuard(0.05);
+    g.add(0.02);
+    g.add(Number.NaN);
+    expect(g.stoppedBy).toBeUndefined();
+    g.add(0.03);
+    expect(g.stoppedBy).toContain("$0.05");
+    expect(() => g.check()).toThrow(BudgetExhausted);
+    const s = new SpendGuard();
+    s.trip("server cap");
+    expect(() => s.check()).toThrow("server cap");
+    expect(isSpendCapRefusal(429, '{"error":{"code":"spend_cap_reached"}}')).toBe(true);
+    expect(isSpendCapRefusal(429, '{"error":{"code":"rate_limited"}}')).toBe(false);
+    expect(parseMaxUsd(undefined)).toBeUndefined();
+    expect(parseMaxUsd("2.5")).toBe(2.5);
+    expect(() => parseMaxUsd("0")).toThrow();
+    expect(() => parseMaxUsd("abc")).toThrow();
+  });
+
+  /** An agent that searches forever at $0.02 a call; the judge costs $0.001. */
+  function looping(status = 200, body?: string) {
+    let calls = 0;
+    const fetchFn = (async (_url: string, init: RequestInit) => {
+      calls++;
+      const req = JSON.parse(String(init.body)) as Record<string, unknown>;
+      if (body) return new Response(body, { status, headers: { "x-marina-cost-usd": "0" } });
+      const message =
+        req.model === "judge/qwen"
+          ? { role: "assistant", content: "correct: yes" }
+          : {
+              role: "assistant",
+              content: null,
+              tool_calls: [call(`c${calls}`, "search", { query: "harbour" })],
+            };
+      return new Response(JSON.stringify({ choices: [{ message }] }), {
+        status: 200,
+        headers: { "x-marina-cost-usd": "0.02" },
+      });
+    }) as unknown as typeof fetch;
+    return { fetchFn, calls: () => calls };
+  }
+
+  it("stops an arm cleanly: stopped queries are not run, never scored, never written", async () => {
+    const out = join(dir, "guarded");
+    const { fetchFn, calls } = looping();
+    const guard = new SpendGuard(0.1);
+    const endpoint = { baseUrl: "http://m", fetch: fetchFn, guard };
+    const queries = ["1", "2", "3"].map((id) => ({ query_id: id, query: "q", answer: "a" }));
+    const arm = await runArm(queries, {
+      model: "openrouter/x",
+      endpoint,
+      agent: { ...opts, maxTurns: 4 },
+      judge: { endpoint, model: "judge/qwen", timeoutMs: 5000 },
+      concurrency: 1,
+      outDir: out,
+    });
+    // Query 1 hits the 4-turn cap ($0.08, a genuine incomplete); query 2 is cut by the cap.
+    expect(arm.items.map((i) => i.query.query_id)).toEqual(["1"]);
+    expect(arm.items[0]!.run.record.status).toBe("incomplete");
+    expect(arm.notRun).toEqual(["2", "3"]);
+    expect(arm.stoppedBy).toContain("spend cap $0.1");
+    expect(guard.spent).toBeCloseTo(0.1, 6);
+    expect(calls()).toBe(5);
+    expect(existsSync(join(out, "runs", "run_1.json"))).toBe(true);
+    expect(existsSync(join(out, "runs", "run_2.json"))).toBe(false);
+    expect(existsSync(join(out, "evals", "run_2_eval.json"))).toBe(false);
+  });
+
+  it("stops a formation, not just one researcher, and treats the server cap as a stop", async () => {
+    const { fetchFn } = looping(
+      429,
+      JSON.stringify({ error: { message: "daily cap", code: "spend_cap_reached" } }),
+    );
+    const guard = new SpendGuard();
+    const run = await runFormation(
+      { baseUrl: "http://m", fetch: fetchFn, guard },
+      parseFormation("ensemble:2"),
+      "9",
+      "q",
+      opts,
+      { model: "openrouter/x", leadTurns: 2 },
+    );
+    expect(run.stoppedBy).toContain("daily spend cap");
+    expect(run.record.status).toBe("incomplete");
+    expect(run.record.metadata.stopped_by).toBeDefined();
+  });
+
+  it("resumes: answered queries are reused, not re-run or re-paid", async () => {
+    const out = join(dir, "resume");
+    const answer = { role: "assistant", content: "Exact Answer: Galway\nConfidence: 80%" };
+    let agentCalls = 0;
+    const fetchFn = (async (_url: string, init: RequestInit) => {
+      const req = JSON.parse(String(init.body)) as Record<string, unknown>;
+      if (req.model !== "judge/qwen") agentCalls++;
+      const message =
+        req.model === "judge/qwen"
+          ? { role: "assistant", content: "extracted_final_answer: Galway\ncorrect: yes" }
+          : answer;
+      return new Response(JSON.stringify({ choices: [{ message }] }), {
+        status: 200,
+        headers: { "x-marina-cost-usd": "0.01" },
+      });
+    }) as unknown as typeof fetch;
+    const endpoint = { baseUrl: "http://m", fetch: fetchFn };
+    const queries = ["1", "2"].map((id) => ({ query_id: id, query: "q", answer: "Galway" }));
+    const base = {
+      model: "openrouter/x",
+      endpoint,
+      agent: opts,
+      judge: { endpoint, model: "judge/qwen", timeoutMs: 5000 },
+      concurrency: 1,
+      outDir: out,
+    };
+    await runArm(queries.slice(0, 1), base);
+    expect(agentCalls).toBe(1);
+    const arm = await runArm(queries, { ...base, resume: true });
+    expect(agentCalls).toBe(2);
+    expect(arm.resumed).toEqual(["1"]);
+    expect(arm.items.map((i) => [i.query.query_id, i.eval.correct])).toEqual([
+      ["1", true],
+      ["2", true],
+    ]);
+    expect(arm.costUsd).toBeCloseTo(0.02, 6);
+  });
+
+  it("resume re-runs errored and judge-errored queries, and reuses genuine outcomes", async () => {
+    const out = join(dir, "resume-errors");
+    let outage = true;
+    let agentCalls = 0;
+    const fetchFn = (async (_url: string, init: RequestInit) => {
+      const req = JSON.parse(String(init.body)) as Record<string, unknown>;
+      const judging = req.model === "judge/qwen";
+      if (!judging) agentCalls++;
+      const prompt = JSON.stringify(req.messages);
+      // During the outage query 1's agent call and query 2's judge call fail.
+      if (
+        outage &&
+        ((!judging && prompt.includes("query one")) || (judging && prompt.includes("query two")))
+      ) {
+        return new Response("upstream down", { status: 502 });
+      }
+      const message = judging
+        ? { role: "assistant", content: "extracted_final_answer: Galway\ncorrect: yes" }
+        : { role: "assistant", content: "Exact Answer: Galway\nConfidence: 80%" };
+      return new Response(JSON.stringify({ choices: [{ message }] }), {
+        status: 200,
+        headers: { "x-marina-cost-usd": "0.01" },
+      });
+    }) as unknown as typeof fetch;
+    const endpoint = { baseUrl: "http://m", fetch: fetchFn };
+    const queries = [
+      { query_id: "1", query: "query one", answer: "Galway" },
+      { query_id: "2", query: "query two", answer: "Galway" },
+      { query_id: "3", query: "query three", answer: "Galway" },
+    ];
+    const base = {
+      model: "openrouter/x",
+      endpoint,
+      agent: opts,
+      judge: { endpoint, model: "judge/qwen", timeoutMs: 5000 },
+      concurrency: 1,
+      outDir: out,
+    };
+    const first = await runArm(queries, base);
+    expect(first.items.map((i) => [i.query.query_id, i.eval.correct])).toEqual([
+      ["1", false],
+      ["2", false],
+      ["3", true],
+    ]);
+    outage = false;
+    const callsBefore = agentCalls;
+    const again = await runArm(queries, { ...base, resume: true });
+    // Only query 3 is reused; the run error and the judge error are run again.
+    expect(again.resumed).toEqual(["3"]);
+    expect(again.retried.sort()).toEqual(["1", "2"]);
+    expect(agentCalls - callsBefore).toBe(2);
+    expect(again.items.map((i) => i.eval.correct)).toEqual([true, true, true]);
+  });
+
+  const config = (over: Partial<ArmConfig> = {}): ArmConfig => ({
+    model: "openrouter/x",
+    formation: "single",
+    leadModel: null,
+    leadTurns: 12,
+    judgeModel: "judge/qwen",
+    corpus: "browsecomp-plus",
+    k: 5,
+    snippetChars: 512,
+    docChars: 20000,
+    maxTurns: 30,
+    maxTokens: null,
+    seed: 1,
+    offset: 0,
+    limit: 10,
+    queriesHash: "abc",
+    ...over,
+  });
+
+  it("refuses to resume a replicate under another configuration", () => {
+    const rep = join(dir, "cfg", "rep1");
+    expect(prepareReplicateDir(rep, config(), false).adopted).toBe(false);
+    expect(prepareReplicateDir(rep, config(), true).adopted).toBe(false);
+    for (const change of [
+      { judgeModel: "judge/other" },
+      { k: 10 },
+      { maxTurns: 12 },
+      { seed: 2 },
+      { queriesHash: "def" },
+    ] satisfies Partial<ArmConfig>[]) {
+      expect(() => prepareReplicateDir(rep, config(change), true)).toThrow(
+        `different configuration (${Object.keys(change)[0]})`,
+      );
+    }
+    // Without --resume the replicate starts over and records the new configuration;
+    // an earlier filing marker no longer describes it.
+    writeFiled(rep, { runId: "bench_old", group: "g" });
+    prepareReplicateDir(rep, config({ k: 10 }), false);
+    expect(readFiled(rep)).toBeUndefined();
+    expect(() => prepareReplicateDir(rep, config({ k: 10 }), true)).not.toThrow();
+  });
+
+  it("adopts a replicate directory from before the configuration was recorded", () => {
+    const rep = join(dir, "legacy", "rep1");
+    mkdirSync(join(rep, "runs"), { recursive: true });
+    expect(prepareReplicateDir(rep, config(), true).adopted).toBe(true);
+    expect(() => prepareReplicateDir(rep, config({ k: 3 }), true)).toThrow("different");
+  });
+
+  it("a resumed arm keeps its replicate group, so new replicates join the filed ones", () => {
+    const out = join(dir, "grouped");
+    const reps = [join(out, "rep1"), join(out, "rep2")];
+    let fresh = 0;
+    const next = () => `rep:g:${++fresh}`;
+    expect(resolveArmGroup(out, { resume: false, replicateDirs: reps, fresh: next })).toBe(
+      "rep:g:1",
+    );
+    // An interrupted run resumed later files rep 2 into the SAME group.
+    expect(resolveArmGroup(out, { resume: true, replicateDirs: reps, fresh: next })).toBe(
+      "rep:g:1",
+    );
+    expect(() =>
+      resolveArmGroup(out, { explicit: "other", resume: true, replicateDirs: reps, fresh: next }),
+    ).toThrow("files into group rep:g:1");
+    // A directory with only a filing marker (no group.json) recovers the group from it.
+    const old = join(dir, "marker-only");
+    const oldReps = [join(old, "rep1")];
+    mkdirSync(oldReps[0]!, { recursive: true });
+    writeFiled(oldReps[0]!, { runId: "bench_1", group: "rep:old:1" });
+    expect(readFiled(oldReps[0]!)).toEqual({ runId: "bench_1", group: "rep:old:1" });
+    expect(resolveArmGroup(old, { resume: true, replicateDirs: oldReps, fresh: next })).toBe(
+      "rep:old:1",
+    );
   });
 });

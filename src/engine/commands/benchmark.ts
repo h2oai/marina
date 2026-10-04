@@ -1036,24 +1036,29 @@ function promote(
     opts.maxCostRatio !== undefined ? { maxCostRatio: opts.maxCostRatio } : {},
   );
   if (found.kind === "error") return found.message;
-  // Self-attestation is always refused: whoever ran the challenger cannot promote it —
-  // compared on the durable account key too, so a fresh login is still the same author.
-  const author = found.challenger.agent_id;
-  if (
-    author &&
-    (author === entity.id || db.durableEntityKey(author) === db.durableEntityKey(entity.id))
-  ) {
-    return `Refused: you ran ${runId}. Someone else must promote it — self-attestation is never accepted.`;
+  // Self-attestation is always refused: whoever ran the challenger — or ANY
+  // replicate pooled with it — cannot promote it. Compared on the durable
+  // account key too, so a fresh login is still the same author.
+  const me = db.durableEntityKey(entity.id);
+  for (const run of found.pooledRuns) {
+    const author = run.agent_id;
+    if (author && (author === entity.id || db.durableEntityKey(author) === me)) {
+      return run.id === runId
+        ? `Refused: you ran ${runId}. Someone else must promote it — self-attestation is never accepted.`
+        : `Refused: you ran ${run.id}, a replicate pooled with ${runId}. Someone else must promote it — self-attestation is never accepted.`;
+    }
   }
   // Invalidating an incumbent and then filling its slot is self-attestation
-  // too: neither the promoter nor the challenger's author may be the account
-  // that invalidated it.
+  // too: neither the promoter nor the author of any pooled challenger run may
+  // be the account that invalidated it.
   const by = found.invalidIncumbent?.invalidatedBy;
-  if (
-    by &&
-    (by === db.durableEntityKey(entity.id) || (author && by === db.durableEntityKey(author)))
-  ) {
-    return `Refused: ${by === db.durableEntityKey(entity.id) ? "you" : `the author of ${runId}`} invalidated the incumbent ${found.invalidIncumbent?.id}. Someone else must fill ${slot} — self-attestation is never accepted.`;
+  if (by) {
+    const authoredBy = found.pooledRuns.find(
+      (r) => r.agent_id && db.durableEntityKey(r.agent_id) === by,
+    );
+    if (by === me || authoredBy) {
+      return `Refused: ${by === me ? "you" : `the author of ${authoredBy?.id}`} invalidated the incumbent ${found.invalidIncumbent?.id}. Someone else must fill ${slot} — self-attestation is never accepted.`;
+    }
   }
   const value = found.challenger.target_json;
   if (!value) {
