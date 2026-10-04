@@ -39,7 +39,7 @@ export const CACHE_WRITE_TOKENS_HEADER = "x-marina-cache-write-tokens";
 export const MODEL_CORS = corsHeaders(null, {
   methods: "GET, POST, OPTIONS",
   headers:
-    "Content-Type, Authorization, X-Conversation-Id, X-Load-Balance, X-Marina-Agent, X-Marina-Context",
+    "Content-Type, Authorization, X-Conversation-Id, X-Load-Balance, X-Marina-Agent, X-Marina-Context, X-Marina-Deadline-Ms",
   expose: [
     "X-Conversation-Id",
     "x-request-id",
@@ -49,6 +49,7 @@ export const MODEL_CORS = corsHeaders(null, {
     COST_USD_HEADER,
     CACHE_READ_TOKENS_HEADER,
     CACHE_WRITE_TOKENS_HEADER,
+    "x-marina-budget-forced",
   ].join(", "),
 });
 

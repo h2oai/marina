@@ -216,6 +216,7 @@ function depsFor(v: Variant, lessons?: LessonStore) {
       ...(v.runs !== undefined ? { runs: v.runs } : {}),
       ...(v.researchRounds !== undefined ? { researchRounds: v.researchRounds } : {}),
       ...(v.critique === false ? { critique: false } : {}),
+      ...(v.budgetMs ? { budgetMs: v.budgetMs } : {}),
     });
     if ("error" in made) throw new Error(made.error);
     return made;

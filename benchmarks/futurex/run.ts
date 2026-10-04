@@ -37,6 +37,8 @@ export interface Variant {
   runs?: number;
   researchRounds?: number;
   critique?: boolean;
+  /** Wall-clock budget per row (ms): the forecast answers from what finished (labelled). */
+  budgetMs?: number;
 }
 
 /**

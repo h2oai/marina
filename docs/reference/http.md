@@ -1985,7 +1985,7 @@ Fields read here: `model`, `name`.
 
 ### `rest === "*"`
 
-[Source](../../src/net/model-api/shared.ts#L131)
+[Source](../../src/net/model-api/shared.ts#L132)
 
 - Guard: `rest === "*"`
 

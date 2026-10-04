@@ -276,7 +276,9 @@ export function typedOptionsFromEnv(
   const rounds = intEnv(env.MARINA_FORECAST_RESEARCH_ROUNDS);
   const critique = env.MARINA_FORECAST_CRITIQUE?.trim().toLowerCase();
   const verify = env.MARINA_FORECAST_VERIFY?.trim().toLowerCase();
+  const budgetS = intEnv(env.MARINA_FORECAST_BUDGET_S);
   return {
+    ...(budgetS !== undefined && budgetS > 0 ? { budgetMs: budgetS * 1000 } : {}),
     ...(runs !== undefined ? { runs } : {}),
     ...(rounds !== undefined ? { researchRounds: rounds } : {}),
     ...(critique === "off" || critique === "false" || critique === "0" ? { critique: false } : {}),

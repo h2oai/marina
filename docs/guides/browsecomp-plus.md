@@ -104,6 +104,13 @@ The tool loop follows the official harness:
 - `search` returns the top `--k` hits (default 5), each with its docid, BM25 score and the document's first `--snippet-chars` characters (default 2000, about the official 512-token snippet).
 - `get_document` returns a document, capped at `--doc-chars` (default 20,000).
 - A run that reaches `--max-turns` model turns (default 30) without a text answer is incomplete, and counts as wrong.
+- `--final-answer` turns on budget-terminal answering, a Marina addition that is off by default so the official protocol stays comparable:
+  - From about 75 % of `--max-turns`, the latest tool result carries a note saying how many turns are left and asking the agent to converge.
+  - At the cap, the agent gets one more call with `tool_choice: "none"`, asking for its final answer from what it has found.
+  - A forced answer is labelled: `budget_forced` in the run's metadata and in the ledger item, and `budget_forced` (a count) in `summary.json`.
+  - In a formation, a lead that still has no answer falls back to the researchers' most-agreed report (`source: member-plurality`).
+  - The arm is its own configuration. Its label ends in `+final-answer` and its ledger target carries `finalAnswer`, so its runs are never pooled with official-protocol runs.
+- Against a crew (`marina:<crew>`), each request carries the client's timeout as `x-marina-deadline-ms`. The crew answers with its best draft before that deadline, and the answer is labelled `x-marina-budget-forced`.
 
 **The judge.** It is the official grader prompt, with the official sampling: temperature 0.7, top-p 0.8, top-k 20, 4,096 tokens, thinking off. It runs through the same Marina server under `--judge-model` (default `openrouter/qwen/qwen3-32b`, the official Qwen3-32B). As in the official evaluator, an incomplete run is never judged.
 

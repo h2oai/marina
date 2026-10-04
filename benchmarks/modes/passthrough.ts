@@ -53,6 +53,11 @@ export interface QueryResult {
    * (`not_run`: checker unavailable — the draft went out unchecked).
    */
   verification?: "passed" | "failed" | "not_run";
+  /**
+   * Marina's `x-marina-budget-forced` reason (e.g. `deadline`): the answer is
+   * the crew's best draft at the item's deadline, not its own reply.
+   */
+  budgetForced?: string;
 }
 
 /** The ledger's verification state for a `x-marina-verify` label; undefined when absent. */
@@ -66,8 +71,14 @@ export function verificationFromLabel(
 }
 
 /** The per-item labels a reply carries for the ledger (spread into a `ResultItem`). */
-export function replyLabels(reply: QueryResult): { verification?: QueryResult["verification"] } {
-  return reply.verification ? { verification: reply.verification } : {};
+export function replyLabels(reply: QueryResult): {
+  verification?: QueryResult["verification"];
+  budgetForced?: boolean;
+} {
+  return {
+    ...(reply.verification ? { verification: reply.verification } : {}),
+    ...(reply.budgetForced ? { budgetForced: true } : {}),
+  };
 }
 
 /**
@@ -127,6 +138,9 @@ export async function queryWithUsage(
 ): Promise<QueryResult> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    // The item's own deadline: a Marina crew answers with its best draft before
+    // it (labelled `x-marina-budget-forced`) instead of the harness aborting.
+    "x-marina-deadline-ms": String(timeoutMs),
   };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
@@ -174,6 +188,7 @@ export async function queryWithUsage(
       const requestId = resp.headers.get("x-request-id") ?? undefined;
       const repaired = resp.headers.get("x-marina-repair") ?? undefined;
       const verification = verificationFromLabel(resp.headers.get("x-marina-verify"));
+      const budgetForced = resp.headers.get("x-marina-budget-forced") ?? undefined;
       consecutiveTimeouts.delete(endpoint);
       deadUntil.delete(endpoint);
       return {
@@ -182,6 +197,7 @@ export async function queryWithUsage(
         ...(requestId ? { requestId } : {}),
         ...(repaired ? { repaired } : {}),
         ...(verification ? { verification } : {}),
+        ...(budgetForced ? { budgetForced } : {}),
       };
     } catch (err) {
       if (controller.signal.aborted || (err instanceof Error && err.name === "TimeoutError")) {
