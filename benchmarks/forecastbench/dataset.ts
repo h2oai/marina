@@ -75,7 +75,24 @@ export async function fetchQuestionSet(
   due: string | "latest",
   fetcher: Fetcher = fetch,
 ): Promise<FbQuestionSet> {
-  const name = due === "latest" ? "latest-llm.json" : `${due}-llm.json`;
+  let name = `${due}-llm.json`;
+  if (due === "latest") {
+    // `latest-llm.json` is a git symlink: served raw, its body is the target's file name.
+    const res = await fetcher(`${DATASETS_RAW}/question_sets/latest-llm.json`, {
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (!res.ok) throw new Error(`GET latest-llm.json → ${res.status}`);
+    const body = (await res.text()).trim();
+    const target = /^(\d{4}-\d{2}-\d{2}-llm\.json)$/.exec(body)?.[1];
+    if (!target) {
+      const set = JSON.parse(body) as FbQuestionSet;
+      if (!set?.forecast_due_date || !Array.isArray(set.questions)) {
+        throw new Error("latest-llm.json is not a question set");
+      }
+      return set;
+    }
+    name = target;
+  }
   const set = (await getJson(`${DATASETS_RAW}/question_sets/${name}`, fetcher)) as FbQuestionSet;
   if (!set?.forecast_due_date || !Array.isArray(set.questions)) {
     throw new Error(`${name} is not a question set`);
