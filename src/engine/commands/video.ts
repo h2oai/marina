@@ -4,7 +4,7 @@
 import type { CommandDef } from "../../types";
 import type { Engine } from "../engine";
 import { lookAndReply } from "../media/vision";
-import { sendMediaJobStatus } from "./image";
+import { resolveMediaCanvas, sendMediaJobStatus } from "./image";
 
 export function videoCommand(_engine: Engine): CommandDef {
   return {
@@ -67,7 +67,7 @@ export function videoCommand(_engine: Engine): CommandDef {
       }
 
       const model = parsed.model ?? "runway/gen3-alpha";
-      const canvas = resolveCanvas(engine, parsed.canvas);
+      const canvas = resolveMediaCanvas(engine, parsed.canvas, input.entity);
 
       try {
         const job = await engine.mediaManager.startJob({
@@ -162,12 +162,4 @@ function parseVideoArgs(tokens: string[]): VideoOptions | { error: string } {
   }
 
   return opts;
-}
-
-function resolveCanvas(engine: Engine, canvas?: string): string | undefined {
-  if (!canvas || !engine.db) return undefined;
-  const byName = engine.db.getCanvasByName(canvas);
-  if (byName) return byName.id;
-  const byId = engine.db.getCanvas(canvas);
-  return byId?.id ?? undefined;
 }

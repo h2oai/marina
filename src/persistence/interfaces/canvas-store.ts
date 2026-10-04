@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
+  AssetNodeScope,
   CanvasEdgeRow,
   CanvasIntentClaimResult,
   CanvasIntentCompleteResult,
@@ -45,6 +46,8 @@ export interface CanvasStore {
   }): void;
   getNode(id: string): CanvasNodeRow | undefined;
   getNodesByCanvas(canvasId: string): CanvasNodeRow[];
+  /** Nodes showing an asset, with their canvas scope (the shared canvas read check). */
+  listAssetNodeScopes(assetId: string): AssetNodeScope[];
   trimCanvasNodes(canvasId: string, max: number): number;
   /** Trim old canvas nodes and return their ids so live clients can converge. */
   trimCanvasNodesWithIds(canvasId: string, max: number): string[];
@@ -105,6 +108,7 @@ export const CANVAS_STORE_METHODS = [
   "createNode",
   "getNode",
   "getNodesByCanvas",
+  "listAssetNodeScopes",
   "trimCanvasNodes",
   "trimCanvasNodesWithIds",
   "updateNode",

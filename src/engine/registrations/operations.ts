@@ -144,6 +144,7 @@ export function registerOperationCommands(engine: Engine): void {
       storage: engine.storage,
       logEvent: (event) => engine.logEvent(event as import("../../types").EngineEvent),
       scratchRoot: "data/scratch",
+      canvasGrants: engine.canvasGrants,
       look: (who, tokens) => lookAndReply(engine, who, tokens),
     }),
   );

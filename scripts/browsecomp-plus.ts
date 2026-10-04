@@ -10,7 +10,7 @@
  *       [--replicates 2] [--group <key>] [--out <dir>] [--qrels qrel_evidence.txt]
  *       [--judge-model openrouter/qwen/qwen3-32b] [--file-to http://localhost:3300]
  *       [--formation single|ensemble:N|mapreduce:N|sharding:N|blackboard:NxR]
- *       [--lead-model <id>] [--offset N] [--max-usd N] [--resume]
+ *       [--lead-model <id>] [--offset N] [--max-usd N] [--resume] [--final-answer]
  *   bun run browsecomp-plus compare <armA-dir> <armB-dir>   pooled paired comparison
  *
  * `--max-usd` is a hard spend stop for the whole invocation (every replicate,
@@ -29,6 +29,13 @@
  * (`openrouter/openai/gpt-6-luna`), the verification formation
  * (`marina/verify:<proposer>[+<checker>]`) or a crew (`marina:<crew>`).
  * The key is MARINA_BENCH_API_KEY (a MODEL_API_KEYS entry on that server).
+ *
+ * `--final-answer` runs budget-terminal answering (src/agent/budget-terminal.ts):
+ * from ~75 % of `--max-turns` the agent is told how many turns are left, and at
+ * the cap it gets one more call with tools disabled asking for its answer from
+ * what it found. Forced answers are labelled (`budget_forced` in the run's
+ * metadata and the ledger). Off by default: the official protocol ends a
+ * capped run incomplete. The arm is its own target and label (`+final-answer`).
  *
  * Output per replicate (`<out>/rep<i>/`): `runs/run_<id>.json` (the official
  * run format), `evals/…_eval.json`, `summary.json` (the leaderboard fields)
@@ -96,6 +103,7 @@ const { positionals, values } = parseArgs({
     "snippet-chars": { type: "string", default: String(CORPUS_LEAD_CHARS) },
     "doc-chars": { type: "string", default: "20000" },
     "max-turns": { type: "string", default: "30" },
+    "final-answer": { type: "boolean", default: false },
     "max-tokens": { type: "string" },
     concurrency: { type: "string", default: "4" },
     "timeout-s": { type: "string", default: "600" },
@@ -124,9 +132,10 @@ async function run(): Promise<number> {
   const formation = parseFormation(values.formation!);
   const lead = values["lead-model"];
   const offset = int("offset", values.offset, 0);
+  const finalAnswer = values["final-answer"] === true;
   const label =
     values.label ??
-    (formation.kind === "single" ? values.model : `${formationLabel(formation)}:${values.model}`);
+    `${formation.kind === "single" ? values.model : `${formationLabel(formation)}:${values.model}`}${finalAnswer ? "+final-answer" : ""}`;
   if (values.group && !validGroupKey(values.group))
     throw new Error(`invalid --group ${values.group}`);
   const out =
@@ -169,10 +178,19 @@ async function run(): Promise<number> {
   const endpoint = { baseUrl: values.endpoint!, apiKey, guard };
   const timeoutMs = int("timeout-s", values["timeout-s"]) * 1000;
   const backend = workerPool(values.corpus!, corpusDir(), int("workers", values.workers));
+  // A forced-final-answer arm is its own configuration: its own target, never
+  // pooled with runs of the official protocol (the cap ends a run incomplete).
   const target =
     formation.kind === "single"
-      ? values.model
-      : { formation: formationLabel(formation), model: values.model, lead: lead ?? values.model };
+      ? finalAnswer
+        ? { model: values.model, finalAnswer }
+        : values.model
+      : {
+          formation: formationLabel(formation),
+          model: values.model,
+          lead: lead ?? values.model,
+          ...(finalAnswer ? { finalAnswer } : {}),
+        };
   console.error(
     `${queries.length} queries × ${reps} replicate(s) · ${typeof target === "string" ? target : JSON.stringify(target)} · corpus ${values.corpus} (${corpusDir()})${guard.maxUsd !== undefined ? ` · spend cap $${guard.maxUsd}` : ""}`,
   );
@@ -210,6 +228,7 @@ async function run(): Promise<number> {
         snippetChars: int("snippet-chars", values["snippet-chars"], 0),
         docChars: int("doc-chars", values["doc-chars"]),
         maxTurns: int("max-turns", values["max-turns"]),
+        ...(finalAnswer ? { finalAnswer } : {}),
         ...(values["max-tokens"] ? { maxTokens: int("max-tokens", values["max-tokens"]) } : {}),
         timeoutMs,
       },
@@ -258,6 +277,12 @@ async function run(): Promise<number> {
           ...(arm.resumed.length ? { resumed: arm.resumed.length } : {}),
           ...(arm.retried.length ? { retried_errors: arm.retried.length } : {}),
           ...(arm.stoppedBy ? { stopped_by: arm.stoppedBy, not_run: arm.notRun.length } : {}),
+          ...(finalAnswer
+            ? {
+                final_answer: true,
+                budget_forced: arm.items.filter((i) => i.run.budgetForced).length,
+              }
+            : {}),
         },
       },
     });

@@ -24,6 +24,14 @@
  */
 
 import {
+  BUDGET_FORCED_HEADER,
+  type BudgetForced,
+  budgetFinalRequest,
+  budgetSteerAt,
+  budgetSteerNote,
+  DEADLINE_HEADER,
+} from "../../src/agent/budget-terminal";
+import {
   type CorpusDoc,
   type CorpusHit,
   getCorpusDocument,
@@ -74,6 +82,15 @@ export interface AgentOptions {
   docChars: number;
   /** Model turns before the run is cut off as incomplete. */
   maxTurns: number;
+  /**
+   * Budget-terminal answering (`src/agent/budget-terminal.ts`): from about
+   * 75 % of `maxTurns` the agent is told how many turns are left and to
+   * converge; at the cap it gets one more call with tools disabled asking for
+   * its final answer from what it has found. The answer is labelled
+   * `budget_forced`. Off = the official protocol (the cap ends the run
+   * incomplete).
+   */
+  finalAnswer?: boolean;
   maxTokens?: number;
   temperature?: number;
   /** Per-request timeout. */
@@ -97,6 +114,8 @@ export interface QueryRun {
   error?: string;
   /** Set when the spend guard stopped this query: it is NOT RUN, never scored. */
   stoppedBy?: string;
+  /** Set when the answer was forced at the turn cap (budget-terminal answering). */
+  budgetForced?: BudgetForced;
 }
 
 export interface ChatMessage {
@@ -119,6 +138,8 @@ interface ChatReply {
   promptTokens: number;
   completionTokens: number;
   traceId?: string;
+  /** Marina's `x-marina-budget-forced` reason: a crew's draft forced at the deadline. */
+  budgetForced?: string;
 }
 
 export function toolSchemas(k: number) {
@@ -203,7 +224,11 @@ export async function chat(
 ): Promise<ChatReply> {
   ep.guard?.check();
   const doFetch = ep.fetch ?? fetch;
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    // A crew answers with its best draft before this deadline (budget-terminal).
+    [DEADLINE_HEADER]: String(timeoutMs),
+  };
   if (ep.apiKey) headers.Authorization = `Bearer ${ep.apiKey}`;
   const resp = await doFetch(`${ep.baseUrl.replace(/\/+$/, "")}/v1/chat/completions`, {
     method: "POST",
@@ -234,6 +259,7 @@ export async function chat(
     promptTokens: data.usage?.prompt_tokens ?? 0,
     completionTokens: data.usage?.completion_tokens ?? 0,
     traceId: resp.headers.get("x-request-id") ?? undefined,
+    budgetForced: resp.headers.get(BUDGET_FORCED_HEADER) ?? undefined,
   };
 }
 
@@ -260,6 +286,7 @@ export function emptyRun(model: string, queryId: string, extra: Record<string, u
 /** Close a run: retrieved docids from every search, usage totals, latency. */
 export function finishRun(run: QueryRun, started: number): QueryRun {
   if (run.stoppedBy) run.record.metadata.stopped_by = run.stoppedBy;
+  if (run.budgetForced) run.record.metadata.budget_forced = run.budgetForced;
   run.record.retrieved_docids = retrievedDocids(run.record.result);
   run.record.usage = {
     input_tokens: run.promptTokens,
@@ -275,11 +302,24 @@ export interface LoopResult {
   text?: string;
   /** The conversation, for a caller that continues it (blackboard rounds). */
   messages: ChatMessage[];
+  /** The answer was forced at the turn cap (`finalAnswer`). */
+  budgetForced?: BudgetForced;
+}
+
+/** Append a budget note to the latest tool result (no extra user turn: every provider accepts it). */
+function noteOnLastTool(messages: ChatMessage[], note: string): boolean {
+  const last = messages[messages.length - 1];
+  if (last?.role !== "tool") return false;
+  last.content = `${last.content ?? ""}\n\n${note}`;
+  return true;
 }
 
 /**
  * One agent's tool loop, accumulated into `run` (cost, calls, tool items tagged
  * with `agent`). Ends at the first text answer or after `maxTurns` turns.
+ * With `finalAnswer` (budget-terminal answering) the agent is steered toward
+ * answering from about 75 % of the turns, and at the cap one more call with
+ * tools disabled asks for its final answer — labelled `budgetForced`.
  * Throws on a transport error; the caller decides what that means.
  */
 export async function toolLoop(
@@ -288,18 +328,28 @@ export async function toolLoop(
   messages: ChatMessage[],
   opts: AgentOptions,
   run: QueryRun,
-  more: { agent?: string; maxTurns?: number; shard?: Shard; tools?: boolean } = {},
+  more: {
+    agent?: string;
+    maxTurns?: number;
+    shard?: Shard;
+    tools?: boolean;
+    /** Overrides `opts.finalAnswer` for this loop (a blackboard round is not the last word). */
+    finalAnswer?: boolean;
+  } = {},
 ): Promise<LoopResult> {
   const tools = more.tools === false ? undefined : toolSchemas(opts.k);
   const turns = more.maxTurns ?? opts.maxTurns;
   const tag = more.agent ? { agent: more.agent } : {};
-  for (let turn = 0; turn < turns; turn++) {
+  const forceAnswer = Boolean(tools) && (more.finalAnswer ?? opts.finalAnswer ?? false);
+  const steerAt = budgetSteerAt(turns);
+  let steered = false;
+  const ask = async (choice: "auto" | "none") => {
     const reply = await chat(
       ep,
       {
         model,
         messages,
-        ...(tools ? { tools, tool_choice: "auto" } : {}),
+        ...(tools ? { tools, tool_choice: choice } : {}),
         ...(opts.maxTokens ? { max_tokens: opts.maxTokens } : {}),
         ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
       },
@@ -310,19 +360,24 @@ export async function toolLoop(
     run.promptTokens += reply.promptTokens;
     run.completionTokens += reply.completionTokens;
     if (reply.traceId) run.traceIds.push(reply.traceId);
+    return reply;
+  };
+  const answer = (text: string) => {
+    messages.push({ role: "assistant", content: text });
+    run.record.result.push({
+      type: "output_text",
+      tool_name: null,
+      arguments: null,
+      output: text,
+      ...tag,
+    });
+  };
+  for (let turn = 0; turn < turns; turn++) {
+    const reply = await ask("auto");
     const calls = tools ? (reply.message.tool_calls ?? []) : [];
     if (calls.length === 0) {
       const text = (reply.message.content ?? "").trim();
-      if (text) {
-        messages.push({ role: "assistant", content: text });
-        run.record.result.push({
-          type: "output_text",
-          tool_name: null,
-          arguments: null,
-          output: text,
-          ...tag,
-        });
-      }
+      if (text) answer(text);
       return { ...(text ? { text } : {}), messages };
     }
     messages.push({ role: "assistant", content: reply.message.content ?? null, tool_calls: calls });
@@ -339,8 +394,26 @@ export async function toolLoop(
       });
       messages.push({ role: "tool", tool_call_id: call.id, content: output });
     }
+    const used = turn + 1;
+    if (forceAnswer && !steered && used >= steerAt && used < turns) {
+      steered = noteOnLastTool(messages, budgetSteerNote(used, turns, "turns"));
+    }
   }
-  return { messages };
+  if (!forceAnswer || !noteOnLastTool(messages, budgetFinalRequest(turns, "turns"))) {
+    return { messages };
+  }
+  // The cap: one more call, tools disabled — the best answer from what was found.
+  const reply = await ask("none");
+  const text = (reply.message.content ?? "").trim();
+  if (!text) return { messages };
+  const budgetForced: BudgetForced = {
+    reason: "turns",
+    used: turns,
+    cap: turns,
+    source: "final-request",
+  };
+  answer(text);
+  return { text, messages, budgetForced };
 }
 
 /** The official agent loop: tools until the model answers in text or the turn cap. */
@@ -359,6 +432,7 @@ export async function runToolAgent(
     snippet_chars: opts.snippetChars,
     doc_chars: opts.docChars,
     max_turns: opts.maxTurns,
+    ...(opts.finalAnswer ? { final_answer: true } : {}),
   });
   try {
     const out = await toolLoop(
@@ -369,6 +443,7 @@ export async function runToolAgent(
       run,
     );
     run.record.status = out.text ? "completed" : "incomplete";
+    if (out.budgetForced) run.budgetForced = out.budgetForced;
   } catch (e) {
     failRun(run, e);
   }
@@ -432,6 +507,16 @@ export async function runCrew(
       run.record.status = "completed";
       run.record.retrieved_docids = extractCitations(text);
       run.record.metadata.recall_source = "cited";
+      if (reply.budgetForced) {
+        // The crew's best draft at the deadline, labelled as such.
+        run.budgetForced = {
+          reason: reply.budgetForced as BudgetForced["reason"],
+          used: Date.now() - started,
+          cap: opts.timeoutMs,
+          source: "crew",
+        };
+        run.record.metadata.budget_forced = run.budgetForced;
+      }
     }
   } catch (e) {
     failRun(run, e);

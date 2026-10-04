@@ -11,6 +11,15 @@ import { validatePanelDocument } from "../../sdk/panel-document";
 import { PANEL_RESOURCE_CATALOG } from "../../sdk/panel-resource-catalog";
 import type { StorageProvider } from "../../storage/provider";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import {
+  type CanvasAccessHost,
+  type CanvasReader,
+  type CanvasReadGrants,
+  canvasReaderFor,
+  mayReadAsset,
+  mayReadCanvas,
+  mayReadCanvasRow,
+} from "../canvas-access";
 import { canvasDocumentData } from "../canvas-document";
 import { getErrorMessage } from "../errors";
 import { Logger } from "../logger";
@@ -40,6 +49,42 @@ function canvasOwners(
     : { owners: [canvas.creator_name], creatorOf: agentCreatorOf(db) };
 }
 
+/**
+ * The caller's read access, from the shared canvas read check
+ * (`src/engine/canvas-access.ts`): private (`entity`) canvases are their
+ * owner's and operators'; a node may also be read under a live grant.
+ */
+interface Access {
+  host: CanvasAccessHost;
+  reader: CanvasReader;
+}
+
+/** The canvas when the caller may read it; otherwise undefined, as if missing. */
+function readableCanvas<T extends { id: string; scope: string; scope_id: string | null }>(
+  access: Access,
+  canvas: T | undefined,
+  via: string,
+  mode: "read" | "write" = "read",
+): T | undefined {
+  if (!canvas) return undefined;
+  return mayReadCanvasRow(canvas as never, access.reader, via, mode) ? canvas : undefined;
+}
+
+/**
+ * The node when the caller may write to it: canvas-level write access (owner,
+ * operator, or the local-ungated profile). A read grant and the creator
+ * relation cover reading only, so neither counts here.
+ */
+function canvasLevelNode<T extends { id: string; canvas_id: string }>(
+  access: Access,
+  node: T | undefined,
+  via: string,
+): T | undefined {
+  if (!node) return undefined;
+  const canvas = access.host.db?.getCanvas(node.canvas_id);
+  return mayReadCanvasRow(canvas, access.reader, via, "write") ? node : undefined;
+}
+
 const HELP =
   "Canvas management. Subcommands: canvas create <name> [desc] | canvas list | canvas info <name> | canvas visit <self|entity|name> | canvas post [on:<canvas>] [reply:<node_id>] <text> | canvas publish <type> <asset_id> [canvas] [reply:<node_id>] | canvas nodes <name> | canvas look <node_id> [question] | canvas edges <name> | canvas layout <grid|timeline|feed> <name> | canvas delete <name> | canvas asset upload|list|info|delete | canvas intent list [canvas] | canvas intent claim <node_id> | canvas intent fail <node_id> [reason] | canvas intent complete <node_id> [--type <type>] <result> | canvas intent complete-rich <node_id> <json> | canvas connect <src_node_id> <tgt_node_id> <relationship> [canvas] | canvas disconnect <edge_id>" +
   "\n\nUse canvas resources [filter] to discover authorized data adapters for panel sources (kind: resource). Publish an A2UI JSON asset to compose Marina resources. Open it beside Chat from Workspace → Canvas → Published panels, or use Create coding desk for an existing coding session." +
@@ -52,6 +97,8 @@ export function canvasCommand(deps: {
   storage?: StorageProvider;
   logEvent?: (event: { type: string; entity: EntityId; [k: string]: unknown }) => void;
   scratchRoot?: string;
+  /** Expiring read grants on private nodes (the engine's `canvasGrants`). */
+  canvasGrants?: CanvasReadGrants;
   /** `canvas look` — see a node's image, document or video (src/engine/media/vision.ts). */
   look?: (who: { entityId: EntityId; name: string }, tokens: string[]) => Promise<string>;
 }): CommandDef {
@@ -109,6 +156,12 @@ export function canvasCommand(deps: {
       const eid = input.entity;
       const tokens = input.tokens;
       const sub = tokens[0]?.toLowerCase();
+      const host: CanvasAccessHost = {
+        db,
+        entities: { get: (id: never) => deps.getEntity(id) },
+        ...(deps.canvasGrants ? { canvasGrants: deps.canvasGrants } : {}),
+      };
+      const access: Access = { host, reader: canvasReaderFor(host, eid, { inWorld: true }) };
 
       if (!sub) {
         ctx.send(eid, HELP);
@@ -132,28 +185,46 @@ export function canvasCommand(deps: {
 
       switch (sub) {
         case "asset":
-          await handleAsset(ctx, eid, entity, db, deps.storage, tokens.slice(1), deps.scratchRoot);
+          await handleAsset(
+            ctx,
+            eid,
+            entity,
+            db,
+            deps.storage,
+            tokens.slice(1),
+            deps.scratchRoot,
+            access,
+          );
           return;
         case "create":
           handleCreate(ctx, eid, entity, db, tokens.slice(1));
           return;
         case "list":
-          handleList(ctx, eid, db);
+          handleList(ctx, eid, db, access);
           return;
         case "info":
-          handleInfo(ctx, eid, db, tokens.slice(1));
+          handleInfo(ctx, eid, db, tokens.slice(1), access);
           return;
         case "publish":
-          await handlePublish(ctx, eid, entity, db, deps.storage, deps.logEvent, tokens.slice(1));
+          await handlePublish(
+            ctx,
+            eid,
+            entity,
+            db,
+            deps.storage,
+            deps.logEvent,
+            tokens.slice(1),
+            access,
+          );
           return;
         case "post":
-          handlePost(ctx, eid, entity, db, deps.logEvent, tokens.slice(1));
+          handlePost(ctx, eid, entity, db, deps.logEvent, tokens.slice(1), access);
           return;
         case "nodes":
-          handleNodes(ctx, eid, db, tokens.slice(1));
+          handleNodes(ctx, eid, db, tokens.slice(1), access);
           return;
         case "layout":
-          handleLayout(ctx, eid, entity, db, tokens.slice(1), deps.logEvent);
+          handleLayout(ctx, eid, entity, db, tokens.slice(1), access, deps.logEvent);
           return;
         case "delete": {
           // Deleting a whole canvas (and its nodes) is destructive and shared —
@@ -167,11 +238,20 @@ export function canvasCommand(deps: {
             ctx.send(eid, floor);
             return;
           }
-          handleDelete(ctx, eid, entity, db, deps.logEvent, tokens.slice(1));
+          handleDelete(ctx, eid, entity, db, deps.logEvent, tokens.slice(1), access);
           return;
         }
         case "intent":
-          await handleIntent(ctx, eid, entity, db, deps.storage, deps.logEvent, tokens.slice(1));
+          await handleIntent(
+            ctx,
+            eid,
+            entity,
+            db,
+            deps.storage,
+            deps.logEvent,
+            tokens.slice(1),
+            access,
+          );
           return;
         case "look":
         case "see": {
@@ -183,16 +263,16 @@ export function canvasCommand(deps: {
           return;
         }
         case "connect":
-          handleConnect(ctx, eid, entity, db, deps.logEvent, tokens.slice(1));
+          handleConnect(ctx, eid, entity, db, deps.logEvent, tokens.slice(1), access);
           return;
         case "disconnect":
-          handleDisconnect(ctx, eid, entity, db, deps.logEvent, tokens.slice(1));
+          handleDisconnect(ctx, eid, entity, db, deps.logEvent, tokens.slice(1), access);
           return;
         case "edges":
-          handleEdges(ctx, eid, db, tokens.slice(1));
+          handleEdges(ctx, eid, db, tokens.slice(1), access);
           return;
         case "visit":
-          handleVisit(ctx, eid, entity, db, deps.findEntityGlobal, tokens.slice(1));
+          handleVisit(ctx, eid, entity, db, deps.findEntityGlobal, tokens.slice(1), access);
           return;
         default:
           ctx.send(eid, HELP);
@@ -221,6 +301,7 @@ function handleConnect(
   db: MarinaDB,
   logEvent: ((event: { type: string; entity: EntityId; [k: string]: unknown }) => void) | undefined,
   tokens: string[],
+  access: Access,
 ): void {
   const sourceIdPrefix = tokens[0];
   const targetIdPrefix = tokens[1];
@@ -237,8 +318,16 @@ function handleConnect(
     return;
   }
   // Resolve prefixes to full node ids
-  const sourceNode = db.getNode(sourceIdPrefix) ?? resolveNodePrefix(db, sourceIdPrefix);
-  const targetNode = db.getNode(targetIdPrefix) ?? resolveNodePrefix(db, targetIdPrefix);
+  const sourceNode = canvasLevelNode(
+    access,
+    db.getNode(sourceIdPrefix) ?? resolveNodePrefix(db, sourceIdPrefix, access),
+    "canvas connect",
+  );
+  const targetNode = canvasLevelNode(
+    access,
+    db.getNode(targetIdPrefix) ?? resolveNodePrefix(db, targetIdPrefix, access),
+    "canvas connect",
+  );
   if (!sourceNode || !targetNode) {
     ctx.send(eid, "One of those nodes doesn't exist. `canvas nodes <name>` lists node ids.");
     return;
@@ -284,6 +373,7 @@ function handleDisconnect(
   db: MarinaDB,
   logEvent: ((event: { type: string; entity: EntityId; [k: string]: unknown }) => void) | undefined,
   tokens: string[],
+  access: Access,
 ): void {
   const edgeIdPrefix = tokens[0];
   if (!edgeIdPrefix) {
@@ -295,6 +385,7 @@ function handleDisconnect(
     // Try prefix resolution — list edges across recent canvases and match
     const canvases = db.listCanvases({ limit: 20 });
     for (const canvas of canvases) {
+      if (!mayReadCanvas(canvas, access.reader)) continue;
       for (const e of db.getCanvasEdges(canvas.id)) {
         if (e.id.startsWith(edgeIdPrefix)) {
           edge = e;
@@ -304,12 +395,13 @@ function handleDisconnect(
       if (edge) break;
     }
   }
-  if (!edge) {
+  // An edge on a private canvas the caller cannot read is "not found".
+  const edgeCanvas = edge ? db.getCanvas(edge.canvas_id) : undefined;
+  if (!edge || (edgeCanvas && !readableCanvas(access, edgeCanvas, "canvas disconnect"))) {
     ctx.send(eid, `Edge "${edgeIdPrefix}" not found.`);
     return;
   }
   // The edge's author or the canvas owner (or an admin) may remove it.
-  const edgeCanvas = db.getCanvas(edge.canvas_id);
   const canvasSubject = edgeCanvas ? canvasOwners(db, edgeCanvas) : undefined;
   const refusal = ownershipRefusal(
     entity,
@@ -339,11 +431,12 @@ function handleDisconnect(
   ctx.send(eid, `Disconnected edge ${edge.id.slice(0, 8)}.`);
 }
 
-function resolveNodePrefix(db: MarinaDB, prefix: string) {
-  // Scan recent canvases for a node whose id starts with prefix.
+function resolveNodePrefix(db: MarinaDB, prefix: string, access: Access) {
+  // Scan recent canvases the caller may read for a node whose id starts with prefix.
   if (prefix.length < 4) return undefined;
   const canvases = db.listCanvases({ limit: 20 });
   for (const canvas of canvases) {
+    if (!mayReadCanvas(canvas, access.reader)) continue;
     for (const node of db.getNodesByCanvas(canvas.id)) {
       if (node.id.startsWith(prefix)) return node;
     }
@@ -376,8 +469,9 @@ function handleCreate(
   ctx.send(eid, `Canvas "${name}" created (${id.slice(0, 8)}..)`);
 }
 
-function handleList(ctx: RoomContext, eid: EntityId, db: MarinaDB): void {
-  const canvases = db.listCanvases({ limit: 20 });
+function handleList(ctx: RoomContext, eid: EntityId, db: MarinaDB, access: Access): void {
+  // Private canvases the caller cannot read are left out, not marked.
+  const canvases = db.listCanvases({ limit: 20 }).filter((c) => mayReadCanvas(c, access.reader));
   if (canvases.length === 0) {
     ctx.send(eid, "No canvases found. Use 'canvas create <name>' to make one.");
     return;
@@ -394,13 +488,19 @@ function handleList(ctx: RoomContext, eid: EntityId, db: MarinaDB): void {
   ctx.send(eid, lines.join("\n"));
 }
 
-function handleInfo(ctx: RoomContext, eid: EntityId, db: MarinaDB, tokens: string[]): void {
+function handleInfo(
+  ctx: RoomContext,
+  eid: EntityId,
+  db: MarinaDB,
+  tokens: string[],
+  access: Access,
+): void {
   const name = tokens[0];
   if (!name) {
     ctx.send(eid, "Usage: canvas info <name>");
     return;
   }
-  const canvas = db.getCanvasByName(name);
+  const canvas = readableCanvas(access, db.getCanvasByName(name), "canvas info");
   if (!canvas) {
     ctx.send(eid, `Canvas "${name}" not found.`);
     return;
@@ -450,6 +550,7 @@ async function handlePublish(
   storage: StorageProvider | undefined,
   logEvent: ((event: { type: string; entity: EntityId; [k: string]: unknown }) => void) | undefined,
   tokens: string[],
+  access: Access,
 ): Promise<void> {
   const type = tokens[0]?.toLowerCase();
   const assetId = tokens[1];
@@ -477,8 +578,20 @@ async function handlePublish(
   }
 
   // Verify asset exists
-  const asset =
-    db.getAsset(assetId) ?? db.listAssets({ limit: 200 }).find((a) => a.id.startsWith(assetId));
+  // Publishing shows the asset: a private one (shown only on private canvases,
+  // or a request image) needs the caller's read access, else "not found".
+  const exact = db.getAsset(assetId);
+  const asset = exact
+    ? mayReadAsset(access.host, exact, access.reader, "canvas publish")
+      ? exact
+      : undefined
+    : db
+        .listAssets({ limit: 200 })
+        .find(
+          (a) =>
+            a.id.startsWith(assetId) &&
+            mayReadAsset(access.host, a, access.reader, "canvas publish", { log: false }),
+        );
   if (!asset) {
     ctx.send(eid, `Asset "${assetId}" not found.`);
     return;
@@ -507,9 +620,15 @@ async function handlePublish(
   }
 
   // Find or use default canvas — prefer "global"
+  const named = canvasName ? db.getCanvasByName(canvasName) : undefined;
+  if (named && !readableCanvas(access, named, "canvas publish", "write")) {
+    ctx.send(eid, `Canvas "${canvasName}" not found.`);
+    return;
+  }
   let canvas = canvasName
-    ? db.getCanvasByName(canvasName)
-    : (db.getCanvasByName("global") ?? db.listCanvases({ limit: 1 })[0]);
+    ? named
+    : (db.getCanvasByName("global") ??
+      db.listCanvases({ limit: 20 }).find((c) => mayReadCanvas(c, access.reader, "write")));
   if (!canvas) {
     // Auto-create the global canvas
     const id = crypto.randomUUID();
@@ -599,6 +718,7 @@ function handlePost(
   db: MarinaDB,
   logEvent: ((event: { type: string; entity: EntityId; [k: string]: unknown }) => void) | undefined,
   tokens: string[],
+  access: Access,
 ): void {
   let canvasName: string | undefined;
   let parentNodeId: string | undefined;
@@ -616,9 +736,19 @@ function handlePost(
   }
 
   // Resolve an explicit id or name before falling back to the global canvas.
-  let canvas = canvasName
+  const named = canvasName
     ? (db.getCanvas(canvasName) ?? db.getCanvasByName(canvasName))
-    : (db.getCanvasByName("global") ?? db.listCanvases({ limit: 1 })[0]);
+    : undefined;
+  // A private canvas the caller cannot read is "not found" (and never
+  // shadowed by a new canvas of the same name).
+  if (named && !readableCanvas(access, named, "canvas post", "write")) {
+    ctx.send(eid, `Canvas "${canvasName}" not found.`);
+    return;
+  }
+  let canvas = canvasName
+    ? named
+    : (db.getCanvasByName("global") ??
+      db.listCanvases({ limit: 20 }).find((c) => mayReadCanvas(c, access.reader, "write")));
   if (!canvas) {
     const id = crypto.randomUUID();
     db.createCanvas({
@@ -664,13 +794,19 @@ function handlePost(
   ctx.send(eid, `Posted to canvas "${canvas.name}" (node ${nodeId.slice(0, 8)}..).`);
 }
 
-function handleNodes(ctx: RoomContext, eid: EntityId, db: MarinaDB, tokens: string[]): void {
+function handleNodes(
+  ctx: RoomContext,
+  eid: EntityId,
+  db: MarinaDB,
+  tokens: string[],
+  access: Access,
+): void {
   const name = tokens[0];
   if (!name) {
     ctx.send(eid, "Usage: canvas nodes <name>");
     return;
   }
-  const canvas = db.getCanvasByName(name);
+  const canvas = readableCanvas(access, db.getCanvasByName(name), "canvas nodes");
   if (!canvas) {
     ctx.send(eid, `Canvas "${name}" not found.`);
     return;
@@ -699,13 +835,14 @@ function handleDelete(
   db: MarinaDB,
   logEvent: ((event: { type: string; entity: EntityId; [k: string]: unknown }) => void) | undefined,
   tokens: string[],
+  access: Access,
 ): void {
   const name = tokens[0];
   if (!name) {
     ctx.send(eid, "Usage: canvas delete <name>");
     return;
   }
-  const canvas = db.getCanvasByName(name);
+  const canvas = readableCanvas(access, db.getCanvasByName(name), "canvas delete");
   if (!canvas) {
     ctx.send(eid, `Canvas "${name}" not found.`);
     return;
@@ -747,6 +884,7 @@ function handleVisit(
   db: MarinaDB,
   findEntityGlobal: ((name: string) => Entity | undefined) | undefined,
   tokens: string[],
+  access: Access,
 ): void {
   const targetRaw = tokens[0] ?? "self";
   const target = targetRaw.toLowerCase();
@@ -768,6 +906,12 @@ function handleVisit(
   if (findEntityGlobal) {
     const targetEntity = findEntityGlobal(targetRaw);
     if (targetEntity) {
+      // Another entity's canvas is private: only its owner or an operator
+      // visits it, and a visit by anyone else never creates it (as over HTTP).
+      if (!mayReadCanvas({ scope: "entity", scope_id: targetEntity.id }, access.reader)) {
+        ctx.send(eid, `${targetEntity.name}'s canvas is private.`);
+        return;
+      }
       const canvas = db.ensureEntityCanvas(targetEntity.id, targetEntity.name, actingEntity.name);
       ctx.send(
         eid,
@@ -780,7 +924,7 @@ function handleVisit(
   }
 
   // Fall-through: plain canvas name (global, feed, project-named, etc.)
-  const named = db.getCanvasByName(targetRaw);
+  const named = readableCanvas(access, db.getCanvasByName(targetRaw), "canvas visit");
   if (named) {
     ctx.send(
       eid,
@@ -797,13 +941,19 @@ function handleVisit(
   );
 }
 
-function handleEdges(ctx: RoomContext, eid: EntityId, db: MarinaDB, tokens: string[]): void {
+function handleEdges(
+  ctx: RoomContext,
+  eid: EntityId,
+  db: MarinaDB,
+  tokens: string[],
+  access: Access,
+): void {
   const name = tokens[0];
   if (!name) {
     ctx.send(eid, "Usage: canvas edges <name>");
     return;
   }
-  const canvas = db.getCanvasByName(name);
+  const canvas = readableCanvas(access, db.getCanvasByName(name), "canvas edges");
   if (!canvas) {
     ctx.send(eid, `Canvas "${name}" not found.`);
     return;
@@ -840,8 +990,12 @@ async function handleIntent(
   storage: StorageProvider | undefined,
   logEvent: ((event: { type: string; entity: EntityId; [k: string]: unknown }) => void) | undefined,
   tokens: string[],
+  access: Access,
 ): Promise<void> {
   const action = tokens[0]?.toLowerCase();
+  // Intents on a private canvas the caller cannot read are "not found".
+  const intentNode = (idOrPrefix: string) =>
+    canvasLevelNode(access, resolveNode(db, idOrPrefix), `canvas intent ${action}`);
 
   if (!action) {
     ctx.send(
@@ -854,12 +1008,14 @@ async function handleIntent(
   switch (action) {
     case "list": {
       const canvasName = tokens[1];
-      const results = db.listCanvasIntents({
-        canvasName,
-        statuses: ["pending", "active"],
-        limit: 100,
-        expireActiveMs: INTENT_TIMEOUT_MS,
-      });
+      const results = db
+        .listCanvasIntents({
+          canvasName,
+          statuses: ["pending", "active"],
+          limit: 100,
+          expireActiveMs: INTENT_TIMEOUT_MS,
+        })
+        .filter((r) => mayReadCanvas(db.getCanvas(r.canvasId), access.reader));
 
       if (results.length === 0) {
         ctx.send(eid, "No pending or active intents found.");
@@ -887,7 +1043,12 @@ async function handleIntent(
         return;
       }
 
-      const claim = db.claimCanvasIntent(nodeId, entity.name);
+      const target = intentNode(nodeId);
+      if (!target) {
+        ctx.send(eid, `Node "${nodeId}" not found.`);
+        return;
+      }
+      const claim = db.claimCanvasIntent(target.id, entity.name);
       if (!claim.ok) {
         if (claim.reason === "not_found") {
           ctx.send(eid, `Node "${nodeId}" not found.`);
@@ -930,7 +1091,7 @@ async function handleIntent(
         return;
       }
 
-      const node = resolveNode(db, nodeId);
+      const node = intentNode(nodeId);
       if (!node) {
         ctx.send(eid, `Node "${nodeId}" not found.`);
         return;
@@ -987,7 +1148,7 @@ async function handleIntent(
         return;
       }
 
-      const node = resolveNode(db, nodeId);
+      const node = intentNode(nodeId);
       if (!node) {
         ctx.send(eid, `Node "${nodeId}" not found.`);
         return;
@@ -1071,7 +1232,7 @@ async function handleIntent(
         return;
       }
 
-      const node = resolveNode(db, nodeId);
+      const node = intentNode(nodeId);
       if (!node) {
         ctx.send(eid, `Node "${nodeId}" not found.`);
         return;
@@ -1257,6 +1418,7 @@ function handleLayout(
   entity: Entity,
   db: MarinaDB,
   tokens: string[],
+  access: Access,
   logEvent?: (event: { type: string; entity: EntityId; [key: string]: unknown }) => void,
 ): void {
   const algo = tokens[0]?.toLowerCase();
@@ -1265,7 +1427,7 @@ function handleLayout(
     ctx.send(eid, "Usage: canvas layout <grid|timeline|feed> <canvas_name>");
     return;
   }
-  const canvas = db.getCanvasByName(name);
+  const canvas = readableCanvas(access, db.getCanvasByName(name), "canvas layout");
   if (!canvas) {
     ctx.send(eid, `Canvas "${name}" not found.`);
     return;
@@ -1395,8 +1557,13 @@ async function handleAsset(
   db: MarinaDB,
   storage: StorageProvider | undefined,
   tokens: string[],
-  scratchRoot?: string,
+  scratchRoot: string | undefined,
+  access: Access,
 ): Promise<void> {
+  // Private assets (shown only on private canvases, or request images) follow
+  // the shared read check: hidden from listings, "not found" by id.
+  const canRead = (a: { id: string; metadata: string }, via: string, log = true) =>
+    mayReadAsset(access.host, a, access.reader, via, { log });
   const action = tokens[0]?.toLowerCase();
 
   if (!action) {
@@ -1538,7 +1705,9 @@ async function handleAsset(
 
     case "list": {
       const mine = tokens[1]?.toLowerCase() === "mine";
-      const assets = mine ? db.getAssetsByEntity(entity.name, 20) : db.listAssets({ limit: 20 });
+      const assets = (
+        mine ? db.getAssetsByEntity(entity.name, 20) : db.listAssets({ limit: 20 })
+      ).filter((a) => canRead(a, "canvas asset list", false));
       if (assets.length === 0) {
         ctx.send(eid, "No assets found.");
         return;
@@ -1562,8 +1731,14 @@ async function handleAsset(
         ctx.send(eid, "Usage: canvas asset info <id>");
         return;
       }
-      const asset =
-        db.getAsset(id) ?? db.listAssets({ limit: 100 }).find((a) => a.id.startsWith(id));
+      const exact = db.getAsset(id);
+      const asset = exact
+        ? canRead(exact, "canvas asset info")
+          ? exact
+          : undefined
+        : db
+            .listAssets({ limit: 100 })
+            .find((a) => a.id.startsWith(id) && canRead(a, "canvas asset info", false));
       if (!asset) {
         ctx.send(eid, `Asset "${id}" not found.`);
         return;
@@ -1593,13 +1768,14 @@ async function handleAsset(
       }
       // Deletion takes the exact id: a prefix could name a different asset
       // than the one listed. Offer the full ids a prefix matches instead.
-      const asset = db.getAsset(id);
+      const exact = db.getAsset(id);
+      const asset = exact && canRead(exact, "canvas asset delete") ? exact : undefined;
       if (!asset) {
         const matches =
-          id.length >= 4
+          !exact && id.length >= 4
             ? db
                 .listAssets({ limit: 100 })
-                .filter((a) => a.id.startsWith(id))
+                .filter((a) => a.id.startsWith(id) && canRead(a, "canvas asset delete", false))
                 .slice(0, 5)
             : [];
         ctx.send(

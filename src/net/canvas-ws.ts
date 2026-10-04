@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ServerWebSocket } from "bun";
+import { mayReadCanvas } from "../engine/canvas-access";
 
 /** Any WebSocket that has at least a canvasId field. */
 type CanvasCompatibleWS = ServerWebSocket<{ canvasId?: string; [key: string]: unknown }>;
@@ -48,11 +49,9 @@ export function authorizeCanvasSubscription(
   canvasId: string,
   principal: CanvasSubscriptionPrincipal | undefined,
 ): boolean {
-  const canvas = db.getCanvas(canvasId);
-  if (!canvas) return true; // nonexistent canvas emits no events — nothing to leak
-  if (canvas.scope !== "entity") return true; // public / shared surface
-  if (principal?.isOperator) return true; // operator / admin
-  return !!principal?.entityId && principal.entityId === canvas.scope_id; // owner only
+  // The shared rule (src/engine/canvas-access.ts): a nonexistent canvas emits
+  // nothing; public/shared canvases are open; private ones are owner/operator.
+  return mayReadCanvas(db.getCanvas(canvasId), principal);
 }
 
 export type CanvasEvent =

@@ -15,6 +15,8 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BudgetExhausted, isSpendCapRefusal } from "../spend-guard";
+import { draftAnswerKey } from "../../src/agent/budget-terminal";
+import { answerDigest } from "../../src/engine/benchmark-ledger";
 import { mulberry32 } from "../stats";
 import type { BenchmarkResult, ResultItem } from "../types";
 import {
@@ -594,6 +596,12 @@ export function submissionSummary(
   };
 }
 
+/** The digest of a response's labelled final answer (`Exact Answer:`), for the ledger. */
+function digestOf(response: string): { answerDigest?: string } {
+  const digest = response ? answerDigest(draftAnswerKey(response)) : undefined;
+  return digest ? { answerDigest: digest } : {};
+}
+
 /** The ledger-shaped result: ids, outcomes, cost, judge verdicts — no query or answer text. */
 export function toBenchmarkResult(
   arm: ArmRun,
@@ -630,6 +638,15 @@ export function toBenchmarkResult(
         }
       : {}),
     ...(i.run.traceIds[0] ? { traceId: i.run.traceIds[0] } : {}),
+    // Budget-terminal answering: forced at the turn cap (reported whenever the
+    // mode was on, so "not forced" is a label too, never a missing value).
+    ...(i.run.budgetForced
+      ? { budgetForced: true }
+      : i.run.record.metadata.final_answer
+        ? { budgetForced: false }
+        : {}),
+    // A digest of the labelled final answer — never its text.
+    ...digestOf(finalResponse(i.run.record)),
   }));
   const n = items.length;
   const correct = items.filter((i) => i.correct).length;

@@ -6,6 +6,8 @@
 // arithmetic fast path, agents / open / panel routing, streaming and the
 // 503 → upstream fallback.
 
+import { BUDGET_FORCED_HEADER, DEADLINE_HEADER } from "../../agent/budget-terminal";
+import { parseDeadlineHeader } from "../../coordination/request-deadline";
 import type { Engine } from "../../engine/engine";
 import { stageRequestImages } from "../../engine/media/vision";
 import { getEndpointConfig } from "../model-endpoint";
@@ -29,6 +31,7 @@ import {
   type RouteOptions,
   type RouteResult,
   rejectUnsupportedForAgents,
+  requestImageGrant,
   routeOpen,
   routePanel,
   routeToChannel,
@@ -247,6 +250,7 @@ export async function runOpenaiChat(
         engine,
         userMsg.content,
         requestImagePrincipal(engine, req, authResult),
+        requestImageGrant(engine, model),
       );
       userText = [userText, ...staged].filter(Boolean).join("\n");
     }
@@ -256,6 +260,8 @@ export async function runOpenaiChat(
       conversationId,
       strategy: req.headers.has("X-Load-Balance") ? extractStrategy(req) : ec.strategy,
     };
+    const clientDeadline = parseDeadlineHeader(req.headers.get(DEADLINE_HEADER));
+    if (clientDeadline) opts.deadlineMs = clientDeadline;
     const wantStream = body.stream === true;
 
     // A deliberately tiny verified fast path keeps the demo reactive without
@@ -340,6 +346,7 @@ export async function runOpenaiChat(
       const extra: Record<string, string> = { "x-request-id": result.requestId };
       if (result.conversationId) extra["X-Conversation-Id"] = result.conversationId;
       if (result.repaired) extra["x-marina-repair"] = result.repaired;
+      if (result.budgetForced) extra[BUDGET_FORCED_HEADER] = result.budgetForced.reason;
       return json(
         openaiCompletion(model, result.content, usageFromTrace(engine, result.requestId)),
         200,
