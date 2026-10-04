@@ -68,7 +68,15 @@ bun run metaculus select --backtest-tournament <resolved tournament> --budget 15
   release; one released too recently is reported as not yet backtestable. A crew cannot be
   isolated and is never backtested.
 - Every run goes into the benchmark ledger. Candidates are ranked by pooled score, with a paired
-  two-stage bootstrap against the leader.
+  two-stage bootstrap against the leader. Questions without a usable answer are flagged as
+  fallbacks, so a run with too many is recorded invalid.
+- Candidates run in the order given (the cheapest first by default). Before starting each question
+  the selection checks that the questions in flight can still finish under `--budget` and the
+  daily spend cap. When they cannot, it stops and discards the partial run: it is never scored
+  or filed. A further replicate whose measured cost would overrun the budget is not started.
+- A leak audit counts what each candidate's forecasts saw. It counts evidence lines dated after
+  the cutoff or undated, lessons resolved after it, and lookups that read live or later values.
+  It prints the counts with the ranking and saves them in the selection file; no text is kept.
 - The pick is saved to `data/metaculus/selection.json` and used by later passes. Every comment
   discloses the configuration and how it was chosen.
 
