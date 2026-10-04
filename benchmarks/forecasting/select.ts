@@ -34,7 +34,7 @@
 import { randomUUID } from "node:crypto";
 import type { IsolationLevel } from "../../src/arena/research/isolation";
 import { ledgerFromHarnessResult } from "../../src/engine/benchmark-ledger";
-import { dailyCapRefusal, dailySpend } from "../../src/engine/spend-ledger";
+import { dailyBudget, dailyCapRefusal } from "../../src/engine/spend-ledger";
 import type { TypedForecastAnswer, TypedForecastRequest } from "../../src/forecast/typed";
 import type { MarinaStores } from "../../src/persistence/interfaces";
 import { defaultReplicateGroup } from "../replicates";
@@ -238,9 +238,9 @@ export async function selectConfiguration(opts: SelectOptions): Promise<Selectio
         if (spent + runCost + reserve >= opts.budgetUsd) {
           return `selection budget $${opts.budgetUsd}: $${(spent + runCost).toFixed(2)} spent + $${reserve.toFixed(2)} reserve`;
         }
-        const s = dailySpend(env);
-        if (s.capUsd !== undefined && s.spentUsd + reserve >= s.capUsd) {
-          return `daily spend cap $${s.capUsd}: $${s.spentUsd.toFixed(2)} spent + $${reserve.toFixed(2)} reserve`;
+        const s = dailyBudget(env);
+        if (s !== undefined && s.spentUsd + reserve >= s.capUsd) {
+          return `${s.label} spend cap $${s.capUsd}: $${s.spentUsd.toFixed(2)} spent + $${reserve.toFixed(2)} reserve`;
         }
         return undefined;
       };

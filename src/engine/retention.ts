@@ -240,6 +240,12 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     note: "per-world daily upstream spend by source, behind MARINA_DAILY_SPEND_CAP_USD",
   },
   {
+    table: "spend_scope_daily",
+    timeColumn: "updated_at",
+    kind: "ledger",
+    note: "daily upstream spend per MARINA_SPEND_SCOPE budget, behind MARINA_SPEND_SCOPE_CAP_USD",
+  },
+  {
     table: "autonomy_pulse",
     timeColumn: "at",
     kind: "telemetry",

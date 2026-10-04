@@ -68,6 +68,16 @@ export type OpsSpend = {
     /** `MARINA_MAX_COST_USD_PER_HOUR`; null = unlimited. */
     globalUsd: number | null;
   };
+  /**
+   * The world's UTC-day spend ledger (every process on this database), with
+   * per-`MARINA_SPEND_SCOPE` totals. Privileged observers only; absent otherwise.
+   */
+  daily?: {
+    spentUsd: number;
+    /** `MARINA_DAILY_SPEND_CAP_USD`; null = uncapped. */
+    capUsd: number | null;
+    scopes: { scope: string; spentUsd: number }[];
+  };
 };
 
 export type OpsRetentionPolicy = {

@@ -153,10 +153,13 @@ or restore a run by hand with `benchmark invalidate|revalidate <run> reason:<tex
 `--first-replicate N` numbers new replicates from N, so a later run adds replicates without reusing
 an earlier run's name or lesson space.
 
-**Spend cap.** A run stops starting new rows when its spend plus a reserve (1.5 × concurrency ×
-the average row cost, at least $2) would reach the process's daily cap
-(`MARINA_DAILY_SPEND_CAP_USD`). A run stopped this way is not filed. Rows that fall back because
-the cap or a provider refused them write no lessons.
+**Spend cap.** Every `futurex` command that calls a model records its spend in the world
+database's daily ledger (`DB_PATH`), shared with the server and every other run on that database,
+so an hourly timer does not get a fresh cap each run. Give each job its own budget inside the world
+cap with `MARINA_SPEND_SCOPE=<name>` and `MARINA_SPEND_SCOPE_CAP_USD=<usd>`; a run is refused at
+either cap. A run stops starting new rows when its spend plus a reserve (1.5 × concurrency × the
+average row cost, at least $2) would reach the tighter of the two caps. A run stopped this way is
+not filed. Rows that fall back because the cap or a provider refused them write no lessons.
 
 ## Backtests without `--clean` are smoke tests
 

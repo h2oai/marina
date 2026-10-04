@@ -17,7 +17,7 @@
  * benchmark-specific logic lives here.
  */
 
-import { attachSpendLedger } from "../../src/engine/spend-ledger";
+import { attachDbSpendLedger } from "../../src/engine/spend-ledger";
 import type { ForecastLesson, LessonStore } from "../../src/forecast/lessons";
 import type { TypedForecastAnswer } from "../../src/forecast/typed";
 import type { LessonSink } from "../../src/learning/outcomes";
@@ -69,10 +69,7 @@ export function learnedLessons(
  * Returns the detach function; call it before closing the database.
  */
 export function attachWorldSpend(db: MarinaDB): () => void {
-  return attachSpendLedger({
-    add: (day, source, usd) => db.addDailySpend(day, source, usd),
-    totalFor: (day) => db.getDailySpend(day).reduce((s, r) => s + r.cost_usd, 0),
-  });
+  return attachDbSpendLedger(db);
 }
 
 /** Run `fn` over `items` with at most `concurrency` in flight; results in input order. */

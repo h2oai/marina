@@ -18,7 +18,7 @@ import {
   strictDateFilter,
 } from "../../src/arena/research/isolation";
 import type { Retriever } from "../../src/arena/research/retrieve";
-import { dailySpend } from "../../src/engine/spend-ledger";
+import { dailyBudget } from "../../src/engine/spend-ledger";
 import { type LessonStore, type LessonWriter, lessonFromOutcome } from "../../src/forecast/lessons";
 import { typedForecastDeps } from "../../src/forecast/service";
 import {
@@ -265,13 +265,14 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
           horizonDays: opts.horizonDays,
           concurrency: opts.concurrency,
           shouldStop: () => {
-            const s = dailySpend();
-            if (s.capUsd === undefined) return undefined;
+            // The tighter of the world's cap and this process's MARINA_SPEND_SCOPE cap.
+            const s = dailyBudget();
+            if (s === undefined) return undefined;
             // Stop while every row in flight can still finish under the cap.
             const mean = rowsCosted ? costSum / rowsCosted : 0;
             const reserve = Math.max(2, 1.5 * opts.concurrency * mean);
             return s.spentUsd + reserve >= s.capUsd
-              ? `spend $${s.spentUsd.toFixed(2)} + reserve $${reserve.toFixed(2)} would reach the daily cap $${s.capUsd}`
+              ? `spend $${s.spentUsd.toFixed(2)} + reserve $${reserve.toFixed(2)} would reach the ${s.label} cap $${s.capUsd}`
               : undefined;
           },
           onRow: (r, done, total) =>

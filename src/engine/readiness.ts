@@ -21,7 +21,7 @@ import { describeDefaultUpstream } from "../net/model-api/upstream";
 import { autoRespawnEnabled } from "./auto-respawn";
 import { type AutonomyPosture, getAutonomyPosture } from "./autonomy";
 import type { Engine } from "./engine";
-import { dailySpend, formatSpendUsd } from "./spend-ledger";
+import { dailySpend, formatSpendUsd, scopeSpendToday } from "./spend-ledger";
 import { getTrustProfile, isLocalUngated, isOpenApiMode, type TrustProfile } from "./trust-profile";
 
 /**
@@ -355,6 +355,44 @@ export function computeReadiness(engine: Engine): ReadinessReport {
       label: "Daily spend",
       status: "ok",
       detail: `${formatSpendUsd(spend.spentUsd)} today (UTC) — uncapped (MARINA_DAILY_SPEND_CAP_USD=${env.MARINA_DAILY_SPEND_CAP_USD?.trim() ?? "0"})`,
+    });
+  }
+
+  // ── Budget scopes — command-line jobs sharing this world's spend ledger ────
+  let scopes: { scope: string; spentUsd: number }[] = [];
+  try {
+    scopes = engine.db ? scopeSpendToday(engine.db) : [];
+  } catch {
+    // allow-empty-catch: a database without migration 156 has no scopes to report
+  }
+  if (spend.invalidScope !== undefined || spend.scope || scopes.length) {
+    const own = spend.scope;
+    const ownReached = own?.reached || spend.invalidScope !== undefined;
+    checks.push({
+      id: "spend-scopes",
+      label: "Spend scopes",
+      status: ownReached ? "off" : "ok",
+      detail: [
+        ...(spend.invalidScope !== undefined
+          ? [
+              `MARINA_SPEND_SCOPE=${JSON.stringify(spend.invalidScope)} is invalid — all spend refused`,
+            ]
+          : []),
+        ...(own
+          ? [
+              `this process: ${own.name} ${formatSpendUsd(own.spentUsd)}${own.capUsd !== undefined ? ` of ${formatSpendUsd(own.capUsd)}` : " (uncapped)"}`,
+            ]
+          : []),
+        ...(scopes.length
+          ? [`today: ${scopes.map((s) => `${s.scope} ${formatSpendUsd(s.spentUsd)}`).join(", ")}`]
+          : []),
+      ].join("; "),
+      ...(ownReached
+        ? {
+            remediation:
+              "Wait for 00:00 UTC, raise MARINA_SPEND_SCOPE_CAP_USD=<usd> (0 = no scope cap), or fix MARINA_SPEND_SCOPE.",
+          }
+        : {}),
     });
   }
 

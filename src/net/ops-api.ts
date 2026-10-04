@@ -38,6 +38,7 @@ import type { Engine } from "../engine/engine";
 import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import { describeRetentionPolicies, getLastRetentionReport } from "../engine/retention";
+import { dailySpend, scopeSpendToday } from "../engine/spend-ledger";
 import {
   aggregatePromptSections,
   type PromptTurnSample,
@@ -202,7 +203,18 @@ export function listAgentRows(engine: Engine, scope: OpsObserverScope): AgentOpe
   return rows;
 }
 
-function spendOf(engine: Engine, rows: AgentOperatorRow[]): OpsSpend {
+function dailyOf(engine: Engine): NonNullable<OpsSpend["daily"]> {
+  const today = dailySpend();
+  let scopes: { scope: string; spentUsd: number }[] = [];
+  try {
+    scopes = engine.db ? scopeSpendToday(engine.db) : [];
+  } catch (err) {
+    logger.warn("ops", "spend scopes unavailable", { error: getErrorMessage(err) });
+  }
+  return { spentUsd: today.spentUsd, capUsd: today.capUsd ?? null, scopes };
+}
+
+function spendOf(engine: Engine, rows: AgentOperatorRow[], privileged: boolean): OpsSpend {
   const limits = engine.agentRuntime.getSpendLimits();
   let lastHourUsd = 0;
   let totalUsd = 0;
@@ -217,6 +229,7 @@ function spendOf(engine: Engine, rows: AgentOperatorRow[]): OpsSpend {
       perAgentUsd: limits.perAgentUsdPerHour ?? null,
       globalUsd: limits.globalUsdPerHour ?? null,
     },
+    ...(privileged ? { daily: dailyOf(engine) } : {}),
   };
 }
 
@@ -557,7 +570,7 @@ export function buildOpsOverview(engine: Engine, scope: OpsObserverScope): OpsOv
     generatedAt: Date.now(),
     scope: scope.privileged ? "privileged" : "resident",
     agents,
-    spend: spendOf(engine, agents),
+    spend: spendOf(engine, agents, scope.privileged),
     retention: retentionOf(),
     prompt: {
       ...promptBudget(),

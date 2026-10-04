@@ -63,7 +63,7 @@ import {
 import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import { takeSettledProxyCall } from "../engine/proxy-settlement";
-import { dailyCapRefusal, dailySpend, formatSpendUsd, recordSpend } from "../engine/spend-ledger";
+import { dailyBudget, dailyCapRefusal, formatSpendUsd, recordSpend } from "../engine/spend-ledger";
 import { isLocalProfile } from "../engine/trust-profile";
 import {
   renderUnifiedContext,
@@ -5066,9 +5066,11 @@ The goal is a smaller, sharper memory — not more notes.`;
     if (breach) return breach;
     const pending = extractTurnUsage(turnMessage).costUsd || this.pendingProviderCostUsd || 0;
     if (pending <= 0) return null;
-    const today = dailySpend();
-    if (today.capUsd === undefined || today.spentUsd + pending < today.capUsd) return null;
-    return `daily spend cap reached (${formatSpendUsd(today.spentUsd + pending)} today including this turn ≥ ${formatSpendUsd(today.capUsd)}); resumes at 00:00 UTC`;
+    const today = dailyBudget();
+    if (today === undefined || today.spentUsd + pending < today.capUsd) return null;
+    const which =
+      today.label === "daily" ? "daily spend cap" : `daily spend cap for ${today.label}`;
+    return `${which} reached (${formatSpendUsd(today.spentUsd + pending)} today including this turn ≥ ${formatSpendUsd(today.capUsd)}); resumes at 00:00 UTC`;
   }
 
   /** Per-agent then runtime-wide rolling-hour cap check; the breach text or null. */

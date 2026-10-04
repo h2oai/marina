@@ -15,7 +15,7 @@ import {
   healthCounts,
   healthTone,
 } from "../components/ops/HealthBadge";
-import { SpendChip, spendChipVisible } from "../components/ops/SpendChip";
+import { dailySpendSummary, SpendChip, spendChipVisible } from "../components/ops/SpendChip";
 import type { OpsOverview } from "../lib/ops-types";
 import type { ReadinessReport } from "../lib/types";
 import { renderWithProviders, resetWorldState } from "./test-utils";
@@ -213,6 +213,21 @@ describe("HealthBadge", () => {
 });
 
 describe("SpendChip", () => {
+  it("summarizes the world's daily ledger and its budget scopes when the overview carries them", () => {
+    expect(dailySpendSummary(undefined)).toBeUndefined();
+    expect(
+      dailySpendSummary({
+        spentUsd: 3.2,
+        capUsd: 50,
+        scopes: [
+          { scope: "futurex-live", spentUsd: 2.1 },
+          { scope: "backtest", spentUsd: 0.4 },
+        ],
+      }),
+    ).toBe("Today $3.20 of $50.00 (futurex-live $2.10, backtest $0.4000)");
+    expect(dailySpendSummary({ spentUsd: 1, capUsd: null, scopes: [] })).toBe("Today $1.00");
+  });
+
   it("is hidden with no spend and no caps, visible with a cap, red at ≥ 80 % of a cap", async () => {
     expect(spendChipVisible(ops({ lastHourUsd: 0 }))).toBe(false);
     expect(
