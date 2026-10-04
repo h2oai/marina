@@ -4,6 +4,7 @@
 import { expect, it } from "bun:test";
 import { PassThrough } from "node:stream";
 import { StdinBuffer, type Terminal } from "@earendil-works/pi-tui";
+import { renderLayoutFrame } from "@earendil-works/pi-tui/dist/layout.js";
 import {
   inputGuidance,
   terminalCompletion,
@@ -11,6 +12,7 @@ import {
 } from "../scripts/code-completion";
 import type { PanelInput, TerminalPanelState } from "../scripts/code-panel-form";
 import { CodeTerminal, terminalText } from "../scripts/code-terminal";
+import { WorkspacePanes } from "../scripts/code-workspace-panes";
 import { parseDispatch } from "../scripts/marina";
 import { until } from "./helpers";
 
@@ -304,4 +306,128 @@ it("renders untrusted output as text and keeps shared failures visible during a 
   await until(() => f.screen.text().includes("Connection unavailable; delivery unconfirmed"));
   f.terminal.close();
   expect(await request).toBe("");
+});
+
+it("tiles live coding and world output, keeps routing explicit and restores focus layout on resize", async () => {
+  using f = workspace();
+  f.screen.columns = 120;
+  f.screen.rows = 36;
+  f.screen.resize();
+  f.terminal.write("candidate verification running", "coding");
+  f.terminal.write("Peer: independent task still running", "world");
+  f.screen.send("repair 界 draft");
+  const request = f.terminal.ask("Approve only command 17?");
+  await until(() => f.screen.text().includes("independent task"));
+  expect(f.screen.text()).toContain("candidate verification running");
+  expect(f.lines).toEqual([]);
+  f.screen.send("\x1b[17~tell Peer received\r");
+  expect(f.lines).toEqual(["/world tell Peer received"]);
+  f.screen.send("world draft");
+  f.screen.send("\x1bOQ"); // F2 changes layout without submitting or replacing a draft.
+  f.screen.columns = 35;
+  f.screen.rows = 14;
+  f.screen.resize();
+  f.screen.send("\x1b[18~no\r");
+  expect(await request).toBe("no");
+  f.screen.send(" continued\r");
+  expect(f.lines.at(-1)).toBe("/world world draft continued");
+  f.screen.columns = 160;
+  f.screen.rows = 48;
+  f.screen.resize();
+  f.screen.send("\x1b[17~\r");
+  expect(f.lines.at(-1)).toBe("repair 界 draft");
+  expect(f.lines).toHaveLength(3);
+});
+
+it("keeps independent scroll positions and renders two panes only when there is usable space", () => {
+  const panes = new WorkspacePanes();
+  const state = {
+    focus: "coding" as const,
+    target: "session",
+    status: "working",
+    answer: false,
+    multiline: false,
+    conversations: {
+      coding: Array.from({ length: 60 }, (_, n) => `code-${n}`).join("\n"),
+      world: Array.from({ length: 60 }, (_, n) => `world-${n}`).join("\n"),
+    },
+  };
+  panes.update(state);
+  const frame = (width: number, height: number) =>
+    renderLayoutFrame(panes.component, width, height, () => {});
+  let rendered = frame(120, 18);
+  expect(rendered.lines.some((line) => line.includes("code-59") && line.includes("world-59"))).toBe(
+    true,
+  );
+  const coding = rendered.primaryScrollView!;
+  coding.scrollTo(12);
+  panes.update({ ...state, focus: "world" });
+  const world = frame(120, 18).primaryScrollView!;
+  expect(world).not.toBe(coding);
+  world.scrollTo(20);
+  panes.update({ ...state, focus: "panel", transcript: "Review exact candidate c17" });
+  rendered = frame(120, 18);
+  expect(rendered.lines.join("\n")).toContain("Review exact candidate c17");
+  expect(rendered.lines.join("\n")).toContain("world-20");
+  expect(rendered.lines.join("\n")).not.toContain("code-");
+  panes.update(state);
+  frame(120, 18);
+  expect(coding.scrollTop).toBe(12);
+  expect(world.scrollTop).toBe(20);
+  panes.follow();
+  frame(120, 18);
+  expect(coding.isFollowingEnd).toBe(true);
+  expect(world.scrollTop).toBe(20);
+  for (const [width, height] of [
+    [80, 18],
+    [35, 8],
+    [120, 5],
+  ]) {
+    const narrow = frame(width!, height!);
+    expect(narrow.lines.join("\n")).not.toContain("world-");
+  }
+  panes.update({ ...state, layout: "split" });
+  expect(frame(80, 18).lines.join("\n")).toContain("world-");
+  panes.update({ ...state, layout: "focus" });
+  expect(frame(160, 30).lines.join("\n")).not.toContain("world-");
+  panes.update({ ...state, focus: "world", layout: "focus" });
+  expect(frame(160, 30).lines.join("\n")).not.toContain("code-");
+});
+
+it("keeps input responsive during a burst and never sends local layout controls to a worker", async () => {
+  using f = workspace();
+  f.screen.columns = 120;
+  f.screen.rows = 36;
+  f.screen.resize();
+  f.screen.send("draft kept");
+  for (let index = 0; index < 500; index++) {
+    f.terminal.write(`coding-${index}`, "coding");
+    f.terminal.write(`world-${index}`, "world");
+  }
+  f.screen.send("\x1b[17~tell Peer responsive\r");
+  expect(f.lines).toEqual(["/world tell Peer responsive"]);
+  // Paste bypasses completion; these are controls, never permission answers.
+  const answer = f.terminal.ask("Still pending after layout change?");
+  f.screen.send("\x1b[18~\x1b[200~/layout focus\x1b[201~\r");
+  f.screen.send("\x1b[200~/layout split\x1b[201~\r");
+  expect(f.lines).toHaveLength(1);
+  f.screen.send("no\r");
+  expect(await answer).toBe("no");
+  f.screen.send("\x1b[17~\r");
+  expect(f.lines.at(-1)).toBe("draft kept");
+  await until(() => f.screen.text().includes("world-499"));
+  expect(f.screen.text()).toContain("coding-499");
+});
+
+it("returns to newest local output without sending a history control or losing the other draft", async () => {
+  using f = workspace();
+  for (let index = 0; index < 40; index++) f.terminal.write(`result-${index}`, "coding");
+  f.terminal.selectView("older");
+  f.terminal.write("latest-result-marker", "coding");
+  f.screen.send("\x1b[17~world draft\x1b[17~");
+  f.screen.send("\x1b[200~/view latest\x1b[201~\r");
+  await until(() => f.screen.text().includes("latest-result-marker"));
+  expect(f.lines).toEqual([]);
+  f.screen.send("\x1b[17~\r");
+  expect(f.lines).toEqual(["/world world draft"]);
 });

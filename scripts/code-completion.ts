@@ -6,8 +6,11 @@ import { TERMINAL_CONTROLS, terminalControls } from "./code-controls";
 import { WORKFLOW_COMPLETIONS } from "./code-workflow";
 
 const ARGUMENTS = [
+  ...["auto", "focus", "split"].map((layout) => `/layout ${layout}`),
   ...WORKFLOW_COMPLETIONS,
-  ...["coding", "world", "approvals", "older", "newer"].map((view) => `/view ${view}`),
+  ...["coding", "world", "approvals", "panel", "older", "newer", "latest"].map(
+    (view) => `/view ${view}`,
+  ),
   ...["list", "export", "save", "use"].map((verb) => `/harness ${verb}`),
 ];
 

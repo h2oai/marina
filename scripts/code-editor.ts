@@ -3,6 +3,7 @@
 
 import type { PanelInput, TerminalPanelState } from "./code-panel-form";
 import type { TerminalView } from "./code-views";
+import type { WorkspaceLayout } from "./code-workspace-panes";
 
 /** Presentation boundary shared by scrollback and fullscreen; actions stay in CodeTerminal. */
 export interface CodeEditorState {
@@ -13,6 +14,8 @@ export interface CodeEditorState {
   badge?: string;
   navigation?: string;
   transcript?: string;
+  conversations?: { coding: string; world: string };
+  layout?: WorkspaceLayout;
   answer: boolean;
   multiline: boolean;
   panel?: TerminalPanelState;
@@ -33,6 +36,7 @@ export interface CodeEditor {
   update(state: CodeEditorState): void;
   focus(view: TerminalView): void;
   reset(view: TerminalView): void;
+  follow?(): void;
   print(text: string): void;
   close(): void;
 }
