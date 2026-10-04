@@ -63,5 +63,11 @@
   );
   await until(() => !document.getElementById("splash"), "splash dismissed");
   if (document.getElementById("__err")) throw new Error("Native startup error overlay");
+  Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(
+    command,
+    "say __MARINA_SMOKE_MARKER__",
+  );
+  command.dispatchEvent(new Event("input", { bubbles: true }));
+  command.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
   console.log("[native-smoke] UI and RPC passed");
 })().catch((error) => console.error("[native-smoke] UI failed:", error.message));

@@ -18,7 +18,11 @@ const copiedApp = resolve(isolated, "app");
 cpSync(resolve(dirname(builtLauncher), ".."), copiedApp, { recursive: true });
 const launcher = resolve(copiedApp, "bin/launcher");
 const view = resolve(copiedApp, "Resources/app/views/dashboard/index.html");
-const probe = readFileSync(resolve(project, "test/fixtures/native-smoke-view.js"), "utf8");
+const completionMarker = `native-smoke-${crypto.randomUUID()}`;
+const probe = readFileSync(
+  resolve(project, "test/fixtures/native-smoke-view.js"),
+  "utf8",
+).replaceAll("__MARINA_SMOKE_MARKER__", completionMarker);
 writeFileSync(
   view,
   readFileSync(view, "utf8").replace("</body>", `<script>${probe}</script></body>`),
@@ -91,7 +95,9 @@ try {
   await until(() => {
     if (logs().includes("[native-smoke] UI failed:"))
       throw new Error("Native UI probe failed; see native.log");
-    return logs().includes("[native-smoke] UI and RPC passed");
+    // Release webviews do not promise console forwarding. Observe the proof
+    // through an ordinary world message from the UI to our network resident.
+    return perceptions.some((message) => message.includes(completionMarker));
   });
   if (Bun.which("import")) {
     const screenshot = Bun.spawn(["import", "-window", "root", resolve(isolated, "desktop.png")], {

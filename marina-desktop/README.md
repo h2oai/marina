@@ -99,6 +99,10 @@ bun run build:dev
 xvfb-run -a -s '-screen 0 1440x1000x24' bun scripts/native-smoke.ts
 ```
 
+Pass an extracted release's `bin/launcher` as the script's first argument to test
+that package. Completion is observed through a normal in-world message from the
+native chat to the network resident, without requiring release console logging.
+
 It does not use an existing Marina database. Evidence paths are printed at the
 end. The desktop CI job runs this alongside the SDK and participation tests.
 
