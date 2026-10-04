@@ -135,6 +135,8 @@ export function recordScoredRun(
       runs: input.variant.runs,
       researchRounds: input.variant.researchRounds,
       critique: input.variant.critique ?? true,
+      ...(input.variant.selection ? { selection: input.variant.selection } : {}),
+      ...(input.variant.budgetMs ? { budgetMs: input.variant.budgetMs } : {}),
       ...(input.extra?.isolation ? { isolation: input.extra.isolation } : {}),
       ...(input.extra?.lessons ? { lessons: input.extra.lessons } : {}),
     },

@@ -54,6 +54,7 @@ import {
   type CombinedAnswer,
   combineAnswers,
   formatAnswer,
+  type SelectionMode,
   validateAnswer,
 } from "./answer-types";
 import {
@@ -119,6 +120,12 @@ export interface TypedForecastOptions {
    * time budget.
    */
   budgetMs?: number;
+  /**
+   * How the K runs become one answer (`answer-types.ts` `SelectionMode`):
+   * `agreement` (default) combines by type with agreement as the confidence;
+   * `confidence` takes the most self-confident run with its own confidence.
+   */
+  selection?: SelectionMode;
 }
 
 export interface ModelPart {
@@ -287,6 +294,7 @@ export function answerInstruction(spec: AnswerSpec): string {
     case "number":
       return [
         `"answer" is ONE number${spec.unit ? ` in ${spec.unit}` : ""}: your single most likely value, exactly as the resolution source will publish it — not a hedge between outcomes.`,
+        `Write it at the source's own scale${spec.unit ? ` (${spec.unit})` : ""} — check thousands vs millions against the latest published reading — and keep its sign (negative for a fall or a downward revision).`,
         'Also give "sd", your uncertainty (> 0), in the same unit.',
         spec.integer ? "The answer is an integer." : "",
       ]
@@ -656,6 +664,7 @@ export async function forecastTyped(
   }
   Object.assign(out, judgeAudit(judgeRecord));
 
+  const selection = opts.selection ?? "agreement";
   const combined = combineAnswers(
     req.answer,
     out.runs
@@ -665,6 +674,7 @@ export async function forecastTyped(
         weight: r.weight,
         ...(r.confidence !== undefined ? { confidence: r.confidence } : {}),
       })),
+    { selection },
   );
   if (!combined) {
     const judgeDown = out.runs.some((r) => r.judgeError);
@@ -677,7 +687,13 @@ export async function forecastTyped(
   out.combined = combined;
   out.prediction = combined.value;
   out.formatted = formatAnswer(combined.value);
-  out.confidence = combined.agreement;
+  // Agreement among same-model runs measures consistency, not correctness: with
+  // confidence selection the chosen run's own stated confidence is the
+  // confidence (and the bar a critique must clear to replace the answer).
+  out.confidence =
+    selection === "confidence"
+      ? (combined.selfConfidence ?? combined.agreement)
+      : combined.agreement;
   const spec = req.answer;
   if (spec.type === "choice" && spec.probabilities) {
     const dist = averageDistributions(
@@ -854,7 +870,7 @@ async function critique(
     [
       header,
       "",
-      `LEADING ANSWER: ${out.formatted} (agreement ${out.confidence} across ${out.runs.length} runs)`,
+      `LEADING ANSWER: ${out.formatted} (${out.combined?.selfConfidence !== undefined ? "stated confidence" : "agreement"} ${out.confidence} across ${out.runs.length} runs)`,
       ...out.runs
         .filter((r) => r.formatted !== undefined)
         .map((r) => `- run ${r.run} (${r.model}): ${r.formatted} — ${r.reason ?? ""}`),
@@ -884,9 +900,58 @@ async function critique(
         : parseMarginals(req.answer.options, reply.probabilities);
     if (d) result.distribution = d;
   }
-  // The critic overrides the runs only when it is more sure than they agree.
-  result.applied = (result.confidence ?? 0) > (out.confidence ?? 0);
+  result.applied = critiqueApplies(result.confidence, out.confidence);
   return result;
+}
+
+/**
+ * The critic's revision replaces the runs' answer only when the critic is more
+ * sure than the forecast's own confidence (the runs' agreement, or the chosen
+ * run's stated confidence under `selection: "confidence"`).
+ */
+export function critiqueApplies(
+  critiqueConfidence: number | undefined,
+  forecastConfidence: number | undefined,
+): boolean {
+  return (critiqueConfidence ?? 0) > (forecastConfidence ?? 0);
+}
+
+/**
+ * The final typed answer a stored forecast would give under `selection`, from
+ * its recorded runs and critique — no model calls. For offline re-scoring of
+ * saved forecasts (`benchmarks/futurex/rescore-selection.ts`). The critique is
+ * the recorded one: it saw the leading answer of the selection that ran.
+ */
+export function reselect(
+  answer: Pick<TypedForecastAnswer, "answer" | "runs" | "critique">,
+  selection: SelectionMode,
+): string | undefined {
+  const combined = combineAnswers(
+    answer.answer,
+    answer.runs
+      .filter((r) => r.value !== undefined)
+      .map((r) => ({
+        value: r.value!,
+        weight: r.weight,
+        ...(r.confidence !== undefined ? { confidence: r.confidence } : {}),
+      })),
+    { selection },
+  );
+  if (!combined) return undefined;
+  const confidence =
+    selection === "confidence"
+      ? (combined.selfConfidence ?? combined.agreement)
+      : combined.agreement;
+  const c = answer.critique;
+  if (
+    c?.verdict === "revise" &&
+    c.proposed !== undefined &&
+    critiqueApplies(c.confidence, confidence)
+  ) {
+    const v = validateAnswer(answer.answer, c.proposed);
+    if (!("error" in v)) return formatAnswer(v.value);
+  }
+  return formatAnswer(combined.value);
 }
 
 function probabilitiesInstruction(options: AnswerOption[]): string {

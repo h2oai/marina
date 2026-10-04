@@ -51,6 +51,7 @@ import { type Retriever, retrieverFromSpec } from "../arena/research/retrieve";
 import { defaultPageText } from "../arena/research/verify";
 import { researchJudge } from "../decisions/config";
 import { dailyCapRefusal } from "../engine/spend-ledger";
+import { SELECTION_MODES, type SelectionMode } from "./answer-types";
 import type { LessonStore } from "./lessons";
 import { lookupsFromSpec } from "./lookups";
 import type { ForecastDeps } from "./question";
@@ -277,7 +278,11 @@ export function typedOptionsFromEnv(
   const critique = env.MARINA_FORECAST_CRITIQUE?.trim().toLowerCase();
   const verify = env.MARINA_FORECAST_VERIFY?.trim().toLowerCase();
   const budgetS = intEnv(env.MARINA_FORECAST_BUDGET_S);
+  const selection = env.MARINA_FORECAST_SELECTION?.trim().toLowerCase();
   return {
+    ...(SELECTION_MODES.includes(selection as SelectionMode)
+      ? { selection: selection as SelectionMode }
+      : {}),
     ...(budgetS !== undefined && budgetS > 0 ? { budgetMs: budgetS * 1000 } : {}),
     ...(runs !== undefined ? { runs } : {}),
     ...(rounds !== undefined ? { researchRounds: rounds } : {}),

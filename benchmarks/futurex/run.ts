@@ -39,6 +39,8 @@ export interface Variant {
   critique?: boolean;
   /** Wall-clock budget per row (ms): the forecast answers from what finished (labelled). */
   budgetMs?: number;
+  /** How the runs become one answer (`agreement` default, or `confidence`). */
+  selection?: "agreement" | "confidence";
 }
 
 /**

@@ -17,7 +17,15 @@
  * weighted plurality for choices and text, per-option frequency for sets,
  * weighted median (trimmed mean from five runs) for numbers, Borda for
  * rankings — and reports agreement (the share of runs, by weight, that agree
- * with the combined answer) as its confidence. Pure functions: no I/O.
+ * with the combined answer) as its confidence. With `selection: "confidence"`
+ * the most self-confident run's answer is taken instead, with its own stated
+ * confidence (better calibrated than agreement among same-model runs).
+ *
+ * Numbers are read with their scale and sign ("1.2 million", "(79,000)",
+ * "down 0.4", a Unicode minus) and converted to the spec's unit when the unit
+ * names a scale ("USD billions"); before combining, a run written at another
+ * power-of-ten scale than the runs' median (a thousands/millions confusion)
+ * is brought to the median's scale. Pure functions: no I/O.
  */
 
 export interface AnswerOption {
@@ -178,13 +186,92 @@ function asList(raw: unknown): string[] {
   return [];
 }
 
-function parseNumber(raw: unknown): number | undefined {
-  if (typeof raw === "number") return Number.isFinite(raw) ? raw : undefined;
+/** Multipliers of the scale words a number may be written with. */
+const SCALE_WORDS: ReadonlyArray<[RegExp, number]> = [
+  [/^(?:trillions?|tn)$/i, 1e12],
+  [/^(?:billions?|bn)$/i, 1e9],
+  [/^(?:millions?|mn)$/i, 1e6],
+  [/^thousands?$/i, 1e3],
+];
+/** One-letter suffixes count only attached to the number ("68k", "$3.4B"): "3 m" may be metres. */
+const SCALE_SUFFIXES: Readonly<Record<string, number>> = {
+  k: 1e3,
+  K: 1e3,
+  M: 1e6,
+  B: 1e9,
+  T: 1e12,
+};
+
+/** The multiplier a unit or word names (`USD billions` → 1e9), else undefined. */
+export function unitScale(text: string | undefined): number | undefined {
+  if (!text) return undefined;
+  for (const word of text.toLowerCase().split(/[^a-z]+/)) {
+    if (!word || word.length < 2) continue; // a bare "m" or "b" in a unit is not a scale
+    for (const [re, mult] of SCALE_WORDS) if (re.test(word)) return mult;
+  }
+  return undefined;
+}
+
+/** A sign word in the answer itself: "down 0.4", "a decline of 79,000". */
+const NEGATIVE_WORDS =
+  /^\s*(?:down|minus|negative|lower by|a\s+(?:decline|decrease|drop|fall|contraction|loss)\s+of|declin\w*|decreas\w*|fell|dropped)\b/i;
+
+export interface ParsedNumber {
+  /** The value as written, in absolute units when a scale word was given. */
+  value: number;
+  /** The multiplier of a scale word the number carried ("1.2 million" → 1e6). */
+  scale?: number;
+}
+
+/**
+ * A number from a model's raw value: thousands separators, a Unicode minus or
+ * an accounting "(79,000)" negative, a sign word ("down 0.4"), and a scale
+ * word or suffix ("1.2 million", "$3.4bn", "68k") — which is applied, so the
+ * value is absolute.
+ */
+export function parseNumberWithScale(raw: unknown): ParsedNumber | undefined {
+  if (typeof raw === "number") return Number.isFinite(raw) ? { value: raw } : undefined;
   if (typeof raw !== "string") return undefined;
-  const cleaned = raw.replace(/[,\s_]/g, "").replace(/[^\d.eE+-]/g, "");
-  if (!cleaned) return undefined;
-  const n = Number(cleaned);
-  return Number.isFinite(n) ? n : undefined;
+  let s = raw
+    .normalize("NFKC")
+    .trim()
+    .replace(/[−‒–—]/g, "-");
+  let negative = false;
+  if (/^\(\s*[$€£¥]?\s*[\d.,]+[^)]*\)$/.test(s)) {
+    negative = true;
+    s = s.slice(1, -1);
+  } else if (NEGATIVE_WORDS.test(s)) {
+    negative = true;
+    s = s.replace(NEGATIVE_WORDS, "");
+  }
+  const m = s.match(
+    /([-+]?)\s*[$€£¥]?\s*((?:(?:\d{1,3}(?:[,_ ]\d{3})+|\d+)(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?)(\s*)([A-Za-z]+)?/,
+  );
+  if (!m) return undefined;
+  const n = Number(`${m[1]}${m[2]!.replace(/[,_ ]/g, "")}`);
+  if (!Number.isFinite(n)) return undefined;
+  const word = m[4];
+  let scale: number | undefined;
+  if (word) {
+    for (const [re, mult] of SCALE_WORDS) if (re.test(word)) scale = mult;
+    if (!scale && !m[3] && word.length === 1) scale = SCALE_SUFFIXES[word];
+  }
+  const value = (negative && n > 0 ? -n : n) * (scale ?? 1);
+  return { value, ...(scale ? { scale } : {}) };
+}
+
+/**
+ * A number in the spec's unit. When the unit names a scale ("USD billions",
+ * "thousands of persons") and the answer carries a scale word, the answer is
+ * converted to the unit's scale ("1,234 million" in billions → 1.234); a bare
+ * number is taken as already in the unit.
+ */
+function numberInUnit(raw: unknown, unit: string | undefined): number | undefined {
+  const parsed = parseNumberWithScale(raw);
+  if (!parsed) return undefined;
+  const unitMult = unitScale(unit);
+  if (unitMult && parsed.scale) return parsed.value / unitMult;
+  return parsed.value;
 }
 
 /** A model's raw value as the typed answer, or why it cannot be used. */
@@ -214,7 +301,7 @@ export function validateAnswer(
       return { value: sortByOptionOrder(ids, spec.options) };
     }
     case "number": {
-      const n = parseNumber(raw);
+      const n = numberInUnit(raw, spec.unit);
       if (n === undefined) return { error: "not a number" };
       return { value: spec.integer ? Math.round(n) : n };
     }
@@ -263,12 +350,18 @@ export interface WeightedAnswer {
   weight: number;
   /** The run's own stated confidence (0–1), when it gave one. */
   confidence?: number;
+  /** Set when the order-of-magnitude check rescaled this number (the factor applied). */
+  rescaled?: number;
 }
 
 export interface CombinedAnswer {
   value: AnswerValue;
   /** Weight share (0–1) of the runs that agree with the combined answer. */
   agreement: number;
+  /** `confidence` selection: the chosen run's own stated confidence. */
+  selfConfidence?: number;
+  /** Numbers: how many runs the order-of-magnitude check rescaled. */
+  rescaled?: number;
   /** Per-option weight share for choice / multi answers. */
   support?: Record<string, number>;
   /** For numbers: weighted spread of the runs around the combined value. */
@@ -276,8 +369,105 @@ export interface CombinedAnswer {
   method: string;
 }
 
+/**
+ * How the K runs become one answer:
+ *   agreement  — combine by type (plurality, frequency, median, Borda); the
+ *                agreement share is the confidence (the default);
+ *   confidence — the single run with the highest self-reported confidence
+ *                (ties: more weight, then the agreement answer); its own
+ *                confidence is the confidence. Same-model runs agreeing
+ *                measures consistency, not correctness; a run's own stated
+ *                confidence is much better calibrated.
+ */
+export type SelectionMode = "agreement" | "confidence";
+export const SELECTION_MODES: readonly SelectionMode[] = ["agreement", "confidence"];
+
+export interface CombineOptions {
+  selection?: SelectionMode;
+}
+
 /** Merge K independent answers by type (see the file header). Undefined when none is usable. */
 export function combineAnswers(
+  spec: AnswerSpec,
+  answers: WeightedAnswer[],
+  opts: CombineOptions = {},
+): CombinedAnswer | undefined {
+  const agreed = combineByAgreement(spec, alignScale(spec, answers));
+  if (!agreed || opts.selection !== "confidence") return agreed;
+  return selectByConfidence(spec, alignScale(spec, answers), agreed);
+}
+
+/**
+ * The most self-confident run's answer, with its own confidence. A run that
+ * stated none counts as 0.5; ties go to more weight, then to the run that
+ * agrees with the combined answer, then to the earlier run.
+ */
+function selectByConfidence(
+  spec: AnswerSpec,
+  answers: WeightedAnswer[],
+  agreed: CombinedAnswer,
+): CombinedAnswer {
+  const usable = answers.filter((a) => a.weight > 0);
+  const key = (v: AnswerValue) =>
+    spec.type === "text" ? normalizeText(v as string) : formatAnswer(v).toLowerCase();
+  const agreedKey = key(agreed.value);
+  const conf = (a: WeightedAnswer) => a.confidence ?? 0.5;
+  const best = usable
+    .map((a, i) => ({ a, i }))
+    .sort(
+      (x, y) =>
+        conf(y.a) - conf(x.a) ||
+        y.a.weight - x.a.weight ||
+        Number(key(y.a.value) === agreedKey) - Number(key(x.a.value) === agreedKey) ||
+        x.i - y.i,
+    )[0]!.a;
+  const total = usable.reduce((s, a) => s + a.weight, 0);
+  const agree = usable
+    .filter((a) => key(a.value) === key(best.value))
+    .reduce((s, a) => s + a.weight, 0);
+  return {
+    ...agreed,
+    value: best.value,
+    agreement: round(agree / total),
+    selfConfidence: round(conf(best)),
+    method: "most self-confident run",
+  };
+}
+
+/** Within 3 % of a power-of-ten factor: the same figure written at another scale. */
+const SCALE_FACTORS = [1e3, 1e6, 1e9];
+function scaleFactorBetween(x: number, ref: number): number | undefined {
+  if (x === 0 || ref === 0 || Math.sign(x) !== Math.sign(ref)) return undefined;
+  const ratio = Math.abs(x / ref);
+  for (const f of SCALE_FACTORS) {
+    if (Math.abs(ratio / f - 1) <= 0.03) return 1 / f;
+    if (Math.abs(ratio * f - 1) <= 0.03) return f;
+  }
+  return undefined;
+}
+
+/**
+ * Order-of-magnitude check for numbers: a run whose value is the weighted
+ * median's written at another scale (×1 000, ×1 000 000 …, a thousands /
+ * millions confusion) is brought to the median's scale before combining.
+ * Needs three or more runs, so a majority sets the scale.
+ */
+function alignScale(spec: AnswerSpec, answers: WeightedAnswer[]): WeightedAnswer[] {
+  if (spec.type !== "number") return answers;
+  const usable = answers.filter((a) => a.weight > 0);
+  if (usable.length < 3) return answers;
+  const sorted = usable
+    .map((a) => ({ x: a.value as number, w: a.weight }))
+    .sort((p, q) => p.x - q.x);
+  const total = sorted.reduce((s, v) => s + v.w, 0);
+  const ref = weightedMedian(sorted, total);
+  return answers.map((a) => {
+    const f = scaleFactorBetween(a.value as number, ref);
+    return f ? { ...a, value: (a.value as number) * f, rescaled: f } : a;
+  });
+}
+
+function combineByAgreement(
   spec: AnswerSpec,
   answers: WeightedAnswer[],
 ): CombinedAnswer | undefined {
@@ -326,11 +516,13 @@ export function combineAnswers(
       // Agreement: runs within 2.5% of the combined value (a tight numeric tolerance).
       const tol = Math.max(Math.abs(value) * 0.025, 1e-9);
       const agree = values.filter((v) => Math.abs(v.x - value) <= tol).reduce((s, v) => s + v.w, 0);
+      const rescaled = usable.filter((a) => a.rescaled).length;
       return {
         value: round(value, 6),
         agreement: round(agree / total),
         spread: round(spread, 6),
-        method: values.length >= 5 ? "20% trimmed mean" : "weighted median",
+        method: `${values.length >= 5 ? "20% trimmed mean" : "weighted median"}${rescaled ? " (scale-aligned)" : ""}`,
+        ...(rescaled ? { rescaled } : {}),
       };
     }
     case "ranking": {
