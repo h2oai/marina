@@ -34,13 +34,26 @@ conversation, task status and unread counts visible around the transcript and co
 Coding remains a single session; World messages and independent agents continue alongside it.
 Omit `--tui` to use the scrollback terminal described below.
 
+At 110 columns or wider, **Coding and World appear side by side**. F6 changes which
+conversation receives your input; the marked pane header and composer label identify the
+destination. F7 opens Requests in the left pane while World stays visible; F8 does the same
+for your panel. Incoming requests never take over your draft. Each pane retains its scroll
+position, and each conversation retains its draft when focus or terminal size changes.
+
+Use **F2** to cycle layouts, or `/layout auto`, `/layout focus`, and `/layout split` to choose
+directly. Explicit split needs at least 80 columns and enough height for readable panes;
+smaller windows fall back to the focused view. Resizing back restores the selected arrangement.
+Unread counts track activity outside your focused conversation even when its pane is visible.
+These controls only arrange views; they do not spawn workers or change coding sessions.
+
 In the workspace, type `/` for command suggestions with descriptions. Up/Down selects;
 Tab or Enter inserts the selection into your draft, and a separate Enter sends it.
 Argument hints follow the selected command. Paste inserts a multiline draft without sending;
 Shift+Enter (where supported) or a trailing `\` adds another line. F1 opens help, F6 switches
 Coding/World, F7 opens pending requests, and F8 opens the published panel view.
-PageUp/PageDown scroll the current transcript;
-Alt+Up/Down or `/view older` and `/view newer` fetch another retained local page. Ctrl+D exits
+PageUp/PageDown scroll the focused pane;
+Alt+Up/Down or `/view older` and `/view newer` fetch another retained local page. `/view latest`
+jumps back to recent output and follows new updates in the focused conversation. Ctrl+D exits
 an empty composer. Each conversation retains its editor, cursor and history; cancelled
 requests discard their partial answers. The workspace restores the shell on exit without
 copying unsent drafts into scrollback. It requires interactive input and output; one-shot
@@ -233,6 +246,18 @@ of the raw source excerpts. Automatic loading is bounded to 4 KiB per file, 16 K
 32 directory levels. Read truncated or omitted files explicitly before relying on them.
 Instructions are refreshed from disk on inspection, so subsequent edits can change the
 guidance. Symlinks and nonregular instruction files are refused.
+
+For internal workers, exact repeated instruction excerpts are represented once in the retained
+conversation. Later reads keep a reference and their original source details. If compaction
+removes the full copy, a surviving reference restores it; changed or differently scoped rules
+are delivered in full. Raw inspections and the durable journal remain available. This avoids
+paying to resend the same conventions on every file read without treating old delivery as proof
+that the model still has them.
+
+Use `code search <query> path:<relative-path>` to limit a search to one file or directory.
+The `marina_code` and typed search tools expose the same `path` field.
+For a path with spaces, use `code search path:"src/my folder" -- <query>`. Use `--` before a query
+that contains a literal modifier, for example `code search path:src -- path:literal`.
 
 Worktree sessions use the worktree's instructions. Sandbox sessions report that host
 instructions were not loaded; inspect the actual execution workspace. Repository instructions
@@ -644,7 +669,7 @@ Ready.
 ```
 > code files src
 > code read src/parser.ts
-> code search "off by one"
+> code search off by one
 > code diff
 ```
 
@@ -684,6 +709,10 @@ Every verification ends in one of four states:
 lessons, and not by the SWE-bench adapter's counts. A task that requires candidate verification
 stays active on `not_run`; report it with `code blocked <reason>`, or the owner may accept the
 work unverified.
+
+Changing source or tests invalidates earlier candidate verification. The submission feedback
+includes a retry command preserving the recorded verification options; finish your edits,
+review the options, rerun checks and inspect the completed receipt before submitting again.
 
 Options (each also has an operator default, `MARINA_CODE_VERIFY_*`):
 
@@ -886,7 +915,7 @@ instead of from scratch.
 | Do this | Command |
 |---|---|
 | Start / resume / finish | `code start [title]` · `code resume <id>` · `code done [summary]` · `code list` |
-| Look around | `code files [path]` · `code read <path>` · `code search <query>` · `code diff` |
+| Look around | `code files [path]` · `code read <path>` · `code search <query> [path:<relative-path>]` · `code diff` |
 | Run things | `code run <cmd>` · `code verify` · `code test` / `lint` / `typecheck` · `code recipe run <name>` |
 | Change code | `code patch <title>` → `code apply last patch` · `code checkpoint [title]` · `code revert <id>` |
 | Review | `code approvals` · `code approve\|deny <id>` |

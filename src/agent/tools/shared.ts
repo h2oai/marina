@@ -65,6 +65,14 @@ export async function execCommand(
       command,
       perceptionCount: perceptions.length,
       deliveries: perceptions.flatMap((p) => (p.data.delivery ? [p.data.delivery] : [])),
+      contextBlocks: perceptions.flatMap((p) => {
+        const code =
+          p.tag === "code"
+            ? (p.data.code as { metadata?: { contextBlocks?: unknown[] } } | undefined)
+            : undefined;
+        const blocks = code?.metadata?.contextBlocks;
+        return Array.isArray(blocks) ? blocks : [];
+      }),
     },
   };
 }

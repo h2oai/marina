@@ -3,6 +3,14 @@
 
 import { strict as assert } from "node:assert";
 
+export interface EvaluationRequestSize {
+  attempt: number;
+  requestBytes: number;
+  messageBytes: Record<string, number>;
+  messageCount: number;
+  outputLimit: number;
+}
+
 /** Gate actual upstream attempts, including router fallback. Local protocol traffic
  * is free. Other providers/models are refused before credentials leave the process. */
 export function evaluationBudgetFetch(
@@ -18,6 +26,7 @@ export function evaluationBudgetFetch(
     inputLimit?: number;
     inputPerMillion: number;
     outputPerMillion: number;
+    onAttempt?: (size: EvaluationRequestSize) => void;
   },
 ) {
   return new Proxy(network, {
@@ -52,7 +61,9 @@ export function evaluationBudgetFetch(
         !Number.isSafeInteger(outputLimit) ||
         outputLimit < 1 ||
         outputLimit > 4096 ||
-        body[tokenParameter] !== outputLimit ||
+        !Number.isSafeInteger(body[tokenParameter]) ||
+        body[tokenParameter] < 1 ||
+        body[tokenParameter] > outputLimit ||
         body[otherParameter] !== undefined ||
         !Array.isArray(body.messages) ||
         body.messages.some(
@@ -70,11 +81,24 @@ export function evaluationBudgetFetch(
         );
       const bound =
         ((Buffer.byteLength(text) + 128 * body.messages.length) * state.inputPerMillion) / 1e6 +
-        (outputLimit * state.outputPerMillion) / 1e6;
+        (body[tokenParameter] * state.outputPerMillion) / 1e6;
       if (state.attempts >= state.maxAttempts || state.reserved + bound > state.ceiling)
         throw new Error("Evaluation spending limit reached");
       state.reserved += bound;
       state.attempts++;
+      const messageBytes: Record<string, number> = {};
+      for (const message of body.messages) {
+        const role = message.role ?? "unknown";
+        messageBytes[role] = (messageBytes[role] ?? 0) + Buffer.byteLength(JSON.stringify(message));
+      }
+      // Sizes only: no prompts, source, or credentials in this diagnostic.
+      state.onAttempt?.({
+        attempt: state.attempts,
+        requestBytes: Buffer.byteLength(text),
+        messageBytes,
+        messageCount: body.messages.length,
+        outputLimit: body[tokenParameter],
+      });
       // Ambiguous failures retain their reservation. No redirect can send the key elsewhere.
       return target(
         new Request(request, {

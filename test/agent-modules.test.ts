@@ -1500,6 +1500,12 @@ describe("tool profiles", () => {
     });
     expect(JSON.stringify(refused)).toContain("verificationMode must be");
     expect(commands).toHaveLength(11);
+    await tool!.execute("scoped-search", {
+      action: "search",
+      query: "path:literal",
+      path: "selected folder",
+    });
+    expect(commands.at(-1)).toBe('code search path:"selected folder" -- path:literal');
     const toolset = createProfileToolset(ctx, memory, "full");
     const typedVerify = [...toolset.resident, ...toolset.deferred].find(
       (entry) => entry.name === "marina_code_verify",

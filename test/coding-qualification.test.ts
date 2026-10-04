@@ -19,8 +19,10 @@ import {
   codingWorkspaceHoldout,
   codingWorkspaceInstructionEvidence,
   qualifyCoding,
+  runCodingQualificationProcess,
   validateCodingQualification,
 } from "../scripts/qualify-coding";
+import { evaluationBudgetFetch } from "../scripts/research/memory-evaluation-budget";
 import { captureGitCandidate } from "../src/coding/candidate";
 import { BUN_PREPARATION_POLICY } from "../src/coding/candidate-dependencies";
 import { LocalWorkspace } from "../src/coding/local-workspace";
@@ -36,7 +38,7 @@ test("live coding qualification refuses unbounded spending and output in the sou
   expect(() =>
     validateCodingQualification({
       ...options,
-      scenarios: ["bugfix", "feature", "refactor", "workspace"],
+      scenarios: ["bugfix", "feature", "refactor", "workspace", "marina"],
     }),
   ).not.toThrow();
   for (const budgetUsd of [0, -1, 2.001, Number.NaN, Number.POSITIVE_INFINITY])
@@ -48,6 +50,12 @@ test("live coding qualification refuses unbounded spending and output in the sou
     validateCodingQualification({ ...options, scenarios: ["bugfix", "bugfix"] }),
   ).toThrow("distinct");
   expect(() => validateCodingQualification({ ...options, timeoutMs: 600001 })).toThrow("Timeout");
+  expect(() =>
+    validateCodingQualification({ ...options, repositoryRevision: "--work-tree=/tmp" }),
+  ).toThrow("commit ID");
+  expect(() =>
+    validateCodingQualification({ ...options, repositoryRevision: "a".repeat(40) }),
+  ).not.toThrow();
 });
 
 test("symlink output cannot hide a report under the public repository", () => {
@@ -272,4 +280,69 @@ test("missing credentials fail before starting a world and cannot be mistaken fo
   await expect(
     qualifyCoding({ directory: "/tmp/marina-qualification-not-created", budgetUsd: 1 }),
   ).rejects.toThrow("no live qualification was run");
+});
+
+test("evaluation allows a bounded compaction call but still refuses excess, zero, and alternate models", async () => {
+  let calls = 0;
+  const network = Object.assign(
+    async () => {
+      calls++;
+      return Response.json({});
+    },
+    { preconnect: fetch.preconnect },
+  ) as typeof fetch;
+  const sizes: unknown[] = [];
+  const state = {
+    ceiling: 1,
+    reserved: 0,
+    attempts: 0,
+    maxAttempts: 3,
+    model: "approved",
+    outputLimit: 4096,
+    inputPerMillion: 0.4,
+    outputPerMillion: 1.6,
+    onAttempt: (size: unknown) => sizes.push(size),
+  };
+  const guarded = evaluationBudgetFetch(network, state);
+  const send = (limit: number, model = "approved") =>
+    guarded("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      body: JSON.stringify({
+        model,
+        max_tokens: limit,
+        messages: [{ role: "user", content: "private source" }],
+      }),
+    });
+  await send(500);
+  expect(calls).toBe(1);
+  expect(sizes).toMatchObject([{ attempt: 1, outputLimit: 500, messageCount: 1 }]);
+  expect(JSON.stringify(sizes)).not.toContain("private source");
+  for (const limit of [0, -1, 4097, 1.5]) await expect(send(limit)).rejects.toThrow("unapproved");
+  await expect(send(500, "other")).rejects.toThrow("unapproved");
+  expect(calls).toBe(1);
+});
+
+test("qualification baseline executes explicit hidden tests without polluting the source with Bun cache files", async () => {
+  const root = mkdtempSync(join(tmpdir(), "marina-baseline-cache-"));
+  try {
+    mkdirSync(join(root, ".qualification"));
+    writeFileSync(
+      join(root, "source.ts"),
+      `export const large = ${JSON.stringify("source ".repeat(2000))};`,
+    );
+    writeFileSync(
+      join(root, ".qualification", "acceptance.test.ts"),
+      'import { expect, test } from "bun:test"; import { large } from "../source"; test("hidden acceptance", () => expect(large.length).toBeGreaterThan(4000));',
+    );
+    const result = await runCodingQualificationProcess(
+      [process.execPath, "test", "./.qualification/acceptance.test.ts"],
+      root,
+    );
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stderr).toContain(".qualification/acceptance.test.ts:");
+    expect(result.stderr).toContain("1 pass");
+    expect(existsSync(join(root, ".bun"))).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

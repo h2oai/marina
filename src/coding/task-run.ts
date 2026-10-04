@@ -9,6 +9,7 @@ import { codingRunContext } from "../persistence/coding-run-context";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../persistence/database";
 import type { Entity, EntityId } from "../types";
 import { CANDIDATE_POLICY, type CandidateIdentity, observeCandidate } from "./candidate";
+import { candidateVerificationRetry } from "./verification-plan";
 
 export interface CodingRunMetadata {
   version: 1;
@@ -296,6 +297,7 @@ export async function assessCodingVerification(
       verificationReason: `Checks are still running. Inspect code show ${verification.id}; wait for the result before resubmitting.`,
     };
   const evidence = JSON.parse(verification.metadata_json) as Record<string, unknown>;
+  const retry = candidateVerificationRetry(evidence.verificationOptions);
   result.candidateId = typeof evidence.candidateId === "string" ? evidence.candidateId : undefined;
   // Checks that never ran (or whose runner broke) are neither a pass nor a failure.
   if (verification.status === "not_run" || verification.status === "error")
@@ -309,9 +311,18 @@ export async function assessCodingVerification(
             ? "Checks were not run."
             : "Verification infrastructure failed.",
     };
-  if (verification.status !== "complete") return { ...result, verification: "failed" as const };
+  if (verification.status !== "complete")
+    return {
+      ...result,
+      verification: "failed" as const,
+      verificationReason: `Inspect code show ${verification.id}, fix the failed checks, then run ${retry}.`,
+    };
   if (evidence.workspaceEventId !== meta.workspaceEventId)
-    return { ...result, verification: "stale" as const };
+    return {
+      ...result,
+      verification: "stale" as const,
+      verificationReason: `Source changed after verification. Finish edits and run ${retry}; inspect the completed receipt before resubmitting.`,
+    };
   const row =
     typeof evidence.candidateId === "string"
       ? db.getCodingArtifact(evidence.candidateId)
@@ -367,7 +378,7 @@ export async function assessCodingVerification(
       throw new Error("Candidate workspace binding changed during observation.");
     result.verification = current === candidate.fingerprint ? "passed" : "stale";
     if (result.verification === "stale")
-      result.verificationReason = "Included source changed since snapshot verification.";
+      result.verificationReason = `Included source changed since snapshot verification. Run ${retry} and inspect the completed receipt before resubmitting.`;
   } catch (error) {
     result.verification = "unavailable";
     result.verificationReason = getErrorMessage(error);

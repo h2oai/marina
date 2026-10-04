@@ -237,3 +237,150 @@ describe("short history compaction", () => {
     expect(one.length).toBe(1);
   });
 });
+
+describe("working transcript instruction excerpts", () => {
+  function excerpt(
+    id: string,
+    text = `Scope: entire workspace\n${"Follow these rules. ".repeat(200)}`,
+    key = "root/AGENTS.md",
+  ): AgentMessage[] {
+    return [
+      {
+        ...assistant("", 6000),
+        content: [
+          { type: "toolCall", id, name: "marina_code", arguments: { action: "read", path: id } },
+        ],
+      } as AgentMessage,
+      {
+        role: "toolResult",
+        toolCallId: id,
+        toolName: "marina_code",
+        timestamp: 1,
+        isError: false,
+        content: [{ type: "text", text: `Source for ${id}\n${text}` }],
+        details: { contextBlocks: [{ key, text }] },
+      } as AgentMessage,
+    ];
+  }
+  const visible = (messages: AgentMessage[]) =>
+    messages
+      .filter((m) => m.role === "toolResult")
+      .map((m) => JSON.stringify(m.content))
+      .join("\n");
+  const model = { contextWindow: 128_000, maxTokens: 4096 } as never;
+
+  it("retains an exact full copy, restores it after compaction, and keeps changed/sibling rules", async () => {
+    const archives: AgentMessage[][] = [];
+    const transform = createContextManager({
+      getModel: () => model,
+      getSystemPrompt: () => "sys",
+      onBeforeCompact: (m) => {
+        archives.push(m);
+      },
+    });
+    const input = [user("task"), ...excerpt("a"), ...excerpt("b"), ...excerpt("c")];
+    const result = await transform(input);
+    expect(visible(result).match(/Follow these rules/g)).toHaveLength(200);
+    expect(visible(result).match(/full text retained earlier/g)).toHaveLength(2);
+    expect(archives).toEqual([input]);
+    expect(visible(input).match(/Follow these rules/g)).toHaveLength(600);
+    expect(await transform(result)).toBe(result);
+    expect(archives).toHaveLength(1);
+    // Remove the first complete read as a compaction would, then resume from a serialized checkpoint.
+    const resumed = JSON.parse(JSON.stringify([user("task"), ...result.slice(3)]));
+    const restored = await transform(resumed);
+    expect(visible(restored).match(/Follow these rules/g)).toHaveLength(200);
+    const changed = await transform([
+      ...restored,
+      ...excerpt("new", "Rules changed"),
+      ...excerpt("sibling", "Different subtree rules", "root/sub/AGENTS.md"),
+    ]);
+    expect(visible(changed)).toContain("Rules changed");
+    expect(visible(changed)).toContain("Different subtree rules");
+  });
+
+  it("preserves source that quotes instructions and deduplicates only the appended excerpt", async () => {
+    const first = excerpt("first");
+    const second = excerpt("second");
+    const result = second[1] as {
+      content: { text: string }[];
+      details: { contextBlocks: { text: string }[] };
+    };
+    const rules = result.details.contextBlocks[0]!.text;
+    result.content[0]!.text = `Source quotes:\n${rules}\nEnd source.\n${rules}`;
+    const transform = createContextManager({ getModel: () => model, getSystemPrompt: () => "sys" });
+    const transformed = await transform([user("task"), ...first, ...second]);
+    const text = (transformed.at(-1) as { content: { text: string }[] }).content[0]!.text;
+    expect(text).toContain(`Source quotes:\n${rules}\nEnd source.`);
+    expect(text).toContain("full text retained earlier");
+  });
+
+  it("does not expand short excerpts into longer references", async () => {
+    const input = [user("task"), ...excerpt("a", "Short rule"), ...excerpt("b", "Short rule")];
+    const transform = createContextManager({ getModel: () => model, getSystemPrompt: () => "sys" });
+    expect(await transform(input)).toBe(input);
+  });
+
+  it("archives before reduction, preserves original usage, and rejects archival failure", async () => {
+    const input = [user("task"), ...excerpt("a"), ...excerpt("b")];
+    const failed = createContextManager({
+      getModel: () => model,
+      getSystemPrompt: () => "sys",
+      onBeforeCompact: () => {
+        throw new Error("disk unavailable");
+      },
+    });
+    await expect(failed(input)).rejects.toThrow("Context archival failed");
+    expect(visible(input).match(/Follow these rules/g)).toHaveLength(400);
+    const transform = createContextManager({ getModel: () => model, getSystemPrompt: () => "sys" });
+    const reduced = await transform(input);
+    expect(
+      computeContextBudget({ model, systemPrompt: "sys", messages: reduced, targetRatio: 0.6 })
+        .usageAnchored,
+    ).toBe(false);
+    expect(
+      computeContextBudget({ model, systemPrompt: "sys", messages: input, targetRatio: 0.6 })
+        .usageAnchored,
+    ).toBe(true);
+    expect(
+      computeContextBudget({
+        model,
+        systemPrompt: "sys",
+        messages: [...reduced, assistant("next", 3000)],
+        targetRatio: 0.6,
+      }).totalTokens,
+    ).toBe(3000);
+  });
+});
+
+it("bounds the whole multi-block tool result, not each text block separately", () => {
+  const result: AgentMessage = {
+    role: "toolResult",
+    toolCallId: "multi",
+    toolName: "read",
+    timestamp: 1,
+    isError: false,
+    content: Array.from({ length: 20 }, () => ({ type: "text" as const, text: "x".repeat(180) })),
+  };
+  const [bounded] = truncateOversizedToolResults([result], 100);
+  expect(estimateMessageTokens(bounded!)).toBeLessThanOrEqual(100);
+  expect(JSON.stringify(bounded)).toContain("incomplete output");
+  expect(truncateOversizedToolResults([bounded!], 100)[0]).toBe(bounded);
+  expect(result.content).toHaveLength(20);
+});
+
+it("tiny explicit tool budgets converge even when framing alone exceeds the allowance", () => {
+  const result: AgentMessage = {
+    role: "toolResult",
+    toolCallId: "small",
+    toolName: "read",
+    timestamp: 1,
+    isError: false,
+    content: [{ type: "text", text: "x".repeat(300) }],
+  };
+  for (const cap of [1, 10, 30, 100]) {
+    const [bounded] = truncateOversizedToolResults([result], cap);
+    expect(estimateMessageTokens(bounded!)).toBeLessThanOrEqual(Math.max(cap, 6));
+    expect(truncateOversizedToolResults([bounded!], cap)[0]).toBe(bounded);
+  }
+});

@@ -239,11 +239,11 @@ it("publishes a real worker's busy-to-waiting transition after the prompt settle
       content: [{ type: "text", text: "Continue next cycle." }],
       stopReason: "stop",
       usage: {
-        input: 1,
+        input: 17,
         output: 1,
-        cacheRead: 0,
+        cacheRead: 80,
         cacheWrite: 0,
-        totalTokens: 2,
+        totalTokens: 98,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
       },
     };
@@ -271,7 +271,89 @@ it("publishes a real worker's busy-to-waiting transition after the prompt settle
       modelCalls: 1,
       budgetCalls: 5,
     });
+    expect((adapter.getStatus() as { peakInputTokens?: number }).peakInputTokens).toBe(97);
   } finally {
     unsubscribe();
   }
+});
+
+it("an assigned coding task takes precedence over a stale bootstrap focus without deleting it", async () => {
+  const { adapter, internals } = makeAdapterAtBusyCycle("bootstrap-focus");
+  const state = adapter as unknown as { focus: { description: string; startedAt: number } };
+  state.focus = { description: "Wait for assignment", startedAt: Date.now() };
+  adapter.setActiveCodingTask("Repair and verify source");
+  const prompt = await internals.buildContinuationPrompt();
+  expect(prompt).toContain("Advance the active coding task");
+  expect(prompt).not.toContain("Focus: Wait for assignment. Next verifiable step");
+  expect(state.focus.description).toBe("Wait for assignment");
+});
+
+it("blocks an unfinished tool call at the model output limit before it can mutate anything", async () => {
+  const adapter = new LeanAgentAdapter({ name: "truncated-call" }, "ws://127.0.0.1:3300", null);
+  const i = adapter as unknown as {
+    agent: { beforeToolCall(context: unknown): Promise<{ block: boolean; reason: string }> };
+    currentRunAdmittedTools: number;
+  };
+  const result = await i.agent.beforeToolCall({
+    assistantMessage: { stopReason: "length" },
+    toolCall: { id: "partial", name: "marina_code" },
+    args: { action: "write", path: "source.ts", content: "partial source" },
+  });
+  expect(result.block).toBe(true);
+  expect(result.reason).toContain("did not execute");
+  expect(i.currentRunAdmittedTools).toBe(0);
+});
+
+it("records caught generic coding-tool errors as failures without changing readable tool output", async () => {
+  const adapter = new LeanAgentAdapter({ name: "coding-tool-error" }, "ws://127.0.0.1:3300", null);
+  const i = adapter as unknown as {
+    agent: { afterToolCall(context: unknown): Promise<{ isError?: boolean } | undefined> };
+  };
+  expect(
+    await i.agent.afterToolCall({
+      toolCall: { name: "marina_code", id: "invalid" },
+      args: { action: "write" },
+      isError: false,
+      result: {
+        content: [{ type: "text", text: "Invalid marina_code request: content is required" }],
+        details: { error: "content is required" },
+      },
+    }),
+  ).toEqual({ isError: true });
+  expect(
+    await i.agent.afterToolCall({
+      toolCall: { name: "marina_code", id: "valid" },
+      args: { action: "status" },
+      isError: false,
+      result: { content: [{ type: "text", text: "status" }], details: {} },
+    }),
+  ).toBeUndefined();
+});
+
+it("high input usage tightens the context budget instead of increasing it beyond the model window", () => {
+  const adapter = new LeanAgentAdapter(
+    { name: "context-calibration", model: "marina/default", contextWindow: 128_000 },
+    "ws://127.0.0.1:3300",
+    null,
+  );
+  const i = adapter as unknown as {
+    effectiveContextWindow: number;
+    peakAcceptedInputTokens: number;
+    calibrateContextWindow(message: unknown): void;
+  };
+  i.calibrateContextWindow({ usage: { input: 90_000, cacheRead: 20_000, cacheWrite: 10_000 } });
+  expect(i.peakAcceptedInputTokens).toBe(120_000);
+  expect(i.effectiveContextWindow).toBe(102_000);
+  i.calibrateContextWindow({ usage: { input: 120_000 } });
+  expect(i.effectiveContextWindow).toBe(102_000);
+  i.calibrateContextWindow({ usage: { input: Number.POSITIVE_INFINITY } });
+  expect(i.effectiveContextWindow).toBe(102_000);
+  expect(i.peakAcceptedInputTokens).toBe(120_000);
+  // Comfortable usage restores capacity gradually, bounded by the model.
+  for (let turn = 0; turn < 20; turn++) i.calibrateContextWindow({ usage: { input: 10_000 } });
+  expect(i.effectiveContextWindow).toBe(128_000);
+  // A configured smaller-than-floor window must never be enlarged either.
+  i.effectiveContextWindow = 2_000;
+  i.calibrateContextWindow({ usage: { input: 1_900 } });
+  expect(i.effectiveContextWindow).toBe(2_000);
 });

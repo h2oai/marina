@@ -109,6 +109,48 @@ describe("candidate-bound coding verification", () => {
     if (!artifact("verification")) throw new Error(receipt.metadata_json);
   }
 
+  it("runs a dependency-free saved recipe in a candidate when preparation is explicitly disabled", async () => {
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ dependencies: { "not-installed": "1.0.0" } }),
+    );
+    writeFileSync(
+      join(root, "unit.test.ts"),
+      'import { expect, test } from "bun:test"; test("real check", () => expect(2 + 2).toBe(4));',
+    );
+    mkdirSync(join(root, ".qualification"));
+    const acceptance = join(root, ".qualification", "acceptance.test.ts");
+    writeFileSync(
+      acceptance,
+      'import { expect, test } from "bun:test"; test("HIDDEN_ACCEPTANCE_SENTINEL", () => expect(false).toBe(true));',
+    );
+    await send(
+      "code recipe save default bun test ./.qualification/acceptance.test.ts ./unit.test.ts",
+    );
+    await verify("dependencies:none");
+    expect(artifact("verification").content_text).toContain("failed");
+    expect(artifact("verification").content_text).toContain("HIDDEN_ACCEPTANCE_SENTINEL");
+    await send(`code show ${artifact("verification_request").id}`);
+    expect(output.at(-1)?.data.text).toContain("HIDDEN_ACCEPTANCE_SENTINEL");
+    writeFileSync(
+      acceptance,
+      'import { expect, test } from "bun:test"; test("HIDDEN_ACCEPTANCE_SENTINEL", () => expect(true).toBe(true));',
+    );
+    await verify("dependencies:none");
+    expect(artifact("verification").content_text).toContain("passed");
+    expect(artifact("verification").content_text).not.toContain("Check output");
+    expect(artifact("command_output").content_text).toContain("2 pass");
+    expect(artifact("command_output").content_text).toContain(".qualification/acceptance.test.ts:");
+    expect(existsSync(join(root, "node_modules"))).toBe(false);
+    // A source change invalidates that candidate, and the retry retains the
+    // explicit no-preparation setting rather than reverting to check.
+    requireCandidate();
+    writeFileSync(join(root, "source.txt"), "changed after verification\n");
+    await send("code summary premature submission");
+    expect(current().status).toBe("active");
+    expect(output.at(-1)?.data.text).toContain("code verify candidate dependencies:none");
+  });
+
   function requireCandidate() {
     f.db.updateCodingArtifact(run.id, {
       metadata: { ...meta(), verificationRequirement: "candidate" },

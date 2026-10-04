@@ -1870,7 +1870,7 @@ Usage:
   code status [session_id]    Show session status
   code files [path]           List workspace files
   code read <path>            Read a workspace file
-  code search <query>         Search workspace text
+  code search <query> [path:<path>]  Search workspace text, optionally within one file/directory
   code diff [path]            Show git diff
   code run <check|cmd...>     Run an allowed workspace command and store output
   code run allowlist          Show host-local allowed commands
@@ -2627,11 +2627,13 @@ Effect: unknown.
 Effect: unknown.
 
 
-### `code search <query>`
+### `code search <query> [path:<relative-path>]`
 
 Effect: unknown.
 
 - `field-0` (`query`): text, required.
+- `field-1` (`path`): text, optional group `option-0`.
+- Group `option-0`: `path:relative-path`.
 
 ### `code service list`
 

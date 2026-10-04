@@ -215,6 +215,14 @@ describe("scoped project instructions", () => {
           },
         },
       });
+      writeFileSync(join(root, "other", "unrelated.ts"), "export const value = 99;");
+      await run('search path:"src/nested/file.ts" -- value');
+      expect(messages.at(-1)?.text).toContain("src/nested/file.ts:1:");
+      expect(messages.at(-1)?.text).not.toContain("unrelated.ts");
+      mkdirSync(join(root, "with spaces"));
+      writeFileSync(join(root, "with spaces", "file.ts"), "unique value");
+      await run('search path:"with spaces/file.ts" -- value');
+      expect(messages.at(-1)?.text).toContain("with spaces/file.ts:1:");
     } finally {
       db.close();
     }

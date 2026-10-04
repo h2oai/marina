@@ -38,18 +38,29 @@ import { type EntityId, roomId } from "../src/types";
 import { scopeProcessState, scopeProperty } from "../test/process-state";
 import type { TerminalPanelState } from "./code-panel-form";
 import { CodePanels } from "./code-panels";
-import { evaluationBudgetFetch } from "./research/memory-evaluation-budget";
+import {
+  codingRepositoryFixture,
+  codingRepositoryHoldout,
+} from "./coding-qualification-repository";
+import {
+  type EvaluationRequestSize,
+  evaluationBudgetFetch,
+} from "./research/memory-evaluation-budget";
 
-const SCENARIOS = ["bugfix", "feature", "refactor", "workspace"] as const;
+const SCENARIOS = ["bugfix", "feature", "refactor", "workspace", "marina"] as const;
 export type CodingScenario = (typeof SCENARIOS)[number];
 export interface CodingQualificationOptions {
   directory: string;
   budgetUsd: number;
   scenarios?: CodingScenario[];
   timeoutMs?: number;
+  /** Repeat the real-repository task against a recorded local commit. */
+  repositoryRevision?: string;
 }
 
 export function validateCodingQualification(options: CodingQualificationOptions): void {
+  if (options.repositoryRevision && !/^[a-f0-9]{40}$/.test(options.repositoryRevision))
+    throw new Error("repository-revision must be a full local Git commit ID");
   if (!Number.isFinite(options.budgetUsd) || options.budgetUsd <= 0 || options.budgetUsd > 2)
     throw new Error("Use an explicit --budget-usd greater than 0 and at most 2");
   if (!options.directory) throw new Error("Use --directory PRIVATE_PATH outside the repository");
@@ -87,7 +98,9 @@ export function validateCodingQualification(options: CodingQualificationOptions)
 
 /** The initial fixtures are deliberately dependency-free. These are small
  * functional journeys, not a benchmark of general coding capability. */
-export function codingQualificationFixture(scenario: Exclude<CodingScenario, "workspace">) {
+export function codingQualificationFixture(
+  scenario: Exclude<CodingScenario, "workspace" | "marina">,
+) {
   const source = `export function paginate<T>(items: readonly T[], page: number, size: number): T[] {
   if (!Number.isInteger(page) || page < 1) throw new RangeError("page");
   if (!Number.isInteger(size) || size < 1) throw new RangeError("size");
@@ -285,7 +298,7 @@ export function codingWorkspaceInstructionEvidence(
   });
 }
 
-async function processResult(command: string[], cwd: string) {
+export async function runCodingQualificationProcess(command: string[], cwd: string) {
   const child = Bun.spawn(command, {
     cwd,
     stdin: "ignore",
@@ -295,6 +308,9 @@ async function processResult(command: string[], cwd: string) {
       PATH: process.env.PATH ?? "",
       LANG: "C.UTF-8",
       HOME: cwd,
+      // Baseline/holdout execution must not add transpiler .pile files to the
+      // source candidate. Never ignore unexpected worker files to hide this.
+      BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
       GIT_CONFIG_NOSYSTEM: "1",
       GIT_CONFIG_GLOBAL: "/dev/null",
     },
@@ -346,6 +362,7 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
   // https://developers.openai.com/api/docs/models/gpt-4.1-mini
   // Byte-based reservations deliberately overestimate text token counts; the
   // existing gate refuses alternate models/endpoints and retains lost replies.
+  const requestSizes: EvaluationRequestSize[] = [];
   const spending = new Proxy(
     {
       ceiling: options.budgetUsd,
@@ -353,10 +370,18 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
       attempts: 0,
       maxAttempts: 40 * (options.scenarios?.length ?? 1),
       model: "gpt-4.1-mini-2025-04-14",
-      outputLimit: 2000,
-      inputLimit: 131072,
+      outputLimit: options.scenarios?.includes("marina") ? 4096 : 2000,
+      inputLimit: options.scenarios?.includes("marina") ? 262144 : 131072,
       inputPerMillion: 0.4,
       outputPerMillion: 1.6,
+      onAttempt: (size: EvaluationRequestSize) => {
+        requestSizes.push(size);
+        writeFileSync(
+          join(directory, "request-sizes.json"),
+          JSON.stringify(requestSizes, null, 2),
+          { mode: 0o600 },
+        );
+      },
     },
     {
       set(target, property, value) {
@@ -387,10 +412,23 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
       MARINA_DAILY_SPEND_CAP_USD: String(options.budgetUsd),
     },
   });
+  let networkFailure: string | undefined;
+  const budgetedFetch = evaluationBudgetFetch(globalThis.fetch, spending);
   using _network = scopeProperty(
     globalThis,
     "fetch",
-    evaluationBudgetFetch(globalThis.fetch, spending),
+    new Proxy(budgetedFetch, {
+      async apply(target, receiver, args: Parameters<typeof fetch>) {
+        try {
+          return await Reflect.apply(target, receiver, args);
+        } catch (error) {
+          const message = getErrorMessage(error);
+          if (/^Evaluation (refused|input budget|spending limit)/.test(message))
+            networkFailure ??= message;
+          throw error;
+        }
+      },
+    }),
   );
   await using cleanup = new AsyncDisposableStack();
   const db = new MarinaDB(join(directory, "world.db"));
@@ -450,6 +488,7 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
       command_gates: "enforced",
     },
     scenarios: [],
+    request_sizes: requestSizes,
     limits:
       "Small functional fixtures; workspace uses captured local packages only. No general coding-quality or hermetic-build claim.",
   };
@@ -462,16 +501,39 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
     grant(db, ownerId, "code.exec");
     for (const scenario of options.scenarios ?? ["bugfix"]) {
       const workspaceFixture = scenario === "workspace" ? codingWorkspaceFixture() : undefined;
-      const fixture = scenario !== "workspace" ? codingQualificationFixture(scenario) : undefined;
+      const repositoryFixture = scenario === "marina" ? codingRepositoryFixture() : undefined;
+      const fixture =
+        scenario !== "workspace" && scenario !== "marina"
+          ? codingQualificationFixture(scenario)
+          : undefined;
       const root = join(directory, scenario);
-      mkdirSync(root, { mode: 0o700 });
+      let repositoryCommit: string | undefined;
+      if (repositoryFixture) {
+        const clone = await runCodingQualificationProcess(
+          ["git", "clone", "--quiet", "--no-hardlinks", "--", resolve(import.meta.dir, ".."), root],
+          directory,
+        );
+        assert.equal(clone.code, 0, clone.stderr);
+        if (options.repositoryRevision) {
+          const checkout = await runCodingQualificationProcess(
+            ["git", "checkout", "--quiet", "--detach", options.repositoryRevision, "--"],
+            root,
+          );
+          assert.equal(checkout.code, 0, checkout.stderr);
+        }
+        const head = await runCodingQualificationProcess(["git", "rev-parse", "HEAD"], root);
+        assert.equal(head.code, 0, head.stderr);
+        repositoryCommit = head.stdout.trim();
+        report.repository_baseline = repositoryCommit;
+      } else mkdirSync(root, { mode: 0o700 });
       const pkg = JSON.stringify({ private: true, scripts: { test: "bun test" } });
-      const files = workspaceFixture?.files ?? {
-        "source.ts": fixture!.source,
-        "acceptance.test.ts": fixture!.tests,
-        "package.json": pkg,
-        ".gitignore": "node_modules/\n",
-      };
+      const files: Record<string, string> = repositoryFixture?.files ??
+        workspaceFixture?.files ?? {
+          "source.ts": fixture!.source,
+          "acceptance.test.ts": fixture!.tests,
+          "package.json": pkg,
+          ".gitignore": "node_modules/\n",
+        };
       for (const [path, content] of Object.entries(files)) {
         mkdirSync(dirname(join(root, path)), { recursive: true });
         writeFileSync(join(root, path), content);
@@ -486,7 +548,7 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
         assert.equal(initialPreparation.result.exitCode, 0, initialPreparation.result.output);
       }
       const git = async (...args: string[]) => {
-        const result = await processResult(
+        const result = await runCodingQualificationProcess(
           [
             "git",
             "-c",
@@ -504,11 +566,46 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
       await git("init", "--quiet", "--template=");
       await git("add", ".");
       await git("commit", "--quiet", "-m", "Qualification baseline");
-      const baseline = await processResult([process.execPath, "test"], root);
-      assert.equal(baseline.code === 0, scenario !== "bugfix", "Fixture baseline invalid");
+      const baselineHead = repositoryFixture
+        ? await runCodingQualificationProcess(["git", "rev-parse", "HEAD"], root)
+        : undefined;
+      if (baselineHead) assert.equal(baselineHead.code, 0, baselineHead.stderr);
+      const baseline = await runCodingQualificationProcess(
+        [
+          process.execPath,
+          "test",
+          ...(repositoryFixture ? ["./.qualification/acceptance.test.ts"] : []),
+        ],
+        root,
+      );
+      assert.equal(
+        baseline.code === 0,
+        scenario !== "bugfix" && scenario !== "marina",
+        "Fixture baseline invalid",
+      );
+      if (repositoryFixture) {
+        const output = baseline.stdout + baseline.stderr;
+        assert.ok(
+          output.includes(".qualification/acceptance.test.ts:") &&
+            output.includes(
+              "(fail) return from paged history directly to the newest retained output",
+            ) &&
+            output.includes("latest"),
+          "Repository baseline did not execute the expected missing-feature acceptance case",
+        );
+        const clean = await runCodingQualificationProcess(["git", "status", "--porcelain"], root);
+        assert.equal(clean.code, 0, clean.stderr);
+        assert.equal(
+          clean.stdout.trim(),
+          "",
+          "Baseline execution dirtied the source checkout before worker dispatch",
+        );
+      }
       await owner.command(`code workspace use ${root}`);
       await owner.command(`code start ${scenario}`);
       const sessionId = engine.entities.get(ownerId)!.properties.coding_session_id!;
+      if (repositoryFixture)
+        await owner.command(`code recipe save default ${repositoryFixture.recipe}`);
       const name = `Coder${scenario}`;
       const handle = await engine.agentRuntime.spawn({
         name,
@@ -531,7 +628,7 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
       grant(db, workerId, "code.exec");
       const scenarioStarted = Date.now();
       await owner.command(
-        `code do verification:candidate -- ${workspaceFixture?.task ?? fixture!.task}`,
+        `code do verification:candidate -- ${repositoryFixture?.task ?? workspaceFixture?.task ?? fixture!.task}`,
       );
       const run = db.listCodingRuns({ sessionId, status: "active" })[0];
       assert.ok(run, "Task dispatch did not create a canonical attempt");
@@ -622,18 +719,21 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
       while (Date.now() < deadline && db.getCodingArtifact(run.id)?.status === "active") {
         if (worldLatency === undefined && messages.some((m) => m.includes(marker)))
           worldLatency = performance.now() - sent;
-        if (handle.getStatus().budgetExhausted) break;
+        if (handle.getStatus().budgetExhausted || networkFailure) break;
         await Bun.sleep(50);
       }
       const submitted = db.getCodingArtifact(run.id)!;
-      const failure = codingQualificationFailure({
-        status: submitted.status,
-        reason: codingRunMetadata(submitted).reason,
-        budgetExhausted: handle.getStatus().budgetExhausted,
-        deadlineReached: Date.now() >= deadline,
-      });
+      const failure =
+        networkFailure ??
+        codingQualificationFailure({
+          status: submitted.status,
+          reason: codingRunMetadata(submitted).reason,
+          budgetExhausted: handle.getStatus().budgetExhausted,
+          deadlineReached: Date.now() >= deadline,
+        });
       const result: Record<string, unknown> = {
         scenario,
+        repository_commit: repositoryCommit,
         runId: run.id,
         status: submitted.status,
         verification: codingRunMetadata(submitted).verification,
@@ -659,7 +759,8 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
         "Independent world communication did not arrive during work",
       );
       // Checks cannot be made green by weakening the provided acceptance suite.
-      const sourcePaths = workspaceFixture?.sourcePaths ?? ["source.ts"];
+      const sourcePaths = repositoryFixture?.sourcePaths ??
+        workspaceFixture?.sourcePaths ?? ["source.ts"];
       for (const [path, original] of Object.entries(files)) {
         if (sourcePaths.includes(path))
           assert.notEqual(
@@ -682,13 +783,39 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
           path !== "acceptance.test.ts",
       );
       assert.ok(regressionFiles.length, `${scenario}: no model-authored regression test file`);
+      if (repositoryFixture) {
+        const currentHead = await runCodingQualificationProcess(["git", "rev-parse", "HEAD"], root);
+        assert.equal(currentHead.code, 0, currentHead.stderr);
+        assert.equal(
+          currentHead.stdout,
+          baselineHead!.stdout,
+          "Worker changed the qualification baseline commit",
+        );
+        const diff = await runCodingQualificationProcess(
+          ["git", "diff", "HEAD", "--name-only"],
+          root,
+        );
+        const extra = await runCodingQualificationProcess(
+          ["git", "ls-files", "--others", "--exclude-standard"],
+          root,
+        );
+        assert.equal(diff.code, 0, diff.stderr);
+        assert.equal(extra.code, 0, extra.stderr);
+        const changed = `${diff.stdout}\n${extra.stdout}`.trim().split(/\s+/).filter(Boolean);
+        assert.deepEqual(
+          [...new Set(changed)].sort(),
+          [...repositoryFixture.sourcePaths, ...repositoryFixture.regressionPaths].sort(),
+          "Worker changed files outside the requested repository task",
+        );
+        result.changed_files = changed;
+      }
       const artifacts = db.listCodingArtifacts(sessionId);
       const verificationId = codingRunMetadata(submitted).verificationId;
       const verification = artifacts.find((artifact) => artifact.id === verificationId);
       const verificationMetadata = verification ? JSON.parse(verification.metadata_json) : {};
       const checkOutputs = artifacts
         .filter((artifact) =>
-          workspaceFixture
+          workspaceFixture || repositoryFixture
             ? verificationMetadata.artifactIds?.includes(artifact.id)
             : artifact.kind === "command_output",
         )
@@ -698,8 +825,22 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
         passingTests(checkOutputs) > passingTests(baseline.stdout + baseline.stderr),
         `${scenario}: verification did not execute additional passing tests`,
       );
-      result.regression_files = regressionFiles;
+      result.regression_files = repositoryFixture?.regressionPaths ?? regressionFiles;
       result.passing_tests = passingTests(checkOutputs);
+      if (repositoryFixture) {
+        for (const path of [
+          ".qualification/acceptance.test.ts",
+          ...repositoryFixture.regressionPaths,
+        ])
+          assert.ok(
+            checkOutputs.includes(`${path}:`),
+            `Accepted verification did not execute ${path}`,
+          );
+        assert.ok(
+          passingTests(checkOutputs) >= 2,
+          "Accepted verification needs the fixed acceptance case and a model-authored passing regression",
+        );
+      }
       if (workspaceFixture) {
         const instructionEvidence = codingWorkspaceInstructionEvidence(
           db.listCodingEvents(sessionId, 1000),
@@ -738,9 +879,11 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
       const holdout = join(directory, `holdout-${scenario}.ts`);
       writeFileSync(
         holdout,
-        workspaceFixture
-          ? codingWorkspaceHoldout(root)
-          : `import { strict as assert } from "node:assert";
+        repositoryFixture
+          ? codingRepositoryHoldout(root)
+          : workspaceFixture
+            ? codingWorkspaceHoldout(root)
+            : `import { strict as assert } from "node:assert";
 import * as source from ${JSON.stringify(join(root, "source.ts"))};
 for (let length=0; length<19; length++) for (let size=1; size<7; size++) for (let page=1; page<8; page++) {
   const items=Array.from({length},(_,i)=>i); const before=[...items];
@@ -754,7 +897,10 @@ console.log("Independent pagination contract passed");
 `,
         { mode: 0o600 },
       );
-      const heldoutResult = await processResult([process.execPath, holdout], directory);
+      const heldoutResult = await runCodingQualificationProcess(
+        [process.execPath, holdout],
+        directory,
+      );
       result.independent_check = heldoutResult;
       assert.equal(
         heldoutResult.code,
@@ -812,6 +958,7 @@ if (import.meta.main) {
       "budget-usd": { type: "string" },
       scenarios: { type: "string", default: "bugfix" },
       "timeout-ms": { type: "string" },
+      "repository-revision": { type: "string" },
     },
   });
   const timeoutMs = values["timeout-ms"] ? Number(values["timeout-ms"]) : 240_000;
@@ -829,6 +976,7 @@ if (import.meta.main) {
     budgetUsd: Number(values["budget-usd"]),
     scenarios: values.scenarios!.split(",") as CodingScenario[],
     timeoutMs,
+    repositoryRevision: values["repository-revision"],
   });
   clearTimeout(watchdog);
   console.log(

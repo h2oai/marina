@@ -21,6 +21,7 @@ import { maxToolResultTokensForWindow } from "../engine/constants";
 import { Logger } from "../engine/logger";
 
 import { withMemoryAbort } from "../sdk/memory-abort";
+import { clearContextUsageAnchors, collapseContextExcerpts } from "./context-excerpts";
 
 /** Module logger. */
 const logger = new Logger();
@@ -304,17 +305,26 @@ export function createContextManager(options: ContextManagerOptions) {
     signal?: AbortSignal,
   ): Promise<AgentMessage[]> => {
     signal?.throwIfAborted();
+    const original = messages;
+    messages = collapseContextExcerpts(messages);
+    if (messages.some((message, i) => message !== original[i]))
+      messages = clearContextUsageAnchors(messages);
     const finish = async (result: AgentMessage[]) => {
+      // Rehydrate any excerpt whose retained original was removed by compaction.
+      result = truncateOversizedToolResults(
+        collapseContextExcerpts(result),
+        configuredToolResultTokens ??
+          maxToolResultTokensForWindow(effectivePromptWindow(getModel())),
+      );
+      const changed =
+        result.length !== original.length || result.some((message, i) => message !== original[i]);
       signal?.throwIfAborted();
-      if (
-        onBeforeCompact &&
-        (result.length !== messages.length || result.some((message, i) => message !== messages[i]))
-      ) {
+      if (onBeforeCompact && changed) {
         try {
           await withMemoryAbort(
             () =>
               Promise.resolve(
-                onBeforeCompact(messages, summarizeMessages(messages as Message[]), signal),
+                onBeforeCompact(original, summarizeMessages(original as Message[]), signal),
               ),
             signal,
           );
@@ -326,7 +336,7 @@ export function createContextManager(options: ContextManagerOptions) {
           });
         }
       }
-      return result;
+      return changed ? clearContextUsageAnchors(result) : original;
     };
     try {
       if (messages.length === 0) return messages;
@@ -339,7 +349,7 @@ export function createContextManager(options: ContextManagerOptions) {
       // will consume (`effectivePromptWindow`). The fixed prefix is the system
       // prompt PLUS the serialized tool schemas — both ride on every request.
       const contextWindow = effectivePromptWindow(model);
-      if (contextWindow <= 0) return messages;
+      if (contextWindow <= 0) return await finish(messages);
       const maxToolResultTokens =
         configuredToolResultTokens ?? maxToolResultTokensForWindow(contextWindow);
 
@@ -675,28 +685,33 @@ export function truncateOversizedToolResults(
       const resultTokens = estimateMessageTokens(msg);
       if (resultTokens <= maxTokens) return msg;
 
-      const truncatedContent = toolResult.content.map((block) => {
-        if (block.type !== "text") return block;
-
-        const blockTokens = estimateTokens(block.text);
-        if (blockTokens <= maxTokens) return block;
-
-        // Cut where the estimate says the budget ends — the old `*4/1.1` cut
-        // assumed ~3.6 chars/token while the estimate counted 3, so a
-        // "truncated" block still measured over budget on the next pass.
-        const suffix = `\n\n[...truncated, ~${blockTokens} tokens total; incomplete output. Request narrower results to retrieve omitted content.]`;
-        // Include the notice in the allowance so repeated transforms don't
-        // truncate the same result again just to replace its own suffix.
-        const maxChars = Math.max(0, charsForTokens(maxTokens) - suffix.length);
-        return {
-          ...block,
-          text: `${block.text.slice(0, maxChars)}${suffix}`,
-        };
-      });
-
-      return truncatedContent.every((block, i) => block === toolResult.content[i])
-        ? msg
-        : ({ ...toolResult, content: truncatedContent } as AgentMessage);
+      const notice =
+        "\n\n[...truncated; incomplete output. Request narrower results to retrieve omitted content.]";
+      const overhead = 4 + estimateTokens(toolResult.toolName ?? "");
+      const allowance = Math.max(0, Math.floor(maxTokens) - overhead);
+      const suffix =
+        estimateTokens(notice) <= allowance
+          ? notice
+          : estimateTokens("[truncated]") <= allowance
+            ? "[truncated]"
+            : "";
+      let remaining = allowance - estimateTokens(suffix);
+      const truncatedContent: ToolResultMessage["content"] = [];
+      for (const block of toolResult.content) {
+        if (block.type === "text") {
+          const text = block.text.slice(0, charsForTokens(remaining));
+          if (text) truncatedContent.push({ ...block, text });
+          remaining -= estimateTokens(text);
+        } else if (remaining >= 300) {
+          truncatedContent.push(block);
+          remaining -= 300;
+        }
+      }
+      const last = truncatedContent.at(-1);
+      if (last?.type === "text") last.text += suffix;
+      else if (suffix) truncatedContent.push({ type: "text", text: suffix });
+      if (JSON.stringify(truncatedContent) === JSON.stringify(toolResult.content)) return msg;
+      return { ...toolResult, content: truncatedContent } as AgentMessage;
     });
   } catch {
     return messages;

@@ -20,7 +20,12 @@ import { scopeProcessState } from "./process-state";
 for (const mode of ["continue", "storage-failure", "yield"] as const)
   it(`resident tool-result persistence: ${mode}`, async () => {
     using _state = scopeProcessState({
-      env: { AGENT_MAX_TOOL_CALLS_PER_RUN: mode === "yield" ? "1" : undefined },
+      env: {
+        AGENT_MAX_TOOL_CALLS_PER_RUN: mode === "yield" ? "1" : undefined,
+        // Persistence uses a deterministic probe; the optional external judge
+        // has dedicated policy tests and must not intercept this fixture.
+        MARINA_DECISION_GATE: "off",
+      },
     });
     const failResult = mode === "storage-failure";
     const directory = mkdtempSync(join(tmpdir(), "marina-tool-journal-"));
