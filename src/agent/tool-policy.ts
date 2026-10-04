@@ -53,7 +53,7 @@ function worstRisk(risks: readonly ToolRisk[]): ToolRisk {
 }
 
 const CONSEQUENTIAL_COMMAND =
-  /^(admin|rank|grant|ban|kick|destroy|connect\s+(add|auth|remove)|gateway\s+(add|remove|bridge)|build\s+(destroy|unlink)|code\s+(approve|deny|revert)|agent\s+(stop|key|reconfigure|config)|role\s+(edit|delete|reload)|trait\s+delete)\b/i;
+  /^(admin|rank|grant|ban|kick|destroy|connect\s+(add|auth|remove)|gateway\s+(add|remove|bridge)|build\s+(destroy|unlink)|code\s+(approve|deny|revert)|agent\s+(stop|key|reconfigure|config)|role\s+(edit|delete|reload)|trait\s+delete|lessons\s+(retire|supersede))\b/i;
 const COMMUNICATION_COMMAND = /^(say|tell|shout|emote|channel\s+send|board\s+(post|reply))\b/i;
 const POLICY_MANIPULATION =
   /\b(ignore|bypass|disable|override|evade|remove)\b.{0,40}\b(safety|gate|policy|permission|system prompt|governing contract)\b/i;

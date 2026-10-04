@@ -1277,110 +1277,110 @@ Fields read here: `Math.min(Number(url.searchParams.get("limit")) &#124;&#124; 1
 
 ### `path === "/v1/memory/health"`
 
-[Source](../../src/net/memory-service-api.ts#L105)
+[Source](../../src/net/memory-service-api.ts#L111)
 
 - Guard: `path === "/v1/memory/health" && req.method === "GET"`
 - Guard: `req.method === "GET"`
 
 ### `path.endsWith("/search")`
 
-[Source](../../src/net/memory-service-api.ts#L139)
+[Source](../../src/net/memory-service-api.ts#L145)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/context")`
 
-[Source](../../src/net/memory-service-api.ts#L140)
+[Source](../../src/net/memory-service-api.ts#L146)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/query")`
 
-[Source](../../src/net/memory-service-api.ts#L141)
+[Source](../../src/net/memory-service-api.ts#L147)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/graph")`
 
-[Source](../../src/net/memory-service-api.ts#L142)
+[Source](../../src/net/memory-service-api.ts#L148)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/source_search")`
 
-[Source](../../src/net/memory-service-api.ts#L143)
+[Source](../../src/net/memory-service-api.ts#L149)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/plan")`
 
-[Source](../../src/net/memory-service-api.ts#L144)
+[Source](../../src/net/memory-service-api.ts#L150)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/execute_plan")`
 
-[Source](../../src/net/memory-service-api.ts#L145)
+[Source](../../src/net/memory-service-api.ts#L151)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/retrieve")`
 
-[Source](../../src/net/memory-service-api.ts#L146)
+[Source](../../src/net/memory-service-api.ts#L152)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/workflow")`
 
-[Source](../../src/net/memory-service-api.ts#L147)
+[Source](../../src/net/memory-service-api.ts#L153)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/federated_retrieve")`
 
-[Source](../../src/net/memory-service-api.ts#L148)
+[Source](../../src/net/memory-service-api.ts#L154)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/retrieve_cached")`
 
-[Source](../../src/net/memory-service-api.ts#L149)
+[Source](../../src/net/memory-service-api.ts#L155)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/review")`
 
-[Source](../../src/net/memory-service-api.ts#L150)
+[Source](../../src/net/memory-service-api.ts#L156)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/cache/get")`
 
-[Source](../../src/net/memory-service-api.ts#L151)
+[Source](../../src/net/memory-service-api.ts#L157)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/federated_search")`
 
-[Source](../../src/net/memory-service-api.ts#L152)
+[Source](../../src/net/memory-service-api.ts#L158)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/federated_read")`
 
-[Source](../../src/net/memory-service-api.ts#L153)
+[Source](../../src/net/memory-service-api.ts#L159)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path.endsWith("/knowledge_graph")`
 
-[Source](../../src/net/memory-service-api.ts#L154)
+[Source](../../src/net/memory-service-api.ts#L160)
 
 - Guard: `["POST", "PATCH", "DELETE"].includes(req.method) && !path.endsWith("/search") && !path.endsWith("/context") && !path.endsWith("/query") && !path.endsWith("/graph") && !path.endsWith("/source_search") && !path.endsWith("/plan") && !path.endsWith("/execute_plan") && !path.endsWith("/retrieve") && !path.endsWith("/workflow") && !path.endsWith("/federated_retrieve") && !path.endsWith("/retrieve_cached") && !path.endsWith("/review") && !path.endsWith("/cache/get") && !path.endsWith("/federated_search") && !path.endsWith("/federated_read") && !path.endsWith("/knowledge_graph") && (!key &#124;&#124; key.length > 128)`
 
 ### `path === "/v1/memory/assistance"`
 
-[Source](../../src/net/memory-service-api.ts#L164)
+[Source](../../src/net/memory-service-api.ts#L170)
 
 - Guard: `path === "/v1/memory/assistance" && req.method === "GET"`
 - Guard: `req.method === "GET"`
@@ -1389,7 +1389,7 @@ Fields read here: `Number(url.searchParams.get("limit"))`, `json( repo.assistanc
 
 ### `path.match( /^\/v1\/memory\/assistance\/([^/]+)(?:\/(claim&#124;heartbeat&#124;read&#124;finish&#124;cancel&#124;delegate&#124;adopt))?$/, )`
 
-[Source](../../src/net/memory-service-api.ts#L176)
+[Source](../../src/net/memory-service-api.ts#L182)
 
 - Guard: `assistance`
 - Guard: `req.method === "GET"`
@@ -1399,28 +1399,28 @@ Fields read here: `lease_token`.
 
 ### `path === "/v1/memory/usage"`
 
-[Source](../../src/net/memory-service-api.ts#L219)
+[Source](../../src/net/memory-service-api.ts#L225)
 
 - Guard: `path === "/v1/memory/usage" && req.method === "GET"`
 - Guard: `req.method === "GET"`
 
 ### `path === "/v1/memory"`
 
-[Source](../../src/net/memory-service-api.ts#L220)
+[Source](../../src/net/memory-service-api.ts#L226)
 
 - Guard: `path === "/v1/memory" && req.method === "GET"`
 - Guard: `req.method === "GET"`
 
 ### `path === "/v1/memory/me"`
 
-[Source](../../src/net/memory-service-api.ts#L221)
+[Source](../../src/net/memory-service-api.ts#L227)
 
 - Guard: `path === "/v1/memory/me" && req.method === "GET"`
 - Guard: `req.method === "GET"`
 
 ### `path === "/v1/memory/spaces"`
 
-[Source](../../src/net/memory-service-api.ts#L227)
+[Source](../../src/net/memory-service-api.ts#L233)
 
 - Guard: `path === "/v1/memory/spaces"`
 - Guard: `req.method === "GET"`
@@ -1430,62 +1430,62 @@ Fields read here: `name`.
 
 ### `path.match(/^\/v1\/memory\/spaces\/([^/]+)(?:\/(.*))?$/)`
 
-[Source](../../src/net/memory-service-api.ts#L234)
+[Source](../../src/net/memory-service-api.ts#L240)
 
 - Guard: `!match`
 
 ### `rest === "assistance"`
 
-[Source](../../src/net/memory-service-api.ts#L238)
+[Source](../../src/net/memory-service-api.ts#L244)
 
 - Guard: `rest === "assistance" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "knowledge_graph"`
 
-[Source](../../src/net/memory-service-api.ts#L244)
+[Source](../../src/net/memory-service-api.ts#L250)
 
 - Guard: `rest === "knowledge_graph" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "federation_mounts"`
 
-[Source](../../src/net/memory-service-api.ts#L246)
+[Source](../../src/net/memory-service-api.ts#L252)
 
 - Guard: `rest === "federation_mounts" && req.method === "GET"`
 - Guard: `req.method === "GET"`
 
 ### `rest === "federated_search"`
 
-[Source](../../src/net/memory-service-api.ts#L250)
+[Source](../../src/net/memory-service-api.ts#L256)
 
 - Guard: `rest === "federated_search" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "federated_read"`
 
-[Source](../../src/net/memory-service-api.ts#L259)
+[Source](../../src/net/memory-service-api.ts#L265)
 
 - Guard: `rest === "federated_read" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "bundle"`
 
-[Source](../../src/net/memory-service-api.ts#L268)
+[Source](../../src/net/memory-service-api.ts#L274)
 
 - Guard: `rest === "bundle" && req.method === "GET"`
 - Guard: `req.method === "GET"`
 
 ### `rest === "bundle"`
 
-[Source](../../src/net/memory-service-api.ts#L269)
+[Source](../../src/net/memory-service-api.ts#L275)
 
 - Guard: `rest === "bundle" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "transfer"`
 
-[Source](../../src/net/memory-service-api.ts#L274)
+[Source](../../src/net/memory-service-api.ts#L280)
 
 - Guard: `rest === "transfer" && req.method === "GET"`
 - Guard: `req.method === "GET"`
@@ -1494,14 +1494,14 @@ Fields read here: `json(repo.exportPage(actor, space, url.searchParams.get("curs
 
 ### `rest === "transfers"`
 
-[Source](../../src/net/memory-service-api.ts#L276)
+[Source](../../src/net/memory-service-api.ts#L282)
 
 - Guard: `rest === "transfers" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "transfers"`
 
-[Source](../../src/net/memory-service-api.ts#L278)
+[Source](../../src/net/memory-service-api.ts#L284)
 
 - Guard: `rest === "transfers" && req.method === "GET"`
 - Guard: `req.method === "GET"`
@@ -1510,7 +1510,7 @@ Fields read here: `Number(url.searchParams.get("limit"))`, `json( repo.transfers
 
 ### `rest.match(/^transfers\/([^/]+)(?:\/(pages&#124;commit&#124;abort))?$/)`
 
-[Source](../../src/net/memory-service-api.ts#L294)
+[Source](../../src/net/memory-service-api.ts#L300)
 
 - Guard: `transfer`
 - Guard: `req.method === "GET"`
@@ -1518,56 +1518,56 @@ Fields read here: `Number(url.searchParams.get("limit"))`, `json( repo.transfers
 
 ### `rest === "acknowledge"`
 
-[Source](../../src/net/memory-service-api.ts#L314)
+[Source](../../src/net/memory-service-api.ts#L320)
 
 - Guard: `rest === "acknowledge" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "json_store"`
 
-[Source](../../src/net/memory-service-api.ts#L316)
+[Source](../../src/net/memory-service-api.ts#L322)
 
 - Guard: `rest === "json_store" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "join"`
 
-[Source](../../src/net/memory-service-api.ts#L318)
+[Source](../../src/net/memory-service-api.ts#L324)
 
 - Guard: `rest === "join" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "rules"`
 
-[Source](../../src/net/memory-service-api.ts#L320)
+[Source](../../src/net/memory-service-api.ts#L326)
 
 - Guard: `rest === "rules" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "rules/run"`
 
-[Source](../../src/net/memory-service-api.ts#L322)
+[Source](../../src/net/memory-service-api.ts#L328)
 
 - Guard: `rest === "rules/run" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "rules/materialize"`
 
-[Source](../../src/net/memory-service-api.ts#L324)
+[Source](../../src/net/memory-service-api.ts#L330)
 
 - Guard: `rest === "rules/materialize" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "review"`
 
-[Source](../../src/net/memory-service-api.ts#L326)
+[Source](../../src/net/memory-service-api.ts#L332)
 
 - Guard: `rest === "review" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "reaffirm"`
 
-[Source](../../src/net/memory-service-api.ts#L328)
+[Source](../../src/net/memory-service-api.ts#L334)
 
 - Guard: `rest === "reaffirm" && req.method === "POST"`
 - Guard: `req.method === "POST"`
@@ -1576,7 +1576,7 @@ Fields read here: `id`.
 
 ### `rest === "resolve"`
 
-[Source](../../src/net/memory-service-api.ts#L341)
+[Source](../../src/net/memory-service-api.ts#L347)
 
 - Guard: `rest === "resolve" && req.method === "POST"`
 - Guard: `req.method === "POST"`
@@ -1585,77 +1585,77 @@ Fields read here: `id`.
 
 ### `rest === "adopt"`
 
-[Source](../../src/net/memory-service-api.ts#L345)
+[Source](../../src/net/memory-service-api.ts#L351)
 
 - Guard: `rest === "adopt" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "cache/delete"`
 
-[Source](../../src/net/memory-service-api.ts#L349)
+[Source](../../src/net/memory-service-api.ts#L355)
 
 - Guard: `rest === "cache/delete" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "cache/get"`
 
-[Source](../../src/net/memory-service-api.ts#L351)
+[Source](../../src/net/memory-service-api.ts#L357)
 
 - Guard: `rest === "cache/get" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "cache/put"`
 
-[Source](../../src/net/memory-service-api.ts#L355)
+[Source](../../src/net/memory-service-api.ts#L361)
 
 - Guard: `rest === "cache/put" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "plan"`
 
-[Source](../../src/net/memory-service-api.ts#L359)
+[Source](../../src/net/memory-service-api.ts#L365)
 
 - Guard: `rest === "plan" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "execute_plan"`
 
-[Source](../../src/net/memory-service-api.ts#L361)
+[Source](../../src/net/memory-service-api.ts#L367)
 
 - Guard: `rest === "execute_plan" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "workflow"`
 
-[Source](../../src/net/memory-service-api.ts#L363)
+[Source](../../src/net/memory-service-api.ts#L369)
 
 - Guard: `rest === "workflow" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "federated_retrieve"`
 
-[Source](../../src/net/memory-service-api.ts#L367)
+[Source](../../src/net/memory-service-api.ts#L373)
 
 - Guard: `rest === "federated_retrieve" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "retrieve_cached"`
 
-[Source](../../src/net/memory-service-api.ts#L376)
+[Source](../../src/net/memory-service-api.ts#L382)
 
 - Guard: `rest === "retrieve_cached" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "retrieve"`
 
-[Source](../../src/net/memory-service-api.ts#L380)
+[Source](../../src/net/memory-service-api.ts#L386)
 
 - Guard: `rest === "retrieve" && req.method === "POST"`
 - Guard: `req.method === "POST"`
 
 ### `rest === "vocabulary"`
 
-[Source](../../src/net/memory-service-api.ts#L382)
+[Source](../../src/net/memory-service-api.ts#L388)
 
 - Guard: `rest === "vocabulary"`
 - Guard: `req.method === "GET"`
@@ -1665,7 +1665,7 @@ Fields read here: `Number(url.searchParams.get("version"))`, `definition`, `expe
 
 ### `rest === "source_search"`
 
-[Source](../../src/net/memory-service-api.ts#L404)
+[Source](../../src/net/memory-service-api.ts#L410)
 
 - Guard: `rest === "source_search" && req.method === "POST"`
 - Guard: `req.method === "POST"`
@@ -1674,7 +1674,7 @@ Fields read here: `expansion`, `limit`, `match`, `query`, `session_id`.
 
 ### `rest.match(/^sources\/([^/]+)$/)`
 
-[Source](../../src/net/memory-service-api.ts#L419)
+[Source](../../src/net/memory-service-api.ts#L425)
 
 - Guard: `source && req.method === "GET"`
 - Guard: `req.method === "GET"`
@@ -1683,7 +1683,7 @@ Fields read here: `Number(url.searchParams.get("end"))`, `Number(url.searchParam
 
 ### `rest === "query"`
 
-[Source](../../src/net/memory-service-api.ts#L431)
+[Source](../../src/net/memory-service-api.ts#L437)
 
 - Guard: `rest === "query" && req.method === "POST"`
 - Guard: `req.method === "POST"`
@@ -1692,7 +1692,7 @@ Fields read here: `limit`, `name`, `object`, `valid_at`.
 
 ### `rest === "graph"`
 
-[Source](../../src/net/memory-service-api.ts#L452)
+[Source](../../src/net/memory-service-api.ts#L458)
 
 - Guard: `rest === "graph" && req.method === "POST"`
 - Guard: `req.method === "POST"`
@@ -1701,7 +1701,7 @@ Fields read here: `direction`, `limit`, `max_depth`, `predicates`, `subject`, `v
 
 ### `rest === "reindex"`
 
-[Source](../../src/net/memory-service-api.ts#L485)
+[Source](../../src/net/memory-service-api.ts#L491)
 
 - Guard: `rest === "reindex" && req.method === "POST"`
 - Guard: `req.method === "POST"`
@@ -1710,7 +1710,7 @@ Fields read here: `cursor`, `expected_generation`, `limit`.
 
 ### `rest === "grants"`
 
-[Source](../../src/net/memory-service-api.ts#L512)
+[Source](../../src/net/memory-service-api.ts#L518)
 
 - Guard: `rest === "grants" && req.method === "POST"`
 - Guard: `req.method === "POST"`
@@ -1719,7 +1719,7 @@ Fields read here: `principal_id`, `role`.
 
 ### `rest === "records"`
 
-[Source](../../src/net/memory-service-api.ts#L521)
+[Source](../../src/net/memory-service-api.ts#L527)
 
 - Guard: `rest === "records" && req.method === "POST"`
 - Guard: `req.method === "POST"`
@@ -1728,7 +1728,7 @@ Fields read here: `mode`.
 
 ### `rest.match(/^records\/([^/]+)$/)`
 
-[Source](../../src/net/memory-service-api.ts#L531)
+[Source](../../src/net/memory-service-api.ts#L537)
 
 - Guard: `record`
 - Guard: `req.method === "GET"`
@@ -1738,7 +1738,7 @@ Fields read here: `expected_version`, `url.searchParams.get("version")`.
 
 ### `rest === "search"`
 
-[Source](../../src/net/memory-service-api.ts#L560)
+[Source](../../src/net/memory-service-api.ts#L566)
 
 - Guard: `(rest === "search" &#124;&#124; rest === "context") && req.method === "POST"`
 - Guard: `req.method === "POST"`
@@ -1747,7 +1747,7 @@ Fields read here: `budget_tokens`.
 
 ### `rest === "context"`
 
-[Source](../../src/net/memory-service-api.ts#L560)
+[Source](../../src/net/memory-service-api.ts#L566)
 
 - Guard: `(rest === "search" &#124;&#124; rest === "context") && req.method === "POST"`
 - Guard: `req.method === "POST"`
@@ -1756,7 +1756,7 @@ Fields read here: `budget_tokens`.
 
 ### `rest === "search"`
 
-[Source](../../src/net/memory-service-api.ts#L564)
+[Source](../../src/net/memory-service-api.ts#L570)
 
 - Guard: `(rest === "search" &#124;&#124; rest === "context") && req.method === "POST"`
 - Guard: `req.method === "POST"`
@@ -1765,7 +1765,7 @@ Fields read here: `budget_tokens`.
 
 ### `rest === "sources/batch"`
 
-[Source](../../src/net/memory-service-api.ts#L577)
+[Source](../../src/net/memory-service-api.ts#L583)
 
 - Guard: `rest === "sources/batch" && req.method === "POST"`
 - Guard: `req.method === "POST"`
@@ -1774,7 +1774,7 @@ Fields read here: `items`.
 
 ### `rest === "source_headers"`
 
-[Source](../../src/net/memory-service-api.ts#L581)
+[Source](../../src/net/memory-service-api.ts#L587)
 
 - Guard: `rest === "source_headers" && req.method === "GET"`
 - Guard: `req.method === "GET"`
@@ -1783,7 +1783,7 @@ Fields read here: `Number(url.searchParams.get("after") ?? 0)`, `Number(url.sear
 
 ### `rest === "sources"`
 
-[Source](../../src/net/memory-service-api.ts#L592)
+[Source](../../src/net/memory-service-api.ts#L598)
 
 - Guard: `rest === "sources"`
 - Guard: `req.method === "POST"`
@@ -1793,7 +1793,7 @@ Fields read here: `Number(url.searchParams.get("after") ?? 0)`, `Number(url.sear
 
 ### `rest.match(/^checkpoints\/([^/]+)$/)`
 
-[Source](../../src/net/memory-service-api.ts#L613)
+[Source](../../src/net/memory-service-api.ts#L619)
 
 - Guard: `checkpoint`
 - Guard: `req.method === "GET"`
@@ -1803,14 +1803,14 @@ Fields read here: `data`, `expected_version`, `source_cursor`, `source_ids`.
 
 ### `rest.match(/^jobs\/([^/]+)$/)`
 
-[Source](../../src/net/memory-service-api.ts#L633)
+[Source](../../src/net/memory-service-api.ts#L639)
 
 - Guard: `job && req.method === "GET"`
 - Guard: `req.method === "GET"`
 
 ### `rest === "forget"`
 
-[Source](../../src/net/memory-service-api.ts#L636)
+[Source](../../src/net/memory-service-api.ts#L642)
 
 - Guard: `rest === "forget" && req.method === "POST"`
 - Guard: `req.method === "POST"`
@@ -1819,7 +1819,7 @@ Fields read here: `all`, `expected_generation`, `field`, `record_ids`, `source_i
 
 ### `rest === "export"`
 
-[Source](../../src/net/memory-service-api.ts#L674)
+[Source](../../src/net/memory-service-api.ts#L680)
 
 - Guard: `rest === "export" && req.method === "GET"`
 - Guard: `req.method === "GET"`

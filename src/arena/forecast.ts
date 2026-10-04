@@ -188,6 +188,23 @@ export interface RoundForecast {
   /** Per series (or cell): which spread rule was used. */
   rules: Record<string, SpreadRule>;
   note: string;
+  /** Dated inputs and the actual start distribution, retained through model stages. */
+  origins?: Record<string, ForecastOrigin>;
+}
+
+export interface ForecastOrigin {
+  selected: "daily" | "weekly";
+  reading: { date: string; value: number };
+  targetDate: string;
+  horizonDays: number;
+  source?: string;
+  fetchedAt?: string;
+  weekly?: { date: string; value: number };
+  daily?: Array<{ date: string; value: number }>;
+  mode: "off" | "drift" | "sd" | "both";
+  reason: string;
+  projection?: Record<string, unknown>;
+  start: Distribution;
 }
 
 export function forecastRound(round: ArenaRound, lock: ArenaLock): RoundForecast {

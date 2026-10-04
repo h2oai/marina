@@ -29,6 +29,15 @@ import { CIVIQS_SERIES, civiqsDailySeries, type LiveCiviqs } from "./civiqs-nowc
 
 export type HorizonMode = "off" | "drift" | "sd" | "both";
 
+export interface HorizonOptions {
+  mode: HorizonMode;
+  phi?: number;
+  /** Unset applies to every series; an explicit list scopes an experiment. */
+  series?: string[];
+  /** Experimental: project from a newer weekly anchor using the older daily trend. */
+  weeklyAnchor?: boolean;
+}
+
 /** Readings the slope is fitted on. */
 export const DRIFT_WINDOW = 7;
 /** Default damping: each further day adds φ× the previous day's drift. */
@@ -170,6 +179,80 @@ export interface HorizonNowcast {
 }
 
 /**
+ * Preserve the authoritative weekly LEVEL. Only borrow a same-vintage daily
+ * slope, aged to the weekly date. The gate evaluates that same stale-slope
+ * estimator at historical pseudo-anchors; it never compares revised daily
+ * levels with weekly levels to manufacture a trend.
+ */
+export async function weeklyAnchorNowcast(
+  data: ArenaData,
+  round: ArenaRound,
+  anchor: { date: string; value: number },
+  phi = DEFAULT_DAMPING,
+  live?: LiveCiviqs,
+): Promise<HorizonNowcast | undefined> {
+  if (
+    !Number.isFinite(phi) ||
+    phi <= 0 ||
+    phi > 1 ||
+    !Number.isFinite(Date.parse(anchor.date)) ||
+    !Number.isFinite(Date.parse(round.release_at))
+  )
+    return undefined;
+  const daily = await civiqsDailySeries(data, round, {
+    days: 120,
+    asOf: round.lock_at,
+    live,
+  });
+  const points = daily?.points ?? [];
+  const last = points.at(-1);
+  if (!last || last.date >= anchor.date || !Number.isFinite(anchor.value)) return undefined;
+  const age = horizonDays(last.date, anchor.date);
+  const h = horizonDays(anchor.date, round.release_at);
+  // Index-based slopes represent days only for a contiguous daily series.
+  if (
+    age > 7 ||
+    h < 1 ||
+    points.some(
+      (p, i) =>
+        !Number.isFinite(p.value) ||
+        (i > 0 && Date.parse(p.date) - Date.parse(points[i - 1]!.date) !== DAY),
+    )
+  )
+    return undefined;
+  const values = points.map((p) => p.value);
+  const steps = phi ** age * dampedSteps(h, phi);
+  const projected: number[] = [];
+  const carried: number[] = [];
+  for (let t = DRIFT_WINDOW - 1 + age; t + h < values.length; t++) {
+    const slope = olsSlope(values.slice(t - age - DRIFT_WINDOW + 1, t - age + 1));
+    carried.push(values[t + h]! - values[t]!);
+    projected.push(values[t + h]! - (values[t]! + slope * steps));
+  }
+  const drift = projected.length >= MIN_SAMPLES && rms(projected) < rms(carried);
+  const slope = olsSlope(values.slice(-DRIFT_WINDOW));
+  return {
+    mean: Math.round((anchor.value + (drift ? slope * steps : 0)) * 1000) / 1000,
+    h,
+    drift,
+    lastDate: anchor.date,
+    detail: {
+      anchor,
+      trendDate: last.date,
+      age,
+      h,
+      phi,
+      slope,
+      drift,
+      samples: projected.length,
+      ...(projected.length ? { projectedRms: rms(projected), carryRms: rms(carried) } : {}),
+      source: daily?.source,
+      points,
+    },
+  };
+}
+
+/**
  * The horizon-aware nowcast for one Civiqs series of a round (a topline, or a
  * profile cell via `{ ...round, series: cell }`). `mode` picks the corrections;
  * the target day is the round's release day. Undefined when no snapshot
@@ -218,6 +301,7 @@ export async function horizonNowcast(
       phi,
       ...(rev !== undefined ? { revisionSd: r(rev) } : {}),
       source: daily?.source,
+      points: pts,
     },
   };
 }
@@ -232,4 +316,21 @@ export function horizonModeFromEnv(env: NodeJS.ProcessEnv = process.env): Horizo
 export function dampingFromEnv(env: NodeJS.ProcessEnv = process.env): number {
   const v = Number(env.MARINA_ARENA_NOWCAST_DAMPING);
   return Number.isFinite(v) && v > 0 && v <= 1 ? v : DEFAULT_DAMPING;
+}
+
+/** Read the complete policy from the caller's environment, not process globals. */
+export function horizonOptionsFromEnv(env: NodeJS.ProcessEnv = process.env): HorizonOptions {
+  const raw = env.MARINA_ARENA_NOWCAST_SERIES;
+  return {
+    mode: horizonModeFromEnv(env),
+    phi: dampingFromEnv(env),
+    ...(raw === undefined
+      ? {}
+      : {
+          series: raw
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
+        }),
+  };
 }

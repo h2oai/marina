@@ -75,6 +75,8 @@ function searchInput(body: Record<string, unknown>): MemorySearchInput {
     throw new MemoryError(400, "invalid_input", "allow_degraded must be boolean");
   for (const key of ["subject", "type", "tier"] as const)
     if (body[key] !== undefined) textValue(body[key], key, 256);
+  if (body.include_ended !== undefined && typeof body.include_ended !== "boolean")
+    throw new MemoryError(400, "invalid_input", "include_ended must be boolean");
   return {
     include_stale: includeStale(body),
     query,
@@ -85,6 +87,10 @@ function searchInput(body: Record<string, unknown>): MemorySearchInput {
     subject: body.subject as string | undefined,
     type: body.type as string | undefined,
     tier: body.tier as string | undefined,
+    ...(body.valid_at === undefined
+      ? {}
+      : { valid_at: integer(body.valid_at, "valid_at", 0, Number.MAX_SAFE_INTEGER) }),
+    ...(body.include_ended === undefined ? {} : { include_ended: body.include_ended as boolean }),
   };
 }
 

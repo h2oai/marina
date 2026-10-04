@@ -25,7 +25,19 @@ export interface SweInstance {
   base_commit: string;
   version?: string;
   problem_statement: string;
+  /** SWE-bench Pro: the PR's explicit requirements (part of the task the solver sees). */
+  requirements?: string;
+  /** SWE-bench Pro: new interfaces the change must introduce, or a statement that there are none. */
+  interface?: string;
 }
+
+/** Which SWE-bench dataset a run belongs to (its ledger name and default instance file). */
+export type SweBenchmark = "verified" | "pro";
+
+export const SWE_BENCHMARKS: Record<SweBenchmark, { dataset: string; instances: string }> = {
+  verified: { dataset: "swe-bench-verified", instances: "verified.jsonl" },
+  pro: { dataset: "swe-bench-pro", instances: "pro.jsonl" },
+};
 
 /** One way of solving an instance with Marina. */
 export interface SweArm {
@@ -124,6 +136,24 @@ const ENV_IMAGE_NOTE = [
   "pytest <path> / python tests/runtests.py <label>). Keep runs short and targeted, then submit.",
 ];
 
+/**
+ * The issue as the dataset states it. SWE-bench Pro tasks also carry the PR's
+ * requirements and its new interfaces (the official task text includes both);
+ * Verified instances have neither, so their text is the problem statement alone.
+ */
+function issueText(inst: SweInstance): string[] {
+  const parts = [inst.problem_statement.trim()];
+  if (inst.requirements?.trim()) parts.push("", "## Requirements", inst.requirements.trim());
+  if (inst.interface?.trim()) parts.push("", "## New Interfaces", inst.interface.trim());
+  if (inst.requirements !== undefined || inst.interface !== undefined) {
+    parts.push(
+      "",
+      "Do not reference, look up, or copy existing solutions, external PRs, or online workarounds.",
+    );
+  }
+  return parts;
+}
+
 /** The task text the coding agent receives: the issue, nothing else. */
 export function taskPrompt(inst: SweInstance, mode: SweMode = "agentless"): string {
   return [
@@ -133,7 +163,7 @@ export function taskPrompt(inst: SweInstance, mode: SweMode = "agentless"): stri
     ...(mode === "env-image" ? ENV_IMAGE_NOTE : AGENTLESS_NOTE),
     "",
     "ISSUE:",
-    inst.problem_statement.trim(),
+    ...issueText(inst),
   ].join("\n");
 }
 
@@ -149,7 +179,7 @@ export function reviewPrompt(inst: SweInstance, mode: SweMode = "agentless"): st
     "reason from the code, then submit a one-line verdict (do not block on verification).",
     "",
     "ISSUE:",
-    inst.problem_statement.trim(),
+    ...issueText(inst),
   ].join("\n");
 }
 
@@ -353,14 +383,22 @@ export async function attemptInstance(
   };
 }
 
-/** Map the official harness report onto the harness-result shape the ledger imports. */
+/**
+ * Map the official harness report onto the harness-result shape the ledger imports.
+ * Instances the harness could not grade (`error_ids`: image, container or
+ * harness failures) are infrastructure exclusions, never counted as unresolved;
+ * they are listed in `metadata.excluded`.
+ */
 export function ledgerResult(
-  report: { resolved_ids?: string[] },
+  report: { resolved_ids?: string[]; error_ids?: string[] },
   attempts: SweAttempt[],
-  meta: { arm: SweArm; replicate: number; subsetSeed: number },
+  meta: { arm: SweArm; replicate: number; subsetSeed: number; benchmark?: SweBenchmark },
 ) {
   const resolved = new Set(report.resolved_ids ?? []);
-  const items = attempts.map((a) => ({
+  const errored = new Set(report.error_ids ?? []);
+  const graded = attempts.filter((a) => !errored.has(a.instance_id));
+  const excluded = attempts.filter((a) => errored.has(a.instance_id)).map((a) => a.instance_id);
+  const items = graded.map((a) => ({
     id: a.instance_id,
     correct: resolved.has(a.instance_id),
     score: resolved.has(a.instance_id) ? 1 : 0,
@@ -370,7 +408,7 @@ export function ledgerResult(
   const correct = items.filter((i) => i.correct).length;
   return {
     config: {
-      dataset: "swe-bench-verified",
+      dataset: SWE_BENCHMARKS[meta.benchmark ?? "verified"].dataset,
       mode: "agent",
       model: meta.arm.model,
       ...(meta.arm.reviewModel ? { reviewModel: meta.arm.reviewModel } : {}),
@@ -378,9 +416,9 @@ export function ledgerResult(
       replicate: meta.replicate,
     },
     timestamp: new Date().toISOString(),
-    duration_ms: attempts.reduce((t, a) => t + a.durationMs, 0),
+    duration_ms: graded.reduce((t, a) => t + a.durationMs, 0),
     scores: { overall: items.length ? correct / items.length : 0 },
-    metadata: { arm: meta.arm.name, judge: "swebench-harness" },
+    metadata: { arm: meta.arm.name, judge: "swebench-harness", excluded },
     items,
   };
 }

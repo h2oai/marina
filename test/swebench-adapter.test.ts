@@ -52,6 +52,29 @@ describe("prompts", () => {
       expect(p).not.toContain("SECRET HINT");
     }
   });
+
+  it("leave a Verified instance's text unchanged (no Pro sections)", () => {
+    const p = taskPrompt(inst("x__y-1", "x/y"));
+    expect(p.endsWith("ISSUE:\nissue text for x__y-1")).toBe(true);
+    expect(p).not.toContain("## Requirements");
+  });
+
+  it("include SWE-bench Pro's requirements and interfaces, never its gold or tests", () => {
+    const pro = {
+      ...inst("instance_a__b-1", "a/b"),
+      requirements: "- must accept None",
+      interface: "No new interfaces are introduced.",
+      patch: "GOLD PATCH",
+      fail_to_pass: "['t::x']",
+    } as SweInstance;
+    for (const p of [taskPrompt(pro), reviewPrompt(pro)]) {
+      expect(p).toContain("## Requirements\n- must accept None");
+      expect(p).toContain("## New Interfaces\nNo new interfaces are introduced.");
+      expect(p).toContain("Do not reference, look up, or copy existing solutions");
+      expect(p).not.toContain("GOLD PATCH");
+      expect(p).not.toContain("t::x");
+    }
+  });
 });
 
 describe("workspace and patch", () => {
@@ -118,6 +141,30 @@ describe("ledgerResult and spend", () => {
     expect(r.items.map((i) => i.correct)).toEqual([true, false, true]);
     expect(r.scores.overall).toBeCloseTo(2 / 3);
     expect(r.items[1]?.usage.costUsd).toBeCloseTo(0.2);
+    expect(r.config.dataset).toBe("swe-bench-verified");
+  });
+
+  it("excludes instances the harness could not grade instead of scoring them 0", () => {
+    const attempts = ["a", "b", "c"].map((id) => ({
+      instance_id: id,
+      arm: "single",
+      replicate: 1,
+      exitCode: 0,
+      patchBytes: 10,
+      costUsd: 0.1,
+      durationMs: 1000,
+      trajectory: `${id}.md`,
+    }));
+    const r = ledgerResult({ resolved_ids: ["a"], error_ids: ["c"] }, attempts, {
+      arm: { name: "single", model: "m" },
+      replicate: 1,
+      subsetSeed: 7,
+      benchmark: "pro",
+    });
+    expect(r.items.map((i) => i.id)).toEqual(["a", "b"]);
+    expect(r.scores.overall).toBeCloseTo(1 / 2);
+    expect(r.metadata.excluded).toEqual(["c"]);
+    expect(r.config.dataset).toBe("swe-bench-pro");
   });
 
   it("reads 0 spend from a missing or schema-less database", () => {

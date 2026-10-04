@@ -578,7 +578,7 @@ See [docs/load-test-results.md](docs/load-test-results.md) for full results.
 | [docs/guides/emergent-organization.md](docs/guides/emergent-organization.md) | Bottom-up coordination and organization patterns |
 | [docs/guides/getting-started.md](docs/guides/getting-started.md) | Source checkout to first visible, reviewed result |
 | [docs/guides/forecasting.md](docs/guides/forecasting.md) | Forecast any question: CLI, command and `/v1/forecast`, with cited and checked evidence |
-| [docs/guides/arena.md](docs/guides/arena.md) | The Social Simulation Arena: baseline, nowcast, crew, research agent, signal discovery, integrity |
+| [docs/guides/arena.md](docs/guides/arena.md) | The Social Simulation Arena: forecasting, bounded parallel/layered shadow portfolios, routing evidence, integrity |
 | [docs/architecture/decisions.md](docs/architecture/decisions.md) | Harness decisions: gate, router, verifier, `decision check/choose`, `/v1/decisions` |
 | [docs/guides/scripts.md](docs/guides/scripts.md) | Every `bun run` script, what it does, and when to use it |
 | [docs/guides/commands.md](docs/guides/commands.md) | Compact command reference |

@@ -181,7 +181,9 @@ it("filters out-of-time and stale records while honoring an explicit historical 
     steps: [{ operation: "search", input: { query: "release", include_stale: true } }],
   });
   expect(result.evidence.map((item) => item.id)).toEqual([current.id]);
-  expect(result.diagnostics.filtered_records).toBe(3);
+  // Out-of-time records never reach the plan: `search` gets the retrieval's
+  // valid_at and excludes them before ranking. Only the stale one is dropped after.
+  expect(result.diagnostics.filtered_records).toBe(1);
   const past = await client.retrieve(space, { task: "release", valid_at: 99 });
   expect(past.evidence).toHaveLength(1);
   expect(past.evidence[0]).toMatchObject({ content: "release retired" });

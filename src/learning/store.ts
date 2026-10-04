@@ -9,6 +9,13 @@
  * records with `trust: "rejected"` that recall never serves. Recall
  * over-fetches lexical matches and applies `visibleAt` itself, so the leakage
  * rule never depends on the store's own temporal filters.
+ *
+ * Retirement (`retire`) is a `revise` that closes the record's validity and
+ * records the reason, curator and replacement in metadata — the same tombstone
+ * shape `note delete` uses. The durable `search` excludes ended records before
+ * ranking, so a retired lesson is never recalled and never takes a slot; recall
+ * re-checks validity anyway. Nothing is erased: `get` (with `version`) reads
+ * every earlier version.
  */
 
 import type { MemoryOperationRequest } from "../sdk/memory-operations";
@@ -16,6 +23,7 @@ import {
   type Lesson,
   type LessonSink,
   type LessonTrust,
+  lessonMatches,
   lessonTokens,
   type OutcomeDomain,
   selectServed,
@@ -27,9 +35,16 @@ type MemoryRun = (request: MemoryOperationRequest) => Promise<{ ok: true; result
 
 interface RecordLike {
   id?: string;
+  version?: number;
   content?: string;
   metadata?: Record<string, unknown>;
   valid_time?: { from: number | null; until: number | null } | null;
+}
+
+/** A record whose validity has not ended at `now` (a retired lesson's has). */
+export function currentLessonRecord(r: RecordLike, now = Date.now()): boolean {
+  const until = r.valid_time?.until;
+  return until === null || until === undefined || until > now;
 }
 
 const TRUSTS = new Set<LessonTrust>(["trusted", "unverified", "rejected"]);
@@ -136,10 +151,70 @@ export function durableLessonSink(
         ...(await space(domain)),
         input: { query: words, mode: "lexical", subject: LESSON_RECORD_SUBJECT, limit: 50 },
       });
+      const now = Date.now();
       const lessons = ((reply.result as { results?: RecordLike[] } | undefined)?.results ?? [])
+        .filter((r) => currentLessonRecord(r, now))
         .map(lessonFromRecord)
         .filter((l): l is Lesson => l !== undefined && l.domain === domain);
       return selectServed(lessons, asOf, recallOpts);
+    },
+    async find(domain, selector, limit) {
+      const sp = await space(domain);
+      if (!sp.space_id) return [];
+      const now = Date.now();
+      const out: Lesson[] = [];
+      let cursor: string | undefined;
+      // Exact symbolic reads at `now`: only current lessons, paged.
+      for (let page = 0; page < 100 && out.length < limit; page++) {
+        const reply = await run({
+          operation: "query",
+          ...sp,
+          input: {
+            subject: LESSON_RECORD_SUBJECT,
+            valid_at: now,
+            limit: 100,
+            ...(cursor ? { cursor } : {}),
+          },
+        });
+        const r = (reply.result ?? {}) as { results?: RecordLike[]; next_cursor?: string | null };
+        for (const record of r.results ?? []) {
+          const l = lessonFromRecord(record);
+          if (l && l.domain === domain && lessonMatches(l, selector)) out.push(l);
+        }
+        if (!r.next_cursor) break;
+        cursor = r.next_cursor;
+      }
+      return out.slice(0, limit);
+    },
+    async retire(domain, id, retirement) {
+      const sp = await space(domain);
+      if (!sp.space_id) throw new Error(`no lessons space for ${domain}`);
+      const record = (await run({ operation: "get", ...sp, id })).result as RecordLike;
+      if (record.metadata?.kind !== LESSON_RECORD_SUBJECT || typeof record.content !== "string")
+        throw new Error(`${id} is not a lesson`);
+      const now = Date.now();
+      if (!currentLessonRecord(record, now)) throw new Error(`lesson ${id} is already retired`);
+      const version = record.version;
+      if (typeof version !== "number") throw new Error(`lesson ${id} has no version`);
+      await run({
+        operation: "revise",
+        ...sp,
+        id,
+        // Deterministic: a retried retirement of the same version is one revision.
+        key: `lesson-retire:${id}:${version}`,
+        input: {
+          expected_version: version,
+          content: record.content,
+          metadata: {
+            ...record.metadata,
+            retired_reason: retirement.reason,
+            retired_at: new Date(now).toISOString(),
+            retired_by: retirement.by,
+            ...(retirement.supersededBy ? { superseded_by: retirement.supersededBy } : {}),
+          },
+          valid_time: { from: record.valid_time?.from ?? null, until: now },
+        },
+      });
     },
   };
 }

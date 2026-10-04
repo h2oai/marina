@@ -168,18 +168,15 @@ describe("contradiction benchmark (offline)", () => {
     expect(m.searchServesSuperseded.pooled).toBe(0);
   });
 
-  test("no arm ever serves a superseded record as current; lexical search still lists them", () => {
+  test("no arm ever serves a superseded record as current, through query or search", () => {
     for (const arm of CONTRADICTION_ARMS) {
       const m = result.arms[arm]!;
       expect(m.unsafeServed.numerator).toBe(0);
       expect(m.servedAmbiguous.numerator).toBe(arm === "keep_both" ? m.conflictFacts : 0);
+      // `search` excludes records whose validity ended before ranking, so a
+      // resolved loser is no longer reachable by keyword for its fact.
+      expect(m.searchServesSuperseded.numerator).toBe(0);
     }
-    // search is not validity-filtered: every superseding policy leaves the
-    // loser reachable by lexical search for its fact.
-    for (const arm of ["last_writer_wins", "evidence_weighted", "await_confirmation"] as const)
-      expect(result.arms[arm]!.searchServesSuperseded.numerator).toBe(
-        result.arms[arm]!.conflictFacts,
-      );
   });
 
   test("hygiene ratios agree with the benchmark's own counts", () => {

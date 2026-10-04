@@ -14,6 +14,7 @@ import { type ArenaConfig, arenaConfigFromEnv, loadArenaKey } from "./config";
 import { ArenaData, DEFAULT_ARENA_DATA_URL } from "./data";
 import type { Forecaster, Learner } from "./evaluate";
 import { forecastRound } from "./forecast";
+import { forecastSettings } from "./forecast-config";
 import type { Usage } from "./model-backend";
 import { publicKeyBase64 } from "./protocol";
 import {
@@ -139,7 +140,7 @@ export async function arenaRegistrationCheck(
  * history the nowcast start forecast is built from, so the cells a model is
  * shown match its start. Every other lock is returned as it is.
  */
-async function lockForModels(
+export async function lockForModels(
   data: ArenaData,
   round: import("./types").ArenaRound,
   lock: import("./types").ArenaLock,
@@ -161,9 +162,13 @@ async function lockForModels(
 /** Live Civiqs reads for open rounds (on unless MARINA_ARENA_CIVIQS_LIVE=off). */
 async function liveCiviqs(env: NodeJS.ProcessEnv = process.env) {
   const { civiqsLiveEnabled, fetchCiviqsLive } = await import("./research/civiqs-live");
-  return civiqsLiveEnabled(env)
-    ? { live: (n: string, f?: Record<string, string>) => fetchCiviqsLive(n, f) }
-    : {};
+  const { horizonOptionsFromEnv } = await import("./research/civiqs-horizon");
+  return {
+    horizon: horizonOptionsFromEnv(env),
+    ...(civiqsLiveEnabled(env)
+      ? { live: (n: string, f?: Record<string, string>) => fetchCiviqsLive(n, f) }
+      : {}),
+  };
 }
 
 /**
@@ -212,9 +217,23 @@ async function routedForecasterFor(
   };
 }
 
+/** Immutable caller-supplied experiment inputs; no archive or research rereads. */
+export interface FormationInputs {
+  roundId: string;
+  start: import("./forecast").RoundForecast;
+  lock: import("./types").ArenaLock;
+  dossier?: import("./formations").ResearchDossier;
+}
+
 export async function forecasterFor(
   spec: string,
-  opts: { weight?: number; raw?: boolean; env?: NodeJS.ProcessEnv; notes?: NotesStore } = {},
+  opts: {
+    weight?: number;
+    raw?: boolean;
+    env?: NodeJS.ProcessEnv;
+    notes?: NotesStore;
+    formationInputs?: FormationInputs;
+  } = {},
 ): Promise<{ forecaster: Forecaster; usage?: Usage; learner?: Learner }> {
   if (spec === "baseline") return { forecaster: baselineForecaster };
   if (spec === "routed" || spec.startsWith("route:")) return routedForecasterFor(spec, opts);
@@ -257,7 +276,7 @@ export async function forecasterFor(
     return researchForecasterFor(spec, opts.env ?? process.env);
   }
   if (spec.startsWith("formation:")) {
-    return formationForecasterFor(spec, opts.env ?? process.env);
+    return formationForecasterFor(spec, opts.env ?? process.env, opts.formationInputs);
   }
   if (spec.startsWith("crew:")) {
     const specs = spec.slice("crew:".length).split(",");
@@ -425,6 +444,7 @@ async function tabh2oForecasterFor(
 async function formationForecasterFor(
   spec: string,
   env: NodeJS.ProcessEnv,
+  inputs?: FormationInputs,
 ): Promise<{ forecaster: Forecaster; usage: Usage }> {
   const [head = "", ...parts] = spec.split("+");
   const [{ modelComplete }, formations, { nowcastForecaster }] = await Promise.all([
@@ -451,7 +471,7 @@ async function formationForecasterFor(
         pageText: import("./research/verify").PageText;
       }
     | undefined;
-  if (researchPart) {
+  if (researchPart && !inputs) {
     const [retrieve, { defaultPageText }] = await Promise.all([
       import("./research/retrieve"),
       import("./research/verify"),
@@ -491,10 +511,17 @@ async function formationForecasterFor(
         st.models.map((m) => ({ name: m.replace(/^openrouter\//, ""), ...modelComplete(m, env) })),
       );
       const members = made.map((ms) => ms.map(({ name, complete }) => ({ name, complete })));
-      const given = await start(round, lock);
-      const shown = await lockForModels(data, round, lock);
+      if (inputs && inputs.roundId !== round.round_id)
+        throw new Error("frozen inputs belong to another round");
+      const given = inputs ? structuredClone(inputs.start) : await start(round, lock);
+      const shown = inputs ? structuredClone(inputs.lock) : await lockForModels(data, round, lock);
+      const evidence = inputs
+        ? inputs.dossier
+          ? { dossier: inputs.dossier }
+          : undefined
+        : research;
       const f =
-        stages.length === 1 && !research
+        stages.length === 1 && !evidence
           ? await formations.formationForecastRound(
               stages[0]!.pattern,
               round,
@@ -512,7 +539,7 @@ async function formationForecasterFor(
                 ...(stages[1] ? [{ pattern: stages[1].pattern, members: members[1]! }] : []),
               ] as [import("./formations").FormationStage, import("./formations").FormationStage?],
               given,
-              research,
+              evidence,
               judge,
             );
       let cost = (f as { dossier?: { costUsd?: number } }).dossier?.costUsd ?? 0;
@@ -570,7 +597,7 @@ export async function arenaDepsWithForecaster(
     // The world's notes are the crew's memory when the store carries them.
     const notes = "getNotesByType" in store ? (store as unknown as NotesStore) : undefined;
     const { forecaster } = await forecasterFor(spec, { weight, env, ...(notes ? { notes } : {}) });
-    return { ...deps, forecaster };
+    return { ...deps, forecaster, forecasterConfig: forecastSettings(spec, env, weight) };
   } catch (err) {
     return { error: `Forecaster: ${(err as Error).message}` };
   }
@@ -788,7 +815,6 @@ async function researchForecasterFor(
   };
 }
 
-/** Record what `spec` would file for each round (first record per round wins). */
 /** A shadow record younger than this is not re-recorded (the latest before lock is scored). */
 export const SHADOW_RERECORD_MS = 6 * 3_600_000;
 
@@ -803,11 +829,13 @@ export async function recordShadow(
   // `discovered` reads — without them it silently degrades to the nowcast.
   const notes = "getNotesByType" in store ? (store as unknown as NotesStore) : undefined;
   const { forecaster, usage } = await forecasterFor(spec, { env, ...(notes ? { notes } : {}) });
+  const settings = forecastSettings(spec, env);
+  const variant = `${spec}#${settings.fingerprint.slice(0, 16)}`;
   // Re-recording is how a forecast stays current until lock (the one that
   // counts is the last before lock, like a filing); a record from the last
   // few hours is fresh enough, so hourly runs don't pile up duplicates.
   const latest = new Map<string, number>();
-  for (const r of store.listArenaShadow({ forecaster: spec, limit: 2_000 })) {
+  for (const r of store.listArenaShadow({ forecaster: variant, limit: 2_000 })) {
     latest.set(r.round_id, Math.max(latest.get(r.round_id) ?? 0, r.created_at));
   }
   const now = Date.now();
@@ -832,11 +860,12 @@ export async function recordShadow(
         unknown
       >;
       const { topline, profile, ranking, rules: _rules, note: _note, ...detail } = f;
+      if (Date.parse(round.lock_at) <= Date.now()) throw new Error("forecast finished after lock");
       const recorded = store.recordArenaShadow({
         roundId,
-        forecaster: spec,
+        forecaster: variant,
         forecast: JSON.stringify({ topline, profile, ranking }),
-        detail: JSON.stringify(detail),
+        detail: JSON.stringify({ ...detail, settings }),
         costUsd: (usage?.costUsd ?? 0) - before,
       });
       out.push({ roundId, recorded });

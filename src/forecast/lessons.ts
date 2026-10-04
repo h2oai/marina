@@ -252,7 +252,12 @@ export function durableLessonStore(
         ...space,
         input: { query: words, mode: "lexical", subject: LESSON_SUBJECT, limit: 50 },
       });
+      const now = Date.now();
       const results = ((reply.result as { results?: RecordLike[] } | undefined)?.results ?? [])
+        // A retired lesson (validity closed, history kept) is never served. The
+        // durable `search` already excludes ended records before ranking; this
+        // re-check keeps recall correct over any store that does not.
+        .filter((r) => r.valid_time?.until == null || r.valid_time.until > now)
         .map(fromRecord)
         .filter((l): l is ForecastLesson => l !== undefined);
       return selectLessons(results, asOf, recallOpts);

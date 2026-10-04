@@ -31,6 +31,8 @@ export interface ArenaPoint {
 /** `locks/<round_id>.json` — the input history the arena froze for the round. */
 export interface ArenaLock {
   round_id: string;
+  series?: string;
+  observed_at?: string;
   lock_at?: string;
   answer_frozen_at?: string;
   history?: ArenaPoint[];

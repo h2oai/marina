@@ -3,7 +3,13 @@
 
 import type { Database } from "bun:sqlite";
 import { cosine } from "../memory/embeddings";
-import { authorizeMemorySpace, type MemoryFilter, memoryFilters } from "./db-memory-service";
+import {
+  authorizeMemorySpace,
+  type MemoryFilter,
+  type MemoryValidityFilter,
+  memoryFilters,
+  memoryValidityFilter,
+} from "./db-memory-service";
 import { REPUTATION_STANDING_CEILING, REPUTATION_WEIGHT } from "./db-notes";
 import type { MemoryActor } from "./db-principals";
 
@@ -15,21 +21,27 @@ export function rankMemoryVectors(
   space: string,
   model: string,
   vector: number[],
-  filter: MemoryFilter = {},
+  filter: MemoryFilter & MemoryValidityFilter = {},
 ) {
   authorizeMemorySpace(db, actor, space);
   const filters = memoryFilters(filter);
+  const validity = memoryValidityFilter(filter);
   const rows =
     db.query(`SELECT r.id,v.vector FROM memory_records r JOIN notes n ON n.id=r.current_note_id
     LEFT JOIN memory_vectors v ON v.note_id=r.current_note_id AND v.model=?
-    WHERE r.space_id=? AND r.status='active' AND n.verification_status!='superseded' ${filters.sql}`);
+    WHERE r.space_id=? AND r.status='active' AND n.verification_status!='superseded' ${filters.sql}${validity.sql}`);
   let scored = 0,
     missing = 0,
     invalid = 0;
   let best: { id: string; score: number }[] = [];
   const compare = (a: { id: string; score: number }, b: { id: string; score: number }) =>
     b.score - a.score || a.id.localeCompare(b.id);
-  for (const entry of rows.iterate(model, space, ...filters.values) as Iterable<{
+  for (const entry of rows.iterate(
+    model,
+    space,
+    ...filters.values,
+    ...validity.values,
+  ) as Iterable<{
     id: string;
     vector: string | null;
   }>) {

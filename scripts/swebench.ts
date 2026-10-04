@@ -14,6 +14,10 @@
  * repository), --instances <file.jsonl> (from benchmarks/swebench/export.py),
  * --concurrency N, --timeout-min M. `score` needs SWEBENCH_PYTHON (a Python with the
  * `swebench` package) and, for Podman, DOCKER_HOST pointing at the Podman socket.
+ *
+ * SWE-bench Pro: --benchmark pro (instances default to pro.jsonl, the ledger dataset is
+ * swe-bench-pro) and `score --tasks <SWE-bench_Pro-os>/v2/tasks`, which grades with the
+ * benchmark's own per-task verifier (benchmarks/swebench/pro_grade.py).
  * Nothing is submitted anywhere; leaderboard submission is a separate, approved act.
  */
 
@@ -25,8 +29,10 @@ import {
   attemptInstance,
   ledgerResult,
   loadInstances,
+  SWE_BENCHMARKS,
   type SweArm,
   type SweAttempt,
+  type SweBenchmark,
   selectSubset,
 } from "../benchmarks/swebench/adapter";
 import { projectSlug } from "./code";
@@ -52,11 +58,18 @@ const { positionals, values } = parseArgs({
     // Opt-in: the agent's commands run inside the instance's environment image
     // (Marina's container runner), so it can run the project's existing tests.
     "env-image": { type: "boolean" },
+    benchmark: { type: "string", default: "verified" },
+    // SWE-bench Pro: the harness's v2 task directories (per-task verifier).
+    tasks: { type: "string" },
   },
 });
 const cmd = positionals[0];
+const benchmark = values.benchmark as SweBenchmark;
+if (!Object.hasOwn(SWE_BENCHMARKS, benchmark)) {
+  throw new Error(`--benchmark must be one of ${Object.keys(SWE_BENCHMARKS).join(", ")}`);
+}
 const dataDir = resolve(values.data as string);
-const instancesPath = values.instances ?? join(dataDir, "verified.jsonl");
+const instancesPath = values.instances ?? join(dataDir, SWE_BENCHMARKS[benchmark].instances);
 const idsPath = values.ids ?? join(dataDir, `subset-n${values.n}-s${values.seed}.txt`);
 const replicate = Number(values.replicate);
 const runDir = join(dataDir, "runs", `${values.arm}-r${replicate}`);
@@ -134,10 +147,32 @@ async function runCmd(): Promise<number> {
   return 0;
 }
 
+/** Where `score` leaves the Pro grader's report (`pro_grade.py --out`). */
+const proReportDir = join(runDir, "pro-grade");
+
 async function scoreCmd(): Promise<number> {
   const py = process.env.SWEBENCH_PYTHON;
   if (!py) throw new Error("SWEBENCH_PYTHON must point at a Python with the swebench package");
   const preds = join(runDir, "predictions.jsonl");
+  if (benchmark === "pro") {
+    if (!values.tasks) throw new Error("--tasks <SWE-bench_Pro-os>/v2/tasks is required for Pro");
+    const pro = Bun.spawn(
+      [
+        py,
+        join(REPO_ROOT, "benchmarks/swebench/pro_grade.py"),
+        "--tasks",
+        resolve(values.tasks),
+        "--predictions",
+        preds,
+        "--out",
+        proReportDir,
+        "--workers",
+        String(values.workers),
+      ],
+      { cwd: runDir, stdout: "inherit", stderr: "inherit" },
+    );
+    return pro.exited;
+  }
   const runId = `marina-${values.arm}-r${replicate}`;
   const proc = Bun.spawn(
     [
@@ -163,9 +198,14 @@ async function scoreCmd(): Promise<number> {
 async function fileCmd(): Promise<number> {
   const arm = JSON.parse(readFileSync(join(runDir, "arm.json"), "utf8")) as SweArm;
   const reportName = `marina-${arm.name}-r${replicate}.marina-${values.arm}-r${replicate}.json`;
-  const reportPath = [join(runDir, reportName)].find((p) => existsSync(p));
+  const reportPath = [join(runDir, reportName), join(proReportDir, "report.json")].find((p) =>
+    existsSync(p),
+  );
   if (!reportPath) throw new Error(`no harness report in ${runDir} (run score first)`);
-  const report = JSON.parse(readFileSync(reportPath, "utf8")) as { resolved_ids?: string[] };
+  const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+    resolved_ids?: string[];
+    error_ids?: string[];
+  };
   const attempts = readFileSync(join(runDir, "attempts.jsonl"), "utf8")
     .split("\n")
     .filter(Boolean)
@@ -174,6 +214,7 @@ async function fileCmd(): Promise<number> {
     arm,
     replicate,
     subsetSeed: Number(values.seed),
+    benchmark,
   });
   const resultPath = join(runDir, "ledger-result.json");
   writeFileSync(resultPath, JSON.stringify(result, null, 2));
@@ -199,7 +240,7 @@ async function fileCmd(): Promise<number> {
       "--cost-usd",
       cost.toFixed(4),
       "--group",
-      values.group ?? `swebench-${arm.name}`,
+      values.group ?? `${benchmark === "pro" ? "swebench-pro" : "swebench"}-${arm.name}`,
     ],
     {
       cwd: REPO_ROOT,

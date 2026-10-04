@@ -10,7 +10,8 @@ import {
   briefCutoff,
   withDataLookups,
 } from "../src/arena/research/data-evidence";
-import type { ResearchReport } from "../src/arena/research/retrieve";
+import { type ResearchReport, withProvidedText } from "../src/arena/research/retrieve";
+import { verifyDossier } from "../src/arena/research/verify";
 import { dataCommand } from "../src/engine/commands/data";
 import { dataOdds, dataSeries, dataSources } from "../src/forecast/data-query";
 import type { LookupFetch } from "../src/forecast/lookup-http";
@@ -344,7 +345,8 @@ describe("arena research data evidence", () => {
     expect(out.report).toContain("CHANGES only");
     expect(out.report).toContain("University of Michigan");
     expect(seen.map((s) => s.ctx?.hints?.fred?.[0])).toContain("MICH");
-    for (const s of seen) expect(s.cutoff.toISOString()).toBe(new Date(lockAt).toISOString());
+    expect(seen[0]!.cutoff.toISOString()).toBe(new Date(lockAt).toISOString());
+    expect(seen[1]!.cutoff.toISOString()).toBe("2026-10-03T23:59:59.999Z");
     expect(out.sources.length).toBeGreaterThan(report.sources.length);
 
     seen.length = 0;
@@ -369,7 +371,60 @@ describe("arena research data evidence", () => {
       },
     };
     const out = await withDataLookups(async () => report, [empty, boom])(brief("x-round"));
-    expect(out).toEqual(report);
+    expect(out).toMatchObject(report);
+    expect(out.data?.map((r) => r.skipped)).toEqual(["no match", "down"]);
+  });
+
+  it("verifies dated FRED changes against its frozen payload without fetching a revised page", async () => {
+    const now = new Date("2026-10-03T20:00:00Z");
+    let reads = 0;
+    const fred: ForecastLookup = {
+      name: "fred",
+      async lookup(_q, cutoff) {
+        expect([now.toISOString(), "2026-09-19T23:59:59.999Z"]).toContain(cutoff.toISOString());
+        return {
+          name: "fred",
+          lines: [],
+          sources: [],
+          mode: "historical",
+          asOf: cutoff.toISOString(),
+          readings: [
+            {
+              source: "FRED",
+              series: "UMCSENT",
+              date: "2026-09-01",
+              value: 60.4,
+              asOf: cutoff.toISOString().slice(0, 10),
+              unit: "Index",
+              history: [
+                { date: "2026-08-01", value: 62.3 },
+                { date: "2026-09-01", value: 60.4 },
+              ],
+            },
+          ],
+        };
+      },
+    };
+    const paired = withProvidedText(
+      withDataLookups(async () => ({ ...report, report: "", sources: [] }), [fred], {
+        now: () => now,
+      }),
+      async () => {
+        reads++;
+        return "revised value 90.0";
+      },
+    );
+    const out = await paired.retriever(brief("civiqs-2026-w41-econ-now", "2026-10-07T14:00:00Z"));
+    expect(out.report).toContain("same-vintage change -1.9");
+    expect(out.report).toContain("previous 62.3 on 2026-08-01");
+    expect(out.report).toContain("change since anchor vintage 2026-09-19: 0 (no new level change)");
+    expect(out.data?.[1]?.name).toBe("fred-anchor-vintage");
+    expect(out.data?.[0]?.readings?.[0]?.value).toBe(60.4);
+    expect(out.sources[0]?.url).toContain("#marina-vintage-");
+    expect(out.sources[0]?.text).toBeUndefined();
+    const checked = await verifyDossier(out.report, paired.pageText);
+    expect(checked.verifiedText).toContain("same-vintage change -1.9");
+    expect(reads).toBe(0);
   });
 
   it("reads as of the brief's cutoff", () => {

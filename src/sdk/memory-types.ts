@@ -275,6 +275,17 @@ export interface MemorySearchInput extends MemoryFilter {
   limit?: number;
   mode?: "lexical" | "hybrid";
   allow_degraded?: boolean;
+  /**
+   * Validity of ranked records. Default: a record whose `valid_time.until` has
+   * passed (retired by a tombstone `revise`, a `resolve` loser) is excluded
+   * before ranking, so it never takes a result slot. `valid_at` (UTC ms) serves
+   * the records valid at that instant instead (`from <= t < until`, as `query`
+   * and `graph`). `include_ended: true` is the explicit history/audit read and
+   * returns every active record regardless of validity; it cannot be combined
+   * with `valid_at`. Exact `get`/`history` reads are never filtered.
+   */
+  valid_at?: number;
+  include_ended?: boolean;
 }
 /** Reputation-weighted re-rank applied to SHARED-space search results (records the
  *  actor does not own). Bounded, inspectable, deterministic — see db-memory-ranking.ts. */

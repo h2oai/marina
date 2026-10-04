@@ -185,10 +185,69 @@ the signal language as the `nowcast-drift:<φ>` centre and the `horizon` spread,
 `bun run arena discover` and `evaluate` can measure them. Keep the default off until a backtest
 earns the switch.
 
+Scope a measured correction with `MARINA_ARENA_NOWCAST_SERIES`, a comma-separated list of
+Civiqs series ids (for example `civiqs_net_econ_now`). Unset means every series; an empty list
+means none. Each forecast retains its observation date, target horizon, selected daily or weekly
+anchor, snapshot reference, and projection decision. Model prompts distinguish the raw reading
+from the projected start so they do not apply the trend twice. A daily snapshot older than the
+weekly anchor does not replace it; the trace records that decision.
+
+`bun run arena shadow horizons <round_id|due>` compares off, drift at damping 0.8 and 1.0,
+spread-only, and combined correction. It makes no model calls and files nothing. Candidates
+share frozen archive reads and one live read per tracker for each round; a batch finishing after
+the lock records nothing. Every variant has its own configuration fingerprint and is scored
+against future published outcomes through `shadow score`.
+
+Add `--weekly-anchor` to include two additional experimental policies (damping 0.8 and 1.0).
+When the weekly anchor is newer than the daily series, these keep the weekly **level** and
+project using the older daily slope, damped for its age. A matched-horizon walk-forward gate
+must favour the projection; gapped daily histories and slopes older than seven days are rejected.
+They retain the original spread and do not change the configured submission policy.
+
+**Paired model experiments.** `bun run arena shadow compare <round_id|due>` uses the configured
+Delphi route, or an explicit `--forecaster formation:delphi:<models>`, to record four scalar
+candidates: the statistical start, closed-book Delphi, the same Delphi with verified FRED
+evidence, and uncertainty calibration of that final forecast. The start, lock and dossier are
+captured once; each model receives its own copy. FRED is the intentional evidence difference,
+not a fresh start or a different model roster. Missing archive reads remain missing throughout
+the experiment. The ledger stores the complete comparison inputs, their hash, configuration,
+candidate failures and costs. This runs two formations; calibration adds no model calls.
+`due` selects scalar rounds inside the normal filing window and reports non-Delphi routes as
+inapplicable to this experiment; it does not alter their submissions.
+
+`bun run arena shadow paired-score` scores the latest matched batch per round and configuration.
+Incomplete or failed batches are reported explicitly and excluded from paired performance claims.
+They are not silently replaced by an older successful batch. A batch finishing after lock is not
+recorded as prospective evidence. The ordinary `shadow score` remains a per-variant view; use
+`paired-score` to compare these experiments on identical rounds.
+
+Uncertainty calibration is **shadow-only**. It uses recorded errors from complete forecasts of
+the exact same estimator/configuration, within the same family and unit, weighted by similarity
+of horizon and source age. It needs at least twelve distinct resolved rounds: at least eight in
+an earlier training block and four in a later validation block. Waves stay together; training
+outcomes must have been published before the validation forecasts. A bounded spread adjustment
+must improve validation mean normalized CRPS by five percent; the centre never changes.
+Missing or insufficient history leaves the forecast unchanged and records the reason. The trace
+includes interval coverage and training/validation round IDs. This is a qualification gate, not
+evidence of a live win or a substitute for future matched results.
+
 **Replacing a filing.** The arena's signed intake keeps every version and scores the newest one
 accepted before the lock (up to 120 per round). `bun run arena submit <round|due> --replace` files
 a newer version of an accepted round; an unchanged forecast is not re-sent, and the autopilot never
 replaces.
+
+Keep an early accepted forecast, then schedule an operator refresh closer to the lock. For
+example, an hourly `MARINA_ARENA_WINDOW_HOURS=1.1 bun run arena submit due --replace` selects
+rounds locking within 66 minutes, while preserving the five-minute safety margin. Allow enough
+time for the selected formation and any simultaneous deadlines. Runners sharing a checkout or
+submission ledger should use one exclusive lock; a refresh failure leaves the earlier accepted
+forecast in place.
+
+Submissions also retain a local `detail` trace (migration 154): the frozen lock and its hash,
+forecast origin, model proposals and fallbacks, research evidence, explicit nonsecret strategy
+settings, and start/completion timestamps. It is separate from the signed wire body and survives
+retries unchanged. Signing uses the completion time, and the five-minute deadline margin is
+checked again after forecasting so slow retrieval cannot silently consume the filing window.
 
 **How the board ranks.** An entrant's row is its mean skill over the rounds it answered —
 unanswered rounds are not counted — and skill is `1 − CRPS / persistence CRPS` against a
@@ -245,8 +304,21 @@ against the arena's recorded persistence loss for each round.
 - **Google Trends baskets**: Trends re-normalises its index in every snapshot, so the lock's own
   frozen per-cell history — what the persistence null reads — is used; the `trends/` archive only
   fills in for a lock without one, complete weeks only (`MARINA_ARENA_TRENDS_PARTIAL=on` adds the
-  partial week; mixed in the backtest).
+  partial week; mixed in the backtest). Archive fallback requires the exact target basket, unique
+  terms, an eligible fetch timestamp, finite nonnegative indices, matching vector lengths and
+  ordered periods. Extra terms change the denominator and are rejected. An empty or malformed
+  snapshot does not hide an older usable one; histories are never spliced across vintages.
 - **YouGov crosstab profiles**: no structured source yet; the baseline ties persistence.
+
+`bun run arena audit <round_id|due> [--out report.json]` checks the histories before a run:
+round/series identity, cutoff timestamps, finite ordered observations, missing cells and, for
+Trends, matching cell dates and shares summing to 100. It reports short histories and observations
+older than two typical release intervals. For YouGov, distinguish adults from registered voters,
+and total approval from strong approval; the round's exact series and question define the target.
+Other pollsters' levels cannot fill missing target data. The audit does not fetch restricted
+publisher pages or invent missing releases.
+YouGov research uses the exact target question as its first keyword query and asks for each
+figure's population, response category and subgroup definition; its search budget is unchanged.
 
 ### The research agent (`research:`)
 
@@ -334,6 +406,22 @@ persistence and the baseline, `shadow list` shows the record, `bun run arena res
 runs it once and prints everything. `MARINA_ARENA_SHADOW=<spec>` records hourly from the tick
 job — no entrant or key needed.
 
+Shadow variants include a fingerprint of the forecaster's strategy settings. Different horizon
+modes, damping, selected series, routes and lookup settings no longer share a deduplication key.
+
+**Structured evidence.** `FRED_API_KEY` makes vintage-aware series available, but arena research
+also needs `MARINA_ARENA_RESEARCH_LOOKUPS=fred` and a research-consuming route. A formation
+with `+research@closed-book` uses the existing empty web retriever plus these structured lookups;
+it adds no web-search model. The explicit related-series map selects evidence for Civiqs economic
+questions and SCE inflation expectations. The arena's own history remains the level anchor.
+FRED evidence includes current/previous observations, their same-vintage change, units and
+vintage date. A comparison with the vintage available at the start reading distinguishes new
+information from a monthly change that was already known. Verification uses the frozen structured
+payload rather than a mutable HTML page;
+the dossier retains the typed observations and failure/skip reasons. Historical intraday cutoffs
+use the prior UTC day's FRED vintage because its API does not provide exact release instants.
+Live reads use currently available data. Sports odds are excluded from arena research.
+
 ## Signal discovery
 
 `bun run arena discover [--tracker T] [--proposer provider/model] [--n N]` runs the loop that found
@@ -365,6 +453,66 @@ elsewhere. Promotion is necessary, not sufficient — record a promoted signal i
 files. To trial a signal without touching the live record, promote it in a separate discovery
 record (`DB_PATH=<scratch> bun run arena discover --tracker civiqs --signal <centre>/<spread>`),
 then shadow `discovered` from that record against the nowcast for several weeks before filing it.
+
+## Parallel and layered shadow portfolios
+
+`arena:portfolio` compares formations without signing or submitting a forecast. It uses the
+existing Score executor for parallel dependencies and recursive `conduct` steps, and records
+the entire attempt in one `arena_shadow` row. Choose an explicit experiment database:
+
+```sh
+bun run arena:portfolio <round_id> --db /tmp/arena-shadow.db \
+  --models <provider/model>,<provider/model> --plan layered \
+  --max-calls 32 --concurrency 4 --timeout-ms 300000 --max-tokens 2000 \
+  --out /tmp/portfolio.json
+bun run arena:portfolio score --db /tmp/arena-shadow.db --out /tmp/portfolio-scores.json
+```
+
+Plans are `control` (Delphi), `parallel` (independent Delphi and symbiosis, then a mixture), and
+`layered` (the mixture followed by verification). All branches share one frozen start, lock and
+verified dossier. Structured lookups follow `MARINA_ARENA_RESEARCH_LOOKUPS`; this runner uses
+archived Civiqs data, with no direct live Civiqs fetch. The control reproduces the Delphi method
+on those captured inputs; it is not a replay of a previously filed forecast or its random model
+draws. Ranking rounds are rejected because these formations support numeric and profile answers.
+
+The mixture includes both candidate uncertainty and disagreement; it does not divide uncertainty
+by the number of models. Every refinement remains anchored to the original start, so stacking
+formations cannot compound the allowed mean movement. `--plan-file` accepts an `ArenaPlan` JSON
+object (the `plan` field in a report): a versioned Score and typed operations keyed by step ID.
+Operations are `formation`, `aggregate`, or `conduct` with a child plan. The runner validates the
+whole graph before model calls, with at most 32 steps, eight members per formation and depth three.
+Keep the top-level `control` step to get paired scoring.
+
+Call admission and concurrency are shared across all branches and child plans. Failed requests
+consume attempts. The timeout includes selection and graph execution; input retrieval has its
+own existing fetch deadlines. Output tokens are bounded per model call. These are invocation
+limits, not guaranteed dollar ceilings: cancelled requests may still be billed, and configured
+decision providers may make internal requests. The normal daily spend guard still applies.
+The trace reports in-flight calls if a transport has not settled when cancellation returns;
+`costFinal: false` means reported spend can still increase upstream.
+
+`--plan auto --selector jev` asks the existing decision provider to choose among the three plans;
+`--selector decisions` uses the configured decision backend. With no selector, malformed answers
+or an unavailable upstream, routing preserves the control (an explicitly requested but unconfigured
+provider is an error). Model confidence is not a benchmark success probability. Auto selection
+loads resolved, prospective comparisons from this shadow ledger. `--evidence` additionally accepts
+an exported score report or an array of versioned `RouteEvidence` records from other adapters.
+
+The shared routing contract in `src/coordination/task-routing.ts` retains benchmark, cohort,
+policy fingerprint, native metric, direction, failure count and outcome availability time.
+It excludes future outcomes, the current question, retrospective runs and changed same-benchmark
+policies. Other benchmarks may share an explicitly declared strategy lineage and skill tags;
+their results remain separate transfer hypotheses. SWE-bench pass rates and arena skill are
+never averaged together. Other benchmark adapters must supply genuinely paired observations;
+running another benchmark alone does not establish that a particular orchestration improved it.
+
+Scoring selects the latest attempt per round/configuration, including failures, rather than
+falling back to a previous successful attempt. Late, invalid and incomplete comparisons remain
+visible. Completed pairs use the existing CRPS/energy scoring implementation. A failed candidate
+with a valid pre-lock control can export failure evidence after resolution, without an invented
+candidate score. Unresolved forecasts cannot establish an improvement. The ledger scan is bounded
+to the latest 2,000 rows; archive/export older evidence for longer experiments. No plan or score
+automatically changes `MARINA_ARENA_ROUTES`, timers or submissions.
 
 ## Integrity: what the backtest numbers can and cannot claim
 
@@ -451,7 +599,11 @@ match the arena's continuous, profile and ranking targets.
 | `arena shadow [list]` · `arena shadow score` | in-world | the shadow ledger, and its score on outcomes no one had seen |
 | `arena shadow run <round_id\|due> [forecaster:F]` | in-world | record a free forecaster's forecast for rounds about to lock (never filed) |
 | `arena discover [tracker:T] [n:N]` · `arena signals [tracker:T]` | in-world | run signal discovery (one proposer call per family, rate limited), list every attempt |
-| `bun run arena submit <round_id\|due> [--dry-run] [--forecaster …] [--weight w]` | operator CLI | sign and file now |
+| `bun run arena submit <round_id\|due> [--dry-run] [--replace] [--forecaster …] [--weight w]` | operator CLI | sign and file now, optionally replacing an earlier accepted version |
+| `bun run arena shadow horizons <round_id\|due>` | operator CLI | compare five statistical horizon policies on shared inputs; never file |
+| `bun run arena shadow horizons <round_id\|due> --weekly-anchor` | operator CLI | add two experimental projections from newer weekly anchors |
+| `bun run arena shadow compare <round_id\|due>` · `shadow paired-score` | operator CLI | record and score matched statistical/Delphi/FRED/calibration candidates |
+| `bun run arena audit <round_id\|due>` | operator CLI | validate input identity, timing, history and basket comparability |
 | `bun run arena evaluate [--forecaster …] [--weight w] [--out FILE]` | operator CLI | score forecasters on resolved rounds; files nothing |
 | `bun run arena keygen <path>` / `registration` | operator CLI | key and registration file |
 
