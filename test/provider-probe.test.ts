@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { modelSourceEnvKeys } from "../src/agent/available-models";
 import {
   PROVIDER_PROBE_MIN_RANK,
   readinessCommand,
@@ -36,16 +37,8 @@ import { scopeProcessState } from "./process-state";
 let processState: DisposableStack | undefined;
 
 const PROVIDER_ENV = [
-  "ANTHROPIC_API_KEY",
-  "GEMINI_API_KEY",
-  "GOOGLE_API_KEY",
-  "GROQ_API_KEY",
-  "LLAMA_API_KEY",
-  "LLAMA_BASE_URL",
-  "OLLAMA_API_KEY",
-  "OLLAMA_BASE_URL",
-  "OPENAI_API_KEY",
-  "OPENROUTER_API_KEY",
+  ...modelSourceEnvKeys(),
+  "CEREBRAS_API_KEY",
   "MARINA_DEFAULT_ANTHROPIC_MODEL",
   "MARINA_DEFAULT_OPENAI_MODEL",
 ] as const;
