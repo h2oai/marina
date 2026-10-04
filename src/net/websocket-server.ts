@@ -483,12 +483,24 @@ export class WebSocketServer {
             if (!consumeHttpRate("assetRead", clientIp(req, server))) {
               return rateLimitedResponse(req.headers.get("Origin"));
             }
-            return await handleAssetServing(url, self.storage, self.db);
+            return await handleAssetServing(url, self.storage, self.db, {
+              engine,
+              req,
+              peerIp: server.requestIP(req)?.address,
+            });
           }
 
           // Asset API routes: /api/assets*
           if (url.pathname.startsWith("/api/assets") && self.db && self.storage) {
-            return await handleAssetApi(url, req.method, req, self.db, self.storage, engine);
+            return await handleAssetApi(
+              url,
+              req.method,
+              req,
+              self.db,
+              self.storage,
+              engine,
+              server.requestIP(req)?.address,
+            );
           }
 
           // Canvas API routes: /api/canvases*

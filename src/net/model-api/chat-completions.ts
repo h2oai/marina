@@ -29,6 +29,7 @@ import {
   type RouteOptions,
   type RouteResult,
   rejectUnsupportedForAgents,
+  requestImageGrant,
   routeOpen,
   routePanel,
   routeToChannel,
@@ -247,6 +248,7 @@ export async function runOpenaiChat(
         engine,
         userMsg.content,
         requestImagePrincipal(engine, req, authResult),
+        requestImageGrant(engine, model),
       );
       userText = [userText, ...staged].filter(Boolean).join("\n");
     }

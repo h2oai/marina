@@ -40,6 +40,7 @@ import {
   getOrCreateConversationChannel,
   type RouteOptions,
   rejectUnsupportedForAgents,
+  requestImageGrant,
   routeToChannel,
   routeToChannelStreaming,
   usageFromTrace,
@@ -236,6 +237,7 @@ export async function handleResponsesCreate(
         engine,
         imageParts,
         requestImagePrincipal(engine, req, auth),
+        requestImageGrant(engine, model),
       );
       agentInput = [userInput, ...staged].filter(Boolean).join("\n");
     }

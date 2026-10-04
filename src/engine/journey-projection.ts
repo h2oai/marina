@@ -7,6 +7,7 @@ import type {
   JourneyRow,
   MarinaDB,
 } from "../persistence/database";
+import { isPrivateCanvas } from "./canvas-access";
 
 export interface JourneyProgressItem {
   kind: JourneyEventRow["kind"];
@@ -222,7 +223,9 @@ export function resolveJourneyRecord(
   }
   if (kind === "canvas_node") {
     const node = db.getNode(ref);
-    if (!node) return undefined;
+    // Journeys are shared: a node on a private canvas never resolves here
+    // (src/engine/canvas-access.ts), whoever cited it.
+    if (!node || isPrivateCanvas(db.getCanvas(node.canvas_id))) return undefined;
     return {
       kind,
       ref,

@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { mayReadAsset, mayReadNode } from "../engine/canvas-access";
 import { canvasDocumentData, panelRevision } from "../engine/canvas-document";
 import type { Engine } from "../engine/engine";
 import { getErrorMessage } from "../engine/errors";
@@ -394,7 +395,26 @@ export async function handleCanvasApi(
     const nodeId = decodeURIComponent(nodeMatch[2]!);
     // Owner/operator gate for EVERY node method (GET read + DELETE/PATCH
     // mutation) on a private per-entity canvas. 404 so existence isn't leaked.
-    if (!canAccessCanvas(canvasId)) return json({ error: "Node not found" }, 404);
+    // A GET goes through the shared node check (src/engine/canvas-access.ts),
+    // so it also passes on an explicit, unexpired read grant for this node;
+    // a mutation never does.
+    if (method === "GET") {
+      const node = db.getNode(nodeId);
+      const readable =
+        !!node &&
+        node.canvas_id === canvasId &&
+        (engine
+          ? mayReadNode(
+              { db, entities: engine.entities, canvasGrants: engine.canvasGrants },
+              node,
+              canvasPrincipal,
+              "http GET node",
+            )
+          : canAccessCanvas(canvasId));
+      if (!node || !readable) return json({ error: "Node not found" }, 404);
+    } else if (!canAccessCanvas(canvasId)) {
+      return json({ error: "Node not found" }, 404);
+    }
 
     if (method === "DELETE") {
       // Fetch the node first so we can clean up its asset
@@ -520,6 +540,22 @@ export async function handleCanvasApi(
       const parent = db.getNode(parentNodeId);
       if (!parent || parent.canvas_id !== canvasId) {
         return json({ error: "Parent node not found on this canvas" }, 400);
+      }
+    }
+    // Showing an asset on this canvas reads it: a private asset (one shown only
+    // on private canvases, or a request image) needs the caller's read access.
+    if (typeof body.asset_id === "string" && engine) {
+      const asset = db.getAsset(body.asset_id);
+      if (
+        asset &&
+        !mayReadAsset(
+          { db, entities: engine.entities, canvasGrants: engine.canvasGrants },
+          asset,
+          canvasPrincipal,
+          "http POST node",
+        )
+      ) {
+        return json({ error: "Asset not found" }, 404);
       }
     }
     let nodeData = body.data as Record<string, unknown> | undefined;

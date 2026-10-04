@@ -11,11 +11,9 @@
  * vice-versa, and a private one is closed on both.
  */
 
+import { canvasReaderFor } from "../engine/canvas-access";
 import type { Engine } from "../engine/engine";
-import { getRank } from "../engine/permissions";
-import { checkUnattendedGate } from "../engine/safety-gates";
 import type { MarinaDB } from "../persistence/database";
-import type { EntityId } from "../types";
 import {
   authenticateRequest,
   DESKTOP_OPERATOR_ENTITY_ID,
@@ -76,14 +74,9 @@ export function buildCanvasPrincipal(
   ) {
     return { isOperator: true };
   }
-  const entityId = principal as EntityId;
-  const entity = engine.entities.get(entityId);
-  const isOperator =
-    (!!entity && getRank(entity) >= 9) ||
-    // Unattended check: a supervised-only admin.destructive holder is NOT an
-    // operator for private-canvas access.
-    (!!db && checkUnattendedGate(db, entityId, "admin.destructive").ok);
-  return { entityId: principal, isOperator };
+  // The same reader every in-world read path uses (src/engine/canvas-access.ts):
+  // a supervised-only admin.destructive holder is NOT an operator.
+  return canvasReaderFor({ entities: engine.entities, db }, principal);
 }
 
 /**
