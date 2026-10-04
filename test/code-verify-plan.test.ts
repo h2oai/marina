@@ -591,6 +591,8 @@ describe("code verify (command level)", () => {
   async function setup() {
     db.saveEntity(who);
     grant(db, who.id, "code.exec");
+    // Choosing a session image (no operator image) needs the runner override gate.
+    grant(db, who.id, "code.exec.unrestricted");
     const command = codeCommand({
       db,
       getEntity: (id) => (id === who.id ? who : undefined),
