@@ -17,6 +17,14 @@
  *   tournament — the runs' proposals meet in pairwise knockout matches judged
  *                by the critic (an odd field gives a bye); the champion's
  *                answer and uncertainty are the forecast; the bracket is kept
+ *   skeptic    — the arena's crew: a statistician and an analyst propose, a
+ *                skeptic sets how much of their move away from the prior to
+ *                trust; deterministic aggregation that can only shrink toward
+ *                the prior (`./skeptic.ts`)
+ *
+ * Whatever the formation, the finished answer then goes through the prior
+ * shrink and recalibration stage when the operator turned it on
+ * (`deps.adjust`, `./adjust.ts`).
  *
  * The verification formation is the typed forecaster's own `verify` option,
  * and a crew formation is a `marina:<crew>` analyst — both compose with these.
@@ -24,6 +32,7 @@
  * with fewer than two usable runs every formation returns the runs' answer.
  */
 
+import { adjustActive, adjustForecast } from "./adjust";
 import {
   type AnswerOption,
   type AnswerSpec,
@@ -43,6 +52,7 @@ import {
   pickDistribution,
 } from "./distribution";
 import { askAnalyst } from "./judge";
+import { type SkepticRecord, skepticCrew } from "./skeptic";
 import {
   answerInstruction,
   forecastTyped,
@@ -53,7 +63,7 @@ import {
   type TypedRun,
 } from "./typed";
 
-export const TYPED_FORMATIONS = ["ensemble", "delphi", "tournament"] as const;
+export const TYPED_FORMATIONS = ["ensemble", "delphi", "tournament", "skeptic"] as const;
 export type TypedFormation = (typeof TYPED_FORMATIONS)[number];
 
 export function typedFormation(name: string | undefined): TypedFormation | undefined {
@@ -92,6 +102,8 @@ export interface FormationRecord {
   /** Tournament: the bracket, by run number. */
   matches?: FormationMatch[];
   champion?: number;
+  /** Skeptic crew: the roles, the start forecast, the proposals and the trust. */
+  crew?: SkepticRecord;
   /** Why the formation fell back to the runs' own answer. */
   fallback?: string;
 }
@@ -108,8 +120,22 @@ export async function forecastFormed(
   deps: TypedForecastDeps,
   pattern: TypedFormation = "ensemble",
 ): Promise<FormedAnswer> {
+  const out = await formed(req, deps, pattern);
+  if (adjustActive(deps.adjust)) await adjustForecast(out, req, deps.adjust);
+  return out;
+}
+
+async function formed(
+  req: TypedForecastRequest,
+  deps: TypedForecastDeps,
+  pattern: TypedFormation,
+): Promise<FormedAnswer> {
   if (pattern === "ensemble") {
     return { ...(await forecastTyped(req, deps)), formation: { pattern } };
+  }
+  if (pattern === "skeptic") {
+    const { crew, ...answer } = await skepticCrew(req, deps);
+    return { ...answer, formation: { pattern, crew } };
   }
   // Round one: the ordinary forecast without its critique (the formation replaces it),
   // keeping the research the runs read so the second step sees the same evidence.

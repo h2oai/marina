@@ -32,6 +32,7 @@ import {
   isLiveCutoff,
   type LookupContext,
   type LookupResult,
+  type MarketPrice,
   skippedResult,
 } from "./lookup-types";
 
@@ -78,15 +79,16 @@ export function polymarketLookup(
       for (const ev of matched) {
         const url = `https://polymarket.com/event/${encodeURIComponent(ev.slug)}`;
         const lines = live
-          ? liveLines(ev, qt)
+          ? liveLines(ev, qt, now)
           : await historicalLines(ev, cutoff, history!, MAX_PRICED_MARKETS - priced, qt);
         if (lines.length === 0) continue;
         priced += lines.length;
         out.sources.push({ url, title: ev.title });
         for (const l of lines) {
           out.lines.push(
-            `- ${day(live ? now : cutoff)} — Polymarket "${ev.title}": ${l} [Polymarket](${url})`,
+            `- ${day(live ? now : cutoff)} — Polymarket "${ev.title}": ${l.text} [Polymarket](${url})`,
           );
+          if (l.price) (out.prices ??= []).push({ venue: name, ...l.price });
         }
         if (priced >= MAX_PRICED_MARKETS) break;
       }
@@ -110,8 +112,11 @@ function parseJsonArray(s: string | undefined): string[] {
   }
 }
 
-function liveLines(ev: PolymarketEvent, qt: Set<string>): string[] {
-  const out: string[] = [];
+/** A dossier line and, when it priced one market's first outcome, that price. */
+type PricedLine = { text: string; price?: Omit<MarketPrice, "venue"> };
+
+function liveLines(ev: PolymarketEvent, qt: Set<string>, now: Date): PricedLine[] {
+  const out: PricedLine[] = [];
   for (const m of rankMarkets(ev.markets ?? [], qt)) {
     if (out.length >= 6) break;
     if (m.closed) continue;
@@ -120,7 +125,21 @@ function liveLines(ev: PolymarketEvent, qt: Set<string>): string[] {
     const pairs = outcomes
       .map((o, i) => `${o} ${pct(Number(prices[i]))}`)
       .filter((s) => !s.endsWith("NaN%"));
-    if (pairs.length) out.push(`${m.question} — ${pairs.join(", ")}`);
+    if (!pairs.length) continue;
+    const p0 = Number(prices[0]);
+    out.push({
+      text: `${m.question} — ${pairs.join(", ")}`,
+      ...(prices.length && Number.isFinite(p0)
+        ? {
+            price: {
+              market: m.question,
+              outcome: outcomes[0] ?? "Yes",
+              p: p0,
+              at: now.toISOString(),
+            },
+          }
+        : {}),
+    });
   }
   return out;
 }
@@ -139,8 +158,8 @@ async function historicalLines(
   history: typeof pricesHistory,
   budget: number,
   qt: Set<string>,
-): Promise<string[]> {
-  const out: string[] = [];
+): Promise<PricedLine[]> {
+  const out: PricedLine[] = [];
   const endTs = Math.floor(cutoff.getTime() / 1000);
   // An event's markets are often a ladder of dates or thresholds; the ones
   // closest to the question are tried first, and a market with no history
@@ -155,7 +174,15 @@ async function historicalLines(
     if (!last || !Number.isFinite(last.p)) continue;
     const outcomes = m.outcomes ? parseJsonArray(m.outcomes) : ["Yes", "No"];
     const at = new Date(last.t * 1000).toISOString().slice(0, 16);
-    out.push(`${m.question} — ${outcomes[0] ?? "Yes"} ${pct(last.p)} (price at ${at}Z)`);
+    out.push({
+      text: `${m.question} — ${outcomes[0] ?? "Yes"} ${pct(last.p)} (price at ${at}Z)`,
+      price: {
+        market: m.question,
+        outcome: outcomes[0] ?? "Yes",
+        p: last.p,
+        at: new Date(last.t * 1000).toISOString(),
+      },
+    });
   }
   return out;
 }
@@ -228,6 +255,13 @@ export function kalshiLookup(
           out.lines.push(
             `- ${day(live ? now : cutoff)} — Kalshi "${ev.title}": ${m.title || m.ticker} — Yes ${pct(priced.p)}${at} [Kalshi](${url})`,
           );
+          (out.prices ??= []).push({
+            venue: name,
+            market: m.title || m.ticker,
+            outcome: "Yes",
+            p: priced.p,
+            at: live ? now.toISOString() : `${priced.at}:00.000Z`,
+          });
           added++;
         }
         if (added) out.sources.push({ url, title: ev.title });

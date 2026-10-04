@@ -18,8 +18,8 @@
  */
 
 import type { AnswerSpec } from "../../src/forecast/answer-types";
+import { forecastFormed, type TypedFormation } from "../../src/forecast/formations";
 import type { TypedForecastAnswer, TypedForecastDeps } from "../../src/forecast/typed";
-import { forecastTyped } from "../../src/forecast/typed";
 import type { FuturexRow } from "./dataset";
 import { requestFor } from "./map";
 
@@ -41,6 +41,8 @@ export interface Variant {
   budgetMs?: number;
   /** How the runs become one answer (`agreement` default, or `confidence`). */
   selection?: "agreement" | "confidence";
+  /** How the runs combine (default `ensemble`, the typed forecaster as is). */
+  formation?: TypedFormation;
 }
 
 /**
@@ -99,6 +101,20 @@ export const BUILTIN_VARIANTS: Record<string, Variant> = {
     critic: "openrouter/anthropic/claude-opus-5.5",
     runs: 3,
     researchRounds: 3,
+  },
+  /**
+   * The skeptic crew (`src/forecast/skeptic.ts`): a statistician and an analyst
+   * from two vendors propose, a third-vendor skeptic decides how much of their
+   * move to trust. All released before the clean backtest's knowledge bound.
+   */
+  skeptic: {
+    label: "skeptic",
+    model: "marina-skeptic-crew",
+    analysts: ["openrouter/deepseek/deepseek-v4-pro-0813", "openrouter/moonshotai/kimi-k3"],
+    planner: "openrouter/deepseek/deepseek-v4-pro-0813",
+    critic: "openrouter/anthropic/claude-opus-5",
+    researchRounds: 2,
+    formation: "skeptic",
   },
   crew: {
     label: "crew",
@@ -182,7 +198,7 @@ export async function runBatch(
       if (stopped) break;
       const i = next++;
       const row = rows[i]!;
-      results[i] = await runRow(row, makeDeps, now(), opts.horizonDays);
+      results[i] = await runRow(row, variant, makeDeps, now(), opts.horizonDays);
       if (opts.afterRow) await opts.afterRow(row, results[i]!);
       done++;
       opts.onRow?.(results[i]!, done, rows.length);
@@ -203,6 +219,7 @@ export async function runBatch(
 
 async function runRow(
   row: FuturexRow,
+  variant: Variant,
   makeDeps: DepsFactory,
   now: Date,
   horizonDays: number | undefined,
@@ -216,7 +233,11 @@ async function runRow(
   const late = Number.isFinite(end) && end <= now.getTime() && horizonDays === undefined;
   const req = { ...base, ...(asOf ? { asOf } : {}) };
   const made = makeDeps();
-  const answer = await forecastTyped(req, { ...made.deps, now: () => now });
+  const answer = await forecastFormed(
+    { ...req, id: row.id },
+    { ...made.deps, now: () => now },
+    variant.formation ?? "ensemble",
+  );
   answer.costUsd = made.costUsd();
   const fb = answer.formatted === undefined ? fallbackPrediction(req.answer, answer) : undefined;
   return {

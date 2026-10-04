@@ -117,6 +117,56 @@ export function averageDistributions(
   return normalise(out);
 }
 
+/** How the runs' probabilities are averaged: arithmetically, or in log-odds (`MARINA_FORECAST_POOL`). */
+export type PoolMethod = "linear" | "logodds";
+
+const logOdds = (p: number) => {
+  const q = Math.min(1 - PROBABILITY_FLOOR, Math.max(PROBABILITY_FLOOR, p));
+  return Math.log(q / (1 - q));
+};
+
+/**
+ * The weighted geometric mean of distributions over the same options,
+ * renormalised — the log-odds pool. Unlike the arithmetic mean it does not
+ * drag confident, agreeing runs toward uniform.
+ */
+export function logOddsDistributions(
+  items: Array<{ distribution: Distribution; weight: number }>,
+): Distribution | undefined {
+  const usable = items.filter((i) => i.weight > 0);
+  const total = usable.reduce((s, i) => s + i.weight, 0);
+  if (usable.length === 0 || !(total > 0)) return undefined;
+  const keys = new Set(usable.flatMap((i) => Object.keys(i.distribution)));
+  const out: Distribution = {};
+  for (const k of keys) {
+    let s = 0;
+    for (const { distribution, weight } of usable) {
+      s += (weight / total) * Math.log(Math.max(PROBABILITY_FLOOR, distribution[k] ?? 0));
+    }
+    out[k] = Math.exp(s);
+  }
+  return normalise(out);
+}
+
+/** The weighted mean of each option's own probability in log-odds. */
+export function logOddsMarginals(
+  items: Array<{ distribution: Distribution; weight: number }>,
+): Distribution | undefined {
+  const usable = items.filter((i) => i.weight > 0);
+  if (usable.length === 0) return undefined;
+  const sums: Distribution = {};
+  const weights: Distribution = {};
+  for (const { distribution, weight } of usable) {
+    for (const [k, p] of Object.entries(distribution)) {
+      sums[k] = (sums[k] ?? 0) + logOdds(p) * weight;
+      weights[k] = (weights[k] ?? 0) + weight;
+    }
+  }
+  const out: Distribution = {};
+  for (const k of Object.keys(sums)) out[k] = clampP(1 / (1 + Math.exp(-sums[k]! / weights[k]!)));
+  return out;
+}
+
 /** `a` moved toward `b` by `w` (0 = a, 1 = b). */
 export function blendDistributions(a: Distribution, b: Distribution, w: number): Distribution {
   const out: Distribution = {};

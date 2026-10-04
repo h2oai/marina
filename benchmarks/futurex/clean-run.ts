@@ -19,6 +19,9 @@ import {
 } from "../../src/arena/research/isolation";
 import type { Retriever } from "../../src/arena/research/retrieve";
 import { SpendGuard } from "../../src/engine/spend-guard";
+import { recordFromAnswer } from "../../src/forecast/adjust";
+import { type AnswerSpec, matchOption } from "../../src/forecast/answer-types";
+import type { ForecastHistory } from "../../src/forecast/history";
 import { type LessonStore, type LessonWriter, lessonFromOutcome } from "../../src/forecast/lessons";
 import { typedForecastDeps } from "../../src/forecast/service";
 import {
@@ -75,6 +78,12 @@ export interface CleanOptions {
   /** A fresh lesson store per (variant, replicate) — keeps the ablation honest. */
   lessonStore?: (runLabel: string) => Promise<LessonStore>;
   lessonWriter?: LessonWriter;
+  /**
+   * Resolved forecast history per (variant, replicate): each scored row's
+   * record is added after it finishes, so later rows' prior weights, base
+   * rates and calibration can learn from it (visible only once resolved).
+   */
+  history?: (runLabel: string) => Promise<ForecastHistory>;
   reference?: ReferenceScores;
   /** Also grade strings and lists with a model judge, as the official scoring does. */
   judge?: JudgeModel;
@@ -177,6 +186,30 @@ function rowRetrieval(
   return { wrap, evidence: () => kept.join("\n") };
 }
 
+/**
+ * A resolved row's outcome in the forecast's own terms: the true option ids of
+ * a choice or multi-select (every truth item must name an option), or a
+ * number's value. Undefined for rankings, strings and truths that do not map.
+ */
+export function truthOutcome(
+  row: FuturexRow,
+  spec: AnswerSpec,
+): { options?: string[]; value?: number } | undefined {
+  const truth = parseTruth(row.ground_truth);
+  if (truth.length === 0) return undefined;
+  if (spec.type === "choice" || spec.type === "multi") {
+    const ids = truth.map((t) => matchOption(t, spec.options)?.id);
+    if (ids.some((id) => id === undefined)) return undefined;
+    const unique = [...new Set(ids as string[])];
+    return spec.type === "choice" && unique.length !== 1 ? undefined : { options: unique };
+  }
+  if (spec.type === "number" && truth.length === 1) {
+    const v = Number(truth[0]!.replace(/[,\s_$%]/g, ""));
+    return Number.isFinite(v) ? { value: v } : undefined;
+  }
+  return undefined;
+}
+
 export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary[]> {
   const log = opts.log ?? console.log;
   const env = opts.env ?? process.env;
@@ -232,6 +265,7 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
       const label = `${variant.label}-${opts.isolation}-lessons-${opts.lessons}-r${rep}`;
       const store =
         opts.lessons === "on" && opts.lessonStore ? await opts.lessonStore(label) : undefined;
+      const history = opts.history ? await opts.history(label) : undefined;
       const retrieval = { linesIn: 0, linesKept: 0 };
       let lessonsWritten = 0;
       // Only the daily caps bound a backtest; the guard holds a reserve for the rows in flight.
@@ -263,6 +297,7 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
             retriever: spec,
             wrapRetriever: cap.wrap,
             ...(store ? { lessons: store } : {}),
+            ...(history ? { history } : {}),
           });
           if ("error" in made) throw new Error(made.error);
           // Lookups that only know current values are skipped for past cutoffs by the engine.
@@ -282,10 +317,29 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
             guard.record(r.costUsd);
             // A fallback is an infrastructure outcome (no run answered), not a
             // forecast to learn from.
-            if (!store || r.fallback) return;
+            if ((!store && !history) || r.fallback) return;
             const end = endTimeIso(row.end_time);
             if (!end) return;
             const item = scoreItem(row, r.prediction);
+            // Known once the event ended (a day's margin for settlement).
+            const resolvedAt = new Date(Date.parse(end) + 86_400_000).toISOString();
+            if (history) {
+              const req = requestFor(row);
+              const truth = truthOutcome(row, req.answer);
+              const rec = truth
+                ? recordFromAnswer({
+                    id: row.id,
+                    req: { ...req, id: row.id },
+                    answer: r.answer,
+                    truth,
+                    resolvedAt,
+                    formation: variant.formation ?? "ensemble",
+                    score: item.score,
+                  })
+                : undefined;
+              if (rec) await history.add(rec);
+            }
+            if (!store) return;
             const lesson = await lessonFromOutcome(
               {
                 question: requestFor(row).question,
@@ -293,8 +347,7 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
                 prediction: r.prediction,
                 truth: parseTruth(row.ground_truth).join(", "),
                 score: item.score,
-                // Known once the event ended (a day's margin for settlement).
-                resolvedAt: new Date(Date.parse(end) + 86_400_000).toISOString(),
+                resolvedAt,
                 reasons: r.answer.runs.map((x) => x.reason ?? "").filter(Boolean),
                 ...(r.caveat ? { caveat: r.caveat } : {}),
                 origin: "backtest",

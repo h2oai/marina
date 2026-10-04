@@ -137,6 +137,108 @@ The typed answer object keeps every stage — plan, each research round (with it
 and warnings), lookups, every run with its reason and weight, the combination and its support, the
 critique, the cutoff, sources, verification, evidence budget, judge record, cost and time. In-world answers are saved like any other forecast.
 
+## Priors, calibration, the skeptic crew and routing
+
+Four mechanisms from Marina's [Social Simulation Arena](arena.md) forecaster, generalised to any
+typed question. All are opt-in, and each learns only from **resolved history visible at the
+forecast's cutoff**: a record counts only once its outcome was known at or before the cutoff, and
+a question never learns from its own record (the same rule as lessons).
+
+**Resolved history** (`MARINA_FORECAST_HISTORY`, a JSON-lines file; `src/forecast/history.ts`). One
+record per resolved forecast: the forecast in numbers before adjustment, the prior it had, the
+outcome as option ids or a value, when the outcome became known, and optionally the formation and
+the board's score. Option labels are kept only as short hashes. No question or answer text is
+stored. Adapters append records as questions resolve (`recordFromAnswer` in
+`src/forecast/adjust.ts`).
+
+**Prior shrink** (`MARINA_FORECAST_PRIOR=on`). A strong baseline caps a forecaster's large misses,
+so the answer is pooled toward the best prior available at the cutoff:
+
+1. a market or community forecast the caller supplies (`priors` on `POST /v1/forecast`: `source`,
+   `distribution` or `value`/`sd`, and `at`, the time it was observed — a prior observed after the
+   cutoff is rejected and the rejection recorded);
+2. one priced market a lookup matched, for a yes/no question (two or more matches give no prior);
+3. for a number, the freshest official reading (the lookups' anchor);
+4. the base rate of the question's class in resolved history (the caller's `category`, else the
+   answer type) — per recurring option label for a choice, per class for a multi-select, smoothed
+   toward uniform;
+5. the type default: uniform over a choice's options, 0.5 per multi-select option.
+
+Only an **informative** prior (1–4) earns a shrink. The type default is recorded but never shrunk
+toward, because LLM forecasters already hedge toward the middle and pooling toward uniform makes that
+worse. Probabilities are pooled in log-odds (a geometric pool for a choice); a number moves
+linearly. Before there is evidence, the weight is `MARINA_FORECAST_PRIOR_WEIGHT` (0.5) toward a
+supplied market or community prior, and 0 toward anything else. A fitted weight replaces the default
+only when it wins on held-out history (below). Each prior also records its time to close, and its
+liquidity in USD when the caller supplies `liquidity`. When a bucket has enough records, the weight
+is fitted within it: time to close of ≤ 7 days, ≤ 30 days or more, split by liquidity below or
+above $10k when known. This lets a liquid market near its close earn more weight than a thin market
+far from it.
+
+**Calibration** (`MARINA_FORECAST_CALIBRATION=on`, or `observe` to fit and record without
+applying). One map per answer group (`src/forecast/recalibration.ts`):
+
+| group | map |
+|---|---|
+| a two-option choice (all yes/no questions share one) | Platt in log-odds on the first option |
+| any other choice | Platt one-vs-rest, renormalised |
+| a multi-select | Platt on each option's own probability |
+| a number | a scale on the stated sd (the point is unchanged) |
+
+**Cold start**: `MARINA_FORECAST_CALIBRATION=fixed:<a>` (for example `fixed:sqrt3`) applies a
+fixed Platt slope with b = 0 from the very first forecast. It needs no history, so a new board can
+use it. A slope above 1 extremizes, which counters the pipeline's hedging. You can also seed the
+history with your own earlier resolved runs (records from the same pipeline, never other
+forecasters' forecasts).
+
+**Pooling and the tail guard.** `MARINA_FORECAST_POOL=logodds` averages the runs' probabilities in
+log-odds (a geometric pool), so confident runs that agree are not dragged toward uniform. The
+default is `linear`. `MARINA_FORECAST_PROB_CLAMP=<ε>` holds the final probabilities inside
+[ε, 1 − ε]; use it on log-scored boards, where one confident miss is unbounded.
+
+A monotone map never changes a choice's most probable option or a number's point estimate. It
+changes the probabilities a proper score reads, and which options of a multi-select clear one half.
+
+**The held-out rule** (both of the above): fit on the older 60 % of the visible history, compare
+with the default (identity, or the default weight) on the newer 40 %, and adopt the fitted setting
+only if it improves `MARINA_FORECAST_CALIBRATION_SCORE` (Brier or log; CRPS for numbers) by at least
+`MARINA_FORECAST_CALIBRATION_MARGIN` (5 %, relative). It also needs at least
+`MARINA_FORECAST_HISTORY_MIN` (50) visible records. If adopted, it is refitted on everything
+visible. This is how the arena chooses each series' spread.
+
+**What the answer records.** A question that asked for probabilities gets the adjusted ones. One
+that asked only for a pick keeps its pick unless the adjustment moves the most probable option (or a
+multi-select's set at one half); the replaced pick is recorded. The answer's `adjustment` holds the
+raw forecast, the prior (source, value, time), the weight and the map with their held-out scores,
+record counts, the newest outcome time used (always at or before the cutoff), and the final numbers.
+
+**The skeptic crew** (`MARINA_FORECAST_FORMATION=skeptic`; `src/forecast/skeptic.ts`). This is the
+arena's crew as a formation. After the ordinary research:
+
+- the first analyst proposes as the **statistician** (base rates, readings, usual change);
+- the second analyst proposes as the **analyst** (the specifics and sources);
+- the critic, else the third analyst, acts as the **skeptic**. It sees the prior, both proposals,
+  the research and the forecaster's own track record for this kind of question, and returns how much
+  of the proposals' move away from the prior to *trust* (0 to 1).
+
+The answer is the prior plus trust × (the proposals' mean − the prior), computed in log-odds by
+code, not by a fourth model. The skeptic can only shrink toward an informative prior and never adds
+extremity; for a number it may only widen the spread. Without an informative prior, the proposals'
+log-odds mean stands unshrunk, and extremity is left to calibration. With one
+configured model, every role runs on it. Rankings and short strings have no prior: the two
+proposals are combined like runs.
+
+**Formation routing** (`MARINA_FORECAST_ROUTE=observe|on`, `POST /v1/forecast`;
+`src/forecast/routing.ts`). For each question class (the caller's `category` if it has enough
+records, else the answer group), a candidate formation replaces the default only when both hold:
+
+- on at least `MARINA_FORECAST_ROUTE_MIN_N` questions both answered, its paired gain in the board's
+  score has a 95 % lower bound above zero;
+- the gain clears the fishing margin 0.02 + 0.01·log₂(1 + candidates tried), the rule the benchmark
+  ledger uses for promotions.
+
+Otherwise the default formation answers. The decision is recorded on the answer (`route`).
+
 ## Keeping score
 
 Every in-world answer is saved with its full audit trail (`forecast list` shows yours). To have
