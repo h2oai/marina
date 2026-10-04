@@ -12,6 +12,12 @@ web fetch https://example.com/page          readable text of a page
 ```
 
 Tavily (`TAVILY_API_KEY`) and SearXNG (`SEARXNG_URL`) take over the web category when configured.
+A provider that fails — a key out of credit (Tavily answers HTTP 432), an outage, the daily spend
+cap — falls through to the next one for the category (Tavily → SearXNG → DuckDuckGo), and the reply
+names the failure instead of saying "No results found". A provider that keeps failing, or reports a
+quota or key problem, is skipped for ten minutes. `readiness` shows each backend's health (check
+`search`), from real calls only — it never spends a credit to probe. Tavily calls are priced into
+the daily spend ledger (source `search`).
 
 ## Searching as of a date
 
@@ -41,6 +47,29 @@ Residual effects to keep in mind:
 - GDELT only reaches back a few months.
 
 None of these lets post-bound text into a result.
+
+## Research retrieval for live questions
+
+`search` (the default research retriever together with OpenRouter web search) searches every
+query the forecast planner decomposed — the named entities, recent news, the resolution source,
+official data, base rates, market or expert expectations — through the backend chain
+(`MARINA_RESEARCH_SEARCH_BACKENDS`, default: Tavily, Exa, SearXNG as configured, then DuckDuckGo,
+then OpenRouter's Exa web plugin with `OPENROUTER_API_KEY` — a paid fallback for when DuckDuckGo
+throttles bulk callers, which it does). A page the question names as its resolution source is read
+before any search.
+
+- **Breadth:** results are fused across queries, at most `MARINA_RESEARCH_DOMAIN_CAP` pages per site
+  (default 3), up to `MARINA_RESEARCH_MAX_PAGES` (default 14) pages read in parallel through the
+  SSRF guard, each with a timeout; no-fetch publishers are never read.
+- **Depth:** the main text of each page is extracted (navigation, link lists and teaser cards
+  dropped), and the passages most relevant to the question — not the head of each page — are
+  quoted verbatim, dated, within the forecast's evidence budget — at most
+  `MARINA_RESEARCH_MAX_PASSAGES` (15) per round, and none far below the best one.
+- **Recency:** for a live question recent pages rank higher and every line carries its publication
+  date; pages dated after the cutoff are dropped. `search` is not date-strict — use `asof` for
+  backtests.
+- **Status:** each research round records a funnel (hits, pages read, failed reads, passages, and
+  each backend's calls and failures), so a thin dossier says why it is thin.
 
 ## Date-strict research for forecasts
 

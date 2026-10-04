@@ -32,6 +32,17 @@ export interface ResearchBrief {
    * without it they bound to the start of `until` (never later), else now.
    */
   untilAt?: string;
+  /**
+   * Characters of evidence the caller can use from this brief (its prompt
+   * budget, sized to the model's context window). Engines that select
+   * passages (`search`) fill up to it; others ignore it.
+   */
+  maxChars?: number;
+  /**
+   * Pages to read before searching — the question's named resolution source.
+   * Engines that read pages (`search`) put them first; others ignore it.
+   */
+  readFirst?: string[];
 }
 
 /** The freshest reading known before the round (the Civiqs daily nowcast). */

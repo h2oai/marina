@@ -63,14 +63,15 @@ export function searxngProvider(baseUrl: string): SearchProvider {
       const searchUrl = `${url}/search?${params.toString()}`;
       const result = await runtime.httpGet(searchUrl, entityId);
 
-      if ("error" in result) return [];
-      if (result.status !== 200) return [];
+      // A failure throws so the orchestrator falls through to the next provider.
+      if ("error" in result) throw new Error(`searxng: ${result.error}`);
+      if (result.status !== 200) throw new Error(`searxng HTTP ${result.status}`);
 
       let data: SearxngResponse;
       try {
         data = JSON.parse(result.body) as SearxngResponse;
       } catch {
-        return [];
+        throw new Error("searxng: unreadable reply");
       }
 
       return (data.results ?? []).slice(0, max).map((r) => ({
@@ -79,6 +80,7 @@ export function searxngProvider(baseUrl: string): SearchProvider {
         snippet: (r.content ?? "").slice(0, 500),
         source: `searxng:${r.engine ?? "unknown"}`,
         score: r.score,
+        ...(isoInstant(r.publishedDate) ? { published: isoInstant(r.publishedDate) } : {}),
       }));
     },
   };
@@ -90,6 +92,14 @@ interface SearxngResult {
   content?: string;
   engine?: string;
   score?: number;
+  publishedDate?: string | null;
+}
+
+/** An ISO instant from an engine's date, else undefined. */
+function isoInstant(raw: string | null | undefined): string | undefined {
+  if (!raw) return undefined;
+  const t = Date.parse(raw);
+  return Number.isFinite(t) ? new Date(t).toISOString() : undefined;
 }
 
 interface SearxngResponse {

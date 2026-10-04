@@ -21,6 +21,8 @@ import { describeDefaultUpstream } from "../net/model-api/upstream";
 import { autoRespawnEnabled } from "./auto-respawn";
 import { type AutonomyPosture, getAutonomyPosture } from "./autonomy";
 import type { Engine } from "./engine";
+import { searchBackendHealth } from "./search-providers/health";
+import { describeSearchReadiness } from "./search-readiness";
 import { dailySpend, formatSpendUsd, scopeSpendToday } from "./spend-ledger";
 import { getTrustProfile, isLocalUngated, isOpenApiMode, type TrustProfile } from "./trust-profile";
 
@@ -329,6 +331,16 @@ export function computeReadiness(engine: Engine): ReadinessReport {
           remediation: "Set TABH2O_API_KEY to enable tabular forecasting.",
         },
   );
+
+  // ── Search — backends for `web search` and forecast research, from real calls ─
+  const search = describeSearchReadiness(env, searchBackendHealth());
+  checks.push({
+    id: "search",
+    label: "Web search & research retrieval",
+    status: search.status,
+    detail: search.detail,
+    ...(search.remediation ? { remediation: search.remediation } : {}),
+  });
 
   // ── Daily spend — the world's upstream dollars today vs its cap ────────────
   const spend = dailySpend(env);
