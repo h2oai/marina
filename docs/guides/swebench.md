@@ -4,9 +4,9 @@ Marina's coding agent can be measured on [SWE-bench](https://www.swebench.com/) 
 benchmark-specific behavior inside Marina. `bun run swebench` is a thin adapter over the general
 one-shot coding entry point (`marina -p "<task>" <dir>`, see [Coding](coding.md)):
 
-1. **Checkout:** each instance gets a fresh clone at its base commit. Repositories are mirrored once
-   under the data directory and cloned with `--shared`, so attempts never share a working tree and
-   never touch the Marina checkout that runs them.
+1. **Checkout:** each instance gets a fresh repository holding the base commit and nothing else
+   (see [Workspace hygiene](#workspace-hygiene)). Attempts never share a working tree and never
+   touch the Marina checkout that runs them.
 2. **Task:** the agent receives the issue text only (`problem_statement`). Hints, the gold patch and
    the test patch are never exported by `benchmarks/swebench/export.py`, so nothing downstream can
    read them.
@@ -18,6 +18,40 @@ one-shot coding entry point (`marina -p "<task>" <dir>`, see [Coding](coding.md)
 6. **Scoring:** the official SWE-bench harness, run unmodified.
 7. **Ledger:** the scored run is filed into the benchmark ledger in a replicate group, so `benchmark
    compare`, `leaderboard` and `replicates` rank it with everything else Marina has measured.
+
+## Workspace hygiene
+
+A full clone of an upstream repository also contains every commit made after the task's base
+commit, including the fix the benchmark grades against. Other branches, tags, remotes, packed refs,
+the reflog, `FETCH_HEAD` and shared object stores all reach those commits, so a solver could recover
+the reference patch with `git log --all`, `git show <sha>`, `git reflog` or `git fsck`. The
+workspace is built so that none of these routes exists:
+
+- **Layout.** Repositories are mirrored once under `<data>/mirrors`, but the mirror is only ever
+  fetched from. Each attempt runs `git init` in an empty directory and fetches the base commit
+  alone (`--depth=1 --no-tags --no-write-fetch-head`), then detaches HEAD at it. The workspace has
+  no branches, tags, remotes, alternates, reflog (`core.logAllRefUpdates=false`, and the checkout's
+  `logs/` are removed), stash, `FETCH_HEAD` or `ORIG_HEAD`, and no objects beyond the base tree.
+- **Same sha, same patch.** HEAD is the real base commit, so `git diff HEAD` (the collected
+  `model_patch`) applies to the base exactly as the grader applies it.
+- **No earlier history either.** The fetch is shallow, so commits before the base are not
+  available. `git log` shows the base commit only and `git blame` attributes every line to it.
+- **Fail closed.** Every prepared workspace is checked before the agent starts
+  (`assertWorkspaceIsolated` in `benchmarks/swebench/adapter.ts`). The instance fails, with no
+  attempt recorded, when:
+  - HEAD is not the base;
+  - any ref, remote, reflog entry or pointer file (`packed-refs`, `FETCH_HEAD`, `ORIG_HEAD`,
+    alternates, `worktrees/`, `modules/`) exists;
+  - any commit other than the base is reachable;
+  - the object store holds any object not reachable from the base tree;
+  - a known forbidden sha (for example a gold commit, when one is supplied) resolves.
+
+  `file` records an instance with no recorded attempt as unresolved.
+- **Environment images.** With `--env-image`, the agent's commands run in the instance's official
+  image. Its `/testbed` repository is prepared by the SWE-bench image builder: later tags are
+  deleted, the remote is removed, the reflog is expired and the object store is pruned. The image
+  keeps the history before the base, plus one synthetic setup commit on top of it. The patch is
+  still collected from the isolated host workspace described above.
 
 ## Commands
 
