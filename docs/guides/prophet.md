@@ -12,6 +12,8 @@ probabilities.
 |---|---|---|
 | mutually exclusive outcomes | a choice with probabilities | probabilities that sum to 1 |
 | otherwise | a multi-select with each outcome's own probability | marginals, never renormalized |
+| a single outcome | a yes/no choice | the probability of yes |
+| more than 64 outcomes | balanced parts of at most 64 outcomes, one question each | the parts' probabilities (an exclusive event's are normalized to sum to 1) |
 
 The question carries this context: the event's rules, the crowd prices, and the event's frozen
 context sources.

@@ -16,6 +16,9 @@ import { memoryLessonSink } from "../src/learning/outcomes";
 import { disableOutcomeLearning, enableOutcomeLearning } from "../src/learning/service";
 import { handleModelApi } from "../src/net/model-api";
 import {
+  checkerEffort,
+  checkerEffortMode,
+  checkerMessages,
   guardRevision,
   isReadOnlyToolCall,
   parseVerdict,
@@ -99,6 +102,8 @@ const ENV = [
   "MARINA_DAILY_SPEND_CAP_USD",
   "MARINA_VERIFY_CHECKER_MODEL",
   "MARINA_VERIFY_ROUNDS",
+  "MARINA_VERIFY_CHECKER_EFFORT",
+  "MARINA_ANTHROPIC_AUTO_CACHE",
 ] as const;
 
 let saved: Map<string, string | undefined>;
@@ -106,7 +111,7 @@ let originalFetch: typeof fetch;
 let dir: string;
 let db: MarinaDB;
 let engine: Engine;
-let calls: { model: unknown; system: string }[];
+let calls: { model: unknown; system: string; body: Record<string, unknown> }[];
 let checkerReply: string;
 /** When set, the proposer's draft message (else a cancel_order tool call). */
 let proposerMessage: Record<string, unknown> | undefined;
@@ -128,12 +133,16 @@ beforeEach(() => {
   originalFetch = globalThis.fetch;
   globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
     const body = init?.body ? JSON.parse(String(init.body)) : {};
-    const msgs = (body.messages ?? []) as { role: string; content: string }[];
+    const msgs = (body.messages ?? []) as { role: string; content: unknown }[];
     const system = msgs
       .filter((m) => m.role === "system")
-      .map((m) => m.content)
+      .map((m) =>
+        Array.isArray(m.content)
+          ? m.content.map((p: { text?: string }) => p.text ?? "").join("")
+          : String(m.content),
+      )
       .join("\n");
-    calls.push({ model: body.model, system });
+    calls.push({ model: body.model, system, body });
     const isChecker = system.includes("You review an assistant's DRAFT");
     const isRevision = system.includes("A reviewer checked your draft");
     const message = isChecker
@@ -443,5 +452,118 @@ describe("write-action guard", () => {
     );
     expect(v.conflict).toEqual(cited);
     expect(revisionNote(draft, "wrong item", v.conflict)).toContain("argument new_item_ids[0]");
+  });
+});
+
+describe("the checker call", () => {
+  const checkerBody = () =>
+    calls.find((c) => c.system.includes("You review an assistant's DRAFT"))?.body ?? {};
+
+  it("inherits the caller's effort, top level or from extra_body", async () => {
+    await post(
+      request("marina/verify:openrouter/openai/gpt-6.1-sol", { reasoning_effort: "high" }),
+    );
+    expect(checkerBody().reasoning_effort).toBe("high");
+    calls = [];
+    await post(
+      request("marina/verify:openrouter/openai/gpt-6.1-sol", {
+        extra_body: { reasoning_effort: "medium" },
+      }),
+    );
+    expect(checkerBody().reasoning_effort).toBe("medium");
+    calls = [];
+    await post(request("marina/verify:openrouter/openai/gpt-6.1-sol"));
+    expect("reasoning_effort" in checkerBody()).toBe(false);
+  });
+
+  it("MARINA_VERIFY_CHECKER_EFFORT overrides the caller's effort", async () => {
+    process.env.MARINA_VERIFY_CHECKER_EFFORT = "low";
+    await post(
+      request("marina/verify:openrouter/openai/gpt-6.1-sol", { reasoning_effort: "high" }),
+    );
+    expect(checkerBody().reasoning_effort).toBe("low");
+    calls = [];
+    process.env.MARINA_VERIFY_CHECKER_EFFORT = "off";
+    await post(
+      request("marina/verify:openrouter/openai/gpt-6.1-sol", { reasoning_effort: "high" }),
+    );
+    expect("reasoning_effort" in checkerBody()).toBe(false);
+  });
+
+  it("parses the mode and copies every effort spelling", () => {
+    expect(checkerEffortMode({})).toBe("inherit");
+    expect(checkerEffortMode({ MARINA_VERIFY_CHECKER_EFFORT: "HIGH" })).toBe("high");
+    expect(checkerEffortMode({ MARINA_VERIFY_CHECKER_EFFORT: "junk" })).toBe("inherit");
+    expect(
+      checkerEffort(
+        { reasoning_effort: "high", extra_body: { reasoning_effort: "low", thinking: "medium" } },
+        "inherit",
+      ),
+    ).toEqual({ reasoning_effort: "high", thinking: "medium" });
+    expect(checkerEffort({ reasoning: { effort: "high" } }, "inherit")).toEqual({
+      reasoning: { effort: "high" },
+    });
+    expect(checkerEffort({ reasoning_effort: "high" }, "medium")).toEqual({
+      reasoning_effort: "medium",
+    });
+    expect(checkerEffort({ reasoning_effort: "high" }, "off")).toEqual({});
+  });
+
+  const turn1 = [
+    { role: "system", content: "Never cancel without explicit confirmation." },
+    { role: "user", content: "Cancel order 7." },
+  ];
+  const turn2 = [
+    ...turn1,
+    toolCall("get_order", '{"id":7}'),
+    { role: "tool", name: "get_order", tool_call_id: "call_1", content: '{"id":7}' },
+  ];
+  const tools = [{ type: "function", function: { name: "cancel_order", description: "Cancel" } }];
+  const draft = toolCall("cancel_order", '{"id":7}');
+  const strip = (v: unknown): unknown =>
+    JSON.parse(JSON.stringify(v, (k, x) => (k === "cache_control" ? undefined : x)));
+
+  it("keeps the checker's prefix byte-identical across turns, with breakpoints", () => {
+    const a = checkerMessages({ messages: turn1, tools, draft, lessons: "LESSONS A", cache: true });
+    const b = checkerMessages({ messages: turn2, tools, draft, lessons: "LESSONS B", cache: true });
+    expect(JSON.stringify(a[0])).toBe(JSON.stringify(b[0])); // CHECKER_SYSTEM
+    const pa = (a[1] as { content: unknown[] }).content;
+    const pb = (b[1] as { content: unknown[] }).content;
+    // Everything before turn 1's tail is a prefix of turn 2's request.
+    const prefix = pa.length - 1;
+    expect(strip(pb.slice(0, prefix))).toEqual(strip(pa.slice(0, prefix)));
+    // Breakpoints: system, head, last conversation chunk — at most four in all.
+    const marked = (parts: unknown[]) =>
+      parts.flatMap((p, i) => ((p as { cache_control?: unknown }).cache_control ? [i] : []));
+    expect(marked(pa)).toEqual([0, prefix - 1]);
+    expect(marked(pb)).toEqual([0, pb.length - 2]);
+    // Lessons and the draft ride in the tail.
+    expect((pb.at(-1) as { text: string }).text).toStartWith("LESSONS B\n\nDRAFT NEXT");
+  });
+
+  it("without breakpoints the user content is one string with a stable prefix", () => {
+    const a = checkerMessages({ messages: turn1, tools, draft });
+    const b = checkerMessages({ messages: turn2, tools, draft });
+    const sa = (a[1] as { content: string }).content;
+    const sb = (b[1] as { content: string }).content;
+    expect(typeof sa).toBe("string");
+    const tail = sa.indexOf("DRAFT NEXT ASSISTANT MESSAGE");
+    expect(sb.startsWith(sa.slice(0, tail))).toBe(true);
+    expect(a[0]).toEqual(b[0]);
+  });
+
+  it("marks an Anthropic checker's request end to end when auto-cache is on", async () => {
+    process.env.MARINA_ANTHROPIC_AUTO_CACHE = "true";
+    await post(
+      request("marina/verify:openrouter/openai/gpt-6.1-sol+openrouter/anthropic/claude-sonnet-5", {
+        reasoning_effort: "high",
+      }),
+    );
+    const body = checkerBody();
+    expect(body.model).toBe("anthropic/claude-sonnet-5");
+    expect(body.reasoning_effort).toBe("high");
+    const msgs = body.messages as { content: unknown }[];
+    expect(JSON.stringify(msgs)).toContain('"cache_control":{"type":"ephemeral"}');
+    expect(JSON.stringify(msgs).match(/cache_control/g)?.length).toBe(3);
   });
 });

@@ -1,6 +1,12 @@
 # Prophet Arena agent manifest (read by `prophet submit` / `prophet run`).
+[agent]
 name = "h2oai-marina"
 display_name = "H2O.ai Marina"
 # Marina researches on its own; the track is immutable once registered.
 track = "agentic"
 description = "H2O.ai Marina: open-source multi-model forecasting with research, verification and lessons."
+
+# Self-declared design metadata, shown on the agent's public page.
+[card]
+methodology = "plan -> date-bounded research -> independent runs -> formation (ensemble/delphi/tournament) -> verification and critique"
+tools = ["web research", "market and official-series lookups"]
