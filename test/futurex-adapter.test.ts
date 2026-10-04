@@ -5,6 +5,10 @@
 // no benchmark question or answer is committed.
 
 import { describe, expect, it } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { cleanBacktest } from "../benchmarks/futurex/clean-run";
 import { type FuturexRow, fetchBatch } from "../benchmarks/futurex/dataset";
 import { recordScoredRun, recordSubmission } from "../benchmarks/futurex/ledger";
 import {
@@ -15,7 +19,12 @@ import {
   requestFor,
   specFor,
 } from "../benchmarks/futurex/map";
-import { fallbackPrediction, runBatch, type Variant } from "../benchmarks/futurex/run";
+import {
+  BatchStopped,
+  fallbackPrediction,
+  runBatch,
+  type Variant,
+} from "../benchmarks/futurex/run";
 import { parseTruth, scoreBatch, scoreItem } from "../benchmarks/futurex/score";
 import {
   DEFAULT_IDENTITY,
@@ -396,6 +405,151 @@ describe("ledger", () => {
       expect(items.map((i) => [i.item_id, i.correct, i.score])).toEqual([["a", 1, 1]]);
     } finally {
       db.close();
+    }
+  });
+});
+
+describe("run journal: a stopped batch keeps its finished rows", () => {
+  const rows = ["a", "b", "c"].map((id) =>
+    row({ id, level: 1, prompt: lettered("Q?", ["Yes", "No"]) }),
+  );
+  const now = () => new Date("2026-12-01T00:00:00Z");
+  const counting = (answer: string) => {
+    const made = { n: 0 };
+    const inner = fakeDeps(answer);
+    return {
+      made,
+      deps: () => {
+        made.n++;
+        return inner();
+      },
+    };
+  };
+
+  it("keeps finished rows on a cap stop, labels the run partial, and resumes only the rest", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "futurex-journal-"));
+    try {
+      const path = join(dir, "rows.jsonl");
+      const journal = { path, config: { batchSha: "s1" } };
+      let started = 0;
+      const first = counting('{"answer":"A"}');
+      const stopped = await runBatch(rows, variant, first.deps, {
+        concurrency: 1,
+        now,
+        journal,
+        shouldStop: () => (started++ >= 1 ? "daily spend cap" : undefined),
+      }).catch((e: unknown) => e);
+      expect(stopped).toBeInstanceOf(BatchStopped);
+      const err = stopped as BatchStopped;
+      expect(err.message).toContain("batch stopped after 1/3 rows: daily spend cap");
+      expect(err.message).toContain("--resume");
+      expect(err.partial.results.map((r) => r.id)).toEqual(["a"]);
+      expect(err.partial.total).toBe(3);
+      expect(readFileSync(path, "utf8").trim().split("\n")).toHaveLength(2);
+
+      const second = counting('{"answer":"B"}');
+      const run = await runBatch(rows, variant, second.deps, {
+        concurrency: 1,
+        now,
+        journal: { ...journal, resume: true },
+      });
+      expect(second.made.n).toBe(2);
+      expect(run.resumed).toBe(1);
+      expect(run.results.map((r) => `${r.id}:${r.prediction}`)).toEqual(["a:A", "b:B", "c:B"]);
+      expect(run.costUsd).toBe(0.03);
+
+      // Without --resume the journal starts over.
+      const fresh = counting('{"answer":"A"}');
+      await runBatch(rows, variant, fresh.deps, { concurrency: 1, now, journal });
+      expect(fresh.made.n).toBe(3);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to resume under a different configuration, and reruns fallback rows", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "futurex-journal-"));
+    try {
+      const path = join(dir, "rows.jsonl");
+      await runBatch(rows, variant, fakeDeps('{"answer":"Z"}'), {
+        now,
+        journal: { path, config: { batchSha: "s1" } },
+      });
+      await expect(
+        runBatch(rows, { ...variant, runs: 5 }, fakeDeps('{"answer":"A"}'), {
+          now,
+          journal: { path, config: { batchSha: "s1" }, resume: true },
+        }),
+      ).rejects.toThrow(/refusing --resume: .* different configuration \(variant\)/);
+      await expect(
+        runBatch(rows, variant, fakeDeps('{"answer":"A"}'), {
+          now,
+          horizonDays: 7,
+          journal: { path, config: { batchSha: "s1" }, resume: true },
+        }),
+      ).rejects.toThrow("(horizonDays)");
+      // Every row was a fallback (no run answered): none is reused.
+      const again = counting('{"answer":"A"}');
+      const run = await runBatch(rows, variant, again.deps, {
+        now,
+        journal: { path, config: { batchSha: "s1" }, resume: true },
+      });
+      expect(again.made.n).toBe(3);
+      expect(run.results.every((r) => !r.fallback)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a clean backtest stopped at the cap writes partial.json and files nothing", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "futurex-clean-"));
+    try {
+      const resolved = ["p1", "p2"].map((id) =>
+        row({
+          id,
+          level: 1,
+          prompt: lettered("Q?", ["Yes", "No"]),
+          end_time: "2026-09-20T00:00:00+00:00",
+          ground_truth: "['A']",
+        }),
+      );
+      let filed = 0;
+      const ledger = {
+        recordBenchmarkLedgerRun: (() => {
+          filed++;
+          return { id: "x", created: true };
+        }) as never,
+        recordExternalSubmission: (() => {
+          filed++;
+        }) as never,
+      };
+      await expect(
+        cleanBacktest({
+          rows: resolved,
+          batchSha: "sha",
+          variants: [variant],
+          isolation: "closed-book",
+          after: "2026-01-01",
+          limit: 8,
+          horizonDays: 7,
+          concurrency: 1,
+          replicates: 1,
+          lessons: "off",
+          outDir: dir,
+          ledger,
+          // The guard's reserve ($2) exceeds the $1 cap: it stops before any row.
+          env: { MARINA_DAILY_SPEND_CAP_USD: "1" },
+          log: () => {},
+        }),
+      ).rejects.toBeInstanceOf(BatchStopped);
+      const label = "test-closed-book-lessons-off-r1";
+      const partial = JSON.parse(readFileSync(join(dir, label, "partial.json"), "utf8"));
+      expect(partial).toMatchObject({ partial: true, finished: 0, total: 2 });
+      expect(partial.journal).toBe(join(dir, label, "rows.jsonl"));
+      expect(existsSync(join(dir, label, "summary.json"))).toBe(false);
+      expect(filed).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

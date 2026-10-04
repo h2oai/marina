@@ -167,6 +167,15 @@ either cap. A run stops starting new rows when its spend plus a reserve (1.5 × 
 average row cost, at least $2) would reach the tighter of the two caps. A run stopped this way is
 not filed. Rows that fall back because the cap or a provider refused them write no lessons.
 
+**Partial runs and `--resume`.** Every finished row is appended to `rows.jsonl` in the run's output
+directory as soon as it lands. A run stopped by a cap keeps those rows: a clean backtest writes
+`partial.json` beside them (reason, rows finished, cost) and files nothing to the ledger. Rerun the
+same command with `--resume` to forecast only the rows still missing; fallback rows run again. A
+journal written under another configuration (variant, rows, horizon, batch, isolation, retriever,
+lessons, replicate) is refused; run without `--resume` to start over. `metaculus select` and
+`forecastbench select` keep the same journals per candidate and replicate (`<selection>-runs/`); a
+resumed selection files each run once and counts only new spend against the selection budget.
+
 ## Backtests without `--clean` are smoke tests
 
 The resolved dataset's outcomes are public. A backtest moves each cutoff `--horizon-days` before

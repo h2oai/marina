@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ForecastConfig } from "../benchmarks/forecasting/configs";
 import { auditForecast, hardLeaks } from "../benchmarks/forecasting/leak-audit";
 import { type BacktestItem, selectConfiguration } from "../benchmarks/forecasting/select";
@@ -153,5 +156,86 @@ describe("auditForecast", () => {
     });
     expect(hardLeaks(c)).toBe(3);
     expect(hardLeaks(auditForecast("2026-09-13T00:00:00.000Z", [], undefined))).toBe(0);
+  });
+});
+
+describe("selectConfiguration journals", () => {
+  it("keeps a stopped run's answers, files nothing partial, and resumes only the rest", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "select-journal-"));
+    try {
+      const filed: string[] = [];
+      const ledger = {
+        recordBenchmarkLedgerRun: ((run: { id: string }) => {
+          filed.push(run.id);
+          return run;
+        }) as never,
+      };
+      const base = {
+        benchmark: "t",
+        items,
+        candidates: [config("a")],
+        releases,
+        replicates: 1,
+        minItems: 1,
+        isolation: "date-filtered" as const,
+        concurrency: 1,
+        env: { MARINA_DAILY_SPEND_CAP_USD: "0" },
+        ledger,
+        journalDir: dir,
+      };
+      let calls = 0;
+      const makeForecaster = () => async () => {
+        calls++;
+        return answer(1, "Yes");
+      };
+      // $1 an item against a $6 budget: stopped partway, with the reserve held back.
+      const first = await selectConfiguration({ ...base, makeForecaster, budgetUsd: 6 });
+      const done = calls;
+      expect(done).toBeGreaterThan(0);
+      expect(done).toBeLessThan(items.length);
+      expect(first.ranking[0]?.status).toBe("not run (budget)");
+      expect(filed).toHaveLength(0);
+      const path = join(dir, "a-r1.jsonl");
+      expect(readFileSync(path, "utf8").trim().split("\n")).toHaveLength(1 + done);
+
+      // A different configuration under the same journal is refused.
+      await expect(
+        selectConfiguration({
+          ...base,
+          candidates: [{ ...config("a"), runs: 5 }],
+          makeForecaster,
+          budgetUsd: 100,
+          resume: true,
+        }),
+      ).rejects.toThrow("refusing --resume");
+
+      const second = await selectConfiguration({
+        ...base,
+        makeForecaster,
+        budgetUsd: 100,
+        resume: true,
+      });
+      expect(calls).toBe(items.length);
+      const a = second.ranking.find((r) => r.label === "a")!;
+      expect(a.replicates).toBe(1);
+      expect(a.mean).toBe(1);
+      // The resumed answers' cost is the run's cost; the budget counts only new spend.
+      expect(a.costPerItem).toBe(1);
+      expect(second.costUsd).toBe(items.length - done);
+      expect(filed).toHaveLength(1);
+
+      // Resuming a filed run re-files nothing and forecasts nothing.
+      const third = await selectConfiguration({
+        ...base,
+        makeForecaster,
+        budgetUsd: 100,
+        resume: true,
+      });
+      expect(calls).toBe(items.length);
+      expect(filed).toHaveLength(1);
+      expect(third.ranking[0]?.ledgerRuns).toEqual([filed[0]!]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
