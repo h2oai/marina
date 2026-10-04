@@ -238,6 +238,28 @@ Missing or insufficient history leaves the forecast unchanged and records the re
 includes interval coverage and training/validation round IDs. This is a qualification gate, not
 evidence of a live win or a substitute for future matched results.
 
+Scorer exports containing `calibrationObservations` can be accumulated without counting each
+scoring run as new evidence:
+
+```bash
+bun run scripts/arena-calibration-history.ts \
+  --as-of 2026-10-10T12:00:00Z --output history-next.json history-previous.json scores.json
+```
+
+Omit `history-previous.json` on the first run. The tool accepts trusted scorer exports, observation
+arrays, and its own versioned history reports. It writes a new file, refuses overwrites, rejects
+invalid chronology and conflicting forecasts/outcomes, and admits only outcomes available before
+the explicit cutoff. Repeated exports are deduplicated; multiple prospective captures retain the
+latest forecast per estimator/family/unit/round, matching the calibrator's rule. Keep original
+exports to revisit observations excluded by an earlier cutoff. Use the experiment's predeclared
+repeat or ensemble; do not pass stochastic repetitions as additional calibration rounds.
+
+The report inventories distinct rounds and lock-time waves separately for every exact estimator,
+family, and unit. Its `observations` can be passed to `calibrateUncertainty()` with a real future
+forecast and context. Twelve rounds or a positive descriptive score do not qualify a policy:
+the existing chronological 8/4 split and held-out improvement check still apply. History import
+cannot certify the provenance of an arbitrary input file and never changes submission routing.
+
 **Replacing a filing.** The arena's signed intake keeps every version and scores the newest one
 accepted before the lock (up to 120 per round). `bun run arena submit <round|due> --replace` files
 a newer version of an accepted round; an unchanged forecast is not re-sent, and the autopilot never
