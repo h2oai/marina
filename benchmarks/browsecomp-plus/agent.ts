@@ -29,6 +29,7 @@ import {
   getCorpusDocument,
   searchCorpus,
 } from "../../src/engine/search-providers/corpus";
+import { BudgetExhausted, isSpendCapRefusal, type SpendGuard } from "../spend-guard";
 import {
   extractCitations,
   GET_DOCUMENT_DESCRIPTION,
@@ -44,6 +45,8 @@ export interface ChatEndpoint {
   apiKey?: string;
   /** Injected for tests. */
   fetch?: typeof fetch;
+  /** Hard spend stop: checked before every call, fed every call's cost. */
+  guard?: SpendGuard;
 }
 
 /** Where tool calls are answered. In-process by default; `corpus-pool.ts` runs them in workers. */
@@ -92,6 +95,8 @@ export interface QueryRun {
   latencyMs: number;
   traceIds: string[];
   error?: string;
+  /** Set when the spend guard stopped this query: it is NOT RUN, never scored. */
+  stoppedBy?: string;
 }
 
 export interface ChatMessage {
@@ -196,6 +201,7 @@ export async function chat(
   body: Record<string, unknown>,
   timeoutMs: number,
 ): Promise<ChatReply> {
+  ep.guard?.check();
   const doFetch = ep.fetch ?? fetch;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (ep.apiKey) headers.Authorization = `Bearer ${ep.apiKey}`;
@@ -206,7 +212,14 @@ export async function chat(
     signal: AbortSignal.timeout(timeoutMs),
   });
   const text = await resp.text();
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${text.slice(0, 300)}`);
+  ep.guard?.add(Number(resp.headers.get("x-marina-cost-usd")));
+  if (!resp.ok) {
+    if (ep.guard && isSpendCapRefusal(resp.status, text)) {
+      ep.guard.trip("the server's daily spend cap");
+      ep.guard.check();
+    }
+    throw new Error(`HTTP ${resp.status}: ${text.slice(0, 300)}`);
+  }
   const data = JSON.parse(text) as {
     choices?: { message?: ChatMessage; finish_reason?: string }[];
     usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number };
@@ -246,6 +259,7 @@ export function emptyRun(model: string, queryId: string, extra: Record<string, u
 
 /** Close a run: retrieved docids from every search, usage totals, latency. */
 export function finishRun(run: QueryRun, started: number): QueryRun {
+  if (run.stoppedBy) run.record.metadata.stopped_by = run.stoppedBy;
   run.record.retrieved_docids = retrievedDocids(run.record.result);
   run.record.usage = {
     input_tokens: run.promptTokens,
@@ -356,10 +370,20 @@ export async function runToolAgent(
     );
     run.record.status = out.text ? "completed" : "incomplete";
   } catch (e) {
-    run.record.status = "error";
-    run.error = e instanceof Error ? e.message : String(e);
+    failRun(run, e);
   }
   return finishRun(run, started);
+}
+
+/** A thrown query: a budget stop is NOT RUN (`stoppedBy`); anything else is an error. */
+export function failRun(run: QueryRun, e: unknown): void {
+  if (e instanceof BudgetExhausted) {
+    run.record.status = "incomplete";
+    run.stoppedBy = e.reason;
+    return;
+  }
+  run.record.status = "error";
+  run.error = e instanceof Error ? e.message : String(e);
 }
 
 /** The crew's instructions: the official prompt plus how to reach the corpus in-world. */
@@ -410,8 +434,7 @@ export async function runCrew(
       run.record.metadata.recall_source = "cited";
     }
   } catch (e) {
-    run.record.status = "error";
-    run.error = e instanceof Error ? e.message : String(e);
+    failRun(run, e);
   }
   run.latencyMs = Date.now() - started;
   return run;

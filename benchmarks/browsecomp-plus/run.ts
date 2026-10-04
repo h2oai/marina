@@ -12,8 +12,9 @@
  * result carries item ids and outcomes only.
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { BudgetExhausted, isSpendCapRefusal } from "../spend-guard";
 import { mulberry32 } from "../stats";
 import type { BenchmarkResult, ResultItem } from "../types";
 import {
@@ -130,6 +131,7 @@ export async function judgeAnswer(
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (cfg.endpoint.apiKey) headers.Authorization = `Bearer ${cfg.endpoint.apiKey}`;
   try {
+    cfg.endpoint.guard?.check();
     const resp = await doFetch(`${cfg.endpoint.baseUrl.replace(/\/+$/, "")}/v1/chat/completions`, {
       method: "POST",
       headers,
@@ -147,14 +149,21 @@ export async function judgeAnswer(
       signal: AbortSignal.timeout(cfg.timeoutMs),
     });
     const text = await resp.text();
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${text.slice(0, 300)}`);
+    const cost = Number(resp.headers.get("x-marina-cost-usd"));
+    cfg.endpoint.guard?.add(cost);
+    if (!resp.ok) {
+      if (cfg.endpoint.guard && isSpendCapRefusal(resp.status, text)) {
+        cfg.endpoint.guard.trip("the server's daily spend cap");
+        cfg.endpoint.guard.check();
+      }
+      throw new Error(`HTTP ${resp.status}: ${text.slice(0, 300)}`);
+    }
     const data = JSON.parse(text) as { choices?: { message?: { content?: string | null } }[] };
     // A thinking block, if a host emits one anyway, is not part of the verdict.
     const content = (data.choices?.[0]?.message?.content ?? "").replace(
       /<think>[\s\S]*?<\/think>/g,
       "",
     );
-    const cost = Number(resp.headers.get("x-marina-cost-usd"));
     return {
       prompt,
       response: content,
@@ -163,6 +172,8 @@ export async function judgeAnswer(
       traceId: resp.headers.get("x-request-id") ?? undefined,
     };
   } catch (e) {
+    // A budget stop is not a judge error: the caller leaves the query out.
+    if (e instanceof BudgetExhausted) throw e;
     return {
       prompt,
       response: "",
@@ -189,6 +200,8 @@ export interface ArmOptions {
   /** A multi-agent research formation (default: the single official loop). */
   formation?: FormationSpec;
   formationOptions?: Omit<FormationOptions, "model">;
+  /** Reuse queries already answered and judged in `outDir` (an interrupted or stopped run). */
+  resume?: boolean;
   onProgress?: (done: number, total: number, last: QueryEval) => void;
 }
 
@@ -206,6 +219,12 @@ export interface ArmRun {
   finishedAt: number;
   costUsd: number;
   judgeCostUsd: number;
+  /** Set when the spend guard stopped the arm: `items` then holds only finished queries. */
+  stoppedBy?: string;
+  /** Query ids not run because of the stop (never scored, never counted wrong). */
+  notRun: string[];
+  /** Query ids reused from an earlier run in the same directory (`resume`). */
+  resumed: string[];
 }
 
 function evalFor(
@@ -229,15 +248,78 @@ function evalFor(
   };
 }
 
-/** Answer and judge every query; writes run_<id>.json and <id>_eval.json as it goes. */
+/** A query answered and judged by an earlier run in `outDir`, rebuilt from its files. */
+export function priorItem(
+  q: Query,
+  outDir: string,
+  qrels?: Map<string, string[]>,
+  goldQrels?: Map<string, string[]>,
+): ArmItem | undefined {
+  const runFile = join(outDir, "runs", `run_${q.query_id}.json`);
+  const evalFile = join(outDir, "evals", `run_${q.query_id}_eval.json`);
+  if (!existsSync(runFile) || !existsSync(evalFile)) return undefined;
+  try {
+    const record = JSON.parse(readFileSync(runFile, "utf8")) as RunRecord;
+    const ev = JSON.parse(readFileSync(evalFile, "utf8")) as Record<string, unknown>;
+    if (record.metadata?.stopped_by) return undefined;
+    const jr = (ev.judge_result ?? {}) as Record<string, unknown>;
+    const judge: JudgeOutcome | null =
+      typeof ev.judge_response === "string"
+        ? {
+            prompt: "",
+            response: ev.judge_response,
+            result: {
+              extractedFinalAnswer: (jr.extracted_final_answer as string | null) ?? null,
+              correct: (jr.correct as boolean | null) ?? null,
+              confidence: (jr.confidence as number | null) ?? null,
+              parseError: jr.parse_error === true,
+            },
+            costUsd: Number(ev.judge_cost_usd) || 0,
+            ...(typeof ev.judge_trace_id === "string" ? { traceId: ev.judge_trace_id } : {}),
+            ...(typeof jr.error === "string" ? { error: jr.error } : {}),
+          }
+        : null;
+    const usage = record.usage ?? {};
+    const run: QueryRun = {
+      record,
+      costUsd: Number(ev.cost_usd) || 0,
+      promptTokens: usage.input_tokens ?? 0,
+      completionTokens: usage.output_tokens ?? 0,
+      calls: Number(ev.calls) || 0,
+      latencyMs: Number(ev.latency_ms) || 0,
+      traceIds: Array.isArray(ev.trace_ids) ? (ev.trace_ids as string[]) : [],
+    };
+    return { query: q, run, judge, eval: evalFor(q, record, judge, qrels, goldQrels) };
+  } catch {
+    // allow-empty-catch: an unreadable earlier file means the query runs again
+    return undefined;
+  }
+}
+
+/**
+ * Answer and judge every query; writes run_<id>.json and <id>_eval.json as it
+ * goes. With a spend guard on the endpoint, a query the guard stops is NOT RUN:
+ * no file is written, it is left out of `items` and listed in `notRun`.
+ */
 export async function runArm(queries: readonly Query[], opts: ArmOptions): Promise<ArmRun> {
   const startedAt = Date.now();
   const runsDir = join(opts.outDir, "runs");
   const evalsDir = join(opts.outDir, "evals");
   mkdirSync(runsDir, { recursive: true });
   mkdirSync(evalsDir, { recursive: true });
+  const guard = opts.endpoint.guard;
+  const resumed: string[] = [];
   let done = 0;
-  const items = await pool(queries, opts.concurrency, async (q) => {
+  const slots = await pool(queries, opts.concurrency, async (q): Promise<ArmItem | null> => {
+    if (opts.resume) {
+      const prior = priorItem(q, opts.outDir, opts.qrels, opts.goldQrels);
+      if (prior) {
+        resumed.push(q.query_id);
+        opts.onProgress?.(++done, queries.length, prior.eval);
+        return prior;
+      }
+    }
+    if (guard?.stoppedBy) return null;
     const run =
       shapeFor(opts.model) === "crew"
         ? await runCrew(opts.endpoint, opts.model, q.query_id, q.query, opts.agent)
@@ -248,13 +330,19 @@ export async function runArm(queries: readonly Query[], opts: ArmOptions): Promi
               model: opts.model,
             })
           : await runToolAgent(opts.endpoint, opts.model, q.query_id, q.query, opts.agent);
-    writeFileSync(join(runsDir, `run_${q.query_id}.json`), JSON.stringify(run.record, null, 2));
+    if (run.stoppedBy) return null;
     const response = finalResponse(run.record);
     // evaluate_run.py never judges an incomplete or empty run: it counts as wrong.
-    const judge =
-      run.record.status === "completed" && response
-        ? await judgeAnswer(opts.judge, q.query, response, q.answer)
-        : null;
+    let judge: JudgeOutcome | null = null;
+    if (run.record.status === "completed" && response) {
+      try {
+        judge = await judgeAnswer(opts.judge, q.query, response, q.answer);
+      } catch (e) {
+        if (e instanceof BudgetExhausted) return null;
+        throw e;
+      }
+    }
+    writeFileSync(join(runsDir, `run_${q.query_id}.json`), JSON.stringify(run.record, null, 2));
     const ev = evalFor(q, run.record, judge, opts.qrels, opts.goldQrels);
     writeFileSync(
       join(evalsDir, `run_${q.query_id}_eval.json`),
@@ -281,7 +369,10 @@ export async function runArm(queries: readonly Query[], opts: ArmOptions): Promi
           },
           cost_usd: run.costUsd,
           judge_cost_usd: judge?.costUsd ?? 0,
+          calls: run.calls,
+          latency_ms: run.latencyMs,
           trace_ids: run.traceIds,
+          ...(judge?.traceId ? { judge_trace_id: judge.traceId } : {}),
         },
         null,
         2,
@@ -290,6 +381,8 @@ export async function runArm(queries: readonly Query[], opts: ArmOptions): Promi
     opts.onProgress?.(++done, queries.length, ev);
     return { query: q, run, judge, eval: ev };
   });
+  const items = slots.filter((s): s is ArmItem => s !== null);
+  const notRun = queries.filter((_, i) => slots[i] === null).map((q) => q.query_id);
   return {
     model: opts.model,
     items,
@@ -297,6 +390,9 @@ export async function runArm(queries: readonly Query[], opts: ArmOptions): Promi
     finishedAt: Date.now(),
     costUsd: items.reduce((t, i) => t + i.run.costUsd, 0),
     judgeCostUsd: items.reduce((t, i) => t + (i.judge?.costUsd ?? 0), 0),
+    ...(notRun.length ? { stoppedBy: guard?.stoppedBy ?? "spend guard" } : {}),
+    notRun,
+    resumed,
   };
 }
 
@@ -342,7 +438,8 @@ export function toBenchmarkResult(
     id: i.query.query_id,
     question: "",
     expected: "",
-    actual: "",
+    // An errored run is a fallback, not an answer (the ledger counts the rate); no content.
+    actual: i.run.record.status === "error" ? "ERROR: run failed" : "",
     correct: i.eval.correct,
     latencyMs: i.run.latencyMs,
     ...(i.run.record.status === "error" ? { category: "error" } : {}),
