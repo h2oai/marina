@@ -259,6 +259,7 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
               : {}),
             ...(variant.critique === false ? { critique: false } : {}),
             ...(variant.budgetMs ? { budgetMs: variant.budgetMs } : {}),
+            ...(variant.selection ? { selection: variant.selection } : {}),
             retriever: spec,
             wrapRetriever: cap.wrap,
             ...(store ? { lessons: store } : {}),

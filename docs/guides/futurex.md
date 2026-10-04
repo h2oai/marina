@@ -35,10 +35,13 @@ required and `TAVILY_API_KEY` enables date-filtered search.
 
 | The row | The forecast |
 |---|---|
-| lettered options (`A. …`), or boxed alternatives in older rows | `choice` — or `multi` for a level-2 bundle of independent outcomes (nominations, who qualifies, cumulative thresholds such as "at least …") |
-| "how many …", a unit ("Report the value in …"), a measured value | `number` (an integer for counts) |
-| an ordered or "which N" list, "ranked from X to Y" | `ranking`, sized when the row says how many |
-| anything else (one name, an exact title) | `text` |
+| lettered options (`A. …`), or boxed alternatives in older rows | `choice` — or `multi` for a level-2 bundle of independent outcomes (nominations, who qualifies, cumulative thresholds such as "at least …"); a count with bucketed options ("how many …") is always one `choice` |
+| "how many …", a unit ("Report the value in …", "…, in knots, …"), a measured value, or an official statistic titled by its series and period ("Job openings — July 2026") | `number` (an integer for counts; the unit is passed on) |
+| one top entry ("which club will be first …", "rank No. 1") | `text` |
+| an ordered or "which N" list, "ranked from X to Y", "which <plural>" ("which identifiers …"), "winners of the N …" | `ranking`, sized when the row says how many |
+| anything else (an exact title) | `text` |
+
+Each rule is checked against the shape of every resolved row's truth. `test/forecast-shape-scale-selection.test.ts` holds synthetic cases. With `FUTUREX_SHAPE_AUDIT_BATCH=<past batch json>` set, it also checks, by row id, the rows a failure analysis found mistyped.
 
 The full prompt goes along as the forecast's `context` (it carries the settlement rules and the
 requested format), and the row's end time becomes the evidence cutoff.
@@ -103,7 +106,10 @@ Built-ins are:
 - `crew`: a Marina crew as the analyst, via `marina:<crew>`.
 
 Model ids are pinned, never floating aliases. `--variants <file.json>` supplies others: an array of
-`{ label, model, analysts, planner?, critic?, verifier?, verify?, runs?, researchRounds?, critique? }`.
+`{ label, model, analysts, planner?, critic?, verifier?, verify?, runs?, researchRounds?, critique?, selection?, budgetMs? }`.
+`selection: "confidence"` takes each row's most self-confident run (see [Forecasting](forecasting.md#typed-answers)). `budgetMs` is a per-row time budget: the answer is combined from what has finished, and is labelled `budget_forced` in the ledger.
+
+`bun benchmarks/futurex/rescore-selection.ts --dataset <past batch json> --runs <answers.json>,…` re-scores saved runs under each selection mode, with no model calls. Rows split into selection and holdout halves by a stable hash. It reports whether `confidence` clears the promotion margin over `agreement` on the holdout half; pass `--tried` with the number of candidates already examined.
 
 Live runs recall every lesson in the shared `forecast-lessons` space of the `--lessons-account` world
 account (default `Forecaster`) when it exists; `--lessons off` disables that.

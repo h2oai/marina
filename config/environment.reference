@@ -727,6 +727,9 @@
 # Wall-clock budget per typed forecast, in seconds (unset or 0 = none). Budget-terminal answering: from about 75 % no further research round starts; at the cap lookups, verification and the critique are skipped and the answer is combined from the runs finished so far (the first run to finish, when none has). The answer then carries `budgetForced`, and a skipped check is recorded as `not_run`, never as a failure.
 # MARINA_FORECAST_BUDGET_S=0
 
+# How a typed forecast's K runs become one answer. `agreement` (the default) combines the runs by type and reports their agreement as the confidence. `confidence` takes the run with the highest self-reported confidence and reports that confidence, which is the bar a critique must clear to replace it. Agreement among same-model runs measures consistency, not correctness. The default changes only after `confidence` wins on a held-out split by the promotion margin (`benchmarks/futurex/rescore-selection.ts` re-scores saved forecasts offline).
+# MARINA_FORECAST_SELECTION=agreement
+
 # Exa search for forecast and arena retrieval (`exa:auto`, `exa:neural`, `exa:keyword`): filtered server-side by publication date to the brief's window, so it is a date-filtered engine.
 # @restart
 # EXA_API_KEY=
