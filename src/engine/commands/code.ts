@@ -601,7 +601,7 @@ export function codeCommand(deps: CodeDeps): CommandDef {
       "code workspace show",
       "code workspace runner",
       "code workspace runner local",
-      "code workspace runner container image:<ref> [sync:mount|patch] [workdir:<path>] [network:on] [-- <init>]",
+      "code workspace runner container image:<ref> [sync:mount|patch] [workdir:<path>] [network:on]",
       "code workspace use <path>",
       "code worktree",
       "code worktree merge",

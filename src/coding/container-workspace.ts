@@ -18,8 +18,15 @@
  *   no-new-privileges, CPU / memory / pid limits, a timeout that also removes
  *   the container, `--rm` so no container outlives its command.
  * - `mount` sync: the worktree is the only host path mounted (read-write, at
- *   the workdir); the root filesystem is read-only with a private /tmp; the
- *   process runs as the host user (`--userns=keep-id` / `--user uid:gid`).
+ *   the workdir) EXCEPT its git metadata, which is bound read-only on top
+ *   (`gitMetadataPaths`): code inside the container cannot plant hooks, an
+ *   fsmonitor or diff drivers that host git would run. A root without its own
+ *   `.git` is refused. Host git itself is hardened as well (host-git.ts). The
+ *   root filesystem is read-only with a private /tmp; the process runs as the
+ *   host user (`--userns=keep-id` / `--user uid:gid`).
+ * - Operator policy (code/runner.ts): `init`, the image, network and the host
+ *   runner are operator settings; the in-world `code workspace runner` cannot
+ *   set an init preamble and cannot leave an operator-required container.
  * - `patch` sync: nothing from the host is mounted. The image already holds
  *   the project at its base revision; the workspace's pending diff (tracked
  *   changes plus untracked files) is fed on stdin and applied inside a
@@ -32,8 +39,9 @@
  *   none of it: it only gets the explicit `-e` values below.
  */
 
-import { readFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { WorkspaceDescriptor, WorkspaceRunResult } from "./local-workspace";
 import { LocalWorkspace, runCapture, runWorkspaceCommand } from "./local-workspace";
 
@@ -271,7 +279,13 @@ export function containerRunArgv(
   root: string,
   command: string[],
   name: string,
-  opts: { applyPatch?: boolean; uid?: number; gid?: number } = {},
+  opts: {
+    applyPatch?: boolean;
+    uid?: number;
+    gid?: number;
+    /** Root-relative git metadata paths bound read-only over the worktree mount (default `.git`). */
+    readOnlyPaths?: string[];
+  } = {},
 ): string[] {
   const ids = {
     uid: opts.uid ?? process.getuid?.() ?? 1000,
@@ -309,6 +323,12 @@ export function containerRunArgv(
   ];
   if (runner.sync === "mount") {
     argv.push("--read-only", "-v", `${root}:${runner.workdir}:rw`);
+    // Git metadata is read-only inside the container: code run there (a test
+    // suite) must never plant config, hooks or an fsmonitor that host git would
+    // later execute. Later mounts shadow the read-write worktree mount.
+    for (const rel of opts.readOnlyPaths ?? [".git"]) {
+      argv.push("-v", `${root}/${rel}:${runner.workdir}/${rel}:ro`);
+    }
     if (runner.runtime === "podman") argv.push("--userns=keep-id");
     else argv.push("--user", `${ids.uid}:${ids.gid}`);
   } else if (applyPatch) {
@@ -323,7 +343,10 @@ export function containerRunArgv(
       'git apply --whitespace=nowarn - || { echo "marina: pending diff did not apply inside the image" >&2; exit 125; }',
     );
   if (steps.length === 0) return [...argv, ...command];
-  // The command stays an argv ("$@"); only the operator-set preamble is shell text.
+  // The command stays an argv ("$@"). The only shell text is the fixed patch
+  // step and `init`, which comes from operator configuration
+  // (MARINA_CODE_CONTAINER_INIT) only: the in-world runner command cannot set
+  // it, and stored session settings are stripped of it (code/runner.ts).
   return [
     ...argv,
     runner.shell,
@@ -332,6 +355,47 @@ export function containerRunArgv(
     "marina-run",
     ...command,
   ];
+}
+
+/**
+ * The root-relative git metadata paths a `mount`-sync container must see
+ * read-only: `.git` itself (a directory, or a worktree's `gitdir:` file) and,
+ * when that file points back inside the worktree, the git directory and its
+ * common directory too. Throws when `.git` is missing or a symlink: the
+ * container could then create or redirect it, and host git would read it.
+ */
+export function gitMetadataPaths(root: string): string[] {
+  const dotGit = join(root, ".git");
+  let stat: ReturnType<typeof lstatSync>;
+  try {
+    stat = lstatSync(dotGit);
+  } catch {
+    throw new Error(
+      "Container mount sync needs the workspace root to be a git repository root (its .git is mounted read-only). Use sync:patch, or a repository root.",
+    );
+  }
+  if (stat.isSymbolicLink())
+    throw new Error("Container mount sync refuses a symlinked .git in the workspace root.");
+  const paths = [".git"];
+  if (stat.isFile()) {
+    const match = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotGit, "utf8"));
+    if (!match) throw new Error("Unreadable .git file in the workspace root.");
+    const gitDir = resolve(root, match[1]!.trim());
+    addInside(root, gitDir, paths);
+    try {
+      const common = readFileSync(join(gitDir, "commondir"), "utf8").trim();
+      if (common) addInside(root, resolve(gitDir, common), paths);
+    } catch {
+      // allow-empty-catch: no commondir file means the gitdir is its own common dir
+    }
+  }
+  return paths;
+}
+
+function addInside(root: string, target: string, paths: string[]): void {
+  const rel = relative(root, target);
+  if (!rel || isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`)) return;
+  if (!paths.includes(rel)) paths.push(rel);
 }
 
 /** A Code Mode workspace whose finite commands run inside a container image. */
@@ -395,6 +459,7 @@ export class ContainerWorkspace extends LocalWorkspace {
     const name = `marina-run-${crypto.randomUUID().slice(0, 12)}`;
     const argv = containerRunArgv(this.runner, this.root, normalized, name, {
       applyPatch: stdin !== undefined,
+      ...(this.runner.sync === "mount" ? { readOnlyPaths: gitMetadataPaths(this.root) } : {}),
     });
     const result = await runWorkspaceCommand(
       argv,
@@ -413,6 +478,7 @@ export class ContainerWorkspace extends LocalWorkspace {
         this.root,
         4096,
         this.hostExecForbidden,
+        this.runtimeEnv,
       );
     }
     return result;

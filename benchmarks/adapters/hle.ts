@@ -15,7 +15,7 @@
  */
 
 import { correctDataUrlImageType } from "../../src/net/anthropic-tools";
-import { queryWithUsage } from "../modes/passthrough";
+import { queryWithUsage, replyLabels } from "../modes/passthrough";
 import { judgeEquivalence } from "../scoring/judge";
 import type { BenchmarkConfig, DatasetItem, ItemUsage, Message, ResultItem } from "../types";
 import { addCallUsage } from "../usage";
@@ -127,6 +127,7 @@ export async function runHLE(
       let judge: ResultItem["judge"];
       let traceId: string | undefined;
       let repaired: string | undefined;
+      let labels: ReturnType<typeof replyLabels> = {};
       try {
         const reply = await queryWithUsage(
           config.endpoint,
@@ -137,6 +138,7 @@ export async function runHLE(
         usage = addCallUsage(undefined, reply.usage);
         traceId = reply.requestId;
         repaired = reply.repaired;
+        labels = replyLabels(reply);
         rawResponse = reply.content;
         if (isMultipleChoice(item)) {
           actual = extractChoiceLetter(reply.content);
@@ -176,6 +178,7 @@ export async function runHLE(
         ...(judge ? { judge } : {}),
         ...(traceId ? { traceId } : {}),
         ...(repaired ? { repaired } : {}),
+        ...labels,
       });
       completed++;
       onProgress?.(completed, items.length);

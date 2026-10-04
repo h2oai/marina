@@ -16,20 +16,12 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { HOST_GIT_CONFIG_ARGS, hostGitEnv } from "./host-git";
 
 export const CANDIDATE_POLICY = "git-working-bytes-v1";
 const MAX_FILES = 8192;
 const MAX_BYTES = 128 * 1024 * 1024;
 const MAX_PINS = 64;
-const GIT_ENV = {
-  PATH: process.env.PATH ?? "/usr/bin:/bin",
-  LANG: "C",
-  GIT_CONFIG_NOSYSTEM: "1",
-  GIT_CONFIG_GLOBAL: "/dev/null",
-  GIT_OPTIONAL_LOCKS: "0",
-  GIT_TERMINAL_PROMPT: "0",
-  GIT_NO_LAZY_FETCH: "1",
-};
 
 export interface CandidateIdentity {
   version: 1;
@@ -56,28 +48,16 @@ async function git(
   index?: string,
   allowFailure = false,
 ) {
-  const child = Bun.spawn(
-    [
-      "git",
-      "-c",
-      "core.fsmonitor=false",
-      "-c",
-      "core.hooksPath=/dev/null",
-      "-c",
-      "gc.auto=0",
-      ...args,
-    ],
-    {
-      cwd,
-      env: { ...GIT_ENV, ...(index ? { GIT_INDEX_FILE: index } : {}) },
-      stdin:
-        input === undefined
-          ? "ignore"
-          : new Blob([typeof input === "string" ? input : new Uint8Array(input)]),
-      stdout: "pipe",
-      stderr: "pipe",
-    },
-  );
+  const child = Bun.spawn(["git", ...HOST_GIT_CONFIG_ARGS, ...args], {
+    cwd,
+    env: hostGitEnv(index ? { GIT_INDEX_FILE: index } : {}),
+    stdin:
+      input === undefined
+        ? "ignore"
+        : new Blob([typeof input === "string" ? input : new Uint8Array(input)]),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const timer = setTimeout(() => child.kill("SIGKILL"), 30_000);
   const read = async (stream: ReadableStream<Uint8Array>) => {
     const chunks: Uint8Array[] = [];

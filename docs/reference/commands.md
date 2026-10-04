@@ -2882,7 +2882,7 @@ Effect: unknown.
 Effect: unknown.
 
 
-### `code workspace runner container image:<ref> [sync:mount|patch] [workdir:<path>] [network:on] [-- <init>]`
+### `code workspace runner container image:<ref> [sync:mount|patch] [workdir:<path>] [network:on]`
 
 Effect: unknown.
 
@@ -2890,11 +2890,9 @@ Effect: unknown.
 - `field-1` (`sync`): text, optional group `option-0`, choices `mount`, `patch`.
 - `field-2` (`workdir`): text, optional group `option-1`.
 - `field-3` (`network`): text, optional group `option-2`.
-- `field-4` (`init`): text, optional group `option-3`.
 - Group `option-0`: `sync:mount|patch`.
 - Group `option-1`: `workdir:path`.
 - Group `option-2`: `network:on`.
-- Group `option-3`: `-- init`.
 
 ### `code workspace use <path>`
 

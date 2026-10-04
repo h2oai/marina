@@ -8,12 +8,17 @@
  * event log, so a run against a Marina crew lands ranked and attributed.
  *
  * What is sent: the credential-free config and per-item ids, outcomes, scores,
- * latency, cost, judge verdict, trace id and a `fallback` flag for items that
- * errored — never the question, expected answer or response text.
+ * latency, cost, judge verdict, trace id, a `fallback` flag for items that
+ * errored, an answer digest (hashed again with a per-ledger key before it is
+ * stored), and the `budgetForced` / `verification` labels — never the
+ * question, expected answer or response text.
  */
 
+import { answerDigest } from "../src/engine/benchmark-ledger";
 import { resultForDisk } from "./result-file";
 import type { BenchmarkResult } from "./types";
+
+const withDigest = (digest: string | undefined) => (digest ? { answerDigest: digest } : {});
 
 export type LedgerTargetKind = "model" | "crew" | "population";
 
@@ -55,6 +60,11 @@ export function ledgerFileBody(result: BenchmarkResult, opts: LedgerFileOptions)
         ...(it.traceId ? { traceId: it.traceId } : {}),
         // An item that errored is a fallback, not an answer (the server counts the rate).
         ...(it.actual?.startsWith("ERROR:") ? { fallback: true } : {}),
+        // A digest of the normalised answer, never its text: the ledger keeps a
+        // per-ledger keyed hash so plurality and selectors can be measured offline.
+        ...withDigest(it.answerDigest ?? answerDigest(it.actual)),
+        ...(typeof it.budgetForced === "boolean" ? { budgetForced: it.budgetForced } : {}),
+        ...(it.verification ? { verification: it.verification } : {}),
       })),
     },
   };
