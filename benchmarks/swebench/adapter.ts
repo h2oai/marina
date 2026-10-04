@@ -17,6 +17,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { capEnvValue } from "../../src/engine/spend-guard";
 
 /** The solver-visible fields `export.py` writes — no hints, gold or test patches. */
 export interface SweInstance {
@@ -485,7 +486,15 @@ export interface AttemptOptions {
   run?: Run;
   /** Opt-in: run the agent's commands inside the instance's environment image. */
   mode?: SweMode;
+  /**
+   * The most this attempt's session may spend (its own Marina's daily cap,
+   * implementer and reviewer together). Default {@link DEFAULT_ATTEMPT_CAP_USD}.
+   */
+  capUsd?: number;
 }
+
+/** A single attempt's cap when the run has no `--max-usd` budget. */
+export const DEFAULT_ATTEMPT_CAP_USD = 25;
 
 /** One instance × arm × replicate: checkout → implement (→ review) → patch, trajectory, cost. */
 export async function attemptInstance(
@@ -505,7 +514,9 @@ export async function attemptInstance(
   const mode = o.mode ?? "agentless";
   const env = {
     MARINA_CODE_TASK_TIMEOUT_MS: String(o.timeoutMs),
-    MARINA_DAILY_SPEND_CAP_USD: "25",
+    MARINA_DAILY_SPEND_CAP_USD: capEnvValue(
+      Math.min(o.capUsd ?? DEFAULT_ATTEMPT_CAP_USD, DEFAULT_ATTEMPT_CAP_USD),
+    ),
     ...(mode === "env-image" ? envImageRunnerEnv(inst.instance_id) : {}),
   };
   const marina = (task: string, model: string) =>

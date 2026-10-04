@@ -30,6 +30,7 @@
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { capEnvValue } from "../../src/engine/spend-guard";
 import type {
   ArmSpec,
   CommandStep,
@@ -84,6 +85,11 @@ export function resolveModels(
   return { answer, checker, judge, labels };
 }
 
+/** An even share of `budgetUsd` across `units` (never more than the budget in total). */
+export function budgetShare(budgetUsd: number, units: number): number {
+  return Math.max(0, budgetUsd) / Math.max(1, units);
+}
+
 function serverEnv(world: string, spendCapUsd: number, extra: Record<string, string> = {}) {
   return {
     MARINA_WORLD: world,
@@ -92,7 +98,8 @@ function serverEnv(world: string, spendCapUsd: number, extra: Record<string, str
     MARINA_OPEN_API: "true",
     MODEL_REQUEST_TIMEOUT_MS: "1200000",
     MARINA_EVENT_RETENTION: "2000000",
-    MARINA_DAILY_SPEND_CAP_USD: String(Math.max(1, Math.ceil(spendCapUsd))),
+    // The server's share of --budget-usd, rounded down — never up past it, never 0 (= uncapped).
+    MARINA_DAILY_SPEND_CAP_USD: capEnvValue(spendCapUsd),
     ...extra,
   };
 }
@@ -243,7 +250,8 @@ const hle: Setup = {
     const arms = armsOf(this, flags);
     const limit = flags.limit ?? this.smoke;
     const m = resolveModels(tier, flags, FRONTIER.strong, FRONTIER.strong);
-    const share = Math.max(5, flags.budgetUsd / Math.max(1, arms.length * flags.replicates));
+    // Each server's cap is an even share of the budget, so together they never exceed it.
+    const share = budgetShare(flags.budgetUsd, arms.length * flags.replicates);
     const steps: Step[] = [];
     let port = BASE_PORT;
     for (const arm of arms) {
@@ -341,6 +349,8 @@ const swebench: Setup = {
         argv: ["bun", "scripts/swebench.ts", "subset", ...common],
       },
     ];
+    // Every arm × replicate run gets an even share of the budget as a hard total.
+    const runShare = budgetShare(flags.budgetUsd, arms.length * flags.replicates);
     for (const arm of arms) {
       for (let r = 1; r <= flags.replicates; r++) {
         const run = [
@@ -353,6 +363,8 @@ const swebench: Setup = {
           m.answer,
           "--replicate",
           String(r),
+          "--max-usd",
+          capEnvValue(runShare),
           ...(arm.name === "verify" ? ["--review-model", m.checker] : []),
           ...(flags.envImage ? ["--env-image"] : []),
           // Repository mirrors are shared with the default data directory, never re-cloned.

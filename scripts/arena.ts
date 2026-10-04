@@ -65,6 +65,7 @@ import {
   recordShadow,
 } from "../src/arena/service";
 import { buildForecastBody, dueRounds, submitRound } from "../src/arena/submit";
+import { attachCliSpendLedger } from "../src/engine/cli-spend-ledger";
 import { getErrorMessage } from "../src/engine/errors";
 import { MarinaDB } from "../src/persistence/database";
 
@@ -104,11 +105,18 @@ function weightFlag(): number | undefined {
   return w;
 }
 
+/** Commands that can call a model (forecast, research, evaluate, propose). */
+const SPENDING_COMMANDS = new Set(["submit", "evaluate", "research", "shadow", "discover"]);
+
 function openDb(): MarinaDB {
   return new MarinaDB(process.env.DB_PATH || "marina.db");
 }
 
 async function main(): Promise<number> {
+  // Model-backed forecasters spend: count it in the world's daily ledger.
+  if (cmd && SPENDING_COMMANDS.has(cmd)) {
+    attachCliSpendLedger(`bun run arena ${cmd}`, { dbPath: process.env.DB_PATH || "marina.db" });
+  }
   switch (cmd) {
     case "audit": {
       if (!arg) throw new Error("usage: bun run arena audit <round_id|due>");

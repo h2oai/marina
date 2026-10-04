@@ -95,7 +95,8 @@ with `AGENT_AUTORESPAWN=true`, or when an operator spawns them with `agent spawn
 | --- | --- | --- |
 | `ANTHROPIC_API_KEY` (or `OPENAI_API_KEY`, `GEMINI_API_KEY`, …) | Upstream provider key — **gates whether any agent can call a model** | unset |
 | `AGENT_AUTORESPAWN` | `true` → seeded/saved agents respawn on boot; `false` → never | unset = on for a local install with a provider, else off |
-| `MARINA_DAILY_SPEND_CAP_USD` | USD per UTC day for the whole world; at the cap model calls, decisions, forecasts and media are refused and agents pause | `25` (`0` = no cap) |
+| `MARINA_DAILY_SPEND_CAP_USD` | USD per UTC day for the whole world (server and every command-line run on the same `DB_PATH`); at the cap model calls, decisions, forecasts and media are refused and agents pause | `25` (`0` = no cap) |
+| `MARINA_SPEND_SCOPE` / `MARINA_SPEND_SCOPE_CAP_USD` | A per-job budget inside the world cap (for example `futurex-live`); refused at either cap | unset / `50` (`0` = no scope cap) |
 | `MARINA_ROOM_AGENTS` | `false` → rooms never spawn their agents | enabled |
 | `MODEL_API_KEYS` | Bearer token(s) for external `/v1` callers (Marina-as-LLM). Caller auth, **not** an upstream key | unset |
 | `MARINA_OPEN_API` | `true` → dev-only: skip `/v1` + dashboard caller auth | off |

@@ -9,6 +9,7 @@ import type {
   ProductivitySummary,
   ProductivityTrendPoint,
   PromptOutcomeSummary,
+  ScopeDailySpendRow,
 } from "../db-telemetry";
 import type { ExactKeys } from "./exact-keys";
 
@@ -64,8 +65,9 @@ export interface TelemetryStore {
   getPrimitiveUsageLeaderboard(limit?: number): PrimitiveUsageSummary[];
   recordAutonomyPulse(pulse: AutonomyPulseInput): void;
   listAutonomyPulse(sinceMs: number): AutonomyPulseRow[];
-  addDailySpend(day: string, source: string, usd: number): void;
+  addDailySpend(day: string, source: string, usd: number, scope?: string): void;
   getDailySpend(day: string): DailySpendRow[];
+  getScopeDailySpend(day: string, scope?: string): ScopeDailySpendRow[];
 }
 
 /** Runtime mirror of `TelemetryStore`'s method names — the drift test compares it to the facade. */
@@ -84,6 +86,7 @@ export const TELEMETRY_STORE_METHODS = [
   "listAutonomyPulse",
   "addDailySpend",
   "getDailySpend",
+  "getScopeDailySpend",
 ] as const satisfies readonly (keyof TelemetryStore)[];
 
 export const TELEMETRY_STORE_COMPLETE: ExactKeys<TelemetryStore, typeof TELEMETRY_STORE_METHODS> =

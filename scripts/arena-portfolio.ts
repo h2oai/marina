@@ -25,6 +25,7 @@ import { arenaData, lockForModels } from "../src/arena/service";
 import { parseRouteEvidence, selectTaskRoute } from "../src/coordination/task-routing";
 import { WorkBudget } from "../src/coordination/work-budget";
 import { researchJudge } from "../src/decisions/config";
+import { attachCliSpendLedger } from "../src/engine/cli-spend-ledger";
 import { getErrorMessage } from "../src/engine/errors";
 import { MarinaDB } from "../src/persistence/database";
 
@@ -54,6 +55,8 @@ async function main() {
     return;
   }
   if (!values.db) throw new Error("--db is required: choose an explicit shadow ledger");
+  // Spend counts against the WORLD's daily cap (DB_PATH), not the shadow ledger.
+  attachCliSpendLedger("bun run arena:portfolio");
   const data = arenaData().frozen();
   const db = new MarinaDB(values.db);
   try {
