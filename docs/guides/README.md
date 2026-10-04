@@ -9,6 +9,11 @@ and operate the environment. Start with one path below; the full catalog follows
 
 | I want to… | Start here | Then read |
 |---|---|---|
+| Integrate an existing application | [Integration hub](integrations.md) | [Credential and session rules](integrations.md#keep-credentials-and-sessions-distinct) |
+| Use LangChain or LangGraph | [LangChain and LangGraph](langchain.md) | [Memory service](memory-service.md) |
+| Build n8n workflows | [n8n](n8n.md) | [MCP Integration](mcp-integration.md) |
+| Connect coding assistants or an ACP editor | [Coding agents and editors](coding-agent-integrations.md) | [Coding](coding.md) |
+| Compare desktop, dashboard and TUI | [Interface guide](interfaces.md) | [Published panels](published-panels.md) |
 | Run Marina and see one useful result | [Getting Started](getting-started.md) | [Dashboard](dashboard.md) |
 | Use the packaged desktop app | [Getting Started: packaged desktop](getting-started.md#packaged-desktop-app) | [Dashboard](dashboard.md) |
 | Connect Claude or another MCP client | [MCP Integration](mcp-integration.md) | [Connecting](connecting.md) |
@@ -27,7 +32,7 @@ and operate the environment. Start with one path below; the full catalog follows
 | Register another Marina without assuming trust | [Federation discovery](federation-discovery.md) | [Inheritance](inheritance.md) |
 | Run on one local model (Ollama, llama.cpp) or a single key | [Single model](single-model.md) | [Configuration](configuration.md) |
 | Forecast a question (probability or number, with evidence) | [Single model](single-model.md) | What every model-using feature does with one local model or one key, and how `readiness` reports it |
-| [Forecasting](forecasting.md) | [Model API](model-api.md) |
+| Route forecasting into another application | [Forecasting](forecasting.md) | [Model API](model-api.md) |
 | Enter Marina in the Social Simulation Arena | [Arena](arena.md) | [Forecasting](forecasting.md) |
 | Enter Marina in FutureX (weekly future-prediction benchmark) | [FutureX](futurex.md) | [Forecasting](forecasting.md) |
 | Enter Marina in Metaculus AI-benchmark tournaments as a bot | [Metaculus](metaculus.md) | [Forecasting](forecasting.md) |

@@ -576,6 +576,8 @@ See [docs/load-test-results.md](docs/load-test-results.md) for full results.
 | [docs/load-test-results.md](docs/load-test-results.md) | Performance benchmarks |
 | [docs/guides/memory.md](docs/guides/memory.md) | Memory architecture and everyday memory workflows |
 | [docs/guides/emergent-organization.md](docs/guides/emergent-organization.md) | Bottom-up coordination and organization patterns |
+| [docs/guides/integrations.md](docs/guides/integrations.md) | Connect LangChain, n8n, coding agents and existing applications; deploy your own instance |
+| [docs/guides/interfaces.md](docs/guides/interfaces.md) | Desktop, browser and terminal capabilities, shared contracts and packaging boundaries |
 | [docs/guides/getting-started.md](docs/guides/getting-started.md) | Source checkout to first visible, reviewed result |
 | [docs/guides/forecasting.md](docs/guides/forecasting.md) | Forecast any question: CLI, command and `/v1/forecast`, with cited and checked evidence |
 | [docs/guides/arena.md](docs/guides/arena.md) | The Social Simulation Arena: forecasting, bounded parallel/layered shadow portfolios, routing evidence, integrity |

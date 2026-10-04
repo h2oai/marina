@@ -4,6 +4,7 @@
 import { RateLimiter } from "../../../src/auth/rate-limiter";
 import { Engine } from "../../../src/engine/engine";
 import { Logger } from "../../../src/engine/logger";
+import { closeWorldMemoryService } from "../../../src/memory/world-service";
 import type { Adapter } from "../../../src/net/adapter";
 import { DashboardBroadcaster } from "../../../src/net/dashboard-ws";
 import { formatPerception } from "../../../src/net/formatter";
@@ -235,6 +236,12 @@ export class EngineHost {
     if (!this.running) return;
 
     this.logger.info("desktop", "Shutting down engine...");
+    // Refuse new desktop RPC work while admitted commands/checkpoints drain.
+    this.running = false;
+    this.wsServer?.beginDrain();
+    this.mcpServer?.beginDrain();
+    this.telnetServer?.beginDrain();
+    this.engine?.stop();
 
     if (this.stateInterval) {
       clearInterval(this.stateInterval);
@@ -264,16 +271,20 @@ export class EngineHost {
       await this.engine.agentRuntime.stopAll();
     }
 
-    // Stop engine (saves state + stops tick loop)
-    this.engine?.shutdown();
+    await Promise.all([this.wsServer?.drainRequests(), this.mcpServer?.drainRequests()]);
+    await this.engine?.drainCommands();
+    // Background writes must settle before persistence is closed.
+    await this.engine?.shutdown();
 
     // Stop network servers
-    this.wsServer?.stop();
+    await Promise.all([this.wsServer?.stop(), this.mcpServer?.stop()]);
     this.telnetServer?.stop();
-    this.mcpServer?.stop();
 
     // Close database
-    this.db?.close();
+    if (this.db) {
+      await closeWorldMemoryService(this.db);
+      this.db.close();
+    }
 
     this.engine = null;
     this.db = null;

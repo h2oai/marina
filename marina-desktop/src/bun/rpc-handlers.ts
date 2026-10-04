@@ -1,14 +1,22 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  completeCommandResponse,
+  correlateCommandPerception,
+} from "../../../src/engine/command-response";
 import { testKeyConnectivity } from "../../../src/engine/commands/key";
 import { discoverModels } from "../../../src/net/model-discovery";
-import type { Connection, EntityId, Perception } from "../../../src/types";
+import {
+  handleParticipantMessage,
+  type ParticipantMessage,
+} from "../../../src/net/participant-messages";
+import type { Connection, EntityId, Perception, RoomId } from "../../../src/types";
 import type { EngineHost } from "./engine-host";
 import type {
   AgentSpawnParams,
-  ApiProxyParams,
   ApiKeyParams,
+  ApiProxyParams,
   CreateCanvasParams,
   CreateNodeParams,
   DeleteNodeParams,
@@ -38,7 +46,7 @@ export function createRpcHandlers(
 ) {
   function requireEngine() {
     const host = engineHost();
-    if (!host || !host.isRunning) {
+    if (!host?.isRunning) {
       throw new Error("Engine not running");
     }
     return { engine: host.getEngine()!, db: host.getDb()! };
@@ -70,10 +78,7 @@ export function createRpcHandlers(
           short: r.module.short,
           district,
           exits: Object.fromEntries(
-            Object.entries(r.module.exits ?? {}).map(([k, v]) => [
-              k,
-              v as string,
-            ]),
+            Object.entries(r.module.exits ?? {}).map(([k, v]) => [k, v as string]),
           ),
           entityCount: entities.length,
         };
@@ -98,8 +103,7 @@ export function createRpcHandlers(
       const npcs = allEntities.filter((e) => e.kind === "npc");
       const roomPops: Record<string, number> = {};
       for (const e of agents) {
-        roomPops[e.room as string] =
-          (roomPops[e.room as string] ?? 0) + 1;
+        roomPops[e.room as string] = (roomPops[e.room as string] ?? 0) + 1;
       }
 
       const mem = process.memoryUsage();
@@ -152,7 +156,7 @@ export function createRpcHandlers(
 
     getRoomDetail(roomId: string): unknown {
       const { engine, db } = requireEngine();
-      const room = engine.rooms.get(roomId as any);
+      const room = engine.rooms.get(roomId as RoomId);
       if (!room) return { error: "Room not found" };
 
       const entities = engine.entities.inRoom(room.id).map((e) => ({
@@ -161,8 +165,7 @@ export function createRpcHandlers(
         kind: e.kind,
       }));
 
-      const longText =
-        typeof room.module.long === "string" ? room.module.long : "[dynamic]";
+      const longText = typeof room.module.long === "string" ? room.module.long : "[dynamic]";
 
       const items: Record<string, string> = {};
       if (room.module.items) {
@@ -264,15 +267,13 @@ export function createRpcHandlers(
       const task = db.getTask(taskId);
       if (!task) return { error: "Task not found" };
 
-      const children = db
-        .listTasks({ parentId: taskId, limit: 50 })
-        .map((t) => ({
-          id: t.id,
-          title: t.title,
-          status: t.status,
-          creator_name: t.creator_name,
-          created_at: t.created_at,
-        }));
+      const children = db.listTasks({ parentId: taskId, limit: 50 }).map((t) => ({
+        id: t.id,
+        title: t.title,
+        status: t.status,
+        creator_name: t.creator_name,
+        created_at: t.created_at,
+      }));
 
       return {
         id: task.id,
@@ -354,9 +355,7 @@ export function createRpcHandlers(
             parentId: p.bundle_id,
             limit: 200,
           });
-          const done = children.filter(
-            (t) => t.status === "completed",
-          ).length;
+          const done = children.filter((t) => t.status === "completed").length;
           bundleProgress = { total: children.length, done };
         }
         return {
@@ -449,9 +448,7 @@ export function createRpcHandlers(
       return { ok: true };
     },
 
-    async connectRemote(
-      url: string,
-    ): Promise<{ ok: boolean; error?: string }> {
+    async connectRemote(url: string): Promise<{ ok: boolean; error?: string }> {
       try {
         const healthUrl = `${url.replace(/\/$/, "")}/health`;
         const res = await fetch(healthUrl, {
@@ -492,10 +489,11 @@ export function createRpcHandlers(
         entity: null,
         connectedAt: Date.now(),
         send(perception: Perception) {
-          gamePush(perception);
+          gamePush(correlateCommandPerception(connId, perception));
         },
         close() {
-          /* no-op for desktop */
+          completeCommandResponse(connId, gamePush);
+          if (desktopGameConn?.id === connId) desktopGameConn = null;
         },
       };
 
@@ -515,78 +513,29 @@ export function createRpcHandlers(
       if (!desktopGameConn) throw new Error("Not connected");
       const { engine } = requireEngine();
 
-      let parsed: {
-        type: string;
-        name?: string;
-        command?: string;
-        token?: string;
-      };
+      let parsed: ParticipantMessage;
       try {
         parsed = JSON.parse(raw);
       } catch {
         parsed = { type: "command", command: raw };
       }
-
-      if (parsed.type === "login" && parsed.name) {
-        const result = engine.login(desktopGameConn.id, parsed.name);
-        if ("error" in result) {
-          gamePush({
-            kind: "error",
-            timestamp: Date.now(),
-            data: { text: result.error },
-          });
-          return;
-        }
-        gamePush({
-          kind: "system",
-          timestamp: Date.now(),
-          data: {
-            text: `Logged in as ${parsed.name}.`,
-            entityId: result.entityId,
-            token: result.token,
+      const connection = desktopGameConn;
+      handleParticipantMessage(
+        engine,
+        {
+          data: { connId: connection.id },
+          get readyState() {
+            return desktopGameConn === connection && engine.getConnections().has(connection.id)
+              ? 1
+              : 3;
           },
-        });
-        engine.sendLook(result.entityId);
-        engine.sendBrief(result.entityId);
-        return;
-      }
-
-      if (parsed.type === "auth" && parsed.token) {
-        const result = engine.reconnect(desktopGameConn.id, parsed.token);
-        if ("error" in result) {
-          gamePush({
-            kind: "error",
-            timestamp: Date.now(),
-            data: { text: result.error },
-          });
-          return;
-        }
-        gamePush({
-          kind: "system",
-          timestamp: Date.now(),
-          data: {
-            text: `Reconnected as ${result.name}.`,
-            entityId: result.entityId,
+          send(data) {
+            gamePush(JSON.parse(data));
           },
-        });
-        engine.sendLook(result.entityId);
-        return;
-      }
-
-      if (parsed.type === "command" && parsed.command) {
-        const entityId = engine.getConnectionEntity(desktopGameConn.id);
-        if (entityId) {
-          engine.processCommand(entityId, parsed.command);
-        } else {
-          gamePush({
-            kind: "error",
-            timestamp: Date.now(),
-            data: {
-              text: 'Not logged in. Enter your name to begin.',
-            },
-          });
-        }
-      }
+        },
+        parsed,
+        engine.config.rateLimiter,
+      );
     },
 
     gameDisconnect(): void {

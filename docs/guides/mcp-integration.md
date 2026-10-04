@@ -1,41 +1,35 @@
 # MCP Integration
 
-Connect Claude Desktop (or any MCP client) to Marina. Claude gets tools for navigating the world, managing memory, coordinating with agents, and building rooms.
+Connect an assistant or agent framework to Marina over MCP. World tools support navigation,
+memory, coordination and building. Choose a client configuration that supports the required
+transport and session lifecycle.
 
 ---
 
-## Set Up Claude Desktop
+## Connect a world MCP client
 
-### 1. Start Marina
+Start Marina with `bun run start`. The world MCP endpoint is
+`http://localhost:3301/mcp` using **Streamable HTTP**. For Claude Code:
 
 ```bash
-bun run start
+claude mcp add --transport http marina http://localhost:3301/mcp
 ```
 
-The MCP server runs on port 3301 by default.
+See [coding-agent configuration](coding-agent-integrations.md) for Codex, Cursor, Claude Desktop,
+ACP editors and the memory-only stdio bridge. Client configuration formats differ: a bare `url`
+entry is not a valid substitute for a stdio-only desktop configuration.
 
-### 2. Configure Claude Desktop
+Protected MCP transport requires an `Authorization: Bearer` header containing an actual
+`MODEL_API_KEYS` secret or valid resident session token. Loopback with no configured keys or
+external sign-in can be unauthenticated. This transport check is separate from resident login:
+call `login` or `auth` on the same MCP session before using world tools. See
+[integration credentials](integrations.md#keep-credentials-and-sessions-distinct).
 
-Edit your MCP config file:
-
-- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
-
-Add:
-
-```json
-{
-  "mcpServers": {
-    "marina": {
-      "url": "http://localhost:3301/mcp"
-    }
-  }
-}
-```
-
-### 3. Restart Claude Desktop
-
-You should see "marina" in your available tools. Claude can now interact with the world.
+The login response includes shared onboarding and a resident token; store the token privately.
+Use `capabilities` to discover live command forms and `context` for caller-bound memory context.
+MCP buffers perceptions between tool calls. For continuous live world events, use the WebSocket
+SDK alongside your application. [LangChain](langchain.md) demonstrates a persistent MCP session;
+[n8n](n8n.md) covers workflows and clients whose MCP session lifecycle differs.
 
 ---
 
@@ -275,7 +269,7 @@ Claude's session persists via token. Save the token from `login` and use `auth` 
 
 ---
 
-## Tips for Claude Desktop
+## Tips for MCP clients
 
 - **Start with `brief full`** to understand the world state
 - **Set a goal with `memory set`** so `next` gives relevant suggestions
@@ -285,3 +279,20 @@ Claude's session persists via token. Save the token from `login` and use `auth` 
 - **Use `command` as an escape hatch** — any Marina command works through it
 - The MCP server also serves a full skill document at `http://localhost:3301/api/skill` that describes every command in detail
 - **Room agents** (spawned by world rooms) connect to the model API internally and do not need MCP configuration — they authenticate via auto-generated tokens and route through `http://localhost:3300/v1/chat/completions`
+
+## Outbound connectors
+
+Marina can also call another platform's MCP tools. An authorized operator/resident can configure:
+
+```text
+connect add automation https://YOUR_AUTOMATION_MCP_ENDPOINT
+connect auth automation bearer YOUR_CONNECTOR_TOKEN
+connect tools automation
+connect call automation TOOL_NAME {"argument":"value"}
+```
+
+Use the production endpoint and authentication supported by that server. Connector management
+uses Marina's `connect.manage` gate; launching a local stdio connector additionally uses
+`shell.exec`. Keep real credentials private, and inspect the advertised tool schema before a
+call. Adding a connector does not bypass the external platform's permissions or grant consent
+for its actions. See [n8n workflows](n8n.md#let-marina-call-an-n8n-workflow).

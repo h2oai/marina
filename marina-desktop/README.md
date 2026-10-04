@@ -1,7 +1,7 @@
 # Marina desktop development
 
-Install the root, dashboard and desktop dependencies with `bun install --frozen-lockfile`
-in each directory. From `marina-desktop`, run `bun run typecheck` and
+Install all workspace dependencies once with `bun install --frozen-lockfile`
+from the repository root. From `marina-desktop`, run `bun run typecheck` and
 `bun run build:dashboard`; `bun run start` builds and launches the desktop app.
 The complete packaging pipeline is `bash marina-desktop/scripts/build.sh` from
 the repository root.
@@ -20,3 +20,10 @@ Electrobun 2 uses a different toolchain and SDK layout and does not distribute a
 Intel Mac toolchain. Review platform support before changing this pin; see the
 [upstream migration guide](https://framework.blackboard.sh/electrobun/guides/migrating-to-v2/).
 Native startup, signing, installers and updates require validation on each target OS.
+
+The desktop bundle builds the same `dashboard/src` application as the web server.
+Its local chat bridge uses the shared WebSocket participation handler for login,
+onboarding, capability discovery, context previews, and correlated coding commands.
+App release metadata reads the desktop package version; it is not a second manual version.
+See the [interface guide](../docs/guides/interfaces.md) for the desktop, dashboard,
+and terminal capabilities and their validation boundaries.

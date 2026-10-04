@@ -57,8 +57,12 @@ PROVIDER_URL=https://api.openai.com/v1 PROVIDER_KEY=sk-your-key PROVIDER_MODEL=g
 
 ### 3. Send a Request
 
+Set `MARINA_MODEL_KEY` privately to the local key printed at startup or an actual configured
+`MODEL_API_KEYS` secret. Example credentials such as `sk-any` do not authenticate.
+
 ```bash
 curl http://localhost:3300/v1/chat/completions \
+  -H "Authorization: Bearer $MARINA_MODEL_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"marina","messages":[{"role":"user","content":"hello"}]}'
 ```
@@ -72,7 +76,7 @@ You'll get a standard OpenAI-format response.
 ### aider
 
 ```bash
-OPENAI_API_BASE=http://localhost:3300/v1 OPENAI_API_KEY=sk-any aider --model openai/marina
+OPENAI_API_BASE=http://localhost:3300/v1 OPENAI_API_KEY="$MARINA_MODEL_KEY" aider --model openai/marina
 ```
 
 ### Cursor / Continue.dev
@@ -86,12 +90,13 @@ Add a custom model provider in your IDE settings:
 ### LiteLLM (Python)
 
 ```python
+import os
 import litellm
 
 response = litellm.completion(
     model="openai/marina",
     api_base="http://localhost:3300/v1",
-    api_key="sk-any",
+    api_key=os.environ["MARINA_MODEL_KEY"],
     messages=[{"role": "user", "content": "hello"}],
 )
 ```
@@ -102,6 +107,7 @@ Marina also serves Ollama-compatible endpoints:
 
 ```bash
 curl http://localhost:3300/api/chat \
+  -H "Authorization: Bearer $MARINA_MODEL_KEY" \
   -d '{"model":"marina","messages":[{"role":"user","content":"hello"}]}'
 ```
 
@@ -113,6 +119,7 @@ Request streaming with `"stream": true`:
 
 ```bash
 curl http://localhost:3300/v1/chat/completions \
+  -H "Authorization: Bearer $MARINA_MODEL_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"marina","messages":[{"role":"user","content":"hello"}],"stream":true}'
 ```
@@ -196,12 +203,14 @@ Use the `X-Conversation-Id` header to maintain context across requests:
 ```bash
 # First message
 curl http://localhost:3300/v1/chat/completions \
+  -H "Authorization: Bearer $MARINA_MODEL_KEY" \
   -H "Content-Type: application/json" \
   -H "X-Conversation-Id: my-session-1" \
   -d '{"model":"marina","messages":[{"role":"user","content":"What is Marina?"}]}'
 
 # Follow-up — the agent remembers the previous exchange
 curl http://localhost:3300/v1/chat/completions \
+  -H "Authorization: Bearer $MARINA_MODEL_KEY" \
   -H "Content-Type: application/json" \
   -H "X-Conversation-Id: my-session-1" \
   -d '{"model":"marina","messages":[{"role":"user","content":"Tell me more about the memory system"}]}'
@@ -253,6 +262,7 @@ no within-channel selection happens, so the header has no effect there.
 
 ```bash
 curl http://localhost:3300/v1/chat/completions \
+  -H "Authorization: Bearer $MARINA_MODEL_KEY" \
   -H "Content-Type: application/json" \
   -H "X-Load-Balance: adaptive" \
   -d '{"model":"marina","messages":[{"role":"user","content":"hello"}]}'
@@ -397,17 +407,19 @@ lifetime (default 1h).
 
 ## Authentication
 
-By default, the API is open (no key required). To require authentication:
+Model endpoints require a caller key unless an operator explicitly enables the development
+`MARINA_OPEN_API` bypass. The local profile generates and persists a private local key when
+`MODEL_API_KEYS` is unset. Shared/public deployments should configure client keys explicitly:
 
 ```bash
 MODEL_API_KEYS=sk-key-1,sk-key-2 bun run start
 ```
 
-Then include the key:
+Set `MARINA_MODEL_KEY` privately to one of those configured secrets, then include it:
 
 ```bash
 curl http://localhost:3300/v1/chat/completions \
-  -H "Authorization: Bearer sk-key-1" \
+  -H "Authorization: Bearer $MARINA_MODEL_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"marina","messages":[{"role":"user","content":"hello"}]}'
 ```

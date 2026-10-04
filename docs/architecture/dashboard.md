@@ -28,6 +28,15 @@ preserves independent drafts; closing removes one view and leaves producers runn
 `/panel desk` and explicit `/panel publish` have separate meanings. Terminal and browser views
 consume the same panel document, source catalog and canonical operations.
 
+The Electrobun app bundles this same dashboard source. Network WebSocket ingress and the
+native local chat RPC delegate participant messages to `src/net/participant-messages.ts`:
+login/auth, shared onboarding, live capabilities, context previews and correlated commands
+with explicit coding targets. Origin/gateway checks remain at network ingress. Commands use
+the engine's admission/FIFO boundary and recheck the originating connection before execution.
+Native socket relays detach on close, and the embedded engine host drains admitted/background
+work before closing SQLite. See [interface capabilities](../guides/interfaces.md) for the
+browser/desktop/TUI presentation differences and native release validation requirements.
+
 
 **When to read this:** you are changing the dashboard's live layers (WORLD/CANVAS/GRAPH/FEED/MEMORY), the WebSocket event taxonomy that feeds them, the canvas intent system, the Admin → Memory tab, or the `/api/memory/*` observability API. `CLAUDE.md` → "Dashboard, Canvas, and Memory Observability" states the invariants; this page is the implementation reference. The user-facing walkthrough (what you see, layouts, web chat, log viewer, the "Memory Observability API" route table) is [`docs/guides/dashboard.md`](../guides/dashboard.md) — link to it rather than duplicating route tables here.
 
