@@ -133,8 +133,8 @@ bun run corpus get <name> <docid>
 - **Discovery:** a corpus built after startup is picked up the first time it is named.
 - **Not in open searches:** a corpus answers only searches that name it. It has no date bound, so it never answers a `before:` search.
 - **Ranking:** FTS5's `bm25()` fixes k1 = 1.2 and b = 0.75. Set `MARINA_CORPUS_BM25_K1` and
-  `MARINA_CORPUS_BM25_B` to rescore each query's top 1,000 candidates with other parameters (long
-  documents favour k1 ≈ 10–25, b ≈ 1). A quoted phrase in a query is an extra term that boosts
+  `MARINA_CORPUS_BM25_B` to rescore each query's top 1,000 candidates with other parameters (for long
+  documents, full length normalisation: b = 1, with k1 around 6). A quoted phrase in a query is an extra term that boosts
   documents holding it; its words still match on their own. Rankings are cached, so later pages
   (`searchCorpusPage(…, { offset })`) cost nothing.
 - **Hits** carry the window of the document that best matches the query (`window`), and research
