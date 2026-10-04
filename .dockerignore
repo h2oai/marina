@@ -35,7 +35,6 @@ test
 # from the single root bun.lock requires every member manifest to be present.
 marina-desktop
 !marina-desktop/package.json
-!marina-desktop/patches
 examples
 !examples/usecase-ui/package.json
 !examples/coding-agent-demo/package.json
