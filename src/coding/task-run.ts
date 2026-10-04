@@ -30,7 +30,15 @@ export interface CodingRunMetadata {
   verificationRequirement?: "candidate";
   unverifiedAcceptance?: { ownerKey: string; reason: string; acceptedAt: number };
   verificationId?: string;
-  verification?: "passed" | "failed" | "missing" | "stale" | "unbound" | "unavailable";
+  verification?:
+    | "passed"
+    | "failed"
+    | "not_run"
+    | "error"
+    | "missing"
+    | "stale"
+    | "unbound"
+    | "unavailable";
   candidateId?: string;
   verificationObservedAt?: number;
   verificationReason?: string;
@@ -234,6 +242,7 @@ export function codingVerificationReadiness(
 ) {
   if (latestVerification(db, run.id)?.status === "running") return "running" as const;
   if (meta.verification === "passed") return "ready" as const;
+  if (meta.verification === "not_run") return "not-run" as const;
   if (meta.verification && meta.verification !== "missing") return "needs-attention" as const;
   return meta.verificationRequirement === "candidate" ? ("required" as const) : undefined;
 }
@@ -288,6 +297,18 @@ export async function assessCodingVerification(
     };
   const evidence = JSON.parse(verification.metadata_json) as Record<string, unknown>;
   result.candidateId = typeof evidence.candidateId === "string" ? evidence.candidateId : undefined;
+  // Checks that never ran (or whose runner broke) are neither a pass nor a failure.
+  if (verification.status === "not_run" || verification.status === "error")
+    return {
+      ...result,
+      verification: verification.status as "not_run" | "error",
+      verificationReason:
+        typeof evidence.outcomeReason === "string"
+          ? evidence.outcomeReason
+          : verification.status === "not_run"
+            ? "Checks were not run."
+            : "Verification infrastructure failed.",
+    };
   if (verification.status !== "complete") return { ...result, verification: "failed" as const };
   if (evidence.workspaceEventId !== meta.workspaceEventId)
     return { ...result, verification: "stale" as const };

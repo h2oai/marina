@@ -11,6 +11,7 @@ import {
   type SweInstance,
   selectSubset,
   sessionSpend,
+  sessionVerification,
   spawnRun,
   sweEnvImage,
   taskPrompt,
@@ -197,6 +198,55 @@ describe("ledgerResult and spend", () => {
 
   it("reads 0 spend from a missing or schema-less database", () => {
     expect(sessionSpend(join(tmpdir(), "does-not-exist.db"))).toBe(0);
+  });
+
+  it("counts in-loop verification by outcome; not_run is never a failure", () => {
+    const dir = mkdtempSync(join(tmpdir(), "swe-verify-"));
+    try {
+      const dbPath = join(dir, "marina.db");
+      const { Database } = require("bun:sqlite") as typeof import("bun:sqlite");
+      const db = new Database(dbPath);
+      db.run("CREATE TABLE coding_artifacts (kind TEXT, status TEXT)");
+      for (const [kind, status] of [
+        ["verification", "complete"],
+        ["verification", "failed"],
+        ["verification", "not_run"],
+        ["verification", "not_run"],
+        ["verification", "error"],
+        ["command_output", "failed"],
+      ])
+        db.run("INSERT INTO coding_artifacts (kind, status) VALUES (?, ?)", [kind!, status!]);
+      db.close();
+      const counts = sessionVerification(dbPath);
+      expect(counts).toEqual({ passed: 1, failed: 1, not_run: 2, error: 1 });
+      expect(sessionVerification(join(dir, "missing.db"))).toEqual({
+        passed: 0,
+        failed: 0,
+        not_run: 0,
+        error: 0,
+      });
+      const attempts = ["a", "b"].map((id) => ({
+        instance_id: id,
+        arm: "env-verify",
+        replicate: 1,
+        exitCode: 0,
+        patchBytes: 10,
+        costUsd: 0.1,
+        durationMs: 1000,
+        trajectory: `${id}.md`,
+        verification: counts,
+      }));
+      const r = ledgerResult({ resolved_ids: ["a"] }, attempts, {
+        arm: { name: "env-verify", model: "m" },
+        replicate: 1,
+        subsetSeed: 7,
+      });
+      expect(r.metadata.verification).toEqual({ passed: 2, failed: 2, not_run: 4, error: 2 });
+      // Grading is the harness's alone: verification outcomes never change a score.
+      expect(r.scores.overall).toBeCloseTo(1 / 2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

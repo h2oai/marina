@@ -15,11 +15,25 @@ const verificationMode = Type.Optional(
       "live waits for workspace checks; start runs them in background; candidate verifies a separate local Git source snapshot. Background modes return a receipt; inspect its result before submitting a summary.",
   }),
 );
+const DEPENDENCY_MODES = ["none", "check", "auto", "bun", "npm", "pnpm", "yarn", "uv"] as const;
 const dependencies = Type.Optional(
-  Type.Literal("bun", {
-    description:
-      "Only with candidate mode and user authorization: install captured bun.lock in the disposable snapshot, frozen, without lifecycle scripts. Never uses live node_modules.",
-  }),
+  Type.Union(
+    DEPENDENCY_MODES.map((mode) => Type.Literal(mode)),
+    {
+      description:
+        "Dependency preparation, by the detected project type. Default check: probe the environment and report not_run if it lacks what the checks need. auto (or the project's own manager) also installs locked dependencies where isolated: a candidate's captured bun.lock without scripts, or a container runner with mount sync and network. Never another language's installer.",
+    },
+  ),
+);
+const VERIFY_SCOPES = ["auto", "changed", "full", "changed+full"] as const;
+const scope = Type.Optional(
+  Type.Union(
+    VERIFY_SCOPES.map((value) => Type.Literal(value)),
+    {
+      description:
+        "Test scope. auto (default): tests relevant to the change, else the full suite; changed: relevant tests only; full: the whole suite; changed+full: relevant tests, then the full suite under a time budget.",
+    },
+  ),
 );
 
 const codeEditSchema = Type.Object({
@@ -43,6 +57,7 @@ const codeWriteSchema = Type.Object({
 const codeSchema = Type.Object({
   verificationMode,
   dependencies,
+  scope,
   action: Type.Union(
     [
       Type.Literal("status"),
@@ -291,9 +306,9 @@ export function createTypedCodeTools(ctx: ToolContext): AgentTool[] {
     wrap(
       "marina_code_verify",
       "Code Verify",
-      "Run the detected verification chain. Candidate mode binds results to an isolated local Git snapshot; ignored dependencies are excluded. Background admission is not a passing result.",
-      Type.Object({ verificationMode, dependencies }),
-      (p) => verificationCommand(p.verificationMode, p.dependencies),
+      "Run the detected verification chain where the session runs (host or its container runner): prepare by project type, then tests relevant to the change. The result is passed, failed (checks ran and failed), not_run (no tests found, or the environment is not ready) or error. Candidate mode binds results to an isolated local Git snapshot; ignored dependencies are excluded. Background admission is not a passing result.",
+      Type.Object({ verificationMode, dependencies, scope }),
+      (p) => verificationCommand(p.verificationMode, p.dependencies, p.scope),
       ctx,
     ),
     wrap(
@@ -616,15 +631,22 @@ export function createTypedCodeTools(ctx: ToolContext): AgentTool[] {
   ];
 }
 
-function verificationCommand(mode: unknown, dependencies?: unknown): string {
-  if (dependencies !== undefined) {
-    if (dependencies !== "bun" || mode !== "candidate")
-      throw new Error("dependencies must be bun with verificationMode candidate");
-    return "code verify candidate dependencies:bun";
-  }
-  if (mode === undefined || mode === "live") return "code verify";
-  if (mode === "start" || mode === "candidate") return `code verify ${mode}`;
-  throw new Error("verificationMode must be live, start or candidate");
+function verificationCommand(mode: unknown, dependencies?: unknown, scopeValue?: unknown): string {
+  if (mode !== undefined && mode !== "live" && mode !== "start" && mode !== "candidate")
+    throw new Error("verificationMode must be live, start or candidate");
+  if (
+    dependencies !== undefined &&
+    !(DEPENDENCY_MODES as readonly unknown[]).includes(dependencies)
+  )
+    throw new Error(`dependencies must be one of ${DEPENDENCY_MODES.join(", ")}`);
+  if (scopeValue !== undefined && !(VERIFY_SCOPES as readonly unknown[]).includes(scopeValue))
+    throw new Error(`scope must be one of ${VERIFY_SCOPES.join(", ")}`);
+  return [
+    "code verify",
+    ...(mode === "start" || mode === "candidate" ? [mode] : []),
+    ...(dependencies !== undefined ? [`dependencies:${dependencies}`] : []),
+    ...(scopeValue !== undefined ? [`scope:${scopeValue}`] : []),
+  ].join(" ");
 }
 
 function buildCodeCommand(params: Record<string, unknown>): string {
@@ -653,7 +675,7 @@ function buildCodeCommand(params: Record<string, unknown>): string {
     case "run":
       return `code run ${requiredSingleLineCodeParam(command, "command", "action=run requires command")}`;
     case "verify":
-      return verificationCommand(params.verificationMode, params.dependencies);
+      return verificationCommand(params.verificationMode, params.dependencies, params.scope);
     case "observe":
       return `code observe ${requiredSingleLineCodeParam(text, "text", "action=observe requires text")}`;
     case "patch":
