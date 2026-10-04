@@ -137,6 +137,22 @@ def request_for(
         w = window if window.tzinfo else window.replace(tzinfo=timezone.utc)
         if w < datetime.now(timezone.utc):
             body["asOf"] = _iso(w)
+    # The crowd's prices are the market prior the forecaster may shrink toward
+    # (used only when the server's operator turns MARINA_FORECAST_PRIOR on).
+    prior = {
+        i: float(crowd[n])
+        for i, n in by_id.items()
+        if n in crowd and 0.0 <= float(crowd[n]) <= 1.0
+    }
+    if prior:
+        body["priors"] = [
+            {
+                "source": "market",
+                "distribution": prior,
+                "at": body.get("asOf") or _iso(datetime.now(timezone.utc)),
+                "label": "Prophet Arena market",
+            }
+        ]
     return body, by_id
 
 

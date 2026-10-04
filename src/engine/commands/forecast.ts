@@ -119,9 +119,9 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
       );
       if (typed) {
         return (async () => {
-          const [{ forecastTyped }, { typedForecastDeps }, { forecastLessonsFor }] =
+          const [{ forecastFormed }, { typedForecastDeps }, { forecastLessonsFor }] =
             await Promise.all([
-              import("../../forecast/typed"),
+              import("../../forecast/formations"),
               import("../../forecast/service"),
               import("../../learning/forecast-bridge"),
             ]);
@@ -133,9 +133,12 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
               : {}),
           });
           if ("error" in made) return ctx.send(input.entity, made.error);
-          const a = await forecastTyped(
+          // The ensemble formation is the typed forecaster itself, plus the prior
+          // shrink / recalibration stage when the operator turned it on.
+          const a = await forecastFormed(
             { question, answer: typed.spec, ...(typed.endTime ? { endTime: typed.endTime } : {}) },
             made.deps,
+            "ensemble",
           );
           a.costUsd = made.costUsd();
           const saved = name && deps.db ? saveTypedAnswer(deps.db, name, a, sampleId) : undefined;

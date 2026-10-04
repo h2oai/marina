@@ -54,6 +54,7 @@ import {
   type RepairLabel,
   repairOutput,
 } from "../repair/output-repair";
+import type { AdjustmentRecord, AdjustSettings } from "./adjust";
 import {
   type AnswerOption,
   type AnswerSpec,
@@ -73,6 +74,9 @@ import {
   combinedSd,
   completeMarginals,
   type Distribution,
+  logOddsDistributions,
+  logOddsMarginals,
+  type PoolMethod,
   parseDistribution,
   parseMarginals,
   pickDistribution,
@@ -88,6 +92,7 @@ import {
   numericAnchor,
   runLookups,
 } from "./lookups";
+import type { SuppliedPrior } from "./prior";
 
 export interface TypedForecastRequest {
   question: string;
@@ -98,6 +103,18 @@ export interface TypedForecastRequest {
   asOf?: string;
   /** Resolution rules, format notes or background the asker supplies. */
   context?: string;
+  /**
+   * A stable question id (a ledger item id, never text): a forecast never
+   * learns from its own resolved record.
+   */
+  id?: string;
+  /** The question's reference class, as the asker names it (base rates, calibration evidence). */
+  category?: string;
+  /**
+   * Priors the asker already has — a market price, a community forecast — each
+   * with the time it was observed. One observed after the cutoff is rejected.
+   */
+  priors?: SuppliedPrior[];
 }
 
 export interface TypedForecastOptions {
@@ -155,6 +172,16 @@ export interface TypedForecastOptions {
    * crux and one more run that reads it, pooled with the others (default true).
    */
   disagreementRound?: boolean;
+  /**
+   * How the runs' probabilities are averaged: `linear` (default) or `logodds`
+   * (a geometric pool — confident, agreeing runs are not dragged toward uniform).
+   */
+  pool?: PoolMethod;
+  /**
+   * A role per run (run i gets role i mod n): an instruction added to that
+   * run's system prompt — how a crew formation gives its members their parts.
+   */
+  roles?: string[];
 }
 
 export interface ModelPart {
@@ -184,6 +211,11 @@ export interface TypedForecastDeps {
   lookups?: ForecastLookup[];
   now?: () => Date;
   options?: TypedForecastOptions;
+  /**
+   * Prior shrink and recalibration from resolved history (`./adjust.ts`),
+   * applied once at the end of a formation (`forecastFormed`).
+   */
+  adjust?: AdjustSettings;
 }
 
 export interface ForecastPlan {
@@ -313,6 +345,8 @@ export interface TypedForecastAnswer {
   budget?: { capMs: number; usedMs: number; skipped: string[] };
   /** The answer was combined at the time budget from what had finished (labelled, never silent). */
   budgetForced?: BudgetForced;
+  /** Prior shrink and recalibration (`./adjust.ts`): the raw forecast, the prior, the learned settings. */
+  adjustment?: AdjustmentRecord;
 }
 
 const MAX_DOSSIER_CHARS = 24_000;
@@ -867,21 +901,20 @@ export async function forecastTyped(
       ? (combined.selfConfidence ?? combined.agreement)
       : combined.agreement;
   const spec = req.answer;
+  const logodds = opts.pool === "logodds";
   if (spec.type === "choice" && spec.probabilities) {
-    const dist = averageDistributions(
-      out.runs
-        .filter((r) => r.distribution)
-        .map((r) => ({ distribution: r.distribution!, weight: r.weight })),
-    );
+    const items = out.runs
+      .filter((r) => r.distribution)
+      .map((r) => ({ distribution: r.distribution!, weight: r.weight }));
+    const dist = logodds ? logOddsDistributions(items) : averageDistributions(items);
     if (dist) setDistribution(out, spec.options, dist);
   }
   if (spec.type === "multi" && spec.probabilities) {
     // Each option's own probability; the picked set stays the runs' combined answer.
-    const marginals = averageMarginals(
-      out.runs
-        .filter((r) => r.distribution)
-        .map((r) => ({ distribution: r.distribution!, weight: r.weight })),
-    );
+    const items = out.runs
+      .filter((r) => r.distribution)
+      .map((r) => ({ distribution: r.distribution!, weight: r.weight }));
+    const marginals = logodds ? logOddsMarginals(items) : averageMarginals(items);
     if (marginals) out.distribution = marginals;
   }
   if (spec.type === "number") {
@@ -976,9 +1009,10 @@ async function runIndependent(
     const i = j + offset;
     const analyst = deps.analysts[i % deps.analysts.length]!;
     const run: TypedRun = { run: i + 1, model: analyst.name, weight: 0, status: "ok" };
+    const role = opts.roles?.length ? opts.roles[i % opts.roles.length] : undefined;
     const asked = await askAnalyst(
       analyst,
-      runSystem(req.answer),
+      role ? `${runSystem(req.answer)}\n${role}` : runSystem(req.answer),
       `${user}\n\n(Independent run ${i + 1} of ${k + offset}: reason from the evidence yourself.)`,
     );
     if (asked.error !== undefined) {
@@ -1399,7 +1433,7 @@ function setDistribution(
   out.confidence = dist[top];
 }
 
-function chooseCutoff(req: TypedForecastRequest, now: Date): TypedForecastAnswer["cutoff"] {
+export function chooseCutoff(req: TypedForecastRequest, now: Date): TypedForecastAnswer["cutoff"] {
   const slack = 3_600_000;
   const asOf = req.asOf ? Date.parse(req.asOf) : Number.NaN;
   if (Number.isFinite(asOf)) {
