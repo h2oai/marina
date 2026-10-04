@@ -64,6 +64,76 @@ class Mapping(unittest.TestCase):
             m.probabilities_from({"caveat": "no run"}, {"A": "Red"})
 
 
+def wide(n: int, exclusive: bool = False) -> NS:
+    e = event(exclusive)
+    e.outcomes = [NS(name=f"Outcome {i}", criteria=None) for i in range(n)]
+    e.crowd = {f"Outcome {i}": 0.01 for i in range(n)}
+    return e
+
+
+class Shapes(unittest.TestCase):
+    def test_a_single_outcome_is_yes_or_no(self):
+        e = event(False)
+        e.outcomes = [NS(name="Before 2026", criteria=None)]
+        body, by_id = m.request_for(e)
+        self.assertEqual(body["answer"]["type"], "choice")
+        self.assertEqual([o["id"] for o in body["answer"]["options"]], ["A", "B"])
+        self.assertEqual(by_id, {"A": "Before 2026"})
+        probs = m.probabilities_from({"distribution": {"A": 0.8, "B": 0.2}}, by_id)
+        self.assertEqual(probs, {"Before 2026": 0.8})
+
+    def test_wide_events_are_asked_in_balanced_parts(self):
+        self.assertEqual([len(p) for p in m.parts_of(64)], [64])
+        self.assertEqual([len(p) for p in m.parts_of(75)], [38, 37])
+        self.assertEqual([len(p) for p in m.parts_of(156)], [52, 52, 52])
+        asked = m.requests_for(wide(75))
+        self.assertEqual(len(asked), 2)
+        names = [n for _, by_id in asked for n in by_id.values()]
+        self.assertEqual(names, [f"Outcome {i}" for i in range(75)])
+        for body, _ in asked:
+            self.assertEqual(body["answer"]["type"], "multi")
+            self.assertLessEqual(len(body["answer"]["options"]), m.MAX_OPTIONS)
+            self.assertIn("of the event's 75 outcomes", body["context"])
+        # Each part shows only its own outcomes' prices.
+        self.assertIn("Outcome 0 0.01", asked[0][0]["context"])
+        self.assertNotIn("Outcome 74 0.01", asked[0][0]["context"])
+        self.assertIn("Outcome 74 0.01", asked[1][0]["context"])
+
+    def test_a_wide_exclusive_event_is_normalized(self):
+        calls = []
+
+        def fake(body):
+            calls.append(body)
+            return {"distribution": {o["id"]: 0.02 for o in body["answer"]["options"]}, "runs": []}
+
+        real, m.call_marina = m.call_marina, fake
+        try:
+            out = m.forecast_event(wide(100, exclusive=True))
+        finally:
+            m.call_marina = real
+        self.assertEqual(len(calls), 2)
+        self.assertAlmostEqual(sum(out["probabilities"].values()), 1.0)
+        self.assertIn("Asked in 2 parts", out["rationale"])
+
+    def test_rationale_names_the_checkers(self):
+        answer = {
+            "runs": [{"model": "a/x", "reason": "R.", "verified": {"model": "b/y"}}],
+            "critique": {"model": "b/y"},
+        }
+        self.assertIn("ensemble of a/x · checked by b/y", m.rationale_from(answer))
+
+
+class Manifest(unittest.TestCase):
+    def test_arena_toml_has_the_agent_table_the_cli_reads(self):
+        import tomllib
+        from pathlib import Path
+
+        data = tomllib.loads((Path(__file__).parent / "arena.toml").read_text())
+        self.assertEqual(data["agent"]["name"], "h2oai-marina")
+        self.assertEqual(data["agent"]["track"], "agentic")
+        self.assertEqual(data["agent"]["display_name"], "H2O.ai Marina")
+
+
 class Server(unittest.TestCase):
     def test_calls_v1_forecast_with_the_key(self):
         seen: dict = {}
