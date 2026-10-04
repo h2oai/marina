@@ -86,6 +86,9 @@ FutureX questions stay open for days, so a filed answer is a *standing* answer p
 [outcome-lesson loop](../architecture/memory.md#outcome-lessons-srclearning). Each standing answer
 whose row has a ground truth in the past dataset is scored and recorded once per variant and row.
 The question, truth and answer are seen only by the lesson writer as private context, never stored.
+A row's outcome counts as known one day after its end time (`SETTLEMENT_MARGIN_MS` in
+`benchmarks/futurex/lessons.ts`), never at the end time itself: the rows of a week share one end
+time, and a replay's cutoff is that end time, so a sibling's lesson can never reach it.
 
 ## Records
 
@@ -111,17 +114,28 @@ Model ids are pinned, never floating aliases. `--variants <file.json>` supplies 
 
 `bun benchmarks/futurex/rescore-selection.ts --dataset <past batch json> --runs <answers.json>,…` re-scores saved runs under each selection mode, with no model calls. Rows split into selection and holdout halves by a stable hash. It reports whether `confidence` clears the promotion margin over `agreement` on the holdout half; pass `--tried` with the number of candidates already examined.
 
-Live runs recall every lesson in the shared `forecast-lessons` space of the `--lessons-account` world
-account (default `Forecaster`) when it exists; `--lessons off` disables that.
+Live runs recall from the one judged lesson pool (`forecast` and `arena` domains, the same
+`forecastLessonsFor` every forecasting surface uses; `MARINA_LESSONS` on / observe / off);
+`--lessons off` disables that.
+
+Lessons kept by the earlier, unjudged store (subject `forecast-lesson` in the `forecast-lessons`
+space of a `Forecaster` world account) are copied into the pool once — by `futurex run` and
+`futurex learn`, or explicitly with `bun run futurex migrate-lessons` — as `unverified` lessons with
+their original resolution time and a `provenance` record (store, account, space, id, version). Each
+copy is keyed by the record's id and version, so a re-run never writes it twice. The originals are
+never changed; when every record has been copied and the account was created by the script, it is
+renamed to `marina:legacy-forecast-lessons`, a server-owned name no login can produce.
 
 ## Clean backtests
 
 `bun run futurex backtest --clean` measures skill on resolved rows without letting outcomes in.
 Each of the three ways an outcome can leak has a guard (`benchmarks/futurex/clean.ts`):
 
-- **Model weights.** Only rows that end at least 10 days after every model's public release are
-  used. A weekly question is released at most about 10 days before it ends, so the question
-  postdates the model. Release dates come from the provider catalogue (`MODEL_RELEASES`) and are an
+- **Model weights.** Only rows whose cutoff (the end time minus `--horizon-days`, default 7) is
+  more than 3 days (`KNOWLEDGE_MARGIN_DAYS`) after every model's public release are used — by
+  default, rows that end more than 10 days after it. This is the one rule configuration selection
+  uses too (`benchmarks/forecasting/knowledge.ts`: one release table, one margin, floating aliases
+  refused everywhere). Release dates come from the provider catalogue (`MODEL_RELEASES`) and are an
   upper bound on knowledge cutoffs. A model with no known release, a floating alias, or a crew
   (whose agents have their own tools) is refused unless `--after <YYYY-MM-DD>` is given. Every
   variant in one invocation runs on the same rows.

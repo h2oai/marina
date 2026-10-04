@@ -11,10 +11,12 @@
  *
  * Leakage guards:
  *   model weights — a candidate is scored only on questions whose forecast
- *                   date is at least `lagDays` after every one of its models'
- *                   public release (an upper bound on its knowledge cutoff);
- *                   a candidate released too recently for `minItems` such
- *                   questions is reported as not yet backtestable, never
+ *                   date is clean of every one of its models' public release
+ *                   (the one rule in `knowledge.ts`, shared with the FutureX
+ *                   clean backtest: one release table, one margin); a model
+ *                   on a floating alias has no trustworthy release date and is
+ *                   refused; a candidate released too recently for `minItems`
+ *                   such questions is reported as not yet backtestable, never
  *                   scored on older ones;
  *   retrieval     — the caller's forecaster wraps research in the strict
  *                   pre-cutoff filter;
@@ -50,6 +52,7 @@ import {
   type Forecaster,
   usesCrew,
 } from "./configs";
+import { afterKnowledge, type KnowledgeBound, knowledgeBoundOf } from "./knowledge";
 import { mapLimit } from "./shared";
 
 export interface BacktestItem {
@@ -64,6 +67,7 @@ export type CandidateStatus =
   | "ranked"
   | "crew (not isolable)"
   | "unknown release"
+  | "floating alias"
   | "too recent"
   | "not run (budget)";
 
@@ -99,7 +103,7 @@ export interface SelectOptions {
   benchmark: string;
   items: BacktestItem[];
   candidates: ForecastConfig[];
-  /** Release dates (YYYY-MM-DD) by bare model id. */
+  /** Release dates (YYYY-MM-DD) by bare model id (`releaseTable` over the catalogue). */
   releases: Record<string, string>;
   /** The candidate's forecaster for a backtest (strict retrieval, lessons as configured). */
   makeForecaster: (c: ForecastConfig) => Forecaster;
@@ -108,7 +112,6 @@ export interface SelectOptions {
   minItems?: number;
   /** Most items to use (spread evenly over the window). */
   maxItems?: number;
-  lagDays?: number;
   /** Total spend for the selection. */
   budgetUsd: number;
   /** How the forecasters' retrieval is isolated (`isolationOfSpec`); `contaminated` is refused. */
@@ -137,16 +140,11 @@ export interface SelectOptions {
 /** One journal line: an answered item, or the run's ledger filing. */
 type SelectionEntry = { id: string; answer: TypedForecastAnswer } | { filed: string };
 
-const DAY = 86_400_000;
-
-export function boundOf(c: ForecastConfig, releases: Record<string, string>): string | undefined {
-  const dates = configModels(c).map((m) => releases[m]);
-  if (dates.some((d) => !d)) return undefined;
-  return dates.sort().at(-1);
+export function boundOf(c: ForecastConfig, releases: Record<string, string>): KnowledgeBound {
+  return knowledgeBoundOf(configModels(c), releases);
 }
 
-const cleanFor = (item: BacktestItem, bound: string, lagDays: number) =>
-  Date.parse(item.request.asOf) >= Date.parse(bound) + lagDays * DAY;
+const cleanFor = (item: BacktestItem, bound: string) => afterKnowledge(item.request.asOf, bound);
 
 /** Evenly spaced picks from a sorted list. */
 function spread<T>(xs: T[], n: number): T[] {
@@ -163,7 +161,6 @@ export async function selectConfiguration(opts: SelectOptions): Promise<Selectio
   }
   const now = opts.now ?? (() => new Date());
   const reps = Math.max(1, opts.replicates ?? 2);
-  const lag = opts.lagDays ?? 3;
   const minItems = opts.minItems ?? 20;
   const ranking = new Map<string, Ranked>();
   const eligible: Array<{ c: ForecastConfig; bound: string }> = [];
@@ -180,16 +177,15 @@ export async function selectConfiguration(opts: SelectOptions): Promise<Selectio
       r.status = "crew (not isolable)";
       continue;
     }
-    const bound = boundOf(c, opts.releases);
-    if (!bound) {
-      r.status = "unknown release";
-      r.note = `no release date for ${configModels(c)
-        .filter((m) => !opts.releases[m])
-        .join(", ")}`;
+    const known = boundOf(c, opts.releases);
+    if ("error" in known) {
+      r.status = known.reason === "floating" ? "floating alias" : "unknown release";
+      r.note = known.error;
       continue;
     }
+    const bound = known.after;
     r.bound = bound;
-    const n = opts.items.filter((i) => cleanFor(i, bound, lag)).length;
+    const n = opts.items.filter((i) => cleanFor(i, bound)).length;
     if (n < minItems) {
       r.status = "too recent";
       r.note = `released ${bound}: ${n} resolved questions forecast after it (needs ${minItems})`;
@@ -203,7 +199,7 @@ export async function selectConfiguration(opts: SelectOptions): Promise<Selectio
   let common: BacktestItem[] = [];
   while (eligible.length) {
     const latest = eligible.at(-1)!.bound;
-    common = opts.items.filter((i) => cleanFor(i, latest, lag));
+    common = opts.items.filter((i) => cleanFor(i, latest));
     if (common.length >= minItems) break;
     const dropped = eligible.pop()!;
     const r = ranking.get(dropped.c.label)!;

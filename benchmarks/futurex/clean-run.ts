@@ -22,8 +22,14 @@ import { SpendGuard } from "../../src/engine/spend-guard";
 import { recordFromAnswer } from "../../src/forecast/adjust";
 import { type AnswerSpec, matchOption } from "../../src/forecast/answer-types";
 import type { ForecastHistory } from "../../src/forecast/history";
-import { type LessonStore, type LessonWriter, lessonFromOutcome } from "../../src/forecast/lessons";
 import { typedForecastDeps } from "../../src/forecast/service";
+import { forecastLessonsFor } from "../../src/learning/forecast-bridge";
+import {
+  type LessonWriter,
+  memoryLessonSink,
+  type Outcome,
+  recordOutcome,
+} from "../../src/learning/outcomes";
 import {
   auditRow,
   batchWeek,
@@ -35,6 +41,7 @@ import {
 } from "./clean";
 import type { FuturexRow } from "./dataset";
 import { recordScoredRun } from "./ledger";
+import { futurexOutcome, futurexResolvedAt } from "./lessons";
 import { endTimeIso, parseOptions, requestFor } from "./map";
 import { type BatchRun, BatchStopped, runBatch, type Variant } from "./run";
 import {
@@ -75,9 +82,19 @@ export interface CleanOptions {
   /** Number of the first replicate (default 1) — to add replicates without reusing a label. */
   firstReplicate?: number;
   lessons: "on" | "off";
-  /** A fresh lesson store per (variant, replicate) — keeps the ablation honest. */
-  lessonStore?: (runLabel: string) => Promise<LessonStore>;
+  /**
+   * With lessons on, each (variant, replicate) learns into its own in-run pool
+   * (the general outcome → candidate path of `src/learning`, unjudged so
+   * labelled `unverified`) and recalls only from it — an honest ablation.
+   * `lessonWriter` writes each candidate's rule.
+   */
   lessonWriter?: LessonWriter;
+  /**
+   * Hand each scored row's outcome to the shared, judged pool (`noteOutcome`)
+   * once its run is filed in the ledger and valid; every outcome cites the
+   * run (`bench:<id>`), so invalidating the run retires its lessons.
+   */
+  learn?: (outcome: Outcome) => void;
   /**
    * Resolved forecast history per (variant, replicate): each scored row's
    * record is added after it finishes, so later rows' prior weights, base
@@ -257,9 +274,11 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
   const rows = selectCleanRows(only ? opts.rows.filter((r) => only.has(r.id)) : opts.rows, {
     after,
     limit: opts.limit,
+    horizonDays: opts.horizonDays,
     ...(opts.until ? { until: opts.until } : {}),
   });
-  if (rows.length === 0) throw new Error(`no resolved rows end after ${after} + release lag`);
+  if (rows.length === 0)
+    throw new Error(`no resolved rows whose cutoff is clean of the knowledge bound ${after}`);
   log(
     `clean backtest: ${rows.length} rows (knowledge bound ${after}), isolation ${opts.isolation}${opts.isolation === "closed-book" ? "" : ` via ${spec}`}, lessons ${opts.lessons}, cutoff ${opts.horizonDays}d before each end`,
   );
@@ -268,8 +287,12 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
     const first = opts.firstReplicate ?? 1;
     for (let rep = first; rep < first + opts.replicates; rep++) {
       const label = `${variant.label}-${opts.isolation}-lessons-${opts.lessons}-r${rep}`;
-      const store =
-        opts.lessons === "on" && opts.lessonStore ? await opts.lessonStore(label) : undefined;
+      const own = opts.lessons === "on" ? memoryLessonSink() : undefined;
+      // The in-run pool is recalled whatever MARINA_LESSONS says: `lessons` is explicit here.
+      const store = own
+        ? forecastLessonsFor(undefined, { sink: own, env: { ...env, MARINA_LESSONS: "on" } })
+        : undefined;
+      const outcomes: Outcome[] = [];
       const history = opts.history ? await opts.history(label) : undefined;
       const retrieval = { linesIn: 0, linesKept: 0 };
       let lessonsWritten = 0;
@@ -337,12 +360,12 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
             guard.record(r.costUsd);
             // A fallback is an infrastructure outcome (no run answered), not a
             // forecast to learn from.
-            if ((!store && !history) || r.fallback) return;
-            const end = endTimeIso(row.end_time);
-            if (!end) return;
+            if ((!own && !history && !opts.learn) || r.fallback) return;
+            // Known once the event ended, plus the settlement margin (never at
+            // the end time itself, which sibling rows share as their cutoff).
+            const resolvedAt = futurexResolvedAt(row);
+            if (!resolvedAt) return;
             const item = scoreItem(row, r.prediction);
-            // Known once the event ended (a day's margin for settlement).
-            const resolvedAt = new Date(Date.parse(end) + 86_400_000).toISOString();
             if (history) {
               const req = requestFor(row);
               const truth = truthOutcome(row, req.answer);
@@ -359,23 +382,20 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
                 : undefined;
               if (rec) await history.add(rec);
             }
-            if (!store) return;
-            const lesson = await lessonFromOutcome(
-              {
-                question: requestFor(row).question,
-                answer: requestFor(row).answer,
-                prediction: r.prediction,
-                truth: parseTruth(row.ground_truth).join(", "),
-                score: item.score,
-                resolvedAt,
-                reasons: r.answer.runs.map((x) => x.reason ?? "").filter(Boolean),
-                ...(r.caveat ? { caveat: r.caveat } : {}),
-                origin: "backtest",
-              },
-              opts.lessonWriter,
-            );
+            const outcome = futurexOutcome({
+              row,
+              result: r,
+              item,
+              label: `clean:${variant.label}`,
+              resolvedAt,
+            });
+            if (opts.learn) outcomes.push(outcome);
+            if (!own) return;
             try {
-              await store.write(lesson);
+              await recordOutcome(
+                { sink: own, ...(opts.lessonWriter ? { writer: opts.lessonWriter } : {}) },
+                outcome,
+              );
               lessonsWritten++;
             } catch (err) {
               // A lost lesson costs later rows a hint; it never voids the run.
@@ -504,6 +524,11 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
           },
         });
         summary.ledgerId = rec.id;
+        // Only a newly filed, valid run teaches the shared pool; each lesson cites it.
+        if (opts.learn && rec.created && !rec.invalidReason) {
+          for (const o of outcomes)
+            opts.learn({ ...o, refs: [...(o.refs ?? []), `bench:${rec.id}`] });
+        }
       }
       log(
         `  ${label}: overall ${summary.overall} [${summary.ci.join(", ")}] · clean-only ${summary.clean.overall} (n=${summary.clean.rows}) · ${Object.entries(

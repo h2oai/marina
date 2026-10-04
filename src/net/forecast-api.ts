@@ -6,7 +6,8 @@
  * auditable ForecastAnswer (src/forecast). With `answer` (a typed answer spec:
  * choice / multi / number / ranking / text) it runs the typed pipeline instead
  * — plan, research rounds, K runs, critique, combined by the operator's formation
- * (`MARINA_FORECAST_FORMATION`) — and also takes `endTime`,
+ * (`MARINA_FORECAST_FORMATION`), with the lesson pool — through the same builder
+ * as the `forecast` command (`src/forecast/surface.ts`) — and also takes `endTime`,
  * `asOf`, `context`, `runs`, `researchRounds` and `critique`. Models stay
  * operator-configured (env), never chosen by the caller. Behind the model
  * API's auth and per-IP limit like every /v1 route.
@@ -16,9 +17,10 @@ import { dailyCapRefusal } from "../engine/spend-ledger";
 import { parseAnswerSpec } from "../forecast/answer-types";
 import type { SuppliedPrior } from "../forecast/prior";
 import type { ForecastKind } from "../forecast/question";
+import type { MarinaDB } from "../persistence/database";
 import { errorJson, json } from "./model-api/shared";
 
-export async function handleForecast(req: Request): Promise<Response> {
+export async function handleForecast(req: Request, db?: MarinaDB): Promise<Response> {
   let body: {
     question?: unknown;
     kind?: unknown;
@@ -43,7 +45,7 @@ export async function handleForecast(req: Request): Promise<Response> {
       code: "invalid_request_error",
     });
   }
-  if (body.answer !== undefined) return typed(body, question);
+  if (body.answer !== undefined) return typed(body, question, db);
   if (body.kind !== undefined && body.kind !== "probability" && body.kind !== "number") {
     return errorJson(400, 'kind must be "probability" or "number"', {
       code: "invalid_request_error",
@@ -143,6 +145,7 @@ async function typed(
     category?: unknown;
   },
   question: string,
+  db: MarinaDB | undefined,
 ): Promise<Response> {
   const parsed = parseAnswerSpec(body.answer);
   if ("error" in parsed) return errorJson(400, parsed.error, { code: "invalid_request_error" });
@@ -185,24 +188,14 @@ async function typed(
   if (body.critique !== undefined && typeof body.critique !== "boolean") {
     return errorJson(400, "critique must be a boolean", { code: "invalid_request_error" });
   }
-  const [{ formationFromEnv }, { typedForecastDeps }, { forecastRouted, routeSettingsFromEnv }] =
-    await Promise.all([
-      import("../forecast/formations"),
-      import("../forecast/service"),
-      import("../forecast/routing"),
-    ]);
+  const { typedForecastFor } = await import("../forecast/surface");
   const capped = dailyCapRefusal();
   if (capped) return errorJson(429, capped, { code: "spend_cap_reached" });
-  const made = typedForecastDeps(process.env, {
-    ...(body.runs !== undefined ? { runs } : {}),
-    ...(body.researchRounds !== undefined ? { researchRounds: rounds } : {}),
-    ...(typeof body.critique === "boolean" ? { critique: body.critique } : {}),
-  });
-  if ("error" in made) return errorJson(503, made.error, { code: "forecast_unavailable" });
   const endTime = isoOrUndefined(body.endTime);
   const asOf = isoOrUndefined(body.asOf);
-  // Routing off (the default) is exactly the operator's formation.
-  const answer = await forecastRouted(
+  // The same builder as the `forecast` command: operator formation and routing
+  // (off = exactly that formation), the prior / recalibration stage, lessons.
+  const made = await typedForecastFor(
     {
       question,
       answer: parsed.spec,
@@ -212,10 +205,13 @@ async function typed(
       ...(priors.priors.length ? { priors: priors.priors } : {}),
       ...(typeof body.category === "string" ? { category: body.category.trim() } : {}),
     },
-    made.deps,
-    formationFromEnv(),
-    routeSettingsFromEnv(),
+    {
+      ...(db ? { db } : {}),
+      ...(body.runs !== undefined ? { runs } : {}),
+      ...(body.researchRounds !== undefined ? { researchRounds: rounds } : {}),
+      ...(typeof body.critique === "boolean" ? { critique: body.critique } : {}),
+    },
   );
-  answer.costUsd = made.costUsd();
-  return json({ ...answer, scale: made.scale });
+  if ("error" in made) return errorJson(503, made.error, { code: "forecast_unavailable" });
+  return json({ ...made.answer, scale: made.scale });
 }

@@ -82,6 +82,12 @@ export interface Lesson {
   resolvedAt: string;
   source: string;
   refs?: string[];
+  /**
+   * Where a lesson came from when it was not learned by this loop — a record
+   * migrated from an earlier store (`store`, `account`, `space`, `id`,
+   * `version`). Stored as metadata, never served to a model.
+   */
+  provenance?: Record<string, string>;
 }
 
 export interface LessonWriter {
@@ -312,6 +318,8 @@ export interface LessonSelector {
   source?: string;
   /** Case-insensitive substring of the lesson text or category. */
   match?: string;
+  /** An exact evidence ref the lesson cites (e.g. `bench:<run id>`). */
+  ref?: string;
 }
 
 export const MIN_LESSON_ID_PREFIX = 8;
@@ -327,12 +335,16 @@ export function lessonMatches(l: Lesson, sel: LessonSelector): boolean {
     const needle = sel.match.toLowerCase();
     if (!`${l.text}\n${l.category ?? ""}`.toLowerCase().includes(needle)) return false;
   }
+  if (sel.ref !== undefined && !(l.refs ?? []).includes(sel.ref)) return false;
   return true;
 }
 
 export interface LessonSink {
-  /** Persist a lesson (trusted / unverified served; rejected kept as audit only). */
-  write(lesson: Lesson): Promise<{ id?: string }>;
+  /**
+   * Persist a lesson (trusted / unverified served; rejected kept as audit only).
+   * `key` makes the write idempotent: the same key and lesson write once.
+   */
+  write(lesson: Lesson, opts?: { key?: string }): Promise<{ id?: string }>;
   /**
    * Served lessons of `domain` known at `asOf` matching `query`, newest first,
    * byte-budgeted. A retired lesson (validity closed) is never served.
@@ -429,13 +441,17 @@ export function memoryLessonSink(initial: Lesson[] = []): LessonSink & {
 } {
   const lessons = [...initial];
   const retired = new Map<string, LessonRetirement>();
+  const keyed = new Map<string, string>();
   const current = (l: Lesson) => !(l.id && retired.has(l.id));
   return {
     all: () => [...lessons],
     retirements: () => new Map(retired),
-    async write(lesson) {
+    async write(lesson, opts) {
+      const seen = opts?.key ? keyed.get(opts.key) : undefined;
+      if (seen) return { id: seen };
       const id = lesson.id ?? `lesson-${lessons.length + 1}`;
       lessons.push({ ...lesson, id });
+      if (opts?.key) keyed.set(opts.key, id);
       return { id };
     },
     async find(domain, selector, limit) {

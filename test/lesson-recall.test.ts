@@ -13,7 +13,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { lessonsCommand } from "../src/engine/commands/lessons";
 import { grant } from "../src/engine/safety-gates";
-import type { ForecastLesson, LessonStore } from "../src/forecast/lessons";
 import { forecastLessonsFor } from "../src/learning/forecast-bridge";
 import { type Lesson, memoryLessonSink } from "../src/learning/outcomes";
 import {
@@ -138,7 +137,7 @@ describe("recallAcross", () => {
     expect(off).toEqual({ inject: [], recalled: [], mode: "off" });
   });
 
-  it("is inert when learning is not armed: no account or space is created", async () => {
+  it("never creates the lessons account or a space when recalling unarmed", async () => {
     const db = freshDb();
     try {
       const got = await recallLessons(db, "code", "anything", { env: ON });
@@ -166,40 +165,49 @@ describe("forecastLessonsFor", () => {
     lesson("g1", "forecast", "election polls overstate incumbents early"),
     lesson("a1", "arena", "election approval series move slowly week to week"),
   ]);
-  const legacyLesson: ForecastLesson = {
-    id: "old-1",
-    text: "election markets lag polls by a day",
-    answerType: "choice",
-    resolvedAt: "2026-08-01T00:00:00.000Z",
-  };
-  const written: ForecastLesson[] = [];
-  const legacy: LessonStore = {
-    async write(l) {
-      written.push(l);
-      return { id: "w" };
-    },
-    async recall() {
-      return [legacyLesson];
-    },
-  };
 
-  it("merges general forecast + arena lessons with the legacy store", async () => {
-    const store = forecastLessonsFor(undefined, { sink, legacy, env: ON });
+  it("recalls forecast + arena lessons from the one pool under one budget", async () => {
+    const store = forecastLessonsFor(undefined, { sink, env: ON });
     const got = await store.recall("election", "2026-09-30T00:00:00.000Z");
-    expect(got.map((l) => l.id)).toEqual(expect.arrayContaining(["g1", "a1", "old-1"]));
+    expect(got.map((l) => l.id)).toEqual(expect.arrayContaining(["g1", "a1"]));
+    expect(got.every((l) => !l.observed)).toBe(true);
     const capped = await store.recall("election", "2026-09-30T00:00:00.000Z", { limit: 1 });
     expect(capped.length).toBe(1);
   });
 
-  it("injects nothing under observe or off, and writes only to the legacy store", async () => {
-    for (const env of [OBSERVE, OFF]) {
-      const store = forecastLessonsFor(undefined, { sink, legacy, env });
-      expect(await store.recall("election", "2026-09-30T00:00:00.000Z")).toEqual([]);
+  it("observe returns the lessons marked observed (recorded, never injected); off nothing", async () => {
+    const observed = await forecastLessonsFor(undefined, { sink, env: OBSERVE }).recall(
+      "election",
+      "2026-09-30T00:00:00.000Z",
+    );
+    expect(observed.length).toBe(2);
+    expect(observed.every((l) => l.observed === true)).toBe(true);
+    const off = forecastLessonsFor(undefined, { sink, env: OFF });
+    expect(await off.recall("election", "2026-09-30T00:00:00.000Z")).toEqual([]);
+  });
+
+  it("reads the durable pool on a database without arming learning (P1-11)", async () => {
+    const db = freshDb();
+    try {
+      await lessonSinkFor(db).write(
+        lesson("", "forecast", "election turnout models miss late deciders", { id: undefined }),
+      );
+      disableOutcomeLearning(db);
+      const got = await forecastLessonsFor(db, { env: ON }).recall(
+        "election turnout",
+        "2026-09-30T00:00:00.000Z",
+      );
+      expect(got.map((l) => l.text)).toEqual(["election turnout models miss late deciders"]);
+      // The leakage rule still holds on the durable path.
+      expect(
+        await forecastLessonsFor(db, { env: ON }).recall(
+          "election turnout",
+          "2026-08-30T00:00:00.000Z",
+        ),
+      ).toEqual([]);
+    } finally {
+      db.close();
     }
-    const store = forecastLessonsFor(undefined, { sink, legacy, env: ON });
-    await store.write(legacyLesson);
-    expect(written).toEqual([legacyLesson]);
-    expect(sink.all().length).toBe(2);
   });
 });
 

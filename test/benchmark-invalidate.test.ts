@@ -23,6 +23,8 @@ import { freeTextModifier } from "../src/engine/commands/benchmark";
 import { Engine } from "../src/engine/engine";
 import { RETENTION_POLICIES } from "../src/engine/retention";
 import { grant } from "../src/engine/safety-gates";
+import { memoryLessonSink } from "../src/learning/outcomes";
+import { disableOutcomeLearning, enableOutcomeLearning } from "../src/learning/service";
 import { handleBenchmarkFile } from "../src/net/benchmarks-api";
 import type { PassthruAuthResult } from "../src/net/model-api/shared";
 import { MarinaDB } from "../src/persistence/database";
@@ -490,6 +492,53 @@ describe("benchmark invalidate | revalidate — commands", () => {
     expect(op.send("benchmark replicates bad")).toContain("excluded from its group");
     expect(op.send("benchmark participants synthetic")).not.toContain("bad");
     expect(op.send(`benchmark challenge ${SLOT} bad`)).toContain("an invalid run is never");
+  });
+
+  it("retires the lessons that cite an invalidated run (audited), and only those", async () => {
+    recordRun(db, "bad", strongRight);
+    const sink = memoryLessonSink([
+      {
+        id: "l-bad",
+        domain: "benchmark",
+        text: "lesson from the bad run",
+        kind: "success",
+        trust: "trusted",
+        resolvedAt: "2026-09-01T00:00:00.000Z",
+        source: "benchmark:synthetic",
+        refs: ["bench:bad", "bench:good"],
+      },
+      {
+        id: "l-good",
+        domain: "benchmark",
+        text: "lesson from the good run",
+        kind: "success",
+        trust: "trusted",
+        resolvedAt: "2026-09-01T00:00:00.000Z",
+        source: "benchmark:synthetic",
+        refs: ["bench:good"],
+      },
+    ]);
+    enableOutcomeLearning(db, { sink, writer: null, judge: null, env: {} });
+    try {
+      const op = login("Operator");
+      grant(db, op.conn.entity!, "role.edit");
+      op.conn.clear();
+      await engine.processCommand(
+        op.conn.entity!,
+        "benchmark invalidate bad reason:provider outage",
+      );
+      const reply = stripAnsi(op.conn.allTextJoined());
+      expect(reply).toContain("Invalidated bad");
+      expect(reply).toContain("Lessons citing bad: 1 retired");
+      const retired = sink.retirements();
+      expect([...retired.keys()]).toEqual(["l-bad"]);
+      expect(retired.get("l-bad")).toMatchObject({
+        reason: "benchmark run bad invalidated: provider outage",
+        by: db.durableEntityKey(op.conn.entity!),
+      });
+    } finally {
+      disableOutcomeLearning(db);
+    }
   });
 
   it("never lets the invalidator of an incumbent fill its slot, and makes others earn it", () => {

@@ -13,6 +13,7 @@
  *         [--daily] [--learn]                    …re-forecast OPEN rows daily + a final run before the
  *                                                Wed 16:00 UTC deadline; feed resolved weeks to lessons
  *   bun run futurex learn                          resolved rows of filed batches → outcome lessons
+ *   bun run futurex migrate-lessons                copy the retired forecast-lesson store into the pool
  *   bun run futurex status                         what has been filed (external_submissions)
  *
  * Common flags: --dir data/futurex (outside the repo's tracked tree), --variant <name> (repeatable;
@@ -49,6 +50,7 @@ import {
   recordScoredRun,
   recordSubmission,
 } from "../benchmarks/futurex/ledger";
+import { futurexOutcome, futurexResolvedAt } from "../benchmarks/futurex/lessons";
 import { endTimeIso } from "../benchmarks/futurex/map";
 import {
   type BatchRun,
@@ -66,7 +68,7 @@ import {
   submissionFileName,
 } from "../benchmarks/futurex/submission";
 import { attachCliSpendLedger } from "../src/engine/cli-spend-ledger";
-import { durableLessonStore, type LessonStore, retryingMemoryRun } from "../src/forecast/lessons";
+import type { LessonStore } from "../src/forecast/lessons";
 import {
   dueRun,
   nextWeeklyDeadline,
@@ -74,10 +76,10 @@ import {
   type StandingAnswer,
 } from "../src/forecast/revision";
 import { modelPart, typedForecastDeps } from "../src/forecast/service";
+import { forecastLessonsFor } from "../src/learning/forecast-bridge";
+import { migrateLegacyForecastLessons } from "../src/learning/legacy-forecast";
 import { enableOutcomeLearning, noteOutcome, settleOutcomes } from "../src/learning/service";
-import { residentMemoryOperation } from "../src/memory/resident-service";
 import { MarinaDB } from "../src/persistence/database";
-import type { MemoryOperationRequest } from "../src/sdk/memory-operations";
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -117,7 +119,6 @@ const { positionals, values } = parseArgs({
     replicates: { type: "string", default: "1" },
     "first-replicate": { type: "string" },
     lessons: { type: "string" },
-    "lessons-account": { type: "string", default: "Forecaster" },
     "lesson-writer": { type: "string", default: "openrouter/deepseek/deepseek-v4-pro-0813" },
     reference: { type: "string" },
     judge: { type: "string" },
@@ -186,28 +187,6 @@ function readRowIds(path: string): Set<string> {
       .map((l) => l.trim())
       .filter(Boolean),
   );
-}
-
-/**
- * The durable lesson memory for `account` (created as a world account when
- * missing), in the named space — canonical memory records through the
- * resident memory service.
- */
-async function lessonStoreFor(db: MarinaDB, account: string, space: string): Promise<LessonStore> {
-  if (!db.getUserByName(account)) db.createUser({ id: crypto.randomUUID(), name: account });
-  const run = retryingMemoryRun(
-    (request: MemoryOperationRequest) =>
-      residentMemoryOperation(db, account, request) as Promise<{ ok: true; result: unknown }>,
-  );
-  const spaces = (await run({ operation: "spaces" })).result as {
-    spaces?: Array<{ id: string; name: string }>;
-  };
-  const found = spaces.spaces?.find((s) => s.name === space)?.id;
-  const id =
-    found ??
-    ((await run({ operation: "create_space", input: { name: space } })).result as { id: string })
-      .id;
-  return durableLessonStore(run, { spaceId: id });
 }
 
 function depsFor(v: Variant, lessons?: LessonStore) {
@@ -286,14 +265,14 @@ async function runCmd(opts: { kind?: string; openOnly?: boolean } = {}): Promise
     : limited;
   console.log(`${describe(batch)}\n${kind}: ${rows.length} rows`);
   if (rows.length === 0) return 0;
-  // Live forecasts read every lesson learned so far (now is after every resolution).
+  // Live forecasts read every lesson learned so far (now is after every resolution),
+  // from the one judged pool (MARINA_LESSONS on / observe / off).
   let lessons: LessonStore | undefined;
   if (values.lessons !== "off" && !values["no-ledger"]) {
     const ldb = openDb();
-    if (ldb.getUserByName(values["lessons-account"]!)) {
-      lessons = await lessonStoreFor(ldb, values["lessons-account"]!, SHARED_LESSONS);
-      console.log(`lessons: recalling from ${values["lessons-account"]}/${SHARED_LESSONS}`);
-    }
+    await migrateLessons(ldb);
+    lessons = forecastLessonsFor(ldb);
+    console.log("lessons: recalling from the lesson pool (forecast, arena)");
   }
   for (const v of variantsFromFlags()) {
     console.log(`\n── variant ${v.label} (${v.analysts.join(", ")}) · ${rows.length} rows`);
@@ -415,6 +394,7 @@ async function learnCmd(): Promise<number> {
   enableOutcomeLearning(db);
   let queued = 0;
   try {
+    await migrateLessons(db);
     for (const sha of readdirSync(outRoot)) {
       if (!existsSync(schedulePath(sha))) continue;
       for (const label of readdirSync(join(outRoot, sha))) {
@@ -431,21 +411,21 @@ async function learnCmd(): Promise<number> {
           const row = truth.get(r.id);
           if (!row || learned.has(r.id)) continue;
           const item = scoreItem(row, r.prediction);
-          noteOutcome(db, {
-            domain: "forecast",
-            source: `futurex:${label}`,
-            succeeded: item.score >= 0.5,
-            score: item.score,
-            resolvedAt: endTimeIso(row.end_time) ?? past.fetchedAt,
-            attempted: `forecast a level-${row.level} ${r.spec} question (variant ${label})`,
-            detail: `${item.metric} score ${item.score.toFixed(2)}${r.fallback ? " (fallback answer)" : ""}`,
-            signals: [
-              `variant:${label}`,
-              ...(r.confidence !== undefined ? [`confidence:${r.confidence.toFixed(2)}`] : []),
-            ],
-            refs: [`futurex:${r.id}`, `batch:${sha.slice(0, 10)}`],
-            privateContext: `${row.prompt}\n${JSON.stringify(row.ground_truth)}\n${r.prediction}`,
-          });
+          // Known only after the end time plus the settlement margin: rows of a
+          // week share one end time, and a replay's cutoff is that end time.
+          const resolvedAt = futurexResolvedAt(row);
+          if (!resolvedAt) continue;
+          noteOutcome(
+            db,
+            futurexOutcome({
+              row,
+              result: r,
+              item,
+              label,
+              resolvedAt,
+              refs: [`batch:${sha.slice(0, 10)}`],
+            }),
+          );
           learned.add(r.id);
           queued++;
         }
@@ -460,8 +440,29 @@ async function learnCmd(): Promise<number> {
   return 0;
 }
 
-/** The shared lesson space live runs read and every backtest also writes to. */
-const SHARED_LESSONS = "forecast-lessons";
+/**
+ * Copy the retired forecast-lesson store (a `Forecaster` account's
+ * `forecast-lessons` space) into the pool once; a no-op after it has run.
+ */
+async function migrateLessons(db: MarinaDB): Promise<number> {
+  const m = await migrateLegacyForecastLessons(db);
+  if (m.account) {
+    console.log(
+      `lessons: ${m.copied}/${m.found} legacy forecast lessons in the pool (from ${m.account})${m.renamed ? "; the script account is now server-owned" : ""}${m.failed ? ` · ${m.failed} failed: ${m.errors.join("; ")}` : ""}`,
+    );
+  }
+  return m.failed;
+}
+
+async function migrateLessonsCmd(): Promise<number> {
+  const db = openDb();
+  try {
+    const failed = await migrateLessons(db);
+    return failed ? 1 : 0;
+  } finally {
+    db.close();
+  }
+}
 
 async function cleanBacktestCmd(batch: FuturexBatch): Promise<number> {
   const isolation = values.isolation as
@@ -478,10 +479,9 @@ async function cleanBacktestCmd(batch: FuturexBatch): Promise<number> {
   }
   const lessons = values.lessons === "on" ? "on" : "off";
   const db = values["no-ledger"] ? undefined : openDb();
+  // With lessons on, each scored row of a valid filed run also feeds the judged pool.
+  const learning = db && lessons === "on" ? enableOutcomeLearning(db) : false;
   try {
-    const account = values["lessons-account"]!;
-    const shared =
-      db && lessons === "on" ? await lessonStoreFor(db, account, SHARED_LESSONS) : undefined;
     const writer = lessons === "on" ? modelPart(values["lesson-writer"]!) : undefined;
     const summaries = await cleanBacktest({
       rows: batch.rows,
@@ -498,22 +498,8 @@ async function cleanBacktestCmd(batch: FuturexBatch): Promise<number> {
       concurrency: Number(values.concurrency),
       replicates: Math.max(1, Number(values.replicates)),
       lessons,
-      ...(db && lessons === "on"
-        ? {
-            // Each run recalls only its own lessons (an honest ablation); every
-            // lesson is also kept in the shared space for live forecasts.
-            lessonStore: async (label: string) => {
-              const own = await lessonStoreFor(db, account, `${SHARED_LESSONS}-${label}`);
-              return {
-                write: async (l) => {
-                  await shared?.write(l);
-                  return own.write(l);
-                },
-                recall: (q, asOf, o) => own.recall(q, asOf, o),
-              } satisfies LessonStore;
-            },
-          }
-        : {}),
+      // Each run recalls only its own in-run lessons (an honest ablation).
+      ...(db && learning ? { learn: (o) => noteOutcome(db, o) } : {}),
       ...(writer ? { lessonWriter: writer } : {}),
       ...(values.judge ? { judge: modelPart(values.judge) } : {}),
       ...(values.reference
@@ -534,6 +520,7 @@ async function cleanBacktestCmd(batch: FuturexBatch): Promise<number> {
       join(dir, "clean", batch.sha, `summary-${Date.now()}.json`),
       JSON.stringify(summaries, null, 1),
     );
+    if (db && learning) await settleOutcomes(db);
     return 0;
   } finally {
     db?.close();
@@ -673,7 +660,7 @@ async function main(): Promise<number> {
   // Every model call counts in the world database's daily spend ledger (and
   // MARINA_SPEND_SCOPE's), shared with the server and every other run on it,
   // so an hourly timer cannot spend a fresh cap each invocation.
-  if (cmd !== "fetch" && cmd !== "status") {
+  if (cmd !== "fetch" && cmd !== "status" && cmd !== "migrate-lessons") {
     attachCliSpendLedger(`bun run futurex ${cmd}`, {
       dbPath: process.env.DB_PATH || (values["no-ledger"] ? undefined : "marina.db"),
     });
@@ -691,9 +678,11 @@ async function main(): Promise<number> {
       return statusCmd();
     case "learn":
       return learnCmd();
+    case "migrate-lessons":
+      return migrateLessonsCmd();
     default:
       console.error(
-        "usage: bun run futurex fetch|run|backtest|watch|learn|status [flags] (see scripts/futurex.ts)",
+        "usage: bun run futurex fetch|run|backtest|watch|learn|migrate-lessons|status [flags] (see scripts/futurex.ts)",
       );
       return 2;
   }
