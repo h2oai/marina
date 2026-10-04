@@ -33,7 +33,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { IsolationLevel } from "../../src/arena/research/isolation";
-import { ledgerFromHarnessResult } from "../../src/engine/benchmark-ledger";
+import { answerDigest, ledgerFromHarnessResult } from "../../src/engine/benchmark-ledger";
 import { SpendGuard } from "../../src/engine/spend-guard";
 import { dailyCapRefusal } from "../../src/engine/spend-ledger";
 import type { TypedForecastAnswer, TypedForecastRequest } from "../../src/forecast/typed";
@@ -411,6 +411,10 @@ function fileRun(
       score: scores.get(it.id) ?? 0,
       // Scored as the board's fallback, flagged so the ledger can see the run's fallback rate.
       ...(isFallback(answers[i]) ? { fallback: true } : {}),
+      // A digest of the answer, never its text (stored keyed per ledger).
+      ...(answers[i]?.formatted && answerDigest(answers[i]!.formatted)
+        ? { answerDigest: answerDigest(answers[i]!.formatted) }
+        : {}),
       usage: { costUsd: answers[i]?.costUsd ?? 0 },
       judge: "1-brier",
     })),

@@ -14,7 +14,11 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { type HarnessResultFile, ledgerFromHarnessResult } from "../../src/engine/benchmark-ledger";
+import {
+  answerDigest,
+  type HarnessResultFile,
+  ledgerFromHarnessResult,
+} from "../../src/engine/benchmark-ledger";
 import type { MarinaStores } from "../../src/persistence/interfaces";
 import type { BatchRun, Variant } from "./run";
 import type { BatchScore } from "./score";
@@ -104,6 +108,11 @@ export function recordScoredRun(
         // A row with no usable answer was filled by a fallback: past
         // MARINA_BENCHMARK_MAX_FALLBACK_RATE the run is recorded invalid.
         ...(r?.fallback ? { fallback: true } : {}),
+        // The answer's digest only (stored keyed per ledger): plurality and
+        // selectors across replicates can be measured without the text.
+        ...(r && !r.fallback && answerDigest(r.prediction)
+          ? { answerDigest: answerDigest(r.prediction) }
+          : {}),
         judge: it.metric,
       };
     }),

@@ -13,11 +13,13 @@ import type { BenchmarkRunRow, MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
 import {
   compareRuns,
+  formatVerificationCounts,
   invalidReason,
   MAX_VALIDITY_REASON,
   paretoFrontier,
   participantCredit,
   runLabel,
+  verificationCounts,
 } from "../benchmark-ledger";
 import { type ChallengeEvaluation, lookupChallenge, type SplitStats } from "../benchmark-promotion";
 import {
@@ -437,6 +439,19 @@ export function benchmarkCommand(deps: {
           }
           if (row.agent_id) {
             lines.push(`  ${bold("launched by")}: ${row.agent_id}`);
+          }
+          {
+            // Item labels (migration 157): checks that never ran are not failures,
+            // and a budget-forced answer is counted apart from a free one.
+            const items = db.getBenchmarkItems(row.id);
+            const verification = formatVerificationCounts(verificationCounts(items));
+            if (verification) lines.push(`  ${bold("checks")}:      ${verification}`);
+            const forced = items.filter((i) => i.budget_forced === 1).length;
+            if (forced > 0) {
+              lines.push(
+                `  ${bold("forced")}:      ${forced}/${items.length} answers forced at a budget`,
+              );
+            }
           }
           if (row.config_json) {
             try {

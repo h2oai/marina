@@ -17,6 +17,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { verificationCounts } from "../../src/engine/benchmark-ledger";
 import { capEnvValue } from "../../src/engine/spend-guard";
 
 /** The solver-visible fields `export.py` writes — no hints, gold or test patches. */
@@ -88,6 +89,12 @@ export interface SweAttempt {
   trajectory: string;
   /** `code verify` results in the session, by outcome (not_run/error are neither pass nor fail). */
   verification?: VerificationCounts;
+  /**
+   * The session's LAST `code verify` outcome, the item's ledger label:
+   * `not_run` when no check executed (not run, or a broken runner) —
+   * infrastructure, not a failing change. Absent when the agent never verified.
+   */
+  lastVerification?: "passed" | "failed" | "not_run";
 }
 
 /** Code Mode verification outcomes recorded in one session. */
@@ -476,6 +483,59 @@ export function sessionVerification(dbPath: string): VerificationCounts {
   return counts;
 }
 
+/**
+ * One Code Mode verification artifact as a ledger state. Code Mode's
+ * `metadata.outcome` (or a `metadata.state`) wins: `passed` / `failed` /
+ * `not_run`, and `error` (a broken runner — no check ran) is `not_run`; the
+ * `ran/…` / `infra/not-run` spellings are accepted. Otherwise the status
+ * decides (`complete` passed; `not_run` / `error` never ran), and a legacy
+ * failed artifact whose checks never executed (no command ran — dependency
+ * preparation failed first) is `not_run`.
+ */
+export function verificationState(
+  status: string,
+  metadata: Record<string, unknown>,
+): "passed" | "failed" | "not_run" {
+  const explicit = String(metadata.outcome ?? metadata.state ?? "")
+    .toLowerCase()
+    .replace(/^(ran|infra)\//, "")
+    .replace("-", "_");
+  if (explicit === "passed" || explicit === "failed" || explicit === "not_run") return explicit;
+  if (explicit === "error" || status === "not_run" || status === "error") return "not_run";
+  if (status === "complete") return "passed";
+  const commands = Array.isArray(metadata.commands) ? metadata.commands : [];
+  const prep = metadata.preparation as { status?: string } | undefined;
+  if (commands.length === 0 || prep?.status === "failed") return "not_run";
+  return "failed";
+}
+
+/** The last verification state recorded in a session database, if the agent ever verified. */
+export function sessionLastVerification(dbPath: string): SweAttempt["lastVerification"] {
+  if (!existsSync(dbPath)) return undefined;
+  const { Database } = require("bun:sqlite") as typeof import("bun:sqlite");
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    const row = db
+      .query(
+        "SELECT status, metadata_json FROM coding_artifacts WHERE kind = 'verification' ORDER BY created_at DESC, rowid DESC LIMIT 1",
+      )
+      .get() as { status: string; metadata_json: string } | null;
+    if (!row) return undefined;
+    let metadata: Record<string, unknown> = {};
+    try {
+      metadata = JSON.parse(row.metadata_json) as Record<string, unknown>;
+    } catch {
+      // allow-empty-catch: unreadable metadata classifies from the status alone
+    }
+    return verificationState(row.status, metadata);
+  } catch {
+    // allow-empty-catch: an older or partial session DB has no verification record
+    return undefined;
+  } finally {
+    db.close();
+  }
+}
+
 export interface AttemptOptions {
   repoRoot: string;
   dataDir: string;
@@ -532,6 +592,7 @@ export async function attemptInstance(
   const dbPath = join(home, "marina.db");
   const costUsd = sessionSpend(dbPath);
   const verification = sessionVerification(dbPath);
+  const lastVerification = sessionLastVerification(dbPath);
   const trajectory = join(trajDir, `${inst.instance_id}.md`);
   writeFileSync(
     trajectory,
@@ -570,6 +631,7 @@ export async function attemptInstance(
       durationMs: Date.now() - started,
       trajectory,
       verification,
+      ...(lastVerification ? { lastVerification } : {}),
     },
     prediction: {
       instance_id: inst.instance_id,
@@ -633,6 +695,8 @@ export function ledgerResult(
     score: resolved.has(a.instance_id) ? 1 : 0,
     latencyMs: a.durationMs,
     usage: { costUsd: a.costUsd },
+    // The item's ledger label: the session's last verification state.
+    ...(a.lastVerification ? { verification: a.lastVerification } : {}),
   }));
   const correct = items.filter((i) => i.correct).length;
   // In-loop verification outcomes, summed over graded attempts. Descriptive: a
@@ -641,6 +705,8 @@ export function ledgerResult(
   for (const a of graded)
     for (const key of Object.keys(verification) as (keyof VerificationCounts)[])
       verification[key] += a.verification?.[key] ?? 0;
+  // Per item, the last state: a check that never ran is not a failed check.
+  const checks = verificationCounts(items);
   return {
     config: {
       dataset: SWE_BENCHMARKS[meta.benchmark ?? "verified"].dataset,
@@ -659,6 +725,13 @@ export function ledgerResult(
       excluded,
       missingAttempts,
       verification,
+      // `not_run` (the checks never executed) is infrastructure, never a failed check.
+      itemVerification: {
+        passed: checks.passed,
+        failed: checks.failed,
+        not_run: checks.notRun,
+        never_requested: checks.unreported,
+      },
     },
     items,
   };
