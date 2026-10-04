@@ -19,14 +19,17 @@
  * Untrusted input: bytes are capped (`MARINA_VISION_MAX_BYTES`, default 20 MB),
  * raster images must pass the asset pipeline's magic-byte check, SVG is never
  * sent (it is markup, not pixels), URLs go through `guardedFetch` (SSRF), and
- * external tools run with argument arrays (no shell), a private temp
- * directory and a hard timeout.
+ * external tools run asynchronously with argument arrays (no shell), a private
+ * temp directory, a hard timeout, capped output and a process-wide concurrency
+ * limit, so a slow or crafted file never stalls the tick or other requests.
+ * Each entity's looks are rate limited (the local profile lifts it).
  */
 
 import { createHash } from "node:crypto";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { RateLimiter } from "../../auth/rate-limiter";
 import { proxyToUpstream } from "../../net/model-api/upstream";
 import { guardedFetch } from "../../net/url-guard";
 import type { EntityId } from "../../types";
@@ -70,6 +73,12 @@ const PDF_PAGES_AS_IMAGES = 3;
 const PDF_TEXT_PAGES = 12;
 const VIDEO_FRAMES = 4;
 const TOOL_TIMEOUT_MS = 30_000;
+/** Bytes read from one tool's stdout (pdftotext); the text is clamped far below this. */
+const TOOL_STDOUT_MAX_BYTES = 4 * 1024 * 1024;
+/** PDF/video preparations running at once, process-wide. */
+export const VISION_TOOL_CONCURRENCY = 2;
+/** Preparations allowed to wait for a slot; beyond this a look is refused at once. */
+export const VISION_TOOL_QUEUE_MAX = 8;
 const CACHE_LIMIT = 200;
 
 const VISION_SYSTEM =
@@ -211,13 +220,38 @@ export async function loadUrl(
   const cap = visionMaxBytes(env);
   const declared = Number(resp.headers.get("content-length") ?? 0);
   if (declared > cap) throw new Error("Remote file is larger than the vision size cap.");
-  const buf = new Uint8Array(await resp.arrayBuffer());
-  if (buf.byteLength > cap) throw new Error("Remote file is larger than the vision size cap.");
+  const buf = await readBodyCapped(resp, cap);
   return {
     data: buf,
     mime: (resp.headers.get("content-type") ?? "").split(";")[0]!.trim(),
     label: url,
   };
+}
+
+/** Read a response body, refusing as soon as it passes `cap` bytes (a missing
+ *  or false `content-length` never buffers more than the cap). */
+async function readBodyCapped(resp: Response, cap: number): Promise<Uint8Array> {
+  if (!resp.body) return new Uint8Array(0);
+  const reader = resp.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > cap) {
+      await reader.cancel().catch(() => undefined);
+      throw new Error("Remote file is larger than the vision size cap.");
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) {
+    out.set(c, at);
+    at += c.byteLength;
+  }
+  return out;
 }
 
 /** Resolve `node:<id>`, `asset:<id>`, an http(s) URL, a canvas node id or an asset id. */
@@ -245,14 +279,106 @@ export function hasTool(name: string): boolean {
   return found;
 }
 
-/** Run a tool with an argument array (never a shell) and a hard timeout. */
-function runTool(cmd: string[]): { ok: boolean; stdout: string } {
+/** Read at most `cap` bytes of a stream; past it, `onOverflow` (kill) and stop. */
+async function readStreamCapped(
+  stream: ReadableStream<Uint8Array>,
+  cap: number,
+  onOverflow: () => void,
+): Promise<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let out = "";
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const room = cap - total;
+    total += value.byteLength;
+    out += decoder.decode(room < value.byteLength ? value.subarray(0, room) : value, {
+      stream: true,
+    });
+    if (total >= cap) {
+      onOverflow();
+      await reader.cancel().catch(() => undefined);
+      break;
+    }
+  }
+  return out + decoder.decode();
+}
+
+/**
+ * Run a tool asynchronously with an argument array (never a shell), a hard
+ * timeout and capped stdout. A timeout, an abort or an output overflow kills
+ * the process and fails the run; the event loop is never held.
+ */
+export async function runTool(
+  cmd: string[],
+  opts: { timeoutMs?: number; signal?: AbortSignal; maxStdoutBytes?: number } = {},
+): Promise<{ ok: boolean; stdout: string; timedOut?: boolean }> {
+  if (opts.signal?.aborted) return { ok: false, stdout: "" };
+  let proc: ReturnType<typeof Bun.spawn<"ignore", "pipe", "ignore">>;
   try {
-    const r = Bun.spawnSync(cmd, { stdout: "pipe", stderr: "ignore", timeout: TOOL_TIMEOUT_MS });
-    return { ok: r.exitCode === 0, stdout: r.stdout ? new TextDecoder().decode(r.stdout) : "" };
+    proc = Bun.spawn(cmd, { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
   } catch {
     return { ok: false, stdout: "" };
   }
+  let killed = false;
+  let timedOut = false;
+  const kill = () => {
+    if (killed) return;
+    killed = true;
+    try {
+      proc.kill("SIGKILL");
+    } catch {
+      // allow-empty-catch: the process already exited
+    }
+  };
+  const timer = setTimeout(() => {
+    timedOut = true;
+    kill();
+  }, opts.timeoutMs ?? TOOL_TIMEOUT_MS);
+  opts.signal?.addEventListener("abort", kill, { once: true });
+  try {
+    const [stdout, code] = await Promise.all([
+      readStreamCapped(proc.stdout, opts.maxStdoutBytes ?? TOOL_STDOUT_MAX_BYTES, kill),
+      proc.exited,
+    ]);
+    return { ok: code === 0 && !killed, stdout, ...(timedOut ? { timedOut } : {}) };
+  } catch {
+    kill();
+    return { ok: false, stdout: "" };
+  } finally {
+    clearTimeout(timer);
+    opts.signal?.removeEventListener("abort", kill);
+  }
+}
+
+/** A process-wide slot limit for tool-backed preparations (PDF, video). */
+let toolSlotsInUse = 0;
+const toolSlotWaiters: Array<() => void> = [];
+
+/** Take a preparation slot, or undefined when too many are already waiting. */
+async function acquireToolSlot(): Promise<(() => void) | undefined> {
+  if (toolSlotsInUse >= VISION_TOOL_CONCURRENCY) {
+    if (toolSlotWaiters.length >= VISION_TOOL_QUEUE_MAX) return undefined;
+    await new Promise<void>((resolve) => toolSlotWaiters.push(resolve));
+  } else {
+    toolSlotsInUse++;
+  }
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const next = toolSlotWaiters.shift();
+    // The slot passes straight to the next waiter; otherwise it is freed.
+    if (next) next();
+    else toolSlotsInUse--;
+  };
+}
+
+/** For tests: the slots in use and the waiters. */
+export function visionToolLoad(): { inUse: number; waiting: number } {
+  return { inUse: toolSlotsInUse, waiting: toolSlotWaiters.length };
 }
 
 function toDataUrl(mime: string, data: Uint8Array): string {
@@ -263,8 +389,16 @@ function clampText(s: string): string {
   return s.length <= MAX_TEXT_CHARS ? s : `${s.slice(0, MAX_TEXT_CHARS)}\n[…truncated]`;
 }
 
-/** Turn a loaded source into model input. Never throws for missing tools — it notes them. */
-export function prepareVisual(src: VisualSource): VisualInput {
+/**
+ * Turn a loaded source into model input. Never throws for missing tools — it
+ * notes them. PDF and video preparation run external tools asynchronously
+ * under the process-wide slot limit; when every slot and the queue are full
+ * the preparation is refused at once with a note (nothing waits unbounded).
+ */
+export async function prepareVisual(
+  src: VisualSource,
+  opts: { signal?: AbortSignal } = {},
+): Promise<VisualInput> {
   const kind = classifyVisual(src.data, src.mime);
   if (!kind) {
     if (src.mime.toLowerCase() === "image/svg+xml") {
@@ -284,20 +418,37 @@ export function prepareVisual(src: VisualSource): VisualInput {
   if (kind === "text") {
     return { kind, images: [], text: clampText(new TextDecoder().decode(src.data)), notes: [] };
   }
-  const dir = mkdtempSync(join(tmpdir(), "marina-vision-"));
+  if (kind === "video" && !hasTool("ffmpeg")) {
+    return {
+      kind,
+      images: [],
+      notes: ["ffmpeg is not installed; video frames could not be sampled."],
+    };
+  }
+  const release = await acquireToolSlot();
+  if (!release) {
+    return {
+      kind,
+      images: [],
+      notes: ["Vision is busy preparing other documents; try again shortly."],
+    };
+  }
+  const run = (cmd: string[]) => runTool(cmd, { signal: opts.signal });
+  let dir: string | undefined;
   try {
+    dir = await mkdtemp(join(tmpdir(), "marina-vision-"));
     if (kind === "pdf") {
       const notes: string[] = [];
       const file = join(dir, "doc.pdf");
-      writeFileSync(file, src.data);
+      await writeFile(file, src.data);
       let text: string | undefined;
       if (hasTool("pdftotext")) {
-        const r = runTool(["pdftotext", "-l", String(PDF_TEXT_PAGES), "-layout", file, "-"]);
+        const r = await run(["pdftotext", "-l", String(PDF_TEXT_PAGES), "-layout", file, "-"]);
         if (r.ok && r.stdout.trim()) text = clampText(r.stdout);
       } else notes.push("pdftotext is not installed; no text was extracted.");
       const images: string[] = [];
       if (hasTool("pdftoppm")) {
-        const r = runTool([
+        const r = await run([
           "pdftoppm",
           "-png",
           "-r",
@@ -308,10 +459,10 @@ export function prepareVisual(src: VisualSource): VisualInput {
           join(dir, "page"),
         ]);
         if (r.ok) {
-          for (const f of readdirSync(dir)
+          for (const f of (await readdir(dir))
             .filter((n) => n.startsWith("page") && n.endsWith(".png"))
             .sort()) {
-            images.push(toDataUrl("image/png", readFileSync(join(dir, f))));
+            images.push(toDataUrl("image/png", await readFile(join(dir, f))));
           }
         }
       } else notes.push("pdftoppm is not installed; pages were not rendered as images.");
@@ -320,16 +471,9 @@ export function prepareVisual(src: VisualSource): VisualInput {
       return { kind, images, ...(text ? { text } : {}), notes };
     }
     // video
-    if (!hasTool("ffmpeg")) {
-      return {
-        kind,
-        images: [],
-        notes: ["ffmpeg is not installed; video frames could not be sampled."],
-      };
-    }
     const file = join(dir, "clip");
-    writeFileSync(file, src.data);
-    const r = runTool([
+    await writeFile(file, src.data);
+    const r = await run([
       "ffmpeg",
       "-nostdin",
       "-loglevel",
@@ -344,12 +488,11 @@ export function prepareVisual(src: VisualSource): VisualInput {
       "vfr",
       join(dir, "frame-%02d.png"),
     ]);
-    const images = r.ok
-      ? readdirSync(dir)
-          .filter((n) => n.startsWith("frame-"))
-          .sort()
-          .map((f) => toDataUrl("image/png", readFileSync(join(dir, f))))
-      : [];
+    const images: string[] = [];
+    if (r.ok) {
+      const frames = (await readdir(dir)).filter((n) => n.startsWith("frame-")).sort();
+      for (const f of frames) images.push(toDataUrl("image/png", await readFile(join(dir, f))));
+    }
     return {
       kind,
       images,
@@ -358,7 +501,8 @@ export function prepareVisual(src: VisualSource): VisualInput {
         : ["No frames could be sampled from this video."],
     };
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    release();
+    if (dir) await rm(dir, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
@@ -413,7 +557,13 @@ export function visionRequest(
 export async function describeVisual(
   engine: Engine,
   src: VisualSource,
-  opts: { question?: string; model?: string; agentModel?: string; entityId?: EntityId } = {},
+  opts: {
+    question?: string;
+    model?: string;
+    agentModel?: string;
+    entityId?: EntityId;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<VisualDescription> {
   const question = (opts.question ?? "").trim();
   const candidates = visionModelCandidates(opts.model, opts.agentModel);
@@ -421,7 +571,7 @@ export async function describeVisual(
     const hit = cache.get(cacheKey(src, question, model));
     if (hit) return { ...hit, cached: true };
   }
-  const input = prepareVisual(src);
+  const input = await prepareVisual(src, opts.signal ? { signal: opts.signal } : {});
   if (input.images.length === 0 && !input.text) {
     return {
       ok: false,
@@ -575,9 +725,21 @@ export function parseLookArgs(
   return { ref, question: words.join(" ").trim(), ...(model ? { model } : {}) };
 }
 
+/** Looks per entity: a burst of 6, refilling one every 10 s (lifted under the local profile). */
+const newLookLimiter = () =>
+  new RateLimiter({ maxTokens: 6, refillRate: 1, refillInterval: 10_000 });
+let lookLimiter = newLookLimiter();
+
+/** For tests: forget every entity's look budget. */
+export function resetVisionRateLimits(): void {
+  lookLimiter = newLookLimiter();
+}
+
 /**
  * Load, describe and (for canvas sources) write back — the shared body of
  * `canvas look`, `image describe` and `video describe`. Returns the reply text.
+ * Each look costs a model call and may run external tools, so looks are rate
+ * limited per entity.
  */
 export async function lookAndReply(
   engine: Engine,
@@ -587,6 +749,9 @@ export async function lookAndReply(
 ): Promise<string> {
   const args = parseLookArgs(tokens);
   if ("error" in args) return args.error;
+  if (!lookLimiter.consume(who.entityId)) {
+    return "Vision rate limit reached (6 looks, then one every 10 s); try again shortly.";
+  }
   let src: VisualSource;
   try {
     src = await loadVisualSource(engine, args.ref);
@@ -644,20 +809,42 @@ function partImageUrl(part: unknown): string | undefined {
   return undefined;
 }
 
+/** Who sent a staged request image: the owner of its private inbox canvas. */
+export interface RequestImagePrincipal {
+  /** Owner id: the caller's entity id, or a stable id derived from its API key. */
+  ownerId: string;
+  /** Attribution (asset `entity_name`, node creator). */
+  name: string;
+}
+
+/** Marks staged request images (asset metadata, node data) for retention. */
+export const REQUEST_IMAGE_ORIGIN = "request";
+
+/** The fixed inbox canvas name for a principal — never a client-chosen string. */
+export function requestInboxName(ownerId: string): string {
+  const safe = ownerId.replace(/[^A-Za-z0-9_.-]/g, "-").slice(0, 80) || "anonymous";
+  return `inbox:${safe}`;
+}
+
 /**
  * Put a request's images where crew agents can see them. A crew hears a
  * request as a clamped text perception, so images cannot ride along inline:
  * each inline image is stored through the asset pipeline (magic-byte checked,
- * size-capped) and published as an image node on the canvas `canvasName`; the
- * returned lines name each node and how to look at it. Remote URLs are not
- * fetched here — the line names the URL, which `canvas look` reads through the
- * SSRF guard if an agent chooses to.
+ * size-capped per image and per request) and published as an image node on
+ * the requesting principal's PRIVATE inbox canvas (`scope: "entity"`, owned by
+ * the principal — operators and the owner see it on the dashboard, the world
+ * does not). The returned lines name each node; the crew reads it by that id
+ * with `canvas look`. Staged images age out with the `assets` / `canvas_nodes`
+ * request-image retention policies (`src/engine/retention.ts`). Without a
+ * principal (an open-API caller outside the local profile) nothing is stored
+ * and each image is labelled as not staged. Remote URLs are not fetched here —
+ * the line names the URL, which `canvas look` reads through the SSRF guard if
+ * an agent chooses to.
  */
 export async function stageRequestImages(
   engine: Engine,
   content: unknown,
-  canvasName: string,
-  author = "model-api",
+  principal: RequestImagePrincipal | undefined,
 ): Promise<string[]> {
   if (!Array.isArray(content)) return [];
   const urls = content.map(partImageUrl).filter((u): u is string => !!u);
@@ -665,11 +852,17 @@ export async function stageRequestImages(
   const lines: string[] = [];
   const db = engine.db;
   const max = visionMaxBytes();
+  let budget = max;
   let canvasId: string | undefined;
+  const canvasName = principal ? requestInboxName(principal.ownerId) : "";
   for (const [i, url] of urls.slice(0, STAGE_MAX_IMAGES).entries()) {
     const k = i + 1;
     if (/^https?:\/\/\S+$/i.test(url)) {
       lines.push(`[image ${k}: ${url} — read with: canvas look ${url} <question>]`);
+      continue;
+    }
+    if (!principal) {
+      lines.push(`[image ${k}: not staged — this caller has no identity to own it]`);
       continue;
     }
     const decoded = decodeDataUrl(url);
@@ -682,10 +875,15 @@ export async function stageRequestImages(
       lines.push(`[image ${k}: ${decoded.data.byteLength} bytes exceeds ${max} — not staged]`);
       continue;
     }
+    if (decoded.data.byteLength > budget) {
+      lines.push(`[image ${k}: the request's images exceed ${max} bytes in total — not staged]`);
+      continue;
+    }
     if (!db || !engine.storage) {
       lines.push(`[image ${k}: no asset storage on this server — not staged]`);
       continue;
     }
+    budget -= decoded.data.byteLength;
     if (!canvasId) {
       const existing = db.getCanvasByName(canvasName);
       canvasId = existing?.id ?? crypto.randomUUID();
@@ -693,8 +891,11 @@ export async function stageRequestImages(
         db.createCanvas({
           id: canvasId,
           name: canvasName,
-          description: "Images sent with model-API requests, staged for the agents answering them.",
-          creatorName: author,
+          description:
+            "Images sent with this caller's model-API requests, staged for the agents answering them.",
+          scope: "entity",
+          scopeId: principal.ownerId,
+          creatorName: principal.name,
         });
       }
     }
@@ -706,12 +907,12 @@ export async function stageRequestImages(
     await engine.storage.put(storageKey, decoded.data, mime);
     db.createAsset({
       id: assetId,
-      entityName: author,
+      entityName: principal.name,
       filename,
       mimeType: mime,
       size: decoded.data.byteLength,
       storageKey,
-      metadata: { origin: "request", canvas: canvasName },
+      metadata: { origin: REQUEST_IMAGE_ORIGIN, canvas: canvasName, owner: principal.ownerId },
     });
     const maxY = db.getNodesByCanvas(canvasId).reduce((acc, n) => Math.max(acc, n.y + n.height), 0);
     const nodeId = crypto.randomUUID();
@@ -727,13 +928,14 @@ export async function stageRequestImages(
         mime,
         url: engine.storage.resolve(storageKey),
         title: `Request image ${k}`,
-        author,
+        author: principal.name,
+        origin: REQUEST_IMAGE_ORIGIN,
       },
-      creatorName: author,
+      creatorName: principal.name,
     });
     engine.logEvent({
       type: "canvas_publish",
-      entity: author as EntityId,
+      entity: principal.ownerId as EntityId,
       canvasId,
       nodeId,
       timestamp: Date.now(),

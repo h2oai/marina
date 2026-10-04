@@ -18,6 +18,7 @@ export interface AssetsStore {
   getAsset(id: string): AssetRow | undefined;
   getAssetsByEntity(entityName: string, limit?: number): AssetRow[];
   listAssets(opts?: { limit?: number; mime?: string }): AssetRow[];
+  listAssetsByOrigin(origin: string, before: number, limit: number): AssetRow[];
   deleteAsset(id: string): boolean;
 }
 
@@ -27,6 +28,7 @@ export const ASSETS_STORE_METHODS = [
   "getAsset",
   "getAssetsByEntity",
   "listAssets",
+  "listAssetsByOrigin",
   "deleteAsset",
 ] as const satisfies readonly (keyof AssetsStore)[];
 

@@ -6,6 +6,7 @@
 
 import { createHash } from "node:crypto";
 import type { Engine } from "../../engine/engine";
+import { stageRequestImages } from "../../engine/media/vision";
 import { getEndpointConfig } from "../model-endpoint";
 import { UnsupportedParameterError } from "../openai-errors";
 import { applyInjection, capturePassthruTranscript, type OpenAIMessage } from "../passthru-context";
@@ -25,6 +26,7 @@ import {
   passthruTraceOptions,
   passthruUpstreamHints,
   preparePassthru,
+  requestImagePrincipal,
 } from "./passthru";
 import {
   formatResponseRecord,
@@ -223,6 +225,21 @@ export async function handleResponsesCreate(
     const rejected = rejectUnsupportedForAgents(body as Record<string, unknown>);
     if (rejected) return rejected;
 
+    // Images ride to the agents the same way as on chat completions: staged
+    // on the caller's private inbox canvas, each named in the text by node id.
+    const imageParts = turn.messages
+      .filter((m) => m.role === "user" && Array.isArray(m.content))
+      .flatMap((m) => m.content as unknown[]);
+    let agentInput = userInput;
+    if (imageParts.some((p) => (p as { type?: unknown })?.type === "image_url")) {
+      const staged = await stageRequestImages(
+        engine,
+        imageParts,
+        requestImagePrincipal(engine, req, auth),
+      );
+      agentInput = [userInput, ...staged].filter(Boolean).join("\n");
+    }
+
     const opts: RouteOptions = {
       context: body.instructions ? `system: ${body.instructions}` : undefined,
       conversationId,
@@ -245,7 +262,7 @@ export async function handleResponsesCreate(
         const { stream, requestId } = routeToChannelStreaming(
           engine,
           model,
-          userInput,
+          agentInput,
           "responses",
           opts,
           {
@@ -263,7 +280,7 @@ export async function handleResponsesCreate(
           },
         });
       }
-      const result = await routeToChannel(engine, model, userInput, opts);
+      const result = await routeToChannel(engine, model, agentInput, opts);
       const id = newResponseId();
       const rec: ResponseRecord = {
         id,

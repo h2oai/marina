@@ -3078,6 +3078,10 @@ export class MarinaDB implements MarinaStores {
     return assetsDb.listAssets(this.db, opts);
   }
 
+  listAssetsByOrigin(origin: string, before: number, limit: number): AssetRow[] {
+    return assetsDb.listAssetsByOrigin(this.db, origin, before, limit);
+  }
+
   deleteAsset(id: string): boolean {
     return assetsDb.deleteAsset(this.db, id);
   }

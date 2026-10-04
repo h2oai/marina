@@ -6,7 +6,10 @@
 // prep + receipt, the trace/upstream hints handed to `proxyToUpstream`, the
 // response-cache hooks and the fire-and-forget transcript capture.
 
+import { createHash } from "node:crypto";
 import type { Engine } from "../../engine/engine";
+import type { RequestImagePrincipal } from "../../engine/media/vision";
+import { isLocalProfile } from "../../engine/trust-profile";
 import type { EntityId } from "../../types";
 import {
   encodeMemoryReceiptAttribute,
@@ -72,6 +75,40 @@ function maybePassthruIdentity(
   // existing entity — participates in the shared world.
   if (identity.shared) return undefined;
   return identity;
+}
+
+/** The caller's distinct passthru entity, if any (no injection, no capture):
+ *  attribution for surfaces such as `marina/verify` that proxy on its behalf. */
+export function passthruEntityId(
+  engine: Engine,
+  req: Request,
+  authResult?: PassthruAuthResult,
+): EntityId | undefined {
+  return maybePassthruIdentity(engine, req, authResult)?.entityId;
+}
+
+/**
+ * The principal that owns images staged from an agents-mode request: the
+ * caller's distinct entity (bound key / authorized name-map), else a stable id
+ * derived from the API key that matched (never the key itself), else — only
+ * for the open-API dev mode under the local profile — the local operator.
+ * Undefined otherwise: nothing is staged for an unidentified caller.
+ */
+export function requestImagePrincipal(
+  engine: Engine,
+  req: Request,
+  authResult?: PassthruAuthResult,
+): RequestImagePrincipal | undefined {
+  const identity = maybePassthruIdentity(engine, req, authResult);
+  if (identity) return { ownerId: identity.entityId, name: identity.name };
+  if (authResult?.matchedKey) {
+    const id = `model-key-${createHash("sha256").update(authResult.matchedKey).digest("hex").slice(0, 16)}`;
+    return { ownerId: id, name: id };
+  }
+  if (authResult?.openMode && isLocalProfile()) {
+    return { ownerId: "model-api-local", name: "model-api-local" };
+  }
+  return undefined;
 }
 
 /**
