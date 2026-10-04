@@ -23,6 +23,7 @@ import { Logger } from "../../engine/logger";
 import { lessonsBlock, recallAcross } from "../../learning/service";
 import type { RepairLabel } from "../../repair/output-repair";
 import { repairToolCallMessage } from "../../repair/tool-call-repair";
+import { anthropicAutoCacheEnabled } from "./anthropic-bridge";
 import {
   COST_USD_HEADER,
   errorJson,
@@ -122,30 +123,6 @@ function textOf(content: unknown): string {
 /** The most recent image parts the checker should see alongside the text review. */
 const REVIEW_MAX_IMAGES = 4;
 
-/**
- * The checker's user content: the text review, plus the conversation's most
- * recent image parts (user and tool messages) so a verifier of a visual task
- * can see what the proposer saw. Text-only conversations stay a plain string.
- */
-export function reviewContent(
-  review: string,
-  messages: Msg[],
-): string | Array<Record<string, unknown>> {
-  const images: Array<Record<string, unknown>> = [];
-  for (const m of messages) {
-    if (m.role !== "user" && m.role !== "tool") continue;
-    if (!Array.isArray(m.content)) continue;
-    for (const p of m.content) if (isImagePart(p)) images.push(p as Record<string, unknown>);
-  }
-  if (images.length === 0) return review;
-  const shown = images.slice(-REVIEW_MAX_IMAGES);
-  const note =
-    images.length > shown.length
-      ? `\n\n(The last ${shown.length} of ${images.length} images in the conversation follow.)`
-      : `\n\n(The conversation's ${shown.length} image${shown.length === 1 ? "" : "s"} follow${shown.length === 1 ? "s" : ""}.)`;
-  return [{ type: "text", text: review + note }, ...shown];
-}
-
 function clamp(s: string, n: number): string {
   return s.length <= n ? s : `${s.slice(0, n)} […+${s.length - n} chars]`;
 }
@@ -162,8 +139,24 @@ export function renderAssistant(m: Msg): string {
   return parts.join("\n") || "(empty)";
 }
 
-/** The checker's input: rules, tool catalogue, conversation, and the draft. */
-export function renderReview(messages: Msg[], tools: unknown[] | undefined, draft: Msg): string {
+// ─── The checker's request ───────────────────────────────────────────────────
+//
+// Laid out so its prefix is byte-identical from one turn of a conversation to
+// the next, and a provider prompt cache (Anthropic breakpoints, OpenAI's
+// automatic prefix cache) reads everything but the new tail:
+//
+//   system  CHECKER_SYSTEM                         (constant)
+//   user    [head]   rules + tool catalogue        (stable while the caller's are)
+//           [turn]…  one text part per message     (append-only, clamped per message)
+//           [images] the most recent images        (after the cached prefix)
+//           [tail]   lessons + the draft           (new every call)
+//
+// Lessons sit in the tail: they are recalled from the latest user message and
+// change when it does, so placing them earlier would invalidate the cached
+// conversation; the trade-off is that their ≤ 800 bytes are never cached.
+
+/** The checker's head: the rules and the tool catalogue (stable across turns). */
+export function renderReviewHead(messages: Msg[], tools: unknown[] | undefined): string {
   const system = messages
     .filter((m) => m.role === "system" || m.role === "developer")
     .map((m) => textOf(m.content))
@@ -175,27 +168,166 @@ export function renderReview(messages: Msg[], tools: unknown[] | undefined, draf
     })
     .filter(Boolean)
     .join("\n");
-  const turns = messages
-    .filter((m) => m.role !== "system" && m.role !== "developer")
-    .map((m) => {
-      if (m.role === "assistant")
-        return `ASSISTANT:\n${clamp(renderAssistant(m), REVIEW_MESSAGE_MAX_CHARS)}`;
-      if (m.role === "tool") {
-        return `TOOL RESULT${m.name ? ` (${m.name})` : ""}:\n${clamp(textOf(m.content), REVIEW_MESSAGE_MAX_CHARS)}`;
-      }
-      return `${(m.role ?? "user").toUpperCase()}:\n${clamp(textOf(m.content), REVIEW_MESSAGE_MAX_CHARS)}`;
-    })
-    .join("\n\n");
   return [
     system
       ? `RULES AND INSTRUCTIONS GIVEN TO THE ASSISTANT:\n${clamp(system, REVIEW_SYSTEM_MAX_CHARS)}`
       : "",
     toolLines ? `TOOLS AVAILABLE TO THE ASSISTANT:\n${toolLines}` : "",
-    `CONVERSATION SO FAR:\n${turns || "(none)"}`,
-    `DRAFT NEXT ASSISTANT MESSAGE (under review):\n${renderAssistant(draft)}`,
   ]
     .filter(Boolean)
     .join("\n\n");
+}
+
+/** One conversation message as a self-contained review chunk (deterministic). */
+export function renderTurn(m: Msg): string {
+  if (m.role === "assistant")
+    return `ASSISTANT:\n${clamp(renderAssistant(m), REVIEW_MESSAGE_MAX_CHARS)}`;
+  if (m.role === "tool") {
+    return `TOOL RESULT${m.name ? ` (${m.name})` : ""}:\n${clamp(textOf(m.content), REVIEW_MESSAGE_MAX_CHARS)}`;
+  }
+  return `${(m.role ?? "user").toUpperCase()}:\n${clamp(textOf(m.content), REVIEW_MESSAGE_MAX_CHARS)}`;
+}
+
+/** The conversation's chunks: the first carries the section label. Append-only. */
+export function renderTurns(messages: Msg[]): string[] {
+  const turns = messages
+    .filter((m) => m.role !== "system" && m.role !== "developer")
+    .map(renderTurn);
+  if (turns.length === 0) return ["CONVERSATION SO FAR:\n(none)"];
+  return turns.map((t, i) => (i === 0 ? `CONVERSATION SO FAR:\n${t}` : t));
+}
+
+/** The checker's tail: the draft under review. */
+export function renderDraft(draft: Msg): string {
+  return `DRAFT NEXT ASSISTANT MESSAGE (under review):\n${renderAssistant(draft)}`;
+}
+
+/** The checker's input as one text: rules, tool catalogue, conversation, and the draft. */
+export function renderReview(messages: Msg[], tools: unknown[] | undefined, draft: Msg): string {
+  return [renderReviewHead(messages, tools), ...renderTurns(messages), renderDraft(draft)]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+/** The conversation's most recent image parts (user and tool messages), and how many there were. */
+function recentImages(messages: Msg[]): { shown: Array<Record<string, unknown>>; total: number } {
+  const images: Array<Record<string, unknown>> = [];
+  for (const m of messages) {
+    if (m.role !== "user" && m.role !== "tool") continue;
+    if (!Array.isArray(m.content)) continue;
+    for (const p of m.content) if (isImagePart(p)) images.push(p as Record<string, unknown>);
+  }
+  return { shown: images.slice(-REVIEW_MAX_IMAGES), total: images.length };
+}
+
+function imagesNote(shown: number, total: number): string {
+  return total > shown
+    ? `(The last ${shown} of ${total} images in the conversation follow.)`
+    : `(The conversation's ${shown} image${shown === 1 ? "" : "s"} follow${shown === 1 ? "s" : ""}.)`;
+}
+
+const EPHEMERAL = { type: "ephemeral" } as const;
+
+/**
+ * The checker's messages. `cache` marks three breakpoints (CHECKER_SYSTEM, the
+ * head, the last conversation chunk) for an Anthropic checker; a request with
+ * no breakpoint and no image keeps the user content a single string whose
+ * prefix is equally stable (OpenAI-style automatic prefix caching).
+ */
+export function checkerMessages(input: {
+  messages: Msg[];
+  tools: unknown[] | undefined;
+  draft: Msg;
+  lessons?: string;
+  cache?: boolean;
+}): Array<Record<string, unknown>> {
+  const { messages, tools, draft, lessons, cache } = input;
+  const head = renderReviewHead(messages, tools);
+  const turns = renderTurns(messages);
+  const { shown, total } = recentImages(messages);
+  const tail = [lessons ?? "", renderDraft(draft)].filter(Boolean).join("\n\n");
+  const system = cache
+    ? {
+        role: "system",
+        content: [{ type: "text", text: CHECKER_SYSTEM, cache_control: EPHEMERAL }],
+      }
+    : { role: "system", content: CHECKER_SYSTEM };
+  if (!cache && shown.length === 0) {
+    // The same bytes as the parts below, joined: stable prefix, new tail.
+    return [system, { role: "user", content: [head, ...turns, tail].filter(Boolean).join("\n\n") }];
+  }
+  const text = (t: string, mark = false): Record<string, unknown> => ({
+    type: "text",
+    text: t,
+    ...(mark && cache ? { cache_control: EPHEMERAL } : {}),
+  });
+  const parts: Array<Record<string, unknown>> = [];
+  if (head) parts.push(text(head, true));
+  for (const [i, t] of turns.entries()) parts.push(text(t, i === turns.length - 1));
+  if (shown.length > 0) parts.push(text(imagesNote(shown.length, total)), ...shown);
+  parts.push(text(tail));
+  return [system, { role: "user", content: parts }];
+}
+
+/**
+ * The checker's user content when the review is one text: the text plus the
+ * conversation's most recent image parts (user and tool messages) so a
+ * verifier of a visual task can see what the proposer saw. Text-only
+ * conversations stay a plain string.
+ */
+export function reviewContent(
+  review: string,
+  messages: Msg[],
+): string | Array<Record<string, unknown>> {
+  const { shown, total } = recentImages(messages);
+  if (shown.length === 0) return review;
+  return [{ type: "text", text: `${review}\n\n${imagesNote(shown.length, total)}` }, ...shown];
+}
+
+// ─── Checker reasoning effort ────────────────────────────────────────────────
+
+/** `MARINA_VERIFY_CHECKER_EFFORT`: `inherit` (default) | `low` | `medium` | `high` | `off`. */
+export type CheckerEffortMode = "inherit" | "low" | "medium" | "high" | "off";
+
+export function checkerEffortMode(
+  env: Record<string, string | undefined> = process.env,
+): CheckerEffortMode {
+  const raw = env.MARINA_VERIFY_CHECKER_EFFORT?.trim().toLowerCase();
+  return raw === "low" || raw === "medium" || raw === "high" || raw === "off" ? raw : "inherit";
+}
+
+/** Body fields that carry a reasoning depth in the OpenAI shape (and the variants Marina translates). */
+const EFFORT_FIELDS = ["reasoning_effort", "reasoning", "thinking"] as const;
+
+/**
+ * The effort fields the checker call carries. `inherit` copies the caller's own
+ * (`reasoning_effort`, `reasoning`, `thinking`), top level first, then from a
+ * literal `extra_body` object; an explicit level sends `reasoning_effort`;
+ * `off` sends none (the checker model's default, no thinking for Claude). The
+ * upstream layer translates them per provider (Anthropic thinking/effort,
+ * Claude 5 sampling rules), exactly as for the proposer.
+ */
+export function checkerEffort(
+  body: Record<string, unknown>,
+  mode: CheckerEffortMode = checkerEffortMode(),
+): Record<string, unknown> {
+  if (mode === "off") return {};
+  if (mode !== "inherit") return { reasoning_effort: mode };
+  const extra =
+    body.extra_body && typeof body.extra_body === "object" && !Array.isArray(body.extra_body)
+      ? (body.extra_body as Record<string, unknown>)
+      : {};
+  const out: Record<string, unknown> = {};
+  for (const k of EFFORT_FIELDS) {
+    const v = body[k] !== undefined ? body[k] : extra[k];
+    if (v !== undefined && v !== null) out[k] = v;
+  }
+  return out;
+}
+
+/** Breakpoints only where they mean something: an Anthropic checker with auto-cache on. */
+function checkerCaches(checker: string): boolean {
+  return anthropicAutoCacheEnabled() && /(^|\/)~?anthropic\/|(^|\/)claude-/i.test(checker);
 }
 
 export const CHECKER_SYSTEM = [
@@ -635,6 +767,8 @@ export async function maybeVerifyChat(
   let cost = first.costUsd ?? 0;
   let verdictLabel = "approved";
   const rounds = verifyRounds();
+  const effort = checkerEffort(body);
+  const checkerCache = checkerCaches(spec.checker);
 
   // 2. Review (and up to `rounds` revisions).
   for (let round = 0; round < Math.max(1, rounds); round++) {
@@ -643,16 +777,14 @@ export async function maybeVerifyChat(
       const review = await callUpstream(
         engine,
         {
-          messages: [
-            { role: "system", content: CHECKER_SYSTEM },
-            {
-              role: "user",
-              content: reviewContent(
-                `${block ? `${block}\n\n` : ""}${renderReview(callerMessages, tools, draft)}`,
-                callerMessages,
-              ),
-            },
-          ],
+          ...effort,
+          messages: checkerMessages({
+            messages: callerMessages,
+            tools,
+            draft,
+            lessons: block,
+            cache: checkerCache,
+          }),
         },
         spec.checker,
         signal,
