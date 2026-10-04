@@ -480,7 +480,7 @@ export function codeCommand(deps: CodeDeps): CommandDef {
       "code external show",
       "code external unlink",
       "code files [path]",
-      "code handoff <notes> [to <agent>]",
+      "code handoff <notes> [to:<agent>]",
       "code handoff <text>",
       "code history [session_id]",
       "code lint",

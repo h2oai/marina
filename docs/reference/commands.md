@@ -1900,7 +1900,7 @@ Usage:
   code history [session_id]   Show recent coding events
   code plan <direction>       Store a plan artifact
   code summary <notes>        Store a summary artifact
-  code handoff <notes> [to <agent>] Store a handoff artifact; transfer the write lock when "to" given
+  code handoff <notes> [to:<agent>] Store a handoff artifact; to:<participant> also passes the write lock
   code decision <choice>      Store a decision artifact
   code steer <direction>      Record steering on the active session
   code exit                   Leave Code Mode
@@ -2168,13 +2168,13 @@ Effect: unknown.
 - `field-0` (`path`): text, optional group `option-0`.
 - Group `option-0`: `path`.
 
-### `code handoff <notes> [to <agent>]`
+### `code handoff <notes> [to:<agent>]`
 
 Effect: unknown.
 
 - `field-0` (`notes`): text, required.
-- `field-1` (`agent`): text, optional group `option-0`.
-- Group `option-0`: `to agent`.
+- `field-1` (`to`): text, optional group `option-0`.
+- Group `option-0`: `to:agent`.
 
 ### `code handoff <text>`
 
