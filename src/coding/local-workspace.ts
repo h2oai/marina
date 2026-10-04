@@ -17,6 +17,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { captureGitCandidate } from "./candidate";
 import { prepareCandidateBunDependencies } from "./candidate-dependencies";
 import type { ExecApprover } from "./exec-approver";
+import { CODE_RUN_HOME, hostGitArgv, hostGitEnv, isGitArgv } from "./host-git";
 import { preparationStepKind } from "./verification-plan";
 
 const DEFAULT_MAX_READ_BYTES = 64 * 1024;
@@ -25,7 +26,6 @@ const DEFAULT_MAX_SEARCH_RESULTS = 80;
 const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
 const DEFAULT_RUN_TIMEOUT_MS = 120_000;
 const MAX_RUN_TIMEOUT_MS = 300_000;
-const CODE_RUN_HOME = join(tmpdir(), "marina-code-home");
 
 const SKIP_DIRS = new Set([".git", ".turbo", ".vite", "coverage", "dist", "node_modules", "tmp"]);
 const SHELL_METACHARACTERS = /[;&|`$()><\n\r\\]/;
@@ -1214,12 +1214,18 @@ export async function runWorkspaceCommand(
 ): Promise<Omit<WorkspaceRunResult, "command" | "durationMs">> {
   assertHostExecAllowed(hostExecForbidden); // chokepoint: telnet-origin never spawns
   mkdirSync(CODE_RUN_HOME, { recursive: true });
-  const env: Record<string, string> = {
-    ...CODE_RUN_ENV,
-    PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
-    HOME: CODE_RUN_HOME,
-    ...environment,
-  };
+  // Host git never honours repository-planted fsmonitor / hooks / diff drivers
+  // (src/coding/host-git.ts); everything else gets the scrubbed Code Mode env.
+  const git = isGitArgv(cmd);
+  const argv = git ? hostGitArgv(cmd) : cmd;
+  const env: Record<string, string> = git
+    ? hostGitEnv(environment)
+    : {
+        ...CODE_RUN_ENV,
+        PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+        HOME: CODE_RUN_HOME,
+        ...environment,
+      };
 
   let timedOut = false;
   let exitCode = -1;
@@ -1229,7 +1235,7 @@ export async function runWorkspaceCommand(
 
   try {
     const grouped = process.platform !== "win32";
-    const proc = Bun.spawn(cmd, {
+    const proc = Bun.spawn(argv, {
       cwd,
       env,
       stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
@@ -1310,16 +1316,32 @@ export async function runWorkspaceCommand(
   };
 }
 
-/** Capture a short host command's output (git diff, rg) under the host-exec chokepoint. */
+/**
+ * Capture a short host command's output (git diff, rg) under the host-exec
+ * chokepoint. The child never inherits the server environment: git gets the
+ * hardened argv and env (src/coding/host-git.ts), anything else the scrubbed
+ * Code Mode env plus `environment` (e.g. the container runtime CLI's settings).
+ */
 export async function runCapture(
   cmd: string[],
   cwd: string,
   maxBytes: number,
   hostExecForbidden = false,
+  environment: Record<string, string> = {},
 ): Promise<{ content: string; truncated: boolean; exitCode: number }> {
   assertHostExecAllowed(hostExecForbidden); // chokepoint: telnet-origin never spawns
+  const git = isGitArgv(cmd);
+  const argv = git ? hostGitArgv(cmd) : cmd;
+  const env: Record<string, string> = git
+    ? hostGitEnv(environment)
+    : {
+        ...CODE_RUN_ENV,
+        PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+        HOME: CODE_RUN_HOME,
+        ...environment,
+      };
   try {
-    const proc = Bun.spawn(cmd, { cwd, stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawn(argv, { cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
     const [exitCode, stdout, stderr] = await Promise.all([
       proc.exited,
       new Response(proc.stdout).text(),
