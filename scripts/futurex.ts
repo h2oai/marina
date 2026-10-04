@@ -61,6 +61,7 @@ import {
   submissionBody,
   submissionFileName,
 } from "../benchmarks/futurex/submission";
+import { attachCliSpendLedger } from "../src/engine/cli-spend-ledger";
 import { durableLessonStore, type LessonStore, retryingMemoryRun } from "../src/forecast/lessons";
 import {
   dueRun,
@@ -646,6 +647,14 @@ function statusCmd(): number {
 }
 
 async function main(): Promise<number> {
+  // Every model call counts in the world database's daily spend ledger (and
+  // MARINA_SPEND_SCOPE's), shared with the server and every other run on it,
+  // so an hourly timer cannot spend a fresh cap each invocation.
+  if (cmd !== "fetch" && cmd !== "status") {
+    attachCliSpendLedger(`bun run futurex ${cmd}`, {
+      dbPath: process.env.DB_PATH || (values["no-ledger"] ? undefined : "marina.db"),
+    });
+  }
   switch (cmd) {
     case "fetch":
       return fetchCmd();

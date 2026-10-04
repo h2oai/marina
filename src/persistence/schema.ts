@@ -444,6 +444,23 @@ CREATE TRIGGER benchmark_run_regroups_no_update BEFORE UPDATE ON benchmark_run_r
 BEGIN SELECT RAISE(ABORT, 'benchmark_run_regroups is append-only'); END;
 `,
   },
+  // Budget scopes (src/engine/spend-ledger.ts): a process with
+  // MARINA_SPEND_SCOPE=<name> records its dollars here as well as in
+  // spend_daily (same transaction), capped by MARINA_SPEND_SCOPE_CAP_USD.
+  {
+    version: 156,
+    sql: `
+CREATE TABLE spend_scope_daily (
+  day TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  source TEXT NOT NULL CHECK (source IN ('model_api', 'agent', 'decision', 'forecast', 'media')),
+  cost_usd REAL NOT NULL DEFAULT 0,
+  calls INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (day, scope, source)
+);
+`,
+  },
 ];
 
 /** Migration 143 body — self-contained so later edits to db-notes never change it. */

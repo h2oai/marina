@@ -464,9 +464,17 @@
 
 # ── Spend limits and failure breaker ─────────────────────────────────────────
 
-# Daily USD cap (UTC day, persisted) on everything this world pays upstream: /v1 passthru, agent turns, decision backends, forecasts and priced media jobs. At the cap /v1 returns 429 spend_cap_reached, decisions, forecasts and priced media jobs are refused and agents pause until 00:00 UTC. Default 50; 0 or off = no cap; an invalid value keeps the default. `readiness` shows today's spend.
+# Daily USD cap (UTC day, persisted) on everything this world pays upstream: /v1 passthru, agent turns, decision backends, forecasts and priced media jobs. At the cap /v1 returns 429 spend_cap_reached, decisions, forecasts and priced media jobs are refused and agents pause until 00:00 UTC. Default 50; 0 or off = no cap; an invalid value keeps the default. `readiness` shows today's spend. The total is shared by every process on the same database: command-line runs (`bun run futurex`, `forecast`, `arena`, `metaculus`, `forecastbench`, …) attach the DB_PATH ledger and are checked against the persisted day total, so each run does not get a fresh cap. A command-line run without a database counts per process and warns once.
 # @protected
 # MARINA_DAILY_SPEND_CAP_USD=50
+
+# Optional budget scope for this process (letters, digits, `.`, `_`, `-`, `:`; at most 64; case-insensitive). Its spend is recorded under the scope as well as in the world total, and the process is refused when EITHER its scope cap OR MARINA_DAILY_SPEND_CAP_USD is reached, so a scope only narrows the budget. Use one scope per job, for example a live watcher and a backtest. An invalid name refuses all spend. `readiness` lists today's scopes.
+# @protected
+# MARINA_SPEND_SCOPE=futurex-live
+
+# The daily USD cap for MARINA_SPEND_SCOPE (UTC day, persisted). Default 50; 0 or off = no scope cap (the world cap still applies); an invalid value keeps the default.
+# @protected
+# MARINA_SPEND_SCOPE_CAP_USD=50
 
 # Daily cap a World Collective child world starts with (default 50, never above the parent's cap; 0 or off = the parent's cap).
 # @protected

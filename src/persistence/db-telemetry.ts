@@ -654,12 +654,60 @@ export interface DailySpendRow {
   calls: number;
 }
 
-export function addDailySpend(db: Database, day: string, source: string, usd: number): void {
-  db.query(
-    `INSERT INTO spend_daily (day, source, cost_usd, calls, updated_at) VALUES (?, ?, ?, 1, ?)
-     ON CONFLICT(day, source) DO UPDATE SET
-       cost_usd = cost_usd + excluded.cost_usd, calls = calls + 1, updated_at = excluded.updated_at`,
-  ).run(day, source, usd, Date.now());
+export interface ScopeDailySpendRow extends DailySpendRow {
+  scope: string;
+}
+
+/**
+ * Add `usd` to the day's world total and, when a budget scope is given, to the
+ * scope's total (migration 156) — both upserts in ONE immediate transaction,
+ * so every process sharing the database (WAL, busy timeout) sees both or
+ * neither, and concurrent writers serialize instead of losing an increment.
+ */
+export function addDailySpend(
+  db: Database,
+  day: string,
+  source: string,
+  usd: number,
+  scope?: string,
+): void {
+  const now = Date.now();
+  db.transaction(() => {
+    db.query(
+      `INSERT INTO spend_daily (day, source, cost_usd, calls, updated_at) VALUES (?, ?, ?, 1, ?)
+       ON CONFLICT(day, source) DO UPDATE SET
+         cost_usd = cost_usd + excluded.cost_usd, calls = calls + 1, updated_at = excluded.updated_at`,
+    ).run(day, source, usd, now);
+    if (scope) {
+      db.query(
+        `INSERT INTO spend_scope_daily (day, scope, source, cost_usd, calls, updated_at)
+         VALUES (?, ?, ?, ?, 1, ?)
+         ON CONFLICT(day, scope, source) DO UPDATE SET
+           cost_usd = cost_usd + excluded.cost_usd, calls = calls + 1,
+           updated_at = excluded.updated_at`,
+      ).run(day, scope, source, usd, now);
+    }
+  }).immediate();
+}
+
+/** The day's per-scope rows, for one scope or every scope. */
+export function getScopeDailySpend(
+  db: Database,
+  day: string,
+  scope?: string,
+): ScopeDailySpendRow[] {
+  const columns = "day, scope, source, cost_usd, calls";
+  return (
+    scope === undefined
+      ? db
+          .query(`SELECT ${columns} FROM spend_scope_daily WHERE day = ? ORDER BY scope, source`)
+          .all(day)
+      : db
+          .query(
+            `SELECT ${columns} FROM spend_scope_daily WHERE day = ? AND scope = ? ORDER BY source`,
+          )
+          .all(day, scope)
+  ) as ScopeDailySpendRow[];
 }
 
 export function getDailySpend(db: Database, day: string): DailySpendRow[] {

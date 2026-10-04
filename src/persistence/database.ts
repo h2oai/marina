@@ -2020,12 +2020,16 @@ export class MarinaDB implements MarinaStores {
     return telemetryDb.listAutonomyPulse(this.reader, sinceMs);
   }
 
-  addDailySpend(day: string, source: string, usd: number): void {
-    telemetryDb.addDailySpend(this.db, day, source, usd);
+  addDailySpend(day: string, source: string, usd: number, scope?: string): void {
+    telemetryDb.addDailySpend(this.db, day, source, usd, scope);
   }
 
   getDailySpend(day: string): telemetryDb.DailySpendRow[] {
     return telemetryDb.getDailySpend(this.db, day);
+  }
+
+  getScopeDailySpend(day: string, scope?: string): telemetryDb.ScopeDailySpendRow[] {
+    return telemetryDb.getScopeDailySpend(this.db, day, scope);
   }
 
   getPrimitiveUsageLeaderboard(limit = 20): PrimitiveUsageSummary[] {
@@ -3076,6 +3080,10 @@ export class MarinaDB implements MarinaStores {
 
   listAssets(opts?: { limit?: number; mime?: string }): AssetRow[] {
     return assetsDb.listAssets(this.db, opts);
+  }
+
+  listAssetsByOrigin(origin: string, before: number, limit: number): AssetRow[] {
+    return assetsDb.listAssetsByOrigin(this.db, origin, before, limit);
   }
 
   deleteAsset(id: string): boolean {

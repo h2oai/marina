@@ -17,11 +17,13 @@ import {
   metaculusClient,
 } from "../benchmarks/metaculus/api";
 import {
+  ATTEMPT_BENCHMARK,
   BENCHMARK,
   forecastPass,
   OUTCOME_BENCHMARK,
   outcomeScore,
   resolvePass,
+  spentToday,
 } from "../benchmarks/metaculus/bot";
 import { type CdfQuestion, continuousCdf, quantileOf } from "../benchmarks/metaculus/cdf";
 import { commentFor, payloadFor, requestFor, specFor } from "../benchmarks/metaculus/map";
@@ -292,6 +294,47 @@ describe("metaculus: the bot pass", () => {
     expect(r.failed[0]?.error).toContain("no probability");
     expect(sent.forecasts).toHaveLength(0);
     expect(db.listExternalSubmissions(BENCHMARK)).toHaveLength(0);
+    db.close();
+  });
+
+  it("counts paid-but-unfiled forecasts against the cap and does not re-forecast them today", async () => {
+    const db = new MarinaDB(":memory:");
+    const { client } = recordingClient([post(1, binary), post(2, multiple)]);
+    let calls = 0;
+    const opts = {
+      client,
+      db,
+      forecast: async (req: { question: string }) => {
+        calls++;
+        if (req.question === binary.title) {
+          return answerFor(binary, { distribution: undefined, caveat: "no run", costUsd: 0.5 });
+        }
+        throw new Error("upstream 500 after research");
+      },
+      tournaments: ["t"],
+      config,
+      dailyCapUsd: 10,
+    };
+    const first = await forecastPass(opts);
+    expect(first.failed).toHaveLength(2);
+    expect(calls).toBe(2);
+    // The unpostable answer's $0.50 is the bot's spend today, though nothing was filed.
+    expect(spentToday(db, new Date())).toBeCloseTo(0.5, 9);
+    expect(db.listExternalSubmissions(ATTEMPT_BENCHMARK)).toHaveLength(2);
+    // The next pass the same day pays for neither again.
+    const second = await forecastPass(opts);
+    expect(calls).toBe(2);
+    expect(second.skipped.map((s) => s.reason)).toEqual([
+      "failed earlier today; retried tomorrow",
+      "failed earlier today; retried tomorrow",
+    ]);
+    // A cap below what was already spent on failures stops the pass.
+    const capped = await forecastPass({
+      ...opts,
+      client: recordingClient([post(3, numeric)]).client,
+      dailyCapUsd: 0.4,
+    });
+    expect(capped.stoppedBy).toContain("daily cap");
     db.close();
   });
 });

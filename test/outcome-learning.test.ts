@@ -6,6 +6,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DecisionProvider, DecisionRequest } from "../src/decisions/types";
+import { resetSpendLedgerForTests, spentTodayUsd } from "../src/engine/spend-ledger";
 import {
   candidateFromOutcome,
   judgeLesson,
@@ -318,8 +319,12 @@ describe("outcome learning: wiring", () => {
           judge: judge({}),
         }),
       ).toBe(true);
+      resetSpendLedgerForTests();
       noteOutcome(db, outcome({ detail: "pytest failed at collection" }));
       await settleOutcomes(db);
+      // The judge reported $0.0001; a real judge records it where it is spent
+      // (metered() or /v1), so the learning service must not record it again.
+      expect(spentTodayUsd()).toBe(0);
       const got = await recallLessons(db, "code", "python test pytest", {
         env: {} as NodeJS.ProcessEnv,
         asOf: "2026-12-01T00:00:00.000Z",

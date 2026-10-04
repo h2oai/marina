@@ -11,6 +11,8 @@ import {
   getLastRetentionReport,
   parseRetentionOverrides,
   parseRetentionValue,
+  pruneRequestImageBlobs,
+  REQUEST_IMAGE_KEEP_MS,
   RETENTION_DEFAULTS,
   RETENTION_POLICIES,
   RETENTION_TICK_PHASE,
@@ -386,5 +388,49 @@ describe("retention pass", () => {
         (r) => r.job_id,
       ),
     ).toEqual(["j_new"]);
+  });
+
+  it("ages out staged request images only: blobs first, then asset rows and inbox nodes", async () => {
+    const old = now - REQUEST_IMAGE_KEEP_MS - DAY;
+    const young = now - DAY;
+    const asset = (id: string, at: number, origin?: string) => {
+      raw.run(
+        "INSERT INTO assets (id, entity_name, filename, mime_type, size, storage_key, metadata, created_at) VALUES (?, 'k', 'f.png', 'image/png', 1, ?, ?, ?)",
+        [id, `${id}.png`, JSON.stringify(origin ? { origin } : {}), at],
+      );
+    };
+    asset("req_old", old, "request");
+    asset("req_new", young, "request");
+    asset("user_old", old);
+    raw.run(
+      "INSERT INTO canvases (id, name, scope, scope_id, creator_name, created_at, updated_at) VALUES ('cv', 'inbox:k', 'entity', 'k', 'k', ?, ?)",
+      [old, old],
+    );
+    const node = (id: string, at: number, data: Record<string, unknown>) =>
+      raw.run(
+        "INSERT INTO canvas_nodes (id, canvas_id, type, data, creator_name, created_at, updated_at) VALUES (?, 'cv', 'image', ?, 'k', ?, ?)",
+        [id, JSON.stringify(data), at, at],
+      );
+    node("n_req_old", old, { origin: "request" });
+    node("n_req_new", young, { origin: "request" });
+    node("n_user_old", old, {});
+
+    const deleted: string[] = [];
+    const storage = {
+      delete: async (key: string) => {
+        deleted.push(key);
+        return true;
+      },
+    };
+    // `assets=0` keeps them, blobs included.
+    expect(await pruneRequestImageBlobs(db, storage, { now, overridesEnv: "assets=0" })).toBe(0);
+    expect(await pruneRequestImageBlobs(db, storage, { now, overridesEnv: "" })).toBe(1);
+    expect(deleted).toEqual(["req_old.png"]);
+    const result = runRetentionPass(db, { now, overridesEnv: "" });
+    expect(result.deleted.canvas_nodes).toBe(1);
+    const ids = (table: string) =>
+      (raw.query(`SELECT id FROM ${table} ORDER BY id`).all() as { id: string }[]).map((r) => r.id);
+    expect(ids("assets")).toEqual(["req_new", "user_old"]);
+    expect(ids("canvas_nodes")).toEqual(["n_req_new", "n_user_old"]);
   });
 });

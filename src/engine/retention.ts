@@ -67,6 +67,10 @@ export const RETENTION_TICK_PHASE = 2100;
 
 export const RETENTION_OVERRIDES_ENV = "MARINA_RETENTION_OVERRIDES";
 
+/** How long images staged from model-API requests are kept (`assets` / `canvas_nodes`). */
+export const REQUEST_IMAGE_KEEP_MS = 7 * DAY_MS;
+const REQUEST_IMAGE_ASSET_WHERE = "json_extract(metadata, '$.origin') = 'request'";
+
 /** Join-derived timestamp for a table with no time column of its own. */
 const ASSISTANCE_ACTION_TIME =
   "(SELECT j.created_at FROM memory_assistance_jobs j WHERE j.id = memory_assistance_actions.job_id)";
@@ -132,6 +136,22 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     keepRows: EVENT_LOG_DB_RETENTION,
     kind: "telemetry",
     note: "engine event log; row-bounded (MARINA_EVENT_RETENTION), backs traces",
+  },
+  {
+    table: "assets",
+    timeColumn: "created_at",
+    kind: "telemetry",
+    keepMs: REQUEST_IMAGE_KEEP_MS,
+    where: REQUEST_IMAGE_ASSET_WHERE,
+    note: "ONLY images staged from model-API requests (metadata.origin = request); their blobs are deleted first by pruneRequestImageBlobs",
+  },
+  {
+    table: "canvas_nodes",
+    timeColumn: "created_at",
+    kind: "telemetry",
+    keepMs: REQUEST_IMAGE_KEEP_MS,
+    where: "json_extract(data, '$.origin') = 'request'",
+    note: "ONLY the inbox-canvas nodes of staged model-API request images",
   },
   // ── ledgers: operational history worth a quarter ──
   {
@@ -238,6 +258,12 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     timeColumn: "updated_at",
     kind: "ledger",
     note: "per-world daily upstream spend by source, behind MARINA_DAILY_SPEND_CAP_USD",
+  },
+  {
+    table: "spend_scope_daily",
+    timeColumn: "updated_at",
+    kind: "ledger",
+    note: "daily upstream spend per MARINA_SPEND_SCOPE budget, behind MARINA_SPEND_SCOPE_CAP_USD",
   },
   {
     table: "autonomy_pulse",
@@ -572,4 +598,35 @@ export function describeRetentionPolicies(
     overridden: p.kind !== "append-only" && overrides.has(p.table),
     ...(p.note ? { note: p.note } : {}),
   }));
+}
+
+// ─── Request-image blobs ────────────────────────────────────────────────────
+
+/** Blobs removed per pass; the remainder is picked up next hour. */
+export const REQUEST_IMAGE_BLOB_BATCH = 500;
+
+/**
+ * Delete the stored bytes (then the asset row) of request images past the
+ * `assets` window, so the row retention never orphans a blob. Honors the same
+ * `MARINA_RETENTION_OVERRIDES` entry (`assets=0` keeps them). Runs before
+ * `runRetentionPass` in the hourly job; returns the number removed.
+ */
+export async function pruneRequestImageBlobs(
+  db: MarinaDB,
+  storage: { delete(key: string): Promise<boolean> } | undefined,
+  opts: { now?: number; overridesEnv?: string } = {},
+): Promise<number> {
+  if (!storage || !db.tableExists("assets")) return 0;
+  const { overrides } = parseRetentionOverrides(
+    opts.overridesEnv ?? process.env[RETENTION_OVERRIDES_ENV],
+  );
+  const policy = effectivePolicies(overrides).find((p) => p.table === "assets");
+  if (!policy || policy.disabled || policy.effectiveKeepMs === undefined) return 0;
+  const before = (opts.now ?? Date.now()) - policy.effectiveKeepMs;
+  let removed = 0;
+  for (const asset of db.listAssetsByOrigin("request", before, REQUEST_IMAGE_BLOB_BATCH)) {
+    await storage.delete(asset.storage_key).catch(() => false);
+    if (db.deleteAsset(asset.id)) removed++;
+  }
+  return removed;
 }

@@ -57,6 +57,7 @@ export const EXPORT_TABLES = [
   "challenge_outcomes",
   "autonomy_pulse",
   "spend_daily",
+  "spend_scope_daily",
   "economic_adapters",
   "simulation_manifests",
   "simulation_runs",

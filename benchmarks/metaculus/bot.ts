@@ -23,7 +23,8 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { dailyCapRefusal, utcDay } from "../../src/engine/spend-ledger";
+import { SpendGuard } from "../../src/engine/spend-guard";
+import { utcDay } from "../../src/engine/spend-ledger";
 import type { TypedForecastAnswer } from "../../src/forecast/typed";
 import type { Outcome } from "../../src/learning/outcomes";
 import type { ExternalSubmissionRow } from "../../src/persistence/db-benchmarks";
@@ -42,6 +43,14 @@ type Ledger = Pick<MarinaStores, "recordExternalSubmission" | "listExternalSubmi
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 export const questionKey = (questionId: number) => sha256(`metaculus:${questionId}`);
 const outcomeKey = (questionId: number) => sha256(`metaculus-outcome:${questionId}`);
+/**
+ * A paid forecast that was not filed (failed, unpostable, or a dry run) — one
+ * row per question per UTC day, so its spend counts against the bot's cap and
+ * a failed question is not paid for again until the next day.
+ */
+export const ATTEMPT_BENCHMARK = "metaculus-attempt";
+const attemptKey = (questionId: number, day: string) =>
+  sha256(`metaculus-attempt:${questionId}:${day}`);
 
 /** What a recorded forecast keeps (numbers only; the question text stays on Metaculus). */
 export interface ForecastMeta {
@@ -88,13 +97,23 @@ export interface PassResult {
   stoppedBy?: string;
 }
 
-/** This bot's spend today, from its own records. */
+/** This bot's spend today, from its own records: filed forecasts and paid attempts. */
 export function spentToday(db: Ledger, now: Date): number {
   const day = utcDay(now.getTime());
-  return db
-    .listExternalSubmissions(BENCHMARK, 1_000)
+  return [BENCHMARK, ATTEMPT_BENCHMARK]
+    .flatMap((b) => db.listExternalSubmissions(b, 1_000))
     .filter((r) => utcDay(r.created_at) === day)
     .reduce((s, r) => s + (r.cost_usd ?? 0), 0);
+}
+
+/** Questions that already failed after a paid forecast today (no retry before tomorrow). */
+function failedToday(db: Ledger, day: string): Set<string> {
+  return new Set(
+    db
+      .listExternalSubmissions(ATTEMPT_BENCHMARK, 10_000)
+      .filter((r) => r.variant !== "dry-run" && utcDay(r.created_at) === day)
+      .map((r) => r.file_sha256),
+  );
 }
 
 function recorded(db: Ledger): Map<string, ExternalSubmissionRow> {
@@ -107,7 +126,42 @@ export async function forecastPass(opts: PassOptions): Promise<PassResult> {
   const cap = opts.dailyCapUsd ?? 10;
   const result: PassResult = { open: 0, forecast: 0, skipped: [], failed: [], costUsd: 0 };
   const done = recorded(opts.db);
-  let spent = spentToday(opts.db, now());
+  // The bot's own day budget (filed forecasts + paid attempts, persisted) and the world's caps.
+  const guard = new SpendGuard({
+    label: "metaculus daily cap",
+    budgetUsd: cap,
+    spentUsd: spentToday(opts.db, now()),
+    reserveFactor: 0,
+    env: opts.env ?? process.env,
+    now: () => now().getTime(),
+  });
+  const day = utcDay(now().getTime());
+  const failedEarlier = failedToday(opts.db, day);
+  /** Record a paid forecast that was not filed: its cost counts, and a failure is not retried today. */
+  const attempt = (qid: number, costUsd: number, reason: string, kind: "failed" | "dry-run") => {
+    if (costUsd <= 0 && kind === "dry-run") return;
+    try {
+      opts.db.recordExternalSubmission({
+        benchmark: ATTEMPT_BENCHMARK,
+        batch_ref: day,
+        variant: kind,
+        identity_json: JSON.stringify(ATTRIBUTION),
+        file_name: `question/${qid}`,
+        // A failure is one row per question per day; every dry run counts its own spend.
+        file_sha256:
+          kind === "failed"
+            ? attemptKey(qid, day)
+            : sha256(`metaculus-dry-run:${qid}:${now().getTime()}:${Math.random()}`),
+        items: 1,
+        answered: 0,
+        cost_usd: costUsd,
+        meta_json: JSON.stringify({ questionId: qid, reason: reason.slice(0, 300) }),
+        created_at: now().getTime(),
+      });
+    } catch (err) {
+      log(`  attempt for q${qid} not recorded: ${(err as Error).message.slice(0, 200)}`);
+    }
+  };
 
   const candidates: Array<{ post: MetaculusPost; tournament: string | number }> = [];
   for (const t of opts.tournaments) {
@@ -124,16 +178,17 @@ export async function forecastPass(opts: PassOptions): Promise<PassResult> {
   for (const { post, tournament } of candidates) {
     const qid = post.question!.id;
     if (done.has(questionKey(qid))) continue;
+    if (failedEarlier.has(attemptKey(qid, day))) {
+      result.skipped.push({ questionId: qid, reason: "failed earlier today; retried tomorrow" });
+      continue;
+    }
     if (opts.limit !== undefined && result.forecast >= opts.limit) break;
-    const worldCap = dailyCapRefusal(opts.env ?? process.env, now().getTime());
-    if (worldCap) {
-      result.stoppedBy = worldCap;
+    const stop = guard.stopReason();
+    if (stop) {
+      result.stoppedBy = stop;
       break;
     }
-    if (spent >= cap) {
-      result.stoppedBy = `metaculus daily cap reached ($${spent.toFixed(2)} ≥ $${cap.toFixed(2)})`;
-      break;
-    }
+    let paid: number | undefined;
     try {
       // The list may omit our own forecasts; the detail never does.
       const detail = await opts.client.post(post.id);
@@ -147,15 +202,16 @@ export async function forecastPass(opts: PassOptions): Promise<PassResult> {
         result.skipped.push({ questionId: qid, reason: `unsupported ${q.type}` });
         continue;
       }
+      paid = 0; // from here on, a failure may have spent money
       const answer = await opts.forecast(req);
-      spent += answer.costUsd;
+      paid = answer.costUsd;
+      guard.record(answer.costUsd);
       result.costUsd += answer.costUsd;
       const made = payloadFor(q, answer);
       if ("skip" in made) {
-        result.failed.push({
-          questionId: qid,
-          error: `${made.skip}${answer.caveat ? ` (${answer.caveat})` : ""}`,
-        });
+        const error = `${made.skip}${answer.caveat ? ` (${answer.caveat})` : ""}`;
+        result.failed.push({ questionId: qid, error });
+        attempt(qid, answer.costUsd, error, "failed");
         continue;
       }
       const comment = commentFor(q, answer, made.payload, opts.config.description);
@@ -172,6 +228,7 @@ export async function forecastPass(opts: PassOptions): Promise<PassResult> {
           ),
         );
         log(`  [dry] q${qid} ${q.type} → ${summary(meta)} · $${answer.costUsd.toFixed(3)}`);
+        attempt(qid, answer.costUsd, "dry run", "dry-run");
       } else {
         await opts.client.forecast(made.payload);
         await opts.client.comment(post.id, comment);
@@ -192,7 +249,10 @@ export async function forecastPass(opts: PassOptions): Promise<PassResult> {
       }
       result.forecast++;
     } catch (err) {
-      result.failed.push({ questionId: qid, error: (err as Error).message.slice(0, 300) });
+      const error = (err as Error).message.slice(0, 300);
+      result.failed.push({ questionId: qid, error });
+      // A failure after the forecaster ran (it threw, or posting failed) was paid for.
+      if (paid !== undefined) attempt(qid, paid, error, "failed");
     }
   }
   return result;

@@ -15,6 +15,9 @@ one-shot coding entry point (`marina -p "<task>" <dir>`, see [Coding](coding.md)
 4. **Patch:** the working-tree change, including new files, is collected as `model_patch`.
 5. **Trajectory and cost:** the streamed session, plus the session's Marina database (every turn,
    tool call and spend row), is kept as the trajectory. Cost is the session's `spend_daily` total.
+   Each session's daily spend cap is $25. With `run --max-usd X`, the run's total, including attempts
+   already recorded, is capped at X instead: every attempt gets an even share of what is left as
+   its session's cap (`SpendGuard.share`), and no attempt starts once X is spent.
 6. **Scoring:** the official SWE-bench harness, run unmodified.
 7. **Ledger:** the scored run is filed into the benchmark ledger in a replicate group, so `benchmark
    compare`, `leaderboard` and `replicates` rank it with everything else Marina has measured.

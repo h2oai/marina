@@ -72,7 +72,7 @@ import { computeReadiness } from "./readiness";
 import { RoomSandbox } from "./room-sandbox";
 import { compileCommandModule, compileRoomModule } from "./sandbox";
 import { ShellRuntime } from "./shell-runtime";
-import { attachSpendLedger } from "./spend-ledger";
+import { attachSpendLedger, dbSpendSink } from "./spend-ledger";
 import { registerTickJobs } from "./tick-jobs";
 import { type TickJobStatus, TickScheduler } from "./tick-scheduler";
 
@@ -266,14 +266,16 @@ export class Engine {
       // Daily spend ledger: this world's upstream dollars, persisted by day, so
       // MARINA_DAILY_SPEND_CAP_USD survives a restart (src/engine/spend-ledger.ts).
       const spendDb = this.db;
+      // Command-line processes on the same DB_PATH attach the same ledger, so
+      // the day's total is shared across processes (re-read on every check).
       spendDb.onClose(
-        attachSpendLedger({
-          add: (day, source, usd) =>
+        attachSpendLedger(
+          dbSpendSink(spendDb, (error) =>
             tryLog(this.logger, "spend", "Daily spend not recorded", () => {
-              spendDb.addDailySpend(day, source, usd);
+              throw error;
             }),
-          totalFor: (day) => spendDb.getDailySpend(day).reduce((sum, row) => sum + row.cost_usd, 0),
-        }),
+          ),
+        ),
       );
 
       // Benchmark runner — spawns the harness subprocess + persists runs

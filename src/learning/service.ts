@@ -39,7 +39,6 @@ import { chatClassifierProvider } from "../decisions/providers";
 import type { DecisionProvider } from "../decisions/types";
 import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
-import { recordSpend } from "../engine/spend-ledger";
 import { residentMemoryOperation } from "../memory/resident-service";
 import type { MarinaDB } from "../persistence/database";
 import type { MemoryOperationRequest } from "../sdk/memory-operations";
@@ -325,7 +324,11 @@ async function drain(a: Armed, env: NodeJS.ProcessEnv): Promise<void> {
         sink: a.sink,
         ...(a.writer ? { writer: a.writer } : {}),
         ...(judge ? { judge } : {}),
-        onSpend: (usd) => recordSpend("decision", usd),
+        // No onSpend: every judge here already records its own spend where it
+        // leaves Marina — a configured backend through `metered()`
+        // (src/decisions/config.ts), Marina engines and the fallback classifier
+        // through this Marina's `/v1` passthru. Recording the verdict's cost
+        // again would count each dollar twice.
       },
       batch,
       { maxOutcomes: batch.length, concurrency: 2 },

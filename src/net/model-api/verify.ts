@@ -23,12 +23,16 @@ import { Logger } from "../../engine/logger";
 import { lessonsBlock, recallAcross } from "../../learning/service";
 import type { RepairLabel } from "../../repair/output-repair";
 import { repairToolCallMessage } from "../../repair/tool-call-repair";
+import type { EntityId } from "../../types";
+import { getEndpointConfig } from "../model-endpoint";
 import { anthropicAutoCacheEnabled } from "./anthropic-bridge";
+import { passthruEntityId } from "./passthru";
 import {
   COST_USD_HEADER,
   errorJson,
   generateRequestId,
   json,
+  type PassthruAuthResult,
   requestTrace,
   unsupportedParam,
 } from "./shared";
@@ -61,6 +65,7 @@ export interface VerifyModelSpec {
 export function parseVerifyModel(
   model: string,
   env: Record<string, string | undefined> = process.env,
+  defaultId?: string,
 ): VerifyModelSpec | undefined {
   if (!model.startsWith(VERIFY_MODEL_PREFIX)) return undefined;
   const rest = model.slice(VERIFY_MODEL_PREFIX.length).trim();
@@ -70,7 +75,7 @@ export function parseVerifyModel(
   const explicitChecker = plus > 0 ? rest.slice(plus + 1).trim() : "";
   const checker = explicitChecker || env.MARINA_VERIFY_CHECKER_MODEL?.trim() || proposer;
   if (!proposer || !checker) return undefined;
-  return { proposer: sized(proposer, env), checker: sized(checker, env) };
+  return { proposer: sized(proposer, env, defaultId), checker: sized(checker, env, defaultId) };
 }
 
 /**
@@ -78,8 +83,9 @@ export function parseVerifyModel(
  * local runtime first, see `availableModels`), so `marina/verify:default`
  * works on a Marina with a single model: it checks its own drafts.
  */
-function sized(id: string, env: Record<string, string | undefined>): string {
+function sized(id: string, env: Record<string, string | undefined>, defaultId?: string): string {
   if (id !== "default") return id;
+  if (defaultId) return defaultId;
   return availableModels(env as NodeJS.ProcessEnv)[0]?.spec ?? id;
 }
 
@@ -627,18 +633,27 @@ interface CallResult {
   costUsd?: number;
 }
 
+/**
+ * One inner call. The id travels as `body.model` and `forceModel` stays unset,
+ * so `proxyToUpstream` takes its explicit-provider path: the named provider's
+ * rejection is the answer, and only an aggregator may serve the same full id
+ * after a transport failure. A proposer or checker is never silently answered
+ * by another vendor's default model (passing the id as `forceModel` would make
+ * it a default request with the default-model fallback).
+ */
 async function callUpstream(
   engine: Engine,
   body: Record<string, unknown>,
   model: string,
   signal: AbortSignal | undefined,
   reason: string,
+  entityId?: EntityId,
 ): Promise<CallResult> {
   const resp = await proxyToUpstream(
     engine,
     { ...body, model, stream: false },
-    model,
-    { routeKind: "passthru", routeReason: reason },
+    undefined,
+    { routeKind: "passthru", routeReason: reason, ...(entityId ? { entityId } : {}) },
     signal ? { clientSignal: signal } : undefined,
   );
   const raw = await resp.text();
@@ -675,10 +690,23 @@ function withFirstMessage(body: Record<string, unknown>, message: Msg): Record<s
   return { ...body, choices };
 }
 
-/** The repair shot's model: `MARINA_REPAIR_MODEL` when it is reachable, else the proposer. */
-function repairModelFor(engine: Engine, proposer: string): string {
+/** The repair shot's model: `MARINA_REPAIR_MODEL` when it is reachable (and,
+ *  under a passthru pin, is the pinned model), else the proposer. */
+function repairModelFor(engine: Engine, proposer: string, pin: string): string {
   const configured = process.env.MARINA_REPAIR_MODEL?.trim();
-  return configured && explicitUpstreamModel(engine, configured) ? configured : proposer;
+  if (!configured || !explicitUpstreamModel(engine, configured)) return proposer;
+  return pin && configured !== pin ? proposer : configured;
+}
+
+/**
+ * The operator's passthru pin (`passthru` endpoint mode with a configured
+ * model), or "" when none applies. Plain passthru forces every request to the
+ * pin; verify applies the same policy to its proposer, checker and repair
+ * model, so a key holder cannot reach other upstream models through it.
+ */
+export function verifyPin(engine: Engine): string {
+  const ec = getEndpointConfig(engine.db);
+  return ec.mode === "passthru" ? ec.passthruModel.trim() : "";
 }
 
 type Usage = { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
@@ -701,15 +729,29 @@ export async function maybeVerifyChat(
   engine: Engine,
   req: Request,
   body: Record<string, unknown>,
+  authResult?: PassthruAuthResult,
 ): Promise<Response | undefined> {
   const model = typeof body.model === "string" ? body.model : "";
-  const spec = parseVerifyModel(model);
   if (!model.startsWith(VERIFY_MODEL_PREFIX)) return undefined;
+  // Under the operator's passthru pin `default` names the pinned model and
+  // every other id must be the pin (same policy as plain passthru).
+  const pin = verifyPin(engine);
+  const spec = parseVerifyModel(model, process.env, pin || undefined);
   if (!spec)
     return errorJson(
       400,
       `Malformed verify model id "${model}" (marina/verify:<proposer>[+<checker>])`,
     );
+  if (pin) {
+    const other = [spec.proposer, spec.checker].find((id) => id !== pin);
+    if (other) {
+      return errorJson(
+        403,
+        `This endpoint is pinned to "${pin}"; marina/verify cannot use "${other}"`,
+        { code: "model_not_allowed" },
+      );
+    }
+  }
   if (body.stream === true) {
     return unsupportedParam(
       "stream",
@@ -730,6 +772,9 @@ export async function maybeVerifyChat(
   const tools = Array.isArray(body.tools) ? (body.tools as unknown[]) : undefined;
   const signal = req.signal;
   const requestId = generateRequestId();
+  // The caller's distinct passthru identity (bound key / named agent), when it
+  // has one, rides every inner call's lifecycle events.
+  const entityId = passthruEntityId(engine, req, authResult);
 
   // 0. Lessons from past outcomes: the proposer (the lead) and the checker see
   // the relevant ones (MARINA_LESSONS=observe recalls without injecting).
@@ -754,6 +799,7 @@ export async function maybeVerifyChat(
     spec.proposer,
     signal,
     "verify:proposer",
+    entityId,
   );
   if (!first.ok || !first.body) {
     return new Response(first.text ?? "", {
@@ -789,6 +835,7 @@ export async function maybeVerifyChat(
         spec.checker,
         signal,
         "verify:checker",
+        entityId,
       );
       cost += review.costUsd ?? 0;
       usage = addUsage(usage, review.body?.usage);
@@ -819,6 +866,7 @@ export async function maybeVerifyChat(
       spec.proposer,
       signal,
       "verify:revision",
+      entityId,
     ).catch(() => undefined);
     if (!revised?.ok || !revised.body || !firstMessage(revised.body)) {
       verdictLabel = "revision-failed";
@@ -846,7 +894,7 @@ export async function maybeVerifyChat(
   let repairLabel: RepairLabel | undefined;
   const finalMessage = firstMessage(final);
   if (tools?.length && finalMessage) {
-    const repairModel = repairModelFor(engine, spec.proposer);
+    const repairModel = repairModelFor(engine, spec.proposer, pin);
     const repaired = await repairToolCallMessage({
       message: finalMessage,
       tools,
@@ -863,6 +911,7 @@ export async function maybeVerifyChat(
           repairModel,
           signal,
           "verify:repair",
+          entityId,
         );
         cost += r.costUsd ?? 0;
         usage = addUsage(usage, r.body?.usage);
@@ -884,6 +933,7 @@ export async function maybeVerifyChat(
     model,
     target: spec.proposer,
     routeKind: "passthru",
+    ...(entityId ? { entityId } : {}),
     routeReason: `verify:${verdictLabel}${repairLabel ? `+${repairLabel}` : ""}`,
     timestamp: Date.now(),
   });
