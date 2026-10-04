@@ -454,6 +454,66 @@ files. To trial a signal without touching the live record, promote it in a separ
 record (`DB_PATH=<scratch> bun run arena discover --tracker civiqs --signal <centre>/<spread>`),
 then shadow `discovered` from that record against the nowcast for several weeks before filing it.
 
+## Parallel and layered shadow portfolios
+
+`arena:portfolio` compares formations without signing or submitting a forecast. It uses the
+existing Score executor for parallel dependencies and recursive `conduct` steps, and records
+the entire attempt in one `arena_shadow` row. Choose an explicit experiment database:
+
+```sh
+bun run arena:portfolio <round_id> --db /tmp/arena-shadow.db \
+  --models <provider/model>,<provider/model> --plan layered \
+  --max-calls 32 --concurrency 4 --timeout-ms 300000 --max-tokens 2000 \
+  --out /tmp/portfolio.json
+bun run arena:portfolio score --db /tmp/arena-shadow.db --out /tmp/portfolio-scores.json
+```
+
+Plans are `control` (Delphi), `parallel` (independent Delphi and symbiosis, then a mixture), and
+`layered` (the mixture followed by verification). All branches share one frozen start, lock and
+verified dossier. Structured lookups follow `MARINA_ARENA_RESEARCH_LOOKUPS`; this runner uses
+archived Civiqs data, with no direct live Civiqs fetch. The control reproduces the Delphi method
+on those captured inputs; it is not a replay of a previously filed forecast or its random model
+draws. Ranking rounds are rejected because these formations support numeric and profile answers.
+
+The mixture includes both candidate uncertainty and disagreement; it does not divide uncertainty
+by the number of models. Every refinement remains anchored to the original start, so stacking
+formations cannot compound the allowed mean movement. `--plan-file` accepts an `ArenaPlan` JSON
+object (the `plan` field in a report): a versioned Score and typed operations keyed by step ID.
+Operations are `formation`, `aggregate`, or `conduct` with a child plan. The runner validates the
+whole graph before model calls, with at most 32 steps, eight members per formation and depth three.
+Keep the top-level `control` step to get paired scoring.
+
+Call admission and concurrency are shared across all branches and child plans. Failed requests
+consume attempts. The timeout includes selection and graph execution; input retrieval has its
+own existing fetch deadlines. Output tokens are bounded per model call. These are invocation
+limits, not guaranteed dollar ceilings: cancelled requests may still be billed, and configured
+decision providers may make internal requests. The normal daily spend guard still applies.
+The trace reports in-flight calls if a transport has not settled when cancellation returns;
+`costFinal: false` means reported spend can still increase upstream.
+
+`--plan auto --selector jev` asks the existing decision provider to choose among the three plans;
+`--selector decisions` uses the configured decision backend. With no selector, malformed answers
+or an unavailable upstream, routing preserves the control (an explicitly requested but unconfigured
+provider is an error). Model confidence is not a benchmark success probability. Auto selection
+loads resolved, prospective comparisons from this shadow ledger. `--evidence` additionally accepts
+an exported score report or an array of versioned `RouteEvidence` records from other adapters.
+
+The shared routing contract in `src/coordination/task-routing.ts` retains benchmark, cohort,
+policy fingerprint, native metric, direction, failure count and outcome availability time.
+It excludes future outcomes, the current question, retrospective runs and changed same-benchmark
+policies. Other benchmarks may share an explicitly declared strategy lineage and skill tags;
+their results remain separate transfer hypotheses. SWE-bench pass rates and arena skill are
+never averaged together. Other benchmark adapters must supply genuinely paired observations;
+running another benchmark alone does not establish that a particular orchestration improved it.
+
+Scoring selects the latest attempt per round/configuration, including failures, rather than
+falling back to a previous successful attempt. Late, invalid and incomplete comparisons remain
+visible. Completed pairs use the existing CRPS/energy scoring implementation. A failed candidate
+with a valid pre-lock control can export failure evidence after resolution, without an invented
+candidate score. Unresolved forecasts cannot establish an improvement. The ledger scan is bounded
+to the latest 2,000 rows; archive/export older evidence for longer experiments. No plan or score
+automatically changes `MARINA_ARENA_ROUTES`, timers or submissions.
+
 ## Integrity: what the backtest numbers can and cannot claim
 
 Audited 2026-09-25 (`src/arena/evaluate.ts`, `test/arena-*.test.ts`):

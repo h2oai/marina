@@ -66,7 +66,7 @@ async function callCost(
 export function modelComplete(
   spec: string,
   env: NodeJS.ProcessEnv = process.env,
-  opts: { maxTokens?: number; timeoutMs?: number } = {},
+  opts: { maxTokens?: number; timeoutMs?: number; signal?: AbortSignal } = {},
 ): { complete: Complete; usage: Usage } {
   const provider = spec.split("/")[0] ?? "";
   // A self-hosted runtime (llama.cpp / Ollama / vLLM) needs no vendor key: its
@@ -83,6 +83,7 @@ export function modelComplete(
   const model = resolveModel(spec);
   const usage: Usage = { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
   const complete: Complete = async (system, user) => {
+    opts.signal?.throwIfAborted();
     const capped = dailyCapRefusal(env);
     if (capped) throw new Error(capped);
     const messages = [{ role: "user", content: user, timestamp: Date.now() }] as Message[];
@@ -92,7 +93,10 @@ export function modelComplete(
       {
         apiKey,
         maxTokens: opts.maxTokens ?? 8_000,
-        signal: AbortSignal.timeout(opts.timeoutMs ?? 180_000),
+        signal: AbortSignal.any([
+          AbortSignal.timeout(opts.timeoutMs ?? 180_000),
+          ...(opts.signal ? [opts.signal] : []),
+        ]),
       },
     );
     usage.calls++;
