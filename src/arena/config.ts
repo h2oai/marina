@@ -45,7 +45,7 @@ export interface ArenaConfig {
 
 const MODEL_ID = "[a-z0-9-]+\\/[\\w.:/-]+";
 /** A research retriever entry (`openrouter-web:<model>` / `sonar:<model>` / `tavily:<depth>`). */
-const RETRIEVER = "((openrouter-web|sonar):[A-Za-z0-9._/:-]+|tavily:(basic|advanced))";
+const RETRIEVER = "((openrouter-web|sonar):[A-Za-z0-9._/:-]+|tavily:(basic|advanced)|closed-book)";
 /** Orchestration patterns as forecasting protocols (src/arena/formations.ts). */
 const FORMATION =
   "(ensemble|deliberation|debate|chorus|pipeline|cascade|mapreduce|blackboard|symbiosis|research|delphi|tournament|verification)";

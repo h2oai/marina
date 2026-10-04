@@ -3,6 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { AgentRuntime, getInternalModelToken } from "../src/agent/agent-runtime";
+import { modelSourceEnvKeys } from "../src/agent/available-models";
 import {
   applyRankProgression,
   checkRankProgression,
@@ -119,18 +120,7 @@ describe("AgentRuntime", () => {
   describe("isAvailable()", () => {
     it("returns false when no API keys are present", () => {
       // Save and clear all API key env vars
-      const keyVars = [
-        "ANTHROPIC_API_KEY",
-        "OPENAI_API_KEY",
-        "GEMINI_API_KEY",
-        "GOOGLE_API_KEY",
-        "GROQ_API_KEY",
-        "OPENROUTER_API_KEY",
-        "CEREBRAS_API_KEY",
-        "XAI_API_KEY",
-        "MISTRAL_API_KEY",
-        "DEEPSEEK_API_KEY",
-      ];
+      const keyVars = [...modelSourceEnvKeys(), "CEREBRAS_API_KEY"];
       const saved: Record<string, string | undefined> = {};
       for (const v of keyVars) {
         saved[v] = process.env[v];
@@ -168,24 +158,7 @@ describe("AgentRuntime", () => {
     it("does not mistake inbound API auth settings for a model provider", () => {
       const savedOpen = process.env.MARINA_OPEN_API;
       const savedModelKeys = process.env.MODEL_API_KEYS;
-      const providerVars = [
-        "ANTHROPIC_API_KEY",
-        "OPENAI_API_KEY",
-        "GEMINI_API_KEY",
-        "GOOGLE_API_KEY",
-        "GROQ_API_KEY",
-        "OPENROUTER_API_KEY",
-        "CEREBRAS_API_KEY",
-        "XAI_API_KEY",
-        "MISTRAL_API_KEY",
-        "DEEPSEEK_API_KEY",
-        "LLAMA_API_KEY",
-        "LLAMA_BASE_URL",
-        "OLLAMA_API_KEY",
-        "OLLAMA_BASE_URL",
-        "VIBETHINKER_API_KEY",
-        "VIBETHINKER_BASE_URL",
-      ];
+      const providerVars = [...modelSourceEnvKeys(), "CEREBRAS_API_KEY"];
       const savedProviders = Object.fromEntries(
         providerVars.map((name) => [name, process.env[name]]),
       );
@@ -209,18 +182,7 @@ describe("AgentRuntime", () => {
 
     it("returns true when a DB API key exists", () => {
       // Clear env keys
-      const keyVars = [
-        "ANTHROPIC_API_KEY",
-        "OPENAI_API_KEY",
-        "GEMINI_API_KEY",
-        "GOOGLE_API_KEY",
-        "GROQ_API_KEY",
-        "OPENROUTER_API_KEY",
-        "CEREBRAS_API_KEY",
-        "XAI_API_KEY",
-        "MISTRAL_API_KEY",
-        "DEEPSEEK_API_KEY",
-      ];
+      const keyVars = [...modelSourceEnvKeys(), "CEREBRAS_API_KEY"];
       const saved: Record<string, string | undefined> = {};
       for (const v of keyVars) {
         saved[v] = process.env[v];

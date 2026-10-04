@@ -8,7 +8,7 @@
  * refused anyway.
  */
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { guardedFetch } from "../net/url-guard";
 import type { ArenaSubmissionRow } from "../persistence/db-arena";
 import type { ArenaStore } from "../persistence/interfaces/arena-store";
@@ -75,6 +75,8 @@ export interface SubmitDeps {
   now?: () => number;
   /** What produces the answer; the calibrated baseline when omitted. */
   forecaster?: Forecaster;
+  /** Only nonsecret, explicitly selected strategy settings. */
+  forecasterConfig?: Record<string, unknown>;
 }
 
 export const baselineForecaster: Forecaster = async (round, lock) => forecastRound(round, lock);
@@ -92,6 +94,15 @@ export async function buildForecastBody(
   round: ArenaRound,
   forecaster: Forecaster = baselineForecaster,
 ): Promise<ArenaForecastBody> {
+  return (await prepareForecast(data, entrant, round, forecaster)).body;
+}
+
+async function prepareForecast(
+  data: ArenaData,
+  entrant: string,
+  round: ArenaRound,
+  forecaster: Forecaster,
+) {
   const lock = await data.lock(round.round_id);
   const f = await forecaster(round, lock);
   const body: ArenaForecastBody = {
@@ -104,7 +115,16 @@ export async function buildForecastBody(
   };
   const invalid = validateForecastBody(round, body);
   if (invalid) throw new Error(`${round.round_id}: ${invalid}`);
-  return body;
+  return {
+    body,
+    detail: {
+      schema: "marina.arena.forecast.v1",
+      round,
+      lock,
+      lockHash: createHash("sha256").update(JSON.stringify(lock)).digest("hex"),
+      forecast: f,
+    },
+  };
 }
 
 export async function submitRound(
@@ -146,12 +166,27 @@ export async function submitRound(
     row = latest; // an unconfirmed send: re-send the SAME signed request
   } else {
     let body: ArenaForecastBody;
+    let detail: Awaited<ReturnType<typeof prepareForecast>>["detail"];
     try {
-      body = await buildForecastBody(deps.data, config.entrant, round, deps.forecaster);
+      ({ body, detail } = await prepareForecast(
+        deps.data,
+        config.entrant,
+        round,
+        deps.forecaster ?? baselineForecaster,
+      ));
     } catch (err) {
       return { kind: "skipped", roundId, reason: err instanceof Error ? err.message : String(err) };
     }
     if (opts.dryRun) return { kind: "dry-run", roundId, body };
+    // Model/retrieval work may take minutes. Admission time is not signing time.
+    const signingTime = deps.now?.() ?? Date.now();
+    if (Date.parse(round.lock_at) - signingTime < LOCK_MARGIN_MS) {
+      return {
+        kind: "skipped",
+        roundId,
+        reason: `forecast finished too close to lock at ${round.lock_at}`,
+      };
+    }
     const raw = Buffer.from(JSON.stringify(body));
     if (opts.replace && accepted && accepted.body === raw.toString("utf8")) {
       return { kind: "accepted", roundId, row: accepted, already: true };
@@ -161,7 +196,7 @@ export async function submitRound(
       entrant: config.entrant,
       "key-id": config.keyId,
       "request-id": randomUUID(),
-      timestamp: arenaTimestamp(new Date(now)),
+      timestamp: arenaTimestamp(new Date(signingTime)),
     };
     const signature = signRequest(meta, raw, config.audience, deps.key);
     const id = store.insertArenaSubmission({
@@ -171,6 +206,12 @@ export async function submitRound(
       url: config.origin,
       meta: JSON.stringify({ ...meta, signature }),
       body: raw.toString("utf8"),
+      detail: JSON.stringify({
+        ...detail,
+        startedAt: new Date(now).toISOString(),
+        completedAt: new Date(signingTime).toISOString(),
+        config: deps.forecasterConfig ?? { spec: config.forecaster },
+      }),
     });
     row = store.latestArenaSubmission(config.entrant, roundId)!;
     if (row.id !== id) throw new Error("arena ledger write was not read back");

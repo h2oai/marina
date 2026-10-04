@@ -93,6 +93,23 @@ const QUERIES: Record<string, string[]> = {
   attention: ["trending news this week", "most viewed Wikipedia articles this week"],
 };
 
+/** Poll populations and response categories are different targets, not interchangeable levels. */
+function pollIdentityRules(round: ArenaRound): string[] {
+  if (!round.tracker.includes("yougov")) return [];
+  return [
+    `Target identity: ${round.tracker}/${round.series ?? "profile"}; ${round.unit ?? "unit as stated in the question"}.`,
+    "For every poll figure, explicitly state population, response category and subgroup definition. Adults, registered voters and likely voters are different populations; total approval and strong approval are different responses. Compare changes only between matching definitions within the same pollster. Do not substitute another population's level, or subtract unlike categories; report missing comparable evidence plainly.",
+  ];
+}
+
+function targetQueries(round: ArenaRound, queries: string[]): string[] {
+  // Keep the search budget unchanged while making the first query about the
+  // actual target rather than generic approval (especially RV/strong approval).
+  return round.tracker.includes("yougov")
+    ? [round.question.slice(0, 300), ...queries.slice(1)]
+    : queries;
+}
+
 /**
  * A round with no published value at all (no history, no observed list): the
  * question is the LEVEL itself, not a change from a known reading, so the
@@ -160,6 +177,7 @@ export function buildResearchBrief(
   const request = [
     `A forecaster must predict: ${round.question}`,
     `The answer is published around ${round.release_at.slice(0, 10)}. ${lastLine}`,
+    ...pollIdentityRules(round),
     "",
     `Research ONLY facts dated after ${since}, and report:`,
     ...asks,
@@ -171,7 +189,7 @@ export function buildResearchBrief(
     family === "attention"
       ? [round.question, ...(QUERIES.attention ?? [])]
       : [...(QUERIES[family] ?? [])];
-  return { roundId: round.round_id, since, request, queries };
+  return { roundId: round.round_id, since, request, queries: targetQueries(round, queries) };
 }
 
 /**
@@ -187,6 +205,7 @@ function noHistoryBrief(round: ArenaRound, now: number): ResearchBrief {
   const request = [
     `A forecaster must predict: ${round.question}`,
     `The answer is published around ${round.release_at.slice(0, 10)}. No value of this quantity has been published yet — there is no history and no earlier reading to start from, so the forecast rests on outside evidence of the level itself.`,
+    ...pollIdentityRules(round),
     "",
     `Research facts dated after ${since} (older facts only when they are still the latest of their kind), and report:`,
     ...asks,
@@ -246,6 +265,7 @@ function profileBrief(
   const request = [
     `A forecaster must predict, item by item (${cells.length} items): ${round.question}`,
     `The answer is published around ${round.release_at.slice(0, 10)}. The benchmark's own latest values (up to ${since}) are ALREADY known — ${known}${round.unit ? ` (${round.unit})` : ""} — the question is where each item stands in the next release.`,
+    ...pollIdentityRules(round),
     "",
     `Research ONLY facts dated after ${since}, and report:`,
     ...asks,
@@ -260,5 +280,5 @@ function profileBrief(
           ...(QUERIES.attention ?? []),
         ]
       : [...(QUERIES[family] ?? []), "poll crosstabs by party age race education"];
-  return { roundId: round.round_id, since, request, queries };
+  return { roundId: round.round_id, since, request, queries: targetQueries(round, queries) };
 }

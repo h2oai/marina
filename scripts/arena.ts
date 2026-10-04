@@ -25,6 +25,11 @@
  *   bun run arena signals [--tracker T]         every discovery attempt and its verdict
  *   bun run arena shadow run <round_id|due> | list | score
  *                                               record / list / score shadow forecasts (never filed)
+ *   bun run arena shadow horizons <round_id|due> shared-input comparison of five horizon policies
+ *   bun run arena shadow compare <round_id|due> --forecaster formation:delphi:<models>
+ *                                               paired start / Delphi / FRED / calibration experiment
+ *   bun run arena shadow paired-score           score only matched comparison batches
+ *   bun run arena audit <round_id|due>           check target identity and comparable input histories
  *   bun run arena evaluate [--forecaster model:<m>|crew:<m>[,<m>,<m>]|formation:<pattern>:<m>[,<m>…]|tabh2o[:forecast][@nowcast]]
  *                          [--no-learn] [--limit N] [--tracker T] [--shape profile|ranking] [--out FILE]
  *                                               score forecasters on already-resolved rounds (files nothing);
@@ -60,6 +65,7 @@ import {
   recordShadow,
 } from "../src/arena/service";
 import { buildForecastBody, dueRounds, submitRound } from "../src/arena/submit";
+import { getErrorMessage } from "../src/engine/errors";
 import { MarinaDB } from "../src/persistence/database";
 
 const { positionals, values } = parseArgs({
@@ -79,6 +85,7 @@ const { positionals, values } = parseArgs({
     shape: { type: "string" },
     weight: { type: "string" },
     "no-learn": { type: "boolean" },
+    "weekly-anchor": { type: "boolean" },
     proposer: { type: "string" },
     n: { type: "string" },
     signal: { type: "string", multiple: true },
@@ -103,6 +110,32 @@ function openDb(): MarinaDB {
 
 async function main(): Promise<number> {
   switch (cmd) {
+    case "audit": {
+      if (!arg) throw new Error("usage: bun run arena audit <round_id|due>");
+      const data = arenaData().frozen();
+      const rounds =
+        arg === "due"
+          ? (await data.openRounds()).filter(
+              (r) => Date.parse(r.lock_at) <= Date.now() + arenaWindowHours() * 3_600_000,
+            )
+          : [await data.round(arg)];
+      const { auditForecastInputs } = await import("../src/arena/input-audit");
+      const { lockForModels } = await import("../src/arena/service");
+      const report = [];
+      for (const round of rounds) {
+        if (!round) throw new Error(`unknown round ${arg}`);
+        try {
+          const lock = await lockForModels(data, round, await data.lock(round.round_id));
+          report.push({ roundId: round.round_id, ...auditForecastInputs(round, lock) });
+        } catch (error) {
+          report.push({ roundId: round.round_id, ok: false, issues: [getErrorMessage(error)] });
+        }
+      }
+      const output = JSON.stringify(report, null, 2);
+      if (values.out) await Bun.write(values.out, `${output}\n`);
+      console.log(output);
+      return report.some((r) => !r.ok) ? 1 : 0;
+    }
     case "keygen": {
       if (!arg) throw new Error("usage: bun run arena keygen <path>");
       const key = generateArenaKey();
@@ -436,6 +469,81 @@ async function main(): Promise<number> {
       const db = openDb();
       try {
         const action = arg ?? "list";
+        if (action === "paired-score") {
+          const { scorePairedShadows } = await import("../src/arena/paired-shadow");
+          const report = await scorePairedShadows(arenaData(), db.listArenaShadow({ limit: 2000 }));
+          const output = JSON.stringify(report, null, 2);
+          if (values.out) await Bun.write(values.out, `${output}\n`);
+          console.log(output);
+          return 0;
+        }
+        if (action === "compare") {
+          const target = positionals[2];
+          if (!target)
+            throw new Error(
+              "usage: bun run arena shadow compare <round_id|due> [--forecaster formation:delphi:<models>]",
+            );
+          const { recordPairedShadow } = await import("../src/arena/paired-shadow");
+          const { parseRoutes, routeFor } = await import("../src/arena/routing");
+          const { civiqsLiveEnabled, fetchCiviqsLive } = await import(
+            "../src/arena/research/civiqs-live"
+          );
+          const data = arenaData();
+          const rounds =
+            target === "due"
+              ? (await data.openRounds()).filter(
+                  (r) =>
+                    r.target_type === "continuous_normal" &&
+                    Date.parse(r.lock_at) <= Date.now() + arenaWindowHours() * 3_600_000,
+                )
+              : [await data.round(target)];
+          const report = [];
+          for (const round of rounds) {
+            if (!round) throw new Error(`unknown round ${target}`);
+            let spec = values.forecaster ?? process.env.MARINA_ARENA_FORECASTER ?? "routed";
+            if (spec === "routed" || spec.startsWith("route:"))
+              spec = routeFor(parseRoutes(spec), round.tracker);
+            spec = spec.replace(/\+research@[^+]+$/, "");
+            if (!spec.startsWith("formation:delphi:") && target === "due") {
+              report.push({ roundId: round.round_id, skipped: `not a Delphi route: ${spec}` });
+              continue;
+            }
+            const candidates = await recordPairedShadow(db, data, round.round_id, spec, {
+              ...(civiqsLiveEnabled() ? { live: fetchCiviqsLive } : {}),
+            });
+            report.push({ roundId: round.round_id, candidates });
+          }
+          const output = JSON.stringify(report, null, 2);
+          if (values.out) await Bun.write(values.out, `${output}\n`);
+          console.log(output);
+          return report.some((r) => r.candidates?.some((c) => !c.recorded || c.error)) ? 1 : 0;
+        }
+        if (action === "horizons") {
+          const target = positionals[2];
+          if (!target) throw new Error("usage: bun run arena shadow horizons <round_id|due>");
+          const { recordHorizonShadows } = await import("../src/arena/horizon-shadow");
+          const { civiqsLiveEnabled, fetchCiviqsLive } = await import(
+            "../src/arena/research/civiqs-live"
+          );
+          const data = arenaData();
+          const ids =
+            target === "due"
+              ? (await data.openRounds())
+                  .filter(
+                    (r) =>
+                      r.tracker === "civiqs" &&
+                      Date.parse(r.lock_at) <= Date.now() + arenaWindowHours() * 3_600_000,
+                  )
+                  .map((r) => r.round_id)
+              : [target];
+          const results = await recordHorizonShadows(db, data, ids, {
+            weeklyAnchor: values["weekly-anchor"],
+            ...(civiqsLiveEnabled() ? { live: fetchCiviqsLive } : {}),
+          });
+          for (const r of results)
+            console.log(`${r.roundId} ${r.variant ?? ""}: ${r.recorded ? "recorded" : r.error}`);
+          return results.some((r) => !r.recorded) ? 1 : 0;
+        }
         if (action === "run") {
           const target = positionals[2];
           if (!target)
@@ -452,7 +560,9 @@ async function main(): Promise<number> {
           const results = await recordShadow(db, data, spec, ids);
           for (const r of results)
             console.log(`${r.roundId}: ${r.recorded ? "recorded" : r.error}`);
-          const rows = db.listArenaShadow({ forecaster: spec, limit: 2_000 });
+          const { forecastSettings } = await import("../src/arena/forecast-config");
+          const variant = `${spec}#${forecastSettings(spec, process.env).fingerprint.slice(0, 16)}`;
+          const rows = db.listArenaShadow({ forecaster: variant, limit: 2_000 });
           const cost = rows
             .filter((r) => ids.includes(r.round_id))
             .reduce((t, r) => t + r.cost_usd, 0);
@@ -489,7 +599,7 @@ async function main(): Promise<number> {
           }
           return 0;
         }
-        throw new Error("usage: bun run arena shadow run|list|score");
+        throw new Error("usage: bun run arena shadow run|horizons|compare|paired-score|list|score");
       } finally {
         db.close();
       }
@@ -568,7 +678,7 @@ async function main(): Promise<number> {
     }
     default:
       throw new Error(
-        `unknown command ${cmd} (keygen, registration, status, rounds, show, submit, backtest, evaluate, research, shadow, discover, signals)`,
+        `unknown command ${cmd} (keygen, registration, status, rounds, show, submit, backtest, evaluate, research, shadow, audit, discover, signals)`,
       );
   }
 }

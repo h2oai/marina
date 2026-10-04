@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { modelSourceEnvKeys } from "../src/agent/available-models";
 import { getRecipe } from "../src/engine/commands/usecase";
 import { Engine } from "../src/engine/engine";
 import { handleDashboardApi } from "../src/net/dashboard-api";
@@ -10,24 +11,7 @@ import type { EntityId, RoomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
 
 const TEST_DB = "test_usecase_evolve.db";
-const PROVIDER_VARS = [
-  "ANTHROPIC_API_KEY",
-  "OPENAI_API_KEY",
-  "GEMINI_API_KEY",
-  "GOOGLE_API_KEY",
-  "GROQ_API_KEY",
-  "OPENROUTER_API_KEY",
-  "CEREBRAS_API_KEY",
-  "XAI_API_KEY",
-  "MISTRAL_API_KEY",
-  "DEEPSEEK_API_KEY",
-  "LLAMA_API_KEY",
-  "LLAMA_BASE_URL",
-  "OLLAMA_API_KEY",
-  "OLLAMA_BASE_URL",
-  "VIBETHINKER_API_KEY",
-  "VIBETHINKER_BASE_URL",
-];
+const PROVIDER_VARS = [...modelSourceEnvKeys(), "CEREBRAS_API_KEY"];
 
 function makeRequest(path: string, body: unknown): [URL, string, Request] {
   const url = new URL(`http://localhost:3300${path}`);

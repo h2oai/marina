@@ -21,6 +21,8 @@ export type ArenaFetch = (url: string) => Promise<Response>;
 
 export class ArenaData {
   private cache = new Map<string, { at: number; value: unknown }>();
+  private pending = new Map<string, Promise<unknown>>();
+  private isolated = false;
 
   constructor(
     private readonly baseUrl: string = DEFAULT_ARENA_DATA_URL,
@@ -31,7 +33,21 @@ export class ArenaData {
 
   private async json<T>(path: string): Promise<T> {
     const hit = this.cache.get(path);
-    if (hit && this.now() - hit.at < CACHE_MS) return hit.value as T;
+    if (hit && this.now() - hit.at < CACHE_MS)
+      return (this.isolated ? structuredClone(hit.value) : hit.value) as T;
+    const pending = this.pending.get(path);
+    if (pending) return (this.isolated ? structuredClone(await pending) : await pending) as T;
+    const request = this.readJson<T>(path);
+    this.pending.set(path, request);
+    try {
+      const value = await request;
+      return this.isolated ? structuredClone(value) : value;
+    } finally {
+      this.pending.delete(path);
+    }
+  }
+
+  private async readJson<T>(path: string): Promise<T> {
     const res = await this.fetcher(`${this.baseUrl.replace(/\/$/, "")}/${path}`);
     if (!res.ok) throw new Error(`arena data ${path}: HTTP ${res.status}`);
     const text = await res.text();
@@ -39,6 +55,26 @@ export class ArenaData {
     const value = JSON.parse(text) as T;
     this.cache.set(path, { at: this.now(), value });
     return value;
+  }
+
+  /** Per-experiment view: each requested path is read once, without TTL expiry. */
+  frozen(): ArenaData {
+    const at = this.now();
+    const base = this.baseUrl.replace(/\/$/, "");
+    // Cache rejected reads too: a missing archive must not appear halfway
+    // through a comparison. Each caller receives its own mutable copy.
+    const reads = new Map<string, Promise<unknown>>();
+    const view = new ArenaData(
+      base,
+      async (url) => {
+        const path = url.slice(base.length + 1);
+        if (!reads.has(path)) reads.set(path, this.json(path).then(structuredClone));
+        return Response.json(await reads.get(path));
+      },
+      () => at,
+    );
+    view.isolated = true;
+    return view;
   }
 
   /** The published registration for an entrant (entrants/<id>.json), or undefined when absent. */

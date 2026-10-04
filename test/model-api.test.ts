@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { modelSourceEnvKeys } from "../src/agent/available-models";
 import type { ChannelManager } from "../src/coordination/channel-manager";
 import { Engine } from "../src/engine/engine";
 import { projectTraces } from "../src/engine/trace-projection";
@@ -235,13 +236,7 @@ describe("Model API", () => {
 
     // Clear upstream API keys so proxy fallback also returns 503
     const savedKeys: Record<string, string | undefined> = {};
-    for (const k of [
-      "OPENAI_API_KEY",
-      "GEMINI_API_KEY",
-      "OPENROUTER_API_KEY",
-      "GROQ_API_KEY",
-      "ANTHROPIC_API_KEY",
-    ]) {
+    for (const k of [...modelSourceEnvKeys(), "CEREBRAS_API_KEY"]) {
       savedKeys[k] = process.env[k];
       delete process.env[k];
     }
@@ -1188,18 +1183,7 @@ describe("Model API", () => {
       run: () => Promise<T>,
     ): Promise<T> {
       const originalFetch = globalThis.fetch;
-      const providerEnvKeys = [
-        "ANTHROPIC_API_KEY",
-        "GEMINI_API_KEY",
-        "GOOGLE_API_KEY",
-        "GROQ_API_KEY",
-        "LLAMA_API_KEY",
-        "LLAMA_BASE_URL",
-        "OLLAMA_API_KEY",
-        "OLLAMA_BASE_URL",
-        "OPENAI_API_KEY",
-        "OPENROUTER_API_KEY",
-      ] as const;
+      const providerEnvKeys = [...modelSourceEnvKeys(), "CEREBRAS_API_KEY"];
       const originalValues = new Map(
         providerEnvKeys.map((key) => [key, process.env[key]] as const),
       );
@@ -1982,16 +1966,8 @@ describe("tryVerifiedArithmetic", () => {
 describe("passthru memory gateway", () => {
   const GATEWAY_DB = "test_model_api_gateway.db";
   const PROVIDER_ENV = [
-    "ANTHROPIC_API_KEY",
-    "GEMINI_API_KEY",
-    "GOOGLE_API_KEY",
-    "GROQ_API_KEY",
-    "LLAMA_API_KEY",
-    "LLAMA_BASE_URL",
-    "OLLAMA_API_KEY",
-    "OLLAMA_BASE_URL",
-    "OPENAI_API_KEY",
-    "OPENROUTER_API_KEY",
+    ...modelSourceEnvKeys(),
+    "CEREBRAS_API_KEY",
     "MODEL_API_KEYS",
     "MARINA_OPEN_API",
     "MARINA_PASSTHRU_INJECT_BYTES",

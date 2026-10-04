@@ -18,7 +18,8 @@
  * only. Unmatched lookups add nothing.
  */
 
-import type { DataHints, ForecastLookup } from "../../forecast/lookup-types";
+import { createHash } from "node:crypto";
+import type { DataHints, ForecastLookup, LookupResult } from "../../forecast/lookup-types";
 import { type LookupName, lookupsFromSpec, runLookups } from "../../forecast/lookups";
 import type { ResearchBrief } from "./briefs";
 import type { ResearchReport, Retriever } from "./retrieve";
@@ -82,14 +83,74 @@ export function withDataLookups(
     const query =
       opts.query?.(brief) ?? brief.queries?.slice(0, 2).join(" ") ?? brief.request.slice(0, 200);
     let lines: string[] = [];
+    let evidence: LookupResult[] = [];
     const sources: ResearchReport["sources"] = [];
     try {
       const seriesNamed = !!(hints.fred?.length || hints.bls?.length);
-      const usable = lookups.filter((l) => seriesNamed || (l.name !== "fred" && l.name !== "bls"));
+      const usable = lookups
+        .filter((l) => seriesNamed || (l.name !== "fred" && l.name !== "bls"))
+        .map(
+          (l): ForecastLookup =>
+            l.name !== "fred"
+              ? l
+              : {
+                  name: l.name,
+                  lookup: (query, cutoff, now, ctx) => {
+                    // Historical FRED vintages have day precision, not publication instants.
+                    // A live read is causal; a past intraday cutoff uses the prior UTC day.
+                    const at =
+                      cutoff.getTime() < now.getTime()
+                        ? new Date(Date.parse(cutoff.toISOString().slice(0, 10)) - 1)
+                        : cutoff;
+                    return l.lookup(query, at, now, ctx);
+                  },
+                },
+        );
       const results = await runLookups(usable, query, briefCutoff(brief, now), now, {
         hints: { ...hints, markets: query },
       });
+      evidence = results;
+      // Compare information vintages as well as observation periods. A monthly
+      // decline already known at the start reading is not fresh weekly news.
+      const anchorAt = new Date(`${brief.since}T00:00:00Z`);
+      const fred = usable.find((l) => l.name === "fred");
+      const prior =
+        fred &&
+        Number.isFinite(anchorAt.getTime()) &&
+        anchorAt < now &&
+        results.some((r) => r.name === "fred" && r.readings?.length)
+          ? (await runLookups([fred], query, anchorAt, now, { hints }))[0]
+          : undefined;
+      if (prior) evidence = [...results, { ...prior, name: "fred-anchor-vintage" }];
       for (const r of results) {
+        if (r.name === "fred" && r.readings?.length) {
+          for (const reading of r.readings) {
+            const previous = reading.history?.filter((p) => p.date < reading.date).at(-1);
+            const delta = previous
+              ? Math.round((reading.value - previous.value) * 1000) / 1000
+              : undefined;
+            const anchor = prior?.readings?.find((p) => p.series === reading.series);
+            const vintageDelta = anchor
+              ? Math.round((reading.value - anchor.value) * 1000) / 1000
+              : undefined;
+            const payload = JSON.stringify({ reading, previous, delta, anchor, vintageDelta });
+            const digest = createHash("sha256").update(payload).digest("hex");
+            // A unique URL identifies the frozen payload in the existing provided-text
+            // verifier; a current HTML series page cannot verify an older vintage.
+            const url = `https://fred.stlouisfed.org/series/${encodeURIComponent(reading.series)}#marina-vintage-${digest}`;
+            const change = previous
+              ? `previous ${previous.value} on ${previous.date}; same-vintage change ${delta}`
+              : "no previous observation; change unavailable";
+            const update = anchor
+              ? `change since anchor vintage ${anchor.asOf.slice(0, 10)}: ${vintageDelta}${vintageDelta === 0 ? " (no new level change)" : ""}`
+              : "change since start reading unavailable; do not treat the period change as new evidence";
+            lines.push(
+              `- ${reading.date} — FRED ${reading.series}: ${reading.value}${reading.unit ? ` ${reading.unit}` : ""}; ${change}; ${update}; vintage ${reading.asOf.slice(0, 10)} [FRED](${url})`,
+            );
+            sources.push({ url, title: `FRED ${reading.series}`, text: payload });
+          }
+          continue;
+        }
         lines = lines.concat(r.lines);
         for (const s of r.sources)
           sources.push({ url: s.url, ...(s.title ? { title: s.title } : {}) });
@@ -97,10 +158,11 @@ export function withDataLookups(
     } catch {
       // allow-empty-catch: structured data is optional evidence; research stands without it
     }
-    if (lines.length === 0) return report;
+    if (lines.length === 0) return { ...report, data: evidence };
     const head = `STRUCTURED DATA (as of the cutoff; evidence of CHANGES only — the round's own history sets the level${related ? `; related series: ${related}` : ""}):`;
     return {
       ...report,
+      data: evidence,
       report: `${report.report}\n\n${head}\n${lines.join("\n")}`,
       sources: [
         ...report.sources,

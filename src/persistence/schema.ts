@@ -417,6 +417,12 @@ CREATE TRIGGER benchmark_run_validity_no_update BEFORE UPDATE ON benchmark_run_v
 BEGIN SELECT RAISE(ABORT, 'benchmark_run_validity is append-only'); END;
 `,
   },
+  // Keep the local forecast evidence beside the exact signed wire body.
+  // Old submissions retain an empty trace; retries preserve the original one.
+  {
+    version: 154,
+    sql: "ALTER TABLE arena_submissions ADD COLUMN detail TEXT NOT NULL DEFAULT '{}';",
+  },
 ];
 
 /** Migration 143 body — self-contained so later edits to db-notes never change it. */
