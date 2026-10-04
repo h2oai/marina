@@ -15,7 +15,7 @@ import { horizonDays, horizonOptionsFromEnv } from "./research/civiqs-horizon";
 import { type LiveCiviqs, nowcastForecaster } from "./research/civiqs-nowcast";
 import { arenaResearchLookups, withDataLookups } from "./research/data-evidence";
 import { retrieverFromSpec, withProvidedText } from "./research/retrieve";
-import { crpsNormal, skill } from "./score";
+import { crpsNormal, normalSkillAttribution, skill } from "./score";
 import { type FormationInputs, forecasterFor, lockForModels } from "./service";
 import type { ArenaLock, ArenaRound, Distribution } from "./types";
 import {
@@ -324,6 +324,16 @@ export async function scorePairedShadows(data: ArenaData, rows: ArenaShadowRow[]
                       crpsNormal(f.topline.mean, f.topline.sd, resolution!.value!),
                       baseline,
                     ),
+                    ...(baseline > 0 && c.shared.start.topline
+                      ? {
+                          attributionFromStart: normalSkillAttribution(
+                            c.shared.start.topline,
+                            f.topline,
+                            resolution!.value!,
+                            baseline,
+                          ),
+                        }
+                      : {}),
                   }
                 : {}),
             },

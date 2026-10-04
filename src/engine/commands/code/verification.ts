@@ -9,6 +9,10 @@ import {
   codingVerificationReadiness,
   codingVerificationUnchanged,
 } from "../../../coding/task-run";
+import {
+  resolveVerificationOptions,
+  type VerificationOptions,
+} from "../../../coding/verification-plan";
 import { assertBoundedVerification } from "../../../coding/verification-runner";
 import { codingRunContext } from "../../../persistence/coding-run-context";
 import type { MarinaDB } from "../../../persistence/database";
@@ -16,7 +20,8 @@ import type { Entity, EntityId, RoomContext } from "../../../types";
 import { getErrorMessage } from "../../errors";
 import { checkUnattendedGate } from "../../safety-gates";
 import { isLocalUngated } from "../../trust-profile";
-import { normalizeCodeRunArgs, runVerificationCommands, verificationCommands } from "./exec";
+import { normalizeCodeRunArgs, planVerification, runVerificationCommands } from "./exec";
+import { applySessionRunner } from "./runner";
 import {
   type CodeDeps,
   canAdoptCodingSession,
@@ -34,7 +39,7 @@ export async function startVerification(
   entity: Entity,
   deps: CodeDeps & { db: MarinaDB },
   candidate = false,
-  dependencies?: "bun",
+  options: VerificationOptions = resolveVerificationOptions(),
 ): Promise<void> {
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
@@ -77,9 +82,11 @@ export async function startVerification(
       throw new Error("Verification stopped: the session's coding attempt changed.");
   };
   beforeSpawn();
-  const commands = (await verificationCommands(deps, session)).map((command) =>
-    candidate && command === "git diff --check" ? "git diff --cached --check" : command,
-  );
+  const forCandidate = (command: string) =>
+    candidate && command === "git diff --check" ? "git diff --cached --check" : command;
+  // The live plan validates admission; a candidate is re-planned on its snapshot.
+  const livePlan = await planVerification(deps, session, workspace, options, candidate);
+  const commands = livePlan.commands.map(forCandidate);
   assertBoundedVerification(commands);
   for (const command of commands)
     normalizeAllowedCodeCommand(root, normalizeCodeRunArgs(command.split(/\s+/).filter(Boolean)));
@@ -133,6 +140,7 @@ export async function startVerification(
             workspace,
             beforeSpawn,
           },
+          livePlan,
         );
       const snapshot = await workspace.captureCandidate!(undefined, beforeSpawn);
       try {
@@ -154,24 +162,48 @@ export async function startVerification(
           createdBy: entity.name,
         });
         beforeSpawn();
-        const prepared = new LocalWorkspace(snapshot.directory);
+        // The snapshot runs where the session runs: the same container runner
+        // (same allowlist, approver and gates) when one is set, never a silent
+        // host fallback.
+        const prepared = applySessionRunner(
+          new LocalWorkspace(snapshot.directory),
+          deps.db,
+          session,
+        );
+        prepared.setHostExecForbidden?.(deps.hostExecForbidden === true);
+        const snapshotPlan = await planVerification(
+          deps,
+          session,
+          prepared,
+          options,
+          true,
+          livePlan.touched,
+        );
+        const plan = {
+          ...snapshotPlan,
+          commands: snapshotPlan.commands.map(forCandidate),
+          steps: {
+            ...snapshotPlan.steps,
+            steps: snapshotPlan.steps.steps.map((step) => ({
+              ...step,
+              command: forCandidate(step.command),
+            })),
+          },
+        };
+        const runner = prepared.describe().runner;
         return await runVerificationCommands(
           backgroundContext,
           eid,
           entity,
           deps,
           session,
-          commands,
+          plan.commands,
           "Snapshot verification",
           {
             receiptId,
             workspace: prepared,
             beforeSpawn,
             candidateId: captured.id,
-            prepare:
-              dependencies === "bun"
-                ? () => prepared.prepareCandidateDependencies(beforeSpawn)
-                : undefined,
             candidateEvidence: async () => {
               const evidence: Record<string, unknown> = {
                 candidateId: captured.id,
@@ -179,7 +211,12 @@ export async function startVerification(
                 candidateFingerprint: snapshot.candidate.fingerprint,
                 executionTarget: "local",
                 executionLocation: "candidate-materialization",
-                recipeType: commands.every((command) => command === "git diff --cached --check")
+                executionRunner: runner
+                  ? { kind: "container", image: runner.image, sync: runner.sync }
+                  : { kind: "host" },
+                recipeType: plan.commands.every(
+                  (command) => command === "git diff --cached --check",
+                )
                   ? "whitespace-only"
                   : "configured-checks",
                 runtime: { bun: Bun.version, platform: process.platform, arch: process.arch },
@@ -194,7 +231,8 @@ export async function startVerification(
                 );
                 evidence.materializedFingerprint = checked;
                 if (checked !== snapshot.candidate.fingerprint) {
-                  const changed = await prepared.captureCandidate(root, beforeSpawn);
+                  // Host and container local workspaces both capture on the host.
+                  const changed = await prepared.captureCandidate!(root, beforeSpawn);
                   try {
                     const successor = deps.db.createCodingArtifact({
                       sessionId: session.id,
@@ -222,6 +260,7 @@ export async function startVerification(
               return evidence;
             },
           },
+          plan,
         );
       } finally {
         await snapshot.dispose();

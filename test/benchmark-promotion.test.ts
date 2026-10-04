@@ -191,7 +191,7 @@ describe("earned promotion — store and commands", () => {
     id: string,
     group: string,
     correct: (id: string, i: number) => boolean,
-    extra: { agent_id?: string; model?: string } = {},
+    extra: { agent_id?: string; model?: string; judge?: string } = {},
   ) {
     const outcome = items(id, correct);
     db.recordBenchmarkLedgerRun(
@@ -213,7 +213,7 @@ describe("earned promotion — store and commands", () => {
         ci_high: 1,
         seed: 1,
         slice_hash: sliceHash(IDS),
-        judge: "judge/model",
+        judge: extra.judge ?? "judge/model",
         target_kind: "crew",
         target_json: JSON.stringify({ crew: "answerer", model: extra.model ?? `model-${group}` }),
         label: id,
@@ -340,6 +340,57 @@ describe("earned promotion — store and commands", () => {
     const stats = JSON.parse(db.listBenchmarkPromotions(SLOT).at(-1)?.stats_json ?? "{}");
     expect(stats.replicates).toEqual({ challenger: 3, incumbent: 3, minimum: 2 });
     expect(stats.pooled.challengerReplicates).toBe(3);
+  });
+
+  it("refuses to pool a challenger group padded with an unrelated run", () => {
+    record("base", incumbentRight);
+    // One real challenger run plus an unrelated configuration under the same label.
+    recordOne("strong", "strong", strongRight);
+    recordOne("stray", "strong", strongRight, { model: "some-other-model" });
+    const op = login("Guard");
+    grant(db, op.conn.entity!, "role.edit");
+    op.send(`benchmark promote ${SLOT} base`);
+    const reply = op.send(`benchmark promote ${SLOT} strong`);
+    expect(reply).toContain("Inconsistent replicate group");
+    expect(reply).toContain("stray (different target)");
+    expect(reply).not.toContain("holdout:");
+    // Refused before the holdout was read: no attempt recorded, the bar did not move.
+    expect(db.listBenchmarkPromotions(SLOT).map((h) => h.outcome)).toEqual(["seeded"]);
+    expect(op.send(`benchmark challenge ${SLOT} strong`)).toContain("Inconsistent replicate group");
+  });
+
+  it("refuses a challenger group whose replicates were graded by another judge", () => {
+    recordOne("seed", "seed", incumbentRight);
+    recordOne("seed-r2", "seed", incumbentRight, { model: "model-seed", judge: "other/judge" });
+    const op = login("Judged");
+    grant(db, op.conn.entity!, "role.edit");
+    const reply = op.send(`benchmark promote ${SLOT} seed`);
+    expect(reply).toContain("seed-r2 (different judge)");
+    expect(db.listBenchmarkDefaults()).toHaveLength(0);
+  });
+
+  it("pools only the incumbent's own configuration, so a stray run cannot pad or freeze it", () => {
+    record("base", incumbentRight);
+    record("strong", strongRight);
+    const op = login("Pool");
+    grant(db, op.conn.entity!, "role.edit");
+    op.send(`benchmark promote ${SLOT} base`);
+    recordOne("intruder", "base", strongRight, { model: "intruder-model" });
+    expect(op.send(`benchmark promote ${SLOT} strong`)).toContain("Promoted");
+    const stats = JSON.parse(db.listBenchmarkPromotions(SLOT).at(-1)?.stats_json ?? "{}");
+    expect(stats.replicates.incumbent).toBe(2);
+  });
+
+  it("refuses a promoter who authored any replicate pooled with the challenger", () => {
+    record("base", incumbentRight);
+    const op = login("Author");
+    grant(db, op.conn.entity!, "role.edit");
+    op.send(`benchmark promote ${SLOT} base`);
+    recordOne("strong", "strong", strongRight);
+    recordOne("strong-r2", "strong", strongRight, { agent_id: op.conn.entity! });
+    const reply = op.send(`benchmark promote ${SLOT} strong`);
+    expect(reply).toContain("you ran strong-r2, a replicate pooled with strong");
+    expect(db.listBenchmarkPromotions(SLOT).map((h) => h.outcome)).toEqual(["seeded"]);
   });
 
   it("refuses a challenger that is a replicate of the incumbent", () => {

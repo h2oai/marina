@@ -4,9 +4,9 @@ Marina's coding agent can be measured on [SWE-bench](https://www.swebench.com/) 
 benchmark-specific behavior inside Marina. `bun run swebench` is a thin adapter over the general
 one-shot coding entry point (`marina -p "<task>" <dir>`, see [Coding](coding.md)):
 
-1. **Checkout:** each instance gets a fresh clone at its base commit. Repositories are mirrored once
-   under the data directory and cloned with `--shared`, so attempts never share a working tree and
-   never touch the Marina checkout that runs them.
+1. **Checkout:** each instance gets a fresh repository holding the base commit and nothing else
+   (see [Workspace hygiene](#workspace-hygiene)). Attempts never share a working tree and never
+   touch the Marina checkout that runs them.
 2. **Task:** the agent receives the issue text only (`problem_statement`). Hints, the gold patch and
    the test patch are never exported by `benchmarks/swebench/export.py`, so nothing downstream can
    read them.
@@ -18,6 +18,40 @@ one-shot coding entry point (`marina -p "<task>" <dir>`, see [Coding](coding.md)
 6. **Scoring:** the official SWE-bench harness, run unmodified.
 7. **Ledger:** the scored run is filed into the benchmark ledger in a replicate group, so `benchmark
    compare`, `leaderboard` and `replicates` rank it with everything else Marina has measured.
+
+## Workspace hygiene
+
+A full clone of an upstream repository also contains every commit made after the task's base
+commit, including the fix the benchmark grades against. Other branches, tags, remotes, packed refs,
+the reflog, `FETCH_HEAD` and shared object stores all reach those commits, so a solver could recover
+the reference patch with `git log --all`, `git show <sha>`, `git reflog` or `git fsck`. The
+workspace is built so that none of these routes exists:
+
+- **Layout.** Repositories are mirrored once under `<data>/mirrors`, but the mirror is only ever
+  fetched from. Each attempt runs `git init` in an empty directory and fetches the base commit
+  alone (`--depth=1 --no-tags --no-write-fetch-head`), then detaches HEAD at it. The workspace has
+  no branches, tags, remotes, alternates, reflog (`core.logAllRefUpdates=false`, and the checkout's
+  `logs/` are removed), stash, `FETCH_HEAD` or `ORIG_HEAD`, and no objects beyond the base tree.
+- **Same sha, same patch.** HEAD is the real base commit, so `git diff HEAD` (the collected
+  `model_patch`) applies to the base exactly as the grader applies it.
+- **No earlier history either.** The fetch is shallow, so commits before the base are not
+  available. `git log` shows the base commit only and `git blame` attributes every line to it.
+- **Fail closed.** Every prepared workspace is checked before the agent starts
+  (`assertWorkspaceIsolated` in `benchmarks/swebench/adapter.ts`). The instance fails, with no
+  attempt recorded, when:
+  - HEAD is not the base;
+  - any ref, remote, reflog entry or pointer file (`packed-refs`, `FETCH_HEAD`, `ORIG_HEAD`,
+    alternates, `worktrees/`, `modules/`) exists;
+  - any commit other than the base is reachable;
+  - the object store holds any object not reachable from the base tree;
+  - a known forbidden sha (for example a gold commit, when one is supplied) resolves.
+
+  `file` records an instance with no recorded attempt as unresolved.
+- **Environment images.** With `--env-image`, the agent's commands run in the instance's official
+  image. Its `/testbed` repository is prepared by the SWE-bench image builder: later tags are
+  deleted, the remote is removed, the reflog is expired and the object store is pruned. The image
+  keeps the history before the base, plus one synthetic setup commit on top of it. The patch is
+  still collected from the isolated host workspace described above.
 
 ## Commands
 
@@ -36,13 +70,28 @@ bun run swebench file --arm single --replicate 1 --db marina.db
   implementer, a reviewer (usually another vendor) reads the change against the issue. It edits only
   when the change is wrong or incomplete.
 - **Resuming:** `run` skips instances already recorded in the run's `attempts.jsonl`, so an
-  interrupted run picks up where it stopped.
+  interrupted run picks up where it stopped. It records the arm, mode and subset (`--n`/`--seed`
+  or `--ids`) in `arm.json` and refuses to continue a replicate under another configuration.
+- **One subset per run:** `run` and `file` read the ids `subset` wrote, so give every step the
+  same `--n` and `--seed` (or `--ids`); `file` records the seed from `arm.json`. `bun run swebench
+  export` writes the task fields with `SWEBENCH_PYTHON` when `<data>/verified.jsonl` is missing.
+- **Re-filing is a no-op:** the ledger result is stamped with the last attempt's write, never the
+  filing time, and every replicate of an arm records the same target (no replicate number or path).
 - **Location:** everything is written under `--data` (default `~/.local/share/marina-swebench/data`).
 - **`--env-image` (opt-in):** the agent's commands run inside the instance's official environment
   image (`swebench/sweb.eval.x86_64.<id>`, pulled or built beforehand) through Marina's general
   container runner, in patch sync at `/testbed` with the `testbed` conda env and no network. The
   agent can then run the project's existing tests while it works (a full agent run instead of
   agentless). Without the flag, runs stay agentless.
+- **In-loop verification:** with `--env-image`, `code verify` and `code test` run in that same
+  image, including candidate checks. Preparation follows the detected project type: for a Python
+  repository it probes the image's environment (the instance image already has it) and never runs a
+  JavaScript installer, even when the repository carries a `package.json` or the agent asks for
+  `dependencies:bun`. Tests relevant to the change run first. Each verification ends `passed`,
+  `failed`, `not_run` (nothing could be checked, with the reason) or `error` (the runtime failed).
+  Each attempt in `attempts.jsonl` carries these counts (`verification`), and the filed ledger result
+  sums them in `metadata.verification`. They describe the agent's process only: grading is the
+  harness's alone, and a `not_run` is never counted as a failed or passed check.
 
 ## SWE-bench Pro
 
@@ -106,7 +155,9 @@ netns = "pasta"
   `--env-image`, Marina's container runner (`docs/guides/coding.md` → "Run commands in a container
   image") executes the agent's commands in the instance's environment image; the images must already
   be present (the harness builds or pulls them), and each image needs a supported test runner shape
-  (`python -m pytest`, `python tests/runtests.py`, …) to be useful.
+  (`python -m pytest`, `python tests/runtests.py`, `go test`, `npm run test`, …) to be useful.
+  Patch sync starts every command from the image, so verification never installs dependencies
+  there: an image without the project environment yields `not_run`, not a failure.
 - **No submission.** Nothing is submitted anywhere. A leaderboard submission (a pull request to
   `SWE-bench/experiments` with predictions, logs and trajectories) is a separate act that its owner
   approves.

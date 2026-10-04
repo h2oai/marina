@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 import type { CodingArtifactEntry } from "../lib/types";
+import { verificationLabel, verificationOutcomeFromStatus } from "../lib/verification-outcome";
 import { DiffViewer } from "./DiffViewer";
 
 /** Read existing session/evidence rows; an artifact's status is never promoted into proof. */
@@ -53,7 +54,13 @@ export function CodingDeskResource({ value }: { value: Record<string, unknown> }
           {artifacts.slice(0, 30).map((artifact) => (
             <details key={artifact.id} className="rounded border border-border p-2">
               <summary>
-                {artifact.title} · {artifact.kind.replaceAll("_", " ")} · {artifact.status}
+                {artifact.title} · {artifact.kind.replaceAll("_", " ")} ·{" "}
+                {artifact.kind === "verification"
+                  ? verificationLabel(
+                      verificationOutcomeFromStatus(artifact.status),
+                      artifact.status,
+                    )
+                  : artifact.status}
               </summary>
               {artifact.kind === "patch" || artifact.kind === "diff" ? (
                 <DiffViewer patch={artifact.content_text} />
@@ -85,7 +92,7 @@ export function CodingDeskResource({ value }: { value: Record<string, unknown> }
 
 function verification(artifact: CodingArtifactEntry): string {
   try {
-    return String(JSON.parse(artifact.metadata_json).verification ?? "not recorded");
+    return verificationLabel(JSON.parse(artifact.metadata_json).verification);
   } catch {
     return "not recorded";
   }

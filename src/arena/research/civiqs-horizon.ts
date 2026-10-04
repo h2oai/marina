@@ -52,6 +52,16 @@ export const REVISION_LOOKBACK_DAYS = 28;
 
 const DAY = 86_400_000;
 
+/** Index-based slopes and residuals represent days only for regular daily input. */
+function isDailySeries(points: Array<{ date: string; value: number }>): boolean {
+  return points.every(
+    (p, i) =>
+      Number.isFinite(p.value) &&
+      Number.isFinite(Date.parse(p.date)) &&
+      (i === 0 || Date.parse(p.date) - Date.parse(points[i - 1]!.date) === DAY),
+  );
+}
+
 /** Whole days from `fromDate` to `toDate` (YYYY-MM-DD), never negative. */
 export function horizonDays(fromDate: string, toDate: string): number {
   const d = Math.round((Date.parse(toDate.slice(0, 10)) - Date.parse(fromDate.slice(0, 10))) / DAY);
@@ -209,17 +219,7 @@ export async function weeklyAnchorNowcast(
   if (!last || last.date >= anchor.date || !Number.isFinite(anchor.value)) return undefined;
   const age = horizonDays(last.date, anchor.date);
   const h = horizonDays(anchor.date, round.release_at);
-  // Index-based slopes represent days only for a contiguous daily series.
-  if (
-    age > 7 ||
-    h < 1 ||
-    points.some(
-      (p, i) =>
-        !Number.isFinite(p.value) ||
-        (i > 0 && Date.parse(p.date) - Date.parse(points[i - 1]!.date) !== DAY),
-    )
-  )
-    return undefined;
+  if (age > 7 || h < 1 || !isDailySeries(points)) return undefined;
   const values = points.map((p) => p.value);
   const steps = phi ** age * dampedSteps(h, phi);
   const projected: number[] = [];
@@ -266,17 +266,21 @@ export async function horizonNowcast(
   asOf: string = round.lock_at,
   live?: LiveCiviqs,
 ): Promise<HorizonNowcast | undefined> {
+  if (!Number.isFinite(phi) || phi <= 0 || phi > 1) return undefined;
   // The same snapshot the nowcast reads (archive fetched by the lock; an open
   // round may use the live dashboard when it is at least as fresh).
   const daily = await civiqsDailySeries(data, round, { days: 120, asOf, live }).catch(
     () => undefined,
   );
   const pts = daily?.points ?? [];
-  if (pts.length === 0) return undefined;
+  // Do not compress missing days into one trend step or train on the wrong
+  // horizon. The caller retains the plain nowcast and its baseline spread.
+  if (pts.length === 0 || !isDailySeries(pts)) return undefined;
   const values = pts.map((p) => p.value);
   const last = pts.at(-1)!;
   const target = (round.release_at ?? round.lock_at).slice(0, 10);
   const h = horizonDays(last.date, target);
+  if (!Number.isFinite(h)) return undefined;
   const wantDrift = mode === "drift" || mode === "both";
   const wantSd = mode === "sd" || mode === "both";
   const drift = wantDrift && h > 0 && driftPersists(values, h, phi);

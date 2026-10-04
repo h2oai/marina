@@ -26,6 +26,8 @@ export function verificationReadinessLabel(value: unknown): string | undefined {
       return "ready for review";
     case "needs-attention":
       return "checks need attention";
+    case "not-run":
+      return "checks not run";
     default:
       return undefined;
   }

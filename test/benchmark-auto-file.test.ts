@@ -194,15 +194,21 @@ describe("POST /v1/benchmarks/runs — auto-filing", () => {
     openMode: false,
   } as PassthruAuthResult;
 
-  function file(label: string, pattern: boolean[], auth: PassthruAuthResult = keyed) {
+  function file(
+    label: string,
+    pattern: boolean[],
+    auth: PassthruAuthResult = keyed,
+    extra: { replicateGroup?: string; timestamp?: number } = {},
+  ) {
     const body = {
       targetKind: "crew",
       target: { crew: "answerer", formation: label },
       label,
       judge: "judge/model",
+      ...(extra.replicateGroup ? { replicateGroup: extra.replicateGroup } : {}),
       result: {
         config: { dataset: "synthetic-set", seed: 1, apiKey: "sk-never" },
-        timestamp: T0 + 7000,
+        timestamp: extra.timestamp ?? T0 + 7000,
         duration_ms: 7000,
         items: pattern.map((correct, i) => ({
           id: `item-${i}`,
@@ -259,6 +265,21 @@ describe("POST /v1/benchmarks/runs — auto-filing", () => {
     const again = await file("crew-a", [true, false]);
     expect(again.status).toBe(200);
     expect(((await again.json()) as { created: boolean }).created).toBe(false);
+  });
+
+  it("a re-file at another time is the same run, and the reply reports the STORED run", async () => {
+    const first = (await (
+      await file("crew-g", [true, true], keyed, { replicateGroup: "group-one" })
+    ).json()) as { runId: string };
+    // A resumed harness re-files with a new wall-clock timestamp and another group label.
+    const res = await file("crew-g", [true, true], keyed, {
+      replicateGroup: "group-two",
+      timestamp: T0 + 99_000,
+    });
+    expect(res.status).toBe(200);
+    const out = (await res.json()) as { runId: string; created: boolean; replicateGroup: string };
+    expect(out).toMatchObject({ runId: first.runId, created: false, replicateGroup: "group-one" });
+    expect(db.queryBenchmarkRuns({ benchmark: "synthetic-set" })).toHaveLength(1);
   });
 
   it("feeds benchmark participants and benchmark compare", async () => {
