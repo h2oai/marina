@@ -28,6 +28,7 @@ import {
   type Verdict,
   verifyRounds,
 } from "../src/net/model-api/verify";
+import { setEndpointConfig } from "../src/net/model-endpoint";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { MockConnection, makeTestRoom } from "./helpers";
@@ -111,7 +112,9 @@ let originalFetch: typeof fetch;
 let dir: string;
 let db: MarinaDB;
 let engine: Engine;
-let calls: { model: unknown; system: string; body: Record<string, unknown> }[];
+let calls: { model: unknown; system: string; body: Record<string, unknown>; url: string }[];
+/** When it returns a status, the upstream answers that status instead. */
+let failWith: ((url: string, body: Record<string, unknown>) => number | undefined) | undefined;
 let checkerReply: string;
 /** When set, the proposer's draft message (else a cancel_order tool call). */
 let proposerMessage: Record<string, unknown> | undefined;
@@ -128,10 +131,12 @@ beforeEach(() => {
   process.env.MARINA_OPEN_API = "true";
   process.env.OPENROUTER_API_KEY = "test-openrouter-key";
   calls = [];
+  failWith = undefined;
   checkerReply = '{"verdict":"approve","issues":""}';
   proposerMessage = undefined;
   originalFetch = globalThis.fetch;
-  globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = input instanceof Request ? input.url : String(input);
     const body = init?.body ? JSON.parse(String(init.body)) : {};
     const msgs = (body.messages ?? []) as { role: string; content: unknown }[];
     const system = msgs
@@ -142,7 +147,11 @@ beforeEach(() => {
           : String(m.content),
       )
       .join("\n");
-    calls.push({ model: body.model, system, body });
+    calls.push({ model: body.model, system, body, url });
+    const status = failWith?.(url, body);
+    if (status) {
+      return Response.json({ error: { message: "upstream refused" } }, { status });
+    }
     const isChecker = system.includes("You review an assistant's DRAFT");
     const isRevision = system.includes("A reviewer checked your draft");
     const message = isChecker
@@ -317,6 +326,56 @@ describe("POST /v1/chat/completions with marina/verify", () => {
     proposerMessage = { role: "assistant", content: "Which order do you mean?" };
     const prose = await post(request("marina/verify:openrouter/openai/gpt-6.1-sol"));
     expect(prose?.headers.get("x-marina-repair")).toBeNull();
+  });
+
+  it("never answers a failing checker with another vendor's default model", async () => {
+    process.env.OPENAI_API_KEY = "test-openai-key";
+    const isChecker = (b: Record<string, unknown>) =>
+      JSON.stringify(b.messages).includes("You review an assistant's DRAFT");
+    failWith = (url, body) => (url.includes("openrouter") && isChecker(body) ? 503 : undefined);
+    const resp = await post(request("marina/verify:openrouter/openai/gpt-6.1-sol"));
+    expect(resp?.status).toBe(200);
+    expect(resp?.headers.get("x-marina-verify")).toBe("checker-unavailable");
+    // Every call went to the named provider with the named id; no first-party
+    // fallback (OpenAI's default model) answered for the checker.
+    expect(calls.every((c) => c.url.includes("openrouter"))).toBe(true);
+    expect(calls.every((c) => c.model === "openai/gpt-6.1-sol")).toBe(true);
+  });
+
+  it("returns a rejected proposer as the failure, with no fallback and no added effort", async () => {
+    process.env.OPENAI_API_KEY = "test-openai-key";
+    failWith = (url) => (url.includes("openrouter") ? 400 : undefined);
+    const resp = await post(request("marina/verify:openrouter/openai/gpt-6.1-sol"));
+    expect(resp?.status).toBe(400);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toContain("openrouter");
+    // A default-route body would carry an injected reasoning_effort.
+    expect(calls[0]!.body.reasoning_effort).toBeUndefined();
+  });
+
+  it("applies the operator's passthru pin to the proposer and checker", async () => {
+    const pin = "openrouter/openai/gpt-6.1-sol";
+    expect(setEndpointConfig(db, { mode: "passthru", passthruModel: pin })).toHaveProperty(
+      "config",
+    );
+    const other = await post(request(`marina/verify:${pin}+openrouter/anthropic/claude-opus-5.5`));
+    expect(other?.status).toBe(403);
+    expect(((await other!.json()) as { error: { code: string } }).error.code).toBe(
+      "model_not_allowed",
+    );
+    const elsewhere = await post(request("marina/verify:openrouter/z-ai/glm-6"));
+    expect(elsewhere?.status).toBe(403);
+    expect(calls).toHaveLength(0);
+    // `default` names the pin; the pin itself is served.
+    const viaDefault = await post(request("marina/verify:default"));
+    expect(viaDefault?.status).toBe(200);
+    const pinned = await post(request(`marina/verify:${pin}`));
+    expect(pinned?.status).toBe(200);
+    expect(calls.map((c) => c.model)).toEqual(Array(4).fill("openai/gpt-6.1-sol"));
+    // Outside passthru mode the pin does not apply.
+    setEndpointConfig(db, { mode: "agents" });
+    const free = await post(request("marina/verify:openrouter/z-ai/glm-6"));
+    expect(free?.status).toBe(200);
   });
 
   it("refuses streaming and unreachable models explicitly", async () => {

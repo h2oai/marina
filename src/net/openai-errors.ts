@@ -31,7 +31,9 @@ export type OpenAIErrorCode =
   // The world's MARINA_DAILY_SPEND_CAP_USD is spent (src/engine/spend-ledger.ts).
   | "spend_cap_reached"
   // A ledger write (POST /v1/benchmarks/runs) by the read-only open-API sentinel.
-  | "open_api_read_only";
+  | "open_api_read_only"
+  // A model id the operator's passthru pin does not allow (marina/verify).
+  | "model_not_allowed";
 
 export type OpenAIErrorType =
   | "invalid_request_error"

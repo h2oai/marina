@@ -22,6 +22,7 @@ import {
   passthruTraceOptions,
   passthruUpstreamHints,
   preparePassthru,
+  requestImagePrincipal,
 } from "./passthru";
 import {
   bufferedOpenaiStream,
@@ -131,7 +132,7 @@ export async function runOpenaiChat(
     // `marina/verify:<proposer>[+<checker>]` — the verification formation as a
     // model id (proposer → checker review → bounded revision), tools included.
     if (model.startsWith(VERIFY_MODEL_PREFIX)) {
-      const verified = await maybeVerifyChat(engine, req, body);
+      const verified = await maybeVerifyChat(engine, req, body, authResult);
       if (verified) return verified;
     }
 
@@ -239,10 +240,14 @@ export async function runOpenaiChat(
     const rejected = rejectUnsupportedForAgents(body);
     if (rejected) return rejected;
 
-    // Agents hear the request as clamped text, so its images go on the canvas
-    // (one canvas per model id) and the text names each node for `canvas look`.
+    // Agents hear the request as clamped text, so its images go on the
+    // caller's private inbox canvas and the text names each node for `canvas look`.
     if (hasImages) {
-      const staged = await stageRequestImages(engine, userMsg.content, `inbox:${model}`);
+      const staged = await stageRequestImages(
+        engine,
+        userMsg.content,
+        requestImagePrincipal(engine, req, authResult),
+      );
       userText = [userText, ...staged].filter(Boolean).join("\n");
     }
 

@@ -54,6 +54,20 @@ export function listAssets(db: Database, opts?: { limit?: number; mime?: string 
     .all(opts?.limit ?? 50) as AssetRow[];
 }
 
+/** Assets whose `metadata.origin` is `origin`, created before `before`, oldest first. */
+export function listAssetsByOrigin(
+  db: Database,
+  origin: string,
+  before: number,
+  limit: number,
+): AssetRow[] {
+  return db
+    .query(
+      "SELECT * FROM assets WHERE created_at < ? AND json_extract(metadata, '$.origin') = ? ORDER BY created_at LIMIT ?",
+    )
+    .all(before, origin, limit) as AssetRow[];
+}
+
 export function deleteAsset(db: Database, id: string): boolean {
   const result = db.run("DELETE FROM assets WHERE id = ?", [id]);
   return result.changes > 0;

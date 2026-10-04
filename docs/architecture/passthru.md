@@ -19,7 +19,8 @@
   Tests: `test/upstream-explicit-provider.test.ts`.
 - **`marina/verify:<proposer>[+<checker>]` (2026-10-03)** — the verification formation as a model id (`src/net/model-api/verify.ts`, reached from `runOpenaiChat` before any routing).
   - **Flow:** proposer draft (tools allowed) → checker review of the draft against the rules, requests and tool results (JSON verdict) → at most `MARINA_VERIFY_ROUNDS` (default 1) proposer revisions with the reviewer's note as a trailing system message.
-  - **Plumbing:** every call goes through `proxyToUpstream`, so spend, the daily cap and lifecycle traces apply.
+  - **Plumbing:** every call goes through `proxyToUpstream`, so spend, the daily cap and lifecycle traces apply. The id travels as `body.model` (never `forceModel`), so each call takes the explicit-provider path: the named provider's rejection is final and only an aggregator may serve the same full id after a transport failure. A proposer or checker is never answered by another vendor's default model. The caller's distinct passthru identity (bound key / name-map) is stamped on the inner calls' lifecycle events.
+  - **Operator pin:** in `passthru` endpoint mode with a configured `passthruModel`, `default` names the pin and any other proposer or checker id is refused with `403 model_not_allowed`; `MARINA_REPAIR_MODEL` is used only when it is the pin.
   - **Response:** sums `usage` and `x-marina-cost-usd`, and sets `x-marina-verify`.
   - **Fails open** to the draft.
   - **Write-action guard** (`guardRevision`): a revision may change text and read-only calls freely, but a state-changing tool call stays as drafted unless the verdict carries a `conflict` (`kind`, verbatim `quote`, `call`, `field`).

@@ -150,7 +150,10 @@ with `marina_tool_search`). What the model receives depends on the source:
 | SVG | refused: it is markup, not pixels |
 
 When `pdftotext`, `pdftoppm` or `ffmpeg` is not installed, the answer says so
-and works with what remains.
+and works with what remains. The tools run asynchronously with a 30 s timeout
+and capped output, at most two documents at a time across the server (a few
+more wait; beyond that a look is refused with a note). Each entity may look 6
+times in a burst, then once every 10 s (the local profile lifts the limit).
 
 **Write-back.** When the source is a canvas node, the answer is written to the
 same canvas as a text node beside it, linked by a `derived_from` edge, so it is
@@ -164,9 +167,15 @@ through to `MARINA_VISION_MODEL`; if neither can, the reply is labelled
 spend, the daily cap and traces apply as for any model call.
 
 **Crews.** A crew (`marina:<crew>` model id) hears a request as text, so images
-in a `/v1/chat/completions` request are stored as assets and placed on the
-canvas `inbox:<model id>`; the crew's prompt names each node and the `canvas
-look` command to read it. A request may now be image-only. Remote image URLs are
+in an agents-mode `/v1/chat/completions` or `/v1/responses` request are stored
+as assets and placed on the caller's private inbox canvas (`inbox:<entity id>`
+for a bound key or name-mapped agent, `inbox:model-key-<hash>` for any other
+API key; only the owner and operators see it in the dashboard). The crew's
+prompt names each node and the `canvas look` command to read it. A request's
+images are capped at `MARINA_VISION_MAX_BYTES` in total, and staged images are
+deleted after 7 days (`MARINA_RETENTION_OVERRIDES` entries `assets` and
+`canvas_nodes`, which apply to request images only). An open-API caller outside
+the local profile stages nothing; each image is labelled as not staged. A request may now be image-only. Remote image URLs are
 not fetched at request time; the prompt names the URL, which `canvas look`
 reads through the SSRF guard if an agent chooses to.
 

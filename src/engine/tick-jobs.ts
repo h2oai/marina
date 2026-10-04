@@ -25,7 +25,12 @@ import { tryLog } from "./errors";
 import type { Logger } from "./logger";
 import { MEMORY_ACCUMULATION_PHASE, runEngineAccumulationDispatch } from "./memory-dispatch";
 import { MEMORY_HYGIENE_PHASE, runEngineMemoryHygiene } from "./memory-hygiene";
-import { formatRetentionSummary, RETENTION_TICK_PHASE, runRetentionPass } from "./retention";
+import {
+  formatRetentionSummary,
+  pruneRequestImageBlobs,
+  RETENTION_TICK_PHASE,
+  runRetentionPass,
+} from "./retention";
 import type { TickScheduler } from "./tick-scheduler";
 
 /** The autonomy pulse cadence (5 minutes, matching readiness's evidence window) in ticks. */
@@ -259,6 +264,8 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
     run: async () => {
       const db = host.db;
       if (!db) return;
+      // Staged request images: bytes first, so the row pass never orphans a blob.
+      await pruneRequestImageBlobs(db, host.engine.storage);
       const result = runRetentionPass(db);
       if (result.skipped.length) {
         host.logger.debug("retention", "Skipped tables missing from this schema", {
