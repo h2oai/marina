@@ -7,9 +7,7 @@ import {
   type EditorTheme,
   matchesKey,
   ProcessTerminal,
-  ScrollView,
   type Terminal,
-  Text,
   TuiAltScreen,
   truncateToWidth,
   VStack,
@@ -19,6 +17,7 @@ import type { CodeEditor, CodeEditorOptions, CodeEditorState } from "./code-edit
 import { CodePanelForm } from "./code-panel-form";
 import { terminalText } from "./code-presentation";
 import type { TerminalView } from "./code-views";
+import { WorkspacePanes } from "./code-workspace-panes";
 
 const plain = (text: string) => text;
 const color = (code: number) => (text: string) =>
@@ -48,12 +47,7 @@ export class WorkspaceCodeEditor implements CodeEditor {
   private readonly tui: TuiAltScreen;
   private readonly editors: Record<TerminalView, DraftEditor>;
   private readonly panelForm: CodePanelForm;
-  private readonly transcript = new Text("", 0, 0);
-  private readonly scroll = new ScrollView(this.transcript, {
-    follow: "end",
-    primary: true,
-    scrollbar: "auto",
-  });
+  private readonly panes = new WorkspacePanes();
   private focusView: TerminalView = "coding";
   private state?: CodeEditorState;
   private notice = "";
@@ -107,7 +101,7 @@ export class WorkspaceCodeEditor implements CodeEditor {
           ),
           basis: 1,
         },
-        { component: this.scroll, basis: 0, grow: 1, minSize: 1 },
+        { component: this.panes.component, basis: 0, grow: 1, minSize: 1 },
         {
           component: line(() => this.notice),
           basis: 1,
@@ -142,7 +136,9 @@ export class WorkspaceCodeEditor implements CodeEditor {
         },
         { component: input, basis: "auto", minSize: 3, maxSize: 10, shrink: 1 },
         {
-          component: line(() => "F1 help · F6 Coding/World · F7 requests · F8 panel · Ctrl+D exit"),
+          component: line(
+            () => "F1 help · F2 layout · F6 Coding/World · F7 requests · F8 panel · Ctrl+D exit",
+          ),
           basis: 1,
           visible: ({ height }) => (height ?? 0) >= 10,
         },
@@ -166,6 +162,10 @@ export class WorkspaceCodeEditor implements CodeEditor {
       }
       if (matchesKey(data, "f1")) {
         options.line("/help");
+        return { consume: true };
+      }
+      if (matchesKey(data, "f2")) {
+        options.line("/layout");
         return { consume: true };
       }
       const view = matchesKey(data, "f6")
@@ -210,12 +210,10 @@ export class WorkspaceCodeEditor implements CodeEditor {
 
   update(state: CodeEditorState) {
     if (this.closed) return;
-    const changedRequest = state.answer && state.transcript !== this.state?.transcript;
     this.state = state;
     if (state.panel) this.panelForm.update(state.panel);
     this.tui.setFocus(this.inputComponent());
-    this.transcript.setText(terminalText(state.transcript ?? ""));
-    if (changedRequest) this.scroll.scrollToStart();
+    this.panes.update(state);
     this.tui.requestRender();
   }
 
@@ -224,7 +222,6 @@ export class WorkspaceCodeEditor implements CodeEditor {
     this.focusView = view;
     this.notice = "";
     this.tui.setFocus(this.inputComponent());
-    this.scroll.scrollToEnd();
     this.tui.requestRender();
   }
 
@@ -232,6 +229,11 @@ export class WorkspaceCodeEditor implements CodeEditor {
     // Replacing the editor also discards cancelled approval undo/paste/history state.
     this.editors[view] = this.makeEditor(view);
     if (view === this.focusView) this.tui.setFocus(this.editors[view]);
+    this.tui.requestRender();
+  }
+
+  follow() {
+    this.panes.follow();
     this.tui.requestRender();
   }
   private inputComponent() {

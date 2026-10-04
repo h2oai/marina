@@ -5,6 +5,7 @@ import type { WorkspaceRuntime } from "../../../coding/local-workspace";
 import {
   formatProjectInstructions,
   loadProjectInstructions,
+  projectInstructionContextBlocks,
   projectInstructionMetadata,
 } from "../../../coding/project-instructions";
 import { dim, error as fmtError, header, separator, success } from "../../../net/ansi";
@@ -57,7 +58,10 @@ export async function files(
   sendCode(ctx, eid, lines.join("\n"), {
     commands: ["code read <path>", "code search <query>", "code diff"],
     event: "files_listed",
-    metadata: { projectInstructions: instructionMetadata },
+    metadata: {
+      projectInstructions: instructionMetadata,
+      contextBlocks: projectInstructionContextBlocks(instructions),
+    },
     rows: entries.map((entry) => ({
       path: entry.path,
       size: entry.size,
@@ -115,7 +119,10 @@ export async function readFile(
       commands: [`code diff ${result.path}`, `code search ${result.path}`],
       content: result.content,
       event: "file_read",
-      metadata: { projectInstructions: instructionMetadata },
+      metadata: {
+        projectInstructions: instructionMetadata,
+        contextBlocks: projectInstructionContextBlocks(instructions),
+      },
       paths: [result.path],
       rows: [
         {
@@ -141,6 +148,7 @@ export async function search(
   entity: Entity,
   deps: CodeDeps & { db: MarinaDB },
   query: string,
+  path?: string,
 ): Promise<void> {
   if (!query.trim()) {
     ctx.send(eid, "Usage: code search <query>");
@@ -149,12 +157,12 @@ export async function search(
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
   const workspace = workspaceForSession(deps, session);
-  const hits = await workspace.search(query);
+  const hits = await workspace.search(query, undefined, path);
   deps.db.createCodingEvent({
     sessionId: session.id,
     actor: entity.name,
     kind: "workspace_searched",
-    payload: { query, hits: hits.length },
+    payload: { query, path: path ?? ".", hits: hits.length },
   });
   if (hits.length === 0) {
     sendCode(ctx, eid, `No code search results for "${query}".`, {

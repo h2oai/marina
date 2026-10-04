@@ -377,6 +377,7 @@ type CompactionInternals = {
 
 describe("mid-run compaction (prepareNextTurn)", () => {
   it("compacts exactly once, before the turn that follows the threshold crossing", async () => {
+    using _policy = scopeProcessState({ env: { MARINA_DECISION_GATE: "off" } });
     // Window 20 000 tokens → effective prompt window 15 648 (4096 output + 2 % margin).
     // Each tool turn adds ~1 813 estimated tokens (5 400-char result at 3 chars/token),
     // so the 0.8 threshold is crossed after the 7th tool turn; 8 tool turns then

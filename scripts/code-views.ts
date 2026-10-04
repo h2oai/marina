@@ -119,6 +119,14 @@ export class TerminalViews {
       this.unread[view] = 0;
   }
 
+  /** Return to live local output without moving the other conversation's history. */
+  latest(): string {
+    if (this.focus === "approvals" || this.focus === "panel") return this.page("newer");
+    this.pageEnd[this.focus] = undefined;
+    this.unread[this.focus] = 0;
+    return this.snapshot(this.focus);
+  }
+
   page(direction: "older" | "newer"): string {
     if (this.focus === "panel")
       return "This view shows the current publication. /panel refresh reloads it; F6 returns to conversations.";

@@ -1242,7 +1242,19 @@ export async function proxyToUpstream(
       if (r.response) return finish(r.response, lastTarget);
       lastErrorKind = r.networkError ? "network" : classifyProxyError(r.errorStatus ?? 0);
       anyTimedOut ||= r.timedOut === true;
+      // An explicitly configured default pins the model. A rejected or failed
+      // request must not silently become a different provider's default model.
+      return finish(
+        r.errorResponse ??
+          errorJson(
+            r.timedOut ? 504 : 502,
+            `Configured upstream ${lastTarget} could not complete the request. See server logs.`,
+          ),
+        lastTarget,
+        lastErrorKind,
+      );
     }
+    if (forceModel) return finish(errorJson(503, `Pinned upstream ${dm} is not configured.`), dm);
   }
 
   // An Anthropic "model not found" for a non-default id is a routing miss, not

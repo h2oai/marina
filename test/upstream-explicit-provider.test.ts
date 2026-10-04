@@ -194,3 +194,32 @@ describe("proxyToUpstream: explicit provider prefix", () => {
     expect(calls.map((c) => c.host)).toEqual(["openrouter.ai"]);
   });
 });
+
+describe("configured default remains pinned on failure", () => {
+  it("returns the selected provider's rejection without trying another provider", async () => {
+    db.setSetting("default_model", "openrouter/example/model");
+    replies["openrouter.ai"] = () =>
+      Response.json({ error: { message: "Request is too large" } }, { status: 413 });
+    const response = await ask("marina/default");
+    expect(response.status).toBe(413);
+    expect(await response.text()).toContain("Request is too large");
+    expect(calls).toEqual([{ host: "openrouter.ai", model: "example/model" }]);
+    expect(routedTarget()).toBe("openrouter/example/model");
+  });
+
+  it("does not switch models after a network failure or missing forced-provider credentials", async () => {
+    replies["openrouter.ai"] = () => {
+      throw new Error("offline");
+    };
+    const response = await proxyToUpstream(
+      engine,
+      { model: "default" },
+      "openrouter/example/model",
+    );
+    expect(response.status).toBe(502);
+    expect(calls).toHaveLength(1);
+    const missing = await proxyToUpstream(engine, { model: "default" }, "openai/example");
+    expect(missing.status).toBe(503);
+    expect(calls).toHaveLength(1);
+  });
+});

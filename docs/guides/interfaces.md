@@ -32,6 +32,9 @@ For project coding, run `marina . --tui` in the project directory. Use `--url` a
 [Coding](coding.md) when connecting to an existing world. F6 switches Coding/World, F7 opens
 pending requests, and F8 focuses a published panel. `/view` and `/panel` provide alternatives
 when your terminal does not pass function keys. These views preserve drafts while events arrive.
+Wide TUIs display Coding and World together. F2 cycles automatic, focused and split layouts;
+`/layout auto|focus|split` offers the same choice. Focus selects the composer destination, while
+each pane retains its own scroll position. Requests and panels can sit beside the World stream.
 
 Use separate residents for independent active clients. Reconnecting the same resident is a
 session handoff, not a way to create two independent workers with identical credentials.

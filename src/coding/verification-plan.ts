@@ -90,6 +90,24 @@ export interface VerificationOptions {
 
 export const DEFAULT_VERIFY_FULL_BUDGET_MS = 600_000;
 
+/** Reproduce explicit settings in a retry hint without executing anything or
+ * accepting command text from artifact metadata. Older receipts keep defaults. */
+export function candidateVerificationRetry(options: unknown): string {
+  const command = "code verify candidate";
+  if (!options || typeof options !== "object") return command;
+  const value = options as Partial<VerificationOptions>;
+  const modifiers: string[] = [];
+  if (value.dependencies && DEPENDENCY_MODES.includes(value.dependencies))
+    modifiers.push(`dependencies:${value.dependencies}`);
+  if (value.scope && VERIFICATION_SCOPES.includes(value.scope))
+    modifiers.push(`scope:${value.scope}`);
+  if (value.typecheck === "auto" || value.typecheck === "off")
+    modifiers.push(`typecheck:${value.typecheck}`);
+  if (Number.isSafeInteger(value.fullBudgetMs) && value.fullBudgetMs! >= 1000)
+    modifiers.push(`budget:${value.fullBudgetMs}ms`);
+  return [command, ...modifiers].join(" ");
+}
+
 function oneOf<T extends string>(value: string | undefined, allowed: readonly T[]): T | undefined {
   const v = value?.trim().toLowerCase().replace(",", "+");
   return v && (allowed as readonly string[]).includes(v) ? (v as T) : undefined;

@@ -9,6 +9,7 @@
 // subcommand inside Code Mode is a natural-language task routed to `doCode`.
 
 import { CodeSessionDriver } from "../../coding/code-session-driver";
+import { parseCodeSearchInput } from "../../coding/search-input";
 import { codingRunMetadata } from "../../coding/task-run";
 import {
   resolveVerificationOptions,
@@ -331,7 +332,8 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
   read: readHandler,
   cat: readHandler,
   search: async (c) => {
-    await search(c.ctx, c.eid, c.entity, c.deps, c.args.join(" "));
+    const parsed = parseCodeSearchInput(c.rawAfterSub);
+    await search(c.ctx, c.eid, c.entity, c.deps, parsed.query, parsed.path);
   },
   diff: async (c) => {
     await diff(c.ctx, c.eid, c.entity, c.deps, c.args.join(" "));
@@ -556,7 +558,7 @@ export function codeCommand(deps: CodeDeps): CommandDef {
       "code sandbox stop [discard] confirm",
       "code sandbox stop confirm",
       "code sandbox use",
-      "code search <query>",
+      "code search <query> [path:<relative-path>]",
       "code service list",
       "code service logs",
       "code service probe",

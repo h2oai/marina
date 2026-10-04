@@ -1728,6 +1728,15 @@ export class LeanAgentAdapter implements AgentHandle {
           : () => apiKey
         : undefined,
       beforeToolCall: async (context) => {
+        // Providers may return parseable partial tool arguments at the output
+        // limit. Never execute that unfinished request (especially a write).
+        if (context.assistantMessage?.stopReason === "length") {
+          return {
+            block: true,
+            reason:
+              "The model output limit interrupted this tool request; it did not execute. Retry with a smaller, complete call and a surgical edit.",
+          };
+        }
         // Reserve before any await: parallel preparation must share the same limit.
         if (this.currentRunAdmittedTools >= this.runToolCallCap()) {
           return {
@@ -1794,8 +1803,17 @@ export class LeanAgentAdapter implements AgentHandle {
       },
       afterToolCall: async (context) => {
         let noted: AfterToolCallResult | undefined;
+        // The generic Code tool keeps a readable error result for callers.
+        // Tell the loop it failed too; a caught validation/execution error
+        // must not become a successful action in telemetry/stuck detection.
+        if (
+          context.toolCall.name === "marina_code" &&
+          typeof (context.result.details as { error?: unknown } | undefined)?.error === "string"
+        )
+          noted = { isError: true };
         if (this.policyLabeledCalls.delete(context.toolCall.id)) {
           noted = {
+            ...noted,
             content: [
               {
                 type: "text",
@@ -1815,7 +1833,7 @@ export class LeanAgentAdapter implements AgentHandle {
           context.toolCall.name,
           (context.args ?? {}) as Record<string, unknown>,
           context.result,
-          context.isError,
+          noted?.isError ?? context.isError,
         );
         return noted;
       },
@@ -2810,10 +2828,6 @@ export class LeanAgentAdapter implements AgentHandle {
         this.overflowStallCount = 0;
         this.lastErrorReason = null;
         this.metrics.lastActivity = Date.now();
-        // Calibrate the effective window from the real token usage the server
-        // just reported — catches estimator undercount before it 400s, and
-        // relaxes the window back toward nominal after overflow recovery.
-        this.calibrateContextWindow(lastMsg as unknown as Record<string, unknown>);
         // pi keeps isStreaming true through turn_end/agent_end listeners. Only
         // the settled prompt reflects its idle state; publish after bookkeeping
         // so coding observers see the wait between cycles without changing it.
@@ -3109,16 +3123,26 @@ export class LeanAgentAdapter implements AgentHandle {
   private calibrateContextWindow(lastMsg: Record<string, unknown>): void {
     // Token/cost totals are accumulated per turn in the turn_end listener;
     // this only calibrates the window from the last accepted prompt size.
-    const usage = lastMsg.usage as { input?: number; cacheRead?: number } | undefined;
+    const usage = lastMsg.usage as
+      | { input?: number; cacheRead?: number; cacheWrite?: number }
+      | undefined;
     if (!usage || typeof usage.input !== "number") return;
-    const realInput = usage.input + (typeof usage.cacheRead === "number" ? usage.cacheRead : 0);
-    if (realInput <= 0) return;
+    const realInput =
+      usage.input +
+      (typeof usage.cacheRead === "number" ? usage.cacheRead : 0) +
+      (typeof usage.cacheWrite === "number" ? usage.cacheWrite : 0);
+    if (!Number.isFinite(realInput) || realInput <= 0) return;
     this.peakAcceptedInputTokens = Math.max(this.peakAcceptedInputTokens, realInput);
 
     // Real prompt outran the budget the compactor thought it had → tighten so
-    // the next transform compacts harder. Leave ~12% headroom for output+margin.
+    // the next transform compacts harder. Multiplication reduces the budget;
+    // dividing by 0.85 would enlarge it and could exceed the nominal window.
     if (realInput > this.effectiveContextWindow * 0.85) {
-      this.effectiveContextWindow = Math.max(MIN_EFFECTIVE_CONTEXT, Math.floor(realInput / 0.85));
+      this.effectiveContextWindow = Math.min(
+        this.model.contextWindow,
+        this.effectiveContextWindow,
+        Math.max(MIN_EFFECTIVE_CONTEXT, Math.floor(realInput * 0.85)),
+      );
       return;
     }
 
@@ -3141,11 +3165,10 @@ export class LeanAgentAdapter implements AgentHandle {
     const rate = this.getTickRate();
 
     // Circuit-breaker: a persistently-silent agent (model returns prose, no
-    // tool calls — typically a reasoning model spending its output budget on
-    // <think> before any tool call) would otherwise re-prompt at full cadence
+    // tool calls) would otherwise re-prompt at full cadence
     // forever, burning tokens. Back off hard (ramping to 2 min) so it goes
-    // near-dormant; the periodic retry recovers it once the cause (output
-    // budget / context window) is addressed. Takes precedence over perceptions
+    // near-dormant; the periodic retry recovers it once the blocker is
+    // addressed. Takes precedence over perceptions
     // because the failure is structural, not a lack of stimulus.
     if (this.silentTurns >= LeanAgentAdapter.SILENT_TURN_BACKOFF_THRESHOLD) {
       const over = this.silentTurns - LeanAgentAdapter.SILENT_TURN_BACKOFF_THRESHOLD + 1;
@@ -3871,6 +3894,9 @@ The goal is a smaller, sharper memory — not more notes.`;
     if (this.loopPrefs.rest !== null) {
       // Declared rest: quiet is a legitimate choice, not a failure to act.
       actionDirective = `You are resting (${clampText(this.loopPrefs.rest, 120)}). Act only if something here is worth it; otherwise end the turn. \`memory delete rest\` resumes your loop.`;
+    } else if (this.activeCodingTask) {
+      actionDirective =
+        "Advance the active coding task with the next verifiable step. Inspect completed verification receipts before claiming success; report a concrete blocker when checks cannot run.";
     } else if (this.focus) {
       actionDirective = this.focusDirective(this.focus.description);
     } else if (this.config.goal) {
@@ -3997,10 +4023,11 @@ The goal is a smaller, sharper memory — not more notes.`;
    * pi-agent-core `prepareNextTurnWithContext`: called after a completed turn
    * when the run continues (tool results or steering pending). Gauge the
    * loop's working context with the same budget the transform uses; when it
-   * is over the prune threshold, run the transform now and replace the context
-   * the next turn starts from. Below threshold: no-op, so a normal run pays
-   * only the estimate. The per-request `transformContext` stays in place —
-   * it then sees an already-compacted list and only clamps tool results.
+   * is over the prune threshold, compact it. Also commit exact excerpt
+   * deduplication and tool-result bounds below threshold. An unchanged
+   * transcript keeps its object identities and provider cache prefix. The
+   * per-request `transformContext` stays in place — it then sees an already
+   * compacted list and only clamps tool results.
    */
   private async prepareNextTurn(
     context: PrepareNextTurnContext,
@@ -4020,9 +4047,8 @@ The goal is a smaller, sharper memory — not more notes.`;
         messages: messages.filter((m) => m.role !== "system"),
         targetRatio: CONTEXT_PRUNE_TARGET,
       });
-      const cap = this.tokenCapFor(messages);
-      const overCap = cap !== undefined && conversationTokens(messages) >= cap.capTokens;
-      if (gauge.usageRatio < CONTEXT_PRUNE_THRESHOLD && !overCap) return undefined;
+      // Also commit lossless excerpt deduplication and bounded tool output while
+      // below the compaction threshold, instead of re-deriving it every request.
       const compacted = await transform(messages, signal);
       const changed =
         compacted.length !== messages.length || compacted.some((m, i) => m !== messages[i]);
@@ -4317,6 +4343,10 @@ The goal is a smaller, sharper memory — not more notes.`;
         // last message of a cycle — a tool-calling prompt is several turns).
         // Feeds the lifetime totals and the rolling-hour spend ceiling.
         const usage = this.recordTurnUsage(extractTurnUsage(event.message), endedAt);
+        const stopReason =
+          event.message.role === "assistant" ? event.message.stopReason : undefined;
+        if (stopReason !== "error" && stopReason !== "aborted")
+          this.calibrateContextWindow(event.message as unknown as Record<string, unknown>);
         this.emitEvent({
           type: "turn_end",
           hadToolCalls: event.toolResults.length > 0,
@@ -4330,6 +4360,11 @@ The goal is a smaller, sharper memory — not more notes.`;
         });
         this.firstTurnOutputAt = 0;
         const deliberateRest = this.loopPrefs.rest !== null && !this.currentPromptAddressed;
+        if (stopReason === "error" || stopReason === "aborted") {
+          // Transport failures are handled by the error path. They are not
+          // prose-only model decisions and must not trigger action nudges.
+          return;
+        }
         if (event.toolResults.length === 0 && deliberateRest) {
           // Declared rest: a quiet turn is the agent's choice — no counter,
           // no circuit-breaker backoff, no forced-action followUp.
@@ -4355,8 +4390,8 @@ The goal is a smaller, sharper memory — not more notes.`;
           if (this.silentTurns === LeanAgentAdapter.SILENT_TURN_BACKOFF_THRESHOLD) {
             const reason =
               `${this.silentTurns}+ silent turns (model returning prose, no tool calls) — backing off. ` +
-              `Most likely the output-token budget: a reasoning model (e.g. Qwen via llama.cpp) can spend its ` +
-              `whole completion on <think> before reaching a tool call. Check the model's context window / output budget.`;
+              `Inspect the last response and tool receipts for a blocker, completed work, or an output limit; ` +
+              `this signal alone does not establish context exhaustion.`;
             this.noteError(reason);
             this.log.warn(LEAN_AGENT_LOG_CATEGORY, reason, { agent: this.name });
             this.emitEvent({ type: "error", error: reason, context: "autonomous_loop" });

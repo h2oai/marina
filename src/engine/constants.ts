@@ -333,7 +333,7 @@ export const UPSTREAM_ERROR_PAUSE_MS = upstreamErrorPauseMsFromEnv();
 
 // ─── Agent Prompt Budget ─────────────────────────────────────────────────────
 
-/** Per-text-block tool-result allowance, recomputed from the effective prompt
+/** Whole-message tool-result allowance, recomputed from the effective prompt
  *  window on every transform. An explicit override keeps a fixed token cap. */
 export function maxToolResultTokensForWindow(
   promptWindow: number,

@@ -2,7 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LocalWorkspace } from "../src/coding/local-workspace";
@@ -205,5 +213,32 @@ describe("LocalWorkspace patch resilience", () => {
     expect(result.ok).toBe(false);
     expect(result.output).toContain("also failed");
     expect(readFileSync(join(root, "hello.txt"), "utf-8")).toBe(fileBody);
+  });
+});
+
+describe("LocalWorkspace scoped search", () => {
+  it("the no-rg fallback does not follow directory symlinks", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "marina-search-outside-"));
+    try {
+      writeFileSync(join(outside, "private.ts"), "needle outside workspace");
+      symlinkSync(outside, join(root, "escape"));
+      const fallback = workspace as unknown as { searchWithRg(): Promise<null> };
+      fallback.searchWithRg = async () => null;
+      expect(await workspace.search("needle")).toEqual([]);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("searches a selected file or directory without returning unrelated matches", async () => {
+    mkdirSync(join(root, "selected folder"));
+    writeFileSync(join(root, "selected folder", "file.ts"), "needle selected\n");
+    writeFileSync(join(root, "unrelated.ts"), "needle unrelated\n");
+    const file = await workspace.search("needle", 20, "selected folder/file.ts");
+    expect(file).toEqual([{ path: "selected folder/file.ts", line: 1, text: "needle selected" }]);
+    expect(await workspace.search("needle", 20, "selected folder")).toEqual(file);
+    expect(await workspace.search("needle")).toHaveLength(2);
+    await expect(workspace.search("needle", 20, "../outside")).rejects.toThrow("escapes");
+    await expect(workspace.search("needle", 20, "/tmp")).rejects.toThrow("relative path");
   });
 });

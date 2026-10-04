@@ -16,6 +16,7 @@ import { LocalWorkspace, normalizeAllowedCodeCommand } from "../src/coding/local
 import { detectProjectRunner, isTestCommand } from "../src/coding/project-detection";
 import {
   aggregateVerification,
+  candidateVerificationRetry,
   classifyStep,
   detectedSteps,
   executePreparation,
@@ -765,4 +766,23 @@ describe.skipIf(!Bun.which("go"))("code verify (Go fixture, real toolchain)", ()
     await send("code verify scope:full");
     expect(JSON.parse(verification().metadata_json).outcome).toBe("failed");
   }, 120_000);
+});
+
+it("candidate retry hints preserve resolved verification options and reject injected command text", () => {
+  const options = resolveVerificationOptions(
+    { dependencies: "none", scope: "changed", typecheck: "off", budget: "2m" },
+    {},
+  );
+  expect(candidateVerificationRetry(options)).toBe(
+    "code verify candidate dependencies:none scope:changed typecheck:off budget:120000ms",
+  );
+  expect(candidateVerificationRetry(undefined)).toBe("code verify candidate");
+  expect(
+    candidateVerificationRetry({
+      dependencies: "none; rm",
+      scope: "full\nquit",
+      typecheck: "off --extra",
+      fullBudgetMs: -1,
+    }),
+  ).toBe("code verify candidate");
 });

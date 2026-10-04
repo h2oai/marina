@@ -10,10 +10,15 @@ export function isWorldInput(text: string): boolean {
 
 /** Local terminal controls only; world commands still use the server capability manifest. */
 export const TERMINAL_CONTROLS = [
+  {
+    name: "/layout",
+    usage: "/layout auto|focus|split",
+    help: "Arrange TUI panes without changing your session",
+  },
   { name: "/help", usage: "/help", help: "Show terminal controls and keyboard shortcuts" },
   {
     name: "/view",
-    usage: "/view coding|world|approvals|panel|older|newer",
+    usage: "/view coding|world|approvals|panel|older|newer|latest",
     help: "Switch conversation or read local history",
   },
   {
@@ -80,7 +85,10 @@ ${terminalControls(connected)
 F6 switches coding/world; F7 opens pending requests; F8 focuses the published panel. Switching preserves each draft.
 Tab completes terminal commands. Ctrl+C interrupts active work; again exits.
 Workspace (--tui): type / for suggestions. Tab or Enter inserts; another Enter sends.
-F1 opens this help; PageUp/PageDown scroll; Alt+Up/Down reads older/newer retained pages.
+Wide workspaces show Coding and World together; Requests or Panel replace the Coding pane.
+F2 cycles auto/focus/split layouts; /layout auto|focus|split selects one. Narrow screens use focus.
+F1 opens this help; PageUp/PageDown scroll the focused pane; Alt+Up/Down reads older/newer retained pages.
+/view latest returns straight to recent output and follows new updates in this conversation.
 In the panel, Tab/Shift+Tab selects controls; type to edit; Space toggles a checkbox.
 Enter on a button opens review, initially on Cancel. Select Confirm to submit; Escape cancels.
 Ctrl+D exits an empty composer. Omit --tui for ordinary terminal scrollback.

@@ -194,6 +194,8 @@ Follow **[First autonomous fix (copy and paste)](docs/guides/coding.md#first-aut
 for the exact prompt, expected lifecycle, independent verification, troubleshooting, and cleanup.
 
 Add `--tui` for the fullscreen terminal: `bun run code /tmp/marina-coding-agent-demo --tui`.
+Wide terminals show Coding and World side by side; F2 changes the layout, and narrow screens
+keep a focused view. Drafts and scroll positions survive switching and resizing.
 F6 switches Coding/World, F7 opens pending requests, and F8 opens your panel views. `/panel desk` opens a personal coding desk; `/panel publish <canvas-id>` shares one. One coding
 session is enough; other conversations and autonomous agents continue alongside your work.
 

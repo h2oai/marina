@@ -3,6 +3,7 @@
 
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -122,7 +123,7 @@ export interface WorkspaceFiles {
     input: string,
     maxBytes?: number,
   ): Promise<{ path: string; content: string; truncated: boolean; size: number }>;
-  search(query: string, limit?: number): Promise<SearchHit[]>;
+  search(query: string, limit?: number, path?: string): Promise<SearchHit[]>;
   diff(
     input?: string,
     maxBytes?: number,
@@ -334,15 +335,21 @@ export class LocalWorkspace implements WorkspaceRuntime {
     };
   }
 
-  async search(query: string, limit = DEFAULT_MAX_SEARCH_RESULTS): Promise<SearchHit[]> {
+  async search(
+    query: string,
+    limit = DEFAULT_MAX_SEARCH_RESULTS,
+    path = ".",
+  ): Promise<SearchHit[]> {
     const needle = query.trim();
     if (!needle) return [];
 
-    const rgHits = await this.searchWithRg(needle, limit);
+    const target = this.resolvePath(path);
+    const scopedPath = this.relativePath(target);
+    const rgHits = await this.searchWithRg(needle, limit, scopedPath);
     if (rgHits) return rgHits;
 
     const hits: SearchHit[] = [];
-    await this.walkTextFiles(this.root, async (path) => {
+    const visit = async (path: string) => {
       if (hits.length >= limit) return;
       const file = Bun.file(path);
       const text = await file.text().catch(() => "");
@@ -353,7 +360,9 @@ export class LocalWorkspace implements WorkspaceRuntime {
           hits.push({ path: this.relativePath(path), line: i + 1, text: line.trimEnd() });
         }
       }
-    });
+    };
+    if (statSync(target).isDirectory()) await this.walkTextFiles(target, visit);
+    else await visit(target);
     return hits;
   }
 
@@ -656,9 +665,23 @@ export class LocalWorkspace implements WorkspaceRuntime {
     return codeRunPolicy();
   }
 
-  private async searchWithRg(query: string, limit: number): Promise<SearchHit[] | null> {
+  private async searchWithRg(
+    query: string,
+    limit: number,
+    path: string,
+  ): Promise<SearchHit[] | null> {
     const result = await runCapture(
-      ["rg", "--line-number", "--no-heading", "--color", "never", "--", query, "."],
+      [
+        "rg",
+        "--with-filename",
+        "--line-number",
+        "--no-heading",
+        "--color",
+        "never",
+        "--",
+        query,
+        path,
+      ],
       this.root,
       DEFAULT_MAX_OUTPUT_BYTES,
       this.hostExecForbidden,
@@ -681,8 +704,9 @@ export class LocalWorkspace implements WorkspaceRuntime {
     for (const name of readdirSync(dir)) {
       if (SKIP_DIRS.has(name)) continue;
       const path = join(dir, name);
-      const stat = statSync(path, { throwIfNoEntry: false });
+      const stat = lstatSync(path, { throwIfNoEntry: false });
       if (!stat) continue; // removed mid-walk
+      if (stat.isSymbolicLink()) continue; // Match rg's no-follow traversal.
       if (stat.isDirectory()) {
         await this.walkTextFiles(path, visit);
       } else if (stat.isFile() && stat.size <= DEFAULT_MAX_READ_BYTES && looksTextual(name)) {

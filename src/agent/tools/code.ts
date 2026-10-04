@@ -108,7 +108,10 @@ const codeSchema = Type.Object({
     },
   ),
   path: Type.Optional(
-    Type.String({ description: "Relative workspace path for files/read/diff/edit/write" }),
+    Type.String({
+      description:
+        "Relative workspace path for files/read/search/diff/edit/write; limits search to this file or directory",
+    }),
   ),
   oldText: Type.Optional(codeEditSchema.properties.oldText),
   newText: Type.Optional(codeEditSchema.properties.newText),
@@ -149,6 +152,9 @@ const codeReadFileSchema = Type.Object({
 
 const codeSearchSchema = Type.Object({
   query: Type.String({ description: "Search query" }),
+  path: Type.Optional(
+    Type.String({ description: "Limit search to this relative file or directory" }),
+  ),
 });
 
 const codeRunSchema = Type.Object({
@@ -287,8 +293,7 @@ export function createTypedCodeTools(ctx: ToolContext): AgentTool[] {
       "Code Search",
       "Search text in the active coding session workspace.",
       codeSearchSchema,
-      (p) =>
-        `code search ${requiredSingleLineCodeParam(p.query as string | undefined, "query", "query is required")}`,
+      (p) => buildCodeSearchCommand(p),
       ctx,
     ),
     wrap(
@@ -657,7 +662,6 @@ function verificationCommand(mode: unknown, dependencies?: unknown, scopeValue?:
 function buildCodeCommand(params: Record<string, unknown>): string {
   const action = params.action as string;
   const path = params.path as string | undefined;
-  const query = params.query as string | undefined;
   const command = params.command as string | undefined;
   const title = params.title as string | undefined;
   const diff = params.diff as string | undefined;
@@ -674,7 +678,7 @@ function buildCodeCommand(params: Record<string, unknown>): string {
     case "read":
       return `code read ${requiredSingleLineCodeParam(path, "path", "action=read requires path")}`;
     case "search":
-      return `code search ${requiredSingleLineCodeParam(query, "query", "action=search requires query")}`;
+      return buildCodeSearchCommand(params);
     case "diff":
       return path ? `code diff ${singleLineCodeParam(path, "path")}` : "code diff";
     case "run":
@@ -791,6 +795,20 @@ function buildCodeCommand(params: Record<string, unknown>): string {
     default:
       return "code status";
   }
+}
+
+function buildCodeSearchCommand(params: Record<string, unknown>): string {
+  const query = requiredSingleLineCodeParam(
+    params.query as string | undefined,
+    "query",
+    "query is required",
+  );
+  const path =
+    params.path === undefined
+      ? undefined
+      : requiredSingleLineCodeParam(params.path as string, "path", "path is required");
+  const modifier = path ? ` path:${JSON.stringify(path)}` : "";
+  return `code search${modifier} -- ${query}`;
 }
 
 function buildCodeEditCommand(params: Record<string, unknown>): string {

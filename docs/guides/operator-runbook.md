@@ -91,6 +91,37 @@ Both emit latency percentiles and fail on correctness violations. These are repr
 local qualifications, not universal throughput or power-loss guarantees. Measure on
 representative storage and corpus sizes before choosing production concurrency.
 
+## Coding workers and growing prompts
+
+Check the last tool result and verification receipt before increasing token limits. A failed
+check includes a bounded tail of command output and the full output artifact ID; a completed
+background receipt includes that result. `not_run` means the environment or test selection
+prevented checks from running, not that the code passed. For a recipe that truly uses only
+local source and runtime builtins, `dependencies:none` skips preparation explicitly; other
+recipes need their dependencies in the execution environment.
+
+After changing source or tests, rerun candidate verification before submitting. Stale or
+failed-check feedback includes a retry command with the previous receipt's dependency,
+scope, typecheck and time-budget settings. Review those settings before running it; the
+hint never executes a command or installs dependencies automatically.
+
+Compare per-turn input usage (including cache reads/writes) with the effective context window.
+Lifetime input totals add every request and do not represent the current prompt size. A harness
+request-byte ceiling is a separate bound, not evidence of provider context exhaustion. Silent
+turns indicate successful model responses without tool calls; transport errors are counted
+separately. Neither signal alone proves the model needs a larger output allowance.
+
+Narrow source searches with `path:` and prefer surgical edits. Internal workers retain one
+full copy of unchanged repository instruction excerpts, restore it if compaction removes it,
+and archive originals before reducing context. Provider usage anchors are recalculated after
+transcript changes. Keep budget ceilings in place while diagnosing loops; tests and independent
+candidate review remain the completion evidence.
+
+An unpriced provider/model can report zero recorded dollars despite consuming tokens. Keep
+call/token limits as well as spend caps; inspect the resolved model's pricing and provider
+usage before treating the dollar counter as complete. The live qualification tool separately
+reserves a conservative upper bound before each approved upstream attempt.
+
 ## Published panel freshness and actions
 
 `GET /api/panel-resources` lists the deployed source adapters. Catalog sources call the original

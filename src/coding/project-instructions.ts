@@ -185,12 +185,32 @@ export function formatProjectInstructions(instructions: ProjectInstructions): st
     "Project conventions:",
     `Workspace: ${instructions.root}; inspected path: ${instructions.target}.`,
     "Sources are ordered from root to the inspected directory. Deeper instructions apply only in their subtree. Combine same-directory documents and honor their explicit precedence; filename order does not establish precedence. If they conflict without a stated resolution, ask the requester.",
-    ...instructions.sources.flatMap((source) => [
-      `--- ${source.path} ---`,
-      `Scope: ${source.scope === "." ? "entire workspace" : `${source.scope}/ subtree`}; ${source.status}${source.size === undefined ? "" : `; ${source.loadedBytes ?? 0}/${source.size} bytes`}.`,
-      ...(source.content ? [source.content] : []),
-      ...(source.detail ? [`[${source.detail}]`] : []),
-    ]),
+    ...instructions.sources.map(formatProjectInstructionSource),
     ...instructions.notices.map((notice) => `[${notice}]`),
   ];
+}
+
+function formatProjectInstructionSource(source: ProjectInstructionSource): string {
+  return [
+    `--- ${source.path} ---`,
+    `Scope: ${source.scope === "." ? "entire workspace" : `${source.scope}/ subtree`}; ${source.status}${source.size === undefined ? "" : `; ${source.loadedBytes ?? 0}/${source.size} bytes`}.`,
+    ...(source.content ? [source.content] : []),
+    ...(source.detail ? [`[${source.detail}]`] : []),
+  ].join("\n");
+}
+
+/** Exact, reversible excerpts for the agent's working transcript. Fresh reads and
+ * durable events still carry every source; this is not a delivery cache. */
+export function projectInstructionContextBlocks(instructions: ProjectInstructions) {
+  return instructions.sources
+    .filter((source) => source.content)
+    .map((source) => ({
+      key: JSON.stringify([
+        instructions.root,
+        instructions.executionTarget,
+        source.path,
+        source.scope,
+      ]),
+      text: formatProjectInstructionSource(source),
+    }));
 }

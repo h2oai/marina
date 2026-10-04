@@ -9,6 +9,7 @@ import { terminalText } from "./code-presentation";
 import { ReadlineCodeEditor } from "./code-readline";
 import { type TerminalView, TerminalViews, type TranscriptView } from "./code-views";
 import { WorkspaceCodeEditor } from "./code-workspace";
+import type { WorkspaceLayout } from "./code-workspace-panes";
 
 export { isWorldInput, TERMINAL_COMMANDS, TERMINAL_HELP, terminalHelp } from "./code-controls";
 export {
@@ -54,6 +55,7 @@ export class CodeTerminal {
     panel: [],
   };
   private redrawTimer?: ReturnType<typeof setTimeout>;
+  private layout: WorkspaceLayout = "auto";
 
   constructor(private options: CodeTerminalOptions) {
     const input = options.input ?? process.stdin;
@@ -107,6 +109,21 @@ export class CodeTerminal {
   }
 
   private line(line: string) {
+    if (/^\/layout(?:\s|$)/.test(line.trimStart())) {
+      const name = line.trim().slice(7).trim();
+      if (!this.workspace)
+        this.print("Layout controls require marina --tui. Your session is unchanged.");
+      else if (name === "auto" || name === "focus" || name === "split" || name === "") {
+        this.layout =
+          name === ""
+            ? ({ auto: "focus", focus: "split", split: "auto" } as const)[this.layout]
+            : name;
+        this.print(
+          `Layout: ${this.layout}. Split requires 80 columns; auto splits at 110. F2 changes layout.`,
+        );
+      } else this.print("Use /layout auto | focus | split. F2 cycles layouts.");
+      return;
+    }
     if (/^\/view(?:\s|$)/.test(line.trimStart())) {
       this.selectView(line.trim().slice(5).trim());
       return;
@@ -162,15 +179,18 @@ export class CodeTerminal {
       );
       return false;
     }
-    if (name === "older" || name === "newer") {
-      const page = this.views.page(name);
-      if (this.workspace) this.redraw();
-      else this.print(page);
+    if (name === "older" || name === "newer" || name === "latest") {
+      const page = name === "latest" ? this.views.latest() : this.views.page(name);
+      if (this.workspace) {
+        this.redraw();
+        if (name === "latest" && (this.views.focus === "coding" || this.views.focus === "world"))
+          this.editor.follow?.();
+      } else this.print(page);
       return true;
     }
     if (name !== "coding" && name !== "world" && name !== "approvals" && name !== "panel") {
       this.print(
-        "Views: /view coding | /view world | /view approvals | /view panel | /view older | /view newer. F6 switches conversations; F7 opens requests; F8 opens the panel.",
+        "Views: /view coding | /view world | /view approvals | /view panel | /view older | /view newer | /view latest. F6 switches conversations; F7 opens requests; F8 opens the panel.",
       );
       return false;
     }
@@ -215,6 +235,13 @@ export class CodeTerminal {
       status: this.status,
       badge: this.views?.badge(questions),
       navigation: this.views?.navigation(questions),
+      layout: this.layout,
+      conversations: this.workspace
+        ? {
+            coding: this.views!.snapshot("coding", true),
+            world: this.views!.snapshot("world", true),
+          }
+        : undefined,
       transcript: this.workspace
         ? focus === "approvals"
           ? this.questionDetails()

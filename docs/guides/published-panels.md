@@ -150,6 +150,8 @@ Legacy `action.event` buttons and field notifications still update `lastAction`.
 ## Terminal
 
 The existing Marina coding terminal has a separate panel view. Coding, world output and requests remain live, with their composers preserved.
+In a wide `--tui` workspace, the focused panel appears beside the World stream. F2 or
+`/layout auto|focus|split` changes the arrangement without changing the panel's targets or worker.
 
 ```text
 /panel list

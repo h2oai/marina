@@ -150,6 +150,14 @@ export function showArtifact(
   const meta = parseArtifactMetadata(artifact);
   const receipt =
     artifact.kind === "verification_request" ? parseJsonObject(artifact.metadata_json) : undefined;
+  const receiptResult =
+    typeof receipt?.resultArtifactId === "string"
+      ? deps.db.getCodingArtifact(receipt.resultArtifactId)
+      : undefined;
+  const resultText =
+    receiptResult?.session_id === session.id && receiptResult.kind === "verification"
+      ? receiptResult.content_text
+      : undefined;
   sendCode(
     ctx,
     eid,
@@ -164,6 +172,7 @@ export function showArtifact(
       ...(typeof receipt?.resultArtifactId === "string"
         ? [`Result: code show ${receipt.resultArtifactId}`]
         : []),
+      ...(resultText ? [resultText] : []),
     ].join("\n"),
     {
       artifactId: artifact.id,

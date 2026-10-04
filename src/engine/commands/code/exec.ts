@@ -631,6 +631,9 @@ export async function runVerificationCommands(
       ? `Dependency preparation: ${preparationArtifact.status} (${preparationArtifact.id}).${blocked ? " Checks were not run." : preparation?.policy ? " Install scripts disabled." : ""}\n`
       : "") +
     formatVerificationSummary(verdict, ran, preparation) +
+    (!passed && failedRun?.stored
+      ? `\nCheck output (untrusted command output):\n${failedRun.stored.result.output.slice(-4096)}\nFull output: code show ${failedRun.stored.artifact.id}`
+      : "") +
     (plan && stepPlan.scopeNote !== "configured recipe"
       ? `\n${dim(`Scope: ${stepPlan.scopeNote}.${relevant?.files.length ? ` Relevant tests: ${relevant.files.slice(0, 8).join(", ")}${relevant.files.length > 8 ? ", …" : ""}` : ""}`)}`
       : "") +
@@ -652,6 +655,7 @@ export async function runVerificationCommands(
       ...(plan?.language ? { language: plan.language } : {}),
       ...(plan
         ? {
+            verificationOptions: plan.options,
             scope: plan.options.scope,
             scopeNote: stepPlan.scopeNote,
             ...(relevant?.files.length || relevant?.packages.length

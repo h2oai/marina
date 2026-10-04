@@ -540,3 +540,38 @@ the original acceptance tests and configuration, and independently checks roundi
 inputs, order and mutation behavior. Dependency preparation uses captured workspace packages;
 it does not install into your checkout. This remains a bounded functional exercise, not a
 claim of reliability on arbitrary repositories.
+
+To exercise an actual committed Marina checkout with a bounded terminal-history task:
+
+```sh
+bun run qualify:coding --directory /tmp/marina-repository-check --budget-usd 2 --scenarios marina --timeout-ms 600000
+```
+
+This clones local committed source without sharing Git objects, records the base commit, and
+asks Marina's worker to implement a direct return to recent terminal history with regression
+tests. The harness checks the allowed changed files, candidate-bound checks, independent
+behavioral assertions, world messaging and owner review. It leaves the operator's checkout
+untouched. Use `--repository-revision <full-commit-id>` from an earlier report to repeat that
+same task after the feature is integrated. A passing baseline must not count as model work.
+Failures retain their reports too; a spending or serialized-request byte ceiling stops the
+qualification instead of consuming the remaining deadline in upstream retries. A byte ceiling
+is not the provider's token context window. `request-sizes.json` records request bytes, bytes
+by message role, output allowances and attempt counts without copying prompts or credentials.
+The main output limit is a ceiling; smaller compaction requests are permitted and charged to
+the same spending reservation.
+
+The repository task's saved recipe imports local source and Bun/Node builtins only. It uses
+`code verify candidate dependencies:none` explicitly, which skips the repository-wide
+`node_modules` probe but still runs and records both acceptance and regression tests in the
+candidate. The recipe uses explicit `./.qualification/...` file paths so Bun executes the
+hidden acceptance directory; the harness checks both the failing baseline and the accepted
+run for that file. Baseline/holdout processes disable the runtime transpiler cache and a clean
+Git status is required before worker dispatch, so harness files cannot be mistaken for edits. Tasks using package dependencies must instead prepare their isolated environment;
+this exception is not a general instruction to disable preparation.
+
+`bun test test/code-workspace.test.ts test/code-workspace-pty.test.ts` checks responsive pane
+geometry, independent scrolling, composer targeting and request handling. On Linux and macOS,
+the PTY test drives the production terminal renderer through real raw input, Unicode/multiline
+paste, resizing and shell restoration; Windows skips the unsupported Bun PTY fixture. The PTY
+fixture does not call a model or a world server. Combine it with live coding qualification for
+separate renderer and coding-outcome evidence; neither alone proves a complete daily workflow.
