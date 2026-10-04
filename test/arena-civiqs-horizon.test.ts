@@ -20,6 +20,7 @@ import {
   horizonSd,
   hStepErrors,
   olsSlope,
+  weeklyAnchorNowcast,
 } from "../src/arena/research/civiqs-horizon";
 import { nowcastForecaster } from "../src/arena/research/civiqs-nowcast";
 import type { ArenaLock, ArenaRound } from "../src/arena/types";
@@ -147,6 +148,63 @@ const history = Array.from({ length: 20 }, (_, i) => ({
 const lock: ArenaLock = { round_id: round.round_id, answer_history: history };
 
 describe("horizon nowcast on the archive", () => {
+  it("projects a newer weekly anchor without importing the daily snapshot's revised level", async () => {
+    const { data } = archive();
+    const weekly = { date: "2026-09-27", value: -40 };
+    const projected = await weeklyAnchorNowcast(data, round, weekly, 1);
+    expect(projected?.mean).toBe(-41.25); // five days * -0.25, from -40, not the daily level
+    expect(projected?.detail.age).toBe(1);
+    expect(projected?.detail.samples).toBeGreaterThan(10);
+    expect(projected?.drift).toBe(true);
+    const newer = { ...lock, answer_history: [...history, weekly] };
+    const existing = await nowcastForecaster(data, forecastRound, {
+      horizon: { mode: "drift", phi: 1 },
+    })(round, newer);
+    const candidate = await nowcastForecaster(data, forecastRound, {
+      horizon: { mode: "drift", phi: 1, weeklyAnchor: true },
+    })(round, newer);
+    expect(existing.topline?.mean).toBe(-40);
+    expect(candidate.topline?.mean).toBe(-41.25);
+    expect(candidate.topline?.sd).toBe(existing.topline?.sd);
+    expect(candidate.origins?.[round.series!]?.selected).toBe("weekly");
+    expect(candidate.origins?.[round.series!]?.reading.value).toBe(-40);
+    const damped = await weeklyAnchorNowcast(data, round, weekly, 0.8);
+    expect(damped?.mean).toBeCloseTo(-40 - 0.25 * 0.8 * dampedSteps(5, 0.8), 3);
+  });
+
+  it("does not extrapolate an excessively old trend or beyond a resolved horizon", async () => {
+    const { data } = archive();
+    expect(
+      await weeklyAnchorNowcast(
+        data,
+        { ...round, release_at: "2026-10-10T14:00:00Z" },
+        { date: "2026-10-05", value: -40 },
+      ),
+    ).toBeUndefined();
+    expect(
+      await weeklyAnchorNowcast(data, round, { date: "2026-10-02", value: -40 }),
+    ).toBeUndefined();
+  });
+
+  it("records weekly candidates under distinct policy identities only when requested", async () => {
+    const { data } = archive();
+    const labels: string[] = [];
+    const rows = await recordHorizonShadows(
+      {
+        recordArenaShadow: (row) => {
+          labels.push(row.forecaster);
+          return true;
+        },
+      },
+      data,
+      [round.round_id],
+      { now: () => Date.parse(round.lock_at) - 3600_000, weeklyAnchor: true },
+    );
+    expect(rows).toHaveLength(7);
+    expect(new Set(labels).size).toBe(7);
+    expect(rows.filter((r) => r.variant?.endsWith(":weekly"))).toHaveLength(2);
+  });
+
   it("records five distinct prospective policies on shared inputs, including drift-only", async () => {
     const { data, requested } = archive();
     const rows: Array<{ forecaster: string; forecast: string; detail: string }> = [];

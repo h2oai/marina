@@ -34,6 +34,8 @@ export interface HorizonOptions {
   phi?: number;
   /** Unset applies to every series; an explicit list scopes an experiment. */
   series?: string[];
+  /** Experimental: project from a newer weekly anchor using the older daily trend. */
+  weeklyAnchor?: boolean;
 }
 
 /** Readings the slope is fitted on. */
@@ -174,6 +176,80 @@ export interface HorizonNowcast {
   drift: boolean;
   lastDate: string;
   detail: Record<string, unknown>;
+}
+
+/**
+ * Preserve the authoritative weekly LEVEL. Only borrow a same-vintage daily
+ * slope, aged to the weekly date. The gate evaluates that same stale-slope
+ * estimator at historical pseudo-anchors; it never compares revised daily
+ * levels with weekly levels to manufacture a trend.
+ */
+export async function weeklyAnchorNowcast(
+  data: ArenaData,
+  round: ArenaRound,
+  anchor: { date: string; value: number },
+  phi = DEFAULT_DAMPING,
+  live?: LiveCiviqs,
+): Promise<HorizonNowcast | undefined> {
+  if (
+    !Number.isFinite(phi) ||
+    phi <= 0 ||
+    phi > 1 ||
+    !Number.isFinite(Date.parse(anchor.date)) ||
+    !Number.isFinite(Date.parse(round.release_at))
+  )
+    return undefined;
+  const daily = await civiqsDailySeries(data, round, {
+    days: 120,
+    asOf: round.lock_at,
+    live,
+  });
+  const points = daily?.points ?? [];
+  const last = points.at(-1);
+  if (!last || last.date >= anchor.date || !Number.isFinite(anchor.value)) return undefined;
+  const age = horizonDays(last.date, anchor.date);
+  const h = horizonDays(anchor.date, round.release_at);
+  // Index-based slopes represent days only for a contiguous daily series.
+  if (
+    age > 7 ||
+    h < 1 ||
+    points.some(
+      (p, i) =>
+        !Number.isFinite(p.value) ||
+        (i > 0 && Date.parse(p.date) - Date.parse(points[i - 1]!.date) !== DAY),
+    )
+  )
+    return undefined;
+  const values = points.map((p) => p.value);
+  const steps = phi ** age * dampedSteps(h, phi);
+  const projected: number[] = [];
+  const carried: number[] = [];
+  for (let t = DRIFT_WINDOW - 1 + age; t + h < values.length; t++) {
+    const slope = olsSlope(values.slice(t - age - DRIFT_WINDOW + 1, t - age + 1));
+    carried.push(values[t + h]! - values[t]!);
+    projected.push(values[t + h]! - (values[t]! + slope * steps));
+  }
+  const drift = projected.length >= MIN_SAMPLES && rms(projected) < rms(carried);
+  const slope = olsSlope(values.slice(-DRIFT_WINDOW));
+  return {
+    mean: Math.round((anchor.value + (drift ? slope * steps : 0)) * 1000) / 1000,
+    h,
+    drift,
+    lastDate: anchor.date,
+    detail: {
+      anchor,
+      trendDate: last.date,
+      age,
+      h,
+      phi,
+      slope,
+      drift,
+      samples: projected.length,
+      ...(projected.length ? { projectedRms: rms(projected), carryRms: rms(carried) } : {}),
+      source: daily?.source,
+      points,
+    },
+  };
 }
 
 /**

@@ -16,12 +16,14 @@
 
 import type { ArenaData } from "../data";
 import type { ForecastOrigin } from "../forecast";
+import { auditedTrendsHistory } from "../input-audit";
 import type { ArenaRound } from "../types";
 import {
   type HorizonOptions,
   horizonDays,
   horizonNowcast,
   horizonOptionsFromEnv,
+  weeklyAnchorNowcast,
 } from "./civiqs-horizon";
 
 type Net = true | { minuend: string[]; subtrahend: string[] };
@@ -375,9 +377,25 @@ export function nowcastForecaster(
     ) => {
       const n = await reading(seriesId);
       const selected = n && (!weekly || n.date >= weekly.date) ? n : undefined;
-      const c: { mean: number; sd: number; detail?: Record<string, unknown> } = selected
+      let c: { mean: number; sd: number; detail?: Record<string, unknown> } = selected
         ? await corrected(seriesId, selected, start.sd)
         : start;
+      if (
+        !selected &&
+        weekly &&
+        horizon.weeklyAnchor &&
+        (horizon.mode === "drift" || horizon.mode === "both") &&
+        (!horizon.series || horizon.series.includes(seriesId))
+      ) {
+        const projected = await weeklyAnchorNowcast(
+          data,
+          { ...round, series: seriesId },
+          weekly,
+          horizon.phi,
+          cachedLive,
+        ).catch(() => undefined);
+        if (projected) c = { mean: projected.mean, sd: start.sd, detail: projected.detail };
+      }
       const origin = selected ?? weekly;
       if (origin) {
         const scoped = !horizon.series || horizon.series.includes(seriesId);
@@ -391,17 +409,20 @@ export function nowcastForecaster(
           ...(n?.fetchedAt ? { fetchedAt: n.fetchedAt } : {}),
           ...(weekly ? { weekly } : {}),
           mode: scoped ? horizon.mode : "off",
-          reason: !selected
-            ? n
-              ? "daily reading predates weekly anchor"
-              : "no daily reading"
-            : !scoped
-              ? "series outside horizon policy"
-              : horizon.mode === "off"
-                ? "carry latest reading to target"
-                : detail
-                  ? "horizon evaluated"
-                  : "no matching horizon snapshot",
+          reason:
+            !selected && detail
+              ? "weekly anchor with aged daily trend"
+              : !selected
+                ? n
+                  ? "daily reading predates weekly anchor"
+                  : "no daily reading"
+                : !scoped
+                  ? "series outside horizon policy"
+                  : horizon.mode === "off"
+                    ? "carry latest reading to target"
+                    : detail
+                      ? "horizon evaluated"
+                      : "no matching horizon snapshot",
           ...(detail ? { projection: detail } : {}),
           start: { mean: c.mean, sd: c.sd },
         };
@@ -429,7 +450,7 @@ export function nowcastForecaster(
           nowcast: used,
         };
       }
-      return withDaily;
+      return { ...withDaily, topline: { mean: c.mean, sd: c.sd } };
     }
     if (f.profile) {
       const profile = { ...f.profile };
@@ -439,7 +460,7 @@ export function nowcastForecaster(
       }
       return Object.keys(used).length
         ? { ...f, profile, origins, note: `${f.note}; Civiqs daily nowcast`, nowcast: used }
-        : { ...f, origins };
+        : { ...f, profile, origins };
     }
     return f;
   };
@@ -502,21 +523,9 @@ export async function trendsBasketHistory(
     const day = new Date(lock - back * 86_400_000).toISOString().slice(0, 10);
     for (const dir of await data.trendsBasketDirs()) {
       const snap = await data.trendsSnapshot(dir, day).catch(() => undefined);
-      if (!snap || (snap.fetched_at && Date.parse(snap.fetched_at) > lock)) continue;
-      const order = snap.queries.map((q) => `trends_share_${q.toLowerCase()}`);
-      if (!cells.every((c) => order.includes(c))) continue;
-      const out: Record<string, Array<{ date: string; value: number }>> = Object.fromEntries(
-        cells.map((c) => [c, []]),
-      );
-      for (const [, end, values, partial] of snap.points) {
-        if (partial && !includePartial) continue;
-        const total = values.reduce((a, b) => a + b, 0);
-        if (total <= 0) continue;
-        order.forEach((cell, i) => {
-          out[cell]?.push({ date: end, value: Math.round((10_000 * values[i]!) / total) / 100 });
-        });
-      }
-      return out;
+      if (!snap) continue;
+      const out = auditedTrendsHistory(round, snap, includePartial);
+      if (out) return out;
     }
   }
   return undefined;

@@ -140,7 +140,7 @@ export async function arenaRegistrationCheck(
  * history the nowcast start forecast is built from, so the cells a model is
  * shown match its start. Every other lock is returned as it is.
  */
-async function lockForModels(
+export async function lockForModels(
   data: ArenaData,
   round: import("./types").ArenaRound,
   lock: import("./types").ArenaLock,
@@ -217,9 +217,23 @@ async function routedForecasterFor(
   };
 }
 
+/** Immutable caller-supplied experiment inputs; no archive or research rereads. */
+export interface FormationInputs {
+  roundId: string;
+  start: import("./forecast").RoundForecast;
+  lock: import("./types").ArenaLock;
+  dossier?: import("./formations").ResearchDossier;
+}
+
 export async function forecasterFor(
   spec: string,
-  opts: { weight?: number; raw?: boolean; env?: NodeJS.ProcessEnv; notes?: NotesStore } = {},
+  opts: {
+    weight?: number;
+    raw?: boolean;
+    env?: NodeJS.ProcessEnv;
+    notes?: NotesStore;
+    formationInputs?: FormationInputs;
+  } = {},
 ): Promise<{ forecaster: Forecaster; usage?: Usage; learner?: Learner }> {
   if (spec === "baseline") return { forecaster: baselineForecaster };
   if (spec === "routed" || spec.startsWith("route:")) return routedForecasterFor(spec, opts);
@@ -262,7 +276,7 @@ export async function forecasterFor(
     return researchForecasterFor(spec, opts.env ?? process.env);
   }
   if (spec.startsWith("formation:")) {
-    return formationForecasterFor(spec, opts.env ?? process.env);
+    return formationForecasterFor(spec, opts.env ?? process.env, opts.formationInputs);
   }
   if (spec.startsWith("crew:")) {
     const specs = spec.slice("crew:".length).split(",");
@@ -430,6 +444,7 @@ async function tabh2oForecasterFor(
 async function formationForecasterFor(
   spec: string,
   env: NodeJS.ProcessEnv,
+  inputs?: FormationInputs,
 ): Promise<{ forecaster: Forecaster; usage: Usage }> {
   const [head = "", ...parts] = spec.split("+");
   const [{ modelComplete }, formations, { nowcastForecaster }] = await Promise.all([
@@ -456,7 +471,7 @@ async function formationForecasterFor(
         pageText: import("./research/verify").PageText;
       }
     | undefined;
-  if (researchPart) {
+  if (researchPart && !inputs) {
     const [retrieve, { defaultPageText }] = await Promise.all([
       import("./research/retrieve"),
       import("./research/verify"),
@@ -496,10 +511,17 @@ async function formationForecasterFor(
         st.models.map((m) => ({ name: m.replace(/^openrouter\//, ""), ...modelComplete(m, env) })),
       );
       const members = made.map((ms) => ms.map(({ name, complete }) => ({ name, complete })));
-      const given = await start(round, lock);
-      const shown = await lockForModels(data, round, lock);
+      if (inputs && inputs.roundId !== round.round_id)
+        throw new Error("frozen inputs belong to another round");
+      const given = inputs ? structuredClone(inputs.start) : await start(round, lock);
+      const shown = inputs ? structuredClone(inputs.lock) : await lockForModels(data, round, lock);
+      const evidence = inputs
+        ? inputs.dossier
+          ? { dossier: inputs.dossier }
+          : undefined
+        : research;
       const f =
-        stages.length === 1 && !research
+        stages.length === 1 && !evidence
           ? await formations.formationForecastRound(
               stages[0]!.pattern,
               round,
@@ -517,7 +539,7 @@ async function formationForecasterFor(
                 ...(stages[1] ? [{ pattern: stages[1].pattern, members: members[1]! }] : []),
               ] as [import("./formations").FormationStage, import("./formations").FormationStage?],
               given,
-              research,
+              evidence,
               judge,
             );
       let cost = (f as { dossier?: { costUsd?: number } }).dossier?.costUsd ?? 0;

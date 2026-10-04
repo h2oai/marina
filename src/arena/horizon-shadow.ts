@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { getErrorMessage } from "../engine/errors";
 import type { ArenaStore } from "../persistence/interfaces/arena-store";
 import type { ArenaData } from "./data";
@@ -14,16 +15,17 @@ export async function recordHorizonShadows(
   store: Pick<ArenaStore, "recordArenaShadow">,
   data: ArenaData,
   roundIds: string[],
-  opts: { live?: LiveCiviqs; now?: () => number } = {},
+  opts: { live?: LiveCiviqs; now?: () => number; weeklyAnchor?: boolean } = {},
 ) {
   const now = opts.now ?? Date.now;
-  const variants: Array<[HorizonMode, number]> = [
+  const variants: Array<[HorizonMode, number, boolean?]> = [
     ["off", 0.8],
     ["drift", 0.8],
     ["drift", 1],
     ["sd", 0.8],
     ["both", 0.8],
   ];
+  if (opts.weeklyAnchor) variants.push(["drift", 0.8, true], ["drift", 1, true]);
   const out: Array<{ roundId: string; variant?: string; recorded: boolean; error?: string }> = [];
   for (const roundId of roundIds) {
     try {
@@ -44,9 +46,9 @@ export async function recordHorizonShadows(
         });
       const capturedAt = new Date(now()).toISOString();
       const candidates = await Promise.all(
-        variants.map(async ([mode, phi]) => {
+        variants.map(async ([mode, phi, weeklyAnchor]) => {
           const f = await nowcastForecaster(frozen, forecastRound, {
-            horizon: { mode, phi },
+            horizon: { mode, phi, ...(weeklyAnchor ? { weeklyAnchor } : {}) },
             ...(live ? { live } : {}),
           })(round, lock);
           const settings = forecastSettings("nowcast", {
@@ -54,6 +56,13 @@ export async function recordHorizonShadows(
             MARINA_ARENA_NOWCAST_DAMPING: String(phi),
             MARINA_ARENA_CIVIQS_LIVE: live ? "on" : "off",
           });
+          if (weeklyAnchor) {
+            settings.horizon.weeklyAnchor = true;
+            const { fingerprint: _prior, ...policy } = settings;
+            settings.fingerprint = createHash("sha256")
+              .update(JSON.stringify(policy))
+              .digest("hex");
+          }
           return { f, settings, label: `nowcast#${settings.fingerprint.slice(0, 16)}` };
         }),
       );
@@ -69,7 +78,7 @@ export async function recordHorizonShadows(
         });
         out.push({
           roundId,
-          variant: `${settings.horizon.mode}:${settings.horizon.phi}`,
+          variant: `${settings.horizon.mode}:${settings.horizon.phi}${settings.horizon.weeklyAnchor ? ":weekly" : ""}`,
           recorded,
         });
       }

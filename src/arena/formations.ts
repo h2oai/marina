@@ -1372,7 +1372,7 @@ export async function composeForecastRound(
   lock: ArenaLock,
   stages: [FormationStage, FormationStage?],
   start: RoundForecast,
-  research?: { retriever: Retriever; pageText: PageText },
+  research?: { retriever: Retriever; pageText: PageText } | { dossier: ResearchDossier },
   /** A decision backend for model-judged aspects, handed to both formations. */
   judge?: DecisionProvider,
 ): Promise<ComposedForecast> {
@@ -1381,7 +1381,9 @@ export async function composeForecastRound(
   const profiled = round.target_type === "profile_energy" && hasEveryCell(round, start);
   const dossier =
     research && (numeric || profiled)
-      ? await buildDossier(round, lock, start, research.retriever, research.pageText)
+      ? "dossier" in research
+        ? structuredClone(research.dossier)
+        : await buildDossier(round, lock, start, research.retriever, research.pageText)
       : undefined;
   const brief = dossier ? dossierBlock(dossier) : undefined;
   const one = await formationForecastRound(

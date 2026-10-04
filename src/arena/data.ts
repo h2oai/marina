@@ -22,6 +22,7 @@ export type ArenaFetch = (url: string) => Promise<Response>;
 export class ArenaData {
   private cache = new Map<string, { at: number; value: unknown }>();
   private pending = new Map<string, Promise<unknown>>();
+  private isolated = false;
 
   constructor(
     private readonly baseUrl: string = DEFAULT_ARENA_DATA_URL,
@@ -32,13 +33,15 @@ export class ArenaData {
 
   private async json<T>(path: string): Promise<T> {
     const hit = this.cache.get(path);
-    if (hit && this.now() - hit.at < CACHE_MS) return hit.value as T;
+    if (hit && this.now() - hit.at < CACHE_MS)
+      return (this.isolated ? structuredClone(hit.value) : hit.value) as T;
     const pending = this.pending.get(path);
-    if (pending) return pending as Promise<T>;
+    if (pending) return (this.isolated ? structuredClone(await pending) : await pending) as T;
     const request = this.readJson<T>(path);
     this.pending.set(path, request);
     try {
-      return await request;
+      const value = await request;
+      return this.isolated ? structuredClone(value) : value;
     } finally {
       this.pending.delete(path);
     }
@@ -58,14 +61,20 @@ export class ArenaData {
   frozen(): ArenaData {
     const at = this.now();
     const base = this.baseUrl.replace(/\/$/, "");
-    return new ArenaData(
+    // Cache rejected reads too: a missing archive must not appear halfway
+    // through a comparison. Each caller receives its own mutable copy.
+    const reads = new Map<string, Promise<unknown>>();
+    const view = new ArenaData(
       base,
       async (url) => {
         const path = url.slice(base.length + 1);
-        return Response.json(await this.json(path));
+        if (!reads.has(path)) reads.set(path, this.json(path).then(structuredClone));
+        return Response.json(await reads.get(path));
       },
       () => at,
     );
+    view.isolated = true;
+    return view;
   }
 
   /** The published registration for an entrant (entrants/<id>.json), or undefined when absent. */
