@@ -186,7 +186,12 @@ export function resolveMediaCanvas(
   if (!canvas || !engine.db) return undefined;
   const row = engine.db.getCanvasByName(canvas) ?? engine.db.getCanvas(canvas);
   if (!row) return undefined;
-  return mayReadCanvasRow(row, canvasReaderFor(engine, entityId), "media canvas")
+  return mayReadCanvasRow(
+    row,
+    canvasReaderFor(engine, entityId, { inWorld: true }),
+    "media canvas",
+    "write",
+  )
     ? row.id
     : undefined;
 }

@@ -64,15 +64,16 @@ function readableCanvas<T extends { id: string; scope: string; scope_id: string 
   access: Access,
   canvas: T | undefined,
   via: string,
+  mode: "read" | "write" = "read",
 ): T | undefined {
   if (!canvas) return undefined;
-  return mayReadCanvasRow(canvas as never, access.reader, via) ? canvas : undefined;
+  return mayReadCanvasRow(canvas as never, access.reader, via, mode) ? canvas : undefined;
 }
 
 /**
- * The node when the caller may act on it: its canvas must be readable. A read
- * grant covers looking (`canvas look`) only, never writes, so it does not
- * count here.
+ * The node when the caller may write to it: canvas-level write access (owner,
+ * operator, or the local-ungated profile). A read grant and the creator
+ * relation cover reading only, so neither counts here.
  */
 function canvasLevelNode<T extends { id: string; canvas_id: string }>(
   access: Access,
@@ -81,7 +82,7 @@ function canvasLevelNode<T extends { id: string; canvas_id: string }>(
 ): T | undefined {
   if (!node) return undefined;
   const canvas = access.host.db?.getCanvas(node.canvas_id);
-  return mayReadCanvasRow(canvas, access.reader, via) ? node : undefined;
+  return mayReadCanvasRow(canvas, access.reader, via, "write") ? node : undefined;
 }
 
 const HELP =
@@ -160,7 +161,7 @@ export function canvasCommand(deps: {
         entities: { get: (id: never) => deps.getEntity(id) },
         ...(deps.canvasGrants ? { canvasGrants: deps.canvasGrants } : {}),
       };
-      const access: Access = { host, reader: canvasReaderFor(host, eid) };
+      const access: Access = { host, reader: canvasReaderFor(host, eid, { inWorld: true }) };
 
       if (!sub) {
         ctx.send(eid, HELP);
@@ -620,14 +621,14 @@ async function handlePublish(
 
   // Find or use default canvas — prefer "global"
   const named = canvasName ? db.getCanvasByName(canvasName) : undefined;
-  if (named && !readableCanvas(access, named, "canvas publish")) {
+  if (named && !readableCanvas(access, named, "canvas publish", "write")) {
     ctx.send(eid, `Canvas "${canvasName}" not found.`);
     return;
   }
   let canvas = canvasName
     ? named
     : (db.getCanvasByName("global") ??
-      db.listCanvases({ limit: 20 }).find((c) => mayReadCanvas(c, access.reader)));
+      db.listCanvases({ limit: 20 }).find((c) => mayReadCanvas(c, access.reader, "write")));
   if (!canvas) {
     // Auto-create the global canvas
     const id = crypto.randomUUID();
@@ -740,14 +741,14 @@ function handlePost(
     : undefined;
   // A private canvas the caller cannot read is "not found" (and never
   // shadowed by a new canvas of the same name).
-  if (named && !readableCanvas(access, named, "canvas post")) {
+  if (named && !readableCanvas(access, named, "canvas post", "write")) {
     ctx.send(eid, `Canvas "${canvasName}" not found.`);
     return;
   }
   let canvas = canvasName
     ? named
     : (db.getCanvasByName("global") ??
-      db.listCanvases({ limit: 20 }).find((c) => mayReadCanvas(c, access.reader)));
+      db.listCanvases({ limit: 20 }).find((c) => mayReadCanvas(c, access.reader, "write")));
   if (!canvas) {
     const id = crypto.randomUUID();
     db.createCanvas({

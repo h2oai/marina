@@ -164,6 +164,8 @@ export interface AssetNodeScope {
   canvas_id: string;
   scope: string;
   scope_id: string | null;
+  /** The canvas name (identifies a request inbox). */
+  name: string;
 }
 
 /**
@@ -174,7 +176,8 @@ export interface AssetNodeScope {
 export function listAssetNodeScopes(db: Database, assetId: string): AssetNodeScope[] {
   return db
     .query(
-      `SELECT n.id AS node_id, n.canvas_id AS canvas_id, c.scope AS scope, c.scope_id AS scope_id
+      `SELECT n.id AS node_id, n.canvas_id AS canvas_id, c.scope AS scope, c.scope_id AS scope_id,
+              c.name AS name
          FROM canvas_nodes n JOIN canvases c ON c.id = n.canvas_id
         WHERE n.asset_id = ?`,
     )

@@ -9,7 +9,9 @@
  * `marina_see` and the MCP `canvas` tool), `image`/`video describe`, the
  * canvas and asset HTTP APIs, asset bytes and journey projections. Public
  * canvases are unaffected. Model-API request images are granted to the
- * serving crew for the request's lifetime.
+ * serving crew for the request's lifetime. In world, an agent's creator reads
+ * (never writes) its canvases and the local-ungated profile lifts the rule as
+ * before; neither reaches a request inbox, and neither changes HTTP/WS.
  */
 
 import { afterEach, beforeEach, describe, expect, it, setSystemTime } from "bun:test";
@@ -38,6 +40,7 @@ import { LocalStorageProvider } from "../src/storage/local-provider";
 import type { EntityId } from "../src/types";
 import { createTestEngine } from "./engine-fixture";
 import { MockConnection } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 1, 2]);
 const PNG_URL = `data:image/png;base64,${Buffer.from(PNG).toString("base64")}`;
@@ -409,6 +412,107 @@ describe("private canvas nodes on every read path", () => {
     expect(await run(crew, "canvas look pn-image what")).toContain("not found");
     expect(await httpNode("pn-image", crew.token)).toBe(404);
     expect(fixture.engine.canvasGrants.list()).toEqual([]);
+  });
+
+  describe("liftable reads: creators and the local-ungated profile", () => {
+    beforeEach(async () => {
+      const { db, engine } = fixture;
+      // Crewmate is an agent Stranger spawned (the creator relation challenges use).
+      db.saveAgentConfig({ name: "Crewmate", model: "marina/default", spawnedBy: "Stranger" });
+      db.createCanvas({
+        id: "agent-cv",
+        name: "crewmate-board",
+        scope: "entity",
+        scopeId: crew.id,
+        creatorName: "Crewmate",
+      });
+      db.createNode({
+        id: "an-text",
+        canvasId: "agent-cv",
+        type: "text",
+        data: { text: "agent notes", intent: { prompt: "agent task", status: "pending" } },
+        creatorName: "Crewmate",
+      });
+      // The agent's own request inbox (#281): other callers' uploads.
+      await engine.storage!.put("ia.png", PNG, "image/png");
+      db.createAsset({
+        id: "ia",
+        entityName: "Crewmate",
+        filename: "request-image-1.png",
+        mimeType: "image/png",
+        size: PNG.byteLength,
+        storageKey: "ia.png",
+        metadata: { origin: "request", owner: crew.id },
+      });
+      db.createCanvas({
+        id: "agent-inbox",
+        name: `inbox:${crew.id}`,
+        scope: "entity",
+        scopeId: crew.id,
+        creatorName: "Crewmate",
+      });
+      db.createNode({
+        id: "in-image",
+        canvasId: "agent-inbox",
+        type: "image",
+        assetId: "ia",
+        creatorName: "Crewmate",
+      });
+    });
+
+    it("a creator reads its agent's canvas but cannot write to it", async () => {
+      expect(await run(stranger, "canvas nodes crewmate-board")).not.toContain("not found");
+      expect(await run(stranger, "canvas look an-text what")).toContain("A red square.");
+      expect(await run(stranger, "canvas list")).toContain("crewmate-board");
+      expect(await run(stranger, "canvas intent list")).toContain("agent task");
+      expect(await run(stranger, "canvas post on:crewmate-board hi")).toContain("not found");
+      expect(await run(stranger, "canvas intent claim an-text")).toContain("not found");
+      expect(await run(stranger, "canvas delete crewmate-board")).toContain("Only the owner");
+      // Someone who did not create the agent still cannot read it.
+      expect(await run(owner, "canvas nodes crewmate-board")).toContain("not found");
+    });
+
+    it("a creator never reads its agent's request inbox", async () => {
+      expect(await run(stranger, `canvas nodes inbox:${crew.id}`)).toContain("not found");
+      expect(await run(stranger, "canvas look in-image")).toContain("not found");
+      expect(await run(stranger, "image describe asset:ia")).toContain("not found");
+      expect(await run(crew, "canvas look in-image")).toContain("A red square.");
+    });
+
+    it("the creator relation stays in world; HTTP keeps the pre-#284 rule", async () => {
+      const [url, r] = get("/api/canvases/agent-cv", stranger.token);
+      const resp = await handleCanvasApi(
+        url,
+        "GET",
+        r,
+        fixture.db,
+        undefined,
+        undefined,
+        fixture.engine,
+        undefined,
+        REMOTE,
+      );
+      expect(resp.status).toBe(404);
+    });
+
+    it("local-ungated lifts entity canvases in world, but never a request inbox or HTTP", async () => {
+      using _state = scopeProcessState({ trustProfile: "local" });
+      expect(await run(owner, "canvas nodes crewmate-board")).not.toContain("not found");
+      expect(await run(owner, "canvas look an-text what")).toContain("A red square.");
+      expect(await run(admin, "canvas post on:crewmate-board hi")).toContain("Posted");
+      expect(await run(stranger, "canvas look pn-text what")).toContain("A red square.");
+      expect(await run(stranger, "canvas visit Owner")).toContain("Visiting Owner's canvas");
+      // Request images stay owner, operator and grant only in every profile.
+      expect(await run(owner, `canvas nodes inbox:${crew.id}`)).toContain("not found");
+      expect(await run(owner, "canvas look in-image")).toContain("not found");
+      expect(await run(owner, "canvas asset info ia")).toContain("not found");
+      expect(await httpNode("pn-image", stranger.token)).toBe(404);
+    });
+
+    it("the default (shared) profile does not lift", async () => {
+      using _state = scopeProcessState({ trustProfile: "shared" });
+      expect(await run(owner, "canvas nodes crewmate-board")).toContain("not found");
+    });
   });
 
   describe("model-API request images", () => {

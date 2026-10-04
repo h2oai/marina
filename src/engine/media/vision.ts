@@ -776,7 +776,11 @@ export async function lookAndReply(
   }
   let src: VisualSource;
   try {
-    src = await loadVisualSource(engine, args.ref, canvasReaderFor(engine, who.entityId));
+    src = await loadVisualSource(
+      engine,
+      args.ref,
+      canvasReaderFor(engine, who.entityId, { inWorld: true }),
+    );
   } catch (e) {
     return e instanceof Error ? e.message : String(e);
   }

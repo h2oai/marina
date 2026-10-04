@@ -14,7 +14,10 @@
  *  - A canvas whose scope is not `entity` (global, project, feed, …) is public,
  *    as it always was.
  *  - An `entity` canvas is private: its owner (`scope_id`) and operators
- *    (sovereign rank, or `admin.destructive` held unsupervised) read it.
+ *    (sovereign rank, or `admin.destructive` held unsupervised) read it. In
+ *    world (commands, tools, MCP), the agent's creator also reads it, and the
+ *    local-ungated profile lifts the restriction as before. A request inbox
+ *    (`inbox:<owner>`, #281) gets neither: owner, operators and grants only.
  *  - Anyone else may read one NODE of a private canvas only through an
  *    explicit, time-limited {@link CanvasReadGrants} entry naming that node and
  *    that principal. The model API records one for a request's staged images,
@@ -32,11 +35,13 @@
 import type { MarinaDB } from "../persistence/database";
 import type { AssetRow } from "../persistence/db-assets";
 import type { CanvasNodeRow, CanvasRow } from "../persistence/db-canvas";
-import type { Entity } from "../types";
+import type { Entity, EntityId } from "../types";
+import { sanitizeEntityName } from "./entity-name";
 import { Logger } from "./logger";
 import { OWNERSHIP_ADMIN_RANK } from "./ownership";
 import { getRank } from "./permissions";
 import { checkUnattendedGate } from "./safety-gates";
+import { isLocalUngated } from "./trust-profile";
 
 const logger = new Logger();
 
@@ -46,24 +51,57 @@ export interface CanvasReader {
   entityId?: string;
   /** Operators and admins read every canvas. */
   isOperator?: boolean;
+  /**
+   * In-world readers only: the local-ungated profile (`isLocalUngated()`)
+   * lifts the entity-canvas restriction, as it did before. Never set for
+   * HTTP/WS principals, and never lifts a request inbox.
+   */
+  localUngated?: boolean;
+  /**
+   * In-world readers only: true when the reader created (spawned) the agent
+   * that owns `ownerId` — the creator relation challenges use. Lets a creator
+   * READ its agents' canvases; never a write, never a request inbox.
+   */
+  createdOwner?: (ownerId: string) => boolean;
 }
 
-/** The scope fields of a canvas row. */
-export type CanvasScope = Pick<CanvasRow, "scope" | "scope_id">;
+/** The scope fields of a canvas row (`name` identifies a request inbox). */
+export type CanvasScope = Pick<CanvasRow, "scope" | "scope_id"> & { name?: string };
 
 /** `entity` canvases are private to their owner. */
 export function isPrivateCanvas(canvas: CanvasScope | undefined): boolean {
   return canvas?.scope === "entity";
 }
 
+/** Name prefix of a model-API request inbox (`requestInboxName` in vision.ts). */
+export const REQUEST_INBOX_PREFIX = "inbox:";
+
 /**
- * May `reader` read this canvas? A missing canvas is allowed (there is nothing
- * to leak: it holds no nodes and broadcasts nothing).
+ * A private request inbox (#281): another caller's uploads. Only its owner,
+ * operators and grant holders read it, in every profile.
  */
-export function mayReadCanvas(canvas: CanvasScope | undefined, reader?: CanvasReader): boolean {
+export function isRequestInbox(canvas: CanvasScope | undefined): boolean {
+  return isPrivateCanvas(canvas) && !!canvas?.name?.startsWith(REQUEST_INBOX_PREFIX);
+}
+
+/**
+ * May `reader` read (or, with `mode: "write"`, write to) this canvas? A
+ * missing canvas is allowed (there is nothing to leak: it holds no nodes and
+ * broadcasts nothing). Owner and operators always pass. For in-world readers,
+ * the local-ungated profile passes both, and an agent's creator passes reads;
+ * neither applies to a request inbox.
+ */
+export function mayReadCanvas(
+  canvas: CanvasScope | undefined,
+  reader?: CanvasReader,
+  mode: "read" | "write" = "read",
+): boolean {
   if (!canvas || !isPrivateCanvas(canvas)) return true;
   if (reader?.isOperator) return true;
-  return !!reader?.entityId && reader.entityId === canvas.scope_id;
+  if (reader?.entityId && reader.entityId === canvas.scope_id) return true;
+  if (isRequestInbox(canvas)) return false;
+  if (reader?.localUngated) return true;
+  return mode === "read" && !!canvas.scope_id && reader?.createdOwner?.(canvas.scope_id) === true;
 }
 
 // ─── Grants ───────────────────────────────────────────────────────────────
@@ -176,20 +214,40 @@ export interface CanvasAccessHost {
   canvasGrants?: CanvasReadGrants;
 }
 
+const norm = (name: string) => sanitizeEntityName(name).toLowerCase();
+
 /**
- * The reader for an in-world entity: the entity itself, an operator when it is
- * a sovereign admin or holds `admin.destructive` unsupervised (a supervised-only
+ * The reader for an entity: the entity itself, an operator when it is a
+ * sovereign admin or holds `admin.destructive` unsupervised (a supervised-only
  * holder is not an operator).
+ *
+ * With `inWorld` (commands, agent tools, MCP — not the HTTP/WS surfaces) the
+ * reader also carries the local-ungated lift and the creator relation: the
+ * entity that spawned an agent (`agent_configs.spawned_by`, as challenges use)
+ * may read that agent's canvases.
  */
 export function canvasReaderFor(
   host: Pick<CanvasAccessHost, "db" | "entities">,
   entityId: string,
+  opts: { inWorld?: boolean } = {},
 ): CanvasReader {
   const entity = host.entities.get(entityId as never);
   const isOperator =
     (!!entity && getRank(entity) >= OWNERSHIP_ADMIN_RANK) ||
     (!!host.db && checkUnattendedGate(host.db, entityId, "admin.destructive").ok);
-  return { entityId, isOperator };
+  if (!opts.inWorld) return { entityId, isOperator };
+  const myName = entity ? norm(entity.name) : "";
+  return {
+    entityId,
+    isOperator,
+    localUngated: isLocalUngated(),
+    createdOwner: (ownerId) => {
+      if (!myName || !host.db) return false;
+      const owner = host.entities.get(ownerId as never) ?? host.db.loadEntity(ownerId as EntityId);
+      const creator = owner ? host.db.getAgentConfig(owner.name)?.spawned_by : undefined;
+      return !!creator && norm(creator) === myName;
+    },
+  };
 }
 
 function refused(what: string, id: string, reader: CanvasReader | undefined, via: string): void {
@@ -236,8 +294,9 @@ export function mayReadCanvasRow(
   canvas: CanvasRow | undefined,
   reader: CanvasReader | undefined,
   via: string,
+  mode: "read" | "write" = "read",
 ): boolean {
-  if (mayReadCanvas(canvas, reader)) return true;
+  if (mayReadCanvas(canvas, reader, mode)) return true;
   refused("canvas", canvas?.id ?? "?", reader, via);
   return false;
 }
