@@ -860,6 +860,9 @@
 # `marina/verify:` revision rounds after a flagged draft (0 = review only and return the draft; max 3). Default 1.
 # MARINA_VERIFY_ROUNDS=1
 
+# `marina/verify:` checker reasoning effort. `inherit` copies the caller's own effort (`reasoning_effort`, `reasoning`, `thinking`, top level or inside a literal `extra_body`); `low`/`medium`/`high` send that `reasoning_effort`; `off` sends none (the checker model's default, no thinking for Claude). The upstream layer translates it per provider. Default inherit.
+# MARINA_VERIFY_CHECKER_EFFORT=inherit
+
 # Vision model for `canvas look` / `image describe` / `video describe` / `marina_see` when the agent's own model cannot read images. Unset: the agent's model, else Marina's default route.
 # MARINA_VISION_MODEL=openrouter/openai/gpt-6.1-sol
 
