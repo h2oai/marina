@@ -113,6 +113,10 @@ export function recordScoredRun(
         ...(r && !r.fallback && answerDigest(r.prediction)
           ? { answerDigest: answerDigest(r.prediction) }
           : {}),
+        // With a time budget the label is always reported: forced or not.
+        ...(r && input.variant.budgetMs
+          ? { budgetForced: r.answer.budgetForced !== undefined }
+          : {}),
         judge: it.metric,
       };
     }),

@@ -141,6 +141,7 @@ are saved with their answer as one string (`prediction`).
 | `MARINA_FORECAST_RUNS` | `3` | typed answers: independent runs (1–9) |
 | `MARINA_FORECAST_RESEARCH_ROUNDS` | `2` | typed answers: research rounds (1–4) |
 | `MARINA_FORECAST_CRITIQUE` | `on` | `off` skips the critique |
+| `MARINA_FORECAST_BUDGET_S` | unset (none) | typed answers: wall-clock budget per forecast. From about 75 % no further research round starts. At the cap, lookups, verification and the critique are skipped and the answer is combined from the runs that have finished (the first to finish, when none has). The answer then carries `budgetForced`, and a skipped check is `verified.verdict: "not_run"` |
 | `MARINA_FORECAST_LOOKUPS` | `auto` | structured sources: `auto` (every one that can run here), `off`, or a list of `polymarket`, `kalshi`, `odds`, `fred`, `bls`, `markets` / `all` (see [Lookups](#lookups)) |
 | `MARINA_FORECAST_MARINA_URL` / `_KEY` | `http://localhost:3300` | where `marina:<crew>` analysts are asked |
 

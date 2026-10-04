@@ -97,6 +97,7 @@ import {
   type AgentThinkingLevel,
   resolveAgentThinkingLevel,
 } from "./agent-types";
+import { budgetSteerAt } from "./budget-terminal";
 import {
   type ConversationTokenCap,
   computeContextBudget,
@@ -593,9 +594,12 @@ function clampText(text: string, maxChars = RECALL_BLOCK_MAX_CHARS): string {
 
 /** Clamp one World Events line. `model_request` payloads carry the caller's
  *  question in `content`, so they get the larger clamp — see the constants. */
-/** The point (75 %) at which a per-run cap is surfaced to the agent before it aborts. */
+/**
+ * The point (75 %) at which a per-run cap is surfaced to the agent before it
+ * aborts — the shared budget-terminal steer point (`./budget-terminal`).
+ */
 export function runCapWarningAt(cap: number): number {
-  return Math.max(1, Math.ceil(cap * 0.75));
+  return budgetSteerAt(cap);
 }
 
 export function clampPerceptionLine(text: string, addressed = false): string {
@@ -2288,9 +2292,23 @@ export class LeanAgentAdapter implements AgentHandle {
   private warnRunCap(used: string, cap: number): void {
     this.agent.steer({
       role: "user",
-      content: `[Run budget] ${used} used this run; it yields at ${cap} and resumes next cycle. Finish the current step or leave its state (note, focus, task) so nothing is lost.`,
+      content: `[Run budget] ${used} used this run; it yields at ${cap} and resumes next cycle. Finish the current step or leave its state (note, focus, task) so nothing is lost.${this.owedAnswerSteer()}`,
       timestamp: Date.now(),
     });
+  }
+
+  /**
+   * Budget-terminal steer for a request that is owed an answer: the run is
+   * near its cap, so send the best answer now rather than after more work —
+   * a yield with the answer unsent is how a crew request ends in silence.
+   */
+  private owedAnswerSteer(): string {
+    const owed = this.outstandingRequests
+      .entries()
+      .filter((r) => r.presented && r.modelRequestId && r.kind === "channel");
+    if (owed.length === 0) return "";
+    const ids = owed.map((r) => r.modelRequestId).join(", ");
+    return ` A model_response is still owed (${ids}): send your best current answer now, before the cap — an answer from what you have beats none.`;
   }
 
   private shouldStopAfterTurn(turnMessage?: unknown): boolean {

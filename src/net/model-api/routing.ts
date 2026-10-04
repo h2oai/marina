@@ -7,6 +7,7 @@
 // trace-derived usage, the agents-route parameter refusal and the stale
 // conversation-channel sweep.
 
+import type { BudgetForced } from "../../agent/budget-terminal";
 import {
   formatUntrustedContext,
   PANEL_SYNTHESIS_SYSTEM_PROMPT,
@@ -20,12 +21,18 @@ import {
   REQUEST_PROTOCOL_FORMATIONS,
   requestProtocolLine,
 } from "../../coordination/crew-formations";
+import {
+  RequestDraftCollector,
+  requestDeadlineMs,
+  upstreamRefusalStatus,
+} from "../../coordination/request-deadline";
 import type { Engine } from "../../engine/engine";
 import { compareTraceCohorts } from "../../engine/trace-dataset";
 import { projectTraces } from "../../engine/trace-projection";
 import { adviseTraceRouting, selectAdaptiveCandidate } from "../../engine/trace-routing-advice";
 import { formatLesson } from "../../learning/outcomes";
 import { recallAcross } from "../../learning/service";
+import type { EngineEvent } from "../../types";
 import type { ResponseRecord, ResponsesSseEmitter } from "./responses-sse";
 import {
   type CompletionUsage,
@@ -109,11 +116,13 @@ export function modelRequestIdleSeconds(): number {
  * if it lost its own thread. Duplicate replies are harmless — the waiter
  * takes the first match.
  *
- * Fires at 25% and 60% of REQUEST_TIMEOUT_MS (150s/360s at the 600s default,
- * so the first reminder also lands inside a 300s client window). Disable
- * with MODEL_REQUEST_REMINDERS=0.
+ * Fires at 25%, 60% and 85% of the request's deadline (REQUEST_TIMEOUT_MS,
+ * or the client's sooner `x-marina-deadline-ms`; 150s/360s/510s at the 600s
+ * default, so the first reminder also lands inside a 300s client window).
+ * At the deadline itself the crew's best draft is the answer (budget-terminal,
+ * `src/coordination/request-deadline.ts`). Disable with MODEL_REQUEST_REMINDERS=0.
  */
-const REQUEST_REMINDER_FRACTIONS = [0.25, 0.6];
+const REQUEST_REMINDER_FRACTIONS = [0.25, 0.6, 0.85];
 export function scheduleRequestReminders(
   cm: ChannelManager,
   channelId: string,
@@ -132,6 +141,7 @@ export function scheduleRequestReminders(
     setTimeout(
       () => {
         const age = Math.round((timeoutMs * fraction) / 1000);
+        const left = Math.max(0, Math.round((timeoutMs * (1 - fraction)) / 1000));
         cm.send(
           channelId,
           "__model_api__",
@@ -142,10 +152,11 @@ export function scheduleRequestReminders(
             reminder: true,
             target,
             content:
-              `REMINDER (${age}s elapsed, request ${requestId} still unanswered): send your best ` +
+              `REMINDER (${age}s elapsed, ${left}s to the deadline, request ${requestId} still unanswered): send your best ` +
               `current answer immediately — do not wait on further coordination. Run EXACTLY: ` +
               `channel send ${channelName} {"type":"model_response","id":"${requestId}","content":"<your best answer>"} ` +
               `(the channel name "${channelName}" is required — never omit it). ` +
+              `At the deadline your latest draft is sent for you (a {"type":"model_draft","id":"${requestId}","content":"…"} post sets it). ` +
               `Original question: ${userContent.slice(0, 1500)}`,
           }),
         );
@@ -291,6 +302,11 @@ export interface RouteResult {
   requestId: string;
   /** The responder delivered this answer through output repair (`repaired:parse|shot`). */
   repaired?: string;
+  /**
+   * The answer is the crew's best draft, forced at the deadline or by a
+   * permanent upstream refusal (`x-marina-budget-forced`), not its own reply.
+   */
+  budgetForced?: BudgetForced;
 }
 
 /** A responder's `repaired` label, when it is one Marina issues. */
@@ -302,7 +318,19 @@ export interface RouteOptions {
   context?: string;
   conversationId?: string;
   strategy?: "round-robin" | "least-busy" | "adaptive";
+  /**
+   * The client's own per-item deadline (`x-marina-deadline-ms`): the route
+   * answers with the crew's best draft before it rather than the client
+   * aborting with nothing.
+   */
+  deadlineMs?: number;
 }
+
+/**
+ * Non-retryable upstream refusals of the lead's model before a routed request
+ * stops waiting (one stray error is not enough; the lead retries with backoff).
+ */
+const UPSTREAM_REFUSALS_BEFORE_FAIL_FAST = 2;
 
 const ADAPTIVE_HISTORY_EVENT_LIMIT = 2_000;
 // Routing advice is a 2,000-row scan + full trace projection — far too heavy
@@ -485,18 +513,79 @@ export async function routeToChannel(
   });
 
   incrementPending(target);
-  const cancelReminders = scheduleRequestReminders(cm, channel.id, requestId, target, userContent);
+  // Budget-terminal deadline: the route's timeout, or the client's own per-item
+  // deadline when sooner. At the deadline the crew's best draft is the answer
+  // (labelled `budgetForced`); only a crew with no draft at all times out.
+  const deadlineMs = requestDeadlineMs(REQUEST_TIMEOUT_MS, opts?.deadlineMs);
+  const cancelReminders = scheduleRequestReminders(
+    cm,
+    channel.id,
+    requestId,
+    target,
+    userContent,
+    deadlineMs,
+  );
+  const targetName = engine.getOnlineAgents().find((e) => e.id === target)?.name;
+  const drafts = new RequestDraftCollector(requestId, targetName);
   // The member whose correlated reply fulfilled the request (usually `target`).
   let respondedBy = target;
+  let detachEvents = () => {};
 
   try {
     const result = await new Promise<RouteResult>((resolve, reject) => {
-      const timer = setTimeout(() => {
+      let settled = false;
+      const settle = (outcome: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
         unsub();
-        reject(new HttpError(504, "Response timeout"));
-      }, REQUEST_TIMEOUT_MS);
+        detachEvents();
+        outcome();
+      };
+      // End early with the best draft (or an error when there is none), labelled.
+      const forceEnd = (reason: BudgetForced["reason"], noDraft: HttpError) => {
+        const best = drafts.best();
+        settle(() =>
+          best
+            ? resolve({
+                content: best.text,
+                conversationId: convId,
+                requestId,
+                budgetForced: {
+                  reason,
+                  used: Date.now() - startedAt,
+                  cap: deadlineMs,
+                  source: best.source,
+                },
+              })
+            : reject(noDraft),
+        );
+      };
+      const timer = setTimeout(
+        () => forceEnd("deadline", new HttpError(504, "Response timeout")),
+        deadlineMs,
+      );
 
-      const unsub = cm.onMessage((channelId, senderId, _senderName, content) => {
+      // Fail fast: the lead's model refused this request permanently (a 4xx
+      // that retrying never fixes) — twice, so one stray error is not enough.
+      let refusals = 0;
+      const onEvent = (event: EngineEvent) => {
+        drafts.onEvent(event);
+        if (event.type !== "agent_error" || event.name !== targetName) return;
+        if (event.timestamp < startedAt) return;
+        const status = upstreamRefusalStatus(event.error);
+        if (status === undefined) return;
+        refusals++;
+        if (refusals < UPSTREAM_REFUSALS_BEFORE_FAIL_FAST) return;
+        forceEnd(
+          "upstream_error",
+          new HttpError(
+            502,
+            `The crew's lead could not answer: its model refused the request (HTTP ${status}).`,
+          ),
+        );
+      };
+      const unsub = cm.onMessage((channelId, senderId, senderName, content) => {
         if (channelId !== channel.id) return;
         if (!isEndpointResponder(cm, channel.id, senderId)) return;
 
@@ -507,16 +596,20 @@ export async function routeToChannel(
         } catch {
           // Non-JSON — fall through to plaintext check
         }
+        if (parsed?.type === "model_draft" && parsed.id === requestId) {
+          drafts.addExplicit(senderName, String(parsed.content ?? ""));
+          return;
+        }
         if (parsed?.type === "model_response" && parsed.id === requestId) {
-          clearTimeout(timer);
-          unsub();
-          respondedBy = senderId;
           const repaired = repairLabelOf(parsed.repaired);
-          resolve({
-            content: parsed.content ?? "",
-            conversationId: convId,
-            requestId,
-            ...(repaired ? { repaired } : {}),
+          settle(() => {
+            respondedBy = senderId;
+            resolve({
+              content: parsed.content ?? "",
+              conversationId: convId,
+              requestId,
+              ...(repaired ? { repaired } : {}),
+            });
           });
           return;
         }
@@ -524,21 +617,22 @@ export async function routeToChannel(
         // Fallback: plaintext "[req-abc123] response text"
         const prefix = `[${requestId}] `;
         if (content.startsWith(prefix)) {
-          clearTimeout(timer);
-          unsub();
-          respondedBy = senderId;
-          resolve({
-            content: content.slice(prefix.length),
-            conversationId: convId,
-            requestId,
+          settle(() => {
+            respondedBy = senderId;
+            resolve({
+              content: content.slice(prefix.length),
+              conversationId: convId,
+              requestId,
+            });
           });
         }
       });
+      engine.addEventListener(onEvent);
+      detachEvents = () => engine.removeEventListener(onEvent);
 
       // Send request to channel
       cm.send(channel.id, "__model_api__", "model-api", payload);
     });
-
     // Persist to conversation channel (use __model_conv__ to avoid triggering agents)
     if (convChannel) {
       cm.send(convChannel.id, "__model_conv__", "user", userContent);
@@ -556,9 +650,20 @@ export async function routeToChannel(
       routeStrategy: strategy,
       candidateCount: onlineMembers.length,
       routeAdviceMode: route.adviceMode,
-      routeReason: result.repaired
-        ? `${route.reason ?? "routed"}+${result.repaired}`
-        : route.reason,
+      routeReason:
+        [
+          route.reason ?? (result.repaired || result.budgetForced ? "routed" : undefined),
+          result.repaired,
+          result.budgetForced ? `budget-forced:${result.budgetForced.reason}` : undefined,
+        ]
+          .filter(Boolean)
+          .join("+") || undefined,
+      // The trace says when the answer was a draft forced at a budget, and whose.
+      ...(result.budgetForced
+        ? {
+            detail: `budget-forced ${result.budgetForced.reason}: ${result.budgetForced.source ?? "draft"} after ${result.budgetForced.used}ms`,
+          }
+        : {}),
       durationMs: Date.now() - startedAt,
       timestamp: Date.now(),
     });

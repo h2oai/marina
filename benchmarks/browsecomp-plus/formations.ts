@@ -24,6 +24,7 @@
  */
 
 import { BudgetExhausted } from "../spend-guard";
+import { mostAgreedDraft } from "../../src/agent/budget-terminal";
 import {
   type AgentOptions,
   type ChatEndpoint,
@@ -239,6 +240,7 @@ export async function runFormation(
     doc_chars: opts.docChars,
     max_turns: opts.maxTurns,
     lead_turns: fo.leadTurns,
+    ...(opts.finalAnswer ? { final_answer: true } : {}),
   });
   try {
     if (spec.kind === "single") {
@@ -250,6 +252,7 @@ export async function runFormation(
         run,
       );
       run.record.status = out.text ? "completed" : "incomplete";
+      if (out.budgetForced) run.budgetForced = out.budgetForced;
       return finishRun(run, started);
     }
     let reports: string[];
@@ -296,6 +299,31 @@ export async function runFormation(
       run,
       { agent: "lead", maxTurns: fo.leadTurns },
     );
+    if (final.budgetForced) run.budgetForced = final.budgetForced;
+    if (!final.text && opts.finalAnswer) {
+      // Budget-terminal: the lead produced nothing, so the team's most-agreed
+      // report is the answer — labelled, never passed off as the lead's.
+      const best = mostAgreedDraft(
+        reports.filter((r) => !/^\((researcher failed|no answer)/.test(r)),
+      );
+      if (best) {
+        run.record.result.push({
+          type: "output_text",
+          tool_name: null,
+          arguments: null,
+          output: best.text,
+          agent: "team-plurality",
+        });
+        run.budgetForced = {
+          reason: "turns",
+          used: fo.leadTurns,
+          cap: fo.leadTurns,
+          source: "member-plurality",
+        };
+        run.record.status = "completed";
+        return finishRun(run, started);
+      }
+    }
     run.record.status = final.text ? "completed" : "incomplete";
   } catch (e) {
     failRun(run, e);

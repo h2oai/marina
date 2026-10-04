@@ -35,6 +35,7 @@
  * orchestration over injected parts; `service.ts` wires the real ones.
  */
 
+import { type BudgetForced, budgetPhase } from "../agent/budget-terminal";
 import type { ResearchReport, Retriever } from "../arena/research/retrieve";
 import { type PageText, verifyDossier } from "../arena/research/verify";
 import type { Evidence } from "../decisions/evidence";
@@ -109,6 +110,15 @@ export interface TypedForecastOptions {
    * (default false).
    */
   verify?: boolean;
+  /**
+   * Wall-clock budget for the whole forecast, in ms (budget-terminal
+   * answering, `src/agent/budget-terminal.ts`). From about 75 % no further
+   * research round starts; at the cap lookups, verification and the critique
+   * are skipped and the answer is combined from the runs finished so far (the
+   * first run to finish, when none has) — labelled `budgetForced`. Unset = no
+   * time budget.
+   */
+  budgetMs?: number;
 }
 
 export interface ModelPart {
@@ -181,7 +191,8 @@ export interface TypedRun {
   /** The verifier's check of this draft (`options.verify`). */
   verified?: {
     model: string;
-    verdict: "accept" | "correct" | "error";
+    /** `not_run`: the time budget was spent before the check (never a failed check). */
+    verdict: "accept" | "correct" | "error" | "not_run";
     /** The draft before a correction replaced it. */
     draft?: string;
     reason?: string;
@@ -239,6 +250,10 @@ export interface TypedForecastAnswer {
   costUsd: number;
   latencyMs: number;
   caveat?: string;
+  /** With `options.budgetMs`: the budget, what was spent, and the stages it cut. */
+  budget?: { capMs: number; usedMs: number; skipped: string[] };
+  /** The answer was combined at the time budget from what had finished (labelled, never silent). */
+  budgetForced?: BudgetForced;
 }
 
 const MAX_DOSSIER_CHARS = 24_000;
@@ -361,6 +376,12 @@ export async function forecastTyped(
   const planner = deps.planner ?? deps.analysts[0];
   const critic = deps.critic ?? planner;
   const verifier = deps.verifier ?? critic;
+  // Budget-terminal answering: steer from ~75 % (no new research round), and
+  // at the cap combine what has finished rather than return nothing.
+  const budgetMs = opts.budgetMs && opts.budgetMs > 0 ? opts.budgetMs : undefined;
+  const phase = () => (budgetMs ? budgetPhase(Date.now() - started, budgetMs) : "work");
+  const skipped: string[] = [];
+  let forced = false;
 
   const cutoff = chooseCutoff(req, now);
   const cutoffDay = cutoff.at.slice(0, 10);
@@ -382,6 +403,17 @@ export async function forecastTyped(
   const earlier: string[] = [];
   const finish = (caveat?: string): TypedForecastAnswer => {
     out.latencyMs = Date.now() - started;
+    if (budgetMs) {
+      out.budget = { capMs: budgetMs, usedMs: out.latencyMs, skipped };
+      if (forced && out.formatted !== undefined) {
+        out.budgetForced = {
+          reason: "time",
+          used: out.latencyMs,
+          cap: budgetMs,
+          source: "runs-so-far",
+        };
+      }
+    }
     const notes = [
       ...earlier,
       caveat,
@@ -466,6 +498,10 @@ export async function forecastTyped(
     }
     out.research.push(round);
     if (r === rounds) break;
+    if (phase() !== "work") {
+      skipped.push(`research rounds ${r + 1}–${rounds}`);
+      break;
+    }
     const { reply } = await askAnalyst(
       planner,
       gapSystem(),
@@ -481,7 +517,10 @@ export async function forecastTyped(
   }
 
   // ── Lookups ───────────────────────────────────────────────────────────────
-  if (deps.lookups?.length) {
+  if (deps.lookups?.length && phase() === "final") {
+    skipped.push("lookups");
+    forced = true;
+  } else if (deps.lookups?.length) {
     out.lookups = await runLookups(
       deps.lookups,
       plan.restatement ?? req.question,
@@ -541,56 +580,80 @@ export async function forecastTyped(
 
   // ── K independent runs ────────────────────────────────────────────────────
   const user = `${header}\n\nRESEARCH DOSSIER${checked ? " (cited lines tagged by a mechanical check against the cited page)" : ""}:\n${dossier || (researchDown ? "(research unavailable — answer from the question, its notes and what you know as of the cutoff)" : "(nothing found)")}`;
-  out.runs = await Promise.all(
-    Array.from({ length: k }, async (_, i): Promise<TypedRun> => {
-      const analyst = deps.analysts[i % deps.analysts.length]!;
-      const run: TypedRun = { run: i + 1, model: analyst.name, weight: 0, status: "ok" };
-      const asked = await askAnalyst(
-        analyst,
-        runSystem(req.answer),
-        `${user}\n\n(Independent run ${i + 1} of ${k}: reason from the evidence yourself.)`,
+  const runJobs = Array.from({ length: k }, async (_, i): Promise<TypedRun> => {
+    const analyst = deps.analysts[i % deps.analysts.length]!;
+    const run: TypedRun = { run: i + 1, model: analyst.name, weight: 0, status: "ok" };
+    const asked = await askAnalyst(
+      analyst,
+      runSystem(req.answer),
+      `${user}\n\n(Independent run ${i + 1} of ${k}: reason from the evidence yourself.)`,
+    );
+    if (asked.error !== undefined) {
+      return { ...run, status: `error: ${asked.error.slice(0, 100)}` };
+    }
+    let reply = asked.reply;
+    let v = validateAnswer(req.answer, reply?.answer);
+    if ("error" in v && asked.raw) {
+      // The run answered, but not in the required shape: repair the format
+      // (deterministic, else one re-encoding shot on the same analyst).
+      const repaired = await repairRunAnswer(req.answer, asked.raw, analyst);
+      if (repaired) {
+        reply = repaired.value.reply;
+        v = { value: repaired.value.value };
+        run.repaired = repaired.label ?? "repaired:parse";
+      }
+    }
+    if ("error" in v) return { ...run, status: `invalid: ${v.error}` };
+    run.value = v.value;
+    run.formatted = formatAnswer(v.value);
+    const c = Number(reply?.confidence);
+    if (Number.isFinite(c)) run.confidence = Math.min(1, Math.max(0, c));
+    if (typeof reply?.reason === "string") run.reason = reply.reason.slice(0, 500);
+    readUncertainty(req.answer, reply, run);
+    run.weight = 1;
+    if (opts.verify && verifier) {
+      if (phase() === "final") {
+        // The budget is spent: the draft counts unchecked, and says so.
+        run.verified = { model: verifier.name, verdict: "not_run", reason: "time budget spent" };
+        forced = true;
+      } else {
+        await verifyRun(req, verifier, user, run);
+      }
+    }
+    if (judge) {
+      const judged = await judgeClaim(
+        judge,
+        judgeRecord,
+        `Answer: ${run.formatted}. ${run.reason ?? ""}`,
+        evidence,
+        req.question,
+        (g, q) => Math.max(0.05, (g ?? 0) * ((q ?? 0) / 2)),
       );
-      if (asked.error !== undefined) {
-        return { ...run, status: `error: ${asked.error.slice(0, 100)}` };
-      }
-      let reply = asked.reply;
-      let v = validateAnswer(req.answer, reply?.answer);
-      if ("error" in v && asked.raw) {
-        // The run answered, but not in the required shape: repair the format
-        // (deterministic, else one re-encoding shot on the same analyst).
-        const repaired = await repairRunAnswer(req.answer, asked.raw, analyst);
-        if (repaired) {
-          reply = repaired.value.reply;
-          v = { value: repaired.value.value };
-          run.repaired = repaired.label ?? "repaired:parse";
-        }
-      }
-      if ("error" in v) return { ...run, status: `invalid: ${v.error}` };
-      run.value = v.value;
-      run.formatted = formatAnswer(v.value);
-      const c = Number(reply?.confidence);
-      if (Number.isFinite(c)) run.confidence = Math.min(1, Math.max(0, c));
-      if (typeof reply?.reason === "string") run.reason = reply.reason.slice(0, 500);
-      readUncertainty(req.answer, reply, run);
-      run.weight = 1;
-      if (opts.verify && verifier) await verifyRun(req, verifier, user, run);
-      if (judge) {
-        const judged = await judgeClaim(
-          judge,
-          judgeRecord,
-          `Answer: ${run.formatted}. ${run.reason ?? ""}`,
-          evidence,
-          req.question,
-          (g, q) => Math.max(0.05, (g ?? 0) * ((q ?? 0) / 2)),
-        );
-        run.weight = judged.weight;
-        if (judged.grounded !== undefined) run.grounded = judged.grounded;
-        if (judged.quality !== undefined) run.quality = judged.quality;
-        if (judged.judgeError) run.judgeError = judged.judgeError;
-      }
-      return run;
-    }),
-  );
+      run.weight = judged.weight;
+      if (judged.grounded !== undefined) run.grounded = judged.grounded;
+      if (judged.quality !== undefined) run.quality = judged.quality;
+      if (judged.judgeError) run.judgeError = judged.judgeError;
+    }
+    return run;
+  });
+  if (budgetMs) {
+    const settled = await settleWithinBudget(runJobs, started + budgetMs);
+    out.runs = settled.map(
+      (r, i) =>
+        r ?? {
+          run: i + 1,
+          model: deps.analysts[i % deps.analysts.length]!.name,
+          weight: 0,
+          status: "budget: unfinished at the cap",
+        },
+    );
+    if (settled.some((r) => r === undefined)) {
+      skipped.push("unfinished runs");
+      forced = true;
+    }
+  } else {
+    out.runs = await Promise.all(runJobs);
+  }
   Object.assign(out, judgeAudit(judgeRecord));
 
   const combined = combineAnswers(
@@ -639,7 +702,10 @@ export async function forecastTyped(
   }
 
   // ── Critique ──────────────────────────────────────────────────────────────
-  if (opts.critique !== false && critic) {
+  if (opts.critique !== false && critic && phase() === "final") {
+    skipped.push("critique");
+    forced = true;
+  } else if (opts.critique !== false && critic) {
     out.critique = await critique(req, deps, critic, header, dossier, out, since, cutoffDay);
     if (out.critique.applied && out.critique.proposed !== undefined) {
       const v = validateAnswer(req.answer, out.critique.proposed);
@@ -671,6 +737,36 @@ export async function forecastTyped(
   return finish(
     lowGrounding ? "the judge found little verified evidence behind every run" : undefined,
   );
+}
+
+/**
+ * The runs settled by `deadline` (undefined = still running). Budget-terminal:
+ * when none has finished by then, wait for the FIRST to finish — an answer
+ * from one run beats none — and take whatever has settled at that moment.
+ */
+export async function settleWithinBudget<T>(
+  jobs: readonly Promise<T>[],
+  deadline: number,
+): Promise<Array<T | undefined>> {
+  const done: Array<T | undefined> = new Array(jobs.length).fill(undefined);
+  const tracked = jobs.map((p, i) =>
+    p.then((v) => {
+      done[i] = v;
+      return v;
+    }),
+  );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cap = new Promise<"cap">((resolve) => {
+    timer = setTimeout(() => resolve("cap"), Math.max(0, deadline - Date.now()));
+  });
+  try {
+    const first = await Promise.race([Promise.all(tracked), cap]);
+    if (first !== "cap") return first;
+    if (done.every((v) => v === undefined)) await Promise.race(tracked);
+    return [...done];
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function verifierSystem(spec: AnswerSpec): string {
