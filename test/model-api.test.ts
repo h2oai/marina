@@ -1351,12 +1351,13 @@ describe("Model API", () => {
         },
       );
 
-      expect(resp.status).toBe(502);
+      // The pinned model's own rejection is surfaced; no other provider is tried.
+      expect(resp.status).toBe(429);
       const lifecycle = lifecycleEvents();
       expect(lifecycle.at(-1)).toMatchObject({
         phase: "failed",
         routeKind: "passthru",
-        target: "openai/gpt-6-luna",
+        target: "openai/gpt-4o",
         errorKind: "rate_limit",
       });
       expect(resp.headers.get("x-request-id")).toBe(lifecycle.at(-1)?.traceId ?? null);

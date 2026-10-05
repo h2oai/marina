@@ -315,7 +315,7 @@ describe("probeConfiguredProviders", () => {
     expect(lines).toContain("would be dropped for this provider");
   });
 
-  it("fails a provider whose reply was actually served by the fallback provider", async () => {
+  it("reports a pinned provider's own failure instead of a fallback's reply", async () => {
     process.env.ANTHROPIC_API_KEY = "k";
     process.env.OPENROUTER_API_KEY = "expired";
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -335,18 +335,17 @@ describe("probeConfiguredProviders", () => {
     });
     expect(results).toHaveLength(1);
     const [openrouter] = results;
-    // The proxy fell back to Anthropic and returned a perfectly good answer —
-    // the probe must not credit OpenRouter for it.
+    // A configured default stays pinned: the proxy never answers with another
+    // provider's model, so the probe sees OpenRouter's own rejection.
     expect(openrouter).toMatchObject({
       provider: "openrouter",
       ok: false,
-      status: 200,
-      textOk: true,
-      systemHonored: true,
+      status: 401,
+      textOk: false,
     });
-    expect(openrouter!.servedBy).toMatch(/^anthropic\//);
-    expect(openrouter!.error).toContain("served by fallback anthropic/");
-    expect(renderProviderProbe(results).join("\n")).toContain("served by fallback");
+    expect(openrouter!.servedBy).toMatch(/^openrouter\//);
+    expect(openrouter!.error).toContain("API key expired");
+    expect(renderProviderProbe(results).join("\n")).toContain("API key expired");
   });
 
   it("reports an upstream error and a transport failure without throwing", async () => {
