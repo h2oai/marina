@@ -211,13 +211,13 @@ describe("source execution evidence", () => {
   test("learning distinguishes declared target from observed execution and refuses incomparable baselines", () => {
     using f = fixture();
     const before = benchmarkRunOutcome(f.target, f.target.getBenchmarkRun("target")!);
-    expect(before!.signals!.join(" ")).toContain("2 unknown");
+    expect(before!.measurement!.join(" ")).toContain("2 unknown");
     expect(before!.detail).toContain("superiority untested");
     f.target.attachBenchmarkSourceEvidence("target", f.evidence);
     const after = benchmarkRunOutcome(f.target, f.target.getBenchmarkRun("target")!);
     expect(after!.attempted).toContain("declared target");
-    expect(after!.signals!.join(" ")).toContain("2/2 items trace-linked");
-    expect(after!.signals!.join(" ")).toContain("not causal benefit");
+    expect(after!.measurement!.join(" ")).toContain("2/2 items trace-linked");
+    expect(after!.measurement!.join(" ")).toContain("not causal benefit");
     const other = run("other", false);
     other.run.content_hash = "other";
     other.run.score = 1;

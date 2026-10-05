@@ -13,14 +13,22 @@
  *     lesson had been learned when the run was filed.
  *   - Idempotent: a run whose own lesson (first ref `bench:<id>`, any trust,
  *     current) already exists is skipped, so a second pass writes nothing.
+ *   - `relearnRejected`: a run whose current lessons are ALL rejected and were
+ *     all written by an earlier learner (`provenance.learner` ≠
+ *     `BENCHMARK_LEARNER`) is learned again. The rejected lessons stay as audit
+ *     records; the new lesson carries the current learner, so a second pass
+ *     skips the run whatever the new verdict was.
  *   - Invalid, failed, unscored and empty runs are skipped: they measured the
  *     infrastructure, not the target.
+ *   - A run the judge could not decide (outage, spend cap) is deferred, not
+ *     written `unverified`; `refuse` (the daily spend cap) stops the pass
+ *     before the next run. Either way a later pass learns what was left.
  *   - Trusted, transferable lessons are mirrored into `lessons:meta` as on any
  *     other write (`MARINA_LESSONS_META` ≠ off).
  */
 
 import type { MarinaDB } from "../persistence/database";
-import { benchmarkRunOutcome } from "./intake";
+import { BENCHMARK_LEARNER, benchmarkRunOutcome } from "./intake";
 import {
   type Lesson,
   type LessonTrust,
@@ -34,6 +42,8 @@ export interface BackfillReport {
   runs: number;
   /** Runs that already had a lesson (idempotency). */
   existing: number;
+  /** Of `learned`, runs re-learned because an earlier learner's lessons were all rejected. */
+  relearned: number;
   /** Invalid, failed, unscored or empty runs: nothing to learn. */
   skipped: number;
   /** Runs fed through the loop (or that would be, on a dry run). */
@@ -41,6 +51,10 @@ export interface BackfillReport {
   trust: Record<LessonTrust, number>;
   /** Lessons mirrored into `lessons:meta`. */
   mirrored: number;
+  /** Runs fed but not written: the judge reached no verdict (left for a later pass). */
+  deferred: number;
+  /** Why the pass stopped early (`refuse`), if it did. */
+  stopped?: string;
   /** Outcomes merged into an existing lesson at admission (`MARINA_MEMORY_RANKING=on`). */
   merged: number;
   failed: number;
@@ -66,38 +80,53 @@ function ownRun(l: Lesson): string | undefined {
 export async function backfillLedgerLessons(
   db: MarinaDB,
   deps: OutcomeLearnerDeps,
-  opts: { dryRun?: boolean; limit?: number; onRecord?: (r: OutcomeRecord) => void } = {},
+  opts: {
+    dryRun?: boolean;
+    limit?: number;
+    relearnRejected?: boolean;
+    /** Checked before each run; a reason stops the pass (e.g. `dailyCapRefusal`). */
+    refuse?: () => string | undefined;
+    onRecord?: (r: OutcomeRecord) => void;
+  } = {},
 ): Promise<BackfillReport> {
   if (!deps.sink.find) throw new Error("this lesson store cannot list lessons");
   const report: BackfillReport = {
     runs: 0,
     existing: 0,
+    relearned: 0,
     skipped: 0,
     learned: 0,
     trust: { trusted: 0, unverified: 0, rejected: 0 },
     mirrored: 0,
+    deferred: 0,
     merged: 0,
     failed: 0,
     runIds: [],
   };
   // A run taught a lesson, or was merged into one at admission (its run is
   // the first ref of a `merged` entry): either way it is not learned again.
-  const taught = new Set(
-    (await deps.sink.find("benchmark", {}, 100_000)).flatMap((l) => {
-      const own = ownRun(l);
-      const merged = (l.merged ?? []).flatMap((m) => {
-        const id = ownRun({ refs: m.refs } as Lesson);
-        return id ? [id] : [];
-      });
-      return [...(own ? [own] : []), ...merged];
-    }),
-  );
+  // Of the runs it taught, those every lesson of which an earlier learner
+  // wrote and the judge rejected are re-learnable on request.
+  const taught = new Set<string>();
+  const stale = new Map<string, boolean>();
+  for (const l of await deps.sink.find("benchmark", {}, 100_000)) {
+    for (const m of l.merged ?? []) {
+      const id = ownRun({ refs: m.refs } as Lesson);
+      if (id) taught.add(id);
+    }
+    const id = ownRun(l);
+    if (!id) continue;
+    taught.add(id);
+    const old = l.trust === "rejected" && l.provenance?.learner !== BENCHMARK_LEARNER;
+    stale.set(id, (stale.get(id) ?? true) && old);
+  }
   const runs = db
     .queryBenchmarkRuns({ limit: BACKFILL_MAX_RUNS })
     .sort((a, b) => (a.completed_at ?? 0) - (b.completed_at ?? 0) || a.id.localeCompare(b.id));
   for (const run of runs) {
     report.runs++;
-    if (taught.has(run.id)) {
+    const relearn = !!opts.relearnRejected && stale.get(run.id) === true;
+    if (taught.has(run.id) && !relearn) {
       report.existing++;
       continue;
     }
@@ -117,14 +146,29 @@ export async function backfillLedgerLessons(
     }
     if (opts.limit !== undefined && report.learned >= opts.limit) break;
     report.learned++;
+    if (relearn) report.relearned++;
     report.runIds.push(run.id);
     if (opts.dryRun) continue;
+    const refused = opts.refuse?.();
+    if (refused) {
+      report.learned--;
+      if (relearn) report.relearned--;
+      report.runIds.pop();
+      report.stopped = refused;
+      break;
+    }
     try {
-      const record = await recordOutcome(deps, outcome);
+      const record = await recordOutcome({ ...deps, deferUnjudged: true }, outcome);
+      if (record.deferred) {
+        report.deferred++;
+        opts.onRecord?.(record);
+        continue;
+      }
       report.trust[record.trust]++;
       if (record.metaId) report.mirrored++;
       if (record.mergedInto) report.merged++;
       taught.add(run.id);
+      stale.set(run.id, false);
       opts.onRecord?.(record);
     } catch {
       report.failed++;

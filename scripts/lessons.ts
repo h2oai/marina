@@ -5,7 +5,7 @@
 /**
  * Operator script for the judged lesson pool (src/learning/).
  *
- *   DB_PATH=marina.db bun run lessons backfill [--dry-run] [--limit N]
+ *   DB_PATH=marina.db bun run lessons backfill [--dry-run] [--limit N] [--relearn-rejected]
  *   DB_PATH=marina.db bun run lessons rank [--domain d[,d…]] [--limit N] [--out rows.jsonl]
  *   DB_PATH=marina.db bun run lessons replay --ranks rows.jsonl [--domain d[,d…]] [--cutoff ISO]
  *
@@ -15,7 +15,9 @@
  * completion, baselines only from runs completed by then. Re-running it is a
  * no-op for runs already taught. Invalid runs are skipped. Admission ranking
  * (`MARINA_MEMORY_RANKING`, src/memory/admission.ts) applies to each write as
- * on the server.
+ * on the server. `--relearn-rejected`
+ * also re-learns runs whose lessons an EARLIER learner wrote and the judge
+ * rejected (they stay as audit records); still idempotent.
  *
  * `rank` is the observe-mode admission pass over the EXISTING pool: every
  * current lesson is compared with the lessons of its pool written before it,
@@ -30,7 +32,8 @@
  *
  * The writer and judge are the server's (`MARINA_LESSONS_WRITER`, the decision
  * backend, else `marina/default` through this Marina's `/v1` at `WS_PORT`).
- * With no model reachable the lessons are recorded `unverified`, never trusted.
+ * With no judge verdict (no model reachable, the daily spend cap) a run is
+ * deferred, never written `unverified`; the pass stops at the cap.
  * Judge spend goes to the world's daily ledger (`DB_PATH`). Back up the
  * database first; `--dry-run` lists what would be learned without writing.
  */
@@ -38,7 +41,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { harnessDecisionProvider } from "../src/decisions/engines";
-import { attachDbSpendLedger, spentTodayUsd } from "../src/engine/spend-ledger";
+import { attachDbSpendLedger, dailyCapRefusal, spentTodayUsd } from "../src/engine/spend-ledger";
 import { lessonAdmission } from "../src/learning/admission";
 import { backfillLedgerLessons } from "../src/learning/backfill";
 import { OUTCOME_DOMAINS, type OutcomeDomain } from "../src/learning/outcomes";
@@ -61,6 +64,7 @@ const { positionals, values } = parseArgs({
   options: {
     "dry-run": { type: "boolean" },
     limit: { type: "string" },
+    "relearn-rejected": { type: "boolean" },
     domain: { type: "string" },
     out: { type: "string" },
     ranks: { type: "string" },
@@ -70,7 +74,7 @@ const { positionals, values } = parseArgs({
 });
 
 const USAGE =
-  "usage: bun run lessons backfill [--dry-run] [--limit N] | rank [--domain d] [--limit N] [--out f.jsonl] | replay --ranks f.jsonl [--domain d] [--cutoff ISO]";
+  "usage: bun run lessons backfill [--dry-run] [--limit N] [--relearn-rejected] | rank [--domain d] [--limit N] [--out f.jsonl] | replay --ranks f.jsonl [--domain d] [--cutoff ISO]";
 
 function fail(msg: string): never {
   console.error(`lessons: ${msg}`);
@@ -122,9 +126,11 @@ async function backfill() {
     {
       ...(values["dry-run"] ? { dryRun: true } : {}),
       ...(limit !== undefined ? { limit } : {}),
+      ...(values["relearn-rejected"] ? { relearnRejected: true } : {}),
+      refuse: () => dailyCapRefusal(),
       onRecord: (r) =>
         console.log(
-          `  ${r.trust}${r.metaId ? " +meta" : ""}${r.admission && r.admission !== "new" ? ` [${r.admission}]` : ""} — ${r.lesson.source}`,
+          `  ${r.deferred ? `deferred (${r.reason})` : r.trust}${r.metaId ? " +meta" : ""}${r.admission && r.admission !== "new" ? ` [${r.admission}]` : ""} — ${r.lesson.source}`,
         ),
     },
   );
@@ -132,19 +138,24 @@ async function backfill() {
     [
       `${values["dry-run"] ? "would learn" : "learned"} ${report.learned} run(s) of ${report.runs}`,
       `already taught ${report.existing}`,
+      ...(values["relearn-rejected"]
+        ? [`re-learned (earlier rejections) ${report.relearned}`]
+        : []),
       `skipped ${report.skipped} (invalid, failed or unscored)`,
       ...(values["dry-run"]
         ? []
         : [
             `trusted ${report.trust.trusted}, unverified ${report.trust.unverified}, rejected ${report.trust.rejected}`,
             `mirrored to lessons:meta ${report.mirrored}`,
+            `deferred (no verdict) ${report.deferred}`,
             `merged into existing lessons ${report.merged}`,
             `failed ${report.failed}`,
             `admission ${admit ? memoryRankingMode() : "off"}`,
           ]),
     ].join("; "),
   );
-  if (report.failed) process.exitCode = 1;
+  if (report.stopped) console.log(`stopped early: ${report.stopped}`);
+  if (report.failed || report.stopped) process.exitCode = 1;
 }
 
 async function rank() {

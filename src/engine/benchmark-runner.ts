@@ -24,6 +24,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { noteBenchmarkRun } from "../learning/intake";
+import { caseGuardFromItems } from "../learning/leak-guard";
 import { localHttpBase } from "../net/listen-ports";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent, EntityId } from "../types";
@@ -600,9 +601,14 @@ export class BenchmarkRunner {
     } else if (status === "completed" && score !== null) {
       // Learning loop: the run becomes ONE outcome for the judged lesson loop
       // (a no-op unless the server armed it). Ids, score and category
-      // accuracy only, never an item's question or answer.
+      // accuracy only, never an item's question or answer; the items' text
+      // goes along only as hashed fingerprints for the mechanical leak check.
       const run = this.db.getBenchmarkRun(id);
-      if (run) noteBenchmarkRun(this.db, run, { categories: categoryAccuracy(resultItems) });
+      if (run)
+        noteBenchmarkRun(this.db, run, {
+          categories: categoryAccuracy(resultItems),
+          guard: caseGuardFromItems(resultItems),
+        });
 
       this.emitFeed({
         type: "feed_event",
