@@ -56,7 +56,7 @@ import {
   TARGET_KINDS,
 } from "../src/engine/benchmark-ledger";
 import { replicateGroupOf, validReplicateGroup } from "../src/engine/benchmark-replicates";
-import { noteBenchmarkRun } from "../src/learning/intake";
+import { noteBenchmarkRun, retireLessonsForRun } from "../src/learning/intake";
 import { enableOutcomeLearning, settleOutcomes } from "../src/learning/service";
 import { MarinaDB } from "../src/persistence/database";
 import type { BenchmarkTargetKind } from "../src/persistence/db-benchmarks";
@@ -146,6 +146,13 @@ if (values.invalidate !== undefined || values.revalidate !== undefined) {
     });
     if (!res.ok) fail(res.error);
     console.log(`${runId}: ${res.status} (audit row ${res.id}) — ${reason}`);
+    if (action === "invalidate") {
+      // Lessons citing the run are retired through the audited revise path.
+      const r = await retireLessonsForRun(db, runId, { reason, by: "operator" });
+      console.log(
+        `  lessons citing it: ${r.retired.length} retired${r.failed.length ? `, ${r.failed.length} failed` : ""}${r.error ? ` (${r.error})` : ""}`,
+      );
+    }
   } finally {
     db.close();
   }

@@ -448,11 +448,21 @@ describe("run journal: a stopped batch keeps its finished rows", () => {
       expect(readFileSync(path, "utf8").trim().split("\n")).toHaveLength(2);
 
       const second = counting('{"answer":"B"}');
+      // A resumed row is handed to onResumed (e.g. to rebuild an in-run lesson
+      // pool) before any new row starts; afterRow sees only the rows run now.
+      const order: string[] = [];
       const run = await runBatch(rows, variant, second.deps, {
         concurrency: 1,
         now,
         journal: { ...journal, resume: true },
+        onResumed: async (row) => {
+          order.push(`resumed:${row.id}`);
+        },
+        afterRow: async (row) => {
+          order.push(`ran:${row.id}`);
+        },
       });
+      expect(order).toEqual(["resumed:a", "ran:b", "ran:c"]);
       expect(second.made.n).toBe(2);
       expect(run.resumed).toBe(1);
       expect(run.results.map((r) => `${r.id}:${r.prediction}`)).toEqual(["a:A", "b:B", "c:B"]);

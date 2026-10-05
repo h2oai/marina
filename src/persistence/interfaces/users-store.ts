@@ -19,6 +19,8 @@ export interface UsersStore {
   listUsers(): UserRow[];
   updateUserLastLogin(id: string): void;
   updateUserRank(id: string, rank: number): void;
+  /** Rename an account, keeping its id (maintenance: a script account → a server-owned name). */
+  renameUser(id: string, name: string): boolean;
   /** Look up the named user bound to a verified external-identity subject. */
   getUserByAuthSubject(subject: string): UserRow | undefined;
   /** Bind a verified identity (subject + email) to an existing named user. */
@@ -50,6 +52,7 @@ export const USERS_STORE_METHODS = [
   "listUsers",
   "updateUserLastLogin",
   "updateUserRank",
+  "renameUser",
   "getUserByAuthSubject",
   "bindAuthSubject",
   "deleteUser",

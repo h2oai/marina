@@ -59,7 +59,8 @@ import {
   runSelection,
 } from "../benchmarks/forecasting/cli";
 import { depsForConfig, forecasterFor } from "../benchmarks/forecasting/configs";
-import { attachWorldSpend, learnedLessons } from "../benchmarks/forecasting/shared";
+import { attachWorldSpend } from "../benchmarks/forecasting/shared";
+import { forecastLessonsFor } from "../src/learning/forecast-bridge";
 import { enableOutcomeLearning, noteOutcome, settleOutcomes } from "../src/learning/service";
 import { MarinaDB } from "../src/persistence/database";
 
@@ -183,7 +184,7 @@ async function runCmd(db: MarinaDB): Promise<number> {
     questions: selected(set),
     forecast: forecasterFor(
       chosen.config,
-      depsForConfig(chosen.config, { lessons: learnedLessons(db) }),
+      depsForConfig(chosen.config, { lessons: forecastLessonsFor(db) }),
     ),
     journal,
     concurrency: Number(values.concurrency),

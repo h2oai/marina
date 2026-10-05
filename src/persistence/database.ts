@@ -1646,6 +1646,11 @@ export class MarinaDB implements MarinaStores {
     usersDb.updateUserRank(this.db, id, rank);
   }
 
+  /** Rename an account, keeping its id (see `usersDb.renameUser`). */
+  renameUser(id: string, name: string): boolean {
+    return usersDb.renameUser(this.db, id, name);
+  }
+
   /** Look up the named user bound to a verified external-identity subject. */
   getUserByAuthSubject(subject: string): UserRow | undefined {
     return usersDb.getUserByAuthSubject(this.db, subject);

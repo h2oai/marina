@@ -76,21 +76,31 @@ export function lessonFromRecord(r: RecordLike): Lesson | undefined {
     resolvedAt,
     source: typeof m.source === "string" ? m.source : "",
     ...(Array.isArray(m.refs) ? { refs: m.refs.filter((x) => typeof x === "string") } : {}),
+    ...(m.provenance && typeof m.provenance === "object" && !Array.isArray(m.provenance)
+      ? {
+          provenance: Object.fromEntries(
+            Object.entries(m.provenance as Record<string, unknown>).filter(
+              (e): e is [string, string] => typeof e[1] === "string",
+            ),
+          ),
+        }
+      : {}),
   };
 }
 
+export interface RetryOptions {
+  retries?: number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
 /**
- * A durable sink. `spaceFor(domain)` returns the shared space id for a domain
- * (created on first use by the caller's resolver). A busy store (HTTP 503 /
- * 429) is retried with the same request key.
+ * `rawRun` retried on a busy store (HTTP 503 / 429) with the same request key,
+ * after the delay the store asks for. The one retry helper for memory-service
+ * callers that may meet another writer holding the database.
  */
-export function durableLessonSink(
-  rawRun: MemoryRun,
-  spaceFor: (domain: OutcomeDomain) => Promise<string | undefined>,
-  opts: { retries?: number; sleep?: (ms: number) => Promise<void> } = {},
-): LessonSink {
+export function retryingMemoryRun(rawRun: MemoryRun, opts: RetryOptions = {}): MemoryRun {
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  const run: MemoryRun = async (request) => {
+  return async (request) => {
     const keyed = request.key ? request : { ...request, key: crypto.randomUUID() };
     for (let attempt = 0; ; attempt++) {
       try {
@@ -103,14 +113,29 @@ export function durableLessonSink(
       }
     }
   };
+}
+
+/**
+ * A durable sink. `spaceFor(domain)` returns the shared space id for a domain
+ * (created on first use by the caller's resolver, or `undefined` when a
+ * recall-only resolver finds none — recall is then empty). A busy store
+ * (HTTP 503 / 429) is retried with the same request key.
+ */
+export function durableLessonSink(
+  rawRun: MemoryRun,
+  spaceFor: (domain: OutcomeDomain) => Promise<string | undefined>,
+  opts: RetryOptions = {},
+): LessonSink {
+  const run = retryingMemoryRun(rawRun, opts);
   const space = async (domain: OutcomeDomain) => {
     const id = await spaceFor(domain);
     return id ? { space_id: id } : {};
   };
   return {
-    async write(lesson) {
+    async write(lesson, writeOpts) {
       const reply = await run({
         operation: "remember",
+        ...(writeOpts?.key ? { key: writeOpts.key } : {}),
         ...(await space(lesson.domain)),
         input: {
           content: lesson.text,
@@ -130,6 +155,7 @@ export function durableLessonSink(
             ...(lesson.judgement ? { judgement: lesson.judgement } : {}),
             ...(lesson.judge ? { judge: lesson.judge } : {}),
             ...(lesson.refs?.length ? { refs: lesson.refs } : {}),
+            ...(lesson.provenance ? { provenance: lesson.provenance } : {}),
           },
           valid_time: { from: Date.parse(lesson.resolvedAt), until: null },
         },
@@ -146,9 +172,11 @@ export function durableLessonSink(
     async recall(domain, query, asOf, recallOpts) {
       const words = [...lessonTokens(query)].slice(0, 12).join(" ");
       if (!words) return [];
+      const sp = await space(domain);
+      if (!sp.space_id) return [];
       const reply = await run({
         operation: "search",
-        ...(await space(domain)),
+        ...sp,
         input: { query: words, mode: "lexical", subject: LESSON_RECORD_SUBJECT, limit: 50 },
       });
       const now = Date.now();
