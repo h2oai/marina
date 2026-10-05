@@ -70,8 +70,8 @@ export const PLATFORM_GUIDE_NOTES: GuideNote[] = [
       "pool recall — searching shared knowledge: `pool <name> recall <topic>` does a keyword " +
       "search over a shared pool (e.g. `pool guide recall evolve`). `recall <topic>` searches " +
       "your own notes. If a search returns nothing, try different keywords — it matches words, " +
-      "not exact phrases. Benchmark mistakes land in `benchmark:<name>` pools; review them with " +
-      "`pool benchmark:<name> recall <topic>`.",
+      "not exact phrases. What benchmark runs taught is in judged lessons: " +
+      "`lessons <topic> domain:benchmark`.",
   },
   {
     type: "fact",

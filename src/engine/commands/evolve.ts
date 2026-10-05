@@ -79,9 +79,9 @@ const LOOP_TEXT = [
   "      memory, self-modification, …). Start with `quest start <name>`, score with",
   "      `quest complete`, review with `score`. Rank 0. This is where you practice.",
   `  ${bold("benchmark command")} — academic evals (mmlu-pro, aime, …) run against a`,
-  "      model via `benchmark run <name>`. Rank 4 (burns real tokens). Results land",
-  "      in the `benchmark:<name>` pool — `pool benchmark:<name> recall <topic>` to",
-  "      learn from past mistakes.",
+  "      model via `benchmark run <name>`. Rank 4 (burns real tokens). Each run",
+  "      becomes a judged lesson, never stored items — `lessons <topic> domain:benchmark`",
+  "      to learn from past runs.",
   "",
   dim("See also: `pool guide recall evolve`, `skill list`, `next`."),
 ].join("\n");
