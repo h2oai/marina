@@ -44,7 +44,7 @@ import { residentMemoryOperation } from "../memory/resident-service";
 import type { MarinaDB } from "../persistence/database";
 import type { MemoryOperationRequest } from "../sdk/memory-operations";
 import { type EvalContext, evalExclusion } from "./eval-context";
-import { familiesForSource } from "./families";
+import { familiesForBenchmark, familiesForSource } from "./families";
 import { type LessonsMode, lessonsMetaMode, lessonsMode } from "./modes";
 import {
   formatLesson,
@@ -529,12 +529,19 @@ export async function recallForWork(
   if (mode === "off" || (!db && !opts.sink)) return { inject: [], recalled: [], mode };
   const asOf = opts.asOf ?? new Date().toISOString();
   const exclude = evalExclusionFor(db, opts.eval);
+  // A measured board's families key the recall when the caller names none:
+  // lessons from OTHER boards of the same kind of work reach it.
+  const families = opts.families?.length
+    ? opts.families
+    : opts.eval
+      ? familiesForBenchmark(opts.eval.benchmark)
+      : [];
   const shared = {
     asOf,
     ...(opts.env ? { env: opts.env } : {}),
     ...(opts.sink ? { sink: opts.sink } : {}),
     ...(exclude ? { exclude } : {}),
-    ...(opts.families?.length ? { families: opts.families } : {}),
+    ...(families.length ? { families } : {}),
   };
   const meta = await recallLessons(db, "meta", query, {
     ...shared,

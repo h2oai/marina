@@ -444,6 +444,28 @@ describe("x-marina-eval self-exclusion", () => {
     expect(live.recalled.map((l) => l.id).sort()).toEqual(["mirror", "other", "own"]);
   });
 
+  it("a measured board's families reach same-family lessons from other boards", async () => {
+    const sink = memoryLessonSink([
+      lesson("airline", "meta", "confirm the policy before a refund", {
+        source: "benchmark:tau2-airline",
+        scope: "method",
+        families: ["tool-agent.policy"],
+      }),
+      lesson("qa", "meta", "short answers win", {
+        source: "benchmark:simple-qa",
+        scope: "method",
+        families: ["qa.exact"],
+      }),
+    ]);
+    const r = await recallForWork(undefined, ["tools"], "zzz unrelated words", {
+      sink,
+      env: ON,
+      asOf: NOW,
+      eval: { benchmark: "tau2-retail", mode: "measure" },
+    });
+    expect(r.recalled.map((l) => l.id)).toEqual(["airline"]);
+  });
+
   it("the harness sends the eval context on target calls only, never on judge calls", async () => {
     expect(lessonRequestHeaders()).toEqual({});
     setTargetLessonContext({ eval: { benchmark: "board-a", mode: "measure" }, lessons: true });
