@@ -78,6 +78,7 @@ export default defineConfig({
             { label: "Coding in Marina", slug: "docs/guides/coding" },
             { label: "Prediction Markets", slug: "docs/guides/markets" },
             { label: "Media Generation", slug: "docs/guides/media" },
+            { label: "Leaderboards & Competitions", slug: "docs/guides/leaderboards" },
           ],
         },
         {

@@ -28,6 +28,7 @@ The terminal client is `bun run scripts/connect.ts <name>` (`-c "<command>"` for
 | `forecastbench fetch\|estimate\|run\|write\|upload\|resolve\|select\|status` | ForecastBench: forecast a round's 500 questions (resumable), write the set file, choose up to 3 configurations by backtest; `upload` needs `FORECASTBENCH_GCS_FOLDER` and `--yes`. See [ForecastBench](forecastbench.md). |
 | `metaculus select\|pass\|forecast\|resolve\|status\|timer` | Metaculus tournament bot: choose a configuration by held-out backtest, forecast open questions with a reasoning comment (`--dry-run` posts nothing), learn from resolved ones, write the 20-minute systemd units (never enabled). Needs `METACULUS_TOKEN`. See [Metaculus](metaculus.md). |
 | `repro doctor\|list\|<setup>` | Reproduce a published benchmark setup (`hle-verified`, `swebench-verified`, `tau2`, `futurex-backtest`, `arena-backtest`): prerequisite checks with fixes, `--dry-run` plans with estimated spend, replicated arms, a pooled comparison from the ledger. See [Reproduce](reproduce.md). |
+| `leaderboards` | Print a markdown snapshot of the public-competition record — external submissions, arena filings, and the benchmark ledger — from the append-only tables. See [Leaderboards](leaderboards.md). |
 
 ## Memory service
 
