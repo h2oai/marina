@@ -55,6 +55,8 @@ export interface BackfillReport {
   deferred: number;
   /** Why the pass stopped early (`refuse`), if it did. */
   stopped?: string;
+  /** Outcomes merged into an existing lesson at admission (`MARINA_MEMORY_RANKING=on`). */
+  merged: number;
   failed: number;
   /** The ids of runs fed (or that would be fed). */
   runIds: string[];
@@ -97,14 +99,21 @@ export async function backfillLedgerLessons(
     trust: { trusted: 0, unverified: 0, rejected: 0 },
     mirrored: 0,
     deferred: 0,
+    merged: 0,
     failed: 0,
     runIds: [],
   };
-  // Runs with a current lesson; and of those, runs every lesson of which an
-  // earlier learner wrote and the judge rejected (re-learnable on request).
+  // A run taught a lesson, or was merged into one at admission (its run is
+  // the first ref of a `merged` entry): either way it is not learned again.
+  // Of the runs it taught, those every lesson of which an earlier learner
+  // wrote and the judge rejected are re-learnable on request.
   const taught = new Set<string>();
   const stale = new Map<string, boolean>();
   for (const l of await deps.sink.find("benchmark", {}, 100_000)) {
+    for (const m of l.merged ?? []) {
+      const id = ownRun({ refs: m.refs } as Lesson);
+      if (id) taught.add(id);
+    }
     const id = ownRun(l);
     if (!id) continue;
     taught.add(id);
@@ -157,6 +166,7 @@ export async function backfillLedgerLessons(
       }
       report.trust[record.trust]++;
       if (record.metaId) report.mirrored++;
+      if (record.mergedInto) report.merged++;
       taught.add(run.id);
       stale.set(run.id, false);
       opts.onRecord?.(record);

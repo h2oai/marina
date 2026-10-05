@@ -40,9 +40,11 @@ import { chatClassifierProvider } from "../decisions/providers";
 import type { DecisionProvider } from "../decisions/types";
 import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
+import { rankedServing } from "../memory/admission";
 import { residentMemoryOperation } from "../memory/resident-service";
 import type { MarinaDB } from "../persistence/database";
 import type { MemoryOperationRequest } from "../sdk/memory-operations";
+import { lessonAdmission } from "./admission";
 import { type EvalContext, evalExclusion } from "./eval-context";
 import { familiesForBenchmark, familiesForSource } from "./families";
 import { type LessonsMode, lessonsMetaMode, lessonsMode } from "./modes";
@@ -299,7 +301,18 @@ export function enableOutcomeLearning(
             return w ? { writer: w } : {};
           })()),
     ...(opts.judge === null ? {} : { judge: opts.judge ?? lessonJudgeFromEnv(env) }),
-    ...(opts.admit ? { admit: opts.admit } : {}),
+    ...(() => {
+      // Admission ranking (MARINA_MEMORY_RANKING) needs a configured decision
+      // backend; the one-model fallback judge never ranks (off without one).
+      const admit =
+        opts.admit ??
+        lessonAdmission({
+          env,
+          db,
+          ...(opts.judge === null ? {} : { judge: opts.judge ?? harnessDecisionProvider(env) }),
+        });
+      return admit ? { admit } : {};
+    })(),
     queue: [],
     windowStart: Date.now(),
     processed: 0,
@@ -449,6 +462,7 @@ export async function recallLessons(
       ...(opts.maxBytes !== undefined ? { maxBytes: opts.maxBytes } : {}),
       ...(exclude ? { exclude } : {}),
       ...(opts.families?.length ? { families: opts.families } : {}),
+      ...(rankedServing(opts.env) ? { rankOrder: true } : {}),
     });
     return { inject: mode === "on" ? recalled : [], recalled, mode };
   } catch {
@@ -494,6 +508,7 @@ export async function recallAcross(
   const recalled = selectServed(distinctByText(per.flatMap((r) => r.recalled)), asOf, {
     ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
     ...(opts.maxBytes !== undefined ? { maxBytes: opts.maxBytes } : {}),
+    ...(rankedServing(opts.env) ? { rankOrder: true } : {}),
   });
   // A domain whose own mode is observe (meta under MARINA_LESSONS_META=observe)
   // is recalled for the record but never injected.
