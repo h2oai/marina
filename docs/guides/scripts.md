@@ -29,6 +29,7 @@ The terminal client is `bun run scripts/connect.ts <name>` (`-c "<command>"` for
 | `metaculus select\|pass\|forecast\|resolve\|status\|timer` | Metaculus tournament bot: choose a configuration by held-out backtest, forecast open questions with a reasoning comment (`--dry-run` posts nothing), learn from resolved ones, write the 20-minute systemd units (never enabled). Needs `METACULUS_TOKEN`. See [Metaculus](metaculus.md). |
 | `mind2web2 run\|cache\|judge\|score\|record` | Mind2Web 2: answer live-web research tasks with the research agent (`--cap-usd` required), export the pages it read in the judge's cache layout, run the official judge locally under a spend cap, score, and record to the ledger and lessons. Never submits. See [Mind2Web 2](mind2web2.md). |
 | `repro doctor\|list\|<setup>` | Reproduce a published benchmark setup (`hle-verified`, `swebench-verified`, `tau2`, `futurex-backtest`, `arena-backtest`): prerequisite checks with fixes, `--dry-run` plans with estimated spend, replicated arms, a pooled comparison from the ledger. See [Reproduce](reproduce.md). |
+| `leaderboards` | Print a markdown snapshot of the public-competition record — external submissions, arena filings, and the benchmark ledger — from the append-only tables. See [Leaderboards](leaderboards.md). |
 
 ## Memory service
 

@@ -45,6 +45,7 @@ and operate the environment. Start with one path below; the full catalog follows
 | Run τ²-bench through Marina; use the verification formation as a model (`marina/verify:`) | [τ²-bench](tau2.md) | [Model API](model-api.md) |
 | Run LongMemEval-V2 with Marina's memory as the system under test | [LongMemEval-V2](longmemeval.md) | [Memory System](memory.md) |
 | Reproduce any published Marina benchmark setup with one command | [Reproduce](reproduce.md) | [Testing](testing.md) |
+| See every public competition Marina has entered and where it stands | [Leaderboards](leaderboards.md) | [Reproduce](reproduce.md) |
 | Find the right `bun run` script | [Scripts reference](scripts.md) | [Release qualification](release-qualification.md) |
 | Follow a desire from expression to evidence | [Journeys](journeys.md) | [Cognitive Provenance](cognitive-provenance.md) |
 | Create portable intellects and associations | [Intellect Lifecycle](intellect-lifecycle.md) | [Associations](associations.md) |
@@ -83,6 +84,7 @@ degraded, or off and gives the next concrete action without exposing secrets.
 | [Mind2Web 2](mind2web2.md) | A thin adapter over the live-web research agent: cited markdown answers, the page cache as the agent read it, the official judge run locally under a spend cap (never sent by Marina) |
 | [Metaculus](metaculus.md) | A bot adapter: open questions → typed forecasts → forecast + reasoning comment; configuration chosen by held-out backtest |
 | [ForecastBench](forecastbench.md) | A round → typed forecasts (dataset horizons in one call) → set file, resumable, up to 3 configurations by backtest; upload only by the operator |
+| [Leaderboards](leaderboards.md) | The single record of public competitions entered, the discipline (candidate vs. result, operator-act submission), and `bun run leaderboards` for the live ledger snapshot |
 | [Prophet Arena](prophet.md) | A Python agent for the `prophet-arena` SDK that asks a Marina server's `/v1/forecast` |
 | [Reproduce](reproduce.md) | One command per published benchmark setup: `bun run repro doctor`, dry-run plans, replicated arms, pooled comparison from the ledger |
 | [LongMemEval-V2](longmemeval.md) | A memory backend for the official harness: trajectories → canonical records → lexical (or configured hybrid) evidence for a fixed reader; ledger of ids and verdicts |
