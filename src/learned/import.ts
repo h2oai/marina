@@ -22,6 +22,15 @@
  *              PRIOR_N_CAP items per cell; never `benchmark_runs`/`_items`.
  *   roles      → created under the `upstream.` prefix (traits too), create-only,
  *              never bound to an agent; changing one takes `role.edit`.
+ *   world      → `upstream:worlds` (the data-only world document), trust `imported`.
+ *   room_source→ `upstream:room-sources` as inert text flagged `world.code`:
+ *              never compiled, registered or executed here.
+ *
+ * Access (`entitlement.ts`): an item is written only when it is in an `open`
+ * slice, or in a `token`/`private` slice that the caller's entitlement grant
+ * covers (`private` also accepts the operator's `own` grant, `token` never
+ * does). `opts.slices` limits the import to those slices. A withheld or
+ * unselected item is neither written nor retired.
  *
  * Items absent from a newer generation are retired locally; revoked ones are
  * retired with status `revoked`. Every action is an `upstream_events` row.
@@ -43,17 +52,23 @@ import {
   verifyBundle,
   verifyRevocations,
 } from "./bundle";
+import { type EntitlementGrant, OWN_VERIFIER } from "./entitlement";
 import {
   type ConventionItem,
   type DefaultItem,
   type EvidenceItem,
   type LearnedItem,
   type LessonItem,
+  type Manifest,
   type RoleItem,
+  type RoomSourceItem,
+  type Slice,
   sha256Hex,
+  type WorldItem,
 } from "./format";
 import { type BenchmarkTextIndex, Scanner, stringsOf } from "./scan";
 import { type PinnedKey, pinnedPublisherKeys } from "./sign";
+import { validateRoomSource, validateWorldDocument } from "./world";
 
 export const UPSTREAM_ACCOUNT = "marina:upstream";
 /** The trust value of every imported record: below local `trusted`, never promoted by import. */
@@ -81,6 +96,13 @@ export interface ImportOptions {
   /** Who ran the import (an operator label, recorded in the audit). */
   actor?: string;
   env?: NodeJS.ProcessEnv;
+  /** Import only these slices (ids from `manifest.slices`). Absent: every slice. */
+  slices?: readonly string[];
+  /**
+   * A grant from an entitlement verifier (`entitlement.ts`), or `ownBundleGrant`
+   * for the operator's own private pack. Without one, only open items are written.
+   */
+  entitlement?: EntitlementGrant;
 }
 
 export interface ImportReport {
@@ -97,6 +119,8 @@ export interface ImportReport {
   skipped: { item_key: string; reason: string }[];
   priors: number;
   rolesCreated: string[];
+  /** Items not written for lack of an entitlement covering them (never retired). */
+  withheld: { item_key: string; reason: string }[];
 }
 
 export type ImportOutcome = { ok: true; report: ImportReport } | { ok: false; error: string };
@@ -199,6 +223,57 @@ function upstreamMetadata(b: VerifiedBundle, item: LearnedItem): Record<string, 
   };
 }
 
+/** Can `grant` unlock `slice`? `open` always; `token` only by a verified grant naming it. */
+function sliceUnlocked(slice: Slice, grant: EntitlementGrant | undefined): boolean {
+  if (slice.open || slice.access === "open") return true;
+  if (!grant) return false;
+  if (slice.access === "private" && grant.verifier === OWN_VERIFIER) return true;
+  return grant.verifier !== OWN_VERIFIER && grant.tiers.includes(slice.id);
+}
+
+/** Item keys this import may write, and why each other one is withheld. */
+export function accessPlan(
+  m: Manifest,
+  itemKeys: readonly string[],
+  opts: { slices?: readonly string[]; entitlement?: EntitlementGrant },
+):
+  | { ok: true; allowed: Set<string>; withheld: Map<string, string> }
+  | { ok: false; error: string } {
+  const slices = m.slices ?? [];
+  const byId = new Map(slices.map((s) => [s.id, s]));
+  const grant = opts.entitlement;
+  let selected: Set<string>;
+  if (opts.slices?.length) {
+    selected = new Set();
+    for (const id of opts.slices) {
+      const slice = byId.get(id);
+      if (!slice) return { ok: false, error: `no slice ${id} in ${m.artifact_id}@${m.version}` };
+      if (!sliceUnlocked(slice, grant))
+        return {
+          ok: false,
+          error: `slice ${id} is ${slice.access}: an entitlement covering it is required`,
+        };
+      for (const k of slice.item_keys) selected.add(k);
+    }
+  } else selected = new Set(itemKeys);
+  const membership = new Map<string, Slice[]>();
+  for (const slice of slices)
+    for (const k of slice.item_keys) membership.set(k, [...(membership.get(k) ?? []), slice]);
+  const allowed = new Set<string>();
+  const withheld = new Map<string, string>();
+  for (const key of itemKeys) {
+    if (!selected.has(key)) continue;
+    const of = membership.get(key);
+    const unlocked = of?.length
+      ? of.some((s) => sliceUnlocked(s, grant))
+      : m.access?.model === "open" ||
+        (m.access?.model === "private" && grant?.verifier === OWN_VERIFIER);
+    if (unlocked) allowed.add(key);
+    else withheld.set(key, "entitlement required");
+  }
+  return { ok: true, allowed, withheld };
+}
+
 /** Import a verified-on-the-spot bundle directory. Refusals change nothing but the audit. */
 export async function importLearnedBundle(
   db: MarinaDB,
@@ -240,17 +315,55 @@ export async function importLearnedBundle(
     }
   }
   const revokedItems = new Map<string, string>();
+  const revokedTokens = new Set<string>();
   for (const raw of docs) {
     const v = verifyRevocations(raw, pinned);
     if (!v.ok) return refuse(v.error);
     if (v.keyId !== m.publisher.key_id) continue;
     for (const e of v.revocations.entries) {
       if (e.artifact_id !== m.artifact_id) continue;
+      if (e.entitlement_nonce) {
+        revokedTokens.add(e.entitlement_nonce);
+        continue;
+      }
       if (e.item_key) revokedItems.set(e.item_key, e.reason);
       else if (!e.version || e.version === m.version) {
         return refuse(`${m.artifact_id}@${m.version} is revoked by its publisher: ${e.reason}`);
       }
     }
+  }
+
+  // Entitlement: a grant must be live and not revoked by the publisher; then the
+  // access plan decides item by item. A paid item is never written without one.
+  const grant = opts.entitlement;
+  if (grant) {
+    const expires = grant.expires_at ? Date.parse(grant.expires_at) : Number.POSITIVE_INFINITY;
+    if (!(expires >= Date.now())) return refuse("the entitlement grant has expired");
+    if (grant.nonce && revokedTokens.has(grant.nonce))
+      return refuse("the entitlement token is revoked by its publisher");
+  }
+  const plan = accessPlan(
+    m,
+    b.items.map((i) => i.item_key),
+    { ...(opts.slices ? { slices: opts.slices } : {}), ...(grant ? { entitlement: grant } : {}) },
+  );
+  if (!plan.ok) return refuse(plan.error, { slices: opts.slices ?? [] });
+  if (plan.allowed.size === 0 && plan.withheld.size > 0)
+    return refuse(
+      `every selected item needs an entitlement (${plan.withheld.size} withheld; access ${m.access?.model ?? "private"})`,
+    );
+  if (grant) {
+    db.recordUpstreamEvent({
+      ...at,
+      action: "entitlement",
+      outcome: "ok",
+      detail: {
+        verifier: grant.verifier,
+        licensee: grant.licensee,
+        tiers: grant.tiers,
+        ...(grant.nonce ? { nonce: sha256Hex(grant.nonce).slice(0, 16) } : {}),
+      },
+    });
   }
 
   const latest = db.latestLearnedArtifact(m.artifact_id);
@@ -279,6 +392,7 @@ export async function importLearnedBundle(
     skipped: [],
     priors: 0,
     rolesCreated: [],
+    withheld: [...plan.withheld].map(([item_key, reason]) => ({ item_key, reason })),
   };
   const scanner = new Scanner({
     ...(opts.benchmarkIndex ? { benchmarkIndex: opts.benchmarkIndex } : {}),
@@ -286,8 +400,11 @@ export async function importLearnedBundle(
   const run = upstreamRun(db);
   const spaceFor = spaceResolver(run);
   const present = new Set<string>();
+  const carried = new Set(b.items.map((i) => i.item_key));
 
   for (const item of b.items) {
+    // Unselected or withheld (no entitlement): not written, and not retired below.
+    if (!plan.allowed.has(item.item_key)) continue;
     const prior = db.getLearnedItem(m.artifact_id, item.item_key);
     if (revokedItems.has(item.item_key)) {
       // Never applied; an earlier import of it is retired as `revoked` below.
@@ -376,6 +493,10 @@ export async function importLearnedBundle(
   for (const row of db.listLearnedItems({ artifactId: m.artifact_id, status: "active" })) {
     const revoked = revokedItems.get(row.item_key);
     if (present.has(row.item_key) && revoked === undefined) continue;
+    // An item still carried by the bundle but outside this import's selection or
+    // entitlement is untouched: limiting an import never retires what it skips.
+    if (revoked === undefined && carried.has(row.item_key) && !plan.allowed.has(row.item_key))
+      continue;
     if (row.local_ref) {
       await retireOld(run, row.kind, row.local_ref, revoked ?? "retired upstream");
     }
@@ -422,13 +543,16 @@ export async function importLearnedBundle(
       revoked: report.revoked,
       dropped: report.dropped.length,
       skipped: report.skipped.length,
+      withheld: report.withheld.length,
+      ...(opts.slices?.length ? { slices: opts.slices } : {}),
     },
   });
   return { ok: true, report };
 }
 
 async function retireOld(run: Run, kind: string, localRef: string, reason: string): Promise<void> {
-  if (kind === "lesson" || kind === "convention") await retireRecord(run, localRef, reason);
+  if (kind === "lesson" || kind === "convention" || kind === "world" || kind === "room_source")
+    await retireRecord(run, localRef, reason);
   // Seeds, priors and roles need no action here: a seed or prior counts only
   // while its item is active (`latestUpstreamDefaultSeed`, `listEvidencePriors`),
   // and an upstream role stays until an operator deletes it.
@@ -575,6 +699,61 @@ async function applyItem(
         detail: { role: result.role, traits: result.traitsCreated },
       });
       return `role:${result.role}`;
+    }
+    case "world": {
+      const w = item as WorldItem;
+      const problems = validateWorldDocument(w.world);
+      if (problems.length) return skip(problems.slice(0, 3).join("; "));
+      const spaceId = await spaceFor("upstream:worlds");
+      const reply = await run({
+        operation: "remember",
+        space_id: spaceId,
+        key,
+        input: {
+          content: JSON.stringify(w.world),
+          type: "inference",
+          tier: "reflection",
+          subject: "world",
+          metadata: {
+            kind: "world",
+            world_name: w.world.name,
+            rooms: w.world.rooms.length,
+            ...upstreamMetadata(b, item),
+          },
+        },
+      });
+      const id = recordId(reply.result);
+      if (!id) throw new Error("the memory service returned no record id");
+      return `${spaceId}/${id}`;
+    }
+    case "room_source": {
+      // Inert text for review. Nothing here parses, compiles, registers or runs it.
+      const r = item as RoomSourceItem;
+      const problems = validateRoomSource(r);
+      if (problems.length) return skip(problems.join("; "));
+      const spaceId = await spaceFor("upstream:room-sources");
+      const reply = await run({
+        operation: "remember",
+        space_id: spaceId,
+        key,
+        input: {
+          content: r.source,
+          type: "inference",
+          tier: "reflection",
+          subject: "room_source",
+          metadata: {
+            kind: "room_source",
+            room_id: r.room_id,
+            language: r.language,
+            requires_gate: "world.code",
+            executable: false,
+            ...upstreamMetadata(b, item),
+          },
+        },
+      });
+      const id = recordId(reply.result);
+      if (!id) throw new Error("the memory service returned no record id");
+      return `${spaceId}/${id}`;
     }
   }
 }

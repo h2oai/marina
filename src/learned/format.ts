@@ -20,6 +20,9 @@
  *   defaults.jsonl    promoted defaults with evidence summaries
  *   evidence.jsonl    ledger aggregates, cells of at least K_MIN items only
  *   roles.jsonl       adopted roles (RoleBundle v1)
+ *   world.jsonl       the data-only world document (content profile `marina.world.v1`)
+ *   room-sources.jsonl room source as inert text: never compiled on import;
+ *                     installing it is the `world.code`-gated path
  *
  * A revocation list (`revocations.json`, schema REVOCATIONS_SCHEMA) is a
  * separately signed document, shipped beside a bundle or on its own.
@@ -30,6 +33,8 @@ import type { RoleBundle } from "../agent/role-bundle";
 import { canonicalFederationJson } from "../net/federation-crypto";
 
 export const LEARNED_SCHEMA = "marina.learned.v1";
+/** Content profile of a bundle that carries a whole world (`world` + `room_source` items). */
+export const WORLD_PROFILE = "marina.world.v1";
 export const SPEC_SCHEMA = "marina.learned.spec.v1";
 export const REVOCATIONS_SCHEMA = "marina.learned.revocations.v1";
 
@@ -46,6 +51,8 @@ export const ITEM_FILES = {
   default: "defaults.jsonl",
   evidence: "evidence.jsonl",
   role: "roles.jsonl",
+  world: "world.jsonl",
+  room_source: "room-sources.jsonl",
 } as const;
 
 export type ItemKind = keyof typeof ITEM_FILES;
@@ -149,7 +156,54 @@ export interface RoleItem extends ItemBase {
   role: RoleBundle;
 }
 
-export type LearnedItem = LessonItem | ConventionItem | DefaultItem | EvidenceItem | RoleItem;
+/** One room of a world document: data only (text, exits, layout), never handlers. */
+export interface WorldRoom {
+  id: string;
+  short: string;
+  long?: string;
+  exits?: Record<string, string>;
+  grid?: { row: number; col: number };
+}
+
+/**
+ * The data-only world document. It never carries a seed, lifecycle hook or
+ * bootstrap command: `validateWorldDocument` (world.ts) refuses unknown keys.
+ */
+export interface WorldDocument {
+  name: string;
+  description: string;
+  start_room: string;
+  rooms: WorldRoom[];
+  guide_notes?: Array<{ content: string; importance: number; type: string }>;
+  quests?: Array<{ id: string; name: string; description: string }>;
+}
+
+export interface WorldItem extends ItemBase {
+  kind: "world";
+  world: WorldDocument;
+}
+
+/**
+ * Room source as inert text. Import stores it for review and NEVER compiles,
+ * registers or executes it; installing it is the existing `world.code`-gated
+ * path, taken by someone who read it.
+ */
+export interface RoomSourceItem extends ItemBase {
+  kind: "room_source";
+  room_id: string;
+  language: "typescript";
+  source: string;
+  requires_gate: "world.code";
+}
+
+export type LearnedItem =
+  | LessonItem
+  | ConventionItem
+  | DefaultItem
+  | EvidenceItem
+  | RoleItem
+  | WorldItem
+  | RoomSourceItem;
 
 export interface Publisher {
   name: string;
@@ -158,11 +212,27 @@ export interface Publisher {
   url?: string;
 }
 
+/** A chain on which the publisher sells licences (verified by an optional chain adapter). */
+export interface LicenceChain {
+  family: string;
+  chain_id: number | string;
+  license_contract: string;
+}
+
 export interface Access {
+  /**
+   * `open`: importable by anyone with no check. `token`: paid, so every item
+   * needs an entitlement grant. `private`: the publisher's own pack, so it
+   * needs a grant or the importing operator's explicit `own` assertion
+   * (`entitlement.ts`).
+   */
   model: "open" | "token" | "private";
-  entitlement_issuer: string | null;
+  /** Key ids (besides the publisher's) allowed to sign entitlements for this artifact. */
+  entitlement_issuers: string[];
   audience: string | null;
-  /** Reserved (Phase 4): publisher-signed offline entitlement tokens. */
+  /** Chains on which on-chain licences are sold (an optional extension verifies them). */
+  chains?: LicenceChain[];
+  /** Reserved: an embedded entitlement (always null; grants are passed at import). */
   entitlement: null;
   /** Reserved: per-slice encryption with wrapped keys. */
   encryption: null;
@@ -187,6 +257,8 @@ export interface ParentRef {
 
 export interface Manifest {
   schema: typeof LEARNED_SCHEMA;
+  /** Absent for a memory bundle; `marina.world.v1` for a world artifact. */
+  content_profile?: typeof WORLD_PROFILE;
   artifact_id: string;
   name: string;
   description: string;
@@ -233,6 +305,8 @@ export interface RevocationEntry {
   version?: string;
   /** Present: revokes one item, not the version. */
   item_key?: string;
+  /** Present: revokes one entitlement token (its `nonce`), not content. */
+  entitlement_nonce?: string;
   reason: string;
   severity: "advisory" | "retire" | "critical";
 }

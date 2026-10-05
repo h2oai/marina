@@ -17,6 +17,8 @@ are off by default (`MARINA_UPSTREAM=off`).
 - [Export](#export)
 - [Verify, diff and import](#verify-diff-and-import)
 - [Licence, access and slices](#licence-access-and-slices)
+- [Entitlements for paid and private slices](#entitlements-for-paid-and-private-slices)
+- [Worlds (`marina.world.v1`)](#worlds-marinaworldv1)
 - [Revocation](#revocation)
 - [Keys](#keys)
 - [Inspecting imports in-world](#inspecting-imports-in-world)
@@ -38,6 +40,8 @@ sha256 hash in `manifest.json`, and `signature.json` signs the manifest
 | `defaults.jsonl` | Promoted benchmark defaults, each with an evidence summary that holds numbers only. |
 | `evidence.jsonl` | Aggregate ledger statistics per descriptor, family and (internal packs only) benchmark. A cell is exported only when it has at least 20 items. |
 | `roles.jsonl` | Roles adopted through `world adopt`, as RoleBundle v1. |
+| `world.jsonl` | World bundles only: the data-only world document (rooms, exits, guide notes, quest descriptions). |
+| `room-sources.jsonl` | World bundles only: room source code as inert text, flagged for review under `world.code`. |
 
 Every item has two identifiers:
 - an `item_key`: a stable, opaque identity that survives edits across versions;
@@ -48,7 +52,8 @@ opaque origin, hashed outcome references, the judge and whether it is
 calibrated, and a role label such as `ratifier`. A hop never names a person.
 
 The manifest identifies the artifact with these fields:
-- `artifact_id`: `marina-memory:<publisher key fingerprint>/<name>`;
+- `artifact_id`: `marina-memory:<publisher key fingerprint>/<name>`, or
+  `marina-world:…` for a world bundle;
 - `version`: semver;
 - `generation`: a monotonic integer, used to refuse downgrades;
 - `parent`: `{version, generation, manifest_digest}`;
@@ -129,8 +134,12 @@ An explicit `--version` must be greater than the parent's version.
 ```bash
 bun run learned verify ./packs/curated-1.1.0 [--revocations revocations.json]
 bun run learned diff ./packs/curated-1.0.0 ./packs/curated-1.1.0
-MARINA_UPSTREAM=on DB_PATH=marina.db bun run learned import ./packs/curated-1.1.0
+MARINA_UPSTREAM=on DB_PATH=marina.db bun run learned import ./packs/curated-1.1.0 --own
 ```
+
+`--own` imports your own private pack, which is the default export. Open slices
+need no flag, and paid slices need `--entitlement`; see
+[Entitlements](#entitlements-for-paid-and-private-slices).
 
 Verification refuses the bundle at the first failure in this order:
 1. the schema is not `marina.learned.v1`;
@@ -195,10 +204,71 @@ The `slices` list in the manifest has one tier slice per tier (`tier:core`,
 `domain:code`, `domain:conventions` and so on). Each slice lists its item keys,
 a digest, and its own `open`, `license` and `access` values.
 
-The access fields `entitlement_issuer`, `audience`, `entitlement` and
-`encryption` are recorded as data only. This version enforces no entitlement
-and encrypts nothing. Licence terms are the operator's to honour. The code
-records and displays them, and does not enforce them.
+Each slice's `access` decides what an import needs. The next section
+describes the rules. Licence terms beyond access, such as redistribution and
+attribution, are the operator's to honour: the code records and displays them.
+Nothing is encrypted. `access.encryption` and `access.entitlement` are reserved
+and always `null`.
+
+## Entitlements for paid and private slices
+
+An import writes an item only when one of its slices allows it:
+
+| Slice `access` | What the import needs |
+|---|---|
+| `open` | Nothing. No check runs and no network call is made. |
+| `token` (paid) | An entitlement grant that names the slice. |
+| `private` (the default export) | A grant that names the slice, or `--own`: the operator's assertion that the pack is their own, for an internal move or a backup. `--own` never unlocks a `token` slice. |
+
+Without a grant, an import writes the open items and reports the rest as
+withheld. It refuses when every selected item is withheld. `--slices` limits
+an import to named slices; a named `token` or `private` slice without a grant
+is refused. A withheld or unselected item is never retired, so importing only
+the free core later leaves paid items imported earlier in place. Every grant
+used is recorded in `upstream_events`.
+
+A grant comes from an entitlement token, `marina.entitlement.v1`. The
+publisher, or an issuer listed in `access.entitlement_issuers`, signs it with
+its learned-bundle key. It is verified offline against the same pinned keys as
+bundles, so an import still works air-gapped. Payment happens outside Marina:
+a checkout run by the publisher issues the token.
+
+```bash
+# publisher: issue a token for one buyer
+MARINA_LEARNED_SIGNING_KEY=… bun run learned entitle --artifact marina-memory:…/curated \
+  --tiers tier:standard --licensee buyer-co --versions '^1.0.0' --days 365 > buyer.json
+# buyer: import the paid slice
+MARINA_UPSTREAM=on DB_PATH=marina.db bun run learned import ./packs/curated-1.1.0 \
+  --slices tier:standard --entitlement buyer.json
+```
+
+A token names the artifact, a semver range of versions, the slice ids it
+grants, a licensee label, an optional federation audience, a validity window
+and a nonce. A publisher revokes a token with a signed revocation entry
+carrying `entitlement_nonce`; an import with a revoked token is refused.
+
+`src/learned/entitlement.ts` defines the `EntitlementVerifier` interface, so
+other proofs can produce grants too. The optional `extensions/marina-market`
+extension adds a read-only on-chain licence check. `access.chains` lists the
+chains on which a publisher sells such licences.
+
+## Worlds (`marina.world.v1`)
+
+A world travels as a learned bundle whose `content_profile` is
+`marina.world.v1`. There is no separate format: world content is two item
+kinds, so worlds get content hashes, slices, diffs, revocation and the scanner
+like every other item.
+
+- `world`: the data-only world document. Unknown keys are refused, so a seed,
+  lifecycle hook or bootstrap command cannot ride along.
+- `room_source`: room source code as inert text with `requires_gate:
+  world.code`. Import stores it in `upstream:room-sources` for review and never
+  compiles, registers or runs it. Installing it is the existing
+  `world.code`-gated path, taken by someone who read it.
+
+Imported world documents land in `upstream:worlds` with trust `imported`.
+`src/learned/assemble.ts` builds and signs a bundle from items a publisher
+already holds, such as a world.
 
 ## Revocation
 
