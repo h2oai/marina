@@ -66,20 +66,50 @@ function decodePrivateKey(value: string) {
     : createPrivateKey({ key: Buffer.from(trimmed, "base64"), format: "der", type: "pkcs8" });
 }
 
+/** The base64 SPKI public key and `sha256:` key id of an encoded Ed25519 private key. */
+export function publicKeyOfSigningKey(encoded: string): { publicKey: string; keyId: string } {
+  const privateKey = decodePrivateKey(encoded);
+  if (privateKey.asymmetricKeyType !== "ed25519") {
+    throw new Error("signing key must be an Ed25519 PKCS#8 private key");
+  }
+  const publicDer = createPublicKey(privateKey).export({ format: "der", type: "spki" });
+  return {
+    publicKey: Buffer.from(publicDer).toString("base64"),
+    keyId: `sha256:${createHash("sha256").update(publicDer).digest("hex")}`,
+  };
+}
+
+/** The `sha256:` key id of a base64 SPKI public key (the form pinned keys are listed in). */
+export function keyIdOfPublicKey(publicKey: string): string {
+  const der = Buffer.from(publicKey.trim(), "base64");
+  return `sha256:${createHash("sha256").update(der).digest("hex")}`;
+}
+
 export function federationSigningAvailable(): boolean {
   return Boolean(process.env.MARINA_FEDERATION_SIGNING_KEY?.trim());
 }
 
+/**
+ * Sign with the federation identity, or — when `opts.signingKey` is given —
+ * with that dedicated key instead (e.g. `MARINA_LEARNED_SIGNING_KEY` for
+ * learned bundles, which must never share the federation key). `keyName`
+ * names the key in errors.
+ */
 export function signFederationDocument<T extends Record<string, unknown>>(
   document: T,
+  opts: { signingKey?: string; keyName?: string } = {},
 ): T & {
   signature: FederationSignature;
 } {
-  const encoded = process.env.MARINA_FEDERATION_SIGNING_KEY?.trim();
-  if (!encoded) throw new Error("MARINA_FEDERATION_SIGNING_KEY is not configured");
+  const keyName = opts.keyName ?? "MARINA_FEDERATION_SIGNING_KEY";
+  const encoded =
+    opts.signingKey !== undefined
+      ? opts.signingKey.trim()
+      : process.env.MARINA_FEDERATION_SIGNING_KEY?.trim();
+  if (!encoded) throw new Error(`${keyName} is not configured`);
   const privateKey = decodePrivateKey(encoded);
   if (privateKey.asymmetricKeyType !== "ed25519") {
-    throw new Error("MARINA_FEDERATION_SIGNING_KEY must be an Ed25519 PKCS#8 private key");
+    throw new Error(`${keyName} must be an Ed25519 PKCS#8 private key`);
   }
   const publicDer = createPublicKey(privateKey).export({ format: "der", type: "spki" });
   const publicKey = Buffer.from(publicDer).toString("base64");

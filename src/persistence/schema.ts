@@ -539,6 +539,92 @@ CREATE TRIGGER benchmark_item_evidence_no_update BEFORE UPDATE ON benchmark_item
 BEGIN SELECT RAISE(ABORT, 'benchmark_item_evidence is append-only'); END;
 `,
   },
+  // Migration 160: imported `marina.learned.v1` bundles (src/learned/). Empty
+  // on every install that never imports one. Artifact versions, upstream
+  // default seeds, evidence priors and the audit trail are append-only;
+  // `learned_items` is the current state of each imported item (its local
+  // record, status and local confirmation). Priors are never ledger rows and a
+  // seed never writes `benchmark_defaults`: local truth stays local.
+  {
+    version: 160,
+    sql: `
+CREATE TABLE learned_artifacts (
+  artifact_id TEXT NOT NULL,
+  generation INTEGER NOT NULL CHECK (generation >= 1),
+  version TEXT NOT NULL,
+  manifest_digest TEXT NOT NULL,
+  publisher_key_id TEXT NOT NULL,
+  license TEXT NOT NULL,
+  access_model TEXT NOT NULL,
+  manifest_json TEXT NOT NULL,
+  actor TEXT,
+  imported_at INTEGER NOT NULL,
+  PRIMARY KEY (artifact_id, generation)
+);
+CREATE TRIGGER learned_artifacts_no_update BEFORE UPDATE ON learned_artifacts
+BEGIN SELECT RAISE(ABORT, 'learned_artifacts is append-only'); END;
+CREATE TABLE learned_items (
+  artifact_id TEXT NOT NULL,
+  item_key TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  generation INTEGER NOT NULL,
+  local_ref TEXT,
+  status TEXT NOT NULL CHECK (status IN ('active', 'retired', 'revoked')),
+  confirmed_by TEXT,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (artifact_id, item_key)
+);
+CREATE TABLE upstream_default_seeds (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  slot TEXT NOT NULL,
+  value_json TEXT NOT NULL,
+  evidence_json TEXT,
+  artifact_id TEXT NOT NULL,
+  version TEXT NOT NULL,
+  generation INTEGER NOT NULL,
+  item_key TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_upstream_default_seeds_slot ON upstream_default_seeds(slot, id);
+CREATE TRIGGER upstream_default_seeds_no_update BEFORE UPDATE ON upstream_default_seeds
+BEGIN SELECT RAISE(ABORT, 'upstream_default_seeds is append-only'); END;
+CREATE TABLE evidence_priors (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  artifact_id TEXT NOT NULL,
+  version TEXT NOT NULL,
+  generation INTEGER NOT NULL,
+  item_key TEXT NOT NULL,
+  descriptor TEXT NOT NULL,
+  family TEXT NOT NULL,
+  benchmark TEXT,
+  n INTEGER NOT NULL CHECK (n >= 0),
+  successes INTEGER NOT NULL CHECK (successes >= 0 AND successes <= n),
+  weight REAL NOT NULL CHECK (weight > 0 AND weight <= 1),
+  prior_n REAL NOT NULL,
+  prior_successes REAL NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_evidence_priors_cell ON evidence_priors(descriptor, family, id);
+CREATE TRIGGER evidence_priors_no_update BEFORE UPDATE ON evidence_priors
+BEGIN SELECT RAISE(ABORT, 'evidence_priors is append-only'); END;
+CREATE TABLE upstream_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  action TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('ok', 'refused', 'dropped', 'skipped')),
+  artifact_id TEXT,
+  version TEXT,
+  generation INTEGER,
+  item_key TEXT,
+  detail_json TEXT,
+  actor TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_upstream_events_artifact ON upstream_events(artifact_id, id);
+CREATE TRIGGER upstream_events_no_update BEFORE UPDATE ON upstream_events
+BEGIN SELECT RAISE(ABORT, 'upstream_events is append-only'); END;
+`,
+  },
 ];
 
 /** Migration 143 body — self-contained so later edits to db-notes never change it. */

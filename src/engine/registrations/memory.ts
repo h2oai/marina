@@ -11,6 +11,7 @@ import { debriefCommand } from "../commands/debrief";
 import { digCommand } from "../commands/dig";
 import { evolveCommand } from "../commands/evolve";
 import { guideCommand } from "../commands/guide";
+import { learnedCommand } from "../commands/learned";
 import { lessonsCommand } from "../commands/lessons";
 import { marketCommand } from "../commands/market";
 import { memoryCommand } from "../commands/memory";
@@ -115,6 +116,7 @@ export function registerMemoryCommands(engine: Engine): void {
     }),
   );
   engine.commands.registerBuiltin(lessonsCommand({ db: engine.db }));
+  engine.commands.registerBuiltin(learnedCommand({ db: engine.db }));
   engine.commands.registerBuiltin(
     noveltyCommand({
       getEntity: (id) => engine.entities.get(id as EntityId),

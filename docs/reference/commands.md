@@ -4680,6 +4680,54 @@ Effect: unknown.
 
 - `field-0` (`run`): text, required.
 
+## learned
+
+Inspect imported learned bundles (marina.learned.v1): artifacts, items and their trust, seeded default slots, evidence priors and the import audit. Read-only.
+Usage: learned | learned artifacts | learned items [artifact:<id>] [status:active|retired|revoked] | learned seeds | learned priors [family:<f>] | learned events [limit:<n>]
+
+Export and import are operator acts (`bun run learned export|import|verify|diff`). Imported lessons carry trust `imported` and are never trusted until local outcomes confirm them; seeds fill only empty default slots; priors are down-weighted and never ledger rows.
+
+Category: Knowledge. Minimum rank: 0.
+Aliases: none.
+
+### `learned`
+
+Effect: unknown.
+
+
+### `learned artifacts`
+
+Effect: unknown.
+
+
+### `learned items [artifact:<id>] [status:<active|retired|revoked>]`
+
+Effect: unknown.
+
+- `field-0` (`artifact`): text, optional group `option-0`.
+- `field-1` (`status`): text, optional group `option-1`, choices `active`, `retired`, `revoked`.
+- Group `option-0`: `artifact:id`.
+- Group `option-1`: `status:active|retired|revoked`.
+
+### `learned seeds`
+
+Effect: unknown.
+
+
+### `learned priors [family:<family>]`
+
+Effect: unknown.
+
+- `field-0` (`family`): text, optional group `option-0`.
+- Group `option-0`: `family:family`.
+
+### `learned events [limit:<n>]`
+
+Effect: unknown.
+
+- `field-0` (`limit`): number, optional group `option-0`.
+- Group `option-0`: `limit:n`.
+
 ## lessons
 
 Recall lessons Marina learned from past outcomes (benchmark runs, resolved forecasts, code verifications, arena rounds), trusted first.

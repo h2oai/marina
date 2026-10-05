@@ -335,6 +335,26 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     note: "forecast track record: each answer's audit trail and, once resolved, its score",
   },
   {
+    table: "learned_artifacts",
+    kind: "append-only",
+    note: "imported learned-bundle versions; the downgrade check reads the highest generation",
+  },
+  {
+    table: "upstream_default_seeds",
+    kind: "append-only",
+    note: "upstream default seeds from imported bundles (never benchmark_defaults rows)",
+  },
+  {
+    table: "evidence_priors",
+    kind: "append-only",
+    note: "down-weighted imported ledger aggregates (never benchmark_runs or benchmark_items)",
+  },
+  {
+    table: "upstream_events",
+    kind: "append-only",
+    note: "audit of every learned-bundle verify, import and item action",
+  },
+  {
     table: "economic_events",
     kind: "append-only",
     note: "contract / settlement ledger — financial history is not aged out by default",

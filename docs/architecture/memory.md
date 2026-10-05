@@ -131,3 +131,21 @@ Where lessons are recalled. Every site goes through `recallLessons` or `recallAc
 | `lessons <topic>` command | all | 8 / 2,400 B | listing (`retire` / `supersede` curate, above) |
 
 Recall never creates the `marina:lessons` account or its spaces as a side effect; on a database with no pool it returns nothing. Under `observe` the header and metadata name the lessons recall would have used (prefixed `observe:`) while nothing is injected.
+
+## Learned bundles (`src/learned/`, migration 160)
+
+`marina.learned.v1` moves what a Marina learned between instances as a signed bundle (user guide: [learned bundles](../guides/learned-bundles.md)). It is inert unless an operator exports or imports: no tick job, no read path on a database that never imported anything.
+
+| module | role |
+|---|---|
+| `format.ts` | Pure: envelope and item types, `item_key` (salted with the publisher key id, stable across versions), `content_hash` (substance only: rank, tier, provenance excluded), semver, `diffItems` (added / changed / re-ranked / retired by key). |
+| `sign.ts` | A dedicated Ed25519 key (`MARINA_LEARNED_SIGNING_KEY`) through `signFederationDocument(doc, { signingKey })`. Verification is only against pinned keys: `BUILTIN_PUBLISHER_KEYS` (empty until a publisher key is pinned) plus `MARINA_LEARNED_PUBLISHER_KEYS`. A signature's embedded key is never a trust anchor. |
+| `scan.ts` | Export safety: `secret`, `instance`, `human-name`, `benchmark-text` (6-word shingles and word-aligned 40-character windows of local dataset caches, hashed). A failing item is dropped, never redacted. |
+| `export.ts` | The allow-list readers (`listOwnedSpaceRecords` on the lessons account's `lessons:*` spaces, trust `trusted` only; `listRatifiedInstitutionalRecords`; promoted `benchmark_defaults` with numeric evidence; `listLedgerCells` with k ≥ 20; applied `world adopt` roles), tiers, slices, licence, lineage. |
+| `bundle.ts` | Directory I/O, `verifyBundle` (schema → pinned signature → file digests → item hashes), signed revocation lists. |
+| `import.ts` | Opt-in (`MARINA_UPSTREAM=on`); refuses unpinned, tampered, revoked, downgraded or same-generation-different-content bundles with an audit row; writes lessons and conventions into `upstream:*` spaces owned by `marina:upstream` with trust `imported`; `confirmImportedLesson`. |
+| `upstream-seed.ts` | The upstream-seed layer for default resolution (`env > local slot > family slot > upstream seed > built-in`): a seed answers only while no local `benchmark_defaults` row exists for its slot and its imported item is active. |
+
+Trust: `imported` is never served as local `trusted` and nothing an import does raises it. Lessons keep their original `resolved_at`, so the leakage rule (`visibleAt`) is unchanged. Confirmation happens only through a local, judged, `trusted` lesson that cites `upstream:<item_key>`; the imported record keeps `imported` and gains `confirmed_locally_by`.
+
+Storage (migration 160): `learned_artifacts`, `upstream_default_seeds`, `evidence_priors` and `upstream_events` are append-only (update triggers; `append-only` in `RETENTION_POLICIES`). `learned_items` is the current state per imported item (local record, `active` / `retired` / `revoked`, `confirmed_by`). Priors are never `benchmark_runs` / `benchmark_items` rows and seeds never `benchmark_defaults` rows: local evidence stays local truth.
