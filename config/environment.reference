@@ -918,6 +918,12 @@
 # Outcomes processed per hour (writer + judge calls are bounded by it); excess outcomes are dropped and counted.
 # MARINA_LESSONS_MAX_PER_HOUR=120
 
+# Cross-board lessons. A trusted lesson whose scope is not `case` (method, config, budget, calibration, retrieval, infra, model) and that the judge finds `transferable` is mirrored into `lessons:meta`; every surface that recalls lessons (forecasting, verify, crew routing, Code Mode, opted-in passthru and resident agents) also serves meta lessons within a third of its budget, labelled `cross-board <scope>`. `on` (default) mirrors and serves; `observe` mirrors and records the ids without injecting; `off` neither. Capped by MARINA_LESSONS. The time rule and the measurement self-exclusion (`x-marina-eval`) apply.
+# MARINA_LESSONS_META=on
+
+# Resident agents' continuation prompt: `on` adds a [Lessons] section for the agent's focus every tenth cycle (judged lessons from every domain, cross-board included, labelled); `observe` logs the lesson ids it would show; `off` (default) never asks. Capped by MARINA_LESSONS.
+# MARINA_LESSONS_RESIDENT=off
+
 # ── Passthru and prompt caching ──────────────────────────────────────────────
 
 # Comma-separated pool names shared with passthru (external OpenAI-SDK) callers. Empty shares none.

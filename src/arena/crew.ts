@@ -29,9 +29,15 @@
  * the crew's error vs persistence's, which way it leaned) in Marina's notes
  * store; the analyst recalls the most recent lessons for the series. Lessons
  * enter memory only once a round's number is public, so a forecast never sees
- * its own answer.
+ * its own answer. The same round also feeds the judged outcome loop
+ * (`crewLessonOutcome` → `noteOutcome`, domain `arena`; a no-op unless learning
+ * is armed), and the crew reads the judged pool too — `forecast`, `arena` and
+ * the cross-board `meta` lessons visible at the round's lock — beside its own
+ * series notes.
  */
 
+import type { ForecastLesson, LessonStore } from "../forecast/lessons";
+import type { Outcome } from "../learning/outcomes";
 import type { NotesStore } from "../persistence/interfaces/notes-store";
 import type { RoundForecast } from "./forecast";
 import { forecastRound } from "./forecast";
@@ -144,6 +150,46 @@ export function learn(
   return { beat: ours < pers, skill: pers > 0 ? 1 - ours / pers : 0, lean };
 }
 
+/**
+ * The judged-loop outcome of one resolved round (domain `arena`): general
+ * terms only — the tracker, skill against persistence, which way the crew
+ * leaned. `resolvedAt` is when the number became known (the caller's `now`
+ * for live resolutions; the round's release in a backtest).
+ */
+export function crewLessonOutcome(
+  round: ArenaRound,
+  roundId: string,
+  summary: { beat: boolean; skill: number; lean: string },
+  resolvedAt: string,
+): Outcome {
+  return {
+    domain: "arena",
+    source: `arena:${round.tracker ?? "round"}`,
+    succeeded: summary.beat,
+    score: Math.max(0, Math.min(1, (summary.skill + 1) / 2)),
+    resolvedAt,
+    attempted: `${round.tracker ?? "tracker"} topline forecast against persistence`,
+    detail: `skill ${summary.skill.toFixed(2)} vs persistence; ${summary.lean}`,
+    refs: [`arena:${roundId}`],
+  };
+}
+
+/** Judged-pool lessons for a round, visible at its lock (the forecast's cutoff). */
+async function judgedLessons(lessons: LessonStore | undefined, round: ArenaRound) {
+  if (!lessons) return [] as ForecastLesson[];
+  try {
+    const got = await lessons.recall(
+      `${round.tracker ?? ""} ${round.question}`.slice(0, 400),
+      round.lock_at,
+      { limit: 4, maxBytes: 800 },
+    );
+    // Observe mode returns lessons for the record only: never shown to a role.
+    return got.filter((l) => !l.observed);
+  } catch {
+    return [];
+  }
+}
+
 export async function crewForecastRound(
   round: ArenaRound,
   lock: ArenaLock,
@@ -155,6 +201,8 @@ export async function crewForecastRound(
    * the calibrated baseline. Every move is measured from it.
    */
   start?: RoundForecast,
+  /** The judged lesson pool (`forecastLessonsFor`): read at the round's lock. */
+  lessonStore?: LessonStore,
 ): Promise<CrewForecast> {
   const given = start ?? forecastRound(round, lock);
   const daily = dailyOf(given);
@@ -165,7 +213,10 @@ export async function crewForecastRound(
   const base = baseline.topline;
   const history = historyOf(lock);
   const series = round.series ?? round.round_id;
-  const lessons = notes ? recallLessons(notes, series) : [];
+  const lessons = [
+    ...(notes ? recallLessons(notes, series) : []),
+    ...(await judgedLessons(lessonStore, round)).map((l) => l.text),
+  ];
   const fresh = freshestReading(baseline, round.series);
   const head = [
     `Question: ${round.question}`,

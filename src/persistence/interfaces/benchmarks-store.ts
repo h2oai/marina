@@ -6,6 +6,7 @@ import type {
   BenchmarkDefaultRow,
   BenchmarkEvidenceRow,
   BenchmarkItemInput,
+  BenchmarkItemLessonRow,
   BenchmarkItemRow,
   BenchmarkLedgerRunInput,
   BenchmarkPromotionInput,
@@ -78,6 +79,8 @@ export interface BenchmarksStore {
   /** A run's append-only validity history, oldest first. */
   listBenchmarkRunValidity(runId: string): BenchmarkValidityRow[];
   getBenchmarkItems(runId: string): BenchmarkItemRow[];
+  /** The judged lesson ids a run's items were served (migration 160), in item order. */
+  getBenchmarkItemLessons(runId: string): BenchmarkItemLessonRow[];
   getBenchmarkItemsForBenchmark(benchmark: string, limit?: number): BenchmarkItemRow[];
   /** The slot's promoted default (migration 147), if one was ever seeded. */
   getBenchmarkDefault(slot: string): BenchmarkDefaultRow | undefined;
@@ -115,6 +118,7 @@ export const BENCHMARKS_STORE_METHODS = [
   "setBenchmarkRunValidity",
   "listBenchmarkRunValidity",
   "getBenchmarkItems",
+  "getBenchmarkItemLessons",
   "getBenchmarkItemsForBenchmark",
   "getBenchmarkDefault",
   "listBenchmarkDefaults",

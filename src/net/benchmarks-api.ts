@@ -66,7 +66,17 @@ function slimItem(it: Record<string, unknown>): Record<string, unknown> {
       : {}),
     ...(typeof it.budgetForced === "boolean" ? { budgetForced: it.budgetForced } : {}),
     ...(typeof it.verification === "string" ? { verification: it.verification } : {}),
+    // Lesson ids only (validated and capped when recorded).
+    ...(Array.isArray(it.lessons) ? { lessons: idList(it.lessons) } : {}),
+    ...(Array.isArray(it.lessonsObserved) ? { lessonsObserved: idList(it.lessonsObserved) } : {}),
   };
+}
+
+/** Short id strings only, at most 16 (lesson ids). */
+function idList(v: unknown[]): string[] {
+  return v
+    .filter((x): x is string => typeof x === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(x))
+    .slice(0, 16);
 }
 
 export async function handleBenchmarkFile(

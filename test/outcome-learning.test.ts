@@ -249,6 +249,7 @@ describe("outcome learning: one local model, no vendor keys", () => {
               general: { noul: 0.7 },
               leak_free: { noul: 0.9 },
               consistent: { noul: 0.8 },
+              transferable: { noul: 0.3 },
             },
           })
         : '{"category":"python test run","rule":"Use the repo\'s own test runner."}';

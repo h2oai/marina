@@ -17,7 +17,7 @@ import { parseModifiers, splitOnTerminator } from "../parse-input";
 import { checkRoleEdit } from "../role-guard";
 import { requiresPersistence } from "./command-messages";
 
-const DOMAIN_HINT = "forecast|code|tools|benchmark|arena";
+const DOMAIN_HINT = "forecast|code|tools|benchmark|arena|meta";
 const RETIRE_USAGE = `lessons retire <id> reason:<text> [domain:<${DOMAIN_HINT}>] | lessons retire source:<s>|match:<text> [domain:<d>] [confirm:yes] reason:<text>`;
 const SUPERSEDE_USAGE = "lessons supersede <id> reason:<text> -- <replacement lesson>";
 /** Most lessons one criteria retirement touches; narrow the criteria for more. */
@@ -137,7 +137,7 @@ export function lessonsCommand(deps: { db?: MarinaDB }): CommandDef {
     name: "lessons",
     aliases: [],
     minRank: 0,
-    help: `Recall lessons Marina learned from past outcomes (benchmark runs, resolved forecasts, code verifications, arena rounds), trusted first.\nUsage: lessons <topic> [domain:<${DOMAIN_HINT}>]\n       ${RETIRE_USAGE}\n       ${SUPERSEDE_USAGE}\n\nEvery verdict becomes a candidate lesson; the decision layer judges it and only passing (trusted) or unjudged (unverified, labelled) lessons are served. A wrong lesson is retired, never erased: retire/supersede close its validity (recall stops serving it; its history stays readable) and need role.edit — a lesson steers every agent it is recalled for. Criteria retirements preview until confirm:yes.`,
+    help: `Recall lessons Marina learned from past outcomes (benchmark runs, resolved forecasts, code verifications, arena rounds), trusted first; domain:meta holds the cross-board lessons (trusted, transferable methods and configurations mirrored from every producer).\nUsage: lessons <topic> [domain:<${DOMAIN_HINT}>]\n       ${RETIRE_USAGE}\n       ${SUPERSEDE_USAGE}\n\nEvery verdict becomes a candidate lesson; the decision layer judges it and only passing (trusted) or unjudged (unverified, labelled) lessons are served. A wrong lesson is retired, never erased: retire/supersede close its validity (recall stops serving it; its history stays readable) and need role.edit — a lesson steers every agent it is recalled for. Criteria retirements preview until confirm:yes.`,
     handler: async (ctx: RoomContext, input) => {
       if (!deps.db) {
         ctx.send(input.entity, requiresPersistence("lessons"));

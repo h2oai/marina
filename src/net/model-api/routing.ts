@@ -30,8 +30,9 @@ import type { Engine } from "../../engine/engine";
 import { compareTraceCohorts } from "../../engine/trace-dataset";
 import { projectTraces } from "../../engine/trace-projection";
 import { adviseTraceRouting, selectAdaptiveCandidate } from "../../engine/trace-routing-advice";
+import type { EvalContext } from "../../learning/eval-context";
 import { formatLesson } from "../../learning/outcomes";
-import { recallAcross } from "../../learning/service";
+import { lessonsHeaderValue, recallForWork } from "../../learning/service";
 import type { EngineEvent } from "../../types";
 import type { ResponseRecord, ResponsesSseEmitter } from "./responses-sse";
 import {
@@ -307,6 +308,8 @@ export interface RouteResult {
    * permanent upstream refusal (`x-marina-budget-forced`), not its own reply.
    */
   budgetForced?: BudgetForced;
+  /** The lesson ids the request was served (`x-marina-lessons`), when any were recalled. */
+  lessons?: string;
 }
 
 /** A responder's `repaired` label, when it is one Marina issues. */
@@ -324,6 +327,8 @@ export interface RouteOptions {
    * aborting with nothing.
    */
   deadlineMs?: number;
+  /** The request's eval context (`x-marina-eval`): self-exclusion for measurement runs. */
+  eval?: EvalContext;
 }
 
 /**
@@ -457,11 +462,12 @@ export async function routeToChannel(
   const protocol = plan.protocolFor(target);
   // Lessons from past outcomes for the lead to apply (MARINA_LESSONS; observe
   // and off inject nothing). Byte-budgeted: the perception is clamped.
-  const lessons = await recallAcross(
+  // Cross-board `meta` lessons ride a third of the budget.
+  const lessons = await recallForWork(
     engine.db,
     ["tools", "code", "forecast"],
     userContent.slice(0, 500),
-    { limit: 3, maxBytes: 600 },
+    { limit: 3, maxBytes: 600, ...(opts?.eval ? { eval: opts.eval } : {}) },
   );
 
   // Multi-turn conversation
@@ -667,7 +673,7 @@ export async function routeToChannel(
       durationMs: Date.now() - startedAt,
       timestamp: Date.now(),
     });
-    return result;
+    return lessons.recalled.length ? { ...result, lessons: lessonsHeaderValue(lessons) } : result;
   } catch (error) {
     engine.logEvent({
       type: "model_request_lifecycle",
