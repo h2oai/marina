@@ -38,6 +38,7 @@ import {
 } from "./download";
 import { fileToLedger, type LedgerTargetKind, parseTarget } from "./ledger-file";
 import { runRetentionTask, runRetentionTaskPassthrough } from "./modes/memory";
+import { setTargetLessonContext } from "./modes/passthrough";
 import { inPartition, parsePartition } from "./partition";
 import {
   defaultReplicateGroup,
@@ -285,6 +286,8 @@ function parseCliArgs() {
       label: { type: "string" },
       group: { type: "string" },
       replicates: { type: "string" },
+      "lessons-mode": { type: "string" },
+      lessons: { type: "boolean" },
       list: { type: "boolean" },
       results: { type: "boolean" },
       help: { type: "boolean", short: "h" },
@@ -318,6 +321,8 @@ function parseCliArgs() {
     label: str("label"),
     group: str("group"),
     replicates: str("replicates"),
+    "lessons-mode": str("lessons-mode"),
+    lessons: values.lessons === true,
     list: values.list === true,
     results: values.results === true,
     help: values.help === true,
@@ -665,6 +670,10 @@ Options:
                             replicate group); prints the pooled summary
       --group <key>         Ledger replicate group for the run(s) (default with
                             --replicates > 1: a fresh rep:<label>:<time> key)
+      --lessons-mode <m>    measure (default): a Marina target never recalls lessons
+                            learned from this benchmark (x-marina-eval); live: every lesson
+      --lessons             Ask a plain passthru target to inject judged lessons
+                            (x-marina-lessons: on); served lesson ids are filed per item
       --list                List available benchmarks
       --results             Show past results
   -h, --help                Show this help
@@ -705,6 +714,12 @@ Options:
     process.exit(2);
   }
 
+  const lessonsMode = args["lessons-mode"] ?? "measure";
+  if (lessonsMode !== "measure" && lessonsMode !== "live") {
+    console.error("--lessons-mode must be measure or live");
+    process.exit(2);
+  }
+
   const benchmarkName = args.benchmark;
   if (!benchmarkName) {
     console.error("Error: --benchmark is required. Use --list to see available benchmarks.");
@@ -739,7 +754,15 @@ Options:
       model: args["judge-model"] ?? args.model ?? "marina",
       endpoint: args["judge-endpoint"] ?? args.endpoint ?? "http://localhost:3300",
     },
+    lessons_mode: lessonsMode,
+    ...(args.lessons ? { lessons: true } : {}),
   };
+  // Every target call says which board it measures (leakage rule 2); judge
+  // calls never carry it. A non-Marina endpoint ignores the headers.
+  setTargetLessonContext({
+    eval: { benchmark: benchDef.dataset, mode: lessonsMode },
+    ...(args.lessons ? { lessons: true } : {}),
+  });
 
   console.log(`\n  Benchmark: ${benchDef.name} (Phase ${benchDef.phase})`);
   console.log(`  Mode: ${config.mode}`);

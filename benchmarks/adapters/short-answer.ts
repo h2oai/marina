@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { queryWithUsage } from "../modes/passthrough";
+import { queryWithUsage, replyLabels } from "../modes/passthrough";
 import { judgeResponseWithUsage } from "../scoring/judge";
 import type { BenchmarkConfig, DatasetItem, ItemUsage, Message, ResultItem } from "../types";
 import { addCallUsage } from "../usage";
@@ -54,10 +54,12 @@ export async function runShortAnswer(
       let usage: ItemUsage | undefined;
       let judgeUsage: ItemUsage | undefined;
       let traceId: string | undefined;
+      let labels: ReturnType<typeof replyLabels> = {};
       try {
         const reply = await queryWithUsage(config.endpoint, config.model, messages, config.apiKey);
         usage = addCallUsage(undefined, reply.usage);
         traceId = reply.requestId;
+        labels = replyLabels(reply);
         actual = reply.content;
         rawResponse = actual;
         // Primary check: normalized substring. Cheap, no LLM.
@@ -95,6 +97,7 @@ export async function runShortAnswer(
         ...(usage ? { usage } : {}),
         ...(judgeUsage ? { judgeUsage } : {}),
         ...(traceId ? { traceId } : {}),
+        ...labels,
       });
       completed++;
       onProgress?.(completed, items.length);

@@ -69,6 +69,7 @@
     "arena": "bun run scripts/arena.ts",
     "arena:portfolio": "bun run scripts/arena-portfolio.ts",
     "futurex": "bun run scripts/futurex.ts",
+    "mind2web2": "bun run scripts/mind2web2.ts",
     "metaculus": "bun run scripts/metaculus.ts",
     "forecastbench": "bun run scripts/forecastbench.ts",
     "swebench": "bun run scripts/swebench.ts",
@@ -102,6 +103,7 @@
     "bench": "bun run benchmarks/harness.ts",
     "bench:compare": "bun run benchmarks/compare.ts",
     "benchmark:import": "bun scripts/benchmark-import.ts",
+    "lessons": "bun scripts/lessons.ts",
     "bench:tier0": "bun run benchmarks/tier0.ts",
     "bench:context": "bun --env-file=/dev/null benchmarks/context-statistics.ts",
     "bench:ui": "bun run benchmarks/server.ts",
@@ -205,7 +207,8 @@
   },
   "optionalDependencies": {
     "better-auth": "^1.7.4",
-    "jose": "^6.2.12"
+    "jose": "^6.2.12",
+    "playwright-core": "1.63.0"
   },
   "exports": {
     "./memory": {
