@@ -269,6 +269,18 @@ export function ParticipantRuntimeControls({
               </button>
             </form>
             <div className="flex gap-2">
+              {runtime.mode === "managed" && runtime.resumeSupported && runtime.nativeSessionId && (
+                <button
+                  type="button"
+                  className={button}
+                  disabled={
+                    disabled || !["stopped", "failed", "disconnected"].includes(runtime.status)
+                  }
+                  onClick={() => void send({ action: "resume" })}
+                >
+                  Resume native session
+                </button>
+              )}
               <button
                 type="button"
                 className={button}

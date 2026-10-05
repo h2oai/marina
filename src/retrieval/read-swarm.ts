@@ -736,12 +736,10 @@ export function readingSummary(r: DocReading, quoteChars = 240): Record<string, 
   return {
     ...(r.candidate ? { candidate: r.candidate } : {}),
     clues: r.clues,
-    quotes: verified
-      .slice(0, 4)
-      .map((q) => ({
-        ...(q.clue !== undefined ? { clue: q.clue } : {}),
-        quote: clip(q.text, quoteChars),
-      })),
+    quotes: verified.slice(0, 4).map((q) => ({
+      ...(q.clue !== undefined ? { clue: q.clue } : {}),
+      quote: clip(q.text, quoteChars),
+    })),
     confidence: Number(r.confidence.toFixed(2)),
     ...(r.note ? { note: clip(r.note, 160) } : {}),
     ...(r.totalChars !== undefined && r.charsRead < r.totalChars

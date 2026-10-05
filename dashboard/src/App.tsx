@@ -26,6 +26,7 @@ import { useWorkspacePanels } from "./components/workspace-panels-registry";
 import { useSystem, useWorld } from "./hooks/use-api";
 import { useChatState } from "./hooks/use-chat-state";
 import { useDashboardNavigation } from "./hooks/use-dashboard-navigation";
+import { useLayoutHistory } from "./hooks/use-layout-history";
 import { useLayoutPresets } from "./hooks/use-layout-presets";
 import { useGlobalRealtimeInvalidations } from "./hooks/use-realtime-invalidations";
 import { useDashboardWebSocket } from "./hooks/use-websocket";
@@ -42,6 +43,7 @@ import {
   parsePanelBinding,
 } from "./lib/panel-bindings";
 import { dashboardPanels } from "./lib/panel-registry";
+import { balanceWorkspaceRows, nudgeWorkspacePanel } from "./lib/workspace-canvas-layout";
 import { BUILTIN_PRESETS, WORKSPACE_LAYOUTS } from "./lib/workspace-layouts";
 import {
   closePanelInstance,
@@ -65,9 +67,13 @@ export default function App() {
   const [drawer, setDrawer] = useState<"attention" | "pulse" | "memory" | null>(null);
   const [memoryDestination, setMemoryDestination] = useState<MemoryDestination>({});
   const preset = useLayoutPresets(WORKSPACE_LAYOUTS, BUILTIN_PRESETS);
-  const [layouts, setLayouts] = useState<ResponsiveLayouts<Bp>>(
+  const layoutHistory = useLayoutHistory(
     () => preset.presets.find((p) => p.id === preset.activeId)?.layouts ?? WORKSPACE_LAYOUTS,
   );
+  const { layouts, reset: setLayouts } = layoutHistory;
+  useEffect(() => {
+    preset.updateActiveLayouts(layouts);
+  }, [layouts, preset.updateActiveLayouts]);
   const resident = useChatState((s) => (s.loggedIn ? s.entityName : null));
   const [bindings, setBindings] = useState<PanelBindings>(
     () => preset.presets.find((p) => p.id === preset.activeId)?.bindings ?? {},
@@ -126,7 +132,7 @@ export default function App() {
       }
       useWorkspaceState.getState().setView(next);
     },
-    [legacy, preset.applyPreset],
+    [legacy, preset.applyPreset, setLayouts],
   );
 
   useDashboardNavigation(openView, setDrawer, setMemoryDestination);
@@ -193,8 +199,7 @@ export default function App() {
   };
   const handleLayoutChange = (_current: Layout, all: ResponsiveLayouts<Bp>) => {
     if (focused || width < 800 || fullscreen) return;
-    setLayouts(all);
-    preset.updateActiveLayouts(all);
+    layoutHistory.commit(all);
   };
   const openViewBelow = (sourceId: string, panelId: string, target?: PanelBinding | null) => {
     const next = openPanelBelow(layouts, sourceId, panelId, columns);
@@ -323,6 +328,43 @@ export default function App() {
         onOpenSearch={() => setSearchOpen(true)}
         onOpenShortcuts={() => setShortcutsOpen(true)}
         onResetLayout={() => selectPreset("default")}
+        onUndoLayout={layoutHistory.canUndo ? layoutHistory.undo : undefined}
+        onRedoLayout={layoutHistory.canRedo ? layoutHistory.redo : undefined}
+        onBalanceLayout={
+          !focused && !fullscreen && width >= 800
+            ? () => {
+                const bp = width >= 1200 ? "lg" : "md";
+                layoutHistory.commit({
+                  ...layouts,
+                  [bp]: balanceWorkspaceRows(layouts[bp] ?? [], columns[bp]),
+                });
+              }
+            : undefined
+        }
+        onMovePanel={
+          !focused && !fullscreen && width >= 800
+            ? (dx, dy) => {
+                const bp = width >= 1200 ? "lg" : "md";
+                layoutHistory.commit({
+                  ...layouts,
+                  [bp]: nudgeWorkspacePanel(layouts[bp] ?? [], pane, dx, dy, columns[bp]),
+                });
+              }
+            : undefined
+        }
+        selectedPanel={pane}
+        movablePanels={panels.map(([id]) => ({
+          id,
+          label:
+            id === "webchat"
+              ? "Chat"
+              : id === "workspace"
+                ? "Workspace"
+                : id === "context"
+                  ? "Context"
+                  : id,
+        }))}
+        onSelectPanel={(id) => useWorkspaceState.setState({ pane: id as WorkspacePane })}
         layoutPresets={preset.presets}
         activeLayoutId={preset.activeId}
         onSelectLayoutPreset={selectPreset}

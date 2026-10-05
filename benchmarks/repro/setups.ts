@@ -426,7 +426,15 @@ const TAU2_SPLIT_SIZES: Record<string, number> = {
   "retail/base": 114,
   "telecom/test": 40,
   "telecom/base": 114,
+  // τ³: banking_knowledge has one task set (τ² ignores the split name there).
+  "banking_knowledge/base": 97,
 };
+
+/** The τ³ domain whose agent searches a knowledge base; the board requires its retrieval config. */
+const TAU2_KNOWLEDGE_DOMAIN = "banking_knowledge";
+
+/** The retrieval configuration of the board's reference banking runs (BM25 + dense + shell). */
+const TAU2_DEFAULT_RETRIEVAL = "alltools";
 
 /**
  * The leaderboard's split: every task, no `--num-tasks` / `--task-ids` filter
@@ -460,6 +468,11 @@ export function tau2LlmArgs(apiBase: string, effort: string): string {
   });
 }
 
+/** τ² retrieval configs that give the agent a sandboxed shell over the knowledge base. */
+export function retrievalNeedsShell(config: string): boolean {
+  return config.startsWith("alltools") || config.startsWith("terminal_use");
+}
+
 const tau2: Setup = {
   name: "tau2",
   summary:
@@ -491,6 +504,11 @@ const tau2: Setup = {
     if (tier === "frontier" && !flags.judge) m.judge = TAU2_USER_SIMULATOR;
     const effort = flags.effort ?? "high";
     const userEffort = flags.userEffort ?? "low";
+    const knowledge = domain === TAU2_KNOWLEDGE_DOMAIN;
+    if (flags.retrievalConfig && !knowledge) {
+      throw new Error(`--retrieval-config applies only to --domain ${TAU2_KNOWLEDGE_DOMAIN}`);
+    }
+    const retrieval = knowledge ? (flags.retrievalConfig ?? TAU2_DEFAULT_RETRIEVAL) : undefined;
     const port = BASE_PORT + 50;
     const base = `http://localhost:${port}/v1`;
     const steps: Step[] = [plainServer("tau2", port, flags.budgetUsd)];
@@ -513,6 +531,8 @@ const tau2: Setup = {
         numTasks,
         split: flags.split ?? null,
         domain,
+        // Only knowledge runs carry the key, so every other domain keeps its tag (and resumes).
+        ...(retrieval ? { retrieval } : {}),
       });
       const name = `marina-repro-${basename(flags.runDir)}-${domain}${flags.split ? `-${flags.split}` : ""}-${arm.name}-${tag}`;
       const results = `$TAU2_HOME/data/simulations/${name}/results.json`;
@@ -539,6 +559,7 @@ const tau2: Setup = {
           "--num-trials",
           String(flags.replicates),
           ...(numTasks !== null ? ["--num-tasks", String(numTasks)] : []),
+          ...(retrieval ? ["--retrieval-config", retrieval] : []),
           "--max-concurrency",
           "4",
           "--save-to",
@@ -573,8 +594,19 @@ const tau2: Setup = {
       `agent reasoning_effort = ${effort} (extra_body)`,
       `user simulator = ${m.judge} (reasoning_effort = ${userEffort}, extra_body)`,
       "evaluator = τ² as shipped, with the operator's provider keys",
+      ...(retrieval
+        ? [
+            `knowledge retrieval = ${retrieval} (τ²'s own tools; its embedding calls use the operator's provider keys, outside Marina's spend ledger)`,
+          ]
+        : []),
     ];
-    return finish(this, flags, tier, arms, limit, labels, steps);
+    const plan = finish(this, flags, tier, arms, limit, labels, steps);
+    if (!retrieval) return plan;
+    const extra = [
+      "tau2-knowledge",
+      ...(retrievalNeedsShell(retrieval) ? ["tau2-knowledge-shell"] : []),
+    ];
+    return { ...plan, requires: [...plan.requires, ...extra] };
   },
 };
 

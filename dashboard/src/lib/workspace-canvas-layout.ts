@@ -6,11 +6,72 @@ import {
   calcWH,
   calcXY,
   cloneLayout,
+  collides,
   type Layout,
   moveElement,
   verticalCompactor,
 } from "react-grid-layout";
 import { correctBounds } from "react-grid-layout/core";
+
+/** Explicitly balance each row; honor minimums, maximums and fixed panels. */
+export function balanceWorkspaceRows(layout: Layout, cols: number): Layout {
+  const next = layout.map((item) => ({ ...item }));
+  const rows = new Map<number, Array<Layout[number]>>();
+  for (const item of next) rows.set(item.y, [...(rows.get(item.y) ?? []), item]);
+  for (const row of rows.values()) {
+    if (row.some((item) => item.static || item.isResizable === false || item.isDraggable === false))
+      continue;
+    row.sort((a, b) => a.x - b.x);
+    const widths = row.map((item) => Math.max(1, item.minW ?? 1));
+    let remaining = cols - widths.reduce((sum, w) => sum + w, 0);
+    if (remaining < 0) continue;
+    while (remaining > 0) {
+      const eligible = row
+        .map((item, i) => ({ item, i }))
+        .filter(({ item, i }) => widths[i]! < (item.maxW ?? cols));
+      eligible.sort((a, b) => widths[a.i]! - widths[b.i]! || a.i - b.i);
+      if (!eligible.length) break;
+      widths[eligible[0]!.i]!++;
+      remaining--;
+    }
+    let x = 0;
+    row.forEach((item, i) => {
+      item.x = x;
+      item.w = widths[i]!;
+      x += item.w;
+    });
+  }
+  // Staggered rows may overlap vertically. Never balance them through another panel.
+  if (next.some((item) => next.some((other) => item.i !== other.i && collides(item, other))))
+    return layout;
+  return next;
+}
+
+/** Keyboard/button movement uses the same collision policy as dragging. */
+export function nudgeWorkspacePanel(
+  layout: Layout,
+  id: string,
+  dx: number,
+  dy: number,
+  cols: number,
+): Layout {
+  const next = cloneLayout(layout);
+  const item = next.find((entry) => entry.i === id);
+  if (!item || item.static || item.isDraggable === false) return layout;
+  return verticalCompactor.compact(
+    moveElement(
+      next,
+      item,
+      Math.max(0, Math.min(cols - item.w, item.x + dx)),
+      Math.max(0, item.y + dy),
+      true,
+      false,
+      "vertical",
+      cols,
+    ),
+    cols,
+  );
+}
 
 /** Match the grid's default placement for newly registered local panels. */
 export function completeWorkspaceLayout(
