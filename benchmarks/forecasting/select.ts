@@ -32,12 +32,15 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { IsolationLevel } from "../../src/arena/research/isolation";
 import { answerDigest, ledgerFromHarnessResult } from "../../src/engine/benchmark-ledger";
 import { SpendGuard } from "../../src/engine/spend-guard";
 import { dailyCapRefusal } from "../../src/engine/spend-ledger";
 import type { TypedForecastAnswer, TypedForecastRequest } from "../../src/forecast/typed";
 import type { MarinaStores } from "../../src/persistence/interfaces";
+import { idsDigest, openJournal } from "../journal";
 import { defaultReplicateGroup } from "../replicates";
 import { mulberry32 } from "../stats";
 import {
@@ -114,10 +117,25 @@ export interface SelectOptions {
   livePerItemUsd?: number;
   concurrency?: number;
   ledger?: Pick<MarinaStores, "recordBenchmarkLedgerRun">;
+  /**
+   * Keep every answered item on disk as it lands, one journal per candidate
+   * and replicate in this directory: a run stopped by a budget or a cap keeps
+   * what it paid for (still never scored or filed while partial).
+   */
+  journalDir?: string;
+  /**
+   * Continue from the journals' answered items (same configuration and items
+   * only — a different one is refused); a run already filed is not re-filed.
+   * The selection budget counts this invocation's new spend.
+   */
+  resume?: boolean;
   env?: NodeJS.ProcessEnv;
   now?: () => Date;
   log?: (line: string) => void;
 }
+
+/** One journal line: an answered item, or the run's ledger filing. */
+type SelectionEntry = { id: string; answer: TypedForecastAnswer } | { filed: string };
 
 const DAY = 86_400_000;
 
@@ -202,7 +220,19 @@ export async function selectConfiguration(opts: SelectOptions): Promise<Selectio
   // Runs: replicate 1 of every candidate before any replicate 2 (in the order
   // given — pass the cheapest first), so a budget stop still leaves as many
   // candidates measured as it can.
-  const stamp = now().getTime();
+  let stamp = now().getTime();
+  if (opts.journalDir) {
+    // The replicate group's stamp is kept, so a resumed selection files into the same groups.
+    mkdirSync(opts.journalDir, { recursive: true });
+    const meta = join(opts.journalDir, "selection.json");
+    const kept =
+      opts.resume && existsSync(meta)
+        ? (JSON.parse(readFileSync(meta, "utf8")) as { stamp?: number }).stamp
+        : undefined;
+    if (typeof kept === "number") stamp = kept;
+    else writeFileSync(meta, JSON.stringify({ benchmark: opts.benchmark, stamp }));
+  }
+  const itemsDigest = idsDigest(common.map((i) => i.id));
   const scores = new Map<string, Array<Map<string, number>>>();
   const costs = new Map<string, number[]>();
   const env = opts.env ?? process.env;
@@ -225,9 +255,30 @@ export async function selectConfiguration(opts: SelectOptions): Promise<Selectio
         );
         continue;
       }
+      const journal = opts.journalDir
+        ? openJournal<SelectionEntry>(
+            join(opts.journalDir, `${c.label.replace(/[^\w.-]+/g, "_")}-r${rep}.jsonl`),
+            {
+              benchmark: opts.benchmark,
+              configuration: describeConfig(c),
+              items: itemsDigest,
+              isolation: opts.isolation,
+              replicate: rep,
+            },
+            opts.resume ? { resume: true } : {},
+          )
+        : undefined;
+      // Answers a stopped earlier run paid for (no-answer items run again).
+      const prior = new Map<string, TypedForecastAnswer>();
+      let filedBefore: string | undefined;
+      for (const e of journal?.entries ?? []) {
+        if ("filed" in e) filedBefore = e.filed;
+        else if (!isFallback(e.answer)) prior.set(e.id, e.answer);
+      }
       const forecast = opts.makeForecaster(c);
-      const started = now();
+      const started = journal ? new Date(journal.startedAt) : now();
       let runCost = 0;
+      let resumedCost = 0;
       let finished = 0;
       let halt: string | undefined;
       // Stop starting items while every item in flight can still finish under the
@@ -242,6 +293,12 @@ export async function selectConfiguration(opts: SelectOptions): Promise<Selectio
         env,
       });
       const answers = await mapLimit(common, concurrency, async (item) => {
+        const kept = prior.get(item.id);
+        if (kept) {
+          finished++;
+          resumedCost += kept.costUsd ?? 0;
+          return kept;
+        }
         halt ??= guard.stopReason();
         if (halt) return undefined;
         let itemCost = 0;
@@ -249,6 +306,7 @@ export async function selectConfiguration(opts: SelectOptions): Promise<Selectio
           const answer = await forecast(item.request);
           itemCost = answer.costUsd ?? 0;
           runCost += itemCost;
+          journal?.append({ id: item.id, answer });
           return answer;
         } catch {
           return undefined;
@@ -262,7 +320,9 @@ export async function selectConfiguration(opts: SelectOptions): Promise<Selectio
         spent += runCost;
         stopped = halt;
         log(
-          `  ${c.label} r${rep}: stopped after ${finished}/${common.length} items — partial run discarded ($${runCost.toFixed(2)})`,
+          `  ${c.label} r${rep}: stopped after ${finished}/${common.length} items — partial run ${
+            journal ? `kept in ${journal.path} (not filed; --resume continues it)` : "discarded"
+          } ($${runCost.toFixed(2)})`,
         );
         break;
       }
@@ -274,7 +334,8 @@ export async function selectConfiguration(opts: SelectOptions): Promise<Selectio
         cost += answers[i]?.costUsd ?? 0;
         if (isFallback(answers[i])) fallbacks++;
       });
-      spent += cost;
+      // Resumed answers were paid for by an earlier invocation.
+      spent += cost - resumedCost;
       if (fallbacks) log(`  ${c.label} r${rep}: ${fallbacks}/${common.length} items had no answer`);
       scores.set(c.label, [...(scores.get(c.label) ?? []), runScores]);
       costs.set(c.label, [...(costs.get(c.label) ?? []), cost / Math.max(1, common.length)]);
@@ -282,11 +343,13 @@ export async function selectConfiguration(opts: SelectOptions): Promise<Selectio
       r.replicates++;
       const mean = [...runScores.values()].reduce((s, x) => s + x, 0) / Math.max(1, runScores.size);
       log(`  ${c.label} r${rep}: mean ${mean.toFixed(4)} · $${cost.toFixed(2)}`);
-      if (opts.ledger) {
+      if (filedBefore) {
+        r.ledgerRuns.push(filedBefore);
+      } else if (opts.ledger) {
         try {
-          r.ledgerRuns.push(
-            fileRun(opts, c, rep, common, answers, runScores, started, now(), cost, stamp),
-          );
+          const id = fileRun(opts, c, rep, common, answers, runScores, started, now(), cost, stamp);
+          r.ledgerRuns.push(id);
+          journal?.append({ filed: id });
         } catch (err) {
           log(`  ledger: ${(err as Error).message.slice(0, 120)}`);
         }

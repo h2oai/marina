@@ -9,7 +9,7 @@
  * the benchmark ledger under a replicate group.
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   type FilterStats,
@@ -36,7 +36,7 @@ import {
 import type { FuturexRow } from "./dataset";
 import { recordScoredRun } from "./ledger";
 import { endTimeIso, parseOptions, requestFor } from "./map";
-import { type BatchRun, runBatch, type Variant } from "./run";
+import { type BatchRun, BatchStopped, runBatch, type Variant } from "./run";
 import {
   type BatchScore,
   type JudgeModel,
@@ -88,6 +88,11 @@ export interface CleanOptions {
   /** Also grade strings and lists with a model judge, as the official scoring does. */
   judge?: JudgeModel;
   outDir: string;
+  /**
+   * Continue each replicate from the rows its earlier, stopped run finished
+   * (`rows.jsonl` in its output directory), under the same configuration only.
+   */
+  resume?: boolean;
   ledger?: Parameters<typeof recordScoredRun>[0];
   env?: NodeJS.ProcessEnv;
   log?: (line: string) => void;
@@ -276,7 +281,8 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
         env,
       });
       let lessonFailures = 0;
-      const run: BatchRun = await runBatch(
+      const out = join(opts.outDir, label);
+      const runPromise: Promise<BatchRun> = runBatch(
         rows,
         variant,
         () => {
@@ -306,6 +312,20 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
         {
           horizonDays: opts.horizonDays,
           concurrency: opts.concurrency,
+          // Every finished row lands on disk at once: a cap stop keeps what was paid for.
+          journal: {
+            path: join(out, "rows.jsonl"),
+            config: {
+              benchmark: CLEAN_BENCHMARK,
+              batchSha: opts.batchSha,
+              isolation: opts.isolation,
+              retriever: spec,
+              lessons: opts.lessons,
+              knowledgeBound: after,
+              replicate: rep,
+            },
+            ...(opts.resume ? { resume: true } : {}),
+          },
           // Stop while every row in flight can still finish under the tighter of
           // the world's cap and this process's MARINA_SPEND_SCOPE cap.
           shouldStop: () => guard.stopReason(),
@@ -365,6 +385,33 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
           },
         },
       );
+      let run: BatchRun;
+      try {
+        run = await runPromise;
+      } catch (err) {
+        if (err instanceof BatchStopped) {
+          // A partial run is kept, labelled, and never scored or filed as a complete one.
+          writeFileSync(
+            join(out, "partial.json"),
+            JSON.stringify(
+              {
+                partial: true,
+                reason: err.reason,
+                finished: err.partial.results.length,
+                total: err.partial.total,
+                costUsd: err.partial.costUsd,
+                journal: err.journal,
+                label,
+              },
+              null,
+              1,
+            ),
+          );
+          log(`  ${label}: PARTIAL — ${err.message} (not filed)`);
+        }
+        throw err;
+      }
+      rmSync(join(out, "partial.json"), { force: true });
       const predictions = new Map(run.results.map((r) => [r.id, r.prediction]));
       const score = scoreBatch(rows, predictions);
       const judged = opts.judge ? await scoreBatchJudged(rows, predictions, opts.judge) : undefined;
@@ -434,7 +481,6 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
         costUsd: run.costUsd,
         group,
       };
-      const out = join(opts.outDir, label);
       mkdirSync(out, { recursive: true });
       writeFileSync(join(out, "answers.json"), JSON.stringify(run, null, 1));
       writeFileSync(join(out, "score.json"), JSON.stringify(score, null, 1));

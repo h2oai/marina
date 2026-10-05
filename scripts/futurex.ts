@@ -19,6 +19,10 @@
  * built-ins cheap, frontier, crew), --variants <file.json> (Variant[]), --concurrency N,
  * --limit N, --org h2o.ai, --agent Marina, --model <segment>.
  *
+ * Every finished row is appended to `rows.jsonl` beside the run's output as it lands. A run
+ * stopped by a spend cap keeps them (labelled partial, never filed); `--resume` continues it
+ * under the same configuration (a different one is refused).
+ *
  * NOTHING IS SENT. `run` prints the file path and the email fields; the operator (or an approved
  * connector) sends it. Answers are frozen before each row's end time. Re-forecasts keep a standing
  * answer per row and revise it only on a material change (`src/forecast/revision.ts`); every
@@ -99,6 +103,8 @@ const { positionals, values } = parseArgs({
     "final-lead-hours": { type: "string", default: "4" },
     "daily-hour": { type: "string", default: "6" },
     "no-ledger": { type: "boolean" },
+    // Continue a stopped run from the rows it finished (rows.jsonl), same configuration only.
+    resume: { type: "boolean" },
     // Clean (non-leaking) backtest — see benchmarks/futurex/clean.ts.
     clean: { type: "boolean" },
     after: { type: "string" },
@@ -291,8 +297,18 @@ async function runCmd(opts: { kind?: string; openOnly?: boolean } = {}): Promise
   }
   for (const v of variantsFromFlags()) {
     console.log(`\n── variant ${v.label} (${v.analysts.join(", ")}) · ${rows.length} rows`);
+    const out = join(dir, "out", batch.sha, v.label);
     const run = await runBatch(rows, v, depsFor(v, lessons), {
       concurrency: Number(values.concurrency),
+      journal: {
+        path: join(out, "rows.jsonl"),
+        config: {
+          benchmark: ONLINE_BENCHMARK,
+          batchSha: batch.sha,
+          lessons: lessons ? "on" : "off",
+        },
+        ...(values.resume ? { resume: true } : {}),
+      },
       onRow: (r, done, total) =>
         console.log(
           `  [${done}/${total}] L${r.level} ${r.spec} ${r.id} → ${r.prediction || "(empty)"}${r.fallback ? " (fallback)" : ""}${r.late ? " (late)" : ""} · $${r.costUsd.toFixed(3)}`,
@@ -305,7 +321,6 @@ async function runCmd(opts: { kind?: string; openOnly?: boolean } = {}): Promise
       framework: "Marina",
     };
     const name = submissionFileName(identity);
-    const out = join(dir, "out", batch.sha, v.label);
     mkdirSync(out, { recursive: true });
     // Revise standing answers only on a material change; log every decision.
     const prior = loadStanding(out);
@@ -505,6 +520,7 @@ async function cleanBacktestCmd(batch: FuturexBatch): Promise<number> {
         ? { reference: JSON.parse(readFileSync(values.reference, "utf8")) as ReferenceScores }
         : {}),
       outDir: join(dir, "clean", batch.sha),
+      ...(values.resume ? { resume: true } : {}),
       ...(db ? { ledger: db } : {}),
     });
     for (const s of summaries) {
@@ -542,9 +558,15 @@ async function backtestCmd(): Promise<number> {
       "CAVEAT: these outcomes are public; web search without a date filter can still surface them. A smoke test, not a skill estimate.",
   );
   for (const v of variantsFromFlags()) {
+    const out = join(dir, "backtest", batch.sha, v.label);
     const run = await runBatch(rows, v, depsFor(v), {
       horizonDays,
       concurrency: Number(values.concurrency),
+      journal: {
+        path: join(out, "rows.jsonl"),
+        config: { benchmark: PAST_BENCHMARK, batchSha: batch.sha },
+        ...(values.resume ? { resume: true } : {}),
+      },
       onRow: (r, done, total) =>
         console.log(
           `  [${done}/${total}] L${r.level} ${r.spec} → ${r.prediction || "(empty)"} · $${r.costUsd.toFixed(3)}`,
@@ -553,7 +575,6 @@ async function backtestCmd(): Promise<number> {
     const score = scoreBatch(rows, new Map(run.results.map((r) => [r.id, r.prediction])), {
       sigma: values.sigma === "dataset" ? "dataset" : "relative",
     });
-    const out = join(dir, "backtest", batch.sha, v.label);
     mkdirSync(out, { recursive: true });
     writeFileSync(join(out, "answers.json"), JSON.stringify(run, null, 1));
     writeFileSync(join(out, "score.json"), JSON.stringify(score, null, 1));

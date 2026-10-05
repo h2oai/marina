@@ -9,7 +9,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { isolationOfSpec } from "../../src/arena/research/isolation";
 import type { MarinaDB } from "../../src/persistence/database";
 import {
@@ -132,6 +132,8 @@ export async function runSelection(opts: {
   retriever?: string;
   concurrency?: number;
   out: string;
+  /** Continue a stopped selection from its journals (`<out>-runs/`), same configuration only. */
+  resume?: boolean;
   log: (line: string) => void;
 }): Promise<SavedSelection> {
   const retriever = opts.retriever ?? BACKTEST_RETRIEVER;
@@ -161,6 +163,9 @@ export async function runSelection(opts: {
     isolation: isolationOfSpec(retriever, false),
     ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
     ledger: opts.db,
+    // Answered items are kept as they land: a cap stop never loses paid-for work.
+    journalDir: join(dirname(opts.out), `${basename(opts.out, ".json")}-runs`),
+    ...(opts.resume ? { resume: true } : {}),
     log: opts.log,
   });
   const saved: SavedSelection = {
