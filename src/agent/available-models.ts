@@ -36,6 +36,7 @@ const CLOUD_PROVIDERS: ReadonlyArray<{ provider: string; envKeys: readonly strin
   { provider: "mistral", envKeys: ["MISTRAL_API_KEY"] },
   { provider: "xai", envKeys: ["XAI_API_KEY"] },
   { provider: "huggingface", envKeys: ["HUGGINGFACE_API_KEY", "HF_TOKEN"] },
+  { provider: "cerebras", envKeys: ["CEREBRAS_API_KEY"] },
   { provider: "openrouter", envKeys: ["OPENROUTER_API_KEY"] },
 ];
 
