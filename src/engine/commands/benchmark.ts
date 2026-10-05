@@ -8,6 +8,7 @@ import {
   referenceScoresForBenchmark,
   referenceScoresForModel,
 } from "../../../benchmarks/reference-scores";
+import { retireLessonsForRun } from "../../learning/intake";
 import { bold, category, dim, status as fmtStatus, header, separator } from "../../net/ansi";
 import type { BenchmarkRunRow, MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
@@ -738,10 +739,22 @@ export function benchmarkCommand(deps: {
             ctx.send(input.entity, `Usage: benchmark ${sub} <run> reason:<text>`);
             return;
           }
-          ctx.send(
-            input.entity,
-            setValidity(db, entity, sub, id, reason.slice(0, MAX_VALIDITY_REASON), deps.logEvent),
-          );
+          const why = reason.slice(0, MAX_VALIDITY_REASON);
+          const result = setValidity(db, entity, sub, id, why, deps.logEvent);
+          ctx.send(input.entity, result.message);
+          if (result.changed && sub === "invalidate") {
+            // Lessons learned from (or comparing against) the run measured the
+            // infrastructure, not the target: retire them through the audited path.
+            const r = await retireLessonsForRun(db, id, {
+              reason: why,
+              by: db.durableEntityKey(entity.id),
+            });
+            if (r.retired.length || r.failed.length || r.error)
+              ctx.send(
+                input.entity,
+                `  Lessons citing ${id}: ${r.retired.length} retired${r.failed.length ? `, ${r.failed.length} failed` : ""}${r.error ? ` (${r.error})` : ""}.`,
+              );
+          }
           return;
         }
 
@@ -947,11 +960,12 @@ function setValidity(
   runId: string,
   reason: string,
   logEvent: ((event: EngineEvent) => void) | undefined,
-): string {
+): { message: string; changed: boolean } {
+  const no = (message: string) => ({ message, changed: false });
   const gate = checkRoleEdit(db, entity, `benchmark ${action} ${runId}`);
-  if ("reason" in gate) return gate.reason;
+  if ("reason" in gate) return no(gate.reason);
   const run = db.getBenchmarkRun(runId);
-  if (!run) return `No run ${runId}.`;
+  if (!run) return no(`No run ${runId}.`);
   // Re-admitting your own run as valid is self-attestation; retiring it is not.
   const author = run.agent_id;
   if (
@@ -959,7 +973,9 @@ function setValidity(
     author &&
     (author === entity.id || db.durableEntityKey(author) === db.durableEntityKey(entity.id))
   ) {
-    return `Refused: you ran ${runId}. Someone else must revalidate it — self-attestation is never accepted.`;
+    return no(
+      `Refused: you ran ${runId}. Someone else must revalidate it — self-attestation is never accepted.`,
+    );
   }
   const now = Date.now();
   const res = db.setBenchmarkRunValidity({
@@ -971,7 +987,7 @@ function setValidity(
     source: "in-world",
     created_at: now,
   });
-  if (!res.ok) return res.error;
+  if (!res.ok) return no(res.error);
   gate.record();
   logEvent?.({
     type: "feed_event",
@@ -982,9 +998,13 @@ function setValidity(
     payload: { id: runId, benchmark: run.benchmark, reason, source: "in-world" },
     timestamp: now,
   });
-  return action === "invalidate"
-    ? `Invalidated ${runId} (${run.benchmark}, ${runLabel(run)}): ${reason}\n  Its items are kept; every ranking, pooling, comparison, promotion and route evidence now skips it. Audit row ${res.id}.`
-    : `Revalidated ${runId} (${run.benchmark}, ${runLabel(run)}): ${reason}\n  It counts again in every ledger reader. Audit row ${res.id}.`;
+  return {
+    changed: true,
+    message:
+      action === "invalidate"
+        ? `Invalidated ${runId} (${run.benchmark}, ${runLabel(run)}): ${reason}\n  Its items are kept; every ranking, pooling, comparison, promotion and route evidence now skips it. Audit row ${res.id}.`
+        : `Revalidated ${runId} (${run.benchmark}, ${runLabel(run)}): ${reason}\n  It counts again in every ledger reader. Audit row ${res.id}.`,
+  };
 }
 
 // ─── Earned promotion of defaults ──────────────────────────────────────────

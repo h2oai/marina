@@ -208,6 +208,12 @@ export interface RunOptions {
    */
   afterRow?: (row: FuturexRow, r: RowResult) => Promise<void>;
   /**
+   * Awaited for each row taken from the journal of a stopped run, in row order,
+   * before any new row starts — e.g. rebuild an in-run lesson pool that lived
+   * only in the stopped process.
+   */
+  onResumed?: (row: FuturexRow, r: RowResult) => Promise<void>;
+  /**
    * Checked before each row is started: a reason stops the batch cleanly (rows in
    * flight finish, no new row starts) and `runBatch` rejects with `BatchStopped`,
    * carrying the finished rows — e.g. a spend budget about to run out, which
@@ -260,6 +266,9 @@ export async function runBatch(
     else todo.push(i);
   });
   const resumed = rows.length - todo.length;
+  if (opts.onResumed) {
+    for (const [i, row] of rows.entries()) if (results[i]) await opts.onResumed(row, results[i]!);
+  }
   let next = 0;
   let done = resumed;
   let stopped: string | undefined;

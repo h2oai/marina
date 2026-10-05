@@ -3,8 +3,15 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { crpsNormal } from "../src/arena/score";
-import { forecastCommand, renderHistory, saveAnswer } from "../src/engine/commands/forecast";
+import {
+  forecastCommand,
+  renderHistory,
+  saveAnswer,
+  saveTypedAnswer,
+} from "../src/engine/commands/forecast";
 import type { ForecastAnswer } from "../src/forecast/question";
+import type { TypedForecastAnswer } from "../src/forecast/typed";
+import { scoreTypedAnswer } from "../src/forecast/typed-score";
 import { MarinaDB } from "../src/persistence/database";
 import {
   clearCalibrationFinders,
@@ -107,5 +114,103 @@ describe("forecast answers are persisted and calibrated", () => {
     run("e_ada", "list");
     expect(sent.at(-1)).toContain(`#${id}`);
     expect(sent.at(-1)).toContain("Brier 0.090");
+  });
+});
+
+const typedAnswer = (over: Partial<TypedForecastAnswer>): TypedForecastAnswer =>
+  ({
+    question: "Who wins?",
+    answer: {
+      type: "choice",
+      options: [
+        { id: "A", label: "Home" },
+        { id: "B", label: "Away" },
+      ],
+    },
+    runs: [],
+    research: [],
+    sources: [],
+    cutoff: { at: "2026-09-01T00:00:00.000Z", basis: "now", pastCutoff: false },
+    costUsd: 0,
+    latencyMs: 1,
+    ...over,
+  }) as TypedForecastAnswer;
+
+describe("typed answers are scored when their Sample resolves", () => {
+  let db: MarinaDB;
+  beforeEach(() => {
+    db = new MarinaDB(":memory:");
+    clearCalibrationFinders();
+    registerBuiltinCalibrationFinders();
+  });
+  afterEach(() => {
+    clearCalibrationFinders();
+    db.close();
+  });
+
+  it("a choice: multiclass Brier from its distribution, matched by id or label", () => {
+    saveTypedAnswer(
+      db,
+      "Ada",
+      typedAnswer({ prediction: "A", formatted: "A", distribution: { A: 0.7, B: 0.3 } }),
+      "kalshi/MATCH",
+    );
+    runCalibration(db, resolved("kalshi/MATCH", { option: "Home" }));
+    const row = db.listForecastAnswers("Ada")[0]!;
+    expect(row.score).toBeCloseTo(0.18, 6); // (0.7−1)² + 0.3²
+    expect(JSON.parse(row.outcome_json!)).toMatchObject({ outcome: ["A"], correct: true });
+    expect(renderHistory([row])).toContain("Brier 0.180");
+  });
+
+  it("an outcome that matches none of its options leaves the answer open", () => {
+    saveTypedAnswer(db, "Ada", typedAnswer({ prediction: "A", formatted: "A" }), "kalshi/MATCH");
+    runCalibration(db, resolved("kalshi/MATCH", { option: "Draw" }));
+    expect(db.listForecastAnswers("Ada")[0]!.resolved_at).toBeNull();
+  });
+
+  it("a typed number carries its uncertainty and is scored by CRPS", () => {
+    saveTypedAnswer(
+      db,
+      "Ada",
+      typedAnswer({
+        answer: { type: "number" },
+        prediction: 100,
+        formatted: "100",
+        uncertainty: { sd: 10 },
+      }),
+      "fred/CPI",
+    );
+    runCalibration(db, resolved("fred/CPI", { value: 110 }));
+    expect(db.listForecastAnswers("Ada")[0]!.score).toBeCloseTo(crpsNormal(100, 10, 110), 6);
+  });
+
+  it("scores multi, ranking and text, and a yes/no outcome against Yes/No options", () => {
+    const multi = scoreTypedAnswer(
+      {
+        answer: { type: "multi", options: [{ id: "A" }, { id: "B" }, { id: "C" }] },
+        prediction: ["A", "B"],
+      },
+      { options: ["A", "C"] },
+    )!;
+    expect(multi.loss).toBeCloseTo(2 / 3, 4);
+    expect(multi.succeeded).toBe(false);
+    const ranking = scoreTypedAnswer(
+      { answer: { type: "ranking", size: 3 }, prediction: ["x", "y", "z"] },
+      { ranking: ["y", "q", "x"] },
+    )!;
+    expect(ranking.quality).toBeCloseTo(2 / 3, 4);
+    const text = scoreTypedAnswer(
+      { answer: { type: "text" }, prediction: "Paris." },
+      { value: "paris" },
+    )!;
+    expect(text).toMatchObject({ loss: 0, succeeded: true });
+    const yesNo = scoreTypedAnswer(
+      {
+        answer: { type: "choice", options: [{ id: "Yes" }, { id: "No" }] },
+        prediction: "No",
+      },
+      { outcome: "yes" },
+    )!;
+    expect(yesNo).toMatchObject({ loss: 2, succeeded: false, outcome: ["Yes"] });
   });
 });

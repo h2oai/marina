@@ -36,6 +36,8 @@ export interface ForecastCommandDeps {
     "saveForecastAnswer" | "linkForecastToSample" | "listForecastAnswers"
   >;
   getEntity?: (id: string) => { name: string } | undefined;
+  /** The world database, for the lesson pool typed forecasts recall (none: no lessons). */
+  readonly lessonsDb?: MarinaDB;
 }
 
 /**
@@ -119,28 +121,15 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
       );
       if (typed) {
         return (async () => {
-          const [{ forecastFormed }, { typedForecastDeps }, { forecastLessonsFor }] =
-            await Promise.all([
-              import("../../forecast/formations"),
-              import("../../forecast/service"),
-              import("../../learning/forecast-bridge"),
-            ]);
-          // The wired store is the full MarinaDB; a narrowed test store has no lesson pool.
-          const full = deps.db as unknown as MarinaDB | undefined;
-          const made = typedForecastDeps(process.env, {
-            ...(typeof full?.getUserByName === "function"
-              ? { lessons: forecastLessonsFor(full) }
-              : {}),
-          });
-          if ("error" in made) return ctx.send(input.entity, made.error);
-          // The ensemble formation is the typed forecaster itself, plus the prior
-          // shrink / recalibration stage when the operator turned it on.
-          const a = await forecastFormed(
+          // The same builder as POST /v1/forecast: operator formation and
+          // routing, the prior / recalibration stage, and the lesson pool.
+          const { typedForecastFor } = await import("../../forecast/surface");
+          const made = await typedForecastFor(
             { question, answer: typed.spec, ...(typed.endTime ? { endTime: typed.endTime } : {}) },
-            made.deps,
-            "ensemble",
+            deps.lessonsDb ? { db: deps.lessonsDb } : {},
           );
-          a.costUsd = made.costUsd();
+          if ("error" in made) return ctx.send(input.entity, made.error);
+          const a = made.answer;
           const saved = name && deps.db ? saveTypedAnswer(deps.db, name, a, sampleId) : undefined;
           ctx.send(
             input.entity,
@@ -238,6 +227,8 @@ export function saveTypedAnswer(
       question: a.question,
       kind: a.answer.type,
       ...(typeof a.prediction === "number" ? { mean: a.prediction } : {}),
+      // A number's uncertainty: with it, the answer is scored by CRPS when it resolves.
+      ...(typeof a.prediction === "number" && a.uncertainty?.sd ? { sd: a.uncertainty.sd } : {}),
       ...(a.formatted !== undefined ? { prediction: a.formatted } : {}),
       answerJson: JSON.stringify(a),
       ...(sampleId ? { sampleId } : {}),
@@ -312,6 +303,16 @@ export function saveAnswer(
   }
 }
 
+/** What a resolved row's score is, per kind (every score is a loss: lower is better). */
+const SCORE_LABEL: Record<string, string> = {
+  probability: "Brier",
+  number: "CRPS",
+  choice: "Brier",
+  multi: "set Brier",
+  ranking: "overlap loss",
+  text: "mismatch",
+};
+
 export function renderHistory(rows: ForecastAnswerRow[]): string {
   if (rows.length === 0) return "No saved forecasts yet.";
   return [
@@ -333,7 +334,7 @@ export function renderHistory(rows: ForecastAnswerRow[]): string {
           ? r.sample_id
             ? `open · resolves on ${r.sample_id}`
             : "open · untracked"
-          : `resolved${r.score === null ? "" : ` · ${r.kind === "probability" ? "Brier" : "CRPS"} ${r.score.toFixed(3)}`}`;
+          : `resolved${r.score === null ? "" : ` · ${SCORE_LABEL[r.kind] ?? "loss"} ${r.score.toFixed(3)}`}`;
       return `  #${r.id} ${bold(value)} ${r.question.slice(0, 80)}\n    ${dim(state)}`;
     }),
   ].join("\n");

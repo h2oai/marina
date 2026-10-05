@@ -335,6 +335,8 @@ export interface TypedForecastAnswer {
   lookups?: LookupResult[];
   /** Lessons recalled for this forecast (all resolved at or before the cutoff). */
   lessons?: Array<{ id?: string; text: string; resolvedAt: string }>;
+  /** `MARINA_LESSONS=observe`: lessons that would have been injected, recorded only. */
+  observedLessons?: Array<{ id?: string; text: string; resolvedAt: string }>;
   /** For a number: the freshest official reading the runs started from, and its horizon spread. */
   anchor?: NumericAnchor;
   critique?: Critique;
@@ -542,11 +544,15 @@ export async function forecastTyped(
   if (deps.lessons) {
     try {
       const recalled = await deps.lessons.recall(`${req.question} ${req.answer.type}`, cutoff.at);
-      out.lessons = recalled.map((l) => ({
+      const record = (l: (typeof recalled)[number]) => ({
         ...(l.id ? { id: l.id } : {}),
         text: l.text,
         resolvedAt: l.resolvedAt,
-      }));
+      });
+      // Observe mode: recorded on the answer, never shown to a model.
+      const observed = recalled.filter((l) => l.observed);
+      out.lessons = recalled.filter((l) => !l.observed).map(record);
+      if (observed.length) out.observedLessons = observed.map(record);
     } catch (err) {
       earlier.push(
         `lesson recall failed: ${(err instanceof Error ? err.message : String(err)).slice(0, 120)}`,

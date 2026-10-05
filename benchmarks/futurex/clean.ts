@@ -5,13 +5,14 @@
  * A CLEAN (non-leaking) backtest on resolved FutureX rows. Three things can
  * leak an outcome into a past-cutoff forecast, and each has a guard here:
  *
- *   model weights   only rows that ended well after every model's public
- *                   release (`MODEL_RELEASES`): a model published before an
- *                   event cannot have trained on it. Release dates are an
- *                   upper bound on knowledge cutoffs — the vendors' published
- *                   cutoffs are absent from the catalogue (`knowledge_cutoff`
- *                   is null) — so this is conservative. A model with no known
- *                   release requires an explicit `--after`.
+ *   model weights   only rows whose cutoff is more than the knowledge margin
+ *                   after every model's public release — the one rule shared
+ *                   with configuration selection (`../forecasting/knowledge.ts`:
+ *                   one release table, one margin, floating aliases refused).
+ *                   Release dates are an upper bound on knowledge cutoffs (the
+ *                   vendors' published cutoffs are absent from the catalogue),
+ *                   so this is conservative. A model with no known release
+ *                   requires an explicit `--after`.
  *   retrieval       the run's isolation level (src/arena/research/isolation.ts):
  *                   date-filtered engines, the strict post-filter, or closed-
  *                   book. An unfiltered engine is `contaminated` and refused.
@@ -24,44 +25,22 @@
  */
 
 import { daysMentioned } from "../../src/arena/research/isolation";
+import {
+  afterKnowledge,
+  FLOATING_ALIASES,
+  KNOWLEDGE_MARGIN_DAYS,
+  knowledgeBoundOf,
+  MODEL_RELEASES,
+} from "../forecasting/knowledge";
 import type { FuturexRow } from "./dataset";
 import { endTimeIso } from "./map";
 import type { RowResult, Variant } from "./run";
 import { parseTruth } from "./score";
 
-/**
- * Public release dates (UTC) of models usable in a clean backtest — an upper
- * bound on each model's knowledge cutoff. Source: OpenRouter's model catalogue
- * (`https://openrouter.ai/api/v1/models`, field `created`), read 2026-10-02.
- * Keys are the id after the `openrouter/` routing prefix.
- */
-export const MODEL_RELEASES: Record<string, string> = {
-  "deepseek/deepseek-v4-pro-0813": "2026-08-12",
-  "deepseek/deepseek-v4-pro": "2026-04-24",
-  "deepseek/deepseek-v4-flash": "2026-04-24",
-  "anthropic/claude-opus-5": "2026-07-24",
-  "google/gemini-3.5-flash-lite": "2026-07-21",
-  "google/gemini-3.8-flash": "2026-09-02",
-  "moonshotai/kimi-k3": "2026-07-16",
-  "z-ai/glm-5.1": "2026-04-07",
-  "anthropic/claude-opus-5.5": "2026-09-22",
-  "anthropic/claude-sonnet-5.5": "2026-09-28",
-  "anthropic/claude-fable-5.1": "2026-09-01",
-  "openai/gpt-6-astra-pro": "2026-09-04",
-  "openai/gpt-6.1-sol-pro": "2026-09-29",
-  "openai/gpt-6-luna": "2026-09-22",
-  "openai/gpt-6-sol": "2026-09-22",
-  "openai/gpt-6.1-sol": "2026-09-29",
-};
+export { FLOATING_ALIASES, KNOWLEDGE_MARGIN_DAYS, MODEL_RELEASES };
 
-/**
- * Some aliases (an unversioned id) can be re-pointed at newer weights after
- * their catalogue date. They are refused in a clean run; name a pinned id.
- */
-export const FLOATING_ALIASES = new Set(["deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash"]);
-
-/** Days before its end time a weekly FutureX question is released, at most. */
-export const RELEASE_LAG_DAYS = 10;
+/** The default backtest horizon (days before each end time the evidence is frozen). */
+export const DEFAULT_HORIZON_DAYS = 7;
 
 const bare = (m: string) => m.replace(/^openrouter\//, "");
 
@@ -81,15 +60,14 @@ export function knowledgeBound(
   v: Variant & { verifier?: string },
 ): { after: string } | { error: string } {
   const models = variantModels(v);
-  const floating = models.filter((m) => FLOATING_ALIASES.has(m));
-  if (floating.length) {
+  const bound = knowledgeBoundOf(models.filter((m) => !m.startsWith("marina:")));
+  if ("error" in bound) {
     return {
-      error: `floating alias ${floating.join(", ")}: name a pinned model id for a clean run`,
+      error:
+        bound.reason === "floating"
+          ? `${bound.error} for a clean run`
+          : `${bound.error}: pass --after <YYYY-MM-DD>`,
     };
-  }
-  const unknown = models.filter((m) => !MODEL_RELEASES[m] && !m.startsWith("marina:"));
-  if (unknown.length) {
-    return { error: `no known release date for ${unknown.join(", ")}: pass --after <YYYY-MM-DD>` };
   }
   if (models.some((m) => m.startsWith("marina:"))) {
     return {
@@ -97,8 +75,7 @@ export function knowledgeBound(
         "a crew analyst has its own tools (web search) and models: it cannot be isolated; use the in-engine verify option",
     };
   }
-  const dates = models.map((m) => MODEL_RELEASES[m]!).sort();
-  return { after: dates.at(-1)! };
+  return bound;
 }
 
 /** The Wednesday (UTC+8 calendar) that opens the weekly FutureX window holding `iso`. */
@@ -111,22 +88,22 @@ export function batchWeek(iso: string): string {
 }
 
 /**
- * Rows a clean backtest may use: resolved, with a parseable end time at least
- * `RELEASE_LAG_DAYS` after `after` (so the question was released after every
- * model's knowledge bound). Balanced across levels, spread across weeks, and
+ * Rows a clean backtest may use: resolved, with a parseable end time whose
+ * cutoff (end − `horizonDays`) is clean of the knowledge bound `after`
+ * (`afterKnowledge`: more than `KNOWLEDGE_MARGIN_DAYS` later). Balanced across levels, spread across weeks, and
  * returned in order of end time (the order lessons must be learned in).
  */
 export function selectCleanRows(
   rows: FuturexRow[],
-  opts: { after: string; limit: number; until?: string },
+  opts: { after: string; limit: number; until?: string; horizonDays?: number },
 ): FuturexRow[] {
-  const floor = Date.parse(opts.after) + RELEASE_LAG_DAYS * 86_400_000;
+  const horizon = (opts.horizonDays ?? DEFAULT_HORIZON_DAYS) * 86_400_000;
   const ceil = opts.until ? Date.parse(opts.until) : Number.POSITIVE_INFINITY;
   const eligible = rows.filter((r) => {
     const end = endTimeIso(r.end_time);
     if (!end || parseTruth(r.ground_truth).length === 0) return false;
     const t = Date.parse(end);
-    return t > floor && t <= ceil;
+    return afterKnowledge(t - horizon, opts.after) && t <= ceil;
   });
   const perLevel = Math.max(1, Math.floor(opts.limit / 4));
   const picked: FuturexRow[] = [];

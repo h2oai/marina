@@ -27,7 +27,8 @@
  *
  * Learning is armed per database by `enableOutcomeLearning(db)` — the server
  * (`main.ts`) and operator scripts call it; library code and tests that never
- * arm it see `noteOutcome` as a no-op. The lessons are owned by a server
+ * arm it see `noteOutcome` as a no-op. Recall needs no arming: it reads the
+ * pool through `lessonRecallSinkFor`, which never creates anything. The lessons are owned by a server
  * account named `marina:lessons` — a name login cannot produce (login names are
  * alphanumeric + underscore), so no participant can claim or edit the pool.
  * Lessons live in one shared space per domain (`lessons:<domain>`).
@@ -127,6 +128,41 @@ export function lessonSinkFor(db: MarinaDB): LessonSink {
     return p;
   };
   return durableLessonSink(run, spaceFor);
+}
+
+const recallOnlySinks = new WeakMap<object, LessonSink>();
+
+/**
+ * A recall-only sink over `db`: reads the lessons account's existing
+ * `lessons:<domain>` spaces and never creates the account or a space (no
+ * account or no space ⇒ no lessons). This is what lets every surface that
+ * forecasts or verifies on a database — the server, an operator script, a
+ * backtest — recall the judged pool without arming the learning loop, which
+ * only the writers need.
+ */
+export function lessonRecallSinkFor(db: MarinaDB): LessonSink {
+  const cached = recallOnlySinks.get(db);
+  if (cached) return cached;
+  const run = (request: MemoryOperationRequest) =>
+    residentMemoryOperation(db, LESSONS_ACCOUNT, request) as Promise<{
+      ok: true;
+      result: unknown;
+    }>;
+  const found = new Map<OutcomeDomain, string>();
+  const spaceFor = async (domain: OutcomeDomain) => {
+    const known = found.get(domain);
+    if (known) return known;
+    if (!db.getUserByName(LESSONS_ACCOUNT)) return undefined;
+    const listed = (await run({ operation: "spaces" })).result as {
+      spaces?: Array<{ id: string; name: string }>;
+    };
+    const id = listed.spaces?.find((s) => s.name === `lessons:${domain}`)?.id;
+    if (id) found.set(domain, id);
+    return id;
+  };
+  const sink = durableLessonSink(run, spaceFor);
+  recallOnlySinks.set(db, sink);
+  return sink;
 }
 
 /** This Marina's own `/v1` base and the internal model token (no vendor key). */
@@ -370,9 +406,10 @@ export async function recallLessons(
 ): Promise<RecalledLessons> {
   const mode = lessonsMode(opts.env);
   if (mode === "off") return { inject: [], recalled: [], mode };
-  // Inert unless learning is armed for `db` (or a sink is given): recall never
-  // creates the lessons account or its spaces as a side effect.
-  const sink = opts.sink ?? (db ? armed.get(db)?.sink : undefined);
+  // The given sink, else the armed one, else a recall-only reader of the pool:
+  // recall never creates the lessons account or its spaces as a side effect,
+  // and needs no arming (only writers do).
+  const sink = opts.sink ?? (db ? (armed.get(db)?.sink ?? lessonRecallSinkFor(db)) : undefined);
   if (!sink) return { inject: [], recalled: [], mode };
   try {
     const recalled = await sink.recall(domain, query, opts.asOf ?? new Date().toISOString(), {
@@ -437,6 +474,14 @@ export async function recallAcross(
 /** The sink curation acts on: the armed one, else the durable sink over `db`. */
 function curationSink(db: MarinaDB, sink?: LessonSink): LessonSink {
   return sink ?? armed.get(db)?.sink ?? lessonSinkFor(db);
+}
+
+/**
+ * The sink a find-and-retire pass uses: the armed one, else the recall-only
+ * reader (which can retire what it finds, and never creates a space to look in).
+ */
+export function lessonRetireSink(db: MarinaDB): LessonSink {
+  return armed.get(db)?.sink ?? lessonRecallSinkFor(db);
 }
 
 /** Current lessons matching `selector` across `domains` (any trust), capped at `limit`. */

@@ -38,7 +38,7 @@ import {
   runSelection,
 } from "../benchmarks/forecasting/cli";
 import { depsForConfig, forecasterFor } from "../benchmarks/forecasting/configs";
-import { attachWorldSpend, learnedLessons } from "../benchmarks/forecasting/shared";
+import { attachWorldSpend } from "../benchmarks/forecasting/shared";
 import {
   fixtureClient,
   type MetaculusClient,
@@ -55,6 +55,7 @@ import {
   spentToday,
 } from "../benchmarks/metaculus/bot";
 import { timerUnits } from "../benchmarks/metaculus/timer";
+import { forecastLessonsFor } from "../src/learning/forecast-bridge";
 import { enableOutcomeLearning, noteOutcome, settleOutcomes } from "../src/learning/service";
 import { MarinaDB } from "../src/persistence/database";
 
@@ -158,7 +159,7 @@ async function forecastCmd(db: MarinaDB): Promise<number> {
   });
   const forecast = forecasterFor(
     chosen.config,
-    depsForConfig(chosen.config, { lessons: learnedLessons(db) }),
+    depsForConfig(chosen.config, { lessons: forecastLessonsFor(db) }),
   );
   log(
     `metaculus ${dryRun ? "DRY RUN " : ""}· tournaments ${tournaments.join(", ")} · ${chosen.config.label}: ${chosen.description} · spent today $${spentToday(db, new Date()).toFixed(2)} of $${values["daily-cap"]}`,

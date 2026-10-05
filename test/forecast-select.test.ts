@@ -116,6 +116,40 @@ describe("selectConfiguration order", () => {
   });
 });
 
+describe("selectConfiguration knowledge bounds", () => {
+  it("refuses a floating alias (its catalogue date can't bound its weights) and a too-recent model", async () => {
+    const ran: string[] = [];
+    const s = await selectConfiguration({
+      benchmark: "t",
+      items,
+      candidates: [config("a"), config("b"), config("c")],
+      // v/a has a dated pinned sibling, so `v/a` floats; v/c is released 2 days before the items.
+      releases: {
+        "v/a": "2026-07-01",
+        "v/a-0813": "2026-08-13",
+        "v/b": "2026-08-01",
+        "v/c": "2026-09-11",
+      },
+      makeForecaster: (c) => async () => {
+        ran.push(c.label);
+        return answer(0, "Yes");
+      },
+      replicates: 1,
+      minItems: 1,
+      budgetUsd: 100,
+      isolation: "date-filtered",
+      concurrency: 1,
+      env: { MARINA_DAILY_SPEND_CAP_USD: "0" },
+    });
+    const by = (l: string) => s.ranking.find((r) => r.label === l)!;
+    expect(by("a").status).toBe("floating alias");
+    expect(by("a").note).toContain("v/a");
+    expect(by("c").status).toBe("too recent");
+    expect(by("b").status).toBe("ranked");
+    expect(new Set(ran)).toEqual(new Set(["b"]));
+  });
+});
+
 describe("auditForecast", () => {
   it("counts evidence, lessons and lookups dated after the cutoff", () => {
     const report = [

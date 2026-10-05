@@ -8,9 +8,16 @@
  */
 
 import { benchmarkExecution } from "../engine/benchmark-execution";
+import { getErrorMessage } from "../engine/errors";
 import type { MarinaDB } from "../persistence/database";
-import type { Outcome } from "./outcomes";
-import { noteOutcome } from "./service";
+import { type LessonSink, OUTCOME_DOMAINS, type Outcome } from "./outcomes";
+import {
+  findLessons,
+  lessonRetireSink,
+  noteOutcome,
+  type RetireResult,
+  retireLessons,
+} from "./service";
 
 interface RunLike {
   id: string;
@@ -99,4 +106,41 @@ export function noteBenchmarkRun(db: MarinaDB, run: RunLike): void {
   if (db.getBenchmarkRun(run.id)?.status === "invalid") return;
   const outcome = benchmarkRunOutcome(db, run);
   if (outcome) noteOutcome(db, outcome);
+}
+
+/**
+ * A ledger run was invalidated (`benchmark invalidate`, `benchmark:import
+ * --invalidate`): retire every current lesson that cites it (`bench:<id>` in
+ * its refs — lessons learned from the run, and lessons that compared another
+ * run against it). Retirement is the audited `revise` path: the lesson stops
+ * being served, its history and the reason stay readable. Revalidating the
+ * run does not bring them back (a new outcome teaches again). Never throws.
+ */
+export async function retireLessonsForRun(
+  db: MarinaDB,
+  runId: string,
+  retirement: { reason: string; by: string },
+  opts: { sink?: LessonSink } = {},
+): Promise<RetireResult & { error?: string }> {
+  try {
+    const sink = opts.sink ?? lessonRetireSink(db);
+    const found = await findLessons(
+      db,
+      OUTCOME_DOMAINS,
+      { ref: `bench:${runId}` },
+      {
+        sink,
+        limit: 1_000,
+      },
+    );
+    if (!found.length) return { retired: [], failed: [] };
+    return await retireLessons(
+      db,
+      found,
+      { reason: `benchmark run ${runId} invalidated: ${retirement.reason}`, by: retirement.by },
+      { sink },
+    );
+  } catch (err) {
+    return { retired: [], failed: [], error: getErrorMessage(err) };
+  }
 }

@@ -3,10 +3,16 @@
 
 import { describe, expect, it } from "bun:test";
 import {
+  afterKnowledge,
+  isFloatingAlias,
+  knowledgeBoundOf,
+  releaseTable,
+} from "../benchmarks/forecasting/knowledge";
+import {
   auditRow,
   batchWeek,
+  KNOWLEDGE_MARGIN_DAYS,
   knowledgeBound,
-  RELEASE_LAG_DAYS,
   selectCleanRows,
 } from "../benchmarks/futurex/clean";
 import { bootstrapOverall, weightedOverall } from "../benchmarks/futurex/clean-run";
@@ -48,6 +54,33 @@ describe("knowledge bounds", () => {
   });
 });
 
+describe("one knowledge-bound rule (clean backtest and selection)", () => {
+  it("refuses floating aliases everywhere: known ones, latest routes, and ids with a pinned sibling", () => {
+    expect(isFloatingAlias("openrouter/deepseek/deepseek-v4-pro")).toBe(true);
+    expect(isFloatingAlias("~anthropic/claude-latest")).toBe(true);
+    expect(isFloatingAlias("vendor/model-latest")).toBe(true);
+    expect(isFloatingAlias("vendor/model", ["vendor/model-20260813"])).toBe(true);
+    expect(isFloatingAlias("vendor/model", ["vendor/model-pro"])).toBe(false);
+    expect(isFloatingAlias("deepseek/deepseek-v4-pro-0813")).toBe(false);
+    const bound = knowledgeBoundOf(["vendor/model"], {
+      "vendor/model": "2026-07-01",
+      "vendor/model-0901": "2026-09-01",
+    });
+    expect("error" in bound && bound.reason).toBe("floating");
+  });
+
+  it("the pinned release table wins over a catalogue date", () => {
+    const t = releaseTable({ "anthropic/claude-opus-5.5": "2026-01-01", "x/new": "2026-09-30" });
+    expect(t["anthropic/claude-opus-5.5"]).toBe("2026-09-22");
+    expect(t["x/new"]).toBe("2026-09-30");
+  });
+
+  it("a cutoff is clean only strictly after the bound plus the margin", () => {
+    expect(afterKnowledge("2026-08-15T00:00:00.000Z", "2026-08-12")).toBe(false);
+    expect(afterKnowledge("2026-08-15T00:00:00.001Z", "2026-08-12")).toBe(true);
+  });
+});
+
 describe("clean row selection", () => {
   it("keeps rows released after the bound, balanced by level, in order of end time", () => {
     const rows = [
@@ -61,7 +94,12 @@ describe("clean row selection", () => {
     ];
     const got = selectCleanRows(rows, { after: "2026-08-12", limit: 4 });
     expect(got.map((r) => r.id)).toEqual(["r4", "r2", "r1", "r3"]);
-    expect(RELEASE_LAG_DAYS).toBe(10);
+    // The default 7-day horizon plus the 3-day margin: rows end more than 10 days after the bound.
+    expect(KNOWLEDGE_MARGIN_DAYS).toBe(3);
+    const atEdge = [row("edge", 1, "2026-08-22 08:00:00"), row("past", 1, "2026-08-22 09:00:00")];
+    expect(selectCleanRows(atEdge, { after: "2026-08-12", limit: 4 }).map((r) => r.id)).toEqual([
+      "past",
+    ]);
   });
 
   it("names the batch week by its opening Wednesday (UTC+8)", () => {
