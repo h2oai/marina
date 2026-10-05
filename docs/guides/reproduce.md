@@ -37,6 +37,7 @@ bootstrap over runs, then items). A single run is labelled "not replicated".
 | `--domain` | τ²-bench domain (default `airline`) |
 | `--split` | τ²-bench task split (`test` or `base`); runs the whole split unless `--limit` is given. `base` is the leaderboard split: every task, so `--limit` is refused with it. A re-run with the same `--run-dir` resumes an interrupted τ² run (`--auto-resume`) |
 | `--effort`, `--user-effort` | τ²-bench agent and user-simulator reasoning effort (default `high` and `low`), sent in `extra_body` |
+| `--retrieval-config` | τ³ `banking_knowledge` only: τ²'s knowledge-base retrieval configuration (default `alltools`, the board's reference configuration; it is shown on the board and is part of the run's configuration tag). Refused for other domains |
 | `--env-image` | SWE-bench: run the agent's tests inside each instance's environment image (full agent rather than agentless) |
 | `--run-dir`, `--ledger` | where runs, servers and the ledger live (default under `~/.local/share/marina-repro/`, on disk) |
 | `--dry-run` | print the plan and the estimate, then stop |
@@ -65,6 +66,7 @@ changed, so a single small model can still run everything:
 - **SWE-bench harness:** a Python with the `swebench` package, named by `SWEBENCH_PYTHON`.
 - **τ²-bench:** a checkout with its virtualenv, named by `TAU2_HOME`.
 - **τ²-bench evaluator:** `OPENAI_API_KEY` in `.env`. τ²'s NL-assertion judge calls OpenAI's `gpt-4.1` with keys from the environment; without one, those simulations end as infrastructure errors.
+- **τ³ knowledge shell** (`--domain banking_knowledge` with `alltools` or `terminal_use`): τ² runs the agent's knowledge-base shell under Anthropic's sandbox-runtime, so `srt` (`@anthropic-ai/sandbox-runtime@0.0.23`, the version τ² pins), `rg`, `bwrap` and `socat` must be on `PATH`, and the τ² virtualenv needs τ²'s `knowledge` extra (`pip install -e ".[knowledge]"`). `alltools` also embeds with OpenAI (`OPENAI_API_KEY`); those embedding calls are τ²'s own and are not in Marina's spend ledger.
 
 ## What the kit does for you
 
