@@ -3,6 +3,7 @@
 
 import type { Database } from "bun:sqlite";
 import { cosine } from "../memory/embeddings";
+import { TopK } from "../retrieval/vectors";
 import {
   authorizeMemorySpace,
   type MemoryFilter,
@@ -33,9 +34,8 @@ export function rankMemoryVectors(
   let scored = 0,
     missing = 0,
     invalid = 0;
-  let best: { id: string; score: number }[] = [];
-  const compare = (a: { id: string; score: number }, b: { id: string; score: number }) =>
-    b.score - a.score || a.id.localeCompare(b.id);
+  // Exact scan keeping a bounded top 200 (shared with corpus vectors); ties by id.
+  const best = new TopK<string>(200, (a, b) => a.localeCompare(b) < 0);
   for (const entry of rows.iterate(
     model,
     space,
@@ -52,17 +52,13 @@ export function rankMemoryVectors(
     try {
       const score = cosine(vector, JSON.parse(entry.vector));
       scored++;
-      if (score > 0) best.push({ id: entry.id, score });
-      if (best.length >= 400) best = best.sort(compare).slice(0, 200);
+      if (score > 0) best.offer(entry.id, score);
     } catch {
       invalid++;
     }
   }
   return {
-    ids: best
-      .sort(compare)
-      .slice(0, 200)
-      .map((item) => item.id),
+    ids: best.sorted().map((entry) => entry.item),
     scored,
     missing,
     invalid,

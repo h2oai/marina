@@ -35,9 +35,10 @@ import {
   BENCHMARKS,
   type BenchmarkRunner,
   type BenchmarkSubject,
+  purgeBenchmarkContentNotes,
   retireOutcomeNotesForRun,
 } from "../benchmark-runner";
-import { extractModifiers, resolveMultiWordName } from "../parse-input";
+import { extractModifiers, parseModifiers, resolveMultiWordName } from "../parse-input";
 import { checkRoleEdit } from "../role-guard";
 import { formatAge } from "./format-duration";
 
@@ -100,6 +101,12 @@ Usage:
                                                      invalidator can't fill the slot.
   benchmark revalidate <run> reason:<text>         — undo an invalidation (audited the same way);
                                                      needs role.edit, never the run's own author.
+  benchmark purge-content-notes [confirm:yes]      — find the per-item notes older runs left in
+                                                     benchmark:<name> pools (each held an item's
+                                                     question and answer); dry run by default.
+                                                     confirm:yes retires them through note delete's
+                                                     audited path (needs role.edit). Runs now teach
+                                                     only through judged lessons (\`lessons\`).
 
 Benchmarks: smoke (15-item prompt A/B, always ready), mmlu-pro, truthfulqa, arc-challenge,
   hellaswag, musr, bbh, gsm8k, math, simple-qa, humaneval, ifeval, frames, aime
@@ -166,6 +173,7 @@ export function benchmarkCommand(deps: {
       "benchmark compare <runA> <runB>",
       "benchmark defaults",
       "benchmark promote <slot> <run> [--max-cost-ratio R] [--holdout F]",
+      "benchmark purge-content-notes [confirm:yes]",
       "benchmark frontier <benchmark>",
       "benchmark invalidate <run> reason:<text>",
       "benchmark leaderboard <benchmark> [--limit N]",
@@ -770,6 +778,19 @@ export function benchmarkCommand(deps: {
           return;
         }
 
+        case "purge-content-notes": {
+          const parsed = parseModifiers(tokens.slice(1), { confirm: { type: "bool" } });
+          if (parsed.errors.length || parsed.rest.length) {
+            ctx.send(input.entity, "Usage: benchmark purge-content-notes [confirm:yes]");
+            return;
+          }
+          ctx.send(
+            input.entity,
+            purgeContentNotes(db, entity, parsed.values.confirm === true, deps.logEvent),
+          );
+          return;
+        }
+
         case "frontier": {
           const name = tokens[1];
           if (!name) {
@@ -962,6 +983,51 @@ function validityLines(db: MarinaDB, row: BenchmarkRunRow): string[] {
     );
   }
   return lines;
+}
+
+/**
+ * `benchmark purge-content-notes [confirm:yes]`: the dry run (rank 0) reports
+ * counts per pool, never content; applying needs role.edit, retires through
+ * `note delete`'s audited path and logs one feed event.
+ */
+function purgeContentNotes(
+  db: MarinaDB,
+  entity: Entity,
+  apply: boolean,
+  logEvent: ((event: EngineEvent) => void) | undefined,
+): string {
+  const preview = purgeBenchmarkContentNotes(db);
+  if (preview.error) return `Content-note scan failed: ${preview.error}`;
+  if (preview.found === 0)
+    return "No benchmark content notes: no benchmark:<name> pool holds item text.";
+  const pools = preview.pools.map((p) => `  ${category(p.name)}  ${p.notes} note(s)`);
+  if (!apply)
+    return [
+      `${preview.found} benchmark content note(s) would be retired (each holds an item's question and answer):`,
+      ...pools,
+      "Repeat with confirm:yes to retire them (needs role.edit; audited, nothing is erased).",
+    ].join("\n");
+  const gate = checkRoleEdit(db, entity, "benchmark purge-content-notes");
+  if ("reason" in gate) return gate.reason;
+  const done = purgeBenchmarkContentNotes(db, { apply: true });
+  if (done.retired) gate.record();
+  logEvent?.({
+    type: "feed_event",
+    kind: "benchmark_content_notes_retired",
+    entity: entity.id,
+    summary: `benchmark content notes retired: ${done.retired} of ${done.found}${done.failed ? `, ${done.failed} failed` : ""}`,
+    payload: {
+      retired: done.retired,
+      failed: done.failed,
+      pools: done.pools,
+      actor: db.durableEntityKey(entity.id),
+    },
+    timestamp: Date.now(),
+  });
+  return [
+    `Retired ${done.retired} of ${done.found} benchmark content note(s)${done.failed ? ` (${done.failed} failed)` : ""}${done.error ? ` (${done.error})` : ""}:`,
+    ...done.pools.map((p) => `  ${category(p.name)}  ${p.notes} note(s)`),
+  ].join("\n");
 }
 
 /** `benchmark invalidate|revalidate`: role.edit, audited, never deletes anything. */

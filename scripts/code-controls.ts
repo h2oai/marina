@@ -34,6 +34,11 @@ export const TERMINAL_CONTROLS = [
   ...WORKFLOW_CONTROLS,
   { name: "/agents", usage: "/agents", help: "Show agents, status and workspace" },
   {
+    name: "/resume",
+    usage: "/resume <name-or-id>",
+    help: "Reconnect a recorded native session without replaying its last task",
+  },
+  {
     name: "/spawn",
     usage: "/spawn claude|codex|pi [name]",
     help: "Add a native agent in an isolated Git worktree",
@@ -56,15 +61,15 @@ export const TERMINAL_CONTROLS = [
 export const TERMINAL_COMMANDS = TERMINAL_CONTROLS.map((control) => control.name);
 
 export function terminalControls(connected = false) {
-  return TERMINAL_CONTROLS.filter((control) => !connected || control.name !== "/spawn").map(
-    (control) => {
-      if (connected && control.name === "/use")
-        return { ...control, usage: "/use marina", help: "Select the server-side coding agent" };
-      if (connected && control.name === "/quit")
-        return { ...control, help: "Detach; world agents and tasks keep running" };
-      return control;
-    },
-  );
+  return TERMINAL_CONTROLS.filter(
+    (control) => !connected || !["/spawn", "/resume"].includes(control.name),
+  ).map((control) => {
+    if (connected && control.name === "/use")
+      return { ...control, usage: "/use marina", help: "Select the server-side coding agent" };
+    if (connected && control.name === "/quit")
+      return { ...control, help: "Detach; world agents and tasks keep running" };
+    return control;
+  });
 }
 
 export function terminalHelp(connected = false): string {
@@ -83,7 +88,8 @@ ${terminalControls(connected)
 /panel resources [filter]                Discover data sources for coded panel compositions
 /panel open <canvas> <node>              Open an existing publication; /panel close closes only its view
 F6 switches coding/world; F7 opens pending requests; F8 focuses the published panel. Switching preserves each draft.
-Tab completes terminal commands. Ctrl+C interrupts active work; again exits.
+Tab completes commands and observed files/artifacts; /world code files lists your workspace.
+Ctrl+C interrupts active work; again exits.
 Workspace (--tui): type / for suggestions. Tab or Enter inserts; another Enter sends.
 Wide workspaces show Coding and World together; Requests or Panel replace the Coding pane.
 F2 cycles auto/focus/split layouts; /layout auto|focus|split selects one. Narrow screens use focus.

@@ -28,8 +28,8 @@
   - **Absolute conversation cap.** `conversationTokenCap` in `context-manager.ts` caps the conversation at 48 000 estimated tokens by default, excluding the system prompt and tool schemas. Once the cap is reached the history is compacted to a third of it (`MARINA_AGENT_CONTEXT_TARGET_TOKENS`).
     - `MARINA_AGENT_CONTEXT_CAP_TOKENS=0|off` disables it; an explicit value is floored at 8 000.
     - The window-ratio trigger (0.8 × effective window) still fires first on small or local windows, because the cap is consulted only below it.
-    - The cap never compacts an agent's first run (`hasCompletedRun`).
-    - The built-in default exempts an agent bound to an active Code Mode task (`setActiveCodingTask`), whose working set is legitimately large; an operator-set cap applies to every agent.
+    - Ordinary residents apply the cap after their first run (`hasCompletedRun`). Bound Code Mode coders also apply it after the first assistant turn inside a long task, so tool loops do not wait for another user prompt.
+    - Coding workers use the same default cap and operator overrides. The fresh request is preserved until work starts, and the durable full-request pointer survives in the task reminder. Archive-before-compaction and tool-call pairing remain enforced.
   - **Old reasoning blocks.** `dropOldThinking` in `transcript-hygiene.ts` removes reasoning blocks (text and signature) from assistant messages of earlier runs, on by default (`MARINA_DROP_OLD_THINKING_SIGNATURES=off` keeps them).
     - The latest run is untouched; OpenAI Responses-API messages, whose items are paired with their reasoning item by id, are skipped; and a reasoning-only message keeps its blocks.
   - Originals stay in the continuity journal and are archived before compaction; a failed archive (`ContextPersistenceError`) keeps the full history. `metrics.capCompactions` counts cap compactions.

@@ -223,10 +223,12 @@ The operator must keep that revision identifier aligned with the deployed model.
 been live-qualified here. No Hindsight, Graphiti or Mem0 backend is installed by this slice.
 
 The world server (`bun run start`) constructs the same providers from the environment.
-`MARINA_MEMORY_EMBEDDINGS=none|local|ollama` (default `none`) selects the provider;
-`local` reads `MARINA_MEMORY_EMBEDDING_CACHE` / `MARINA_MEMORY_EMBEDDING_LOCAL_ONLY`, and
+`MARINA_MEMORY_EMBEDDINGS=none|local|ollama|openai` (default `none`) selects the provider;
+`local` reads `MARINA_MEMORY_EMBEDDING_CACHE` / `MARINA_MEMORY_EMBEDDING_LOCAL_ONLY`,
 `ollama` requires `MARINA_MEMORY_EMBEDDING_MODEL`, `MARINA_MEMORY_EMBEDDING_REVISION` and
-optionally `MARINA_MEMORY_EMBEDDING_URL`. Unset or `none` keeps both memory silos lexical, and an
+optionally `MARINA_MEMORY_EMBEDDING_URL`, and `openai` (any OpenAI-compatible `/v1/embeddings`:
+the operator's existing provider or a local server) requires the URL, model and revision, with
+`MARINA_MEMORY_EMBEDDING_API_KEY` and an optional `MARINA_MEMORY_EMBEDDING_DIMENSIONS`. Unset or `none` keeps both memory silos lexical, and an
 explicit `mode:"hybrid"` then fails with `503 retrieval_incomplete` (`semantic_not_configured`)
 rather than quietly returning lexical results. An invalid value fails on first memory use instead
 of degrading silently; a `local` configuration without the installed extension reports

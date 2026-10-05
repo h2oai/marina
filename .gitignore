@@ -23,6 +23,7 @@ benchmarks/datasets/
 benchmarks/results/
 benchmarks/.tmp-humaneval/
 marina-export-*.json
+marina.db.bak-*
 artifacts/flywheel/
 .env.*
 !.env.example

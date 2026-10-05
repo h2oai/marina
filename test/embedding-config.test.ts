@@ -6,6 +6,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  CORPUS_EMBEDDING_ENV,
   EMBEDDING_ENV,
   embeddingProviderFromConfig,
   embeddingProviderId,
@@ -13,7 +14,7 @@ import {
   lazyEmbeddingProvider,
   parseEmbeddingEnv,
 } from "../src/memory/embedding-config";
-import { ollamaEmbeddings } from "../src/memory/embeddings";
+import { ollamaEmbeddings, openAIEmbeddings } from "../src/memory/embeddings";
 import { MemoryError } from "../src/memory/service-types";
 import { worldEmbeddingProvider, worldMemoryService } from "../src/memory/world-service";
 import { MarinaDB } from "../src/persistence/database";
@@ -65,12 +66,137 @@ describe("parseEmbeddingEnv", () => {
   });
 
   it("rejects unknown kinds and malformed booleans loudly", () => {
-    expect(() => parseEmbeddingEnv({ [EMBEDDING_ENV.kind]: "openai" })).toThrow(
-      /MARINA_MEMORY_EMBEDDINGS must be one of none, local, ollama \(got "openai"\)/,
+    expect(() => parseEmbeddingEnv({ [EMBEDDING_ENV.kind]: "cohere" })).toThrow(
+      /MARINA_MEMORY_EMBEDDINGS must be one of none, local, ollama, openai \(got "cohere"\)/,
     );
     expect(() =>
       parseEmbeddingEnv({ [EMBEDDING_ENV.kind]: "local", [EMBEDDING_ENV.localOnly]: "yes" }),
     ).toThrow(/LOCAL_ONLY must be true or false/);
+  });
+});
+
+describe("openai-compatible embeddings", () => {
+  const base = {
+    [EMBEDDING_ENV.kind]: "openai",
+    [EMBEDDING_ENV.model]: "qwen/qwen3-embedding-8b",
+    [EMBEDDING_ENV.revision]: "2026-10",
+  };
+
+  it("requires a URL (no default vendor) and keeps vendor keys on their own hosts", () => {
+    expect(() => parseEmbeddingEnv(base)).toThrow(/MARINA_MEMORY_EMBEDDING_URL/);
+    expect(
+      parseEmbeddingEnv({
+        ...base,
+        [EMBEDDING_ENV.url]: "https://openrouter.ai/api/v1",
+        OPENROUTER_API_KEY: "or-key",
+        OPENAI_API_KEY: "oa-key",
+      }),
+    ).toEqual({
+      kind: "openai",
+      url: "https://openrouter.ai/api/v1",
+      model: "qwen/qwen3-embedding-8b",
+      revision: "2026-10",
+      apiKey: "or-key",
+    });
+    const local = parseEmbeddingEnv({
+      ...base,
+      [EMBEDDING_ENV.url]: "http://127.0.0.1:8080/v1",
+      OPENROUTER_API_KEY: "or-key",
+      [EMBEDDING_ENV.dimensions]: "1024",
+    });
+    expect(local).not.toHaveProperty("apiKey");
+    expect(local).toMatchObject({ dimensions: 1024 });
+    expect(() =>
+      parseEmbeddingEnv({
+        ...base,
+        [EMBEDDING_ENV.url]: "http://x/v1",
+        [EMBEDDING_ENV.dimensions]: "0",
+      }),
+    ).toThrow(/positive integer/);
+    expect(embeddingProviderId(local)).toBe("openai:qwen/qwen3-embedding-8b@2026-10:d1024:raw-v1");
+  });
+
+  it("reads a separate variable family for corpora", () => {
+    expect(
+      parseEmbeddingEnv({ ...base, [EMBEDDING_ENV.url]: "http://x/v1" }, CORPUS_EMBEDDING_ENV),
+    ).toEqual({ kind: "none" });
+    expect(
+      parseEmbeddingEnv(
+        {
+          MARINA_CORPUS_EMBEDDINGS: "ollama",
+          MARINA_CORPUS_EMBEDDING_MODEL: "m",
+          MARINA_CORPUS_EMBEDDING_REVISION: "r",
+        },
+        CORPUS_EMBEDDING_ENV,
+      ),
+    ).toMatchObject({ kind: "ollama", model: "m" });
+  });
+
+  it("batches, orders by index, reports cost and refuses at the cap", async () => {
+    const calls: Array<{
+      url: string;
+      body: { input: string[]; dimensions?: number };
+      auth?: string;
+    }> = [];
+    const costs: number[] = [];
+    let refuse: string | undefined;
+    const provider = openAIEmbeddings({
+      baseUrl: "http://127.0.0.1:9/v1",
+      model: "m",
+      revision: "r",
+      apiKey: "k",
+      dimensions: 2,
+      onCost: (usd) => costs.push(usd),
+      refuse: () => refuse,
+      fetch: (async (url: string | URL, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body));
+        calls.push({
+          url: String(url),
+          body,
+          auth: (init?.headers as Record<string, string> | undefined)?.Authorization,
+        });
+        return new Response(
+          JSON.stringify({
+            data: body.input
+              .map((_: string, i: number) => ({
+                index: i,
+                embedding: [i + 1, 1],
+              }))
+              .reverse(),
+            usage: { cost: 0.000002 },
+          }),
+        );
+      }) as typeof fetch,
+    });
+    expect(provider.id).toBe("openai:m@r:d2:raw-v1");
+    expect(await provider.embedBatch!(["a", "b"])).toEqual([
+      [1, 1],
+      [2, 1],
+    ]);
+    expect(await provider.embed("c")).toEqual([1, 1]);
+    expect(calls[0]).toMatchObject({
+      url: "http://127.0.0.1:9/v1/embeddings",
+      body: { input: ["a", "b"], dimensions: 2 },
+      auth: "Bearer k",
+    });
+    expect(costs).toEqual([0.000002, 0.000002]);
+    refuse = "daily spend cap reached";
+    await expect(provider.embed("d")).rejects.toThrow(/daily spend cap/);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("rejects a malformed reply as invalid_embedding", async () => {
+    const provider = openAIEmbeddings({
+      baseUrl: "http://127.0.0.1:9/v1",
+      model: "m",
+      revision: "r",
+      fetch: (async () =>
+        new Response(
+          JSON.stringify({ data: [{ index: 0, embedding: [0, 0] }] }),
+        )) as unknown as typeof fetch,
+    });
+    const error = await provider.embed("x").catch((e) => e);
+    expect((error as MemoryError).code).toBe("invalid_embedding");
   });
 });
 
