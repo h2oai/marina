@@ -21,6 +21,7 @@ import { describeDefaultUpstream } from "../net/model-api/upstream";
 import { autoRespawnEnabled } from "./auto-respawn";
 import { type AutonomyPosture, getAutonomyPosture } from "./autonomy";
 import type { Engine } from "./engine";
+import { corpusEmbeddingStatus } from "./search-providers/corpus-vectors";
 import { searchBackendHealth } from "./search-providers/health";
 import { describeSearchReadiness } from "./search-readiness";
 import { dailySpend, formatSpendUsd, scopeSpendToday } from "./spend-ledger";
@@ -341,6 +342,35 @@ export function computeReadiness(engine: Engine): ReadinessReport {
     detail: search.detail,
     ...(search.remediation ? { remediation: search.remediation } : {}),
   });
+
+  // ── Corpus hybrid search — optional; BM25 serves whenever it does not apply ─
+  const corpusEmbeddings = corpusEmbeddingStatus(env);
+  checks.push(
+    corpusEmbeddings.state === "configured"
+      ? {
+          id: "corpus-hybrid",
+          label: "Corpus hybrid search",
+          status: "ok",
+          detail: `query embeddings ${corpusEmbeddings.model}; corpora holding vectors from this model rank BM25 + dense (others stay BM25)`,
+        }
+      : corpusEmbeddings.state === "invalid"
+        ? {
+            id: "corpus-hybrid",
+            label: "Corpus hybrid search",
+            status: "degraded",
+            detail: `MARINA_CORPUS_EMBEDDINGS is invalid (${corpusEmbeddings.error}); corpora rank with BM25`,
+            remediation:
+              "Fix the MARINA_CORPUS_EMBEDDING_* settings or unset MARINA_CORPUS_EMBEDDINGS.",
+          }
+        : {
+            id: "corpus-hybrid",
+            label: "Corpus hybrid search",
+            status: "off",
+            detail: "corpora rank with BM25 (optional: dense vectors fused with BM25)",
+            remediation:
+              "Optional: set MARINA_CORPUS_EMBEDDINGS (local, ollama or any OpenAI-compatible endpoint) and run `bun run corpus embed <name>`.",
+          },
+  );
 
   // ── Daily spend — the world's upstream dollars today vs its cap ────────────
   const spend = dailySpend(env);

@@ -588,9 +588,24 @@
 # Where local corpora live: offline BM25 indexes built with `bun run corpus build <name> <docs.jsonl>` and searched with `web search engines:corpus:<name>`, the search room, or the `corpus:<name>` research retriever. Keep it on a disk with room (a 100k-document corpus is several GB), not a small temp filesystem.
 # MARINA_CORPUS_DIR=~/.local/share/marina/corpora
 
-# Corpus ranking. FTS5's built-in bm25() fixes k1 = 1.2 and b = 0.75, tuned for short passages. Set BOTH to rescore each query's top 1,000 FTS5 candidates with these parameters instead (Porter-stemmed term counts, document length in characters). Long documents want full length normalisation: on a held-out replay of a long-document corpus, b = 1 beat b = 0.75 at every k1 and k1 = 6, b = 1 ranked best. Unset: FTS5's own ranking. Rankings are cached, so paging through results (`offset`) is cheap; a rescored search costs about 1–2 s on a 100k-document corpus.
+# Corpus ranking. Each query's top 1,000 FTS5 candidates are rescored with BM25 k1 = 6, b = 1 (Porter-stemmed term counts, document length in characters): full length normalisation, which beat FTS5's built-in bm25() (k1 = 1.2, b = 0.75, tuned for short passages) on held-out query splits of a long-document corpus. Set BOTH K1 and B to rescore with other parameters; MARINA_CORPUS_RANKING=fts5 keeps FTS5's own ranking. Rankings are cached, so paging through results (`offset`) is cheap; a rescored search costs about 1–3 s on a 100k-document corpus (FTS5 alone ≈ 0.3 s). The BrowseComp-Plus harness ranks with FTS5 unless K1 and B are set explicitly.
+# MARINA_CORPUS_RANKING=rescored
 # MARINA_CORPUS_BM25_K1=
 # MARINA_CORPUS_BM25_B=
+
+# Optional hybrid corpus search: the query embedder. none (default) keeps every corpus on BM25 exactly as above. local (the pinned MiniLM extension), ollama (an operator-run /api/embed) or openai (ANY OpenAI-compatible /v1/embeddings: OpenAI, OpenRouter, a local llama.cpp / vLLM / TEI server; URL, model and an operator-declared immutable revision required). Hybrid search applies only to a corpus holding vectors from the same model (`bun run corpus embed <name>` with this configuration, or `bun run corpus vectors import`); otherwise, and on any embedding failure or the daily spend cap, the search is BM25 and says so. Paid query embeddings are recorded in the spend ledger as `search`. The API key falls back to OPENROUTER_API_KEY / OPENAI_API_KEY only for those vendors' own hosts. DIMENSIONS asks the server for a Matryoshka-truncated vector (the stored vectors must match).
+# @protected
+# MARINA_CORPUS_EMBEDDINGS=none
+# MARINA_CORPUS_EMBEDDING_URL=
+# MARINA_CORPUS_EMBEDDING_MODEL=
+# MARINA_CORPUS_EMBEDDING_REVISION=
+# MARINA_CORPUS_EMBEDDING_API_KEY=
+# MARINA_CORPUS_EMBEDDING_DIMENSIONS=
+# MARINA_CORPUS_EMBEDDING_CACHE=data/memory-models
+# MARINA_CORPUS_EMBEDDING_LOCAL_ONLY=false
+
+# Hybrid corpus search: weight of the dense ranking in the reciprocal-rank fusion (the BM25 ranking weighs 1). Each ranking contributes its top 1,000.
+# MARINA_CORPUS_HYBRID_WEIGHT=2
 
 # ── Chat adapters ────────────────────────────────────────────────────────────
 
@@ -876,7 +891,7 @@
 # MARINA_MEMORY_PLANNER_MODEL=marina
 # MARINA_MEMORY_PLANNER_TOKEN=
 
-# Memory embeddings: none (lexical only), local (pinned MiniLM through the optional extensions/local-embeddings) or ollama (an operator-run /api/embed with a model and an immutable revision). Evidence-gated: run `bun run qualify:paraphrase` first.
+# Memory embeddings: none (lexical only), local (pinned MiniLM through the optional extensions/local-embeddings), ollama (an operator-run /api/embed with a model and an immutable revision) or openai (any OpenAI-compatible /v1/embeddings; URL, model and revision required; API_KEY falls back to OPENROUTER_API_KEY / OPENAI_API_KEY only for those vendors' hosts; DIMENSIONS requests a Matryoshka-truncated vector). Evidence-gated: run `bun run qualify:paraphrase` first.
 # @restart
 # MARINA_MEMORY_EMBEDDINGS=none
 # MARINA_MEMORY_EMBEDDING_CACHE=data/memory-models
@@ -884,6 +899,12 @@
 # MARINA_MEMORY_EMBEDDING_URL=http://127.0.0.1:11434
 # MARINA_MEMORY_EMBEDDING_MODEL=
 # MARINA_MEMORY_EMBEDDING_REVISION=
+
+# Memory embeddings over an OpenAI-compatible endpoint (MARINA_MEMORY_EMBEDDINGS=openai): the bearer key (unset falls back to OPENROUTER_API_KEY / OPENAI_API_KEY for those vendors' own hosts only) and an optional Matryoshka dimension count requested from the server.
+# @protected
+# @restart
+# MARINA_MEMORY_EMBEDDING_API_KEY=
+# MARINA_MEMORY_EMBEDDING_DIMENSIONS=
 
 # Outcome learning (src/learning/): every verdict — a benchmark run scored, a forecast resolved, a Code Mode verification, an arena round — becomes a candidate lesson that the decision layer judges (grounded, general, leak-free, consistent); passing lessons are served by recall in pools `lessons:<domain>`, rejected ones stay as audit records. `on` (default) learns and injects; `observe` learns and records what recall WOULD inject without injecting (the ablation arm); `off` neither learns nor recalls. A lesson is never visible to work whose cutoff precedes the outcome it came from.
 # MARINA_LESSONS=on

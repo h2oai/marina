@@ -17,6 +17,8 @@ import {
   bm25FromEnv,
   buildCorpus,
   closeCorpora,
+  DEFAULT_CORPUS_BM25,
+  explicitBm25FromEnv,
   ftsQuery,
   getCorpusDocument,
   matchWindow,
@@ -117,13 +119,28 @@ describe("corpus ranking", () => {
     expect(doc?.totalChars).toBe(DOCS[0]!.text.length);
   });
 
-  it("reads parameters from the environment only when both are valid", () => {
+  it("rescores by default, takes explicit parameters only when both are valid, and opts out to FTS5", () => {
     expect(bm25FromEnv({ MARINA_CORPUS_BM25_K1: "16", MARINA_CORPUS_BM25_B: "1" })).toEqual({
       k1: 16,
       b: 1,
     });
-    expect(bm25FromEnv({ MARINA_CORPUS_BM25_K1: "16" })).toBeUndefined();
-    expect(bm25FromEnv({ MARINA_CORPUS_BM25_K1: "16", MARINA_CORPUS_BM25_B: "2" })).toBeUndefined();
+    expect(bm25FromEnv({})).toEqual(DEFAULT_CORPUS_BM25);
+    expect(bm25FromEnv({ MARINA_CORPUS_BM25_K1: "16" })).toEqual(DEFAULT_CORPUS_BM25);
+    expect(bm25FromEnv({ MARINA_CORPUS_BM25_K1: "16", MARINA_CORPUS_BM25_B: "2" })).toEqual(
+      DEFAULT_CORPUS_BM25,
+    );
+    expect(
+      bm25FromEnv({
+        MARINA_CORPUS_RANKING: "fts5",
+        MARINA_CORPUS_BM25_K1: "3",
+        MARINA_CORPUS_BM25_B: "1",
+      }),
+    ).toBeUndefined();
+    expect(explicitBm25FromEnv({})).toBeUndefined();
+    expect(explicitBm25FromEnv({ MARINA_CORPUS_BM25_K1: "3", MARINA_CORPUS_BM25_B: "1" })).toEqual({
+      k1: 3,
+      b: 1,
+    });
   });
 });
 
