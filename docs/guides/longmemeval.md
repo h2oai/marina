@@ -44,6 +44,7 @@ OPENAI_API_KEY=<a MODEL_API_KEYS entry> $LME/venv/bin/python benchmarks/longmeme
 
 - `--backend no_retrieval` runs the official no-memory control with the same reader and judge.
 - `--mode hybrid` needs `MARINA_MEMORY_EMBEDDINGS` in the environment of the run.
+- `--reader-retries 6 --reader-cache runs/web-reader.jsonl` makes a long run survive a transient reader failure: the official harness aborts the whole run on one failed call and keeps nothing. Retries cover 429, 5xx, timeouts and empty replies (30 s doubling backoff); the cache lets a rerun resume, reusing replies for identical requests. Scoring is untouched. Disclose both if you submit.
 - `--reader-quantizations bf16` restricts OpenRouter's provider routing for the reader to unquantized endpoints, matching the paper's reader. It changes request routing only.
 - The memory budgets (`--search-limit`, `--context-bytes`, `--state-bytes`, `--episode-bytes`, `--radius`) are the method's settings; keep them fixed across the two domains of one operating point.
 
