@@ -19,6 +19,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { verificationCounts } from "../../src/engine/benchmark-ledger";
 import { capEnvValue } from "../../src/engine/spend-guard";
+import { mulberry32 } from "../stats";
 
 /** The solver-visible fields `export.py` writes — no hints, gold or test patches. */
 export interface SweInstance {
@@ -112,25 +113,13 @@ export function loadInstances(path: string): SweInstance[] {
     .map((l) => JSON.parse(l) as SweInstance);
 }
 
-/** mulberry32 — a tiny seeded PRNG so a subset is reproducible from its seed. */
-function rng(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 /**
  * A seeded subset that mixes repositories: instances are shuffled within each
  * repo, then taken round-robin across repos (largest first), so a small pilot
  * does not end up all Django. Same seed + same input ⇒ same ids, same order.
  */
 export function selectSubset(rows: SweInstance[], n: number, seed: number): SweInstance[] {
-  const rand = rng(seed);
+  const rand = mulberry32(seed);
   const byRepo = new Map<string, SweInstance[]>();
   for (const r of [...rows].sort((a, b) => a.instance_id.localeCompare(b.instance_id))) {
     const list = byRepo.get(r.repo) ?? [];
