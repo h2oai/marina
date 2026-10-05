@@ -139,6 +139,10 @@ describe("candidate-bound coding verification", () => {
     await verify("dependencies:none");
     expect(artifact("verification").content_text).toContain("passed");
     expect(artifact("verification").content_text).not.toContain("Check output");
+    expect(output.map((p) => p.data.text).join("\n")).toContain("Candidate verification: passed.");
+    expect(output.map((p) => p.data.text).join("\n")).toContain(
+      "Any later source or test edit requires fresh candidate verification",
+    );
     expect(artifact("command_output").content_text).toContain("2 pass");
     expect(artifact("command_output").content_text).toContain(".qualification/acceptance.test.ts:");
     expect(existsSync(join(root, "node_modules"))).toBe(false);
@@ -156,6 +160,36 @@ describe("candidate-bound coding verification", () => {
       metadata: { ...meta(), verificationRequirement: "candidate" },
     });
   }
+  it("distinguishes artifact receipts from files without leaking another session's artifacts", async () => {
+    await verify();
+    const id = artifact("verification_request").id;
+    output.length = 0;
+    await send(`code read ${id}`);
+    expect(output.at(-1)?.data.text).toContain(`action=show, artifactId=${id}`);
+    expect(output.at(-1)?.data.text).toContain("not a workspace file");
+    // A genuine file with the same name still reads as a file.
+    writeFileSync(join(root, id), "real file with artifact-shaped name");
+    await send(`code read ${id}`);
+    expect(output.at(-1)?.data.text).toContain("real file with artifact-shaped name");
+    f.db.createCodingSession({
+      id: "private",
+      title: "Private",
+      workspaceRoot: root,
+      createdBy: "Other",
+    });
+    const hidden = f.db.createCodingArtifact({
+      sessionId: "private",
+      kind: "observation",
+      title: "Secret",
+      status: "complete",
+      contentText: "private data",
+      createdBy: "Other",
+    });
+    await send(`code read ${hidden.id}`);
+    expect(output.at(-1)?.data.text).not.toContain("action=show");
+    expect(output.at(-1)?.data.text).not.toContain("private data");
+  });
+
   it("keeps early, live and stale summaries active, then submits the same attempt after current checks", async () => {
     requireCandidate();
     await send("code summary First progress");
@@ -217,76 +251,102 @@ describe("candidate-bound coding verification", () => {
     expect(f.db.listCodingEvents("s").some((e) => e.kind === "task_run_submitted")).toBe(false);
   });
 
-  it("prepares locked workspace dependencies only in the candidate, without lifecycle scripts or source changes", async () => {
-    mkdirSync(join(root, "dependency"));
-    writeFileSync(
-      join(root, "dependency/package.json"),
-      JSON.stringify({
-        name: "fixture-dep",
-        version: "1.0.0",
-        exports: "./index.ts",
-        scripts: { postinstall: "touch DANGER" },
-      }),
-    );
-    writeFileSync(join(root, "dependency/index.ts"), "export const answer = 42;");
-    writeFileSync(
-      join(root, "package.json"),
-      JSON.stringify({
-        name: "fixture",
-        workspaces: ["dependency"],
-        dependencies: { "fixture-dep": "workspace:*" },
-        trustedDependencies: ["fixture-dep"],
-        scripts: { preinstall: "touch DANGER", test: "bun check.ts" },
-      }),
-    );
-    writeFileSync(
-      join(root, "bun.lock"),
-      JSON.stringify({
-        lockfileVersion: 2,
-        configVersion: 1,
-        workspaces: {
-          "": { name: "fixture", dependencies: { "fixture-dep": "workspace:*" } },
-          dependency: { name: "fixture-dep", version: "1.0.0" },
-        },
-        trustedDependencies: ["fixture-dep"],
-        packages: { "fixture-dep": ["fixture-dep@workspace:dependency"] },
-      }),
-    );
-    writeFileSync(
-      join(root, "bunfig.toml"),
-      '[install]\nregistry = "http://127.0.0.1:9"\n[install.security]\nscanner = "./scanner.ts"\n',
-    );
-    writeFileSync(join(root, "scanner.ts"), 'await Bun.write("DANGER", "scanner ran");');
-    writeFileSync(
-      join(root, "check.ts"),
-      'import { answer } from "fixture-dep"; if (answer !== 42 || await Bun.file("DANGER").exists() || await Bun.file("dependency/DANGER").exists()) process.exit(1); console.log("locked dependency imported; no scripts");',
-    );
-    const index = readFileSync(join(root, ".git/index"));
-    const head = git("rev-parse", "HEAD");
-    const lock = readFileSync(join(root, "bun.lock"));
-    await verify("dependencies:bun");
-    const evidence = JSON.parse(artifact("verification").metadata_json);
-    expect(artifact("verification").status).toBe("complete");
-    expect(evidence).toMatchObject({
-      freshness: "current",
-      preparation: { policy: "bun-frozen-public-no-scripts-v1", status: "complete" },
-    });
-    expect(evidence.preparation.lockfileSha256).toHaveLength(64);
-    const prep = f.db.getCodingArtifact(evidence.preparationArtifactId)!;
-    expect(JSON.parse(prep.metadata_json)).toMatchObject({
-      phase: "dependency-preparation",
-      candidateId: evidence.candidateId,
-    });
-    expect(JSON.parse(prep.metadata_json).command).toContain("--ignore-scripts");
-    expect(existsSync(join(root, "node_modules"))).toBe(false);
-    expect(existsSync(join(root, "DANGER"))).toBe(false);
-    expect(readFileSync(join(root, "bun.lock"))).toEqual(lock);
-    expect(readFileSync(join(root, ".git/index"))).toEqual(index);
-    expect(git("rev-parse", "HEAD")).toBe(head);
-    expect(artifact("verification").content_text).toContain("Install scripts disabled");
-    await send("code summary Locked dependencies verified");
-    expect(meta().verification).toBe("passed");
-  });
+  it.each([true, false])(
+    "prepares locked workspace dependencies only in the candidate (root dependencies: %s)",
+    async (rootDependencies) => {
+      mkdirSync(join(root, "dependency"));
+      writeFileSync(
+        join(root, "dependency/package.json"),
+        JSON.stringify({
+          name: "fixture-dep",
+          version: "1.0.0",
+          exports: "./index.ts",
+          scripts: { postinstall: "touch DANGER" },
+        }),
+      );
+      writeFileSync(join(root, "dependency/index.ts"), "export const answer = 42;");
+      mkdirSync(join(root, "consumer"));
+      writeFileSync(
+        join(root, "consumer/package.json"),
+        JSON.stringify({
+          name: "fixture-consumer",
+          version: "1.0.0",
+          dependencies: { "fixture-dep": "workspace:*" },
+        }),
+      );
+      writeFileSync(join(root, "consumer/index.ts"), 'export { answer } from "fixture-dep";');
+      writeFileSync(
+        join(root, "package.json"),
+        JSON.stringify({
+          name: "fixture",
+          workspaces: ["dependency", "consumer"],
+          ...(rootDependencies ? { dependencies: { "fixture-dep": "workspace:*" } } : {}),
+          trustedDependencies: ["fixture-dep"],
+          scripts: { preinstall: "touch DANGER", test: "bun check.ts" },
+        }),
+      );
+      writeFileSync(
+        join(root, "bun.lock"),
+        JSON.stringify({
+          lockfileVersion: 2,
+          configVersion: 1,
+          workspaces: {
+            "": {
+              name: "fixture",
+              ...(rootDependencies ? { dependencies: { "fixture-dep": "workspace:*" } } : {}),
+            },
+            dependency: { name: "fixture-dep", version: "1.0.0" },
+            consumer: {
+              name: "fixture-consumer",
+              version: "1.0.0",
+              dependencies: { "fixture-dep": "workspace:*" },
+            },
+          },
+          trustedDependencies: ["fixture-dep"],
+          packages: {
+            "fixture-dep": ["fixture-dep@workspace:dependency"],
+            "fixture-consumer": ["fixture-consumer@workspace:consumer"],
+          },
+        }),
+      );
+      writeFileSync(
+        join(root, "bunfig.toml"),
+        '[install]\nregistry = "http://127.0.0.1:9"\n[install.security]\nscanner = "./scanner.ts"\n',
+      );
+      writeFileSync(join(root, "scanner.ts"), 'await Bun.write("DANGER", "scanner ran");');
+      writeFileSync(
+        join(root, "check.ts"),
+        'import { answer } from "./consumer/index.ts"; if (answer !== 42 || await Bun.file("DANGER").exists() || await Bun.file("dependency/DANGER").exists()) process.exit(1); console.log("locked dependency imported; no scripts");',
+      );
+      const index = readFileSync(join(root, ".git/index"));
+      const head = git("rev-parse", "HEAD");
+      const lock = readFileSync(join(root, "bun.lock"));
+      await verify("dependencies:bun");
+      const evidence = JSON.parse(artifact("verification").metadata_json);
+      expect(artifact("verification").status, artifact("verification").content_text).toBe(
+        "complete",
+      );
+      expect(evidence).toMatchObject({
+        freshness: "current",
+        preparation: { policy: "bun-frozen-public-no-scripts-v1", status: "complete" },
+      });
+      expect(evidence.preparation.lockfileSha256).toHaveLength(64);
+      const prep = f.db.getCodingArtifact(evidence.preparationArtifactId)!;
+      expect(JSON.parse(prep.metadata_json)).toMatchObject({
+        phase: "dependency-preparation",
+        candidateId: evidence.candidateId,
+      });
+      expect(JSON.parse(prep.metadata_json).command).toContain("--ignore-scripts");
+      expect(existsSync(join(root, "node_modules"))).toBe(false);
+      expect(existsSync(join(root, "DANGER"))).toBe(false);
+      expect(readFileSync(join(root, "bun.lock"))).toEqual(lock);
+      expect(readFileSync(join(root, ".git/index"))).toEqual(index);
+      expect(git("rev-parse", "HEAD")).toBe(head);
+      expect(artifact("verification").content_text).toContain("Install scripts disabled");
+      await send("code summary Locked dependencies verified");
+      expect(meta().verification).toBe("passed");
+    },
+  );
 
   it("records unmet dependency prerequisites as not run (never a failure) and runs no checks", async () => {
     writeFileSync(

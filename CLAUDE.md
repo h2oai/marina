@@ -2,6 +2,14 @@
 
 This file keeps only what a contributor must follow to make a correct change: build commands, code style, architecture rules, the invariants of each subsystem, and the key-file map. **Deep dives: [docs/architecture/](docs/architecture/README.md)** — design, history, measurements, and per-feature walkthroughs. Every subsystem section below ends with a pointer to its long-form page.
 
+## Change delivery
+
+Use a feature branch and pull request for every repository change. Never push directly to
+`main`. A request to commit and push means publishing the feature branch and opening or
+updating its PR; it does not authorize merging. Leave the PR for review unless merging is
+explicitly requested. Required CI checks must pass on the latest revision before merge;
+do not bypass checks, reviews, or branch protection.
+
 ## Build & Test
 ```bash
 bun run start          # Start server

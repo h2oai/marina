@@ -35,6 +35,10 @@ import { scopeProcessState } from "./process-state";
 test("live coding qualification refuses unbounded spending and output in the source checkout", () => {
   const options = { directory: "/tmp/marina-coding-qualification-unit", budgetUsd: 1 };
   expect(() => validateCodingQualification(options)).not.toThrow();
+  expect(() => validateCodingQualification({ ...options, model: "gpt-6-luna" })).not.toThrow();
+  expect(() => validateCodingQualification({ ...options, model: "unpriced" as never })).toThrow(
+    "approved qualification model",
+  );
   expect(() =>
     validateCodingQualification({
       ...options,
@@ -320,6 +324,104 @@ test("evaluation allows a bounded compaction call but still refuses excess, zero
   for (const limit of [0, -1, 4097, 1.5]) await expect(send(limit)).rejects.toThrow("unapproved");
   await expect(send(500, "other")).rejects.toThrow("unapproved");
   expect(calls).toBe(1);
+});
+
+test("Luna qualification enforces the modern token cap, non-reasoning tools and standard pricing before network", async () => {
+  let calls = 0;
+  const network = Object.assign(
+    async () => {
+      calls++;
+      return Response.json({});
+    },
+    { preconnect: fetch.preconnect },
+  ) as typeof fetch;
+  const state = {
+    ceiling: 1,
+    reserved: 0,
+    attempts: 0,
+    maxAttempts: 3,
+    model: "gpt-6-luna",
+    tokenParameter: "max_completion_tokens" as const,
+    requireReasoningEffort: "none" as const,
+    outputLimit: 4096,
+    inputPerMillion: 0.25,
+    outputPerMillion: 0.75,
+  };
+  const guarded = evaluationBudgetFetch(network, state);
+  const send = (overrides: Record<string, unknown> = {}) =>
+    guarded("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      body: JSON.stringify({
+        model: state.model,
+        max_completion_tokens: 4096,
+        reasoning_effort: "none",
+        messages: [{ role: "user", content: "bounded task" }],
+        ...overrides,
+      }),
+    });
+  for (const overrides of [
+    { max_completion_tokens: undefined, max_tokens: 4096 },
+    { max_completion_tokens: 4097 },
+    { reasoning_effort: undefined },
+    { reasoning_effort: "high" },
+    { service_tier: "fast" },
+    { model: "other" },
+  ])
+    await expect(send(overrides)).rejects.toThrow("unapproved");
+  expect(calls).toBe(0);
+  expect(state.reserved).toBe(0);
+  await send();
+  await send({ max_completion_tokens: 500, service_tier: "default" });
+  expect(calls).toBe(2);
+  expect(state.attempts).toBe(2);
+  expect(state.reserved).toBeGreaterThan(0);
+});
+
+test("evaluation never treats invalid prices or counters as an unlimited spending allowance", async () => {
+  let calls = 0;
+  const network = Object.assign(
+    async () => {
+      calls++;
+      return Response.json({});
+    },
+    { preconnect: fetch.preconnect },
+  ) as typeof fetch;
+  const baseline = {
+    ceiling: 1,
+    reserved: 0,
+    attempts: 0,
+    maxAttempts: 3,
+    model: "approved",
+    inputPerMillion: 0.4,
+    outputPerMillion: 1.6,
+  };
+  for (const invalid of [
+    { inputPerMillion: Number.NaN },
+    { inputPerMillion: -1 },
+    { inputPerMillion: 0 },
+    { outputPerMillion: Number.POSITIVE_INFINITY },
+    { outputPerMillion: Number.NaN },
+    { ceiling: Number.NaN },
+    { ceiling: Number.POSITIVE_INFINITY },
+    { reserved: Number.NaN },
+    { reserved: -1 },
+    { attempts: Number.NaN },
+    { attempts: -1 },
+    { maxAttempts: Number.POSITIVE_INFINITY },
+  ]) {
+    const guarded = evaluationBudgetFetch(network, { ...baseline, ...invalid });
+    await expect(
+      guarded("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        body: JSON.stringify({
+          model: "approved",
+          max_tokens: 500,
+          messages: [{ role: "user", content: "bounded" }],
+        }),
+      }),
+    ).rejects.toThrow("spending bounds");
+  }
+  expect(calls).toBe(0);
 });
 
 test("qualification baseline executes explicit hidden tests without polluting the source with Bun cache files", async () => {
