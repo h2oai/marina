@@ -232,12 +232,14 @@ describe("page reader", () => {
 describe("visible text and rendered reads", () => {
   test("visibleText keeps bylines, link text and table cells; drops scripts and head", () => {
     const html = `<html><head><title>T</title><style>.x{}</style></head><body>
-      <header><a href="/u/ann">ann</a> authored on <span>Dec 7</span></header>
+      <header><a href="/u/ann">ann</a> authored on <span>Dec 7</span>
+        <relative-time datetime="2023-12-07T08:30:47Z" class="x"></relative-time></header>
       <script>var hidden = 1;</script>
       <table><tr><th>Item</th><th>Price</th></tr><tr><td>Monitor</td><td>$399</td></tr></table>
       <p>Body &amp; text</p></body></html>`;
     const t = visibleText(html);
     expect(t).toContain("ann authored on Dec 7");
+    expect(t).toContain("[2023-12-07T08:30:47Z]");
     expect(t).toContain("Monitor | $399");
     expect(t).toContain("Body & text");
     expect(t).not.toContain("hidden");

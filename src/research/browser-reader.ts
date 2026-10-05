@@ -111,20 +111,22 @@ export async function openBrowser(opts: BrowserOptions = {}): Promise<BrowserRea
     });
     try {
       await context.route("**/*", async (route) => {
-        const req = route.request();
-        const u = req.url();
-        if (u.startsWith("data:") || u.startsWith("blob:")) return route.continue();
-        if (BLOCKED_TYPES.has(req.resourceType())) return route.abort("blockedbyclient");
-        const refused = await check(u);
-        if (refused) return route.abort("blockedbyclient");
-        // Fetch without following redirects and hand the response to the page:
-        // a redirect then comes back through this handler as a new request, so
-        // every hop is checked (Chromium would otherwise follow it unrouted).
+        // Requests still in flight when the read ends (context closed) reject;
+        // that is the end of the read, not an error.
         try {
+          const req = route.request();
+          const u = req.url();
+          if (u.startsWith("data:") || u.startsWith("blob:")) return await route.continue();
+          if (BLOCKED_TYPES.has(req.resourceType())) return await route.abort("blockedbyclient");
+          const refused = await check(u);
+          if (refused) return await route.abort("blockedbyclient");
+          // Fetch without following redirects and hand the response to the page:
+          // a redirect then comes back through this handler as a new request, so
+          // every hop is checked (Chromium would otherwise follow it unrouted).
           const response = await route.fetch({ maxRedirects: 0, timeout });
-          return route.fulfill({ response });
+          await route.fulfill({ response });
         } catch {
-          return route.abort("failed");
+          await route.abort("failed").catch(() => undefined);
         }
       });
       await context.routeWebSocket(/.*/, (ws) => ws.close());

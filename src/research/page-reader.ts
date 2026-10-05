@@ -166,6 +166,12 @@ export function visibleText(html: string): string {
     .replace(/<!--[\s\S]*?-->/g, " ")
     .replace(/<(script|style|noscript|svg|template|head)\b[\s\S]*?<\/\1>/gi, " ")
     .replace(/<(td|th)\b[^>]*>/gi, " | ")
+    // Timestamps many sites fill in with script (`<relative-time datetime=…>`):
+    // keep the machine-readable instant, which is all a plain read sees.
+    .replace(
+      /<((?:relative-|local-)?time)\b[^>]*\bdatetime\s*=\s*["']([^"']+)["'][^>]*>/gi,
+      (_m, _tag: string, when: string) => ` [${when}] `,
+    )
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(
       /<\/?(p|div|li|ul|ol|tr|table|thead|tbody|h[1-6]|section|article|header|footer|nav|aside|main|blockquote|pre|dd|dt|dl|figure|figcaption|form|details|summary|address)\b[^>]*>/gi,
