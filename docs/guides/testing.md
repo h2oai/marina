@@ -545,6 +545,10 @@ The final report drains workers while the server and database remain open. Inspe
 `workers_settled`, `completed_upstream_calls`, `failed_upstream_calls` and
 `model-lifecycles.json` alongside the candidate outcome. A successful submission can be followed
 by a cancelled request; successful coding does not imply that every upstream attempt succeeded.
+A report with `workers_settled: false` leaves lifecycle qualification open even when its candidate
+passed. Keep that report and the lifecycle log; run a separately identified follow-up after fixing
+shutdown rather than editing the original evidence.
+
 
 For an outcome qualification, declare the scenario/repetition list, runtime revision, model,
 per-attempt bounds and aggregate spending ceiling before the first call. Run each attempt in
