@@ -34,6 +34,11 @@ export const TERMINAL_CONTROLS = [
   ...WORKFLOW_CONTROLS,
   { name: "/agents", usage: "/agents", help: "Show agents, status and workspace" },
   {
+    name: "/resume",
+    usage: "/resume <name-or-id>",
+    help: "Reconnect a recorded native session without replaying its last task",
+  },
+  {
     name: "/spawn",
     usage: "/spawn claude|codex|pi [name]",
     help: "Add a native agent in an isolated Git worktree",
@@ -56,15 +61,15 @@ export const TERMINAL_CONTROLS = [
 export const TERMINAL_COMMANDS = TERMINAL_CONTROLS.map((control) => control.name);
 
 export function terminalControls(connected = false) {
-  return TERMINAL_CONTROLS.filter((control) => !connected || control.name !== "/spawn").map(
-    (control) => {
-      if (connected && control.name === "/use")
-        return { ...control, usage: "/use marina", help: "Select the server-side coding agent" };
-      if (connected && control.name === "/quit")
-        return { ...control, help: "Detach; world agents and tasks keep running" };
-      return control;
-    },
-  );
+  return TERMINAL_CONTROLS.filter(
+    (control) => !connected || !["/spawn", "/resume"].includes(control.name),
+  ).map((control) => {
+    if (connected && control.name === "/use")
+      return { ...control, usage: "/use marina", help: "Select the server-side coding agent" };
+    if (connected && control.name === "/quit")
+      return { ...control, help: "Detach; world agents and tasks keep running" };
+    return control;
+  });
 }
 
 export function terminalHelp(connected = false): string {

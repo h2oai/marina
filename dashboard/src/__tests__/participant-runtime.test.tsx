@@ -87,3 +87,17 @@ it("disables execution controls when the supervisor heartbeat is stale", async (
   expect(await screen.findByText(/connection is stale/)).toBeVisible();
   expect(screen.getByRole("button", { name: "Launch agent" })).toBeDisabled();
 });
+
+it("resumes recorded managed history without sending a task or taking over active work", async () => {
+  const { requests } = fixture({
+    ...state(),
+    role: "agent",
+    status: "disconnected",
+    adapter: "codex",
+    resumeSupported: true,
+    nativeSessionId: "recorded-thread",
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "Resume native session" }));
+  await waitFor(() => expect(requests).toHaveLength(1));
+  expect(requests[0]!.control).toEqual({ action: "resume" });
+});

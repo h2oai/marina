@@ -3,6 +3,8 @@ import { CodePanels } from "./code-panels";
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { getErrorMessage } from "../src/engine/errors";
 import type { CommandOptions, MarinaAgent, Perception } from "../src/sdk/client";
 import { type CodingHarness, codingAgent, type HarnessStore } from "./code-harness";
@@ -485,9 +487,15 @@ export class CodeConsole {
   }
   private select(agent: TerminalAgent) {
     if (["stopped", "failed", "disconnected"].includes(agent.state.status))
-      throw new Error("That session is no longer active; launch a new agent");
+      throw new Error(
+        "That session is not connected; use /resume for a supported session or launch new work",
+      );
     this.selected = agent.session.id;
-    this.harness = agent.harness ?? { version: 1, agent: codingAgent(agent.state.adapter) };
+    this.harness = agent.harness ?? {
+      version: 1,
+      agent: codingAgent(agent.state.adapter),
+      model: agent.state.model,
+    };
     this.terminal?.setTarget(agent.session.label);
     this.write(`Selected ${agent.session.label} · ${agent.state.cwd}`);
   }
@@ -523,6 +531,19 @@ export class CodeConsole {
       await this.stopSelected();
       return;
     }
+    if (verb === "/resume") {
+      const runtime = await this.runtime();
+      const agent = [...runtime.agents.values()].find(
+        (entry) => entry.session.id === argument || entry.session.label === argument,
+      );
+      if (!agent) throw new Error("Usage: /resume <exact name-or-id> from /agents");
+      await runtime.control(agent.session.id, { action: "resume" });
+      this.select(runtime.agents.get(agent.session.id)!);
+      this.write(
+        "Native history reconnected; inspect it before sending a new task. Prior instructions were not replayed.",
+      );
+      return;
+    }
     if (verb === "/world") {
       if (!argument) throw new Error("Usage: /world <Marina command>");
       await this.command(`/${argument}`);
@@ -554,6 +575,12 @@ export class CodeConsole {
       return;
     }
     if (verb === "/agents") {
+      if (
+        !this.options.connected &&
+        !this.native &&
+        existsSync(join(this.options.directory, "journal.db"))
+      )
+        await this.runtime();
       this.write(`marina · ${this.activity()} · ${this.options.root}`);
       for (const agent of this.native?.agents.values() ?? []) {
         if (agent.state.role === "agent")
