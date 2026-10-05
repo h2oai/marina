@@ -1687,3 +1687,33 @@ it("a live panel view preserves coding and world drafts and never turns panel in
     "unfinished coding draft continued",
   ]);
 });
+
+it("uses observed hints in scrollback without dispatching before Enter or completing an approval answer", async () => {
+  const input = Object.assign(new PassThrough(), { isTTY: true });
+  const output = Object.assign(new PassThrough(), { isTTY: true, columns: 80 });
+  output.resume();
+  const lines: string[] = [];
+  const terminal = new CodeTerminal({
+    input,
+    output,
+    completions: () => [{ value: "/show check_1", label: "/show check_1" }],
+    line: (text) => lines.push(text),
+    interrupt: () => {},
+    close: () => {},
+  });
+  try {
+    input.write("/show ch\t");
+    expect(lines).toEqual([]);
+    input.write("\n");
+    await until(() => lines.length === 1);
+    expect(lines).toEqual(["/show check_1"]);
+    const answer = terminal.ask("Review input");
+    input.write("/show ch\t\n");
+    expect((await answer).trim()).toBe("/show ch");
+    expect(lines).toEqual(["/show check_1"]);
+  } finally {
+    terminal.close();
+    input.destroy();
+    output.destroy();
+  }
+});

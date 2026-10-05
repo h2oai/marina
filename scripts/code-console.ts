@@ -7,6 +7,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { getErrorMessage } from "../src/engine/errors";
 import type { CommandOptions, MarinaAgent, Perception } from "../src/sdk/client";
+import { CodeDiscovery } from "./code-discovery";
 import { type CodingHarness, codingAgent, type HarnessStore } from "./code-harness";
 import { inferCodeDefaultModel } from "./code-model";
 import { installedCodingAdapters, NativeTerminal, type TerminalAgent } from "./code-native";
@@ -40,6 +41,7 @@ export interface CodeConsoleOptions {
 
 export class CodeConsole {
   private terminal?: CodeTerminal;
+  private discovery = new CodeDiscovery();
   private panels?: CodePanels;
   private native?: NativeTerminal;
   private startingNative?: Promise<NativeTerminal>;
@@ -159,6 +161,7 @@ export class CodeConsole {
   /** The one perception printer: metadata drives local views, never rendered prose. */
   receive(p: Perception) {
     this.observe(p);
+    this.discovery.observe(p, this.sessionId);
     const text = formatCodePerception(p, this.sessionId);
     if (text)
       this.write(
@@ -354,6 +357,29 @@ export class CodeConsole {
         views: interactive,
         tui: this.options.tui,
         connected: this.options.connected,
+        completions: () => [
+          ...this.discovery.suggestions(this.selected ? undefined : this.sessionId),
+          ...[...(this.native?.agents.values() ?? [])]
+            .filter((agent) => agent.state.role === "agent")
+            .flatMap((agent) => {
+              const inactive = ["disconnected", "stopped", "failed"].includes(agent.state.status);
+              const verb = inactive
+                ? agent.state.resumeSupported && agent.state.nativeSessionId
+                  ? "/resume"
+                  : undefined
+                : "/use";
+              const entries = verb
+                ? [
+                    {
+                      value: `${verb} ${agent.session.id}`,
+                      label: `${verb} ${agent.session.id}`,
+                      description: this.safeText(agent.session.label).slice(0, 120),
+                    },
+                  ]
+                : [];
+              return entries;
+            }),
+        ],
         panelInput: (input) => this.panels?.input(input),
         viewChanged: (view) => this.panels?.setActive(view === "panel"),
         location: `${this.options.connected ? "Server" : "Local"} workspace · ${this.options.root}`,

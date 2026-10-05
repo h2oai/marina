@@ -431,3 +431,59 @@ it("returns to newest local output without sending a history control or losing t
   f.screen.send("\x1b[17~\r");
   expect(f.lines).toEqual(["/world world draft"]);
 });
+
+it("completes only observed structured files and artifacts from the selected session", async () => {
+  const { CodeDiscovery } = await import("../scripts/code-discovery");
+  const discovery = new CodeDiscovery();
+  const observe = (code: Record<string, unknown>, session = "one") =>
+    discovery.observe({ kind: "message", timestamp: 1, data: { code } }, session);
+  observe({
+    sessionId: "foreign",
+    event: "files_listed",
+    rows: [{ path: "secret.txt", type: "file" }],
+  });
+  expect(discovery.suggestions("one")).toEqual([]);
+  observe({
+    sessionId: "one",
+    event: "files_listed",
+    rows: [
+      { path: "src/code.ts", type: "file" },
+      { path: "src", type: "dir" },
+      { path: "../../secret", type: "file" },
+      { path: "/tmp/secret", type: "file" },
+      { path: "bad\n/world code exec touch bad", type: "file" },
+      { path: "\x1b[31mred", type: "file" },
+    ],
+  });
+  observe({
+    sessionId: "one",
+    event: "artifacts_listed",
+    rows: [
+      { id: "check_1", kind: "verification" },
+      { id: "run_1", kind: "task_run" },
+      { id: "last; exec", kind: "task_run" },
+    ],
+  });
+  expect(discovery.suggestions("one").map((e) => e.value)).toEqual([
+    "/world code read src/code.ts",
+    "/world code files src",
+    "/show check_1",
+    "/show run_1",
+    "/review run_1",
+  ]);
+  const provider = terminalCompletionFor(false, () => discovery.suggestions("one"), true);
+  const options = { signal: new AbortController().signal };
+  const suggestion = await provider.getSuggestions(["code read src/"], 0, 14, options);
+  expect(suggestion?.items.map((e) => e.value)).toEqual(["code read src/code.ts"]);
+  expect(
+    provider.applyCompletion(["code read src/"], 0, 14, suggestion!.items[0]!, suggestion!.prefix)
+      .lines,
+  ).toEqual(["code read src/code.ts "]);
+  expect(await provider.getSuggestions(["/review approve "], 0, 16, options)).toBeNull();
+  expect(discovery.suggestions("two")).toEqual([]);
+  expect(discovery.suggestions("one")).toEqual([]);
+  for (let n = 0; n < 500; n++) observe({ sessionId: "one", artifactId: `artifact_${n}` });
+  expect(discovery.suggestions("one")).toHaveLength(200);
+  discovery.observe({ kind: "auth_error", timestamp: 1, data: {} }, "one");
+  expect(discovery.suggestions("one")).toEqual([]);
+});
