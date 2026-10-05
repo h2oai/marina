@@ -89,7 +89,23 @@ export async function readFile(
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
   const workspace = workspaceForSession(deps, session);
-  const result = await workspace.read(path);
+  const result = await workspace.read(path).catch((error: unknown) => {
+    // A receipt is durable world data, not a source file. Offer the precise
+    // recovery only for artifacts in this already-authorized session. Never
+    // reinterpret a successful file read or disclose another session's IDs.
+    const artifact = deps.db.getCodingArtifact(path);
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === "ENOENT" &&
+      artifact?.session_id === session.id
+    )
+      throw new Error(
+        `${path} is a coding artifact, not a workspace file. Use code show ${path} (marina_code action=show, artifactId=${path}).`,
+      );
+    throw error;
+  });
   const instructions = await loadProjectInstructions({
     root: workspace.displayRoot(),
     target: result.path,

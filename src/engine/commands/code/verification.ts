@@ -280,7 +280,15 @@ export async function startVerification(
       const state = fresh ? { ...codingRunMetadata(run), ...assessment } : undefined;
       const meta = parseJsonObject(completed.metadata_json);
       notifyParticipants(
-        `Background verification ${completed.status}: ${completed.id}${typeof meta.error === "string" ? `\n${meta.error}` : ""}`,
+        [
+          `Background verification ${completed.status}: ${completed.id}`,
+          ...(typeof meta.error === "string" ? [meta.error] : []),
+          ...(state?.verification
+            ? [`${candidate ? "Candidate verification" : "Verification"}: ${state.verification}.`]
+            : []),
+          ...(state?.verificationReason ? [state.verificationReason] : []),
+          `Inspect the completed receipt: code show ${completed.id} (marina_code action=show, artifactId=${completed.id}).${candidate ? " Any later source or test edit requires fresh candidate verification before submission." : ""}`,
+        ].join("\n"),
         {
           event: "verification_finished",
           metadata: {
@@ -306,7 +314,7 @@ export async function startVerification(
     },
   });
   notifyParticipants(
-    `Verification started: ${receipt.id}\nContinue participating while checks run. Inspect with code show ${receipt.id}.`,
+    `Verification started: ${receipt.id}\nContinue participating while checks run. Inspect with code show ${receipt.id} (marina_code action=show, artifactId=${receipt.id}; this is not a file path).`,
     {
       event: "verification_started",
       metadata: {

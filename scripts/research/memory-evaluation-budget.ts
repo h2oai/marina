@@ -22,6 +22,7 @@ export function evaluationBudgetFetch(
     maxAttempts: number;
     model: string;
     tokenParameter?: "max_tokens" | "max_completion_tokens";
+    requireReasoningEffort?: "none";
     outputLimit?: number;
     inputLimit?: number;
     inputPerMillion: number;
@@ -46,6 +47,8 @@ export function evaluationBudgetFetch(
         model: string;
         max_tokens: number;
         max_completion_tokens: number;
+        reasoning_effort?: string;
+        service_tier?: string;
         messages: {
           role?: string;
           content: string | { type: string; text?: string }[] | null;
@@ -58,6 +61,9 @@ export function evaluationBudgetFetch(
         tokenParameter === "max_tokens" ? "max_completion_tokens" : "max_tokens";
       if (
         body.model !== state.model ||
+        (state.requireReasoningEffort !== undefined &&
+          body.reasoning_effort !== state.requireReasoningEffort) ||
+        (body.service_tier !== undefined && body.service_tier !== "default") ||
         !Number.isSafeInteger(outputLimit) ||
         outputLimit < 1 ||
         outputLimit > 4096 ||
@@ -79,6 +85,23 @@ export function evaluationBudgetFetch(
         throw new Error(
           `Evaluation refused an unapproved model or token limit (model=${body.model}, ${tokenParameter}=${body[tokenParameter]}, ${otherParameter}=${body[otherParameter]}, content_types=${body.messages?.map((message) => (message.content === null ? "null" : typeof message.content)).join(",")})`,
         );
+      // NaN comparisons are false: without explicit validation a missing
+      // catalog price or corrupted counter could turn the ceiling off.
+      if (
+        !Number.isFinite(state.ceiling) ||
+        state.ceiling <= 0 ||
+        !Number.isFinite(state.reserved) ||
+        state.reserved < 0 ||
+        !Number.isSafeInteger(state.attempts) ||
+        state.attempts < 0 ||
+        !Number.isSafeInteger(state.maxAttempts) ||
+        state.maxAttempts < 1 ||
+        !Number.isFinite(state.inputPerMillion) ||
+        state.inputPerMillion <= 0 ||
+        !Number.isFinite(state.outputPerMillion) ||
+        state.outputPerMillion <= 0
+      )
+        throw new Error("Evaluation refused invalid spending bounds");
       const bound =
         ((Buffer.byteLength(text) + 128 * body.messages.length) * state.inputPerMillion) / 1e6 +
         (body[tokenParameter] * state.outputPerMillion) / 1e6;

@@ -69,7 +69,7 @@ export interface ProjectRunnerProfile {
    * appended at plan time).
    */
   typecheck?: string;
-  /** JavaScript: the package declares dependencies, so they must be installed to test. */
+  /** JavaScript: declared dependencies or workspace links require preparation. */
   declaresDependencies?: boolean;
   /** JavaScript: the `test` script's command line, to know whether it accepts file paths. */
   testScript?: string;
@@ -200,14 +200,25 @@ function packageInfo(packageJson: string | null | undefined): {
       scripts?: Record<string, unknown>;
       dependencies?: Record<string, unknown>;
       devDependencies?: Record<string, unknown>;
+      optionalDependencies?: Record<string, unknown>;
+      workspaces?: unknown;
     };
     const test = parsed.scripts?.test;
     const declared =
       Object.keys(parsed.dependencies ?? {}).length +
-      Object.keys(parsed.devDependencies ?? {}).length;
+      Object.keys(parsed.devDependencies ?? {}).length +
+      Object.keys(parsed.optionalDependencies ?? {}).length;
+    // A root can have no dependencies of its own while its children need
+    // installed packages and workspace links. Do not skip their preparation.
+    const workspaces = Array.isArray(parsed.workspaces)
+      ? parsed.workspaces
+      : (parsed.workspaces as { packages?: unknown } | null)?.packages;
+    const hasWorkspaces =
+      Array.isArray(workspaces) &&
+      workspaces.some((entry) => typeof entry === "string" && entry.trim().length > 0);
     return {
       ...(typeof test === "string" ? { testScript: test } : {}),
-      declaresDependencies: declared > 0,
+      declaresDependencies: declared > 0 || hasWorkspaces,
     };
   } catch {
     return { declaresDependencies: false };

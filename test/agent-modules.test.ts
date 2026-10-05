@@ -1620,6 +1620,14 @@ describe("tool profiles", () => {
         expect(JSON.stringify(result)).toContain("Invalid marina_code request");
       }
       expect(commands.length).toBe(before);
+      const wrongEdit = await generic.execute("wrong-edit-action", {
+        action: "write",
+        path: "a.ts",
+        oldText: "old",
+        newText: "new",
+      });
+      expect(JSON.stringify(wrongEdit)).toContain("use action=edit with path, oldText and newText");
+      expect(commands.length).toBe(before);
     }
   });
 

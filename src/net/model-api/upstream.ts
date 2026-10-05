@@ -1097,6 +1097,8 @@ export async function proxyToUpstream(
     /** The client request's signal: a NON-streaming upstream call is aborted
      *  when the client disconnects (streams keep their own cancel path). */
     clientSignal?: AbortSignal;
+    /** Verification/evaluation names a provider, so another route cannot answer for it. */
+    providerFallback?: boolean;
     /** Native Anthropic body to forward verbatim when the upstream is Anthropic. */
     anthropicNative?: Record<string, unknown>;
     /** The LAST system block is the proxy's injected memory addendum (see
@@ -1280,7 +1282,8 @@ export async function proxyToUpstream(
       lastTarget = `${provider}/${upstreamModel}`;
       if (cfg.anthropic) {
         const resp = await anthropic(key!, upstreamModel);
-        if (resp.status !== 404) return finish(resp, lastTarget);
+        if (hints?.providerFallback === false || resp.status !== 404)
+          return finish(resp, lastTarget);
         modelNotFound = { response: resp, target: lastTarget };
         lastErrorKind = classifyProxyError(404);
       } else {
@@ -1293,6 +1296,17 @@ export async function proxyToUpstream(
           clientSignal,
         );
         if (r.response) return finish(r.response, lastTarget);
+        if (hints?.providerFallback === false) {
+          return finish(
+            r.errorResponse ??
+              errorJson(
+                r.timedOut ? 504 : 502,
+                `Named upstream ${lastTarget} could not complete the request.`,
+              ),
+            lastTarget,
+            r.networkError ? "network" : classifyProxyError(r.errorStatus ?? 0),
+          );
+        }
         // The named provider rejected the request itself (an unsupported
         // parameter, a malformed body): that is the answer. Another provider
         // would not serve this provider's model id, and a silent retry
@@ -1303,6 +1317,11 @@ export async function proxyToUpstream(
         lastErrorKind = r.networkError ? "network" : classifyProxyError(r.errorStatus ?? 0);
         anyTimedOut ||= r.timedOut === true;
       }
+    } else if (cfg && hints?.providerFallback === false) {
+      return finish(
+        errorJson(503, `Named upstream ${provider}/${upstreamModel} is not configured.`),
+        `${provider}/${upstreamModel}`,
+      );
     }
   }
 
@@ -1327,7 +1346,8 @@ export async function proxyToUpstream(
     lastTarget = `${provider}/${requestModel}`;
     if (cfg.anthropic) {
       const resp = await anthropic(key!, requestModel);
-      if (isDefault || resp.status !== 404) return finish(resp, lastTarget);
+      if (hints?.providerFallback === false || isDefault || resp.status !== 404)
+        return finish(resp, lastTarget);
       modelNotFound ??= { response: resp, target: lastTarget };
       lastErrorKind = classifyProxyError(404);
       continue;
@@ -1341,6 +1361,17 @@ export async function proxyToUpstream(
       clientSignal,
     );
     if (r.response) return finish(r.response, lastTarget);
+    if (hints?.providerFallback === false) {
+      return finish(
+        r.errorResponse ??
+          errorJson(
+            r.timedOut ? 504 : 502,
+            `Selected upstream ${lastTarget} could not complete the request.`,
+          ),
+        lastTarget,
+        r.networkError ? "network" : classifyProxyError(r.errorStatus ?? 0),
+      );
+    }
     lastErrorKind = r.networkError ? "network" : classifyProxyError(r.errorStatus ?? 0);
     anyTimedOut ||= r.timedOut === true;
   }

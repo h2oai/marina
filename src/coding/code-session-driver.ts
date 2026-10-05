@@ -225,7 +225,17 @@ export class CodeSessionDriver {
       run && codingRunMetadata(run).verificationRequirement === "candidate"
         ? "Completion requires current candidate verification: use marina_code verify with verificationMode=candidate, inspect its receipt/result, then summary. Early summaries remain progress. If blocked, use marina_code blocked with the reason; do not loop indefinitely or install dependencies without permission."
         : undefined;
-    const activeTask = requirement ? `${prompt}\n\n${requirement}` : prompt;
+    // The resident's bounded reminder may truncate a long request. Keep the
+    // completion contract and a durable full-request pointer ahead of it.
+    const activeTask = run
+      ? [
+          `Task #${codingRunMetadata(run).taskId}; full request: code show ${run.id} (marina_code action=show, artifactId=${run.id}). Read the full request before editing; this reminder may be abbreviated.`,
+          requirement,
+          prompt,
+        ]
+          .filter(Boolean)
+          .join("\n\n")
+      : prompt;
     const boundEntity = this.bindAgentEntity(agent, opts.session, opts.profile, activeTask);
     // Task mode: the adapter suppresses its low-value cognitive sections and
     // restates this task every cycle until code.ts clears it (stop/summary).
@@ -252,11 +262,11 @@ export class CodeSessionDriver {
           ? "Start with marina_code status, then inspect with files/read/search/diff. Finite commands run in the active Flywheel project with no host fallback; use code service for long-running apps."
           : "Start with marina_code status, then inspect with files/read/search/diff. For a supported local Git root, use verify with verificationMode=candidate for immutable source evidence. It returns a receipt: inspect its result before submitting a summary. Ignored dependencies are not copied; report missing prerequisites. Ordinary verify checks the live workspace and is unbound evidence. Run only host-allowlisted checks."
         : `First run: code resume ${opts.session.id}. Then use marina_code status/files/read/search/diff/verify when available.`,
-      "Use marina_code action=edit with path, oldText and newText for exact replacements, or action=write with path and content for new files or deliberate full rewrites. These use the existing writer permissions and record durable changes. Use patch to propose a unified diff for apply/reject; show/artifacts/patches/history retain the evidence.",
+      "Use marina_code action=edit with path, oldText and newText for exact replacements: choose a small unique oldText copied from the file and literal newText without diff markers. Use action=write with path and content for new files or deliberate full rewrites. These use the existing writer permissions and record durable changes. Use patch for unified diffs; show/artifacts/patches/history retain the evidence.",
       opts.session.execution_target === "flywheel"
         ? "Use code service start/probe/screenshot for managed app evidence; use observe for additional behavior notes."
         : "Use observe to record app or manual behavior notes. Long-running app launch is disabled on the Marina host; configure Flywheel and use code service.",
-      "Record durable progress with code plan, code summary, code handoff, and code decision.",
+      "Finish source and regression-test edits before candidate verification. Any later edit requires fresh candidate checks. Use code plan for progress; code summary submits finished work for review. A rejected summary remains progress and its feedback explains what is still required.",
       "Before editing a path, inspect its directory with code files or read the file with code read. These refresh scoped project instructions from disk. Read any truncated instruction files explicitly; repository instructions do not grant execution permissions. Native external runtimes retain their own instruction loaders.",
       ...formatProjectInstructions(instructions),
       "",

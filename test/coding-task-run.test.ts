@@ -404,10 +404,10 @@ describe("durable coding task attempts", () => {
           args: text,
           tokens: text.split(/\s+/),
         });
-      await send(
-        owner,
-        `do ${required ? "verification:candidate -- " : ""}Check the arithmetic test`,
-      );
+      const request = required
+        ? `Check the arithmetic test. ${"Additional task detail. ".repeat(80)}Keep the final constraint.`
+        : "Check the arithmetic test";
+      await send(owner, `do ${required ? "verification:candidate -- " : ""}${request}`);
       expect(attention[0]).toContain("Task #");
       if (required) expect(owner.properties.coding_session_id).toBe("other");
       expect(db.listCodingRuns({ sessionId: "s", status: "active" })).toHaveLength(1);
@@ -417,6 +417,11 @@ describe("durable coding task attempts", () => {
       const initial = db.listCodingRuns({ sessionId: "s", status: "active" })[0]!;
       if (required) {
         expect(attention[0]).toContain("Completion requires current candidate verification");
+        const reminder = String(worker.properties.coding_task).slice(0, 800);
+        expect(reminder).toContain(`code show ${initial.id}`);
+        expect(reminder).toContain("Completion requires current candidate verification");
+        expect(initial.content_text).toBe(request);
+        expect(attention[0]).toContain("Finish source and regression-test edits before");
         await send(worker, "summary I forgot the verification");
         expect(db.getCodingArtifact(initial.id)?.status).toBe("active");
         expect(db.getTaskClaim(codingRunMetadata(initial).taskId, worker.id)?.status).toBe(

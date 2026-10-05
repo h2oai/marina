@@ -512,7 +512,7 @@ bun run qualify:coding --directory /tmp/marina-coding-check --budget-usd 1 --sce
 ```
 
 Use a new private directory outside the source checkout. The script creates its own world and
-participants, uses a fixed model with a conservative upstream spending reservation (maximum $2),
+participants, uses an explicitly selected model with a conservative upstream spending reservation (maximum $2),
 and never connects to a running world. It asks the worker to edit, verify a captured candidate,
 inspect the receipt and submit through normal coding tools. It then independently checks the
 result, preserves the original acceptance tests, and performs canonical owner review. World
@@ -523,9 +523,32 @@ the worker running after closing the desk. This proves SDK composition and consu
 not claim that the model designed the panel. The fixture explicitly disables the optional external
 decision judge to isolate coding behavior; normal ownership, command gates, guarded autonomy and
 candidate freshness checks remain enforced. It does not qualify that optional judge.
+Preparation defaults are explicit and recorded as `verification_defaults` in the report:
+`check` for single-package fixtures, `bun` for the local-workspace fixture, and `none` for
+the Marina fixture's saved recipe, whose imports require only local source and Bun/Node
+builtins. These use the existing operator setting, restore it after each scenario, and do
+not skip any configured checks. Explicit verification modifiers still override the default.
 Failures, missing credentials and timeouts are failures; this is a small functional smoke test,
 not a general coding-quality benchmark. The default scenario is `bugfix`; `--timeout-ms` controls
 the deadline per scenario (default 240000, maximum 600000).
+
+For an outcome qualification, declare the scenario/repetition list, runtime revision, model,
+per-attempt bounds and aggregate spending ceiling before the first call. Run each attempt in
+a new directory and preserve every report, including failures. Freeze runtime code during
+the cohort; an implementation correction requires a separately identified cohort. A passing
+unit suite or one successful model candidate does not establish repeatable end-to-end results.
+
+The default is `--model gpt-6-luna`, matching Marina's built-in OpenAI route. Use
+`--model gpt-4.1-mini-2025-04-14` to reproduce the historical baseline separately.
+Only these priced models are accepted;
+the guard fixes the upstream model and token field, refuses non-standard service tiers,
+and requires `reasoning_effort:none` for Luna's Chat Completions tools. Luna reservations
+cover its higher long-context/cache-write rates. Reports distinguish these conservative
+reservations from completed-turn estimates at the recorded rates. No comparison changes
+the server's configured model or replaces a failed run. Luna exposes an alias rather than
+a dated snapshot, so record the run date too. Invalid pricing/counters fail closed before
+any paid request. `upstream_refusal` records guard refusals, including a follow-on call
+after successful submission; `passed` describes the completed coding/verification/review contract.
 
 For a multi-package exercise with nested project instructions and workspace dependencies:
 
@@ -544,7 +567,7 @@ claim of reliability on arbitrary repositories.
 To exercise an actual committed Marina checkout with a bounded terminal-history task:
 
 ```sh
-bun run qualify:coding --directory /tmp/marina-repository-check --budget-usd 2 --scenarios marina --timeout-ms 600000
+bun run qualify:coding --directory /tmp/marina-repository-check --budget-usd 2 --model gpt-6-luna --scenarios marina --timeout-ms 600000 --repository-revision 558348c90dc3624d567c454a55410a48a77d85e5
 ```
 
 This clones local committed source without sharing Git objects, records the base commit, and
@@ -552,7 +575,9 @@ asks Marina's worker to implement a direct return to recent terminal history wit
 tests. The harness checks the allowed changed files, candidate-bound checks, independent
 behavioral assertions, world messaging and owner review. It leaves the operator's checkout
 untouched. Use `--repository-revision <full-commit-id>` from an earlier report to repeat that
-same task after the feature is integrated. A passing baseline must not count as model work.
+same task after the feature is integrated. The example pins the local pre-feature commit;
+the current `HEAD` already implements that task and must fail the baseline check. The pinned
+commit must exist in your local Git history. A passing baseline must not count as model work.
 Failures retain their reports too; a spending or serialized-request byte ceiling stops the
 qualification instead of consuming the remaining deadline in upstream retries. A byte ceiling
 is not the provider's token context window. `request-sizes.json` records request bytes, bytes

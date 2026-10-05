@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { modelSourceEnvKeys } from "../src/agent/available-models";
 import { Engine } from "../src/engine/engine";
 import { memoryLessonSink } from "../src/learning/outcomes";
 import { disableOutcomeLearning, enableOutcomeLearning } from "../src/learning/service";
@@ -95,6 +96,7 @@ describe("verdicts and rendering", () => {
 });
 
 const ENV = [
+  ...modelSourceEnvKeys(),
   "ANTHROPIC_API_KEY",
   "OPENAI_API_KEY",
   "OPENROUTER_API_KEY",
@@ -178,13 +180,13 @@ beforeEach(() => {
   engine.spawnEntity("c1", "Agent1");
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await engine.shutdown();
   globalThis.fetch = originalFetch;
   for (const [k, v] of saved) {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
   }
-  engine.shutdown();
   db.close();
   rmSync(dir, { recursive: true, force: true });
 });
@@ -328,19 +330,24 @@ describe("POST /v1/chat/completions with marina/verify", () => {
     expect(prose?.headers.get("x-marina-repair")).toBeNull();
   });
 
-  it("never answers a failing checker with another vendor's default model", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
-    const isChecker = (b: Record<string, unknown>) =>
-      JSON.stringify(b.messages).includes("You review an assistant's DRAFT");
-    failWith = (url, body) => (url.includes("openrouter") && isChecker(body) ? 503 : undefined);
-    const resp = await post(request("marina/verify:openrouter/openai/gpt-6.1-sol"));
-    expect(resp?.status).toBe(200);
-    expect(resp?.headers.get("x-marina-verify")).toBe("checker-unavailable");
-    // Every call went to the named provider with the named id; no first-party
-    // fallback (OpenAI's default model) answered for the checker.
-    expect(calls.every((c) => c.url.includes("openrouter"))).toBe(true);
-    expect(calls.every((c) => c.model === "openai/gpt-6.1-sol")).toBe(true);
-  });
+  it.each([401, 404, 503])(
+    "never substitutes a provider for a failing checker (%i)",
+    async (status) => {
+      process.env.OPENAI_API_KEY = "test-openai-key";
+      process.env.HF_TOKEN = "test-hf-key";
+      const isChecker = (b: Record<string, unknown>) =>
+        JSON.stringify(b.messages).includes("You review an assistant's DRAFT");
+      failWith = (url, body) =>
+        url.includes("openrouter") && isChecker(body) ? status : undefined;
+      const resp = await post(request("marina/verify:openrouter/openai/gpt-6.1-sol"));
+      expect(resp?.status).toBe(200);
+      expect(resp?.headers.get("x-marina-verify")).toBe("checker-unavailable");
+      // Every call went to the named provider with the named id; no first-party
+      // fallback (OpenAI's default model) answered for the checker.
+      expect(calls.every((c) => c.url.includes("openrouter"))).toBe(true);
+      expect(calls.every((c) => c.model === "openai/gpt-6.1-sol")).toBe(true);
+    },
+  );
 
   it("returns a rejected proposer as the failure, with no fallback and no added effort", async () => {
     process.env.OPENAI_API_KEY = "test-openai-key";
