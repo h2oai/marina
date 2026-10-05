@@ -27,6 +27,13 @@ export function knownFamilies(tags: readonly unknown[]): string[] {
   return out;
 }
 
+const DESCRIPTIONS = vocabulary.families as Record<string, string>;
+
+/** The plain-words description of a family tag (the vocabulary's own), else the tag. */
+export function familyDescription(tag: string): string {
+  return DESCRIPTIONS[tag] ?? tag;
+}
+
 /** Every family in the vocabulary (for docs and validation). */
 export function familyVocabulary(): string[] {
   return [...FAMILIES];

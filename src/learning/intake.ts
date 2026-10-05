@@ -10,7 +10,8 @@
 import { benchmarkExecution } from "../engine/benchmark-execution";
 import { getErrorMessage } from "../engine/errors";
 import type { MarinaDB } from "../persistence/database";
-import { familiesForRun, targetSubjects } from "./families";
+import { familiesForRun, familyDescription, targetSubjects } from "./families";
+import { type CaseGuard, ledgerCaseGuard, mergeGuards } from "./leak-guard";
 import { type LessonSink, OUTCOME_DOMAINS, type Outcome } from "./outcomes";
 import {
   findLessons,
@@ -19,6 +20,13 @@ import {
   type RetireResult,
   retireLessons,
 } from "./service";
+
+/**
+ * The version of the benchmark-run lesson writer, stamped on each lesson's
+ * provenance (`learner`). `backfill --relearn-rejected` re-learns a run whose
+ * lessons were all rejected by an EARLIER learner, so a second pass is a no-op.
+ */
+export const BENCHMARK_LEARNER = "bench-rule-v2";
 
 interface RunLike {
   id: string;
@@ -35,7 +43,66 @@ interface RunLike {
   config_json?: string | null;
 }
 
-/** A short, general description of a ledger target (model / crew + formation / population). */
+const shortModel = (m: unknown) => (typeof m === "string" ? (m.split("/").pop() ?? m) : "");
+
+/** Role keys a configuration names models under, in the order a reader wants them. */
+const ROLE_KEYS = [
+  "lead",
+  "model",
+  "reader",
+  "researcher",
+  "analysts",
+  "planner",
+  "verifier",
+  "critic",
+  "reviewModel",
+] as const;
+
+/** A configuration object (a target or its nested `configuration`) in a few words. */
+function describeConfig(t: Record<string, unknown>, kind: string): string {
+  const inner =
+    t.configuration && typeof t.configuration === "object" && !Array.isArray(t.configuration)
+      ? (t.configuration as Record<string, unknown>)
+      : undefined;
+  if (inner) return describeConfig({ ...t, ...inner, configuration: undefined }, kind);
+  const f = t.formation;
+  let formation = "";
+  if (typeof f === "string") formation = f;
+  else if (f && typeof f === "object") {
+    const fo = f as Record<string, unknown>;
+    formation = typeof fo.kind === "string" ? fo.kind : "";
+    if (formation && typeof fo.researchers === "number")
+      formation += ` with ${fo.researchers} researchers`;
+  }
+  const roles: string[] = [];
+  const named = new Set<string>();
+  for (const key of ROLE_KEYS) {
+    const v = t[key];
+    const models = [...new Set((Array.isArray(v) ? v : [v]).map(shortModel).filter(Boolean))];
+    if (!models.length) continue;
+    const list = models.slice(0, 3).join("+");
+    if (key === "model" && named.has(list)) continue;
+    named.add(list);
+    roles.push(`${key === "reviewModel" ? "reviewer" : key} ${list}`);
+  }
+  if (!roles.length && t.models && typeof t.models === "object") {
+    const models = [
+      ...new Set(Object.values(t.models as Record<string, unknown>).map(shortModel)),
+    ].filter(Boolean);
+    if (models.length) roles.push(`models ${models.slice(0, 4).join("+")}`);
+  }
+  if (typeof t.mode === "string") roles.push(`${t.mode} mode`);
+  const head = formation ? `the ${formation} formation` : `a ${kind}`;
+  return roles.length ? `${head} (${roles.slice(0, 4).join(", ")})` : head;
+}
+
+const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+
+/**
+ * A short, general description of a ledger target: the model, or the
+ * formation and the models in each role. Configuration only — never anything
+ * about an item.
+ */
 export function describeTarget(run: RunLike): string {
   let target: unknown;
   try {
@@ -43,20 +110,53 @@ export function describeTarget(run: RunLike): string {
   } catch {
     target = run.target_json;
   }
-  if (typeof target === "string") return `${run.target_kind ?? "model"} ${target}`;
-  if (target && typeof target === "object") {
-    const t = target as Record<string, unknown>;
-    const formation = typeof t.formation === "string" ? ` in the ${t.formation} formation` : "";
-    const models =
-      t.models && typeof t.models === "object"
-        ? ` (${[...new Set(Object.values(t.models as Record<string, unknown>).map(String))]
-            .map((m) => m.split("/").pop())
-            .slice(0, 6)
-            .join(", ")})`
-        : "";
-    return `${run.target_kind ?? "crew"}${formation}${models}`;
-  }
+  if (typeof target === "string") return `${run.target_kind ?? "model"} ${shortModel(target)}`;
+  if (target && typeof target === "object" && !Array.isArray(target))
+    return describeConfig(target as Record<string, unknown>, run.target_kind ?? "crew");
   return run.label ?? run.target_kind ?? "target";
+}
+
+/** The kind of work a run measured, in words (its families' descriptions, else its board). */
+export function kindOfWork(run: Pick<RunLike, "benchmark" | "config_json">): string {
+  const families = familiesForRun(run);
+  return families.length ? families.map(familyDescription).join(" and ") : `${run.benchmark} tasks`;
+}
+
+/** Below this score difference two runs are a tie, not a win. */
+const TIE = 0.005;
+
+/**
+ * The run's verdict as a general rule about configuration choice: the kind of
+ * work, the configurations compared and which won, aggregate numbers only as
+ * evidence strength. The lesson a run teaches when no writer answers.
+ */
+export function benchmarkRunRule(run: RunLike, best: RunLike | undefined): string {
+  const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
+  const work = kindOfWork(run);
+  const self = clip(describeTarget(run), 110);
+  const size = run.n ? `, n=${run.n}` : "";
+  const score = run.score ?? 0;
+  if (!best || best.score === null || best.score === undefined)
+    return `On ${work}, ${self} reached ${pct(score)}${size} with no comparable run; treat it as a reference point, not evidence that this configuration is better.`;
+  const other = clip(describeTarget(best), 110);
+  const vs = `${pct(score)} vs ${pct(best.score)} on the same items and judge${size}`;
+  const tie = Math.abs(score - best.score) < TIE;
+  if (other === self) {
+    // Same declared target: replicates. Same description, different target:
+    // variants that differ only in settings the description leaves out.
+    const runs =
+      run.target_json === best.target_json
+        ? `repeated runs of ${self}`
+        : `variants of ${self} that differ in other settings`;
+    return tie
+      ? `On ${work}, ${runs} agreed (${vs}); the result on this work is stable.`
+      : `On ${work}, ${runs} varied (${vs}); treat a gap of that size between configurations as noise.`;
+  }
+  if (tie)
+    return `On ${work}, ${self} matched ${other} (${vs}); choose between them on cost and latency.`;
+  return score > best.score
+    ? `On ${work}, ${self} outperformed ${other} (${vs}); prefer the former for similar work.`
+    : `On ${work}, ${self} trailed ${other} (${vs}); prefer the latter for similar work.`;
 }
 
 /** Per-category tallies of a run (a category label and counts, never item text). */
@@ -94,7 +194,7 @@ function categorySignal(categories: CategoryTally[] | undefined): string[] {
 export function benchmarkRunOutcome(
   db: MarinaDB,
   run: RunLike,
-  opts: { categories?: CategoryTally[] } = {},
+  opts: { categories?: CategoryTally[]; guard?: CaseGuard } = {},
 ): Outcome | undefined {
   if (run.score === null || run.score === undefined) return undefined;
   // Only runs completed by this run's own completion are a baseline: a lesson
@@ -121,10 +221,8 @@ export function benchmarkRunOutcome(
     succeeded,
     score: run.score,
     resolvedAt: new Date(run.completed_at ?? Date.now()).toISOString(),
-    attempted: `${run.benchmark}; declared target: ${describeTarget(run)}`,
+    attempted: `${kindOfWork(run)} (board ${run.benchmark}); declared target: ${describeTarget(run)}`,
     signals: [
-      `execution: ${execution.tracedItems}/${execution.items} items trace-linked, ${execution.unknownItems} unknown, ${execution.windowOnlyItems} window-only, ${execution.unverifiedItems} unverified`,
-      `observed residents: ${execution.agents.length}; multiple residents on ${execution.multipleResidentItems} items; participation is not causal benefit`,
       ...(run.n ? [`n=${run.n}`] : []),
       ...(run.cost_usd !== null && run.cost_usd !== undefined && run.n
         ? [`$${(run.cost_usd / run.n).toFixed(4)}/item`]
@@ -132,14 +230,21 @@ export function benchmarkRunOutcome(
       ...(run.judge ? [`judge ${run.judge}`] : []),
       ...categorySignal(opts.categories),
     ],
+    measurement: [
+      `execution: ${execution.tracedItems}/${execution.items} items trace-linked, ${execution.unknownItems} unknown, ${execution.windowOnlyItems} window-only, ${execution.unverifiedItems} unverified`,
+      `observed residents: ${execution.agents.length}; multiple residents on ${execution.multipleResidentItems} items; participation is not causal benefit`,
+    ],
     detail: best
       ? `${pct(run.score)} vs best other ${pct(best.score ?? 0)} (${describeTarget(best)})`
       : `${pct(run.score)}; no comparable baseline; superiority untested`,
+    rule: benchmarkRunRule(run, best),
     refs: [`bench:${run.id}`, ...(best ? [`bench:${best.id}`] : [])],
     // A run's verdict is about a configuration on a kind of work.
     scope: "config",
     families: familiesForRun(run),
     subjects: targetSubjects(run),
+    caseGuard: mergeGuards(ledgerCaseGuard(db, [run.id, ...(best ? [best.id] : [])]), opts.guard),
+    provenance: { learner: BENCHMARK_LEARNER },
   };
 }
 
@@ -147,7 +252,7 @@ export function benchmarkRunOutcome(
 export function noteBenchmarkRun(
   db: MarinaDB,
   run: RunLike,
-  opts: { categories?: CategoryTally[] } = {},
+  opts: { categories?: CategoryTally[]; guard?: CaseGuard } = {},
 ): void {
   // An invalid run measured the infrastructure, not the target: no lesson.
   if (db.getBenchmarkRun(run.id)?.status === "invalid") return;

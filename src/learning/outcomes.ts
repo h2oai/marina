@@ -16,12 +16,15 @@
  *
  * Nothing here stores a benchmark's question or answer text: the candidate is
  * built from the outcome's own general fields, the writer is told not to
- * restate the case, and a mechanical check rejects any rule that quotes the
- * case text it was shown. Recall applies the leakage rule `visibleAt` (a
+ * restate the case, and a mechanical check (`leaksCase`, `itemLeak`) rejects
+ * any lesson that quotes the case text it was shown or names an item's id,
+ * question or answer — before a judge reads it. A rejected lesson that failed
+ * that check is stored with its text withheld. Recall applies the leakage rule `visibleAt` (a
  * lesson resolved at T is invisible to work whose cutoff precedes T).
  */
 
 import type { DecisionProvider, DecisionQuestions, NoulAnswer } from "../decisions/types";
+import { type CaseGuard, itemLeak } from "./leak-guard";
 
 /**
  * Where a lesson is pooled. All except `meta` are producers (where an outcome came
@@ -111,6 +114,18 @@ export interface Outcome {
   attempted: string;
   /** Evidence, tools or settings that mattered (short phrases). */
   signals?: string[];
+  /**
+   * How the outcome was measured (trace coverage, provenance grades) — context
+   * for the judge, never the finding a rule is about.
+   */
+  measurement?: string[];
+  /**
+   * The producer's own general rule for this outcome (method, configuration,
+   * model choice; aggregate numbers as evidence only). The writer starts from
+   * it; it is the lesson's rule when no writer answers or the writer's rule
+   * fails the item check.
+   */
+  rule?: string;
   /** The mechanical failure mode, or a short success factor. */
   detail?: string;
   /** Pointers to the evidence: `trace:…`, `note:N`, `task:N`, `artifact:…`, `bench:…`. */
@@ -127,6 +142,13 @@ export interface Outcome {
    * stored.
    */
   privateContext?: string;
+  /**
+   * Fingerprints of the outcome's ITEMS (ids, hashed text shingles, hashed
+   * answers) for the mechanical item check. Never shown to a model, never stored.
+   */
+  caseGuard?: CaseGuard;
+  /** Stored on the lesson's provenance (e.g. `learner`, the writer version). */
+  provenance?: Record<string, string>;
 }
 
 export type LessonTrust = "trusted" | "unverified" | "rejected";
@@ -167,25 +189,63 @@ export interface LessonWriter {
 
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
-const WRITER_SYSTEM = [
-  "You turn one outcome into one terse, reusable lesson for an AI agent. No pleasantries.",
+const WRITER_REPLY = [
   'Reply with ONE JSON object: {"category": "<2-5 words: domain + kind of work>",',
-  '"rule": "<one imperative sentence under 30 words that applies to SIMILAR future work>",',
+  '"rule": "<one sentence under 35 words that applies to SIMILAR future work>",',
   `"scope": "<what the rule is about: one of ${LESSON_SCOPES.join("|")}>"}.`,
+].join(" ");
+
+/** For a single case (a forecast, a code check): nothing specific to the case survives. */
+const WRITER_SYSTEM_CASE = [
+  "You turn one outcome into one terse, reusable lesson for an AI agent. No pleasantries.",
+  WRITER_REPLY,
   "The rule generalizes: a method, a source to check, a failure to avoid, a setting that worked.",
   "Never restate the specific case, its question, its answer, names, numbers or quotes from it.",
 ].join(" ");
 
-/** The mechanical lesson text, before any writer rule. */
+/**
+ * For an aggregate outcome (a whole run, a configuration compared with
+ * another): the rule is about method, configuration or model choice.
+ */
+const WRITER_SYSTEM_AGGREGATE = [
+  "You turn one aggregate outcome (a whole evaluation run, compared with the best other",
+  "configuration on the same items) into one terse, reusable lesson for an AI agent. No pleasantries.",
+  WRITER_REPLY,
+  "The rule is about METHOD, CONFIGURATION or MODEL CHOICE: what worked or failed, and under",
+  "what conditions (the kind of work), e.g. 'On multi-hop retrieval questions, a strong lead model",
+  "reading whole documents beats a single cheap agent.' Name models, formations and settings;",
+  "you may cite aggregate scores, sample sizes or costs as evidence strength.",
+  "Never include item ids, question text, answers or details of any single item.",
+  "Measurement notes say how the run was recorded; they are not the finding, so never make them the rule.",
+  "When the outcome has no comparable baseline, say what the result does and does not show.",
+].join(" ");
+
+/** Scopes whose lessons come from aggregate outcomes, not a single case. */
+const AGGREGATE_SCOPES = new Set<LessonScope>(["config", "model", "budget", "calibration"]);
+
+/** The lesson text: header, then the rule when there is one, then the evidence. */
 function mechanicalText(o: Outcome, category?: string, rule?: string): string {
   return [
     `[lesson:${o.domain}] ${o.succeeded ? "success" : "failure"}${category ? ` · ${category}` : ""}`,
+    rule ? `rule: ${rule}` : "",
     o.score !== undefined ? `score ${o.score.toFixed(2)}` : "",
     o.detail ? clip(o.detail, 120) : "",
-    rule ? `rule: ${rule}` : "",
   ]
     .filter(Boolean)
     .join(" · ");
+}
+
+/** The text the writer was shown about the outcome (its general fields): never an item leak. */
+function outcomeVocabulary(o: Outcome): string {
+  return [o.attempted, o.detail, o.rule, ...(o.signals ?? []), ...(o.subjects ?? [])]
+    .filter(Boolean)
+    .join(" ");
+}
+
+/** Why `text` fails the mechanical case/item check for `o`, or undefined. */
+export function mechanicalLeak(text: string, o: Outcome): string | undefined {
+  if (leaksCase({ text }, o.privateContext)) return "quotes the case text";
+  return itemLeak(text, o.caseGuard, outcomeVocabulary(o));
 }
 
 /**
@@ -197,16 +257,21 @@ export async function candidateFromOutcome(o: Outcome, writer?: LessonWriter): P
   let category: string | undefined;
   let rule: string | undefined;
   let scope: LessonScope = o.scope ?? defaultScope(o.domain);
+  let writerNote: string | undefined;
   if (writer) {
     try {
       const raw = await writer.complete(
-        WRITER_SYSTEM,
+        AGGREGATE_SCOPES.has(scope) ? WRITER_SYSTEM_AGGREGATE : WRITER_SYSTEM_CASE,
         [
           `Domain: ${o.domain} (${o.source})`,
           `Attempted: ${clip(o.attempted, 400)}`,
           `Result: ${o.succeeded ? "success" : "failure"}${o.score !== undefined ? ` (score ${o.score.toFixed(2)})` : ""}`,
           o.detail ? `Detail: ${clip(o.detail, 300)}` : "",
           o.signals?.length ? `Signals: ${clip(o.signals.join("; "), 400)}` : "",
+          o.measurement?.length
+            ? `Measurement notes (not a finding): ${clip(o.measurement.join("; "), 300)}`
+            : "",
+          o.rule ? `Draft rule (improve it; keep it general): ${clip(o.rule, 300)}` : "",
           o.privateContext ? `Context (do not quote): ${clip(o.privateContext, 800)}` : "",
         ]
           .filter(Boolean)
@@ -223,7 +288,22 @@ export async function candidateFromOutcome(o: Outcome, writer?: LessonWriter): P
     } catch {
       // allow-empty-catch: a writer outage leaves the mechanical candidate
     }
+    // A writer's rule or category that carries item content is discarded (and
+    // never stored): the producer's own rule stands in for it.
+    const leak =
+      rule || category ? mechanicalLeak(`${category ?? ""} ${rule ?? ""}`, o) : undefined;
+    if (leak) {
+      writerNote = `writer rule discarded: ${leak}`;
+      rule = undefined;
+      category = undefined;
+    }
   }
+  rule ??= o.rule ? clip(o.rule, 260) : undefined;
+  const provenance = {
+    ...(o.provenance ?? {}),
+    ...(writer ? { writer: writer.name } : {}),
+    ...(writerNote ? { writer_note: writerNote } : {}),
+  };
   return {
     domain: o.domain,
     text: mechanicalText(o, category, rule),
@@ -238,6 +318,7 @@ export async function candidateFromOutcome(o: Outcome, writer?: LessonWriter): P
     scope,
     ...(o.families?.length ? { families: o.families.slice(0, MAX_FAMILIES) } : {}),
     ...(o.subjects?.length ? { subjects: o.subjects.slice(0, MAX_SUBJECTS) } : {}),
+    ...(Object.keys(provenance).length ? { provenance } : {}),
   };
 }
 
@@ -268,7 +349,7 @@ export const LESSON_JUDGE_QUESTIONS: DecisionQuestions = {
   grounded: {
     type: "noul",
     instructions:
-      "Is the lesson supported by the outcome it was written from (the result, detail and signals)?",
+      "Is the lesson supported by the outcome it was written from (the result, detail and signals)? Any numbers it cites must match the outcome.",
     criteria: {
       true: "The lesson follows from the stated outcome and evidence.",
       false: "The lesson claims something the outcome does not show.",
@@ -277,19 +358,19 @@ export const LESSON_JUDGE_QUESTIONS: DecisionQuestions = {
   general: {
     type: "noul",
     instructions:
-      "Would the lesson help on DIFFERENT but similar future work, rather than only this one case?",
+      "Would the lesson help on DIFFERENT but similar future work (other questions or tasks of the same kind), rather than only this one case?",
     criteria: {
-      true: "A reusable method, check, source or pitfall.",
+      true: "A reusable method, check, source, pitfall, or a configuration or model choice with the kind of work it applies to.",
       false: "A one-off fact about this case, or too vague to act on.",
     },
   },
   leak_free: {
     type: "noul",
     instructions:
-      "Is the lesson free of the specific case's question, answer or identifying details?",
+      "Is the lesson free of benchmark ITEM content — any question text, answer, item id or instance-specific detail (a name, date, quantity or quote from one particular question or task) that would let a future run memorise answers? Aggregate scores, percentages, sample sizes, costs, model names, formations and configuration descriptions are NOT item content.",
     criteria: {
-      true: "No case-specific answer, name, number or quote.",
-      false: "It reveals or restates the case's answer or specifics.",
+      true: "No item's question, answer, id or instance detail; at most aggregate results and configuration.",
+      false: "It reveals or restates an item's question, answer, id or instance-specific details.",
     },
   },
   consistent: {
@@ -335,12 +416,15 @@ export interface LessonVerdict {
   /** The judge found the lesson transferable to other task families (its own bar). */
   transferable?: boolean;
   costUsd?: number;
+  /** Rejected by the mechanical case/item check (no judge asked; the text is withheld). */
+  leak?: boolean;
 }
 
 /**
  * Score a candidate with the decision layer. No provider (decisions off) or an
  * outage ⇒ `unverified` — the conservative fallback never promotes to trusted.
- * A mechanical leak is rejected before the judge is asked.
+ * A mechanical leak (case text, an item's id, question or answer) is rejected
+ * before the judge is asked.
  */
 export async function judgeLesson(
   candidate: Lesson,
@@ -348,8 +432,8 @@ export async function judgeLesson(
   provider: DecisionProvider | undefined,
   existing: Lesson[] = [],
 ): Promise<LessonVerdict> {
-  if (leaksCase(candidate, outcome.privateContext))
-    return { trust: "rejected", reason: "quotes the case text" };
+  const leak = mechanicalLeak(candidate.text, outcome);
+  if (leak) return { trust: "rejected", reason: leak, leak: true };
   if (!provider) return { trust: "unverified", reason: "no decision backend" };
   try {
     const result = await provider.ask({
@@ -362,6 +446,7 @@ export async function judgeLesson(
           attempted: clip(outcome.attempted, 400),
           ...(outcome.detail ? { detail: clip(outcome.detail, 300) } : {}),
           ...(outcome.signals?.length ? { signals: outcome.signals.slice(0, 8) } : {}),
+          ...(outcome.measurement?.length ? { measurement: outcome.measurement.slice(0, 4) } : {}),
         },
         lesson: candidate.text,
         ...(candidate.scope ? { scope: candidate.scope } : {}),
@@ -374,7 +459,10 @@ export async function judgeLesson(
     for (const [k, a] of Object.entries(result.answers)) {
       if (a.type === "noul") judgement[k] = (a as NoulAnswer).noul;
     }
-    const calibrated = provider.calibrated !== false && result.calibrated !== false;
+    // What ANSWERED decides the bars, as for the tool gate: a composite engine
+    // (`marina/auto`) is calibrated when its calibrated primary answered alone,
+    // and uncalibrated when an uncalibrated second opinion joined in.
+    const calibrated = (result.calibrated ?? provider.calibrated) !== false;
     const bar = (k: keyof typeof LESSON_JUDGE_POLICY) =>
       calibrated ? LESSON_JUDGE_POLICY[k] : 0.5;
     const failed = (Object.keys(LESSON_JUDGE_POLICY) as Array<keyof typeof LESSON_JUDGE_POLICY>)
@@ -673,6 +761,12 @@ export interface OutcomeLearnerDeps {
   meta?: boolean;
   /** See `LessonAdmission`. */
   admit?: LessonAdmission;
+  /**
+   * Write nothing when no judge verdict was reached (outage, spend cap): the
+   * outcome stays unlearned so a later pass judges it, instead of leaving an
+   * `unverified` lesson behind. For batch passes such as the ledger backfill.
+   */
+  deferUnjudged?: boolean;
 }
 
 export interface OutcomeRecord {
@@ -682,6 +776,8 @@ export interface OutcomeRecord {
   lesson: Lesson;
   /** The `lessons:meta` mirror's id, when the lesson was mirrored. */
   metaId?: string;
+  /** Not written: no verdict was reached and the caller asked to defer (`deferUnjudged`). */
+  deferred?: boolean;
 }
 
 /**
@@ -706,8 +802,17 @@ export async function recordOutcome(
   }
   const verdict = await judgeLesson(candidate, outcome, deps.judge, existing);
   if (verdict.costUsd) deps.onSpend?.(verdict.costUsd);
+  if (deps.deferUnjudged && verdict.trust === "unverified")
+    return { trust: verdict.trust, reason: verdict.reason, lesson: candidate, deferred: true };
+  // A mechanical leak is kept as an audit record WITHOUT the leaking text.
+  const audited: Lesson = verdict.leak
+    ? (({ rule: _r, category: _c, ...rest }) => ({
+        ...rest,
+        text: `[lesson:${candidate.domain}] withheld · ${verdict.reason}`,
+      }))(candidate)
+    : candidate;
   const judged: Lesson = {
-    ...candidate,
+    ...audited,
     trust: verdict.trust,
     ...(verdict.judgement ? { judgement: verdict.judgement } : {}),
     ...(verdict.judge ? { judge: verdict.judge } : {}),
