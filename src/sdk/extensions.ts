@@ -45,6 +45,31 @@ export interface ExtensionResolver {
     | { status: "error"; reason: string; retryAfter?: number }
   >;
 }
+/**
+ * What a peer gateway presented when it opened its federation handshake. `proof`
+ * is the opaque `entitlement` value of its `gateway_auth` message (undefined when
+ * it sent none); the extension that registered the check decides what it means.
+ */
+export interface GatewayAdmissionRequest {
+  readonly proof: unknown;
+  /** Gateway protocol version the peer declared, when it declared one. */
+  readonly peerVersion: number | null;
+}
+export type GatewayAdmissionResult =
+  | { admit: true; label?: string }
+  | { admit: false; reason: string };
+/**
+ * Extra admission for INBOUND gateway peers, run after (never instead of) the
+ * `GATEWAY_SECRET` check. With no check registered the handshake is unchanged.
+ */
+export type GatewayAdmissionCheck = (
+  request: GatewayAdmissionRequest,
+) => GatewayAdmissionResult | Promise<GatewayAdmissionResult>;
+/**
+ * Supplies the opaque `entitlement` value this instance presents when IT dials a
+ * peer gateway (`undefined` = present nothing). Must be JSON-serialisable.
+ */
+export type GatewayProofProvider = (gateway: { name: string; url: string }) => unknown;
 /** Trusted operator-installed modules. The API limits coupling, not host-code privileges. */
 export interface ExtensionContext {
   readonly apiVersion: 1;
@@ -52,6 +77,10 @@ export interface ExtensionContext {
   registerCommand(command: ExtensionCommand): void;
   registerResolver(resolver: ExtensionResolver): void;
   registerWidget(widget: ExtensionWidget): void;
+  /** At most one per instance. Optional additive hook: absent ⇒ federation unchanged. */
+  registerGatewayAdmission?(check: GatewayAdmissionCheck): void;
+  /** At most one per instance. Optional additive hook: absent ⇒ federation unchanged. */
+  registerGatewayProof?(provider: GatewayProofProvider): void;
 }
 export interface MarinaExtension {
   activate(

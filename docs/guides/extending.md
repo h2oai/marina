@@ -45,6 +45,22 @@ The memory API binds the caller to its durable world account; it does not grant 
 owner's records or bypass space ACLs. New fields are additive within API version 1;
 removing or changing existing contracts requires a new version.
 
+Two optional federation hooks exist for extensions that host or join gated worlds
+(for example the separately installed `extensions/marina-market`). With neither
+registered, the gateway handshake is unchanged:
+
+- `registerGatewayAdmission(check)`: an inbound peer's `gateway_auth` may carry an
+  opaque `entitlement`. The check runs only after the `GATEWAY_SECRET` comparison
+  and can only refuse; it never admits a peer the secret refused. While a check is
+  registered, a `Gateway_` login waits for its verdict. A missing proof, a throw,
+  a malformed verdict or a 15 s timeout refuses the peer.
+- `registerGatewayProof(provider)`: returns the JSON value this instance sends as
+  `entitlement` when it dials a peer (`undefined` sends nothing).
+
+Each hook can be registered once per instance and is removed on shutdown. Like
+`GATEWAY_SECRET`, the admission check gates the gateway handshake only. A hard
+boundary also needs `MARINA_AUTH=better-auth` without open login.
+
 Widgets render escaped text from the existing authenticated `world` or `readiness`
 endpoints. Slots are `sidebar` and `admin-tab`; the latter is listed only to operators.
 No remote component path, HTML injection or private event subscription is accepted.

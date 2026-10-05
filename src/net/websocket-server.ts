@@ -18,12 +18,19 @@ import {
   WS_MAX_TOTAL_CONNECTIONS,
 } from "../engine/constants";
 import type { Engine } from "../engine/engine";
+import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import { isOpenApiMode } from "../engine/trust-profile";
+import { extensionGatewayAdmission } from "../extensions/loader";
 import type { MemoryService } from "../memory/service";
 import { worldMemoryService } from "../memory/world-service";
 import type { MarinaDB } from "../persistence/database";
 import { MARINA_ROOT } from "../runtime-paths";
+import type {
+  GatewayAdmissionCheck,
+  GatewayAdmissionRequest,
+  GatewayAdmissionResult,
+} from "../sdk/extensions";
 import type { StorageProvider } from "../storage/provider";
 import type { Connection, Perception } from "../types";
 import { handleAssetApi, handleAssetServing } from "./asset-api";
@@ -67,6 +74,44 @@ import { RequestDrain } from "./request-drain";
 
 /** Module logger: network-surface lifecycle and request-path failures. */
 const logger = new Logger();
+
+/** Bound on an extension's gateway admission check (it may consult a remote verifier). */
+const GATEWAY_ADMISSION_TIMEOUT_MS = 15_000;
+
+/**
+ * Run an extension's gateway admission check, failing CLOSED: a throw, a
+ * malformed verdict or a timeout refuses the peer. Never rejects.
+ */
+export async function runGatewayAdmission(
+  check: GatewayAdmissionCheck,
+  request: GatewayAdmissionRequest,
+  timeoutMs = GATEWAY_ADMISSION_TIMEOUT_MS,
+): Promise<GatewayAdmissionResult> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const verdict = await Promise.race([
+      Promise.resolve().then(() => check(request)),
+      new Promise<GatewayAdmissionResult>((resolve) => {
+        timer = setTimeout(
+          () => resolve({ admit: false, reason: "admission check timed out" }),
+          timeoutMs,
+        );
+      }),
+    ]);
+    if (verdict?.admit === true) return verdict;
+    const reason =
+      verdict && verdict.admit === false && typeof verdict.reason === "string"
+        ? verdict.reason.slice(0, 200)
+        : "admission check returned no verdict";
+    logger.info("ws", "Gateway admission refused", { reason });
+    return { admit: false, reason };
+  } catch (error) {
+    logger.warn("ws", "Gateway admission check failed", { error: getErrorMessage(error) });
+    return { admit: false, reason: "admission check failed" };
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 const WEBCHAT_PATH = join(MARINA_ROOT, "src/net/webchat.html");
 const ASK_PATH = join(MARINA_ROOT, "src/net/ask.html");
@@ -211,6 +256,8 @@ export class WebSocketServer {
    *  gateway runtime retire legacy regex fallbacks per-peer: a peer that
    *  declared v>=1 speaks the structured envelope. */
   readonly gatewayPeerVersions = new Map<string, number>();
+  /** Extension gateway admission per connection (only when an extension registered one). */
+  private gatewayAdmissions = new Map<string, Promise<GatewayAdmissionResult>>();
 
   constructor(
     private engine: Engine,
@@ -814,6 +861,7 @@ export class WebSocketServer {
             secret?: string;
             internalToken?: string;
             version?: number;
+            entitlement?: unknown;
             request_id?: string;
             coding_target?: unknown;
             trace_links?: unknown;
@@ -863,8 +911,22 @@ export class WebSocketServer {
                 }),
               );
               ws.close();
+              return;
             }
-            // If GATEWAY_SECRET is not set, ignore the message silently (backward compatible)
+            // If GATEWAY_SECRET is not set, the secret is ignored (backward compatible).
+            // An extension admission check (e.g. an entitlement proof for a hosted
+            // paid world) runs only when one is registered, and only AFTER the
+            // secret check — it can refuse a peer, never admit one the secret refused.
+            const admission = extensionGatewayAdmission(engine);
+            if (admission) {
+              self.gatewayAdmissions.set(
+                connId,
+                runGatewayAdmission(admission, {
+                  proof: parsed.entitlement,
+                  peerVersion: Number.isInteger(version) && version > 0 ? version : null,
+                }),
+              );
+            }
             return;
           }
 
@@ -892,6 +954,32 @@ export class WebSocketServer {
                 }),
               );
               ws.close();
+              return;
+            }
+            // Extension admission: with a check registered, a Gateway_ login waits
+            // for the verdict of the proof sent in its gateway_auth (none sent ⇒
+            // refused). Without one, nothing here runs and login is unchanged.
+            if (parsed.name.startsWith("Gateway_") && extensionGatewayAdmission(engine)) {
+              const pending = self.gatewayAdmissions.get(connId);
+              const message = parsed;
+              void (async () => {
+                const verdict: GatewayAdmissionResult = pending
+                  ? await pending
+                  : { admit: false, reason: "Gateway connections must present an entitlement." };
+                if (ws.readyState !== 1) return;
+                if (!verdict.admit) {
+                  ws.send(
+                    JSON.stringify({
+                      kind: "auth_error",
+                      timestamp: Date.now(),
+                      data: { text: `Gateway admission refused: ${verdict.reason}` },
+                    }),
+                  );
+                  ws.close();
+                  return;
+                }
+                handleParticipantMessage(engine, ws, message, rateLimiter);
+              })();
               return;
             }
           }
@@ -929,6 +1017,7 @@ export class WebSocketServer {
           sockets.delete(connId);
           self.gatewayAuthed.delete(connId);
           self.gatewayPeerVersions.delete(connId);
+          self.gatewayAdmissions.delete(connId);
           engine.removeConnection(connId);
         },
       },
