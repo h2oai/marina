@@ -17,13 +17,47 @@ import { join, resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dir, "..");
 
-/** Package scripts that start a benchmark run or a dataset download. */
-const RUN_SCRIPTS = ["bench", "bench:compare", "bench:native", "bench:tier0", "bench:ui", "repro"];
-/** Entry points that run a benchmark, or download data, when executed. */
-const RUN_ENTRY =
-  /benchmarks\/(harness|tier0|download-all|download|server|native\/cli|run-[\w-]+)(\.ts)?\b/;
+/**
+ * Package scripts that start a benchmark run, a dataset download, a paid model
+ * run or an external filing (forecasting competitions, the arena).
+ */
+const RUN_SCRIPTS = [
+  "arena",
+  "arena:portfolio",
+  "bench",
+  "bench:compare",
+  "bench:native",
+  "bench:tier0",
+  "bench:ui",
+  "browsecomp-plus",
+  "forecast",
+  "forecastbench",
+  "futurex",
+  "metaculus",
+  "repro",
+  "swebench",
+  "tau2",
+];
+/** The paid runners' script entry points (each runs `main()` at module load). */
+const PAID_RUNNERS =
+  "futurex|forecastbench|metaculus|browsecomp-plus|swebench|tau2|repro|forecast|arena|arena-portfolio";
+/**
+ * Entry points that run a benchmark, download data, spend on models or file
+ * externally when executed: the harnesses, the paid runner scripts, the
+ * SWE-bench Pro grader, and the Prophet Arena CLI (`prophet eval|run|submit`).
+ */
+const RUN_ENTRY = new RegExp(
+  [
+    String.raw`benchmarks\/(harness|tier0|download-all|download|server|native\/cli|run-[\w-]+)(\.ts)?\b`,
+    String.raw`scripts\/(${PAID_RUNNERS})(\.ts)?(?![\w.-])`,
+    String.raw`benchmarks\/swebench\/pro_grade\.py`,
+    String.raw`\bprophet\s+(eval|run|submit)\b`,
+  ].join("|"),
+);
 /** Entry points whose module body runs `main()` unguarded, so importing one starts a run. */
-const UNGUARDED_ENTRY = /from\s+["']\.\.\/benchmarks\/(harness|download-all|native\/cli)["']/;
+const UNGUARDED_ENTRY = new RegExp(
+  String.raw`from\s+["']\.\.\/(benchmarks\/(harness|download-all|native\/cli)|scripts\/(${PAID_RUNNERS}))["']`,
+);
 
 const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as {
   scripts: Record<string, string>;
@@ -91,6 +125,18 @@ describe("CI never runs benchmarks", () => {
       return ref ? [`${file}: ${ref}`] : [];
     });
     expect(hits).toEqual([]);
+  });
+
+  it("recognises every guarded runner's own entry point", () => {
+    // A renamed script would otherwise slip past the entry-point patterns.
+    const missed = RUN_SCRIPTS.filter((name) => {
+      const body = pkg.scripts[name];
+      return body === undefined || !RUN_ENTRY.test(body);
+    });
+    expect(missed.filter((name) => !name.startsWith("bench"))).toEqual([]);
+    expect(RUN_ENTRY.test("benchmarks/swebench/pro_grade.py")).toBe(true);
+    expect(RUN_ENTRY.test("prophet run marina_agent.py")).toBe(true);
+    expect(RUN_ENTRY.test("scripts/arena-calibration-history.ts")).toBe(false);
   });
 
   it("no test imports a benchmark entry point that runs on import", () => {
