@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { queryWithUsage } from "../modes/passthrough";
+import { asJudge, queryWithUsage } from "../modes/passthrough";
 import type { ItemUsage } from "../types";
 import { addCallUsage } from "../usage";
 
@@ -41,15 +41,17 @@ export async function judgeResponseWithUsage(
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const judgeReply = await queryWithUsage(
-        judgeConfig.endpoint,
-        judgeConfig.model,
-        [
-          { role: "system", content: JUDGE_SYSTEM_PROMPT },
-          { role: "user", content: userContent },
-        ],
-        apiKey,
-        30000,
+      const judgeReply = await asJudge(() =>
+        queryWithUsage(
+          judgeConfig.endpoint,
+          judgeConfig.model,
+          [
+            { role: "system", content: JUDGE_SYSTEM_PROMPT },
+            { role: "user", content: userContent },
+          ],
+          apiKey,
+          30000,
+        ),
       );
       usage = addCallUsage(usage, judgeReply.usage);
 
@@ -122,15 +124,17 @@ export async function judgeEquivalence(
   const user = `Question:\n${question}\n\nReference answer:\n${reference}\n\nResponse:\n${response}\n\nVerdict (CORRECT or INCORRECT):`;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const reply = await queryWithUsage(
-        judgeConfig.endpoint,
-        judgeConfig.model,
-        [
-          { role: "system", content: EQUIVALENCE_SYSTEM_PROMPT },
-          { role: "user", content: user },
-        ],
-        apiKey,
-        120_000,
+      const reply = await asJudge(() =>
+        queryWithUsage(
+          judgeConfig.endpoint,
+          judgeConfig.model,
+          [
+            { role: "system", content: EQUIVALENCE_SYSTEM_PROMPT },
+            { role: "user", content: user },
+          ],
+          apiKey,
+          120_000,
+        ),
       );
       usage = addCallUsage(usage, reply.usage);
       const verdict = parseEquivalenceVerdict(reply.content);

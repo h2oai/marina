@@ -284,6 +284,47 @@ function tau2EvaluatorCheck(p: Probe): Check {
   };
 }
 
+/**
+ * τ³ banking retrieval configs with a shell (`alltools`, `terminal_use`) run the
+ * agent's commands under Anthropic's sandbox-runtime, which τ² pins and which needs
+ * these system tools on Linux. Without them every such simulation fails at setup.
+ */
+function tau2KnowledgeShellCheck(p: Probe): Check {
+  const missing = ["srt", "rg", "bwrap", "socat"].filter((cmd) => !p.which(cmd));
+  return {
+    id: "tau2-knowledge-shell",
+    title: "τ³ knowledge-base shell sandbox",
+    status: missing.length ? "missing" : "ok",
+    detail: missing.length
+      ? `not on PATH: ${missing.join(", ")}`
+      : "srt, rg, bwrap and socat on PATH",
+    ...(missing.length
+      ? {
+          fix: "npm install --prefix ~/.cache/tau2-srt @anthropic-ai/sandbox-runtime@0.0.23 && export PATH=~/.cache/tau2-srt/node_modules/.bin:$PATH (plus ripgrep, bubblewrap and socat from the OS)",
+        }
+      : {}),
+  };
+}
+
+/**
+ * τ³ banking needs τ²'s `knowledge` extra (BM25 and the embedding client) in the τ²
+ * virtualenv; a plain `pip install -e .` lacks it and the run dies at import.
+ */
+function tau2KnowledgeCheck(p: Probe): Check {
+  const home = p.env.TAU2_HOME;
+  const ok =
+    !!home && p.run([`${home}/.venv/bin/python`, "-c", "import rank_bm25, openai"]) !== undefined;
+  return {
+    id: "tau2-knowledge",
+    title: "τ³ knowledge extra",
+    status: ok ? "ok" : "missing",
+    detail: ok
+      ? "rank_bm25 and openai import in the τ² virtualenv"
+      : "the τ² virtualenv cannot import rank_bm25/openai (τ²'s `knowledge` extra)",
+    ...(ok ? {} : { fix: 'cd "$TAU2_HOME" && .venv/bin/pip install -e ".[knowledge]"' }),
+  };
+}
+
 export interface DoctorOptions {
   runDir: string;
   /** Free disk (GB) wanted for the chosen setup. */
@@ -304,6 +345,8 @@ export function doctor(p: Probe, opts: DoctorOptions): { tier: ModelTier; checks
     "python-swebench": () => pythonSwebenchCheck(p),
     tau2: () => tau2Check(p),
     "tau2-evaluator": () => tau2EvaluatorCheck(p),
+    "tau2-knowledge": () => tau2KnowledgeCheck(p),
+    "tau2-knowledge-shell": () => tau2KnowledgeShellCheck(p),
   };
   const ids = opts.only?.length
     ? [

@@ -65,6 +65,7 @@ import { Logger } from "../engine/logger";
 import { takeSettledProxyCall } from "../engine/proxy-settlement";
 import { dailyBudget, dailyCapRefusal, formatSpendUsd, recordSpend } from "../engine/spend-ledger";
 import { isLocalProfile } from "../engine/trust-profile";
+import { residentLessonsMode } from "../learning/modes";
 import {
   renderUnifiedContext,
   truncateToBytes,
@@ -3659,6 +3660,36 @@ export class LeanAgentAdapter implements AgentHandle {
       }
     }
 
+    // ── 2d. Lessons for the focus (opt-in, every 10th cycle, offset 7) ──
+    // MARINA_LESSONS_RESIDENT=on shows what judged outcomes taught about this
+    // kind of work (cross-board lessons labelled); `observe` logs the ids it
+    // would have shown and injects nothing; off (default) never asks.
+    const residentLessons = residentLessonsMode();
+    if (
+      residentLessons !== "off" &&
+      cycle % 10 === 7 &&
+      this.focus &&
+      !this.crewResponderMode &&
+      !this.activeCodingTask
+    ) {
+      try {
+        const got = await this.platformMemory.lessonsFor(this.focus.description);
+        if (got.lines.length > 0 && residentLessons === "on") {
+          const content = clampText(got.lines.map((l) => `- ${l}`).join("\n"), 600);
+          if (this.shouldIncludeSection("lessons", content)) {
+            parts.push(`[Lessons]\n${content}`);
+          }
+        } else if (got.ids.length > 0) {
+          this.log.info(LEAN_AGENT_LOG_CATEGORY, "lessons observed for focus (not shown)", {
+            agent: this.name,
+            lessons: got.ids.join(","),
+          });
+        }
+      } catch {
+        // best-effort; the agent works without lessons
+      }
+    }
+
     // Idle agents get a compact view of the world's highest-value work. This
     // replaces repeated exploratory turns with an actionable command while
     // leaving focused agents and event-driven crew responders undisturbed.
@@ -4086,11 +4117,11 @@ The goal is a smaller, sharper memory — not more notes.`;
   }
 
   /**
-   * The conversation cap that applies to this agent now. The built-in default
-   * exempts a bound coder (an active Code Mode task legitimately carries a large
-   * working set; the window-ratio threshold still guards it), while an
-   * operator-set `MARINA_AGENT_CONTEXT_CAP_TOKENS` applies to every agent. No
-   * cap compacts an agent's first run.
+   * Coding tasks use the same conversation cap as other residents. They may
+   * execute many tool turns inside their first prompt: apply the cap after the
+   * first assistant turn, without waiting for a second user prompt. Originals
+   * are archived by the context transform; the durable task pointer remains
+   * available. Never compact a fresh request before any work has occurred.
    */
   private tokenCapFor(
     messages: readonly AgentMessage[],
@@ -4098,8 +4129,12 @@ The goal is a smaller, sharper memory — not more notes.`;
   ): ConversationTokenCap | undefined {
     const cap = conversationTokenCap();
     if (!cap) return undefined;
-    if (!cap.explicit && this.activeCodingTask) return undefined;
-    if (!opts.betweenPrompts && !hasCompletedRun(messages)) return undefined;
+    if (
+      !opts.betweenPrompts &&
+      !hasCompletedRun(messages) &&
+      !(this.activeCodingTask && messages.some((message) => message.role === "assistant"))
+    )
+      return undefined;
     return cap;
   }
 

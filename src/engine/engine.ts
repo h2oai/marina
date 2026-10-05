@@ -62,6 +62,7 @@ import { isIgnoring } from "./commands/ignore";
 import { ConnectionManager } from "./connection-manager";
 import { ConnectorRuntime } from "./connector-runtime";
 import { positiveNumberFromEnv, ROOM_FETCH_RATE_MS, ROOM_FETCH_TIMEOUT_MS } from "./constants";
+import { onDefaultResolved, summarizeDefaultValue } from "./default-resolution";
 import { sanitizeEntityName } from "./entity-name";
 import { getErrorMessage, tryLog, tryLogAsync } from "./errors";
 import { EventLog } from "./event-log";
@@ -153,6 +154,8 @@ export class Engine {
   private readonly briefManager = new BriefManager();
   /** Detached DB-writing work (`trackBackground`), drained by `shutdown()`. */
   private readonly background = new Set<Promise<unknown>>();
+  /** Unsubscribes this engine from default-resolution traces (on shutdown). */
+  private readonly releaseDefaultTrace: () => void;
   /** Periodic (`tick % every === phase`) maintenance jobs; see `registerTickJobs()`. */
   private readonly tickScheduler: TickScheduler;
   /** @internal */ readonly _connections: ConnectionManager;
@@ -210,6 +213,21 @@ export class Engine {
     this.sandbox = new RoomSandbox();
     this.db = this.config.db;
     this._eventLog = new EventLog(this.logger, this.db);
+    // Every default resolved in this process is traced as an event (which
+    // layer answered and why); released on shutdown.
+    this.releaseDefaultTrace = onDefaultResolved((r) =>
+      this.logEvent({
+        type: "default_resolved",
+        slot: r.slot,
+        ...(r.surface ? { surface: r.surface } : {}),
+        source: r.source,
+        key: r.key,
+        value: summarizeDefaultValue(r.value),
+        ...(r.incumbentRunId ? { incumbentRunId: r.incumbentRunId } : {}),
+        reason: r.reason,
+        timestamp: Date.now(),
+      }),
+    );
     this.db?.onResourceChange((change) =>
       this.logEvent({ type: "resource_changed", ...change, timestamp: Date.now() }),
     );
@@ -1898,6 +1916,7 @@ export class Engine {
     const finish = () => {
       this.saveWorldState();
       releaseChallengeHost(this);
+      this.releaseDefaultTrace();
       return Promise.allSettled([
         this.connectorRuntime?.close(),
         this.gatewayRuntime?.close(),

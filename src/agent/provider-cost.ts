@@ -35,6 +35,8 @@ export interface TokenPrice {
 const DEFAULT_MODEL_PRICES: Record<string, TokenPrice> = {
   "gpt-6-luna": { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
   "gpt-6-sol": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+  // OpenRouter list price, checked 2026-10-05.
+  "gpt-6.1-sol": { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 0 },
   "gpt-6-astra": { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
   "glm-5.3-flash": { input: 0.15, output: 0.5, cacheRead: 0.03, cacheWrite: 0 },
   "claude-sonnet-5.5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
@@ -47,7 +49,14 @@ const DEFAULT_MODEL_PRICES: Record<string, TokenPrice> = {
 /** A default model's list price, or undefined (never a fabricated $0). */
 export function defaultModelPrice(modelId: string): TokenPrice | undefined {
   const bare = (modelId.split("/").pop() ?? modelId).toLowerCase();
-  return DEFAULT_MODEL_PRICES[bare];
+  // Anthropic's own API spells versions with dashes (`claude-opus-5-5`) where
+  // OpenRouter uses dots (`claude-opus-5.5`): both are the same model.
+  return DEFAULT_MODEL_PRICES[bare] ?? DEFAULT_MODEL_PRICES[dottedVersion(bare)];
+}
+
+/** `claude-opus-5-5` → `claude-opus-5.5` (a trailing `<major>-<minor>` version only). */
+function dottedVersion(id: string): string {
+  return id.replace(/-(\d{1,2})-(\d{1,2})$/, "-$1.$2");
 }
 
 type PricedModel = { cost?: { input?: number; output?: number } };

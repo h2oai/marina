@@ -49,9 +49,11 @@ const CANDIDATES = [
 ];
 
 describe("settings", () => {
-  test("off by default; invalid values fall back safely", () => {
+  test("observe by default; invalid values fall back safely", () => {
     const s = routeEvidenceSettingsFromEnv({});
-    expect(s.mode).toBe("off");
+    expect(s.mode).toBe("observe");
+    expect(routeEvidenceSettingsFromEnv({ MARINA_ROUTE_EVIDENCE: "off" }).mode).toBe("off");
+    expect(routeEvidenceSettingsFromEnv({ MARINA_ROUTE_EVIDENCE: "on" }).mode).toBe("on");
     expect(s.minN).toBe(30);
     expect(s.includeWindow).toBe(false);
     expect(s.maxCostPerItemUsd).toBeUndefined();
@@ -61,7 +63,7 @@ describe("settings", () => {
       MARINA_ROUTE_EVIDENCE_MIN_N: "-4",
       MARINA_ROUTE_EVIDENCE_MAX_COST_USD: "free",
     });
-    expect(junk.mode).toBe("off");
+    expect(junk.mode).toBe("observe");
     expect(junk.minN).toBe(30);
     expect(junk.maxCostPerItemUsd).toBeUndefined();
   });

@@ -9,7 +9,7 @@
  *   DB_PATH=marina.db bun run benchmark:import <file.json | tier0-dir> ... \
  *     --target-kind model|crew|population --target '<json or model id>' \
  *     [--label name] [--judge "<model> @ <route>"] [--cost-usd N] [--dry-run] \
- *     [--group key | --replicate-of <runId>] [--learn]
+ *     [--group key | --replicate-of <runId>] [--no-learn]
  *   DB_PATH=marina.db bun run benchmark:import --attach-to <runId> \
  *     --source-db <original-world.db> --source-run <original-runId> [--dry-run]
  *   DB_PATH=marina.db bun run benchmark:import --regroup <runId,runId,…> --group key --reason "<why>"
@@ -41,10 +41,12 @@
  * (role.edit). A result whose items are more than
  * `MARINA_BENCHMARK_MAX_FALLBACK_RATE` fallbacks is recorded invalid on import.
  *
- * `--learn` also feeds each newly recorded run to the outcome-learning loop
+ * Every newly recorded valid run also feeds the outcome-learning loop
  * (src/learning/): a judged lesson about which configuration won or lost on
- * that benchmark. It uses this Marina's own model and decision backend when
- * reachable; otherwise the lesson is recorded unverified, never trusted.
+ * that benchmark (ids, scores and counts only — never item text). It uses this
+ * Marina's own model and decision backend when reachable; otherwise the lesson
+ * is recorded unverified, never trusted. `--no-learn` opts out (as does
+ * `MARINA_LESSONS=off`); `--learn` is accepted and is the default.
  */
 
 import { Database } from "bun:sqlite";
@@ -85,6 +87,7 @@ const { positionals, values } = parseArgs({
     "cost-usd": { type: "string" },
     "dry-run": { type: "boolean" },
     learn: { type: "boolean" },
+    "no-learn": { type: "boolean" },
     group: { type: "string" },
     "replicate-of": { type: "string" },
     regroup: { type: "string" },
@@ -125,6 +128,7 @@ if (values["attach-to"]) {
   if (
     positionals.length ||
     values.learn ||
+    values["no-learn"] ||
     values.group ||
     values["replicate-of"] ||
     values["cost-usd"] ||
@@ -292,6 +296,9 @@ if (costUsd !== undefined && files.length !== 1) {
 }
 
 const db = values["dry-run"] ? undefined : new MarinaDB(process.env.DB_PATH || "marina.db");
+if (values.learn && values["no-learn"]) fail("give --learn or --no-learn, not both");
+// Imports teach by default (every scored outcome teaches); --no-learn opts out.
+const learn = db && !values["no-learn"] ? enableOutcomeLearning(db) : false;
 let replicateGroup = values.group;
 if (values["replicate-of"] !== undefined) {
   const peer = db?.getBenchmarkRun(values["replicate-of"]);
@@ -351,10 +358,7 @@ try {
       console.log(
         formatBenchmarkExecution(benchmarkExecution(db.getBenchmarkItems(res.id))).join("\n"),
       );
-      if (res.created && values.learn) {
-        enableOutcomeLearning(db);
-        noteBenchmarkRun(db, { ...run, id: res.id });
-      }
+      if (res.created && learn) noteBenchmarkRun(db, { ...run, id: res.id });
       console.log(
         res.created
           ? `${file}: recorded ${res.id} — ${run.benchmark} ${acc}${replicateGroup ? ` (group ${replicateGroup})` : ""}${invalid}`
@@ -366,7 +370,7 @@ try {
     }
   }
 } finally {
-  if (db && values.learn) await settleOutcomes(db);
+  if (db && learn) await settleOutcomes(db);
   db?.close();
 }
 process.exit(failed ? 1 : 0);

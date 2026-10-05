@@ -10,6 +10,9 @@ import { BUDGET_FORCED_HEADER, DEADLINE_HEADER } from "../../agent/budget-termin
 import { parseDeadlineHeader } from "../../coordination/request-deadline";
 import type { Engine } from "../../engine/engine";
 import { stageRequestImages } from "../../engine/media/vision";
+import { evalOption, LESSONS_HEADER } from "../../learning/eval-context";
+import type { OutcomeDomain } from "../../learning/outcomes";
+import { lessonsBlock, lessonsHeaderValue, recallForWork } from "../../learning/service";
 import { getEndpointConfig } from "../model-endpoint";
 import {
   applyInjection,
@@ -55,6 +58,30 @@ import {
 } from "./shared";
 import { explicitUpstreamModel, passthruForceModel, proxyToUpstream } from "./upstream";
 import { maybeVerifyChat, VERIFY_MODEL_PREFIX } from "./verify";
+
+/**
+ * `marina/lessons:<model>` — the plain request to <model>, with judged lessons
+ * (tools, code and cross-board meta) injected as one labelled system block.
+ * `x-marina-lessons: on` does the same for an unchanged model id.
+ */
+export const LESSONS_MODEL_PREFIX = "marina/lessons:";
+
+/** The lesson domains a plain passthru request recalls (meta rides on top). */
+export const PASSTHRU_LESSON_DOMAINS: readonly OutcomeDomain[] = ["tools", "code"];
+
+/** Did the request opt into lessons (model prefix, or `x-marina-lessons: on`)? */
+export function wantsLessons(req: Request, model: unknown): boolean {
+  if (typeof model === "string" && model.startsWith(LESSONS_MODEL_PREFIX)) return true;
+  const v = req.headers.get(LESSONS_HEADER)?.trim().toLowerCase();
+  return v === "on" || v === "true" || v === "1";
+}
+
+/** The upstream's response with one more header (its headers may be immutable). */
+function withResponseHeader(resp: Response, name: string, value: string): Response {
+  const headers = new Headers(resp.headers);
+  headers.set(name, value);
+  return new Response(resp.body, { status: resp.status, statusText: resp.statusText, headers });
+}
 
 /** Resolve only an explicit, single binary arithmetic expression. This is
  * intentionally conservative: no precedence, variables, units, or inferred
@@ -127,8 +154,14 @@ export async function runOpenaiChat(
   },
 ): Promise<Response> {
   try {
-    const body: Record<string, unknown> =
+    let body: Record<string, unknown> =
       runOpts?.stream !== undefined ? { ...requestBody, stream: runOpts.stream } : requestBody;
+    // `marina/lessons:<model>` (or `x-marina-lessons: on`) opts a plain request
+    // into judged lessons; the prefix is stripped before anything else sees it.
+    const lessonsOptIn = wantsLessons(req, body.model);
+    if (typeof body.model === "string" && body.model.startsWith(LESSONS_MODEL_PREFIX)) {
+      body = { ...body, model: body.model.slice(LESSONS_MODEL_PREFIX.length) };
+    }
     const model = typeof body.model === "string" ? body.model : "marina";
     const messages = Array.isArray(body.messages) ? (body.messages as OpenAIMessage[]) : [];
 
@@ -191,13 +224,29 @@ export async function runOpenaiChat(
       // The body is OpenAI-shaped on both, so the injection format is `openai`;
       // the SURFACE recorded on the lifecycle events is the protocol the client
       // actually spoke (`anthropic` when the bridge called in).
-      const prep = await preparePassthru(
+      const shared = await preparePassthru(
         engine,
         req,
         authResult,
         messages,
         runOpts?.surface ?? "openai",
       );
+      // Opt-in lessons ride the same addendum (after the caller's context), so
+      // a plain passthru request is byte-identical unless it asked for them.
+      const lessons = lessonsOptIn
+        ? await recallForWork(engine.db, PASSTHRU_LESSON_DOMAINS, userText.slice(0, 500), {
+            limit: 4,
+            maxBytes: 800,
+            ...evalOption(req),
+          })
+        : undefined;
+      const lessonText = lessons ? lessonsBlock(lessons.inject) : "";
+      const prep = lessonText
+        ? {
+            ...shared,
+            addendum: shared.addendum ? `${shared.addendum}\n\n${lessonText}` : lessonText,
+          }
+        : shared;
       if (prep.addendum) applyInjection(body, prep.addendum, "openai");
       // The native Anthropic body gets the same addendum in ITS native slot (a
       // leading system text block) so a `/v1/messages` client's own
@@ -223,7 +272,7 @@ export async function runOpenaiChat(
         void capturePassthruResponse(engine, prep.identity.entityId, messages, resp);
         passthruCacheStore(engine, prep, body, forceModel, resp);
       }
-      return resp;
+      return lessons ? withResponseHeader(resp, LESSONS_HEADER, lessonsHeaderValue(lessons)) : resp;
     }
 
     // Non-passthru routing modes synthesize an answer from the user's text (or
@@ -262,6 +311,8 @@ export async function runOpenaiChat(
     };
     const clientDeadline = parseDeadlineHeader(req.headers.get(DEADLINE_HEADER));
     if (clientDeadline) opts.deadlineMs = clientDeadline;
+    const evalCtx = evalOption(req).eval;
+    if (evalCtx) opts.eval = evalCtx;
     const wantStream = body.stream === true;
 
     // A deliberately tiny verified fast path keeps the demo reactive without
@@ -347,6 +398,7 @@ export async function runOpenaiChat(
       if (result.conversationId) extra["X-Conversation-Id"] = result.conversationId;
       if (result.repaired) extra["x-marina-repair"] = result.repaired;
       if (result.budgetForced) extra[BUDGET_FORCED_HEADER] = result.budgetForced.reason;
+      if (result.lessons) extra[LESSONS_HEADER] = result.lessons;
       return json(
         openaiCompletion(model, result.content, usageFromTrace(engine, result.requestId)),
         200,

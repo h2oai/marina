@@ -11,8 +11,10 @@ import type { TrialDeps } from "../src/engine/evolution-trial";
 import { grant } from "../src/engine/safety-gates";
 import { MarinaDB } from "../src/persistence/database";
 import type { Entity, EntityId, RoomContext } from "../src/types";
+import { adoptionLog } from "../src/world/adoption";
 import { WorldCollectiveManager } from "../src/world/world-collective-manager";
 import { stripAnsi, until } from "./helpers";
+import { scopeProperty } from "./process-state";
 
 const person = (id: string, name: string) =>
   ({ id, name, properties: { rank: 9 } }) as unknown as Entity;
@@ -162,6 +164,7 @@ const run = async (cmd: ReturnType<typeof worldCommand>, who: Entity, text: stri
 
 describe("world adopt — bringing an earned winner home", () => {
   it("requests with the child's evidence; only someone else approves; creates the role", async () => {
+    using _clock = scopeProperty(Date, "now", () => 1_800_000_000_000);
     const cmd = parentWorld();
     const req = await run(cmd, alice, "world adopt trial2 scout-v2");
     expect(req).toContain("Adoption #1 requested: scout-v2");
@@ -170,6 +173,7 @@ describe("world adopt — bringing an earned winner home", () => {
     expect(await run(cmd, alice, "world adopt approve 1")).toContain("cannot approve their own");
     expect(await run(cmd, bob, "world adopt approve 1")).toContain("Adoption #1 applied");
     expect(JSON.parse(parent.getRole("scout-v2")!.guidelines)).toEqual(["Cite sources"]);
+    expect(adoptionLog(parent)[0]?.status).toBe("applied");
   });
 
   it("replacing an existing role needs role.edit, saves the old definition, and rolls back", async () => {

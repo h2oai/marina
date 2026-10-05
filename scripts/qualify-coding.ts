@@ -35,7 +35,7 @@ import type { CodingEventRow } from "../src/persistence/db-coding";
 import { MarinaClient } from "../src/sdk/client";
 import { codingDesk } from "../src/sdk/coding-desk";
 import { MarinaPanelClient } from "../src/sdk/panel-client";
-import { type EntityId, roomId } from "../src/types";
+import { type EngineEvent, type EntityId, roomId } from "../src/types";
 import { scopeProcessState, scopeProperty } from "../test/process-state";
 import type { TerminalPanelState } from "./code-panel-form";
 import { CodePanels } from "./code-panels";
@@ -60,9 +60,13 @@ export interface CodingQualificationOptions {
   repositoryRevision?: string;
   /** Defaults to Marina's built-in OpenAI model; recorded explicitly in every report. */
   model?: (typeof MODELS)[number];
+  /** Retain one resident's history across tasks; no extra calls or spend are granted. */
+  reuseWorker?: boolean;
 }
 
 export function validateCodingQualification(options: CodingQualificationOptions): void {
+  if (options.reuseWorker !== undefined && typeof options.reuseWorker !== "boolean")
+    throw new Error("reuse-worker must be a boolean");
   if (options.model !== undefined && !MODELS.includes(options.model))
     throw new Error(`Choose an approved qualification model: ${MODELS.join(", ")}`);
   if (options.repositoryRevision && !/^[a-f0-9]{40}$/.test(options.repositoryRevision))
@@ -377,12 +381,13 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
     ? { ...knownPrice! }
     : { input: 0.4, output: 1.6, cacheRead: 0.1, cacheWrite: 0.4 };
   const requestSizes: EvaluationRequestSize[] = [];
+  const totalAttemptLimit = 40 * (options.scenarios?.length ?? 1);
   const spending = new Proxy(
     {
       ceiling: options.budgetUsd,
       reserved: 0,
       attempts: 0,
-      maxAttempts: 40 * (options.scenarios?.length ?? 1),
+      maxAttempts: totalAttemptLimit,
       model,
       tokenParameter: luna ? ("max_completion_tokens" as const) : ("max_tokens" as const),
       ...(luna ? { requireReasoningEffort: "none" as const } : {}),
@@ -478,7 +483,11 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
   server.setDb(db);
   const broadcaster = new DashboardBroadcaster();
   server.setBroadcaster(broadcaster);
-  engine.addEventListener((event) => broadcaster.broadcastEvent(event));
+  const modelEvents: Extract<EngineEvent, { type: "model_request_lifecycle" }>[] = [];
+  engine.addEventListener((event) => {
+    broadcaster.broadcastEvent(event);
+    if (event.type === "model_request_lifecycle") modelEvents.push(event);
+  });
   cleanup.defer(() => server.stop());
   server.start();
   engine.agentRuntime.setWsPort(server.getPort());
@@ -490,8 +499,29 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
     owner.disconnect();
     peer.disconnect();
   });
-  cleanup.defer(() => engine.agentRuntime.stopAll());
+  const settleWorkers = async () => {
+    await engine.agentRuntime.stopAll();
+    // A cancelled stream may settle after the resident stops. Keep the server
+    // and persistence open until every actual upstream request is terminal.
+    const deadline = Date.now() + 5000;
+    while (true) {
+      const pending = new Set<string>();
+      for (const event of modelEvents) {
+        if (event.routeKind !== "passthru") continue;
+        if (event.phase === "received") pending.add(event.requestId);
+        if (event.phase === "completed" || event.phase === "failed")
+          pending.delete(event.requestId);
+      }
+      if (!pending.size) return;
+      if (Date.now() >= deadline)
+        throw new Error(`Unsettled upstream requests: ${[...pending].join(", ")}`);
+      await Bun.sleep(25);
+    }
+  };
+  cleanup.defer(settleWorkers);
   const traces: { scenario: string; event: AgentEvent }[] = [];
+  let tracingScenario = "setup";
+  const observedWorkers = new Set<string>();
   const messages: string[] = [];
   owner.onPerception((p) => messages.push(String(p.data.text ?? "")));
   const report: Record<string, unknown> = {
@@ -500,6 +530,7 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
     provider: `openai/${spending.model}`,
     pricing: { standard: price, long_context_threshold: luna ? 272000 : null },
     model_loop: "native Marina worker",
+    reuse_worker: options.reuseWorker ?? false,
     policy: {
       autonomy: "guarded",
       trust: "shared",
@@ -519,6 +550,8 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
     const ownerId = owner.getSession()!.entityId as EntityId;
     grant(db, ownerId, "code.exec");
     for (const scenario of options.scenarios ?? ["bugfix"]) {
+      tracingScenario = scenario;
+      spending.maxAttempts = Math.min(totalAttemptLimit, spending.attempts + 40);
       // Qualify against an explicit operator-approved environment, rather than
       // asking the model to remember infrastructure policy on every retry.
       // The repository recipe imports only local/Bun builtins; the workspace
@@ -636,22 +669,30 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
       const sessionId = engine.entities.get(ownerId)!.properties.coding_session_id!;
       if (repositoryFixture)
         await owner.command(`code recipe save default ${repositoryFixture.recipe}`);
-      const name = `Coder${scenario}`;
-      const handle = await engine.agentRuntime.spawn({
-        name,
-        model: "marina/default",
-        role: "coder",
-        goal: "Wait for your coding task assignment; do not make changes or dispatch other agents until assigned.",
-        crewResponder: true,
-        toolProfile: "full",
-        thinkingLevel: "off",
-        maxTokens: spending.outputLimit,
-        budgetCalls: 40,
-        promptTimeoutMs: 60_000,
-        maxRetryDelayMs: 0,
-        loopCycleDelay: 200,
-      });
-      const unsubscribe = handle.subscribe((event) => traces.push({ scenario, event }));
+      const name = options.reuseWorker ? "CodingJourney" : `Coder${scenario}`;
+      const handle =
+        engine.agentRuntime.get(name) ??
+        (await engine.agentRuntime.spawn({
+          name,
+          model: "marina/default",
+          role: "coder",
+          goal: "Wait for your coding task assignment; do not make changes or dispatch other agents until assigned.",
+          crewResponder: true,
+          toolProfile: "full",
+          thinkingLevel: "off",
+          maxTokens: spending.outputLimit,
+          budgetCalls: options.reuseWorker ? 40 * (options.scenarios?.length ?? 1) : 40,
+          promptTimeoutMs: 60_000,
+          maxRetryDelayMs: 0,
+          loopCycleDelay: 200,
+        }));
+      if (!observedWorkers.has(name)) {
+        observedWorkers.add(name);
+        cleanup.defer(
+          handle.subscribe((event) => traces.push({ scenario: tracingScenario, event })),
+        );
+      }
+      const initialCalls = handle.getStatus().modelCalls ?? 0;
       db.updateCodingSession(sessionId, { agent: name });
       const workerId = handle.getStatus().entityId;
       assert.ok(workerId, "Native worker failed to join the world");
@@ -749,7 +790,12 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
       while (Date.now() < deadline && db.getCodingArtifact(run.id)?.status === "active") {
         if (worldLatency === undefined && messages.some((m) => m.includes(marker)))
           worldLatency = performance.now() - sent;
-        if (handle.getStatus().budgetExhausted || networkFailure) break;
+        if (
+          handle.getStatus().budgetExhausted ||
+          (handle.getStatus().modelCalls ?? 0) - initialCalls >= 40 ||
+          networkFailure
+        )
+          break;
         await Bun.sleep(50);
       }
       const submitted = db.getCodingArtifact(run.id)!;
@@ -774,6 +820,7 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
         elapsed_ms: Date.now() - scenarioStarted,
         world_message_latency_ms: worldLatency,
         worker: handle.getStatus(),
+        worker_calls_this_task: (handle.getStatus().modelCalls ?? 0) - initialCalls,
         failure,
         desk: deskProof,
       };
@@ -942,15 +989,33 @@ console.log("Independent pagination contract passed");
       result.review = "Canonical owner approval after independent deterministic contract checks";
       result.passed = true;
       workers.push({ name, recordedCostUsd: operatorStatusOf(handle)?.totalCostUsd ?? 0 });
-      unsubscribe();
-      await engine.agentRuntime.stop(name);
+      if (!options.reuseWorker) await engine.agentRuntime.stop(name);
     }
     assert.ok(spending.attempts > 0, "No actual provider request occurred");
     report.passed = true;
   } catch (error) {
     report.error = getErrorMessage(error);
   } finally {
+    // Retain a provisional outcome before draining, then settle late turns and
+    // refusals before publishing the final report. A successful task can still
+    // have a failed follow-on request; never hide it behind the submission time.
+    writeFileSync(join(directory, "report.pending.json"), JSON.stringify(report, null, 2), {
+      mode: 0o600,
+    });
+    try {
+      await settleWorkers();
+      report.workers_settled = true;
+    } catch (error) {
+      report.passed = false;
+      report.shutdown_error = getErrorMessage(error);
+    }
     report.upstream_refusal = networkFailure ?? null;
+    report.completed_upstream_calls = modelEvents.filter(
+      (event) => event.routeKind === "passthru" && event.phase === "completed",
+    ).length;
+    report.failed_upstream_calls = modelEvents
+      .filter((event) => event.routeKind === "passthru" && event.phase === "failed")
+      .map((event) => ({ request_id: event.requestId, error_kind: event.errorKind }));
     report.spending = {
       ...spending,
       recorded_usd: spentTodayUsd(),
@@ -985,6 +1050,9 @@ console.log("Independent pagination contract passed");
     report.elapsed_ms = Date.now() - started;
     writeFileSync(join(directory, "report.json"), JSON.stringify(report, null, 2), { mode: 0o600 });
     writeFileSync(join(directory, "traces.json"), JSON.stringify(traces), { mode: 0o600 });
+    writeFileSync(join(directory, "model-lifecycles.json"), JSON.stringify(modelEvents), {
+      mode: 0o600,
+    });
     writeFileSync(join(directory, "transcript.json"), JSON.stringify(messages), { mode: 0o600 });
     // Persist the outcome before shutdown: a broken worker's own checkpoint
     // cleanup must not erase the evidence explaining its failure.
@@ -1003,6 +1071,7 @@ if (import.meta.main) {
       "timeout-ms": { type: "string" },
       "repository-revision": { type: "string" },
       model: { type: "string" },
+      "reuse-worker": { type: "boolean", default: false },
     },
   });
   const timeoutMs = values["timeout-ms"] ? Number(values["timeout-ms"]) : 240_000;
@@ -1022,6 +1091,7 @@ if (import.meta.main) {
     timeoutMs,
     repositoryRevision: values["repository-revision"],
     model: values.model as CodingQualificationOptions["model"],
+    reuseWorker: values["reuse-worker"],
   });
   clearTimeout(watchdog);
   console.log(

@@ -39,7 +39,7 @@ import {
   type VerificationVerdict,
 } from "../../../coding/verification-plan";
 import { summarizeFlywheelEvents, WorkspaceGateway } from "../../../coding/workspace-gateway";
-import { lessonsBlock, noteOutcome, recallLessons } from "../../../learning/service";
+import { lessonsBlock, noteOutcome, recallForWork } from "../../../learning/service";
 import { dim, error as fmtError, header, separator, success } from "../../../net/ansi";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Connection, Entity, EntityId, RoomContext } from "../../../types";
@@ -727,11 +727,12 @@ export async function runVerificationCommands(
     updateCodeContext(currentEntity, deps.db, currentSession);
 
   // A failure brings back what earlier verifications taught about this kind of
-  // work (MARINA_LESSONS; observe records the ids without showing them).
+  // work, plus cross-board method lessons within a third of the budget
+  // (MARINA_LESSONS / MARINA_LESSONS_META; observe records the ids without showing them).
   const lessons = failed
-    ? await recallLessons(
+    ? await recallForWork(
         deps.db,
-        "code",
+        ["code"],
         `${results.map((item) => item.result.command.join(" ")).join(" ")} ${(failedRun?.stored?.result.output ?? "").slice(-300)}`,
         { limit: 3, maxBytes: 600 },
       )

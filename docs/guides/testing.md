@@ -532,6 +532,24 @@ Failures, missing credentials and timeouts are failures; this is a small functio
 not a general coding-quality benchmark. The default scenario is `bugfix`; `--timeout-ms` controls
 the deadline per scenario (default 240000, maximum 600000).
 
+Add `--reuse-worker` to run the selected scenarios sequentially with one resident and its
+retained conversation. Each scenario still gets its own disposable workspace, coding session,
+candidate checks and owner review. The 40-call limit applies to each task; the declared dollar
+ceiling covers the entire journey. For example, `--scenarios workspace,marina --reuse-worker`
+exercises a workspace change followed by the pinned repository task below. This tests repeated
+work without claiming day-long reliability. Long coding conversations use the normal context
+cap after their first assistant turn; archived history and the durable full-task pointer remain
+available after compaction.
+
+The final report drains workers while the server and database remain open. Inspect
+`workers_settled`, `completed_upstream_calls`, `failed_upstream_calls` and
+`model-lifecycles.json` alongside the candidate outcome. A successful submission can be followed
+by a cancelled request; successful coding does not imply that every upstream attempt succeeded.
+A report with `workers_settled: false` leaves lifecycle qualification open even when its candidate
+passed. Keep that report and the lifecycle log; run a separately identified follow-up after fixing
+shutdown rather than editing the original evidence.
+
+
 For an outcome qualification, declare the scenario/repetition list, runtime revision, model,
 per-attempt bounds and aggregate spending ceiling before the first call. Run each attempt in
 a new directory and preserve every report, including failures. Freeze runtime code during
