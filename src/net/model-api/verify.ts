@@ -654,7 +654,7 @@ async function callUpstream(
     { ...body, model, stream: false },
     undefined,
     { routeKind: "passthru", routeReason: reason, ...(entityId ? { entityId } : {}) },
-    signal ? { clientSignal: signal } : undefined,
+    { clientSignal: signal, providerFallback: false },
   );
   const raw = await resp.text();
   const cost = Number(resp.headers.get(COST_USD_HEADER));

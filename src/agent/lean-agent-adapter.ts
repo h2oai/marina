@@ -3553,7 +3553,7 @@ export class LeanAgentAdapter implements AgentHandle {
       parts.push(
         `[Active Coding Task]\n${clampText(this.activeCodingTask, ACTIVE_CODING_TASK_MAX_CHARS)}\n` +
           "The task comes first: work through marina_code actions (read/search/edit/write/patch/verify). " +
-          "Finish with a marina_code summary citing changed paths and passing checks. " +
+          "Finish source and test edits, verify the final candidate, inspect its receipt, then submit a marina_code summary. Later edits require fresh checks. " +
           "Using memory, pool or focus tools along the way is your call.",
         MANDATORY_SECTION_PRIORITY,
         "active_coding_task",

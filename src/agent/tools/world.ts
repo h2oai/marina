@@ -683,7 +683,7 @@ export function createWorldTools(ctx: ToolContext): AgentTool[] {
     wrap(
       "marina_novelty",
       "Novelty",
-      "Advisory exploration grounded in your goal, activity and outcomes. suggest ranks relevant recovery, verification and exploration; experiments inspects benchmark evidence. Neither runs experiments nor rewards activity volume.",
+      "Advisory opportunities from goals, activity and outcomes. suggest ranks recovery, verification and exploration; experiments inspects benchmark evidence. No execution or activity rewards.",
       noveltySchema,
       (p) =>
         `novelty ${p.action as string}${

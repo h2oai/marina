@@ -593,6 +593,12 @@ freshness is reassessed at status, submission, and review; readiness is an obser
 The configured check recipe determines what is tested: a whitespace-only fallback does not
 establish functional correctness. Use a project test recipe for a meaningful completion check.
 
+Workers keep the completion requirement and a link to the full task artifact ahead of any
+abbreviated task reminder. Finish source and regression-test edits before verification;
+background completion reports the observed candidate state, and any later edit requires fresh
+checks. Coding note tools use single-line `text`; exact replacements use `edit` with
+`oldText`/`newText`, while a new file uses `write` with `content`.
+
 If work cannot proceed, `code blocked <reason>` saves a handoff, interrupts this attempt,
 and releases its claim. It preserves edits and evidence. Configured worker budgets still apply;
 this requirement adds no retry scheduler or automatic dependency installation. An active task
@@ -689,7 +695,7 @@ container runner):
 
 1. **Prepare** for the detected project type. A probe checks that the environment has what the
    checks need (`python -m pytest --version`, `go version`, `node_modules` for a package with
-   dependencies, and so on). A JavaScript installer never runs on a Python project, and the
+   dependencies or workspace links, and so on). A JavaScript installer never runs on a Python project, and the
    reverse.
 2. **Type-check**, when the project configures it and the chain does not already run it:
    `tsc --noEmit` for a `tsconfig.json`, `mypy` or `pyright` on the changed Python files.
@@ -726,6 +732,16 @@ code verify dependencies:none     # skip the probe
 code verify dependencies:auto     # also install locked dependencies where that is isolated
 code verify typecheck:off         # skip the configured type-check
 ```
+
+Workspace roots require preparation even when dependencies are declared only in child
+packages. `dependencies:check` still never installs; `dependencies:bun` uses the locked,
+isolated candidate installer with lifecycle scripts disabled. An operator can set
+`MARINA_CODE_VERIFY_DEPENDENCIES` for a deployment's normal policy; explicit command
+modifiers override it. Use `none` only for checks known to need no installed dependencies.
+
+Verification receipt IDs are artifacts, not files. Inspect them with `code show <id>`,
+or `marina_code` with `action=show` and `artifactId=<id>`. A completed request displays
+its linked result, including failed-check output and the full-output artifact pointer.
 
 **Relevant tests** are the test files you changed, tests named after the files you changed
 (`test_parser.py`, `parser.test.ts`, `ParserTest.java`), and tests that import them. Go runs the

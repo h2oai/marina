@@ -16,6 +16,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import type { AgentEvent } from "../src/agent/agent-types";
 import { operatorStatusOf } from "../src/agent/lean-agent-adapter";
+import { costFromTokens, defaultModelPrice } from "../src/agent/provider-cost";
 import { BUN_PREPARATION_POLICY } from "../src/coding/candidate-dependencies";
 import { LocalWorkspace } from "../src/coding/local-workspace";
 import type { ProjectInstructions } from "../src/coding/project-instructions";
@@ -48,6 +49,7 @@ import {
 } from "./research/memory-evaluation-budget";
 
 const SCENARIOS = ["bugfix", "feature", "refactor", "workspace", "marina"] as const;
+const MODELS = ["gpt-6-luna", "gpt-4.1-mini-2025-04-14"] as const;
 export type CodingScenario = (typeof SCENARIOS)[number];
 export interface CodingQualificationOptions {
   directory: string;
@@ -56,9 +58,13 @@ export interface CodingQualificationOptions {
   timeoutMs?: number;
   /** Repeat the real-repository task against a recorded local commit. */
   repositoryRevision?: string;
+  /** Defaults to Marina's built-in OpenAI model; recorded explicitly in every report. */
+  model?: (typeof MODELS)[number];
 }
 
 export function validateCodingQualification(options: CodingQualificationOptions): void {
+  if (options.model !== undefined && !MODELS.includes(options.model))
+    throw new Error(`Choose an approved qualification model: ${MODELS.join(", ")}`);
   if (options.repositoryRevision && !/^[a-f0-9]{40}$/.test(options.repositoryRevision))
     throw new Error("repository-revision must be a full local Git commit ID");
   if (!Number.isFinite(options.budgetUsd) || options.budgetUsd <= 0 || options.budgetUsd > 2)
@@ -358,10 +364,18 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
     throw new Error("OPENAI_API_KEY is unavailable; no live qualification was run");
   const directory = resolve(options.directory);
   mkdirSync(directory, { recursive: false, mode: 0o700 });
-  // Published non-batch rates, checked 2026-09-29:
+  const model = options.model ?? MODELS[0];
+  const luna = model === "gpt-6-luna";
+  // Published standard rates, checked 2026-10-04:
   // https://developers.openai.com/api/docs/models/gpt-4.1-mini
+  // https://developers.openai.com/api/docs/models/gpt-6-luna
   // Byte-based reservations deliberately overestimate text token counts; the
   // existing gate refuses alternate models/endpoints and retains lost replies.
+  const knownPrice = defaultModelPrice(model);
+  assert.ok(!luna || knownPrice, "Qualification model has no approved pricing");
+  const price = luna
+    ? { ...knownPrice! }
+    : { input: 0.4, output: 1.6, cacheRead: 0.1, cacheWrite: 0.4 };
   const requestSizes: EvaluationRequestSize[] = [];
   const spending = new Proxy(
     {
@@ -369,11 +383,15 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
       reserved: 0,
       attempts: 0,
       maxAttempts: 40 * (options.scenarios?.length ?? 1),
-      model: "gpt-4.1-mini-2025-04-14",
+      model,
+      tokenParameter: luna ? ("max_completion_tokens" as const) : ("max_tokens" as const),
+      ...(luna ? { requireReasoningEffort: "none" as const } : {}),
       outputLimit: options.scenarios?.includes("marina") ? 4096 : 2000,
       inputLimit: options.scenarios?.includes("marina") ? 262144 : 131072,
-      inputPerMillion: 0.4,
-      outputPerMillion: 1.6,
+      // Reserve at the more expensive long-context/cache-write rate even
+      // though the request-byte cap keeps normal prompts well below it.
+      inputPerMillion: luna ? Math.max(price.input, price.cacheWrite) * 2 : price.input,
+      outputPerMillion: luna ? price.output * 1.5 : price.output,
       onAttempt: (size: EvaluationRequestSize) => {
         requestSizes.push(size);
         writeFileSync(
@@ -480,6 +498,7 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
     schema: "marina.coding.qualification.v1",
     passed: false,
     provider: `openai/${spending.model}`,
+    pricing: { standard: price, long_context_threshold: luna ? 272000 : null },
     model_loop: "native Marina worker",
     policy: {
       autonomy: "guarded",
@@ -500,6 +519,17 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
     const ownerId = owner.getSession()!.entityId as EntityId;
     grant(db, ownerId, "code.exec");
     for (const scenario of options.scenarios ?? ["bugfix"]) {
+      // Qualify against an explicit operator-approved environment, rather than
+      // asking the model to remember infrastructure policy on every retry.
+      // The repository recipe imports only local/Bun builtins; the workspace
+      // fixture needs captured local workspace links. All other probes stay on.
+      const dependencyMode =
+        scenario === "marina" ? "none" : scenario === "workspace" ? "bun" : "check";
+      using _verificationPolicy = scopeProcessState({
+        env: { MARINA_CODE_VERIFY_DEPENDENCIES: dependencyMode },
+      });
+      report.verification_defaults ??= {} as Record<string, string>;
+      (report.verification_defaults as Record<string, string>)[scenario] = dependencyMode;
       const workspaceFixture = scenario === "workspace" ? codingWorkspaceFixture() : undefined;
       const repositoryFixture = scenario === "marina" ? codingRepositoryFixture() : undefined;
       const fixture =
@@ -920,21 +950,34 @@ console.log("Independent pagination contract passed");
   } catch (error) {
     report.error = getErrorMessage(error);
   } finally {
+    report.upstream_refusal = networkFailure ?? null;
     report.spending = {
       ...spending,
       recorded_usd: spentTodayUsd(),
-      estimated_completed_turn_cost_usd: traces.reduce(
-        (sum, { event }) =>
-          event.type === "turn_end"
-            ? sum +
-              ((event.inputTokens ?? 0) * spending.inputPerMillion +
-                (event.cacheReadTokens ?? 0) * 0.1 +
-                (event.cacheWriteTokens ?? 0) * spending.inputPerMillion +
-                (event.outputTokens ?? 0) * spending.outputPerMillion) /
-                1_000_000
-            : sum,
-        0,
-      ),
+      estimated_completed_turn_cost_usd: traces.reduce((sum, { event }) => {
+        if (event.type !== "turn_end") return sum;
+        const long =
+          luna &&
+          (event.inputTokens ?? 0) + (event.cacheReadTokens ?? 0) + (event.cacheWriteTokens ?? 0) >
+            272000;
+        const rate = long
+          ? {
+              input: price.input * 2,
+              cacheRead: price.cacheRead * 2,
+              cacheWrite: price.cacheWrite * 2,
+              output: price.output * 1.5,
+            }
+          : price;
+        return (
+          sum +
+          costFromTokens(rate, {
+            input: event.inputTokens,
+            cacheRead: event.cacheReadTokens,
+            cacheWrite: event.cacheWriteTokens,
+            output: event.outputTokens,
+          })
+        );
+      }, 0),
       workers,
       accounting:
         "Reservations cover all attempted requests, including discovery and ambiguous failures. Completed-turn estimate applies published token rates to reported usage; it is not an invoice. Recorded cost is best-effort provider accounting and can be zero for an unpriced model, not evidence of free requests.",
@@ -959,6 +1002,7 @@ if (import.meta.main) {
       scenarios: { type: "string", default: "bugfix" },
       "timeout-ms": { type: "string" },
       "repository-revision": { type: "string" },
+      model: { type: "string" },
     },
   });
   const timeoutMs = values["timeout-ms"] ? Number(values["timeout-ms"]) : 240_000;
@@ -977,6 +1021,7 @@ if (import.meta.main) {
     scenarios: values.scenarios!.split(",") as CodingScenario[],
     timeoutMs,
     repositoryRevision: values["repository-revision"],
+    model: values.model as CodingQualificationOptions["model"],
   });
   clearTimeout(watchdog);
   console.log(

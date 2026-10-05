@@ -61,6 +61,27 @@ function run(command: string[], exitCode: number, output = "", timedOut = false)
 }
 
 describe("detection: managers, Java, type-checks", () => {
+  it("prepares workspace links and optional dependencies without root dependencies", () => {
+    for (const manifest of [
+      { workspaces: ["packages/*"] },
+      { workspaces: { packages: ["packages/*"] } },
+      { optionalDependencies: { optional: "1.0.0" } },
+    ]) {
+      const profile = detectProjectRunner({
+        markers: markers("package.json", "bun.lock"),
+        packageJson: JSON.stringify({ ...manifest, scripts: { test: "bun test" } }),
+      });
+      expect(profile.declaresDependencies).toBe(true);
+      expect(
+        planPreparation(profile, "bun", { installsPermitted: false, hostCandidate: true }),
+      ).toMatchObject({ probe: ["test", "-d", "node_modules"], hostBun: true });
+      expect(
+        planPreparation(profile, "check", { installsPermitted: false, hostCandidate: true })
+          .hostBun,
+      ).toBeUndefined();
+    }
+  });
+
   it("names the JavaScript manager by lockfile and runs its scripts with it", () => {
     const pkg = JSON.stringify({ scripts: { test: "jest", lint: "eslint ." } });
     const npm = detectProjectRunner({

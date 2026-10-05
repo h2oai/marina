@@ -43,6 +43,8 @@
 - **Sandbox execution**: never silently fall back from requested sandbox execution to host execution, and never imply host/guest file coherence.
 
 ## Commit & Pull Request Guidelines
+- Use feature branches and pull requests for every change; never push directly to `main`.
+- Commit/push requests mean publishing the feature branch and opening or updating its PR. Leave it for review unless merge is explicitly requested; required CI must pass on the latest revision. Never bypass checks, reviews, or branch protection.
 - Follow Conventional Commits (`type(scope): short explanation`), matching existing history (`feat(webchat): …`).
 - Squash work into logical commits; run `bun run typecheck`, `bun run lint`, `bun run format`, and tests before pushing.
 - PRs must explain the why, link relevant issues, and include screenshots for UI or dashboard changes.

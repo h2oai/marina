@@ -12,7 +12,7 @@ import { execCommand, type ToolContext, wrap } from "./shared";
 const verificationMode = Type.Optional(
   Type.Union([Type.Literal("live"), Type.Literal("start"), Type.Literal("candidate")], {
     description:
-      "live waits for workspace checks; start runs them in background; candidate verifies a separate local Git source snapshot. Background modes return a receipt; inspect its result before submitting a summary.",
+      "live: workspace checks; start: background; candidate: isolated Git snapshot. Before summary inspect receipts with action=show, artifactId=<id>, never read/path.",
   }),
 );
 const DEPENDENCY_MODES = ["none", "check", "auto", "bun", "npm", "pnpm", "yarn", "uv"] as const;
@@ -42,7 +42,8 @@ const codeEditSchema = Type.Object({
     description: "For edit: exact existing text to replace (may span lines)",
   }),
   newText: Type.String({
-    description: "For edit: replacement text (empty string deletes oldText)",
+    description:
+      "For edit: literal replacement source, without diff markers (empty deletes oldText)",
   }),
   replaceAll: Type.Optional(
     Type.Boolean({ description: "Replace every occurrence instead of requiring a unique match" }),
@@ -104,7 +105,7 @@ const codeSchema = Type.Object({
     ],
     {
       description:
-        "Action in the bound coding session. edit/write change files; patch proposes a diff for later apply.",
+        "Session action. edit: path/oldText/newText; write: path/content; patch proposes a diff for later apply.",
     },
   ),
   path: Type.Optional(
@@ -136,7 +137,9 @@ const codeSchema = Type.Object({
     }),
   ),
   text: Type.Optional(
-    Type.String({ description: "Text for plan/summary/blocked/handoff/decision/observe/reject" }),
+    Type.String({
+      description: "Single-line text for plan/summary/blocked/handoff/decision/observe/reject",
+    }),
   ),
   to: Type.Optional(Type.String({ description: "handoff: new lock holder" })),
 });
@@ -843,7 +846,9 @@ function buildCodeWriteCommand(params: Record<string, unknown>): string {
     "path is required",
   );
   if (typeof params.content !== "string")
-    throw new Error("content is required for write; supply the complete file content");
+    throw new Error(
+      "content is required for write; for an exact replacement use action=edit with path, oldText and newText. Use action=write with path and content for a new file or deliberate full rewrite.",
+    );
   return `code write ${path}\n${params.content}`;
 }
 
