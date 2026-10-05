@@ -18,7 +18,7 @@ bun run repro hle-verified              # smoke size, 2 replicates per arm, $10 
 |---|---|---|---|
 | `hle-verified` | `single` (one model through Marina), `verify` (a verification crew) | HLE-Verified Gold answers, judged by a model **through Marina** | models |
 | `swebench-verified` | `single` (one model patches), `verify` (patch plus reviewer) | the unmodified `swebench` harness in containers | models, podman or docker, Python `swebench` |
-| `tau2` | `single` (one model as the agent), `verify` (`marina/verify:<model>[+<checker>]`) | the unmodified τ²-bench CLI, user simulator and evaluator | models, a τ²-bench checkout |
+| `tau2` | `single` (one model as the agent), `verify` (`marina/verify:<model>[+<checker>]`); `obligations` (`marina/obligations:<model>`, only when named with `--arm`) | the unmodified τ²-bench CLI, user simulator and evaluator | models, a τ²-bench checkout |
 | `futurex-backtest` | `cheap`, `verify` forecast variants | resolved FutureX questions, forecast with **date-bounded** research only | models |
 | `arena-backtest` | `baseline`, `nowcast` | MIT Social Simulation Arena rounds, scored in lock order | none (keyless) |
 
@@ -29,7 +29,7 @@ bootstrap over runs, then items). A single run is labelled "not replicated".
 
 | flag | meaning |
 |---|---|
-| `--arm a,b` | which arms to run (default: all) |
+| `--arm a,b` | which arms to run (default: all except opt-in arms such as τ²'s `obligations`) |
 | `--replicates N` | independent runs per arm (default 2); a crew arm gets a fresh server per replicate |
 | `--limit N` | items per arm and replicate (default: the smoke size); the full sizes are in `repro list` |
 | `--budget-usd X` | refuse to start when the estimate exceeds X (default 10); X is also a hard total, split evenly across the run's servers or SWE-bench runs |
@@ -38,6 +38,7 @@ bootstrap over runs, then items). A single run is labelled "not replicated".
 | `--split` | τ²-bench task split (`test` or `base`); runs the whole split unless `--limit` is given. `base` is the leaderboard split: every task, so `--limit` is refused with it. A re-run with the same `--run-dir` resumes an interrupted τ² run (`--auto-resume`) |
 | `--effort`, `--user-effort` | τ²-bench agent and user-simulator reasoning effort (default `high` and `low`), sent in `extra_body` |
 | `--retrieval-config` | τ³ `banking_knowledge` only: τ²'s knowledge-base retrieval configuration (default `alltools`, the board's reference configuration; it is shown on the board and is part of the run's configuration tag). Refused for other domains |
+| `--task-ids a,b,c` | τ² only: run exactly these task ids (τ²'s `--task-ids`), for a pre-registered subset. Not with `--limit` or the board split `base`; the ids are part of the configuration tag |
 | `--env-image` | SWE-bench: run the agent's tests inside each instance's environment image (full agent rather than agentless) |
 | `--run-dir`, `--ledger` | where runs, servers and the ledger live (default under `~/.local/share/marina-repro/`, on disk) |
 | `--dry-run` | print the plan and the estimate, then stop |

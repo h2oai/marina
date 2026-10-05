@@ -49,6 +49,7 @@
     "futurex": ["forecast.typed"],
     "forecastbench": ["forecast.binary"],
     "metaculus": ["forecast.binary"],
-    "arena": ["forecast.timeseries"]
+    "arena": ["forecast.timeseries"],
+    "obligations": ["tool-agent.policy"]
   }
 }

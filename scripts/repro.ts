@@ -13,6 +13,7 @@
  *                         [--model m] [--checker m] [--judge m] [--domain d] [--env-image]
  *                         [--split test] [--effort high] [--user-effort low]   (τ²)
  *                         [--retrieval-config alltools]   (τ³ banking_knowledge)
+ *                         [--task-ids a,b,c]   (τ²: a fixed task subset, ids only)
  *
  * Setups: hle-verified, swebench-verified, tau2, futurex-backtest, arena-backtest.
  * Runs live under --run-dir (default ~/.local/share/marina-repro/<setup>-<time>), on
@@ -89,6 +90,7 @@ async function main(): Promise<number> {
       effort: { type: "string" },
       "user-effort": { type: "string" },
       "retrieval-config": { type: "string" },
+      "task-ids": { type: "string" },
       "env-image": { type: "boolean" },
       seed: { type: "string", default: "42" },
       "run-dir": { type: "string" },
@@ -111,7 +113,7 @@ async function main(): Promise<number> {
     for (const s of SETUPS) {
       console.log(`${s.name} — ${s.summary}`);
       console.log(
-        `  arms: ${s.arms.map((a) => a.name).join(", ")}   smoke ${s.smoke || "all"} · full ${s.full || "all"}`,
+        `  arms: ${s.arms.map((a) => (a.optIn ? `${a.name} (--arm only)` : a.name)).join(", ")}   smoke ${s.smoke || "all"} · full ${s.full || "all"}`,
       );
     }
     return 0;
@@ -152,6 +154,14 @@ async function main(): Promise<number> {
     ...(values.effort ? { effort: values.effort } : {}),
     ...(values["user-effort"] ? { userEffort: values["user-effort"] } : {}),
     ...(values["retrieval-config"] ? { retrievalConfig: values["retrieval-config"] } : {}),
+    ...(values["task-ids"]
+      ? {
+          taskIds: values["task-ids"]
+            .split(",")
+            .map((t) => t.trim())
+            .filter(Boolean),
+        }
+      : {}),
     ...(values["env-image"] ? { envImage: true } : {}),
     seed: Number(values.seed) || 42,
     runDir,

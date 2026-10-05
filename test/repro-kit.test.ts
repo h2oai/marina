@@ -194,6 +194,43 @@ describe("plans", () => {
     expect(setup.plan(flags({ split: "test", limit: 5 }), "frontier").limit).toBe(5);
   });
 
+  it("τ² obligations arm runs only when named, and --task-ids runs a fixed subset", () => {
+    const setup = setupNamed("tau2")!;
+    expect(setup.plan(flags({ domain: "retail", split: "test" }), "frontier").arms).toEqual([
+      "single",
+      "verify",
+    ]);
+    const plan = setup.plan(
+      flags({
+        arms: ["single", "obligations"],
+        domain: "airline",
+        taskIds: ["3", "1"],
+        model: "anthropic/claude-fable-5-1",
+      }),
+      "frontier",
+    );
+    expect(plan.limit).toBe(2);
+    const runs = plan.steps.filter(
+      (s): s is CommandStep => s.kind === "command" && s.label.includes("τ²"),
+    );
+    const agent = (s: CommandStep) => s.argv[s.argv.indexOf("--agent-llm") + 1];
+    expect(runs.map(agent)).toEqual([
+      "openai/anthropic/claude-fable-5-1",
+      "openai/marina/obligations:anthropic/claude-fable-5-1",
+    ]);
+    for (const r of runs) {
+      expect(r.argv.slice(r.argv.indexOf("--task-ids"), r.argv.indexOf("--task-ids") + 3)).toEqual([
+        "--task-ids",
+        "3",
+        "1",
+      ]);
+      expect(r.argv).not.toContain("--num-tasks");
+    }
+    expect(() =>
+      setup.plan(flags({ taskIds: ["1"], limit: 3, domain: "airline" }), "frontier"),
+    ).toThrow("--task-ids");
+  });
+
   it("τ² never auto-resumes a results file of another configuration", () => {
     const setup = setupNamed("tau2")!;
     const saveTo = (f: Partial<ReproFlags>) =>
