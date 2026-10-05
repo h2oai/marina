@@ -12,7 +12,7 @@ import { execCommand, type ToolContext, wrap } from "./shared";
 const verificationMode = Type.Optional(
   Type.Union([Type.Literal("live"), Type.Literal("start"), Type.Literal("candidate")], {
     description:
-      "live waits for workspace checks; start runs them in background; candidate verifies a separate local Git source snapshot. Inspect background receipts with action=show, artifactId=<receipt id> (not read/path) before summary.",
+      "live: workspace checks; start: background; candidate: isolated Git snapshot. Before summary inspect receipts with action=show, artifactId=<id>, never read/path.",
   }),
 );
 const DEPENDENCY_MODES = ["none", "check", "auto", "bun", "npm", "pnpm", "yarn", "uv"] as const;
