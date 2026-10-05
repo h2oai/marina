@@ -173,6 +173,18 @@ missing or changed identities, and sends no prior task again. The dashboard Stre
 the same action. Claude managed resume remains unavailable until its SDK can confirm the resumed
 identity before input; recover those conversations in Claude itself.
 
+### Complete names from your current work
+
+After `/world code files [directory]`, Tab suggests the displayed paths for
+`/world code read <path>` and `code read <path>` in the World pane. `/checks` and
+`/history` populate `/show <artifact>` and `/review <attempt>` hints. Observed native
+participants appear under `/use` and supported disconnected sessions under `/resume`.
+Both terminal renderers use these same local hints; the TUI shows a dropdown.
+
+Suggestions only edit the draft. They do not scan the filesystem, fetch more data, run a
+command or approve work. File and artifact hints clear when you switch coding sessions;
+approval answers have no command completion. Refresh a listing if its contents changed.
+
 ### Keep a Coding desk beside your work
 
 In the dashboard, select an existing session in **Work** to open a personal desk. Its repository may be Marina itself or any external project. To publish a shared desk, choose **Workspace → Canvas → Published panels → Create coding desk**.

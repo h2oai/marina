@@ -88,7 +88,8 @@ ${terminalControls(connected)
 /panel resources [filter]                Discover data sources for coded panel compositions
 /panel open <canvas> <node>              Open an existing publication; /panel close closes only its view
 F6 switches coding/world; F7 opens pending requests; F8 focuses the published panel. Switching preserves each draft.
-Tab completes terminal commands. Ctrl+C interrupts active work; again exits.
+Tab completes commands and observed files/artifacts; /world code files lists your workspace.
+Ctrl+C interrupts active work; again exits.
 Workspace (--tui): type / for suggestions. Tab or Enter inserts; another Enter sends.
 Wide workspaces show Coding and World together; Requests or Panel replace the Coding pane.
 F2 cycles auto/focus/split layouts; /layout auto|focus|split selects one. Narrow screens use focus.
