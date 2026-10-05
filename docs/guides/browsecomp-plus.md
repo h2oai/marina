@@ -82,11 +82,20 @@ Price an arm on **hard** queries before setting its cap. Easy queries answer in 
 | `mapreduce:N` | The lead plans N complementary angles over the question's clues (map). N researchers pursue one angle each, and the lead reduces their reports. |
 | `sharding:N` | N researchers, each searching one hash shard of the corpus, so together they read N times deeper into the ranking. `get_document` reads any document. A lead answers. |
 | `blackboard:NxR` | N researchers over R rounds. Between rounds, each sees the team's posted answers and evidence. A lead answers. |
+| `read-swarm` | Marina's read swarm (`src/retrieval/read-swarm.ts`). The question is split into clues; each clue is searched; reader models read the best documents **in full** (in chunks, not snippets) and report the clues each satisfies with verbatim quotes, which are checked mechanically. One lead gets the ranked candidate table and keeps researching: its `search` results are read by the same readers before it sees them, and `get_document` stays the official tool. |
 
 **The lead.**
 - It answers in the official format.
 - It may use the tools to check a report before answering (`--lead-turns`, default 12).
 - `--lead-model` puts a different model in the lead.
+
+**The read swarm.**
+- `--reader-model` (default `--model`) reads; `--lead-model` (default `--model`) answers. One model can play both (the single-LLM tier).
+- `--swarm-docs N` is the per-query read budget in documents (default 60; the character budget is 2,000,000). Once it is spent, `search` returns snippets again.
+- `--swarm-open N` is the number of documents read before the lead's first turn (default 16): each clue's two best first, then the reranked order.
+- `--swarm-no-decompose` reads against the question alone (no clue split).
+- The lead runs `--max-turns`; combine with `--final-answer` so the cap ends in an answer.
+- The run record adds a `swarm_read` item per document read (docid, clues, counts — no text) and `swarm_stats` in the metadata. Documents the readers read count toward recall only when a search showed them to the lead.
 
 **Composing with verification.** `--model` is the researchers' model. Making it a `marina/verify:<proposer>[+<checker>]` id puts each researcher's steps under review.
 
