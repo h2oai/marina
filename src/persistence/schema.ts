@@ -539,14 +539,14 @@ CREATE TRIGGER benchmark_item_evidence_no_update BEFORE UPDATE ON benchmark_item
 BEGIN SELECT RAISE(ABORT, 'benchmark_item_evidence is append-only'); END;
 `,
   },
-  // Migration 160: imported `marina.learned.v1` bundles (src/learned/). Empty
+  // Migration 161: imported `marina.learned.v1` bundles (src/learned/). Empty
   // on every install that never imports one. Artifact versions, upstream
   // default seeds, evidence priors and the audit trail are append-only;
   // `learned_items` is the current state of each imported item (its local
   // record, status and local confirmation). Priors are never ledger rows and a
   // seed never writes `benchmark_defaults`: local truth stays local.
   {
-    version: 160,
+    version: 161,
     sql: `
 CREATE TABLE learned_artifacts (
   artifact_id TEXT NOT NULL,

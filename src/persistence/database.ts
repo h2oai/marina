@@ -2205,7 +2205,7 @@ export class MarinaDB implements MarinaStores {
     return decisionsDb.listChallengeOutcomes(this.reader, opts);
   }
 
-  // ─── Learned bundles (delegated to db-learned.ts, migration 160) ────────
+  // ─── Learned bundles (delegated to db-learned.ts, migration 161) ────────
 
   recordLearnedArtifact(
     row: Omit<learnedDb.LearnedArtifactRow, "imported_at"> & { imported_at?: number },

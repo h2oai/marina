@@ -119,7 +119,7 @@ export function buildSpec(input: {
       if (row.confirmed_by) confirmed++;
     }
   } catch {
-    // allow-empty-catch: a database without migration 160 has imported nothing
+    // allow-empty-catch: a database without migration 161 has imported nothing
   }
   const evidence = items.filter((i) => i.kind === "evidence");
   return {

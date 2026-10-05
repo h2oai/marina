@@ -132,7 +132,7 @@ Where lessons are recalled. Every site goes through `recallLessons` or `recallAc
 
 Recall never creates the `marina:lessons` account or its spaces as a side effect; on a database with no pool it returns nothing. Under `observe` the header and metadata name the lessons recall would have used (prefixed `observe:`) while nothing is injected.
 
-## Learned bundles (`src/learned/`, migration 160)
+## Learned bundles (`src/learned/`, migration 161)
 
 `marina.learned.v1` moves what a Marina learned between instances as a signed bundle (user guide: [learned bundles](../guides/learned-bundles.md)). It is inert unless an operator exports or imports: no tick job, no read path on a database that never imported anything.
 
@@ -148,4 +148,4 @@ Recall never creates the `marina:lessons` account or its spaces as a side effect
 
 Trust: `imported` is never served as local `trusted` and nothing an import does raises it. Lessons keep their original `resolved_at`, so the leakage rule (`visibleAt`) is unchanged. Confirmation happens only through a local, judged, `trusted` lesson that cites `upstream:<item_key>`; the imported record keeps `imported` and gains `confirmed_locally_by`.
 
-Storage (migration 160): `learned_artifacts`, `upstream_default_seeds`, `evidence_priors` and `upstream_events` are append-only (update triggers; `append-only` in `RETENTION_POLICIES`). `learned_items` is the current state per imported item (local record, `active` / `retired` / `revoked`, `confirmed_by`). Priors are never `benchmark_runs` / `benchmark_items` rows and seeds never `benchmark_defaults` rows: local evidence stays local truth.
+Storage (migration 161): `learned_artifacts`, `upstream_default_seeds`, `evidence_priors` and `upstream_events` are append-only (update triggers; `append-only` in `RETENTION_POLICIES`). `learned_items` is the current state per imported item (local record, `active` / `retired` / `revoked`, `confirmed_by`). Priors are never `benchmark_runs` / `benchmark_items` rows and seeds never `benchmark_defaults` rows: local evidence stays local truth.

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Imported `marina.learned.v1` bundles (migration 160, `src/learned/`).
+ * Imported `marina.learned.v1` bundles (migration 161, `src/learned/`).
  *
  * - `learned_artifacts`: one append-only row per imported artifact version
  *   (the downgrade check reads the highest generation).

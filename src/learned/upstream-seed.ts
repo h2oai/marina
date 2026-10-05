@@ -49,7 +49,7 @@ export function upstreamSeedFor(
       evidence: row.evidence_json ? (JSON.parse(row.evidence_json) as unknown) : null,
     };
   } catch {
-    // allow-empty-catch: no migration 160/147, or an unreadable value — no seed (built-ins apply)
+    // allow-empty-catch: no migration 161/147, or an unreadable value — no seed (built-ins apply)
     return undefined;
   }
 }
