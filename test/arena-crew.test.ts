@@ -163,6 +163,47 @@ describe("forecasting crew", () => {
     expect(f.profile).toBeDefined();
     expect(f.fallback).toContain("numeric");
   });
+
+  it("reads the judged lesson pool at the round's lock beside its own series notes", async () => {
+    const asked: Array<{ query: string; asOf: string }> = [];
+    const store = {
+      async recall(query: string, asOf: string) {
+        asked.push({ query, asOf });
+        return [
+          {
+            id: "m1",
+            text: "polls: agreement is not confidence (cross-board calibration)",
+            resolvedAt: "2026-07-01T00:00:00Z",
+          },
+          { id: "o1", text: "observed only", resolvedAt: "2026-07-01T00:00:00Z", observed: true },
+        ];
+      },
+    };
+    const prompts: string[] = [];
+    const seeing =
+      (text: string): Complete =>
+      async (_system, user) => {
+        prompts.push(user);
+        return text;
+      };
+    const last = history.at(-1)!.value;
+    const f = await crewForecastRound(
+      round,
+      lock,
+      {
+        statistician: seeing(`{"mean": ${last}, "sd": 1}`),
+        analyst: seeing(`{"mean": ${last}, "sd": 1}`),
+        skeptic: seeing('{"trust": 0, "sd_scale": 1}'),
+      },
+      undefined,
+      undefined,
+      store,
+    );
+    expect(asked).toEqual([{ query: "civiqs Net approval?", asOf: round.lock_at }]);
+    expect(f.lessonsUsed).toBe(1); // observe-mode lessons are never shown
+    expect(prompts.some((p) => p.includes("agreement is not confidence"))).toBe(true);
+    expect(prompts.some((p) => p.includes("observed only"))).toBe(false);
+  });
 });
 
 describe("crew memory", () => {

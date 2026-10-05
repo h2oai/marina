@@ -386,4 +386,32 @@ test("operator can launch and answer native approvals through participant contro
     .poll(async () => (await page.getByRole("region", { name: "Agent controls" }).boundingBox())?.x)
     .toBeLessThan(30);
   await page.screenshot({ path: "/tmp/marina-agent-approval-mobile.png" });
+  await publish(agent.id, {
+    ...state,
+    role: "agent",
+    status: "disconnected",
+    nativeSessionId: "native-review",
+    resumeSupported: true,
+    updatedAt: Date.now(),
+  });
+  const resume = page.getByRole("button", { name: "Resume native session", exact: true });
+  await expect(resume).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Send", exact: true })).toBeDisabled();
+  await resume.click();
+  await expect
+    .poll(async () => {
+      const inbox = await (
+        await request.get(`/api/routing/sessions/${agent.id}/inbox`, { headers })
+      ).json();
+      return inbox.messages
+        .filter((message: { payload: { action: string } }) => message.payload.action === "resume")
+        .map((message: { payload: unknown }) => message.payload);
+    })
+    .toEqual([{ action: "resume" }]);
+  await expect(page.getByLabel("Message agent")).toHaveValue(
+    "Keep this draft while I inspect Canvas",
+  );
+  await page.screenshot({ path: test.info().outputPath("native-session-recovery.png") });
+  const axe = await new AxeBuilder({ page }).include('[aria-label="Agent controls"]').analyze();
+  expect(axe.violations).toEqual([]);
 });

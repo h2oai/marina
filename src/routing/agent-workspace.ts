@@ -15,6 +15,21 @@ export async function allowedDirectory(root: string, directory = ".") {
     throw new Error("Directory is outside this supervisor's configured root");
   return target;
 }
+
+/** Revalidate saved paths after restart: a moved directory or symlink grants no new scope. */
+export async function restoreAgentWorkspace(root: string, stateDirectory: string, cwd: string) {
+  const target = await realpath(cwd);
+  if (target !== resolve(cwd))
+    throw new Error("Recorded native workspace now resolves to a different directory");
+  for (const allowed of [root, join(stateDirectory, "worktrees")]) {
+    try {
+      return await allowedDirectory(allowed, target);
+    } catch {
+      // Try the other explicitly owned root; never accept the unchecked saved path.
+    }
+  }
+  throw new Error("Recorded native workspace is outside this supervisor's owned directories");
+}
 export async function prepareAgentWorkspace(
   root: string,
   directory: string | undefined,

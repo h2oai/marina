@@ -4,8 +4,10 @@
 import { collides, type Layout } from "react-grid-layout";
 import { describe, expect, it } from "vitest";
 import {
+  balanceWorkspaceRows,
   completeWorkspaceLayout,
   moveWorkspacePanel,
+  nudgeWorkspacePanel,
   resizeWorkspacePanel,
   workspaceGridMetrics,
   workspacePanelRect,
@@ -15,6 +17,38 @@ import { WORKSPACE_LAYOUTS } from "../lib/workspace-layouts";
 describe("the Canvas projection of saved grid layouts", () => {
   const layout = WORKSPACE_LAYOUTS.lg!;
   const metrics = workspaceGridMetrics(1432, 20, 70);
+
+  it("balances widths without losing panel identity, heights, bounds or the original preset", () => {
+    const original = structuredClone(layout);
+    const balanced = balanceWorkspaceRows(layout, 20);
+    expect(balanced.map((item) => item.w)).toEqual([7, 7, 6]);
+    expect(balanced.map((item) => item.i)).toEqual(layout.map((item) => item.i));
+    expect(balanced.map((item) => item.h)).toEqual(layout.map((item) => item.h));
+    expect(layout).toEqual(original);
+    const bounded = [
+      { i: "a", x: 0, y: 0, w: 2, h: 2, maxW: 2 },
+      { i: "b", x: 2, y: 0, w: 8, h: 2, minW: 6 },
+    ];
+    expect(balanceWorkspaceRows(bounded, 10).map((item) => item.w)).toEqual([2, 8]);
+    expect(balanceWorkspaceRows([{ ...layout[0], static: true }, ...layout.slice(1)], 20)).toEqual([
+      { ...layout[0], static: true },
+      ...layout.slice(1),
+    ]);
+  });
+
+  it("refuses balance through a staggered panel and keeps button moves inside bounds", () => {
+    const staggered = [
+      { i: "a", x: 0, y: 0, w: 5, h: 4 },
+      { i: "b", x: 5, y: 1, w: 5, h: 4 },
+    ];
+    expect(balanceWorkspaceRows(staggered, 10)).toBe(staggered);
+    const moved = nudgeWorkspacePanel(layout, "context", -1, 0, 20);
+    expect(moved.find((item) => item.i === "context")?.x).toBe(14);
+    expect(moved.every((item) => item.x >= 0 && item.x + item.w <= 20)).toBe(true);
+    expect(
+      moved.every((item) => !moved.some((other) => item.i !== other.i && collides(item, other))),
+    ).toBe(true);
+  });
 
   it("retains the 30/45/25 proportions, four-pixel gutters and existing preset coordinates", () => {
     const [chat, workspace, context] = layout.map((item) => workspacePanelRect(metrics, item));

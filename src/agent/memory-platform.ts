@@ -412,6 +412,32 @@ export class PlatformMemoryBackend {
     return { success: true, text };
   }
 
+  /**
+   * Judged lessons for a topic via the `lessons` command (every domain, the
+   * cross-board `meta` pool included; trusted first, labels kept). Each line
+   * is one lesson; `ids` are the short ids the command shows.
+   */
+  async lessonsFor(topic: string): Promise<{ lines: string[]; ids: string[] }> {
+    // Free text only: no modifier tokens, never a curation subcommand.
+    const words = topic
+      .replace(/\s+/g, " ")
+      .split(" ")
+      .filter((w) => w && !/[:=]/.test(w))
+      .slice(0, 24);
+    if (/^(retire|supersede)$/i.test(words[0] ?? "")) words.unshift("about");
+    if (words.length === 0) return { lines: [], ids: [] };
+    const text = extractText(await this.client.command(`lessons ${words.join(" ")}`));
+    const lines: string[] = [];
+    const ids: string[] = [];
+    for (const line of text.split("\n")) {
+      const m = line.match(/^- (.*?)\s*\[[a-z]+(?: ([0-9a-zA-Z_-]+))?\]\s*$/);
+      if (!m) continue;
+      lines.push(m[1]!);
+      if (m[2]) ids.push(m[2]);
+    }
+    return { lines, ids };
+  }
+
   async workInbox(): Promise<PlatformMemoryResult> {
     const perceptions = await this.client.command("work");
     const text = extractText(perceptions);

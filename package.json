@@ -103,6 +103,7 @@
     "bench": "bun run benchmarks/harness.ts",
     "bench:compare": "bun run benchmarks/compare.ts",
     "benchmark:import": "bun scripts/benchmark-import.ts",
+    "lessons": "bun scripts/lessons.ts",
     "bench:tier0": "bun run benchmarks/tier0.ts",
     "bench:context": "bun --env-file=/dev/null benchmarks/context-statistics.ts",
     "bench:ui": "bun run benchmarks/server.ts",
@@ -158,6 +159,7 @@
     "check:a11y": "bun run scripts/check-dashboard-accessibility.ts && biome lint dashboard/src --error-on-warnings",
     "test:a11y": "bun run check:a11y && bun run dashboard:build && cd dashboard && bun run test:browser e2e/accessibility.spec.ts",
     "tau2": "bun run scripts/tau2.ts",
+    "longmemeval": "bun run scripts/longmemeval.ts",
     "repro": "bun run scripts/repro.ts"
   },
   "devDependencies": {
