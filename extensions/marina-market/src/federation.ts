@@ -9,27 +9,29 @@
  * a hard boundary also needs `MARINA_AUTH=better-auth` without open login.
  */
 
+import { verifyEntitlement } from "../../../src/learned/entitlement";
 import type { GatewayAdmissionCheck, GatewayProofProvider } from "../../../src/sdk/extensions";
 import { nonceHandle } from "./audit";
 import { type MarketRuntime, readPrivateJson, resolveFrom } from "./config";
-import { verifyEntitlement } from "./entitlements";
 
 export function createGatewayAdmission(runtime: MarketRuntime): GatewayAdmissionCheck | undefined {
-  const hosted = runtime.config.hosted_world;
+  const hosted = runtime.hosted;
   if (!hosted) return undefined;
+  const m = hosted.manifest;
   return async ({ proof }) => {
     const decision = await verifyEntitlement(
       proof,
       {
-        artifactId: hosted.artifact_id,
-        version: hosted.version,
+        artifactId: m.artifact_id,
+        version: m.version,
+        publisherKeyId: m.publisher.key_id,
+        allowedIssuers: m.access?.entitlement_issuers ?? [],
         tiers: hosted.tiers,
         purpose: "federation",
         audience: hosted.audience,
         now: new Date(),
-        allowedIssuers: hosted.entitlement_issuers,
       },
-      runtime.verifiers,
+      runtime.verifiersFor(m),
     );
     const nonce = nonceHandle((proof as { token?: { nonce?: unknown } })?.token?.nonce);
     if (!decision.ok) {
@@ -37,17 +39,17 @@ export function createGatewayAdmission(runtime: MarketRuntime): GatewayAdmission
         "gateway.admit",
         "refused",
         { verifier: decision.verifier, reason: decision.reason, nonce },
-        hosted.artifact_id,
+        m.artifact_id,
       );
       return { admit: false, reason: decision.reason };
     }
     runtime.audit.append(
       "gateway.admit",
       "allowed",
-      { verifier: decision.verifier, licensee: decision.licensee, nonce },
-      hosted.artifact_id,
+      { verifier: decision.grant.verifier, licensee: decision.grant.licensee, nonce },
+      m.artifact_id,
     );
-    return { admit: true, label: decision.licensee };
+    return { admit: true, label: decision.grant.licensee };
   };
 }
 

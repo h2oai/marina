@@ -15,6 +15,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { preserveTrustProfileForTests, setTrustProfile } from "../../../src/engine/trust-profile";
+import type { PinnedKey } from "../../../src/learned/sign";
+import { MarinaDB } from "../../../src/persistence/database";
+import { AuditLog } from "../src/audit";
 import {
   addressOfPublicKey,
   EvmChainAdapter,
@@ -24,6 +27,7 @@ import {
   toHex,
 } from "../src/chain/evm";
 import { WalletLicenceVerifier } from "../src/entitlements";
+import { importWithEntitlement } from "../src/importer";
 import { publishWorld } from "../src/world";
 import { cleanupTemp, publisherKey, publishSpec, tempDir, writeWorldPayload } from "./fixtures";
 
@@ -62,7 +66,7 @@ describe.skipIf(!enabled)("anvil devnet end-to-end", () => {
   const deployerKey = toHex(deployer);
   const buyer = secp256k1.utils.randomSecretKey();
   const buyerAddress = addressOfPublicKey(secp256k1.getPublicKey(buyer, false));
-  const world = { dir: "", artifactId: "", digest: "" };
+  const world = { dir: "", bundle: "", artifactId: "", digest: "", pinned: [] as PinnedKey[] };
   let profile: Disposable | undefined;
 
   beforeAll(async () => {
@@ -100,10 +104,13 @@ describe.skipIf(!enabled)("anvil devnet end-to-end", () => {
 
     const dir = tempDir();
     writeWorldPayload(dir);
-    const published = publishWorld(dir, publishSpec(), publisherKey().pem);
+    const pub = publisherKey();
+    world.bundle = tempDir("anvil-bundle-");
+    const published = publishWorld(dir, world.bundle, publishSpec(), pub.key);
+    world.pinned = [pub.pinned];
     world.dir = dir;
     world.artifactId = published.manifest.artifact_id;
-    world.digest = published.manifestDigest;
+    world.digest = published.manifestDigest.replace(/^sha256:/, "");
 
     const send = (...args: string[]) =>
       run([
@@ -117,12 +124,18 @@ describe.skipIf(!enabled)("anvil devnet end-to-end", () => {
         contract,
         ...args,
       ]);
-    send("defineLicense(string,string,bool,bool)", world.artifactId, "standard", "false", "true");
+    send(
+      "defineLicense(string,string,bool,bool)",
+      world.artifactId,
+      "tier:standard",
+      "false",
+      "true",
+    );
     const receipt = JSON.parse(
       send(
         "issue(address,uint256,uint256,bytes32)",
         buyerAddress,
-        licenseTokenId(world.artifactId, "standard").toString(),
+        licenseTokenId(world.artifactId, "tier:standard").toString(),
         "1",
         `0x${"00".repeat(32)}`,
       ),
@@ -152,7 +165,7 @@ describe.skipIf(!enabled)("anvil devnet end-to-end", () => {
     const now = Date.now();
     const message = licenceStatement({
       artifactId: world.artifactId,
-      tiers: ["standard"],
+      tiers: ["tier:standard"],
       audience: "import",
       chainId: 31337,
       address: buyerAddress,
@@ -169,14 +182,56 @@ describe.skipIf(!enabled)("anvil devnet end-to-end", () => {
     const ctx = {
       artifactId: world.artifactId,
       version: "1.2.0",
+      publisherKeyId: "sha256:fixture",
       purpose: "import" as const,
       now: new Date(),
     };
-    expect(await verifier.verify(proof, { ...ctx, tiers: ["standard"] })).toMatchObject({
+    expect(await verifier.verify(proof, { ...ctx, tiers: ["tier:standard"] })).toMatchObject({
       ok: true,
     });
-    const full = await verifier.verify(proof, { ...ctx, tiers: ["full"] });
+    const full = await verifier.verify(proof, { ...ctx, tiers: ["tier:full"] });
     expect(full.ok).toBe(false);
+  });
+
+  it("a wallet proof unlocks the paid slice through the core importer", async () => {
+    setTrustProfile("local");
+    const now = Date.now();
+    const message = licenceStatement({
+      artifactId: world.artifactId,
+      tiers: ["tier:standard"],
+      audience: "import",
+      chainId: 31337,
+      address: buyerAddress,
+      issuedAt: new Date(now - 1000).toISOString(),
+      expiresAt: new Date(now + 600_000).toISOString(),
+    });
+    const proof = {
+      kind: "evm-wallet",
+      chain: "anvil",
+      message,
+      signature: personalSign(message, buyer),
+    };
+    const db = new MarinaDB(join(tempDir("anvil-db-"), "m.db"));
+    try {
+      const r = await importWithEntitlement(
+        db,
+        world.bundle,
+        {
+          pinned: world.pinned,
+          revocations: [],
+          verifiersFor: () => [new WalletLicenceVerifier(new Map([["anvil", adapter()]]))],
+          audit: new AuditLog(join(tempDir(), "audit.jsonl")),
+        },
+        { env: { MARINA_UPSTREAM: "on" } as NodeJS.ProcessEnv, slices: ["tier:standard"], proof },
+      );
+      if (!r.ok || !r.outcome.ok) throw new Error(r.ok ? "import refused" : r.error);
+      expect(r.network_used).toBe(true);
+      expect(r.grant).toMatchObject({ verifier: "evm-wallet", licensee: buyerAddress });
+      expect(r.outcome.report.added).toBeGreaterThan(1);
+      expect(r.outcome.report.withheld).toEqual([]);
+    } finally {
+      db.close();
+    }
   });
 
   it("anchors the manifest digest from an unsigned transaction the operator signs", async () => {
@@ -199,7 +254,7 @@ describe.skipIf(!enabled)("anvil devnet end-to-end", () => {
       txHash: issueTx,
       licensee: buyerAddress,
       artifactId: world.artifactId,
-      tier: "standard",
+      tier: "tier:standard",
     };
     expect(await chain.resolveSettlement(ref)).toMatchObject({ settled: true, amount: "1" });
     const stranger = addressOfPublicKey(
@@ -215,7 +270,7 @@ describe.skipIf(!enabled)("anvil devnet end-to-end", () => {
     const result = await adapter().verifyEntitlement({
       holder: buyerAddress,
       artifactId: world.artifactId,
-      tiers: ["standard"],
+      tiers: ["tier:standard"],
     });
     expect(result).toMatchObject({ ok: false });
   });

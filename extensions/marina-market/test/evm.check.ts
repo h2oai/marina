@@ -84,6 +84,7 @@ function proofFor(
 }
 
 const ctx = (tiers = ["standard"]) => ({
+  publisherKeyId: "sha256:fixture",
   artifactId: ARTIFACT,
   version: "1.2.0",
   tiers,
@@ -159,7 +160,10 @@ describe("wallet licence verifier (read-only, mocked chain)", () => {
   it("grants when the signer holds the licence, using only read methods", async () => {
     const { w, verifier, calls } = setup(true);
     const decision = await verifier.verify(proofFor(w), ctx());
-    expect(decision).toMatchObject({ ok: true, licensee: w.address, verifier: "evm-wallet" });
+    expect(decision).toMatchObject({
+      ok: true,
+      grant: { licensee: w.address, verifier: "evm-wallet" },
+    });
     expect(new Set(calls)).toEqual(new Set(["eth_chainId", "eth_blockNumber", "eth_call"]));
   });
 

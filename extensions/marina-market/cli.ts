@@ -3,35 +3,30 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Operator CLI for the optional marketplace extension. Every command is either
- * offline (keys, signing with a key FILE the operator controls, verification)
- * or a read-only chain query. Nothing here sends a transaction: `anchor-tx`
- * prints an unsigned transaction for the operator's own wallet.
+ * Operator CLI for the optional marketplace extension. Bundle keys, signing,
+ * verification and entitlement tokens are the core's (`bun run learned
+ * keygen|entitle|verify`); this CLI adds what is marketplace-only:
  *
- *   bun run cli.ts keygen <out.pem>
- *   bun run cli.ts publish <payload-dir> <publish-spec.json> --key <publisher.pem>
- *   bun run cli.ts verify <bundle-dir>
- *   bun run cli.ts issue --key <pem> --artifact <id> --tiers a,b --licensee <label>
- *                        [--days 365] [--versions '^1.0.0'] [--audience host1,host2]
- *   bun run cli.ts plan-import <bundle-dir> [--slices core,standard] [--proof proof.json]
- *   bun run cli.ts statement --artifact <id> --tiers a,b --chain <name> --address 0x…
- *                        [--audience import|<host>] [--hours 1]
- *   bun run cli.ts anchor-tx <bundle-dir> --chain <name>
+ *   bun run cli.ts publish <payload-dir> <out-dir> <publish-spec.json> --key-file <key>
+ *   bun run cli.ts import <bundle-dir> [--slices a,b] [--proof proof.json]   (DB_PATH, MARINA_UPSTREAM=on)
+ *   bun run cli.ts statement --chain <name> --artifact <id> --tiers a,b --address 0x…
+ *                            [--audience import|<host>] [--hours 1]
+ *   bun run cli.ts anchor-tx <bundle-dir> --chain <name>     (unsigned; sign in your own wallet)
  *   bun run cli.ts read-anchor --chain <name> --artifact <id> --version <v>
  *   bun run cli.ts resolve-settlement --chain <name> --tx 0x… --licensee 0x… --artifact <id> --tier <t>
  *   bun run cli.ts audit-verify
  *
- * Config: `--config <file>` or `MARINA_MARKET_CONFIG`.
+ * Everything is offline or a read-only chain query; nothing here sends a
+ * transaction. Config: `--config <file>` or `MARINA_MARKET_CONFIG`.
  */
 
-import { generateKeyPairSync } from "node:crypto";
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
+import { verifyBundle } from "../../src/learned/bundle";
+import { MarinaDB } from "../../src/persistence/database";
 import { verifyAuditLog } from "./src/audit";
 import { licenceStatement } from "./src/chain/evm";
 import { buildRuntime, type MarketRuntime, readPrivateJson } from "./src/config";
-import { issueEntitlement } from "./src/entitlements";
-import { keyIdOf, openBundle } from "./src/envelope";
-import { applyPlan, planImport } from "./src/importer";
+import { importWithEntitlement } from "./src/importer";
 import { publishWorld, type WorldPublishSpec } from "./src/world";
 
 function flags(argv: string[]): { positional: string[]; opts: Record<string, string> } {
@@ -52,10 +47,10 @@ function need(value: string | undefined, label: string): string {
   return value;
 }
 
-/** A private key file must be the operator's alone. Its contents are never printed. */
+/** A signing-key file must be the operator's alone. Its contents are never printed. */
 function readKeyFile(path: string): string {
   if (statSync(path).mode & 0o077) throw new Error(`${path} must be mode 600`);
-  return readFileSync(path, "utf8");
+  return readFileSync(path, "utf8").trim();
 }
 
 function runtime(opts: Record<string, string>): MarketRuntime {
@@ -74,31 +69,25 @@ function print(value: unknown): void {
   process.stdout.write(`${typeof value === "string" ? value : JSON.stringify(value, null, 2)}\n`);
 }
 
-async function main(argv: string[]): Promise<void> {
+function verified(rt: MarketRuntime, dir: string) {
+  const v = verifyBundle(dir, rt.pinned);
+  if (!v.ok) throw new Error(`bundle refused: ${v.error}`);
+  return v.bundle;
+}
+
+export async function main(argv: string[]): Promise<void> {
   const [command, ...rest] = argv;
   const { positional, opts } = flags(rest);
   switch (command) {
-    case "keygen": {
-      const out = need(positional[0], "<out.pem>");
-      const { privateKey, publicKey } = generateKeyPairSync("ed25519");
-      writeFileSync(out, privateKey.export({ format: "pem", type: "pkcs8" }), {
-        mode: 0o600,
-        flag: "wx",
-      });
-      const spki = Buffer.from(publicKey.export({ format: "der", type: "spki" })).toString(
-        "base64",
-      );
-      // Only the PUBLIC key is printed: pin it in importers' configs.
-      return print({ public_key: spki, key_id: keyIdOf(spki), private_key_file: out });
-    }
     case "publish": {
       const spec = JSON.parse(
-        readFileSync(need(positional[1], "<publish-spec.json>"), "utf8"),
+        readFileSync(need(positional[2], "<publish-spec.json>"), "utf8"),
       ) as WorldPublishSpec;
       const result = publishWorld(
         need(positional[0], "<payload-dir>"),
+        need(positional[1], "<out-dir>"),
         spec,
-        readKeyFile(need(opts.key, "--key")),
+        readKeyFile(need(opts["key-file"], "--key-file")),
       );
       return print({
         artifact_id: result.manifest.artifact_id,
@@ -106,50 +95,33 @@ async function main(argv: string[]): Promise<void> {
         manifest_digest: result.manifestDigest,
       });
     }
-    case "verify": {
+    case "import": {
       const rt = runtime(opts);
-      const bundle = openBundle(need(positional[0], "<bundle-dir>"), rt.pinned);
-      rt.audit.append(
-        "bundle.verify",
-        "allowed",
-        { digest: bundle.manifestDigest },
-        bundle.manifest.artifact_id,
-      );
-      return print({
-        artifact_id: bundle.manifest.artifact_id,
-        version: bundle.manifest.version,
-        publisher: bundle.manifest.publisher.name,
-        license: bundle.manifest.license,
-        slices: bundle.manifest.slices.map((s) => ({
-          id: s.id,
-          access: s.access ?? bundle.manifest.access.model,
-        })),
-        manifest_digest: bundle.manifestDigest,
-      });
-    }
-    case "issue": {
-      const days = Number(opts.days ?? 365);
-      const token = issueEntitlement(
-        {
-          artifact_id: need(opts.artifact, "--artifact"),
-          version_range: opts.versions ?? "*",
-          tiers: need(opts.tiers, "--tiers").split(","),
-          licensee: { label: need(opts.licensee, "--licensee") },
-          audience: opts.audience ? opts.audience.split(",") : undefined,
-          not_after: new Date(Date.now() + days * 86_400_000).toISOString(),
-        },
-        readKeyFile(need(opts.key, "--key")),
-      );
-      return print({ kind: "token", token });
-    }
-    case "plan-import": {
-      const rt = runtime(opts);
-      const proof = opts.proof ? readPrivateJson(opts.proof) : undefined;
-      const dir = need(positional[0], "<bundle-dir>");
-      const plan = await planImport(dir, { slices: opts.slices?.split(","), proof }, rt);
-      print(plan);
-      if (opts.apply === "true") print(await applyPlan(dir, plan, rt.audit));
-      return;
+      const db = new MarinaDB(process.env.DB_PATH || "marina.db");
+      try {
+        const result = await importWithEntitlement(db, need(positional[0], "<bundle-dir>"), rt, {
+          ...(opts.slices ? { slices: opts.slices.split(",") } : {}),
+          ...(opts.proof ? { proof: readPrivateJson(opts.proof) } : {}),
+          actor: opts.actor ?? "operator",
+        });
+        if (!result.ok) throw new Error(result.error);
+        if (!result.outcome.ok) throw new Error(`import refused: ${result.outcome.error}`);
+        const r = result.outcome.report;
+        return print({
+          artifact_id: r.artifactId,
+          version: r.version,
+          added: r.added,
+          changed: r.changed,
+          withheld: r.withheld.length,
+          trust: "imported",
+          entitlement: result.grant
+            ? { verifier: result.grant.verifier, licensee: result.grant.licensee }
+            : null,
+          network_used: result.network_used,
+        });
+      } finally {
+        db.close();
+      }
     }
     case "statement": {
       const rt = runtime(opts);
@@ -169,16 +141,17 @@ async function main(argv: string[]): Promise<void> {
     }
     case "anchor-tx": {
       const rt = runtime(opts);
-      const bundle = openBundle(need(positional[0], "<bundle-dir>"), rt.pinned);
+      const bundle = verified(rt, need(positional[0], "<bundle-dir>"));
+      const digest = bundle.digest.replace(/^sha256:/, "");
       const tx = await chain(rt, opts.chain).anchor({
         artifactId: bundle.manifest.artifact_id,
         version: bundle.manifest.version,
-        manifestDigest: bundle.manifestDigest,
+        manifestDigest: digest,
       });
       rt.audit.append(
         "anchor.prepare",
         "info",
-        { chain: opts.chain, digest: bundle.manifestDigest },
+        { chain: opts.chain, digest },
         bundle.manifest.artifact_id,
       );
       return print(tx);
@@ -213,7 +186,7 @@ async function main(argv: string[]): Promise<void> {
     }
     default:
       throw new Error(
-        "usage: cli.ts keygen|publish|verify|issue|plan-import|statement|anchor-tx|read-anchor|resolve-settlement|audit-verify",
+        "usage: cli.ts publish|import|statement|anchor-tx|read-anchor|resolve-settlement|audit-verify (keys, tokens and verify: bun run learned)",
       );
   }
 }
@@ -224,5 +197,3 @@ if (import.meta.main) {
     process.exit(1);
   });
 }
-
-export { main };

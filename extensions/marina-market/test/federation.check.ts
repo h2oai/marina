@@ -17,14 +17,14 @@ import {
   extensionGatewayProof,
   loadExtensions,
 } from "../../../src/extensions/loader";
+import { issueEntitlement } from "../../../src/learned/entitlement";
 import { WebSocketServer } from "../../../src/net/websocket-server";
 import { MarinaClient } from "../../../src/sdk/client";
 import { roomId } from "../../../src/types";
 import { makeTestRoom } from "../../../test/helpers";
 import { scopeProcessState } from "../../../test/process-state";
-import { issueEntitlement } from "../src/entitlements";
-import { keyIdOf } from "../src/envelope";
-import { cleanupTemp, publisherKey, tempDir } from "./fixtures";
+import { publishWorld } from "../src/world";
+import { cleanupTemp, publisherKey, publishSpec, tempDir, writeWorldPayload } from "./fixtures";
 
 const EXTENSION_DIR = join(import.meta.dir, "..");
 const cleanups: Array<() => unknown> = [];
@@ -32,8 +32,6 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
   cleanupTemp();
 });
-
-const ARTIFACT_NAME = "research-lab";
 
 async function host(config: Record<string, unknown>) {
   const dir = tempDir();
@@ -71,7 +69,9 @@ describe("hosting a paid world over federation", () => {
       env: { MARINA_MARKET_CONFIG: undefined, GATEWAY_SECRET: undefined },
     });
     const key = publisherKey();
-    const { engine } = await host({ publishers: [key.pinned] });
+    const { engine } = await host({
+      publishers: [{ name: "acme", public_key: key.pinned.publicKey }],
+    });
     expect(extensionGatewayAdmission(engine)).toBeUndefined();
   });
 
@@ -81,28 +81,27 @@ describe("hosting a paid world over federation", () => {
       env: { MARINA_MARKET_CONFIG: undefined, GATEWAY_SECRET: undefined },
     });
     const key = publisherKey();
-    const artifact = `marina-world:${keyIdOf(key.pinned.public_key)}/${ARTIFACT_NAME}`;
+    const payload = tempDir();
+    writeWorldPayload(payload);
+    const bundle = tempDir("fed-bundle-");
+    const { manifest } = publishWorld(payload, bundle, publishSpec(), key.key);
+    const publishers = [{ name: "acme", public_key: key.pinned.publicKey }];
     const { url, dir } = await host({
-      publishers: [key.pinned],
-      hosted_world: {
-        artifact_id: artifact,
-        version: "1.2.0",
-        tiers: ["standard"],
-        audience: "lab-host",
-      },
+      publishers,
+      hosted_world: { bundle, tiers: ["tier:standard"], audience: "lab-host" },
     });
     const token = (audience: string[]) => ({
       kind: "token",
       token: issueEntitlement(
         {
-          artifact_id: artifact,
+          artifact_id: manifest.artifact_id,
           version_range: "^1.0.0",
-          tiers: ["standard"],
+          tiers: ["tier:standard"],
           licensee: { label: "peer-world" },
           audience,
           not_after: new Date(Date.now() + 3_600_000).toISOString(),
         },
-        key.pem,
+        key.key,
       ),
     });
     expect(await joinAs(url)).toContain("Gateway admission refused");
@@ -112,7 +111,7 @@ describe("hosting a paid world over federation", () => {
     // The joining side: the same extension, configured with a proof for gateway "lab".
     writeFileSync(join(dir, "proof.json"), JSON.stringify(token(["lab-host"])), { mode: 0o600 });
     const joinerEngine = (
-      await host({ publishers: [key.pinned], gateway_proofs: { lab: join(dir, "proof.json") } })
+      await host({ publishers, gateway_proofs: { lab: join(dir, "proof.json") } })
     ).engine;
     const relay = () => {};
     const joiner = new GatewayRuntime({
@@ -123,13 +122,13 @@ describe("hosting a paid world over federation", () => {
     });
     cleanups.push(() => joiner.close());
     await joiner.addGateway("lab", url);
-    await expect(
-      new GatewayRuntime({
-        localRelay: relay,
-        localTellRelay: relay,
-        localWorldName: "x",
-      }).addGateway("lab", url),
-    ).rejects.toThrow();
+    const stranger = new GatewayRuntime({
+      localRelay: relay,
+      localTellRelay: relay,
+      localWorldName: "x",
+    });
+    cleanups.push(() => stranger.close());
+    await expect(stranger.addGateway("lab", url)).rejects.toThrow();
     const audit = readFileSync(join(dir, "audit.jsonl"), "utf8");
     expect(audit).toContain('"action":"gateway.admit"');
     expect(audit).not.toContain("signature");

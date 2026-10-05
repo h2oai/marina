@@ -14,8 +14,8 @@
 
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { sha256Hex } from "../../../src/learned/format";
 import { canonicalFederationJson } from "../../../src/net/federation-crypto";
-import { sha256Hex } from "./envelope";
 
 export interface AuditEntry {
   seq: number;

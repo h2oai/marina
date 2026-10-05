@@ -3,43 +3,54 @@
 
 /**
  * Operator configuration, one JSON file named by `MARINA_MARKET_CONFIG` (or
- * `--config` for the CLI). Nothing is read from the network; no key material
- * is configured here — only PUBLIC publisher keys to pin, chain endpoints to
- * read from, and paths.
+ * `--config` for the CLI). Nothing is read from the network; no private key is
+ * configured here — only PUBLIC publisher keys (added to the core's pinned
+ * keys, `MARINA_LEARNED_PUBLISHER_KEYS`), chain endpoints to read from, and paths.
  */
 
 import { readFileSync, statSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
-import { AuditLog } from "./audit";
-import { type ChainConfig, type ChainRegistry, createChainRegistry } from "./chain/adapter";
-import { evmAdapterFactory } from "./chain/evm";
+import { readRevocationsFile, verifyBundle } from "../../../src/learned/bundle";
 import {
   type EntitlementVerifier,
   OfflineTokenVerifier,
-  WalletLicenceVerifier,
-} from "./entitlements";
-import { keyIdOf, type PinnedKey } from "./envelope";
+  revokedNonces,
+} from "../../../src/learned/entitlement";
+import type { Manifest } from "../../../src/learned/format";
+import { type PinnedKey, parsePinnedKeys, pinnedPublisherKeys } from "../../../src/learned/sign";
+import { AuditLog } from "./audit";
+import { type ChainConfig, type ChainRegistry, createChainRegistry } from "./chain/adapter";
+import { evmAdapterFactory } from "./chain/evm";
+import { WalletLicenceVerifier } from "./entitlements";
 
 export interface HostedWorldConfig {
-  artifact_id: string;
-  version: string;
-  /** Paid tiers a joining gateway peer must hold. */
+  /** The hosted world's bundle directory (verified against the pinned keys at start). */
+  bundle: string;
+  /** Paid slices a joining gateway peer must hold (e.g. `tier:standard`). */
   tiers: string[];
   /** This host's world name; proofs must name it (anti-replay across hosts). */
   audience: string;
-  entitlement_issuers?: string[];
 }
 
 export interface MarketConfig {
-  publishers: PinnedKey[];
+  /** Extra pinned publishers: `{name, public_key}` (base64 SPKI). */
+  publishers?: Array<{ name: string; public_key: string }>;
   audit_log: string;
   chains?: Record<string, ChainConfig>;
   allow_mainnet?: boolean;
-  revoked_nonces?: string[];
+  /** Signed revocation lists (core format) whose `entitlement_nonce` entries revoke tokens. */
+  revocations?: string[];
   hosted_world?: HostedWorldConfig;
   /** Gateway name → proof JSON file presented when this instance joins a paid host. */
   gateway_proofs?: Record<string, string>;
   max_proof_age_hours?: number;
+}
+
+export interface HostedWorld {
+  manifest: Manifest;
+  tiers: string[];
+  audience: string;
+  revoked: Set<string>;
 }
 
 export interface MarketRuntime {
@@ -47,25 +58,22 @@ export interface MarketRuntime {
   configDir: string;
   pinned: PinnedKey[];
   chains: ChainRegistry;
-  verifiers: EntitlementVerifier[];
+  revocations: unknown[];
+  /** Verifiers for a manifest (token revocations are per publisher and artifact). */
+  verifiersFor(manifest: Manifest): EntitlementVerifier[];
+  hosted?: HostedWorld;
   audit: AuditLog;
 }
 
 export function loadConfig(path: string): MarketConfig {
   const config = JSON.parse(readFileSync(path, "utf8")) as MarketConfig;
-  if (!Array.isArray(config.publishers)) throw new Error("config: publishers[] required");
-  for (const key of config.publishers) {
-    if (typeof key.name !== "string" || typeof key.public_key !== "string")
-      throw new Error("config: each publisher needs name and public_key");
-    keyIdOf(key.public_key);
-  }
   if (typeof config.audit_log !== "string") throw new Error("config: audit_log path required");
+  for (const p of config.publishers ?? [])
+    if (typeof p.name !== "string" || typeof p.public_key !== "string")
+      throw new Error("config: each publisher needs name and public_key");
   const hosted = config.hosted_world;
-  if (
-    hosted &&
-    (!hosted.artifact_id || !hosted.version || !hosted.audience || !hosted.tiers?.length)
-  )
-    throw new Error("config: hosted_world needs artifact_id, version, audience and tiers");
+  if (hosted && (!hosted.bundle || !hosted.audience || !hosted.tiers?.length))
+    throw new Error("config: hosted_world needs bundle, audience and tiers");
   return config;
 }
 
@@ -76,24 +84,55 @@ export function resolveFrom(base: string, path: string): string {
 export function buildRuntime(configPath: string): MarketRuntime {
   const config = loadConfig(configPath);
   const configDir = dirname(resolve(configPath));
+  const extra = parsePinnedKeys(
+    (config.publishers ?? []).map((p) => `${p.name}=${p.public_key}`).join(","),
+  );
+  if (extra.length !== (config.publishers ?? []).length)
+    throw new Error("config: a publisher public_key is not an Ed25519 SPKI key");
+  const pinned = [...pinnedPublisherKeys(), ...extra];
   const chains = createChainRegistry(
     config.chains ?? {},
     { evm: evmAdapterFactory },
     config.allow_mainnet === true,
   );
-  const verifiers: EntitlementVerifier[] = [
-    new OfflineTokenVerifier(config.publishers, new Set(config.revoked_nonces ?? [])),
-  ];
-  if (chains.size)
-    verifiers.push(
-      new WalletLicenceVerifier(chains, (config.max_proof_age_hours ?? 24) * 60 * 60 * 1000),
-    );
+  const revocations = (config.revocations ?? []).map((p) =>
+    readRevocationsFile(resolveFrom(configDir, p)),
+  );
+  const maxAge = (config.max_proof_age_hours ?? 24) * 60 * 60 * 1000;
+  const verifiersFor = (manifest: Manifest): EntitlementVerifier[] => {
+    const list: EntitlementVerifier[] = [
+      new OfflineTokenVerifier(
+        pinned,
+        revokedNonces(revocations, pinned, manifest.publisher.key_id, manifest.artifact_id),
+      ),
+    ];
+    if (chains.size) list.push(new WalletLicenceVerifier(chains, maxAge));
+    return list;
+  };
+  let hosted: HostedWorld | undefined;
+  if (config.hosted_world) {
+    // A paywall the operator believes is active must not silently disappear:
+    // an unverifiable hosted bundle fails startup.
+    const v = verifyBundle(resolveFrom(configDir, config.hosted_world.bundle), pinned);
+    if (!v.ok) throw new Error(`hosted_world bundle refused: ${v.error}`);
+    const m = v.bundle.manifest;
+    for (const t of config.hosted_world.tiers)
+      if (!m.slices.some((s) => s.id === t)) throw new Error(`hosted_world: no slice ${t}`);
+    hosted = {
+      manifest: m,
+      tiers: config.hosted_world.tiers,
+      audience: config.hosted_world.audience,
+      revoked: revokedNonces(revocations, pinned, m.publisher.key_id, m.artifact_id),
+    };
+  }
   return {
     config,
     configDir,
-    pinned: config.publishers,
+    pinned,
     chains,
-    verifiers,
+    revocations,
+    verifiersFor,
+    ...(hosted ? { hosted } : {}),
     audit: new AuditLog(resolveFrom(configDir, config.audit_log)),
   };
 }

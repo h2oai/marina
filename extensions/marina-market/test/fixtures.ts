@@ -3,11 +3,11 @@
 
 /** Shared fixtures for the extension's own checks (run with `bun run check`). */
 
-import { generateKeyPairSync } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { PinnedKey } from "../src/envelope";
+import { generateLearnedKeyPair, type PinnedKey } from "../../../src/learned/sign";
+import { keyIdOfPublicKey } from "../../../src/net/federation-crypto";
 import type { WorldPublishSpec } from "../src/world";
 
 const dirs: string[] = [];
@@ -20,15 +20,10 @@ export function cleanupTemp(): void {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 }
 
-export function publisherKey(name = "acme"): { pem: string; pinned: PinnedKey } {
-  const { privateKey, publicKey } = generateKeyPairSync("ed25519");
-  return {
-    pem: privateKey.export({ format: "pem", type: "pkcs8" }).toString(),
-    pinned: {
-      name,
-      public_key: Buffer.from(publicKey.export({ format: "der", type: "spki" })).toString("base64"),
-    },
-  };
+/** A fresh publisher key (base64 PKCS#8 DER, the core learned-bundle format) and its pin. */
+export function publisherKey(label = "acme"): { key: string; pinned: PinnedKey } {
+  const { privateKey, publicKey } = generateLearnedKeyPair();
+  return { key: privateKey, pinned: { label, publicKey, keyId: keyIdOfPublicKey(publicKey) } };
 }
 
 export const ROLE_BUNDLE = {
@@ -45,7 +40,7 @@ export const ROLE_BUNDLE = {
   traits: [{ name: "curious", category: "cognition", prompt: "Ask why.", capabilities: {} }],
 };
 
-/** Write a small but complete world payload: core (open) + standard (paid) tiers. */
+/** A small but complete world payload. */
 export function writeWorldPayload(dir: string, opts: { roomCode?: boolean } = {}): void {
   mkdirSync(join(dir, "world/rooms"), { recursive: true });
   mkdirSync(join(dir, "roles"), { recursive: true });
@@ -66,13 +61,13 @@ export function writeWorldPayload(dir: string, opts: { roomCode?: boolean } = {}
     writeFileSync(join(dir, "world/rooms/bench.ts"), "export default { short: 'Bench' };\n");
   writeFileSync(join(dir, "roles/lab-scout.json"), JSON.stringify(ROLE_BUNDLE));
   writeFileSync(
-    join(dir, "lessons.jsonl"),
-    `${JSON.stringify({ item_key: "l1", text: "Check the citation before trusting a claim." })}\n`,
+    join(dir, "conventions.jsonl"),
+    `${JSON.stringify({ id: "c1", pool: "guide", text: "Check the citation before trusting a claim." })}\n`,
   );
   writeFileSync(
     join(dir, "contributions.jsonl"),
     `${JSON.stringify({
-      item_key: "l1",
+      item_id: "c1",
       participants: [
         { id: "pseud:agent-7", kind: "agent", role: "author", weight: 0.7, method: "provenance" },
         { id: "anon:judge", kind: "model", role: "judge", weight: 0.3, method: "provenance" },
@@ -84,14 +79,20 @@ export function writeWorldPayload(dir: string, opts: { roomCode?: boolean } = {}
 export function publishSpec(overrides: Partial<WorldPublishSpec> = {}): WorldPublishSpec {
   return {
     name: "research-lab",
-    description: "Lab world with a paid curated memory tier",
+    description: "Lab world with a paid curated tier",
     version: "1.2.0",
     generation: 3,
     publisher: { name: "acme" },
     tiers: [
-      { id: "core", access: "open", include: ["world/", "roles/"] },
-      { id: "standard", access: "token", include: ["lessons.jsonl", "contributions.jsonl"] },
+      { id: "tier:core", access: "open", include: ["world/world.json"] },
+      {
+        id: "tier:standard",
+        access: "token",
+        include: ["world/", "roles/", "conventions.jsonl"],
+      },
     ],
     ...overrides,
   };
 }
+
+export const UPSTREAM_ON = { MARINA_UPSTREAM: "on" } as NodeJS.ProcessEnv;

@@ -10,59 +10,61 @@ call:
 - running Marina;
 - growing memory;
 - building, exporting or federating worlds;
-- importing free (`open`) tiers.
+- importing open slices.
 
-Entitlement checks run only when a user chooses to import or join a **paid** tier.
+## What lives in the core, and what this adds
 
-## What it adds
+The format, the verifier and the importer are free and open, and they live in
+the core (`src/learned/`, see `docs/guides/learned-bundles.md`). The core
+provides:
 
-- **World artifacts.** A `marina.world.v1` artifact is a `marina.learned.v1`
-  envelope whose `content_profile` is `marina.world.v1`. It is not a second
-  format. A world artifact contains:
-  - the world document, which is data only: rooms, exits, guide notes and quest
-    descriptions;
-  - optional room source code, kept as inert text for review;
-  - roles (RoleBundle v1);
-  - a curated memory slice (lessons, conventions, defaults, skills);
-  - optional pseudonymous contribution vectors;
-  - a generated `spec.json`.
+- **`marina.learned.v1` bundles**, signed and verified against pinned publisher
+  keys. Each bundle has slices, and each slice has an `access` of `open`,
+  `token` or `private`.
+- **World content.** A `marina.world.v1` bundle is a learned bundle with two item
+  kinds:
+  - `world`: the data-only world document;
+  - `room_source`: room source code as inert text flagged for `world.code`,
+    never compiled on import.
+- **Offline entitlement tokens** (`marina.entitlement.v1`): `bun run learned
+  entitle` issues them and the importer verifies them offline.
+- **An entitlement-gated importer.** A paid item is never written without a grant
+  that covers one of its slices.
 
-  Every artifact has an open `core` tier and may add paid tiers. The default
-  licence is proprietary (`LicenseRef-<publisher>-proprietary`).
-- **Entitlements.** Two interchangeable verifiers sit behind one interface:
-  - `token` (the default): a publisher-signed `marina.entitlement.v1`, verified
-    offline against pinned publisher keys.
-  - `evm-wallet`: the licensee signs a short statement in their own wallet.
-    Marina recovers the address and makes a read-only `balanceOf` call on a
-    configured chain.
-- **Chain-agnostic adapters.** `ChainAdapter` defines `verifyEntitlement`,
-  `anchor`, `readAnchor` and `resolveSettlement`. A single EVM adapter covers any
-  EVM chain by configuration.
+This extension adds:
 
-  `anchor` returns an unsigned transaction. Marina never holds, receives or asks
-  for a private key, has no token of its own, and does no bridging.
+- **World publishing** (`cli.ts publish`). It turns a payload directory into a
+  signed world bundle through the core's `assembleBundle`. It enforces the
+  marketplace's world rule: an open `tier:core` slice that carries the world
+  document. It also runs publish-side scans, which refuse secrets, home paths,
+  emails, unknown files and symlinks.
+- **A read-only on-chain verifier** (`evm-wallet`). The licensee signs a short
+  statement in their own wallet. Marina recovers the address and makes a
+  read-only `balanceOf` call on a configured chain. The verifier implements the
+  core `EntitlementVerifier` interface, so it yields the same grant as a token.
+- **`ChainAdapter`**, which defines `verifyEntitlement`, `anchor`, `readAnchor`
+  and `resolveSettlement`. A single EVM adapter covers any EVM chain by
+  configuration.
+  - `anchor` returns an unsigned transaction. Marina never holds, receives or
+    asks for a private key, has no token of its own, and does no bridging.
+  - A non-EVM family plugs in by implementing `ChainAdapter` and registering a
+    factory for its `family` in `createChainRegistry`.
+- **Paid hosted worlds over federation.** A host can name a `hosted_world`
+  bundle. Inbound gateway peers then need an entitlement that names this host
+  as its audience.
+  - The check runs through the core's optional gateway hooks, after
+    `GATEWAY_SECRET`, whose meaning is unchanged.
+  - It gates the gateway handshake only. A hard boundary also needs
+    `MARINA_AUTH=better-auth` without open login.
+  - Free worlds register nothing.
+- **A licence contract** (`contracts/src/MarinaLicense.sol`): a minimal ERC-1155
+  licence registry. The licence id is `keccak256(artifactId ‖ 0x00 ‖ slice id)`.
+  Its `transferable` and `revocable` terms cannot change, it anchors an artifact
+  digest once, and it has no payable functions.
 
-  A non-EVM family plugs in by implementing `ChainAdapter` and registering a
-  factory for its `family` in `createChainRegistry`.
-- **Paid hosted worlds over federation.** A host can name a `hosted_world`. The
-  core then sends every inbound gateway peer through the extension's admission
-  check, which:
-  - runs after `GATEWAY_SECRET`, whose meaning is unchanged;
-  - requires an entitlement that names the host as its audience.
-
-  Like `GATEWAY_SECRET`, this gates the gateway handshake only. A hard boundary
-  also needs `MARINA_AUTH=better-auth` without open login. Free worlds register
-  nothing.
-- **Payment hook only.** `contracts/src/MarinaLicense.sol` is a minimal ERC-1155
-  licence registry:
-  - licence id = `keccak256(artifactId ‖ 0x00 ‖ tier)`;
-  - immutable `transferable` and `revocable` terms;
-  - a write-once artifact digest anchor;
-  - no payable functions.
-
-  The contract does not take payment. An external checkout or marketplace
-  contract takes payment and calls `issue()` with `ISSUER_ROLE`. Marina only
-  reads the result (`resolveSettlement`).
+  Payment happens outside Marina. An external checkout or marketplace contract
+  takes payment and calls `issue()` with `ISSUER_ROLE`. Marina only reads the
+  result (`resolveSettlement`).
 
 ## Install and enable (operators)
 
@@ -75,55 +77,62 @@ MARINA_PLUGINS=./extensions/marina-market MARINA_MARKET_CONFIG=./market.json bun
 
 ```json
 {
-  "publishers": [{ "name": "acme", "public_key": "<base64 SPKI from keygen>" }],
+  "publishers": [{ "name": "acme", "public_key": "<base64 SPKI from bun run learned keygen>" }],
   "audit_log": "data/marina-market-audit.jsonl",
+  "revocations": ["revocations.json"],
   "chains": {
     "base-sepolia": {
       "family": "evm", "chain_id": 84532, "rpc": "https://sepolia.base.org",
       "license_contract": "0x…", "confirmations": 3, "network": "testnet"
     }
   },
-  "hosted_world": {
-    "artifact_id": "marina-world:sha256:…/research-lab", "version": "1.2.0",
-    "tiers": ["standard"], "audience": "my-world"
-  },
+  "hosted_world": { "bundle": "worlds/research-lab-1.2.0", "tiers": ["tier:standard"], "audience": "my-world" },
   "gateway_proofs": { "lab": "proofs/lab.json" }
 }
 ```
 
-Mainnet chains are refused unless the config sets `"allow_mainnet": true`. Leave
-it off until there is an explicit decision to go to production. A chain id that
-is a known mainnet but is declared `testnet` is always refused.
+Publishers in this file are added to the core's pinned keys
+(`MARINA_LEARNED_PUBLISHER_KEYS`). Mainnet chains are refused unless the config
+sets `"allow_mainnet": true`. Leave it off until there is an explicit decision to
+go to production. A chain id that is a known mainnet but is declared `testnet` is
+always refused.
 
 RPC requests go through Marina's SSRF guard. A loopback devnet such as anvil is
 reachable only under `MARINA_PROFILE=local`.
 
 In-world, `market status` and `market audit` are read-only. Every other action
-goes through the operator CLI:
+is an operator act:
 
 ```bash
-bun run cli.ts keygen publisher.pem                      # prints only the PUBLIC key
-bun run cli.ts publish <payload-dir> publish.json --key publisher.pem
-bun run cli.ts verify <bundle-dir>
-bun run cli.ts issue --key publisher.pem --artifact <id> --tiers standard --licensee buyer
-bun run cli.ts plan-import <bundle-dir> --slices core,standard --proof proof.json
-bun run cli.ts statement --chain base-sepolia --artifact <id> --tiers standard --address 0x…
+bun run learned keygen publisher.key                     # core: a publisher key (0600)
+bun run cli.ts publish <payload-dir> <out-dir> publish.json --key-file publisher.key
+bun run learned entitle --artifact <id> --tiers tier:standard --licensee buyer --key-file publisher.key
+MARINA_UPSTREAM=on bun run cli.ts import <bundle-dir> --slices tier:standard --proof proof.json
+bun run cli.ts statement --chain base-sepolia --artifact <id> --tiers tier:standard --address 0x…
 bun run cli.ts anchor-tx <bundle-dir> --chain base-sepolia   # unsigned; sign in your wallet
-bun run cli.ts resolve-settlement --chain base-sepolia --tx 0x… --licensee 0x… --artifact <id> --tier standard
+bun run cli.ts resolve-settlement --chain base-sepolia --tx 0x… --licensee 0x… --artifact <id> --tier tier:standard
 bun run cli.ts audit-verify
 ```
 
-Imports are handled as follows:
+`cli.ts import` verifies the proof, then hands the bundle and the grant to the
+core importer. The core importer writes only the slices the grant covers, at
+trust `imported`. Room source code is stored for review. It is installed only
+through the existing `world.code`-gated path.
 
-- `plan-import` verifies the bundle and applies the entitlement gate. It then
-  hands the plan to the core `marina.learned.v1` importer at trust `imported`:
-  an imported item is not trusted until local outcomes confirm it.
-- The extension never writes memory, roles or rooms itself.
-- Room source code is listed for review. It is installed only through the
-  existing `world.code`-gated path.
+Every marketplace decision goes to a hash-chained, mode-0600 audit log, which
+never holds tokens, signatures or keys. The core records imports in
+`upstream_events`.
 
-Every decision goes to a hash-chained, mode-0600 audit log. The log never holds
-tokens, signatures or keys.
+## Payload layout for `publish`
+
+| Path | Becomes |
+|---|---|
+| `world/world.json` | a `world` item (data only; unknown keys refused) |
+| `world/rooms/<id>.ts` | `room_source` items (inert text) |
+| `roles/<name>.json` | `role` items (RoleBundle v1) |
+| `conventions.jsonl` (`{id, text, pool}`) | `convention` items |
+| `lessons.jsonl` (`{id, text, domain, lesson_kind, resolved_at}`) | `lesson` items |
+| `contributions.jsonl` | pseudonymous contribution vectors, in the spec sheet |
 
 ## Tests
 
@@ -139,12 +148,9 @@ anvil devnet and runs these steps:
 
 1. deploys the contract with the testnet-only `script/Deploy.s.sol`;
 2. issues a licence;
-3. anchors a real artifact;
-4. verifies the licence, the anchor and the settlement through the read-only
+3. imports the paid slice through the core importer with a wallet proof;
+4. anchors the artifact and resolves the settlement through the read-only
    adapter.
 
 All keys in these steps are ephemeral. When Foundry is absent, those checks are
 skipped.
-
-`script/Deploy.s.sol` refuses every chain that is not a known devnet or testnet.
-The deployer signs with their own key, and Marina never sees it.

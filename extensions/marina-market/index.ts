@@ -20,17 +20,17 @@ import { createGatewayAdmission, createGatewayProofProvider } from "./src/federa
 function statusText(runtime: MarketRuntime | undefined, problem?: string): string {
   if (!runtime)
     return `market: not configured${problem ? ` (${problem})` : ""}. Set MARINA_MARKET_CONFIG to enable paid-artifact checks; free use needs nothing.`;
-  const { config } = runtime;
   const head = runtime.audit.head();
   const lines = [
     "market: enabled (optional extension; the core never depends on it)",
-    `pinned publishers: ${config.publishers.map((p) => p.name).join(", ") || "none"}`,
+    `pinned publishers: ${runtime.pinned.map((p) => p.label).join(", ") || "none"}`,
     `chains (read-only): ${[...runtime.chains.keys()].join(", ") || "none — offline tokens only"}`,
     `audit log: ${head.seq} entries, head ${head.hash.slice(0, 12)}`,
   ];
-  if (config.hosted_world) {
+  const hosted = runtime.hosted;
+  if (hosted) {
     lines.push(
-      `hosting paid world ${config.hosted_world.artifact_id}@${config.hosted_world.version} (tiers ${config.hosted_world.tiers.join(",")}): gateway peers need an entitlement`,
+      `hosting paid world ${hosted.manifest.artifact_id}@${hosted.manifest.version} (slices ${hosted.tiers.join(",")}): gateway peers need an entitlement`,
     );
     if (process.env.MARINA_AUTH !== "better-auth")
       lines.push(

@@ -1,13 +1,15 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/** The operator flow through the CLI: keygen → publish → verify → issue → plan. */
+/** The operator flow: publish a world, then import it free and paid through the CLI. */
 
 import { afterEach, expect, it, spyOn } from "bun:test";
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { issueEntitlement } from "../../../src/learned/entitlement";
+import { scopeProcessState } from "../../../test/process-state";
 import { main } from "../cli";
-import { cleanupTemp, publishSpec, tempDir, writeWorldPayload } from "./fixtures";
+import { cleanupTemp, publisherKey, publishSpec, tempDir, writeWorldPayload } from "./fixtures";
 
 afterEach(cleanupTemp);
 
@@ -25,72 +27,76 @@ async function capture(argv: string[]): Promise<string> {
   return out;
 }
 
-it("runs the publisher and importer flow without printing key material", async () => {
+it("publishes, then imports the free core and the paid slice, without printing key material", async () => {
   const dir = tempDir();
-  const keyFile = join(dir, "publisher.pem");
-  const keygen = JSON.parse(await capture(["keygen", keyFile]));
-  expect(statSync(keyFile).mode & 0o777).toBe(0o600);
-  expect(JSON.stringify(keygen)).not.toContain("PRIVATE KEY");
-
-  const payload = join(dir, "world");
-  writeWorldPayload(payload);
+  const pub = publisherKey();
+  const keyFile = join(dir, "publisher.key");
+  writeFileSync(keyFile, pub.key, { mode: 0o600 });
+  const payload = join(dir, "payload");
+  writeWorldPayload(payload, { roomCode: true });
   const specFile = join(dir, "spec.json");
   writeFileSync(specFile, JSON.stringify(publishSpec()));
-  const published = JSON.parse(await capture(["publish", payload, specFile, "--key", keyFile]));
-  expect(published.artifact_id).toBe(`marina-world:${keygen.key_id}/research-lab`);
+  const bundle = join(dir, "bundle");
+  const published = JSON.parse(
+    await capture(["publish", payload, bundle, specFile, "--key-file", keyFile]),
+  );
+  expect(published.artifact_id).toStartWith("marina-world:");
+  expect(JSON.stringify(published)).not.toContain(pub.key);
 
   const config = join(dir, "market.json");
   writeFileSync(
     config,
     JSON.stringify({
-      publishers: [{ name: "acme", public_key: keygen.public_key }],
+      publishers: [{ name: "acme", public_key: pub.pinned.publicKey }],
       audit_log: "audit.jsonl",
     }),
   );
-  const verified = JSON.parse(await capture(["verify", payload, "--config", config]));
-  expect(verified.slices).toEqual([
-    { id: "core", access: "open" },
-    { id: "standard", access: "token" },
-  ]);
+  using _state = scopeProcessState({
+    env: {
+      MARINA_UPSTREAM: "on",
+      DB_PATH: join(dir, "m.db"),
+      MARINA_LEARNED_PUBLISHER_KEYS: undefined,
+    },
+  });
+  const free = JSON.parse(await capture(["import", bundle, "--config", config]));
+  expect(free).toMatchObject({ added: 1, entitlement: null, network_used: false });
+  expect(free.withheld).toBeGreaterThan(0);
 
-  const token = await capture([
-    "issue",
-    "--key",
-    keyFile,
-    "--artifact",
-    published.artifact_id,
-    "--tiers",
-    "standard",
-    "--licensee",
-    "buyer",
-    "--versions",
-    "^1.0.0",
-  ]);
+  const token = issueEntitlement(
+    {
+      artifact_id: published.artifact_id,
+      version_range: "^1.0.0",
+      tiers: ["tier:standard"],
+      licensee: { label: "buyer" },
+      not_after: new Date(Date.now() + 86_400_000).toISOString(),
+    },
+    pub.key,
+  );
   const proofFile = join(dir, "proof.json");
-  writeFileSync(proofFile, token, { mode: 0o600 });
-  const plan = JSON.parse(
+  writeFileSync(proofFile, JSON.stringify({ kind: "token", token }), { mode: 0o600 });
+  const paid = JSON.parse(
     await capture([
-      "plan-import",
-      payload,
+      "import",
+      bundle,
       "--slices",
-      "core,standard",
+      "tier:standard",
       "--proof",
       proofFile,
       "--config",
       config,
     ]),
   );
-  expect(plan.entitlement.licensee).toBe("buyer");
-  expect(plan.trust).toBe("imported");
+  expect(paid).toMatchObject({ trust: "imported", entitlement: { licensee: "buyer" } });
+  expect(paid.withheld).toBe(0);
 
   // A world-readable proof file is refused rather than silently used.
-  writeFileSync(join(dir, "loose.json"), token, { mode: 0o644 });
+  writeFileSync(join(dir, "loose.json"), JSON.stringify({ kind: "token", token }), { mode: 0o644 });
   await expect(
     main([
-      "plan-import",
-      payload,
+      "import",
+      bundle,
       "--slices",
-      "standard",
+      "tier:standard",
       "--proof",
       join(dir, "loose.json"),
       "--config",
@@ -100,5 +106,5 @@ it("runs the publisher and importer flow without printing key material", async (
 
   const audit = JSON.parse(await capture(["audit-verify", "--config", config]));
   expect(audit.ok).toBe(true);
-  expect(readFileSync(join(dir, "audit.jsonl"), "utf8")).not.toContain("PRIVATE");
+  expect(readFileSync(join(dir, "audit.jsonl"), "utf8")).not.toContain(pub.key);
 });
