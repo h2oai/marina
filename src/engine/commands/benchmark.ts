@@ -30,7 +30,12 @@ import {
   pooledSummary,
   replicateGroupOf,
 } from "../benchmark-replicates";
-import { BENCHMARKS, type BenchmarkRunner, type BenchmarkSubject } from "../benchmark-runner";
+import {
+  BENCHMARKS,
+  type BenchmarkRunner,
+  type BenchmarkSubject,
+  retireOutcomeNotesForRun,
+} from "../benchmark-runner";
 import { extractModifiers, resolveMultiWordName } from "../parse-input";
 import { checkRoleEdit } from "../role-guard";
 import { formatAge } from "./format-duration";
@@ -746,6 +751,13 @@ export function benchmarkCommand(deps: {
               ctx.send(
                 input.entity,
                 `  Lessons citing ${id}: ${r.retired.length} retired${r.failed.length ? `, ${r.failed.length} failed` : ""}${r.error ? ` (${r.error})` : ""}.`,
+              );
+            // So were the per-item outcome notes the runner deposited for it.
+            const n = retireOutcomeNotesForRun(db, id);
+            if (n.retired || n.ambiguous || n.error)
+              ctx.send(
+                input.entity,
+                `  Outcome notes citing ${id}: ${n.retired} retired${n.ambiguous ? `, ${n.ambiguous} left (legacy prefix shared with another run)` : ""}${n.error ? ` (${n.error})` : ""}.`,
               );
           }
           return;

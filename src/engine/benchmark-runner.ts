@@ -19,6 +19,7 @@ import { localHttpBase } from "../net/listen-ports";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent, EntityId } from "../types";
 import { fallbackInvalidReason, isFallbackItem } from "./benchmark-ledger";
+import { getErrorMessage } from "./errors";
 
 interface BenchmarkSpec {
   name: string;
@@ -175,6 +176,61 @@ function hashConfig(config: unknown): string {
     h = ((h << 5) + h) ^ s.charCodeAt(i);
   }
   return (h >>> 0).toString(16).padStart(8, "0");
+}
+
+/** The citation an outcome note carries for its run (`bench:<id>`, as lessons cite it). */
+function outcomeNoteRef(runId: string): string {
+  return `bench:${runId}`;
+}
+
+/** Notes written before outcome notes carried the full id cite a 16-char prefix. */
+const LEGACY_NOTE_PREFIX = 16;
+
+/**
+ * A ledger run was invalidated: retire the per-item outcome notes the runner
+ * deposited for it in the `benchmark:<name>` pool (they record what the
+ * infrastructure did, not the target). Retirement is `note delete`'s path —
+ * the canonical record is revised and stays readable in its history; the
+ * invalidation's own audit row carries the reason. Older notes cite only a
+ * 16-character prefix of the run id (`run=<prefix>`); they are retired only
+ * when no other run on that benchmark shares the prefix, otherwise counted as
+ * `ambiguous` and left in place. Never throws.
+ */
+export function retireOutcomeNotesForRun(
+  db: MarinaDB,
+  runId: string,
+): { retired: number; ambiguous: number; error?: string } {
+  try {
+    const run = db.getBenchmarkRun(runId);
+    if (!run) return { retired: 0, ambiguous: 0 };
+    const pool = db.getMemoryPool(`benchmark:${run.benchmark}`);
+    if (!pool) return { retired: 0, ambiguous: 0 };
+    const full = outcomeNoteRef(runId);
+    const prefix = runId.slice(0, LEGACY_NOTE_PREFIX);
+    const legacy = `| run=${prefix}`;
+    const legacyUnique =
+      runId.length > LEGACY_NOTE_PREFIX
+        ? !db
+            .queryBenchmarkRuns({ benchmark: run.benchmark, limit: 500 })
+            .some((r) => r.id !== runId && r.id.startsWith(prefix))
+        : true;
+    let retired = 0;
+    let ambiguous = 0;
+    const notes = db.getPoolNotes(pool.id, Math.max(1, db.countPoolNotes(pool.id)));
+    for (const note of notes) {
+      if (note.entity_name !== "benchmark-runner") continue;
+      const content = note.content ?? "";
+      const legacyHit = content.endsWith(legacy);
+      if (!content.endsWith(`| ${full}`) && !(legacyHit && legacyUnique)) {
+        if (legacyHit) ambiguous++;
+        continue;
+      }
+      if (db.deleteNote(note.id, note.entity_name)) retired++;
+    }
+    return { retired, ambiguous };
+  } catch (err) {
+    return { retired: 0, ambiguous: 0, error: getErrorMessage(err) };
+  }
 }
 
 /** Where the harness sends its model calls: this instance's own /v1, authenticated. */
@@ -485,7 +541,7 @@ export class BenchmarkRunner {
       const cat = item.category ? `[${item.category}] ` : "";
       const content =
         `WRONG ${cat}Q: ${qFrag} | expected=${item.expected} | we_answered=${item.actual} ` +
-        `| run=${runId.slice(0, 16)}`;
+        `| ${outcomeNoteRef(runId)}`;
       try {
         this.db.addPoolNote(pool.id, "benchmark-runner", content, 7);
         count++;
@@ -496,7 +552,7 @@ export class BenchmarkRunner {
     for (const item of chosenCorrect) {
       const qFrag = (item.question ?? "").slice(0, 150).replace(/\s+/g, " ").trim();
       const cat = item.category ? `[${item.category}] ` : "";
-      const content = `OK ${cat}Q: ${qFrag} | answer=${item.expected} | run=${runId.slice(0, 16)}`;
+      const content = `OK ${cat}Q: ${qFrag} | answer=${item.expected} | ${outcomeNoteRef(runId)}`;
       try {
         this.db.addPoolNote(pool.id, "benchmark-runner", content, 4);
         count++;

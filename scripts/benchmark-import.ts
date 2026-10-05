@@ -56,6 +56,7 @@ import {
   TARGET_KINDS,
 } from "../src/engine/benchmark-ledger";
 import { replicateGroupOf, validReplicateGroup } from "../src/engine/benchmark-replicates";
+import { retireOutcomeNotesForRun } from "../src/engine/benchmark-runner";
 import { noteBenchmarkRun, retireLessonsForRun } from "../src/learning/intake";
 import { enableOutcomeLearning, settleOutcomes } from "../src/learning/service";
 import { MarinaDB } from "../src/persistence/database";
@@ -151,6 +152,10 @@ if (values.invalidate !== undefined || values.revalidate !== undefined) {
       const r = await retireLessonsForRun(db, runId, { reason, by: "operator" });
       console.log(
         `  lessons citing it: ${r.retired.length} retired${r.failed.length ? `, ${r.failed.length} failed` : ""}${r.error ? ` (${r.error})` : ""}`,
+      );
+      const n = retireOutcomeNotesForRun(db, runId);
+      console.log(
+        `  outcome notes citing it: ${n.retired} retired${n.ambiguous ? `, ${n.ambiguous} left (legacy prefix shared with another run)` : ""}${n.error ? ` (${n.error})` : ""}`,
       );
     }
   } finally {

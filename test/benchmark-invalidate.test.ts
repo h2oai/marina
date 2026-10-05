@@ -541,6 +541,41 @@ describe("benchmark invalidate | revalidate — commands", () => {
     }
   });
 
+  it("retires the outcome notes the runner deposited for an invalidated run, and only those", async () => {
+    recordRun(db, "br_0000aaaa_mgabcdef", strongRight);
+    recordRun(db, "br_0000aaaa_mgabzzzz", incumbentRight);
+    recordRun(db, "br_0000bbbb_mgabcdef", incumbentRight);
+    db.createMemoryPool("pool-bench", "benchmark:synthetic", "benchmark-runner");
+    const add = (content: string) => db.addPoolNote("pool-bench", "benchmark-runner", content, 4);
+    const full = add("OK Q: a | answer=1 | bench:br_0000aaaa_mgabcdef");
+    const other = add("OK Q: b | answer=2 | bench:br_0000bbbb_mgabcdef");
+    // Legacy notes cite a 16-char prefix; this one is shared by two runs.
+    const shared = add("WRONG Q: c | expected=1 | we_answered=2 | run=br_0000aaaa_mgab");
+    const unique = add("WRONG Q: d | expected=1 | we_answered=2 | run=br_0000bbbb_mgab");
+
+    const op = login("Operator");
+    grant(db, op.conn.entity!, "role.edit");
+    op.conn.clear();
+    await engine.processCommand(
+      op.conn.entity!,
+      "benchmark invalidate br_0000aaaa_mgabcdef reason:outage",
+    );
+    const reply = stripAnsi(op.conn.allTextJoined());
+    expect(reply).toContain("Outcome notes citing br_0000aaaa_mgabcdef: 1 retired, 1 left");
+    expect(db.getNote(full)).toBeUndefined();
+    expect(db.getNote(other)).toBeDefined();
+    expect(db.getNote(shared)).toBeDefined();
+
+    op.conn.clear();
+    await engine.processCommand(
+      op.conn.entity!,
+      "benchmark invalidate br_0000bbbb_mgabcdef reason:outage",
+    );
+    expect(stripAnsi(op.conn.allTextJoined())).toContain("2 retired");
+    expect(db.getNote(other)).toBeUndefined();
+    expect(db.getNote(unique)).toBeUndefined();
+  });
+
   it("never lets the invalidator of an incumbent fill its slot, and makes others earn it", () => {
     const op = login("Invalidator");
     grant(db, op.conn.entity!, "role.edit");
