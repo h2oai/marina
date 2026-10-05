@@ -88,6 +88,23 @@ The overlay is safe only because `docker-compose.yml` publishes the ports on the
 `127.0.0.1`. Never use it with widened `ports:`, a reverse proxy in front of the host, or the
 EC2/server deploy (`scripts/deploy.sh` does not use it).
 
+### Publishing beyond loopback (`MARINA_BIND_IP`)
+
+`docker-compose.yml` publishes every port on `127.0.0.1` by default, so a fresh `docker compose up`
+is reachable from that machine only. A reverse proxy or load balancer on **another** host connects
+to this host's routable address, not its loopback — so with the default it cannot connect at all and
+every health check fails. Set the host interface to publish on:
+
+```bash
+# in .env — 0.0.0.0 for every interface, or pin a specific host IP
+MARINA_BIND_IP=0.0.0.0
+```
+
+Before widening the bind, enable sign-in (`MARINA_AUTH=better-auth`) or set `MODEL_API_KEYS`, and
+keep the host firewall / security group scoped to the proxy or load balancer. Publishing on
+`0.0.0.0` makes the port reachable from anything that can route to the host; the network boundary is
+then your security group, not Docker.
+
 ### Without Compose
 
 ```bash

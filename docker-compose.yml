@@ -12,15 +12,18 @@ services:
         required: false
     # SECURE-BY-DEFAULT publish: ports bind the HOST's loopback interface, so a
     # fresh `docker compose up` is reachable from this machine only. To expose
-    # Marina to a network, drop the `127.0.0.1:` prefix — and BEFORE you do,
-    # enable real auth (MARINA_AUTH=better-auth) or set MODEL_API_KEYS; see the
-    # SECURITY block below and docs/guides/deployment.md.
+    # Marina to a network, set MARINA_BIND_IP (0.0.0.0 for every interface, or a
+    # specific host IP) — and BEFORE you do, enable real auth
+    # (MARINA_AUTH=better-auth) or set MODEL_API_KEYS; see the SECURITY block
+    # below and docs/guides/deployment.md. Reverse proxies and load balancers
+    # reach the host by its routable address, not loopback, so a deployment
+    # behind one MUST set this or every health check fails.
     ports:
-      - "127.0.0.1:3300:3300" # WebSocket + Web Chat + Dashboard + OpenAI/Ollama API
-      - "127.0.0.1:3301:3301" # MCP (optional — drop this line to keep it internal)
+      - "${MARINA_BIND_IP:-127.0.0.1}:3300:3300" # WebSocket + Web Chat + Dashboard + OpenAI/Ollama API
+      - "${MARINA_BIND_IP:-127.0.0.1}:3301:3301" # MCP (optional — drop this line to keep it internal)
       # Telnet is plaintext + unauthenticated and OFF by default. To enable on a
       # trusted network: set TELNET_PORT=4000 in `environment:` and publish it:
-      # - "127.0.0.1:4000:4000"
+      # - "${MARINA_BIND_IP:-127.0.0.1}:4000:4000"
     volumes:
       # Docker-managed storage works on first run without host UID/GID repair.
       # Operators who need host-visible files can set MARINA_DATA_VOLUME to an

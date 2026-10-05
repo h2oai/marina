@@ -125,15 +125,6 @@ const PROVIDER_UPSTREAM: Record<string, { url: string; envKeys: string[]; anthro
 /** Providers that serve other vendors' models under `<vendor>/<model>` ids. */
 const AGGREGATORS = new Set(["openrouter", "huggingface"]);
 
-/**
- * An upstream status that rejects the request itself (unsupported parameter,
- * malformed or oversized body), as opposed to a routing miss (404), an auth or
- * quota problem, or an outage — those may still be served elsewhere.
- */
-function isRequestRejection(status: number | undefined): boolean {
-  return status === 400 || status === 413 || status === 415 || status === 422;
-}
-
 // First-party providers preferred over OpenRouter on the fallback path, since
 // OpenRouter is an aggregator that re-routes (and adds markup). An explicitly
 // configured default model overrides this order entirely (see proxyToUpstream).
@@ -1265,10 +1256,12 @@ export async function proxyToUpstream(
   let modelNotFound: { response: Response; target: string } | undefined;
 
   // 1b) Explicit provider prefix on a non-default id (`openrouter/z-ai/glm-…`,
-  //     `openai/gpt-…`): that provider first, prefix stripped. Its failure falls
-  //     through to (2), which may still serve the full id (an aggregator accepts
-  //     `openai/gpt-…` as-is).
-  let explicitProvider: string | undefined;
+  //     `openai/gpt-…`): that provider ONLY, prefix stripped. The prefix names
+  //     the provider, so its answer — success, rejection, 404, 429, 5xx or a
+  //     transport failure — is the answer. It never falls back to another
+  //     provider: the full id is that provider's namespace (another provider
+  //     would 400 on `openrouter/…`), and a silent reroute would credit the
+  //     wrong provider and hide the named provider's error from the caller.
   if (!isDefault && typeof body.model === "string" && !clientSignal?.aborted) {
     const slash = body.model.indexOf("/");
     const provider = slash > 0 ? body.model.slice(0, slash) : "";
@@ -1277,47 +1270,42 @@ export async function proxyToUpstream(
     const key = cfg ? resolveProviderKey(engine, provider) : undefined;
     const localReady = isLocalProvider(provider) && localProviderConfigured(provider);
     if (cfg && (key || localReady) && upstreamModel) {
-      explicitProvider = provider;
       attemptedUpstream = true;
       lastTarget = `${provider}/${upstreamModel}`;
       if (cfg.anthropic) {
-        const resp = await anthropic(key!, upstreamModel);
-        if (hints?.providerFallback === false || resp.status !== 404)
-          return finish(resp, lastTarget);
-        modelNotFound = { response: resp, target: lastTarget };
-        lastErrorKind = classifyProxyError(404);
-      } else {
-        const r = await dispatchOpenAICompatible(
-          cfg.url,
-          key ?? "",
-          prepareUpstreamBody({ ...body, model: upstreamModel }, provider, isDefault, cacheHints),
-          wantStream,
-          upstreamHeaders,
-          clientSignal,
-        );
-        if (r.response) return finish(r.response, lastTarget);
-        if (hints?.providerFallback === false) {
-          return finish(
-            r.errorResponse ??
-              errorJson(
-                r.timedOut ? 504 : 502,
-                `Named upstream ${lastTarget} could not complete the request.`,
-              ),
-            lastTarget,
-            r.networkError ? "network" : classifyProxyError(r.errorStatus ?? 0),
-          );
-        }
-        // The named provider rejected the request itself (an unsupported
-        // parameter, a malformed body): that is the answer. Another provider
-        // would not serve this provider's model id, and a silent retry
-        // elsewhere would hide the reason from the caller.
-        if (r.errorResponse && isRequestRejection(r.errorStatus)) {
-          return finish(r.errorResponse, lastTarget, classifyProxyError(r.errorStatus ?? 0));
-        }
-        lastErrorKind = r.networkError ? "network" : classifyProxyError(r.errorStatus ?? 0);
-        anyTimedOut ||= r.timedOut === true;
+        return finish(await anthropic(key!, upstreamModel), lastTarget);
       }
-    } else if (cfg && hints?.providerFallback === false) {
+      const r = await dispatchOpenAICompatible(
+        cfg.url,
+        key ?? "",
+        prepareUpstreamBody({ ...body, model: upstreamModel }, provider, isDefault, cacheHints),
+        wantStream,
+        upstreamHeaders,
+        clientSignal,
+      );
+      if (r.response) return finish(r.response, lastTarget);
+      return finish(
+        r.errorResponse ??
+          errorJson(
+            r.timedOut ? 504 : 502,
+            r.timedOut
+              ? `Named upstream ${lastTarget} did not answer within ${upstreamTimeoutMs()} ms (MARINA_UPSTREAM_TIMEOUT_MS).`
+              : `Named upstream ${lastTarget} could not complete the request.`,
+          ),
+        lastTarget,
+        r.networkError ? "network" : classifyProxyError(r.errorStatus ?? 0),
+      );
+    }
+    // A prefix that can only mean a Marina provider — an aggregator
+    // (`openrouter/…`, `huggingface/…`) or a local runtime — is never another
+    // provider's model id, so with that provider unconfigured nothing can
+    // serve it. (A first-party vendor prefix such as `openai/…` with no
+    // OpenAI key is also an aggregator's vendor id and keeps the loop below.)
+    if (
+      cfg &&
+      upstreamModel &&
+      (hints?.providerFallback === false || AGGREGATORS.has(provider) || isLocalProvider(provider))
+    ) {
       return finish(
         errorJson(503, `Named upstream ${provider}/${upstreamModel} is not configured.`),
         `${provider}/${upstreamModel}`,
@@ -1326,14 +1314,20 @@ export async function proxyToUpstream(
   }
 
   // 2) Fallback: first-party-preferred over whatever keys exist (env or DB).
+  //    A default request is mapped to EACH provider's own default model, so
+  //    every attempt names a model that provider carries. A non-default id is
+  //    sent as-is; one whose prefix names a first-party vendor this instance
+  //    has no key for (`openai/gpt-…` with no OpenAI key) is that vendor's id
+  //    in an aggregator's namespace, so only an aggregator is asked.
+  const modelSlash = typeof body.model === "string" ? body.model.indexOf("/") : -1;
+  const vendorPrefixed =
+    !isDefault &&
+    modelSlash > 0 &&
+    PROVIDER_UPSTREAM[(body.model as string).slice(0, modelSlash)] !== undefined;
   for (const provider of FALLBACK_PRIORITY) {
     // A caller that disconnected gets no further provider attempts.
     if (clientSignal?.aborted) break;
-    // The explicitly named provider was already asked with the stripped id.
-    if (provider === explicitProvider) continue;
-    // `<provider>/<id>` names that provider's model: after it failed, only an
-    // aggregator can serve the full id; a first-party API cannot.
-    if (explicitProvider && !AGGREGATORS.has(provider)) continue;
+    if (vendorPrefixed && !AGGREGATORS.has(provider)) continue;
     const cfg = PROVIDER_UPSTREAM[provider]!;
     const key = resolveProviderKey(engine, provider);
     // Skip cloud providers with no key, and local runtimes the operator hasn't

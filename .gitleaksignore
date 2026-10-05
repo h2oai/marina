@@ -24,3 +24,4 @@ f3bb0f3d575b854a4f6a2641b9c1e14c9d2c49db:test/arena-key-formats.test.ts:private-
 
 # Synthetic alphabet-and-digits secret in the learned-bundle rejection regression; never a credential.
 daf91c77d7542ffdca128df630e5cde3e1bcc539:test/learned-bundle.test.ts:generic-api-key:348
+daf91c77d7542ffdca128df630e5cde3e1bcc539:test/learned-bundle.test.ts:generic-api-key:348

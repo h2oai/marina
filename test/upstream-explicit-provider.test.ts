@@ -38,6 +38,8 @@ const ENV = [
   "OLLAMA_API_KEY",
   "OLLAMA_BASE_URL",
   "MARINA_DAILY_SPEND_CAP_USD",
+  "MARINA_DEFAULT_OPENAI_MODEL",
+  "MARINA_DEFAULT_HUGGINGFACE_MODEL",
 ] as const;
 
 let processState: DisposableStack | undefined;
@@ -176,13 +178,61 @@ describe("proxyToUpstream: explicit provider prefix", () => {
     expect(routedTarget()).toBe("openrouter/openai/gpt-reasoner");
   });
 
-  it("after the named provider fails, sends the full id only to an aggregator", async () => {
+  it("a named first-party provider's outage is returned, never served by an aggregator", async () => {
     process.env.OPENAI_API_KEY = "sk-openai-test";
-    replies["api.openai.com"] = () => new Response("{}", { status: 503 });
+    replies["api.openai.com"] = () =>
+      Response.json({ error: { message: "overloaded" } }, { status: 503 });
+    const resp = await ask("openai/gpt-x");
+    expect(resp.status).toBe(503);
+    expect(await resp.text()).toContain("overloaded");
+    expect(calls).toEqual([{ host: "api.openai.com", model: "gpt-x" }]);
+    expect(routedTarget()).toBe("openai/gpt-x");
+  });
+
+  it.each([429, 500, 503])(
+    "openrouter/<id> with an upstream %d returns OpenRouter's own error; Hugging Face is never sent the prefixed id",
+    async (status) => {
+      process.env.HUGGINGFACE_API_KEY = "hf-test";
+      replies["openrouter.ai"] = () =>
+        Response.json({ error: { message: `openrouter says ${status}` } }, { status });
+      const resp = await ask("openrouter/qwen/qwen3.5-9b");
+      expect(resp.status).toBe(status);
+      expect(await resp.text()).toContain(`openrouter says ${status}`);
+      expect(calls).toEqual([{ host: "openrouter.ai", model: "qwen/qwen3.5-9b" }]);
+      expect(routedTarget()).toBe("openrouter/qwen/qwen3.5-9b");
+    },
+  );
+
+  it("a transport failure on the named provider is a 502 naming it, with no fallback", async () => {
+    process.env.HUGGINGFACE_API_KEY = "hf-test";
+    replies["openrouter.ai"] = () => {
+      throw new Error("offline");
+    };
+    const resp = await ask("openrouter/qwen/qwen3.5-9b");
+    expect(resp.status).toBe(502);
+    expect(calls.map((c) => c.host)).toEqual(["openrouter.ai"]);
+    expect(routedTarget()).toBe("openrouter/qwen/qwen3.5-9b");
+  });
+
+  it("an explicit anthropic/<id> 404 is returned, not retried on an aggregator", async () => {
+    const resp = await ask("anthropic/claude-missing");
+    expect(resp.status).toBe(404);
+    expect(calls).toEqual([{ host: "api.anthropic.com", model: "claude-missing" }]);
+    expect(routedTarget()).toBe("anthropic/claude-missing");
+  });
+
+  it("an aggregator prefix with that aggregator unconfigured is a 503, never sent elsewhere", async () => {
+    delete process.env.OPENROUTER_API_KEY;
+    process.env.HUGGINGFACE_API_KEY = "hf-test";
+    const resp = await ask("openrouter/qwen/qwen3.5-9b");
+    expect(resp.status).toBe(503);
+    expect(calls).toEqual([]);
+  });
+
+  it("a first-party vendor prefix with no key for that vendor goes only to an aggregator", async () => {
     const resp = await ask("openai/gpt-x");
     expect(resp.status).toBe(200);
-    expect(calls.map((c) => c.host)).toEqual(["api.openai.com", "openrouter.ai"]);
-    expect(calls[1]!.model).toBe("openai/gpt-x");
+    expect(calls).toEqual([{ host: "openrouter.ai", model: "openai/gpt-x" }]);
     expect(routedTarget()).toBe("openrouter/openai/gpt-x");
   });
 
@@ -190,8 +240,28 @@ describe("proxyToUpstream: explicit provider prefix", () => {
     process.env.OPENAI_API_KEY = "sk-openai-test";
     replies["openrouter.ai"] = () => new Response("{}", { status: 503 });
     const resp = await ask("openrouter/openai/gpt-x");
-    expect(resp.status).toBe(502);
+    // The aggregator's own status, not a generic "every provider failed" 502.
+    expect(resp.status).toBe(503);
     expect(calls.map((c) => c.host)).toEqual(["openrouter.ai"]);
+  });
+});
+
+describe("unprefixed default fallback", () => {
+  it("maps each attempt to the target provider's own default model", async () => {
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
+    process.env.OPENAI_API_KEY = "sk-openai-test";
+    process.env.HUGGINGFACE_API_KEY = "hf-test";
+    process.env.MARINA_DEFAULT_OPENAI_MODEL = "gpt-default-test";
+    process.env.MARINA_DEFAULT_HUGGINGFACE_MODEL = "org/hf-default-test";
+    replies["api.openai.com"] = () => new Response("{}", { status: 503 });
+    const resp = await ask("marina/default");
+    expect(resp.status).toBe(200);
+    expect(calls).toEqual([
+      { host: "api.openai.com", model: "gpt-default-test" },
+      { host: "router.huggingface.co", model: "org/hf-default-test" },
+    ]);
+    expect(routedTarget()).toBe("huggingface/org/hf-default-test");
   });
 });
 
