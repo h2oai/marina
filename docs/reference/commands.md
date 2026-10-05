@@ -5850,7 +5850,7 @@ Effect: write.
 
 ## novelty
 
-Activity proficiency and exploration coverage. Shows command success rates, coverage gaps, and suggestions for underused capabilities. Usage: novelty | novelty suggest | novelty stats
+Ranked opportunities from activity, task outcomes and execution evidence. Advisory, bounded exploration; no activity rewards or automatic spawning. Usage: novelty | novelty stats | novelty suggest [goal] | novelty experiments [benchmark]
 
 Category: Cognition. Minimum rank: 0.
 Aliases: none.
@@ -5865,10 +5865,19 @@ Effect: unknown.
 Effect: unknown.
 
 
-### `novelty suggest`
+### `novelty suggest [goal]`
 
 Effect: unknown.
 
+- `field-0` (`goal`): text, optional group `option-0`.
+- Group `option-0`: `goal`.
+
+### `novelty experiments [benchmark]`
+
+Effect: unknown.
+
+- `field-0` (`benchmark`): text, optional group `option-0`.
+- Group `option-0`: `benchmark`.
 
 ## observe
 

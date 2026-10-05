@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ArenaData } from "../../arena/data";
+import { arenaExecutionSummary } from "../../arena/execution-evidence";
 import { backtestSeries, forecastRound } from "../../arena/forecast";
 import { arenaData, arenaStatus } from "../../arena/service";
 import { buildForecastBody } from "../../arena/submit";
@@ -188,7 +189,7 @@ export function arenaCommand(deps: {
             separator(),
             ...rows.map(
               (r) =>
-                `  ${bold(r.round_id)} ${r.status}${r.http_status ? ` (${r.http_status})` : ""} ${dim(new Date(r.created_at).toISOString())}`,
+                `  ${bold(r.round_id)} ${r.status}${r.http_status ? ` (${r.http_status})` : ""} ${dim(new Date(r.created_at).toISOString())}\n    ${arenaExecutionSummary(r.detail)}`,
             ),
           ].join("\n"),
         );

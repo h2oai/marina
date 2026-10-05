@@ -1,8 +1,10 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { BenchmarkSourceEvidence } from "../benchmark-source-evidence";
 import type {
   BenchmarkDefaultRow,
+  BenchmarkEvidenceRow,
   BenchmarkItemInput,
   BenchmarkItemRow,
   BenchmarkLedgerRunInput,
@@ -55,7 +57,14 @@ export interface BenchmarksStore {
   recordBenchmarkLedgerRun(
     run: BenchmarkLedgerRunInput,
     items: readonly BenchmarkItemInput[],
+    evidence?: BenchmarkSourceEvidence,
   ): { id: string; created: boolean };
+  /** Operator-owned source attribution, matched to every item and audited. */
+  attachBenchmarkSourceEvidence(
+    runId: string,
+    evidence: BenchmarkSourceEvidence,
+  ): { changed: number; sourceHash: string };
+  listBenchmarkRunEvidence(runId: string): BenchmarkEvidenceRow[];
   /** Put runs into one replicate group (migration 148), audited (migration 155); returns rows changed. */
   setBenchmarkReplicateGroup(
     runIds: readonly string[],
@@ -99,6 +108,8 @@ export const BENCHMARKS_STORE_METHODS = [
   "queryBenchmarkRuns",
   "leaderboardBenchmark",
   "recordBenchmarkLedgerRun",
+  "attachBenchmarkSourceEvidence",
+  "listBenchmarkRunEvidence",
   "setBenchmarkReplicateGroup",
   "listBenchmarkRunRegroups",
   "setBenchmarkRunValidity",

@@ -12,6 +12,7 @@ import { retireLessonsForRun } from "../../learning/intake";
 import { bold, category, dim, status as fmtStatus, header, separator } from "../../net/ansi";
 import type { BenchmarkRunRow, MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import { benchmarkExecution, formatBenchmarkExecution } from "../benchmark-execution";
 import {
   compareRuns,
   formatVerificationCounts,
@@ -445,6 +446,12 @@ export function benchmarkCommand(deps: {
             // Item labels (migration 157): checks that never ran are not failures,
             // and a budget-forced answer is counted apart from a free one.
             const items = db.getBenchmarkItems(row.id);
+            lines.push(...formatBenchmarkExecution(benchmarkExecution(items)));
+            for (const evidence of db.listBenchmarkRunEvidence(row.id)) {
+              lines.push(
+                `Source evidence: ${evidence.changed_items} items from ${evidence.source_run_id}, sha256:${evidence.source_hash} (operator-attached; not remote attestation).`,
+              );
+            }
             const verification = formatVerificationCounts(verificationCounts(items));
             if (verification) lines.push(`  ${bold("checks")}:      ${verification}`);
             const forced = items.filter((i) => i.budget_forced === 1).length;
@@ -462,7 +469,7 @@ export function benchmarkCommand(deps: {
                 : [];
               if (subjects.length > 0) {
                 lines.push(
-                  `  ${bold("measured")}:    ${subjects
+                  `  ${bold("declared")}:    ${subjects
                     .map(
                       (s) =>
                         `${s.agent}${s.role ? ` (role ${s.role}` : " ("}${s.promptVersion ? `, prompt ${s.promptVersion}` : ""})`,
@@ -800,7 +807,7 @@ export function benchmarkCommand(deps: {
               input.entity,
               items.length === 0
                 ? `No item outcomes recorded for ${category(name)}.`
-                : `No participants recorded on ${items.length} ${category(name)} item outcomes — participant credit needs the agents/models from each item's trace.`,
+                : `No participants recorded on ${items.length} ${category(name)} item outcomes — execution is unknown, not proven inactive. Participant credit needs each item's source trace.`,
             );
             return;
           }
@@ -809,6 +816,7 @@ export function benchmarkCommand(deps: {
               `Participants — ${name} (${withParticipants} of ${items.length} items attributed)`,
             ),
             separator(),
+            "Participation is association with outcomes, not causal credit for improving them.",
             ...credit.map(
               (c) =>
                 `  ${dim(c.kind.padEnd(5))}  ${bold(c.name).padEnd(40)}  ${pct(c.accuracy)} (${c.correct}/${c.items})  ${c.costUsd === null ? dim("unpriced") : usd(c.costUsd)}`,

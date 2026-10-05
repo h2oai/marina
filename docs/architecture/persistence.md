@@ -222,3 +222,8 @@ append-only `external_submissions` (what was filed to an outside evaluation: bat
 identity, file hash — one row per file; the scored run joins the benchmark ledger once the batch
 resolves). Do not edit the baseline
 or archived migrations to implement a new feature.
+
+Migration 159 adds `benchmark_run_evidence` and `benchmark_item_evidence` as append-only source
+attribution overlays. Original benchmark rows remain immutable; facade readers project recovered
+participants. Operator imports require exact item outcomes and request IDs. See
+[execution evidence](../guides/execution-evidence.md).

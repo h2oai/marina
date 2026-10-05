@@ -7,6 +7,7 @@
  * case text" lives in one place.
  */
 
+import { benchmarkExecution } from "../engine/benchmark-execution";
 import { getErrorMessage } from "../engine/errors";
 import type { MarinaDB } from "../persistence/database";
 import { type LessonSink, OUTCOME_DOMAINS, type Outcome } from "./outcomes";
@@ -65,8 +66,15 @@ export function benchmarkRunOutcome(db: MarinaDB, run: RunLike): Outcome | undef
   if (run.score === null || run.score === undefined) return undefined;
   const others = db
     .leaderboardBenchmark(run.benchmark, 50)
-    .filter((r) => r.id !== run.id && (!run.slice_hash || r.slice_hash === run.slice_hash));
+    .filter(
+      (r) =>
+        r.id !== run.id &&
+        !!run.slice_hash &&
+        r.slice_hash === run.slice_hash &&
+        r.judge === run.judge,
+    );
   const best = others[0];
+  const execution = benchmarkExecution(db.getBenchmarkItems(run.id));
   const succeeded = !best || run.score >= (best.score ?? 0);
   const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
   return {
@@ -75,15 +83,19 @@ export function benchmarkRunOutcome(db: MarinaDB, run: RunLike): Outcome | undef
     succeeded,
     score: run.score,
     resolvedAt: new Date(run.completed_at ?? Date.now()).toISOString(),
-    attempted: `${run.benchmark} with ${describeTarget(run)}`,
+    attempted: `${run.benchmark}; declared target: ${describeTarget(run)}`,
     signals: [
+      `execution: ${execution.tracedItems}/${execution.items} items trace-linked, ${execution.unknownItems} unknown, ${execution.windowOnlyItems} window-only, ${execution.unverifiedItems} unverified`,
+      `observed residents: ${execution.agents.length}; multiple residents on ${execution.multipleResidentItems} items; participation is not causal benefit`,
       ...(run.n ? [`n=${run.n}`] : []),
-      ...(run.cost_usd && run.n ? [`$${(run.cost_usd / run.n).toFixed(4)}/item`] : []),
+      ...(run.cost_usd !== null && run.cost_usd !== undefined && run.n
+        ? [`$${(run.cost_usd / run.n).toFixed(4)}/item`]
+        : []),
       ...(run.judge ? [`judge ${run.judge}`] : []),
     ],
     detail: best
       ? `${pct(run.score)} vs best other ${pct(best.score ?? 0)} (${describeTarget(best)})`
-      : `${pct(run.score)}; first run on this slice`,
+      : `${pct(run.score)}; no comparable baseline; superiority untested`,
     refs: [`bench:${run.id}`, ...(best ? [`bench:${best.id}`] : [])],
   };
 }
