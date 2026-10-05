@@ -43,6 +43,23 @@ export interface ResearchBrief {
    * Engines that read pages (`search`) put them first; others ignore it.
    */
   readFirst?: string[];
+  /**
+   * Sources the research must not use (a task that bars a source, a
+   * benchmark's own published answers). Engines that read pages (`search`)
+   * drop them before reading; others ignore it. See `excludedSource`.
+   */
+  exclude?: SourceExclusion;
+}
+
+/** Pages a brief may not use. */
+export interface SourceExclusion {
+  /**
+   * URL prefixes, scheme- and `www.`-insensitive: `example.org/paper/1` bars
+   * that page and everything under it; a bare host bars the whole site.
+   */
+  urls?: string[];
+  /** Titles: a page whose title contains one of these (case/punctuation-insensitive) is barred. */
+  titles?: string[];
 }
 
 /** The freshest reading known before the round (the Civiqs daily nowcast). */

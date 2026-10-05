@@ -24,13 +24,20 @@
 import type { DecisionProvider, DecisionQuestions, NoulAnswer } from "../decisions/types";
 
 /**
- * Where a lesson is pooled. The first five are producers (where an outcome came
+ * Where a lesson is pooled. All except `meta` are producers (where an outcome came
  * from); `meta` is the cross-board pool: trusted, transferable lessons about a
  * method, a configuration, a budget, calibration, retrieval, infrastructure or
  * model behaviour, mirrored from their producer domain so every surface that
  * does that kind of work recalls them.
  */
-export type OutcomeDomain = "forecast" | "code" | "tools" | "benchmark" | "arena" | "meta";
+export type OutcomeDomain =
+  | "forecast"
+  | "code"
+  | "tools"
+  | "benchmark"
+  | "arena"
+  | "research"
+  | "meta";
 
 /** Domains an outcome can come from (every domain except the `meta` mirror). */
 export const PRODUCER_DOMAINS: readonly OutcomeDomain[] = [
@@ -39,6 +46,7 @@ export const PRODUCER_DOMAINS: readonly OutcomeDomain[] = [
   "tools",
   "benchmark",
   "arena",
+  "research",
 ];
 
 export const OUTCOME_DOMAINS: readonly OutcomeDomain[] = [...PRODUCER_DOMAINS, "meta"];

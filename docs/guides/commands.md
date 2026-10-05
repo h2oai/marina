@@ -186,7 +186,7 @@ invent outcomes; mutations do not bypass subsystem activation or safety boundari
 
 ## Knowledge & Cognition
 
-`lessons <topic> [domain:<forecast|code|tools|benchmark|arena>]` recalls what past outcomes taught.
+`lessons <topic> [domain:<forecast|code|tools|benchmark|arena|research>]` recalls what past outcomes taught.
 - **Where lessons come from:** every verdict becomes a candidate lesson, including a benchmark run filed, a forecast resolved, a Code Mode verification, and an arena round scored.
 - **Judging:** the decision layer (or the operator's own model, uncalibrated) judges each candidate.
 - **What recall returns:** passing lessons come first, then unjudged ones labelled `(unverified)`. Rejected candidates are never served.

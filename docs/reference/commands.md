@@ -4683,8 +4683,8 @@ Effect: unknown.
 ## lessons
 
 Recall lessons Marina learned from past outcomes (benchmark runs, resolved forecasts, code verifications, arena rounds), trusted first; domain:meta holds the cross-board lessons (trusted, transferable methods and configurations mirrored from every producer).
-Usage: lessons <topic> [domain:<forecast|code|tools|benchmark|arena|meta>]
-       lessons retire <id> reason:<text> [domain:<forecast|code|tools|benchmark|arena|meta>] | lessons retire source:<s>|match:<text> [domain:<d>] [confirm:yes] reason:<text>
+Usage: lessons <topic> [domain:<forecast|code|tools|benchmark|arena|research|meta>]
+       lessons retire <id> reason:<text> [domain:<forecast|code|tools|benchmark|arena|research|meta>] | lessons retire source:<s>|match:<text> [domain:<d>] [confirm:yes] reason:<text>
        lessons supersede <id> reason:<text> -- <replacement lesson>
 
 Every verdict becomes a candidate lesson; the decision layer judges it and only passing (trusted) or unjudged (unverified, labelled) lessons are served. A wrong lesson is retired, never erased: retire/supersede close its validity (recall stops serving it; its history stays readable) and need role.edit — a lesson steers every agent it is recalled for. Criteria retirements preview until confirm:yes.
@@ -4698,12 +4698,12 @@ Effect: unknown.
 
 - `field-0` (`topic`): text, required.
 
-### `lessons <topic> domain:<forecast|code|tools|benchmark|arena|meta>`
+### `lessons <topic> domain:<forecast|code|tools|benchmark|arena|research|meta>`
 
 Effect: unknown.
 
 - `field-0` (`topic`): text, required.
-- `field-1` (`domain`): text, required, choices `forecast`, `code`, `tools`, `benchmark`, `arena`, `meta`.
+- `field-1` (`domain`): text, required, choices `forecast`, `code`, `tools`, `benchmark`, `arena`, `research`, `meta`.
 
 ### `lessons retire <id> reason:<text>`
 
