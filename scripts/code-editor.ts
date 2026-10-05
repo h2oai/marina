@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import type { PanelInput, TerminalPanelState } from "./code-panel-form";
 import type { TerminalView } from "./code-views";
 import type { WorkspaceLayout } from "./code-workspace-panes";
@@ -23,6 +24,7 @@ export interface CodeEditorState {
 
 export interface CodeEditorOptions {
   connected?: boolean;
+  completions?: () => readonly AutocompleteItem[];
   line(text: string): void;
   interrupt(): void;
   close(): void;

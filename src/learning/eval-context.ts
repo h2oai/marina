@@ -124,7 +124,7 @@ export function evalExclusion(
   ctx: EvalContext | undefined,
   benchmarkOf?: (runId: string) => string | undefined,
 ): ((lesson: Lesson) => boolean) | undefined {
-  if (!ctx || ctx.mode !== "measure") return undefined;
+  if (ctx?.mode !== "measure") return undefined;
   const cache = new Map<string, string | undefined>();
   const runBenchmark = (id: string) => {
     if (!cache.has(id)) cache.set(id, benchmarkOf?.(id));

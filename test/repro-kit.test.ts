@@ -7,7 +7,13 @@
 import { describe, expect, it } from "bun:test";
 import { blocking, doctor, modelTier, type Probe, subuidWidth } from "../benchmarks/repro/doctor";
 import { budgetRefusal, parseDotEnv, renderPlan, withProviderEnv } from "../benchmarks/repro/run";
-import { LEDGER_KEY, resolveModels, SETUPS, setupNamed } from "../benchmarks/repro/setups";
+import {
+  LEDGER_KEY,
+  resolveModels,
+  SETUPS,
+  setupNamed,
+  tau2ConfigTag,
+} from "../benchmarks/repro/setups";
 import type { CommandStep, ReproFlags, ServerStep } from "../benchmarks/repro/types";
 
 function probe(over: Partial<Probe> = {}): Probe {
@@ -233,6 +239,82 @@ describe("plans", () => {
     expect(() => setup.plan(flags({ split: "base", limit: 2 }), "frontier")).toThrow(
       /runs every task/,
     );
+  });
+
+  it("τ³ banking passes the board's retrieval config and requires the shell sandbox", () => {
+    const setup = setupNamed("tau2")!;
+    const runOf = (p: ReturnType<typeof setup.plan>) =>
+      p.steps.find((s): s is CommandStep => s.kind === "command" && s.label.includes("τ²"))!;
+    const plan = setup.plan(
+      flags({ domain: "banking_knowledge", split: "base", replicates: 4 }),
+      "frontier",
+    );
+    expect(plan.limit).toBe(97);
+    const run = runOf(plan);
+    expect(run.argv[run.argv.indexOf("--retrieval-config") + 1]).toBe("alltools");
+    expect(run.argv).not.toContain("--num-tasks");
+    expect(plan.requires).toContain("tau2-knowledge-shell");
+    expect(plan.requires).toContain("tau2-knowledge");
+    expect(plan.labels.some((l) => l.startsWith("knowledge retrieval = alltools"))).toBe(true);
+    // Another retrieval config is another configuration (its own τ² results file).
+    const bm25 = setup.plan(
+      flags({ domain: "banking_knowledge", split: "base", replicates: 4, retrievalConfig: "bm25" }),
+      "frontier",
+    );
+    const saveTo = (r: CommandStep) => r.argv[r.argv.indexOf("--save-to") + 1];
+    expect(saveTo(runOf(bm25))).not.toBe(saveTo(run));
+    expect(bm25.requires).not.toContain("tau2-knowledge-shell");
+    expect(bm25.requires).toContain("tau2-knowledge");
+    // Other domains never get the flag, and their configuration tags are unchanged.
+    const retail = runOf(setup.plan(flags({ domain: "retail", split: "test" }), "frontier"));
+    expect(retail.argv).not.toContain("--retrieval-config");
+    expect(saveTo(retail)).toBe(
+      `marina-repro-x-retail-test-single-${tau2ConfigTag({
+        agent: retail.argv[retail.argv.indexOf("--agent-llm") + 1]!.slice("openai/".length),
+        user: "openrouter/openai/gpt-5.2",
+        effort: "high",
+        userEffort: "low",
+        trials: 2,
+        numTasks: null,
+        split: "test",
+        domain: "retail",
+      })}`,
+    );
+    expect(() =>
+      setup.plan(flags({ domain: "retail", retrievalConfig: "bm25" }), "frontier"),
+    ).toThrow(/only to --domain banking_knowledge/);
+  });
+
+  it("the τ³ shell check names each missing tool", () => {
+    const check = (missing: string[]) =>
+      doctor(
+        {
+          ...probe({}),
+          which: (cmd: string) => !missing.includes(cmd),
+        },
+        { runDir: "/x", only: ["tau2-knowledge-shell"] },
+      ).checks.find((c) => c.id === "tau2-knowledge-shell")!;
+    expect(check([]).status).toBe("ok");
+    const miss = check(["srt", "socat"]);
+    expect(miss.status).toBe("missing");
+    expect(miss.detail).toBe("not on PATH: srt, socat");
+  });
+
+  it("the τ³ knowledge check imports τ²'s knowledge extra from TAU2_HOME's virtualenv", () => {
+    const check = (imports: boolean) =>
+      doctor(
+        probe({
+          env: { TAU2_HOME: "/opt/tau2" },
+          run: (cmd) =>
+            imports && cmd[0] === "/opt/tau2/.venv/bin/python" && cmd.at(-1)?.includes("rank_bm25")
+              ? ""
+              : undefined,
+        }),
+        { runDir: "/x", only: ["tau2-knowledge"] },
+      ).checks.find((c) => c.id === "tau2-knowledge")!;
+    expect(check(true).status).toBe("ok");
+    expect(check(false).status).toBe("missing");
+    expect(check(false).fix).toContain("[knowledge]");
   });
 
   it("the doctor requires the key τ²'s own judge reads, reporting it by name only", () => {

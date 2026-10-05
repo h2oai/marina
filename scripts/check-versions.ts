@@ -25,6 +25,8 @@ const SKIP_DIRS = new Set([
   ".git",
   ".astro",
   ".stryker-tmp",
+  ".hutch",
+  ".claude",
   "data",
   "marina-data",
   "backups",

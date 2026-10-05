@@ -12,6 +12,7 @@
  *   bun run repro <setup> [--arm a,b] [--replicates 2] [--limit N] [--budget-usd 10]
  *                         [--model m] [--checker m] [--judge m] [--domain d] [--env-image]
  *                         [--split test] [--effort high] [--user-effort low]   (τ²)
+ *                         [--retrieval-config alltools]   (τ³ banking_knowledge)
  *
  * Setups: hle-verified, swebench-verified, tau2, futurex-backtest, arena-backtest.
  * Runs live under --run-dir (default ~/.local/share/marina-repro/<setup>-<time>), on
@@ -87,6 +88,7 @@ async function main(): Promise<number> {
       split: { type: "string" },
       effort: { type: "string" },
       "user-effort": { type: "string" },
+      "retrieval-config": { type: "string" },
       "env-image": { type: "boolean" },
       seed: { type: "string", default: "42" },
       "run-dir": { type: "string" },
@@ -149,13 +151,16 @@ async function main(): Promise<number> {
     ...(values.split ? { split: values.split } : {}),
     ...(values.effort ? { effort: values.effort } : {}),
     ...(values["user-effort"] ? { userEffort: values["user-effort"] } : {}),
+    ...(values["retrieval-config"] ? { retrievalConfig: values["retrieval-config"] } : {}),
     ...(values["env-image"] ? { envImage: true } : {}),
     seed: Number(values.seed) || 42,
     runDir,
     ledgerDb: values.ledger ?? join(runDir, "ledger.db"),
   };
-  const { tier, checks } = doctor(probe, { runDir: homedir(), only: setup.requires });
+  const { tier } = doctor(probe, { runDir: homedir(), only: setup.requires });
   const plan = setup.plan(flags, tier);
+  // A plan may need more than its setup's defaults (τ³ banking needs the shell sandbox).
+  const { checks } = doctor(probe, { runDir: homedir(), only: plan.requires });
   console.log(renderPlan(plan, flags.budgetUsd));
   if (values["dry-run"]) return 0;
   const missing = blocking(checks);

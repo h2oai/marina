@@ -246,6 +246,7 @@ it("launches an arbitrary adapter, delivers once, resolves approvals, and retrie
   let stops = 0;
   const adapter: AgentAdapter = {
     id: "custom",
+    supportsResume: true,
     label: "Custom worker",
     executable: "fixture",
     async start(options) {
@@ -281,7 +282,7 @@ it("launches an arbitrary adapter, delivers once, resolves approvals, and retrie
       return Response.json(response);
     }) as typeof fetch,
   });
-  const supervisor = new MarinaSupervisor({
+  const supervisorOptions = {
     client,
     root: directory,
     stateDirectory: directory,
@@ -289,7 +290,8 @@ it("launches an arbitrary adapter, delivers once, resolves approvals, and retrie
     label: "test supervisor",
     adapters: [adapter],
     secrets: ["token-secret"],
-  });
+  };
+  const supervisor = new MarinaSupervisor(supervisorOptions);
   const owner = await supervisor.start();
   const control = (target: RoutingSession, value: RuntimeControl) =>
     router.control(owner.id, {
@@ -298,11 +300,31 @@ it("launches an arbitrary adapter, delivers once, resolves approvals, and retrie
       control: value,
     });
   try {
-    control(owner, { action: "launch", adapter: "custom", label: "worker", workspace: "shared" });
+    control(owner, {
+      action: "launch",
+      adapter: "custom",
+      label: "worker",
+      workspace: "shared",
+      model: "pinned-model",
+    });
     await supervisor.tick();
     await until(() => !!native);
     await until(() => router.list().sessions.length === 2);
     const agent = router.list().sessions.find((s) => s.kind === "custom")!;
+    const connected = native;
+    const rejected = control(agent, { action: "resume" });
+    await supervisor.tick();
+    await until(async () => {
+      await supervisor.tick();
+      return router.receipt(owner.id, rejected.id).status === "acknowledged";
+    });
+    expect(native).toBe(connected);
+    expect(router.events(agent.id).events).toContainEqual(
+      expect.objectContaining({
+        kind: "delivery.error",
+        payload: expect.objectContaining({ text: expect.stringContaining("already connected") }),
+      }),
+    );
     const msg = control(agent, { action: "prompt", text: "first task" });
     await supervisor.tick();
     await until(() => prompts.length === 1);
@@ -327,8 +349,43 @@ it("launches an arbitrary adapter, delivers once, resolves approvals, and retrie
     control(agent, { action: "stop" });
     await supervisor.tick();
     await until(() => stops > 0);
+    const previous = native;
+    await supervisor.tick();
+    control(agent, { action: "resume" });
+    await supervisor.tick();
+    await until(() => native !== previous);
+    expect(native!.resumeSessionId).toBe("native-test");
+    expect(native!.model).toBe("pinned-model");
+    expect(native!.cwd).toBe(directory);
+    expect(prompts).toEqual(["\n\nfirst task"]);
   } finally {
     await supervisor.stop();
     supervisor.close();
+  }
+  const beforeRestart = native;
+  const recovered = new MarinaSupervisor(supervisorOptions);
+  try {
+    const owner = await recovered.start();
+    await recovered.tick();
+    const agent = router.list().sessions.find((s) => s.kind === "custom")!;
+    expect(router.runtime(agent.id)).toMatchObject({
+      status: "disconnected",
+      nativeSessionId: "native-test",
+      model: "pinned-model",
+    });
+    expect(native).toBe(beforeRestart);
+    router.control(owner.id, {
+      targetId: agent.id,
+      clientMessageId: "explicit-recovery",
+      control: { action: "resume" },
+    });
+    await recovered.tick();
+    await until(() => native !== beforeRestart);
+    expect(native!.resumeSessionId).toBe("native-test");
+    expect(native!.model).toBe("pinned-model");
+    expect(prompts).toEqual(["\n\nfirst task"]);
+  } finally {
+    await recovered.stop();
+    recovered.close();
   }
 });

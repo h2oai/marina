@@ -36,6 +36,12 @@ export interface ReproFlags {
   effort?: string;
   /** User-simulator reasoning effort (τ²), stated explicitly; default `low`. */
   userEffort?: string;
+  /**
+   * τ³ `banking_knowledge` knowledge-base retrieval configuration (τ²'s `--retrieval-config`,
+   * reported on the board as a badge). Default `alltools`, the configuration the board's
+   * reference runs use. Refused for other domains.
+   */
+  retrievalConfig?: string;
   envImage?: boolean;
   seed: number;
   /** Where servers, databases, scratch and results live (on disk, never a tmpfs). */

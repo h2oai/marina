@@ -18,6 +18,13 @@ interface HeaderProps {
   onOpenSearch?: () => void;
   onOpenShortcuts?: () => void;
   onResetLayout?: () => void;
+  onUndoLayout?: () => void;
+  onRedoLayout?: () => void;
+  onBalanceLayout?: () => void;
+  onMovePanel?: (dx: number, dy: number) => void;
+  selectedPanel?: string;
+  movablePanels?: Array<{ id: string; label: string }>;
+  onSelectPanel?: (id: string) => void;
   layoutPresets?: LayoutPreset[];
   activeLayoutId?: string;
   onSelectLayoutPreset?: (id: string) => void;
@@ -37,6 +44,13 @@ export function Header({
   onOpenSearch,
   onOpenShortcuts,
   onResetLayout,
+  onUndoLayout,
+  onRedoLayout,
+  onBalanceLayout,
+  onMovePanel,
+  selectedPanel,
+  movablePanels,
+  onSelectPanel,
   layoutPresets,
   activeLayoutId,
   onSelectLayoutPreset,
@@ -235,6 +249,69 @@ export function Header({
           >
             Reset layout
           </button>
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              disabled={!onUndoLayout}
+              onClick={onUndoLayout}
+              className="disabled:opacity-50"
+            >
+              Undo layout
+            </button>
+            <button
+              type="button"
+              disabled={!onRedoLayout}
+              onClick={onRedoLayout}
+              className="disabled:opacity-50"
+            >
+              Redo layout
+            </button>
+            <button
+              type="button"
+              disabled={!onBalanceLayout}
+              onClick={onBalanceLayout}
+              className="disabled:opacity-50"
+            >
+              Balance widths
+            </button>
+          </div>
+          {movablePanels && (
+            <select
+              aria-label="Panel to move"
+              value={selectedPanel}
+              onChange={(event) => onSelectPanel?.(event.target.value)}
+              className="rounded border border-border bg-bg px-2 py-1"
+            >
+              {movablePanels.map(({ id, label }) => (
+                <option key={id} value={id}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          )}
+          <fieldset className="flex items-center gap-2">
+            <legend className="sr-only">Move selected panel</legend>
+            <span aria-hidden="true">Move</span>
+            {(
+              [
+                [-1, 0, "left", "←"],
+                [0, -1, "up", "↑"],
+                [0, 1, "down", "↓"],
+                [1, 0, "right", "→"],
+              ] as const
+            ).map(([dx, dy, name, symbol]) => (
+              <button
+                key={name}
+                type="button"
+                aria-label={`Move selected panel ${name}`}
+                disabled={!onMovePanel}
+                onClick={() => onMovePanel?.(dx, dy)}
+                className="rounded border border-border px-2 py-1 disabled:opacity-50"
+              >
+                {symbol}
+              </button>
+            ))}
+          </fieldset>
           <ThemeSwitcher />
           <SpendChip />
           <p className="text-text-dim">
