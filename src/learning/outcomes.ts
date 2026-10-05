@@ -23,16 +23,76 @@
 
 import type { DecisionProvider, DecisionQuestions, NoulAnswer } from "../decisions/types";
 
-/** Where an outcome came from; lessons are pooled per domain. */
-export type OutcomeDomain = "forecast" | "code" | "tools" | "benchmark" | "arena";
+/**
+ * Where a lesson is pooled. All except `meta` are producers (where an outcome came
+ * from); `meta` is the cross-board pool: trusted, transferable lessons about a
+ * method, a configuration, a budget, calibration, retrieval, infrastructure or
+ * model behaviour, mirrored from their producer domain so every surface that
+ * does that kind of work recalls them.
+ */
+export type OutcomeDomain =
+  | "forecast"
+  | "code"
+  | "tools"
+  | "benchmark"
+  | "arena"
+  | "research"
+  | "meta";
 
-export const OUTCOME_DOMAINS: readonly OutcomeDomain[] = [
+/** Domains an outcome can come from (every domain except the `meta` mirror). */
+export const PRODUCER_DOMAINS: readonly OutcomeDomain[] = [
   "forecast",
   "code",
   "tools",
   "benchmark",
   "arena",
+  "research",
 ];
+
+export const OUTCOME_DOMAINS: readonly OutcomeDomain[] = [...PRODUCER_DOMAINS, "meta"];
+
+/**
+ * What a lesson is ABOUT (where it came from is provenance, not the address).
+ * `case` lessons stay with their producer; every other scope may be mirrored
+ * into `lessons:meta` when the judge trusts it and finds it transferable.
+ */
+export type LessonScope =
+  | "case"
+  | "method"
+  | "config"
+  | "budget"
+  | "calibration"
+  | "retrieval"
+  | "infra"
+  | "model";
+
+export const LESSON_SCOPES: readonly LessonScope[] = [
+  "case",
+  "method",
+  "config",
+  "budget",
+  "calibration",
+  "retrieval",
+  "infra",
+  "model",
+];
+
+/** The scope a producer's lesson has when no writer names one. */
+export function defaultScope(domain: OutcomeDomain): LessonScope {
+  switch (domain) {
+    case "benchmark":
+      return "config";
+    case "code":
+    case "tools":
+      return "method";
+    default:
+      return "case";
+  }
+}
+
+/** At most this many family tags and subjects ride one lesson. */
+export const MAX_FAMILIES = 3;
+export const MAX_SUBJECTS = 6;
 
 export interface Outcome {
   domain: OutcomeDomain;
@@ -55,6 +115,12 @@ export interface Outcome {
   detail?: string;
   /** Pointers to the evidence: `trace:…`, `note:N`, `task:N`, `artifact:…`, `bench:…`. */
   refs?: string[];
+  /** What the lesson will be about, when the producer knows (else `defaultScope`). */
+  scope?: LessonScope;
+  /** Task-family tags from the declared vocabulary (`src/learning/families.json`). */
+  families?: string[];
+  /** Model classes and formations a `config` or `model` lesson is about. */
+  subjects?: string[];
   /**
    * Case text the writer may see for context (a question, an error excerpt)
    * but which must never appear in the lesson. Used by the leak check; never
@@ -82,10 +148,14 @@ export interface Lesson {
   resolvedAt: string;
   source: string;
   refs?: string[];
+  scope?: LessonScope;
+  families?: string[];
+  subjects?: string[];
   /**
    * Where a lesson came from when it was not learned by this loop — a record
    * migrated from an earlier store (`store`, `account`, `space`, `id`,
-   * `version`). Stored as metadata, never served to a model.
+   * `version`), or a `meta` mirror (`promoted_from: <domain>/<id>`). Stored as
+   * metadata, never served to a model.
    */
   provenance?: Record<string, string>;
 }
@@ -100,7 +170,8 @@ const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…`
 const WRITER_SYSTEM = [
   "You turn one outcome into one terse, reusable lesson for an AI agent. No pleasantries.",
   'Reply with ONE JSON object: {"category": "<2-5 words: domain + kind of work>",',
-  '"rule": "<one imperative sentence under 30 words that applies to SIMILAR future work>"}.',
+  '"rule": "<one imperative sentence under 30 words that applies to SIMILAR future work>",',
+  `"scope": "<what the rule is about: one of ${LESSON_SCOPES.join("|")}>"}.`,
   "The rule generalizes: a method, a source to check, a failure to avoid, a setting that worked.",
   "Never restate the specific case, its question, its answer, names, numbers or quotes from it.",
 ].join(" ");
@@ -125,6 +196,7 @@ function mechanicalText(o: Outcome, category?: string, rule?: string): string {
 export async function candidateFromOutcome(o: Outcome, writer?: LessonWriter): Promise<Lesson> {
   let category: string | undefined;
   let rule: string | undefined;
+  let scope: LessonScope = o.scope ?? defaultScope(o.domain);
   if (writer) {
     try {
       const raw = await writer.complete(
@@ -141,9 +213,13 @@ export async function candidateFromOutcome(o: Outcome, writer?: LessonWriter): P
           .join("\n"),
       );
       const m = raw.match(/\{[\s\S]*\}/);
-      const parsed = m ? (JSON.parse(m[0]) as { category?: unknown; rule?: unknown }) : {};
+      const parsed = m
+        ? (JSON.parse(m[0]) as { category?: unknown; rule?: unknown; scope?: unknown })
+        : {};
       if (typeof parsed.category === "string") category = clip(parsed.category.trim(), 48);
       if (typeof parsed.rule === "string") rule = clip(parsed.rule.trim(), 220);
+      const named = typeof parsed.scope === "string" ? parsed.scope.trim().toLowerCase() : "";
+      if (LESSON_SCOPES.includes(named as LessonScope)) scope = named as LessonScope;
     } catch {
       // allow-empty-catch: a writer outage leaves the mechanical candidate
     }
@@ -159,6 +235,9 @@ export async function candidateFromOutcome(o: Outcome, writer?: LessonWriter): P
     resolvedAt: o.resolvedAt,
     source: o.source,
     ...(o.refs?.length ? { refs: o.refs.slice(0, 8) } : {}),
+    scope,
+    ...(o.families?.length ? { families: o.families.slice(0, MAX_FAMILIES) } : {}),
+    ...(o.subjects?.length ? { subjects: o.subjects.slice(0, MAX_SUBJECTS) } : {}),
   };
 }
 
@@ -222,6 +301,15 @@ export const LESSON_JUDGE_QUESTIONS: DecisionQuestions = {
       false: "Contradicts higher-trust lessons without new evidence.",
     },
   },
+  transferable: {
+    type: "noul",
+    instructions:
+      "Would this lesson hold for a DIFFERENT task family or board than the one it came from?",
+    criteria: {
+      true: "A method, configuration, budget or calibration finding that carries to other kinds of work.",
+      false: "It holds only for this board, this task family or this case.",
+    },
+  },
 };
 
 /** Bars a calibrated judge must clear; an uncalibrated one uses one cut at 0.5. */
@@ -232,12 +320,20 @@ export const LESSON_JUDGE_POLICY = {
   consistent: 0.5,
 } as const;
 
+/**
+ * The `transferable` bar (calibrated; an uncalibrated judge uses 0.5). It never
+ * decides trust: only whether a trusted lesson is mirrored into `lessons:meta`.
+ */
+export const TRANSFERABLE_BAR = 0.6;
+
 export interface LessonVerdict {
   trust: LessonTrust;
   reason: string;
   judgement?: Record<string, number>;
   /** The judge that answered, labelled `(uncalibrated)` when it used the single 0.5 cut. */
   judge?: string;
+  /** The judge found the lesson transferable to other task families (its own bar). */
+  transferable?: boolean;
   costUsd?: number;
 }
 
@@ -268,6 +364,8 @@ export async function judgeLesson(
           ...(outcome.signals?.length ? { signals: outcome.signals.slice(0, 8) } : {}),
         },
         lesson: candidate.text,
+        ...(candidate.scope ? { scope: candidate.scope } : {}),
+        ...(candidate.families?.length ? { families: candidate.families } : {}),
         existing_lessons: existing.slice(0, 5).map((l) => l.text),
       },
       questions: LESSON_JUDGE_QUESTIONS,
@@ -283,8 +381,12 @@ export async function judgeLesson(
       .filter((k) => judgement[k] === undefined || judgement[k]! < bar(k))
       .map((k) => `${k} ${(judgement[k] ?? 0).toFixed(2)}`);
     const judge = `${result.model || provider.model}${calibrated ? "" : " (uncalibrated)"}`;
+    const transferable =
+      judgement.transferable !== undefined &&
+      judgement.transferable >= (calibrated ? TRANSFERABLE_BAR : 0.5);
     return {
       trust: failed.length ? "rejected" : "trusted",
+      transferable,
       reason: failed.length
         ? `below bar: ${failed.join(", ")}`
         : calibrated
@@ -339,6 +441,23 @@ export function lessonMatches(l: Lesson, sel: LessonSelector): boolean {
   return true;
 }
 
+/** How a recall selects: budget, trust floor, and lessons the work must not see. */
+export interface LessonRecallOptions {
+  limit?: number;
+  maxBytes?: number;
+  includeUnverified?: boolean;
+  /**
+   * Lessons this work must not see beyond the time rule — e.g. a measurement
+   * run's self-exclusion (`evalExclusion`). Applied before the budget.
+   */
+  exclude?: (lesson: Lesson) => boolean;
+  /**
+   * Family tags of the work. A store may add lessons tagged with any of them
+   * when the lexical match is thin (a key match, no embeddings needed).
+   */
+  families?: readonly string[];
+}
+
 export interface LessonSink {
   /**
    * Persist a lesson (trusted / unverified served; rejected kept as audit only).
@@ -353,7 +472,7 @@ export interface LessonSink {
     domain: OutcomeDomain,
     query: string,
     asOf: string,
-    opts?: { limit?: number; maxBytes?: number; includeUnverified?: boolean },
+    opts?: LessonRecallOptions,
   ): Promise<Lesson[]>;
   /** Current (not retired) lessons of `domain` matching `selector`, any trust — for curation. */
   find?(domain: OutcomeDomain, selector: LessonSelector, limit: number): Promise<Lesson[]>;
@@ -374,20 +493,26 @@ export function visibleAt(lesson: Pick<Lesson, "resolvedAt">, asOf: string): boo
 export const DEFAULT_RECALL_LIMIT = 5;
 export const DEFAULT_RECALL_BYTES = 1_200;
 
-/** Served, visible lessons: trusted first, then newest; trimmed to the byte budget. */
+/**
+ * Served, visible lessons: trusted first, then newest; trimmed to the byte
+ * budget. `exclude` drops lessons the work must not see (self-exclusion);
+ * the leakage rule `visibleAt` always applies.
+ */
 export function selectServed(
   candidates: Lesson[],
   asOf: string,
-  opts: { limit?: number; maxBytes?: number; includeUnverified?: boolean } = {},
+  opts: LessonRecallOptions = {},
 ): Lesson[] {
   const limit = opts.limit ?? DEFAULT_RECALL_LIMIT;
   const budget = opts.maxBytes ?? DEFAULT_RECALL_BYTES;
+  const exclude = opts.exclude;
   const served = candidates
     .filter(
       (l) =>
         l.trust === "trusted" || (opts.includeUnverified !== false && l.trust === "unverified"),
     )
     .filter((l) => visibleAt(l, asOf))
+    .filter((l) => !exclude?.(l))
     .sort(
       (a, b) =>
         (a.trust === "trusted" ? 0 : 1) - (b.trust === "trusted" ? 0 : 1) ||
@@ -404,9 +529,39 @@ export function selectServed(
   return out;
 }
 
-/** How a recalled lesson is shown to a model: labelled by trust. */
+/**
+ * How a recalled lesson is shown to a model: labelled by trust, and a `meta`
+ * lesson labelled as learned on other work (`cross-board <scope>`).
+ */
 export function formatLesson(l: Lesson): string {
-  return l.trust === "trusted" ? l.text : `${l.text} (unverified)`;
+  const tags: string[] = [];
+  if (l.domain === "meta") tags.push(`cross-board ${l.scope ?? "lesson"}`);
+  if (l.trust !== "trusted") tags.push("unverified");
+  return tags.length ? `${l.text} (${tags.join(", ")})` : l.text;
+}
+
+/**
+ * The `meta` mirror of a judged lesson: same text, judgement, judge and
+ * `resolvedAt` (so the leakage rule is unchanged), refs gaining the original
+ * (`lesson:<id>`, which is how retiring the original retires the mirror), and
+ * `promoted_from` provenance. Undefined when the lesson does not qualify: only
+ * a TRUSTED, non-`case` lesson the judge found transferable is mirrored.
+ */
+export function metaMirror(
+  lesson: Lesson,
+  originalId: string,
+  verdict: Pick<LessonVerdict, "trust" | "transferable">,
+): Lesson | undefined {
+  if (lesson.domain === "meta" || verdict.trust !== "trusted" || !verdict.transferable)
+    return undefined;
+  if (!lesson.scope || lesson.scope === "case") return undefined;
+  const { id: _id, provenance: _p, ...rest } = lesson;
+  return {
+    ...rest,
+    domain: "meta",
+    refs: [`lesson:${originalId}`, ...(lesson.refs ?? [])].slice(0, 9),
+    provenance: { promoted_from: `${lesson.domain}/${originalId}` },
+  };
 }
 
 const TOKEN = /[a-z0-9]{3,}/g;
@@ -467,13 +622,14 @@ export function memoryLessonSink(initial: Lesson[] = []): LessonSink & {
     },
     async recall(domain, query, asOf, opts) {
       const q = lessonTokens(query);
+      const fam = new Set(opts?.families ?? []);
       const ranked = lessons
         .filter((l) => l.domain === domain && current(l))
         .map((l) => ({
           l,
           hits: [...lessonTokens(`${l.text} ${l.category ?? ""}`)].filter((t) => q.has(t)).length,
         }))
-        .filter((x) => x.hits > 0 || q.size === 0)
+        .filter((x) => x.hits > 0 || q.size === 0 || (x.l.families ?? []).some((f) => fam.has(f)))
         .sort((a, b) => b.hits - a.hits);
       return selectServed(
         ranked.map((x) => x.l),
@@ -486,12 +642,37 @@ export function memoryLessonSink(initial: Lesson[] = []): LessonSink & {
 
 // ─── The loop ────────────────────────────────────────────────────────────────
 
+/** What an admission step sees for one judged write. */
+export interface LessonAdmissionContext {
+  outcome: Outcome;
+  verdict: LessonVerdict;
+  /** `lesson` for the producer-domain write, `meta` for its cross-board mirror. */
+  target: "lesson" | "meta";
+  sink: LessonSink;
+}
+
+/**
+ * The admission hook: runs AFTER the judge and BEFORE the write, for the
+ * lesson and for its `meta` mirror. It returns the lesson to write (unchanged,
+ * or carrying extra fields such as a rank), or `null` to write nothing (a merge
+ * into an existing record it performed itself). Absent ⇒ every judged lesson is
+ * written as judged. This is where memory admission ranking plugs in.
+ */
+export type LessonAdmission = (
+  lesson: Lesson,
+  ctx: LessonAdmissionContext,
+) => Promise<Lesson | null>;
+
 export interface OutcomeLearnerDeps {
   sink: LessonSink;
   writer?: LessonWriter;
   judge?: DecisionProvider;
   /** Called with the judge's cost (the writer records its own through modelComplete). */
   onSpend?: (usd: number) => void;
+  /** Mirror trusted, transferable, non-case lessons into `lessons:meta` (MARINA_LESSONS_META ≠ off). */
+  meta?: boolean;
+  /** See `LessonAdmission`. */
+  admit?: LessonAdmission;
 }
 
 export interface OutcomeRecord {
@@ -499,12 +680,15 @@ export interface OutcomeRecord {
   reason: string;
   lessonId?: string;
   lesson: Lesson;
+  /** The `lessons:meta` mirror's id, when the lesson was mirrored. */
+  metaId?: string;
 }
 
 /**
  * One outcome through the loop: candidate → judge (with the domain's current
- * trusted lessons as the consistency context) → write. Rejected candidates are
- * written too, as audit records the recall path never serves.
+ * trusted lessons as the consistency context) → [admission] → write → [meta
+ * mirror]. Rejected candidates are written too, as audit records the recall
+ * path never serves.
  */
 export async function recordOutcome(
   deps: OutcomeLearnerDeps,
@@ -522,14 +706,39 @@ export async function recordOutcome(
   }
   const verdict = await judgeLesson(candidate, outcome, deps.judge, existing);
   if (verdict.costUsd) deps.onSpend?.(verdict.costUsd);
-  const lesson: Lesson = {
+  const judged: Lesson = {
     ...candidate,
     trust: verdict.trust,
     ...(verdict.judgement ? { judgement: verdict.judgement } : {}),
     ...(verdict.judge ? { judge: verdict.judge } : {}),
   };
+  // ── Admission hook: after the judge, before the write. ──
+  const lesson = deps.admit
+    ? await deps.admit(judged, { outcome, verdict, target: "lesson", sink: deps.sink })
+    : judged;
+  if (!lesson)
+    return { trust: verdict.trust, reason: `${verdict.reason}; not admitted`, lesson: judged };
   const { id } = await deps.sink.write(lesson);
-  return { trust: verdict.trust, reason: verdict.reason, ...(id ? { lessonId: id } : {}), lesson };
+  let metaId: string | undefined;
+  const mirror = deps.meta && id ? metaMirror(lesson, id, verdict) : undefined;
+  if (mirror) {
+    try {
+      const admitted = deps.admit
+        ? await deps.admit(mirror, { outcome, verdict, target: "meta", sink: deps.sink })
+        : mirror;
+      // Keyed by the original: a retried mirror of the same lesson writes once.
+      if (admitted) metaId = (await deps.sink.write(admitted, { key: `lesson-meta:${id}` })).id;
+    } catch {
+      // allow-empty-catch: a failed mirror leaves the lesson served in its own domain
+    }
+  }
+  return {
+    trust: verdict.trust,
+    reason: verdict.reason,
+    ...(id ? { lessonId: id } : {}),
+    lesson,
+    ...(metaId ? { metaId } : {}),
+  };
 }
 
 /**

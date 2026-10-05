@@ -253,12 +253,26 @@ describe("between-prompt hygiene in the adapter", () => {
     expect(i.tokenCapFor(done)?.capTokens).toBe(DEFAULT_CONVERSATION_CAP_TOKENS);
   });
 
-  it("exempts a bound coder from the default cap but not from an explicit one", () => {
+  it("caps a bound coder after work starts, including tool turns in its first prompt", () => {
     {
       using _state = scopeProcessState({ env: { MARINA_AGENT_CONTEXT_CAP_TOKENS: undefined } });
       const i = make() as unknown as CapInternals;
       i.activeCodingTask = "fix the parser";
-      expect(i.tokenCapFor(done)).toBeUndefined();
+      expect(i.tokenCapFor([user("fix the parser")])).toBeUndefined();
+      expect(
+        i.tokenCapFor([
+          user("fix the parser"),
+          assistant([
+            {
+              type: "toolCall",
+              id: "read-1",
+              name: "marina_code",
+              arguments: { action: "read", path: "source.ts" },
+            },
+          ]),
+        ])?.capTokens,
+      ).toBe(DEFAULT_CONVERSATION_CAP_TOKENS);
+      expect(i.tokenCapFor(done)?.capTokens).toBe(DEFAULT_CONVERSATION_CAP_TOKENS);
     }
     {
       using _state = scopeProcessState({ env: { MARINA_AGENT_CONTEXT_CAP_TOKENS: "64000" } });
@@ -271,5 +285,56 @@ describe("between-prompt hygiene in the adapter", () => {
   it("off disables the cap for every agent", () => {
     using _state = scopeProcessState({ env: { MARINA_AGENT_CONTEXT_CAP_TOKENS: "off" } });
     expect((make() as unknown as CapInternals).tokenCapFor(done)).toBeUndefined();
+  });
+
+  it("repeatedly compacts a first coding task without losing its request or unarchived evidence", async () => {
+    using _state = scopeProcessState({
+      env: { MARINA_AGENT_CONTEXT_CAP_TOKENS: "20000", MARINA_AGENT_CONTEXT_TARGET_TOKENS: "8000" },
+    });
+    const adapter = make() as unknown as CapInternals;
+    adapter.activeCodingTask = "Task #1; full request: code show task_run_test";
+    const request = user(adapter.activeCodingTask);
+    const prefix = system("Authority and trust remain unchanged");
+    const archived = new Set<AgentMessage>();
+    let compactions = 0;
+    const transform = createContextManager({
+      getModel: () => bigModel,
+      getSystemPrompt: () => "Authority and trust remain unchanged",
+      getTokenCap: (messages) =>
+        adapter.tokenCapFor(messages) as ReturnType<typeof conversationTokenCap>,
+      onBeforeCompact: (messages) => {
+        compactions++;
+        for (const message of messages) archived.add(message);
+      },
+    });
+    const evidence: AgentMessage[] = [];
+    let working = [prefix, request];
+    for (let turn = 0; turn < 100; turn++) {
+      const call = assistant([
+        {
+          type: "toolCall",
+          id: `read-${turn}`,
+          name: "marina_code",
+          arguments: { action: "read", path: `src/module-${turn}.ts` },
+        },
+      ]);
+      const result = {
+        role: "toolResult",
+        toolCallId: `read-${turn}`,
+        toolName: "marina_code",
+        content: [{ type: "text", text: `Evidence ${turn}: ${"x".repeat(5000)}` }],
+        isError: false,
+        timestamp: turn,
+      } as AgentMessage;
+      evidence.push(call, result);
+      working = await transform([...working, call, result]);
+      expect(working[0]).toBe(prefix);
+      expect(working).toContain(request);
+      expect(working).toContain(result);
+      expect(conversationTokens(working)).toBeLessThan(22_000);
+    }
+    expect(compactions).toBeGreaterThan(2);
+    for (const message of evidence)
+      expect(archived.has(message) || working.includes(message)).toBe(true);
   });
 });

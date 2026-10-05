@@ -1,7 +1,49 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { AsyncLocalStorage } from "node:async_hooks";
+import {
+  EVAL_HEADER,
+  type EvalContext,
+  formatEvalHeader,
+  LESSONS_HEADER,
+  parseLessonsHeader,
+} from "../../src/learning/eval-context";
 import type { CallUsage, Message } from "../types";
+
+/**
+ * What the run tells a Marina target about itself: `x-marina-eval` (leakage
+ * rule 2 — a `measure` run never recalls lessons learned from its own board)
+ * and, with `lessons`, `x-marina-lessons: on` (a plain passthru request opts
+ * into judged lessons). Judge calls (`asJudge`) never carry either header.
+ */
+export interface TargetLessonContext {
+  eval: EvalContext;
+  /** Ask a plain passthru target to inject lessons (`x-marina-lessons: on`). */
+  lessons?: boolean;
+}
+
+let targetContext: TargetLessonContext | undefined;
+const judgeScope = new AsyncLocalStorage<true>();
+
+/** Set (or clear) the run's target lesson context; the harness sets it once per run. */
+export function setTargetLessonContext(ctx: TargetLessonContext | undefined): void {
+  targetContext = ctx;
+}
+
+/** Run a judge call: no eval or lesson header, so a judge is never steered by lessons. */
+export function asJudge<T>(fn: () => Promise<T>): Promise<T> {
+  return judgeScope.run(true, fn);
+}
+
+/** The lesson headers for a target call (none for a judge call or without a context). */
+export function lessonRequestHeaders(): Record<string, string> {
+  if (!targetContext || judgeScope.getStore()) return {};
+  return {
+    [EVAL_HEADER]: formatEvalHeader(targetContext.eval),
+    ...(targetContext.lessons ? { [LESSONS_HEADER]: "on" } : {}),
+  };
+}
 
 // Env-overridable upper bound. Reasoning-heavy problems (competition math,
 // multi-hop, debate-council orchestrations) can legitimately take minutes.
@@ -58,6 +100,8 @@ export interface QueryResult {
    * the crew's best draft at the item's deadline, not its own reply.
    */
   budgetForced?: string;
+  /** Lesson ids Marina served (`x-marina-lessons`), and those recalled but not shown. */
+  lessons?: { served: string[]; observed: string[] };
 }
 
 /** The ledger's verification state for a `x-marina-verify` label; undefined when absent. */
@@ -74,10 +118,14 @@ export function verificationFromLabel(
 export function replyLabels(reply: QueryResult): {
   verification?: QueryResult["verification"];
   budgetForced?: boolean;
+  lessons?: string[];
+  lessonsObserved?: string[];
 } {
   return {
     ...(reply.verification ? { verification: reply.verification } : {}),
     ...(reply.budgetForced ? { budgetForced: true } : {}),
+    ...(reply.lessons?.served.length ? { lessons: reply.lessons.served } : {}),
+    ...(reply.lessons?.observed.length ? { lessonsObserved: reply.lessons.observed } : {}),
   };
 }
 
@@ -141,6 +189,7 @@ export async function queryWithUsage(
     // The item's own deadline: a Marina crew answers with its best draft before
     // it (labelled `x-marina-budget-forced`) instead of the harness aborting.
     "x-marina-deadline-ms": String(timeoutMs),
+    ...lessonRequestHeaders(),
   };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
@@ -189,6 +238,7 @@ export async function queryWithUsage(
       const repaired = resp.headers.get("x-marina-repair") ?? undefined;
       const verification = verificationFromLabel(resp.headers.get("x-marina-verify"));
       const budgetForced = resp.headers.get("x-marina-budget-forced") ?? undefined;
+      const lessons = parseLessonsHeader(resp.headers.get(LESSONS_HEADER));
       consecutiveTimeouts.delete(endpoint);
       deadUntil.delete(endpoint);
       return {
@@ -198,6 +248,7 @@ export async function queryWithUsage(
         ...(repaired ? { repaired } : {}),
         ...(verification ? { verification } : {}),
         ...(budgetForced ? { budgetForced } : {}),
+        ...(lessons.served.length || lessons.observed.length ? { lessons } : {}),
       };
     } catch (err) {
       if (controller.signal.aborted || (err instanceof Error && err.name === "TimeoutError")) {

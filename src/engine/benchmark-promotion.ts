@@ -47,6 +47,7 @@ import {
   promotionMinReplicates,
   restrictToConfiguration,
 } from "./benchmark-replicates";
+import { isFamilySlot } from "./default-resolution";
 import { promotionMargin } from "./fishing-margin";
 
 /** Default share of items held out from selection for a new slot. */
@@ -606,5 +607,176 @@ export function lookupChallenge(
     },
     pooledRuns: challengerGroup.runs,
     ...(invalidIncumbent ? { invalidIncumbent } : {}),
+  };
+}
+
+// ─── Filing a promotion (the one write path) ────────────────────────────────
+
+/** Who files a promotion. */
+export interface PromotionActor {
+  /** The opaque durable key recorded on the history row (`operator` for the operator path). */
+  key: string;
+  /** The live entity id, when the actor is an in-world entity. */
+  entityId?: string;
+  /** Durable key of a run author's id (identity when the store has no accounts). */
+  keyOf: (id: string) => string;
+}
+
+export type FiledPromotion =
+  /** Nothing was recorded (bad input, not replicated, self-attestation, …). */
+  | { kind: "error"; message: string }
+  | {
+      kind: "seeded";
+      slot: string;
+      challenger: BenchmarkRunRow;
+      replicates: number;
+      holdoutFraction: number;
+      invalidIncumbent?: InvalidatedIncumbent;
+    }
+  | {
+      kind: "promoted" | "refused";
+      slot: string;
+      challenger: BenchmarkRunRow;
+      incumbent: BenchmarkRunRow;
+      evaluation: ChallengeEvaluation;
+      replicates: { challenger: number; incumbent: number; minimum: number };
+      invalidIncumbent?: InvalidatedIncumbent;
+    };
+
+/**
+ * Seed an empty slot, or contest its incumbent on the holdout — the single
+ * write path shared by `benchmark promote` and the operator's selection
+ * scripts. The caller has already checked the actor's authority (`role.edit`
+ * in-world; the operator owns the database). Every rule of earned promotion
+ * applies here: the replicate minimum before the holdout is read, the holdout
+ * interval and the fishing margin, no self-attestation (neither the challenger
+ * nor any pooled replicate may be the actor's own run, and whoever invalidated
+ * the incumbent cannot fill the slot), and an append-only history row for a
+ * seed, a promotion or a refused attempt.
+ *
+ * Family slots (`…:family:<f>`) are refused: one board's holdout never sets a
+ * default for a whole family.
+ */
+export function fileSlotPromotion(
+  db: PromotionStore,
+  input: {
+    slot: string;
+    runId: string;
+    actor: PromotionActor;
+    maxCostRatio?: number;
+    /** Holdout fraction for a NEW slot (fixed once the slot exists). */
+    holdout?: number;
+    now?: number;
+    minReplicates?: number;
+  },
+): FiledPromotion {
+  const { slot, runId, actor } = input;
+  if (isFamilySlot(slot)) {
+    return {
+      kind: "error",
+      message: `${slot} is a family slot — one board's holdout never sets a family default (a family slot needs wins on several member boards, which this path does not evaluate).`,
+    };
+  }
+  const found = lookupChallenge(db, slot, runId, "holdout", {
+    ...(input.maxCostRatio !== undefined ? { maxCostRatio: input.maxCostRatio } : {}),
+    ...(input.minReplicates !== undefined ? { minReplicates: input.minReplicates } : {}),
+  });
+  if (found.kind === "error") return found;
+  // Self-attestation is always refused: whoever ran the challenger — or ANY
+  // replicate pooled with it — cannot promote it. Compared on the durable
+  // account key too, so a fresh login is still the same author.
+  for (const run of found.pooledRuns) {
+    const author = run.agent_id;
+    if (author && (author === actor.entityId || actor.keyOf(author) === actor.key)) {
+      return {
+        kind: "error",
+        message:
+          run.id === runId
+            ? `Refused: you ran ${runId}. Someone else must promote it — self-attestation is never accepted.`
+            : `Refused: you ran ${run.id}, a replicate pooled with ${runId}. Someone else must promote it — self-attestation is never accepted.`,
+      };
+    }
+  }
+  // Invalidating an incumbent and then filling its slot is self-attestation
+  // too: neither the promoter nor the author of any pooled challenger run may
+  // be the account that invalidated it.
+  const by = found.invalidIncumbent?.invalidatedBy;
+  if (by) {
+    const authoredBy = found.pooledRuns.find((r) => r.agent_id && actor.keyOf(r.agent_id) === by);
+    if (by === actor.key || authoredBy) {
+      return {
+        kind: "error",
+        message: `Refused: ${by === actor.key ? "you" : `the author of ${authoredBy?.id}`} invalidated the incumbent ${found.invalidIncumbent?.id}. Someone else must fill ${slot} — self-attestation is never accepted.`,
+      };
+    }
+  }
+  const value = found.challenger.target_json;
+  if (!value) {
+    return {
+      kind: "error",
+      message: `Run ${runId} records no target configuration (target_json) — nothing to promote as the default.`,
+    };
+  }
+  const fixedHoldout =
+    "--holdout is fixed once a slot exists (moving it would move items between splits).";
+  const now = input.now ?? Date.now();
+  if (found.kind === "seed") {
+    if (found.invalidIncumbent && input.holdout !== undefined) {
+      return { kind: "error", message: fixedHoldout };
+    }
+    const fraction = input.holdout ?? found.holdoutFraction;
+    if (!(fraction > 0 && fraction < 1)) {
+      return { kind: "error", message: "--holdout must be between 0 and 1 (exclusive)." };
+    }
+    db.recordBenchmarkPromotion({
+      slot,
+      outcome: "seeded",
+      challenger_run_id: runId,
+      incumbent_run_id: null,
+      value_json: value,
+      actor: actor.key,
+      stats_json: null,
+      reason: found.invalidIncumbent
+        ? `re-seeded: incumbent ${found.invalidIncumbent.id} was invalidated and no earlier incumbent is valid`
+        : "first incumbent",
+      holdout_fraction: fraction,
+      created_at: now,
+    });
+    return {
+      kind: "seeded",
+      slot,
+      challenger: found.challenger,
+      replicates: found.replicates,
+      holdoutFraction: fraction,
+      ...(found.invalidIncumbent ? { invalidIncumbent: found.invalidIncumbent } : {}),
+    };
+  }
+  if (input.holdout !== undefined) return { kind: "error", message: fixedHoldout };
+  const e = found.evaluation;
+  db.recordBenchmarkPromotion({
+    slot,
+    outcome: e.ok ? "promoted" : "refused",
+    challenger_run_id: runId,
+    incumbent_run_id: found.incumbent.id,
+    value_json: value,
+    actor: actor.key,
+    stats_json: JSON.stringify({
+      ...e.stats,
+      replicates: found.replicates,
+      margin: e.margin,
+      triedBefore: e.triedBefore,
+      costPerItem: e.costPerItem,
+    }),
+    reason: e.ok ? null : e.reasons.join("; "),
+    created_at: now,
+  });
+  return {
+    kind: e.ok ? "promoted" : "refused",
+    slot,
+    challenger: found.challenger,
+    incumbent: found.incumbent,
+    evaluation: e,
+    replicates: found.replicates,
+    ...(found.invalidIncumbent ? { invalidIncumbent: found.invalidIncumbent } : {}),
   };
 }

@@ -266,7 +266,9 @@ export function listCodingArtifacts(
   limit = 20,
 ): CodingArtifactRow[] {
   return db
-    .query("SELECT * FROM coding_artifacts WHERE session_id = ? ORDER BY created_at DESC LIMIT ?")
+    .query(
+      "SELECT * FROM coding_artifacts WHERE session_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?",
+    )
     .all(sessionId, limit) as CodingArtifactRow[];
 }
 

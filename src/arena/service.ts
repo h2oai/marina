@@ -307,6 +307,15 @@ export async function forecasterFor(
       skeptic: made[2]!.complete,
     };
     const notes = opts.notes;
+    // The judged lesson pool (forecast, arena and cross-board meta lessons),
+    // read at each round's lock, when the notes store is a Marina database.
+    const lessonStore =
+      notes && "getBenchmarkRun" in notes
+        ? (await import("../learning/forecast-bridge")).forecastLessonsFor(
+            notes as unknown as import("../persistence/database").MarinaDB,
+            { env },
+          )
+        : undefined;
     // Start from the nowcast (fresher than the weekly history for Civiqs; the
     // baseline elsewhere), exactly as the research agent does.
     const { nowcastForecaster } = await import("./research/civiqs-nowcast");
@@ -317,11 +326,21 @@ export async function forecasterFor(
     return {
       usage,
       forecaster: async (round, lock) =>
-        crew.crewForecastRound(round, lock, members, notes, await start(round, lock)),
+        crew.crewForecastRound(round, lock, members, notes, await start(round, lock), lessonStore),
       ...(notes
         ? {
-            learner: (round, lock, filed, outcome) =>
-              crew.learn(notes, round, lock, filed, outcome),
+            learner: (round, lock, filed, outcome) => {
+              const summary = crew.learn(notes, round, lock, filed, outcome);
+              // The judged loop too (a no-op unless learning is armed for this
+              // store). The number was public from the round's release.
+              if (summary)
+                void import("../learning/service").then(({ noteOutcome }) =>
+                  noteOutcome(
+                    notes,
+                    crew.crewLessonOutcome(round, round.round_id, summary, round.release_at),
+                  ),
+                );
+            },
           }
         : {}),
     };
@@ -664,7 +683,7 @@ export async function learnFromResolutions(
   store: ArenaStore & NotesStore,
   deps: Pick<SubmitDeps, "config" | "data">,
 ): Promise<number> {
-  const { learn, CREW_ENTITY } = await import("./crew");
+  const { learn, crewLessonOutcome, CREW_ENTITY } = await import("./crew");
   const resolved = await deps.data.resolutions();
   const known = new Set(
     store
@@ -681,16 +700,8 @@ export async function learnFromResolutions(
     const summary = learn(store, round, await deps.data.lock(row.round_id), body.topline, value);
     if (summary) {
       const { noteOutcome } = await import("../learning/service");
-      noteOutcome(store, {
-        domain: "arena",
-        source: `arena:${round.tracker ?? "round"}`,
-        succeeded: summary.beat,
-        score: Math.max(0, Math.min(1, (summary.skill + 1) / 2)),
-        resolvedAt: new Date().toISOString(),
-        attempted: `${round.tracker ?? "tracker"} topline forecast against persistence`,
-        detail: `skill ${summary.skill.toFixed(2)} vs persistence; ${summary.lean}`,
-        refs: [`arena:${row.round_id}`],
-      });
+      // resolvedAt = now: conservative, the resolution is seen live.
+      noteOutcome(store, crewLessonOutcome(round, row.round_id, summary, new Date().toISOString()));
     }
     known.add(row.round_id);
     written++;
