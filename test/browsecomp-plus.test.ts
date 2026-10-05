@@ -52,13 +52,13 @@ import {
   toBenchmarkResult,
   writeFiled,
 } from "../benchmarks/browsecomp-plus/run";
-import { ledgerFileBody } from "../benchmarks/ledger-file";
 import {
   BudgetExhausted,
+  CallSpendGuard,
   isSpendCapRefusal,
   parseMaxUsd,
-  CallSpendGuard,
 } from "../benchmarks/call-spend-guard";
+import { ledgerFileBody } from "../benchmarks/ledger-file";
 import { buildCorpus, closeCorpora } from "../src/engine/search-providers/corpus";
 
 const DOCS = [
