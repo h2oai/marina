@@ -31,6 +31,7 @@ The terminal client is `bun run scripts/connect.ts <name>` (`-c "<command>"` for
 | `learned export\|import\|entitle\|verify\|diff\|keygen` | Signed `marina.learned.v1` bundles of lessons, defaults, ledger aggregates, adopted roles and ratified conventions: export (allow-list, scans, proprietary unless `--open`), verify against pinned keys, diff two versions, import (`MARINA_UPSTREAM=on`, trust `imported`; paid slices need `--entitlement`, your own private pack `--own`), entitle (sign an entitlement token). See [Learned bundles](learned-bundles.md). |
 | `mind2web2 run\|cache\|judge\|score\|record` | Mind2Web 2: answer live-web research tasks with the research agent (`--cap-usd` required), export the pages it read in the judge's cache layout, run the official judge locally under a spend cap, score, and record to the ledger and lessons. Never submits. See [Mind2Web 2](mind2web2.md). |
 | `repro doctor\|list\|<setup>` | Reproduce a published benchmark setup (`hle-verified`, `swebench-verified`, `tau2`, `futurex-backtest`, `arena-backtest`): prerequisite checks with fixes, `--dry-run` plans with estimated spend, replicated arms, a pooled comparison from the ledger. See [Reproduce](reproduce.md). |
+| `leaderboards` | Print a markdown snapshot of the public-competition record — external submissions, arena filings, and the benchmark ledger — from the append-only tables. See [Leaderboards](leaderboards.md). |
 
 ## Memory service
 

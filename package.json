@@ -74,6 +74,7 @@
     "mind2web2": "bun run scripts/mind2web2.ts",
     "metaculus": "bun run scripts/metaculus.ts",
     "forecastbench": "bun run scripts/forecastbench.ts",
+    "leaderboards": "bun run scripts/leaderboards.ts",
     "swebench": "bun run scripts/swebench.ts",
     "start": "bun run src/main.ts",
     "code": "bun run scripts/code.ts",
