@@ -23,7 +23,12 @@ import {
   runLabel,
   verificationCounts,
 } from "../benchmark-ledger";
-import { type ChallengeEvaluation, lookupChallenge, type SplitStats } from "../benchmark-promotion";
+import {
+  type ChallengeEvaluation,
+  fileSlotPromotion,
+  lookupChallenge,
+  type SplitStats,
+} from "../benchmark-promotion";
 import {
   comparePooledGroups,
   type LoadedGroup,
@@ -38,6 +43,7 @@ import {
   purgeBenchmarkContentNotes,
   retireOutcomeNotesForRun,
 } from "../benchmark-runner";
+import { recentResolutions } from "../default-resolution";
 import { extractModifiers, parseModifiers, resolveMultiWordName } from "../parse-input";
 import { checkRoleEdit } from "../role-guard";
 import { formatAge } from "./format-duration";
@@ -861,10 +867,24 @@ export function benchmarkCommand(deps: {
 
         case "defaults": {
           const rows = db.listBenchmarkDefaults();
+          // How each default was last resolved in this process (resolveDefault).
+          const resolved = recentResolutions().map(
+            (r) => `  ${(r.surface ? `${r.surface} ` : "") + r.slot}: ${r.source} ${dim(r.reason)}`,
+          );
+          const resolvedBlock = resolved.length
+            ? [
+                "",
+                "  last resolutions (env > board slot > family slot > upstream > built-in):",
+                ...resolved,
+              ]
+            : [];
           if (rows.length === 0) {
             ctx.send(
               input.entity,
-              "No promoted defaults yet. Seed a slot with `benchmark promote <slot> <run>`.",
+              [
+                "No promoted defaults yet. Seed a slot with `benchmark promote <slot> <run>`.",
+                ...resolvedBlock,
+              ].join("\n"),
             );
             return;
           }
@@ -878,6 +898,7 @@ export function benchmarkCommand(deps: {
               `    ${dim(r.value_json.length > 160 ? `${r.value_json.slice(0, 157)}...` : r.value_json)}`,
             );
           }
+          lines.push(...resolvedBlock);
           ctx.send(input.entity, lines.join("\n"));
           return;
         }
@@ -1149,104 +1170,38 @@ function promote(
 ): string {
   const gate = checkRoleEdit(db, entity, `benchmark promote ${slot}`);
   if ("reason" in gate) return gate.reason;
-  const found = lookupChallenge(
-    db,
-    slot,
-    runId,
-    "holdout",
-    opts.maxCostRatio !== undefined ? { maxCostRatio: opts.maxCostRatio } : {},
-  );
-  if (found.kind === "error") return found.message;
-  // Self-attestation is always refused: whoever ran the challenger — or ANY
-  // replicate pooled with it — cannot promote it. Compared on the durable
-  // account key too, so a fresh login is still the same author.
-  const me = db.durableEntityKey(entity.id);
-  for (const run of found.pooledRuns) {
-    const author = run.agent_id;
-    if (author && (author === entity.id || db.durableEntityKey(author) === me)) {
-      return run.id === runId
-        ? `Refused: you ran ${runId}. Someone else must promote it — self-attestation is never accepted.`
-        : `Refused: you ran ${run.id}, a replicate pooled with ${runId}. Someone else must promote it — self-attestation is never accepted.`;
-    }
-  }
-  // Invalidating an incumbent and then filling its slot is self-attestation
-  // too: neither the promoter nor the author of any pooled challenger run may
-  // be the account that invalidated it.
-  const by = found.invalidIncumbent?.invalidatedBy;
-  if (by) {
-    const authoredBy = found.pooledRuns.find(
-      (r) => r.agent_id && db.durableEntityKey(r.agent_id) === by,
-    );
-    if (by === me || authoredBy) {
-      return `Refused: ${by === me ? "you" : `the author of ${authoredBy?.id}`} invalidated the incumbent ${found.invalidIncumbent?.id}. Someone else must fill ${slot} — self-attestation is never accepted.`;
-    }
-  }
-  const value = found.challenger.target_json;
-  if (!value) {
-    return `Run ${runId} records no target configuration (target_json) — nothing to promote as the default.`;
-  }
   // The history is append-only, so it stores the opaque durable account key —
   // never a display name that account erasure would have to rewrite.
-  const actor = db.durableEntityKey(entity.id);
-  const now = Date.now();
-  if (found.kind === "seed") {
-    if (found.invalidIncumbent && opts.holdout) {
-      return "--holdout is fixed once a slot exists (moving it would move items between splits).";
-    }
-    const fraction = opts.holdout ? Number.parseFloat(opts.holdout) : found.holdoutFraction;
-    if (!(fraction > 0 && fraction < 1)) return "--holdout must be between 0 and 1 (exclusive).";
-    db.recordBenchmarkPromotion({
-      slot,
-      outcome: "seeded",
-      challenger_run_id: runId,
-      incumbent_run_id: null,
-      value_json: value,
-      actor,
-      stats_json: null,
-      reason: found.invalidIncumbent
-        ? `re-seeded: incumbent ${found.invalidIncumbent.id} was invalidated and no earlier incumbent is valid`
-        : "first incumbent",
-      holdout_fraction: fraction,
-      created_at: now,
-    });
-    gate.record();
-    return `${found.invalidIncumbent ? `Re-seeded ${slot} (its incumbent ${found.invalidIncumbent.id} was invalidated and no earlier incumbent is valid)` : `Seeded ${slot}`} with ${runLabel(found.challenger)} (${runId}, ${found.replicates} replicate(s)); holdout ${pct(fraction).trim()} of items. Later challengers must earn it.`;
-  }
-  if (opts.holdout) {
-    return "--holdout is fixed once a slot exists (moving it would move items between splits).";
-  }
-  const e = found.evaluation;
-  const stats = JSON.stringify({
-    ...e.stats,
-    replicates: found.replicates,
-    margin: e.margin,
-    triedBefore: e.triedBefore,
-    costPerItem: e.costPerItem,
-  });
-  db.recordBenchmarkPromotion({
+  const filed = fileSlotPromotion(db, {
     slot,
-    outcome: e.ok ? "promoted" : "refused",
-    challenger_run_id: runId,
-    incumbent_run_id: found.incumbent.id,
-    value_json: value,
-    actor,
-    stats_json: stats,
-    reason: e.ok ? null : e.reasons.join("; "),
-    created_at: now,
+    runId,
+    actor: {
+      key: db.durableEntityKey(entity.id),
+      entityId: entity.id,
+      keyOf: (id) => db.durableEntityKey(id),
+    },
+    ...(opts.maxCostRatio !== undefined ? { maxCostRatio: opts.maxCostRatio } : {}),
+    ...(opts.holdout ? { holdout: Number.parseFloat(opts.holdout) } : {}),
   });
+  if (filed.kind === "error") return filed.message;
+  if (filed.kind === "seeded") {
+    gate.record();
+    return `${filed.invalidIncumbent ? `Re-seeded ${slot} (its incumbent ${filed.invalidIncumbent.id} was invalidated and no earlier incumbent is valid)` : `Seeded ${slot}`} with ${runLabel(filed.challenger)} (${runId}, ${filed.replicates} replicate(s)); holdout ${pct(filed.holdoutFraction).trim()} of items. Later challengers must earn it.`;
+  }
+  const e = filed.evaluation;
   const body = [statsLine(e.stats), costLine(e)];
-  if (!e.ok) {
+  if (filed.kind === "refused") {
     return [
-      found.invalidIncumbent
-        ? `Not promoted — the challenger did not beat ${found.incumbent.id}, the best earlier incumbent of ${slot} still valid (${found.invalidIncumbent.id} was invalidated). Recorded as attempt ${e.triedBefore + 1}.`
-        : `Not promoted — ${slot} keeps ${found.incumbent.id}. Recorded as attempt ${e.triedBefore + 1}.`,
+      filed.invalidIncumbent
+        ? `Not promoted — the challenger did not beat ${filed.incumbent.id}, the best earlier incumbent of ${slot} still valid (${filed.invalidIncumbent.id} was invalidated). Recorded as attempt ${e.triedBefore + 1}.`
+        : `Not promoted — ${slot} keeps ${filed.incumbent.id}. Recorded as attempt ${e.triedBefore + 1}.`,
       ...body,
       ...e.reasons.map((r) => `  ${fmtStatus("BLOCK", "warn")} ${r}`),
     ].join("\n");
   }
   gate.record();
   return [
-    `Promoted ${runLabel(found.challenger)} (${runId}) to ${slot}, replacing ${found.invalidIncumbent ? `the invalidated ${found.invalidIncumbent.id} (beat ${found.incumbent.id}, the best earlier incumbent still valid)` : found.incumbent.id}.`,
+    `Promoted ${runLabel(filed.challenger)} (${runId}) to ${slot}, replacing ${filed.invalidIncumbent ? `the invalidated ${filed.invalidIncumbent.id} (beat ${filed.incumbent.id}, the best earlier incumbent still valid)` : filed.incumbent.id}.`,
     ...body,
     `  margin ${(e.margin * 100).toFixed(1)} pts (${e.triedBefore} earlier attempt(s))`,
   ].join("\n");

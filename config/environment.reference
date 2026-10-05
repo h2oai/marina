@@ -708,8 +708,8 @@
 # MARINA_ROUTE_INSTRUCTIONS=Choose the least costly model that can complete the task.
 # MARINA_ROUTE_FALLBACK=powerful
 
-# Benchmark evidence for model:route (src/engine/benchmark-evidence.ts). After the router picks, measured ledger results may prefer another of the SAME candidates: the best Wilson lower bound among at least two candidates with MIN_N items in the role's families (and within MAX_COST_USD per item, when set). `observe` records the pick on the route decision without acting; `on` applies it. Resolved once at spawn and persisted; any error keeps the router's choice. Families: a comma list of benchmark names for every role, or JSON {"*": [...], "<role>": [...]}; with none, evidence never applies. Evidence is traced participants and direct-model runs; window evidence only with MARINA_ROUTE_EVIDENCE_WINDOW=true, shared window evidence never. Inspect with `trace advise evidence <benchmark>`.
-# MARINA_ROUTE_EVIDENCE=off
+# Benchmark evidence for model:route (src/engine/benchmark-evidence.ts). After the router picks, measured ledger results may prefer another of the SAME candidates: the best Wilson lower bound among at least two candidates with MIN_N items in the role's families (and within MAX_COST_USD per item, when set). `observe` (the default) records the pick on the route decision without acting; `on` applies it; `off` skips it. Resolved once at spawn and persisted; any error keeps the router's choice. Families: a comma list of benchmark names for every role, or JSON {"*": [...], "<role>": [...]}; when unset, the spawning role's own declared families (its traits' `families` capability) are used, expanded to the registered benchmarks tagged with them; with none, evidence never applies. Evidence is traced participants and direct-model runs; window evidence only with MARINA_ROUTE_EVIDENCE_WINDOW=true, shared window evidence never. Inspect with `trace advise evidence <benchmark>`.
+# MARINA_ROUTE_EVIDENCE=observe
 # MARINA_ROUTE_EVIDENCE_FAMILIES=hle-verified-gold,frames
 # MARINA_ROUTE_EVIDENCE_MIN_N=30
 # MARINA_ROUTE_EVIDENCE_MAX_COST_USD=0.05
@@ -741,6 +741,9 @@
 # MARINA_FORECAST_FOLLOWUP=on
 # MARINA_FORECAST_MIN_EVIDENCE=5
 # MARINA_FORECAST_DISAGREEMENT=on
+
+# Read swarm (src/retrieval/read-swarm.ts; off unless set): a reader model that reads every page research finds IN FULL against the question's clues and reports verbatim quotes, which are checked mechanically before they reach the dossier. Set, typed forecasts' research rounds put the readers' verified quotes ahead of the retriever's report, and `web swarm <question>` (any agent or crew) answers with a candidate table. Any model spec (`provider/model`); a cheap one is the point. Every reader call is priced against the daily spend cap.
+# MARINA_READ_SWARM_READER=openrouter/openai/gpt-6-luna
 
 # Typed forecasts (a choice, a set of options, a number, a ranking or a short string; `forecast … type:<t>`, `bun run forecast --type`, POST /v1/forecast with `answer`). The retriever also accepts openrouter-web:<model>@exa|@native (the web plugin's engine; Exa excerpts serve the citation check), sonar:<model>, tavily:<basic|advanced> (TAVILY_API_KEY), search[:<backend>+<backend>…] and asof[:<providers>] (keyless and date-strict, bounded to each forecast's cutoff: gdelt, wikipedia, hn, arxiv, wayback; docs/guides/search.md), comma-separated to merge. The planner decomposes the question and names research gaps (default: the first analyst); the critic searches for evidence against the leading answer and may revise it only when its confidence exceeds the runs' agreement (default: the planner). RUNS independent answers (1–9, analysts used round-robin) are combined by type; RESEARCH_ROUNDS bounds the search loop (1–4); CRITIQUE=off skips the disconfirmation pass. LOOKUPS picks structured sources (also answerable directly with the `data` command): unset or `auto` (the default) turns on every one that can run here — polymarket, kalshi, fred and bls (keyless) plus odds when ODDS_API_KEY is set; `off` or `none` (or empty) turns them off; otherwise a comma list: polymarket and kalshi (market prices; a past cutoff reads the last price at or before it, never the resolution), odds (sports head-to-head odds via ODDS_API_KEY; historical snapshots need a paid plan), fred (official series; vintage-correct for a past cutoff with FRED_API_KEY, live-only without), bls (live-only), or markets / all. Every lookup reads as of the earlier of the cutoff and now. A number is anchored on the freshest official reading with a horizon-scaled spread.
 # MARINA_FORECAST_PLANNER=openrouter/deepseek/deepseek-v4-pro
@@ -917,6 +920,12 @@
 
 # Outcomes processed per hour (writer + judge calls are bounded by it); excess outcomes are dropped and counted.
 # MARINA_LESSONS_MAX_PER_HOUR=120
+
+# Cross-board lessons. A trusted lesson whose scope is not `case` (method, config, budget, calibration, retrieval, infra, model) and that the judge finds `transferable` is mirrored into `lessons:meta`; every surface that recalls lessons (forecasting, verify, crew routing, Code Mode, opted-in passthru and resident agents) also serves meta lessons within a third of its budget, labelled `cross-board <scope>`. `on` (default) mirrors and serves; `observe` mirrors and records the ids without injecting; `off` neither. Capped by MARINA_LESSONS. The time rule and the measurement self-exclusion (`x-marina-eval`) apply.
+# MARINA_LESSONS_META=on
+
+# Resident agents' continuation prompt: `on` adds a [Lessons] section for the agent's focus every tenth cycle (judged lessons from every domain, cross-board included, labelled); `observe` logs the lesson ids it would show; `off` (default) never asks. Capped by MARINA_LESSONS.
+# MARINA_LESSONS_RESIDENT=off
 
 # ── Passthru and prompt caching ──────────────────────────────────────────────
 

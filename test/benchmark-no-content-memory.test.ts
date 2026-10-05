@@ -49,6 +49,10 @@ const E = "SENTINELEXPECTED";
 const A = "SENTINELACTUAL";
 const SENTINELS = [Q, E, A];
 
+/** The run's own lesson(s), without the cross-board `meta` mirror a transferable one gets. */
+const producerLessons = (sink: ReturnType<typeof memoryLessonSink>) =>
+  sink.all().filter((l) => l.domain !== "meta");
+
 /** Harness items whose question/expected/actual text is a sentinel. */
 function items(n: number) {
   return Array.from({ length: n }, (_, i) => ({
@@ -171,7 +175,7 @@ describe("the in-world runner", () => {
     expectNoSentinel(feed.join("\n"), "feed");
     expectNoSentinel(w.seen.join("\n"), "lesson writer input");
 
-    const lessons = sink.all();
+    const lessons = producerLessons(sink);
     expect(lessons).toHaveLength(1);
     const [lesson] = lessons;
     expect(lesson?.domain).toBe("benchmark");
@@ -272,8 +276,8 @@ describe("import and filing", () => {
 
     expectNoSentinel(databaseText(db), "database");
     expectNoSentinel(w.seen.join("\n"), "lesson writer input");
-    expect(sink.all()).toHaveLength(1);
-    expect(sink.all()[0]?.trust).toBe("trusted");
+    expect(producerLessons(sink)).toHaveLength(1);
+    expect(producerLessons(sink)[0]?.trust).toBe("trusted");
     expectNoSentinel(JSON.stringify(sink.all()), "lesson");
     const outcome = benchmarkRunOutcome(db, db.getBenchmarkRun(res.id)!);
     expectNoSentinel(JSON.stringify(outcome), "outcome");
@@ -295,7 +299,7 @@ describe("import and filing", () => {
       expect(res.status).toBe(201);
       await settleOutcomes(db);
       expectNoSentinel(databaseText(db), "database");
-      expect(sink.all()).toHaveLength(1);
+      expect(producerLessons(sink)).toHaveLength(1);
       expectNoSentinel(JSON.stringify(sink.all()), "lesson");
     } finally {
       engine.stop();

@@ -10,6 +10,7 @@
 import { benchmarkExecution } from "../engine/benchmark-execution";
 import { getErrorMessage } from "../engine/errors";
 import type { MarinaDB } from "../persistence/database";
+import { familiesForRun, targetSubjects } from "./families";
 import { type LessonSink, OUTCOME_DOMAINS, type Outcome } from "./outcomes";
 import {
   findLessons,
@@ -31,6 +32,7 @@ interface RunLike {
   cost_usd?: number | null;
   judge?: string | null;
   completed_at?: number | null;
+  config_json?: string | null;
 }
 
 /** A short, general description of a ledger target (model / crew + formation / population). */
@@ -95,14 +97,19 @@ export function benchmarkRunOutcome(
   opts: { categories?: CategoryTally[] } = {},
 ): Outcome | undefined {
   if (run.score === null || run.score === undefined) return undefined;
+  // Only runs completed by this run's own completion are a baseline: a lesson
+  // visible from `completed_at` must not know a later run's score (the leakage
+  // rule holds for a backfill as for live filing).
+  const asOf = run.completed_at ?? Number.POSITIVE_INFINITY;
   const others = db
-    .leaderboardBenchmark(run.benchmark, 50)
+    .leaderboardBenchmark(run.benchmark, 100)
     .filter(
       (r) =>
         r.id !== run.id &&
         !!run.slice_hash &&
         r.slice_hash === run.slice_hash &&
-        r.judge === run.judge,
+        r.judge === run.judge &&
+        (r.completed_at ?? Number.POSITIVE_INFINITY) <= asOf,
     );
   const best = others[0];
   const execution = benchmarkExecution(db.getBenchmarkItems(run.id));
@@ -129,6 +136,10 @@ export function benchmarkRunOutcome(
       ? `${pct(run.score)} vs best other ${pct(best.score ?? 0)} (${describeTarget(best)})`
       : `${pct(run.score)}; no comparable baseline; superiority untested`,
     refs: [`bench:${run.id}`, ...(best ? [`bench:${best.id}`] : [])],
+    // A run's verdict is about a configuration on a kind of work.
+    scope: "config",
+    families: familiesForRun(run),
+    subjects: targetSubjects(run),
   };
 }
 

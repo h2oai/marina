@@ -504,6 +504,13 @@ export interface TraitCapabilities {
    * "reasoning", "alignment".
    */
   applicableTasks?: string[];
+  /**
+   * Task families this trait works in (`math`, `code`, `qa.exact`, … —
+   * `src/engine/benchmark-families.ts`). Metadata only: it never gates the
+   * prompt. A role's families (the union over its traits) are where spawn-time
+   * route evidence looks when `MARINA_ROUTE_EVIDENCE_FAMILIES` is unset.
+   */
+  families?: string[];
 }
 
 export interface TraitRow {

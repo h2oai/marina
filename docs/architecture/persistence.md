@@ -227,3 +227,8 @@ Migration 159 adds `benchmark_run_evidence` and `benchmark_item_evidence` as app
 attribution overlays. Original benchmark rows remain immutable; facade readers project recovered
 participants. Operator imports require exact item outcomes and request IDs. See
 [execution evidence](../guides/execution-evidence.md).
+
+Migration 160 adds the append-only `benchmark_item_lessons`: the judged lesson ids each ledger item
+was served (`served`) or recalled without being shown (`observed`), with the run's lesson regime
+(`measure` excludes lessons learned from the same benchmark, `live` does not). Ids only, never lesson
+or item text. See [benchmarks.md](benchmarks.md).

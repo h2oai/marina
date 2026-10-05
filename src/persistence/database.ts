@@ -230,6 +230,7 @@ export type { AssetRow } from "./db-assets";
 export type {
   BenchmarkDefaultRow,
   BenchmarkItemInput,
+  BenchmarkItemLessonRow,
   BenchmarkItemRow,
   BenchmarkLedgerRunInput,
   BenchmarkPromotionInput,
@@ -300,6 +301,7 @@ import type { AssetRow } from "./db-assets";
 import type {
   BenchmarkDefaultRow,
   BenchmarkItemInput,
+  BenchmarkItemLessonRow,
   BenchmarkItemRow,
   BenchmarkLedgerRunInput,
   BenchmarkPromotionInput,
@@ -2348,6 +2350,10 @@ export class MarinaDB implements MarinaStores {
 
   getBenchmarkItems(runId: string): BenchmarkItemRow[] {
     return benchmarksDb.getBenchmarkItems(this.reader, runId);
+  }
+
+  getBenchmarkItemLessons(runId: string): BenchmarkItemLessonRow[] {
+    return benchmarksDb.getBenchmarkItemLessons(this.reader, runId);
   }
 
   getBenchmarkItemsForBenchmark(benchmark: string, limit = 20_000): BenchmarkItemRow[] {

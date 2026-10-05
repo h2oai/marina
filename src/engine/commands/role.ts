@@ -563,7 +563,8 @@ export function hasTraitCapabilities(caps: TraitCapabilities): boolean {
     (caps.activation?.length ?? 0) > 0 ||
     (caps.successSignals?.length ?? 0) > 0 ||
     (caps.riskSignals?.length ?? 0) > 0 ||
-    (caps.applicableTasks?.length ?? 0) > 0
+    (caps.applicableTasks?.length ?? 0) > 0 ||
+    (caps.families?.length ?? 0) > 0
   );
 }
 

@@ -539,6 +539,27 @@ CREATE TRIGGER benchmark_item_evidence_no_update BEFORE UPDATE ON benchmark_item
 BEGIN SELECT RAISE(ABORT, 'benchmark_item_evidence is append-only'); END;
 `,
   },
+  // Which judged lessons each ledger item was served (src/learning/): lesson
+  // ids only, never their text, with the item's use (`served` = injected,
+  // `observed` = recalled but not shown) and the run's regime (`measure` =
+  // same-board lessons excluded, `live`). Append-only like the items it cites.
+  {
+    version: 160,
+    sql: `
+CREATE TABLE benchmark_item_lessons (
+  run_id TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  lesson_id TEXT NOT NULL,
+  use TEXT NOT NULL CHECK (use IN ('served', 'observed')),
+  regime TEXT CHECK (regime IS NULL OR regime IN ('measure', 'live')),
+  PRIMARY KEY (run_id, item_id, lesson_id),
+  FOREIGN KEY (run_id, item_id) REFERENCES benchmark_items(run_id, item_id)
+);
+CREATE INDEX idx_benchmark_item_lessons_lesson ON benchmark_item_lessons(lesson_id);
+CREATE TRIGGER benchmark_item_lessons_no_update BEFORE UPDATE ON benchmark_item_lessons
+BEGIN SELECT RAISE(ABORT, 'benchmark_item_lessons is append-only'); END;
+`,
+  },
 ];
 
 /** Migration 143 body — self-contained so later edits to db-notes never change it. */

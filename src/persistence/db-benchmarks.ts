@@ -178,7 +178,34 @@ export interface BenchmarkItemInput {
   budget_forced?: boolean | 0 | 1 | null;
   /** Verification outcome: checks passed, ran and failed, or never ran (migration 157). */
   verification?: BenchmarkVerification | null;
+  /**
+   * Judged lesson ids the item was served (`x-marina-lessons`), and the run's
+   * lesson regime (migration 160). Ids only — never lesson or item text.
+   */
+  lessons?: BenchmarkItemLessons | null;
 }
+
+export interface BenchmarkItemLessons {
+  served: readonly string[];
+  observed: readonly string[];
+  regime?: BenchmarkLessonRegime | null;
+}
+
+/** `measure`: lessons learned from the same board were excluded; `live`: every lesson. */
+export type BenchmarkLessonRegime = "measure" | "live";
+
+/** One served (or observed) lesson of one ledger item (migration 160). */
+export interface BenchmarkItemLessonRow {
+  run_id: string;
+  item_id: string;
+  lesson_id: string;
+  use: "served" | "observed";
+  regime: BenchmarkLessonRegime | null;
+}
+
+/** Most lesson ids recorded per item (a recall serves a handful). */
+export const MAX_ITEM_LESSONS = 16;
+const LESSON_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 /** Verification states the ledger keeps apart: a check that never ran is not a failed check. */
 export type BenchmarkVerification = "passed" | "failed" | "not_run";
@@ -224,6 +251,41 @@ export function keyedAnswerHash(key: string, itemId: string, digest: string): st
  * `content_hash` (or `legacy_content_hash`) is already recorded is not written
  * again: the existing id is returned with `created: false`.
  */
+/** Append an item's served / observed lesson ids (deduplicated, capped, ids validated). */
+function insertItemLessons(
+  db: Database,
+  runId: string,
+  itemId: string,
+  lessons: BenchmarkItemLessons,
+): void {
+  const regime = lessons.regime === "measure" || lessons.regime === "live" ? lessons.regime : null;
+  const insert = db.prepare(
+    "INSERT OR IGNORE INTO benchmark_item_lessons (run_id, item_id, lesson_id, use, regime) VALUES (?, ?, ?, ?, ?)",
+  );
+  let n = 0;
+  for (const [use, ids] of [
+    ["served", lessons.served],
+    ["observed", lessons.observed],
+  ] as const) {
+    for (const id of ids) {
+      if (n >= MAX_ITEM_LESSONS) return;
+      if (!LESSON_ID.test(id)) continue;
+      if (insert.run(runId, itemId, id, use, regime).changes > 0) n++;
+    }
+  }
+}
+
+/** The lessons a run's items were served, in item order (migration 160). */
+export function getBenchmarkItemLessons(reader: Database, runId: string): BenchmarkItemLessonRow[] {
+  return reader
+    .query(
+      `SELECT l.run_id, l.item_id, l.lesson_id, l.use, l.regime FROM benchmark_item_lessons l
+       JOIN benchmark_items i ON i.run_id = l.run_id AND i.item_id = l.item_id
+       WHERE l.run_id = ? ORDER BY i.id, l.rowid`,
+    )
+    .all(runId) as BenchmarkItemLessonRow[];
+}
+
 export function recordBenchmarkLedgerRun(
   db: Database,
   run: BenchmarkLedgerRunInput,
@@ -305,6 +367,7 @@ export function recordBenchmarkLedgerRun(
           ? it.verification
           : null,
       );
+      if (it.lessons) insertItemLessons(db, run.id, it.item_id, it.lessons);
     }
     if (run.invalid_reason) {
       insertValidityRow(db, {

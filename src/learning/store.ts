@@ -20,7 +20,9 @@
 
 import type { MemoryOperationRequest } from "../sdk/memory-operations";
 import {
+  LESSON_SCOPES,
   type Lesson,
+  type LessonScope,
   type LessonSink,
   type LessonTrust,
   lessonMatches,
@@ -49,6 +51,9 @@ export function currentLessonRecord(r: RecordLike, now = Date.now()): boolean {
 
 const TRUSTS = new Set<LessonTrust>(["trusted", "unverified", "rejected"]);
 
+const strings = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+
 export function lessonFromRecord(r: RecordLike): Lesson | undefined {
   const m = r.metadata ?? {};
   if (m.kind !== LESSON_RECORD_SUBJECT || typeof r.content !== "string") return undefined;
@@ -76,6 +81,9 @@ export function lessonFromRecord(r: RecordLike): Lesson | undefined {
     resolvedAt,
     source: typeof m.source === "string" ? m.source : "",
     ...(Array.isArray(m.refs) ? { refs: m.refs.filter((x) => typeof x === "string") } : {}),
+    ...(LESSON_SCOPES.includes(m.scope as LessonScope) ? { scope: m.scope as LessonScope } : {}),
+    ...(strings(m.families).length ? { families: strings(m.families) } : {}),
+    ...(strings(m.subjects).length ? { subjects: strings(m.subjects) } : {}),
     ...(m.provenance && typeof m.provenance === "object" && !Array.isArray(m.provenance)
       ? {
           provenance: Object.fromEntries(
@@ -155,6 +163,9 @@ export function durableLessonSink(
             ...(lesson.judgement ? { judgement: lesson.judgement } : {}),
             ...(lesson.judge ? { judge: lesson.judge } : {}),
             ...(lesson.refs?.length ? { refs: lesson.refs } : {}),
+            ...(lesson.scope ? { scope: lesson.scope } : {}),
+            ...(lesson.families?.length ? { families: lesson.families } : {}),
+            ...(lesson.subjects?.length ? { subjects: lesson.subjects } : {}),
             ...(lesson.provenance ? { provenance: lesson.provenance } : {}),
           },
           valid_time: { from: Date.parse(lesson.resolvedAt), until: null },
@@ -171,16 +182,35 @@ export function durableLessonSink(
     },
     async recall(domain, query, asOf, recallOpts) {
       const words = [...lessonTokens(query)].slice(0, 12).join(" ");
-      if (!words) return [];
+      const families = new Set(recallOpts?.families ?? []);
+      if (!words && families.size === 0) return [];
       const sp = await space(domain);
       if (!sp.space_id) return [];
-      const reply = await run({
-        operation: "search",
-        ...sp,
-        input: { query: words, mode: "lexical", subject: LESSON_RECORD_SUBJECT, limit: 50 },
-      });
       const now = Date.now();
-      const lessons = ((reply.result as { results?: RecordLike[] } | undefined)?.results ?? [])
+      const records: RecordLike[] = [];
+      if (words) {
+        const reply = await run({
+          operation: "search",
+          ...sp,
+          input: { query: words, mode: "lexical", subject: LESSON_RECORD_SUBJECT, limit: 50 },
+        });
+        records.push(...((reply.result as { results?: RecordLike[] } | undefined)?.results ?? []));
+      }
+      // Key match on the work's families when the lexical match is thin: one
+      // bounded symbolic page of current lessons, kept only on a shared tag.
+      if (families.size > 0 && records.length < (recallOpts?.limit ?? 5)) {
+        const reply = await run({
+          operation: "query",
+          ...sp,
+          input: { subject: LESSON_RECORD_SUBJECT, valid_at: now, limit: 100 },
+        });
+        const seen = new Set(records.map((r) => r.id));
+        for (const r of (reply.result as { results?: RecordLike[] } | undefined)?.results ?? []) {
+          if (seen.has(r.id)) continue;
+          if (strings(r.metadata?.families).some((f) => families.has(f))) records.push(r);
+        }
+      }
+      const lessons = records
         .filter((r) => currentLessonRecord(r, now))
         .map(lessonFromRecord)
         .filter((l): l is Lesson => l !== undefined && l.domain === domain);
