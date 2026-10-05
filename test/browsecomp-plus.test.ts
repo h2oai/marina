@@ -57,8 +57,8 @@ import {
   BudgetExhausted,
   isSpendCapRefusal,
   parseMaxUsd,
-  SpendGuard,
-} from "../benchmarks/spend-guard";
+  CallSpendGuard,
+} from "../benchmarks/call-spend-guard";
 import { buildCorpus, closeCorpora } from "../src/engine/search-providers/corpus";
 
 const DOCS = [
@@ -495,14 +495,14 @@ describe("arm run", () => {
 
 describe("spend guard", () => {
   it("trips at the cap, on the server's daily cap, and validates --max-usd", () => {
-    const g = new SpendGuard(0.05);
+    const g = new CallSpendGuard(0.05);
     g.add(0.02);
     g.add(Number.NaN);
     expect(g.stoppedBy).toBeUndefined();
     g.add(0.03);
     expect(g.stoppedBy).toContain("$0.05");
     expect(() => g.check()).toThrow(BudgetExhausted);
-    const s = new SpendGuard();
+    const s = new CallSpendGuard();
     s.trip("server cap");
     expect(() => s.check()).toThrow("server cap");
     expect(isSpendCapRefusal(429, '{"error":{"code":"spend_cap_reached"}}')).toBe(true);
@@ -539,7 +539,7 @@ describe("spend guard", () => {
   it("stops an arm cleanly: stopped queries are not run, never scored, never written", async () => {
     const out = join(dir, "guarded");
     const { fetchFn, calls } = looping();
-    const guard = new SpendGuard(0.1);
+    const guard = new CallSpendGuard(0.1);
     const endpoint = { baseUrl: "http://m", fetch: fetchFn, guard };
     const queries = ["1", "2", "3"].map((id) => ({ query_id: id, query: "q", answer: "a" }));
     const arm = await runArm(queries, {
@@ -567,7 +567,7 @@ describe("spend guard", () => {
       429,
       JSON.stringify({ error: { message: "daily cap", code: "spend_cap_reached" } }),
     );
-    const guard = new SpendGuard();
+    const guard = new CallSpendGuard();
     const run = await runFormation(
       { baseUrl: "http://m", fetch: fetchFn, guard },
       parseFormation("ensemble:2"),

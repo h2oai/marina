@@ -14,7 +14,7 @@
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { BudgetExhausted, isSpendCapRefusal } from "../spend-guard";
+import { BudgetExhausted, isSpendCapRefusal } from "../call-spend-guard";
 import { draftAnswerKey } from "../../src/agent/budget-terminal";
 import { answerDigest } from "../../src/engine/benchmark-ledger";
 import { mulberry32 } from "../stats";

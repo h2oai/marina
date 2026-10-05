@@ -11,6 +11,10 @@
  * A harness must treat a tripped item as NOT RUN, never as an answer or a
  * wrong answer: it is left out of scoring and the run is marked stopped. The
  * overshoot is bounded by the calls already in flight when the cap is reached.
+ *
+ * This is the PER-CALL stop (BrowseComp-Plus checks it before every model
+ * call). Batch jobs that stop between items with a reserve for work in flight
+ * use `SpendGuard` in `src/engine/spend-guard.ts` instead.
  */
 
 export class BudgetExhausted extends Error {
@@ -20,7 +24,7 @@ export class BudgetExhausted extends Error {
   }
 }
 
-export class SpendGuard {
+export class CallSpendGuard {
   private spentUsd = 0;
   private tripped?: string;
 

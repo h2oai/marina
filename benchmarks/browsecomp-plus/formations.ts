@@ -23,7 +23,7 @@
  * can be another model (`--lead-model`).
  */
 
-import { BudgetExhausted } from "../spend-guard";
+import { BudgetExhausted } from "../call-spend-guard";
 import { mostAgreedDraft } from "../../src/agent/budget-terminal";
 import {
   type AgentOptions,
