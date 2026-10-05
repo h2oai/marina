@@ -19,13 +19,17 @@ import { RoutingService } from "../src/routing/service";
 import type { CommandOptions, CommandResult, MarinaAgent, Perception } from "../src/sdk/client";
 import { MarinaRoutingClient } from "../src/sdk/routing-client";
 import { until } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 let directory: string;
+let terminalEnvironment: DisposableStack;
 beforeEach(() => {
+  terminalEnvironment = scopeProcessState({ env: { TERM: "xterm-256color" } });
   directory = mkdtempSync(join(tmpdir(), "marina-terminal-"));
 });
 afterEach(() => {
   rmSync(directory, { recursive: true, force: true });
+  terminalEnvironment.dispose();
 });
 
 function focusedTerminal(columns = 80) {

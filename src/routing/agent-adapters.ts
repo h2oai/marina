@@ -9,6 +9,8 @@ import { AgentTransport, type WireMessage } from "./agent-transport";
 export interface AgentOptions {
   cwd: string;
   model?: string;
+  /** Only a native identity previously recorded by this managed supervisor. */
+  resumeSessionId?: string;
   env?: NodeJS.ProcessEnv;
   executable: string;
   emit: (kind: string, payload: unknown) => void;
@@ -28,6 +30,7 @@ export interface AgentAdapter {
   label: string;
   executable: string;
   start: (options: AgentOptions) => Promise<ManagedAgent>;
+  supportsResume?: boolean;
 }
 function record(value: unknown): WireMessage {
   return value && typeof value === "object" ? (value as WireMessage) : {};
@@ -115,9 +118,21 @@ async function codex(options: AgentOptions): Promise<ManagedAgent> {
       },
     });
     await transport.send({ method: "initialized", params: {} });
+    if (options.resumeSessionId) {
+      const read = await transport.request({
+        method: "thread/read",
+        params: { threadId: options.resumeSessionId, includeTurns: false },
+      });
+      const thread = record(record(read.result).thread);
+      if (thread.id !== options.resumeSessionId)
+        throw new Error("Codex returned a different stored thread");
+      if (record(thread.status).type === "active")
+        throw new Error("Codex thread is already active; inspect it before taking over");
+    }
     const response = await transport.request({
-      method: "thread/start",
+      method: options.resumeSessionId ? "thread/resume" : "thread/start",
       params: {
+        ...(options.resumeSessionId ? { threadId: options.resumeSessionId } : {}),
         cwd: options.cwd,
         model: options.model,
         approvalPolicy: "on-request",
@@ -127,6 +142,8 @@ async function codex(options: AgentOptions): Promise<ManagedAgent> {
     });
     threadId = String(record(record(response.result).thread).id ?? "");
     if (!threadId) throw new Error("Codex did not return a thread id");
+    if (options.resumeSessionId && threadId !== options.resumeSessionId)
+      throw new Error("Codex did not resume the recorded thread");
     options.state({ nativeSessionId: threadId, status: "idle" });
   } catch (error) {
     await transport.stop();
@@ -163,7 +180,12 @@ async function pi(options: AgentOptions): Promise<ManagedAgent> {
   let stopping = false;
   const transport = new AgentTransport({
     command: options.executable,
-    args: ["--mode", "rpc", ...(options.model ? ["--model", options.model] : [])],
+    args: [
+      "--mode",
+      "rpc",
+      ...(options.resumeSessionId ? ["--session", options.resumeSessionId] : []),
+      ...(options.model ? ["--model", options.model] : []),
+    ],
     cwd: options.cwd,
     env: options.env,
     onStderr: (text) => options.emit("stderr", { text }),
@@ -208,7 +230,10 @@ async function pi(options: AgentOptions): Promise<ManagedAgent> {
   });
   try {
     const state = await transport.request({ type: "get_state" });
-    options.state({ nativeSessionId: String(record(state.data).sessionId ?? ""), status: "idle" });
+    const nativeSessionId = String(record(state.data).sessionId ?? "");
+    if (options.resumeSessionId && nativeSessionId !== options.resumeSessionId)
+      throw new Error("pi did not resume the recorded session");
+    options.state({ nativeSessionId, status: "idle" });
   } catch (error) {
     await transport.stop();
     throw error;
@@ -228,6 +253,10 @@ async function pi(options: AgentOptions): Promise<ManagedAgent> {
 }
 
 async function claude(options: AgentOptions): Promise<ManagedAgent> {
+  // The SDK has no pre-input identity acknowledgement for resume. A transcript lookup
+  // alone cannot prove which conversation the live process opened (upstream #455).
+  if (options.resumeSessionId)
+    throw new Error("Claude cannot confirm resumed identity before input; resume is unavailable");
   const pending: SDKUserMessage[] = [];
   let wake: (() => void) | undefined;
   let stopped = false;
@@ -276,8 +305,9 @@ async function claude(options: AgentOptions): Promise<ManagedAgent> {
     try {
       for await (const message of stream) {
         const event = record(message);
-        if (event.type === "system" && event.subtype === "init")
+        if (event.type === "system" && event.subtype === "init") {
           options.state({ nativeSessionId: String(event.session_id) });
+        }
         const partial = record(event.event);
         const delta = record(partial.delta);
         if (event.type === "stream_event" && delta.type === "text_delta")
@@ -324,6 +354,6 @@ async function claude(options: AgentOptions): Promise<ManagedAgent> {
 /** Registry is extensible; transport, supervisor and dashboard do not assume a participant count. */
 export const BUILTIN_AGENT_ADAPTERS: AgentAdapter[] = [
   { id: "claude", label: "Claude Code", executable: "claude", start: claude },
-  { id: "codex", label: "Codex", executable: "codex", start: codex },
-  { id: "pi", label: "pi", executable: "pi", start: pi },
+  { id: "codex", label: "Codex", executable: "codex", start: codex, supportsResume: true },
+  { id: "pi", label: "pi", executable: "pi", start: pi, supportsResume: true },
 ];
