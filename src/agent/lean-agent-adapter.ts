@@ -78,6 +78,8 @@ import {
   localProviderBaseUrl,
   localProviderContextWindow,
 } from "../net/model-discovery";
+import { AgentObligations } from "../obligations/agent";
+import { readOnlyByName } from "../obligations/ledger";
 import { outputRepairMode, repairFinalAnswer } from "../repair/output-repair";
 import { MarinaClient, TELL_NOTICE_PREFIX } from "../sdk/client";
 import type { Perception } from "../types";
@@ -572,6 +574,8 @@ export function grownPromptTimeoutMs(current: number, explicit: boolean): number
 
 /** Output cap for the one re-encoding shot of an owed-reply salvage (`output-repair`). */
 const REPAIR_SHOT_MAX_TOKENS = 2048;
+/** Output cap for an obligations-ledger call (extraction / judging; room for thinking). */
+const OBLIGATIONS_CALL_MAX_TOKENS = 2000;
 
 /**
  * Backstop poll while the world connection is down. A reconnect wakes the
@@ -1196,6 +1200,15 @@ export class LeanAgentAdapter implements AgentHandle {
   private outputCapCeiling: number | undefined;
   /** The agent's API key, resolved per call (rotation-safe); set in the constructor. */
   private resolveKeyNow: () => Promise<string | undefined> = async () => undefined;
+  /**
+   * Obligations ledger (`MARINA_OBLIGATIONS=off|observe|on`, default off): the
+   * requests this agent owes work on, settled by matching successful actions.
+   * Its calls use the agent's own model (one model is enough).
+   */
+  private readonly obligations = new AgentObligations({
+    complete: (system, user) => this.obligationsComplete(system, user),
+    provider: () => harnessDecisionProvider(),
+  });
 
   private focus: Focus | null = null;
   /** The focus text the action directive last carried in full (see `focusDirective`). */
@@ -1803,6 +1816,12 @@ export class LeanAgentAdapter implements AgentHandle {
         return undefined;
       },
       afterToolCall: async (context) => {
+        this.obligations.observeToolResult(
+          context.toolCall.name,
+          context.args,
+          !context.isError,
+          (name) => !readOnlyByName(name),
+        );
         let noted: AfterToolCallResult | undefined;
         // The generic Code tool keeps a readable error result for callers.
         // Tell the loop it failed too; a caught validation/execution error
@@ -2132,6 +2151,7 @@ export class LeanAgentAdapter implements AgentHandle {
             // Repeated delivery of the same message/model-request ID is already tracked.
             // Re-enqueueing its upsert during settlement could resurrect it after the commit.
             if (tracked && !tracked.isNew) return;
+            if (requestId) this.obligations.noteRequest(requestBody);
             if (requestId) {
               const request = this.outstandingRequests.entries().find((r) => r.id === requestId)!;
               this.unsavedRequests.set(requestId, { ...request });
@@ -3561,6 +3581,31 @@ export class LeanAgentAdapter implements AgentHandle {
       );
     }
 
+    // ── 1c. Obligations ledger (MARINA_OBLIGATIONS, default off) ──
+    // New requests are read into obligations here (one call on the agent's own
+    // model); `on` lists the ones no successful action has settled yet,
+    // `observe` only logs the counts.
+    if (this.obligations.mode() !== "off") {
+      try {
+        const tools = (this.agent?.state.tools ?? this.baseTools).map((t) => ({
+          name: t.name,
+          ...(t.description ? { description: t.description } : {}),
+          write: !readOnlyByName(t.name),
+        }));
+        await this.obligations.refresh(tools);
+        const section = this.obligations.section();
+        if (section) parts.push(section, MANDATORY_SECTION_PRIORITY - 5, "obligations");
+        else if (this.obligations.mode() === "observe") {
+          this.log.info(LEAN_AGENT_LOG_CATEGORY, "obligations observed (not shown)", {
+            agent: this.name,
+            ...this.obligations.summary(),
+          });
+        }
+      } catch {
+        // best-effort; the agent works without the ledger
+      }
+    }
+
     // ── 2. Social context (every 5th cycle, deduped on content) ──
     // The agent perceives room occupants from its own `marina_look` and
     // from social events already in [World Events]. Restating [Nearby]
@@ -4457,6 +4502,11 @@ The goal is a smaller, sharper memory — not more notes.`;
                 "[ACTION REQUIRED] Your previous turn emitted no tool call while an actionable event awaited a response. Pure text is not delivered anywhere. Use the narrow Marina tool that responds to the event or advances its outcome; do not use `think` or unrelated observation merely to satisfy this requirement.",
               timestamp: Date.now(),
             });
+          } else if (!salvaged && !this.runYielded) {
+            // MARINA_OBLIGATIONS=on: a run about to end with an obligation no
+            // action settled gets one follow-up naming it (once per obligation).
+            const nudge = this.obligations.nudge();
+            if (nudge) this.agent.followUp({ role: "user", content: nudge, timestamp: Date.now() });
           }
         } else {
           this.silentTurns = 0;
@@ -4972,7 +5022,31 @@ The goal is a smaller, sharper memory — not more notes.`;
 
   /** See AgentHandle.setActiveCodingTask — task-mode toggle for a bound coder. */
   setActiveCodingTask(task: string | null): void {
-    this.activeCodingTask = task?.trim() ? task.trim() : null;
+    const next = task?.trim() ? task.trim() : null;
+    if (next && next !== this.activeCodingTask) this.obligations.noteRequest(next);
+    this.activeCodingTask = next;
+  }
+
+  /** One obligations-ledger completion on the agent's own model (spend recorded like a turn). */
+  private async obligationsComplete(system: string, user: string): Promise<string> {
+    const capped = dailyCapRefusal();
+    if (capped) throw new Error(capped);
+    const result = await piModels.completeSimple(
+      this.model,
+      {
+        systemPrompt: system,
+        messages: [{ role: "user", content: user, timestamp: Date.now() }] as Message[],
+      },
+      { apiKey: await this.resolveKeyNow(), maxTokens: OBLIGATIONS_CALL_MAX_TOKENS },
+    );
+    // A loopback `marina/*` model's spend was recorded by the passthru already.
+    if (!isMarinaProxyModel(this.model)) recordSpend("agent", extractTurnUsage(result).costUsd);
+    if (result.stopReason === "error")
+      throw new Error(result.errorMessage ?? "obligations call failed");
+    return result.content
+      .filter((b): b is TextContent => b.type === "text")
+      .map((b) => b.text)
+      .join("\n");
   }
 
   /**

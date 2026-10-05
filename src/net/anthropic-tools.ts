@@ -512,6 +512,44 @@ export interface AnthropicRequestOptions {
    * re-derived from the OpenAI translation. Only model/stream are overridden.
    */
   native?: Record<string, unknown>;
+  /**
+   * A volatile note for THIS request only (the obligations ledger's reminder),
+   * appended as the last text block of the final user turn AFTER the cache
+   * breakpoints are placed — no breakpoint ever lands on it, so the cached
+   * prefix (and the rolling breakpoint before it) is the same with or without it.
+   */
+  trailingNote?: string;
+}
+
+/**
+ * `messages` (Anthropic shape) with `note` appended as a trailing text block of
+ * the final user turn (string content becomes one text block first), or as a
+ * new user turn when the conversation ends on an assistant turn. Never mutates
+ * its input; an empty note returns the input.
+ */
+export function appendTrailingNote(
+  messages: readonly unknown[],
+  note: string | undefined,
+): unknown[] {
+  if (!note) return [...messages];
+  const out = [...messages];
+  const last = out[out.length - 1];
+  if (isRec(last) && last.role === "user") {
+    const content = last.content;
+    const blocks: unknown[] =
+      typeof content === "string"
+        ? content
+          ? [{ type: "text", text: content }]
+          : []
+        : Array.isArray(content)
+          ? [...content]
+          : [];
+    blocks.push({ type: "text", text: note });
+    out[out.length - 1] = { ...last, content: blocks };
+    return out;
+  }
+  out.push({ role: "user", content: [{ type: "text", text: note }] });
+  return out;
 }
 
 /** Anthropic allows at most four `cache_control` breakpoints per request. */
@@ -890,6 +928,9 @@ export function buildAnthropicRequest(
       if (placed.system) out.system = placed.system;
       if (placed.tools) out.tools = placed.tools;
     }
+    if (opts.trailingNote && Array.isArray(out.messages)) {
+      out.messages = appendTrailingNote(out.messages, opts.trailingNote);
+    }
     return out;
   }
 
@@ -918,6 +959,9 @@ export function buildAnthropicRequest(
     system = placed.system ?? system;
     if (Array.isArray(placed.tools)) tools = placed.tools as AnthropicToolDef[];
     if (placed.messages) messages = placed.messages as AnthropicMessage[];
+  }
+  if (opts.trailingNote) {
+    messages = appendTrailingNote(messages, opts.trailingNote) as AnthropicMessage[];
   }
   // Only a cap the CLIENT set clamps the thinking budget; the 4096 default is
   // raised to fit the requested depth instead.

@@ -103,13 +103,14 @@ export async function proxyToAnthropic(
   defaultModel: string,
   wantStream = false,
   native?: Record<string, unknown>,
-  opts: { injectedSystemTail?: boolean; clientSignal?: AbortSignal } = {},
+  opts: { injectedSystemTail?: boolean; clientSignal?: AbortSignal; trailingNote?: string } = {},
 ): Promise<Response> {
   const requestModel = isMarinaModel(body.model as string) ? defaultModel : (body.model as string);
   const upstreamBody = buildAnthropicRequest(body, requestModel, wantStream, {
     autoCache: anthropicAutoCacheEnabled(),
     native,
     injectedSystemTail: opts.injectedSystemTail,
+    ...(opts.trailingNote ? { trailingNote: opts.trailingNote } : {}),
   });
   const includeUsage =
     !!body.stream_options &&

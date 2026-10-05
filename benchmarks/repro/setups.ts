@@ -172,7 +172,7 @@ function importStep(
 }
 
 function armsOf(setup: { arms: ArmSpec[] }, flags: ReproFlags): ArmSpec[] {
-  if (!flags.arms?.length) return setup.arms;
+  if (!flags.arms?.length) return setup.arms.filter((a) => !a.optIn);
   const unknown = flags.arms.filter((a) => !setup.arms.some((s) => s.name === a));
   if (unknown.length) {
     throw new Error(
@@ -476,7 +476,7 @@ export function retrievalNeedsShell(config: string): boolean {
 const tau2: Setup = {
   name: "tau2",
   summary:
-    "τ²-bench — the official CLI, simulator and evaluator, with the agent served by Marina: one model vs `marina/verify`.",
+    "τ²-bench — the official CLI, simulator and evaluator, with the agent served by Marina: one model vs `marina/verify` or the obligations ledger.",
   smoke: 10,
   full: 50,
   arms: [
@@ -486,11 +486,22 @@ const tau2: Setup = {
       describe: "`marina/verify:<answer>[+<checker>]` as the agent",
       usdPerItem: 0.24,
     },
+    {
+      name: "obligations",
+      describe: "`marina/obligations:<answer>` as the agent (the obligations ledger on passthru)",
+      usdPerItem: 0.07,
+      optIn: true,
+    },
   ],
   requires: ["models", "tau2", "tau2-evaluator", "tmpdir"],
   plan(flags, tier) {
     const arms = armsOf(this, flags);
     const domain = flags.domain ?? "airline";
+    if (flags.taskIds?.length && (flags.limit !== undefined || flags.split === TAU2_FULL_SPLIT)) {
+      throw new Error(
+        "--task-ids names a fixed subset: drop --limit, and use a non-board --split (or none)",
+      );
+    }
     if (flags.split === TAU2_FULL_SPLIT && flags.limit !== undefined) {
       throw new Error(
         `--split ${TAU2_FULL_SPLIT} runs every task (leaderboard rule); drop --limit, or smoke with --split test --limit N`,
@@ -498,7 +509,7 @@ const tau2: Setup = {
     }
     // A named split without --limit runs the whole split (sized for the estimate).
     const splitSize = flags.split ? TAU2_SPLIT_SIZES[`${domain}/${flags.split}`] : undefined;
-    const limit = flags.limit ?? splitSize ?? this.smoke;
+    const limit = flags.taskIds?.length ?? flags.limit ?? splitSize ?? this.smoke;
     const m = resolveModels(tier, flags, FRONTIER.value, FRONTIER.value);
     // τ²'s recommended user simulator at the frontier tier; --judge overrides it.
     if (tier === "frontier" && !flags.judge) m.judge = TAU2_USER_SIMULATOR;
@@ -516,9 +527,14 @@ const tau2: Setup = {
       const agent =
         arm.name === "single"
           ? m.answer
-          : `marina/verify:${m.answer}${m.checker !== m.answer ? `+${m.checker}` : ""}`;
+          : arm.name === "obligations"
+            ? `marina/obligations:${m.answer}`
+            : `marina/verify:${m.answer}${m.checker !== m.answer ? `+${m.checker}` : ""}`;
+      const taskIds = flags.taskIds?.length ? flags.taskIds : undefined;
       const numTasks =
-        flags.split !== TAU2_FULL_SPLIT && (flags.limit !== undefined || !splitSize) ? limit : null;
+        !taskIds && flags.split !== TAU2_FULL_SPLIT && (flags.limit !== undefined || !splitSize)
+          ? limit
+          : null;
       // τ² writes data/simulations/<name>/results.json under its own checkout and offers
       // to resume an existing one, so the name carries the run directory's — and a tag
       // of the configuration, so a changed configuration never resumes another's file.
@@ -533,6 +549,8 @@ const tau2: Setup = {
         domain,
         // Only knowledge runs carry the key, so every other domain keeps its tag (and resumes).
         ...(retrieval ? { retrieval } : {}),
+        // Likewise only subset runs carry their task ids.
+        ...(taskIds ? { taskIds: [...taskIds].sort() } : {}),
       });
       const name = `marina-repro-${basename(flags.runDir)}-${domain}${flags.split ? `-${flags.split}` : ""}-${arm.name}-${tag}`;
       const results = `$TAU2_HOME/data/simulations/${name}/results.json`;
@@ -559,6 +577,7 @@ const tau2: Setup = {
           "--num-trials",
           String(flags.replicates),
           ...(numTasks !== null ? ["--num-tasks", String(numTasks)] : []),
+          ...(taskIds ? ["--task-ids", ...taskIds] : []),
           ...(retrieval ? ["--retrieval-config", retrieval] : []),
           "--max-concurrency",
           "4",
@@ -594,6 +613,7 @@ const tau2: Setup = {
       `agent reasoning_effort = ${effort} (extra_body)`,
       `user simulator = ${m.judge} (reasoning_effort = ${userEffort}, extra_body)`,
       "evaluator = τ² as shipped, with the operator's provider keys",
+      ...(flags.taskIds?.length ? [`task subset = ${flags.taskIds.length} named task ids`] : []),
       ...(retrieval
         ? [
             `knowledge retrieval = ${retrieval} (τ²'s own tools; its embedding calls use the operator's provider keys, outside Marina's spend ledger)`,

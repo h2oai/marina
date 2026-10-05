@@ -1003,6 +1003,41 @@ export function placeOpenAICacheBreakpoints(
   return { ...body, messages };
 }
 
+/**
+ * The OpenAI-shaped body with a volatile per-request note at the very end
+ * (`proxyToUpstream`'s `trailingNote`), applied AFTER `prepareUpstreamBody` so
+ * no cache breakpoint lands on it: appended to the final user message's
+ * content, or as a new user message when the conversation ends on a tool
+ * result or an assistant turn (no mid-conversation system message, which some
+ * chat templates reject and an Anthropic route would hoist into the cached
+ * system prompt). Never mutates its input; no note returns it unchanged.
+ */
+export function withTrailingNote(
+  body: Record<string, unknown>,
+  note: string | undefined,
+): Record<string, unknown> {
+  if (!note || !Array.isArray(body.messages)) return body;
+  const messages = [...body.messages];
+  const last = messages[messages.length - 1] as Record<string, unknown> | undefined;
+  if (last && last.role === "user") {
+    const content = last.content;
+    messages[messages.length - 1] = {
+      ...last,
+      content:
+        typeof content === "string"
+          ? content
+            ? `${content}\n\n${note}`
+            : note
+          : Array.isArray(content)
+            ? [...content, { type: "text", text: note }]
+            : note,
+    };
+  } else {
+    messages.push({ role: "user", content: note });
+  }
+  return { ...body, messages };
+}
+
 export function prepareUpstreamBody(
   body: Record<string, unknown>,
   provider: string,
@@ -1095,6 +1130,9 @@ export async function proxyToUpstream(
     /** The LAST system block is the proxy's injected memory addendum (see
      *  `placeCacheBreakpoints` — the stable-block breakpoint lands before it). */
     injectedSystemTail?: boolean;
+    /** A volatile note for this request only, appended at the very end AFTER
+     *  the cache breakpoints (the obligations ledger's reminder or nudge). */
+    trailingNote?: string;
   },
 ): Promise<Response> {
   // The world's daily budget is checked before any upstream call is made.
@@ -1140,6 +1178,7 @@ export async function proxyToUpstream(
         {
           injectedSystemTail: hints?.injectedSystemTail,
           clientSignal,
+          ...(hints?.trailingNote ? { trailingNote: hints.trailingNote } : {}),
         },
       );
     } catch (e) {
@@ -1227,7 +1266,10 @@ export async function proxyToUpstream(
       const r = await dispatchOpenAICompatible(
         cfg.url,
         key ?? "",
-        prepareUpstreamBody({ ...body, model: upstreamModel }, provider, isDefault, cacheHints),
+        withTrailingNote(
+          prepareUpstreamBody({ ...body, model: upstreamModel }, provider, isDefault, cacheHints),
+          hints?.trailingNote,
+        ),
         wantStream,
         upstreamHeaders,
         clientSignal,
@@ -1278,7 +1320,10 @@ export async function proxyToUpstream(
       const r = await dispatchOpenAICompatible(
         cfg.url,
         key ?? "",
-        prepareUpstreamBody({ ...body, model: upstreamModel }, provider, isDefault, cacheHints),
+        withTrailingNote(
+          prepareUpstreamBody({ ...body, model: upstreamModel }, provider, isDefault, cacheHints),
+          hints?.trailingNote,
+        ),
         wantStream,
         upstreamHeaders,
         clientSignal,
@@ -1349,7 +1394,10 @@ export async function proxyToUpstream(
     const r = await dispatchOpenAICompatible(
       cfg.url,
       key ?? "",
-      prepareUpstreamBody({ ...body, model: requestModel }, provider, isDefault, cacheHints),
+      withTrailingNote(
+        prepareUpstreamBody({ ...body, model: requestModel }, provider, isDefault, cacheHints),
+        hints?.trailingNote,
+      ),
       wantStream,
       upstreamHeaders,
       clientSignal,

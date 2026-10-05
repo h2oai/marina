@@ -42,6 +42,8 @@ export interface ReproFlags {
    * reference runs use. Refused for other domains.
    */
   retrievalConfig?: string;
+  /** τ²: run only these task ids (τ²'s `--task-ids`); a pre-registered subset, never the board split. */
+  taskIds?: string[];
   envImage?: boolean;
   seed: number;
   /** Where servers, databases, scratch and results live (on disk, never a tmpfs). */
@@ -120,6 +122,8 @@ export interface ArmSpec {
   describe: string;
   /** Rough USD per item at the frontier tier (0 when keyless or local). */
   usdPerItem: number;
+  /** Runs only when named with `--arm` (never part of the default comparison). */
+  optIn?: boolean;
 }
 
 export interface Setup {

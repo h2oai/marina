@@ -38,6 +38,10 @@ Also run the `base` task split (the default) for board comparisons. Named splits
 
 **Infrastructure errors are never scores.** τ²'s metrics drop simulations that ended in `infrastructure_error`. `bun run tau2 summary` and `convert` do the same and report how many they excluded. A non-zero count means fix the cause and re-run before comparing arms. `--require-clean` turns that into a refusal: with any infrastructure error, `summary` and `convert` print `INVALID: N infrastructure error(s)`, report no scores, write no ledger file and exit 3. `bun run repro tau2` always uses it.
 
+## The obligations ledger as a model: `marina/obligations:`
+
+`marina/obligations:<model>` is the plain request to `<model>` with Marina's obligations ledger on (see [passthru](../architecture/passthru.md)): each new user request is read into explicit obligations, a matching successful write call settles them, the open ones ride as a trailing note after the cache breakpoints, and a final reply that would leave one owed gets one retry that quotes the draft. The model's text is never edited. `MARINA_OBLIGATIONS_MODEL` names a cheaper model for the ledger's own calls (default: the agent model). The response carries `x-marina-obligations` (counters) and `x-marina-obligations-cost-usd`. The kit's `obligations` arm uses it (`--arm single,obligations`). Like `marina/verify:`, it adds control flow, so a leaderboard entry made with it is a custom submission.
+
 ## The verification formation as a model: `marina/verify:`
 
 `marina/verify:<proposer>[+<checker>]` is an OpenAI-compatible model id, with tool calling supported. For each request:

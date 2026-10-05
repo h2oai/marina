@@ -21,6 +21,12 @@ import {
   type OpenAIMessage,
 } from "../passthru-context";
 import {
+  finishObligations,
+  OBLIGATIONS_MODEL_PREFIX,
+  obligationsRequestMode,
+  prepareObligations,
+} from "./obligations";
+import {
   capturePassthruResponse,
   passthruCacheLookup,
   passthruCacheStore,
@@ -68,6 +74,31 @@ export const LESSONS_MODEL_PREFIX = "marina/lessons:";
 
 /** The lesson domains a plain passthru request recalls (meta rides on top). */
 export const PASSTHRU_LESSON_DOMAINS: readonly OutcomeDomain[] = ["tools", "code"];
+
+/** The opt-in model prefixes a plain passthru request may carry, in any order. */
+const OPT_IN_PREFIXES = [LESSONS_MODEL_PREFIX, OBLIGATIONS_MODEL_PREFIX] as const;
+
+/**
+ * `model` with the opt-in prefixes stripped, except `keep` (left in front when
+ * present anywhere in the chain, so `wantsLessons` / `obligationsRequestMode`
+ * still see their own prefix). Non-strings pass through.
+ */
+export function stripOptInPrefixes(model: unknown, keep?: string): unknown {
+  if (typeof model !== "string") return model;
+  let rest = model;
+  let kept = false;
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const p of OPT_IN_PREFIXES) {
+      if (rest.indexOf(p) === 0) {
+        if (p === keep) kept = true;
+        rest = rest.slice(p.length);
+        changed = true;
+      }
+    }
+  }
+  return kept && keep ? `${keep}${rest}` : rest;
+}
 
 /** Did the request opt into lessons (model prefix, or `x-marina-lessons: on`)? */
 export function wantsLessons(req: Request, model: unknown): boolean {
@@ -157,11 +188,17 @@ export async function runOpenaiChat(
     let body: Record<string, unknown> =
       runOpts?.stream !== undefined ? { ...requestBody, stream: runOpts.stream } : requestBody;
     // `marina/lessons:<model>` (or `x-marina-lessons: on`) opts a plain request
-    // into judged lessons; the prefix is stripped before anything else sees it.
-    const lessonsOptIn = wantsLessons(req, body.model);
-    if (typeof body.model === "string" && body.model.startsWith(LESSONS_MODEL_PREFIX)) {
-      body = { ...body, model: body.model.slice(LESSONS_MODEL_PREFIX.length) };
-    }
+    // into judged lessons, `marina/obligations:<model>` (or
+    // `x-marina-obligations: on|observe`) into the obligations ledger; the two
+    // combine in either order, and the prefixes are stripped before anything
+    // else sees the model id.
+    const lessonsOptIn = wantsLessons(req, stripOptInPrefixes(body.model, LESSONS_MODEL_PREFIX));
+    const obligationsMode = obligationsRequestMode(
+      req,
+      stripOptInPrefixes(body.model, OBLIGATIONS_MODEL_PREFIX),
+    );
+    const bare = stripOptInPrefixes(body.model);
+    if (bare !== body.model) body = { ...body, model: bare };
     const model = typeof body.model === "string" ? body.model : "marina";
     const messages = Array.isArray(body.messages) ? (body.messages as OpenAIMessage[]) : [];
 
@@ -256,21 +293,48 @@ export async function runOpenaiChat(
         anthropicNative = applyInjection({ ...anthropicNative }, prep.addendum, "anthropic");
       }
       const forceModel = passthruForceModel(engine, ec, model);
-      const cached = await passthruCacheLookup(engine, prep, body, forceModel);
+      // Opt-in obligations ledger: read this request into its conversation's
+      // ledger; the open obligations ride as a trailing note after the cache
+      // breakpoints. Its replies depend on the ledger, so the response cache
+      // is not consulted.
+      const obligations = obligationsMode
+        ? await prepareObligations(engine, req, body, messages, {
+            mode: obligationsMode,
+            forceModel,
+            ...(prep.identity?.entityId ? { entityId: prep.identity.entityId } : {}),
+            ...(authResult ? { auth: authResult } : {}),
+          })
+        : undefined;
+      const cached = obligations
+        ? undefined
+        : await passthruCacheLookup(engine, prep, body, forceModel);
       if (cached) return cached;
-      const resp = await proxyToUpstream(
+      const upstreamHints = {
+        ...passthruUpstreamHints(prep, anthropicNative ? { anthropicNative } : {}),
+        clientSignal: req.signal,
+      };
+      let resp = await proxyToUpstream(
         engine,
         body,
         forceModel || undefined,
         passthruTraceOptions(prep),
-        {
-          ...passthruUpstreamHints(prep, anthropicNative ? { anthropicNative } : {}),
-          clientSignal: req.signal,
-        },
+        obligations?.note ? { ...upstreamHints, trailingNote: obligations.note } : upstreamHints,
       );
+      if (obligations) {
+        const { requestId: _first, ...retryTrace } = passthruTraceOptions(prep);
+        resp = await finishObligations(engine, obligations, body, resp, (note) =>
+          proxyToUpstream(
+            engine,
+            body,
+            forceModel || undefined,
+            { ...retryTrace, routeReason: "obligations:nudge" },
+            { ...upstreamHints, trailingNote: note },
+          ),
+        );
+      }
       if (prep.identity?.contextOptIn) {
         void capturePassthruResponse(engine, prep.identity.entityId, messages, resp);
-        passthruCacheStore(engine, prep, body, forceModel, resp);
+        if (!obligations) passthruCacheStore(engine, prep, body, forceModel, resp);
       }
       return lessons ? withResponseHeader(resp, LESSONS_HEADER, lessonsHeaderValue(lessons)) : resp;
     }
