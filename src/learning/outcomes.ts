@@ -22,6 +22,7 @@
  */
 
 import type { DecisionProvider, DecisionQuestions, NoulAnswer } from "../decisions/types";
+import { rankSortKey } from "../memory/admission-policy";
 
 /**
  * Where a lesson is pooled. All except `meta` are producers (where an outcome came
@@ -158,6 +159,58 @@ export interface Lesson {
    * metadata, never served to a model.
    */
   provenance?: Record<string, string>;
+  /** The record version the store read it at (stores fill it; never written). */
+  version?: number;
+  /** Independent supports: 1 when written, +1 per admission merge. */
+  support?: number;
+  /** Provenance of the duplicates merged into it (newest last, capped). */
+  merged?: LessonMergeEntry[];
+  /** Admission rank (`src/memory/admission.ts` `StoredRank`), stored with the record. */
+  rank?: LessonRank;
+  /** What admission did (on) or proposed (observe) for this write. */
+  admission?: LessonAdmissionStamp;
+  /**
+   * Held unserved: the lesson contradicts a trusted lesson that is still
+   * current (an open resolve case). Stores compute it on read; never written.
+   */
+  contested?: boolean;
+}
+
+/** One duplicate merged into a lesson at admission. */
+export interface LessonMergeEntry {
+  source: string;
+  resolved_at: string;
+  trust: LessonTrust;
+  judge?: string;
+  refs?: string[];
+}
+
+/** The stored rank (opaque here; `StoredRank` in `src/memory/admission.ts`). */
+export interface LessonRank {
+  score: number;
+  [key: string]: unknown;
+}
+
+/** Admission's record on a lesson. */
+export interface LessonAdmissionStamp {
+  mode: "observe" | "on";
+  /** The action: applied under `on`, only proposed under `observe`. */
+  action: "new" | "merge" | "supersede" | "contest";
+  applied: boolean;
+  /** The neighbour the action targets. */
+  target?: string;
+  reason: string;
+  mechanical?: boolean;
+  similarity?: number;
+  /** The judge's relation pick (`refines_N2 p0.8`). */
+  relation?: string;
+  /** `contested`: held unserved while a lesson in `contests` is current. */
+  state?: "contested";
+  contests?: string[];
+  /** The resolve case opened for a contradiction (`memory_resolutions` id). */
+  case?: string;
+  /** Why the write was not ranked (it proceeded as off would). */
+  skipped?: string;
 }
 
 export interface LessonWriter {
@@ -456,6 +509,19 @@ export interface LessonRecallOptions {
    * when the lexical match is thin (a key match, no embeddings needed).
    */
   families?: readonly string[];
+  /**
+   * Ranked serving (`MARINA_MEMORY_RANKING=on`): order by trust, then admission
+   * rank (records below the floor last), then recency.
+   */
+  rankOrder?: boolean;
+}
+
+/** Neighbours of a candidate in one domain's pool (for admission). */
+export interface LessonNeighbours {
+  lessons: Lesson[];
+  generation?: number;
+  mode: "lexical" | "hybrid";
+  degraded: string[];
 }
 
 export interface LessonSink {
@@ -481,6 +547,32 @@ export interface LessonSink {
    * retirement in its metadata. Recall stops serving it; its history stays readable.
    */
   retire?(domain: OutcomeDomain, id: string, retirement: LessonRetirement): Promise<void>;
+  /**
+   * Current lessons of `domain` nearest `text` (any trust), nearest first —
+   * the admission neighbour search. `hybrid` asks for hybrid search when the
+   * store has embeddings (falling back to lexical, labelled).
+   */
+  neighbours?(
+    domain: OutcomeDomain,
+    text: string,
+    opts: { limit: number; hybrid?: boolean },
+  ): Promise<LessonNeighbours>;
+  /**
+   * Revise one current lesson's metadata (a merge: support, refs, merged
+   * provenance). The text, validity and `resolvedAt` are kept.
+   */
+  update?(domain: OutcomeDomain, id: string, change: (l: Lesson) => Lesson): Promise<void>;
+  /**
+   * Open a resolve case between `id` (the new, held lesson) and `against` (the
+   * trusted lesson it contradicts). `autoResolve` closes `against` at once with
+   * an audit row (a calibrated judge with an evidence gap). Returns the case id.
+   */
+  contest?(
+    domain: OutcomeDomain,
+    id: string,
+    against: string,
+    opts: { autoResolve: boolean; rationale: string },
+  ): Promise<{ caseId?: string; resolved: boolean }>;
 }
 
 /** The leakage rule: a lesson exists for work only once its outcome was known. */
@@ -494,9 +586,11 @@ export const DEFAULT_RECALL_LIMIT = 5;
 export const DEFAULT_RECALL_BYTES = 1_200;
 
 /**
- * Served, visible lessons: trusted first, then newest; trimmed to the byte
- * budget. `exclude` drops lessons the work must not see (self-exclusion);
- * the leakage rule `visibleAt` always applies.
+ * Served, visible lessons: trusted first, then (ranked serving only) by
+ * admission rank with records below the floor last, then newest; trimmed to
+ * the byte budget. `exclude` drops lessons the work must not see
+ * (self-exclusion); a contested lesson is never served; the leakage rule
+ * `visibleAt` always applies.
  */
 export function selectServed(
   candidates: Lesson[],
@@ -512,10 +606,12 @@ export function selectServed(
         l.trust === "trusted" || (opts.includeUnverified !== false && l.trust === "unverified"),
     )
     .filter((l) => visibleAt(l, asOf))
+    .filter((l) => !l.contested)
     .filter((l) => !exclude?.(l))
     .sort(
       (a, b) =>
         (a.trust === "trusted" ? 0 : 1) - (b.trust === "trusted" ? 0 : 1) ||
+        (opts.rankOrder ? rankSortKey(a.rank?.score) - rankSortKey(b.rank?.score) : 0) ||
         Date.parse(b.resolvedAt) - Date.parse(a.resolvedAt),
     );
   const out: Lesson[] = [];
@@ -555,7 +651,18 @@ export function metaMirror(
   if (lesson.domain === "meta" || verdict.trust !== "trusted" || !verdict.transferable)
     return undefined;
   if (!lesson.scope || lesson.scope === "case") return undefined;
-  const { id: _id, provenance: _p, ...rest } = lesson;
+  // The mirror is a new record: admission ranks it on its own.
+  const {
+    id: _id,
+    provenance: _p,
+    version: _v,
+    rank: _r,
+    admission: _a,
+    support: _s,
+    merged: _m,
+    contested: _c,
+    ...rest
+  } = lesson;
   return {
     ...rest,
     domain: "meta",
@@ -593,25 +700,38 @@ export const lessonTokens = (s: string) =>
 export function memoryLessonSink(initial: Lesson[] = []): LessonSink & {
   all(): Lesson[];
   retirements(): Map<string, LessonRetirement>;
+  cases(): Array<{ id: string; against: string; resolved: boolean; rationale: string }>;
 } {
   const lessons = [...initial];
   const retired = new Map<string, LessonRetirement>();
   const keyed = new Map<string, string>();
+  const cases: Array<{ id: string; against: string; resolved: boolean; rationale: string }> = [];
   const current = (l: Lesson) => !(l.id && retired.has(l.id));
+  // A contested lesson is held only while a lesson it contests is current.
+  const view = (l: Lesson): Lesson => {
+    if (l.admission?.state !== "contested") return l;
+    const held = (l.admission.contests ?? []).some((id) => !retired.has(id));
+    return { ...l, contested: held };
+  };
+  const overlap = (l: Lesson, q: Set<string>) =>
+    [...lessonTokens(`${l.text} ${l.category ?? ""}`)].filter((t) => q.has(t)).length;
   return {
-    all: () => [...lessons],
+    all: () => lessons.map(view),
     retirements: () => new Map(retired),
+    cases: () => [...cases],
     async write(lesson, opts) {
       const seen = opts?.key ? keyed.get(opts.key) : undefined;
       if (seen) return { id: seen };
       const id = lesson.id ?? `lesson-${lessons.length + 1}`;
-      lessons.push({ ...lesson, id });
+      const { contested: _c, ...stored } = lesson;
+      lessons.push({ ...stored, id, version: 1 });
       if (opts?.key) keyed.set(opts.key, id);
       return { id };
     },
     async find(domain, selector, limit) {
       return lessons
         .filter((l) => l.domain === domain && current(l) && lessonMatches(l, selector))
+        .map(view)
         .slice(0, limit);
     },
     async retire(domain, id, retirement) {
@@ -620,15 +740,48 @@ export function memoryLessonSink(initial: Lesson[] = []): LessonSink & {
       if (retired.has(id)) throw new Error(`lesson ${id} is already retired`);
       retired.set(id, retirement);
     },
+    async neighbours(domain, text, opts) {
+      const q = lessonTokens(text);
+      const ranked = lessons
+        .filter((l) => l.domain === domain && current(l))
+        .map((l) => ({ l, hits: overlap(l, q) }))
+        .filter((x) => x.hits > 0)
+        .sort((a, b) => b.hits - a.hits);
+      return {
+        lessons: ranked.slice(0, opts.limit).map((x) => view(x.l)),
+        generation: lessons.length,
+        mode: "lexical",
+        degraded: opts.hybrid ? ["semantic_not_configured"] : [],
+      };
+    },
+    async update(domain, id, change) {
+      const i = lessons.findIndex((x) => x.id === id && x.domain === domain);
+      if (i < 0 || !current(lessons[i]!)) throw new Error(`no current lesson ${id} in ${domain}`);
+      const before = lessons[i]!;
+      const { contested: _c, ...next } = change(view(before));
+      lessons[i] = {
+        ...next,
+        id,
+        text: before.text,
+        resolvedAt: before.resolvedAt,
+        version: (before.version ?? 1) + 1,
+      };
+    },
+    async contest(domain, id, against, opts) {
+      if (!lessons.some((x) => x.id === against && x.domain === domain && current(x)))
+        throw new Error(`no current lesson ${against} in ${domain}`);
+      const caseId = `case-${cases.length + 1}`;
+      cases.push({ id: caseId, against, resolved: opts.autoResolve, rationale: opts.rationale });
+      if (opts.autoResolve)
+        retired.set(against, { reason: opts.rationale, by: "admission", supersededBy: id });
+      return { caseId, resolved: opts.autoResolve };
+    },
     async recall(domain, query, asOf, opts) {
       const q = lessonTokens(query);
       const fam = new Set(opts?.families ?? []);
       const ranked = lessons
         .filter((l) => l.domain === domain && current(l))
-        .map((l) => ({
-          l,
-          hits: [...lessonTokens(`${l.text} ${l.category ?? ""}`)].filter((t) => q.has(t)).length,
-        }))
+        .map((l) => ({ l: view(l), hits: overlap(l, q) }))
         .filter((x) => x.hits > 0 || q.size === 0 || (x.l.families ?? []).some((f) => fam.has(f)))
         .sort((a, b) => b.hits - a.hits);
       return selectServed(
@@ -652,16 +805,45 @@ export interface LessonAdmissionContext {
 }
 
 /**
+ * What an admission step decided, when it needs more than "write this": a
+ * lesson to write (or `null` for nothing — a merge it performed itself, into
+ * `mergedInto`), and an `afterWrite` step run with the new record's id (a
+ * supersession, a resolve case). A failing `afterWrite` never fails the write.
+ */
+export interface LessonAdmissionDecision {
+  lesson: Lesson | null;
+  /** The action taken (`new`, `merge`, `supersede`, `contest`), for the record. */
+  action?: string;
+  mergedInto?: string;
+  afterWrite?: (id: string) => Promise<void>;
+}
+
+/**
  * The admission hook: runs AFTER the judge and BEFORE the write, for the
  * lesson and for its `meta` mirror. It returns the lesson to write (unchanged,
- * or carrying extra fields such as a rank), or `null` to write nothing (a merge
- * into an existing record it performed itself). Absent ⇒ every judged lesson is
- * written as judged. This is where memory admission ranking plugs in.
+ * or carrying extra fields such as a rank), `null` to write nothing (a merge
+ * into an existing record it performed itself), or a `LessonAdmissionDecision`.
+ * Absent ⇒ every judged lesson is written as judged. This is where memory
+ * admission ranking (`src/learning/admission.ts`) plugs in.
  */
 export type LessonAdmission = (
   lesson: Lesson,
   ctx: LessonAdmissionContext,
-) => Promise<Lesson | null>;
+) => Promise<Lesson | null | LessonAdmissionDecision>;
+
+function asDecision(r: Lesson | null | LessonAdmissionDecision): LessonAdmissionDecision {
+  if (r === null) return { lesson: null };
+  return "text" in r && "domain" in r ? { lesson: r as Lesson } : (r as LessonAdmissionDecision);
+}
+
+async function runAfterWrite(d: LessonAdmissionDecision, id: string | undefined): Promise<void> {
+  if (!d.afterWrite || !id) return;
+  try {
+    await d.afterWrite(id);
+  } catch {
+    // allow-empty-catch: the write stands; the follow-up (supersede/case) is best effort
+  }
+}
 
 export interface OutcomeLearnerDeps {
   sink: LessonSink;
@@ -682,6 +864,10 @@ export interface OutcomeRecord {
   lesson: Lesson;
   /** The `lessons:meta` mirror's id, when the lesson was mirrored. */
   metaId?: string;
+  /** What admission did with the lesson (absent: no admission step). */
+  admission?: string;
+  /** The existing lesson a duplicate was merged into (nothing new was written). */
+  mergedInto?: string;
 }
 
 /**
@@ -713,21 +899,36 @@ export async function recordOutcome(
     ...(verdict.judge ? { judge: verdict.judge } : {}),
   };
   // ── Admission hook: after the judge, before the write. ──
-  const lesson = deps.admit
-    ? await deps.admit(judged, { outcome, verdict, target: "lesson", sink: deps.sink })
-    : judged;
+  const decision = deps.admit
+    ? asDecision(await deps.admit(judged, { outcome, verdict, target: "lesson", sink: deps.sink }))
+    : { lesson: judged };
+  const lesson = decision.lesson;
   if (!lesson)
-    return { trust: verdict.trust, reason: `${verdict.reason}; not admitted`, lesson: judged };
+    return {
+      trust: verdict.trust,
+      reason: `${verdict.reason}; ${decision.mergedInto ? "merged into an existing lesson" : "not admitted"}`,
+      lesson: judged,
+      ...(decision.action ? { admission: decision.action } : {}),
+      ...(decision.mergedInto ? { mergedInto: decision.mergedInto } : {}),
+    };
   const { id } = await deps.sink.write(lesson);
+  await runAfterWrite(decision, id);
   let metaId: string | undefined;
-  const mirror = deps.meta && id ? metaMirror(lesson, id, verdict) : undefined;
+  // A lesson held unserved (contested) is not mirrored until its case resolves.
+  const held = lesson.admission?.state === "contested";
+  const mirror = deps.meta && id && !held ? metaMirror(lesson, id, verdict) : undefined;
   if (mirror) {
     try {
-      const admitted = deps.admit
-        ? await deps.admit(mirror, { outcome, verdict, target: "meta", sink: deps.sink })
-        : mirror;
+      const metaDecision = deps.admit
+        ? asDecision(
+            await deps.admit(mirror, { outcome, verdict, target: "meta", sink: deps.sink }),
+          )
+        : { lesson: mirror };
       // Keyed by the original: a retried mirror of the same lesson writes once.
-      if (admitted) metaId = (await deps.sink.write(admitted, { key: `lesson-meta:${id}` })).id;
+      if (metaDecision.lesson) {
+        metaId = (await deps.sink.write(metaDecision.lesson, { key: `lesson-meta:${id}` })).id;
+        await runAfterWrite(metaDecision, metaId);
+      }
     } catch {
       // allow-empty-catch: a failed mirror leaves the lesson served in its own domain
     }
@@ -738,6 +939,7 @@ export async function recordOutcome(
     ...(id ? { lessonId: id } : {}),
     lesson,
     ...(metaId ? { metaId } : {}),
+    ...(decision.action ? { admission: decision.action } : {}),
   };
 }
 
