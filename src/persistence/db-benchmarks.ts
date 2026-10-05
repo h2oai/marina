@@ -3,6 +3,13 @@
 
 import type { Database } from "bun:sqlite";
 import { createHmac, randomBytes } from "node:crypto";
+import { canonicalJson } from "../engine/benchmark-ledger";
+import {
+  type BenchmarkSourceEvidence,
+  normalizeSourceEvidence,
+  sourceEvidenceHash,
+  sourceParticipants,
+} from "./benchmark-source-evidence";
 
 // ─── Benchmark runs ────────────────────────────────────────────────────────
 
@@ -221,6 +228,7 @@ export function recordBenchmarkLedgerRun(
   db: Database,
   run: BenchmarkLedgerRunInput,
   items: readonly BenchmarkItemInput[],
+  evidence?: BenchmarkSourceEvidence,
 ): { id: string; created: boolean } {
   return db.transaction(() => {
     const hashes = [run.content_hash, run.legacy_content_hash].filter((h): h is string =>
@@ -232,7 +240,10 @@ export function recordBenchmarkLedgerRun(
           `SELECT id FROM benchmark_runs WHERE content_hash IN (${hashes.map(() => "?").join(", ")}) ORDER BY started_at, id LIMIT 1`,
         )
         .get(...hashes) as { id: string } | null;
-      if (existing) return { id: existing.id, created: false };
+      if (existing) {
+        if (evidence) attachBenchmarkSourceEvidence(db, existing.id, evidence);
+        return { id: existing.id, created: false };
+      }
     }
     db.run(
       `INSERT INTO benchmark_runs (id, benchmark, config_hash, config_json, score, answered, total,
@@ -305,6 +316,7 @@ export function recordBenchmarkLedgerRun(
         created_at: run.completed_at,
       });
     }
+    if (evidence) attachBenchmarkSourceEvidence(db, run.id, evidence);
     return { id: run.id, created: true };
   })();
 }
@@ -452,9 +464,15 @@ export function listBenchmarkRunRegroups(reader: Database, runId: string): Bench
 }
 
 /** Every recorded item outcome of one run, in insertion order. */
+const ITEM_EVIDENCE_COLUMNS = `i.id, i.run_id, i.item_id, i.correct, i.score,
+  i.latency_ms, i.cost_usd, i.trace_id, i.judge_verdict, i.answer_hash, i.budget_forced, i.verification,
+  COALESCE(e.participants_json, i.participants_json) AS participants_json`;
+
 export function getBenchmarkItems(reader: Database, runId: string): BenchmarkItemRow[] {
   return reader
-    .query("SELECT * FROM benchmark_items WHERE run_id = ? ORDER BY id")
+    .query(`SELECT ${ITEM_EVIDENCE_COLUMNS} FROM benchmark_items i
+      LEFT JOIN benchmark_item_evidence e ON e.run_id = i.run_id AND e.item_id = i.item_id
+      WHERE i.run_id = ? ORDER BY i.id`)
     .all(runId) as BenchmarkItemRow[];
 }
 
@@ -466,7 +484,8 @@ export function getBenchmarkItemsForBenchmark(
 ): BenchmarkItemRow[] {
   return reader
     .query(
-      `SELECT i.* FROM benchmark_items i JOIN benchmark_runs r ON r.id = i.run_id
+      `SELECT ${ITEM_EVIDENCE_COLUMNS} FROM benchmark_items i JOIN benchmark_runs r ON r.id = i.run_id
+       LEFT JOIN benchmark_item_evidence e ON e.run_id = i.run_id AND e.item_id = i.item_id
        WHERE r.benchmark = ? AND r.status = 'completed' ORDER BY i.id LIMIT ?`,
     )
     .all(benchmark, Math.min(limit, 100_000)) as BenchmarkItemRow[];
@@ -688,4 +707,127 @@ export function listExternalSubmissions(
       "SELECT * FROM external_submissions WHERE benchmark = ? ORDER BY created_at DESC, id DESC LIMIT ?",
     )
     .all(benchmark, limit) as ExternalSubmissionRow[];
+}
+
+/** Read a source snapshot. Caller owns the readonly connection/transaction. */
+export function readBenchmarkSourceEvidence(
+  reader: Database,
+  runId: string,
+): BenchmarkSourceEvidence {
+  const run = getBenchmarkRun(reader, runId);
+  if (!run || !["completed", "invalid"].includes(run.status))
+    throw new Error("Source run must be completed or invalid");
+  // Source archives may predate migration 159. Read them without upgrading.
+  const hasOverlay = reader
+    .query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'benchmark_item_evidence'")
+    .get();
+  const items = hasOverlay
+    ? getBenchmarkItems(reader, runId)
+    : (reader
+        .query("SELECT * FROM benchmark_items WHERE run_id = ? ORDER BY id")
+        .all(runId) as BenchmarkItemRow[]);
+  return normalizeSourceEvidence({
+    schema: "marina.benchmark.source-evidence.v1",
+    sourceRunId: run.id,
+    benchmark: run.benchmark,
+    items: items.map((it) => ({
+      item_id: it.item_id,
+      correct: it.correct,
+      score: it.score,
+      trace_id: it.trace_id,
+      participants: sourceParticipants(JSON.parse(it.participants_json ?? "[]")),
+    })),
+  });
+}
+
+/** Exact item outcomes and request IDs bind source evidence to this run, not its label. */
+export function previewBenchmarkSourceEvidence(
+  benchmark: string,
+  items: readonly Pick<
+    BenchmarkItemRow,
+    "item_id" | "correct" | "score" | "trace_id" | "participants_json"
+  >[],
+  evidence: BenchmarkSourceEvidence,
+): { item_id: string; participants_json: string }[] {
+  const source = normalizeSourceEvidence(evidence);
+  if (benchmark !== source.benchmark || items.length !== source.items.length)
+    throw new Error("Source benchmark/item count does not match target");
+  const byId = new Map(source.items.map((it) => [it.item_id, it]));
+  if (new Set(items.map((it) => it.item_id)).size !== items.length)
+    throw new Error("Duplicate target item ID");
+  const updates: { item_id: string; participants_json: string }[] = [];
+  for (const it of items) {
+    const src = byId.get(it.item_id);
+    if (
+      !src ||
+      src.correct !== it.correct ||
+      src.score !== it.score ||
+      src.trace_id !== it.trace_id
+    )
+      throw new Error(`Source identity/outcome mismatch for item ${it.item_id}`);
+    if (!src.participants.length) continue;
+    const existing: unknown = JSON.parse(it.participants_json ?? "[]");
+    if (!Array.isArray(existing))
+      throw new Error(`Invalid target participants for item ${it.item_id}`);
+    if (existing.length > 0) {
+      if (canonicalJson(sourceParticipants(existing)) !== canonicalJson(src.participants))
+        throw new Error(`Conflicting target participants for item ${it.item_id}`);
+    } else
+      updates.push({ item_id: it.item_id, participants_json: canonicalJson(src.participants) });
+  }
+  return updates;
+}
+
+export interface BenchmarkEvidenceRow {
+  id: number;
+  run_id: string;
+  source_run_id: string;
+  source_hash: string;
+  changed_items: number;
+  actor: string;
+  created_at: number;
+}
+
+/** Fill missing evidence only; refuse mismatches atomically and preserve every score/hash. */
+export function attachBenchmarkSourceEvidence(
+  db: Database,
+  runId: string,
+  evidence: BenchmarkSourceEvidence,
+): { changed: number; sourceHash: string } {
+  const normalized = normalizeSourceEvidence(evidence);
+  const sourceHash = sourceEvidenceHash(normalized);
+  return db.transaction(() => {
+    const run = getBenchmarkRun(db, runId);
+    if (!run || !["completed", "invalid"].includes(run.status))
+      throw new Error("Target run must be completed or invalid");
+    const updates = previewBenchmarkSourceEvidence(
+      run.benchmark,
+      getBenchmarkItems(db, runId),
+      normalized,
+    );
+    const previous = db
+      .query("SELECT id FROM benchmark_run_evidence WHERE run_id = ? AND source_hash = ?")
+      .get(runId, sourceHash);
+    if (previous) {
+      if (updates.length) throw new Error("Previously attached evidence is missing from target");
+      return { changed: 0, sourceHash };
+    }
+    if (!updates.length) return { changed: 0, sourceHash };
+    const audit = db.run(
+      "INSERT INTO benchmark_run_evidence (run_id, source_run_id, source_hash, changed_items, actor, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      [runId, normalized.sourceRunId, sourceHash, updates.length, "operator", Date.now()],
+    );
+    const insert = db.prepare(
+      "INSERT INTO benchmark_item_evidence (run_id, item_id, evidence_id, participants_json) VALUES (?, ?, ?, ?)",
+    );
+    for (const it of updates)
+      insert.run(runId, it.item_id, audit.lastInsertRowid, it.participants_json);
+    return { changed: updates.length, sourceHash };
+  })();
+}
+
+export function listBenchmarkRunEvidence(reader: Database, runId: string): BenchmarkEvidenceRow[] {
+  return reader
+    .query("SELECT * FROM benchmark_run_evidence WHERE run_id = ? ORDER BY id")
+    .all(runId) as BenchmarkEvidenceRow[];
 }

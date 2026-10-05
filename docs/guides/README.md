@@ -118,3 +118,6 @@ degraded, or off and gives the next concrete action without exposing secrets.
 | [Generated environment reference](../reference/environment.md) | Every server environment variable, its default, and whether the dashboard may edit it |
 | [Troubleshooting](troubleshooting.md) | Common issues and how to fix them |
 | [Demo Scenarios](../demos/README.md) | Guided walkthroughs for coordination, content, and deep research demos |
+
+- [Execution evidence](execution-evidence.md): verify model calls, resident participation, and source attribution.
+- [Novelty](novelty.md): ranked exploration and bounded outcome experiments.

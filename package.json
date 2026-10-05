@@ -111,6 +111,7 @@
     "eval-prompt": "bun run scripts/eval-prompt.ts",
     "qualify:prompt": "bun run scripts/eval-prompt.ts marina:answerer --min-score 13",
     "qualify:autonomy": "bun run scripts/qualify-autonomy.ts",
+    "qualify:agents:handoff": "bun scripts/qualify-agent-handoff.ts",
     "qualify:coding": "bun run scripts/qualify-coding.ts",
     "qualify:evolution": "bun run scripts/qualify-evolution.ts",
     "sbom": "bun scripts/generate-sbom.ts",

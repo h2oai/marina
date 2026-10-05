@@ -180,6 +180,8 @@ export const EXPORT_TABLES = [
   "benchmark_promotions",
   "benchmark_run_validity",
   "benchmark_run_regroups",
+  "benchmark_run_evidence",
+  "benchmark_item_evidence",
   "external_submissions",
   "adapters",
   "adapter_user_mappings",

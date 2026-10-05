@@ -239,6 +239,16 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     note: "who invalidated or revalidated a ledger run, when and why",
   },
   {
+    table: "benchmark_item_evidence",
+    kind: "append-only",
+    note: "restored participants; original benchmark item rows remain immutable",
+  },
+  {
+    table: "benchmark_run_evidence",
+    kind: "append-only",
+    note: "source run and evidence digest for operator-restored execution attribution",
+  },
+  {
     table: "benchmark_run_regroups",
     kind: "append-only",
     note: "every move of a ledger run between replicate groups: from, to, who and why",

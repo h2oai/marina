@@ -19,6 +19,7 @@ import type {
   RoutingSessionPage,
 } from "../sdk/routing-types";
 import type { EngineEvent, Entity, EntityId, RoomId } from "../types";
+import type { BenchmarkSourceEvidence } from "./benchmark-source-evidence";
 import type { TraitCapabilities } from "./db-agents";
 import * as agentsDb from "./db-agents";
 import * as alertsDb from "./db-alerts";
@@ -2307,8 +2308,17 @@ export class MarinaDB implements MarinaStores {
   recordBenchmarkLedgerRun(
     run: BenchmarkLedgerRunInput,
     items: readonly BenchmarkItemInput[],
+    evidence?: BenchmarkSourceEvidence,
   ): { id: string; created: boolean } {
-    return benchmarksDb.recordBenchmarkLedgerRun(this.db, run, items);
+    return benchmarksDb.recordBenchmarkLedgerRun(this.db, run, items, evidence);
+  }
+
+  attachBenchmarkSourceEvidence(runId: string, evidence: BenchmarkSourceEvidence) {
+    return benchmarksDb.attachBenchmarkSourceEvidence(this.db, runId, evidence);
+  }
+
+  listBenchmarkRunEvidence(runId: string) {
+    return benchmarksDb.listBenchmarkRunEvidence(this.reader, runId);
   }
 
   setBenchmarkReplicateGroup(

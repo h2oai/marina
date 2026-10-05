@@ -172,3 +172,9 @@ These records are durable and exportable. Schema version 62 adds `contradiction_
 `productivity_sessions`, crew invitations, privacy-safe `primitive_usage`, prompt token/cost and
 trust-lineage attribution, and automatic attention counters on agent configuration. Do not commit
 generated `marina.db*` files; use Marina's export and snapshot tooling for state transfer.
+
+## Execution and exploration evidence
+
+Use [execution evidence](execution-evidence.md) to distinguish successful deterministic answers,
+upstream model calls, resident participation, and useful collaboration. [Novelty opportunities](novelty.md)
+rank bounded exploration using existing activity and outcomes while preserving participant choice.
