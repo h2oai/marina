@@ -3,6 +3,20 @@
 
 import { expect, test } from "@playwright/test";
 
+/**
+ * Canvas content nodes only. Workspace panels (Web Chat, Workspace, Context)
+ * also render as `.react-flow__node` on this surface, so the bare class matches
+ * chrome as well as content and counts drift as panels mount.
+ */
+const CANVAS_NODE = ".react-flow__node:not(.react-flow__node-workspacePanel)";
+
+/**
+ * React Flow's multi-select modifier is `isMacOs() ? "Meta" : "Control"`, so a
+ * hardcoded "Control" selects nothing on macOS. Playwright's "ControlOrMeta"
+ * resolves the same way per platform.
+ */
+const MULTI_SELECT = "ControlOrMeta" as const;
+
 test("dashboard attention is globally visible and opens without navigating away", async ({
   page,
 }) => {
@@ -36,7 +50,7 @@ test("production Canvas opens in a coherent, actionable state", async ({ page, r
   await expect(page.getByRole("button", { name: "+ Canvas" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Add a note" })).toBeVisible();
   await expect(page.getByText("This canvas is empty")).toBeVisible();
-  await expect(page.locator('.react-flow__node [style*="scale(0)"]')).toHaveCount(0);
+  await expect(page.locator(`${CANVAS_NODE} [style*="scale(0)"]`)).toHaveCount(0);
 });
 
 test("a user can create, connect, remove nodes, and delete a canvas through the UI", async ({
@@ -52,22 +66,22 @@ test("a user can create, connect, remove nodes, and delete a canvas through the 
 
   await page.getByRole("button", { name: "Add a note" }).click();
   await page.getByRole("button", { name: "+ Note" }).click();
-  const nodes = page.locator(".react-flow__node");
+  const nodes = page.locator(CANVAS_NODE);
   await expect(nodes).toHaveCount(2);
 
   await nodes.nth(0).click();
-  await nodes.nth(1).click({ modifiers: ["Control"] });
+  await nodes.nth(1).click({ modifiers: [MULTI_SELECT] });
   await page.getByRole("button", { name: "Connect" }).click();
   await page.getByLabel("Relationship").selectOption("supports");
   await page.getByRole("button", { name: "Create relationship" }).click();
   await expect(page.getByText("supports", { exact: true })).toBeVisible();
 
   await page.reload();
-  await expect(page.locator(".react-flow__node")).toHaveCount(2);
+  await expect(page.locator(CANVAS_NODE)).toHaveCount(2);
   await expect(page.getByText("supports", { exact: true })).toBeVisible();
-  await page.locator(".react-flow__node").first().click();
+  await page.locator(CANVAS_NODE).first().click();
   await page.getByRole("button", { name: "Delete (1)", exact: true }).click();
-  await expect(page.locator(".react-flow__node")).toHaveCount(1);
+  await expect(page.locator(CANVAS_NODE)).toHaveCount(1);
   await expect(page.getByText("supports", { exact: true })).toHaveCount(0);
   page.once("dialog", async (dialog) => {
     expect(dialog.message()).toContain('Delete canvas "Browser workflow"');
@@ -89,7 +103,7 @@ test("mobile Canvas keeps the primary controls and a node in view", async ({ pag
   await page.goto(`/canvas?canvas=${canvas.id}`);
   await expect(page.getByRole("button", { name: "+ Canvas" })).toBeVisible();
   await expect(page.getByRole("button", { name: "+ Note" })).toBeVisible();
-  await expect(page.locator(".react-flow__node").first()).toBeInViewport();
+  await expect(page.locator(CANVAS_NODE).first()).toBeInViewport();
 });
 
 test("a failed relationship mutation is visible and leaves the dialog recoverable", async ({
@@ -106,10 +120,10 @@ test("a failed relationship mutation is visible and leaves the dialog recoverabl
     });
   }
   await page.goto(`/canvas?canvas=${canvas.id}`);
-  const nodes = page.locator(".react-flow__node");
+  const nodes = page.locator(CANVAS_NODE);
   await expect(nodes).toHaveCount(2);
   await nodes.nth(0).click();
-  await nodes.nth(1).click({ modifiers: ["Control"] });
+  await nodes.nth(1).click({ modifiers: [MULTI_SELECT] });
   await page.getByRole("button", { name: "Connect" }).click();
   await page.route(`**/api/canvases/${canvas.id}/edges`, (route) =>
     route.fulfill({
