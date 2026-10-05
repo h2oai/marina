@@ -31,14 +31,17 @@ import {
   budgetSteerNote,
   DEADLINE_HEADER,
 } from "../../src/agent/budget-terminal";
-import { firstMove } from "../../src/arena/research/decompose";
+import { getDecisionProvider } from "../../src/decisions/config";
 import {
   type CorpusDoc,
   type CorpusHit,
+  explicitBm25FromEnv,
   getCorpusDocument,
-  searchCorpus,
+  searchCorpusHybridPage,
 } from "../../src/engine/search-providers/corpus";
-import { BudgetExhausted, isSpendCapRefusal, type CallSpendGuard } from "../call-spend-guard";
+import { corpusEmbeddingStatus } from "../../src/engine/search-providers/corpus-vectors";
+import { firstMove } from "../../src/retrieval/first-move";
+import { BudgetExhausted, type CallSpendGuard, isSpendCapRefusal } from "../call-spend-guard";
 import {
   extractCitations,
   GET_DOCUMENT_DESCRIPTION,
@@ -70,8 +73,20 @@ export interface CorpusBackend {
 
 export function localBackend(corpus: string, dir?: string): CorpusBackend {
   return {
+    // Hybrid (BM25 + dense) only when MARINA_CORPUS_EMBEDDINGS names a model
+    // whose vectors the corpus holds; otherwise exactly the BM25 search.
     search: async (query, k, leadChars, offset) =>
-      searchCorpus(corpus, query, { dir, k, leadChars, ...(offset ? { offset } : {}) }),
+      (
+        await searchCorpusHybridPage(corpus, query, {
+          dir,
+          k,
+          leadChars,
+          ...(offset ? { offset } : {}),
+          // The harness ranks with FTS5 unless BM25 parameters are set explicitly
+          // (the official protocol's plain BM25; recorded in the run metadata).
+          bm25: explicitBm25FromEnv() ?? null,
+        })
+      ).hits,
     get: async (docid, maxChars, offset) =>
       getCorpusDocument(corpus, docid, { dir, maxChars, ...(offset ? { offset } : {}) }),
   };
@@ -113,7 +128,8 @@ export interface AgentOptions {
    * First move: decompose the question into clues, search each `depth` deep,
    * fuse, rerank with `model` and show the top `k` before the first turn.
    */
-  firstMove?: { model: string; depth?: number; k?: number };
+  /** `judge`: the configured decision backend (MARINA_DECISIONS) reranks instead of the model. */
+  firstMove?: { model: string; depth?: number; k?: number; judge?: boolean };
   maxTokens?: number;
   temperature?: number;
   /** Per-request timeout. */
@@ -561,6 +577,9 @@ async function openingContext(
   const fm = opts.firstMove!;
   const backend = opts.backend ?? localBackend(opts.corpus, opts.corpusDir);
   const helper = endpointModel(ep, fm.model, run, opts.timeoutMs);
+  const judge = fm.judge ? getDecisionProvider() : undefined;
+  if (fm.judge && !judge)
+    throw new Error("--first-move-judge needs a decision backend (MARINA_DECISIONS)");
   const move = await firstMove(question, {
     search: async (q, depth) =>
       (await backend.search(q, depth, opts.snippetChars)).map((h) => ({
@@ -570,6 +589,7 @@ async function openingContext(
       })),
     decomposer: helper,
     reranker: helper,
+    ...(judge ? { judge } : {}),
     depth: fm.depth ?? 50,
     k: fm.k ?? opts.k,
   });
@@ -586,13 +606,20 @@ async function openingContext(
 
 /** Marina harness options in a run's metadata (absent = the official harness). */
 export function harnessMetadata(opts: AgentOptions): Record<string, unknown> {
+  const embeddings = corpusEmbeddingStatus();
   return {
     ...(opts.snippet === "matched" ? { snippet: "matched" } : {}),
     ...(opts.docPaging ? { doc_paging: true } : {}),
     ...(opts.searchPaging ? { search_paging: true } : {}),
     ...(opts.firstMove ? { first_move: opts.firstMove.model } : {}),
+    ...(opts.firstMove?.judge ? { first_move_judge: getDecisionProvider()?.model ?? "none" } : {}),
     ...(process.env.MARINA_CORPUS_BM25_K1 && process.env.MARINA_CORPUS_BM25_B
       ? { bm25: `k1=${process.env.MARINA_CORPUS_BM25_K1},b=${process.env.MARINA_CORPUS_BM25_B}` }
+      : {}),
+    ...(embeddings.state === "configured"
+      ? {
+          hybrid: `${embeddings.model},w=${process.env.MARINA_CORPUS_HYBRID_WEIGHT?.trim() || "2"}`,
+        }
       : {}),
   };
 }

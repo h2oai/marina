@@ -123,9 +123,21 @@ is recorded in the run's metadata; report such a run as a Marina harness, not th
 - `--first-move <model>`: before the first turn, the question is split into clues by `<model>`,
   each clue is searched 50 deep, the rankings are fused and reranked by the same model, and the
   top `--k` documents are shown as opening context (recorded as a `first_move_search` call, so
-  recall counts them).
-- `MARINA_CORPUS_BM25_K1` / `MARINA_CORPUS_BM25_B`: rescore the corpus ranking with other BM25
-  parameters (see [Search](search.md)); the run's metadata records them.
+  recall counts them). One model does the decomposition and the reranking, so a single-LLM setup
+  can use it. Each clue search uses whatever ranking the corpus search uses (BM25, rescored BM25 or
+  hybrid).
+- `--first-move-judge`: the configured decision backend (`MARINA_DECISIONS`, e.g. the Jev family)
+  scores each fused document's relevance and replaces the model's listwise rerank. Only the order
+  is used, so an uncalibrated chat-classifier backend is fine. If the backend fails, the fused order
+  stands. The run's metadata records the backend as `first_move_judge`.
+- `MARINA_CORPUS_BM25_K1` / `MARINA_CORPUS_BM25_B`: rescore the corpus ranking with these BM25
+  parameters (see [Search](search.md)); the run's metadata records them. Unlike in-world corpus
+  search, which rescores by default, the harness keeps FTS5's plain BM25 unless both are set.
+- `MARINA_CORPUS_EMBEDDINGS` (+ vectors in the corpus): hybrid BM25 + dense search (see
+  [Search](search.md#optional-hybrid-search-bm25--dense-vectors)); the run's metadata records the
+  model and weight as `hybrid`. The official Qwen3-Embedding document vectors can be imported with
+  `bun run corpus vectors import` instead of embedding the corpus; queries are then embedded by the
+  configured endpoint with the official query instruction (`--query-prefix`).
 
 **The judge.** It is the official grader prompt, with the official sampling: temperature 0.7, top-p 0.8, top-k 20, 4,096 tokens, thinking off. It runs through the same Marina server under `--judge-model` (default `openrouter/qwen/qwen3-32b`, the official Qwen3-32B). As in the official evaluator, an incomplete run is never judged.
 

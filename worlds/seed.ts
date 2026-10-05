@@ -1653,11 +1653,11 @@ export function seedAnswererCrew(
       prompt:
         "Once every 15 ticks, review the last hour of benchmark activity via `benchmark runs --limit 20` " +
         "and `feed list --kind benchmark_completed --since 1h`. For runs that show weak scores, " +
-        "look at the per-item outcome notes deposited in the `benchmark:<name>` pool and " +
-        "identify PATTERNS — a domain where we repeatedly miss, a question style, a category. " +
-        "Write higher-importance pool notes capturing those patterns so the Answerer can recall " +
-        "them on future runs. This is the learning loop. Your notes have importance 8, the " +
-        "individual-item notes have importance 7 — so yours surface first.",
+        "read `benchmark result <id>` (per-category accuracy) and `lessons <topic> domain:benchmark` " +
+        "(judged lessons from past runs) and identify PATTERNS — a domain where we repeatedly miss, " +
+        "a question style, a category. Write general pattern notes to topic-scoped pools so the " +
+        "Answerer can recall them on future runs. Never write a benchmark item's question, answer " +
+        "or identifying details anywhere: a memorised answer contaminates every later run.",
       capabilities: {
         strengths: ["pattern-recognition", "post-run-synthesis", "pool-curation"],
         preferences: ["wait-then-analyze", "find-categorical-gaps"],
@@ -1682,7 +1682,7 @@ export function seedAnswererCrew(
         "Every model_request perception is a REQUEST you must answer — do not ignore",
         "Classify the question: math / factual / reasoning / multi-step",
         "For arithmetic and numeric word problems: never delegate; answer directly with at most one `calc`.",
-        "For factual: `web search <keywords>` + `pool benchmark:<name> recall <topic>`",
+        "For factual: `web search <keywords>` + `recall <topic>`",
         "For advanced math only: call `marina_tell` with `awaitReply:true` and `timeoutMs:30000`",
         "After answering, write a note only when the result teaches a reusable pattern",
         "Never answer a math question without at least one `calc` invocation",
@@ -1710,7 +1710,7 @@ export function seedAnswererCrew(
         "When you receive a `tell` from Answerer, this is a task. Solve it using `calc`.",
         "Break multi-step math into clear stages. Use `calc` at each stage.",
         "Reply with: `tell Answerer <your final answer + key calc outputs>`",
-        "Before answering: `pool seed:math recall <topic>` and `pool benchmark:math recall <topic>`",
+        "Before answering: `pool seed:math recall <topic>`",
         "After solving a hard problem: add a note to seed:math or benchmark:math with the technique",
         "If a problem is genuinely ambiguous, reply `UNCERTAIN: <why>` — don't guess",
       ],
@@ -1756,9 +1756,9 @@ export function seedAnswererCrew(
       guidelines: [
         "You are NOT on the critical path — you run in the background",
         "Roughly every 15 ticks: `benchmark runs --limit 20` and read latest `benchmark_completed` feed events",
-        "Recall the benchmark pool: `pool benchmark:<name> recall <domain>` — look at wrong-answer patterns",
-        "When you find a pattern (e.g., 'law items involving rule-against-perpetuities trip us up'), " +
-          "`pool benchmark:<name> add <pattern summary>` with importance 8",
+        "Read `benchmark result <id>` and `lessons <domain> domain:benchmark` — look at weak categories",
+        "When you find a general pattern (e.g., 'property-law items trip us up'), " +
+          "`pool <topic> add <pattern summary>` with importance 8 — never an item's question or answer",
         "Rate-limit yourself: never write more than 3 pattern notes per tick cycle",
       ],
       focus: ["post-run synthesis", "pattern discovery", "pool curation"],
@@ -1811,8 +1811,9 @@ export function seedAnswererCrew(
     "review/verification pass, not another question. Round-trip cost compounds.\n\n" +
     "After answering, if you noticed something worth remembering, `pool <name> add <observation>`. " +
     "Prefer topic-scoped pool names (`facts:awards`, `math:algebra`, `reasoning:deduction`) over " +
-    "benchmark-scoped — knowledge that transfers across benchmarks is more valuable. Use " +
-    "`benchmark:<name>` only for run-specific observations (prompt quirks, dataset tells).";
+    "benchmark-scoped — knowledge that transfers across benchmarks is more valuable. Never " +
+    "write a benchmark item's question, answer or identifying details to any pool: a memorised " +
+    "answer contaminates every later run.";
 
   const configs: {
     name: string;
@@ -2003,7 +2004,7 @@ export function registerAnswererCrew(engine: Engine): void {
  *
  * All share the same specialist pool (Mathematician, Historian, Scholar,
  * Skeptic, Verifier) via the `crew-bench` coordination channel + shared
- * benchmark:* pools. The same question routed through different
+ * topic pools. The same question routed through different
  * orchestrations should produce different trade-offs — latency, accuracy,
  * cost — that the harness measures. Agents default to `marina/default`
  * so the seed bakes in no vendor opinion; callers pass `opts.models` to
@@ -2040,7 +2041,7 @@ export function seedOrchestrationCrews(
       category: "methodology",
       prompt:
         "You answer factual and historical questions. Before answering, always `web search <keywords>` " +
-        "and `pool benchmark:simple-qa recall <topic>`. Prefer primary sources (Wikipedia, biographies, " +
+        "and `recall <topic>`. Prefer primary sources (Wikipedia, biographies, " +
         "official records) cited in your answer. If the question has a specific date/place/name, " +
         "ground it in a search result.",
       capabilities: {

@@ -34,7 +34,12 @@ import {
   DATE_BOUND_PROVIDER_NAMES,
   dateBoundProvider,
 } from "../../engine/search-providers/asof-providers";
-import { corpusUrl, isCorpusName, searchCorpus } from "../../engine/search-providers/corpus";
+import {
+  type CorpusHit,
+  corpusUrl,
+  isCorpusName,
+  searchCorpusHybridPage,
+} from "../../engine/search-providers/corpus";
 import { recordSearchOutcome } from "../../engine/search-providers/health";
 import {
   type SearchHttp,
@@ -615,9 +620,10 @@ export function corpusRetriever(name: string): Retriever {
       .filter(Boolean)
       .slice(0, ASOF_MAX_QUERIES);
     if (queries.length === 0) throw new Error("corpus retrieval: the brief has no query");
-    const byDoc = new Map<string, ReturnType<typeof searchCorpus>[number]>();
+    const byDoc = new Map<string, CorpusHit>();
     for (const q of queries) {
-      for (const h of searchCorpus(name, q, { k: 5, leadChars: CORPUS_SOURCE_CHARS })) {
+      const page = await searchCorpusHybridPage(name, q, { k: 5, leadChars: CORPUS_SOURCE_CHARS });
+      for (const h of page.hits) {
         const had = byDoc.get(h.docid);
         if (!had || h.score > had.score) byDoc.set(h.docid, h);
       }

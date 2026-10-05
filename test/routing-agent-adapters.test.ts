@@ -9,11 +9,19 @@
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AgentOptions, BUILTIN_AGENT_ADAPTERS } from "../src/routing/agent-adapters";
-import { prepareAgentWorkspace } from "../src/routing/agent-workspace";
+import { prepareAgentWorkspace, restoreAgentWorkspace } from "../src/routing/agent-workspace";
 import type { RuntimeState } from "../src/sdk/routing-runtime-types";
 import { git as gitIn } from "./git-helpers";
 import { until } from "./helpers";
@@ -79,7 +87,54 @@ describe("builtin adapter registry", () => {
   });
 });
 
+it("does not launch Claude for a resume that cannot be identity-verified before input", async () => {
+  const h = harness("executable-must-not-run", []);
+  h.options.resumeSessionId = "recorded-session";
+  expect(adapter("claude").supportsResume).not.toBe(true);
+  await expect(adapter("claude").start(h.options)).rejects.toThrow("before input");
+  expect(h.states).toEqual([]);
+  expect(h.events).toEqual([]);
+});
+
 describe("codex adapter", () => {
+  it("resumes only the recorded inactive thread with the existing permission policy and no replay", async () => {
+    const executable = fakeAgent(
+      "fake-codex-resume",
+      `function onLine(m) {
+      if (m.method === "initialize") return out({ id: m.id, result: {} });
+      if (m.method === "initialized") return;
+      if (m.method === "thread/read") return out({ id: m.id, result: { thread: { id: m.params.threadId, status: { type: process.env.FAKE_ACTIVE ? "active" : "notLoaded" } } } });
+      if (m.method === "thread/resume") {
+        out({ method: "echo", params: { msg: m } });
+        return out({ id: m.id, result: { thread: { id: m.params.threadId } } });
+      }
+      return out({ id: m.id, error: { code: -32601, message: "Unexpected replay or new thread" } });
+    }`,
+    );
+    const h = harness(executable, []);
+    h.options.resumeSessionId = "recorded-thread";
+    const agent = await adapter("codex").start(h.options);
+    try {
+      expect(h.states).toContainEqual({ nativeSessionId: "recorded-thread", status: "idle" });
+      expect(echoes(h.events)).toEqual([
+        expect.objectContaining({
+          method: "thread/resume",
+          params: expect.objectContaining({
+            threadId: "recorded-thread",
+            cwd: scratch,
+            model: "test-model",
+            approvalPolicy: "on-request",
+            approvalsReviewer: "user",
+            sandbox: "workspace-write",
+          }),
+        }),
+      ]);
+    } finally {
+      await agent.stop();
+    }
+    h.options.env = { ...process.env, FAKE_ACTIVE: "1" };
+    await expect(adapter("codex").start(h.options)).rejects.toThrow("already active");
+  });
   const codexBin = fakeAgent(
     "fake-codex",
     `function onLine(m) {
@@ -153,6 +208,25 @@ describe("codex adapter", () => {
 });
 
 describe("pi adapter", () => {
+  it("selects the exact recorded session and rejects accidental replacement", async () => {
+    const executable = fakeAgent(
+      "fake-pi-resume",
+      `function onLine(m) {
+      if (m.type === "get_state") {
+        const n = process.argv.indexOf("--session");
+        return out({ id: m.id, type: "response", data: { sessionId: process.env.FAKE_REPLACE ? "new-session" : process.argv[n + 1] } });
+      }
+      return out({ id: m.id, type: "response", success: false, error: "Unexpected replay" });
+    }`,
+    );
+    const h = harness(executable, []);
+    h.options.resumeSessionId = "pi-recorded";
+    const agent = await adapter("pi").start(h.options);
+    expect(h.states).toContainEqual({ nativeSessionId: "pi-recorded", status: "idle" });
+    await agent.stop();
+    h.options.env = { ...process.env, FAKE_REPLACE: "1" };
+    await expect(adapter("pi").start(h.options)).rejects.toThrow("did not resume");
+  });
   const piBin = fakeAgent(
     "fake-pi",
     `function onLine(m) {
@@ -207,6 +281,23 @@ describe("pi adapter", () => {
 });
 
 describe("prepareAgentWorkspace", () => {
+  it("resumes only an existing owned directory and rejects a path changed into a symlink", async () => {
+    const root = realpathSync(mkdtempSync(join(scratch, "resume-root-")));
+    const state = realpathSync(mkdtempSync(join(scratch, "resume-state-")));
+    const worktree = join(state, "worktrees", "owned");
+    mkdirSync(worktree, { recursive: true });
+    expect(await restoreAgentWorkspace(root, state, root)).toBe(root);
+    expect(await restoreAgentWorkspace(root, state, worktree)).toBe(worktree);
+    await expect(restoreAgentWorkspace(root, state, scratch)).rejects.toThrow("outside");
+    await expect(restoreAgentWorkspace(root, state, join(root, "missing"))).rejects.toThrow();
+    if (process.platform !== "win32") {
+      const redirected = join(root, "redirected");
+      symlinkSync(worktree, redirected);
+      await expect(restoreAgentWorkspace(root, state, redirected)).rejects.toThrow(
+        "different directory",
+      );
+    }
+  });
   it("shares the directory in shared mode and adds a detached worktree otherwise", async () => {
     const root = realpathSync(mkdtempSync(join(scratch, "repo-")));
     const git = (...args: string[]) => gitIn(root, ...args);

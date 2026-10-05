@@ -11,23 +11,48 @@
  *   bun run corpus search <name> <query…> [--k 5]
  *   bun run corpus get <name> <docid>
  *
+ * Optional dense vectors for hybrid (BM25 + dense) search — see
+ * src/engine/search-providers/corpus-vectors.ts:
+ *
+ *   bun run corpus embed <name> [--format int8|f32] [--dims N] [--max-chars 16000]
+ *                               [--query-prefix "…"] [--batch 16] [--limit N]
+ *       embeds every document without a vector, with the MARINA_CORPUS_EMBEDDINGS
+ *       provider (local, ollama or any OpenAI-compatible endpoint); resumable.
+ *   bun run corpus vectors <name>                                   list vector sets
+ *   bun run corpus vectors import <name> <vectors.f32> <docids.txt> --model <provider id>
+ *                               --source-dims N [--dims N] [--format int8|f32] [--query-prefix "…"]
+ *   bun run corpus vectors drop <name> <provider id>
+ *
+ * `corpus search` uses the hybrid ranking when it applies and says which ran.
+ *
  * Input JSONL: one document per line, `{"docid", "text", "title"?, "url"?}`.
  * Corpora live in MARINA_CORPUS_DIR (default ~/.local/share/marina/corpora),
  * never under the temp dir.
  */
 
 import { createReadStream } from "node:fs";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
 import {
   buildCorpus,
   type CorpusDoc,
   corpusDir,
+  corpusVectors,
   getCorpusDocument,
+  isCorpusName,
   isUnderTempDir,
   listCorpora,
-  searchCorpus,
+  searchCorpusHybridPage,
 } from "../src/engine/search-providers/corpus";
+import {
+  corpusEmbedder,
+  corpusEmbeddingStatus,
+  dropCorpusVectors,
+  embedCorpus,
+  importCorpusVectors,
+} from "../src/engine/search-providers/corpus-vectors";
+import { isVectorFormat, type VectorFormat } from "../src/retrieval/vectors";
 
 const { positionals, values } = parseArgs({
   args: process.argv.slice(2),
@@ -36,6 +61,14 @@ const { positionals, values } = parseArgs({
     replace: { type: "boolean" },
     source: { type: "string" },
     k: { type: "string" },
+    format: { type: "string" },
+    dims: { type: "string" },
+    "source-dims": { type: "string" },
+    "max-chars": { type: "string" },
+    "query-prefix": { type: "string" },
+    batch: { type: "string" },
+    limit: { type: "string" },
+    model: { type: "string" },
   },
 });
 
@@ -92,10 +125,89 @@ async function main(): Promise<number> {
       const [name, ...q] = rest;
       if (!name || q.length === 0) throw new Error("usage: bun run corpus search <name> <query>");
       const k = values.k ? Number(values.k) : 5;
-      for (const h of searchCorpus(name, q.join(" "), { dir, k, leadChars: 0 })) {
-        console.log(`${h.docid}\t${h.score.toFixed(2)}\t${h.title}\n  ${h.passage}`);
+      const page = await searchCorpusHybridPage(name, q.join(" "), { dir, k, leadChars: 0 });
+      console.error(
+        `ranking: ${page.mode}${page.model ? ` (${page.model})` : ""}${page.degraded ? ` — fell back to BM25: ${page.degraded}` : ""}`,
+      );
+      for (const h of page.hits) {
+        console.log(`${h.docid}\t${h.score.toFixed(4)}\t${h.title}\n  ${h.passage}`);
       }
       return 0;
+    }
+    case "embed": {
+      const [name] = rest;
+      if (!name || !isCorpusName(name)) throw new Error("usage: bun run corpus embed <name>");
+      const status = corpusEmbeddingStatus();
+      if (status.state !== "configured")
+        throw new Error(
+          status.state === "invalid"
+            ? status.error!
+            : "no corpus embedding model: set MARINA_CORPUS_EMBEDDINGS (local, ollama or openai) — see config/environment.reference",
+        );
+      const provider = corpusEmbedder()!;
+      const started = Date.now();
+      const result = await embedCorpus(join(dir, `${name}.db`), provider, {
+        format: vectorFormat(values.format),
+        ...(values.dims ? { dims: positiveInt(values.dims, "--dims") } : {}),
+        ...(values["max-chars"]
+          ? { maxChars: positiveInt(values["max-chars"], "--max-chars") }
+          : {}),
+        ...(values["query-prefix"] !== undefined ? { queryPrefix: values["query-prefix"] } : {}),
+        ...(values.batch ? { batch: positiveInt(values.batch, "--batch") } : {}),
+        ...(values.limit ? { limit: positiveInt(values.limit, "--limit") } : {}),
+        onProgress: (done, total) => {
+          if (done % 1_000 < (values.batch ? Number(values.batch) : 16) || done === total)
+            console.error(`  ${done}/${total} documents embedded…`);
+        },
+      });
+      console.log(
+        `embedded ${result.embedded} documents (${result.total} with vectors) for ${result.info.model} as ${result.info.format}/${result.info.dims}d (${((Date.now() - started) / 1000).toFixed(0)} s)`,
+      );
+      return 0;
+    }
+    case "vectors": {
+      const [sub, name, ...args] = rest;
+      if (sub && !["import", "drop"].includes(sub) && rest.length === 1) {
+        for (const v of corpusVectors(sub, dir))
+          console.log(
+            `${v.model}\t${v.count} docs\t${v.format}/${v.dims}d\tquery prefix ${JSON.stringify(v.queryPrefix)}\t${v.maxChars || "?"} chars`,
+          );
+        return 0;
+      }
+      if (!name || !isCorpusName(name))
+        throw new Error("usage: bun run corpus vectors <name> | vectors import|drop <name> …");
+      const path = join(dir, `${name}.db`);
+      if (sub === "drop") {
+        const [model] = args;
+        if (!model) throw new Error("usage: bun run corpus vectors drop <name> <provider id>");
+        console.log(`dropped ${dropCorpusVectors(path, model)} vectors`);
+        return 0;
+      }
+      if (sub === "import") {
+        const [f32, ids] = args;
+        if (!f32 || !ids || !values.model || !values["source-dims"])
+          throw new Error(
+            "usage: bun run corpus vectors import <name> <vectors.f32> <docids.txt> --model <id> --source-dims N",
+          );
+        const result = importCorpusVectors(path, f32, ids, {
+          model: values.model,
+          sourceDims: positiveInt(values["source-dims"], "--source-dims"),
+          ...(values.dims ? { dims: positiveInt(values.dims, "--dims") } : {}),
+          format: vectorFormat(values.format),
+          ...(values["query-prefix"] !== undefined ? { queryPrefix: values["query-prefix"] } : {}),
+          ...(values["max-chars"]
+            ? { maxChars: positiveInt(values["max-chars"], "--max-chars") }
+            : {}),
+          onProgress: (n) => {
+            if (n % 20_000 < 5_000) console.error(`  ${n} vectors…`);
+          },
+        });
+        console.log(
+          `imported ${result.imported} vectors (${result.unknown} docids not in the corpus) for ${result.info.model} as ${result.info.format}/${result.info.dims}d`,
+        );
+        return 0;
+      }
+      throw new Error("usage: bun run corpus vectors <name> | vectors import|drop <name> …");
     }
     case "get": {
       const [name, docid] = rest;
@@ -109,8 +221,22 @@ async function main(): Promise<number> {
       return 0;
     }
     default:
-      throw new Error("usage: bun run corpus build|list|search|get (see scripts/corpus.ts)");
+      throw new Error(
+        "usage: bun run corpus build|list|search|get|embed|vectors (see scripts/corpus.ts)",
+      );
   }
+}
+
+function positiveInt(raw: string, flag: string): number {
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1) throw new Error(`${flag} must be a positive integer`);
+  return n;
+}
+
+function vectorFormat(raw: string | undefined): VectorFormat {
+  const f = raw ?? "int8";
+  if (!isVectorFormat(f)) throw new Error("--format must be int8 or f32");
+  return f;
 }
 
 main().then(

@@ -86,7 +86,7 @@ export function scoreTypedAnswer(
   const pred = answer.prediction;
   if (spec.type === "choice") {
     const truth = optionTruth(spec, value);
-    if (!truth || truth.length !== 1) return undefined;
+    if (truth?.length !== 1) return undefined;
     const t = truth[0]!;
     const pick = typeof pred === "string" ? pred : undefined;
     const p = (id: string) => answer.distribution?.[id] ?? (id === pick ? 1 : 0);

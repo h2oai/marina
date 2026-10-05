@@ -34,12 +34,30 @@
  * into unrelated words only. A ranking is cached, so `offset` pages through it
  * cheaply. Each hit carries the window of the document that best matches the
  * query (`window`), not only its opening characters.
+ *
+ * Hybrid search (optional, `corpus-vectors.ts`): a corpus may also hold dense
+ * vectors (`bun run corpus embed` / `corpus vectors import`). When the process
+ * has a query embedder for the same model (MARINA_CORPUS_EMBEDDINGS), the BM25
+ * ranking and the dense ranking are fused by weighted reciprocal rank
+ * (MARINA_CORPUS_HYBRID_WEIGHT). With no embedder or no matching vectors the
+ * search is the BM25 search above, unchanged.
  */
 
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import type { EmbeddingProvider } from "../../memory/embeddings";
+import {
+  type CorpusVectorInfo,
+  closeCorpusVectors,
+  corpusEmbedder,
+  corpusVectorSets,
+  denseRanking,
+  fuseHybrid,
+  hybridWeightFromEnv,
+  queryVector,
+} from "./corpus-vectors";
 import type { SearchProvider, SearchResult } from "./index";
 import { porterStem } from "./porter";
 
@@ -292,6 +310,7 @@ export function closeCorpora(): void {
   open.clear();
   stats.clear();
   rankings.clear();
+  closeCorpusVectors();
 }
 
 /** BM25 parameters for the rescorer. */
@@ -301,11 +320,17 @@ export interface Bm25Params {
 }
 
 /**
- * Rescoring parameters from MARINA_CORPUS_BM25_K1 / MARINA_CORPUS_BM25_B (both
- * needed; long documents want k1 ≈ 10–25, b ≈ 1), else undefined — FTS5's own
- * ranking.
+ * The default rescoring: full length normalisation for long documents. Chosen
+ * on held-out query splits of a 100k long-document corpus (raw questions and
+ * replayed agent queries); on short passages it ranks close to FTS5's own.
  */
-export function bm25FromEnv(
+export const DEFAULT_CORPUS_BM25: Bm25Params = { k1: 6, b: 1 };
+
+/**
+ * Explicit rescoring parameters from MARINA_CORPUS_BM25_K1 / MARINA_CORPUS_BM25_B
+ * (both needed), else undefined.
+ */
+export function explicitBm25FromEnv(
   env: Record<string, string | undefined> = process.env,
 ): Bm25Params | undefined {
   const k1 = Number(env.MARINA_CORPUS_BM25_K1);
@@ -313,6 +338,18 @@ export function bm25FromEnv(
   if (!env.MARINA_CORPUS_BM25_K1?.trim() || !env.MARINA_CORPUS_BM25_B?.trim()) return undefined;
   if (!Number.isFinite(k1) || k1 < 0 || !Number.isFinite(b) || b < 0 || b > 1) return undefined;
   return { k1, b };
+}
+
+/**
+ * The ranking a corpus search uses: explicit MARINA_CORPUS_BM25_K1 / _B, else
+ * `DEFAULT_CORPUS_BM25`; `MARINA_CORPUS_RANKING=fts5` keeps FTS5's own ranking
+ * (undefined).
+ */
+export function bm25FromEnv(
+  env: Record<string, string | undefined> = process.env,
+): Bm25Params | undefined {
+  if (env.MARINA_CORPUS_RANKING?.trim().toLowerCase() === "fts5") return undefined;
+  return explicitBm25FromEnv(env) ?? DEFAULT_CORPUS_BM25;
 }
 
 /** Candidates rescored per query unless asked otherwise. */
@@ -608,7 +645,20 @@ export function searchCorpusPage(
   const dir = opts.dir ?? corpusDir();
   const db = corpusDb(name, dir);
   const ranked = rankCorpus(db, corpusPath(name, dir), query, bm25, depth);
-  const page = ranked.slice(offset, offset + k);
+  return {
+    hits: hydrate(db, ranked.slice(offset, offset + k), query, lead),
+    total: ranked.length,
+    offset,
+  };
+}
+
+/** Hits for ranked rowids: FTS5's passage when the document matches the query terms, else none. */
+function hydrate(
+  db: Database,
+  page: ReadonlyArray<{ rowid: number; score: number }>,
+  query: string,
+  lead: number,
+): CorpusHit[] {
   const match = ftsQuery(query);
   const detail = db.query(
     `SELECT d.docid AS docid, d.title AS title, d.url AS url,
@@ -617,15 +667,103 @@ export function searchCorpusPage(
        FROM docs_fts JOIN docs d ON d.rowid = docs_fts.rowid
       WHERE docs_fts MATCH ? AND docs_fts.rowid = ?`,
   );
-  const hits = page.flatMap((r) => {
-    const row = detail.get(lead, match ?? "", r.rowid) as
+  // A dense-only hit (hybrid search) need not contain any query term.
+  const plain = db.query(
+    `SELECT docid, title, url, '' AS passage, substr(text, 1, ?) AS lead, text
+       FROM docs WHERE rowid = ?`,
+  );
+  return page.flatMap((r) => {
+    const row = ((match ? detail.get(lead, match, r.rowid) : null) ?? plain.get(lead, r.rowid)) as
       | (Omit<CorpusHit, "score" | "window"> & { text: string })
       | null;
     if (!row) return [];
     const { text, ...rest } = row;
     return [{ ...rest, score: r.score, window: matchWindow(text, query, lead) }];
   });
-  return { hits, total: ranked.length, offset };
+}
+
+export interface HybridSearchOptions extends CorpusSearchOptions {
+  /** Query embedder: omitted ⇒ the configured one (`corpusEmbedder()`), null ⇒ BM25 only. */
+  embedder?: EmbeddingProvider | null;
+  /** Dense list weight in the fusion (lexical = 1); default `hybridWeightFromEnv()`. */
+  denseWeight?: number;
+  signal?: AbortSignal;
+}
+
+export interface CorpusSearchPage {
+  hits: CorpusHit[];
+  total: number;
+  offset: number;
+  /** `hybrid` when BM25 and dense rankings were fused, else `lexical`. */
+  mode: "lexical" | "hybrid";
+  /** The embedding model whose vectors were searched (hybrid only). */
+  model?: string;
+  /** Why a configured hybrid search fell back to BM25 (never an error). */
+  degraded?: "embedding_model_mismatch" | "embedding_unavailable";
+}
+
+/**
+ * One page of a corpus search that fuses BM25 with dense vectors when it can:
+ * the corpus holds vectors from the configured query embedder's model. With
+ * no embedder, no vectors, a different model or an embedding failure, it is
+ * exactly `searchCorpusPage` (BM25), labelled by `mode` / `degraded`.
+ */
+export async function searchCorpusHybridPage(
+  name: string,
+  query: string,
+  opts: HybridSearchOptions = {},
+): Promise<CorpusSearchPage> {
+  const embedder = opts.embedder === undefined ? corpusEmbedder() : opts.embedder;
+  const lexical = (degraded?: CorpusSearchPage["degraded"]): CorpusSearchPage => ({
+    ...searchCorpusPage(name, query, opts),
+    mode: "lexical",
+    ...(degraded ? { degraded } : {}),
+  });
+  if (!embedder) return lexical();
+  if (!isCorpusName(name)) throw new Error(`invalid corpus name "${name}"`);
+  const dir = opts.dir ?? corpusDir();
+  const db = corpusDb(name, dir);
+  const path = corpusPath(name, dir);
+  const sets = corpusVectorSets(db);
+  if (sets.length === 0) return lexical();
+  const info = sets.find((s) => s.model === embedder.id && s.count > 0);
+  if (!info) return lexical("embedding_model_mismatch");
+  const k = Math.min(Math.max(opts.k ?? 5, 1), 100);
+  const offset = Math.max(0, Math.floor(opts.offset ?? 0));
+  const lead = Math.max(0, opts.leadChars ?? CORPUS_LEAD_CHARS);
+  const bm25 = opts.bm25 === null ? undefined : (opts.bm25 ?? bm25FromEnv());
+  const depth = Math.min(Math.max(opts.depth ?? CORPUS_RESCORE_DEPTH, k + offset), 5_000);
+  const weight = opts.denseWeight ?? hybridWeightFromEnv();
+  const key = `${path}\u0000hybrid\u0000${info.model}\u0000${weight}\u0000${bm25 ? `${bm25.k1},${bm25.b}` : "fts5"}\u0000${depth}\u0000${query}`;
+  let ranked = rankings.get(key);
+  if (!ranked) {
+    let vector: number[];
+    try {
+      vector = await queryVector(embedder, info, query, opts.signal);
+    } catch {
+      opts.signal?.throwIfAborted();
+      return lexical("embedding_unavailable");
+    }
+    const dense = denseRanking(db, path, info, vector, depth);
+    ranked = fuseHybrid(rankCorpus(db, path, query, bm25, depth), dense, {
+      denseWeight: weight,
+      depth,
+    });
+    rankings.set(key, ranked);
+    while (rankings.size > RANKINGS_KEPT) rankings.delete(rankings.keys().next().value!);
+  }
+  return {
+    hits: hydrate(db, ranked.slice(offset, offset + k), query, lead),
+    total: ranked.length,
+    offset,
+    mode: "hybrid",
+    model: info.model,
+  };
+}
+
+/** The vector sets a corpus holds (empty ⇒ BM25 only). */
+export function corpusVectors(name: string, dir: string = corpusDir()): CorpusVectorInfo[] {
+  return corpusVectorSets(corpusDb(name, dir));
 }
 
 /**
@@ -670,7 +808,9 @@ export function corpusProvider(name: string, dir: string = corpusDir()): SearchP
     boundOnly: true,
     describe: `local corpus "${name}" (BM25, offline; fetch corpus://${name}/<docid>)`,
     async search(query, o) {
-      const hits = searchCorpus(name, query, { dir, k: o.maxResults ?? 5 });
+      // Hybrid (BM25 + dense) only when an embedder is configured and the
+      // corpus holds its vectors; otherwise exactly the BM25 search.
+      const { hits } = await searchCorpusHybridPage(name, query, { dir, k: o.maxResults ?? 5 });
       return hits.map(
         (h): SearchResult => ({
           title: h.title || h.docid,

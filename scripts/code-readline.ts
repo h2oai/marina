@@ -8,11 +8,10 @@ import {
   type Interface,
   moveCursor,
 } from "node:readline";
-import { TERMINAL_COMMANDS } from "./code-controls";
+import { terminalCompletionItems } from "./code-completion";
 import type { CodeEditor, CodeEditorOptions, CodeEditorState } from "./code-editor";
 import { terminalText } from "./code-presentation";
 import type { TerminalView } from "./code-views";
-import { WORKFLOW_COMPLETIONS } from "./code-workflow";
 
 interface Draft {
   text: string;
@@ -59,9 +58,14 @@ export class ReadlineCodeEditor implements CodeEditor {
       history,
       historySize: this.view === "approvals" ? 0 : 200,
       completer: (line: string) => [
-        (line.includes(" ") ? WORKFLOW_COMPLETIONS : TERMINAL_COMMANDS).filter((command) =>
-          command.startsWith(line),
-        ),
+        this.view === "approvals" || this.state?.answer
+          ? []
+          : terminalCompletionItems(
+              line,
+              this.options.connected,
+              this.options.completions?.(),
+              this.view === "world",
+            ).map((entry) => entry.value),
         line,
       ],
     });

@@ -19,13 +19,17 @@ import { RoutingService } from "../src/routing/service";
 import type { CommandOptions, CommandResult, MarinaAgent, Perception } from "../src/sdk/client";
 import { MarinaRoutingClient } from "../src/sdk/routing-client";
 import { until } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 let directory: string;
+let terminalEnvironment: DisposableStack;
 beforeEach(() => {
+  terminalEnvironment = scopeProcessState({ env: { TERM: "xterm-256color" } });
   directory = mkdtempSync(join(tmpdir(), "marina-terminal-"));
 });
 afterEach(() => {
   rmSync(directory, { recursive: true, force: true });
+  terminalEnvironment.dispose();
 });
 
 function focusedTerminal(columns = 80) {
@@ -1682,4 +1686,34 @@ it("a live panel view preserves coding and world drafts and never turns panel in
     "/panel field request a panel draft",
     "unfinished coding draft continued",
   ]);
+});
+
+it("uses observed hints in scrollback without dispatching before Enter or completing an approval answer", async () => {
+  const input = Object.assign(new PassThrough(), { isTTY: true });
+  const output = Object.assign(new PassThrough(), { isTTY: true, columns: 80 });
+  output.resume();
+  const lines: string[] = [];
+  const terminal = new CodeTerminal({
+    input,
+    output,
+    completions: () => [{ value: "/show check_1", label: "/show check_1" }],
+    line: (text) => lines.push(text),
+    interrupt: () => {},
+    close: () => {},
+  });
+  try {
+    input.write("/show ch\t");
+    expect(lines).toEqual([]);
+    input.write("\n");
+    await until(() => lines.length === 1);
+    expect(lines).toEqual(["/show check_1"]);
+    const answer = terminal.ask("Review input");
+    input.write("/show ch\t\n");
+    expect((await answer).trim()).toBe("/show ch");
+    expect(lines).toEqual(["/show check_1"]);
+  } finally {
+    terminal.close();
+    input.destroy();
+    output.destroy();
+  }
 });
