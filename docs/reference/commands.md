@@ -718,6 +718,12 @@ Usage:
                                                      invalidator can't fill the slot.
   benchmark revalidate <run> reason:<text>         — undo an invalidation (audited the same way);
                                                      needs role.edit, never the run's own author.
+  benchmark purge-content-notes [confirm:yes]      — find the per-item notes older runs left in
+                                                     benchmark:<name> pools (each held an item's
+                                                     question and answer); dry run by default.
+                                                     confirm:yes retires them through note delete's
+                                                     audited path (needs role.edit). Runs now teach
+                                                     only through judged lessons (`lessons`).
 
 Benchmarks: smoke (15-item prompt A/B, always ready), mmlu-pro, truthfulqa, arc-challenge,
   hellaswag, musr, bbh, gsm8k, math, simple-qa, humaneval, ifeval, frames, aime
@@ -781,6 +787,13 @@ Effect: unknown.
 - `field-3` (`--holdout`): text, optional group `option-1`.
 - Group `option-0`: `--max-cost-ratio R`.
 - Group `option-1`: `--holdout F`.
+
+### `benchmark purge-content-notes [confirm:yes]`
+
+Effect: unknown.
+
+- `field-0` (`confirm`): text, optional group `option-0`.
+- Group `option-0`: `confirm:yes`.
 
 ### `benchmark frontier <benchmark>`
 

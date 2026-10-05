@@ -55,11 +55,9 @@ const TRANSLATOR_TIMEOUT_MS = Number.parseInt(process.env.TRANSLATOR_TIMEOUT_MS 
 const CLASSIFIER_MODEL = process.env.SYNTH_CLASSIFIER ?? "";
 const POOLS = (
   process.env.SYNTH_POOLS ??
-  // Domain pools + benchmark-specific pools. The benchmark:* pools are
-  // populated by BenchmarkRunner after each run with per-item outcomes —
-  // wrong-answer patterns get importance 7 so recall surfaces them as
-  // evidence for similar future items. This is the engine-side learning
-  // loop: every benchmark run makes the next one smarter.
+  // Domain pools only. Benchmark runs never deposit item text into memory
+  // (a memorised answer contaminates later runs); what a run teaches is a
+  // judged, general lesson — recall those with the `lessons` command.
   [
     "seed:math",
     "seed:law",
@@ -71,17 +69,6 @@ const POOLS = (
     "seed:business",
     "seed:history",
     "seed:psychology",
-    "benchmark:mmlu-pro",
-    "benchmark:truthfulqa",
-    "benchmark:arc-challenge",
-    "benchmark:hellaswag",
-    "benchmark:musr",
-    "benchmark:bbh",
-    "benchmark:gsm8k",
-    "benchmark:math",
-    "benchmark:simple-qa",
-    "benchmark:humaneval",
-    "benchmark:ifeval",
   ].join(",")
 )
   .split(",")
@@ -392,23 +379,6 @@ async function gatherEvidence(
   // Web search for factual (short-answer benchmarks like SimpleQA)
   if (cls.type === "factual" || cls.type === "creative") {
     tasks.push(gatherFromWeb(agent, topic));
-  }
-
-  // Consult benchmark-specific pools by type affinity. These pools are
-  // populated in-engine by BenchmarkRunner after each run, so as the sweep
-  // progresses we accumulate "wrong-answer" + "correct-recipe" notes that
-  // surface on similar future items. No external feedback script required.
-  const benchPoolsByType: Record<string, string[]> = {
-    "multi-step": ["benchmark:musr", "benchmark:bbh"],
-    reasoning: ["benchmark:mmlu-pro", "benchmark:arc-challenge", "benchmark:bbh"],
-    math: ["benchmark:gsm8k", "benchmark:math", "benchmark:mmlu-pro"],
-    factual: ["benchmark:simple-qa", "benchmark:truthfulqa"],
-    instruction: ["benchmark:ifeval"],
-    code: ["benchmark:humaneval"],
-    creative: [],
-  };
-  for (const bp of benchPoolsByType[cls.type] ?? []) {
-    if (POOLS.includes(bp)) tasks.push(gatherFromPool(agent, bp, topic));
   }
 
   const chunks = (await Promise.all(tasks)).filter((s) => s.length > 0);
