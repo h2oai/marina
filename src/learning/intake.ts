@@ -7,9 +7,17 @@
  * case text" lives in one place.
  */
 
+import { benchmarkExecution } from "../engine/benchmark-execution";
+import { getErrorMessage } from "../engine/errors";
 import type { MarinaDB } from "../persistence/database";
-import type { Outcome } from "./outcomes";
-import { noteOutcome } from "./service";
+import { type LessonSink, OUTCOME_DOMAINS, type Outcome } from "./outcomes";
+import {
+  findLessons,
+  lessonRetireSink,
+  noteOutcome,
+  type RetireResult,
+  retireLessons,
+} from "./service";
 
 interface RunLike {
   id: string;
@@ -58,8 +66,15 @@ export function benchmarkRunOutcome(db: MarinaDB, run: RunLike): Outcome | undef
   if (run.score === null || run.score === undefined) return undefined;
   const others = db
     .leaderboardBenchmark(run.benchmark, 50)
-    .filter((r) => r.id !== run.id && (!run.slice_hash || r.slice_hash === run.slice_hash));
+    .filter(
+      (r) =>
+        r.id !== run.id &&
+        !!run.slice_hash &&
+        r.slice_hash === run.slice_hash &&
+        r.judge === run.judge,
+    );
   const best = others[0];
+  const execution = benchmarkExecution(db.getBenchmarkItems(run.id));
   const succeeded = !best || run.score >= (best.score ?? 0);
   const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
   return {
@@ -68,15 +83,19 @@ export function benchmarkRunOutcome(db: MarinaDB, run: RunLike): Outcome | undef
     succeeded,
     score: run.score,
     resolvedAt: new Date(run.completed_at ?? Date.now()).toISOString(),
-    attempted: `${run.benchmark} with ${describeTarget(run)}`,
+    attempted: `${run.benchmark}; declared target: ${describeTarget(run)}`,
     signals: [
+      `execution: ${execution.tracedItems}/${execution.items} items trace-linked, ${execution.unknownItems} unknown, ${execution.windowOnlyItems} window-only, ${execution.unverifiedItems} unverified`,
+      `observed residents: ${execution.agents.length}; multiple residents on ${execution.multipleResidentItems} items; participation is not causal benefit`,
       ...(run.n ? [`n=${run.n}`] : []),
-      ...(run.cost_usd && run.n ? [`$${(run.cost_usd / run.n).toFixed(4)}/item`] : []),
+      ...(run.cost_usd !== null && run.cost_usd !== undefined && run.n
+        ? [`$${(run.cost_usd / run.n).toFixed(4)}/item`]
+        : []),
       ...(run.judge ? [`judge ${run.judge}`] : []),
     ],
     detail: best
       ? `${pct(run.score)} vs best other ${pct(best.score ?? 0)} (${describeTarget(best)})`
-      : `${pct(run.score)}; first run on this slice`,
+      : `${pct(run.score)}; no comparable baseline; superiority untested`,
     refs: [`bench:${run.id}`, ...(best ? [`bench:${best.id}`] : [])],
   };
 }
@@ -87,4 +106,41 @@ export function noteBenchmarkRun(db: MarinaDB, run: RunLike): void {
   if (db.getBenchmarkRun(run.id)?.status === "invalid") return;
   const outcome = benchmarkRunOutcome(db, run);
   if (outcome) noteOutcome(db, outcome);
+}
+
+/**
+ * A ledger run was invalidated (`benchmark invalidate`, `benchmark:import
+ * --invalidate`): retire every current lesson that cites it (`bench:<id>` in
+ * its refs — lessons learned from the run, and lessons that compared another
+ * run against it). Retirement is the audited `revise` path: the lesson stops
+ * being served, its history and the reason stay readable. Revalidating the
+ * run does not bring them back (a new outcome teaches again). Never throws.
+ */
+export async function retireLessonsForRun(
+  db: MarinaDB,
+  runId: string,
+  retirement: { reason: string; by: string },
+  opts: { sink?: LessonSink } = {},
+): Promise<RetireResult & { error?: string }> {
+  try {
+    const sink = opts.sink ?? lessonRetireSink(db);
+    const found = await findLessons(
+      db,
+      OUTCOME_DOMAINS,
+      { ref: `bench:${runId}` },
+      {
+        sink,
+        limit: 1_000,
+      },
+    );
+    if (!found.length) return { retired: [], failed: [] };
+    return await retireLessons(
+      db,
+      found,
+      { reason: `benchmark run ${runId} invalidated: ${retirement.reason}`, by: retirement.by },
+      { sink },
+    );
+  } catch (err) {
+    return { retired: [], failed: [], error: getErrorMessage(err) };
+  }
 }

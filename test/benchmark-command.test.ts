@@ -32,13 +32,15 @@ describe("benchmark command (rank-gated in-world primitive)", () => {
     );
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     engine.stop();
+    await engine.drainCommands();
+    await engine.shutdown();
     db.close();
     cleanupDb(dbPath);
   });
 
-  it("`benchmark result` names the agents, role and prompt version a run measured", () => {
+  it("`benchmark result` distinguishes declared subjects from observed execution", async () => {
     db.insertBenchmarkRun({
       id: "br_measured_1",
       benchmark: "smoke",
@@ -54,9 +56,10 @@ describe("benchmark command (rank-gated in-world primitive)", () => {
     engine.addConnection(conn);
     engine.login("c-bench", "Reviewer");
     conn.clear();
-    engine.processCommand(conn.entity!, "benchmark result br_measured_1");
+    await engine.dispatchCommand(conn.entity!, "benchmark result br_measured_1");
     const text = stripAnsi(conn.allTextJoined());
-    expect(text).toContain("measured:    Scout2 (role scout-v2, prompt ab12cd34ef56)");
+    expect(text).toContain("declared:    Scout2 (role scout-v2, prompt ab12cd34ef56)");
+    expect(text).toContain("Observed residents: unproven.");
     expect(text).not.toContain("subjects=");
   });
 

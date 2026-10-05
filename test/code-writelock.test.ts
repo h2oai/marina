@@ -7,6 +7,7 @@ import { LocalWorkspace } from "../src/coding/local-workspace";
 import type { ChannelManager } from "../src/coordination/channel-manager";
 import type { CreateCrewOpts, CrewManager } from "../src/coordination/crew-manager";
 import { codeCommand } from "../src/engine/commands/code";
+import { parseHandoffArgs } from "../src/engine/commands/code/session";
 import { Engine } from "../src/engine/engine";
 import { grant } from "../src/engine/safety-gates";
 import { MarinaDB } from "../src/persistence/database";
@@ -280,27 +281,120 @@ describe("code write-lock enforcement (Phase 4 B2/B3)", () => {
     expect(stripAnsi(sent.join("\n"))).toContain("Holder: impl");
   });
 
-  it("code handoff <notes> to <agent> transfers the lock + writes a handoff", async () => {
+  /** A session started by Alice where `carol` has acted (so she is a participant). */
+  async function handoffSession(title: string) {
     const entity = engine.entities.get(conn.entity!)!;
+    const bob = makeAgentEntity("agent_bob", "bob");
     const sent: string[] = [];
     const command = codeCommand({
       db,
-      getEntity: (id) => (id === entity.id ? entity : undefined),
+      getEntity: (id) => (id === entity.id ? entity : id === bob.id ? bob : undefined),
       workspace: new LocalWorkspace(),
     });
     const ctx = testRoomContext(sent);
-
-    await command.handler(ctx, inputFor(entity, "code start Handoff"));
+    await command.handler(ctx, inputFor(entity, `code start ${title}`));
     const sessionId = entity.properties.coding_session_id as string;
-    await command.handler(ctx, inputFor(entity, "code handoff finished the resolver to carol"));
+    db.createCodingEvent({ sessionId, actor: "carol", kind: "note_recorded", payload: {} });
+    sent.length = 0;
+    const run = (who: Entity, raw: string) => command.handler(ctx, inputFor(who, raw));
+    const handoffs = () =>
+      db.listCodingArtifacts(sessionId, 50).filter((a) => a.kind === "handoff");
+    return { entity, bob, sent, sessionId, run, handoffs };
+  }
+
+  it("legacy `code handoff <notes> to <participant>` transfers the lock + writes a handoff", async () => {
+    const { entity, sessionId, run, handoffs } = await handoffSession("Handoff");
+    await run(entity, "code handoff finished the resolver to carol");
 
     expect(db.getCodingSession(sessionId)!.writer).toBe("carol");
     const kinds = db.listCodingArtifacts(sessionId, 50).map((a) => a.kind);
-    expect(kinds).toContain("handoff");
     expect(kinds).toContain("writer_changed");
-    const handoff = db.listCodingArtifacts(sessionId, 50).find((a) => a.kind === "handoff")!;
     // Notes exclude the "to <agent>" tail.
-    expect(handoff.content_text).toBe("finished the resolver");
+    expect(handoffs()[0]!.content_text).toBe("finished the resolver");
+  });
+
+  it("explicit `to:<agent>` transfers and keeps every word of the notes", async () => {
+    const { entity, sessionId, run, handoffs } = await handoffSession("Explicit");
+    await run(entity, "code handoff moved the parser to error handling to:carol");
+
+    expect(db.getCodingSession(sessionId)!.writer).toBe("carol");
+    expect(handoffs()[0]!.content_text).toBe("moved the parser to error handling");
+    const meta = JSON.parse(handoffs()[0]!.metadata_json) as { handoffTo?: string };
+    expect(meta.handoffTo).toBe("carol");
+  });
+
+  it("a `to` inside the notes never moves the lock", async () => {
+    const { entity, sent, sessionId, run, handoffs } = await handoffSession("Prose");
+    await run(entity, "code writer carol");
+    sent.length = 0;
+    // Progress notes whose prose contains several "to"s, one in the final pair.
+    const notes = "store failures are transferred to error state; next step is to use";
+    await run(entity, `code handoff ${notes}`);
+
+    expect(db.getCodingSession(sessionId)!.writer).toBe("carol");
+    expect(handoffs()[0]!.content_text).toBe(notes);
+    expect(
+      db.listCodingArtifacts(sessionId, 50).filter((a) => a.kind === "writer_changed"),
+    ).toHaveLength(1);
+    expect(stripAnsi(sent.join("\n"))).toContain("Handoff stored");
+  });
+
+  it("a trailing `to <word>` that is not a participant stores the note and keeps the lock", async () => {
+    const { entity, sent, sessionId, run, handoffs } = await handoffSession("Trailing");
+    await run(entity, "code writer carol");
+    sent.length = 0;
+    await run(entity, "code handoff state is transferred to error");
+
+    expect(db.getCodingSession(sessionId)!.writer).toBe("carol");
+    expect(handoffs()[0]!.content_text).toBe("state is transferred to error");
+    const out = stripAnsi(sent.join("\n"));
+    expect(out).toContain('"error" is not a session participant');
+    expect(out).toContain("to:<agent>");
+  });
+
+  it("an unknown explicit recipient refuses the handoff and keeps the lock", async () => {
+    const { entity, sent, sessionId, run, handoffs } = await handoffSession("Unknown");
+    await run(entity, "code writer carol");
+    sent.length = 0;
+    await run(entity, "code handoff ready for review to:LoginFacade");
+
+    expect(db.getCodingSession(sessionId)!.writer).toBe("carol");
+    expect(handoffs()).toHaveLength(0);
+    const out = stripAnsi(sent.join("\n"));
+    expect(out).toContain('"LoginFacade" is not a participant');
+    expect(out).toContain("Write lock unchanged (carol)");
+  });
+
+  it("an existing entity that never joined the session is not a valid recipient", async () => {
+    const { entity, bob, sent, sessionId, run } = await handoffSession("Stranger");
+    expect(bob.name).toBe("bob");
+    await run(entity, "code handoff over to you to:bob");
+    expect(db.getCodingSession(sessionId)!.writer).toBeNull();
+    expect(stripAnsi(sent.join("\n"))).toContain('"bob" is not a participant');
+  });
+
+  it("only the holder or the creator can pass a held lock on", async () => {
+    const { entity, bob, sent, sessionId, run, handoffs } = await handoffSession("Authority");
+    await run(entity, "code writer carol");
+    bob.properties.coding_session_id = sessionId;
+    // bob acts in the session (so he is a participant), but does not hold the lock.
+    await run(bob, "code plan look around");
+    sent.length = 0;
+    await run(bob, "code handoff taking over to:bob");
+    expect(db.getCodingSession(sessionId)!.writer).toBe("carol");
+    expect(handoffs()).toHaveLength(0);
+    expect(stripAnsi(sent.join("\n"))).toContain("can pass the write lock on");
+  });
+
+  it("the tool spelling `to:<agent> -- <notes>` keeps notes literal", async () => {
+    const { entity, sessionId, run, handoffs } = await handoffSession("Tool");
+    await run(entity, "code handoff to:carol -- wired the facade to:LoginFacade to use");
+    expect(db.getCodingSession(sessionId)!.writer).toBe("carol");
+    expect(handoffs()[0]!.content_text).toBe("wired the facade to:LoginFacade to use");
+
+    await run(entity, "code handoff -- ends with to carol");
+    expect(db.getCodingSession(sessionId)!.writer).toBe("carol");
+    expect(handoffs()[0]!.content_text).toBe("ends with to carol");
   });
 });
 
@@ -446,5 +540,39 @@ describe("code autonomous crew assembly (Phase 4 B1)", () => {
     expect(kinds).not.toContain("crew_dispatched");
     expect(db.getCodingSession(sessionId)!.writer).toBeNull();
     expect(stripAnsi(sent.join("\n"))).toContain("Could not assemble a crew");
+  });
+});
+
+describe("parseHandoffArgs", () => {
+  const parse = (raw: string) => parseHandoffArgs(raw.split(/\s+/));
+
+  it("never takes a `to` in the middle of the notes", () => {
+    expect(parse("errors are transferred to error state")).toEqual({
+      text: "errors are transferred to error state",
+      errors: [],
+    });
+  });
+
+  it("offers only a final `to <word>` as a legacy candidate", () => {
+    expect(parse("ready for review to alice.")).toEqual({
+      text: "ready for review to alice.",
+      trailing: "alice",
+      textWithoutTrailing: "ready for review",
+      errors: [],
+    });
+  });
+
+  it("reads every modifier spelling of the explicit recipient", () => {
+    for (const raw of ["notes to:alice", "notes to=alice", "notes --to alice", "to:alice notes"]) {
+      expect(parse(raw)).toEqual({ text: "notes", explicit: "alice", errors: [] });
+    }
+  });
+
+  it("treats everything after `--` as literal notes", () => {
+    expect(parse("-- handed to alice")).toEqual({ text: "handed to alice", errors: [] });
+  });
+
+  it("reports a modifier with no value", () => {
+    expect(parse("notes to:").errors).toEqual(["to: missing value"]);
   });
 });

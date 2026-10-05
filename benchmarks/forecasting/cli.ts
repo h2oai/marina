@@ -9,8 +9,9 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { isolationOfSpec } from "../../src/arena/research/isolation";
+import { forecastLessonsFor } from "../../src/learning/forecast-bridge";
 import type { MarinaDB } from "../../src/persistence/database";
 import {
   type CatalogueModel,
@@ -27,6 +28,7 @@ import {
   forecasterFor,
   parseConfigs,
 } from "./configs";
+import { releaseTable } from "./knowledge";
 import {
   addLeakCounts,
   auditForecast,
@@ -36,7 +38,6 @@ import {
   type LeakCounts,
 } from "./leak-audit";
 import { type BacktestItem, type Selection, selectConfiguration } from "./select";
-import { learnedLessons } from "./shared";
 
 /**
  * Models the operator asked to be considered whatever the vendor heuristic
@@ -132,16 +133,18 @@ export async function runSelection(opts: {
   retriever?: string;
   concurrency?: number;
   out: string;
+  /** Continue a stopped selection from its journals (`<out>-runs/`), same configuration only. */
+  resume?: boolean;
   log: (line: string) => void;
 }): Promise<SavedSelection> {
   const retriever = opts.retriever ?? BACKTEST_RETRIEVER;
-  const lessons = learnedLessons(opts.db);
+  const lessons = forecastLessonsFor(opts.db);
   const leakAudit: Record<string, LeakCounts> = {};
   const selection = await selectConfiguration({
     benchmark: opts.benchmark,
     items: opts.items,
     candidates: opts.configs,
-    releases: releases(opts.catalogue),
+    releases: releaseTable(releases(opts.catalogue)),
     makeForecaster: (c) =>
       forecasterFor(c, depsForConfig(c, { lessons, retriever, captureEvidence: true }), {
         onAnswer: (req, answer, reports) => {
@@ -161,6 +164,9 @@ export async function runSelection(opts: {
     isolation: isolationOfSpec(retriever, false),
     ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
     ledger: opts.db,
+    // Answered items are kept as they land: a cap stop never loses paid-for work.
+    journalDir: join(dirname(opts.out), `${basename(opts.out, ".json")}-runs`),
+    ...(opts.resume ? { resume: true } : {}),
     log: opts.log,
   });
   const saved: SavedSelection = {

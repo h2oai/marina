@@ -75,6 +75,15 @@ What happens:
 4. **Citation check** — as above.
 5. **Runs** — K independent answers (analyst models used in turn), each validated against the
    answer's shape and, with a judge, weighted by how well the verified facts support it.
+   - A run whose answer misses the JSON shape gets output repair (a parse, then one re-encoding
+     shot, labelled `repaired:parse` / `repaired:shot`). Repair never adds content.
+   - A run whose answer has the right type but is incomplete — a ranking short of its size, a
+     multi-select short of its minimum, no answer, or a probability missing for some option —
+     gets ONE more call to the same analyst. The call shows the run's own answer and reasons and
+     names exactly what is missing. Its reply is used only if it now validates, labelled
+     `repaired:completion` (the run's `completion` record keeps what was missing and whether it
+     was accepted); its cost is the run's. It is skipped in the time budget's final phase, and a
+     spend-cap refusal leaves the run as it was. `options.completion: false` turns it off.
 6. **Combine** — by type: weighted plurality for a choice or a short string, per-option frequency
    (≥ half the weight) for a set, the median (a 20 % trimmed mean from five runs) for a number,
    Borda count for a ranking. The runs' agreement is the answer's `confidence`.
@@ -94,17 +103,35 @@ critic) checks its draft against the dossier and the resolution rules — option
 scale, the latest reading, arithmetic — and a concrete correction replaces the draft. Each run
 records the verdict and, on a correction, the draft it replaced.
 
-**Lessons.** A forecast can recall lessons from questions that have already resolved: a terse,
-typed record per outcome — answer type, a category, the failure mode (`wrong option`, `numeric
-over 6.0%`, …) and one corrective rule — written only after the outcome is known
-(`src/forecast/lessons.ts`). They are canonical memory records (reflection tier, subject
-`forecast-lesson`, `valid_time.from` = when the outcome became known) written through the memory
-service. Recall is lexical and byte-budgeted, and a lesson is visible to a forecast only when its
-outcome was known at that forecast's evidence cutoff (`visibleAt`) — so a forecast made "as of"
-September never sees a lesson learned from an October result. The lessons used are recorded on
-the answer (`lessons`), and the plan, the runs and the critic all see them. A lesson retired by a
-`revise` that closes its `valid_time` (history kept) is never recalled; the memory service's
-`search` excludes it before ranking, so retired lessons don't crowd out live ones.
+**Lessons.** A forecast can recall lessons from questions that have already resolved. There is
+one lesson system: the judged, audited outcome loop
+([outcome lessons](../architecture/memory.md#outcome-lessons-srclearning)). A resolved forecast,
+FutureX week, Metaculus or ForecastBench question, or backtest row becomes an outcome; the outcome
+becomes a candidate lesson (a category and one corrective rule), the decision layer judges it, and
+it is stored in the `lessons:forecast` space. Every forecasting surface — the `forecast` command,
+`POST /v1/forecast`, FutureX, Metaculus, ForecastBench and `select` backtests — recalls through the
+same `forecastLessonsFor` (`src/learning/forecast-bridge.ts`), from the `forecast` and `arena`
+domains, so a `+nolessons` ablation differs from its base arm only by the lessons. Recall needs no
+armed learning loop and never creates the pool. Recall is lexical and byte-budgeted, and a lesson
+is visible to a forecast only when its outcome was known at that forecast's evidence cutoff
+(`visibleAt`) — so a forecast made "as of" September never sees a lesson learned from an October
+result. The lessons used are recorded on the answer (`lessons`), and the plan, the runs and the
+critic all see them. `MARINA_LESSONS=observe` records them as `observedLessons` and shows them to
+no model (the ablation arm); `off` recalls nothing. A retired lesson (`lessons retire`, or every
+lesson citing a ledger run when that run is invalidated) is never recalled.
+
+**One builder.** The `forecast … type:` command and `POST /v1/forecast` with an `answer` spec build
+a forecast the same way (`src/forecast/surface.ts`): the operator's models, the lesson pool, the
+prior and recalibration settings, and the operator's formation (`MARINA_FORECAST_FORMATION`) routed
+by `MARINA_FORECAST_ROUTE`. The API adds only `runs`, `researchRounds` and `critique`.
+
+**Scoring a typed answer.** A typed answer linked to a resolver Sample (`resolves:` or
+`forecast track`) is scored when it resolves (`src/forecast/typed-score.ts`): a choice by
+multiclass Brier from its distribution (else its pick), a multi-select by per-option Brier, a
+ranking by top-k overlap, a text answer by normalised exact match, and a number by CRPS from its
+uncertainty. The outcome is matched to the answer's own options; one that matches none leaves the
+answer open rather than scoring it against a guess. Each scored answer becomes an outcome for the
+lesson loop.
 
 **Retrieval isolation** (for past cutoffs). Date-filtered engines (`tavily:`, `exa:` with
 `EXA_API_KEY`) only return pages published inside the window. Any other engine can be wrapped with

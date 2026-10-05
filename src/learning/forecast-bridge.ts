@@ -2,65 +2,60 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * The forecaster's `LessonStore` over the general lesson pool: recall reads the
- * `forecast` domain of `lessons:<domain>` (judged lessons from resolved
- * forecasts, arena rounds and benchmark runs) and, when given, a legacy
- * forecast-lesson store (`src/forecast/lessons.ts`), merged under the same
- * leakage rule and budget. `MARINA_LESSONS=observe|off` inject nothing.
- * Writes go to the legacy store when one is given: the general pool is written
- * only through the judged outcome loop.
+ * The forecaster's `LessonStore` over the one lesson pool: recall reads the
+ * `forecast` and `arena` domains of `lessons:<domain>` (judged lessons from
+ * resolved forecasts, FutureX weeks, arena rounds and backtests), applies the
+ * leakage rule `visibleAt` at the forecast's cutoff and one shared budget.
+ * Every forecasting surface uses it — the `forecast` command, `POST
+ * /v1/forecast`, FutureX, Metaculus, ForecastBench and `select` backtests — so
+ * a `+nolessons` ablation differs from its base arm only by the lessons.
+ *
+ *   MARINA_LESSONS=on        recalled lessons are injected (and recorded)
+ *   MARINA_LESSONS=observe   recalled lessons are returned `observed: true`:
+ *                            the forecaster records them, never injects them
+ *   MARINA_LESSONS=off       nothing is recalled
+ *
+ * Recall needs no armed learning loop: without one it reads the pool through
+ * `lessonRecallSinkFor`, which never creates the lessons account or a space.
+ * Lessons are written only through the judged outcome loop (`noteOutcome`).
  */
 
 import type { ForecastLesson, LessonStore } from "../forecast/lessons";
 import type { MarinaDB } from "../persistence/database";
-import { formatLesson, type Lesson, type LessonSink } from "./outcomes";
+import { formatLesson, type Lesson, type LessonSink, type OutcomeDomain } from "./outcomes";
 import { recallAcross } from "./service";
 
-function toForecastLesson(l: Lesson): ForecastLesson {
+/** The domains a forecast recalls from. */
+export const FORECAST_LESSON_DOMAINS: readonly OutcomeDomain[] = ["forecast", "arena"];
+
+function toForecastLesson(l: Lesson, observed: boolean): ForecastLesson {
   return {
     ...(l.id ? { id: l.id } : {}),
     text: formatLesson(l),
-    answerType: "text",
-    ...(l.category ? { category: l.category } : {}),
-    ...(l.rule ? { rule: l.rule } : {}),
-    ...(l.score !== undefined ? { score: l.score } : {}),
     resolvedAt: l.resolvedAt,
-    origin: l.source,
+    ...(l.category ? { category: l.category } : {}),
+    ...(l.score !== undefined ? { score: l.score } : {}),
+    ...(l.source ? { origin: l.source } : {}),
+    ...(observed ? { observed: true } : {}),
   };
 }
 
 export function forecastLessonsFor(
   db: MarinaDB | undefined,
-  opts: { legacy?: LessonStore; env?: NodeJS.ProcessEnv; sink?: LessonSink } = {},
+  opts: { env?: NodeJS.ProcessEnv; sink?: LessonSink } = {},
 ): LessonStore {
   return {
-    async write(lesson) {
-      return opts.legacy ? opts.legacy.write(lesson) : {};
-    },
     async recall(query, asOf, recallOpts) {
-      const limit = recallOpts?.limit ?? 6;
-      const maxBytes = recallOpts?.maxBytes ?? 1_500;
-      const general = await recallAcross(db, ["forecast", "arena"], query, {
+      const r = await recallAcross(db, FORECAST_LESSON_DOMAINS, query, {
         asOf,
-        limit,
-        maxBytes,
+        limit: recallOpts?.limit ?? 6,
+        maxBytes: recallOpts?.maxBytes ?? 1_500,
         ...(opts.env ? { env: opts.env } : {}),
         ...(opts.sink ? { sink: opts.sink } : {}),
       });
-      if (general.mode !== "on") return [];
-      const legacy = opts.legacy
-        ? await opts.legacy.recall(query, asOf, recallOpts).catch(() => [])
-        : [];
-      const merged = [...general.inject.map(toForecastLesson), ...legacy];
-      const out: ForecastLesson[] = [];
-      let bytes = 0;
-      for (const l of merged) {
-        const n = Buffer.byteLength(l.text);
-        if (out.length >= limit || bytes + n > maxBytes) break;
-        out.push(l);
-        bytes += n;
-      }
-      return out;
+      if (r.mode === "on") return r.inject.map((l) => toForecastLesson(l, false));
+      if (r.mode === "observe") return r.recalled.map((l) => toForecastLesson(l, true));
+      return [];
     },
   };
 }

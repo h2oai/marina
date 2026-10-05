@@ -20,6 +20,8 @@ import { recordScoreOutcome } from "../coordination/score-outcome";
 import { loadScore } from "../coordination/score-store";
 import { positionSettlementFinder } from "../engine/commands/position";
 import { Logger } from "../engine/logger";
+import type { TypedForecastAnswer } from "../forecast/typed";
+import { scoreTypedAnswer } from "../forecast/typed-score";
 import { noteOutcome } from "../learning/service";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent, EntityId, RoomId } from "../types";
@@ -355,9 +357,12 @@ export function extractNumericOutcome(sample: Sample): number | undefined {
  * `forecast track <id> <sampleId>`). When that Sample resolves, each open
  * answer is settled once: a probability gets its Brier score against the
  * yes/no outcome, a number its CRPS against the numeric outcome. An answer
- * that produced no value is settled with the outcome and no score. Typed
- * answers (choice / multi / ranking / text) stay open: this finder does not
- * score them. The row is the record — `forecast list` shows the track record.
+ * that produced no value is settled with the outcome and no score. A typed
+ * answer (choice / multi / ranking / text) is scored by `scoreTypedAnswer`
+ * (`src/forecast/typed-score.ts`) against the outcome matched to its own
+ * options; an outcome it cannot match leaves the row open. A typed number is a
+ * number (CRPS from its uncertainty). Every scored answer is handed to the
+ * lesson loop. The row is the record — `forecast list` shows the track record.
  */
 export const forecastQuestionFinder: CalibrationFinder = {
   name: "forecast-question",
@@ -423,6 +428,39 @@ export const forecastQuestionFinder: CalibrationFinder = {
             refs: [`forecast:${f.id}`, `sample:${sample.id}`],
             privateContext: f.question,
           });
+      } else {
+        let answer: TypedForecastAnswer;
+        try {
+          answer = JSON.parse(f.answer_json) as TypedForecastAnswer;
+        } catch {
+          continue;
+        }
+        if (!answer?.answer || answer.answer.type !== f.kind) continue;
+        const r = scoreTypedAnswer(answer, sample.value);
+        if (!r) continue;
+        db.resolveForecastAnswer(
+          f.id,
+          JSON.stringify({
+            sampleId: sample.id,
+            outcome: r.outcome,
+            metric: r.metric,
+            quality: r.quality,
+            correct: r.succeeded,
+          }),
+          r.loss,
+          sample.ts,
+        );
+        noteOutcome(db, {
+          domain: "forecast",
+          source: `forecast:${f.kind}`,
+          succeeded: r.succeeded,
+          score: r.quality,
+          resolvedAt: new Date(sample.ts).toISOString(),
+          attempted: `${f.kind} forecast`,
+          detail: `${r.metric} loss ${r.loss.toFixed(3)}`,
+          refs: [`forecast:${f.id}`, `sample:${sample.id}`],
+          privateContext: `${f.question}\n${JSON.stringify(r.outcome)}\n${f.prediction ?? ""}`,
+        });
       }
     }
   },

@@ -10,6 +10,8 @@
  *     --target-kind model|crew|population --target '<json or model id>' \
  *     [--label name] [--judge "<model> @ <route>"] [--cost-usd N] [--dry-run] \
  *     [--group key | --replicate-of <runId>] [--learn]
+ *   DB_PATH=marina.db bun run benchmark:import --attach-to <runId> \
+ *     --source-db <original-world.db> --source-run <original-runId> [--dry-run]
  *   DB_PATH=marina.db bun run benchmark:import --regroup <runId,runId,…> --group key --reason "<why>"
  *   DB_PATH=marina.db bun run benchmark:import --invalidate <runId> --reason "<why>"
  *   DB_PATH=marina.db bun run benchmark:import --revalidate <runId> --reason "<why>"
@@ -45,10 +47,12 @@
  * reachable; otherwise the lesson is recorded unverified, never trusted.
  */
 
+import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { benchmarkExecution, formatBenchmarkExecution } from "../src/engine/benchmark-execution";
 import {
   type HarnessResultFile,
   ledgerFromHarnessResult,
@@ -56,15 +60,23 @@ import {
   TARGET_KINDS,
 } from "../src/engine/benchmark-ledger";
 import { replicateGroupOf, validReplicateGroup } from "../src/engine/benchmark-replicates";
-import { noteBenchmarkRun } from "../src/learning/intake";
+import { noteBenchmarkRun, retireLessonsForRun } from "../src/learning/intake";
 import { enableOutcomeLearning, settleOutcomes } from "../src/learning/service";
 import { MarinaDB } from "../src/persistence/database";
 import type { BenchmarkTargetKind } from "../src/persistence/db-benchmarks";
+import {
+  getBenchmarkRun,
+  previewBenchmarkSourceEvidence,
+  readBenchmarkSourceEvidence,
+} from "../src/persistence/db-benchmarks";
 
 const { positionals, values } = parseArgs({
   args: process.argv.slice(2),
   allowPositionals: true,
   options: {
+    "source-db": { type: "string" },
+    "source-run": { type: "string" },
+    "attach-to": { type: "string" },
     "target-kind": { type: "string" },
     target: { type: "string" },
     label: { type: "string" },
@@ -84,6 +96,82 @@ const { positionals, values } = parseArgs({
 function fail(msg: string): never {
   console.error(`benchmark-import: ${msg}`);
   process.exit(2);
+}
+
+// An explicit local source is read in one readonly snapshot; it is never migrated.
+const sourcePath = values["source-db"];
+const sourceRun = values["source-run"];
+if (!!sourcePath !== !!sourceRun) fail("--source-db and --source-run must be supplied together");
+if (
+  (sourcePath || values["attach-to"]) &&
+  (values.regroup || values.invalidate || values.revalidate)
+)
+  fail("source attribution cannot be combined with regroup/validity changes");
+const evidence =
+  sourcePath && sourceRun
+    ? (() => {
+        const source = new Database(sourcePath, { readonly: true });
+        try {
+          source.exec("PRAGMA query_only = ON; BEGIN");
+          return readBenchmarkSourceEvidence(source, sourceRun);
+        } finally {
+          source.close();
+        }
+      })()
+    : undefined;
+if (values["attach-to"]) {
+  if (!evidence) fail("--attach-to requires --source-db and --source-run");
+  if (
+    positionals.length ||
+    values.learn ||
+    values.group ||
+    values["replicate-of"] ||
+    values["cost-usd"] ||
+    values.target ||
+    values["target-kind"] ||
+    values.label ||
+    values.judge
+  )
+    fail("--attach-to only restores existing item attribution; omit import/learning options");
+  const path = process.env.DB_PATH || "marina.db";
+  if (values["dry-run"]) {
+    const target = new Database(path, { readonly: true });
+    try {
+      target.exec("PRAGMA query_only = ON; BEGIN");
+      const run = getBenchmarkRun(target, values["attach-to"]);
+      if (!run || !["completed", "invalid"].includes(run.status))
+        fail("Target run must be completed or invalid");
+      const updates = previewBenchmarkSourceEvidence(
+        run.benchmark,
+        readBenchmarkSourceEvidence(target, run.id).items.map((it) => ({
+          ...it,
+          participants_json: JSON.stringify(it.participants),
+        })),
+        evidence,
+      );
+      console.log(
+        `would restore ${updates.length} item attributions on ${run.id}; scores unchanged`,
+      );
+    } finally {
+      target.close();
+    }
+  } else {
+    const target = new MarinaDB(path);
+    try {
+      const result = target.attachBenchmarkSourceEvidence(values["attach-to"], evidence);
+      console.log(
+        `restored ${result.changed} item attributions; sha256:${result.sourceHash}; scores unchanged`,
+      );
+      console.log(
+        formatBenchmarkExecution(
+          benchmarkExecution(target.getBenchmarkItems(values["attach-to"])),
+        ).join("\n"),
+      );
+    } finally {
+      target.close();
+    }
+  }
+  process.exit(0);
 }
 
 if (values.group !== undefined && !validReplicateGroup(values.group)) {
@@ -146,6 +234,13 @@ if (values.invalidate !== undefined || values.revalidate !== undefined) {
     });
     if (!res.ok) fail(res.error);
     console.log(`${runId}: ${res.status} (audit row ${res.id}) — ${reason}`);
+    if (action === "invalidate") {
+      // Lessons citing the run are retired through the audited revise path.
+      const r = await retireLessonsForRun(db, runId, { reason, by: "operator" });
+      console.log(
+        `  lessons citing it: ${r.retired.length} retired${r.failed.length ? `, ${r.failed.length} failed` : ""}${r.error ? ` (${r.error})` : ""}`,
+      );
+    }
   } finally {
     db.close();
   }
@@ -182,6 +277,7 @@ function resultFiles(paths: string[]): string[] {
 }
 
 const files = resultFiles(positionals);
+if (evidence && files.length !== 1) fail("source attribution applies to exactly one result file");
 const costUsd = values["cost-usd"] === undefined ? undefined : Number(values["cost-usd"]);
 if (costUsd !== undefined && (!Number.isFinite(costUsd) || costUsd < 0)) {
   fail("--cost-usd must be a non-negative number");
@@ -232,6 +328,12 @@ try {
         id: `bench_${randomUUID().slice(0, 12)}`,
         now: Date.now(),
       });
+      if (evidence)
+        previewBenchmarkSourceEvidence(
+          run.benchmark,
+          items.map((it) => ({ ...it, correct: it.correct ? 1 : 0 })),
+          evidence,
+        );
       const acc = `${(run.score * 100).toFixed(1)}% (${items.filter((i) => i.correct).length}/${run.n})`;
       const invalid = run.invalid_reason ? ` — INVALID: ${run.invalid_reason}` : "";
       if (!db) {
@@ -240,7 +342,10 @@ try {
         );
         continue;
       }
-      const res = db.recordBenchmarkLedgerRun(run, items);
+      const res = db.recordBenchmarkLedgerRun(run, items, evidence);
+      console.log(
+        formatBenchmarkExecution(benchmarkExecution(db.getBenchmarkItems(res.id))).join("\n"),
+      );
       if (res.created && values.learn) {
         enableOutcomeLearning(db);
         noteBenchmarkRun(db, { ...run, id: res.id });

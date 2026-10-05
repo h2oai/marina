@@ -6,9 +6,10 @@
  * shares, so each one stays a thin mapping over Marina's general typed
  * forecaster:
  *
- *   - lessons: forecasts recall the outcome-learning loop's served lessons
- *     (`src/learning`, domain `forecast`, visible only once their outcome was
- *     known at the forecast's cutoff); resolved outcomes go back into it;
+ *   - lessons: forecasts recall the one lesson pool through
+ *     `forecastLessonsFor` (`src/learning/forecast-bridge.ts`; visible only
+ *     once their outcome was known at the forecast's cutoff; `MARINA_LESSONS`
+ *     on / observe / off); resolved outcomes go back into it via `noteOutcome`;
  *   - the world's daily spend ledger, so a standalone run counts against the
  *     same `MARINA_DAILY_SPEND_CAP_USD` budget as the server;
  *   - small helpers (bounded concurrency, a reasoning excerpt).
@@ -18,50 +19,11 @@
  */
 
 import { attachDbSpendLedger } from "../../src/engine/spend-ledger";
-import type { ForecastLesson, LessonStore } from "../../src/forecast/lessons";
 import type { TypedForecastAnswer } from "../../src/forecast/typed";
-import type { LessonSink } from "../../src/learning/outcomes";
-import { formatLesson } from "../../src/learning/outcomes";
-import { recallLessons } from "../../src/learning/service";
 import type { MarinaDB } from "../../src/persistence/database";
 
 /** The attribution every adapter files under. */
 export const ATTRIBUTION = { organization: "H2O.ai", agent: "Marina" } as const;
-
-/**
- * The outcome-learning loop's `forecast` lessons as the typed forecaster's
- * lesson store (recall only; outcomes are written with `noteOutcome`).
- * `MARINA_LESSONS=off` recalls nothing; `observe` recalls without injecting.
- */
-export function learnedLessons(
-  db: MarinaDB,
-  opts: { sink?: LessonSink; env?: NodeJS.ProcessEnv } = {},
-): LessonStore {
-  return {
-    async write() {
-      return {};
-    },
-    async recall(query, asOf, o) {
-      const r = await recallLessons(db, "forecast", query, {
-        asOf,
-        ...(o?.limit !== undefined ? { limit: o.limit } : {}),
-        ...(o?.maxBytes !== undefined ? { maxBytes: o.maxBytes } : {}),
-        ...(opts.env ? { env: opts.env } : {}),
-        ...(opts.sink ? { sink: opts.sink } : {}),
-      });
-      return r.inject.map(
-        (l): ForecastLesson => ({
-          ...(l.id ? { id: l.id } : {}),
-          text: formatLesson(l),
-          answerType: "choice",
-          resolvedAt: l.resolvedAt,
-          ...(l.category ? { category: l.category } : {}),
-          ...(l.score !== undefined ? { score: l.score } : {}),
-        }),
-      );
-    },
-  };
-}
 
 /**
  * Count this process's upstream spend in the world's `spend_daily` ledger, so

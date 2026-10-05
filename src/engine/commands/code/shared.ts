@@ -444,7 +444,7 @@ export function enforceWriteLock(
   failCommandResponse("The participant does not hold this session's write lock.");
   ctx.send(
     eid,
-    `${session.writer} holds the write lock for this session — request a handoff (code handoff <notes> to ${entity.name}) or have the owner reassign (code writer ${entity.name}).`,
+    `${session.writer} holds the write lock for this session — request a handoff (code handoff <notes> to:${entity.name}) or have the owner reassign (code writer ${entity.name}).`,
   );
   return false;
 }
@@ -750,6 +750,31 @@ export function latestActiveArtifact(
   return db
     .listCodingArtifacts(sessionId, 50)
     .find((artifact) => artifact.kind === kind && artifact.status === "active");
+}
+
+/**
+ * Names that take part in a coding session, in first-seen order: the creator,
+ * the bound agent, every dispatched crew member, and every actor that recorded
+ * a session event. Each comes from an identity that was enrolled or acted, so
+ * membership also proves the name exists. The current `writer` is deliberately
+ * NOT a source: it is set by handoffs and could itself be a mis-parsed name.
+ */
+export function codingSessionParticipants(db: MarinaDB, session: CodingSessionRow): string[] {
+  const names: string[] = [];
+  const add = (name: unknown) => {
+    if (typeof name !== "string" || !name.trim()) return;
+    if (!names.some((known) => sameEntityName(known, name))) names.push(name.trim());
+  };
+  add(session.created_by);
+  add(session.agent);
+  for (const artifact of db.listCodingArtifacts(session.id, 500)) {
+    if (artifact.kind !== "crew_dispatched") continue;
+    const members = parseJsonObject(artifact.metadata_json).members;
+    if (!Array.isArray(members)) continue;
+    for (const member of members) add((member as { agentName?: unknown } | null)?.agentName);
+  }
+  for (const event of db.listCodingEvents(session.id, 1_000)) add(event.actor);
+  return names;
 }
 
 export function parseEventPayload(event: { payload_json: string }): Record<string, unknown> {

@@ -12,7 +12,7 @@
  *   bun run forecastbench write [--due …] [--set 1]         assemble + validate the set file, record it
  *   bun run forecastbench upload [--due …] [--set 1] --yes  copy the file to the operator's bucket folder
  *   bun run forecastbench resolve [--due …]                 score resolved questions, learn from them
- *   bun run forecastbench select …                          choose up to 3 configurations by backtest
+ *   bun run forecastbench select … [--resume]               choose up to 3 configurations by backtest
  *   bun run forecastbench status
  *
  * Flags: --dir data/forecastbench, --set N (1–3: set N files with the selection's pick N),
@@ -59,7 +59,8 @@ import {
   runSelection,
 } from "../benchmarks/forecasting/cli";
 import { depsForConfig, forecasterFor } from "../benchmarks/forecasting/configs";
-import { attachWorldSpend, learnedLessons } from "../benchmarks/forecasting/shared";
+import { attachWorldSpend } from "../benchmarks/forecasting/shared";
+import { forecastLessonsFor } from "../src/learning/forecast-bridge";
 import { enableOutcomeLearning, noteOutcome, settleOutcomes } from "../src/learning/service";
 import { MarinaDB } from "../src/persistence/database";
 
@@ -86,6 +87,8 @@ const { positionals, values } = parseArgs({
     "min-items": { type: "string", default: "20" },
     "select-budget": { type: "string", default: "15" },
     "live-per-question": { type: "string", default: "0.1" },
+    // select: continue a stopped selection from its journals (same configuration only).
+    resume: { type: "boolean" },
     retriever: { type: "string" },
     concurrency: { type: "string", default: "6" },
     limit: { type: "string" },
@@ -181,7 +184,7 @@ async function runCmd(db: MarinaDB): Promise<number> {
     questions: selected(set),
     forecast: forecasterFor(
       chosen.config,
-      depsForConfig(chosen.config, { lessons: learnedLessons(db) }),
+      depsForConfig(chosen.config, { lessons: forecastLessonsFor(db) }),
     ),
     journal,
     concurrency: Number(values.concurrency),
@@ -339,6 +342,7 @@ async function selectCmd(db: MarinaDB): Promise<number> {
     ...(values.retriever ? { retriever: values.retriever } : {}),
     concurrency: Number(values.concurrency),
     out: selectionPath(),
+    ...(values.resume ? { resume: true } : {}),
     log,
   });
   printSelection(saved, log);

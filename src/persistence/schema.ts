@@ -511,6 +511,35 @@ DROP TABLE spend_scope_daily;
 ALTER TABLE spend_scope_daily_v158 RENAME TO spend_scope_daily;
 `,
   },
+  // Source execution attribution recovered from an operator-owned run DB.
+  // Scores, replicate identity and content hashes are never rewritten.
+  {
+    version: 159,
+    sql: `
+CREATE TABLE benchmark_run_evidence (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL REFERENCES benchmark_runs(id),
+  source_run_id TEXT NOT NULL,
+  source_hash TEXT NOT NULL,
+  changed_items INTEGER NOT NULL CHECK (changed_items >= 0),
+  actor TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  UNIQUE(run_id, source_hash)
+);
+CREATE TRIGGER benchmark_run_evidence_no_update BEFORE UPDATE ON benchmark_run_evidence
+BEGIN SELECT RAISE(ABORT, 'benchmark_run_evidence is append-only'); END;
+CREATE TABLE benchmark_item_evidence (
+  run_id TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  evidence_id INTEGER NOT NULL REFERENCES benchmark_run_evidence(id),
+  participants_json TEXT NOT NULL,
+  PRIMARY KEY(run_id, item_id),
+  FOREIGN KEY(run_id, item_id) REFERENCES benchmark_items(run_id, item_id)
+);
+CREATE TRIGGER benchmark_item_evidence_no_update BEFORE UPDATE ON benchmark_item_evidence
+BEGIN SELECT RAISE(ABORT, 'benchmark_item_evidence is append-only'); END;
+`,
+  },
 ];
 
 /** Migration 143 body — self-contained so later edits to db-notes never change it. */

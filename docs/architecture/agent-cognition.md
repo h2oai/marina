@@ -68,7 +68,7 @@
 - **Goals**: `task goal <title> | <desc> [!pN]` — creates + auto-claims a personal goal with priority 0-10
 - **Progress**: `task progress <id> [+N | N]` — track goal progress (auto-completes at 100)
 - **Learning**: engine auto-tracks command success/failure in `entity_activity` — no agent action needed
-- **Proficiency**: `novelty stats` shows per-command success rates; `novelty suggest` analyzes entropy, gaps, struggle areas
+- **Proficiency and exploration**: `novelty stats` shows per-command success rates; `novelty suggest [goal]` ranks recovery, verification, relevant exploration and continuing effective work from caller-scoped signals. `novelty experiments [benchmark]` explicitly scans bounded ledger evidence for attribution gaps and comparison candidates. Priorities are advisory heuristics, never standing rewards; see [the novelty guide](../guides/novelty.md).
 - **Curiosity signal**: `brief` shows `[low action diversity]` when entropy is low — passive, no prescription
 - **Named verbs that compose primitives** — sit next to `ask` as cheap, agent-friendly workflows over `recall` / `pool` / `web`:
   - `ask <question>` — LLM-synthesized answer with personal + guide + pool + world-search context (`src/engine/commands/ask.ts`)

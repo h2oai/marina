@@ -6,7 +6,7 @@
  * The Metaculus bot — a thin adapter over Marina's general typed forecaster
  * (benchmarks/metaculus/, docs/guides/metaculus.md).
  *
- *   bun run metaculus select …            choose the configuration by held-out backtest
+ *   bun run metaculus select … [--resume] choose the configuration by held-out backtest
  *   bun run metaculus pass [--dry-run] …  forecast new open questions, then learn from resolved ones
  *   bun run metaculus forecast …          only the forecasting half
  *   bun run metaculus resolve             only the learning half
@@ -38,7 +38,7 @@ import {
   runSelection,
 } from "../benchmarks/forecasting/cli";
 import { depsForConfig, forecasterFor } from "../benchmarks/forecasting/configs";
-import { attachWorldSpend, learnedLessons } from "../benchmarks/forecasting/shared";
+import { attachWorldSpend } from "../benchmarks/forecasting/shared";
 import {
   fixtureClient,
   type MetaculusClient,
@@ -55,6 +55,7 @@ import {
   spentToday,
 } from "../benchmarks/metaculus/bot";
 import { timerUnits } from "../benchmarks/metaculus/timer";
+import { forecastLessonsFor } from "../src/learning/forecast-bridge";
 import { enableOutcomeLearning, noteOutcome, settleOutcomes } from "../src/learning/service";
 import { MarinaDB } from "../src/persistence/database";
 
@@ -79,6 +80,8 @@ const { positionals, values } = parseArgs({
     "min-items": { type: "string", default: "20" },
     budget: { type: "string", default: "15" },
     "live-per-question": { type: "string" },
+    // select: continue a stopped selection from its journals (same configuration only).
+    resume: { type: "boolean" },
     retriever: { type: "string" },
     "timer-dir": { type: "string", default: join(homedir(), ".local/share/marina-metaculus") },
   },
@@ -140,6 +143,7 @@ async function selectCmd(db: MarinaDB): Promise<number> {
     ...(values["live-per-question"] ? { livePerItemUsd: Number(values["live-per-question"]) } : {}),
     ...(values.retriever ? { retriever: values.retriever } : {}),
     out: values.selection!,
+    ...(values.resume ? { resume: true } : {}),
     log,
   });
   printSelection(saved, log);
@@ -155,7 +159,7 @@ async function forecastCmd(db: MarinaDB): Promise<number> {
   });
   const forecast = forecasterFor(
     chosen.config,
-    depsForConfig(chosen.config, { lessons: learnedLessons(db) }),
+    depsForConfig(chosen.config, { lessons: forecastLessonsFor(db) }),
   );
   log(
     `metaculus ${dryRun ? "DRY RUN " : ""}· tournaments ${tournaments.join(", ")} · ${chosen.config.label}: ${chosen.description} · spent today $${spentToday(db, new Date()).toFixed(2)} of $${values["daily-cap"]}`,

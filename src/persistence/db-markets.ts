@@ -169,7 +169,10 @@ export interface ForecastAnswerRow {
   created_at: number;
   resolved_at: number | null;
   outcome_json: string | null;
-  /** Brier score (probability) or CRPS (number); lower is better. */
+  /**
+   * A loss, lower is better: Brier (probability, choice), CRPS (number), per-option
+   * Brier (multi), overlap / exact-match loss (ranking, text).
+   */
   score: number | null;
 }
 

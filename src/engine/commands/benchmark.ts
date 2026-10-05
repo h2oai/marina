@@ -8,9 +8,11 @@ import {
   referenceScoresForBenchmark,
   referenceScoresForModel,
 } from "../../../benchmarks/reference-scores";
+import { retireLessonsForRun } from "../../learning/intake";
 import { bold, category, dim, status as fmtStatus, header, separator } from "../../net/ansi";
 import type { BenchmarkRunRow, MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import { benchmarkExecution, formatBenchmarkExecution } from "../benchmark-execution";
 import {
   compareRuns,
   formatVerificationCounts,
@@ -444,6 +446,12 @@ export function benchmarkCommand(deps: {
             // Item labels (migration 157): checks that never ran are not failures,
             // and a budget-forced answer is counted apart from a free one.
             const items = db.getBenchmarkItems(row.id);
+            lines.push(...formatBenchmarkExecution(benchmarkExecution(items)));
+            for (const evidence of db.listBenchmarkRunEvidence(row.id)) {
+              lines.push(
+                `Source evidence: ${evidence.changed_items} items from ${evidence.source_run_id}, sha256:${evidence.source_hash} (operator-attached; not remote attestation).`,
+              );
+            }
             const verification = formatVerificationCounts(verificationCounts(items));
             if (verification) lines.push(`  ${bold("checks")}:      ${verification}`);
             const forced = items.filter((i) => i.budget_forced === 1).length;
@@ -461,7 +469,7 @@ export function benchmarkCommand(deps: {
                 : [];
               if (subjects.length > 0) {
                 lines.push(
-                  `  ${bold("measured")}:    ${subjects
+                  `  ${bold("declared")}:    ${subjects
                     .map(
                       (s) =>
                         `${s.agent}${s.role ? ` (role ${s.role}` : " ("}${s.promptVersion ? `, prompt ${s.promptVersion}` : ""})`,
@@ -731,10 +739,22 @@ export function benchmarkCommand(deps: {
             ctx.send(input.entity, `Usage: benchmark ${sub} <run> reason:<text>`);
             return;
           }
-          ctx.send(
-            input.entity,
-            setValidity(db, entity, sub, id, reason.slice(0, MAX_VALIDITY_REASON), deps.logEvent),
-          );
+          const why = reason.slice(0, MAX_VALIDITY_REASON);
+          const result = setValidity(db, entity, sub, id, why, deps.logEvent);
+          ctx.send(input.entity, result.message);
+          if (result.changed && sub === "invalidate") {
+            // Lessons learned from (or comparing against) the run measured the
+            // infrastructure, not the target: retire them through the audited path.
+            const r = await retireLessonsForRun(db, id, {
+              reason: why,
+              by: db.durableEntityKey(entity.id),
+            });
+            if (r.retired.length || r.failed.length || r.error)
+              ctx.send(
+                input.entity,
+                `  Lessons citing ${id}: ${r.retired.length} retired${r.failed.length ? `, ${r.failed.length} failed` : ""}${r.error ? ` (${r.error})` : ""}.`,
+              );
+          }
           return;
         }
 
@@ -787,7 +807,7 @@ export function benchmarkCommand(deps: {
               input.entity,
               items.length === 0
                 ? `No item outcomes recorded for ${category(name)}.`
-                : `No participants recorded on ${items.length} ${category(name)} item outcomes — participant credit needs the agents/models from each item's trace.`,
+                : `No participants recorded on ${items.length} ${category(name)} item outcomes — execution is unknown, not proven inactive. Participant credit needs each item's source trace.`,
             );
             return;
           }
@@ -796,6 +816,7 @@ export function benchmarkCommand(deps: {
               `Participants — ${name} (${withParticipants} of ${items.length} items attributed)`,
             ),
             separator(),
+            "Participation is association with outcomes, not causal credit for improving them.",
             ...credit.map(
               (c) =>
                 `  ${dim(c.kind.padEnd(5))}  ${bold(c.name).padEnd(40)}  ${pct(c.accuracy)} (${c.correct}/${c.items})  ${c.costUsd === null ? dim("unpriced") : usd(c.costUsd)}`,
@@ -939,11 +960,12 @@ function setValidity(
   runId: string,
   reason: string,
   logEvent: ((event: EngineEvent) => void) | undefined,
-): string {
+): { message: string; changed: boolean } {
+  const no = (message: string) => ({ message, changed: false });
   const gate = checkRoleEdit(db, entity, `benchmark ${action} ${runId}`);
-  if ("reason" in gate) return gate.reason;
+  if ("reason" in gate) return no(gate.reason);
   const run = db.getBenchmarkRun(runId);
-  if (!run) return `No run ${runId}.`;
+  if (!run) return no(`No run ${runId}.`);
   // Re-admitting your own run as valid is self-attestation; retiring it is not.
   const author = run.agent_id;
   if (
@@ -951,7 +973,9 @@ function setValidity(
     author &&
     (author === entity.id || db.durableEntityKey(author) === db.durableEntityKey(entity.id))
   ) {
-    return `Refused: you ran ${runId}. Someone else must revalidate it — self-attestation is never accepted.`;
+    return no(
+      `Refused: you ran ${runId}. Someone else must revalidate it — self-attestation is never accepted.`,
+    );
   }
   const now = Date.now();
   const res = db.setBenchmarkRunValidity({
@@ -963,7 +987,7 @@ function setValidity(
     source: "in-world",
     created_at: now,
   });
-  if (!res.ok) return res.error;
+  if (!res.ok) return no(res.error);
   gate.record();
   logEvent?.({
     type: "feed_event",
@@ -974,9 +998,13 @@ function setValidity(
     payload: { id: runId, benchmark: run.benchmark, reason, source: "in-world" },
     timestamp: now,
   });
-  return action === "invalidate"
-    ? `Invalidated ${runId} (${run.benchmark}, ${runLabel(run)}): ${reason}\n  Its items are kept; every ranking, pooling, comparison, promotion and route evidence now skips it. Audit row ${res.id}.`
-    : `Revalidated ${runId} (${run.benchmark}, ${runLabel(run)}): ${reason}\n  It counts again in every ledger reader. Audit row ${res.id}.`;
+  return {
+    changed: true,
+    message:
+      action === "invalidate"
+        ? `Invalidated ${runId} (${run.benchmark}, ${runLabel(run)}): ${reason}\n  Its items are kept; every ranking, pooling, comparison, promotion and route evidence now skips it. Audit row ${res.id}.`
+        : `Revalidated ${runId} (${run.benchmark}, ${runLabel(run)}): ${reason}\n  It counts again in every ledger reader. Audit row ${res.id}.`,
+  };
 }
 
 // ─── Earned promotion of defaults ──────────────────────────────────────────

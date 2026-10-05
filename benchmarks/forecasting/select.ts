@@ -11,10 +11,12 @@
  *
  * Leakage guards:
  *   model weights — a candidate is scored only on questions whose forecast
- *                   date is at least `lagDays` after every one of its models'
- *                   public release (an upper bound on its knowledge cutoff);
- *                   a candidate released too recently for `minItems` such
- *                   questions is reported as not yet backtestable, never
+ *                   date is clean of every one of its models' public release
+ *                   (the one rule in `knowledge.ts`, shared with the FutureX
+ *                   clean backtest: one release table, one margin); a model
+ *                   on a floating alias has no trustworthy release date and is
+ *                   refused; a candidate released too recently for `minItems`
+ *                   such questions is reported as not yet backtestable, never
  *                   scored on older ones;
  *   retrieval     — the caller's forecaster wraps research in the strict
  *                   pre-cutoff filter;
@@ -32,12 +34,15 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { IsolationLevel } from "../../src/arena/research/isolation";
 import { answerDigest, ledgerFromHarnessResult } from "../../src/engine/benchmark-ledger";
 import { SpendGuard } from "../../src/engine/spend-guard";
 import { dailyCapRefusal } from "../../src/engine/spend-ledger";
 import type { TypedForecastAnswer, TypedForecastRequest } from "../../src/forecast/typed";
 import type { MarinaStores } from "../../src/persistence/interfaces";
+import { idsDigest, openJournal } from "../journal";
 import { defaultReplicateGroup } from "../replicates";
 import { mulberry32 } from "../stats";
 import {
@@ -47,6 +52,7 @@ import {
   type Forecaster,
   usesCrew,
 } from "./configs";
+import { afterKnowledge, type KnowledgeBound, knowledgeBoundOf } from "./knowledge";
 import { mapLimit } from "./shared";
 
 export interface BacktestItem {
@@ -61,6 +67,7 @@ export type CandidateStatus =
   | "ranked"
   | "crew (not isolable)"
   | "unknown release"
+  | "floating alias"
   | "too recent"
   | "not run (budget)";
 
@@ -96,7 +103,7 @@ export interface SelectOptions {
   benchmark: string;
   items: BacktestItem[];
   candidates: ForecastConfig[];
-  /** Release dates (YYYY-MM-DD) by bare model id. */
+  /** Release dates (YYYY-MM-DD) by bare model id (`releaseTable` over the catalogue). */
   releases: Record<string, string>;
   /** The candidate's forecaster for a backtest (strict retrieval, lessons as configured). */
   makeForecaster: (c: ForecastConfig) => Forecaster;
@@ -105,7 +112,6 @@ export interface SelectOptions {
   minItems?: number;
   /** Most items to use (spread evenly over the window). */
   maxItems?: number;
-  lagDays?: number;
   /** Total spend for the selection. */
   budgetUsd: number;
   /** How the forecasters' retrieval is isolated (`isolationOfSpec`); `contaminated` is refused. */
@@ -114,21 +120,31 @@ export interface SelectOptions {
   livePerItemUsd?: number;
   concurrency?: number;
   ledger?: Pick<MarinaStores, "recordBenchmarkLedgerRun">;
+  /**
+   * Keep every answered item on disk as it lands, one journal per candidate
+   * and replicate in this directory: a run stopped by a budget or a cap keeps
+   * what it paid for (still never scored or filed while partial).
+   */
+  journalDir?: string;
+  /**
+   * Continue from the journals' answered items (same configuration and items
+   * only — a different one is refused); a run already filed is not re-filed.
+   * The selection budget counts this invocation's new spend.
+   */
+  resume?: boolean;
   env?: NodeJS.ProcessEnv;
   now?: () => Date;
   log?: (line: string) => void;
 }
 
-const DAY = 86_400_000;
+/** One journal line: an answered item, or the run's ledger filing. */
+type SelectionEntry = { id: string; answer: TypedForecastAnswer } | { filed: string };
 
-export function boundOf(c: ForecastConfig, releases: Record<string, string>): string | undefined {
-  const dates = configModels(c).map((m) => releases[m]);
-  if (dates.some((d) => !d)) return undefined;
-  return dates.sort().at(-1);
+export function boundOf(c: ForecastConfig, releases: Record<string, string>): KnowledgeBound {
+  return knowledgeBoundOf(configModels(c), releases);
 }
 
-const cleanFor = (item: BacktestItem, bound: string, lagDays: number) =>
-  Date.parse(item.request.asOf) >= Date.parse(bound) + lagDays * DAY;
+const cleanFor = (item: BacktestItem, bound: string) => afterKnowledge(item.request.asOf, bound);
 
 /** Evenly spaced picks from a sorted list. */
 function spread<T>(xs: T[], n: number): T[] {
@@ -145,7 +161,6 @@ export async function selectConfiguration(opts: SelectOptions): Promise<Selectio
   }
   const now = opts.now ?? (() => new Date());
   const reps = Math.max(1, opts.replicates ?? 2);
-  const lag = opts.lagDays ?? 3;
   const minItems = opts.minItems ?? 20;
   const ranking = new Map<string, Ranked>();
   const eligible: Array<{ c: ForecastConfig; bound: string }> = [];
@@ -162,16 +177,15 @@ export async function selectConfiguration(opts: SelectOptions): Promise<Selectio
       r.status = "crew (not isolable)";
       continue;
     }
-    const bound = boundOf(c, opts.releases);
-    if (!bound) {
-      r.status = "unknown release";
-      r.note = `no release date for ${configModels(c)
-        .filter((m) => !opts.releases[m])
-        .join(", ")}`;
+    const known = boundOf(c, opts.releases);
+    if ("error" in known) {
+      r.status = known.reason === "floating" ? "floating alias" : "unknown release";
+      r.note = known.error;
       continue;
     }
+    const bound = known.after;
     r.bound = bound;
-    const n = opts.items.filter((i) => cleanFor(i, bound, lag)).length;
+    const n = opts.items.filter((i) => cleanFor(i, bound)).length;
     if (n < minItems) {
       r.status = "too recent";
       r.note = `released ${bound}: ${n} resolved questions forecast after it (needs ${minItems})`;
@@ -185,7 +199,7 @@ export async function selectConfiguration(opts: SelectOptions): Promise<Selectio
   let common: BacktestItem[] = [];
   while (eligible.length) {
     const latest = eligible.at(-1)!.bound;
-    common = opts.items.filter((i) => cleanFor(i, latest, lag));
+    common = opts.items.filter((i) => cleanFor(i, latest));
     if (common.length >= minItems) break;
     const dropped = eligible.pop()!;
     const r = ranking.get(dropped.c.label)!;
@@ -202,7 +216,19 @@ export async function selectConfiguration(opts: SelectOptions): Promise<Selectio
   // Runs: replicate 1 of every candidate before any replicate 2 (in the order
   // given — pass the cheapest first), so a budget stop still leaves as many
   // candidates measured as it can.
-  const stamp = now().getTime();
+  let stamp = now().getTime();
+  if (opts.journalDir) {
+    // The replicate group's stamp is kept, so a resumed selection files into the same groups.
+    mkdirSync(opts.journalDir, { recursive: true });
+    const meta = join(opts.journalDir, "selection.json");
+    const kept =
+      opts.resume && existsSync(meta)
+        ? (JSON.parse(readFileSync(meta, "utf8")) as { stamp?: number }).stamp
+        : undefined;
+    if (typeof kept === "number") stamp = kept;
+    else writeFileSync(meta, JSON.stringify({ benchmark: opts.benchmark, stamp }));
+  }
+  const itemsDigest = idsDigest(common.map((i) => i.id));
   const scores = new Map<string, Array<Map<string, number>>>();
   const costs = new Map<string, number[]>();
   const env = opts.env ?? process.env;
@@ -225,9 +251,30 @@ export async function selectConfiguration(opts: SelectOptions): Promise<Selectio
         );
         continue;
       }
+      const journal = opts.journalDir
+        ? openJournal<SelectionEntry>(
+            join(opts.journalDir, `${c.label.replace(/[^\w.-]+/g, "_")}-r${rep}.jsonl`),
+            {
+              benchmark: opts.benchmark,
+              configuration: describeConfig(c),
+              items: itemsDigest,
+              isolation: opts.isolation,
+              replicate: rep,
+            },
+            opts.resume ? { resume: true } : {},
+          )
+        : undefined;
+      // Answers a stopped earlier run paid for (no-answer items run again).
+      const prior = new Map<string, TypedForecastAnswer>();
+      let filedBefore: string | undefined;
+      for (const e of journal?.entries ?? []) {
+        if ("filed" in e) filedBefore = e.filed;
+        else if (!isFallback(e.answer)) prior.set(e.id, e.answer);
+      }
       const forecast = opts.makeForecaster(c);
-      const started = now();
+      const started = journal ? new Date(journal.startedAt) : now();
       let runCost = 0;
+      let resumedCost = 0;
       let finished = 0;
       let halt: string | undefined;
       // Stop starting items while every item in flight can still finish under the
@@ -242,6 +289,12 @@ export async function selectConfiguration(opts: SelectOptions): Promise<Selectio
         env,
       });
       const answers = await mapLimit(common, concurrency, async (item) => {
+        const kept = prior.get(item.id);
+        if (kept) {
+          finished++;
+          resumedCost += kept.costUsd ?? 0;
+          return kept;
+        }
         halt ??= guard.stopReason();
         if (halt) return undefined;
         let itemCost = 0;
@@ -249,6 +302,7 @@ export async function selectConfiguration(opts: SelectOptions): Promise<Selectio
           const answer = await forecast(item.request);
           itemCost = answer.costUsd ?? 0;
           runCost += itemCost;
+          journal?.append({ id: item.id, answer });
           return answer;
         } catch {
           return undefined;
@@ -262,7 +316,9 @@ export async function selectConfiguration(opts: SelectOptions): Promise<Selectio
         spent += runCost;
         stopped = halt;
         log(
-          `  ${c.label} r${rep}: stopped after ${finished}/${common.length} items — partial run discarded ($${runCost.toFixed(2)})`,
+          `  ${c.label} r${rep}: stopped after ${finished}/${common.length} items — partial run ${
+            journal ? `kept in ${journal.path} (not filed; --resume continues it)` : "discarded"
+          } ($${runCost.toFixed(2)})`,
         );
         break;
       }
@@ -274,7 +330,8 @@ export async function selectConfiguration(opts: SelectOptions): Promise<Selectio
         cost += answers[i]?.costUsd ?? 0;
         if (isFallback(answers[i])) fallbacks++;
       });
-      spent += cost;
+      // Resumed answers were paid for by an earlier invocation.
+      spent += cost - resumedCost;
       if (fallbacks) log(`  ${c.label} r${rep}: ${fallbacks}/${common.length} items had no answer`);
       scores.set(c.label, [...(scores.get(c.label) ?? []), runScores]);
       costs.set(c.label, [...(costs.get(c.label) ?? []), cost / Math.max(1, common.length)]);
@@ -282,11 +339,13 @@ export async function selectConfiguration(opts: SelectOptions): Promise<Selectio
       r.replicates++;
       const mean = [...runScores.values()].reduce((s, x) => s + x, 0) / Math.max(1, runScores.size);
       log(`  ${c.label} r${rep}: mean ${mean.toFixed(4)} · $${cost.toFixed(2)}`);
-      if (opts.ledger) {
+      if (filedBefore) {
+        r.ledgerRuns.push(filedBefore);
+      } else if (opts.ledger) {
         try {
-          r.ledgerRuns.push(
-            fileRun(opts, c, rep, common, answers, runScores, started, now(), cost, stamp),
-          );
+          const id = fileRun(opts, c, rep, common, answers, runScores, started, now(), cost, stamp);
+          r.ledgerRuns.push(id);
+          journal?.append({ filed: id });
         } catch (err) {
           log(`  ledger: ${(err as Error).message.slice(0, 120)}`);
         }

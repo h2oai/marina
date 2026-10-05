@@ -4,6 +4,13 @@
 import { bold, dim, header, progressBar, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { benchmarkExecution } from "../benchmark-execution";
+import {
+  benchmarkNoveltyOpportunities,
+  type NoveltyCapability,
+  type NoveltyOpportunity,
+  noveltyOpportunities,
+} from "../novelty";
 import { getRank } from "../permissions";
 import { requiresPersistence } from "./command-messages";
 
@@ -31,14 +38,20 @@ export function noveltyCommand(deps: {
   getTotalRoomCount?: () => number;
   /** The FULL command registry — the exploration surface must be able to name
    *  a command the agent has never been told about, or it isn't exploration. */
-  getAllCommands?: () => Array<{ name: string; minRank?: number }>;
+  getAllCommands?: () => NoveltyCapability[];
+  getFocus?: (name: string) => string | undefined;
 }): CommandDef {
   return {
     category: "Cognition",
-    usage: ["novelty", "novelty stats", "novelty suggest"],
+    usage: [
+      "novelty",
+      "novelty stats",
+      "novelty suggest [goal]",
+      "novelty experiments [benchmark]",
+    ],
     name: "novelty",
     aliases: [],
-    help: "Activity proficiency and exploration coverage. Shows command success rates, coverage gaps, and suggestions for underused capabilities. Usage: novelty | novelty suggest | novelty stats",
+    help: "Ranked opportunities from activity, task outcomes and execution evidence. Advisory, bounded exploration; no activity rewards or automatic spawning. Usage: novelty | novelty stats | novelty suggest [goal] | novelty experiments [benchmark]",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -79,84 +92,67 @@ export function noveltyCommand(deps: {
         return;
       }
 
-      if (sub === "suggest") {
-        const suggestions: string[] = [];
-
-        // Check for repetitive behavior (boredom detection)
-        const topCommands = db.getActivityByType(entity.name, "command", 20);
-        if (topCommands.length > 0) {
-          const commandCounts = topCommands.map((c) => c.count);
-          const actionEntropy = commandCounts.length > 0 ? entropy(commandCounts) : 0;
-
-          if (actionEntropy < 0.3) {
-            const topCmd = topCommands[0];
-            if (topCmd) {
-              const total = topCommands.reduce((s, c) => s + c.count, 0);
-              const topPct = Math.round((topCmd.count / total) * 100);
-              suggestions.push(
-                `Action entropy is low (${Math.round(actionEntropy * 100)}%) — '${topCmd.key}' is ${topPct}% of activity`,
-              );
-            }
-          }
-
-          // Find commands with low success rates
-          const struggling = topCommands.filter((c) => {
-            const total = c.successCount + c.failCount;
-            return total >= 3 && c.failCount / total > 0.4;
+      if (sub === "suggest" || sub === "experiments") {
+        let opportunities: NoveltyOpportunity[];
+        if (sub === "experiments") {
+          const benchmark = input.tokens.slice(1).join(" ").trim() || undefined;
+          // Explicit opt-in scan, capped to 20 latest completed runs. No model
+          // calls or per-turn global benchmark scans.
+          const runs = db.queryBenchmarkRuns({ benchmark, status: "completed", limit: 20 });
+          opportunities = benchmarkNoveltyOpportunities(
+            runs.map((r) => ({
+              id: r.id,
+              benchmark: r.benchmark,
+              score: r.score,
+              slice: r.slice_hash ?? null,
+              judge: r.judge ?? null,
+              execution: benchmarkExecution(db.getBenchmarkItems(r.id)),
+            })),
+          );
+        } else {
+          const goal =
+            input.tokens.slice(1).join(" ").trim() ||
+            deps.getFocus?.(entity.name) ||
+            db
+              .getActiveClaimsByName(entity.name)
+              .map((c) => c.title)
+              .join(" ");
+          opportunities = noveltyOpportunities({
+            now: Date.now(),
+            participant: entity.name,
+            rank: getRank(entity),
+            goal,
+            capabilities: deps.getAllCommands?.() ?? [],
+            activity: db.getActivityByType(entity.name, "command", -1),
+            outcomes: db.getProductivitySummary(entity.name),
+            unexploredRooms: Math.max(0, (deps.getTotalRoomCount?.() ?? 0) - stats.roomsVisited),
           });
-          if (struggling.length > 0) {
-            const cmd = struggling[0]!;
-            const total = cmd.successCount + cmd.failCount;
-            const failPct = Math.round((cmd.failCount / total) * 100);
-            suggestions.push(`'${cmd.key}' has a ${failPct}% failure rate (${total} attempts)`);
-          }
         }
-
-        // Find unexplored territory — OUTSIDE the has-activity branch, because
-        // a brand-new entity is exactly who needs the map most. Drawn from the
-        // FULL registry (filtered to what this entity's rank can run) — a
-        // hardcoded subset here once made "exploration" structurally unable to
-        // suggest anything the agent hadn't already been told about. Rotates
-        // daily per entity so repeated asks reveal different corners.
-        {
-          const usedCommands = new Set(topCommands.map((c) => c.key));
-          const rank = getRank(entity);
-          const registry = deps.getAllCommands?.() ?? [];
-          const unexplored = registry
-            .filter((c) => (c.minRank ?? 0) <= rank && !usedCommands.has(c.name))
-            .map((c) => c.name)
-            .sort();
-          if (unexplored.length > 0) {
-            const daySeed = Math.floor(Date.now() / 86_400_000) + entity.name.length;
-            const start = daySeed % unexplored.length;
-            const rotated = [...unexplored.slice(start), ...unexplored.slice(0, start)];
-            suggestions.push(
-              `Unexplored commands (${unexplored.length} you've never used): ${rotated.slice(0, 5).join(", ")} — \`help <command>\` explains any of them, \`help all\` is the full map.`,
-            );
-          }
-        }
-
-        // Knowledge gaps
-        if (stats.roomsVisited > 0) {
-          const totalRooms = deps.getTotalRoomCount?.() ?? 0;
-          if (totalRooms > 0) {
-            const unexplored = totalRooms - stats.roomsVisited;
-            if (unexplored > 0) {
-              suggestions.push(`${unexplored} rooms unexplored out of ${totalRooms}`);
-            }
-          }
-        }
-
-        if (suggestions.length === 0) {
-          suggestions.push("Activity is diverse and well-distributed.");
-        }
-
         const lines = [
-          header("Novelty Analysis"),
+          header("Novelty Opportunities"),
           separator(),
-          ...suggestions.slice(0, 4).map((s, i) => `  ${i + 1}. ${s}`),
+          ...opportunities.map(
+            (o, i) =>
+              `  ${i + 1}. [${o.kind}] ${o.suggestion} Evidence: ${o.evidence} Inspect: ${o.next}`,
+          ),
+          ...(opportunities.length
+            ? []
+            : [
+                "No evidence-backed opportunity identified. Continue useful work or choose a question to investigate.",
+              ]),
+          dim(
+            "Advisory heuristic order, not a quality score. Stay within your task and budget; more actions or peers alone do not prove value.",
+          ),
         ];
-        ctx.send(input.entity, lines.join("\n"));
+        ctx.send(input.entity, lines.join("\n"), "novelty", {
+          novelty: {
+            schema: "marina.novelty.v1",
+            mode: sub,
+            opportunities,
+            ranking: "heuristic",
+            advisory: true,
+          },
+        });
         return;
       }
 
@@ -193,7 +189,8 @@ export function noveltyCommand(deps: {
       const lines = [
         header("Novelty Score"),
         separator(),
-        `Composite: ${bold(`${composite}/100`)}`,
+        `Exploration need: ${bold(`${composite}/100`)}`,
+        dim("A coverage heuristic, not a quality, intelligence, or useful-emergence score."),
         "",
         ...scores.map((s) => `  ${s.label}: ${progressBar(s.score, 100, 12)}`),
       ];

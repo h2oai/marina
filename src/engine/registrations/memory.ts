@@ -121,6 +121,10 @@ export function registerMemoryCommands(engine: Engine): void {
       db: engine.db,
       getTotalRoomCount: () => engine.rooms.all().length,
       getAllCommands: () => engine.commands.allBuiltins(),
+      getFocus: (name) => {
+        const status = engine.agentRuntime.get(name)?.getStatus();
+        return status?.focus ?? status?.goal ?? undefined;
+      },
     }),
   );
   if (engine.db) {

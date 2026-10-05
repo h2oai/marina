@@ -1753,7 +1753,7 @@ describe("tool profiles", () => {
       "code observe server rendered the page",
       "code plan inspect before editing",
       "code summary fixed wrapper coverage",
-      "code handoff tests are focused",
+      "code handoff -- tests are focused",
       "code decision keep command implementation unchanged",
       "code history code_123",
       "code workspace list",
@@ -1779,6 +1779,36 @@ describe("tool profiles", () => {
     );
     await expect(workspace!.execute("call-30", { command: "use" })).rejects.toThrow(
       "path is required",
+    );
+  });
+
+  it("handoff tools pass notes literally and the recipient only as to:<agent>", async () => {
+    const commands: string[] = [];
+    const ctx = {
+      client: {
+        isConnected: () => true,
+        command: async (command: string) => {
+          commands.push(command);
+          return [{ kind: "text", data: { text: "ok" } }];
+        },
+      },
+      gameState: { handlePerception: () => {} },
+    } as never;
+    const toolset = createProfileToolset(ctx, {} as never, "full");
+    const tools = [...toolset.resident, ...toolset.deferred];
+    const handoff = tools.find((tool) => tool.name === "marina_code_handoff")!;
+    const code = tools.find((tool) => tool.name === "marina_code")!;
+
+    await handoff.execute("h1", { text: "moved errors to error state", to: "reviewer" });
+    await handoff.execute("h2", { text: "progress only, handed to nobody" });
+    await code.execute("h3", { action: "handoff", text: "ready to review", to: "reviewer" });
+    expect(commands).toEqual([
+      "code handoff to:reviewer -- moved errors to error state",
+      "code handoff -- progress only, handed to nobody",
+      "code handoff to:reviewer -- ready to review",
+    ]);
+    await expect(handoff.execute("h4", { text: "notes", to: "two names" })).rejects.toThrow(
+      "to must be a single agent name",
     );
   });
 });

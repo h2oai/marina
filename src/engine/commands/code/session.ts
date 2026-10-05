@@ -11,9 +11,10 @@ import {
   codingVerificationUnchanged,
 } from "../../../coding/task-run";
 import { codingWorkerState } from "../../../coding/worker-state";
-import { bold, dim, header, separator, success } from "../../../net/ansi";
+import { bold, dim, error as fmtError, header, separator, success } from "../../../net/ansi";
 import type { CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
+import { parseModifiers } from "../../parse-input";
 import { reassignWriter } from "./crew";
 import { formatProfileTry } from "./profiles";
 import {
@@ -24,6 +25,7 @@ import {
   type CodeTreeNode,
   canAdoptCodingSession,
   capitalize,
+  codingSessionParticipants,
   formatCodingNoteTitle,
   formatCompletionTitle,
   getActiveSessionId,
@@ -876,6 +878,97 @@ function depositSessionSummary(
   }
 }
 
+/** How `code handoff` arguments split into notes and a write-lock recipient. */
+export interface HandoffArgs {
+  /** The note text, without any explicit recipient modifier. */
+  text: string;
+  /** `to:<agent>` (also `to=`, `--to`): unambiguous, always validated. */
+  explicit?: string;
+  /** Legacy: the word after a FINAL `to`, a recipient only if it names a participant. */
+  trailing?: string;
+  /** Note text with the legacy `to <agent>` tail removed, used when it matches. */
+  textWithoutTrailing?: string;
+  errors: string[];
+}
+
+/**
+ * Split `code handoff` tokens. The explicit `to:<agent>` modifier (the shared
+ * modifier grammar) names the recipient. Without it, only a `to <word>` pair
+ * that ENDS the notes is a candidate (never the first "to" in the prose, which
+ * once handed the lock to words like "error" or "use"); a literal `--` makes
+ * everything after it plain text, so tools pass notes verbatim.
+ */
+export function parseHandoffArgs(args: readonly string[]): HandoffArgs {
+  const parsed = parseModifiers(args, { to: { type: "string" } });
+  const words = parsed.rest;
+  const text = words.join(" ").trim();
+  const explicit = typeof parsed.values.to === "string" ? parsed.values.to.trim() : undefined;
+  if (parsed.errors.length > 0 || explicit) {
+    return { text, ...(explicit ? { explicit } : {}), errors: parsed.errors };
+  }
+  if (parsed.after !== undefined || words.length < 3) return { text, errors: [] };
+  if (words[words.length - 2]!.toLowerCase() !== "to") return { text, errors: [] };
+  const trailing = words[words.length - 1]!.replace(/[.,;:!?)"'`]+$/, "");
+  if (!trailing) return { text, errors: [] };
+  return {
+    text,
+    trailing,
+    textWithoutTrailing: words.slice(0, -2).join(" ").trim(),
+    errors: [],
+  };
+}
+
+const HANDOFF_USAGE = "code handoff <notes> [to:<agent>]";
+
+/**
+ * Decide the handoff recipient. A recipient must be a participant of the
+ * session (creator, bound agent, crew member or an actor that recorded an
+ * event: {@link codingSessionParticipants}), and only the current holder or
+ * the session creator may pass a held lock on. An explicit `to:<agent>` that
+ * fails either check refuses the whole handoff and keeps the lock. A legacy
+ * trailing `to <word>` that fails is read as prose: the note is stored whole
+ * and the lock is untouched, with a notice saying so.
+ */
+function resolveHandoffRecipient(
+  db: MarinaDB,
+  session: CodingSessionRow,
+  entity: Entity,
+  args: readonly string[],
+): { text: string; to?: string; notice?: string } | { refusal: string } {
+  const parsed = parseHandoffArgs(args);
+  if (parsed.errors.length > 0)
+    return { refusal: `Handoff not stored: ${parsed.errors.join("; ")}. Usage: ${HANDOFF_USAGE}` };
+  const candidate = parsed.explicit ?? parsed.trailing;
+  if (!candidate) return { text: parsed.text };
+  const participants = codingSessionParticipants(db, session);
+  const match = participants.find((name) => sameEntityName(name, candidate));
+  const holder = session.writer ?? "open";
+  const mayTransfer =
+    !session.writer ||
+    sameEntityName(session.writer, entity.name) ||
+    sameEntityName(session.created_by, entity.name);
+  if (parsed.explicit) {
+    if (!match) {
+      return {
+        refusal: `Handoff not stored: "${candidate}" is not a participant in session ${session.id} (participants: ${participants.join(", ") || "none"}). Write lock unchanged (${holder}).`,
+      };
+    }
+    if (!mayTransfer) {
+      return {
+        refusal: `Handoff not stored: only ${session.writer} (current holder) or ${session.created_by} (session creator) can pass the write lock on. Write lock unchanged (${holder}).`,
+      };
+    }
+    return { text: parsed.text, to: match };
+  }
+  if (match && mayTransfer) return { text: parsed.textWithoutTrailing ?? parsed.text, to: match };
+  return {
+    text: parsed.text,
+    notice: match
+      ? `Write lock unchanged (${holder}): only the holder or the session creator can pass it on.`
+      : `Write lock unchanged (${holder}): "${candidate}" is not a session participant. To pass the lock, use ${HANDOFF_USAGE}.`,
+  };
+}
+
 export async function recordCodingNote(
   ctx: RoomContext,
   eid: EntityId,
@@ -891,20 +984,24 @@ export async function recordCodingNote(
   }
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
-  // `code handoff <notes> [to <agent>]` — when `to <agent>` is present, transfer
-  // the write lock to that agent in addition to writing the handoff artifact.
+  // `code handoff <notes> [to:<agent>]` — transfer the write lock to a session
+  // participant in addition to writing the handoff artifact. See
+  // resolveHandoffRecipient for the legacy trailing `to <agent>` spelling.
   let handoffTo: string | undefined;
-  let noteArgs = args;
+  let handoffNotice: string | undefined;
+  let text: string;
   if (noteKind === "handoff") {
-    const toIdx = args.findIndex((a) => a.toLowerCase() === "to");
-    if (toIdx >= 0 && args[toIdx + 1]) {
-      handoffTo = args[toIdx + 1];
-      noteArgs = args.slice(0, toIdx);
+    const resolved = resolveHandoffRecipient(deps.db, session, entity, args);
+    if ("refusal" in resolved) {
+      ctx.send(eid, fmtError(resolved.refusal));
+      return;
     }
+    ({ text, to: handoffTo, notice: handoffNotice } = resolved);
+  } else {
+    text = args.join(" ").trim();
   }
-  const text = noteArgs.join(" ").trim();
   if (!text) {
-    ctx.send(eid, `Usage: code ${noteKind} <text>${noteKind === "handoff" ? " [to <agent>]" : ""}`);
+    ctx.send(eid, `Usage: code ${noteKind} <text>${noteKind === "handoff" ? " [to:<agent>]" : ""}`);
     return;
   }
 
@@ -975,13 +1072,14 @@ export async function recordCodingNote(
     depositSessionSummary(deps, entity, session, text);
   }
   updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
-  // `code handoff <notes> to <agent>` transfers the write lock alongside the
+  // `code handoff <notes> to:<agent>` transfers the write lock alongside the
   // handoff artifact. Re-read the row so reassignWriter sees the freshest writer.
   if (noteKind === "handoff" && handoffTo) {
     const fresh = deps.db.getCodingSession(session.id) ?? session;
     reassignWriter(ctx, eid, entity, deps, fresh, handoffTo, "handoff");
   }
-  sendCode(ctx, eid, success(`${capitalize(noteKind)} stored: ${artifact.id}`), {
+  const stored = success(`${capitalize(noteKind)} stored: ${artifact.id}`);
+  sendCode(ctx, eid, handoffNotice ? `${stored}\n${dim(handoffNotice)}` : stored, {
     artifactId: artifact.id,
     artifactKind: artifact.kind,
     commands: [`code show ${artifact.id}`, "code status", "code history"],

@@ -44,6 +44,21 @@ export function updateUserRank(db: Database, id: string, rank: number): void {
   db.run("UPDATE users SET rank = ? WHERE id = ?", [rank, id]);
 }
 
+/**
+ * Rename an account (and its principal's display name), keeping its id, so
+ * everything it owns stays where it is. Maintenance only: used to turn a
+ * script-created account into a server-owned name no login can produce.
+ * One transaction; false when no account has `id`.
+ */
+export function renameUser(db: Database, id: string, name: string): boolean {
+  return db.transaction(() => {
+    const changed = db.run("UPDATE users SET name = ? WHERE id = ?", [name, id]).changes > 0;
+    if (changed)
+      db.run("UPDATE principals SET display_name = ? WHERE principal_id = ?", [name, id]);
+    return changed;
+  })();
+}
+
 /** Look up the named user bound to a verified external-identity subject. */
 export function getUserByAuthSubject(db: Database, subject: string): UserRow | undefined {
   return (

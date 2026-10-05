@@ -900,8 +900,15 @@ explicit handoff — so a reviewer testing the code never clobbers the implement
 
 ```
 > code writer            # who currently holds the write lock
-> code handoff "ready for review" to alice   # hand the lock to alice
+> code handoff ready for review to:alice     # hand the lock to alice (a session participant)
 ```
+
+The recipient must be a session participant: the creator, the bound agent, a dispatched crew member,
+or anyone who has acted in the session. Only the current holder or the creator can pass a held lock
+on. An unknown `to:` recipient refuses the handoff and keeps the lock. The older spelling
+`code handoff <notes> to alice` still works when `to alice` ends the notes and names a participant.
+Otherwise the notes are stored as written and the lock is left alone, so a "to" in the prose never
+moves it.
 
 **Approvals are first-class, auditable artifacts.** Risky actions can be surfaced as **approvals** —
 request/approve/deny artifacts that leave a visible decision trail and render as cards with
@@ -935,7 +942,7 @@ instead of from scratch.
 | Run things | `code run <cmd>` · `code verify` · `code test` / `lint` / `typecheck` · `code recipe run <name>` |
 | Change code | `code patch <title>` → `code apply last patch` · `code checkpoint [title]` · `code revert <id>` |
 | Review | `code approvals` · `code approve\|deny <id>` |
-| Team up | `code roles` · `code crew <goal> [with a,b]` · `code writer [agent]` · `code handoff <notes> [to agent]` |
+| Team up | `code roles` · `code crew <goal> [with a,b]` · `code writer [agent]` · `code handoff <notes> [to:agent]` |
 | Capture | `code summary <notes>` · `code skill add <name> <text>` · `code task <title>` |
 | Orient | `code doctor` · `code onboard` · `code status` · `code history` |
 

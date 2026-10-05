@@ -1900,7 +1900,7 @@ Usage:
   code history [session_id]   Show recent coding events
   code plan <direction>       Store a plan artifact
   code summary <notes>        Store a summary artifact
-  code handoff <notes> [to <agent>] Store a handoff artifact; transfer the write lock when "to" given
+  code handoff <notes> [to:<agent>] Store a handoff artifact; to:<participant> also passes the write lock
   code decision <choice>      Store a decision artifact
   code steer <direction>      Record steering on the active session
   code exit                   Leave Code Mode
@@ -2168,13 +2168,13 @@ Effect: unknown.
 - `field-0` (`path`): text, optional group `option-0`.
 - Group `option-0`: `path`.
 
-### `code handoff <notes> [to <agent>]`
+### `code handoff <notes> [to:<agent>]`
 
 Effect: unknown.
 
 - `field-0` (`notes`): text, required.
-- `field-1` (`agent`): text, optional group `option-0`.
-- Group `option-0`: `to agent`.
+- `field-1` (`to`): text, optional group `option-0`.
+- Group `option-0`: `to:agent`.
 
 ### `code handoff <text>`
 
@@ -5850,7 +5850,7 @@ Effect: write.
 
 ## novelty
 
-Activity proficiency and exploration coverage. Shows command success rates, coverage gaps, and suggestions for underused capabilities. Usage: novelty | novelty suggest | novelty stats
+Ranked opportunities from activity, task outcomes and execution evidence. Advisory, bounded exploration; no activity rewards or automatic spawning. Usage: novelty | novelty stats | novelty suggest [goal] | novelty experiments [benchmark]
 
 Category: Cognition. Minimum rank: 0.
 Aliases: none.
@@ -5865,10 +5865,19 @@ Effect: unknown.
 Effect: unknown.
 
 
-### `novelty suggest`
+### `novelty suggest [goal]`
 
 Effect: unknown.
 
+- `field-0` (`goal`): text, optional group `option-0`.
+- Group `option-0`: `goal`.
+
+### `novelty experiments [benchmark]`
+
+Effect: unknown.
+
+- `field-0` (`benchmark`): text, optional group `option-0`.
+- Group `option-0`: `benchmark`.
 
 ## observe
 

@@ -9,6 +9,8 @@
  * clean backtest needs) and its price (what a budget needs).
  */
 
+import { isFloatingAlias } from "./knowledge";
+
 export const CATALOGUE_URL = "https://openrouter.ai/api/v1/models";
 
 export interface CatalogueModel {
@@ -24,9 +26,9 @@ export interface CatalogueModel {
 /** Vendors whose newest general models are candidates by default. */
 export const DEFAULT_VENDORS = ["anthropic", "openai", "google", "deepseek", "moonshotai", "x-ai"];
 
-/** Variants that are the same weights (batch, free tiers), other modalities, or floating aliases. */
+/** Variants that are the same weights (batch, free tiers) or other modalities. */
 const SKIP =
-  /(:batch|:free|^~|-image|image-|-audio|-tts|-vl\b|-omni|-embed|-preview|customtools|-mini-|router)/i;
+  /(:batch|:free|-image|image-|-audio|-tts|-vl\b|-omni|-embed|-preview|customtools|-mini-|router)/i;
 
 export type Fetcher = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -64,6 +66,7 @@ export function candidateModels(
   const per = opts.perVendor ?? 2;
   const maxOut = opts.maxOutPerM ?? 60;
   const out: CatalogueModel[] = [];
+  const ids = catalogue.map((m) => m.id);
   for (const v of vendors) {
     out.push(
       ...catalogue
@@ -71,6 +74,8 @@ export function candidateModels(
           (m) =>
             m.id.startsWith(`${v}/`) &&
             !SKIP.test(m.id) &&
+            // A floating alias has no trustworthy release date: never a default candidate.
+            !isFloatingAlias(m.id, ids) &&
             Number.isFinite(m.outPerM) &&
             m.outPerM > 0 &&
             m.outPerM <= maxOut,

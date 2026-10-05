@@ -224,6 +224,9 @@ export function registerCoordinationCommands(engine: Engine): void {
       get db() {
         return engine.db;
       },
+      get lessonsDb() {
+        return engine.db;
+      },
       getEntity: (id) => engine.entities.get(id as EntityId),
     }),
   );

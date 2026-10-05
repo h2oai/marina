@@ -205,10 +205,24 @@ const goalSchema = Type.Object({
 });
 
 const noveltySchema = Type.Object({
-  action: Type.Union([Type.Literal("stats"), Type.Literal("suggest"), Type.Literal("help")], {
-    description:
-      "stats (command entropy + success rates), suggest (new angle to try), help (explainer)",
-  }),
+  action: Type.Union(
+    [
+      Type.Literal("stats"),
+      Type.Literal("suggest"),
+      Type.Literal("experiments"),
+      Type.Literal("help"),
+    ],
+    {
+      description:
+        "stats (activity), suggest (ranked opportunities), experiments (benchmark evidence), help (explainer)",
+    },
+  ),
+  query: Type.Optional(
+    Type.String({
+      maxLength: 2000,
+      description: "Optional goal for suggest, or benchmark name for experiments",
+    }),
+  ),
 });
 
 const feedSchema = Type.Object({
@@ -669,9 +683,16 @@ export function createWorldTools(ctx: ToolContext): AgentTool[] {
     wrap(
       "marina_novelty",
       "Novelty",
-      "Self-diagnostic for exploration. stats reports your command entropy and success rates; suggest proposes a new angle when you're stuck; help explains.",
+      "Advisory exploration grounded in your goal, activity and outcomes. suggest ranks relevant recovery, verification and exploration; experiments inspects benchmark evidence. Neither runs experiments nor rewards activity volume.",
       noveltySchema,
-      (p) => `novelty ${p.action as string}`,
+      (p) =>
+        `novelty ${p.action as string}${
+          (p.action === "suggest" || p.action === "experiments") && p.query
+            ? ` ${String(p.query)
+                .replace(/[\r\n]+/g, " ")
+                .slice(0, 2000)}`
+            : ""
+        }`,
       ctx,
     ),
     wrap(

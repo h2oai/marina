@@ -541,7 +541,7 @@ async function dispatchCodingCrew(
     });
     // Single-writer safety: the implementer (else first member) holds the
     // workspace write lock; other members read/advise via artifacts until a
-    // handoff (`code handoff to <name>`) or owner reassignment (`code writer`).
+    // handoff (`code handoff <notes> to:<name>`) or owner reassignment (`code writer`).
     deps.db.updateCodingSession(session.id, { mode: "agent", writer: writer ?? null });
     if (writer) {
       deps.db.createCodingEvent({
@@ -624,7 +624,7 @@ export function writerCommand(
   if (!target) {
     const holder = session.writer ?? "open";
     sendCode(ctx, eid, `${header("Write Lock")}\n${separator()}\nHolder: ${holder}`, {
-      commands: ["code writer <agent>", "code handoff <notes> to <agent>"],
+      commands: ["code writer <agent>", "code handoff <notes> to:<agent>"],
       event: "code_writer_shown",
       sessionId: session.id,
       status: session.writer ? "locked" : "open",
@@ -652,7 +652,7 @@ export function writerCommand(
 /**
  * Set the session writer to `newWriter`, emit a `writer_changed` event +
  * artifact, and announce. Shared by `code writer <agent>` and `code handoff
- * <notes> to <agent>`.
+ * <notes> to:<agent>`.
  */
 export function reassignWriter(
   ctx: RoomContext,
