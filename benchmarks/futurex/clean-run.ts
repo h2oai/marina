@@ -43,7 +43,7 @@ import type { FuturexRow } from "./dataset";
 import { recordScoredRun } from "./ledger";
 import { futurexOutcome, futurexResolvedAt } from "./lessons";
 import { endTimeIso, parseOptions, requestFor } from "./map";
-import { type BatchRun, BatchStopped, runBatch, type Variant } from "./run";
+import { type BatchRun, BatchStopped, type RowResult, runBatch, type Variant } from "./run";
 import {
   type BatchScore,
   type JudgeModel,
@@ -305,6 +305,53 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
       });
       let lessonFailures = 0;
       const out = join(opts.outDir, label);
+      /** Score a finished row and learn from it (history only for rows run now). */
+      const learnRow = async (row: FuturexRow, r: RowResult, fresh: boolean): Promise<void> => {
+        // A fallback is an infrastructure outcome (no run answered), not a
+        // forecast to learn from.
+        if ((!own && !history && !opts.learn) || r.fallback) return;
+        // Known once the event ended, plus the settlement margin (never at
+        // the end time itself, which sibling rows share as their cutoff).
+        const resolvedAt = futurexResolvedAt(row);
+        if (!resolvedAt) return;
+        const item = scoreItem(row, r.prediction);
+        if (history && fresh) {
+          const req = requestFor(row);
+          const truth = truthOutcome(row, req.answer);
+          const rec = truth
+            ? recordFromAnswer({
+                id: row.id,
+                req: { ...req, id: row.id },
+                answer: r.answer,
+                truth,
+                resolvedAt,
+                formation: variant.formation ?? "ensemble",
+                score: item.score,
+              })
+            : undefined;
+          if (rec) await history.add(rec);
+        }
+        const outcome = futurexOutcome({
+          row,
+          result: r,
+          item,
+          label: `clean:${variant.label}`,
+          resolvedAt,
+        });
+        if (opts.learn) outcomes.push(outcome);
+        if (!own) return;
+        try {
+          await recordOutcome(
+            { sink: own, ...(opts.lessonWriter ? { writer: opts.lessonWriter } : {}) },
+            outcome,
+          );
+          lessonsWritten++;
+        } catch (err) {
+          // A lost lesson costs later rows a hint; it never voids the run.
+          lessonFailures++;
+          log(`  lesson write failed for ${row.id}: ${(err as Error).message.slice(0, 120)}`);
+        }
+      };
       const runPromise: Promise<BatchRun> = runBatch(
         rows,
         variant,
@@ -358,51 +405,12 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
             ),
           afterRow: async (row, r) => {
             guard.record(r.costUsd);
-            // A fallback is an infrastructure outcome (no run answered), not a
-            // forecast to learn from.
-            if ((!own && !history && !opts.learn) || r.fallback) return;
-            // Known once the event ended, plus the settlement margin (never at
-            // the end time itself, which sibling rows share as their cutoff).
-            const resolvedAt = futurexResolvedAt(row);
-            if (!resolvedAt) return;
-            const item = scoreItem(row, r.prediction);
-            if (history) {
-              const req = requestFor(row);
-              const truth = truthOutcome(row, req.answer);
-              const rec = truth
-                ? recordFromAnswer({
-                    id: row.id,
-                    req: { ...req, id: row.id },
-                    answer: r.answer,
-                    truth,
-                    resolvedAt,
-                    formation: variant.formation ?? "ensemble",
-                    score: item.score,
-                  })
-                : undefined;
-              if (rec) await history.add(rec);
-            }
-            const outcome = futurexOutcome({
-              row,
-              result: r,
-              item,
-              label: `clean:${variant.label}`,
-              resolvedAt,
-            });
-            if (opts.learn) outcomes.push(outcome);
-            if (!own) return;
-            try {
-              await recordOutcome(
-                { sink: own, ...(opts.lessonWriter ? { writer: opts.lessonWriter } : {}) },
-                outcome,
-              );
-              lessonsWritten++;
-            } catch (err) {
-              // A lost lesson costs later rows a hint; it never voids the run.
-              lessonFailures++;
-              log(`  lesson write failed for ${row.id}: ${(err as Error).message.slice(0, 120)}`);
-            }
+            await learnRow(row, r, true);
           },
+          // A resumed row's lesson lived only in the stopped process's in-run
+          // pool, and its outcome must still reach the shared pool when this run
+          // is filed; its history record was already added by that run.
+          onResumed: (row, r) => learnRow(row, r, false),
         },
       );
       let run: BatchRun;
