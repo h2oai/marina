@@ -502,6 +502,11 @@ workspace) is persisted in the Docker-managed `marina-data` volume, mounted at `
 For a host-visible bind mount, set `MARINA_DATA_VOLUME=/absolute/writable/path` in `.env`; that
 directory must be writable by container UID 1000.
 
+Compose publishes the ports on `127.0.0.1`, so the stack is reachable from that machine only. To put
+Marina behind a reverse proxy or load balancer on another host, set `MARINA_BIND_IP=0.0.0.0` in
+`.env` (or pin a specific host IP) — and enable sign-in first; see the
+[Deployment guide](docs/guides/deployment.md).
+
 The default Compose path starts Marina only and needs no GPU. To use the optional local llama.cpp
 service, first set `LLAMA_MODEL`, `LLAMA_API_KEY`, `LLAMA_MODELS_DIR`, and
 `LLAMA_BASE_URL=http://llama:8080/v1` in `.env`, install the NVIDIA Container Toolkit, then run
