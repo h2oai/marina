@@ -44,7 +44,7 @@ import { searxngProvider } from "../../engine/search-providers/searxng";
 import { tavilyProvider } from "../../engine/search-providers/tavily";
 import { dailyCapRefusal, recordSpend } from "../../engine/spend-ledger";
 import { guardedFetch } from "../../net/url-guard";
-import type { ResearchBrief } from "./briefs";
+import type { ResearchBrief, SourceExclusion } from "./briefs";
 import type { ResearchReport, Retriever, Source } from "./retrieve";
 import { fetchAllowed, readCapped, VERIFY_USER_AGENT } from "./verify";
 
@@ -88,6 +88,8 @@ export interface RetrievalFunnel {
   /** Passages selected for the report, and their characters. */
   passages: number;
   passageChars: number;
+  /** Pages dropped because the brief bars them (`brief.exclude`); absent when nothing is barred. */
+  excluded?: number;
 }
 
 export interface WebSearchOptions {
@@ -383,6 +385,48 @@ export function pageKey(url: string): string {
   }
 }
 
+/** A title folded for matching: lower case, letters/digits/CJK only, single spaces. */
+function foldTitle(title: string): string {
+  return title
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+/** Shortest barred title matched by containment: shorter ones match unrelated pages by chance. */
+const MIN_BARRED_TITLE = 16;
+
+/**
+ * A predicate for a brief's `exclude`: true when a page (URL, and title when
+ * known) is barred. URL prefixes compare by `pageKey` (no scheme, `www.`,
+ * tracking parameters or trailing slash) at a path boundary; titles by
+ * containment after folding.
+ */
+export function excludedSource(
+  exclude: SourceExclusion | undefined,
+): (url: string, title?: string) => boolean {
+  const prefixes = (exclude?.urls ?? []).map((u) =>
+    pageKey(/^https?:\/\//i.test(u) ? u : `https://${u}`),
+  );
+  const titles = (exclude?.titles ?? []).map(foldTitle).filter((t) => t.length >= MIN_BARRED_TITLE);
+  if (prefixes.length === 0 && titles.length === 0) return () => false;
+  return (url, title) => {
+    const key = pageKey(url);
+    if (
+      prefixes.some(
+        (p) =>
+          key === p || key.startsWith(p.endsWith("/") ? p : `${p}/`) || key.startsWith(`${p}?`),
+      )
+    )
+      return true;
+    if (!title || titles.length === 0) return false;
+    const t = foldTitle(title);
+    return titles.some((b) => t.includes(b));
+  };
+}
+
 /** The registrable domain, approximately (`news.bbc.co.uk` → `bbc.co.uk`). */
 export function siteOf(url: string): string {
   let host: string;
@@ -408,15 +452,30 @@ const STOP = new Set(
   ).split(" "),
 );
 
-/** Lower-cased, accent-folded word tokens of three or more characters, stop words out. */
+/** Han, kana and hangul runs: scripts written without spaces between words. */
+const CJK_RUN = /[぀-ヿ㐀-䶿一-鿿가-힯豈-﫿]+/g;
+
+/**
+ * Lower-cased, accent-folded word tokens of three or more characters, stop
+ * words out — plus, for CJK text (no spaces between words), overlapping
+ * character bigrams (a lone character stands for itself), the usual
+ * dictionary-free tokenisation for Chinese and Japanese retrieval.
+ */
 export function terms(text: string): string[] {
-  return (
+  const latin = (
     text
       .toLowerCase()
       .normalize("NFKD")
       .replace(/[̀-ͯ]/g, "")
       .match(/[a-z0-9][a-z0-9'-]{2,}/g) ?? []
   ).filter((t) => !STOP.has(t));
+  const cjk: string[] = [];
+  for (const run of text.match(CJK_RUN) ?? []) {
+    const chars = [...run];
+    if (chars.length === 1) cjk.push(run);
+    for (let i = 0; i + 1 < chars.length; i++) cjk.push(chars[i]! + chars[i + 1]!);
+  }
+  return cjk.length ? [...latin, ...cjk] : latin;
 }
 
 /** A page's text in passages: paragraphs, long ones split at sentence ends. */
@@ -430,12 +489,15 @@ export function passagesOf(text: string): string[] {
       continue;
     }
     let cur = "";
-    for (const s of p.split(/(?<=[.!?])\s+(?=[A-Z0-9"“(])/)) {
+    // Latin sentence ends need a space and a capital after them; CJK full-width
+    // ends (。！？) need neither.
+    for (const s of p.split(/(?<=[.!?])\s+(?=[A-Z0-9"“(])|(?<=[。！？])\s*/)) {
       if (cur && cur.length + s.length + 1 > PASSAGE_MAX) {
         if (cur.length >= PASSAGE_MIN) out.push(cur);
         cur = "";
       }
-      cur = cur ? `${cur} ${s}` : s;
+      // CJK sentences join without a space, as the page wrote them (the quote check is verbatim).
+      cur = cur ? (/[。！？]$/.test(cur) ? cur + s : `${cur} ${s}`) : s;
     }
     if (cur.length >= PASSAGE_MIN) out.push(cur.slice(0, PASSAGE_MAX * 2));
   }
@@ -655,12 +717,19 @@ export function webSearchRetriever(opts: WebSearchOptions = {}): Retriever {
     }
 
     // ── Fuse, filter by cutoff, cap per domain ───────────────────────────
+    const barred = excludedSource(brief.exclude);
+    if (brief.exclude) funnel.excluded = 0;
+    const barredKeys = new Set<string>();
     const hits = new Map<string, Hit>();
     for (const { query, results } of batches) {
       // Background (the extra batch after the queries) counts half: it frames, it does not decide.
       const scale = query >= queries.length ? 0.5 : 1;
       results.forEach((r, rank) => {
         if (!r.url || !/^https?:\/\//i.test(r.url)) return;
+        if (barred(r.url, r.title)) {
+          barredKeys.add(pageKey(r.url));
+          return;
+        }
         const key = pageKey(r.url);
         const had = hits.get(key);
         const rrf = scale / (rank + 3);
@@ -675,7 +744,7 @@ export function webSearchRetriever(opts: WebSearchOptions = {}): Retriever {
     funnel.unique = hits.size;
     // The question's settlement pages are read first, outside the domain cap.
     const first: Hit[] = (brief.readFirst ?? [])
-      .filter((u) => /^https?:\/\//i.test(u))
+      .filter((u) => /^https?:\/\//i.test(u) && !barred(u))
       .slice(0, 3)
       .map((url) => {
         const had = hits.get(pageKey(url));
@@ -727,6 +796,11 @@ export function webSearchRetriever(opts: WebSearchOptions = {}): Retriever {
           if (html) {
             const ex = extractReadableText(page.body);
             text = ex.text;
+            // The page's own title can reveal a barred source the search hit did not.
+            if (ex.title && barred(url, ex.title)) {
+              barredKeys.add(pageKey(url));
+              return;
+            }
             title ||= ex.title ?? "";
             published ??= extractPublishedDate(page.body, now.getTime());
           } else text = page.body;
@@ -734,6 +808,10 @@ export function webSearchRetriever(opts: WebSearchOptions = {}): Retriever {
       }
       if (!text || text.length < PASSAGE_MIN) {
         funnel.readFailed++;
+        return;
+      }
+      if (title && barred(url, title)) {
+        barredKeys.add(pageKey(url));
         return;
       }
       if (published && Date.parse(published) > bound) {
@@ -785,6 +863,7 @@ export function webSearchRetriever(opts: WebSearchOptions = {}): Retriever {
     }
     funnel.passages = chosen.length;
     funnel.passageChars = chars;
+    if (funnel.excluded !== undefined) funnel.excluded = barredKeys.size;
 
     const lines: string[] = [];
     const sources: Source[] = [];

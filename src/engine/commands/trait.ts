@@ -26,6 +26,7 @@ const CAPABILITY_FIELDS: { key: keyof TraitCapabilities; label: string }[] = [
   { key: "successSignals", label: "Success signals" },
   { key: "riskSignals", label: "Risk signals" },
   { key: "applicableTasks", label: "Applicable tasks" },
+  { key: "families", label: "Families" },
 ];
 
 export function renderTraitDiff(a: TraitRow, b: TraitRow): string {
@@ -55,7 +56,7 @@ export function renderTraitDiff(a: TraitRow, b: TraitRow): string {
  * Parse optional capabilities from the end of a trait create command.
  * Syntax: trait create <name> <category> <prompt text> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2]
  *   [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2]
- *   [successSignals s1,s2] [riskSignals r1,r2]
+ *   [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] [families f1,f2]
  *
  * Returns { prompt, capabilities } where prompt has the capability tokens stripped.
  */
@@ -80,6 +81,7 @@ function parseCapabilities(tokens: string[]): {
     ["riskSignals", "riskSignals"],
     ["applicabletasks", "applicableTasks"],
     ["applicableTasks", "applicableTasks"],
+    ["families", "families"],
   ]);
   let i = 0;
 
@@ -135,6 +137,9 @@ function formatCapabilities(caps: TraitCapabilities): string[] {
   if (caps.applicableTasks && caps.applicableTasks.length > 0) {
     lines.push(`${bold("Applicable tasks:")} ${caps.applicableTasks.join(", ")}`);
   }
+  if (caps.families && caps.families.length > 0) {
+    lines.push(`${bold("Families:")} ${caps.families.join(", ")}`);
+  }
   return lines;
 }
 
@@ -156,8 +161,8 @@ export function traitCommand(deps: {
   return {
     category: "Identity & Access",
     usage: [
-      "trait create <name> <category> <prompt text> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2]",
-      "trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2]",
+      "trait create <name> <category> <prompt text> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] [families f1,f2]",
+      "trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] [families f1,f2]",
       "trait delete <name>",
       "trait diff <a> <b>",
       "trait history <name>",
@@ -168,7 +173,7 @@ export function traitCommand(deps: {
     name: "trait",
     aliases: [],
     minRank: 0,
-    help: "Manage composable agent traits.\nUsage: trait list | trait view <name> | trait lint <name> | trait diff <a> <b> | trait history <name> | trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] | trait delete <name>\n\nTraits are atomic prompt fragments used to compose roles.\nOptional capabilities metadata enables semantic composition (synergies/tensions), task gating, and typed behavioral hints.\n`trait lint <name>` reports pragmatic prompt-shaping warnings without changing the trait. `trait history <name>` shows the audited edit trail.",
+    help: "Manage composable agent traits.\nUsage: trait list | trait view <name> | trait lint <name> | trait diff <a> <b> | trait history <name> | trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] [families f1,f2] | trait delete <name>\n\nTraits are atomic prompt fragments used to compose roles.\nOptional capabilities metadata enables semantic composition (synergies/tensions), task gating, and typed behavioral hints.\n`trait lint <name>` reports pragmatic prompt-shaping warnings without changing the trait. `trait history <name>` shows the audited edit trail.",
     handler: (ctx: RoomContext, input) => {
       if (!deps.db) {
         ctx.send(input.entity, requiresPersistence("traits"));
@@ -304,7 +309,7 @@ export function traitCommand(deps: {
           if (!name || !category || remaining.length === 0) {
             ctx.send(
               input.entity,
-              "Usage: trait create <name> <category> <prompt text> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2]",
+              "Usage: trait create <name> <category> <prompt text> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] [families f1,f2]",
             );
             return;
           }
@@ -373,7 +378,7 @@ export function traitCommand(deps: {
         default:
           ctx.send(
             input.entity,
-            "Usage: trait list | trait view <name> | trait lint <name> | trait diff <a> <b> | trait history <name> | trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] | trait delete <name>",
+            "Usage: trait list | trait view <name> | trait lint <name> | trait diff <a> <b> | trait history <name> | trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] [families f1,f2] | trait delete <name>",
           );
       }
     },

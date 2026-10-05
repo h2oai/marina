@@ -9,8 +9,9 @@
  *   bun run browsecomp-plus run --queries q.jsonl --model <id> [--limit 100 --seed 1]
  *       [--replicates 2] [--group <key>] [--out <dir>] [--qrels qrel_evidence.txt]
  *       [--judge-model openrouter/qwen/qwen3-32b] [--file-to http://localhost:3300]
- *       [--formation single|ensemble:N|mapreduce:N|sharding:N|blackboard:NxR]
+ *       [--formation single|ensemble:N|mapreduce:N|sharding:N|blackboard:NxR|read-swarm]
  *       [--lead-model <id>] [--offset N] [--max-usd N] [--resume] [--final-answer]
+ *       [--reader-model <id>] [--swarm-docs N] [--swarm-open N] [--swarm-no-decompose]
  *   bun run browsecomp-plus compare <armA-dir> <armB-dir>   pooled paired comparison
  *
  * `--max-usd` is a hard spend stop for the whole invocation (every replicate,
@@ -29,6 +30,15 @@
  * (`openrouter/openai/gpt-6-luna`), the verification formation
  * (`marina/verify:<proposer>[+<checker>]`) or a crew (`marina:<crew>`).
  * The key is MARINA_BENCH_API_KEY (a MODEL_API_KEYS entry on that server).
+ *
+ * `--formation read-swarm` runs Marina's read swarm (src/retrieval/read-swarm.ts):
+ * the question is decomposed into clues, each clue is searched, reader models
+ * (`--reader-model`, default `--model`) read the best documents in full, and
+ * a lead (`--lead-model`, default `--model`) answers from the candidate table,
+ * searching on through the same readers. `--swarm-docs` is the per-query read
+ * budget in documents (default 60), `--swarm-open` the documents read before
+ * the lead's first turn (default 16), `--swarm-no-decompose` reads against the
+ * question alone. The lead's turn cap is `--max-turns`.
  *
  * `--final-answer` runs budget-terminal answering (src/agent/budget-terminal.ts):
  * from ~75 % of `--max-turns` the agent is told how many turns are left, and at
@@ -51,6 +61,7 @@ import { parseArgs } from "node:util";
 import { workerPool } from "../benchmarks/browsecomp-plus/corpus-pool";
 import { formationLabel, parseFormation } from "../benchmarks/browsecomp-plus/formations";
 import { parseQrels } from "../benchmarks/browsecomp-plus/official";
+import { type SwarmSettings, swarmLabel } from "../benchmarks/browsecomp-plus/read-swarm";
 import {
   type ArmConfig,
   loadQueries,
@@ -63,6 +74,7 @@ import {
   toBenchmarkResult,
   writeFiled,
 } from "../benchmarks/browsecomp-plus/run";
+import { CallSpendGuard, parseMaxUsd } from "../benchmarks/call-spend-guard";
 import { fileToLedger } from "../benchmarks/ledger-file";
 import { comparePooled, seedFromIds } from "../benchmarks/replicate-stats";
 import {
@@ -73,7 +85,6 @@ import {
   replicateFromResult,
   validGroupKey,
 } from "../benchmarks/replicates";
-import { CallSpendGuard, parseMaxUsd } from "../benchmarks/call-spend-guard";
 import { wilsonInterval } from "../benchmarks/stats";
 import type { BenchmarkResult } from "../benchmarks/types";
 import { CORPUS_LEAD_CHARS, corpusDir } from "../src/engine/search-providers/corpus";
@@ -110,6 +121,11 @@ const { positionals, values } = parseArgs({
     "search-paging": { type: "boolean" },
     "first-move": { type: "string" },
     "first-move-judge": { type: "boolean" },
+    "reader-model": { type: "string" },
+    "swarm-docs": { type: "string" },
+    "swarm-open": { type: "string" },
+    "swarm-chunk-chars": { type: "string" },
+    "swarm-no-decompose": { type: "boolean" },
     "max-tokens": { type: "string" },
     concurrency: { type: "string", default: "4" },
     "timeout-s": { type: "string", default: "600" },
@@ -153,6 +169,27 @@ function int(name: string, raw: string | undefined, min = 1): number {
   return n;
 }
 
+/** `read-swarm` settings from the flags (undefined for other formations). */
+function swarmFlags(kind: string): SwarmSettings | undefined {
+  if (kind !== "read-swarm") {
+    for (const f of ["reader-model", "swarm-docs", "swarm-open", "swarm-chunk-chars"] as const) {
+      if (values[f]) throw new Error(`--${f} needs --formation read-swarm`);
+    }
+    if (values["swarm-no-decompose"])
+      throw new Error("--swarm-no-decompose needs --formation read-swarm");
+    return undefined;
+  }
+  return {
+    ...(values["reader-model"] ? { readerModel: values["reader-model"] } : {}),
+    ...(values["swarm-docs"] ? { maxDocs: int("swarm-docs", values["swarm-docs"]) } : {}),
+    ...(values["swarm-open"] ? { openDocs: int("swarm-open", values["swarm-open"]) } : {}),
+    ...(values["swarm-chunk-chars"]
+      ? { chunkChars: int("swarm-chunk-chars", values["swarm-chunk-chars"], 2000) }
+      : {}),
+    ...(values["swarm-no-decompose"] ? { decompose: false } : {}),
+  };
+}
+
 async function run(): Promise<number> {
   if (!values.queries || !values.model) throw new Error("run needs --queries and --model");
   const apiKey = process.env.MARINA_BENCH_API_KEY;
@@ -164,6 +201,7 @@ async function run(): Promise<number> {
   const lead = values["lead-model"];
   const offset = int("offset", values.offset, 0);
   const finalAnswer = values["final-answer"] === true;
+  const swarm = swarmFlags(formation.kind);
   const label =
     values.label ??
     `${formation.kind === "single" ? values.model : `${formationLabel(formation)}:${values.model}`}${finalAnswer ? "+final-answer" : ""}`;
@@ -196,6 +234,7 @@ async function run(): Promise<number> {
     seed,
     offset,
     limit: limit ?? null,
+    ...(swarm ? { swarm: swarmLabel(swarm, values.model) } : {}),
     queriesHash: createHash("sha256")
       .update(queries.map((q) => q.query_id).join("\n"))
       .digest("hex")
@@ -220,6 +259,12 @@ async function run(): Promise<number> {
           formation: formationLabel(formation),
           model: values.model,
           lead: lead ?? values.model,
+          ...(swarm
+            ? {
+                reader: swarm.readerModel ?? values.model,
+                ...(swarm.decompose === false ? { decompose: false } : {}),
+              }
+            : {}),
           ...(finalAnswer ? { finalAnswer } : {}),
         };
   console.error(
@@ -270,6 +315,7 @@ async function run(): Promise<number> {
       formationOptions: {
         leadTurns: int("lead-turns", values["lead-turns"]),
         ...(lead ? { leadModel: lead } : {}),
+        ...(swarm ? { swarm } : {}),
       },
       qrels,
       goldQrels,
@@ -297,6 +343,7 @@ async function run(): Promise<number> {
           model: values.model,
           formation: formationLabel(formation),
           ...(lead ? { lead_model: lead } : {}),
+          ...(swarm ? { swarm: swarmLabel(swarm, values.model) } : {}),
           judge: values["judge-model"],
           queries: queries.length,
           seed,

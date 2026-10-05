@@ -17,7 +17,7 @@ import { parseModifiers, splitOnTerminator } from "../parse-input";
 import { checkRoleEdit } from "../role-guard";
 import { requiresPersistence } from "./command-messages";
 
-const DOMAIN_HINT = "forecast|code|tools|benchmark|arena|meta";
+const DOMAIN_HINT = OUTCOME_DOMAINS.join("|");
 const RETIRE_USAGE = `lessons retire <id> reason:<text> [domain:<${DOMAIN_HINT}>] | lessons retire source:<s>|match:<text> [domain:<d>] [confirm:yes] reason:<text>`;
 const SUPERSEDE_USAGE = "lessons supersede <id> reason:<text> -- <replacement lesson>";
 /** Most lessons one criteria retirement touches; narrow the criteria for more. */

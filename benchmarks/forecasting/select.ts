@@ -112,6 +112,8 @@ export interface SelectOptions {
   minItems?: number;
   /** Most items to use (spread evenly over the window). */
   maxItems?: number;
+  /** Use every clean item (ignore `maxItems`): a contest against an incumbent's slice. */
+  keepAllItems?: boolean;
   /** Total spend for the selection. */
   budgetUsd: number;
   /** How the forecasters' retrieval is isolated (`isolationOfSpec`); `contaminated` is refused. */
@@ -207,7 +209,8 @@ export async function selectConfiguration(opts: SelectOptions): Promise<Selectio
     r.note = `released ${dropped.bound}: too few questions in the common window`;
   }
   common.sort((a, b) => a.request.asOf.localeCompare(b.request.asOf) || a.id.localeCompare(b.id));
-  common = spread(common, opts.maxItems ?? common.length);
+  // Contesting an incumbent pairs the SAME items: no thinning to `maxItems`.
+  if (!opts.keepAllItems) common = spread(common, opts.maxItems ?? common.length);
   const window = common[0]?.request.asOf.slice(0, 10) ?? "";
   log(
     `selection: ${opts.candidates.length} candidates, ${eligible.length} backtestable on ${common.length} resolved questions forecast from ${window} · ${reps} replicates · budget $${opts.budgetUsd}`,

@@ -17,6 +17,7 @@
 // in `src/decisions/policy.ts`).
 
 import { availableModels } from "../../agent/available-models";
+import { type DefaultSlotReader, resolveDefault } from "../../engine/default-resolution";
 import type { Engine } from "../../engine/engine";
 import { getErrorMessage } from "../../engine/errors";
 import { Logger } from "../../engine/logger";
@@ -61,12 +62,40 @@ export interface VerifyModelSpec {
   checker: string;
 }
 
-/** `marina/verify:<proposer>[+<checker>]` → ids; checker defaults to
- *  `MARINA_VERIFY_CHECKER_MODEL`, else the proposer. Undefined when not a verify id. */
+/** The earned-default slot for the verify checker (`benchmark promote verify:checker <run>`). */
+export const VERIFY_CHECKER_SLOT = "verify:checker";
+
+/**
+ * The checker named by a promoted slot value: an explicit `checker` field, or
+ * the checker of a `marina/verify:<proposer>+<checker>` target model. A run of
+ * any other target says nothing about which checker to use.
+ */
+export function checkerFromSlotValue(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") {
+    return typeof value === "string" ? checkerFromSlotValue({ model: value }) : undefined;
+  }
+  const v = value as { checker?: unknown; model?: unknown };
+  if (typeof v.checker === "string" && v.checker.trim()) return v.checker.trim();
+  if (typeof v.model === "string" && v.model.startsWith(VERIFY_MODEL_PREFIX)) {
+    const rest = v.model.slice(VERIFY_MODEL_PREFIX.length);
+    const plus = rest.lastIndexOf("+");
+    const checker = plus > 0 ? rest.slice(plus + 1).trim() : "";
+    return checker || undefined;
+  }
+  return undefined;
+}
+
+/** `marina/verify:<proposer>[+<checker>]` → ids. Without a checker in the id it
+ *  resolves through `resolveDefault`: `MARINA_VERIFY_CHECKER_MODEL`, else the
+ *  earned `verify:checker` slot (when a ledger is given; a checker `reachable`
+ *  rejects is skipped, so an earned default never breaks the formation), else
+ *  the proposer. Undefined when not a verify id. */
 export function parseVerifyModel(
   model: string,
   env: Record<string, string | undefined> = process.env,
   defaultId?: string,
+  db?: DefaultSlotReader,
+  reachable?: (id: string) => boolean,
 ): VerifyModelSpec | undefined {
   if (!model.startsWith(VERIFY_MODEL_PREFIX)) return undefined;
   const rest = model.slice(VERIFY_MODEL_PREFIX.length).trim();
@@ -74,8 +103,25 @@ export function parseVerifyModel(
   const plus = rest.lastIndexOf("+");
   const proposer = (plus > 0 ? rest.slice(0, plus) : rest).trim();
   const explicitChecker = plus > 0 ? rest.slice(plus + 1).trim() : "";
-  const checker = explicitChecker || env.MARINA_VERIFY_CHECKER_MODEL?.trim() || proposer;
-  if (!proposer || !checker) return undefined;
+  if (!proposer) return undefined;
+  const checker =
+    explicitChecker ||
+    resolveDefault<string>({
+      slot: VERIFY_CHECKER_SLOT,
+      surface: "marina/verify",
+      env: {
+        name: "MARINA_VERIFY_CHECKER_MODEL",
+        value: env.MARINA_VERIFY_CHECKER_MODEL?.trim() || undefined,
+      },
+      read: (v) => {
+        const c = checkerFromSlotValue(v);
+        return c && (!reachable || reachable(c)) ? c : undefined;
+      },
+      builtIn: proposer,
+      builtInLabel: "the proposer (self-check)",
+      ...(db ? { db } : {}),
+    }).value;
+  if (!checker) return undefined;
   return { proposer: sized(proposer, env, defaultId), checker: sized(checker, env, defaultId) };
 }
 
@@ -737,7 +783,14 @@ export async function maybeVerifyChat(
   // Under the operator's passthru pin `default` names the pinned model and
   // every other id must be the pin (same policy as plain passthru).
   const pin = verifyPin(engine);
-  const spec = parseVerifyModel(model, process.env, pin || undefined);
+  // Under a pin every id must be the pin, so an earned checker slot is not consulted.
+  const spec = parseVerifyModel(
+    model,
+    process.env,
+    pin || undefined,
+    pin ? undefined : engine.db,
+    (id) => !!explicitUpstreamModel(engine, id),
+  );
   if (!spec)
     return errorJson(
       400,

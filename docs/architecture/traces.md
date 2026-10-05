@@ -16,6 +16,6 @@
 - **Adaptive routing** (opt-in): load-balance strategy `adaptive` (`X-Load-Balance` header on single-agent routes, else the operator-configured endpoint strategy) selects route targets from trace mechanics via `adviseTraceRouting` (`src/engine/trace-routing-advice.ts`, weight-free shadow advice); falls back to least-busy on insufficient evidence. The routing hot path skips judgment fetches by design.
 - **Benchmark evidence** (`trace advise evidence <benchmark[,benchmark]> [min-n] [role:<role>]`): measured accuracy per model and per participant from the benchmark ledger (`benchmark_items`), with n, the Wilson 95 % interval and cost per item, ranked by lower bound. It also shows the routing objective (`MARINA_ROUTE_EVIDENCE_OBJECTIVE=lcb|value|budget`) with its tolerance or budget, the evidence level used (role, else model), and why each candidate was picked, rejected or ineligible.
   - **Counted:** only traced attribution (the agent whose turns carry the item's request trace) and direct-model runs. Window evidence counts only with `MARINA_ROUTE_EVIDENCE_WINDOW=true`, and shared evidence never.
-  - **Routing:** shows what the configured `model:route` candidates would pick. The same evidence feeds spawn-time routing only under `MARINA_ROUTE_EVIDENCE=observe|on` (see decisions.md).
+  - **Routing:** shows what the configured `model:route` candidates would pick. The same evidence feeds spawn-time routing: recorded under `MARINA_ROUTE_EVIDENCE=observe` (the default), applied only under `on` (see decisions.md).
 
 See also: `docs/guides/observability.md`.

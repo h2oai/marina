@@ -4731,8 +4731,8 @@ Effect: unknown.
 ## lessons
 
 Recall lessons Marina learned from past outcomes (benchmark runs, resolved forecasts, code verifications, arena rounds), trusted first; domain:meta holds the cross-board lessons (trusted, transferable methods and configurations mirrored from every producer).
-Usage: lessons <topic> [domain:<forecast|code|tools|benchmark|arena|meta>]
-       lessons retire <id> reason:<text> [domain:<forecast|code|tools|benchmark|arena|meta>] | lessons retire source:<s>|match:<text> [domain:<d>] [confirm:yes] reason:<text>
+Usage: lessons <topic> [domain:<forecast|code|tools|benchmark|arena|research|meta>]
+       lessons retire <id> reason:<text> [domain:<forecast|code|tools|benchmark|arena|research|meta>] | lessons retire source:<s>|match:<text> [domain:<d>] [confirm:yes] reason:<text>
        lessons supersede <id> reason:<text> -- <replacement lesson>
 
 Every verdict becomes a candidate lesson; the decision layer judges it and only passing (trusted) or unjudged (unverified, labelled) lessons are served. A wrong lesson is retired, never erased: retire/supersede close its validity (recall stops serving it; its history stays readable) and need role.edit — a lesson steers every agent it is recalled for. Criteria retirements preview until confirm:yes.
@@ -4746,12 +4746,12 @@ Effect: unknown.
 
 - `field-0` (`topic`): text, required.
 
-### `lessons <topic> domain:<forecast|code|tools|benchmark|arena|meta>`
+### `lessons <topic> domain:<forecast|code|tools|benchmark|arena|research|meta>`
 
 Effect: unknown.
 
 - `field-0` (`topic`): text, required.
-- `field-1` (`domain`): text, required, choices `forecast`, `code`, `tools`, `benchmark`, `arena`, `meta`.
+- `field-1` (`domain`): text, required, choices `forecast`, `code`, `tools`, `benchmark`, `arena`, `research`, `meta`.
 
 ### `lessons retire <id> reason:<text>`
 
@@ -7816,7 +7816,7 @@ Effect: unknown.
 ## trait
 
 Manage composable agent traits.
-Usage: trait list | trait view <name> | trait lint <name> | trait diff <a> <b> | trait history <name> | trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] | trait delete <name>
+Usage: trait list | trait view <name> | trait lint <name> | trait diff <a> <b> | trait history <name> | trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] [families f1,f2] | trait delete <name>
 
 Traits are atomic prompt fragments used to compose roles.
 Optional capabilities metadata enables semantic composition (synergies/tensions), task gating, and typed behavioral hints.
@@ -7825,7 +7825,7 @@ Optional capabilities metadata enables semantic composition (synergies/tensions)
 Category: Identity & Access. Minimum rank: 0.
 Aliases: none.
 
-### `trait create <name> <category> <prompt text> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2]`
+### `trait create <name> <category> <prompt text> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] [families f1,f2]`
 
 Effect: unknown.
 
@@ -7842,6 +7842,7 @@ Effect: unknown.
 - `field-10` (`successSignals`): text, optional group `option-7`.
 - `field-11` (`riskSignals`): text, optional group `option-8`.
 - `field-12` (`applicableTasks`): text, optional group `option-9`.
+- `field-13` (`families`): text, optional group `option-10`.
 - Group `option-0`: `strengths s1,s2`.
 - Group `option-1`: `preferences p1,p2`.
 - Group `option-2`: `avoids a1,a2`.
@@ -7852,8 +7853,9 @@ Effect: unknown.
 - Group `option-7`: `successSignals s1,s2`.
 - Group `option-8`: `riskSignals r1,r2`.
 - Group `option-9`: `applicableTasks t1,t2`.
+- Group `option-10`: `families f1,f2`.
 
-### `trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2]`
+### `trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] [families f1,f2]`
 
 Effect: unknown.
 
@@ -7870,6 +7872,7 @@ Effect: unknown.
 - `field-10` (`successSignals`): text, optional group `option-7`.
 - `field-11` (`riskSignals`): text, optional group `option-8`.
 - `field-12` (`applicableTasks`): text, optional group `option-9`.
+- `field-13` (`families`): text, optional group `option-10`.
 - Group `option-0`: `strengths s1,s2`.
 - Group `option-1`: `preferences p1,p2`.
 - Group `option-2`: `avoids a1,a2`.
@@ -7880,6 +7883,7 @@ Effect: unknown.
 - Group `option-7`: `successSignals s1,s2`.
 - Group `option-8`: `riskSignals r1,r2`.
 - Group `option-9`: `applicableTasks t1,t2`.
+- Group `option-10`: `families f1,f2`.
 
 ### `trait delete <name>`
 
@@ -8092,6 +8096,10 @@ Usage:
   web search engines:corpus:<name> <query>  — a local corpus (offline BM25; bun run corpus)
   web fetch corpus://<name>/<docid>         — one document of a local corpus
   web multisearch <q1> | <q2>               — parallel multi-query search
+  web swarm [engines:<a,b>] [docs:N] <q>    — split the question into clues, search each, and
+                                              have reader models read the best pages in full:
+                                              a candidate table with verified quotes (off unless
+                                              the operator sets MARINA_READ_SWARM_READER)
 
 Category: Information. Minimum rank: 0.
 Aliases: none.
@@ -8160,6 +8168,23 @@ Effect: unknown.
 Effect: unknown.
 
 - `field-0` (`query`): text, required.
+
+### `web swarm [engines:<a,b>] [docs:N] <question>`
+
+Effect: unknown.
+
+- `field-0` (`engines`): text, optional group `option-0`.
+- `field-1` (`docs`): number, optional group `option-1`.
+- `field-2` (`question`): text, required.
+- Group `option-0`: `engines:a,b`.
+- Group `option-1`: `docs:N`.
+
+### `web swarm engines:corpus:<name> <question>`
+
+Effect: unknown.
+
+- `field-0` (`engines:corpus`): text, required.
+- `field-1` (`question`): text, required.
 
 ## who
 
