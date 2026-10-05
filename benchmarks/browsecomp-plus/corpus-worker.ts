@@ -3,7 +3,11 @@
 
 /** Worker side of `corpus-pool.ts`: answers search / get on its own read-only handle. */
 
-import { getCorpusDocument, searchCorpus } from "../../src/engine/search-providers/corpus";
+import {
+  explicitBm25FromEnv,
+  getCorpusDocument,
+  searchCorpusHybridPage,
+} from "../../src/engine/search-providers/corpus";
 
 declare const self: Worker;
 
@@ -19,17 +23,21 @@ interface Request {
   offset?: number;
 }
 
-self.onmessage = (ev: MessageEvent<Request>) => {
+self.onmessage = async (ev: MessageEvent<Request>) => {
   const r = ev.data;
   try {
     const result =
       r.op === "search"
-        ? searchCorpus(r.corpus, r.query ?? "", {
-            dir: r.dir,
-            k: r.k,
-            leadChars: r.chars,
-            ...(r.offset ? { offset: r.offset } : {}),
-          })
+        ? (
+            await searchCorpusHybridPage(r.corpus, r.query ?? "", {
+              dir: r.dir,
+              k: r.k,
+              leadChars: r.chars,
+              ...(r.offset ? { offset: r.offset } : {}),
+              // FTS5 unless BM25 parameters are set explicitly (see agent.ts localBackend).
+              bm25: explicitBm25FromEnv() ?? null,
+            })
+          ).hits
         : (getCorpusDocument(r.corpus, r.docid ?? "", {
             dir: r.dir,
             maxChars: r.chars,
