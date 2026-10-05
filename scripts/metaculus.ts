@@ -6,7 +6,7 @@
  * The Metaculus bot — a thin adapter over Marina's general typed forecaster
  * (benchmarks/metaculus/, docs/guides/metaculus.md).
  *
- *   bun run metaculus select …            choose the configuration by held-out backtest
+ *   bun run metaculus select … [--resume] choose the configuration by held-out backtest
  *   bun run metaculus pass [--dry-run] …  forecast new open questions, then learn from resolved ones
  *   bun run metaculus forecast …          only the forecasting half
  *   bun run metaculus resolve             only the learning half
@@ -79,6 +79,8 @@ const { positionals, values } = parseArgs({
     "min-items": { type: "string", default: "20" },
     budget: { type: "string", default: "15" },
     "live-per-question": { type: "string" },
+    // select: continue a stopped selection from its journals (same configuration only).
+    resume: { type: "boolean" },
     retriever: { type: "string" },
     "timer-dir": { type: "string", default: join(homedir(), ".local/share/marina-metaculus") },
   },
@@ -140,6 +142,7 @@ async function selectCmd(db: MarinaDB): Promise<number> {
     ...(values["live-per-question"] ? { livePerItemUsd: Number(values["live-per-question"]) } : {}),
     ...(values.retriever ? { retriever: values.retriever } : {}),
     out: values.selection!,
+    ...(values.resume ? { resume: true } : {}),
     log,
   });
   printSelection(saved, log);

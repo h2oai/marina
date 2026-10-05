@@ -20,6 +20,7 @@
 import type { AnswerSpec } from "../../src/forecast/answer-types";
 import { forecastFormed, type TypedFormation } from "../../src/forecast/formations";
 import type { TypedForecastAnswer, TypedForecastDeps } from "../../src/forecast/typed";
+import { idsDigest, openJournal } from "../journal";
 import type { FuturexRow } from "./dataset";
 import { requestFor } from "./map";
 
@@ -151,6 +152,47 @@ export interface BatchRun {
   costUsd: number;
   startedAt: string;
   finishedAt: string;
+  /** Rows taken from the journal of an earlier, stopped run (`journal.resume`). */
+  resumed?: number;
+}
+
+/**
+ * Where finished rows are kept as they land (append-only JSONL: a header with
+ * the run's configuration, then one line per finished row), so a run stopped
+ * by a spend cap — or killed — keeps every row it paid for.
+ */
+export interface RowJournal {
+  path: string;
+  /**
+   * What makes two invocations one run, beyond the variant, the rows and the
+   * horizon (added by `runBatch`): batch, isolation, retriever, lessons, ….
+   */
+  config: Record<string, unknown>;
+  /**
+   * Continue from the journal's finished rows. A journal written under another
+   * configuration is refused; without `resume` the journal starts over.
+   */
+  resume?: boolean;
+}
+
+/**
+ * A batch stopped before every row finished (`shouldStop`). `partial` holds the
+ * rows that did finish — never a complete run: it must not be scored or filed
+ * as one. With a journal they are on disk too, for `resume`.
+ */
+export class BatchStopped extends Error {
+  constructor(
+    readonly reason: string,
+    readonly partial: BatchRun & { total: number },
+    readonly journal?: string,
+  ) {
+    super(
+      `batch stopped after ${partial.results.length}/${partial.total} rows: ${reason}${
+        journal ? ` — finished rows kept in ${journal}; rerun with --resume to continue` : ""
+      }`,
+    );
+    this.name = "BatchStopped";
+  }
 }
 
 export interface RunOptions {
@@ -167,10 +209,13 @@ export interface RunOptions {
   afterRow?: (row: FuturexRow, r: RowResult) => Promise<void>;
   /**
    * Checked before each row is started: a reason stops the batch cleanly (rows in
-   * flight finish, no new row starts) and `runBatch` rejects with it — e.g. a
-   * spend budget about to run out, which would otherwise turn rows into fallbacks.
+   * flight finish, no new row starts) and `runBatch` rejects with `BatchStopped`,
+   * carrying the finished rows — e.g. a spend budget about to run out, which
+   * would otherwise turn rows into fallbacks.
    */
   shouldStop?: () => string | undefined;
+  /** Keep finished rows on disk as they land, and continue from them (`RowJournal`). */
+  journal?: RowJournal;
 }
 
 /** Deps for one row: fresh per row so cost (and, when captured, evidence) is attributable to it. */
@@ -187,34 +232,65 @@ export async function runBatch(
   opts: RunOptions = {},
 ): Promise<BatchRun> {
   const now = opts.now ?? (() => new Date());
-  const startedAt = now().toISOString();
+  let startedAt = now().toISOString();
   const results: RowResult[] = new Array(rows.length);
+  // Rows a stopped earlier run already finished (same configuration) are reused —
+  // except fallbacks: no run answered those (an infrastructure outcome), so they run again.
+  const reused = new Map<string, RowResult>();
+  const journal = opts.journal
+    ? openJournal<RowResult>(
+        opts.journal.path,
+        {
+          ...opts.journal.config,
+          variant,
+          rows: idsDigest(rows.map((r) => r.id)),
+          horizonDays: opts.horizonDays ?? null,
+        },
+        { ...(opts.journal.resume ? { resume: true } : {}), startedAt },
+      )
+    : undefined;
+  if (journal) {
+    for (const r of journal.entries) if (!r.fallback) reused.set(r.id, r);
+    startedAt = journal.startedAt;
+  }
+  const todo: number[] = [];
+  rows.forEach((row, i) => {
+    const r = reused.get(row.id);
+    if (r) results[i] = r;
+    else todo.push(i);
+  });
+  const resumed = rows.length - todo.length;
   let next = 0;
-  let done = 0;
+  let done = resumed;
   let stopped: string | undefined;
   const worker = async () => {
-    while (next < rows.length && !stopped) {
+    while (next < todo.length && !stopped) {
       stopped = opts.shouldStop?.();
       if (stopped) break;
-      const i = next++;
+      const i = todo[next++]!;
       const row = rows[i]!;
       results[i] = await runRow(row, variant, makeDeps, now(), opts.horizonDays);
+      // On disk before anything else can fail: a paid-for row is never lost.
+      journal?.append(results[i]!);
       if (opts.afterRow) await opts.afterRow(row, results[i]!);
       done++;
       opts.onRow?.(results[i]!, done, rows.length);
     }
   };
   await Promise.all(
-    Array.from({ length: Math.max(1, Math.min(opts.concurrency ?? 4, rows.length)) }, worker),
+    Array.from({ length: Math.max(1, Math.min(opts.concurrency ?? 4, todo.length)) }, worker),
   );
-  if (stopped) throw new Error(`batch stopped after ${done}/${rows.length} rows: ${stopped}`);
-  return {
+  const finished = results.filter((r): r is RowResult => r !== undefined);
+  const run: BatchRun = {
     variant: variant.label,
-    results,
-    costUsd: Math.round(results.reduce((s, r) => s + r.costUsd, 0) * 10_000) / 10_000,
+    results: stopped ? finished : results,
+    costUsd: Math.round(finished.reduce((s, r) => s + r.costUsd, 0) * 10_000) / 10_000,
     startedAt,
     finishedAt: now().toISOString(),
+    ...(resumed ? { resumed } : {}),
   };
+  if (stopped) throw new BatchStopped(stopped, { ...run, total: rows.length }, opts.journal?.path);
+  return run;
 }
 
 async function runRow(

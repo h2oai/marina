@@ -13,7 +13,7 @@ import {
   validateAnswer,
 } from "../src/forecast/answer-types";
 import { lookupsFromSpec, polymarketLookup } from "../src/forecast/lookups";
-import { forecastTyped, type ModelPart } from "../src/forecast/typed";
+import { completionGap, forecastTyped, type ModelPart } from "../src/forecast/typed";
 
 const choice: AnswerSpec = {
   type: "choice",
@@ -477,5 +477,162 @@ describe("forecast command: typed questions", () => {
     } finally {
       db.close();
     }
+  });
+});
+
+describe("completion call", () => {
+  const now = () => new Date("2026-10-05T00:00:00Z");
+  const ranking: AnswerSpec = { type: "ranking", size: 3, candidates: ["X", "Y", "Z", "W"] };
+  const probChoice: AnswerSpec = {
+    type: "choice",
+    probabilities: true,
+    options: [{ id: "A" }, { id: "B" }, { id: "C" }],
+  };
+
+  it("names what an incomplete answer is missing, and nothing for a wrong or complete one", () => {
+    expect(completionGap(ranking, { answer: ["X", "Y"] })).toContain("rank all 3 places");
+    expect(completionGap(ranking, { answer: ["X", "Y"] })).toContain("X; Y; Z; W");
+    expect(completionGap(ranking, { answer: ["X", "Y", "Z"] })).toBeUndefined();
+    expect(completionGap(multi, { answer: [] })).toContain("pick at least 1");
+    // Wrong, not incomplete: an unknown option is never a completion.
+    expect(completionGap(multi, { answer: ["E"] })).toBeUndefined();
+    expect(completionGap(choice, { answer: "A, B" })).toBeUndefined();
+    expect(completionGap(choice, { reason: "r" })).toContain("pick exactly ONE");
+    expect(completionGap({ type: "number" }, { reason: "r" })).toContain("ONE number");
+    expect(completionGap(probChoice, { answer: "A", probabilities: { A: 0.6, B: 0.4 } })).toContain(
+      "missing: C",
+    );
+    expect(
+      completionGap(probChoice, { answer: "A", probabilities: { A: 0.5, B: 0.3, C: 0.2 } }),
+    ).toBeUndefined();
+    // No JSON at all is output repair's job.
+    expect(completionGap(choice, undefined)).toBeUndefined();
+  });
+
+  it("makes one extra call per incomplete run, with its own answer, and labels what it used", async () => {
+    const prompts: string[] = [];
+    let calls = 0;
+    const a = await forecastTyped(
+      { question: "Top three?", answer: ranking },
+      {
+        retriever: fakeRetriever([]),
+        analysts: [
+          part("m", (_s, user) => {
+            calls++;
+            if (user.includes("It is INCOMPLETE")) {
+              prompts.push(user);
+              return '{"answer":["X","Y","Z"],"reason":"completed"}';
+            }
+            return '{"answer":["X","Y"],"reason":"only two known"}';
+          }),
+        ],
+        planner: planner({ done: true }),
+        now,
+        options: { runs: 2, researchRounds: 1, critique: false, disagreementRound: false },
+      },
+    );
+    expect(calls).toBe(4);
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]).toContain("rank all 3 places");
+    expect(prompts[0]).toContain("only two known");
+    expect(a.runs.every((r) => r.repaired === "repaired:completion")).toBe(true);
+    expect(a.runs[0]?.completion).toMatchObject({ accepted: true });
+    expect(a.prediction).toEqual(["X", "Y", "Z"]);
+  });
+
+  it("falls back as before when the extra call is still incomplete, and never asks twice", async () => {
+    let completions = 0;
+    const a = await forecastTyped(
+      { question: "Top three?", answer: ranking },
+      {
+        retriever: fakeRetriever([]),
+        analysts: [
+          part("m", (_s, user) => {
+            if (user.includes("It is INCOMPLETE")) completions++;
+            return '{"answer":["X","Y"],"reason":"two"}';
+          }),
+        ],
+        planner: planner({ done: true }),
+        now,
+        options: { runs: 1, researchRounds: 1, critique: false },
+      },
+    );
+    expect(completions).toBe(1);
+    expect(a.runs[0]?.status).toContain("invalid");
+    expect(a.runs[0]?.completion).toMatchObject({
+      accepted: false,
+      error: "still invalid: a ranking of 3 needs 3 items",
+    });
+    expect(a.runs[0]?.repaired).toBeUndefined();
+    expect(a.formatted).toBeUndefined();
+  });
+
+  it("completes a probability missing for an option, keeping the valid answer if it cannot", async () => {
+    const a = await forecastTyped(
+      { question: "Which?", answer: probChoice },
+      {
+        retriever: fakeRetriever([]),
+        analysts: [
+          part("m", (_s, user) =>
+            user.includes("It is INCOMPLETE")
+              ? '{"answer":"A","probabilities":{"A":0.6,"B":0.3,"C":0.1},"reason":"r"}'
+              : '{"answer":"A","probabilities":{"A":0.6,"B":0.4},"reason":"r"}',
+          ),
+          part("refused", (_s, user) => {
+            if (user.includes("It is INCOMPLETE")) throw new Error("daily spend cap reached");
+            return '{"answer":"A","probabilities":{"A":0.7,"B":0.3},"reason":"r"}';
+          }),
+        ],
+        planner: planner({ done: true }),
+        now,
+        options: { runs: 2, researchRounds: 1, critique: false },
+      },
+    );
+    expect(a.runs[0]?.repaired).toBe("repaired:completion");
+    expect(a.runs[0]?.distribution?.C).toBeCloseTo(0.1, 2);
+    // The refused call (a spend cap) leaves the run as it was.
+    expect(a.runs[1]?.completion).toMatchObject({ accepted: false });
+    expect(a.runs[1]?.completion?.error).toContain("spend cap");
+    expect(a.runs[1]?.value).toBe("A");
+    expect(a.runs[1]?.repaired).toBeUndefined();
+  });
+
+  it("is skipped when turned off and in the budget's final phase", async () => {
+    let completions = 0;
+    const analyst = part("m", (_s, user) => {
+      if (user.includes("It is INCOMPLETE")) completions++;
+      return '{"answer":["X","Y"],"reason":"two"}';
+    });
+    const off = await forecastTyped(
+      { question: "Top three?", answer: ranking },
+      {
+        retriever: fakeRetriever([]),
+        analysts: [analyst],
+        planner: planner({ done: true }),
+        now,
+        options: { runs: 1, researchRounds: 1, critique: false, completion: false },
+      },
+    );
+    expect(off.runs[0]?.completion).toBeUndefined();
+    const slow: ModelPart = {
+      name: "slow",
+      complete: async (_s, user) => {
+        if (user.includes("It is INCOMPLETE")) completions++;
+        await new Promise((r) => setTimeout(r, 40));
+        return '{"answer":["X","Y"],"reason":"two"}';
+      },
+    };
+    const forced = await forecastTyped(
+      { question: "Top three?", answer: ranking },
+      {
+        retriever: fakeRetriever([]),
+        analysts: [slow],
+        planner: planner({ done: true }),
+        now,
+        options: { runs: 1, researchRounds: 1, critique: false, plan: false, budgetMs: 20 },
+      },
+    );
+    expect(completions).toBe(0);
+    expect(forced.budget?.skipped).toContain("completion");
   });
 });
