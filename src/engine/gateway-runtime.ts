@@ -260,6 +260,7 @@ export class GatewayRuntime {
     originEntity: string,
   ) => void;
   private localWorldName: string;
+  private gatewayProof?: (gateway: { name: string; url: string }) => unknown;
 
   constructor(opts: {
     db?: MarinaDB;
@@ -271,8 +272,15 @@ export class GatewayRuntime {
       originEntity: string,
     ) => void;
     localWorldName: string;
+    /**
+     * Optional (extension-supplied): the opaque entitlement this instance
+     * presents in `gateway_auth` when dialing a peer that hosts a paid world.
+     * Absent or `undefined` ⇒ the handshake is byte-for-byte what it was.
+     */
+    gatewayProof?: (gateway: { name: string; url: string }) => unknown;
   }) {
     this.db = opts.db;
+    this.gatewayProof = opts.gatewayProof;
     this.localRelay = opts.localRelay;
     this.localTellRelay = opts.localTellRelay;
     this.localWorldName = opts.localWorldName;
@@ -296,20 +304,32 @@ export class GatewayRuntime {
     const wsUrl = url.replace(/\/$/, "");
     const entityName = `Gateway_${this.localWorldName}`;
     const secret = process.env.GATEWAY_SECRET;
+    // An extension may supply an entitlement proof (paid hosted worlds). It is
+    // only ever ADDED to the handshake: the secret semantics are unchanged.
+    let entitlement: unknown;
+    try {
+      entitlement = this.gatewayProof?.({ name, url: wsUrl });
+    } catch (err) {
+      logger.warn("gateway", `Entitlement proof for "${name}" unavailable`, {
+        error: getErrorMessage(err),
+      });
+    }
     const client = new MarinaClient(wsUrl, {
       autoReconnect: true,
       reconnectDelay: 5000,
-      onOpen: secret
-        ? (ws) => {
-            ws.send(
-              JSON.stringify({
-                type: "gateway_auth",
-                secret,
-                version: GATEWAY_PROTOCOL_VERSION,
-              }),
-            );
-          }
-        : undefined,
+      onOpen:
+        secret || entitlement !== undefined
+          ? (ws) => {
+              ws.send(
+                JSON.stringify({
+                  type: "gateway_auth",
+                  ...(secret ? { secret } : {}),
+                  version: GATEWAY_PROTOCOL_VERSION,
+                  ...(entitlement !== undefined ? { entitlement } : {}),
+                }),
+              );
+            }
+          : undefined,
     });
 
     const conn: GatewayConnection = {

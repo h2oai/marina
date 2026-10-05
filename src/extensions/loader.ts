@@ -8,11 +8,29 @@ import { SAFETY_GATES } from "../engine/safety-gates";
 import { residentMemoryAPI } from "../memory/resident-service";
 import { registerResolver, unregisterResolver } from "../resolvers/registry";
 import type { Resolver } from "../resolvers/types";
-import type { ExtensionContext, ExtensionWidget, MarinaExtension } from "../sdk/extensions";
+import type {
+  ExtensionContext,
+  ExtensionWidget,
+  GatewayAdmissionCheck,
+  GatewayProofProvider,
+  MarinaExtension,
+} from "../sdk/extensions";
 
 const widgets = new WeakMap<Engine, ExtensionWidget[]>();
 export function extensionWidgets(engine: Engine): readonly ExtensionWidget[] {
   return widgets.get(engine) ?? [];
+}
+
+/** Federation hooks: at most one of each per engine; absent ⇒ handshake unchanged. */
+const gatewayAdmissions = new WeakMap<Engine, GatewayAdmissionCheck>();
+const gatewayProofs = new WeakMap<Engine, GatewayProofProvider>();
+/** The extension-registered inbound gateway admission check, if any. */
+export function extensionGatewayAdmission(engine: Engine): GatewayAdmissionCheck | undefined {
+  return gatewayAdmissions.get(engine);
+}
+/** The extension-registered outbound gateway proof provider, if any. */
+export function extensionGatewayProof(engine: Engine): GatewayProofProvider | undefined {
+  return gatewayProofs.get(engine);
 }
 
 /** Explicit directory allowlist; no installation, network resolution or implicit code scan. */
@@ -53,6 +71,8 @@ export async function loadExtensions(
       const controller = new AbortController();
       const resolvers: Resolver<unknown>[] = [];
       const ownedWidgets: ExtensionWidget[] = [];
+      let ownedAdmission: GatewayAdmissionCheck | undefined;
+      let ownedProof: GatewayProofProvider | undefined;
       let deactivate: void | (() => void | Promise<void>);
       let active = true;
       let disposed = false;
@@ -73,6 +93,9 @@ export async function loadExtensions(
         } finally {
           engine.commands.removeOwner(owner);
           for (const resolver of resolvers) unregisterResolver(resolver);
+          if (ownedAdmission && gatewayAdmissions.get(engine) === ownedAdmission)
+            gatewayAdmissions.delete(engine);
+          if (ownedProof && gatewayProofs.get(engine) === ownedProof) gatewayProofs.delete(engine);
           widgets.set(
             engine,
             (widgets.get(engine) ?? []).filter((widget) => !ownedWidgets.includes(widget)),
@@ -160,6 +183,22 @@ export async function loadExtensions(
             throw new Error("Duplicate widget");
           ownedWidgets.push(owned);
           widgets.get(engine)!.push(owned);
+        },
+        registerGatewayAdmission(check) {
+          checkActive();
+          if (typeof check !== "function") throw new Error("Invalid gateway admission check");
+          if (gatewayAdmissions.has(engine))
+            throw new Error("A gateway admission check is already registered");
+          ownedAdmission = check;
+          gatewayAdmissions.set(engine, check);
+        },
+        registerGatewayProof(provider) {
+          checkActive();
+          if (typeof provider !== "function") throw new Error("Invalid gateway proof provider");
+          if (gatewayProofs.has(engine))
+            throw new Error("A gateway proof provider is already registered");
+          ownedProof = provider;
+          gatewayProofs.set(engine, provider);
         },
       });
       const module = (await import(pathToFileURL(entry).href)) as { default: MarinaExtension };

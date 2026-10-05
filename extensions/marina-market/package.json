@@ -1,0 +1,24 @@
+{
+  "name": "@marina/market",
+  "version": "0.7.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "description": "Optional Marina extension: signed world artifacts, entitlement verification (offline tokens or read-only on-chain licences) and entitlement-gated federation. Never required by the core.",
+  "scripts": {
+    "check": "bun test ./test/*.check.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "contracts:test": "cd contracts && forge test",
+    "market": "bun run cli.ts"
+  },
+  "dependencies": {
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0"
+  },
+  "devDependencies": {
+    "@openzeppelin/contracts": "5.7.0",
+    "@types/bun": "1.3.13",
+    "forge-std": "github:foundry-rs/forge-std#f3dae6e6ee381f25eb6a246f7da9b85c91a68219",
+    "typescript": "7.0.2"
+  }
+}

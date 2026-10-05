@@ -1,0 +1,6 @@
+{
+  "name": "marina-market",
+  "version": "0.7.0",
+  "apiVersion": 1,
+  "entry": "index.ts"
+}

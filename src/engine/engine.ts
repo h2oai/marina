@@ -22,6 +22,7 @@ import { CrewManager } from "../coordination/crew-manager";
 import { GroupManager } from "../coordination/group-manager";
 import { MacroManager } from "../coordination/macro-manager";
 import { TaskManager } from "../coordination/task-manager";
+import { extensionGatewayProof } from "../extensions/loader";
 import { FlywheelManager, type FlywheelToolBackend } from "../integrations/flywheel-manager";
 import { memoryAccess } from "../memory/access";
 import { residentMemoryAPI } from "../memory/resident-service";
@@ -345,6 +346,8 @@ export class Engine {
         // template name — many instances of the same world must federate
         // as distinct Gateway_<name> identities.
         localWorldName: this.instanceName,
+        // Extension hook (absent by default): entitlement presented to paid peers.
+        gatewayProof: (gateway) => extensionGatewayProof(this)?.(gateway),
       });
     }
 
