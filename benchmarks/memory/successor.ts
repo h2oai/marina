@@ -943,7 +943,7 @@ Usage:
 
 Options:
   --model <id>            stub (default, offline) | any model id routed via --endpoint (e.g. marina)
-  --endpoint <url>        Marina OpenAI-compatible endpoint (default http://localhost:3300)
+  --endpoint <url>        Marina OpenAI-compatible endpoint (or MARINA_ENDPOINT; default http://localhost:3300)
   --api-key <key>         bearer for --endpoint (or MARINA_API_KEY / MODEL_API_KEY)
   --summarizer <kind>     model (default with a real model: the model re-summarises) | stub (truncating digest)
   --seeds <n>             number of seeds (default 5)
