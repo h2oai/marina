@@ -45,7 +45,64 @@ No benchmark path writes an item's question, expected answer or model answer to 
 
   Out of the guard's scope by design: `benchmarks/memory/` and `benchmarks/modes/memory.ts`, which measure memory itself with synthetic material, and `benchmarks/native/`, which seeds each task's own inputs into per-instance pools.
 
+## One resolution path for defaults
+
+Every default that earned promotion may move is read through `resolveDefault` (`src/engine/default-resolution.ts`). It consults five layers, in this order, and the first that answers wins:
+
+1. **env** — the operator's explicit setting: an env var, or an explicit flag such as `--config`. It always wins.
+2. **local slot** — `<slot>:<board>` when the choice is for a named board, else `<slot>` itself (a deployment slot such as `showcase:crew`). Only earned promotion writes it.
+3. **family slot** — `<slot>:family:<family>` for each family the caller declares. `benchmark promote` and every other per-board filing refuse family slots: one board's holdout never sets a default for a whole family. Today only an upstream seed can fill one.
+4. **upstream seed** — consulted only when no local slot answered. The hook is `setUpstreamSeedSource`; it stays empty until a learned-bundle importer registers one.
+5. **built-in** — the caller's own default, which is today's behaviour.
+
+A slot whose incumbent run was invalidated is skipped, and so is a value the caller cannot read (for example, a run whose target is not a configuration of that kind). The next layer answers instead; a value is never half-applied. With nothing promoted and no seed source, every read resolves to `env` or `built-in`, so behaviour is exactly as before.
+
+**Tracing.** Every resolution is traced. It names the layer and key that answered, the incumbent run behind a slot answer, and why each earlier layer did not answer (`unset`, `invalidated`, `unreadable`). Three places carry it:
+
+- the engine's `default_resolved` event (names and ids only, never content);
+- the `defaults` Logger category;
+- the `last resolutions` block in `benchmark defaults`.
+
+**Read sites:**
+
+| Default | Slot | Env (wins) | Built-in |
+|---|---|---|---|
+| Forecast formation, analysts (with planner and critic), checker (`verifier` with `verify`) and selection mode, on the in-world `forecast` command and `POST /v1/forecast` (`src/forecast/defaults.ts`) | `forecast-config`, family `forecast` | `MARINA_FORECAST_FORMATION`, `_ANALYSTS`, `_VERIFIER`/`_VERIFY`, `_SELECTION`; `_PLANNER`/`_CRITIC` win over a slot's planner and critic | `ensemble`, the installation's analysts, no checker, the built-in selection |
+| A board's live forecast configuration, pick 1 (`liveConfig`, used by `bun run forecastbench` and `bun run metaculus`) | `forecast-config:<board>`, family `forecast` | `--config <label>` | the saved selection's pick, else the disclosed fallback |
+| The `marina/verify` checker, when the model id names none (`src/net/model-api/verify.ts`; not consulted under a passthru pin) | `verify:checker` (an explicit `checker` field, or the checker of a `marina/verify:<p>+<c>` target) | `MARINA_VERIFY_CHECKER_MODEL`; a checker in the id wins over everything | the proposer (self-check) |
+| The showcase crew model (`worlds/showcase.ts`) | `showcase:crew` | `MARINA_CREW_MODEL` | `seedAnswererCrew`'s default |
+
+An earned value this installation cannot use never breaks a surface: a verify checker that is not a reachable upstream id is skipped, and a forecast configuration whose models cannot be wired falls back to the built-in (logged). A slot holds the challenger run's `target_json`: data, never code. Models still come only from the operator: from env, or from a promotion that an account holding `role.edit` filed on held-out evidence it did not author.
+
+## Forecast selection files a promotion
+
+`forecastbench select` and `metaculus select` (`runSelection` in `benchmarks/forecasting/cli.ts`) still write `selection.json`, which stays the run journal. They also file the decision through the one write path, `fileSlotPromotion` (`src/engine/benchmark-promotion.ts`), which the in-world `benchmark promote` uses as well. The decision goes to the board's slot `forecast-config:<board>`, under the operator key `operator`. The steps are:
+
+1. **Choosing the challenger.** The challenger is the best measured, affordable candidate on the slot's selection split only: the pooled share of items better than the board's fallback, across its replicates. The holdout is read once, by the promotion attempt itself.
+2. **Seeding.** If the slot is empty, the challenger seeds it. This needs `MARINA_PROMOTION_MIN_REPLICATES` replicates, checked before anything is written.
+3. **Contesting.** If the slot has an incumbent, the challenger must earn the slot. That means the holdout interval above 0 and the gain past `promotionMargin(tried)`. Every attempt, refused ones included, is an append-only row that raises the bar for the next one.
+4. **Contesting on the same items.** While a slot has a valid incumbent, the selection backtests on that incumbent's items (`maxItems` is ignored), so a contest pairs one item slice.
+5. **Skipping.** In some cases the holdout stays unread and nothing is written. The result is recorded in `selection.json` under `promotion.outcome: skipped`, with the reason. This happens when:
+   - the winner already is the default;
+   - the incumbent was measured on a different benchmark, judge or item slice;
+   - fewer than `MIN_HOLDOUT_ITEMS` fall in the holdout;
+   - the challenger is not replicated.
+
+The live run's pick 1 then resolves through `resolveDefault` as in the table above. Its disclosure line names the earned slot and the incumbent run.
+
+## Route evidence: observe by default, families from roles
+
+Spawn-time route evidence (`src/engine/benchmark-evidence.ts`, `MARINA_ROUTE_EVIDENCE`) defaults to `observe`. It records what the ledger would pick on the route decision and never changes a route; `on` applies the pick, and `off` skips the lookup.
+
+When `MARINA_ROUTE_EVIDENCE_FAMILIES` is unset, the families come from the spawning role itself:
+
+- the union of its traits' `families` capability (`trait create … families math,code`);
+- expanded to the registered benchmarks tagged with those families (`src/engine/benchmark-families.ts`, data only);
+- a declared name that is itself a benchmark counts as a family of one.
+
+The route event's `evidence_family_source` (`configured` / `role`) says which source was used. A role that declares nothing still gets `no_family`.
+
 ## Notes
 
-- `getPromotedDefault` is the reader for a slot's promoted value; no production code path reads a promoted default yet, so a promotion is recorded but changes no runtime behaviour until a caller adopts it. Environment variables always win.
+- `getPromotedDefault` reads one slot's raw value. Runtime defaults go through `resolveDefault`, which adds the env, family, upstream and built-in layers and the trace. Environment variables always win.
 - Invalidation also retires the lessons citing `bench:<id>`, and any legacy per-item outcome notes earlier runners left for the run (see [memory.md](memory.md)).

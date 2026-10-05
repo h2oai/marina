@@ -561,6 +561,21 @@ export type EngineEvent =
       secondOpinion?: "used" | "partial" | "timeout" | "failed" | "outage";
       timestamp: number;
     }
+  // A default resolved through `resolveDefault` (src/engine/default-resolution.ts):
+  // which layer answered (env / local slot / family slot / upstream seed /
+  // built-in), from which key, and why earlier layers did not. Names and ids
+  // only — never question or answer content.
+  | {
+      type: "default_resolved";
+      slot: string;
+      surface?: string;
+      source: "env" | "slot" | "family" | "upstream" | "builtin";
+      key: string;
+      value: string;
+      incumbentRunId?: string;
+      reason: string;
+      timestamp: number;
+    }
   // Lifecycle state transition (connected → autonomous → stopped, etc.).
   // Fires at milestones only (not per turn), so observers can refresh an
   // agent's displayed state live without polling.

@@ -7768,7 +7768,7 @@ Effect: unknown.
 ## trait
 
 Manage composable agent traits.
-Usage: trait list | trait view <name> | trait lint <name> | trait diff <a> <b> | trait history <name> | trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] | trait delete <name>
+Usage: trait list | trait view <name> | trait lint <name> | trait diff <a> <b> | trait history <name> | trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] [families f1,f2] | trait delete <name>
 
 Traits are atomic prompt fragments used to compose roles.
 Optional capabilities metadata enables semantic composition (synergies/tensions), task gating, and typed behavioral hints.
@@ -7777,7 +7777,7 @@ Optional capabilities metadata enables semantic composition (synergies/tensions)
 Category: Identity & Access. Minimum rank: 0.
 Aliases: none.
 
-### `trait create <name> <category> <prompt text> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2]`
+### `trait create <name> <category> <prompt text> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] [families f1,f2]`
 
 Effect: unknown.
 
@@ -7794,6 +7794,7 @@ Effect: unknown.
 - `field-10` (`successSignals`): text, optional group `option-7`.
 - `field-11` (`riskSignals`): text, optional group `option-8`.
 - `field-12` (`applicableTasks`): text, optional group `option-9`.
+- `field-13` (`families`): text, optional group `option-10`.
 - Group `option-0`: `strengths s1,s2`.
 - Group `option-1`: `preferences p1,p2`.
 - Group `option-2`: `avoids a1,a2`.
@@ -7804,8 +7805,9 @@ Effect: unknown.
 - Group `option-7`: `successSignals s1,s2`.
 - Group `option-8`: `riskSignals r1,r2`.
 - Group `option-9`: `applicableTasks t1,t2`.
+- Group `option-10`: `families f1,f2`.
 
-### `trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2]`
+### `trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] [families f1,f2]`
 
 Effect: unknown.
 
@@ -7822,6 +7824,7 @@ Effect: unknown.
 - `field-10` (`successSignals`): text, optional group `option-7`.
 - `field-11` (`riskSignals`): text, optional group `option-8`.
 - `field-12` (`applicableTasks`): text, optional group `option-9`.
+- `field-13` (`families`): text, optional group `option-10`.
 - Group `option-0`: `strengths s1,s2`.
 - Group `option-1`: `preferences p1,p2`.
 - Group `option-2`: `avoids a1,a2`.
@@ -7832,6 +7835,7 @@ Effect: unknown.
 - Group `option-7`: `successSignals s1,s2`.
 - Group `option-8`: `riskSignals r1,r2`.
 - Group `option-9`: `applicableTasks t1,t2`.
+- Group `option-10`: `families f1,f2`.
 
 ### `trait delete <name>`
 

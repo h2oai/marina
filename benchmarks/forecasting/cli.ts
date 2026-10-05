@@ -11,6 +11,18 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { isolationOfSpec } from "../../src/arena/research/isolation";
+import {
+  DEFAULT_HOLDOUT_FRACTION,
+  fileSlotPromotion,
+  itemSplit,
+  MIN_HOLDOUT_ITEMS,
+} from "../../src/engine/benchmark-promotion";
+import {
+  boardSlotKey,
+  type DefaultSlotReader,
+  resolveDefault,
+} from "../../src/engine/default-resolution";
+import { FORECAST_CONFIG_SLOT, FORECAST_FAMILY } from "../../src/forecast/defaults";
 import { forecastLessonsFor } from "../../src/learning/forecast-bridge";
 import type { MarinaDB } from "../../src/persistence/database";
 import {
@@ -72,6 +84,164 @@ export interface SavedSelection extends Selection {
   retriever: string;
   /** Leak audit per configuration: what its forecasts saw (counts only). */
   leakAudit?: Record<string, LeakCounts>;
+  /** What the selection filed on the board's default slot (the journal of the decision). */
+  promotion?: SelectionPromotion;
+}
+
+/** The slot a board's live forecast configuration resolves from. */
+export function forecastConfigSlot(benchmark: string): string {
+  return boardSlotKey(FORECAST_CONFIG_SLOT, benchmark);
+}
+
+export interface SelectionPromotion {
+  slot: string;
+  /** seeded / promoted / refused: a history row was written; skipped: nothing was. */
+  outcome: "seeded" | "promoted" | "refused" | "skipped";
+  /** The challenger: the best configuration on the slot's SELECTION split. */
+  challenger?: string;
+  run?: string;
+  incumbentRun?: string;
+  reason: string;
+}
+
+type PromotionDb = Pick<
+  MarinaDB,
+  | "getBenchmarkRun"
+  | "queryBenchmarkRuns"
+  | "getBenchmarkItems"
+  | "listBenchmarkRunValidity"
+  | "getBenchmarkDefault"
+  | "listBenchmarkDefaults"
+  | "listBenchmarkPromotions"
+  | "recordBenchmarkPromotion"
+  | "durableEntityKey"
+>;
+
+/** The item ids a slot's incumbent run was measured on, when it has a valid one. */
+export function incumbentItemIds(
+  db: Pick<MarinaDB, "getBenchmarkDefault" | "getBenchmarkRun" | "getBenchmarkItems">,
+  slot: string,
+): string[] | undefined {
+  const def = db.getBenchmarkDefault(slot);
+  const run = def?.incumbent_run_id ? db.getBenchmarkRun(def.incumbent_run_id) : undefined;
+  if (run?.status !== "completed") return undefined;
+  const ids = db.getBenchmarkItems(run.id).map((i) => i.item_id);
+  return ids.length > 0 ? ids : undefined;
+}
+
+/**
+ * File a selection's decision as an earned promotion on the board's slot
+ * (`forecast-config:<board>`), through the one promotion path
+ * (`fileSlotPromotion`): the replicate minimum, the holdout interval and the
+ * fishing margin, no self-attestation, an append-only history row.
+ *
+ * The challenger is chosen on the slot's SELECTION split only (the pooled
+ * share of items better than the board's fallback, across its replicates), so
+ * the holdout is read once — by the promotion attempt itself. Nothing is filed
+ * (and the holdout stays unread) when no candidate was measured, when the
+ * challenger already is the default, when the incumbent was measured on a
+ * different benchmark, judge or item slice (a contest pairs the same items),
+ * or when too few items fall in the holdout.
+ */
+export function fileSelectionPromotion(
+  db: PromotionDb,
+  saved: Pick<SavedSelection, "benchmark" | "ranking">,
+  opts: { slot?: string; minReplicates?: number; now?: number } = {},
+): SelectionPromotion {
+  const slot = opts.slot ?? forecastConfigSlot(saved.benchmark);
+  const skip = (reason: string, extra: Partial<SelectionPromotion> = {}): SelectionPromotion => ({
+    slot,
+    outcome: "skipped",
+    reason,
+    ...extra,
+  });
+  const def = db.getBenchmarkDefault(slot);
+  const fraction = def?.holdout_fraction ?? DEFAULT_HOLDOUT_FRACTION;
+  const inSelection = (id: string) => itemSplit(slot, id, fraction) === "selection";
+  let best: { label: string; run: string; mean: number; holdout: number } | undefined;
+  for (const r of saved.ranking) {
+    if (r.mean === undefined || r.ledgerRuns.length === 0) continue;
+    if (r.note?.startsWith("over the live budget")) continue;
+    const perItem = new Map<string, { correct: number; n: number }>();
+    for (const runId of r.ledgerRuns) {
+      for (const it of db.getBenchmarkItems(runId)) {
+        const acc = perItem.get(it.item_id) ?? { correct: 0, n: 0 };
+        acc.n++;
+        if (it.correct) acc.correct++;
+        perItem.set(it.item_id, acc);
+      }
+    }
+    const sel = [...perItem].filter(([id]) => inSelection(id));
+    if (sel.length === 0) continue;
+    const mean = sel.reduce((s, [, a]) => s + a.correct / a.n, 0) / sel.length;
+    if (!best || mean > best.mean) {
+      best = {
+        label: r.label,
+        run: r.ledgerRuns[0] as string,
+        mean,
+        holdout: perItem.size - sel.length,
+      };
+    }
+  }
+  if (!best) return skip("no measured, affordable candidate with filed ledger runs");
+  const tag = { challenger: best.label, run: best.run };
+  const challenger = db.getBenchmarkRun(best.run);
+  if (!challenger) return skip(`ledger run ${best.run} not found`, tag);
+  const incumbent = def?.incumbent_run_id ? db.getBenchmarkRun(def.incumbent_run_id) : undefined;
+  if (incumbent?.status === "completed") {
+    if (incumbent.target_json === challenger.target_json) {
+      return skip(`${best.label} already is the default`, { ...tag, incumbentRun: incumbent.id });
+    }
+    const differs = [
+      incumbent.benchmark !== challenger.benchmark ? "benchmark" : "",
+      incumbent.judge !== challenger.judge ? "judge" : "",
+      incumbent.slice_hash &&
+      challenger.slice_hash &&
+      incumbent.slice_hash !== challenger.slice_hash
+        ? "item slice"
+        : "",
+    ].filter(Boolean);
+    if (differs.length > 0) {
+      return skip(
+        `the incumbent ${incumbent.id} was measured on a different ${differs.join(", ")} — re-run the selection on its items to contest it (the holdout stays unread)`,
+        { ...tag, incumbentRun: incumbent.id },
+      );
+    }
+  }
+  if (best.holdout < MIN_HOLDOUT_ITEMS) {
+    return skip(
+      `only ${best.holdout} holdout item(s); a promotion needs at least ${MIN_HOLDOUT_ITEMS} (the holdout stays unread)`,
+      tag,
+    );
+  }
+  const filed = fileSlotPromotion(db, {
+    slot,
+    runId: best.run,
+    // The operator owns the database; the history records the operator key.
+    actor: { key: "operator", keyOf: (id) => db.durableEntityKey(id) },
+    ...(opts.minReplicates !== undefined ? { minReplicates: opts.minReplicates } : {}),
+    ...(opts.now !== undefined ? { now: opts.now } : {}),
+  });
+  if (filed.kind === "error") return skip(filed.message, tag);
+  if (filed.kind === "seeded") {
+    return {
+      slot,
+      outcome: "seeded",
+      ...tag,
+      reason: `first incumbent (${filed.replicates} replicates; holdout ${Math.round(filed.holdoutFraction * 100)}% of items)`,
+    };
+  }
+  const e = filed.evaluation;
+  return {
+    slot,
+    outcome: filed.kind,
+    ...tag,
+    incumbentRun: filed.incumbent.id,
+    reason:
+      filed.kind === "promoted"
+        ? `holdout +${(e.stats.delta * 100).toFixed(1)} pts, 95% [${(e.stats.low * 100).toFixed(1)}, ${(e.stats.high * 100).toFixed(1)}], margin ${(e.margin * 100).toFixed(1)}`
+        : e.reasons.join("; "),
+  };
 }
 
 /** A rough projected cost per question (runs + planner + critic calls at list price). */
@@ -140,9 +310,17 @@ export async function runSelection(opts: {
   const retriever = opts.retriever ?? BACKTEST_RETRIEVER;
   const lessons = forecastLessonsFor(opts.db);
   const leakAudit: Record<string, LeakCounts> = {};
+  // A board whose default was earned is contested on the SAME items its
+  // incumbent was measured on (a promotion pairs items on one slice).
+  const slot = forecastConfigSlot(opts.benchmark);
+  const onlyItems = incumbentItemIds(opts.db, slot);
+  if (onlyItems) {
+    opts.log(`  ${slot} has an incumbent: backtesting on its ${onlyItems.length} items`);
+  }
   const selection = await selectConfiguration({
     benchmark: opts.benchmark,
-    items: opts.items,
+    items: onlyItems ? opts.items.filter((i) => onlyItems.includes(i.id)) : opts.items,
+    ...(onlyItems ? { keepAllItems: true } : {}),
     candidates: opts.configs,
     releases: releaseTable(releases(opts.catalogue)),
     makeForecaster: (c) =>
@@ -175,6 +353,8 @@ export async function runSelection(opts: {
     retriever,
     leakAudit,
   };
+  // The decision is a promotion row on the board's slot; selection.json stays the journal.
+  saved.promotion = fileSelectionPromotion(opts.db, saved, { slot });
   mkdirSync(dirname(opts.out), { recursive: true });
   writeFileSync(opts.out, JSON.stringify(saved, null, 2));
   return saved;
@@ -194,41 +374,95 @@ export function printSelection(s: SavedSelection, log: (line: string) => void): 
     );
   }
   log(`picked: ${s.picked.join(", ") || "(none)"}`);
+  if (s.promotion) {
+    const p = s.promotion;
+    log(
+      `default ${p.slot}: ${p.outcome}${p.challenger ? ` ${p.challenger}` : ""}${p.run ? ` (${p.run})` : ""} — ${p.reason}`,
+    );
+  }
   for (const [label, c] of Object.entries(s.leakAudit ?? {})) {
     log(`leak audit ${label}: ${hardLeaks(c) ? "LEAKS" : "clean"} — ${describeLeakCounts(c)}`);
   }
 }
 
+/** A slot value as a full forecast configuration (`{ configuration }` or the configuration). */
+export function configFromSlot(value: unknown): ForecastConfig | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const inner = (value as { configuration?: unknown }).configuration ?? value;
+  try {
+    return parseConfigs([inner])[0];
+  } catch {
+    // allow-empty-catch: a slot value that is not a forecast configuration is not usable here
+    return undefined;
+  }
+}
+
 /**
- * The configuration a live run files with: `label` from the saved selection
- * (or a configurations file), else the selection's pick number `rank`
- * (1-based), else the fallback — always with its disclosure line.
+ * The configuration a live run files with — always with its disclosure line.
+ *
+ * Pick 1 on a named `board` resolves through `resolveDefault`: an explicit
+ * `label` (the operator's `--config`), then the board's earned slot
+ * `forecast-config:<board>`, then the family slot, then an upstream seed, then
+ * today's built-in — the saved selection's pick (or the fallback). Other picks
+ * (`rank` > 1) and calls without a board keep the selection file's order:
+ * `label`, else pick number `rank` (1-based), else the fallback.
  */
 export function liveConfig(opts: {
   selectionPath: string;
   label?: string;
   rank?: number;
   configsFile?: string;
-}): { config: ForecastConfig; description: string; selected: boolean } {
+  /** The board this live run files on (enables its earned slot). */
+  board?: string;
+  /** The ledger holding the board's promoted defaults. */
+  db?: DefaultSlotReader;
+}): { config: ForecastConfig; description: string; selected: boolean; source?: string } {
   const saved = existsSync(opts.selectionPath)
     ? (JSON.parse(readFileSync(opts.selectionPath, "utf8")) as SavedSelection)
     : undefined;
   const fromFile = opts.configsFile
     ? parseConfigs(JSON.parse(readFileSync(opts.configsFile, "utf8")))
     : [];
+  let explicit: ForecastConfig | undefined;
   let c: ForecastConfig | undefined;
   let selected = false;
   if (opts.label) {
-    c = fromFile.find((x) => x.label === opts.label) ?? saved?.configs[opts.label];
-    if (!c)
+    explicit = fromFile.find((x) => x.label === opts.label) ?? saved?.configs[opts.label];
+    if (!explicit)
       throw new Error(
         `no configuration ${opts.label} in ${opts.configsFile ?? opts.selectionPath}`,
       );
+    c = explicit;
     selected = !!saved?.picked.includes(opts.label);
   } else if (saved?.picked.length) {
     const label = saved.picked[Math.min(saved.picked.length, opts.rank ?? 1) - 1]!;
     c = saved.configs[label];
     selected = true;
+  }
+  if (opts.board && (opts.rank ?? 1) === 1) {
+    const resolved = resolveDefault<ForecastConfig>({
+      slot: FORECAST_CONFIG_SLOT,
+      board: opts.board,
+      families: [FORECAST_FAMILY],
+      surface: `${opts.board}:live`,
+      env: { name: "--config", value: explicit },
+      read: configFromSlot,
+      builtIn: c ?? FALLBACK_CONFIG,
+      builtInLabel: c ? "selection.json pick 1" : "fallback (not selected)",
+      ...(opts.db ? { db: opts.db } : {}),
+    });
+    if (resolved.source !== "env" && resolved.source !== "builtin") {
+      const via =
+        resolved.source === "upstream"
+          ? `seeded from upstream (${resolved.key})`
+          : `earned default ${resolved.key}${resolved.incumbentRunId ? ` (run ${resolved.incumbentRunId})` : ""}`;
+      return {
+        config: resolved.value,
+        description: `${describeConfig(resolved.value)}; ${via}`,
+        selected: true,
+        source: resolved.source,
+      };
+    }
   }
   const config = c ?? FALLBACK_CONFIG;
   const r = saved?.ranking.find((x) => x.label === config.label);
