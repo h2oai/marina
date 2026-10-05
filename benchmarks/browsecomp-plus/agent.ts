@@ -406,12 +406,17 @@ export async function toolLoop(
     tools?: boolean;
     /** Overrides `opts.finalAnswer` for this loop (a blackboard round is not the last word). */
     finalAnswer?: boolean;
+    /** Answers a tool call instead of `executeTool` (undefined ⇒ `executeTool`). */
+    execute?: (name: string, rawArgs: string) => Promise<string | undefined>;
+    /** Tool schemas instead of the official two. */
+    toolSchemas?: unknown[];
   } = {},
 ): Promise<LoopResult> {
   const tools =
     more.tools === false
       ? undefined
-      : toolSchemas(opts.k, { docPaging: opts.docPaging, searchPaging: opts.searchPaging });
+      : (more.toolSchemas ??
+        toolSchemas(opts.k, { docPaging: opts.docPaging, searchPaging: opts.searchPaging }));
   const turns = more.maxTurns ?? opts.maxTurns;
   const tag = more.agent ? { agent: more.agent } : {};
   const forceAnswer = Boolean(tools) && (more.finalAnswer ?? opts.finalAnswer ?? false);
@@ -457,7 +462,10 @@ export async function toolLoop(
     messages.push({ role: "assistant", content: reply.message.content ?? null, tool_calls: calls });
     for (const call of calls) {
       const name = call.function?.name ?? "";
-      const output = await executeTool(name, call.function?.arguments ?? "", opts, more.shard);
+      const rawArgs = call.function?.arguments ?? "";
+      const output =
+        (await more.execute?.(name, rawArgs)) ??
+        (await executeTool(name, rawArgs, opts, more.shard));
       run.record.tool_call_counts[name] = (run.record.tool_call_counts[name] ?? 0) + 1;
       run.record.result.push({
         type: "tool_call",
@@ -538,7 +546,7 @@ export function failRun(run: QueryRun, e: unknown): void {
 }
 
 /** A model on the Marina endpoint as a first-move helper; its cost joins the run. */
-function endpointModel(ep: ChatEndpoint, model: string, run: QueryRun, timeoutMs: number) {
+export function endpointModel(ep: ChatEndpoint, model: string, run: QueryRun, timeoutMs: number) {
   return {
     name: model,
     complete: async (system: string, user: string) => {

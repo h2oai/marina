@@ -8031,6 +8031,10 @@ Usage:
   web search engines:corpus:<name> <query>  — a local corpus (offline BM25; bun run corpus)
   web fetch corpus://<name>/<docid>         — one document of a local corpus
   web multisearch <q1> | <q2>               — parallel multi-query search
+  web swarm [engines:<a,b>] [docs:N] <q>    — split the question into clues, search each, and
+                                              have reader models read the best pages in full:
+                                              a candidate table with verified quotes (off unless
+                                              the operator sets MARINA_READ_SWARM_READER)
 
 Category: Information. Minimum rank: 0.
 Aliases: none.
@@ -8099,6 +8103,23 @@ Effect: unknown.
 Effect: unknown.
 
 - `field-0` (`query`): text, required.
+
+### `web swarm [engines:<a,b>] [docs:N] <question>`
+
+Effect: unknown.
+
+- `field-0` (`engines`): text, optional group `option-0`.
+- `field-1` (`docs`): number, optional group `option-1`.
+- `field-2` (`question`): text, required.
+- Group `option-0`: `engines:a,b`.
+- Group `option-1`: `docs:N`.
+
+### `web swarm engines:corpus:<name> <question>`
+
+Effect: unknown.
+
+- `field-0` (`engines:corpus`): text, required.
+- `field-1` (`question`): text, required.
 
 ## who
 

@@ -79,7 +79,7 @@ const RERANK_SYSTEM = [
 ].join(" ");
 
 /** The first JSON object in a model reply, else undefined. */
-function jsonObject(text: string): Record<string, unknown> | undefined {
+export function jsonObject(text: string): Record<string, unknown> | undefined {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start < 0 || end <= start) return undefined;

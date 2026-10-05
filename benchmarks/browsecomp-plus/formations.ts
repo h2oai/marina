@@ -17,14 +17,17 @@
  *                     (together they read N× deeper into the ranking) → lead
  *   blackboard:NxR    N researchers over R rounds; between rounds each sees the
  *                     team's posted findings → lead
+ *   read-swarm        decompose → per-clue retrieval → cheap readers read whole
+ *                     documents → candidate table → one lead whose searches are
+ *                     read by the same readers (`read-swarm.ts`)
  *
  * The researcher model is the arm's `--model` (a passthru id or a
  * `marina/verify:` id, so verification composes with any formation); the lead
  * can be another model (`--lead-model`).
  */
 
-import { BudgetExhausted } from "../call-spend-guard";
 import { mostAgreedDraft } from "../../src/agent/budget-terminal";
+import { BudgetExhausted } from "../call-spend-guard";
 import {
   type AgentOptions,
   type ChatEndpoint,
@@ -32,12 +35,20 @@ import {
   emptyRun,
   failRun,
   finishRun,
+  harnessMetadata,
   type QueryRun,
   toolLoop,
 } from "./agent";
 import { QUERY_TEMPLATE, queryPrompt } from "./official";
+import { runReadSwarm, type SwarmSettings, swarmLabel } from "./read-swarm";
 
-export type FormationKind = "single" | "ensemble" | "mapreduce" | "sharding" | "blackboard";
+export type FormationKind =
+  | "single"
+  | "ensemble"
+  | "mapreduce"
+  | "sharding"
+  | "blackboard"
+  | "read-swarm";
 
 export interface FormationSpec {
   kind: FormationKind;
@@ -47,14 +58,15 @@ export interface FormationSpec {
   rounds: number;
 }
 
-/** `single`, `ensemble:4`, `mapreduce:4`, `sharding:4`, `blackboard:4x2`. */
+/** `single`, `ensemble:4`, `mapreduce:4`, `sharding:4`, `blackboard:4x2`, `read-swarm`. */
 export function parseFormation(raw: string): FormationSpec {
+  if (raw.trim() === "read-swarm") return { kind: "read-swarm", agents: 1, rounds: 1 };
   const m = /^(single|ensemble|mapreduce|sharding|blackboard)(?::(\d+)(?:x(\d+))?)?$/.exec(
     raw.trim(),
   );
   if (!m)
     throw new Error(
-      `unknown formation "${raw}" (single | ensemble:N | mapreduce:N | sharding:N | blackboard:NxR)`,
+      `unknown formation "${raw}" (single | ensemble:N | mapreduce:N | sharding:N | blackboard:NxR | read-swarm)`,
     );
   const kind = m[1] as FormationKind;
   if (kind === "single") return { kind, agents: 1, rounds: 1 };
@@ -66,7 +78,7 @@ export function parseFormation(raw: string): FormationSpec {
 }
 
 export function formationLabel(spec: FormationSpec): string {
-  if (spec.kind === "single") return "single";
+  if (spec.kind === "single" || spec.kind === "read-swarm") return spec.kind;
   return spec.kind === "blackboard"
     ? `blackboard:${spec.agents}x${spec.rounds}`
     : `${spec.kind}:${spec.agents}`;
@@ -79,6 +91,8 @@ export interface FormationOptions {
   leadModel?: string;
   /** The lead's own tool turns when checking reports before answering. */
   leadTurns: number;
+  /** `read-swarm` settings (reader model, read budget, decomposition). */
+  swarm?: SwarmSettings;
 }
 
 const FORMAT = QUERY_TEMPLATE.slice(QUERY_TEMPLATE.indexOf("Your response should be"));
@@ -239,10 +253,26 @@ export async function runFormation(
     snippet_chars: opts.snippetChars,
     doc_chars: opts.docChars,
     max_turns: opts.maxTurns,
-    lead_turns: fo.leadTurns,
+    lead_turns: spec.kind === "read-swarm" ? opts.maxTurns : fo.leadTurns,
     ...(opts.finalAnswer ? { final_answer: true } : {}),
+    ...(spec.kind === "read-swarm" ? { swarm: swarmLabel(fo.swarm ?? {}, fo.model) } : {}),
+    ...(spec.kind === "read-swarm" ? harnessMetadata(opts) : {}),
   });
   try {
+    if (spec.kind === "read-swarm") {
+      // The lead is the only agent: it runs the arm's turn cap (--max-turns).
+      const out = await runReadSwarm(
+        ep,
+        run,
+        question,
+        opts,
+        { model: fo.model, ...(fo.leadModel ? { leadModel: fo.leadModel } : {}) },
+        fo.swarm ?? {},
+      );
+      run.record.status = out.text ? "completed" : "incomplete";
+      if (out.budgetForced) run.budgetForced = out.budgetForced;
+      return finishRun(run, started);
+    }
     if (spec.kind === "single") {
       const out = await toolLoop(
         ep,
