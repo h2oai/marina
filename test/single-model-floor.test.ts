@@ -167,6 +167,12 @@ describe("intelligence scale", () => {
     expect(scale.summary).toContain("uncalibrated classifier");
   });
 
+  it("a Cerebras-only install has one model, not none", () => {
+    using _ = scopeProcessState({ env: cleared({ CEREBRAS_API_KEY: "k" }) });
+    expect(availableModels().map((m) => m.spec)).toEqual(["cerebras/gpt-oss-120b"]);
+    expect(intelligenceScale().tier).toBe("single");
+  });
+
   it("several vendors stay multi, local runtime first", () => {
     using _ = scopeProcessState({
       env: cleared({ LLAMA_BASE_URL: baseUrl, ANTHROPIC_API_KEY: "k", OPENROUTER_API_KEY: "k" }),

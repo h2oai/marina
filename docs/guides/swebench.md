@@ -122,6 +122,12 @@ bun run swebench file --benchmark pro --data <data> --arm single --replicate 1 -
   pristine image (`ghcr.io/scaleapi/swe-bench_pro-v2:<instance_id>`).
   - **Patch:** applied with the harness's patch-replay fallback chain.
   - **Task limits:** each task's timeout, CPU and memory limits are honoured.
+  - **Hardening:** the container runs with `--network none` (override with `--network <mode>` only
+    for a task set whose verifier must fetch), `--cap-drop ALL` plus the file-ownership and process
+    capabilities a root test run needs, `no-new-privileges`, a PID limit and no swap beyond the
+    memory limit. The root filesystem stays writable: the patch lands in `/app` and the verifier
+    writes `/logs/verifier`, so `--read-only` cannot grade. Instance ids must be plain names (no
+    path separators). The `--gold` self-check proves a task set grades under these flags.
   - **Result:** `reward.txt` decides resolved (1) or not (0).
   - **Errors:** a pull, start or missing-reward failure is an error and is excluded from the ledger;
     it is never scored 0.

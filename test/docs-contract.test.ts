@@ -183,7 +183,7 @@ const ENV_VARS_COMPOSED_AT_RUNTIME = new Set([
 ]);
 
 /**
- * `MARINA_*` variables read in `src/`, `scripts/` or `worlds/` that are NOT
+ * `MARINA_*` variables read in `src/`, `scripts/`, `worlds/` or `benchmarks/` that are NOT
  * server settings, so they are deliberately absent from
  * `config/environment.reference`. Each needs a reason and a home where it IS
  * documented (or a statement that nobody should set it).
@@ -224,15 +224,20 @@ const ENV_VARS_OUTSIDE_SERVER_CATALOG = new Map<string, string>([
   ["MARINA_RESIDENT_TOKEN", "research: memory-resident-qualification.ts"],
   // Written into the external-agent template that scripts/create-agent.ts generates.
   ["MARINA_SESSION_TOKEN", "generated project: create-agent template"],
+  // Benchmark harness clients (benchmarks/): documented in each harness's --help
+  // and its guide; they configure a client of a Marina, never the server.
+  ["MARINA_LEDGER_API_KEY", "harness: benchmarks/harness.ts filing key (benchmarks/README.md)"],
+  ["MARINA_API_KEY", "harness: benchmarks/memory/* bearer (--help; docs/guides/prophet.md)"],
+  ["MARINA_ENDPOINT", "harness: benchmarks/memory/successor.ts endpoint (--help)"],
 ]);
 
-/** Every `MARINA_*` variable read in shipped server/script/world code. */
+/** Every `MARINA_*` variable read in shipped server/script/world/benchmark code. */
 async function marinaVarsRead(): Promise<Map<string, string>> {
   const read =
     /(?:process\.env|Bun\.env|\benv)\.(MARINA_[A-Z0-9_]+)|["'`](MARINA_[A-Z0-9_]+)["'`]/g;
   const found = new Map<string, string>();
   const glob = new Bun.Glob("**/*.ts");
-  for (const root of ["src", "scripts", "worlds"]) {
+  for (const root of ["src", "scripts", "worlds", "benchmarks"]) {
     for await (const file of glob.scan({ cwd: root })) {
       if (root === "src" && file.startsWith("sdk/examples/")) continue;
       const text = await Bun.file(`${root}/${file}`).text();
@@ -360,8 +365,9 @@ describe("documentation contract — structure", () => {
     expect(documented.length).toBeGreaterThan(50);
 
     // World definitions in worlds/ are shipped code that reads env directly
-    // (see package.json "files"), so they count alongside src/ and scripts/.
-    const roots = ["src", "scripts", "worlds"];
+    // (see package.json "files"), so they count alongside src/ and scripts/;
+    // so do the benchmark harnesses in benchmarks/.
+    const roots = ["src", "scripts", "worlds", "benchmarks"];
     const glob = new Bun.Glob("**/*.ts");
     let tree = "";
     for (const root of roots) {
@@ -380,7 +386,7 @@ describe("documentation contract — structure", () => {
     expect([...ENV_VARS_COMPOSED_AT_RUNTIME].filter((n) => !documented.includes(n))).toEqual([]);
   });
 
-  it("documents every MARINA_* variable the server, scripts or worlds read", async () => {
+  it("documents every MARINA_* variable the server, scripts, worlds or benchmarks read", async () => {
     const reference = new Set(
       environmentCatalog(await readDoc(ENVIRONMENT_REFERENCE_PATH)).map((s) => s.key),
     );

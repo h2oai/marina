@@ -717,7 +717,7 @@
 # ── Forecasting ──────────────────────────────────────────────────────────────
 
 # `forecast`, `bun run forecast` and POST /v1/forecast (docs/guides/forecasting.md). No vendor key is required: unset, every part sizes to what is configured (docs/guides/single-model.md). Analysts are a comma list of models (defaults: DeepSeek V4 Pro, Claude Sonnet 5 and GPT-6 Luna via OpenRouter; without OPENROUTER_API_KEY, the configured providers or a single local model, which then answers as the one analyst × K runs); the retriever defaults to OpenRouter web search on GPT-6 Luna over Exa plus the `search` retriever (every planned query through the search backend chain, pages read and quoted), else `search` alone (keyless DuckDuckGo when no search key is set); the judge is jev (without OPENROUTER_API_KEY: the MARINA_DECISIONS backend, else no judge), decisions (the MARINA_DECISIONS backend, falling back to jev) or none. Substitutions are reported as the answer's `scale` (tier `degraded`); only having no model at all is an error.
-# MARINA_FORECAST_ANALYSTS=openrouter/deepseek/deepseek-v4-pro,openrouter/anthropic/claude-opus-5.5,openrouter/openai/gpt-6-luna
+# MARINA_FORECAST_ANALYSTS=openrouter/deepseek/deepseek-v4-pro,openrouter/anthropic/claude-sonnet-5,openrouter/openai/gpt-6-luna
 # MARINA_FORECAST_RETRIEVER=openrouter-web:openai/gpt-6-luna@exa,search
 # MARINA_FORECAST_JUDGE=jev
 
@@ -756,7 +756,7 @@
 
 # Verification inside a typed forecast: with VERIFY=on each run's draft is checked by VERIFIER (default: the critic) against the dossier and the resolution rules before it is combined, and a concrete correction replaces it. RETRIEVAL_FILTER=strict keeps only research lines whose every cited page is provably published on or before the evidence cutoff (engine date, else a date in the URL) and that name no later day; undated and live-result pages are dropped. Use it for past-cutoff forecasts (replays, backtests); date-filtered engines (tavily:, exa:) need no filter, and `closed-book` as the retriever disables retrieval.
 # MARINA_FORECAST_VERIFY=off
-# MARINA_FORECAST_VERIFIER=openrouter/anthropic/claude-opus-5
+# MARINA_FORECAST_VERIFIER=
 # MARINA_FORECAST_RETRIEVAL_FILTER=none
 
 # Wall-clock budget per typed forecast, in seconds (unset or 0 = none). Budget-terminal answering: from about 75 % no further research round starts; at the cap lookups, verification and the critique are skipped and the answer is combined from the runs finished so far (the first run to finish, when none has). The answer then carries `budgetForced`, and a skipped check is recorded as `not_run`, never as a failure.

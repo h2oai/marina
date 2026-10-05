@@ -73,7 +73,7 @@ import {
   replicateFromResult,
   validGroupKey,
 } from "../benchmarks/replicates";
-import { parseMaxUsd, SpendGuard } from "../benchmarks/spend-guard";
+import { CallSpendGuard, parseMaxUsd } from "../benchmarks/call-spend-guard";
 import { wilsonInterval } from "../benchmarks/stats";
 import type { BenchmarkResult } from "../benchmarks/types";
 import { CORPUS_LEAD_CHARS, corpusDir } from "../src/engine/search-providers/corpus";
@@ -197,7 +197,7 @@ async function run(): Promise<number> {
   const goldQrels = values["gold-qrels"]
     ? parseQrels(readFileSync(values["gold-qrels"], "utf8"))
     : undefined;
-  const guard = new SpendGuard(parseMaxUsd(values["max-usd"]));
+  const guard = new CallSpendGuard(parseMaxUsd(values["max-usd"]));
   const endpoint = { baseUrl: values.endpoint!, apiKey, guard };
   const timeoutMs = int("timeout-s", values["timeout-s"]) * 1000;
   const backend = workerPool(values.corpus!, corpusDir(), int("workers", values.workers));

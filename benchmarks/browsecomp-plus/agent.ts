@@ -38,7 +38,7 @@ import {
   getCorpusDocument,
   searchCorpus,
 } from "../../src/engine/search-providers/corpus";
-import { BudgetExhausted, isSpendCapRefusal, type SpendGuard } from "../spend-guard";
+import { BudgetExhausted, isSpendCapRefusal, type CallSpendGuard } from "../call-spend-guard";
 import {
   extractCitations,
   GET_DOCUMENT_DESCRIPTION,
@@ -55,7 +55,7 @@ export interface ChatEndpoint {
   /** Injected for tests. */
   fetch?: typeof fetch;
   /** Hard spend stop: checked before every call, fed every call's cost. */
-  guard?: SpendGuard;
+  guard?: CallSpendGuard;
 }
 
 /** Where tool calls are answered. In-process by default; `corpus-pool.ts` runs them in workers. */

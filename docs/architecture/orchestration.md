@@ -52,3 +52,10 @@ The command-ingress async context retains the attempt ID across long-running che
 late results from being attached to a newer attempt. Migration 126 adds lookup indexes and
 unique active-attempt constraints per session and durable worker. Submission and task approval
 are distinct. See [the coding guide](../guides/coding.md) for the complete operator flow.
+
+## Budget terminal: every budget ends in an answer (2026-10-04)
+
+`src/agent/budget-terminal.ts` is the one mechanism for loops with a turn, step or time budget.
+- Steer from 75 % (`budgetSteerAt`, also the lean agent's run-cap warning). At the cap, block tools and ask for the answer from what the loop has.
+- Label a forced answer `BudgetForced`: in traces, in run records, and as `budget_forced` on ledger items (migration 157). Never pass it off as a free answer.
+- The users are the lean agent's run cap (owed `model_response`), the benchmark tool loop (`--final-answer`), crew request deadlines (`src/coordination/request-deadline.ts`: best draft at `x-marina-deadline-ms`, fail fast on non-retryable 4xx) and typed forecasts (`budgetMs`). Reuse it rather than adding another loop-local cap. → docs/architecture/orchestration.md

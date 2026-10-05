@@ -5,6 +5,11 @@ import { choice } from "../decisions/questions";
 import type { DecisionProvider } from "../decisions/types";
 import { getErrorMessage } from "../engine/errors";
 
+// Not the spawn-time model router: `model:route` prefers candidates from benchmark
+// ledger evidence in src/engine/benchmark-evidence.ts. This module scores
+// formation/strategy routes from portable paired evidence (arena portfolio, task
+// adapters); keep the two separate.
+
 /** Portable paired evidence; native CRPS skill, pass/fail and other metrics must
  * retain their benchmark/cohort identity. Never clamp a negative score to zero. */
 export interface RouteEvidence {

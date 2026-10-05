@@ -141,8 +141,8 @@ export const EXPORT_TABLES = [
   "trait_history",
   "role_history",
   "agent_configs",
-  // Preserve pending effects and retry receipts so restore cannot repeat work
-  // merely because its checkpoint or submission claim was lost.
+  // Reserved tables (migrations 149/150): nothing writes them today; kept in
+  // the snapshot so any rows round-trip unchanged.
   "run_state",
   "submission_requests",
   "crews",
