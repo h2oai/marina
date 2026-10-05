@@ -195,7 +195,9 @@ export class WorkspaceCodeEditor implements CodeEditor {
   private makeEditor(view: TerminalView) {
     const editor = new DraftEditor(this.tui, theme, { autocompleteMaxVisible: 5 });
     if (view !== "approvals")
-      editor.setAutocompleteProvider(terminalCompletionFor(this.options.connected));
+      editor.setAutocompleteProvider(
+        terminalCompletionFor(this.options.connected, this.options.completions, view === "world"),
+      );
     editor.onChange = () => {
       this.notice = "";
       this.tui.requestRender();

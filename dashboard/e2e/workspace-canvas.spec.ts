@@ -149,6 +149,37 @@ test("Canvas layout edits preserve one chat connection, drafts, focus and saved 
   // :hover after a layout change asynchronously.
   await page.mouse.move(0, 0);
   const before = await geometry(page);
+  await page.getByLabel("More dashboard options").click();
+  await page.getByRole("button", { name: "Balance widths", exact: true }).click();
+  await page.mouse.move(0, 0);
+  await expect.poll(async () => (await geometry(page))[0].box[2]).not.toBe(before[0].box[2]);
+  const balanced = await geometry(page);
+  await page.getByRole("button", { name: "Undo layout", exact: true }).click();
+  await page.mouse.move(0, 0);
+  await expect.poll(() => geometry(page)).toEqual(before);
+  await page.getByRole("button", { name: "Redo layout", exact: true }).click();
+  await page.mouse.move(0, 0);
+  await expect.poll(() => geometry(page)).toEqual(balanced);
+  const layoutScreenshot = test.info().outputPath("workspace-layout-controls.png");
+  await page.screenshot({ path: layoutScreenshot });
+  await test
+    .info()
+    .attach("Workspace layout controls", { path: layoutScreenshot, contentType: "image/png" });
+  const menuAccessibility = await new AxeBuilder({ page })
+    .include("header")
+    .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+    .analyze();
+  expect(menuAccessibility.violations.map(({ id }) => id)).toEqual([]);
+  await page.getByRole("button", { name: "Undo layout", exact: true }).click();
+  await page.getByLabel("Panel to move").selectOption("context");
+  await page.getByRole("button", { name: "Move selected panel left", exact: true }).click();
+  await expect.poll(async () => (await geometry(page))[2].box[0]).toBeLessThan(before[2].box[0]);
+  await page.getByRole("button", { name: "Undo layout", exact: true }).click();
+  await page.getByLabel("More dashboard options").click();
+  await page.mouse.move(0, 0);
+  await expect.poll(() => geometry(page)).toEqual(before);
+  await expect(input).toHaveAttribute("data-mount-proof", "retained");
+  await expect(input).toHaveValue("Keep this unsent draft");
   await page.getByRole("button", { name: "Maximize Web Chat panel" }).click();
   await expect.poll(async () => (await geometry(page))[0].box[2]).toBeGreaterThan(before[0].box[2]);
   await page.getByRole("button", { name: "Restore Web Chat panel" }).click();

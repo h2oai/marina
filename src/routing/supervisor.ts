@@ -13,7 +13,7 @@ import type {
   RoutingSession,
 } from "../sdk/routing-types";
 import type { AgentAdapter, ManagedAgent } from "./agent-adapters";
-import { prepareAgentWorkspace } from "./agent-workspace";
+import { prepareAgentWorkspace, restoreAgentWorkspace } from "./agent-workspace";
 
 interface Run {
   session: RoutingSession;
@@ -99,9 +99,12 @@ export class MarinaSupervisor {
       this.runs.set(session.id, run);
       this.state(run, {
         status: "disconnected",
+        resumeSupported:
+          this.options.adapters.find((adapter) => adapter.id === row.state.adapter)
+            ?.supportsResume === true,
         request: undefined,
         error:
-          "Supervisor restarted. Previous native work was not replayed. Inspect its native session and workspace before starting replacement work.",
+          "Supervisor restarted. Previous native work was not replayed. Inspect its native session and workspace, then explicitly resume or start replacement work.",
       });
     }
     const supervisor: Run = {
@@ -240,6 +243,8 @@ export class MarinaSupervisor {
         status: "starting",
         mode: "managed",
         adapter: adapter.id,
+        model: control.model,
+        resumeSupported: adapter.supportsResume === true,
         supervisorId: this.owner.id,
         cwd: workspace.cwd,
         updatedAt: Date.now(),
@@ -255,38 +260,7 @@ export class MarinaSupervisor {
         : "Workspace prepared",
     });
     try {
-      run.agent = await adapter.start({
-        cwd: workspace.cwd,
-        model: control.model,
-        executable: adapter.executable,
-        env: { ...this.options.agentEnvironment, MARINA_SESSION_ID: session.id },
-        emit: (kind, payload) => this.emit(session.id, kind, payload),
-        state: (patch) => this.state(run, patch),
-        ask: (request, signal) =>
-          new Promise((resolve) => {
-            const id = crypto.randomUUID();
-            const finish = (answer: { allow: boolean; answer?: string }) => {
-              signal?.removeEventListener("abort", abort);
-              run.requests.delete(id);
-              this.emit(session.id, "approval.resolved", { requestId: id, ...answer });
-              this.state(run, {
-                request: run.requests.values().next().value?.request,
-                status: run.requests.size ? "waiting" : "running",
-              });
-              resolve(answer);
-            };
-            const abort = () => finish({ allow: false });
-            const full = { ...request, id };
-            run.requests.set(id, { request: full, resolve: finish });
-            this.emit(session.id, "approval.requested", full);
-            this.state(run, {
-              status: "waiting",
-              request: run.requests.values().next().value?.request,
-            });
-            signal?.addEventListener("abort", abort, { once: true });
-            if (signal?.aborted) abort();
-          }),
-      });
+      run.agent = await this.startAdapter(run, adapter);
       if (this.stopped) {
         await run.agent.stop();
         return;
@@ -298,9 +272,83 @@ export class MarinaSupervisor {
       throw error;
     }
   }
+  private startAdapter(run: Run, adapter: AgentAdapter, resumeSessionId?: string) {
+    const session = run.session;
+    return adapter.start({
+      cwd: run.state.cwd,
+      model: run.state.model,
+      resumeSessionId,
+      executable: adapter.executable,
+      env: { ...this.options.agentEnvironment, MARINA_SESSION_ID: session.id },
+      emit: (kind, payload) => this.emit(session.id, kind, payload),
+      state: (patch) => this.state(run, patch),
+      ask: (request, signal) =>
+        new Promise((resolve) => {
+          const id = crypto.randomUUID();
+          const finish = (answer: { allow: boolean; answer?: string }) => {
+            signal?.removeEventListener("abort", abort);
+            run.requests.delete(id);
+            this.emit(session.id, "approval.resolved", { requestId: id, ...answer });
+            this.state(run, {
+              request: run.requests.values().next().value?.request,
+              status: run.requests.size ? "waiting" : "running",
+            });
+            resolve(answer);
+          };
+          const abort = () => finish({ allow: false });
+          const full = { ...request, id };
+          run.requests.set(id, { request: full, resolve: finish });
+          this.emit(session.id, "approval.requested", full);
+          this.state(run, {
+            status: "waiting",
+            request: run.requests.values().next().value?.request,
+          });
+          signal?.addEventListener("abort", abort, { once: true });
+          if (signal?.aborted) abort();
+        }),
+    });
+  }
+  private async resume(run: Run) {
+    if (run.agent || !["stopped", "failed", "disconnected"].includes(run.state.status))
+      throw new Error("Native session is already connected; resume never takes over active work");
+    const adapter = this.options.adapters.find((entry) => entry.id === run.state.adapter);
+    if (!adapter?.supportsResume)
+      throw new Error("This adapter does not support native-session resume");
+    const id = run.state.nativeSessionId;
+    if (!id || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,255}$/.test(id))
+      throw new Error(
+        "No valid native session identity was recorded; inspect before starting replacement work",
+      );
+    await restoreAgentWorkspace(this.options.root, this.options.stateDirectory, run.state.cwd);
+    this.state(run, { status: "starting", error: undefined, request: undefined });
+    this.emit(run.session.id, "native.resume_requested", {
+      nativeSessionId: id,
+      cwd: run.state.cwd,
+    });
+    try {
+      run.agent = await this.startAdapter(run, adapter, id);
+      if (this.stopped) {
+        await run.agent.stop();
+        run.agent = undefined;
+        return;
+      }
+      this.emit(run.session.id, "native.resumed", {
+        nativeSessionId: id,
+        cwd: run.state.cwd,
+        text: "Reconnected to recorded native history; no previous instruction was replayed.",
+      });
+    } catch (error) {
+      await run.agent?.stop();
+      run.agent = undefined;
+      this.state(run, { status: "failed", error: getErrorMessage(error) });
+      throw error;
+    }
+  }
   private async prompt(run: Run, text: string, id: string) {
     if (!run.agent)
-      throw new Error("Native session is not connected; launch a new managed session");
+      throw new Error(
+        "Native session is not connected; explicitly resume a supported session or launch new work",
+      );
     if (typeof text !== "string" || !text.trim() || text.length > 16000)
       throw new Error("Prompt must contain 1–16000 characters");
     this.emit(run.session.id, "input", { text, deliveryId: id });
@@ -346,6 +394,10 @@ export class MarinaSupervisor {
         allow: control.allow,
         ...(control.answer === undefined ? {} : { answer: control.answer }),
       });
+      return;
+    }
+    if (control.action === "resume") {
+      await this.resume(run);
       return;
     }
     if (!run.agent) throw new Error("Native session is not connected");

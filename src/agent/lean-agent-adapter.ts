@@ -4086,11 +4086,11 @@ The goal is a smaller, sharper memory — not more notes.`;
   }
 
   /**
-   * The conversation cap that applies to this agent now. The built-in default
-   * exempts a bound coder (an active Code Mode task legitimately carries a large
-   * working set; the window-ratio threshold still guards it), while an
-   * operator-set `MARINA_AGENT_CONTEXT_CAP_TOKENS` applies to every agent. No
-   * cap compacts an agent's first run.
+   * Coding tasks use the same conversation cap as other residents. They may
+   * execute many tool turns inside their first prompt: apply the cap after the
+   * first assistant turn, without waiting for a second user prompt. Originals
+   * are archived by the context transform; the durable task pointer remains
+   * available. Never compact a fresh request before any work has occurred.
    */
   private tokenCapFor(
     messages: readonly AgentMessage[],
@@ -4098,8 +4098,12 @@ The goal is a smaller, sharper memory — not more notes.`;
   ): ConversationTokenCap | undefined {
     const cap = conversationTokenCap();
     if (!cap) return undefined;
-    if (!cap.explicit && this.activeCodingTask) return undefined;
-    if (!opts.betweenPrompts && !hasCompletedRun(messages)) return undefined;
+    if (
+      !opts.betweenPrompts &&
+      !hasCompletedRun(messages) &&
+      !(this.activeCodingTask && messages.some((message) => message.role === "assistant"))
+    )
+      return undefined;
     return cap;
   }
 

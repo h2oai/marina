@@ -30,6 +30,7 @@ export interface CodeTerminalOptions {
   tui?: boolean;
   location?: string;
   connected?: boolean;
+  completions?: CodeEditorOptions["completions"];
   /** Terminal device injection for renderer tests; no world/session authority. */
   screen?: Terminal;
   panelInput?: (input: PanelInput) => void;
@@ -71,6 +72,7 @@ export class CodeTerminal {
       input,
       output,
       connected: options.connected,
+      completions: options.completions,
       panelInput: options.panelInput,
       line: (text) => this.line(text),
       interrupt: options.interrupt,

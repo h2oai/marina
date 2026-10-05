@@ -166,7 +166,24 @@ normal dashboard remains available at the printed Dashboard URL.
 Use `/stop` or Ctrl+C to interrupt the selected worker. A second Ctrl+C or `/quit` stops
 all native processes owned by this terminal and closes its local Marina. Worktrees and
 the output journal remain available for inspection. Restarting preserves history but
-does **not** replay uncertain work or resume a native process automatically.
+does **not** replay uncertain work or resume a native process automatically. Run `/agents` to
+restore the recorded roster, inspect its history and workspace, then `/resume <exact-name-or-id>`
+to reconnect a stopped Codex or pi session. Recovery preserves its directory and model, refuses
+missing or changed identities, and sends no prior task again. The dashboard Streams controls offer
+the same action. Claude managed resume remains unavailable until its SDK can confirm the resumed
+identity before input; recover those conversations in Claude itself.
+
+### Complete names from your current work
+
+After `/world code files [directory]`, Tab suggests the displayed paths for
+`/world code read <path>` and `code read <path>` in the World pane. `/checks` and
+`/history` populate `/show <artifact>` and `/review <attempt>` hints. Observed native
+participants appear under `/use` and supported disconnected sessions under `/resume`.
+Both terminal renderers use these same local hints; the TUI shows a dropdown.
+
+Suggestions only edit the draft. They do not scan the filesystem, fetch more data, run a
+command or approve work. File and artifact hints clear when you switch coding sessions;
+approval answers have no command completion. Refresh a listing if its contents changed.
 
 ### Keep a Coding desk beside your work
 
