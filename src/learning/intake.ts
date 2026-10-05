@@ -57,12 +57,43 @@ export function describeTarget(run: RunLike): string {
   return run.label ?? run.target_kind ?? "target";
 }
 
+/** Per-category tallies of a run (a category label and counts, never item text). */
+export interface CategoryTally {
+  category: string;
+  n: number;
+  correct: number;
+}
+
+/** At most this many categories are named in an outcome: the weakest ones. */
+const MAX_OUTCOME_CATEGORIES = 4;
+
+/** The weakest categories with at least two items, as `label k/n` phrases. */
+function categorySignal(categories: CategoryTally[] | undefined): string[] {
+  const ranked = (categories ?? [])
+    .filter((c) => c.n >= 2)
+    .sort((a, b) => a.correct / a.n - b.correct / b.n || b.n - a.n);
+  if (ranked.length < 2) return [];
+  return [
+    `weakest categories: ${ranked
+      .slice(0, MAX_OUTCOME_CATEGORIES)
+      .map((c) => `${c.category} ${c.correct}/${c.n}`)
+      .join(", ")}`,
+  ];
+}
+
 /**
  * The outcome of one scored benchmark run: success means it matched or beat
  * the best other completed run on the same benchmark and item slice (so a
  * lesson says which configurations win, and which lose, on that kind of work).
+ * `categories` adds the run's weakest categories. Nothing here reads, or can
+ * carry, an item's question or answer: the outcome holds ids, scores, counts
+ * and category labels only.
  */
-export function benchmarkRunOutcome(db: MarinaDB, run: RunLike): Outcome | undefined {
+export function benchmarkRunOutcome(
+  db: MarinaDB,
+  run: RunLike,
+  opts: { categories?: CategoryTally[] } = {},
+): Outcome | undefined {
   if (run.score === null || run.score === undefined) return undefined;
   const others = db
     .leaderboardBenchmark(run.benchmark, 50)
@@ -92,6 +123,7 @@ export function benchmarkRunOutcome(db: MarinaDB, run: RunLike): Outcome | undef
         ? [`$${(run.cost_usd / run.n).toFixed(4)}/item`]
         : []),
       ...(run.judge ? [`judge ${run.judge}`] : []),
+      ...categorySignal(opts.categories),
     ],
     detail: best
       ? `${pct(run.score)} vs best other ${pct(best.score ?? 0)} (${describeTarget(best)})`
@@ -101,10 +133,14 @@ export function benchmarkRunOutcome(db: MarinaDB, run: RunLike): Outcome | undef
 }
 
 /** Feed a just-recorded benchmark run to the learning loop (no-op unless armed). */
-export function noteBenchmarkRun(db: MarinaDB, run: RunLike): void {
+export function noteBenchmarkRun(
+  db: MarinaDB,
+  run: RunLike,
+  opts: { categories?: CategoryTally[] } = {},
+): void {
   // An invalid run measured the infrastructure, not the target: no lesson.
   if (db.getBenchmarkRun(run.id)?.status === "invalid") return;
-  const outcome = benchmarkRunOutcome(db, run);
+  const outcome = benchmarkRunOutcome(db, run, opts);
   if (outcome) noteOutcome(db, outcome);
 }
 
