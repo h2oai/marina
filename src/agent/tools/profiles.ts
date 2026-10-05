@@ -8,7 +8,6 @@
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type Static, Type } from "@sinclair/typebox";
-import type { ToolReplay } from "../../persistence/db-run-state";
 import type { AgentSupports } from "../agent-types";
 import type { PlatformMemoryBackend } from "../memory-platform";
 import { createCommandTool } from "./command";
@@ -335,11 +334,13 @@ export function agentToolExecutionMode(
 // pi-agent-core's AgentTool already carries `replay?: "never" | "safe"` — the
 // recovery policy for an effect whose durable intent exists but whose outcome
 // is unknown. Marina stamps it centrally instead of asking each tool factory
-// to declare it: read-only tools are `safe` (re-running after a crash only
-// observes), everything else is left unset, which the resume path
-// (src/agent/run-state-resume.ts) treats as `never` (report, do not repeat).
+// to declare it: read-only tools are `safe` (re-running only observes),
+// everything else is left unset (`never`: report, do not repeat). Marina has
+// no crash-resume path of its own today; the stamp is pi-agent-core's
+// declared contract and is reported in its tool telemetry.
 
-export type { ToolReplay };
+/** Recovery policy for an effect whose outcome is unknown (pi-agent-core's `AgentTool.replay`). */
+export type ToolReplay = NonNullable<AgentTool["replay"]>;
 
 /** The replay policy a tool should carry when none was declared explicitly. */
 export function replayPolicyFor(name: string): ToolReplay | undefined {

@@ -291,13 +291,12 @@ ALTER TABLE benchmark_runs ADD COLUMN replicate_group TEXT;
 CREATE INDEX idx_benchmark_runs_replicate_group ON benchmark_runs(replicate_group) WHERE replicate_group IS NOT NULL;
 `,
   },
-  // Migration 149: durable execution checkpoint for the agent loop
-  // (src/persistence/db-run-state.ts). One row per agent describing the
-  // single in-flight effect (a tool call) whose outcome has not been
-  // committed; written before the loop advances, read back at boot so a
-  // crash resumes the step instead of restarting from a summary. `phase`,
-  // `replay` are code-validated unions; the CHECK keeps bad rows out of
-  // the store even though the code is the authority.
+  // Migration 149: RESERVED table for an agent-loop execution checkpoint (one
+  // row per agent: the single in-flight tool call and its `replay` policy).
+  // Nothing reads or writes it: the accessor module and resume decision that
+  // shipped with it had no production caller and were removed (2026-10-04).
+  // The table stays (migrations are immutable); a future crash-resume path
+  // must add its own writer, reader and store interface before relying on it.
   {
     version: 149,
     sql: `
@@ -313,11 +312,11 @@ CREATE TABLE run_state (
 );
 `,
   },
-  // Migration 150: exactly-once submission ledger
-  // (src/persistence/db-submissions.ts). A `requestId` is claimed `pending`
-  // before its work runs and flipped `resolved` once the result commits, so a
-  // client retry after a crash/connection loss gets the original result back
-  // instead of the work being performed twice.
+  // Migration 150: RESERVED table for an exactly-once submission ledger
+  // (`pending` → `resolved` per request id). Nothing reads or writes it: the
+  // accessor module that shipped with it had no production caller and was
+  // removed (2026-10-04). The table stays (migrations are immutable); a
+  // future user must add a writer, a reader and a retention policy.
   {
     version: 150,
     sql: `
