@@ -41,6 +41,8 @@ export interface BackfillReport {
   trust: Record<LessonTrust, number>;
   /** Lessons mirrored into `lessons:meta`. */
   mirrored: number;
+  /** Outcomes merged into an existing lesson at admission (`MARINA_MEMORY_RANKING=on`). */
+  merged: number;
   failed: number;
   /** The ids of runs fed (or that would be fed). */
   runIds: string[];
@@ -74,13 +76,20 @@ export async function backfillLedgerLessons(
     learned: 0,
     trust: { trusted: 0, unverified: 0, rejected: 0 },
     mirrored: 0,
+    merged: 0,
     failed: 0,
     runIds: [],
   };
+  // A run taught a lesson, or was merged into one at admission (its run is
+  // the first ref of a `merged` entry): either way it is not learned again.
   const taught = new Set(
     (await deps.sink.find("benchmark", {}, 100_000)).flatMap((l) => {
-      const id = ownRun(l);
-      return id ? [id] : [];
+      const own = ownRun(l);
+      const merged = (l.merged ?? []).flatMap((m) => {
+        const id = ownRun({ refs: m.refs } as Lesson);
+        return id ? [id] : [];
+      });
+      return [...(own ? [own] : []), ...merged];
     }),
   );
   const runs = db
@@ -114,6 +123,7 @@ export async function backfillLedgerLessons(
       const record = await recordOutcome(deps, outcome);
       report.trust[record.trust]++;
       if (record.metaId) report.mirrored++;
+      if (record.mergedInto) report.merged++;
       taught.add(run.id);
       opts.onRecord?.(record);
     } catch {

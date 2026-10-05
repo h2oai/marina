@@ -926,6 +926,9 @@
 
 # Resident agents' continuation prompt: `on` adds a [Lessons] section for the agent's focus every tenth cycle (judged lessons from every domain, cross-board included, labelled); `observe` logs the lesson ids it would show; `off` (default) never asks. Capped by MARINA_LESSONS.
 # MARINA_LESSONS_RESIDENT=off
+
+# Memory admission ranking (src/memory/admission.ts): each curated write (lessons and their cross-board mirrors) is compared with its 8 nearest existing records — lexical search, hybrid when MARINA_MEMORY_EMBEDDINGS is configured — and ranked by ONE numbers-only decision call (relation, novelty, generality, evidence_fit, value; evidence strength is mechanical). `off` (default): today's behaviour. `observe`: the rank and the proposed action are stored on the record; writes and serving are unchanged. `on`: duplicates merge into the existing record (support, refs), refinements supersede it, a contradiction of a trusted record opens a resolve case and holds the new record unserved, and recall orders by trust, then rank, then recency. Needs a configured decision backend (MARINA_DECISIONS / MARINA_DECISION_ENGINE); without one it behaves as off. An uncalibrated backend gets one cut at 0.5, merges also need mechanical similarity, and contradictions are never auto-resolved. Spend counts against the daily cap; at the cap writes proceed as off.
+# MARINA_MEMORY_RANKING=off
 # Learned bundles (marina.learned.v1, docs/guides/learned-bundles.md): `on` lets an operator import a signed bundle with `bun run learned import`. Imported lessons land in `upstream:*` spaces with trust `imported` and are never trusted until local outcomes confirm them; defaults seed only empty slots; ledger aggregates become down-weighted priors, never ledger rows. `off` (default) refuses every import and nothing changes.
 # MARINA_UPSTREAM=off
 

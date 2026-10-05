@@ -18,8 +18,9 @@ import {
   lessonRequestHeaders,
   setTargetLessonContext,
 } from "../benchmarks/modes/passthrough";
-import type { DecisionProvider, DecisionRequest } from "../src/decisions/types";
+import type { DecisionAnswer, DecisionProvider, DecisionRequest } from "../src/decisions/types";
 import { ledgerFromHarnessResult, sliceHash } from "../src/engine/benchmark-ledger";
+import { lessonAdmission } from "../src/learning/admission";
 import { backfillLedgerLessons } from "../src/learning/backfill";
 import {
   evalExclusion,
@@ -611,6 +612,47 @@ describe("benchmark outcomes and the backfill", () => {
       expect(second).toMatchObject({ learned: 0, existing: 3, skipped: 1 });
       expect(await sink.find!("benchmark", {}, 100)).toHaveLength(3);
       expect(await sink.find!("meta", {}, 100)).toHaveLength(3);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("with admission on, a run merged into an existing lesson is not learned again", async () => {
+    const db = freshDb();
+    try {
+      recordRun(db, "m1", { right: 10, completedAt: 1_000 });
+      recordRun(db, "m2", { right: 10, completedAt: 2_000 });
+      const sink = lessonSinkFor(db);
+      // Lesson judge: every noul passes; admission: the second run restates the first.
+      const both: DecisionProvider = {
+        kind: "test",
+        model: "test/jev",
+        calibrated: true,
+        async ask(request) {
+          const answers: Record<string, DecisionAnswer> = {};
+          for (const [k, q] of Object.entries(request.questions)) {
+            if (q.type === "noul") answers[k] = { type: "noul", noul: 0.9 };
+            else if (q.type === "choice")
+              answers[k] = {
+                type: "choice",
+                choice: "same_as_N1",
+                probabilities: { same_as_N1: 0.9 },
+              };
+            else answers[k] = { type: "score", score: q.criteria.length - 1 };
+          }
+          return { answers, model: "test/jev", provider: "test", latencyMs: 1 };
+        },
+      };
+      const admit = lessonAdmission({ env: { MARINA_MEMORY_RANKING: "on" }, judge: both, db })!;
+      const deps = { sink, judge: both, admit };
+      const first = await backfillLedgerLessons(db, deps);
+      expect(first).toMatchObject({ learned: 2, merged: 1 });
+      const lessons = await sink.find!("benchmark", {}, 100);
+      expect(lessons).toHaveLength(1);
+      expect(lessons[0]!.support).toBe(2);
+      const second = await backfillLedgerLessons(db, deps);
+      expect(second).toMatchObject({ learned: 0, existing: 2, merged: 0 });
+      expect((await sink.find!("benchmark", {}, 100))[0]!.support).toBe(2);
     } finally {
       db.close();
     }

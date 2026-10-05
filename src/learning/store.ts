@@ -18,10 +18,14 @@
  * every earlier version.
  */
 
+import { searchNeighbourRecords } from "../memory/admission";
 import type { MemoryOperationRequest } from "../sdk/memory-operations";
 import {
   LESSON_SCOPES,
   type Lesson,
+  type LessonAdmissionStamp,
+  type LessonMergeEntry,
+  type LessonRank,
   type LessonScope,
   type LessonSink,
   type LessonTrust,
@@ -41,7 +45,11 @@ interface RecordLike {
   content?: string;
   metadata?: Record<string, unknown>;
   valid_time?: { from: number | null; until: number | null } | null;
+  claim?: { subject: string; predicate: string; object: unknown } | null;
 }
+
+/** The claim predicate an admission resolve case is opened under (keyed by the contradicted lesson). */
+export const conflictPredicate = (against: string) => `admission-conflict:${against}`;
 
 /** A record whose validity has not ended at `now` (a retired lesson's has). */
 export function currentLessonRecord(r: RecordLike, now = Date.now()): boolean {
@@ -93,6 +101,47 @@ export function lessonFromRecord(r: RecordLike): Lesson | undefined {
           ),
         }
       : {}),
+    ...(typeof r.version === "number" ? { version: r.version } : {}),
+    ...(typeof m.support === "number" && m.support >= 1 ? { support: m.support } : {}),
+    ...(Array.isArray(m.merged) ? { merged: m.merged as LessonMergeEntry[] } : {}),
+    ...(isObject(m.rank) && typeof m.rank.score === "number" ? { rank: m.rank as LessonRank } : {}),
+    ...(isObject(m.admission) && typeof m.admission.action === "string"
+      ? { admission: m.admission as unknown as LessonAdmissionStamp }
+      : {}),
+    // Pessimistic: a contested lesson is held until the store checks its targets.
+    ...(isObject(m.admission) && m.admission.state === "contested" ? { contested: true } : {}),
+  };
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> =>
+  !!v && typeof v === "object" && !Array.isArray(v);
+
+/** Most merged-duplicate provenance entries kept on one lesson. */
+export const MAX_MERGED_ENTRIES = 20;
+
+/** The record metadata a lesson is stored with (no text; `id`, `version`, `contested` are never written). */
+export function lessonMetadata(lesson: Lesson): Record<string, unknown> {
+  return {
+    kind: LESSON_RECORD_SUBJECT,
+    domain: lesson.domain,
+    trust: lesson.trust,
+    lesson_kind: lesson.kind,
+    resolved_at: lesson.resolvedAt,
+    source: lesson.source,
+    ...(lesson.category ? { category: lesson.category } : {}),
+    ...(lesson.rule ? { rule: lesson.rule } : {}),
+    ...(lesson.score !== undefined ? { score: lesson.score } : {}),
+    ...(lesson.judgement ? { judgement: lesson.judgement } : {}),
+    ...(lesson.judge ? { judge: lesson.judge } : {}),
+    ...(lesson.refs?.length ? { refs: lesson.refs } : {}),
+    ...(lesson.scope ? { scope: lesson.scope } : {}),
+    ...(lesson.families?.length ? { families: lesson.families } : {}),
+    ...(lesson.subjects?.length ? { subjects: lesson.subjects } : {}),
+    ...(lesson.provenance ? { provenance: lesson.provenance } : {}),
+    ...(lesson.support !== undefined ? { support: lesson.support } : {}),
+    ...(lesson.merged?.length ? { merged: lesson.merged.slice(-MAX_MERGED_ENTRIES) } : {}),
+    ...(lesson.rank ? { rank: lesson.rank } : {}),
+    ...(lesson.admission ? { admission: lesson.admission } : {}),
   };
 }
 
@@ -139,6 +188,60 @@ export function durableLessonSink(
     const id = await spaceFor(domain);
     return id ? { space_id: id } : {};
   };
+  const getRecord = async (spaceId: string, id: string) =>
+    (await run({ operation: "get", space_id: spaceId, id })).result as RecordLike;
+  /**
+   * A contested lesson is held only while a lesson it contests is current: a
+   * case resolved for it (or the other lesson retired) releases it.
+   */
+  const releaseContested = async (lessons: Lesson[], spaceId: string): Promise<Lesson[]> => {
+    const now = Date.now();
+    const known = new Map<string, boolean>();
+    const isCurrent = async (id: string) => {
+      let v = known.get(id);
+      if (v === undefined) {
+        try {
+          v = currentLessonRecord(await getRecord(spaceId, id), now);
+        } catch {
+          v = false; // gone or erased: nothing left to contest
+        }
+        known.set(id, v);
+      }
+      return v;
+    };
+    const out: Lesson[] = [];
+    for (const l of lessons) {
+      if (!l.contested) {
+        out.push(l);
+        continue;
+      }
+      let held = false;
+      for (const id of l.admission?.contests ?? []) if (await isCurrent(id)) held = true;
+      out.push(held ? l : { ...l, contested: false });
+    }
+    return out;
+  };
+  /** Revise a current record keeping its text and validity (metadata and/or claim change). */
+  const reviseKeeping = async (
+    spaceId: string,
+    record: RecordLike,
+    change: { metadata?: Record<string, unknown>; claim?: RecordLike["claim"] },
+    key: string,
+  ) => {
+    if (typeof record.version !== "number" || !record.id) throw new Error("record has no version");
+    await run({
+      operation: "revise",
+      space_id: spaceId,
+      id: record.id,
+      key,
+      input: {
+        expected_version: record.version,
+        content: record.content,
+        metadata: change.metadata ?? record.metadata,
+        ...(change.claim ? { claim: change.claim } : {}),
+      },
+    });
+  };
   return {
     async write(lesson, writeOpts) {
       const reply = await run({
@@ -150,24 +253,7 @@ export function durableLessonSink(
           type: "inference",
           tier: "reflection",
           subject: LESSON_RECORD_SUBJECT,
-          metadata: {
-            kind: LESSON_RECORD_SUBJECT,
-            domain: lesson.domain,
-            trust: lesson.trust,
-            lesson_kind: lesson.kind,
-            resolved_at: lesson.resolvedAt,
-            source: lesson.source,
-            ...(lesson.category ? { category: lesson.category } : {}),
-            ...(lesson.rule ? { rule: lesson.rule } : {}),
-            ...(lesson.score !== undefined ? { score: lesson.score } : {}),
-            ...(lesson.judgement ? { judgement: lesson.judgement } : {}),
-            ...(lesson.judge ? { judge: lesson.judge } : {}),
-            ...(lesson.refs?.length ? { refs: lesson.refs } : {}),
-            ...(lesson.scope ? { scope: lesson.scope } : {}),
-            ...(lesson.families?.length ? { families: lesson.families } : {}),
-            ...(lesson.subjects?.length ? { subjects: lesson.subjects } : {}),
-            ...(lesson.provenance ? { provenance: lesson.provenance } : {}),
-          },
+          metadata: lessonMetadata(lesson),
           valid_time: { from: Date.parse(lesson.resolvedAt), until: null },
         },
       });
@@ -214,7 +300,7 @@ export function durableLessonSink(
         .filter((r) => currentLessonRecord(r, now))
         .map(lessonFromRecord)
         .filter((l): l is Lesson => l !== undefined && l.domain === domain);
-      return selectServed(lessons, asOf, recallOpts);
+      return selectServed(await releaseContested(lessons, sp.space_id), asOf, recallOpts);
     },
     async find(domain, selector, limit) {
       const sp = await space(domain);
@@ -243,6 +329,98 @@ export function durableLessonSink(
         cursor = r.next_cursor;
       }
       return out.slice(0, limit);
+    },
+    async neighbours(domain, text, opts) {
+      const words = [...lessonTokens(text)].slice(0, 16).join(" ");
+      const sp = await space(domain);
+      if (!words || !sp.space_id) return { lessons: [], mode: "lexical", degraded: [] };
+      const found = await searchNeighbourRecords<RecordLike>(run, sp.space_id, words, {
+        limit: opts.limit,
+        subject: LESSON_RECORD_SUBJECT,
+        ...(opts.hybrid ? { hybrid: true } : {}),
+      });
+      const now = Date.now();
+      const lessons = found.records
+        .filter((r) => currentLessonRecord(r, now))
+        .map(lessonFromRecord)
+        .filter((l): l is Lesson => l !== undefined && l.domain === domain);
+      return {
+        lessons,
+        ...(found.generation === undefined ? {} : { generation: found.generation }),
+        mode: found.mode,
+        degraded: found.degraded,
+      };
+    },
+    async update(domain, id, change) {
+      const sp = await space(domain);
+      if (!sp.space_id) throw new Error(`no lessons space for ${domain}`);
+      const record = await getRecord(sp.space_id, id);
+      const before = lessonFromRecord(record);
+      if (!before || !currentLessonRecord(record)) throw new Error(`${id} is not a current lesson`);
+      const next = change(before);
+      const metadata = {
+        ...record.metadata,
+        ...lessonMetadata({ ...next, text: before.text, resolvedAt: before.resolvedAt }),
+      };
+      const digest = new Bun.CryptoHasher("sha256")
+        .update(JSON.stringify(metadata))
+        .digest("hex")
+        .slice(0, 16);
+      await reviseKeeping(
+        sp.space_id,
+        record,
+        { metadata },
+        `lesson-update:${id}:${record.version}:${digest}`,
+      );
+    },
+    async contest(domain, id, against, opts) {
+      const sp = await space(domain);
+      if (!sp.space_id) throw new Error(`no lessons space for ${domain}`);
+      const spaceId = sp.space_id;
+      const predicate = conflictPredicate(against);
+      const claimFor = (text: string | undefined) => ({
+        subject: LESSON_RECORD_SUBJECT,
+        predicate,
+        object: { kind: "literal", value: (text ?? "").slice(0, 2_000) },
+      });
+      const other = await getRecord(spaceId, against);
+      if (!currentLessonRecord(other)) throw new Error(`lesson ${against} is not current`);
+      // The resolve operator compares records asserting one subject/predicate:
+      // both lessons carry the case's claim. The contradicted lesson first, so
+      // the new lesson is the most recent write (last_writer_wins picks it).
+      // A lesson already in another case keeps that case: the new one is held
+      // without a second case.
+      if (other.claim && other.claim.predicate !== predicate) return { resolved: false };
+      if (!other.claim)
+        await reviseKeeping(
+          spaceId,
+          other,
+          { claim: claimFor(other.content) },
+          `lesson-claim:${against}:${other.version}`,
+        );
+      const mine = await getRecord(spaceId, id);
+      await reviseKeeping(
+        spaceId,
+        mine,
+        { claim: claimFor(mine.content) },
+        `lesson-claim:${id}:${mine.version}`,
+      );
+      const reply = await run({
+        operation: "resolve",
+        space_id: spaceId,
+        id,
+        key: `lesson-contest:${id}:${against}`,
+        input: {
+          policy: opts.autoResolve ? "last_writer_wins" : "await_confirmation",
+          competing: [against],
+          rationale: opts.rationale.slice(0, 4_000),
+        },
+      });
+      const r = (reply.result ?? {}) as { id?: unknown };
+      return {
+        ...(typeof r.id === "string" ? { caseId: r.id } : {}),
+        resolved: opts.autoResolve,
+      };
     },
     async retire(domain, id, retirement) {
       const sp = await space(domain);
