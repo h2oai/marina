@@ -138,6 +138,7 @@ const codeSchema = Type.Object({
   text: Type.Optional(
     Type.String({ description: "Text for plan/summary/blocked/handoff/decision/observe/reject" }),
   ),
+  to: Type.Optional(Type.String({ description: "handoff: new lock holder" })),
 });
 
 const codeEmptySchema = Type.Object({});
@@ -183,6 +184,15 @@ const codeRejectPatchSchema = Type.Object({
 
 const codeTextSchema = Type.Object({
   text: Type.String({ description: "Single-line note text" }),
+});
+
+const codeHandoffSchema = Type.Object({
+  text: Type.String({ description: "Single-line handoff notes; stored verbatim" }),
+  to: Type.Optional(
+    Type.String({
+      description: "Session participant who receives the write lock; omit to keep it",
+    }),
+  ),
 });
 
 const codeHistorySchema = Type.Object({
@@ -413,10 +423,9 @@ export function createTypedCodeTools(ctx: ToolContext): AgentTool[] {
     wrap(
       "marina_code_handoff",
       "Code Handoff",
-      "Store a handoff artifact in the active coding session.",
-      codeTextSchema,
-      (p) =>
-        `code handoff ${requiredSingleLineCodeParam(p.text as string | undefined, "text", "text is required")}`,
+      "Store a handoff artifact in the active coding session. Set to to pass the write lock to a session participant; words in text never move it.",
+      codeHandoffSchema,
+      (p) => codeHandoffCommand(p.text, p.to, "text is required"),
       ctx,
     ),
     wrap(
@@ -782,10 +791,11 @@ function buildCodeCommand(params: Record<string, unknown>): string {
         )}`;
       }
       return "code external";
+    case "handoff":
+      return codeHandoffCommand(text, params.to, "action=handoff requires text");
     case "plan":
     case "blocked":
     case "summary":
-    case "handoff":
     case "decision":
       return `code ${action} ${requiredSingleLineCodeParam(
         text,
@@ -835,6 +845,18 @@ function buildCodeWriteCommand(params: Record<string, unknown>): string {
   if (typeof params.content !== "string")
     throw new Error("content is required for write; supply the complete file content");
   return `code write ${path}\n${params.content}`;
+}
+
+/**
+ * `code handoff [to:<agent>] -- <notes>`: the recipient travels only as the
+ * explicit modifier, and the `--` terminator keeps every word of the notes
+ * literal, so prose such as "moved to error" can never name a recipient.
+ */
+function codeHandoffCommand(text: unknown, to: unknown, message: string): string {
+  const notes = requiredSingleLineCodeParam(text as string | undefined, "text", message);
+  const recipient = typeof to === "string" && to.trim() ? singleLineCodeParam(to, "to") : "";
+  if (/\s/.test(recipient)) throw new Error("to must be a single agent name");
+  return `code handoff ${recipient ? `to:${recipient} ` : ""}-- ${notes}`;
 }
 
 function requiredSingleLineCodeParam(

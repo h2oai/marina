@@ -30,6 +30,7 @@ import { createServer } from "node:net";
 import { homedir, hostname, tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { formatAge } from "../src/engine/commands/format-duration";
+import { waitForDatabaseLease } from "../src/persistence/database-lease";
 import { MarinaAgent, type Perception } from "../src/sdk/client";
 import { CodeConsole } from "./code-console";
 import { HarnessStore, validateHarness } from "./code-harness";
@@ -179,9 +180,19 @@ function freePort(): Promise<number> {
   });
 }
 
-async function waitForReady(port: number, timeoutMs = 30_000): Promise<boolean> {
+async function waitForReady(
+  port: number,
+  exited: Promise<number>,
+  timeoutMs = 30_000,
+): Promise<boolean> {
+  // A server that died during boot (a held lease, a bad config) cannot come
+  // up: stop polling at once instead of waiting out the whole deadline.
+  let dead = false;
+  void exited.then(() => {
+    dead = true;
+  });
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+  while (Date.now() < deadline && !dead) {
     try {
       const res = await fetch(`http://localhost:${port}/api/setup-status`);
       if (res.ok) return true;
@@ -191,6 +202,45 @@ async function waitForReady(port: number, timeoutMs = 30_000): Promise<boolean> 
     await new Promise((r) => setTimeout(r, 250));
   }
   return false;
+}
+
+/** Grace for the server's own shutdown; `src/main.ts` force-exits after 30 s. */
+export const SERVER_STOP_GRACE_MS = 35_000;
+
+/**
+ * Stop the folder-scoped server and wait until the process has EXITED. The
+ * server drains agents and background work, closes the database and releases
+ * its lease on the way out; exiting the launcher before that would leave the
+ * next `marina` on the same folder (e.g. a reviewer started right after an
+ * implementer) racing a still-held lease. SIGTERM first, SIGKILL after the
+ * grace period: SQLite in WAL mode is crash-safe and the kernel drops the
+ * lease lock with the process.
+ */
+export async function stopServerProcess(
+  proc: { kill(signal?: number | NodeJS.Signals): void; exited: Promise<number> },
+  graceMs = SERVER_STOP_GRACE_MS,
+): Promise<"exited" | "killed"> {
+  try {
+    proc.kill("SIGTERM");
+  } catch {
+    // allow-empty-catch: already gone; `exited` resolves regardless
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const outcome = await Promise.race([
+    proc.exited.then(() => "exited" as const),
+    new Promise<"timeout">((r) => {
+      timer = setTimeout(() => r("timeout"), graceMs);
+    }),
+  ]);
+  if (timer) clearTimeout(timer);
+  if (outcome === "exited") return "exited";
+  try {
+    proc.kill("SIGKILL");
+  } catch {
+    // allow-empty-catch: exited between the deadline and the kill
+  }
+  await proc.exited;
+  return "killed";
 }
 
 /** Append non-empty lines to a rolling tail buffer, keeping the last `max`. */
@@ -284,6 +334,25 @@ export async function runCodeSession(
     console.error("");
   }
 
+  // A previous launch on this folder (an implementer before its reviewer, a
+  // crashed launcher's orphan) may still be draining and hold the database
+  // lease. Wait, bounded, for it to exit; never boot into a held lease.
+  if (!fresh) {
+    try {
+      const { waitedMs } = await waitForDatabaseLease(dbPath);
+      if (waitedMs >= 1_000) {
+        console.error(
+          `Waited ${Math.round(waitedMs / 1000)}s for a previous server to release the database.`,
+        );
+      }
+    } catch {
+      console.error(
+        `Another Marina server still holds this folder's database (${dbPath}.instance-lock). Stop it and retry, or use --fresh for a disposable database.`,
+      );
+      process.exit(1);
+    }
+  }
+
   // Boot a minimal, folder-scoped server. MARINA_ADMINS=coder makes the local
   // user the operator (so it may launch the bound coding agent); the empty world
   // + no room agents keep it light; the DB is per-folder (or a throwaway with
@@ -317,7 +386,7 @@ export async function runCodeSession(
 
   // Rolling stderr tail so a boot failure can say why.
   const stderrTail: string[] = [];
-  (async () => {
+  const stderrDone = (async () => {
     const decoder = new TextDecoder();
     let carry = "";
     for await (const chunk of server.stderr) {
@@ -332,15 +401,12 @@ export async function runCodeSession(
   });
 
   let sessionConsole: CodeConsole | undefined;
-  let cleanedUp = false;
-  function cleanup(code = 0): never {
-    if (!cleanedUp) {
-      cleanedUp = true;
-      try {
-        server.kill();
-      } catch {
-        /* already gone */
-      }
+  let cleaning: Promise<never> | undefined;
+  /** Stop the server, wait until it has released the database, then exit. */
+  function cleanup(code = 0): Promise<never> {
+    cleaning ??= (async () => {
+      if ((await stopServerProcess(server)) === "killed")
+        console.error("Server did not stop in time; killed it.");
       // Only ephemeral (--fresh) DBs are deleted — the per-folder persistent
       // DB is the whole point of resume.
       if (fresh) {
@@ -352,8 +418,9 @@ export async function runCodeSession(
           /* best-effort */
         }
       }
-    }
-    process.exit(code);
+      process.exit(code);
+    })();
+    return cleaning;
   }
 
   const agent = new MarinaAgent(`ws://localhost:${port}`, { autoReconnect: false });
@@ -394,15 +461,18 @@ export async function runCodeSession(
     if (now - lastSigintAt < 200) return;
     lastSigintAt = now;
     if (sessionConsole) void sessionConsole.interrupt();
-    else cleanup(0);
+    else void cleanup(0);
   };
   process.on("SIGINT", handleSigint);
   process.on("SIGTERM", () => {
     if (sessionConsole) void sessionConsole.close(0);
-    else cleanup(0);
+    else void cleanup(0);
   });
 
-  if (!(await waitForReady(port))) {
+  if (!(await waitForReady(port, server.exited))) {
+    // A server that exited during boot has said why on stderr: let the reader
+    // drain it (bounded) before printing the tail.
+    await Promise.race([stderrDone, new Promise((r) => setTimeout(r, 1_000))]);
     console.error("Server did not come up in time. Is the repo built and a provider key set?");
     if (stderrTail.length > 0) {
       console.error("Last server output:");
@@ -413,7 +483,7 @@ export async function runCodeSession(
         "Try --fresh to diagnose startup with a disposable database; your saved project remains intact.",
       );
     }
-    cleanup(1);
+    await cleanup(1);
   }
 
   try {
@@ -421,7 +491,7 @@ export async function runCodeSession(
     console.error(`Ready as ${session.name}.`);
   } catch (err) {
     console.error(`Failed to connect: ${(err as Error).message}`);
-    cleanup(1);
+    await cleanup(1);
   }
 
   // Instance coordinates — every Marina announces its own invitation.
@@ -479,7 +549,7 @@ export async function runCodeSession(
     store: harnessStore,
     finish: (code) => {
       agent.disconnect();
-      cleanup(code);
+      void cleanup(code);
     },
   });
   try {
