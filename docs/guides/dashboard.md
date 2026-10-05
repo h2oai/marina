@@ -25,6 +25,14 @@ updates; saved custom arrangements remain intact. An older auto-saved arrangemen
 as **Previous grid**. Drag or resize panes on desktop, then save a named arrangement. A panel's
 maximize button enlarges it; **Esc** restores its size.
 
+On desktop, **More → Balance widths** evenly distributes each row within panel minimum and
+maximum widths. Fixed panels and arrangements that would overlap remain unchanged. Choose a
+**Panel to move** and use its arrow buttons to move by one grid unit without dragging.
+**Undo layout / Redo layout** restore the last 20 geometry edits in this open page, including
+dragging, resizing and balancing. Opening or closing a view, switching presets, or resetting
+the layout clears this history; undo does not reopen a closed conversation or restore its draft.
+Save a named preset to retain your arrangement across reloads. The initial proportions are unchanged.
+
 The compact recent-activity strip shows the newest curated entries. **More → Pulse** is the
 live event stream; map heat shows local activity, while **Observe** holds narrative and
 conversation history.
