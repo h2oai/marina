@@ -14,7 +14,8 @@
  *   bun run metaculus timer               write the systemd user units (never enables them)
  *
  * Live flags: --tournament <id|slug> (repeatable; default fall2026 + minibench; `test` = the
- * practice area), --config <label> (default: the selection's pick, else a disclosed fallback),
+ * practice area), --config <label> (default: the earned `forecast-config:metaculus` slot that
+ * `select` files through earned promotion, else the selection's pick, else a disclosed fallback),
  * --configs <file.json>, --daily-cap <usd> (default 10), --limit N, --fixture <posts.json>
  * (read-only offline questions; implies --dry-run), --out <dir> (dry-run output).
  *
@@ -154,6 +155,8 @@ async function selectCmd(db: MarinaDB): Promise<number> {
 async function forecastCmd(db: MarinaDB): Promise<number> {
   const chosen = liveConfig({
     selectionPath: values.selection!,
+    board: BENCHMARK,
+    db,
     ...(values.config ? { label: values.config } : {}),
     ...(values.configs ? { configsFile: values.configs } : {}),
   });

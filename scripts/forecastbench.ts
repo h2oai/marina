@@ -15,6 +15,10 @@
  *   bun run forecastbench select … [--resume]               choose up to 3 configurations by backtest
  *   bun run forecastbench status
  *
+ * `select` also files its winner (chosen on the slot's selection split) as an earned promotion on
+ * `forecast-config:forecastbench` (src/engine/benchmark-promotion.ts); set 1 then resolves through
+ * resolveDefault: --config, the earned slot, the family slot, else the selection's pick 1.
+ *
  * Flags: --dir data/forecastbench, --set N (1–3: set N files with the selection's pick N),
  * --config <label> (override), --configs <file.json>, --concurrency 6, --limit N (first N
  * questions), --sample N (N per source), --budget <usd> (stop starting new questions),
@@ -107,9 +111,11 @@ const journalPath = (due: string, n: string) => join(roundDir(due), `set-${n}.js
 const selectionPath = () => values.selection ?? join(values.dir!, "selection.json");
 
 /** Set N files with the selection's pick N (or the named configuration), always disclosed. */
-function chosenConfig() {
+function chosenConfig(db: MarinaDB) {
   return liveConfig({
     selectionPath: selectionPath(),
+    board: BENCHMARK,
+    db,
     rank: Number(values.set),
     ...(values.config ? { label: values.config } : {}),
     ...(values.configs ? { configsFile: values.configs } : {}),
@@ -173,7 +179,7 @@ async function estimateCmd(): Promise<number> {
 
 async function runCmd(db: MarinaDB): Promise<number> {
   const set = await loadSet();
-  const chosen = chosenConfig();
+  const chosen = chosenConfig(db);
   const journal = journalPath(set.forecast_due_date, values.set!);
   mkdirSync(roundDir(set.forecast_due_date), { recursive: true });
   log(
@@ -201,7 +207,7 @@ async function writeCmd(db: MarinaDB, given?: FbQuestionSet): Promise<number> {
   const set = given ?? (await loadSet());
   const due = set.forecast_due_date;
   const n = Number(values.set);
-  const chosen = chosenConfig();
+  const chosen = chosenConfig(db);
   // Sets of one round must differ in `model`; set 1 is plain "Marina".
   const identity = {
     ...DEFAULT_SET_IDENTITY,
@@ -297,7 +303,7 @@ async function resolveCmd(db: MarinaDB): Promise<number> {
     journal: journalPath(set.forecast_due_date, values.set!),
     resolutions,
     db,
-    config: chosenConfig().config.label,
+    config: chosenConfig(db).config.label,
     learn: (o) => noteOutcome(db, o),
   });
   await settleOutcomes(db);

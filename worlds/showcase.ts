@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { join } from "node:path";
-import { getPromotedDefault } from "../src/engine/benchmark-promotion";
+import { resolveDefault } from "../src/engine/default-resolution";
 import type { MarinaDB } from "../src/persistence/database";
 import type { RoomId } from "../src/types";
 import type { WorldDefinition } from "../src/world/world-definition";
@@ -1256,10 +1256,19 @@ function seed(db: MarinaDB): void {
   // benchmark ledger (`benchmark promote`, src/engine/benchmark-promotion.ts)
   // holds the crew configuration that last won on held-out items; its `model`
   // field is used only when MARINA_CREW_MODEL is unset.
-  const promoted = getPromotedDefault<{ model?: unknown }>(db, SHOWCASE_CREW_SLOT);
-  const crewDefault =
-    process.env.MARINA_CREW_MODEL ||
-    (typeof promoted?.model === "string" && promoted.model ? promoted.model : undefined);
+  // Resolved (and traced) through the one default path: env, then the slot.
+  const crewDefault = resolveDefault<string | undefined>({
+    slot: SHOWCASE_CREW_SLOT,
+    surface: "showcase",
+    env: { name: "MARINA_CREW_MODEL", value: process.env.MARINA_CREW_MODEL || undefined },
+    read: (v) => {
+      const model = (v as { model?: unknown } | null)?.model;
+      return typeof model === "string" && model ? model : undefined;
+    },
+    builtIn: undefined,
+    builtInLabel: "seedAnswererCrew default",
+    db,
+  }).value;
   seedAnswererCrew(db, {
     answererCount: Number(process.env.MARINA_ANSWERER_COUNT) || 4,
     answererModel: process.env.MARINA_ANSWERER_MODEL || crewDefault,

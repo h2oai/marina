@@ -18,7 +18,10 @@
  * Agents and models are keyed separately: an external participant's backing
  * model may be invisible, so its record is its own name.
  *
- * Spawn-time `model:route` may consult this evidence (`MARINA_ROUTE_EVIDENCE`).
+ * Spawn-time `model:route` consults this evidence (`MARINA_ROUTE_EVIDENCE`,
+ * default `observe`: recorded on the route decision, never applied; `on` acts).
+ * Families are `MARINA_ROUTE_EVIDENCE_FAMILIES`, else the role's own declared
+ * `families` expanded to the benchmarks tagged with them (`evidenceFamilies`).
  * Only the route's own candidate models with at least `minN` items in the
  * configured families are eligible, at least two of them, within the optional
  * per-item cost budget. The objective (`MARINA_ROUTE_EVIDENCE_OBJECTIVE`) picks
@@ -40,6 +43,7 @@
 
 import { mcnemarExact, wilsonInterval } from "../../benchmarks/stats";
 import type { BenchmarkItemRow, BenchmarkRunRow } from "../persistence/db-benchmarks";
+import { benchmarksInFamilies } from "./benchmark-families";
 
 export type RouteEvidenceMode = "off" | "observe" | "on";
 export type RouteEvidenceObjective = "lcb" | "value" | "budget";
@@ -65,12 +69,14 @@ export const DEFAULT_ROUTE_EVIDENCE_TOLERANCE = 0.05;
 /** `value`: a paired loss at least this significant (two-sided exact McNemar) is "worse". */
 export const VALUE_PAIRED_ALPHA = 0.05;
 
-/** Parse the evidence settings. Invalid values fall back to the safe default (off / unset). */
+/** Parse the evidence settings. Invalid values fall back to the safe default (observe / unset). */
 export function routeEvidenceSettingsFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): RouteEvidenceSettings {
   const raw = env.MARINA_ROUTE_EVIDENCE?.trim().toLowerCase();
-  const mode: RouteEvidenceMode = raw === "observe" || raw === "on" ? raw : "off";
+  // `observe` by default: it records what the evidence would pick and never
+  // changes a route. Only an explicit `on` acts; `off` skips the lookup.
+  const mode: RouteEvidenceMode = raw === "off" || raw === "on" ? raw : "observe";
   const n = Number.parseInt(env.MARINA_ROUTE_EVIDENCE_MIN_N ?? "", 10);
   const budget = Number.parseFloat(env.MARINA_ROUTE_EVIDENCE_MAX_COST_USD ?? "");
   const obj = env.MARINA_ROUTE_EVIDENCE_OBJECTIVE?.trim().toLowerCase();
@@ -116,6 +122,54 @@ export function parseFamilies(raw: string | undefined): Record<string, string[]>
 
 export function familiesForRole(settings: RouteEvidenceSettings, role?: string): string[] {
   return (role ? settings.families[role] : undefined) ?? settings.families["*"] ?? [];
+}
+
+/**
+ * The families a role declares itself: the union of its traits' `families`
+ * capability (`role create`/`trait create` metadata). Empty when the role or
+ * the store does not say.
+ */
+export function declaredRoleFamilies(db: EvidenceSource, role: string | undefined): string[] {
+  if (!role || typeof db.getRole !== "function" || typeof db.getTrait !== "function") return [];
+  try {
+    const row = db.getRole(role);
+    if (!row) return [];
+    const traits = JSON.parse(row.traits || "[]") as unknown;
+    const out = new Set<string>();
+    for (const name of Array.isArray(traits) ? traits : []) {
+      if (typeof name !== "string") continue;
+      const t = db.getTrait(name);
+      if (!t) continue;
+      const caps = JSON.parse(t.capabilities || "{}") as { families?: unknown };
+      for (const f of Array.isArray(caps.families) ? caps.families : []) {
+        if (typeof f === "string" && f.trim()) out.add(f.trim());
+      }
+    }
+    return [...out];
+  } catch {
+    // allow-empty-catch: unreadable role metadata declares no families
+    return [];
+  }
+}
+
+/**
+ * Where a spawn's evidence comes from: the configured families
+ * (`MARINA_ROUTE_EVIDENCE_FAMILIES`), else the role's DECLARED families,
+ * expanded to the benchmarks tagged with them (`benchmarksInFamilies`; a
+ * declared name that is itself a benchmark counts as one).
+ */
+export function evidenceFamilies(
+  settings: RouteEvidenceSettings,
+  role: string | undefined,
+  db: EvidenceSource | undefined,
+): { families: string[]; source: "configured" | "role" | "none" } {
+  const configured = familiesForRole(settings, role);
+  if (configured.length > 0) return { families: configured, source: "configured" };
+  const declared = db ? declaredRoleFamilies(db, role) : [];
+  if (declared.length === 0) return { families: [], source: "none" };
+  const benchmarks = new Set<string>(benchmarksInFamilies(declared));
+  for (const f of declared) benchmarks.add(f);
+  return { families: [...benchmarks], source: "role" };
 }
 
 /**
@@ -356,6 +410,9 @@ export interface EvidenceSource {
   queryBenchmarkRuns(q: { benchmark?: string; status?: string; limit?: number }): BenchmarkRunRow[];
   /** The agent's configured role, for role-level evidence (optional). */
   getAgentConfig?(name: string): { role?: string | null } | undefined;
+  /** Role and trait rows, for a role's declared families (optional). */
+  getRole?(name: string): { traits: string } | undefined;
+  getTrait?(name: string): { capabilities: string } | undefined;
 }
 
 /** A cached `agent → role` lookup over the store; undefined when the store has none. */
@@ -684,7 +741,7 @@ export function applyRouteEvidence(
     signals,
   });
   if (settings.mode === "off") return unchanged();
-  const families = familiesForRole(settings, role);
+  const { families, source: familySource } = evidenceFamilies(settings, role, db);
   if (families.length === 0 || !db) {
     return unchanged({
       evidence_mode: settings.mode,
@@ -702,6 +759,7 @@ export function applyRouteEvidence(
     const signals: Record<string, number | string> = {
       evidence_mode: settings.mode,
       evidence_families: families.join(","),
+      evidence_family_source: familySource,
       evidence_objective: result.objective,
       evidence_level: result.level,
     };
