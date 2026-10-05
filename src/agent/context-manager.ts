@@ -224,7 +224,7 @@ export interface ConversationTokenCap {
   capTokens: number;
   targetTokens: number;
   /** True when the operator set `MARINA_AGENT_CONTEXT_CAP_TOKENS`; false for
-   *  the built-in default (which a bound coder is exempt from). */
+   *  the built-in default. */
   explicit: boolean;
 }
 
