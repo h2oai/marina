@@ -109,6 +109,7 @@ const { positionals, values } = parseArgs({
     "doc-paging": { type: "boolean" },
     "search-paging": { type: "boolean" },
     "first-move": { type: "string" },
+    "first-move-judge": { type: "boolean" },
     "max-tokens": { type: "string" },
     concurrency: { type: "string", default: "4" },
     "timeout-s": { type: "string", default: "600" },
@@ -126,7 +127,7 @@ function harnessFlags(): {
   snippet?: "matched";
   docPaging?: boolean;
   searchPaging?: boolean;
-  firstMove?: { model: string };
+  firstMove?: { model: string; judge?: boolean };
 } {
   if (values.snippet !== "lead" && values.snippet !== "matched") {
     throw new Error("--snippet lead | matched");
@@ -135,7 +136,14 @@ function harnessFlags(): {
     ...(values.snippet === "matched" ? { snippet: "matched" as const } : {}),
     ...(values["doc-paging"] ? { docPaging: true } : {}),
     ...(values["search-paging"] ? { searchPaging: true } : {}),
-    ...(values["first-move"] ? { firstMove: { model: values["first-move"] } } : {}),
+    ...(values["first-move"]
+      ? {
+          firstMove: {
+            model: values["first-move"],
+            ...(values["first-move-judge"] ? { judge: true } : {}),
+          },
+        }
+      : {}),
   };
 }
 

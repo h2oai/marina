@@ -8,8 +8,12 @@
  *   bun run qualify:paraphrase
  *   bun run scripts/qualify-paraphrase.ts --vocab benchmarks/paraphrase/vocab.example.json
  *   bun run scripts/qualify-paraphrase.ts --embeddings local --model-cache data/memory-models
+ *   bun run scripts/qualify-paraphrase.ts --embeddings openai --embedding-url <base /v1> \
+ *     --embedding-model <id> --embedding-revision <rev>   (key: MARINA_MEMORY_EMBEDDING_API_KEY,
+ *     or the vendor key for openrouter.ai / api.openai.com)
  *
- * Never calls a paid model. `--embeddings local` requires the optional
+ * Never calls a paid chat model; `--embeddings openai` pays only for embeddings
+ * (a few hundred short texts). `--embeddings local` requires the optional
  * extension (bun install --cwd extensions/local-embeddings --frozen-lockfile);
  * when it is absent the hybrid row prints "skipped". Exit code is always 0 —
  * this reports evidence, it does not gate CI.
@@ -30,6 +34,7 @@ import {
   EMBEDDING_ENV,
   type EmbeddingConfig,
   embeddingProviderFromConfig,
+  parseEmbeddingEnv,
 } from "../src/memory/embedding-config";
 import type { MemoryQueryVocabulary } from "../src/sdk/memory-expansion";
 
@@ -61,8 +66,8 @@ if (values.vocab) {
 
 let embeddings: ParaphraseRunOptions["embeddings"];
 if (values.embeddings !== "none") {
-  if (!["local", "ollama"].includes(values.embeddings))
-    throw new Error("--embeddings must be none, local or ollama");
+  if (!["local", "ollama", "openai"].includes(values.embeddings))
+    throw new Error("--embeddings must be none, local, ollama or openai");
   const config: EmbeddingConfig =
     values.embeddings === "local"
       ? {
@@ -70,12 +75,20 @@ if (values.embeddings !== "none") {
           cacheDirectory: resolve(values["model-cache"]),
           localOnly: values["local-only"],
         }
-      : {
-          kind: "ollama",
-          url: values["embedding-url"] ?? "http://127.0.0.1:11434",
-          model: values["embedding-model"] ?? "",
-          revision: values["embedding-revision"] ?? "",
-        };
+      : values.embeddings === "openai"
+        ? parseEmbeddingEnv({
+            ...process.env,
+            [EMBEDDING_ENV.kind]: "openai",
+            [EMBEDDING_ENV.url]: values["embedding-url"],
+            [EMBEDDING_ENV.model]: values["embedding-model"],
+            [EMBEDDING_ENV.revision]: values["embedding-revision"],
+          })
+        : {
+            kind: "ollama",
+            url: values["embedding-url"] ?? "http://127.0.0.1:11434",
+            model: values["embedding-model"] ?? "",
+            revision: values["embedding-revision"] ?? "",
+          };
   try {
     const provider = await embeddingProviderFromConfig(config);
     if (!provider) throw new Error("no provider constructed");
@@ -88,12 +101,23 @@ if (values.embeddings !== "none") {
             [EMBEDDING_ENV.cache]: config.cacheDirectory,
             [EMBEDDING_ENV.localOnly]: String(config.localOnly),
           }
-        : {
-            [EMBEDDING_ENV.kind]: "ollama",
-            [EMBEDDING_ENV.url]: config.url,
-            [EMBEDDING_ENV.model]: config.model,
-            [EMBEDDING_ENV.revision]: config.revision,
-          };
+        : config.kind === "openai"
+          ? {
+              [EMBEDDING_ENV.kind]: "openai",
+              [EMBEDDING_ENV.url]: config.url,
+              [EMBEDDING_ENV.model]: config.model,
+              [EMBEDDING_ENV.revision]: config.revision,
+              ...(config.apiKey ? { [EMBEDDING_ENV.apiKey]: config.apiKey } : {}),
+              ...(config.dimensions
+                ? { [EMBEDDING_ENV.dimensions]: String(config.dimensions) }
+                : {}),
+            }
+          : {
+              [EMBEDDING_ENV.kind]: "ollama",
+              [EMBEDDING_ENV.url]: config.url,
+              [EMBEDDING_ENV.model]: config.model,
+              [EMBEDDING_ENV.revision]: config.revision,
+            };
     embeddings = { provider, env };
   } catch (error) {
     embeddings = { skipped: getErrorMessage(error) };

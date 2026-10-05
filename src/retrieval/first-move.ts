@@ -12,7 +12,15 @@
  * Every model step fails open: no clues ⇒ the question itself is the only
  * query; a reranker that fails or answers junk ⇒ the fused order stands. The
  * result records which happened.
+ *
+ * General: any research loop can open with it, over any search (BM25, hybrid,
+ * the web chain). One model can do everything (decompose, rerank — and answer),
+ * so it needs nothing beyond the single LLM an operator already runs; a
+ * decision backend (`judge`) can replace the listwise reranker.
  */
+
+import type { DecisionProvider } from "../decisions/types";
+import { reciprocalRankFusion } from "./fusion";
 
 export interface Candidate {
   id: string;
@@ -32,6 +40,14 @@ export interface FirstMoveOptions {
   decomposer?: FirstMoveModel;
   /** Reranks the fused candidates (none ⇒ the fused order). */
   reranker?: FirstMoveModel;
+  /**
+   * Optional decision backend (`src/decisions/`) that scores each candidate's
+   * relevance pointwise instead of the listwise `reranker` — the Jev family,
+   * or any chat model as a classifier. Used only as an ordering, never a
+   * threshold, so an uncalibrated backend is safe here. Fails open to the
+   * fused order.
+   */
+  judge?: DecisionProvider;
   /** Results per clue (default 100). */
   depth?: number;
   /** Fused candidates shown to the reranker (default 30). */
@@ -46,7 +62,7 @@ export interface FirstMove {
   clues: string[];
   candidates: Candidate[];
   /** How the order was decided. */
-  order: "reranked" | "fused";
+  order: "reranked" | "judged" | "fused";
   error?: string;
 }
 
@@ -102,16 +118,11 @@ export async function decomposeQuestion(
  * a candidate keeps the first text seen for it.
  */
 export function fuseRankings(rankings: Candidate[][]): Candidate[] {
-  const score = new Map<string, { c: Candidate; s: number }>();
-  for (const list of rankings) {
-    list.forEach((c, rank) => {
-      const had = score.get(c.id);
-      const add = 1 / (60 + rank + 1);
-      if (had) had.s += add;
-      else score.set(c.id, { c, s: add });
-    });
-  }
-  return [...score.values()].sort((a, b) => b.s - a.s).map((x) => x.c);
+  const first = new Map<string, Candidate>();
+  for (const list of rankings) for (const c of list) if (!first.has(c.id)) first.set(c.id, c);
+  return reciprocalRankFusion(rankings.map((list) => ({ ids: list.map((c) => c.id) }))).map(
+    (f) => first.get(f.id)!,
+  );
 }
 
 /**
@@ -153,6 +164,72 @@ export async function llmRerank(
   }
 }
 
+const JUDGE_BATCH = 10;
+
+function judgeText(c: Candidate, chars: number): string {
+  const title = c.title ? `${c.title.replace(/\s+/g, " ").slice(0, 120)} — ` : "";
+  return `${title}${c.text.replace(/\s+/g, " ").slice(0, chars)}`;
+}
+
+/**
+ * Pointwise relevance by a decision backend: one `noul` per candidate ("does
+ * this document help answer the question?"), batched, candidates sorted by
+ * P(yes) with ties in their incoming order. Any failed batch ⇒ the incoming
+ * order stands (`ok: false`) — a partial scoring never reorders.
+ */
+export async function judgeRerank(
+  question: string,
+  candidates: Candidate[],
+  judge: DecisionProvider,
+  chars = 600,
+  signal?: AbortSignal,
+): Promise<{ ranked: Candidate[]; ok: boolean; error?: string }> {
+  if (candidates.length <= 1) return { ranked: candidates, ok: true };
+  const scores = new Map<Candidate, number>();
+  try {
+    for (let i = 0; i < candidates.length; i += JUDGE_BATCH) {
+      const batch = candidates.slice(i, i + JUDGE_BATCH);
+      const key = (j: number) => `d${j + 1}`;
+      const result = await judge.ask(
+        {
+          state: {
+            question,
+            documents: Object.fromEntries(batch.map((c, j) => [key(j), judgeText(c, chars)])),
+          },
+          questions: Object.fromEntries(
+            batch.map((_, j) => [
+              key(j),
+              {
+                type: "noul" as const,
+                instructions: `Does document ${key(j)} contain information that helps answer the question — it satisfies one or more of the question's clues, or names the answer?`,
+              },
+            ]),
+          ),
+        },
+        signal,
+      );
+      for (const [j, c] of batch.entries()) {
+        const answer = result.answers[key(j)];
+        if (answer?.type !== "noul") throw new Error(`no answer for ${key(j)}`);
+        scores.set(c, answer.noul);
+      }
+    }
+  } catch (err) {
+    return {
+      ranked: candidates,
+      ok: false,
+      error: (err instanceof Error ? err.message : String(err)).slice(0, 160),
+    };
+  }
+  const order = new Map(candidates.map((c, i) => [c, i]));
+  return {
+    ranked: [...candidates].sort(
+      (a, b) => scores.get(b)! - scores.get(a)! || order.get(a)! - order.get(b)!,
+    ),
+    ok: true,
+  };
+}
+
 /** Decompose → search each clue → fuse → rerank → top k (see the module comment). */
 export async function firstMove(question: string, opts: FirstMoveOptions): Promise<FirstMove> {
   const depth = opts.depth ?? 100;
@@ -162,13 +239,16 @@ export async function firstMove(question: string, opts: FirstMoveOptions): Promi
   const queries = [question, ...clues];
   const rankings = await Promise.all(queries.map((q) => opts.search(q, depth).catch(() => [])));
   const fused = fuseRankings(rankings);
-  if (!opts.reranker) return { clues, candidates: fused.slice(0, k), order: "fused" };
+  if (!opts.reranker && !opts.judge)
+    return { clues, candidates: fused.slice(0, k), order: "fused" };
   const pool = fused.slice(0, opts.rerankPool ?? 30);
-  const r = await llmRerank(question, pool, opts.reranker, opts.rerankChars ?? 500);
+  const r = opts.judge
+    ? await judgeRerank(question, pool, opts.judge, opts.rerankChars ?? 600)
+    : await llmRerank(question, pool, opts.reranker!, opts.rerankChars ?? 500);
   return {
     clues,
     candidates: [...r.ranked, ...fused.slice(pool.length)].slice(0, k),
-    order: r.ok ? "reranked" : "fused",
+    order: r.ok ? (opts.judge ? "judged" : "reranked") : "fused",
     ...(r.error ? { error: r.error } : {}),
   };
 }

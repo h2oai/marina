@@ -132,15 +132,47 @@ bun run corpus get <name> <docid>
 - **Research:** the research retriever takes `corpus:<name>` (`MARINA_FORECAST_RETRIEVER`, `MARINA_ARENA_RESEARCH_RETRIEVER`). It searches the brief's queries and cites `corpus://` URLs.
 - **Discovery:** a corpus built after startup is picked up the first time it is named.
 - **Not in open searches:** a corpus answers only searches that name it. It has no date bound, so it never answers a `before:` search.
-- **Ranking:** FTS5's `bm25()` fixes k1 = 1.2 and b = 0.75. Set `MARINA_CORPUS_BM25_K1` and
-  `MARINA_CORPUS_BM25_B` to rescore each query's top 1,000 candidates with other parameters (for long
-  documents, full length normalisation: b = 1, with k1 around 6). A quoted phrase in a query is an extra term that boosts
+- **Ranking:** each query's top 1,000 FTS5 candidates are rescored with BM25 k1 = 6, b = 1 (full
+  length normalisation, which suits long documents; FTS5's built-in `bm25()` fixes k1 = 1.2 and
+  b = 0.75). Set `MARINA_CORPUS_BM25_K1` and `MARINA_CORPUS_BM25_B` for other parameters, or
+  `MARINA_CORPUS_RANKING=fts5` for FTS5's own ranking (faster: about 0.3 s instead of 1–3 s per
+  search on a 100k-document corpus). A quoted phrase in a query is an extra term that boosts
   documents holding it; its words still match on their own. Rankings are cached, so later pages
   (`searchCorpusPage(…, { offset })`) cost nothing.
 - **Hits** carry the window of the document that best matches the query (`window`), and research
   quotes it instead of the document's opening. `getCorpusDocument(…, { offset })` reads past the
   character cap and reports the document's full length.
 - **Queries:** free text is reduced to its words, without English stopwords (Lucene's set, as in Anserini's BM25), so FTS5 syntax in a query is harmless and common words do not slow ranking.
+
+### Optional: hybrid search (BM25 + dense vectors)
+
+Nothing here is required. With no embedding model configured, every corpus ranks with BM25 exactly as above.
+
+A corpus can also hold dense vectors, one per document per embedding model, in its own file. When the process has a query embedder for the same model, each search fuses the BM25 ranking and the dense ranking by weighted reciprocal rank. A document the dense list finds can enter the results even when it contains none of the query's words.
+
+```bash
+# 1. Pick the query embedder (any one; the same settings embed the documents):
+MARINA_CORPUS_EMBEDDINGS=openai                     # any OpenAI-compatible /v1/embeddings
+MARINA_CORPUS_EMBEDDING_URL=http://127.0.0.1:8080/v1  # a local server, OpenAI, OpenRouter, …
+MARINA_CORPUS_EMBEDDING_MODEL=<model id>
+MARINA_CORPUS_EMBEDDING_REVISION=<immutable revision you declare>
+#    (or MARINA_CORPUS_EMBEDDINGS=local for the pinned MiniLM extension, or ollama)
+
+# 2. Embed the documents (resumable; int8 storage by default):
+bun run corpus embed <name> [--format int8|f32] [--dims N] [--max-chars 16000] [--query-prefix "…"]
+
+#    …or import vectors someone already computed (raw float32 rows + one docid per line):
+bun run corpus vectors import <name> vectors.f32 docids.txt --model <provider id> --source-dims 4096
+
+bun run corpus vectors <name>      # what the corpus holds
+bun run corpus search <name> <q>   # prints which ranking ran
+```
+
+- **Applies only when it matches.** Hybrid runs only if the corpus holds vectors from the configured embedder's model (its provider id). Otherwise, and on an embedding failure or the daily spend cap, the search is BM25 and reports `degraded` (`embedding_model_mismatch`, `embedding_unavailable`). It never fails a search.
+- **Storage and speed.** Vectors are BLOBs in the corpus file: `int8` (a scale plus one byte per dimension, the default) or `f32`. The search is an exact in-memory scan, with no native extension. `--dims` keeps a Matryoshka prefix for models trained that way (Qwen3-Embedding, OpenAI text-embedding-3); set `MARINA_CORPUS_EMBEDDING_DIMENSIONS` to the same value so queries match.
+- **Instruction-tuned models** need their query instruction: pass it as `--query-prefix` when embedding or importing. It is stored with the vectors and prepended to every query.
+- **Fusion weight:** `MARINA_CORPUS_HYBRID_WEIGHT` is the dense ranking's weight; the BM25 ranking weighs 1. Each ranking contributes its top 1,000.
+- **Cost:** paid query embeddings are recorded in the spend ledger as `search` and refused at the daily cap. `readiness` reports the `corpus-hybrid` check.
 
 [BrowseComp-Plus](browsecomp-plus.md) uses a local corpus.
 
