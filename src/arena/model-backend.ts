@@ -48,7 +48,7 @@ export interface Usage {
  * price — the built-in table first, then OpenRouter's live catalog for
  * `openrouter/…` ids. Unknown and unreachable stay at pi-ai's figure.
  */
-async function callCost(
+export async function callCost(
   spec: string,
   model: { cost?: { input?: number; output?: number } },
   used: (TokenUsage & { cost?: { total?: number } }) | undefined,
@@ -62,15 +62,17 @@ async function callCost(
   return price ? costFromTokens(price, used) : reported;
 }
 
-/** A `Complete` for `provider/model`, plus the running usage it has accumulated. */
-export function modelComplete(
+/**
+ * The model behind `provider/model` and the key to call it with. A self-hosted
+ * runtime (llama.cpp / Ollama / vLLM) needs no vendor key: its key is optional
+ * and the transport is local (`resolveModel` builds it). Throws when a vendor
+ * key is missing.
+ */
+export function modelAccess(
   spec: string,
   env: NodeJS.ProcessEnv = process.env,
-  opts: { maxTokens?: number; timeoutMs?: number; signal?: AbortSignal } = {},
-): { complete: Complete; usage: Usage; contextWindow?: number } {
+): { model: ReturnType<typeof resolveModel>; apiKey: string } {
   const provider = spec.split("/")[0] ?? "";
-  // A self-hosted runtime (llama.cpp / Ollama / vLLM) needs no vendor key: its
-  // key is optional and the transport is local (`resolveModel` builds it).
   const local = LOCAL_PROVIDERS[provider];
   const apiKey = local
     ? env[local.keyEnv]?.trim() || "local"
@@ -80,7 +82,16 @@ export function modelComplete(
       `no API key for ${provider} (set ${(PROVIDER_KEYS[provider] ?? ["?"]).join(" or ")})`,
     );
   }
-  const model = resolveModel(spec);
+  return { model: resolveModel(spec), apiKey };
+}
+
+/** A `Complete` for `provider/model`, plus the running usage it has accumulated. */
+export function modelComplete(
+  spec: string,
+  env: NodeJS.ProcessEnv = process.env,
+  opts: { maxTokens?: number; timeoutMs?: number; signal?: AbortSignal } = {},
+): { complete: Complete; usage: Usage; contextWindow?: number } {
+  const { model, apiKey } = modelAccess(spec, env);
   const usage: Usage = { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
   const complete: Complete = async (system, user) => {
     opts.signal?.throwIfAborted();

@@ -35,6 +35,7 @@ and operate the environment. Start with one path below; the full catalog follows
 | Route forecasting into another application | [Forecasting](forecasting.md) | [Model API](model-api.md) |
 | Enter Marina in the Social Simulation Arena | [Arena](arena.md) | [Forecasting](forecasting.md) |
 | Enter Marina in FutureX (weekly future-prediction benchmark) | [FutureX](futurex.md) | [Forecasting](forecasting.md) |
+| Answer Mind2Web 2 live-web research tasks with cited sources | [Mind2Web 2](mind2web2.md) | [Scripts reference](scripts.md) |
 | Enter Marina in Metaculus AI-benchmark tournaments as a bot | [Metaculus](metaculus.md) | [Forecasting](forecasting.md) |
 | Answer a ForecastBench round (500 questions, up to 3 sets) | [ForecastBench](forecastbench.md) | [Forecasting](forecasting.md) |
 | Run Marina as a Prophet Arena agent | [Prophet Arena](prophet.md) | [Forecasting](forecasting.md) |
@@ -78,6 +79,7 @@ degraded, or off and gives the next concrete action without exposing secrets.
 | [Forecasting](forecasting.md) | Any question → a probability or a number with cited, checked evidence (CLI, command, `/v1/forecast`) |
 | [Social Simulation Arena](arena.md) | Marina as an arena entrant: forecasters, research agent, signal discovery, integrity rules |
 | [FutureX](futurex.md) | A thin adapter: weekly batch → typed forecasts → submission file (never sent by Marina); backtests into the ledger |
+| [Mind2Web 2](mind2web2.md) | A thin adapter over the live-web research agent: cited markdown answers, the page cache as the agent read it, the official judge run locally under a spend cap (never sent by Marina) |
 | [Metaculus](metaculus.md) | A bot adapter: open questions → typed forecasts → forecast + reasoning comment; configuration chosen by held-out backtest |
 | [ForecastBench](forecastbench.md) | A round → typed forecasts (dataset horizons in one call) → set file, resumable, up to 3 configurations by backtest; upload only by the operator |
 | [Prophet Arena](prophet.md) | A Python agent for the `prophet-arena` SDK that asks a Marina server's `/v1/forecast` |
