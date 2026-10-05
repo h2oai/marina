@@ -3026,6 +3026,8 @@ export interface RuntimeState {
     supervisorId: string;
     cwd: string;
     nativeSessionId?: string;
+    model?: string;
+    resumeSupported?: boolean;
     request?: RuntimeRequest;
     error?: string;
     adapters?: {

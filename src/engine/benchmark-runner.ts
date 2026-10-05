@@ -9,12 +9,21 @@
  * This keeps the engine decoupled from benchmark adapter internals while
  * turning every run into a first-class persistent artifact.
  *
+ * Learning: a completed run feeds ONE outcome (ids, score, category accuracy)
+ * to the judged lesson loop in `src/learning/`. No benchmark path writes an
+ * item's question, expected answer or model answer to memory: a memorised
+ * answer contaminates every later run of the same benchmark
+ * (`test/benchmark-no-content-memory.test.ts`). Runs before this rule left
+ * per-item notes in `benchmark:<name>` pools; `purgeBenchmarkContentNotes`
+ * retires them (`benchmark purge-content-notes`).
+ *
  * The harness writes its result to benchmarks/results/<bench>-passthrough-<ts>.json;
  * we read the newest matching file once the subprocess exits.
  */
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { noteBenchmarkRun } from "../learning/intake";
 import { localHttpBase } from "../net/listen-ports";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent, EntityId } from "../types";
@@ -38,6 +47,40 @@ interface ResultItemRaw {
   actual?: string;
   correct?: boolean;
   category?: string;
+}
+
+/** The harness result file, as far as the runner reads it. */
+export interface HarnessResult {
+  scores?: { overall?: number; breakdown?: Record<string, number> };
+  metadata?: { total?: number; answered?: number };
+  items?: ResultItemRaw[];
+}
+
+/** What one harness invocation produced: its result file, or why there is none. */
+export type HarnessOutcome =
+  | { result: HarnessResult; error?: undefined }
+  | { error: string; result?: undefined };
+
+/** A category label longer than this is not a taxonomy label: it is left out. */
+const MAX_CATEGORY_LABEL = 48;
+
+/**
+ * Per-category tallies of a run's items, from the item's `category` label and
+ * `correct` verdict only. Question, expected and actual text are never read.
+ */
+export function categoryAccuracy(
+  items: ReadonlyArray<Pick<ResultItemRaw, "category" | "correct">>,
+): { category: string; n: number; correct: number }[] {
+  const tally = new Map<string, { n: number; correct: number }>();
+  for (const item of items) {
+    const label = item.category?.replace(/\s+/g, " ").trim();
+    if (!label || label.length > MAX_CATEGORY_LABEL) continue;
+    const t = tally.get(label) ?? { n: 0, correct: 0 };
+    t.n++;
+    if (item.correct) t.correct++;
+    tally.set(label, t);
+  }
+  return [...tally].map(([category, t]) => ({ category, ...t }));
 }
 
 const DATASETS_DIR = "benchmarks/datasets";
@@ -178,7 +221,12 @@ function hashConfig(config: unknown): string {
   return (h >>> 0).toString(16).padStart(8, "0");
 }
 
-/** The citation an outcome note carries for its run (`bench:<id>`, as lessons cite it). */
+/** The author the runner wrote its (retired) per-item outcome notes under. */
+const LEGACY_NOTE_AUTHOR = "benchmark-runner";
+/** The shape of a legacy per-item note: `WRONG [cat] Q: … | expected=…` / `OK [cat] Q: … | answer=…`. */
+const LEGACY_CONTENT_NOTE = /^(WRONG|OK) (\[[^\]]*\] )?Q: .*\| (expected|answer)=/s;
+
+/** The citation a legacy outcome note carries for its run (`bench:<id>`, as lessons cite it). */
 function outcomeNoteRef(runId: string): string {
   return `bench:${runId}`;
 }
@@ -187,9 +235,10 @@ function outcomeNoteRef(runId: string): string {
 const LEGACY_NOTE_PREFIX = 16;
 
 /**
- * A ledger run was invalidated: retire the per-item outcome notes the runner
- * deposited for it in the `benchmark:<name>` pool (they record what the
- * infrastructure did, not the target). Retirement is `note delete`'s path —
+ * A ledger run was invalidated: retire the per-item outcome notes earlier
+ * versions of the runner deposited for it in the `benchmark:<name>` pool (they
+ * record what the infrastructure did, not the target; the runner no longer
+ * writes them, see `purgeBenchmarkContentNotes`). Retirement is `note delete`'s path —
  * the canonical record is revised and stays readable in its history; the
  * invalidation's own audit row carries the reason. Older notes cite only a
  * 16-character prefix of the run id (`run=<prefix>`); they are retired only
@@ -218,7 +267,7 @@ export function retireOutcomeNotesForRun(
     let ambiguous = 0;
     const notes = db.getPoolNotes(pool.id, Math.max(1, db.countPoolNotes(pool.id)));
     for (const note of notes) {
-      if (note.entity_name !== "benchmark-runner") continue;
+      if (note.entity_name !== LEGACY_NOTE_AUTHOR) continue;
       const content = note.content ?? "";
       const legacyHit = content.endsWith(legacy);
       if (!content.endsWith(`| ${full}`) && !(legacyHit && legacyUnique)) {
@@ -231,6 +280,65 @@ export function retireOutcomeNotesForRun(
   } catch (err) {
     return { retired: 0, ambiguous: 0, error: getErrorMessage(err) };
   }
+}
+
+export interface BenchmarkContentPurge {
+  /** Every `benchmark:<name>` pool that holds content notes, with their count. */
+  pools: { name: string; notes: number }[];
+  /** Content notes found (dry run) or retired (applied). */
+  found: number;
+  retired: number;
+  failed: number;
+  applied: boolean;
+  error?: string;
+}
+
+/**
+ * Find, and with `apply` retire, the per-item notes earlier versions of the
+ * runner wrote into `benchmark:<name>` pools: each carried a benchmark item's
+ * question and expected answer, which contaminates later runs and bypasses
+ * the judged lesson loop. A note counts when the runner wrote it or it has the
+ * runner's `WRONG|OK … Q: … | expected=|answer=` shape. Retirement is
+ * `note delete`'s audited path (the canonical record is revised, never
+ * erased); no row is deleted directly. The pools themselves stay. Dry run by
+ * default; never returns note content. Never throws.
+ */
+export function purgeBenchmarkContentNotes(
+  db: MarinaDB,
+  opts: { apply?: boolean } = {},
+): BenchmarkContentPurge {
+  const out: BenchmarkContentPurge = {
+    pools: [],
+    found: 0,
+    retired: 0,
+    failed: 0,
+    applied: !!opts.apply,
+  };
+  try {
+    for (const pool of db.listMemoryPools()) {
+      if (!pool.name.startsWith("benchmark:")) continue;
+      const notes = db
+        .getPoolNotes(pool.id, Math.max(1, db.countPoolNotes(pool.id)))
+        .filter(
+          (n) => n.entity_name === LEGACY_NOTE_AUTHOR || LEGACY_CONTENT_NOTE.test(n.content ?? ""),
+        );
+      if (!notes.length) continue;
+      out.pools.push({ name: pool.name, notes: notes.length });
+      out.found += notes.length;
+      if (!opts.apply) continue;
+      for (const note of notes) {
+        try {
+          if (db.deleteNote(note.id, note.entity_name)) out.retired++;
+          else out.failed++;
+        } catch {
+          out.failed++;
+        }
+      }
+    }
+  } catch (err) {
+    out.error = getErrorMessage(err);
+  }
+  return out;
 }
 
 /** Where the harness sends its model calls: this instance's own /v1, authenticated. */
@@ -391,14 +499,7 @@ export class BenchmarkRunner {
     const resultFile = join(process.cwd(), RESULTS_DIR, `${id}.json`);
     const { args, env } = harnessInvocation(opts.benchmark, config, this.target(), resultFile);
 
-    let score: number | null = null;
-    let breakdownJson: string | null = null;
-    let answered = 0;
-    let total = 0;
-    let status = "failed";
-    let errorMsg: string | undefined;
-    let resultItems: ResultItemRaw[] = [];
-
+    let harness: HarnessOutcome;
     try {
       const proc = Bun.spawn(["bun", ...args], {
         cwd: process.cwd(),
@@ -411,22 +512,53 @@ export class BenchmarkRunner {
         const err = await new Response(proc.stderr).text();
         throw new Error(`harness exited ${exitCode}: ${err.slice(0, 500)}`);
       }
-
       const result = this.readResult(resultFile);
-      if (!result) {
-        throw new Error("harness completed but no result file found");
-      }
-      const failure = harnessFailure(result);
-      if (failure) throw new Error(failure);
-      score = result.scores?.overall ?? null;
-      breakdownJson = JSON.stringify(result.scores?.breakdown ?? {});
-      answered = result.metadata?.answered ?? 0;
-      total = result.metadata?.total ?? 0;
-      resultItems = result.items ?? [];
-      status = "completed";
+      if (!result) throw new Error("harness completed but no result file found");
+      harness = { result };
     } catch (err) {
-      errorMsg = err instanceof Error ? err.message : String(err);
-      breakdownJson = JSON.stringify({ error: errorMsg.slice(0, 500) });
+      harness = { error: getErrorMessage(err) };
+    }
+    this.recordHarnessResult(id, opts, started, harness);
+  }
+
+  /**
+   * Record what the harness produced for run `id`: the run row, the feed event
+   * and, for a valid scored run, one outcome for the judged learning loop
+   * (`src/learning/`). The outcome carries the run's id, score and per-category
+   * accuracy only; the items' question, expected and actual text is read for
+   * counting and never written to memory, a pool or a lesson (a memorised
+   * answer would contaminate every later run of the same benchmark).
+   * Public so tests can drive it without spawning the harness.
+   */
+  recordHarnessResult(
+    id: string,
+    opts: Pick<BenchmarkRunOptions, "benchmark" | "agentId">,
+    started: number,
+    harness: HarnessOutcome,
+  ): void {
+    let score: number | null = null;
+    let breakdownJson: string | null = null;
+    let answered = 0;
+    let total = 0;
+    let status = "failed";
+    let errorMsg: string | undefined = harness.error;
+    let resultItems: ResultItemRaw[] = [];
+
+    if (harness.result) {
+      const result = harness.result;
+      const failure = harnessFailure(result);
+      if (failure) errorMsg = failure;
+      else {
+        score = result.scores?.overall ?? null;
+        breakdownJson = JSON.stringify(result.scores?.breakdown ?? {});
+        answered = result.metadata?.answered ?? 0;
+        total = result.metadata?.total ?? 0;
+        resultItems = result.items ?? [];
+        status = "completed";
+      }
+    }
+    if (status !== "completed") {
+      breakdownJson = JSON.stringify({ error: (errorMsg ?? "unknown").slice(0, 500) });
     }
 
     const duration_ms = Date.now() - started;
@@ -466,27 +598,19 @@ export class BenchmarkRunner {
         timestamp: now,
       });
     } else if (status === "completed" && score !== null) {
-      // Learning loop: for every item the harness answered, deposit a note
-      // into the benchmark:<name> pool so subsequent runs can recall prior
-      // wrong-answers and successful-recipes. This is the feedback path
-      // that turns a one-shot benchmark run into accumulating wisdom.
-      const depositCount = this.depositOutcomeNotes(opts.benchmark, id, resultItems);
+      // Learning loop: the run becomes ONE outcome for the judged lesson loop
+      // (a no-op unless the server armed it). Ids, score and category
+      // accuracy only, never an item's question or answer.
+      const run = this.db.getBenchmarkRun(id);
+      if (run) noteBenchmarkRun(this.db, run, { categories: categoryAccuracy(resultItems) });
 
       this.emitFeed({
         type: "feed_event",
         kind: "benchmark_completed",
         entity: opts.agentId as EntityId | undefined,
         ref: id,
-        summary: `benchmark ${opts.benchmark} ${(score * 100).toFixed(1)}% (${answered}/${total}) in ${Math.round(duration_ms / 1000)}s${depositCount > 0 ? `, deposited ${depositCount} notes to benchmark:${opts.benchmark}` : ""}`,
-        payload: {
-          id,
-          benchmark: opts.benchmark,
-          score,
-          answered,
-          total,
-          duration_ms,
-          depositedNotes: depositCount,
-        },
+        summary: `benchmark ${opts.benchmark} ${(score * 100).toFixed(1)}% (${answered}/${total}) in ${Math.round(duration_ms / 1000)}s`,
+        payload: { id, benchmark: opts.benchmark, score, answered, total, duration_ms },
         timestamp: now,
       });
     } else {
@@ -503,77 +627,12 @@ export class BenchmarkRunner {
   }
 
   /**
-   * Deposit per-item outcome notes into the benchmark:<name> pool so the
-   * orchestrator on the next run can recall them as evidence. Creates the
-   * pool on demand. Wrong answers and surprising patterns get higher
-   * importance so recall surfaces them first.
-   *
-   * Returns number of notes actually written.
-   */
-  private depositOutcomeNotes(benchmark: string, runId: string, items: ResultItemRaw[]): number {
-    if (items.length === 0) return 0;
-    const poolName = `benchmark:${benchmark}`;
-    let pool = this.db.getMemoryPool(poolName);
-    if (!pool) {
-      const newId = `pool-${crypto.randomUUID().slice(0, 8)}`;
-      try {
-        this.db.createMemoryPool(newId, poolName, "benchmark-runner");
-        pool = this.db.getMemoryPool(poolName);
-      } catch {
-        // Race: another call created it. Re-read.
-        pool = this.db.getMemoryPool(poolName);
-      }
-    }
-    if (!pool) return 0;
-
-    let count = 0;
-    // Cap to avoid runaway pool growth — prioritize wrong answers, then a
-    // sample of correct ones. Wrong answers are the learning signal.
-    const MAX_DEPOSITS = 60;
-    const wrong = items.filter((i) => !i.correct && typeof i.actual === "string");
-    const correct = items.filter((i) => i.correct);
-    const chosenWrong = wrong.slice(0, Math.min(wrong.length, 40));
-    const remaining = MAX_DEPOSITS - chosenWrong.length;
-    const chosenCorrect = correct.slice(0, Math.max(0, remaining));
-
-    for (const item of chosenWrong) {
-      const qFrag = (item.question ?? "").slice(0, 200).replace(/\s+/g, " ").trim();
-      const cat = item.category ? `[${item.category}] ` : "";
-      const content =
-        `WRONG ${cat}Q: ${qFrag} | expected=${item.expected} | we_answered=${item.actual} ` +
-        `| ${outcomeNoteRef(runId)}`;
-      try {
-        this.db.addPoolNote(pool.id, "benchmark-runner", content, 7);
-        count++;
-      } catch {
-        // best-effort
-      }
-    }
-    for (const item of chosenCorrect) {
-      const qFrag = (item.question ?? "").slice(0, 150).replace(/\s+/g, " ").trim();
-      const cat = item.category ? `[${item.category}] ` : "";
-      const content = `OK ${cat}Q: ${qFrag} | answer=${item.expected} | ${outcomeNoteRef(runId)}`;
-      try {
-        this.db.addPoolNote(pool.id, "benchmark-runner", content, 4);
-        count++;
-      } catch {
-        // best-effort
-      }
-    }
-    return count;
-  }
-
-  /**
    * The harness wrote this run's result to the file the runner named for it
    * (`MARINA_BENCH_RESULT_FILE`). Reading an exact path — not "the newest
    * file for this dataset" — keeps concurrent runs, in this world or in child
    * worlds sharing the working directory, from reading each other's results.
    */
-  private readResult(path: string): {
-    scores?: { overall?: number; breakdown?: Record<string, number> };
-    metadata?: { total?: number; answered?: number };
-    items?: ResultItemRaw[];
-  } | null {
+  private readResult(path: string): HarnessResult | null {
     if (!existsSync(path)) return null;
     try {
       return JSON.parse(readFileSync(path, "utf-8"));
