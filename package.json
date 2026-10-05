@@ -69,6 +69,7 @@
     "arena": "bun run scripts/arena.ts",
     "arena:portfolio": "bun run scripts/arena-portfolio.ts",
     "futurex": "bun run scripts/futurex.ts",
+    "mind2web2": "bun run scripts/mind2web2.ts",
     "metaculus": "bun run scripts/metaculus.ts",
     "forecastbench": "bun run scripts/forecastbench.ts",
     "swebench": "bun run scripts/swebench.ts",
@@ -206,7 +207,8 @@
   },
   "optionalDependencies": {
     "better-auth": "^1.7.4",
-    "jose": "^6.2.12"
+    "jose": "^6.2.12",
+    "playwright-core": "1.63.0"
   },
   "exports": {
     "./memory": {
