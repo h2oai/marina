@@ -62,6 +62,20 @@ function makeAgentEntity(id: string, name: string): Entity {
   };
 }
 
+/** The task reminder must resolve to the durable request, including after reload. */
+function expectTaskReminder(db: MarinaDB, coder: Entity, prompt: string): string {
+  const run = db.listCodingRuns({ workerKey: db.durableEntityKey(coder.id), status: "active" })[0];
+  expect(run).toBeDefined();
+  expect(run!.content_text).toBe(prompt);
+  const reminder = coder.properties.coding_task;
+  expect(typeof reminder).toBe("string");
+  expect(reminder).toContain(`full request: code show ${run!.id}`);
+  expect(reminder).toContain(`artifactId=${run!.id}`);
+  expect(reminder).toEndWith(prompt);
+  expect(db.loadEntity(coder.id)?.properties.coding_task).toBe(reminder);
+  return reminder as string;
+}
+
 /** Live-agent handle stub with a role in status and reconfigure/task-mode spies. */
 function fakeHandle(
   name: string,
@@ -809,18 +823,15 @@ describe("coding task mode (set on assign, cleared on stop/completion)", () => {
 
     await command.handler(ctx, inputFor(alice, "code do fix the tokenizer"));
 
-    expect(coder.properties.coding_task).toBe("fix the tokenizer");
-    expect(fake.codingTasks).toEqual(["fix the tokenizer"]);
-    // Persisted, not just in-memory — a reloaded entity carries the task.
-    const reloaded = db.loadEntity("agent_coder" as EntityId);
-    expect(reloaded?.properties.coding_task).toBe("fix the tokenizer");
+    const reminder = expectTaskReminder(db, coder, "fix the tokenizer");
+    expect(fake.codingTasks).toEqual([reminder]);
   });
 
   it("code stop clears coding_task and drops adapter task mode", async () => {
     const { coder, fake, command, ctx, alice } = makeBoundSetup();
 
     await command.handler(ctx, inputFor(alice, "code do refactor the parser"));
-    expect(coder.properties.coding_task).toBe("refactor the parser");
+    expectTaskReminder(db, coder, "refactor the parser");
 
     await command.handler(ctx, inputFor(alice, "code stop"));
 
@@ -834,11 +845,11 @@ describe("coding task mode (set on assign, cleared on stop/completion)", () => {
     const { coder, fake, command, ctx, alice } = makeBoundSetup(notifications);
 
     await command.handler(ctx, inputFor(alice, "code do add a health endpoint"));
-    expect(coder.properties.coding_task).toBe("add a health endpoint");
+    const reminder = expectTaskReminder(db, coder, "add a health endpoint");
 
     // Mid-task actions must NOT clear the assignment.
     fake.emit({ type: "tool_call", toolName: "marina_code", args: { action: "read" } });
-    expect(coder.properties.coding_task).toBe("add a health endpoint");
+    expect(coder.properties.coding_task).toBe(reminder);
 
     // Recording a durable summary marks the work completed → task mode ends.
     fake.emit({
@@ -846,14 +857,14 @@ describe("coding task mode (set on assign, cleared on stop/completion)", () => {
       toolName: "marina_code",
       args: { action: "summary", notes: "done" },
     });
-    expect(coder.properties.coding_task).toBe("add a health endpoint");
+    expect(coder.properties.coding_task).toBe(reminder);
     fake.emit({
       type: "tool_result",
       toolName: "marina_code",
       result: "storage failed",
       isError: true,
     });
-    expect(coder.properties.coding_task).toBe("add a health endpoint");
+    expect(coder.properties.coding_task).toBe(reminder);
     await command.handler(ctx, inputFor(coder, "code summary done"));
     expect(coder.properties.coding_task).toBeUndefined();
     expect(fake.codingTasks.at(-1)).toBeNull();
@@ -959,7 +970,7 @@ describe("structured completion signal (machine-readable lifecycle metadata)", (
 
     await command.handler(ctx, inputFor(alice, "code do refactor the parser"));
     const sid = alice.properties.coding_session_id as string;
-    expect(coder.properties.coding_task).toBe("refactor the parser");
+    expectTaskReminder(db, coder, "refactor the parser");
 
     fake.emit({
       type: "status_change",
