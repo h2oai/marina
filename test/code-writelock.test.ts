@@ -21,6 +21,7 @@ import {
   roomId,
 } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { scopeProperty } from "./process-state";
 
 const TEST_DB = "test_code_writelock.db";
 
@@ -388,6 +389,7 @@ describe("code write-lock enforcement (Phase 4 B2/B3)", () => {
 
   it("the tool spelling `to:<agent> -- <notes>` keeps notes literal", async () => {
     const { entity, sessionId, run, handoffs } = await handoffSession("Tool");
+    using _clock = scopeProperty(Date, "now", () => 1_800_000_000_000);
     await run(entity, "code handoff to:carol -- wired the facade to:LoginFacade to use");
     expect(db.getCodingSession(sessionId)!.writer).toBe("carol");
     expect(handoffs()[0]!.content_text).toBe("wired the facade to:LoginFacade to use");

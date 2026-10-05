@@ -183,6 +183,12 @@ export const EXPORT_TABLES = [
   "benchmark_run_evidence",
   "benchmark_item_evidence",
   "benchmark_item_lessons",
+  // Imported learned bundles (migration 161): import state and its audit.
+  "learned_artifacts",
+  "learned_items",
+  "upstream_default_seeds",
+  "evidence_priors",
+  "upstream_events",
   "external_submissions",
   "adapters",
   "adapter_user_mappings",

@@ -926,6 +926,17 @@
 
 # Resident agents' continuation prompt: `on` adds a [Lessons] section for the agent's focus every tenth cycle (judged lessons from every domain, cross-board included, labelled); `observe` logs the lesson ids it would show; `off` (default) never asks. Capped by MARINA_LESSONS.
 # MARINA_LESSONS_RESIDENT=off
+# Learned bundles (marina.learned.v1, docs/guides/learned-bundles.md): `on` lets an operator import a signed bundle with `bun run learned import`. Imported lessons land in `upstream:*` spaces with trust `imported` and are never trusted until local outcomes confirm them; defaults seed only empty slots; ledger aggregates become down-weighted priors, never ledger rows. `off` (default) refuses every import and nothing changes.
+# MARINA_UPSTREAM=off
+
+# Publisher keys a learned bundle or revocation list must be signed by: comma-separated `label=<base64 SPKI>` or bare base64 Ed25519 public keys, added to the keys pinned in source. A bundle signed by any other key is refused; the key embedded in a bundle is never trusted on its own.
+# @protected
+# MARINA_LEARNED_PUBLISHER_KEYS=
+
+# Dedicated Ed25519 key that signs exported learned bundles (base64 PKCS#8 DER, or PEM with escaped newlines; `bun run learned keygen <path>` makes one). Never the federation or arena key. Read only by `bun run learned export`.
+# @protected
+# @internal
+# MARINA_LEARNED_SIGNING_KEY=
 
 # ── Passthru and prompt caching ──────────────────────────────────────────────
 

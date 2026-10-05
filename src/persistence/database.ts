@@ -49,6 +49,7 @@ import * as flywheelDb from "./db-flywheel";
 import * as gatewaysDb from "./db-gateways";
 import * as intellectsDb from "./db-intellects";
 import * as journeysDb from "./db-journeys";
+import * as learnedDb from "./db-learned";
 import * as logsDb from "./db-logs";
 import * as macrosDb from "./db-macros";
 import * as maintenanceDb from "./db-maintenance";
@@ -2204,6 +2205,100 @@ export class MarinaDB implements MarinaStores {
     opts: { class?: string; limit?: number } = {},
   ): decisionsDb.ChallengeOutcomeRow[] {
     return decisionsDb.listChallengeOutcomes(this.reader, opts);
+  }
+
+  // ─── Learned bundles (delegated to db-learned.ts, migration 161) ────────
+
+  recordLearnedArtifact(
+    row: Omit<learnedDb.LearnedArtifactRow, "imported_at"> & { imported_at?: number },
+  ): void {
+    learnedDb.recordLearnedArtifact(this.db, row);
+  }
+
+  latestLearnedArtifact(artifactId: string): learnedDb.LearnedArtifactRow | undefined {
+    return learnedDb.latestLearnedArtifact(this.reader, artifactId);
+  }
+
+  listLearnedArtifacts(): learnedDb.LearnedArtifactRow[] {
+    return learnedDb.listLearnedArtifacts(this.reader);
+  }
+
+  upsertLearnedItem(
+    row: Omit<learnedDb.LearnedItemRow, "updated_at" | "confirmed_by"> & { updated_at?: number },
+  ): void {
+    learnedDb.upsertLearnedItem(this.db, row);
+  }
+
+  setLearnedItemStatus(
+    artifactId: string,
+    itemKey: string,
+    status: learnedDb.LearnedItemStatus,
+  ): void {
+    learnedDb.setLearnedItemStatus(this.db, artifactId, itemKey, status);
+  }
+
+  confirmLearnedItem(artifactId: string, itemKey: string, confirmedBy: string): boolean {
+    return learnedDb.confirmLearnedItem(this.db, artifactId, itemKey, confirmedBy);
+  }
+
+  getLearnedItem(artifactId: string, itemKey: string): learnedDb.LearnedItemRow | undefined {
+    return learnedDb.getLearnedItem(this.reader, artifactId, itemKey);
+  }
+
+  listLearnedItems(
+    opts: { artifactId?: string; status?: learnedDb.LearnedItemStatus; limit?: number } = {},
+  ): learnedDb.LearnedItemRow[] {
+    return learnedDb.listLearnedItems(this.reader, opts);
+  }
+
+  recordUpstreamDefaultSeed(
+    row: Omit<learnedDb.UpstreamDefaultSeedRow, "id" | "created_at"> & { created_at?: number },
+  ): number {
+    return learnedDb.recordUpstreamDefaultSeed(this.db, row);
+  }
+
+  latestUpstreamDefaultSeed(slot: string): learnedDb.UpstreamDefaultSeedRow | undefined {
+    return learnedDb.latestUpstreamDefaultSeed(this.reader, slot);
+  }
+
+  listUpstreamDefaultSeeds(): learnedDb.UpstreamDefaultSeedRow[] {
+    return learnedDb.listUpstreamDefaultSeeds(this.reader);
+  }
+
+  recordEvidencePrior(
+    row: Omit<learnedDb.EvidencePriorRow, "id" | "created_at"> & { created_at?: number },
+  ): number {
+    return learnedDb.recordEvidencePrior(this.db, row);
+  }
+
+  listEvidencePriors(opts: { family?: string; limit?: number } = {}): learnedDb.EvidencePriorRow[] {
+    return learnedDb.listEvidencePriors(this.reader, opts);
+  }
+
+  recordUpstreamEvent(event: learnedDb.UpstreamEventInput): number {
+    return learnedDb.recordUpstreamEvent(this.db, event);
+  }
+
+  listUpstreamEvents(
+    opts: { artifactId?: string; limit?: number } = {},
+  ): learnedDb.UpstreamEventRow[] {
+    return learnedDb.listUpstreamEvents(this.reader, opts);
+  }
+
+  listOwnedSpaceRecords(
+    ownerName: string,
+    prefix: string,
+    now?: number,
+  ): learnedDb.LearnedSourceRecord[] {
+    return learnedDb.listOwnedSpaceRecords(this.reader, ownerName, prefix, now);
+  }
+
+  listRatifiedInstitutionalRecords(now?: number): learnedDb.LearnedSourceRecord[] {
+    return learnedDb.listRatifiedInstitutionalRecords(this.reader, now);
+  }
+
+  listLedgerCells(): learnedDb.LedgerCellRow[] {
+    return learnedDb.listLedgerCells(this.reader);
   }
 
   // ─── Social Simulation Arena (delegated to db-arena.ts) ─────────────────

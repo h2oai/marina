@@ -201,6 +201,8 @@ The same lessons also reach the people and agents doing the work:
 
 `MARINA_LESSONS=observe` records which lessons recall WOULD use without injecting them; `off` disables it.
 
+`learned` inspects imported learned bundles (read-only): `learned`, `learned artifacts`, `learned items [artifact:<id>] [status:active|retired|revoked]`, `learned seeds`, `learned priors [family:<f>]`, `learned events [limit:<n>]`. Imported lessons carry trust `imported` and are never trusted until local outcomes confirm them. Export and import are operator scripts (`bun run learned …`); see [Learned bundles](learned-bundles.md).
+
 Evidence-aware memory extends the existing `note <text>` workflow:
 
 ```text

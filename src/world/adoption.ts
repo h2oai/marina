@@ -60,7 +60,8 @@ export function adoptionLog(db: MarinaDB): AdoptionRecord[] {
     try {
       const r = JSON.parse(m[2]!) as AdoptionRecord;
       const prior = latest.get(r.id);
-      if (!prior || r.at >= prior.at) latest.set(r.id, r);
+      // Notes arrive newest first; an older entry must not win an equal-time tie.
+      if (!prior || r.at > prior.at) latest.set(r.id, r);
     } catch {
       // Not an adoption record.
     }

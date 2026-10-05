@@ -79,6 +79,7 @@ degraded, or off and gives the next concrete action without exposing secrets.
 | [Connecting](connecting.md) | Dashboard, WebSocket, Telnet, MCP, SDK, CLI, and REST boundaries |
 | [Commands Quick Reference](commands.md) | Every command organized by category |
 | [Scripts reference](scripts.md) | Every `bun run` script: run, CLI, forecasting, tests, qualification, soak |
+| [Learned bundles](learned-bundles.md) | Signed `marina.learned.v1` export and import of lessons, defaults, ledger aggregates, roles and conventions; pinned keys, trust `imported`, licence and slices |
 | [Forecasting](forecasting.md) | Any question → a probability or a number with cited, checked evidence (CLI, command, `/v1/forecast`) |
 | [Social Simulation Arena](arena.md) | Marina as an arena entrant: forecasters, research agent, signal discovery, integrity rules |
 | [FutureX](futurex.md) | A thin adapter: weekly batch → typed forecasts → submission file (never sent by Marina); backtests into the ledger |
