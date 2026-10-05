@@ -43,9 +43,13 @@ import { Logger } from "../engine/logger";
 import { residentMemoryOperation } from "../memory/resident-service";
 import type { MarinaDB } from "../persistence/database";
 import type { MemoryOperationRequest } from "../sdk/memory-operations";
+import { type EvalContext, evalExclusion } from "./eval-context";
+import { familiesForSource } from "./families";
+import { type LessonsMode, lessonsMetaMode, lessonsMode } from "./modes";
 import {
   formatLesson,
   type Lesson,
+  type LessonAdmission,
   type LessonRetirement,
   type LessonSelector,
   type LessonSink,
@@ -65,14 +69,7 @@ const SELF_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_PER_HOUR = 120;
 const MAX_QUEUE = 500;
 
-export type LessonsMode = "on" | "off" | "observe";
-
-export function lessonsMode(env: NodeJS.ProcessEnv = process.env): LessonsMode {
-  const v = env.MARINA_LESSONS?.trim().toLowerCase();
-  if (v === "off" || v === "false" || v === "0") return "off";
-  if (v === "observe") return "observe";
-  return "on";
-}
+export { type LessonsMode, lessonsMetaMode, lessonsMode, residentLessonsMode } from "./modes";
 
 function maxPerHour(env: NodeJS.ProcessEnv): number {
   const n = Number(env.MARINA_LESSONS_MAX_PER_HOUR);
@@ -83,6 +80,7 @@ interface Armed {
   sink: LessonSink;
   writer?: LessonWriter;
   judge?: DecisionProvider;
+  admit?: LessonAdmission;
   queue: Outcome[];
   draining?: Promise<void>;
   windowStart: number;
@@ -283,6 +281,8 @@ export function enableOutcomeLearning(
     sink?: LessonSink;
     writer?: LessonWriter | null;
     judge?: DecisionProvider | null;
+    /** The admission step between judge and write (see `LessonAdmission`). */
+    admit?: LessonAdmission;
   } = {},
 ): boolean {
   const env = opts.env ?? process.env;
@@ -299,6 +299,7 @@ export function enableOutcomeLearning(
             return w ? { writer: w } : {};
           })()),
     ...(opts.judge === null ? {} : { judge: opts.judge ?? lessonJudgeFromEnv(env) }),
+    ...(opts.admit ? { admit: opts.admit } : {}),
     queue: [],
     windowStart: Date.now(),
     processed: 0,
@@ -331,7 +332,10 @@ export function noteOutcome(
     a.dropped++;
     return;
   }
-  a.queue.push(outcome);
+  // A producer that names no families gets its source's (families.json).
+  a.queue.push(
+    outcome.families ? outcome : { ...outcome, families: familiesForSource(outcome.source) },
+  );
   if (!a.draining) a.draining = drain(a, env).finally(() => (a.draining = undefined));
 }
 
@@ -360,6 +364,8 @@ async function drain(a: Armed, env: NodeJS.ProcessEnv): Promise<void> {
         sink: a.sink,
         ...(a.writer ? { writer: a.writer } : {}),
         ...(judge ? { judge } : {}),
+        ...(a.admit ? { admit: a.admit } : {}),
+        meta: lessonsMetaMode(env) !== "off",
         // No onSpend: every judge here already records its own spend where it
         // leaves Marina — a configured backend through `metered()`
         // (src/decisions/config.ts), Marina engines and the fallback classifier
@@ -388,6 +394,37 @@ export interface RecalledLessons {
   mode: LessonsMode;
 }
 
+/** Options every recall entry point takes. */
+export interface RecallOptions {
+  /** The work's evidence cutoff (leakage rule 1); default now. */
+  asOf?: string;
+  limit?: number;
+  maxBytes?: number;
+  env?: NodeJS.ProcessEnv;
+  sink?: LessonSink;
+  /** A measurement run's eval context (leakage rule 2: self-exclusion). */
+  eval?: EvalContext;
+  /** Task families of the work: a key match beside the lexical one. */
+  families?: readonly string[];
+}
+
+/**
+ * The self-exclusion predicate for an eval context over `db` (a `bench:` ref
+ * resolves to its ledger benchmark). Undefined when nothing is excluded.
+ */
+export function evalExclusionFor(
+  db: MarinaDB | undefined,
+  ctx: EvalContext | undefined,
+): ((lesson: Lesson) => boolean) | undefined {
+  return evalExclusion(ctx, (id) => {
+    try {
+      return db?.getBenchmarkRun(id)?.benchmark;
+    } catch {
+      return undefined;
+    }
+  });
+}
+
 /**
  * Lessons for work in `domain` matching `query`, visible at `asOf` (the work's
  * evidence cutoff; default now). Never throws: a recall failure is no lessons.
@@ -396,30 +433,37 @@ export async function recallLessons(
   db: MarinaDB | undefined,
   domain: OutcomeDomain,
   query: string,
-  opts: {
-    asOf?: string;
-    limit?: number;
-    maxBytes?: number;
-    env?: NodeJS.ProcessEnv;
-    sink?: LessonSink;
-  } = {},
+  opts: RecallOptions & { exclude?: (lesson: Lesson) => boolean } = {},
 ): Promise<RecalledLessons> {
-  const mode = lessonsMode(opts.env);
+  const mode = domain === "meta" ? lessonsMetaMode(opts.env) : lessonsMode(opts.env);
   if (mode === "off") return { inject: [], recalled: [], mode };
   // The given sink, else the armed one, else a recall-only reader of the pool:
   // recall never creates the lessons account or its spaces as a side effect,
   // and needs no arming (only writers do).
   const sink = opts.sink ?? (db ? (armed.get(db)?.sink ?? lessonRecallSinkFor(db)) : undefined);
   if (!sink) return { inject: [], recalled: [], mode };
+  const exclude = opts.exclude ?? evalExclusionFor(db, opts.eval);
   try {
     const recalled = await sink.recall(domain, query, opts.asOf ?? new Date().toISOString(), {
       ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
       ...(opts.maxBytes !== undefined ? { maxBytes: opts.maxBytes } : {}),
+      ...(exclude ? { exclude } : {}),
+      ...(opts.families?.length ? { families: opts.families } : {}),
     });
     return { inject: mode === "on" ? recalled : [], recalled, mode };
   } catch {
     return { inject: [], recalled: [], mode };
   }
+}
+
+/** One lesson per text: a mirror and its original (or two copies) are served once. */
+function distinctByText(lessons: Lesson[]): Lesson[] {
+  const seen = new Set<string>();
+  return lessons.filter((l) => {
+    if (seen.has(l.text)) return false;
+    seen.add(l.text);
+    return true;
+  });
 }
 
 /**
@@ -430,35 +474,110 @@ export async function recallAcross(
   db: MarinaDB | undefined,
   domains: readonly OutcomeDomain[],
   query: string,
-  opts: {
-    asOf?: string;
-    limit?: number;
-    maxBytes?: number;
-    env?: NodeJS.ProcessEnv;
-    sink?: LessonSink;
-  } = {},
+  opts: RecallOptions = {},
 ): Promise<RecalledLessons> {
   const mode = lessonsMode(opts.env);
   if (mode === "off" || (!db && !opts.sink)) return { inject: [], recalled: [], mode };
   const asOf = opts.asOf ?? new Date().toISOString();
+  const exclude = evalExclusionFor(db, opts.eval);
   const per = await Promise.all(
     domains.map((d) =>
       recallLessons(db, d, query, {
         asOf,
         ...(opts.env ? { env: opts.env } : {}),
         ...(opts.sink ? { sink: opts.sink } : {}),
+        ...(exclude ? { exclude } : {}),
+        ...(opts.families?.length ? { families: opts.families } : {}),
       }),
     ),
   );
-  const recalled = selectServed(
-    per.flatMap((r) => r.recalled),
+  const recalled = selectServed(distinctByText(per.flatMap((r) => r.recalled)), asOf, {
+    ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
+    ...(opts.maxBytes !== undefined ? { maxBytes: opts.maxBytes } : {}),
+  });
+  // A domain whose own mode is observe (meta under MARINA_LESSONS_META=observe)
+  // is recalled for the record but never injected.
+  const injectable = new Set(per.filter((r) => r.mode === "on").flatMap((r) => r.recalled));
+  return {
+    inject: mode === "on" ? recalled.filter((l) => injectable.has(l)) : [],
+    recalled,
+    mode,
+  };
+}
+
+/** Of a work surface's lesson budget, at most this share goes to `lessons:meta`. */
+export const META_BUDGET_SHARE = 1 / 3;
+
+/**
+ * Lessons for a work surface: its own producer domains first, then the
+ * cross-board `meta` pool within at most a third of the budget (bytes and
+ * count). Meta lessons are trusted only (mirrors of judged, transferable
+ * lessons) and labelled `cross-board` by `formatLesson`. The time rule, the
+ * eval self-exclusion and strict trust labels apply to both. With no meta
+ * lesson, the surface gets exactly what `recallAcross` gave it before.
+ */
+export async function recallForWork(
+  db: MarinaDB | undefined,
+  domains: readonly OutcomeDomain[],
+  query: string,
+  opts: RecallOptions = {},
+): Promise<RecalledLessons> {
+  const own = domains.filter((d) => d !== "meta");
+  const limit = opts.limit ?? 5;
+  const maxBytes = opts.maxBytes ?? 1_200;
+  const mode = lessonsMode(opts.env);
+  if (mode === "off" || (!db && !opts.sink)) return { inject: [], recalled: [], mode };
+  const asOf = opts.asOf ?? new Date().toISOString();
+  const exclude = evalExclusionFor(db, opts.eval);
+  const shared = {
     asOf,
-    {
-      ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
-      ...(opts.maxBytes !== undefined ? { maxBytes: opts.maxBytes } : {}),
-    },
+    ...(opts.env ? { env: opts.env } : {}),
+    ...(opts.sink ? { sink: opts.sink } : {}),
+    ...(exclude ? { exclude } : {}),
+    ...(opts.families?.length ? { families: opts.families } : {}),
+  };
+  const meta = await recallLessons(db, "meta", query, {
+    ...shared,
+    limit: Math.max(1, Math.floor(limit * META_BUDGET_SHARE)),
+    maxBytes: Math.floor(maxBytes * META_BUDGET_SHARE),
+  });
+  // Meta lessons are served trusted-only, whatever the store returned.
+  const metaServed = meta.recalled.filter((l) => l.trust === "trusted");
+  const metaBytes = metaServed.reduce((n, l) => n + Buffer.byteLength(l.text), 0);
+  const base = await recallAcross(db, own, query, {
+    ...shared,
+    ...(opts.eval ? { eval: opts.eval } : {}),
+    limit: limit - metaServed.length,
+    maxBytes: maxBytes - metaBytes,
+  });
+  // A mirror whose original is already served adds nothing.
+  const served = new Set(base.recalled.map((l) => l.text));
+  const ownIds = new Set(base.recalled.flatMap((l) => (l.id ? [`lesson:${l.id}`] : [])));
+  const extra = metaServed.filter(
+    (l) => !served.has(l.text) && !(l.refs ?? []).some((r) => ownIds.has(r)),
   );
-  return { inject: mode === "on" ? recalled : [], recalled, mode };
+  const injectMeta = mode === "on" && meta.mode === "on" ? extra : [];
+  return {
+    inject: [...base.inject, ...injectMeta],
+    recalled: [...base.recalled, ...extra],
+    mode,
+  };
+}
+
+/**
+ * The `x-marina-lessons` response header for a recall: injected ids, then
+ * `observe:` ids that were recalled but not injected (`;`-separated), or `0`.
+ */
+export function lessonsHeaderValue(r: RecalledLessons): string {
+  if (r.recalled.length === 0) return "0";
+  const injected = new Set(r.inject);
+  const ids = (ls: Lesson[]) => ls.map((l) => l.id ?? "?").join(",");
+  const served = r.recalled.filter((l) => injected.has(l));
+  const observed = r.recalled.filter((l) => !injected.has(l));
+  return [
+    ...(served.length ? [ids(served)] : []),
+    ...(observed.length ? [`observe:${ids(observed)}`] : []),
+  ].join(";");
 }
 
 // ─── Curation: retire and supersede ─────────────────────────────────────────
@@ -529,7 +648,46 @@ export async function retireLessons(
       result.failed.push({ lesson, error: getErrorMessage(err) });
     }
   }
+  await retireMirrors(sink, result, retirement);
   return result;
+}
+
+/**
+ * Retirement follows refs: a `meta` mirror cites its original (`lesson:<id>`)
+ * and stops being served with it. Mirrors retired are appended to `result`.
+ */
+async function retireMirrors(
+  sink: LessonSink,
+  result: RetireResult,
+  retirement: LessonRetirement,
+): Promise<void> {
+  if (!sink.find || !sink.retire) return;
+  // Only a trusted, non-case lesson can have been mirrored.
+  const refs = new Set(
+    result.retired
+      .filter((l) => l.domain !== "meta" && l.trust === "trusted" && l.scope && l.scope !== "case")
+      .map((l) => `lesson:${l.id}`),
+  );
+  if (refs.size === 0) return;
+  let mirrors: Lesson[] = [];
+  try {
+    mirrors = (await sink.find("meta", {}, 10_000)).filter((m) =>
+      (m.refs ?? []).some((r) => refs.has(r)),
+    );
+  } catch {
+    // allow-empty-catch: no meta pool, nothing mirrored
+  }
+  const done = new Set(result.retired.map((l) => l.id));
+  for (const mirror of mirrors) {
+    if (!mirror.id || done.has(mirror.id)) continue;
+    done.add(mirror.id);
+    try {
+      await sink.retire("meta", mirror.id, retirement);
+      result.retired.push(mirror);
+    } catch (err) {
+      result.failed.push({ lesson: mirror, error: getErrorMessage(err) });
+    }
+  }
 }
 
 /**
@@ -553,6 +711,9 @@ export async function supersedeLesson(
     text,
     kind: old.kind,
     ...(old.category ? { category: old.category } : {}),
+    ...(old.scope ? { scope: old.scope } : {}),
+    ...(old.families?.length ? { families: old.families } : {}),
+    ...(old.subjects?.length ? { subjects: old.subjects } : {}),
     trust: "unverified",
     resolvedAt: old.resolvedAt,
     source: `supersede:${old.id}`,
@@ -561,6 +722,9 @@ export async function supersedeLesson(
   const { id } = await sink.write(replacement);
   if (!id) throw new Error("the replacement lesson was not stored");
   await sink.retire(old.domain, old.id, { ...retirement, supersededBy: id });
+  // The original's cross-board mirror retires with it (the replacement is
+  // unverified, so it is not mirrored until a judged outcome confirms it).
+  await retireMirrors(sink, { retired: [old], failed: [] }, retirement);
   return { ...replacement, id };
 }
 

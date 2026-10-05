@@ -102,6 +102,7 @@
     "bench": "bun run benchmarks/harness.ts",
     "bench:compare": "bun run benchmarks/compare.ts",
     "benchmark:import": "bun scripts/benchmark-import.ts",
+    "lessons": "bun scripts/lessons.ts",
     "bench:tier0": "bun run benchmarks/tier0.ts",
     "bench:context": "bun --env-file=/dev/null benchmarks/context-statistics.ts",
     "bench:ui": "bun run benchmarks/server.ts",

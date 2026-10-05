@@ -65,6 +65,7 @@ import { Logger } from "../engine/logger";
 import { takeSettledProxyCall } from "../engine/proxy-settlement";
 import { dailyBudget, dailyCapRefusal, formatSpendUsd, recordSpend } from "../engine/spend-ledger";
 import { isLocalProfile } from "../engine/trust-profile";
+import { residentLessonsMode } from "../learning/modes";
 import {
   renderUnifiedContext,
   truncateToBytes,
@@ -3656,6 +3657,36 @@ export class LeanAgentAdapter implements AgentHandle {
         }
       } catch {
         // best-effort — quest status unavailable this cycle
+      }
+    }
+
+    // ── 2d. Lessons for the focus (opt-in, every 10th cycle, offset 7) ──
+    // MARINA_LESSONS_RESIDENT=on shows what judged outcomes taught about this
+    // kind of work (cross-board lessons labelled); `observe` logs the ids it
+    // would have shown and injects nothing; off (default) never asks.
+    const residentLessons = residentLessonsMode();
+    if (
+      residentLessons !== "off" &&
+      cycle % 10 === 7 &&
+      this.focus &&
+      !this.crewResponderMode &&
+      !this.activeCodingTask
+    ) {
+      try {
+        const got = await this.platformMemory.lessonsFor(this.focus.description);
+        if (got.lines.length > 0 && residentLessons === "on") {
+          const content = clampText(got.lines.map((l) => `- ${l}`).join("\n"), 600);
+          if (this.shouldIncludeSection("lessons", content)) {
+            parts.push(`[Lessons]\n${content}`);
+          }
+        } else if (got.ids.length > 0) {
+          this.log.info(LEAN_AGENT_LOG_CATEGORY, "lessons observed for focus (not shown)", {
+            agent: this.name,
+            lessons: got.ids.join(","),
+          });
+        }
+      } catch {
+        // best-effort; the agent works without lessons
       }
     }
 

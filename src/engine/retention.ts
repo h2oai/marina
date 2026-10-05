@@ -244,6 +244,11 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     note: "restored participants; original benchmark item rows remain immutable",
   },
   {
+    table: "benchmark_item_lessons",
+    kind: "append-only",
+    note: "which judged lesson ids each ledger item was served (ids only)",
+  },
+  {
     table: "benchmark_run_evidence",
     kind: "append-only",
     note: "source run and evidence digest for operator-restored execution attribution",

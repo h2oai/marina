@@ -328,6 +328,8 @@ export interface HarnessResultFile {
     name?: string;
     model?: string;
     seed?: number;
+    /** `measure` (same-board lessons excluded, `x-marina-eval`) or `live`. */
+    lessons_mode?: string;
     judge?: { model?: string; endpoint?: string };
   };
   timestamp?: number;
@@ -359,6 +361,10 @@ export interface HarnessResultFile {
     budgetForced?: boolean;
     /** `passed` | `failed` | `not_run` — checks that never ran are not failures. */
     verification?: string;
+    /** Judged lesson ids the item was served (`x-marina-lessons`); ids only. */
+    lessons?: string[];
+    /** Lesson ids recalled for the item but not shown (observe mode). */
+    lessonsObserved?: string[];
   }[];
 }
 
@@ -510,6 +516,12 @@ export function ledgerFromHarnessResult(
   if (!benchmark) throw new Error("result file has no config.dataset / config.name");
   const raw = (file.items ?? []).filter((it) => typeof it.id === "string" && it.id.length > 0);
   const fallbacks = raw.filter(isFallbackItem).length;
+  const regime =
+    config.lessons_mode === "measure" || config.lessons_mode === "live"
+      ? config.lessons_mode
+      : null;
+  const ids = (v: unknown) =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
   const items: BenchmarkItemInput[] = raw.map((it) => ({
     item_id: it.id as string,
     correct: it.correct === true,
@@ -530,6 +542,10 @@ export function ledgerFromHarnessResult(
     verification: BENCHMARK_VERIFICATION_STATES.includes(it.verification as BenchmarkVerification)
       ? (it.verification as BenchmarkVerification)
       : null,
+    lessons:
+      ids(it.lessons).length || ids(it.lessonsObserved).length
+        ? { served: ids(it.lessons), observed: ids(it.lessonsObserved), regime }
+        : null,
   }));
   if (items.length === 0) throw new Error("result file has no items with ids");
   const runCost =
