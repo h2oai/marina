@@ -41,6 +41,7 @@ and operate the environment. Start with one path below; the full catalog follows
 | Run Marina's coding agent on SWE-bench | [SWE-bench](swebench.md) | [Coding](coding.md) |
 | Search the web as of a date, or give agents a search room | [Search](search.md) | [Forecasting](forecasting.md) |
 | Run BrowseComp-Plus (deep research over a fixed corpus); search a local corpus | [BrowseComp-Plus](browsecomp-plus.md) | [Search](search.md) |
+| Write long-form cited research reports; run DeepResearch Bench I and II | [DeepResearch Bench](deepresearch-bench.md) | [Search](search.md) |
 | Run τ²-bench through Marina; use the verification formation as a model (`marina/verify:`) | [τ²-bench](tau2.md) | [Model API](model-api.md) |
 | Reproduce any published Marina benchmark setup with one command | [Reproduce](reproduce.md) | [Testing](testing.md) |
 | Find the right `bun run` script | [Scripts reference](scripts.md) | [Release qualification](release-qualification.md) |
@@ -82,6 +83,7 @@ degraded, or off and gives the next concrete action without exposing secrets.
 | [ForecastBench](forecastbench.md) | A round → typed forecasts (dataset horizons in one call) → set file, resumable, up to 3 configurations by backtest; upload only by the operator |
 | [Prophet Arena](prophet.md) | A Python agent for the `prophet-arena` SDK that asks a Marina server's `/v1/forecast` |
 | [Reproduce](reproduce.md) | One command per published benchmark setup: `bun run repro doctor`, dry-run plans, replicated arms, pooled comparison from the ledger |
+| [DeepResearch Bench](deepresearch-bench.md) | The research-report pipeline (plan → research → verify → write → citation audit) and a thin adapter for DRB I and II; official evaluators run locally behind a capped judge proxy; nothing is sent |
 | [SWE-bench](swebench.md) | A thin adapter: `marina -p` per instance on a clean checkout → patch → official harness → ledger |
 | [How Marina Differs](how-marina-differs.md) | Evidence-based fit across workflow engines, managed agent runtimes, memory products, and persistent worlds |
 | [The Civic Substrate](civic-substrate.md) | Standing, rank, and earned safety gates — capability that's earned and decays, not granted |

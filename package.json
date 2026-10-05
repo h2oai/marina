@@ -68,6 +68,7 @@
     "forecast": "bun run scripts/forecast.ts",
     "arena": "bun run scripts/arena.ts",
     "arena:portfolio": "bun run scripts/arena-portfolio.ts",
+    "deepresearch": "bun run scripts/deepresearch-bench.ts",
     "futurex": "bun run scripts/futurex.ts",
     "metaculus": "bun run scripts/metaculus.ts",
     "forecastbench": "bun run scripts/forecastbench.ts",

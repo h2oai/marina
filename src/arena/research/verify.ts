@@ -135,6 +135,16 @@ function hasFigure(page: string, figure: string): boolean {
 }
 
 /**
+ * The figures of `text` (see `figuresIn`) found on none of `pages`, in
+ * either number reading — the same test a dossier line gets, for any claim
+ * checked against the pages it cites. Empty = every figure is on a page.
+ */
+export function figuresMissing(text: string, pages: readonly string[]): string[] {
+  const readable = pages.flatMap((p) => [normalize(p), normalizeEuropean(p)]);
+  return figuresIn(text).filter((f) => !readable.some((p) => hasFigure(p, f)));
+}
+
+/**
  * Text folded for quote matching: lower case, accents kept, apostrophes and
  * dashes unified, double quotes, markdown links/emphasis, brackets and
  * ellipses dropped, whitespace collapsed. Applied the same way to the line and

@@ -24,7 +24,7 @@
 import type { DecisionProvider, DecisionQuestions, NoulAnswer } from "../decisions/types";
 
 /** Where an outcome came from; lessons are pooled per domain. */
-export type OutcomeDomain = "forecast" | "code" | "tools" | "benchmark" | "arena";
+export type OutcomeDomain = "forecast" | "code" | "tools" | "benchmark" | "arena" | "research";
 
 export const OUTCOME_DOMAINS: readonly OutcomeDomain[] = [
   "forecast",
@@ -32,6 +32,7 @@ export const OUTCOME_DOMAINS: readonly OutcomeDomain[] = [
   "tools",
   "benchmark",
   "arena",
+  "research",
 ];
 
 export interface Outcome {
