@@ -17,6 +17,7 @@ import {
   splitEnginesAndProviders,
 } from "../search-providers/index";
 import { waybackFetch } from "../search-providers/wayback";
+import { handleSwarm, WEB_SWARM_USAGE } from "./web-swarm";
 
 /**
  * `web search` modifiers: `engines:web,academic limit:5 before:2026-09-30`
@@ -112,6 +113,8 @@ export function webCommand(deps: {
       "web search <query>",
       "web search engines:web,academic <query>",
       "web search limit:5 <query>",
+      WEB_SWARM_USAGE,
+      "web swarm engines:corpus:<name> <question>",
     ],
     name: "web",
     aliases: [],
@@ -127,7 +130,11 @@ Usage:
   web fetch <url> asof:2026-09-30           — the page as archived at or before then (Wayback)
   web search engines:corpus:<name> <query>  — a local corpus (offline BM25; bun run corpus)
   web fetch corpus://<name>/<docid>         — one document of a local corpus
-  web multisearch <q1> | <q2>               — parallel multi-query search`,
+  web multisearch <q1> | <q2>               — parallel multi-query search
+  web swarm [engines:<a,b>] [docs:N] <q>    — split the question into clues, search each, and
+                                              have reader models read the best pages in full:
+                                              a candidate table with verified quotes (off unless
+                                              the operator sets MARINA_READ_SWARM_READER)`,
     handler: async (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -151,6 +158,8 @@ Usage:
         case "fetch":
         case "read":
           return handleFetch(ctx, input.entity, tokens.slice(1), deps.connectorRuntime);
+        case "swarm":
+          return handleSwarm(ctx, input.entity, tokens.slice(1), deps.connectorRuntime);
         case "multisearch":
           return handleMultiSearch(
             ctx,

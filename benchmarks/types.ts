@@ -24,6 +24,13 @@ export interface BenchmarkConfig {
   /** Fixed disjoint split of the items (benchmarks/partition.ts). */
   partition?: "holdout" | "tune";
   judge?: { model: string; endpoint: string };
+  /**
+   * The run's lesson regime toward a Marina target (`x-marina-eval`): `measure`
+   * excludes lessons learned from this board, `live` uses every lesson.
+   */
+  lessons_mode?: "measure" | "live";
+  /** The run asked plain passthru targets to inject lessons (`x-marina-lessons: on`). */
+  lessons?: boolean;
 }
 
 export interface BenchmarkResult {
@@ -82,6 +89,10 @@ export interface ResultItem {
   budgetForced?: boolean;
   /** Verification outcome: `not_run` (infrastructure never ran the checks) is not `failed`. */
   verification?: "passed" | "failed" | "not_run";
+  /** Lesson ids the target served for this item (`x-marina-lessons`); ids only. */
+  lessons?: string[];
+  /** Lesson ids recalled for this item but not shown (observe mode). */
+  lessonsObserved?: string[];
 }
 
 /** Usage of one model call. Undefined fields were not reported — never estimated. */

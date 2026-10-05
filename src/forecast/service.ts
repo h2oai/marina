@@ -56,6 +56,7 @@
 import { availableModels } from "../agent/available-models";
 import { modelComplete } from "../arena/model-backend";
 import { strictDateFilter } from "../arena/research/isolation";
+import { readSwarmRetriever } from "../arena/research/read-swarm-retriever";
 import { type Retriever, retrieverFromSpec } from "../arena/research/retrieve";
 import { defaultPageText } from "../arena/research/verify";
 import { researchJudge } from "../decisions/config";
@@ -126,6 +127,7 @@ function wire(env: NodeJS.ProcessEnv): Wired | { error: string } {
     notes.push(`no OpenRouter key: research uses ${retrieverSpec}`);
   }
   let base: Retriever;
+  let retrieverLabel = retrieverSpec;
   try {
     base = retrieverFromSpec(
       retrieverSpec,
@@ -137,6 +139,16 @@ function wire(env: NodeJS.ProcessEnv): Wired | { error: string } {
       { env },
     );
     if (retrievalFilterFromEnv(env) === "strict") base = strictDateFilter(base);
+    // Read swarm (opt-in): reader models read every page the retriever found in full.
+    const readerSpec = env.MARINA_READ_SWARM_READER?.trim();
+    if (readerSpec) {
+      const reader = modelComplete(readerSpec, env);
+      base = readSwarmRetriever(base, {
+        reader: { name: readerSpec, complete: reader.complete },
+        spent: () => reader.usage.costUsd,
+      });
+      retrieverLabel = `${retrieverSpec}+read-swarm:${readerSpec}`;
+    }
   } catch (err) {
     return {
       error: (err as Error).message.replace(
@@ -183,7 +195,7 @@ function wire(env: NodeJS.ProcessEnv): Wired | { error: string } {
   const scale: ForecastScale = {
     tier: notes.length > 0 ? "degraded" : "full",
     analysts: specs,
-    retriever: retrieverSpec,
+    retriever: retrieverLabel,
     judge: judge ? judge.model : "none",
     notes,
   };

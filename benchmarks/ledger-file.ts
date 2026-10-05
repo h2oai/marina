@@ -65,6 +65,8 @@ export function ledgerFileBody(result: BenchmarkResult, opts: LedgerFileOptions)
         ...withDigest(it.answerDigest ?? answerDigest(it.actual)),
         ...(typeof it.budgetForced === "boolean" ? { budgetForced: it.budgetForced } : {}),
         ...(it.verification ? { verification: it.verification } : {}),
+        ...(it.lessons?.length ? { lessons: it.lessons } : {}),
+        ...(it.lessonsObserved?.length ? { lessonsObserved: it.lessonsObserved } : {}),
       })),
     },
   };

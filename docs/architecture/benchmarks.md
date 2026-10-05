@@ -25,7 +25,7 @@ No benchmark path writes an item's question, expected answer or model answer to 
 
 - **One outcome per run.** A run teaches through the outcome-learning loop in `src/learning/`, and every path feeds it the same way:
   - The in-world runner calls `noteBenchmarkRun` from `BenchmarkRunner.recordHarnessResult` for a valid, scored run.
-  - `bun run benchmark:import --learn` and `POST /v1/benchmarks/runs` call it after recording a ledger run.
+  - `bun run benchmark:import` (by default; `--no-learn` opts out) and `POST /v1/benchmarks/runs` call it after recording a ledger run.
 - **What the outcome carries.** `benchmarkRunOutcome` in `src/learning/intake.ts` builds the outcome from:
   - the run's `bench:<id>` ref, score, n and judge;
   - its cost per item and execution evidence;
@@ -101,6 +101,13 @@ When `MARINA_ROUTE_EVIDENCE_FAMILIES` is unset, the families come from the spawn
 - a declared name that is itself a benchmark counts as a family of one.
 
 The route event's `evidence_family_source` (`configured` / `role`) says which source was used. A role that declares nothing still gets `no_family`.
+
+## Runs teach, and measurement stays honest
+
+- **Every scored run teaches.** Filing over HTTP and `benchmark:import` (by default; `--no-learn` opts out) feed each newly recorded valid run to the judged lesson loop: one outcome per run (ids, scores, counts, cost per item, judge label), compared only with runs on the same slice and judge completed by then, with `scope: config`, the run's task `families` (the harness result's `config.families`, else `src/learning/families.json`) and its target `subjects` (formation, short model names). Trusted lessons the judge finds transferable are mirrored into the cross-board `lessons:meta` pool that every work surface recalls ([memory.md](memory.md) → Outcome lessons).
+- **Backfill.** Runs filed before imports learned are taught once with `DB_PATH=<db> bun run lessons backfill [--dry-run] [--limit N]`: valid scored runs only, `resolvedAt` = the run's completion, idempotent (a run that already has its lesson is skipped). Back up the database first.
+- **Self-exclusion (`x-marina-eval`).** The harness sends `x-marina-eval: benchmark=<dataset>; mode=<measure|live>` on every target call, never on judge calls (`asJudge`). Under `--lessons-mode measure` (the default) a Marina target recalls no lesson learned from the same benchmark, so the score is general Marina on this board; `--lessons-mode live` uses every lesson (a live entry). The mode is recorded in the run's `config.lessons_mode`, so measure and live runs never share a configuration hash.
+- **Served lessons per item.** `--lessons` asks a plain passthru target to inject lessons (`x-marina-lessons: on`); verify and crew targets recall them anyway. Each item records the lesson ids the target returned in `x-marina-lessons` (`lessons`, and `lessonsObserved` for observe mode); filing stores them in `benchmark_item_lessons` (migration 160: run, item, lesson id, `served` or `observed`, regime; ids only, at most 16 per item, append-only), read with `getBenchmarkItemLessons(run)`. This is the evidence later per-lesson accounting uses.
 
 ## Notes
 

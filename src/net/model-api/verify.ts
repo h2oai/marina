@@ -21,7 +21,8 @@ import { type DefaultSlotReader, resolveDefault } from "../../engine/default-res
 import type { Engine } from "../../engine/engine";
 import { getErrorMessage } from "../../engine/errors";
 import { Logger } from "../../engine/logger";
-import { lessonsBlock, recallAcross } from "../../learning/service";
+import { evalOption } from "../../learning/eval-context";
+import { lessonsBlock, lessonsHeaderValue, recallForWork } from "../../learning/service";
 import type { RepairLabel } from "../../repair/output-repair";
 import { repairToolCallMessage } from "../../repair/tool-call-repair";
 import type { EntityId } from "../../types";
@@ -832,18 +833,17 @@ export async function maybeVerifyChat(
   // 0. Lessons from past outcomes: the proposer (the lead) and the checker see
   // the relevant ones (MARINA_LESSONS=observe recalls without injecting).
   const lastUser = [...callerMessages].reverse().find((m) => m.role === "user");
-  const lessons = await recallAcross(
+  // Cross-board `meta` lessons ride a third of the budget; a measurement run
+  // (`x-marina-eval: …; mode=measure`) never sees lessons from its own board.
+  const lessons = await recallForWork(
     engine.db,
     ["tools", "code"],
     textOf(lastUser?.content).slice(0, 500),
-    { limit: 4, maxBytes: 800 },
+    { limit: 4, maxBytes: 800, ...evalOption(req) },
   );
   const block = lessonsBlock(lessons.inject);
   const messages = withLessons(callerMessages, block);
-  const lessonsHeader =
-    lessons.recalled.length === 0
-      ? "0"
-      : `${lessons.mode === "on" ? "" : "observe:"}${lessons.recalled.map((l) => l.id ?? "?").join(",")}`;
+  const lessonsHeader = lessonsHeaderValue(lessons);
 
   // 1. Proposer draft.
   const first = await callUpstream(

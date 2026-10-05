@@ -14,9 +14,9 @@
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { BudgetExhausted, isSpendCapRefusal } from "../call-spend-guard";
 import { draftAnswerKey } from "../../src/agent/budget-terminal";
 import { answerDigest } from "../../src/engine/benchmark-ledger";
+import { BudgetExhausted, isSpendCapRefusal } from "../call-spend-guard";
 import { mulberry32 } from "../stats";
 import type { BenchmarkResult, ResultItem } from "../types";
 import {
@@ -463,6 +463,8 @@ export interface ArmConfig {
   seed: number;
   offset: number;
   limit: number | null;
+  /** `read-swarm` settings (absent for every other formation). */
+  swarm?: Record<string, unknown>;
   /** The sampled query ids, hashed: the slice itself, whatever produced it. */
   queriesHash: string;
 }
