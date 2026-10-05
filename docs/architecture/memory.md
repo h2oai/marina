@@ -155,7 +155,12 @@ Recall never creates the `marina:lessons` account or its spaces as a side effect
 | `export.ts` | The allow-list readers (`listOwnedSpaceRecords` on the lessons account's `lessons:*` spaces, trust `trusted` only; `listRatifiedInstitutionalRecords`; promoted `benchmark_defaults` with numeric evidence; `listLedgerCells` with k ≥ 20; applied `world adopt` roles), tiers, slices, licence, lineage. |
 | `bundle.ts` | Directory I/O, `verifyBundle` (schema → pinned signature → file digests → item hashes), signed revocation lists. |
 | `import.ts` | Opt-in (`MARINA_UPSTREAM=on`); refuses unpinned, tampered, revoked, downgraded or same-generation-different-content bundles with an audit row; writes lessons and conventions into `upstream:*` spaces owned by `marina:upstream` with trust `imported`; `confirmImportedLesson`. |
+| `entitlement.ts` | `marina.entitlement.v1` tokens, signed by the publisher or a listed issuer and verified offline against the same pinned keys. `EntitlementVerifier` turns a proof into a grant. `ownBundleGrant` is the operator's assertion for their own `private` pack and never unlocks a `token` slice. |
+| `world.ts` | The `marina.world.v1` content profile: `world` items hold a data-only document (unknown keys refused) and `room_source` items hold inert text flagged `world.code`. Neither is ever compiled or run on import. |
+| `assemble.ts` | Builds and signs a bundle from items the caller already holds (world publishers, curated packs), with the same hashing, slicing and signing as export. |
 | `upstream-seed.ts` | The upstream-seed layer for default resolution (`env > local slot > family slot > upstream seed > built-in`): a seed answers only while no local `benchmark_defaults` row exists for its slot and its imported item is active. |
+
+Access: `accessPlan` in `import.ts` writes an item only when one of its slices is `open`, or is `token` or `private` and covered by the caller's grant. `--own` covers `private` slices only. A withheld or unselected item is neither written nor retired. A grant whose token nonce the publisher revoked refuses the import.
 
 Trust: `imported` is never served as local `trusted` and nothing an import does raises it. Lessons keep their original `resolved_at`, so the leakage rule (`visibleAt`) is unchanged. Confirmation happens only through a local, judged, `trusted` lesson that cites `upstream:<item_key>`; the imported record keeps `imported` and gains `confirmed_locally_by`.
 

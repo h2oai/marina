@@ -553,7 +553,7 @@ export function exportLearnedBundle(db: MarinaDB, opts: ExportOptions): ExportRe
     commercial_use: open ? "allowed" : "none",
     access: {
       model: accessModel,
-      entitlement_issuer: null,
+      entitlement_issuers: [],
       audience: null,
       entitlement: null,
       encryption: null,

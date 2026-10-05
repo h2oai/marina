@@ -12,7 +12,10 @@
  *       [--terms-file F] [--family name=bench1,bench2]... [--bench-corpus <path>]...
  *       [--instance-token T]... [--key-file F]
  *   DB_PATH=marina.db bun run learned import <dir> [--revocations <file>]... [--actor A]
- *       [--bench-corpus <path>]...
+ *       [--bench-corpus <path>]... [--slices id,id] [--entitlement <token.json>] [--own]
+ *   bun run learned entitle --artifact <id> --tiers <slice,slice> --licensee <label>
+ *       [--versions <range>] [--days N] [--audience host,host] [--key-file F]
+ *                                        sign an entitlement token (publisher key)
  *   bun run learned verify <dir> [--revocations <file>]...
  *   bun run learned diff <old-dir> <new-dir>
  *   bun run learned keygen <path>        a new Ed25519 key (0600) for YOUR instance; prints
@@ -23,6 +26,11 @@
  * (MARINA_LEARNED_PUBLISHER_KEYS plus the keys pinned in source). Import needs
  * MARINA_UPSTREAM=on. Licence: proprietary unless --open (whole bundle,
  * CC-BY-4.0) or --open-slice (e.g. the core tier only).
+ *
+ * Access at import: open slices need nothing. A paid (`token`) slice needs
+ * --entitlement, a publisher-signed token verified offline against the pinned
+ * keys. A `private` slice needs a token or --own (the operator's assertion that
+ * the pack is their own). Without either, only open items are written.
  */
 
 import { closeSync, existsSync, openSync, readFileSync, writeSync } from "node:fs";
@@ -30,6 +38,15 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { version as MARINA_VERSION } from "../package.json";
 import { verifyBundle, verifyRevocations } from "../src/learned/bundle";
+import {
+  type EntitlementGrant,
+  importContext,
+  issueEntitlement,
+  OfflineTokenVerifier,
+  ownBundleGrant,
+  revokedNonces,
+  verifyEntitlement,
+} from "../src/learned/entitlement";
 import { exportLearnedBundle } from "../src/learned/export";
 import { diffItems, renderDiff, sha256Hex } from "../src/learned/format";
 import { importLearnedBundle } from "../src/learned/import";
@@ -41,7 +58,7 @@ const REPO_ROOT = join(import.meta.dir, "..");
 
 function usage(): never {
   console.error(
-    "usage: bun run learned export|import|verify|diff|keygen … (see scripts/learned.ts)",
+    "usage: bun run learned export|import|entitle|verify|diff|keygen … (see scripts/learned.ts)",
   );
   process.exit(2);
 }
@@ -101,6 +118,15 @@ async function main(): Promise<number> {
       "key-file": { type: "string" },
       revocations: { type: "string", multiple: true },
       actor: { type: "string" },
+      slices: { type: "string" },
+      entitlement: { type: "string" },
+      own: { type: "boolean" },
+      artifact: { type: "string" },
+      tiers: { type: "string" },
+      licensee: { type: "string" },
+      versions: { type: "string" },
+      days: { type: "string" },
+      audience: { type: "string" },
     },
   });
   const [cmd, a, b] = positionals;
@@ -168,10 +194,42 @@ async function main(): Promise<number> {
     }
     case "import": {
       if (!a) usage();
+      const slices = values.slices
+        ?.split(",")
+        .map((x) => x.trim())
+        .filter(Boolean);
+      const revocations = readRevocations(values.revocations);
+      let entitlement: EntitlementGrant | undefined;
+      if (values.entitlement) {
+        const pinned = pinnedPublisherKeys();
+        const v = verifyBundle(a, pinned);
+        if (!v.ok) {
+          console.error(`Refused: ${v.error}`);
+          return 1;
+        }
+        const m = v.bundle.manifest;
+        const proof = JSON.parse(readFileSync(values.entitlement, "utf8")) as unknown;
+        const gated = (slices ?? m.slices.map((x) => x.id)).filter(
+          (id) => m.slices.find((x) => x.id === id)?.access === "token",
+        );
+        const decision = await verifyEntitlement(proof, importContext(m, gated), [
+          new OfflineTokenVerifier(
+            pinned,
+            revokedNonces(revocations, pinned, m.publisher.key_id, m.artifact_id),
+          ),
+        ]);
+        if (!decision.ok) {
+          console.error(`Refused: entitlement ${decision.verifier}: ${decision.reason}`);
+          return 1;
+        }
+        entitlement = decision.grant;
+      } else if (values.own) entitlement = ownBundleGrant(values.actor ?? "operator");
       const db = new MarinaDB(dbPath);
       try {
         const outcome = await importLearnedBundle(db, a, {
-          revocations: readRevocations(values.revocations),
+          revocations,
+          ...(slices?.length ? { slices } : {}),
+          ...(entitlement ? { entitlement } : {}),
           ...(values["bench-corpus"]?.length
             ? { benchmarkIndex: benchmarkIndex(values["bench-corpus"]) }
             : {}),
@@ -189,10 +247,36 @@ async function main(): Promise<number> {
           `  trust: imported (unconfirmed until local outcomes confirm); seeded ${r.seeded.length} empty slot(s); ${r.priors} prior(s); ${r.rolesCreated.length} role(s) created`,
         );
         for (const d of r.dropped) console.log(`  dropped ${d.item_key}: ${d.reason}`);
+        if (r.withheld.length)
+          console.log(
+            `  withheld ${r.withheld.length} item(s): entitlement required (--entitlement, or --own for your own private pack)`,
+          );
         for (const s of r.skipped) console.log(`  skipped ${s.item_key}: ${s.reason}`);
       } finally {
         db.close();
       }
+      return 0;
+    }
+    case "entitle": {
+      if (!values.artifact || !values.tiers || !values.licensee)
+        throw new Error("entitle needs --artifact, --tiers and --licensee");
+      const days = Number(values.days ?? 365);
+      if (!(days > 0)) throw new Error("--days must be positive");
+      const token = issueEntitlement(
+        {
+          artifact_id: values.artifact,
+          version_range: values.versions ?? "*",
+          tiers: values.tiers
+            .split(",")
+            .map((x) => x.trim())
+            .filter(Boolean),
+          licensee: { label: values.licensee },
+          ...(values.audience ? { audience: values.audience.split(",") } : {}),
+          not_after: new Date(Date.now() + days * 86_400_000).toISOString(),
+        },
+        signingKey(values["key-file"]),
+      );
+      console.log(JSON.stringify({ kind: "token", token }, null, 2));
       return 0;
     }
     case "verify": {

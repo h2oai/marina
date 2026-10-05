@@ -18,6 +18,7 @@ import type { AdoptionOffer } from "../src/engine/commands/evolve";
 import { learnedCommand } from "../src/engine/commands/learned";
 import { RETENTION_POLICIES } from "../src/engine/retention";
 import { signRevocations, verifyBundle } from "../src/learned/bundle";
+import { ownBundleGrant } from "../src/learned/entitlement";
 import { exportLearnedBundle } from "../src/learned/export";
 import {
   diffItems,
@@ -76,6 +77,8 @@ const pin = (k: { publicKey: string }): PinnedKey[] => [
   { label: "test", publicKey: k.publicKey, keyId: keyIdOfPublicKey(k.publicKey) },
 ];
 const ON = { MARINA_UPSTREAM: "on" } as NodeJS.ProcessEnv;
+/** These tests move the publisher's own private pack between its worlds (internal profile). */
+const OWN = ownBundleGrant("operator");
 
 const lesson = (domain: Lesson["domain"], text: string, over: Partial<Lesson> = {}): Lesson => ({
   domain,
@@ -390,7 +393,11 @@ describe("import", () => {
   it("refuses an unpinned or tampered bundle loudly, with an audit row", async () => {
     const { outDir } = exportTo(await sharedCurator());
     const target = freshDb();
-    const out = await importLearnedBundle(target, outDir, { pinned: pin(OTHER), env: ON });
+    const out = await importLearnedBundle(target, outDir, {
+      pinned: pin(OTHER),
+      env: ON,
+      entitlement: OWN,
+    });
     expect(out.ok).toBe(false);
     expect(target.listUpstreamEvents()[0]).toMatchObject({ action: "import", outcome: "refused" });
     expect(target.listLearnedItems()).toHaveLength(0);
@@ -399,7 +406,11 @@ describe("import", () => {
   it("lands lessons in upstream spaces with trust `imported`, never in local lessons", async () => {
     const { outDir, result } = exportTo(await sharedCurator());
     const target = freshDb();
-    const out = await importLearnedBundle(target, outDir, { pinned: pin(KEY), env: ON });
+    const out = await importLearnedBundle(target, outDir, {
+      pinned: pin(KEY),
+      env: ON,
+      entitlement: OWN,
+    });
     expect(out.ok).toBe(true);
     if (!out.ok) return;
     expect(out.report.skipped).toEqual([]);
@@ -425,7 +436,11 @@ describe("import", () => {
     });
     expect(recalled.recalled).toHaveLength(0);
     // Re-importing the same generation is a no-op.
-    const again = await importLearnedBundle(target, outDir, { pinned: pin(KEY), env: ON });
+    const again = await importLearnedBundle(target, outDir, {
+      pinned: pin(KEY),
+      env: ON,
+      entitlement: OWN,
+    });
     expect(again.ok && again.report.added).toBe(0);
     expect(again.ok && again.report.unchanged).toBe(result.items.length);
   });
@@ -457,7 +472,11 @@ describe("import", () => {
       reason: "first incumbent",
       created_at: 1,
     });
-    const out = await importLearnedBundle(target, outDir, { pinned: pin(KEY), env: ON });
+    const out = await importLearnedBundle(target, outDir, {
+      pinned: pin(KEY),
+      env: ON,
+      entitlement: OWN,
+    });
     expect(out.ok).toBe(true);
     if (!out.ok) return;
     expect(out.report.seeded).toEqual(["verify:checker"]);
@@ -489,7 +508,7 @@ describe("import", () => {
   it("stores ledger aggregates as down-weighted priors, never as ledger rows", async () => {
     const { outDir } = exportTo(await sharedCurator());
     const target = freshDb();
-    await importLearnedBundle(target, outDir, { pinned: pin(KEY), env: ON });
+    await importLearnedBundle(target, outDir, { pinned: pin(KEY), env: ON, entitlement: OWN });
     const priors = target.listEvidencePriors();
     expect(priors).toHaveLength(1);
     expect(priors[0]).toMatchObject({ n: 30, successes: 24, weight: PRIOR_WEIGHT });
@@ -500,7 +519,11 @@ describe("import", () => {
   it("creates roles under the upstream. prefix, create-only and unbound", async () => {
     const { outDir } = exportTo(await sharedCurator());
     const target = freshDb();
-    const out = await importLearnedBundle(target, outDir, { pinned: pin(KEY), env: ON });
+    const out = await importLearnedBundle(target, outDir, {
+      pinned: pin(KEY),
+      env: ON,
+      entitlement: OWN,
+    });
     expect(out.ok && out.report.rolesCreated).toEqual(["upstream.checker-v2"]);
     expect(target.getRole("checker-v2")).toBeUndefined();
     expect(target.getRole("upstream.checker-v2")?.traits).toContain("upstream.careful");
@@ -510,7 +533,11 @@ describe("import", () => {
   it("confirms an imported lesson only through a trusted local lesson that cites it", async () => {
     const { outDir } = exportTo(await sharedCurator());
     const target = freshDb();
-    const out = await importLearnedBundle(target, outDir, { pinned: pin(KEY), env: ON });
+    const out = await importLearnedBundle(target, outDir, {
+      pinned: pin(KEY),
+      env: ON,
+      entitlement: OWN,
+    });
     if (!out.ok) throw new Error(out.error);
     const item = target.listLearnedItems().find((i) => i.kind === "lesson")!;
     const sink = lessonSinkFor(target);
@@ -593,8 +620,12 @@ describe("lineage, diff, revocation", () => {
     expect(verified.ok && verified.bundle.diff).toEqual(v2.diff);
 
     const target = freshDb();
-    await importLearnedBundle(target, v1.outDir, { pinned: pin(KEY), env: ON });
-    const second = await importLearnedBundle(target, v2Dir, { pinned: pin(KEY), env: ON });
+    await importLearnedBundle(target, v1.outDir, { pinned: pin(KEY), env: ON, entitlement: OWN });
+    const second = await importLearnedBundle(target, v2Dir, {
+      pinned: pin(KEY),
+      env: ON,
+      entitlement: OWN,
+    });
     expect(second.ok && second.report).toMatchObject({ added: 1, retired: 1 });
     const retiredKey = v2.diff.find((d) => d.change === "retired")!.item_key;
     expect(target.getLearnedItem(v2.manifest.artifact_id, retiredKey)?.status).toBe("retired");
@@ -602,7 +633,11 @@ describe("lineage, diff, revocation", () => {
       target.listOwnedSpaceRecords(UPSTREAM_ACCOUNT, "upstream:lessons:forecast"),
     ).toHaveLength(0);
 
-    const downgrade = await importLearnedBundle(target, v1.outDir, { pinned: pin(KEY), env: ON });
+    const downgrade = await importLearnedBundle(target, v1.outDir, {
+      pinned: pin(KEY),
+      env: ON,
+      entitlement: OWN,
+    });
     expect(downgrade.ok).toBe(false);
     if (!downgrade.ok) expect(downgrade.error).toContain("downgrade");
   });
@@ -619,7 +654,7 @@ describe("lineage, diff, revocation", () => {
     const db = await sharedCurator();
     const { outDir, result } = exportTo(db);
     const target = freshDb();
-    await importLearnedBundle(target, outDir, { pinned: pin(KEY), env: ON });
+    await importLearnedBundle(target, outDir, { pinned: pin(KEY), env: ON, entitlement: OWN });
     const lessonKey = result.items.find((i) => i.kind === "lesson")!.item_key;
     const base = {
       schema: REVOCATIONS_SCHEMA,
@@ -643,6 +678,7 @@ describe("lineage, diff, revocation", () => {
     const again = await importLearnedBundle(target, outDir, {
       pinned: pin(KEY),
       env: ON,
+      entitlement: OWN,
       revocations: [itemRevocation],
     });
     expect(again.ok && again.report.revoked).toBe(1);
@@ -666,6 +702,7 @@ describe("lineage, diff, revocation", () => {
     const refused = await importLearnedBundle(fresh, outDir, {
       pinned: pin(KEY),
       env: ON,
+      entitlement: OWN,
       revocations: [versionRevocation],
     });
     expect(refused.ok).toBe(false);
@@ -677,6 +714,7 @@ describe("lineage, diff, revocation", () => {
     const bad = await importLearnedBundle(freshDb(), outDir, {
       pinned: pin(KEY),
       env: ON,
+      entitlement: OWN,
       revocations: [forged],
     });
     expect(bad.ok).toBe(false);
@@ -741,7 +779,7 @@ describe("learned command", () => {
   it("is read-only inspection of imports", async () => {
     const { outDir } = exportTo(await sharedCurator());
     const target = freshDb();
-    await importLearnedBundle(target, outDir, { pinned: pin(KEY), env: ON });
+    await importLearnedBundle(target, outDir, { pinned: pin(KEY), env: ON, entitlement: OWN });
     const cmd = learnedCommand({ db: target });
     const sent: string[] = [];
     const ctx = { send: (_: EntityId, m: string) => sent.push(m) } as unknown as RoomContext;

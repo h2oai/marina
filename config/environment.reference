@@ -933,7 +933,7 @@
 # @protected
 # MARINA_LEARNED_PUBLISHER_KEYS=
 
-# Dedicated Ed25519 key that signs exported learned bundles (base64 PKCS#8 DER, or PEM with escaped newlines; `bun run learned keygen <path>` makes one). Never the federation or arena key. Read only by `bun run learned export`.
+# Dedicated Ed25519 key that signs exported learned bundles (base64 PKCS#8 DER, or PEM with escaped newlines; `bun run learned keygen <path>` makes one). Never the federation or arena key. Read only by `bun run learned export` and `bun run learned entitle`.
 # @protected
 # @internal
 # MARINA_LEARNED_SIGNING_KEY=
