@@ -4,7 +4,10 @@
 /** Read swarm: reader evidence, mechanical quote checks, aggregation and the read budget. */
 
 import { describe, expect, it } from "bun:test";
-import { readSwarmRetriever } from "../src/arena/research/read-swarm-retriever";
+import {
+  type ReadSwarmBriefStats,
+  readSwarmRetriever,
+} from "../src/arena/research/read-swarm-retriever";
 import { isDateStrict } from "../src/arena/research/retrieve";
 import { foldForQuote } from "../src/arena/research/verify";
 import type { Candidate } from "../src/retrieval/first-move";
@@ -282,5 +285,98 @@ describe("read swarm: research retriever", () => {
     expect(out.report).toContain("- turnout high [Paper](https://example.com/a)");
     expect(out.costUsd).toBeCloseTo(0.012, 6);
     expect(out.retriever).toBe("inner+read-swarm");
+  });
+
+  it("reads the judged pages first under a read budget and reports counts per brief", async () => {
+    const pages = ["a", "b", "c"].map((id) => ({
+      url: `https://example.com/${id}`,
+      title: id,
+      text: `Page ${id}: the founder was Jane Roe of Galway, according to the archive.`,
+    }));
+    const inner = async () => ({
+      report: "",
+      sources: pages,
+      costUsd: 0,
+      searches: 1,
+      retriever: "inner",
+    });
+    const read: string[] = [];
+    const relevance: Record<string, number> = { a: 0.1, b: 0.2, c: 0.9 };
+    const stats: ReadSwarmBriefStats[] = [];
+    const r = readSwarmRetriever(inner, {
+      reader: {
+        complete: async (_system, user) => {
+          const id = ["a", "b", "c"].find((x) => user.includes(`Page ${x}:`)) ?? "?";
+          read.push(id);
+          return JSON.stringify({
+            relevant: true,
+            evidence: [{ clue: 1, quote: "the founder was Jane Roe of Galway" }],
+          });
+        },
+      },
+      maxDocs: 1,
+      judge: {
+        kind: "test",
+        model: "test/judge",
+        ask: async (request) => {
+          const docs = (request.state as { documents: Record<string, string> }).documents;
+          const answers = Object.fromEntries(
+            Object.entries(docs).map(([key, text]) => [
+              key,
+              {
+                type: "noul" as const,
+                noul: relevance[text.match(/Page (\w):/)?.[1] ?? ""] ?? 0,
+              },
+            ]),
+          );
+          return { answers, model: "test/judge", provider: "test", latencyMs: 1 };
+        },
+      },
+      onStats: (s) => stats.push(s),
+      pageText: async () => undefined,
+    });
+    const out = await r({ roundId: "j", since: "2026-01-01", request: "Founder?", queries: ["x"] });
+    expect(read).toEqual(["c"]);
+    expect(out.retriever).toBe("inner+read-swarm+judged");
+    expect(stats).toHaveLength(1);
+    expect(stats[0]).toMatchObject({ roundId: "j", pages: 3, docsRead: 1, order: "judged" });
+  });
+
+  it("keeps the retriever's order when the judge fails", async () => {
+    const inner = async () => ({
+      report: "",
+      sources: [
+        { url: "https://example.com/a", text: "Page a: text about rowing clubs in Boston." },
+        { url: "https://example.com/b", text: "Page b: text about rowing clubs in Galway." },
+      ],
+      costUsd: 0,
+      searches: 1,
+      retriever: "inner",
+    });
+    const read: string[] = [];
+    const stats: ReadSwarmBriefStats[] = [];
+    const r = readSwarmRetriever(inner, {
+      reader: {
+        complete: async (_system, user) => {
+          read.push(user.includes("Page a:") ? "a" : "b");
+          return JSON.stringify({ relevant: false, evidence: [] });
+        },
+      },
+      maxDocs: 1,
+      judge: {
+        kind: "test",
+        model: "test/judge",
+        ask: async () => {
+          throw new Error("judge down");
+        },
+      },
+      onStats: (s) => stats.push(s),
+      pageText: async () => undefined,
+    });
+    const out = await r({ roundId: "k", since: "2026-01-01", request: "Club?", queries: ["x"] });
+    expect(read).toEqual(["a"]);
+    expect(out.retriever).toBe("inner+read-swarm");
+    expect(stats[0]?.order).toBe("retriever");
+    expect(stats[0]?.judgeError).toContain("judge down");
   });
 });

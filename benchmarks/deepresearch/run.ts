@@ -45,13 +45,32 @@ export interface TaskRecord {
   startedAt: string;
   finishedAt: string;
   latencyMs: number;
-  cost: { leadUsd: number; checkerUsd: number; searchUsd: number; totalUsd: number };
+  cost: {
+    leadUsd: number;
+    checkerUsd: number;
+    searchUsd: number;
+    /** Retrieval add-ons the retriever meters itself (read-swarm readers). */
+    retrievalExtraUsd?: number;
+    totalUsd: number;
+  };
   /** Lessons injected into the plan (count only). */
   lessons: number;
+  /** What the retrieval add-ons did for this task (counts and labels only). */
+  retrieval?: Record<string, number | string>;
   report?: ResearchReportResult;
   factPass?: FactPassAudit;
   error?: string;
 }
+
+/**
+ * A task's retriever. Add-ons that meter their own spend (the read swarm's
+ * readers) report it through `extraUsd`, counted once per task, and summarise
+ * what they did through `summary`.
+ */
+export type TaskRetriever = Retriever & {
+  extraUsd?: () => number;
+  summary?: () => Record<string, number | string>;
+};
 
 export function taskPath(outDir: string, label: string, id: string): string {
   return join(outDir, label, "tasks", `${id}.json`);
@@ -88,7 +107,7 @@ async function pool<T>(items: T[], n: number, run: (item: T) => Promise<void>): 
 export async function generateReports(input: {
   tasks: BenchTask[];
   config: RunConfig;
-  retriever: () => Retriever;
+  retriever: () => TaskRetriever;
   outDir: string;
   concurrency: number;
   guard: SpendGuard;
@@ -127,12 +146,13 @@ export async function generateReports(input: {
       cost: { leadUsd: 0, checkerUsd: 0, searchUsd: 0, totalUsd: 0 },
       lessons: lessons ? lessons.split("\n").filter(Boolean).length : 0,
     };
+    const retriever = input.retriever();
     try {
       rec.report = await writeResearchReport(
         { prompt: task.prompt, language: task.language, exclude: task.exclude },
         {
           lead: { name: config.lead, complete: lead.complete },
-          retriever: input.retriever(),
+          retriever,
           ...(config.maxSections ? { maxSections: config.maxSections } : {}),
           ...(config.queriesPerSection ? { queriesPerSection: config.queriesPerSection } : {}),
           ...(config.gapRound === false ? { gapRound: false } : {}),
@@ -150,7 +170,11 @@ export async function generateReports(input: {
     rec.latencyMs = Date.now() - started;
     rec.cost.leadUsd = lead.usage.costUsd;
     rec.cost.searchUsd = rec.report?.searchUsd ?? 0;
-    rec.cost.totalUsd = rec.cost.leadUsd + rec.cost.searchUsd;
+    const extra = retriever.extraUsd?.() ?? 0;
+    if (retriever.extraUsd) rec.cost.retrievalExtraUsd = extra;
+    rec.cost.totalUsd = rec.cost.leadUsd + rec.cost.searchUsd + extra;
+    const summary = retriever.summary?.();
+    if (summary) rec.retrieval = summary;
     input.guard.record(rec.cost.totalUsd);
     save(outDir, rec);
     const c = rec.report?.citations;
