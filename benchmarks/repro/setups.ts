@@ -144,6 +144,15 @@ function crewServer(
   };
 }
 
+/**
+ * A ledger replicate-group key for `setup-arm`: characters a group key cannot
+ * hold (`+` in `obligations+argcheck`) become `_`, so every arm imports and
+ * every comparison names the same key.
+ */
+export function ledgerGroup(setup: string, arm: string): string {
+  return `${setup}-${arm}`.replace(/[^A-Za-z0-9:._@/-]/g, "_");
+}
+
 function importStep(
   flags: ReproFlags,
   dir: string,
@@ -194,8 +203,8 @@ function comparisons(benchmark: string, setup: string, arms: ArmSpec[]): Step[] 
   return rest.map((a) => ({
     kind: "compare" as const,
     benchmark,
-    a: `${setup}-${a.name}`,
-    b: `${setup}-${base.name}`,
+    a: ledgerGroup(setup, a.name),
+    b: ledgerGroup(setup, base.name),
   }));
 }
 
@@ -290,7 +299,7 @@ const hle: Setup = {
             "--file-to",
             `http://localhost:${p}`,
             "--group",
-            `hle-verified-${arm.name}`,
+            ledgerGroup("hle-verified", arm.name),
             "--out-dir",
             out,
           ],
@@ -306,7 +315,7 @@ const hle: Setup = {
             arm.name === "single"
               ? m.answer
               : JSON.stringify({ formation: "verification", lead: m.answer, skeptic: m.checker }),
-            `hle-verified-${arm.name}`,
+            ledgerGroup("hle-verified", arm.name),
           ),
         );
       }
@@ -401,7 +410,7 @@ const swebench: Setup = {
             "--db",
             flags.ledgerDb,
             "--group",
-            `swebench-${arm.name}`,
+            ledgerGroup("swebench", arm.name),
             ...common,
           ],
         });
@@ -628,7 +637,7 @@ const tau2: Setup = {
           "--require-clean",
         ],
       });
-      steps.push(importStep(flags, ledgerFile, "model", agent, `tau2-${domain}-${arm.name}`));
+      steps.push(importStep(flags, ledgerFile, "model", agent, ledgerGroup(`tau2-${domain}`, arm.name)));
     }
     steps.push({ kind: "stop", id: "tau2" });
     steps.push(...comparisons(`tau2-${domain}`, `tau2-${domain}`, arms));
