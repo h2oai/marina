@@ -42,7 +42,11 @@ export function normalizeAnswer(
   const confidence = num(a.confidence);
   const withConfidence = confidence === undefined ? {} : { confidence: clamp01(confidence) };
   if (question.type === "noul") {
-    const p = num(a.noul ?? a.probability ?? a.p);
+    // Chat models often answer a noul with the bare probability (`"M1": 0.9`)
+    // instead of `{ "noul": 0.9 }`; a bare number counts only inside 0..1.
+    const bare = num(raw);
+    const p =
+      bare !== undefined && bare >= 0 && bare <= 1 ? bare : num(a.noul ?? a.probability ?? a.p);
     if (p === undefined) throw new DecisionError(`answer ${id}: missing noul`, "invalid_response");
     return { type: "noul", noul: clamp01(p) };
   }
