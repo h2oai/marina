@@ -375,7 +375,14 @@ async function pinnedFetch(
 export async function guardedFetch(
   urlStr: string,
   init?: RequestInit,
-  opts?: { maxHops?: number },
+  opts?: {
+    maxHops?: number;
+    /**
+     * A caller's own policy for each URL, the first and every redirect target:
+     * a string refuses the hop with that reason (thrown), before any request.
+     */
+    refuseHop?: (url: string) => string | undefined;
+  },
 ): Promise<Response> {
   const maxHops = opts?.maxHops ?? 5;
   let currentUrl = urlStr;
@@ -387,6 +394,8 @@ export async function guardedFetch(
     // Resolve + validate once per hop, then pin the connection to the validated
     // IP so a DNS rebind can't swap in a private address between check and
     // connect. Every redirect target is re-resolved and re-pinned the same way.
+    const refused = opts?.refuseHop?.(currentUrl);
+    if (refused) throw new Error(refused);
     const check = await checkAndResolve(currentUrl);
     if ("error" in check) throw new Error(`SSRF blocked: ${check.error}`);
 

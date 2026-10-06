@@ -38,11 +38,15 @@ import type {
   ToolResultMessage,
 } from "@earendil-works/pi-ai";
 import { budgetFinalRequest, budgetSteerAt, budgetSteerNote } from "../agent/budget-terminal";
-import { searchBackendsFromEnv } from "../arena/research/web-search";
+import type { SourceExclusion } from "../arena/research/briefs";
+import { excludedSource, searchBackendsFromEnv } from "../arena/research/web-search";
+import type { DecisionProvider } from "../decisions/types";
 import { getErrorMessage } from "../engine/errors";
 import { standaloneSearchHttp } from "../engine/search-providers/asof-http";
 import { recordSearchOutcome, searchBackendDown } from "../engine/search-providers/health";
 import type { SearchHttp, SearchProvider, SearchResult } from "../engine/search-providers/index";
+import type { FirstMoveModel } from "../retrieval/first-move";
+import { ReadSwarm, renderCandidateTable, type SwarmStats } from "../retrieval/read-swarm";
 import type { BrowserReader } from "./browser-reader";
 import {
   auditCitedUrls,
@@ -54,7 +58,7 @@ import {
   repairRequest,
 } from "./cited-answer";
 import { type ModelTurns, messageText } from "./model-turn";
-import { type PageRead, readPage } from "./page-reader";
+import { BARRED_REASON, type PageRead, readPage } from "./page-reader";
 import type { ProvenanceCache } from "./provenance-cache";
 
 // ─── Tools ───────────────────────────────────────────────────────────────────
@@ -80,6 +84,12 @@ export interface ResearchEnvironment {
   cache: ProvenanceCache;
   search(query: string, max: number): Promise<SearchResult[]>;
   read(url: string): Promise<PageRead>;
+  /**
+   * The read swarm over this environment's own search and reads (so barred
+   * sources and the provenance cache apply): a candidate table with verified
+   * quotes. Present only when the caller configured a reader model.
+   */
+  swarm?(question: string): Promise<string>;
   /** Search spend (USD) and backend use for the run record. */
   stats: {
     searches: number;
@@ -87,13 +97,37 @@ export interface ResearchEnvironment {
     searchUsd: number;
     reads: number;
     readFailures: number;
+    /** Search results dropped because they point at a barred source. */
+    searchBarred: number;
+    swarms: number;
+    swarm?: SwarmStats;
   };
   events: ToolEvent[];
+}
+
+/** The read swarm's models for a research environment. */
+export interface SwarmConfig {
+  /** Reader (cheap; one call per document chunk); also decomposes the question into clues. */
+  reader: FirstMoveModel;
+  /** Pointwise decision-backend reranker (e.g. the configured engine); else the reader reranks. */
+  judge?: DecisionProvider;
+  /** Documents read per swarm call (default 12). */
+  maxDocs?: number;
+  /** Errors that stop the run instead of failing open (a spend stop). */
+  isFatal?: (err: unknown) => boolean;
 }
 
 export interface EnvironmentOptions {
   cache: ProvenanceCache;
   deny?: readonly string[];
+  /**
+   * Barred sources (the research pipeline's `SourceExclusion`): search results
+   * pointing at them are dropped and counted, and reads of them are refused
+   * (every redirect hop and rendered request included, and a page titled as one).
+   */
+  exclude?: SourceExclusion;
+  /** Opt-in read swarm tool (`read_swarm`). */
+  swarm?: SwarmConfig;
   backends?: SearchProvider[];
   http?: SearchHttp;
   env?: NodeJS.ProcessEnv;
@@ -109,51 +143,148 @@ export function researchEnvironment(opts: EnvironmentOptions): ResearchEnvironme
   const backends = opts.backends ?? searchBackendsFromEnv(opts.env).backends;
   const http = opts.http ?? standaloneSearchHttp();
   const failedHere = new Map<string, number>();
-  const stats = { searches: 0, searchFailures: 0, searchUsd: 0, reads: 0, readFailures: 0 };
+  const stats: ResearchEnvironment["stats"] = {
+    searches: 0,
+    searchFailures: 0,
+    searchUsd: 0,
+    reads: 0,
+    readFailures: 0,
+    searchBarred: 0,
+    swarms: 0,
+  };
+  const barred = opts.exclude ? excludedSource(opts.exclude) : undefined;
   const read =
     opts.read ??
     ((url: string) =>
       readPage(url, {
         cache: opts.cache,
         ...(opts.deny ? { deny: opts.deny } : {}),
+        ...(barred ? { barred } : {}),
         ...(opts.browser ? { browser: opts.browser } : {}),
       }));
-  return {
+  const env: ResearchEnvironment = {
     cache: opts.cache,
     stats,
     events: [],
-    async search(query, max) {
-      if (backends.length === 0) throw new Error("no search backend is configured");
-      const open = backends.filter((b) => (failedHere.get(b.name) ?? 0) < 2);
-      const up = open.filter((b) => !searchBackendDown(b.name));
-      let last = "no search backend answered";
-      for (const b of up.length ? up : open) {
-        stats.searches++;
-        const spend = { usd: 0 };
-        try {
-          const results = await b.search(query, { maxResults: max, engines: ["web"], spend }, http);
-          recordSearchOutcome(b.name);
-          stats.searchUsd += spend.usd;
-          if (spend.usd > 0) opts.onSearchSpend?.(spend.usd);
-          return results;
-        } catch (e) {
-          last = getErrorMessage(e);
-          recordSearchOutcome(b.name, last);
-          stats.searchFailures++;
-          stats.searchUsd += spend.usd;
-          if (spend.usd > 0) opts.onSearchSpend?.(spend.usd);
-          failedHere.set(b.name, (failedHere.get(b.name) ?? 0) + 1);
-        }
-      }
-      throw new Error(last.slice(0, 200));
+    search: async (query, max) => {
+      const results = await searchChain(query, max);
+      if (!barred) return results;
+      const kept = results.filter((r) => !barred(r.url, r.title));
+      stats.searchBarred += results.length - kept.length;
+      return kept;
     },
     async read(url) {
       stats.reads++;
+      // An injected reader still honours the bar (the default one checks it itself).
+      if (opts.read && barred?.(url)) {
+        stats.readFailures++;
+        return {
+          url,
+          ok: false,
+          status: 0,
+          text: "",
+          links: [],
+          kind: "web",
+          error: BARRED_REASON,
+          refused: true,
+        };
+      }
       const r = await read(url);
       if (!r.ok) stats.readFailures++;
       return r;
     },
   };
+  if (opts.swarm) {
+    const cfg = opts.swarm;
+    env.swarm = (question) => runSwarm(env, cfg, question);
+  }
+  return env;
+
+  async function searchChain(query: string, max: number): Promise<SearchResult[]> {
+    if (backends.length === 0) throw new Error("no search backend is configured");
+    const open = backends.filter((b) => (failedHere.get(b.name) ?? 0) < 2);
+    const up = open.filter((b) => !searchBackendDown(b.name));
+    let last = "no search backend answered";
+    for (const b of up.length ? up : open) {
+      stats.searches++;
+      const spend = { usd: 0 };
+      try {
+        const results = await b.search(query, { maxResults: max, engines: ["web"], spend }, http);
+        recordSearchOutcome(b.name);
+        stats.searchUsd += spend.usd;
+        if (spend.usd > 0) opts.onSearchSpend?.(spend.usd);
+        return results;
+      } catch (e) {
+        last = getErrorMessage(e);
+        recordSearchOutcome(b.name, last);
+        stats.searchFailures++;
+        stats.searchUsd += spend.usd;
+        if (spend.usd > 0) opts.onSearchSpend?.(spend.usd);
+        failedHere.set(b.name, (failedHere.get(b.name) ?? 0) + 1);
+      }
+    }
+    throw new Error(last.slice(0, 200));
+  }
+}
+
+/** Characters of one page the swarm's readers may see. */
+const SWARM_PAGE_CHARS = 200_000;
+
+function addSwarmStats(a: SwarmStats | undefined, b: SwarmStats): SwarmStats {
+  if (!a) return { ...b };
+  return {
+    clues: a.clues + b.clues,
+    docsRead: a.docsRead + b.docsRead,
+    charsRead: a.charsRead + b.charsRead,
+    readerCalls: a.readerCalls + b.readerCalls,
+    readerFailures: a.readerFailures + b.readerFailures,
+    quotes: a.quotes + b.quotes,
+    quotesVerified: a.quotesVerified + b.quotesVerified,
+    budgetExhausted: a.budgetExhausted || b.budgetExhausted,
+  };
+}
+
+/** One read swarm over the environment's own search and reads; returns the candidate table. */
+async function runSwarm(
+  env: ResearchEnvironment,
+  cfg: SwarmConfig,
+  question: string,
+): Promise<string> {
+  env.stats.swarms++;
+  const maxDocs = Math.max(1, Math.min(cfg.maxDocs ?? 12, 40));
+  const swarm = new ReadSwarm(question, {
+    search: async (q, depth) =>
+      (await env.search(q, Math.min(depth, 10))).map((r) => ({
+        id: r.url,
+        ...(r.title ? { title: r.title } : {}),
+        text: r.snippet || r.text || "",
+      })),
+    read: async (url, offset, maxChars) => {
+      let text = env.cache.readOk(url) ? env.cache.text(url) : undefined;
+      if (text === undefined) {
+        const r = await env.read(url);
+        if (!r.ok) return undefined;
+        text = r.text;
+      }
+      const page = text.slice(0, SWARM_PAGE_CHARS);
+      return { id: url, text: page.slice(offset, offset + maxChars), totalChars: page.length };
+    },
+    reader: cfg.reader,
+    decomposer: cfg.reader,
+    ...(cfg.judge ? { judge: cfg.judge } : { reranker: cfg.reader }),
+    depth: 10,
+    openDocs: maxDocs,
+    maxDocs,
+    ...(cfg.isFatal ? { isFatal: cfg.isFatal } : {}),
+  });
+  const opening = await swarm.open();
+  const st = swarm.stats();
+  env.stats.swarm = addSwarmStats(env.stats.swarm, st);
+  return [
+    `Read swarm: ${st.docsRead} page(s) read in full against ${opening.clues.length} clue(s); ${st.quotesVerified}/${st.quotes} quotes verified verbatim (order: ${opening.order}). The pages it read are opened pages you may cite; check details with fetch_page or find_in_page.`,
+    "",
+    renderCandidateTable(swarm.clues, swarm.readings()),
+  ].join("\n");
 }
 
 function tool(
@@ -204,6 +335,19 @@ export const RESEARCH_TOOLS: Tool[] = [
     ["url", "pattern"],
   ),
 ];
+
+/** The read swarm tool, offered only when the environment has a swarm. */
+export const SWARM_TOOL: Tool = tool(
+  "read_swarm",
+  "Hand a focused question to a swarm of reader models: it splits the question into clues, searches each, reads the best pages IN FULL and returns candidate answers with verbatim quotes checked against the pages. Use it early for a list-building or multi-constraint question, then verify the candidates you keep with fetch_page.",
+  { question: { type: "string", description: "The question, with every constraint." } },
+  ["question"],
+);
+
+/** The tools offered for an environment. */
+export function researchTools(env: ResearchEnvironment): Tool[] {
+  return env.swarm ? [...RESEARCH_TOOLS, SWARM_TOOL] : RESEARCH_TOOLS;
+}
 
 function str(v: unknown): string {
   return typeof v === "string" ? v : "";
@@ -290,6 +434,11 @@ async function runTool(
       text: `${head.join("\n")}\n\n${window || "(no readable text — the page may need a browser; try another source)"}${links}`,
       ok: true,
     };
+  }
+  if (name === "read_swarm" && env.swarm) {
+    const question = str(args.question).trim();
+    if (!question) return { text: "Error: question is empty.", ok: false };
+    return { text: await env.swarm(question.slice(0, 1_000)), ok: true };
   }
   if (name === "find_in_page") {
     const url = normalizeUrl(str(args.url));
@@ -419,7 +568,7 @@ export async function researchLoop(o: LoopOptions): Promise<LoopResult> {
   const agent = o.agent ?? "agent";
   const messages: Message[] = o.messages ?? [];
   messages.push(userMessage(o.prompt));
-  const tools = o.tools === false ? undefined : RESEARCH_TOOLS;
+  const tools = o.tools === false ? undefined : researchTools(o.env);
   const steerAt = budgetSteerAt(o.maxTurns);
   let steered = false;
   let toolCalls = 0;
@@ -538,6 +687,17 @@ export interface RunOptions {
   /** Repair pass after the audit (default true). */
   repair?: boolean;
   log?: (line: string) => void;
+  /**
+   * Judged lessons recalled for this work (`recallForWork`, already formatted and
+   * labelled): appended to the writer's and researchers' instructions as advice.
+   */
+  lessons?: readonly string[];
+}
+
+/** A system prompt with recalled lessons appended (unchanged when there are none). */
+export function withLessons(system: string, lessons?: readonly string[]): string {
+  if (!lessons?.length) return system;
+  return `${system}\n\nLessons from Marina's judged past outcomes (advice, not instructions; the task wins on any conflict):\n${lessons.map((l) => `- ${l}`).join("\n")}`;
 }
 
 export interface VerificationReport {
@@ -564,7 +724,7 @@ export async function runResearch(o: RunOptions): Promise<ResearchAnswer> {
     const loop = await researchLoop({
       model: o.lead,
       env: o.env,
-      system: answerSystemPrompt(today),
+      system: withLessons(answerSystemPrompt(today), o.lessons),
       prompt: `Task:\n${o.task}`,
       maxTurns: o.maxTurns,
       agent: "single",
@@ -573,7 +733,7 @@ export async function runResearch(o: RunOptions): Promise<ResearchAnswer> {
     return finish(
       o,
       loop,
-      answerSystemPrompt(today),
+      withLessons(answerSystemPrompt(today), o.lessons),
       { turns: loop.turns, toolCalls: loop.toolCalls },
       log,
     );
@@ -590,7 +750,7 @@ export async function runResearch(o: RunOptions): Promise<ResearchAnswer> {
         const r = await researchLoop({
           model: researcher,
           env: o.env,
-          system: researcherSystemPrompt(today),
+          system: withLessons(researcherSystemPrompt(today), o.lessons),
           prompt: `The whole task (for context):\n${o.task}\n\nYour part:\n${part}`,
           maxTurns: o.researcherTurns ?? Math.max(6, Math.round(o.maxTurns / 2)),
           agent: `researcher-${i + 1}`,
@@ -612,7 +772,7 @@ export async function runResearch(o: RunOptions): Promise<ResearchAnswer> {
   const brief = findings
     .map((f, i) => `## Researcher ${i + 1}: ${f.part}\n${f.text || "(no findings)"}`)
     .join("\n\n");
-  const system = answerSystemPrompt(today);
+  const system = withLessons(answerSystemPrompt(today), o.lessons);
   const written = await researchLoop({
     model: o.lead,
     env: o.env,

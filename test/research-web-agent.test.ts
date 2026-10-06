@@ -23,6 +23,7 @@ import {
   relevantPassages,
   researchEnvironment,
   researchLoop,
+  researchTools,
   runResearch,
   verifyCitations,
 } from "../src/research/web-agent";
@@ -309,5 +310,65 @@ describe("helpers", () => {
       },
     ]);
     expect(verifier.seen).toHaveLength(0);
+  });
+});
+
+describe("read swarm tool", () => {
+  test("offered only with a swarm; reads go through the environment, so barred pages stay unread", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "rwa-swarm-"));
+    try {
+      const backend: SearchProvider = {
+        name: "fake",
+        engines: ["web"],
+        search: async () => [
+          { title: "Barred", url: "https://barred.example.org/a", snippet: "x", source: "f" },
+          { title: "Open", url: "https://open.example.org/b", snippet: "x", source: "f" },
+        ],
+      };
+      const readUrls: string[] = [];
+      const read = async (url: string): Promise<PageRead> => {
+        readUrls.push(url);
+        return {
+          url,
+          ok: true,
+          status: 200,
+          text: "The answer is Blue Lake, 12 km long.",
+          links: [],
+          kind: "web",
+        };
+      };
+      const plain = researchEnvironment({
+        cache: new ProvenanceCache(dir),
+        backends: [backend],
+        read,
+      });
+      expect(researchTools(plain).map((t) => t.name)).not.toContain("read_swarm");
+      const reader = {
+        name: "fake-reader",
+        complete: async () =>
+          JSON.stringify({
+            relevant: true,
+            candidate: "Blue Lake",
+            quotes: [{ clue: 1, quote: "The answer is Blue Lake" }],
+            confidence: 0.9,
+            more: false,
+          }),
+      };
+      const env = researchEnvironment({
+        cache: new ProvenanceCache(dir),
+        backends: [backend],
+        read,
+        exclude: { urls: ["barred.example.org"] },
+        swarm: { reader, maxDocs: 4 },
+      });
+      expect(researchTools(env).map((t) => t.name)).toContain("read_swarm");
+      const table = await env.swarm!("Which lake is 12 km long?");
+      expect(table).toContain("Read swarm:");
+      expect(readUrls).toEqual(["https://open.example.org/b"]);
+      expect(env.stats.searchBarred).toBeGreaterThan(0);
+      expect(env.stats.swarms).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
