@@ -12,6 +12,7 @@
  *     [--gate-base-url http://localhost:3300/v1] [--gate-api-key-env OPENAI_API_KEY]
  *     [--search-limit 40] [--context-bytes 160000] [--state-bytes 10000]
  *     [--episode-bytes 6000] [--radius 1]
+ *     [--index-concurrency 8] [--drain-timeout-ms 21600000]
  *     [--ingest-notes off|on] [--notes-model <id>] [--notes-base-url http://localhost:3300/v1]
  *     [--notes-api-key-env OPENAI_API_KEY] [--notes-max-bytes 48000]
  *
@@ -61,6 +62,8 @@ const { values } = parseArgs({
     "gate-base-url": { type: "string", default: "http://localhost:3300/v1" },
     "gate-api-key-env": { type: "string", default: "OPENAI_API_KEY" },
     "search-limit": { type: "string", default: "40" },
+    "index-concurrency": { type: "string", default: "8" },
+    "drain-timeout-ms": { type: "string", default: String(6 * 3_600_000) },
     "context-bytes": { type: "string", default: String(DEFAULT_CONTEXT.contextBytes) },
     "state-bytes": { type: "string", default: String(DEFAULT_CONTEXT.stateBytes) },
     "episode-bytes": { type: "string", default: String(DEFAULT_CONTEXT.episodeBytes) },
@@ -190,7 +193,14 @@ async function handle(line: string): Promise<boolean> {
         write({ id, ok: true, ...(await store.query(String(request.query ?? ""))) });
         return true;
       case "drain":
-        write({ id, ok: true, ...(await store.drainIndex()) });
+        write({
+          id,
+          ok: true,
+          ...(await store.drainIndex({
+            concurrency: positive("index-concurrency", values["index-concurrency"]),
+            timeoutMs: positive("drain-timeout-ms", values["drain-timeout-ms"]),
+          })),
+        });
         return true;
       case "stats":
         write({ id, ok: true, ...store.stats() });

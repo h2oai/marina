@@ -306,12 +306,16 @@ export class LmeMemoryStore {
   /**
    * Embed every pending record (hybrid only) and wait for the background index
    * worker too: returns how many this call indexed and how many are still
-   * pending when the bound (`timeoutMs`, default 60 min) ran out.
+   * pending when the bound (`timeoutMs`, default 6 h) ran out. `concurrency`
+   * embedding requests are in flight at once (default 8).
    */
   async drainIndex(
-    timeoutMs = 3_600_000,
+    opts: { timeoutMs?: number; concurrency?: number } = {},
   ): Promise<{ indexed: number; pending: number; timedOut: boolean }> {
-    return worldMemoryService(this.db).drainIndex({ timeoutMs });
+    return worldMemoryService(this.db).drainIndex({
+      timeoutMs: opts.timeoutMs ?? 6 * 3_600_000,
+      concurrency: opts.concurrency ?? 8,
+    });
   }
 
   private read(ids: string[]): Map<string, Hit> {
