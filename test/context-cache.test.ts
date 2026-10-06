@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { DecisionProvider } from "../src/decisions/types";
 import { Engine } from "../src/engine/engine";
 import { contextCacheStats } from "../src/memory/context-cache";
 import { residentMemoryOperation } from "../src/memory/resident-service";
@@ -149,4 +150,42 @@ it("does not retain uncommitted context after rollback or serve a closed databas
   db.close();
   closed = true;
   await expect(context()).rejects.toThrow(/closed/);
+});
+
+it("never caches a relevance gate that failed open; an applied gate is cached", async () => {
+  let calls = 0;
+  let fail = true;
+  const provider: DecisionProvider = {
+    kind: "decisions-api",
+    model: "test/judge",
+    async ask(request) {
+      calls++;
+      if (fail) throw new Error("backend down");
+      const memories = (request.state as { memories: { id: string }[] }).memories;
+      return {
+        answers: Object.fromEntries(memories.map((m) => [m.id, { type: "noul", noul: 1 }])),
+        model: "test/judge",
+        provider: "decisions-api",
+        latencyMs: 1,
+      };
+    },
+  };
+  const gated = () =>
+    buildUnifiedContext(
+      db,
+      fixture.owner,
+      FIXTURE_QUERY,
+      { scope: "evidence", creditReflections: false, relevanceGate: { mode: "on" } },
+      { relevanceProvider: provider },
+    );
+  expect((await gated()).relevance?.outcome).toBe("fail_open");
+  const hits = contextCacheStats(db).hits;
+  await gated();
+  expect(contextCacheStats(db).hits).toBe(hits);
+  expect(calls).toBe(2);
+  fail = false;
+  expect((await gated()).relevance?.outcome).toBe("applied");
+  await gated();
+  expect(contextCacheStats(db).hits).toBe(hits + 1);
+  expect(calls).toBe(3);
 });
