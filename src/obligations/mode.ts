@@ -34,3 +34,26 @@ export function obligationsMode(env: NodeJS.ProcessEnv = process.env): Obligatio
 export function obligationsModel(env: NodeJS.ProcessEnv = process.env): string | undefined {
   return env.MARINA_OBLIGATIONS_MODEL?.trim() || undefined;
 }
+
+/**
+ * `MARINA_ARGCHECK=off|observe|on` — the argument check before a state-changing
+ * tool call in Marina's own agent loops (`argcheck.ts`). Default `off`: nothing
+ * is checked. `observe` checks and logs counts; `on` also refuses a call whose
+ * arguments the conversation does not support, once per call signature, with
+ * the reason (the model decides what to send next).
+ *
+ * The `/v1` passthru never reads this: a request opts in itself
+ * (`marina/argcheck:<model>` or `x-marina-argcheck: on|observe`).
+ */
+export function argcheckMode(env: NodeJS.ProcessEnv = process.env): ObligationsMode {
+  return parseObligationsMode(env.MARINA_ARGCHECK) ?? "off";
+}
+
+/**
+ * The model the argument check's judge uses when no decision layer is
+ * configured: `MARINA_ARGCHECK_MODEL`, else `MARINA_OBLIGATIONS_MODEL`, else
+ * undefined (the surface then uses the model already serving the work).
+ */
+export function argcheckModel(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  return env.MARINA_ARGCHECK_MODEL?.trim() || obligationsModel(env);
+}

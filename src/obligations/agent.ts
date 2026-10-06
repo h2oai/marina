@@ -35,6 +35,7 @@ import {
   type ObligationLedger,
   openObligations,
   settle,
+  statedLines,
   type ToolCallRecord,
 } from "./ledger";
 import { type ObligationsMode, obligationsMode } from "./mode";
@@ -162,6 +163,11 @@ export class AgentObligations {
       ...owed.slice(0, MAX_LISTED).map(line),
       "If one still needs an action you can take, take it now (a tool call). If it is declined or impossible, tell the requester why.",
     ].join("\n");
+  }
+
+  /** The requests as context for the argument check's judge (empty when off). */
+  stated(): string[] {
+    return this.mode() === "off" ? [] : statedLines(this.ledger);
   }
 
   summary(): ReturnType<typeof ledgerSummary> & { pending: number } {

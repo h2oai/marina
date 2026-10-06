@@ -42,6 +42,10 @@ Also run the `base` task split (the default) for board comparisons. Named splits
 
 `marina/obligations:<model>` is the plain request to `<model>` with Marina's obligations ledger on (see [passthru](../architecture/passthru.md)): each new user request is read into explicit obligations, a matching successful write call settles them, the open ones ride as a trailing note after the cache breakpoints, and a final reply that would leave one owed gets one retry that quotes the draft. The model's text is never edited. `MARINA_OBLIGATIONS_MODEL` names a cheaper model for the ledger's own calls (default: the agent model). The response carries `x-marina-obligations` (counters) and `x-marina-obligations-cost-usd`. The kit's `obligations` arm uses it (`--arm single,obligations`). Like `marina/verify:`, it adds control flow, so a leaderboard entry made with it is a custom submission.
 
+## The argument check as a model: `marina/argcheck:`
+
+`marina/argcheck:<model>` is the plain request to `<model>` with Marina's argument check on (see [passthru](../architecture/passthru.md)): before a reply's state-changing tool call goes back to τ², its ids, amounts, dates and options are looked up in the conversation, and a call with a value the user never stated and no tool returned gets one judgement and, if unsupported, one retry that names those values. The arguments are never rewritten, and the same call issued again passes. `MARINA_ARGCHECK_MODEL` names the judge (default: `MARINA_OBLIGATIONS_MODEL`, then the agent model). The response carries `x-marina-argcheck` (counters) and `x-marina-argcheck-cost-usd`. It combines with the ledger as `marina/obligations:marina/argcheck:<model>`. The kit's opt-in arms are `argcheck` and `obligations+argcheck` (`--arm single,argcheck,obligations+argcheck`). It adds control flow, so a leaderboard entry made with it is a custom submission.
+
 ## The verification formation as a model: `marina/verify:`
 
 `marina/verify:<proposer>[+<checker>]` is an OpenAI-compatible model id, with tool calling supported. For each request:

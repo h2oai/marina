@@ -205,14 +205,16 @@ export interface ObligationsPrep {
  * One ledger call through `proxyToUpstream` (spend, the daily cap and the trace
  * apply as for passthru). The named model's own answer only — no provider
  * fallback — and the operator's passthru pin wins as for the request itself.
+ * Also the argument check's chat judge (`routeReason: "argcheck"`).
  */
-function ledgerCompletion(
+export function ledgerCompletion(
   engine: Engine,
   model: string,
   forceModel: string,
   entityId: EntityId | undefined,
   signal: AbortSignal | undefined,
   spent: { usd: number },
+  routeReason = "obligations",
 ): CompleteText {
   return async (system, user) => {
     const resp = await proxyToUpstream(
@@ -227,7 +229,7 @@ function ledgerCompletion(
         stream: false,
       },
       forceModel || undefined,
-      { routeKind: "passthru", routeReason: "obligations", ...(entityId ? { entityId } : {}) },
+      { routeKind: "passthru", routeReason, ...(entityId ? { entityId } : {}) },
       { clientSignal: signal, providerFallback: false },
     );
     const cost = Number(resp.headers.get(COST_USD_HEADER));

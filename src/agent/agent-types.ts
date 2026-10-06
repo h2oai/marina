@@ -319,7 +319,7 @@ export type AgentEvent =
   // it, so every block / hold / route / retry is explainable and tunable.
   | {
       type: "decision";
-      stage: "gate" | "route" | "verify" | "repair";
+      stage: "gate" | "route" | "verify" | "repair" | "argcheck";
       verdict: string;
       subject: string;
       reason: string;

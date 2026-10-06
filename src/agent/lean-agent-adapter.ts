@@ -79,6 +79,7 @@ import {
   localProviderContextWindow,
 } from "../net/model-discovery";
 import { AgentObligations } from "../obligations/agent";
+import { AgentArgcheck } from "../obligations/argcheck-agent";
 import { readOnlyByName } from "../obligations/ledger";
 import { outputRepairMode, repairFinalAnswer } from "../repair/output-repair";
 import { MarinaClient, TELL_NOTICE_PREFIX } from "../sdk/client";
@@ -1209,6 +1210,18 @@ export class LeanAgentAdapter implements AgentHandle {
     complete: (system, user) => this.obligationsComplete(system, user),
     provider: () => harnessDecisionProvider(),
   });
+  /**
+   * Argument check (`MARINA_ARGCHECK=off|observe|on`, default off): before a
+   * `mutate`/`consequential` call runs, its ids, amounts, dates and options are
+   * looked up in the transcript; an unsupported call is refused once with the
+   * values named (the same call issued again runs). Judge on the decision
+   * layer, else the agent's own model.
+   */
+  private readonly argcheck = new AgentArgcheck({
+    complete: (system, user) => this.obligationsComplete(system, user),
+    provider: () => harnessDecisionProvider(),
+    stated: () => this.obligations.stated(),
+  });
 
   private focus: Focus | null = null;
   /** The focus text the action directive last carried in full (see `focusDirective`). */
@@ -1785,6 +1798,16 @@ export class LeanAgentAdapter implements AgentHandle {
           );
           if (held) return { block: true, reason: held };
         }
+        // Argument check (opt-in, MARINA_ARGCHECK): a call that changes state
+        // must use values the conversation established; refused once if not.
+        if (policy.risk === "mutate" || policy.risk === "consequential") {
+          const refusal = await this.argumentCheck(
+            context.toolCall.name,
+            args,
+            context.context.messages,
+          );
+          if (refusal) return { block: true, reason: refusal };
+        }
         const command = typeof args.command === "string" ? args.command.trim().toLowerCase() : "";
         const isChannelSend =
           (context.toolCall.name === "marina_channel" && args.action === "send") ||
@@ -1858,6 +1881,41 @@ export class LeanAgentAdapter implements AgentHandle {
         return noted;
       },
     });
+  }
+
+  /**
+   * The argument check before a state-changing call (MARINA_ARGCHECK). Returns
+   * a refusal reason (`on`, unsupported, first time for this exact call), else
+   * undefined. Fails open: a judge outage lets the call run. Emits a numbers-
+   * and-labels `decision` event for every call the mechanical pass flagged.
+   */
+  private async argumentCheck(
+    toolName: string,
+    args: Record<string, unknown>,
+    transcript: readonly unknown[],
+  ): Promise<string | undefined> {
+    if (this.argcheck.mode() === "off") return undefined;
+    const started = Date.now();
+    const { outcome, refusal } = await this.argcheck.check(toolName, args, transcript);
+    if (!outcome || outcome.flaggedValues === 0) return undefined;
+    const j = outcome.judgement;
+    this.emitEvent({
+      type: "decision",
+      stage: "argcheck",
+      verdict: refusal ? "nudge" : outcome.label,
+      subject: toolName,
+      reason: `${outcome.flaggedValues} of ${outcome.checked} argument values not found first-hand`,
+      signals: {
+        checked: outcome.checked,
+        flagged: outcome.flaggedValues,
+        ...(j?.supported === undefined ? {} : { supported: j.supported }),
+      },
+      ...(j?.provider ? { provider: j.provider } : {}),
+      ...(j?.model ? { model: j.model } : {}),
+      latencyMs: Date.now() - started,
+      ...(j?.costUsd === undefined ? {} : { costUsd: j.costUsd }),
+    });
+    return refusal;
   }
 
   /**

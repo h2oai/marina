@@ -390,6 +390,19 @@ export function nudgeNote(draft: string, owed: Obligation[]): string {
   ].join("\n");
 }
 
+/**
+ * The ledger's requests (newest 8, any status) as context for the argument
+ * check's judge: what was asked, its target and its constraints.
+ */
+export function statedLines(ledger: ObligationLedger): string[] {
+  return ledger.obligations
+    .slice(-8)
+    .map(
+      (o) =>
+        `- ${o.what}${o.target ? ` (target: ${o.target})` : ""}${o.constraints ? ` [${o.constraints}]` : ""}`,
+    );
+}
+
 /** Compact counters for a response header and logs (no content). */
 export function ledgerSummary(ledger: ObligationLedger): {
   total: number;
@@ -422,14 +435,14 @@ export const MAX_LEDGERS = 2000;
  * obligations hold request text, and a lost ledger is rebuilt from the
  * conversation itself on its next request (the passthru client resends it).
  */
-export class LedgerStore {
-  private readonly ledgers = new Map<string, ObligationLedger>();
+export class LedgerStore<T extends { key: string; updatedAt: number } = ObligationLedger> {
+  private readonly ledgers = new Map<string, T>();
   constructor(
     private readonly ttlMs = LEDGER_TTL_MS,
     private readonly max = MAX_LEDGERS,
   ) {}
 
-  get(key: string, now: number): ObligationLedger | undefined {
+  get(key: string, now: number): T | undefined {
     const l = this.ledgers.get(key);
     if (!l) return undefined;
     if (now - l.updatedAt > this.ttlMs) {
@@ -442,7 +455,7 @@ export class LedgerStore {
     return l;
   }
 
-  put(ledger: ObligationLedger): void {
+  put(ledger: T): void {
     this.ledgers.delete(ledger.key);
     this.ledgers.set(ledger.key, ledger);
     while (this.ledgers.size > this.max) {
