@@ -19,6 +19,8 @@
  * and how it injects the block.
  */
 
+import { dispatchedCall } from "./tool-call";
+
 export type ObligationStatus = "open" | "satisfied" | "declined";
 
 export interface Obligation {
@@ -280,21 +282,23 @@ export interface CallMatch {
 export function matchCall(
   ledger: ObligationLedger,
   call: ToolCallRecord,
-  isWrite: (name: string) => boolean,
+  isWrite: (name: string, args: unknown) => boolean,
 ): CallMatch {
   const none: CallMatch = { satisfied: [], ambiguous: [] };
-  if (!call.ok || !isWrite(call.name)) return none;
+  if (!call.ok || !isWrite(call.name, call.args)) return none;
   const candidates = ledger.obligations.filter((o) => o.status === "open" && o.turn <= call.turn);
   if (candidates.length === 0) return none;
-  if (isTransferTool(call.name)) {
+  // A dispatcher call matches by its inner tool too (an obligation may name either).
+  const inner = dispatchedCall(call.name, call.args);
+  if (isTransferTool(call.name) || (inner && isTransferTool(inner.name))) {
     for (const o of candidates) {
       o.status = "declined";
-      o.by = `transfer:${call.name}`;
+      o.by = `transfer:${inner && !isTransferTool(call.name) ? inner.name : call.name}`;
     }
     return { satisfied: candidates.map((o) => o.id), ambiguous: [] };
   }
-  const argIds = idTokens(call.args);
-  const callWords = words(call.name.replace(/_/g, " "));
+  const argIds = idTokens(inner?.args ?? call.args);
+  const callWords = words(`${call.name} ${inner?.name ?? ""}`.replace(/_/g, " "));
   type Scored = { o: Obligation; overlap: number; named: boolean; miss: boolean; worded: boolean };
   const scored: Scored[] = candidates.map((o) => {
     const obIds = idTokens(`${o.target ?? ""} ${o.what} ${o.constraints ?? ""}`);
@@ -305,7 +309,8 @@ export function matchCall(
       targetIds.size > 0 && argIds.size > 0 && ![...targetIds].some((t) => argIds.has(t));
     const ow = words(`${o.what} ${o.tools.join(" ").replace(/_/g, " ")}`);
     const worded = [...callWords].some((w) => ow.has(w));
-    return { o, overlap, named: o.tools.includes(call.name), miss, worded };
+    const named = o.tools.includes(call.name) || (!!inner && o.tools.includes(inner.name));
+    return { o, overlap, named, miss, worded };
   });
   const strong = scored.filter((s) => s.named && !s.miss);
   if (strong.length > 0) {

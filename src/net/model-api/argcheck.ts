@@ -32,10 +32,12 @@ import type { CompleteText } from "../../obligations/extract";
 import { LedgerStore, type ObligationLedger, statedLines } from "../../obligations/ledger";
 import {
   argcheckModel,
+  argcheckRuleBytes,
   argcheckTrigger,
   type ObligationsMode,
   parseObligationsMode,
 } from "../../obligations/mode";
+import { readOnlyCall } from "../../obligations/tool-call";
 import type { EntityId } from "../../types";
 import { messageText, type OpenAIMessage } from "../passthru-context";
 import { conversationKeys, ledgerCompletion } from "./obligations";
@@ -91,6 +93,8 @@ export interface ArgcheckPrep {
   mode: Exclude<ObligationsMode, "off">;
   /** Which write calls the judge sees (`MARINA_ARGCHECK_TRIGGER`). */
   trigger: ArgcheckTrigger;
+  /** Rule-passage budget for the judge (`MARINA_ARGCHECK_RULE_BYTES`, default 0). */
+  ruleBytes: number;
   memo: ArgcheckMemo;
   messages: OpenAIMessage[];
   tools: unknown[];
@@ -134,6 +138,7 @@ export function prepareArgcheck(
   return {
     mode: opts.mode,
     trigger: argcheckTrigger(),
+    ruleBytes: argcheckRuleBytes(),
     memo,
     messages,
     tools,
@@ -240,7 +245,11 @@ export async function finishArgcheck(
   }
   const writes = (firstMessage(parsed)?.tool_calls ?? [])
     .map((c) => ({ name: c.function?.name ?? "", args: parseArgs(c.function?.arguments) }))
-    .filter((c) => c.name && !isReadOnlyToolCall(c.name, prep.tools));
+    .filter(
+      (c) =>
+        c.name &&
+        !readOnlyCall(c.name, c.args, (n) => isReadOnlyToolCall(n, prep.tools), prep.tools),
+    );
   if (writes.length === 0) return done(resp, text, "no-write");
   const evidence = new EvidenceIndex(conversationEvidence(prep.messages));
   for (const call of writes.slice(0, MAX_CALLS_CHECKED)) {
@@ -249,6 +258,8 @@ export async function finishArgcheck(
         memo: prep.memo,
         mode: prep.mode,
         trigger: prep.trigger,
+        tools: prep.tools,
+        ruleBytes: prep.ruleBytes,
         judge: { ...(prep.provider ? { provider: prep.provider } : {}), complete: prep.complete },
         ...(prep.stated ? { stated: prep.stated } : {}),
       }).catch((e) => {

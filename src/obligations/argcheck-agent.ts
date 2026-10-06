@@ -28,7 +28,7 @@ import {
   newArgcheckMemo,
 } from "./argcheck";
 import type { CompleteText } from "./extract";
-import { argcheckMode, argcheckTrigger, type ObligationsMode } from "./mode";
+import { argcheckMode, argcheckRuleBytes, argcheckTrigger, type ObligationsMode } from "./mode";
 
 export interface AgentArgcheckOptions {
   /** One completion on the agent's own model (the judge when no decision layer is configured). */
@@ -37,6 +37,8 @@ export interface AgentArgcheckOptions {
   mode?: () => ObligationsMode;
   /** Which write calls the judge sees (default: `MARINA_ARGCHECK_TRIGGER`, read live). */
   trigger?: () => ArgcheckTrigger;
+  /** Rule-passage budget for the judge (default: `MARINA_ARGCHECK_RULE_BYTES`, read live). */
+  ruleBytes?: () => number;
   /** Stated requests (the obligations ledger's lines) for the judge, when it runs too. */
   stated?: () => string[];
   now?: () => number;
@@ -105,6 +107,7 @@ export class AgentArgcheck {
           memo: this.memo,
           mode,
           trigger: (this.opts.trigger ?? argcheckTrigger)(),
+          ruleBytes: (this.opts.ruleBytes ?? argcheckRuleBytes)(),
           judge: { ...(provider ? { provider } : {}), complete: this.opts.complete },
           ...(stated.length ? { stated } : {}),
           ...(signal ? { signal } : {}),

@@ -81,6 +81,7 @@ import {
 import { AgentObligations } from "../obligations/agent";
 import { AgentArgcheck } from "../obligations/argcheck-agent";
 import { readOnlyByName } from "../obligations/ledger";
+import { dispatchedCall, readOnlyCall } from "../obligations/tool-call";
 import { outputRepairMode, repairFinalAnswer } from "../repair/output-repair";
 import { MarinaClient, TELL_NOTICE_PREFIX } from "../sdk/client";
 import type { Perception } from "../types";
@@ -1800,7 +1801,12 @@ export class LeanAgentAdapter implements AgentHandle {
         }
         // Argument check (opt-in, MARINA_ARGCHECK): a call that changes state
         // must use values the conversation established; refused once if not.
-        if (policy.risk === "mutate" || policy.risk === "consequential") {
+        // A dispatcher call whose inner tool is a lookup changes nothing.
+        const dispatched = dispatchedCall(context.toolCall.name, args);
+        if (
+          (policy.risk === "mutate" || policy.risk === "consequential") &&
+          !(dispatched && readOnlyByName(dispatched.name))
+        ) {
           const refusal = await this.argumentCheck(
             context.toolCall.name,
             args,
@@ -1843,7 +1849,7 @@ export class LeanAgentAdapter implements AgentHandle {
           context.toolCall.name,
           context.args,
           !context.isError,
-          (name) => !readOnlyByName(name),
+          (name, callArgs) => !readOnlyCall(name, callArgs, readOnlyByName),
         );
         let noted: AfterToolCallResult | undefined;
         // The generic Code tool keeps a readable error result for callers.

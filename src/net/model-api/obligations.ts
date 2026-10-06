@@ -49,6 +49,7 @@ import {
   obligationsModel,
   parseObligationsMode,
 } from "../../obligations/mode";
+import { readOnlyCall } from "../../obligations/tool-call";
 import type { EntityId } from "../../types";
 import { messageText, type OpenAIMessage } from "../passthru-context";
 import { COST_USD_HEADER, type PassthruAuthResult } from "./shared";
@@ -356,7 +357,9 @@ export async function prepareObligations(
     prep.skipped = "no-tools";
     return prep;
   }
-  const isWrite = (name: string) => !isReadOnlyToolCall(name, tools);
+  // A dispatcher call is classified by the tool it runs (`tool-call.ts`).
+  const isWrite = (name: string, args: unknown) =>
+    !readOnlyCall(name, args, (n) => isReadOnlyToolCall(n, tools), tools);
   try {
     const fresh = requests.filter((r) => r.turn > ledger.userTurns);
     prep.extract = "none";

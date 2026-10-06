@@ -127,7 +127,7 @@ export class AgentObligations {
     name: string,
     args: unknown,
     ok: boolean,
-    isWrite: (n: string) => boolean,
+    isWrite: (n: string, args: unknown) => boolean,
   ): void {
     if (this.mode() === "off") return;
     const call: ToolCallRecord = { name, args, ok, turn: this.turn };
