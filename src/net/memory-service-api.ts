@@ -4,6 +4,7 @@
 import { RateLimiter } from "../auth/rate-limiter";
 import { readAssistance } from "../memory/assistance";
 import { getFederatedMemoryCache, putFederatedMemoryCache } from "../memory/cache";
+import { ingestNotesWanted } from "../memory/ingest-notes";
 import { createMemoryPlan, executeMemoryPlan } from "../memory/planning";
 import { retrieveMemoryCached } from "../memory/retrieval-cache";
 import type { MemorySearchInput, MemoryService } from "../memory/service";
@@ -34,6 +35,35 @@ function includeStale(body: Record<string, unknown>): boolean | undefined {
   if (body.include_stale !== undefined && typeof body.include_stale !== "boolean")
     throw new MemoryError(400, "invalid_input", "include_stale must be boolean");
   return body.include_stale as boolean | undefined;
+}
+
+/** `ingest_notes` on a write body: absent or a boolean (per-call override of the env switch). */
+function ingestNotesFlag(body: Record<string, unknown>): boolean | undefined {
+  if (body.ingest_notes !== undefined && typeof body.ingest_notes !== "boolean")
+    throw new MemoryError(400, "invalid_input", "ingest_notes must be boolean");
+  return body.ingest_notes as boolean | undefined;
+}
+
+/**
+ * After a committed record write or source capture: schedule ingest-time notes
+ * when wanted (`src/memory/ingest-notes.ts`). The receipt is returned as is,
+ * plus `ingest_notes: "scheduled"` when a job was queued; the notes never
+ * affect the write.
+ */
+function withIngestNotes<T extends { id: string }>(
+  service: MemoryService,
+  actor: MemoryActor,
+  space: string,
+  receipt: T,
+  flag: boolean | undefined,
+  content: unknown,
+  link: "records" | "sources",
+): T | (T & { ingest_notes: "scheduled" }) {
+  const text = typeof content === "string" ? content : JSON.stringify(content ?? "");
+  if (!ingestNotesWanted(flag, text)) return receipt;
+  return service.scheduleIngestNotes(actor, space, { [link]: [receipt.id] })
+    ? { ...receipt, ingest_notes: "scheduled" as const }
+    : receipt;
 }
 
 async function readBody(req: Request): Promise<Record<string, unknown>> {
@@ -532,7 +562,13 @@ export async function handleMemoryServiceApi(
           "unsupported_extraction",
           "This version accepts verbatim memories; automatic extraction is not configured",
         );
-      return json(repo.remember(actor, space, recordInput(body), key, service.embeddings?.id), 201);
+      const flag = ingestNotesFlag(body);
+      const input = recordInput(body);
+      const receipt = repo.remember(actor, space, input, key, service.embeddings?.id);
+      return json(
+        withIngestNotes(service, actor, space, receipt, flag, input.content, "records"),
+        201,
+      );
     }
     const record = rest.match(/^records\/([^/]+)$/);
     if (record) {
@@ -550,16 +586,19 @@ export async function handleMemoryServiceApi(
       }
       if (req.method === "PATCH") {
         const body = await readBody(req);
+        const flag = ingestNotesFlag(body);
+        const input = recordInput(body);
+        const receipt = repo.revise(
+          actor,
+          space,
+          id,
+          integer(body.expected_version, "expected_version", 1, Number.MAX_SAFE_INTEGER),
+          input,
+          key,
+          service.embeddings?.id,
+        );
         return json(
-          repo.revise(
-            actor,
-            space,
-            id,
-            integer(body.expected_version, "expected_version", 1, Number.MAX_SAFE_INTEGER),
-            recordInput(body),
-            key,
-            service.embeddings?.id,
-          ),
+          withIngestNotes(service, actor, space, receipt, flag, input.content, "records"),
         );
       }
     }
@@ -602,7 +641,12 @@ export async function handleMemoryServiceApi(
           throw new MemoryError(400, "invalid_input", "content is required");
         const session =
           body.session_id === undefined ? undefined : textValue(body.session_id, "session_id", 256);
-        return json(repo.capture(actor, space, body.content, session, key), 201);
+        const flag = ingestNotesFlag(body);
+        const receipt = repo.capture(actor, space, body.content, session, key);
+        return json(
+          withIngestNotes(service, actor, space, receipt, flag, body.content, "sources"),
+          201,
+        );
       }
       if (req.method === "GET") {
         const after = integer(

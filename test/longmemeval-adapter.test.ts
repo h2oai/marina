@@ -11,6 +11,7 @@ import {
   type LmeTrajectory,
   MAX_RECORD_BYTES,
   renderContext,
+  trajectoryNoteViews,
   trajectoryRecords,
   truncateBytes,
 } from "../benchmarks/longmemeval/records";
@@ -235,6 +236,61 @@ describe("LongMemEval store", () => {
     expect(() => gateProvider({ ...base, backend: "decisions" }, {})).toThrow(/MARINA_DECISIONS/);
   });
 
+  it("note views keep each state's action and only the page lines that are new", () => {
+    const t = run("v1", "find the pelican coupon", "failure", [
+      "[1] link 'Home'\n[2] link 'Cart'",
+      "[1] link 'Home'\n[2] link 'Cart'\n[12] link 'Pelican promo' coupon code PEL-42",
+    ]);
+    const views = trajectoryNoteViews(t);
+    expect([...views.keys()]).toEqual(["lme:v1:episode", "lme:v1:0", "lme:v1:1"]);
+    expect(views.get("lme:v1:1")).toContain("action: click('1')");
+    expect(views.get("lme:v1:1")).toContain("link 'Pelican promo' coupon code PEL-42");
+    expect(views.get("lme:v1:1")).not.toContain("link 'Home'");
+    expect(views.get("lme:v1:0")).toContain("link 'Home'");
+  });
+
+  it("--ingest-notes: notes are written per trajectory, linked to its records, and served", async () => {
+    const writer = {
+      id: "model:test/notes",
+      write: async () =>
+        "- The Pelican promo coupon code is PEL-42.\n- The coupon code was QQQ-99 for everyone.",
+    };
+    const store = LmeMemoryStore.open(join(dir, "n.db"), {
+      mode: "lexical",
+      searchLimit: 10,
+      context: small,
+      notes: { writer, maxBytes: 48_000 },
+    });
+    try {
+      const t = run("b2", "find the pelican coupon", "failure", [
+        "Home",
+        "[12] link 'Pelican promo' coupon code PEL-42",
+      ]);
+      store.insert(t);
+      const report = await store.writeNotes(t);
+      expect(report).toMatchObject({ outcome: "written", written: 1, ungrounded: 1, calls: 1 });
+      expect(store.stats()).toMatchObject({ trajectories: 1, notes: 1 });
+      const q = await store.query("What is the pelican promo coupon code?");
+      expect(q.items.some((i) => i.value.includes("(derived note)"))).toBe(true);
+      expect(q.used).toContain(report!.ids[0]!);
+      // Mechanical (no model): still notes, never a model call.
+      const mech = LmeMemoryStore.open(join(dir, "m2.db"), {
+        mode: "lexical",
+        searchLimit: 10,
+        context: small,
+        notes: { writer: null, maxBytes: 48_000 },
+      });
+      try {
+        mech.insert(t);
+        expect(await mech.writeNotes(t)).toMatchObject({ writer: "mechanical", calls: 0 });
+      } finally {
+        await mech.close();
+      }
+    } finally {
+      await store.close();
+    }
+  });
+
   it("refuses hybrid without an embedding provider", () => {
     expect(() =>
       LmeMemoryStore.open(join(dir, "h.db"), {
@@ -309,6 +365,34 @@ describe("LongMemEval sidecar flag plumbing (offline)", () => {
     expect(JSON.stringify(query.items)).toContain("PEL-42");
   });
 
+  it("--ingest-notes on (no model) writes mechanical notes and reports counts; bad values refused", async () => {
+    const { code, replies } = await sidecar(
+      ["--ingest-notes", "on", "--search-limit", "5"],
+      [
+        { id: 1, op: "insert", trajectory },
+        { id: 2, op: "stats" },
+        { id: 3, op: "close" },
+      ],
+    );
+    expect(code).toBe(0);
+    const insert = replies.find((r) => r.id === 1)!;
+    expect(insert.ok).toBe(true);
+    expect(insert.notes).toMatchObject({ writer: "mechanical", calls: 0 });
+    expect(JSON.stringify(insert.notes)).not.toContain("PEL-42"); // counts only, no content
+    expect(replies.find((r) => r.id === 2)).toMatchObject({ ok: true, trajectories: 1 });
+    const off = await sidecar(
+      [],
+      [
+        { id: 1, op: "insert", trajectory },
+        { id: 2, op: "close" },
+      ],
+    );
+    expect(off.replies[0]!.notes).toBeUndefined();
+    const bad = await sidecar(["--ingest-notes", "maybe"], []);
+    expect(bad.code).not.toBe(0);
+    expect(bad.err).toMatch(/--ingest-notes must be one of/);
+  });
+
   it("the Python backend passes every flag to the sidecar and never a key", async () => {
     const python = Bun.which("python3");
     if (!python) return; // the harness side is Python; skip where it is absent
@@ -329,7 +413,7 @@ describe("LongMemEval sidecar flag plumbing (offline)", () => {
       `sys.path.insert(0, ${JSON.stringify(dir)})`,
       `sys.path.insert(0, ${JSON.stringify(join(import.meta.dir, "../benchmarks/longmemeval"))})`,
       "import marina_memory",
-      `m = marina_memory.MarinaMemory({"marina_root": ${JSON.stringify(join(import.meta.dir, ".."))}, "gate": "on", "gate_backend": "model", "gate_model": "qwen/qwen3.5-9b", "gate_max": 5})`,
+      `m = marina_memory.MarinaMemory({"marina_root": ${JSON.stringify(join(import.meta.dir, ".."))}, "gate": "on", "gate_backend": "model", "gate_model": "qwen/qwen3.5-9b", "gate_max": 5, "ingest_notes": "on", "notes_model": "openrouter/google/gemini-2.5-flash-lite", "notes_api_key_env": "LME_NOTES_KEY", "notes_max_bytes": 24000})`,
       "print(json.dumps(m.argv('/tmp/x.db')))",
       "try:",
       `    marina_memory.MarinaMemory({"marina_root": ${JSON.stringify(join(import.meta.dir, ".."))}, "gate": "on", "retrieval": "raw"})`,
@@ -340,7 +424,11 @@ describe("LongMemEval sidecar flag plumbing (offline)", () => {
     const proc = Bun.spawn([python, "-c", script], {
       stdout: "pipe",
       stderr: "pipe",
-      env: { ...process.env, OPENAI_API_KEY: "sk-test-never-on-argv" },
+      env: {
+        ...process.env,
+        OPENAI_API_KEY: "sk-test-never-on-argv",
+        LME_NOTES_KEY: "sk-notes-never-on-argv",
+      },
     });
     const out = await new Response(proc.stdout).text();
     expect(await proc.exited).toBe(0);
@@ -353,7 +441,12 @@ describe("LongMemEval sidecar flag plumbing (offline)", () => {
     expect(flag("--gate-model")).toBe("qwen/qwen3.5-9b");
     expect(flag("--gate-max")).toBe("5");
     expect(flag("--gate-api-key-env")).toBe("OPENAI_API_KEY");
+    expect(flag("--ingest-notes")).toBe("on");
+    expect(flag("--notes-model")).toBe("openrouter/google/gemini-2.5-flash-lite");
+    expect(flag("--notes-api-key-env")).toBe("LME_NOTES_KEY");
+    expect(flag("--notes-max-bytes")).toBe("24000");
     expect(argv.join(" ")).not.toContain("sk-test-never-on-argv");
+    expect(argv.join(" ")).not.toContain("sk-notes-never-on-argv");
     expect(verdict).toBe("refused");
   });
 });
