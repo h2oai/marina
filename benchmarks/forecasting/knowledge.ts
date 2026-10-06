@@ -40,6 +40,7 @@ export const MODEL_RELEASES: Record<string, string> = {
   "anthropic/claude-opus-5.5": "2026-09-22",
   "anthropic/claude-sonnet-5.5": "2026-09-28",
   "anthropic/claude-fable-5.1": "2026-09-01",
+  "google/gemini-3.1-pro-preview": "2026-02-19",
   "openai/gpt-6-astra-pro": "2026-09-04",
   "openai/gpt-6.1-sol-pro": "2026-09-29",
   "openai/gpt-6-luna": "2026-09-22",

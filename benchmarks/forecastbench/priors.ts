@@ -34,7 +34,12 @@ export interface DatasetPrior {
   byDate: Record<string, number>;
   /** How it was made (method or reference class), for the context and the audit trail. */
   basis: string;
+  /** A series question: its latest readings before the cutoff (oldest first), shown to the runs. */
+  recent?: Array<{ date: string; value: number }>;
 }
+
+/** Readings shown to the runs: enough to see the level and the recent moves. */
+const RECENT_READINGS = 12;
 
 export type HistoryFn = (
   ref: SeriesRef,
@@ -157,6 +162,7 @@ export async function datasetPriors(
           prior: supplied(byDate, cutoff, `${ref.source} ${ref.id} ${c.method}`),
           byDate,
           basis: `the series' own history before ${due}: ${c.detail}`,
+          recent: h.points.slice(-RECENT_READINGS),
         });
         continue;
       }
@@ -187,5 +193,8 @@ export function priorLine(p: DatasetPrior): string {
   const dates = Object.entries(p.byDate)
     .map(([d, v]) => `${d}: ${v}`)
     .join(", ");
-  return `Statistical prior (${p.basis}): ${dates}. Start from it; move away only for specific evidence.`;
+  const recent = p.recent?.length
+    ? ` Latest readings: ${p.recent.map((r) => `${r.date} ${r.value}`).join(", ")}.`
+    : "";
+  return `Statistical prior (${p.basis}): ${dates}.${recent} Start from it; move away only for specific evidence (a scheduled release, an event, news) — not for a hunch about direction.`;
 }

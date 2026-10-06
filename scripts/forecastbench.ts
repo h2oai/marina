@@ -14,6 +14,7 @@
  *   bun run forecastbench resolve [--due …]                 score resolved questions, learn from them
  *   bun run forecastbench select … [--resume]               choose up to 3 configurations by backtest
  *   bun run forecastbench baseline [--rounds a,b]           score the model-free priors on resolved rounds
+ *   bun run forecastbench learn [--runs <dir>]              backtest answers → resolve → lessons
  *   bun run forecastbench status
  *
  * `select` also files its winner (chosen on the slot's selection split) as an earned promotion on
@@ -36,8 +37,8 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { backtestItems, resolvedRounds } from "../benchmarks/forecastbench/backtest";
 import {
@@ -49,6 +50,7 @@ import {
   resolutionDates,
 } from "../benchmarks/forecastbench/dataset";
 import { roundPriors, savedPriors } from "../benchmarks/forecastbench/history-cache";
+import { forecastsFrom } from "../benchmarks/forecastbench/map";
 import { assemble, meanCost, resolveRound, runRound } from "../benchmarks/forecastbench/run";
 import {
   coverage,
@@ -66,9 +68,10 @@ import {
 } from "../benchmarks/forecasting/cli";
 import { depsForConfig, forecasterFor } from "../benchmarks/forecasting/configs";
 import { attachWorldSpend } from "../benchmarks/forecasting/shared";
+import { priorAnswer } from "../src/forecast/prior-answer";
+import type { TypedForecastAnswer } from "../src/forecast/typed";
 import { forecastLessonsFor } from "../src/learning/forecast-bridge";
 import { enableOutcomeLearning, noteOutcome, settleOutcomes } from "../src/learning/service";
-import { priorAnswer } from "../src/forecast/prior-answer";
 import { MarinaDB } from "../src/persistence/database";
 
 const BENCHMARK = "forecastbench";
@@ -103,6 +106,7 @@ const { positionals, values } = parseArgs({
     budget: { type: "string" },
     model: { type: "string" },
     yes: { type: "boolean" },
+    runs: { type: "string" },
     "dry-run": { type: "boolean" },
   },
 });
@@ -405,6 +409,84 @@ function halfOf(req: { answer: { type: string; options?: Array<{ id: string }> }
   return Object.fromEntries((req.answer.options ?? []).map((o) => [o.id, 0.5]));
 }
 
+/**
+ * Learn from backtest answers: every answer a selection journal holds
+ * (`<selection>-runs/*.jsonl`; `--runs <dir>`) becomes its round's journal and
+ * goes through `resolve` — scored on the published resolutions, worst first
+ * into the outcome-learning loop, each question once. The prior-only baseline
+ * teaches nothing and is skipped. Lessons are visible only after each outcome
+ * was known, so later backtests cannot see them early.
+ */
+async function learnCmd(db: MarinaDB): Promise<number> {
+  const dir =
+    values.runs ?? join(dirname(selectionPath()), `${basename(selectionPath(), ".json")}-runs`);
+  if (!existsSync(dir)) {
+    log(`no ${dir}; run \`select\` first or pass --runs <dir>`);
+    return 1;
+  }
+  enableOutcomeLearning(db);
+  let resolved = 0;
+  let learned = 0;
+  for (const file of readdirSync(dir).filter((f) => f.endsWith(".jsonl"))) {
+    const byDue = new Map<string, Array<{ id: string; answer: TypedForecastAnswer }>>();
+    let label = basename(file, ".jsonl");
+    for (const line of readFileSync(join(dir, file), "utf8").split("\n")) {
+      if (!line.trim()) continue;
+      const row = JSON.parse(line) as {
+        config?: { label?: string; priorOnly?: boolean };
+        entry?: { id: string; answer?: TypedForecastAnswer };
+      };
+      if (row.config?.priorOnly) break;
+      if (row.config?.label) label = row.config.label;
+      const e = row.entry;
+      const due = e?.id.match(/^forecastbench:(\d{4}-\d{2}-\d{2})\//)?.[1];
+      if (!e?.answer || !due) continue;
+      byDue.set(due, [...(byDue.get(due) ?? []), { id: e.id, answer: e.answer }]);
+    }
+    for (const [due, entries] of byDue) {
+      const set = await fetchQuestionSet(due);
+      const byId = new Map(
+        set.questions.map((q) => [`forecastbench:${due}/${q.source}/${q.id}`, q]),
+      );
+      const journal = join(roundDir(due), `learn-${label.replace(/[^\w.+-]+/g, "_")}.jsonl`);
+      mkdirSync(roundDir(due), { recursive: true });
+      writeFileSync(
+        journal,
+        entries
+          .map(({ id, answer }) => {
+            const q = byId.get(id);
+            const forecasts = q && forecastsFrom(q, answer, null);
+            return q && forecasts
+              ? JSON.stringify({
+                  key: `${q.source}|${q.id}`,
+                  ok: true,
+                  forecasts,
+                  costUsd: answer.costUsd ?? 0,
+                  at: new Date().toISOString(),
+                })
+              : "";
+          })
+          .filter(Boolean)
+          .join("\n") + "\n",
+      );
+      const r = await resolveRound({
+        set,
+        journal,
+        resolutions: await fetchResolutionSet(due),
+        db,
+        config: label,
+        learn: (o) => noteOutcome(db, o),
+      });
+      resolved += r.resolved;
+      learned += r.learned;
+      log(`${label} · ${due}: resolved ${r.resolved} · learned ${r.learned}`);
+    }
+  }
+  await settleOutcomes(db);
+  log(`learned from ${learned} of ${resolved} newly resolved backtest answers`);
+  return 0;
+}
+
 function statusCmd(db: MarinaDB): number {
   for (const r of db.listExternalSubmissions(BENCHMARK, 20)) {
     log(
@@ -431,11 +513,13 @@ async function main(): Promise<number> {
         return await resolveCmd(db);
       case "select":
         return await selectCmd(db);
+      case "learn":
+        return await learnCmd(db);
       case "status":
         return statusCmd(db);
       default:
         console.error(
-          `unknown command ${cmd} (fetch | estimate | run | write | upload | resolve | select | baseline | status)`,
+          `unknown command ${cmd} (fetch | estimate | run | write | upload | resolve | select | baseline | learn | status)`,
         );
         return 2;
     }

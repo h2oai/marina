@@ -118,3 +118,16 @@ bun run forecastbench resolve --due 2026-09-27
 `resolve` reads the round's published resolution set and scores each answered question. It
 hands each outcome to the outcome-learning loop, worst first, so that later forecasts recall the
 lessons. Each question is recorded once (`forecastbench-outcome`).
+
+Backtest answers teach the same way. `learn` turns every answer a selection journal holds
+(`<selection>-runs/*.jsonl`, or `--runs <dir>`) into its round's journal and runs `resolve` on it;
+the prior-only baseline is skipped. Lessons are visible only after each outcome was known, so a
+later backtest cannot see them early.
+
+```bash
+bun run forecastbench learn --runs data/forecastbench/selection-runs
+```
+
+The lesson writer and judge call this Marina's own `/v1`. A CLI process authenticates with the
+operator's first `MODEL_API_KEYS` secret, else the local profile's key file beside `DB_PATH`, so
+its lessons are judged rather than stored unverified.
