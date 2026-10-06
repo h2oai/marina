@@ -161,6 +161,8 @@ describe("arms and policy", () => {
       "https://github.com/RDI-Foundation/mind2web2-agentbeats-leaderboard",
       "https://github.zh-ak.com/OSU-NLP-Group/Mind2Web-2",
       "https://deepwiki.com/OSU-NLP-Group/Mind2Web-2",
+      "https://openreview.net/forum?id=AUaW6DS9si&noteId=8JJiUryMhc",
+      "https://proceedings.neurips.cc/paper_files/paper/2025/file/fdcec9f5b99aa4fc8f4fb8487802d737-Paper-Datasets_and_Benchmarks_Track.pdf",
       "https://hf-p-cfw.fyan.top/datasets/osunlp/Mind2Web-2/resolve/main/test_set.csv",
       "https://82.156.9.71:9000/OSU-NLP-Group/Mind2Web-2",
       "https://github.com/OSU-NLP-Group/QUEST/tree/main/evaluation/Mind2Web2/x/eval_scripts",

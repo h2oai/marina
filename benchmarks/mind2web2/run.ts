@@ -173,9 +173,14 @@ export const M2W2_EXCLUDE: SourceExclusion = {
     "paperswithcode.com/paper/mind2web-2-evaluating-agentic-search-with",
     "paperswithcode.com/dataset/mind2web-2",
     "scribd.com/document/885769297",
+    // the NeurIPS 2025 (Datasets and Benchmarks) version and its review forum
+    "openreview.net/forum?id=auaw6ds9si*",
+    "openreview.net/pdf?id=auaw6ds9si*",
+    "*/paper_files/paper/2025/*/fdcec9f5b99aa4fc8f4fb8487802d737*",
   ],
   titles: [
     "Mind2Web 2: Evaluating Agentic Search with Agent-as-a-Judge",
+    "Mind2Web 2: Evaluating Agentic Search",
     "osunlp/Mind2Web-2",
     "OSU-NLP-Group/Mind2Web-2",
     "Mind2Web 2 Leaderboard",
