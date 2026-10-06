@@ -17,6 +17,12 @@ import type {
 import { type EmbeddingProvider, truncateEmbeddingInput, validEmbedding } from "./embeddings";
 import { configuredMemoryFederation, type MemoryFederation } from "./federation";
 import { runMemoryImport } from "./import-runner";
+import {
+  type IngestNotesInput,
+  type IngestNotesReport,
+  type NoteWriter,
+  writeIngestNotes,
+} from "./ingest-notes";
 import { ratificationPolicy } from "./institutional";
 import { configuredMemoryPlanner, type MemoryPlanner } from "./planning";
 import { memoryQueryExpansion } from "./query-expansion";
@@ -39,6 +45,12 @@ export class MemoryService {
   private working = false;
   private stopping = false;
   private publications = new Set<Promise<unknown>>();
+  /** Ingest-time notes in flight (drained by `close`), and the source sets they cover. */
+  private ingestions = new Set<Promise<IngestNotesReport>>();
+  private ingesting = new Set<string>();
+  private readonly ingestAbort = new AbortController();
+  /** Writer override for ingest-time notes: undefined = the environment's, null = mechanical. */
+  ingestNoteWriter?: NoteWriter | null;
   private logger = new Logger();
   constructor(
     readonly db: MarinaDB,
@@ -285,10 +297,59 @@ export class MemoryService {
     this.worker = undefined;
   }
 
+  /**
+   * Write ingest-time notes for committed sources in the background. The source
+   * write has already returned; a note failure is logged (counts only) and never
+   * reaches it. Returns false when the same source set is already in flight.
+   */
+  scheduleIngestNotes(
+    actor: MemoryActor,
+    space: string,
+    input: Omit<IngestNotesInput, "writer" | "embeddingModel">,
+  ): boolean {
+    const key = `${space}|${[...(input.records ?? []), ...(input.sources ?? [])].join(",")}`;
+    if (this.ingestAbort.signal.aborted || this.ingesting.has(key)) return false;
+    this.ingesting.add(key);
+    const promise = writeIngestNotes(this.repository, actor, space, {
+      ...input,
+      signal: this.ingestAbort.signal,
+      ...(this.ingestNoteWriter === undefined ? {} : { writer: this.ingestNoteWriter }),
+      ...(this.embeddings ? { embeddingModel: this.embeddings.id } : {}),
+    }).then((report) => {
+      this.logger.debug(
+        "memory",
+        `ingest notes ${report.outcome}${report.reason ? ` (${report.reason})` : ""}: writer=${report.writer} chunks=${report.chunks} calls=${report.calls} written=${report.written} ungrounded=${report.ungrounded} duplicates=${report.duplicates}${report.fallback ? ` fallback=${report.fallback}` : ""}`,
+      );
+      return report;
+    });
+    this.ingestions.add(promise);
+    void promise.finally(() => {
+      this.ingestions.delete(promise);
+      this.ingesting.delete(key);
+    });
+    return true;
+  }
+
+  /** Settle every scheduled ingest-note job (tests, shutdown); returns their reports. */
+  async ingestNotesIdle(): Promise<IngestNotesReport[]> {
+    const out: IngestNotesReport[] = [];
+    const seen = new Set<Promise<IngestNotesReport>>();
+    for (;;) {
+      const pending = [...this.ingestions].filter((p) => !seen.has(p));
+      if (!pending.length) return out;
+      for (const p of pending) seen.add(p);
+      for (const result of await Promise.allSettled(pending))
+        if (result.status === "fulfilled") out.push(result.value);
+    }
+  }
+
   async close() {
     this.stopWorker();
     while (this.working) await Bun.sleep(5);
     await Promise.allSettled([...this.publications]);
+    // A note call in flight must not hold shutdown: abort it (the source is already stored).
+    this.ingestAbort.abort();
+    await this.ingestNotesIdle();
   }
   private publication(input: Parameters<typeof runMemoryImport>[1], signal?: AbortSignal) {
     const promise = runMemoryImport(this.db, input, signal);

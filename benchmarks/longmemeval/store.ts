@@ -28,6 +28,13 @@
 import { harnessDecisionProvider } from "../../src/decisions/engines";
 import { chatClassifierProvider } from "../../src/decisions/providers";
 import type { DecisionProvider } from "../../src/decisions/types";
+import {
+  chatNoteWriter,
+  INGEST_NOTE_KIND,
+  type IngestNotesReport,
+  type NoteWriter,
+  writeIngestNotes,
+} from "../../src/memory/ingest-notes";
 import { type RelevanceGateMode, relevanceGateTimeoutMs } from "../../src/memory/relevance-gate";
 import { residentMemoryOperation } from "../../src/memory/resident-service";
 import { buildUnifiedContext, type UnifiedRelevanceReport } from "../../src/memory/unified-context";
@@ -41,6 +48,7 @@ import {
   type Hit,
   type LmeTrajectory,
   renderContext,
+  trajectoryNoteViews,
   trajectoryRecords,
 } from "./records";
 
@@ -69,6 +77,42 @@ export interface StoreOptions {
   context: ContextOptions;
   /** Relevance gate (unified retrieval only); default off. */
   gate?: GateOptions;
+  /** Ingest-time notes (`src/memory/ingest-notes.ts`); default off. */
+  notes?: NotesOptions;
+}
+
+export interface NotesOptions {
+  /** The note writer; null ⇒ the mechanical extractor (no model). */
+  writer: NoteWriter | null;
+  /** Bytes of trajectory view noted per run (the rest is labelled `truncated`). */
+  maxBytes: number;
+}
+
+/** Default bytes of one trajectory's view sent to the note writer (4 chunks of 12 KB). */
+export const DEFAULT_NOTES_MAX_BYTES = 48_000;
+
+export interface NotesWriterOptions {
+  /** A chat model id served by `baseUrl` (a Marina `/v1`, so spend lands on its ledger); none ⇒ mechanical. */
+  model?: string;
+  baseUrl: string;
+  /** NAME of the environment variable holding the bearer key (never the key itself). */
+  apiKeyEnv: string;
+  timeoutMs?: number;
+}
+
+/** The sidecar's note writer: one chat model behind `baseUrl`, or null (mechanical). */
+export function notesWriter(
+  opts: NotesWriterOptions,
+  env: NodeJS.ProcessEnv = process.env,
+): NoteWriter | null {
+  if (!opts.model) return null;
+  const key = env[opts.apiKeyEnv];
+  return chatNoteWriter({
+    baseUrl: opts.baseUrl,
+    model: opts.model,
+    ...(key ? { apiKey: key } : {}),
+    timeoutMs: opts.timeoutMs ?? 120_000,
+  });
 }
 
 export const DEFAULT_STORE: StoreOptions = {
@@ -168,6 +212,9 @@ export interface QueryResult {
 
 export class LmeMemoryStore {
   private readonly ids = new Map<string, string>();
+  /** Record id → trajectory id (resolves a derived note to its run). */
+  private readonly owners = new Map<string, string>();
+  private notesWritten = 0;
   private readonly stateCounts = new Map<string, number>();
   private constructor(
     readonly db: MarinaDB,
@@ -214,11 +261,46 @@ export class LmeMemoryStore {
           this.embeddingId,
         );
         this.ids.set(record.key, receipt.id);
+        this.owners.set(receipt.id, trajectory.id);
         bytes += Buffer.byteLength(record.input.content);
       }
     })();
     this.stateCounts.set(trajectory.id, trajectory.states?.length ?? 0);
     return { records: records.length, bytes, ms: performance.now() - started };
+  }
+
+  /**
+   * Ingest-time notes for one inserted trajectory (`--ingest-notes on`): the
+   * episode and state records are the sources, their compact views what the
+   * writer reads. Never throws; the report carries counts only.
+   */
+  async writeNotes(trajectory: LmeTrajectory): Promise<IngestNotesReport | undefined> {
+    const notes = this.options.notes;
+    if (!notes) return undefined;
+    const views = trajectoryNoteViews(trajectory);
+    const records: string[] = [];
+    const byId: Record<string, string> = {};
+    for (const [key, view] of views) {
+      const id = this.ids.get(key);
+      if (!id) continue;
+      records.push(id);
+      byId[id] = view;
+    }
+    const report = await writeIngestNotes(
+      worldMemoryService(this.db).repository,
+      this.actor,
+      this.space,
+      {
+        records,
+        views: byId,
+        writer: notes.writer,
+        maxBytes: notes.maxBytes,
+        ...(this.embeddingId ? { embeddingModel: this.embeddingId } : {}),
+      },
+    );
+    for (const id of report.ids) this.owners.set(id, trajectory.id);
+    this.notesWritten += report.written;
+    return report;
   }
 
   /**
@@ -235,7 +317,7 @@ export class LmeMemoryStore {
   private read(ids: string[]): Map<string, Hit> {
     if (ids.length === 0) return new Map();
     const rows = worldMemoryService(this.db).repository.readCurrent(this.actor, this.space, ids);
-    return new Map(rows.map((r: MemoryRecord) => [r.id, toHit(r)]));
+    return new Map(rows.map((r: MemoryRecord) => [r.id, this.toHit(r)]));
   }
 
   /** Ranked hits from the ungated search (the pilot's `raw` arm). */
@@ -249,7 +331,7 @@ export class LmeMemoryStore {
       },
     });
     const result = search.result as MemorySearchResult;
-    return { hits: result.results.map(toHit), degraded: result.degraded ?? [] };
+    return { hits: result.results.map((r) => this.toHit(r)), degraded: result.degraded ?? [] };
   }
 
   /** Ranked hits through the resident retrieval path (`buildUnifiedContext`, evidence tier). */
@@ -269,6 +351,8 @@ export class LmeMemoryStore {
         itemMaxBytes: UNIFIED_ITEM_BYTES,
         budgetBytes: UNIFIED_ITEM_BYTES * limit,
         creditReflections: false,
+        // The reader context hydrates records itself (renderContext).
+        derivedSources: false,
         relevanceGate: {
           mode: gate?.mode ?? "off",
           ...(gate ? { maxItems: gate.maxItems } : {}),
@@ -337,15 +421,29 @@ export class LmeMemoryStore {
   }
 
   stats() {
-    return { trajectories: this.stateCounts.size, records: this.ids.size };
+    return {
+      trajectories: this.stateCounts.size,
+      records: this.ids.size,
+      ...(this.options.notes ? { notes: this.notesWritten } : {}),
+    };
+  }
+
+  /** A canonical record as a reader-context hit; a derived note names its run. */
+  private toHit(record: MemoryRecord): Hit {
+    const metadata = record.metadata ?? {};
+    if (metadata.derived === INGEST_NOTE_KIND) {
+      const run = record.depends_on?.map((id) => this.owners.get(id)).find(Boolean);
+      return {
+        id: record.id,
+        content: record.content,
+        metadata: { ...metadata, lme: "note", ...(run ? { trajectory_id: run } : {}) },
+      };
+    }
+    return { id: record.id, content: record.content, metadata };
   }
 
   async close(): Promise<void> {
     worldMemoryService(this.db).stopWorker();
     this.db.close();
   }
-}
-
-function toHit(record: MemoryRecord): Hit {
-  return { id: record.id, content: record.content, metadata: record.metadata ?? {} };
 }

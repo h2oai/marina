@@ -36,6 +36,11 @@ import {
   staleMemoryDependents,
   storeMemoryDependencyVersions,
 } from "./db-memory-dependencies";
+import {
+  activeRecordWithContent,
+  countDerivedNotes,
+  readMemorySourceBodies,
+} from "./db-memory-derived";
 import { memoryKnowledgeGraph } from "./db-memory-knowledge-graph";
 import { memoryDatabaseHealth } from "./db-memory-maintenance";
 import { forgetMemoryNotes, projectMemoryRevision } from "./db-memory-projections";
@@ -1727,6 +1732,19 @@ export function memoryRepository(db: Database) {
       memoryHeads(db, actor, space, filter),
     readCurrent: (actor: MemoryActor, space: string, ids: string[]) =>
       readCurrentMemoryRecords(db, actor, space, ids),
+    /** Ingest-time notes (`src/memory/ingest-notes.ts`): ACL-checked reads only. */
+    derived: {
+      count: (actor: MemoryActor, space: string, derivedKey: string) =>
+        countDerivedNotes(db, actor, space, derivedKey),
+      contentExists: (
+        actor: MemoryActor,
+        space: string,
+        content: string,
+        types: readonly string[],
+      ) => activeRecordWithContent(db, actor, space, content, types),
+      sourceBodies: (actor: MemoryActor, space: string, ids: readonly string[]) =>
+        readMemorySourceBodies(db, actor, space, ids),
+    },
     candidates: (actor: MemoryActor, space: string, filter?: MemoryFilter) =>
       memoryCandidates(db, actor, space, filter),
     lexical: (

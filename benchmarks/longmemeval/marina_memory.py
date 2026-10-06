@@ -29,6 +29,15 @@ memory_params:
   episode_bytes    bytes per run summary (default 6000)
   radius           neighbouring states shown around a hit (default 1)
   work_dir         where the throwaway databases live (default: $TMPDIR)
+  ingest_notes     "off" (default) or "on": write ingest-time notes per trajectory
+  notes_model      chat model that writes the notes (served by notes_base_url);
+                   unset = Marina's mechanical extractor, no model
+  notes_base_url   OpenAI-compatible /v1 for notes_model (default a local Marina,
+                   so the spend lands on its ledger)
+  notes_api_key_env NAME of the env var holding that endpoint's key (default
+                   OPENAI_API_KEY; never the key itself)
+  notes_max_bytes  bytes of each trajectory's compact view sent to the writer
+                   (default 48000)
 
 The backend sees only what the harness gives every backend: full trajectories
 on insert, and the question text (plus an optional image, unused) on query.
@@ -65,6 +74,11 @@ DEFAULTS: dict[str, Any] = {
     "episode_bytes": 6000,
     "radius": 1,
     "work_dir": None,
+    "ingest_notes": "off",
+    "notes_model": None,
+    "notes_base_url": "http://localhost:3300/v1",
+    "notes_api_key_env": "OPENAI_API_KEY",
+    "notes_max_bytes": 48000,
 }
 
 
@@ -90,6 +104,8 @@ class MarinaMemory(Memory):
             raise RuntimeError("the marina relevance gate needs retrieval=unified")
         if self.params["gate_backend"] not in ("auto", "decisions", "model", "mechanical"):
             raise RuntimeError("marina gate_backend must be auto, decisions, model or mechanical")
+        if self.params["ingest_notes"] not in ("off", "on"):
+            raise RuntimeError("marina ingest_notes must be off or on")
         root = self.params["marina_root"] or os.environ.get("MARINA_ROOT")
         if not root:
             raise RuntimeError("set memory_params.marina_root or MARINA_ROOT to a Marina checkout")
@@ -143,6 +159,19 @@ class MarinaMemory(Memory):
             ]
             if p["gate_model"]:
                 argv += ["--gate-model", str(p["gate_model"])]
+        if p["ingest_notes"] == "on":
+            argv += [
+                "--ingest-notes",
+                "on",
+                "--notes-base-url",
+                str(p["notes_base_url"]),
+                "--notes-api-key-env",
+                str(p["notes_api_key_env"]),
+                "--notes-max-bytes",
+                str(int(p["notes_max_bytes"])),
+            ]
+            if p["notes_model"]:
+                argv += ["--notes-model", str(p["notes_model"])]
         return argv
 
     def _start(self) -> subprocess.Popen[str]:

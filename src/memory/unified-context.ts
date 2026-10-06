@@ -64,6 +64,7 @@ import type { MemoryAssistanceJob, MemoryAssistancePage } from "../sdk/memory-as
 import { MemoryClientError } from "../sdk/memory-client";
 import type { MemorySearchResult, MemorySourceSearchResult } from "../sdk/memory-types";
 import { cachedContext } from "./context-cache";
+import { INGEST_NOTE_KIND } from "./ingest-notes";
 import {
   findDurableTwin,
   findLegacyNotesForRecord,
@@ -363,11 +364,20 @@ export function servableSourceIds(
 function recordItem(record: MemorySearchResult["results"][number]): UnifiedContextItem {
   const freshness =
     record.freshness && record.freshness !== "current" ? ` ${record.freshness}` : "";
+  // An ingest-time note is labelled as derived and names the record it came from.
+  const derivedFrom =
+    record.metadata?.derived === INGEST_NOTE_KIND && record.depends_on?.length
+      ? record.depends_on
+      : undefined;
   return {
     tier: "evidence",
     id: record.id,
     content: record.content,
-    provenance: `record ${record.id} v${record.version}${freshness}`,
+    provenance: `record ${record.id} v${record.version}${freshness}${
+      derivedFrom
+        ? ` derived note of record ${derivedFrom[0]}${derivedFrom.length > 1 ? ` +${derivedFrom.length - 1}` : ""}`
+        : ""
+    }`,
     bytes: 0,
     score: record.score,
     meta: {
@@ -378,6 +388,7 @@ function recordItem(record: MemorySearchResult["results"][number]): UnifiedConte
       tier: record.tier,
       source_ids: record.source_ids,
       freshness: record.freshness ?? "current",
+      ...(derivedFrom ? { derived_from: derivedFrom } : {}),
     },
   };
 }
@@ -739,6 +750,97 @@ function applyBudget(
   return { tiers, usedBytes: used, truncated };
 }
 
+// ─── Derived notes → source excerpts ────────────────────────────────────────
+
+/** Below this many remaining bytes a served derived note is not expanded. */
+const DERIVED_SOURCE_MIN_BYTES = 160;
+
+/**
+ * The lines of `content` sharing the most query terms, in original order and
+ * joined with ` … `, within `maxBytes`; empty when no line matches.
+ */
+export function sourceExcerpt(content: string, query: string, maxBytes: number): string {
+  const terms = queryTerms(query);
+  if (!terms.length || maxBytes < MIN_ITEM_BYTES) return "";
+  const lines = content
+    .split(/\n+|(?<=[.!?])\s+(?=\p{Lu})/u)
+    .map((l) => l.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  const scored = lines
+    .map((line, i) => {
+      const matches = termMatcher(line);
+      return { i, hits: terms.filter((t) => matches(t)).length };
+    })
+    .filter((s) => s.hits > 0)
+    .sort((a, b) => b.hits - a.hits || a.i - b.i);
+  const keep: number[] = [];
+  let used = 0;
+  for (const { i } of scored) {
+    const size = byteLength(lines[i]!) + 3;
+    if (used + size > maxBytes) continue;
+    keep.push(i);
+    used += size;
+  }
+  if (!keep.length && scored.length) return truncateToBytes(lines[scored[0]!.i]!, maxBytes);
+  return keep
+    .sort((a, b) => a - b)
+    .map((i) => lines[i]!)
+    .join(" … ");
+}
+
+/**
+ * Ingest-time notes (`src/memory/ingest-notes.ts`) are compact; when budget is
+ * left after every tier is filled, a served note is followed by an excerpt of
+ * the record it was derived from, read under the caller's ACL (a source the
+ * caller can no longer read, or one already served, is skipped).
+ */
+async function expandDerivedNotes(
+  db: MarinaDB,
+  entityName: string,
+  query: string,
+  budgeted: { tiers: UnifiedTierResult[]; usedBytes: number },
+  budgetBytes: number,
+  itemMaxBytes: number,
+): Promise<void> {
+  const evidence = budgeted.tiers.find((t) => t.tier === "evidence");
+  const notes = evidence?.items.filter((i) => Array.isArray(i.meta?.derived_from)) ?? [];
+  if (!evidence || !notes.length) return;
+  const shown = new Set(evidence.items.map((i) => i.id));
+  for (const item of notes) {
+    const remaining = budgetBytes - budgeted.usedBytes;
+    if (remaining < DERIVED_SOURCE_MIN_BYTES) return;
+    const sourceId = (item.meta!.derived_from as string[]).find((id) => !shown.has(id));
+    if (!sourceId) continue;
+    shown.add(sourceId);
+    let content: string;
+    try {
+      const reply = await residentMemoryOperation(db, entityName, {
+        operation: "get",
+        id: sourceId,
+        ...(typeof item.meta?.space_id === "string" ? { space_id: item.meta.space_id } : {}),
+      });
+      const record = reply.result as { content?: unknown; freshness?: string };
+      if (typeof record.content !== "string" || (record.freshness ?? "current") !== "current")
+        continue;
+      content = record.content;
+    } catch {
+      // Not readable (forgotten, revoked): serve the note alone.
+      continue;
+    }
+    const prefix = `\n  ↳ source excerpt (record ${sourceId}): `;
+    const room = Math.min(itemMaxBytes, remaining - byteLength(prefix));
+    const excerpt = sourceExcerpt(content, query, room);
+    if (!excerpt) continue;
+    const addition = `${prefix}${excerpt}`;
+    const bytes = byteLength(addition);
+    if (bytes > remaining) continue;
+    item.content += addition;
+    item.bytes += bytes;
+    item.meta = { ...item.meta, source_excerpt: sourceId };
+    budgeted.usedBytes += bytes;
+  }
+}
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /**
@@ -944,6 +1046,8 @@ async function retrieveUnifiedContext(
   }
 
   const budgeted = applyBudget(served, perTier, budgetBytes, itemMaxBytes);
+  if (trimmed && opts.derivedSources !== false)
+    await expandDerivedNotes(db, entityName, trimmed, budgeted, budgetBytes, itemMaxBytes);
   if (relevance && relevance.mode === "on" && relevance.outcome !== "fail_open")
     // A failed tier means "could not look", not "nothing relevant"; a missing
     // world account is a posture (no durable tiers to look in), not a failure.

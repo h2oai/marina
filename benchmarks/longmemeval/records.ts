@@ -152,6 +152,50 @@ export function trajectoryRecords(t: LmeTrajectory): TrajectoryRecord[] {
   return out;
 }
 
+/** Bytes of NEW page text per state in a note view. */
+export const NOTE_PAGE_BYTES = 1_200;
+
+/**
+ * Compact views of a trajectory's records for ingest-time notes (what the note
+ * writer reads; grounding is still checked against the stored records): the
+ * episode as stored, and per state its URL, thought and action plus only the
+ * page lines that were not on the previous page (element ids dropped), so
+ * repeated navigation chrome is not paid for on every state. Keyed by record key.
+ */
+export function trajectoryNoteViews(t: LmeTrajectory): Map<string, string> {
+  const views = new Map<string, string>();
+  const records = trajectoryRecords(t);
+  const episode = records.find((r) => r.kind === "episode");
+  if (episode) views.set(episode.key, episode.input.content);
+  let previous = new Set<string>();
+  for (const [i, s] of (t.states ?? []).entries()) {
+    const lines = (s.accessibility_tree ?? "")
+      .split("\n")
+      .map((l) => l.replace(/^\s*(?:\[[^\]]*\]\s*)?/, "").trim())
+      .filter((l) => l.length > 2);
+    const fresh: string[] = [];
+    let used = 0;
+    for (const line of lines) {
+      if (previous.has(line)) continue;
+      const size = Buffer.byteLength(line) + 1;
+      if (used + size > NOTE_PAGE_BYTES) break;
+      fresh.push(line);
+      used += size;
+    }
+    previous = new Set(lines);
+    views.set(
+      `lme:${t.id}:${i}`,
+      [
+        `state ${i + 1}: url ${s.url ?? ""}`,
+        `thought: ${oneLine(s.thought, 2000) || "(none)"}`,
+        `action: ${oneLine(s.action, 1000) || "(none)"}`,
+        ...(fresh.length ? ["new on page:", ...fresh] : []),
+      ].join("\n"),
+    );
+  }
+  return views;
+}
+
 /**
  * An extractive excerpt of a long record: the header lines always, then the body
  * lines that share the most distinct query terms, in their original order, until the
@@ -269,6 +313,17 @@ export async function renderContext(
     const summary = episode
       ? excerpt(episode.content, query, Math.min(options.episodeBytes, remaining - 256), 3)
       : undefined;
+    if (hit.metadata.lme === "note") {
+      // An ingest-time note, followed by its run's summary the first time the run appears.
+      const parts = [`### Past run ${trajectoryId} (derived note)`, hit.content];
+      const ids = [hit.id];
+      if (summary && episode) {
+        parts.push(summary);
+        ids.push(episode.id);
+      }
+      if (push(parts.join("\n"), ids) && summary) shownEpisodes.add(trajectoryId);
+      continue;
+    }
     if (hit.metadata.lme === "episode") {
       if (!summary || shownEpisodes.has(trajectoryId)) continue;
       if (push(`### Past run ${trajectoryId} (summary)\n${summary}`, [hit.id]))
