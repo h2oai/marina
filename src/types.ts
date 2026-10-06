@@ -546,7 +546,7 @@ export type EngineEvent =
   | {
       type: "agent_decision";
       name: string;
-      stage: "gate" | "route" | "verify" | "check" | "choose" | "repair";
+      stage: "gate" | "route" | "verify" | "check" | "choose" | "repair" | "argcheck";
       verdict: string;
       subject: string;
       reason: string;

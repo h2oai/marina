@@ -19,6 +19,7 @@ import { handleModelApi } from "../src/net/model-api";
 import { stripOptInPrefixes } from "../src/net/model-api/chat-completions";
 import {
   conversationKey,
+  conversationKeys,
   readConversation,
   resetObligationsForTests,
 } from "../src/net/model-api/obligations";
@@ -188,6 +189,27 @@ describe("ledger (pure)", () => {
     expect(readOnlyByName("cancel_pending_order")).toBe(false);
   });
 
+  it("carries a conversation's state from its deepest known ancestor key as a copy", () => {
+    const s = new LedgerStore(1000, 100);
+    const shared = newLedger("k0", 0);
+    shared.userTurns = 1;
+    s.put(shared);
+    expect(s.resolve(["k0"], 1)).toBe(shared);
+    expect(s.resolve(["x", "y"], 1)).toBeUndefined();
+    // Two conversations that shared k0 continue on k1a and k1b, each from a copy.
+    const a = s.resolve(["k0", "k1a"], 1)!;
+    const b = s.resolve(["k0", "k1b"], 1)!;
+    expect(a.key).toBe("k1a");
+    expect(b.key).toBe("k1b");
+    expect(a.userTurns).toBe(1);
+    a.userTurns = 5;
+    expect(b.userTurns).toBe(1);
+    expect(s.get("k0", 1)!.userTurns).toBe(1);
+    expect(s.resolve(["k0", "k1a"], 1)).toBe(a);
+    // A skipped checkpoint resolves through the deepest ancestor present.
+    expect(s.resolve(["k0", "k1a", "k2", "k3"], 1)!.userTurns).toBe(5);
+  });
+
   it("keeps ledgers in a bounded, expiring store", () => {
     const s = new LedgerStore(1000, 2);
     s.put(newLedger("a", 0));
@@ -352,21 +374,41 @@ describe("opt-in parsing", () => {
     expect(obligationsMode({ MARINA_OBLIGATIONS: "on" })).toBe("on");
   });
 
-  it("keys a conversation by its opening (or the session header) and reads calls with results", () => {
+  it("keys a conversation by a chain over its history (or the session header) and reads calls with results", () => {
     const msgs = [
       { role: "system", content: "rules" },
       { role: "user", content: "hi" },
     ];
     const r = new Request("http://x/v1/chat/completions");
-    const k1 = conversationKey(r, msgs as never);
-    const k2 = conversationKey(r, [
+    const k1 = conversationKeys(r, msgs as never);
+    const longer = conversationKeys(r, [
       ...msgs,
       { role: "assistant", content: "ok" },
       { role: "user", content: "more" },
     ] as never);
-    expect(k1).toBe(k2);
+    // The longer history extends the same chain: its shallower keys are the shorter one's.
+    expect(longer.slice(0, k1.length)).toEqual(k1);
+    expect(longer.length).toBeGreaterThan(k1.length);
+    expect(conversationKey(r, msgs as never)).toBe(k1[k1.length - 1]!);
+    // The declared tools are part of the key.
+    expect(conversationKeys(r, msgs as never, undefined, [{ type: "function" }])[0]).not.toBe(
+      k1[0],
+    );
+    // Between checkpoints the key holds still (9 → 11 non-system messages stay on checkpoint 8).
+    const many = (n: number) =>
+      [
+        { role: "system", content: "rules" },
+        ...Array.from({ length: n }, (_, i) => ({
+          role: i % 2 ? "assistant" : "user",
+          content: `m${i}`,
+        })),
+      ] as never;
+    expect(conversationKey(r, many(9))).toBe(conversationKey(r, many(11)));
+    expect(conversationKey(r, many(12))).not.toBe(conversationKey(r, many(11)));
     const withSession = new Request("http://x", { headers: { "x-marina-session": "abc" } });
-    expect(conversationKey(withSession, msgs as never)).toContain("s:abc");
+    expect(conversationKeys(withSession, msgs as never)).toEqual([
+      expect.stringContaining("s:abc"),
+    ]);
     const conv = readConversation([
       { role: "assistant", content: "Hello" },
       { role: "user", content: "Cancel W1" },
@@ -535,6 +577,47 @@ const lastUserText = (body: Record<string, unknown>) => {
 };
 
 describe("POST /v1/chat/completions with the obligations ledger", () => {
+  it("never mixes two conversations with the same opening once they diverge", async () => {
+    const model = `marina/obligations:${MODEL}`;
+    const counters = (r: Response) => r.headers.get("x-marina-obligations") ?? "";
+    // Both start identically: one shared ledger (indistinguishable so far), one obligation.
+    expect(counters(await post({ model, messages: opening, tools: TOOLS }))).toContain("open=1");
+    expect(counters(await post({ model, messages: opening, tools: TOOLS }))).toContain("open=1");
+    extraction = '{"add":[],"cancel":[]}';
+    const closeCall = (id: string, name: string) => ({
+      role: "assistant",
+      content: null,
+      tool_calls: [{ id, type: "function", function: { name, arguments: '{"card_id":"4417"}' } }],
+    });
+    // A confirms and closes the card: its obligation is satisfied.
+    const a = [
+      ...opening,
+      { role: "assistant", content: "Confirm closing card 4417?" },
+      { role: "user", content: "Yes." },
+      closeCall("t1", "close_card"),
+      { role: "tool", tool_call_id: "t1", content: '{"status":"closed"}' },
+    ];
+    expect(counters(await post({ model, messages: a, tools: TOOLS }))).toContain("satisfied=1");
+    // B diverged after the opening and only looked the card up: A's settlement is not B's.
+    const b = [
+      ...opening,
+      { role: "assistant", content: "Which card do you mean?" },
+      { role: "user", content: "The one ending 4417, but wait, let me think." },
+      closeCall("t2", "get_card"),
+      { role: "tool", tool_call_id: "t2", content: '{"card":"4417","status":"active"}' },
+    ];
+    const bResp = counters(await post({ model, messages: b, tools: TOOLS }));
+    expect(bResp).toContain("open=1");
+    expect(bResp).toContain("satisfied=0");
+    // A keeps its own state.
+    const aMore = [
+      ...a,
+      { role: "assistant", content: "Done." },
+      { role: "user", content: "Thanks." },
+    ];
+    expect(counters(await post({ model, messages: aMore, tools: TOOLS }))).toContain("satisfied=1");
+  });
+
   it("is byte-identical without the opt-in", async () => {
     const req = { model: MODEL, messages: opening, tools: TOOLS };
     const resp = await post(req);

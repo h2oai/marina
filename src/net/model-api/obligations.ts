@@ -63,7 +63,11 @@ export const OBLIGATIONS_MODEL_PREFIX = "marina/obligations:";
 export const OBLIGATIONS_HEADER = "x-marina-obligations";
 /** The ledger's own spend on this request (extraction, judging, a discarded draft). */
 export const OBLIGATIONS_COST_HEADER = "x-marina-obligations-cost-usd";
-/** A client's own conversation id; else the id is a hash of the conversation's opening. */
+/**
+ * A client's own conversation id (exact keying; send a unique one per
+ * conversation). Without it the key is derived from the conversation itself
+ * (`conversationKeys`).
+ */
 export const SESSION_HEADER = "x-marina-session";
 
 /** Ambiguous matches a judge resolves per request (the rest stay open). */
@@ -97,27 +101,83 @@ function principal(req: Request, auth?: PassthruAuthResult): string {
 }
 
 /**
- * The conversation's ledger key: `x-marina-session` when the client sends one,
- * else a hash of the conversation's opening (first system and first user
- * message) — stable while the client appends to the same history.
+ * Non-system message counts at which a derived conversation key deepens:
+ * every message up to 8 (where conversations with a shared opening usually
+ * part), then ×1.5–2 steps, so a long conversation crosses a handful more.
  */
+export const KEY_CHECKPOINTS = [1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 24, 32, 48, 64, 96, 128];
+
+function sha(...parts: string[]): string {
+  const h = createHash("sha256");
+  for (const p of parts) h.update(p).update("\u0000");
+  return h.digest("hex");
+}
+
+/** One message's identity for the key: role, text, tool calls (with arguments) and call id. */
+function messageDigest(m: OpenAIMessage): string {
+  const extra = m as { tool_calls?: unknown; tool_call_id?: unknown; name?: unknown };
+  return sha(
+    m.role,
+    messageText(m.content),
+    extra.tool_calls === undefined ? "" : JSON.stringify(extra.tool_calls),
+    typeof extra.tool_call_id === "string" ? extra.tool_call_id : "",
+    typeof extra.name === "string" ? extra.name : "",
+  );
+}
+
+/**
+ * The conversation's key chain, shallowest first; the last entry is the
+ * current key. With `x-marina-session` it is that one exact key. Without it,
+ * every key is scoped by caller and hashes the system/developer text, the
+ * declared tools, the first user message, and then the conversation's
+ * messages up to a checkpoint ({@link KEY_CHECKPOINTS}) — so two conversations
+ * with the same opening share a key only while their histories are identical
+ * up to the current checkpoint, and part at the first checkpoint after they
+ * diverge. {@link LedgerStore.resolve} carries a conversation's state from its
+ * deepest known ancestor key to the new one (a copy, so a sibling keeps its
+ * own). Clients that know their conversation id should send
+ * `x-marina-session` for exact keying.
+ */
+export function conversationKeys(
+  req: Request,
+  messages: OpenAIMessage[],
+  auth?: PassthruAuthResult,
+  tools: unknown[] = [],
+): string[] {
+  const who = principal(req, auth);
+  const session = req.headers.get(SESSION_HEADER)?.trim();
+  if (session) return [`${who}|s:${session.slice(0, 128)}`];
+  const isSystem = (m: OpenAIMessage) => m.role === "system" || m.role === "developer";
+  const system = messages
+    .filter(isSystem)
+    .map((m) => messageText(m.content))
+    .join("\u0001");
+  const firstUser = messages.find((m) => m.role === "user");
+  let running = sha(
+    who,
+    system,
+    tools.length ? JSON.stringify(tools) : "",
+    messageText(firstUser?.content),
+  );
+  const keys = [`${who}|h:${running.slice(0, 24)}`];
+  const rest = messages.filter((m) => !isSystem(m));
+  const last = KEY_CHECKPOINTS.filter((c) => c <= rest.length).pop() ?? 0;
+  for (let i = 0; i < last; i++) {
+    running = sha(running, messageDigest(rest[i]!));
+    if (KEY_CHECKPOINTS.includes(i + 1)) keys.push(`${who}|h:${running.slice(0, 24)}@${i + 1}`);
+  }
+  return keys;
+}
+
+/** The conversation's current key (the deepest of {@link conversationKeys}). */
 export function conversationKey(
   req: Request,
   messages: OpenAIMessage[],
   auth?: PassthruAuthResult,
+  tools: unknown[] = [],
 ): string {
-  const who = principal(req, auth);
-  const session = req.headers.get(SESSION_HEADER)?.trim();
-  if (session) return `${who}|s:${session.slice(0, 128)}`;
-  const firstSystem = messages.find((m) => m.role === "system" || m.role === "developer");
-  const firstUser = messages.find((m) => m.role === "user");
-  const h = createHash("sha256")
-    .update(messageText(firstSystem?.content))
-    .update("\u0000")
-    .update(messageText(firstUser?.content))
-    .digest("hex")
-    .slice(0, 24);
-  return `${who}|h:${h}`;
+  const keys = conversationKeys(req, messages, auth, tools);
+  return keys[keys.length - 1]!;
 }
 
 type ToolCallMsg = { id?: string; function?: { name?: string; arguments?: string } };
@@ -205,14 +265,16 @@ export interface ObligationsPrep {
  * One ledger call through `proxyToUpstream` (spend, the daily cap and the trace
  * apply as for passthru). The named model's own answer only — no provider
  * fallback — and the operator's passthru pin wins as for the request itself.
+ * Also the argument check's chat judge (`routeReason: "argcheck"`).
  */
-function ledgerCompletion(
+export function ledgerCompletion(
   engine: Engine,
   model: string,
   forceModel: string,
   entityId: EntityId | undefined,
   signal: AbortSignal | undefined,
   spent: { usd: number },
+  routeReason = "obligations",
 ): CompleteText {
   return async (system, user) => {
     const resp = await proxyToUpstream(
@@ -227,7 +289,7 @@ function ledgerCompletion(
         stream: false,
       },
       forceModel || undefined,
-      { routeKind: "passthru", routeReason: "obligations", ...(entityId ? { entityId } : {}) },
+      { routeKind: "passthru", routeReason, ...(entityId ? { entityId } : {}) },
       { clientSignal: signal, providerFallback: false },
     );
     const cost = Number(resp.headers.get(COST_USD_HEADER));
@@ -258,7 +320,9 @@ export async function prepareObligations(
 ): Promise<ObligationsPrep | undefined> {
   if (opts.mode === "off") return undefined;
   const now = Date.now();
-  const key = conversationKey(req, messages, opts.auth);
+  const tools = Array.isArray(body.tools) ? (body.tools as unknown[]) : [];
+  const keys = conversationKeys(req, messages, opts.auth, tools);
+  const key = keys[keys.length - 1]!;
   const spent = { usd: 0 };
   const model =
     obligationsModel() ?? (typeof body.model === "string" ? body.model : "marina/default");
@@ -271,9 +335,8 @@ export async function prepareObligations(
     spent,
   );
   const provider = harnessDecisionProvider();
-  const tools = Array.isArray(body.tools) ? (body.tools as unknown[]) : [];
   const { requests, calls } = readConversation(messages);
-  let ledger = store.get(key, now);
+  let ledger = store.resolve(keys, now);
   // A conversation that shrank (an edited or replayed history) starts over.
   if (!ledger || requests.length < ledger.userTurns || calls.length < ledger.callsSeen) {
     ledger = newLedger(key, now);

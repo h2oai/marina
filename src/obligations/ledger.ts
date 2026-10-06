@@ -390,6 +390,19 @@ export function nudgeNote(draft: string, owed: Obligation[]): string {
   ].join("\n");
 }
 
+/**
+ * The ledger's requests (newest 8, any status) as context for the argument
+ * check's judge: what was asked, its target and its constraints.
+ */
+export function statedLines(ledger: ObligationLedger): string[] {
+  return ledger.obligations
+    .slice(-8)
+    .map(
+      (o) =>
+        `- ${o.what}${o.target ? ` (target: ${o.target})` : ""}${o.constraints ? ` [${o.constraints}]` : ""}`,
+    );
+}
+
 /** Compact counters for a response header and logs (no content). */
 export function ledgerSummary(ledger: ObligationLedger): {
   total: number;
@@ -415,6 +428,13 @@ export function ledgerSummary(ledger: ObligationLedger): {
 export const LEDGER_TTL_MS = 6 * 60 * 60_000;
 /** Most conversations kept at once (least recently used go first). */
 export const MAX_LEDGERS = 2000;
+/**
+ * Most keys kept at once: a derived key deepens as a conversation grows
+ * (`conversationKeys`), and each checkpoint it crosses keeps its snapshot for a
+ * sibling conversation that shared the prefix. Snapshots are never refreshed,
+ * so they go first.
+ */
+export const MAX_LEDGER_KEYS = MAX_LEDGERS * 8;
 
 /**
  * Conversation-scoped working memory: ledgers in process memory, least recently
@@ -422,14 +442,37 @@ export const MAX_LEDGERS = 2000;
  * obligations hold request text, and a lost ledger is rebuilt from the
  * conversation itself on its next request (the passthru client resends it).
  */
-export class LedgerStore {
-  private readonly ledgers = new Map<string, ObligationLedger>();
+export class LedgerStore<T extends { key: string; updatedAt: number } = ObligationLedger> {
+  private readonly ledgers = new Map<string, T>();
   constructor(
     private readonly ttlMs = LEDGER_TTL_MS,
-    private readonly max = MAX_LEDGERS,
+    private readonly max = MAX_LEDGER_KEYS,
   ) {}
 
-  get(key: string, now: number): ObligationLedger | undefined {
+  /**
+   * A conversation's state by its key chain (shallowest first; the last is the
+   * current key). The current key's entry when present; else a COPY of the
+   * deepest ancestor's, stored under the current key — so two conversations
+   * that shared a prefix each continue from the shared state and stop sharing
+   * from here on. Undefined when no key in the chain is known.
+   */
+  resolve(chain: readonly string[], now: number): T | undefined {
+    const current = chain[chain.length - 1];
+    if (current === undefined) return undefined;
+    const hit = this.get(current, now);
+    if (hit) return hit;
+    for (let i = chain.length - 2; i >= 0; i--) {
+      const ancestor = this.get(chain[i]!, now);
+      if (!ancestor) continue;
+      const copy = structuredClone(ancestor);
+      copy.key = current;
+      this.put(copy);
+      return copy;
+    }
+    return undefined;
+  }
+
+  get(key: string, now: number): T | undefined {
     const l = this.ledgers.get(key);
     if (!l) return undefined;
     if (now - l.updatedAt > this.ttlMs) {
@@ -442,7 +485,7 @@ export class LedgerStore {
     return l;
   }
 
-  put(ledger: ObligationLedger): void {
+  put(ledger: T): void {
     this.ledgers.delete(ledger.key);
     this.ledgers.set(ledger.key, ledger);
     while (this.ledgers.size > this.max) {

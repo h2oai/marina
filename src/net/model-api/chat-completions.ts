@@ -21,6 +21,13 @@ import {
   type OpenAIMessage,
 } from "../passthru-context";
 import {
+  ARGCHECK_MODEL_PREFIX,
+  argcheckRequestMode,
+  finishArgcheck,
+  prepareArgcheck,
+  statedFromLedger,
+} from "./argcheck";
+import {
   finishObligations,
   OBLIGATIONS_MODEL_PREFIX,
   obligationsRequestMode,
@@ -76,7 +83,11 @@ export const LESSONS_MODEL_PREFIX = "marina/lessons:";
 export const PASSTHRU_LESSON_DOMAINS: readonly OutcomeDomain[] = ["tools", "code"];
 
 /** The opt-in model prefixes a plain passthru request may carry, in any order. */
-const OPT_IN_PREFIXES = [LESSONS_MODEL_PREFIX, OBLIGATIONS_MODEL_PREFIX] as const;
+const OPT_IN_PREFIXES = [
+  LESSONS_MODEL_PREFIX,
+  OBLIGATIONS_MODEL_PREFIX,
+  ARGCHECK_MODEL_PREFIX,
+] as const;
 
 /**
  * `model` with the opt-in prefixes stripped, except `keep` (left in front when
@@ -189,13 +200,18 @@ export async function runOpenaiChat(
       runOpts?.stream !== undefined ? { ...requestBody, stream: runOpts.stream } : requestBody;
     // `marina/lessons:<model>` (or `x-marina-lessons: on`) opts a plain request
     // into judged lessons, `marina/obligations:<model>` (or
-    // `x-marina-obligations: on|observe`) into the obligations ledger; the two
-    // combine in either order, and the prefixes are stripped before anything
-    // else sees the model id.
+    // `x-marina-obligations: on|observe`) into the obligations ledger,
+    // `marina/argcheck:<model>` (or `x-marina-argcheck: on|observe`) into the
+    // argument check before writes; they combine in any order, and the
+    // prefixes are stripped before anything else sees the model id.
     const lessonsOptIn = wantsLessons(req, stripOptInPrefixes(body.model, LESSONS_MODEL_PREFIX));
     const obligationsMode = obligationsRequestMode(
       req,
       stripOptInPrefixes(body.model, OBLIGATIONS_MODEL_PREFIX),
+    );
+    const argcheckMode = argcheckRequestMode(
+      req,
+      stripOptInPrefixes(body.model, ARGCHECK_MODEL_PREFIX),
     );
     const bare = stripOptInPrefixes(body.model);
     if (bare !== body.model) body = { ...body, model: bare };
@@ -305,9 +321,20 @@ export async function runOpenaiChat(
             ...(authResult ? { auth: authResult } : {}),
           })
         : undefined;
-      const cached = obligations
-        ? undefined
-        : await passthruCacheLookup(engine, prep, body, forceModel);
+      // Opt-in argument check: the reply's state-changing calls are checked
+      // against the conversation after the call (with the obligations
+      // ledger's stated requests as context when it runs too).
+      const argcheck = prepareArgcheck(engine, req, body, messages, {
+        mode: argcheckMode,
+        forceModel,
+        ...(prep.identity?.entityId ? { entityId: prep.identity.entityId } : {}),
+        ...(authResult ? { auth: authResult } : {}),
+        ...(obligations ? { stated: statedFromLedger(obligations.ledger) } : {}),
+      });
+      const cached =
+        obligations || argcheck
+          ? undefined
+          : await passthruCacheLookup(engine, prep, body, forceModel);
       if (cached) return cached;
       const upstreamHints = {
         ...passthruUpstreamHints(prep, anthropicNative ? { anthropicNative } : {}),
@@ -332,9 +359,25 @@ export async function runOpenaiChat(
           ),
         );
       }
+      if (argcheck) {
+        const { requestId: _first, ...retryTrace } = passthruTraceOptions(prep);
+        resp = await finishArgcheck(argcheck, body, resp, (note) =>
+          proxyToUpstream(
+            engine,
+            body,
+            forceModel || undefined,
+            { ...retryTrace, routeReason: "argcheck:nudge" },
+            {
+              ...upstreamHints,
+              // The open obligations stay in view next to the check's note.
+              trailingNote: obligations?.note ? `${obligations.note}\n\n${note}` : note,
+            },
+          ),
+        );
+      }
       if (prep.identity?.contextOptIn) {
         void capturePassthruResponse(engine, prep.identity.entityId, messages, resp);
-        if (!obligations) passthruCacheStore(engine, prep, body, forceModel, resp);
+        if (!obligations && !argcheck) passthruCacheStore(engine, prep, body, forceModel, resp);
       }
       return lessons ? withResponseHeader(resp, LESSONS_HEADER, lessonsHeaderValue(lessons)) : resp;
     }

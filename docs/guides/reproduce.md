@@ -18,7 +18,7 @@ bun run repro hle-verified              # smoke size, 2 replicates per arm, $10 
 |---|---|---|---|
 | `hle-verified` | `single` (one model through Marina), `verify` (a verification crew) | HLE-Verified Gold answers, judged by a model **through Marina** | models |
 | `swebench-verified` | `single` (one model patches), `verify` (patch plus reviewer) | the unmodified `swebench` harness in containers | models, podman or docker, Python `swebench` |
-| `tau2` | `single` (one model as the agent), `verify` (`marina/verify:<model>[+<checker>]`); `obligations` (`marina/obligations:<model>`, only when named with `--arm`) | the unmodified τ²-bench CLI, user simulator and evaluator | models, a τ²-bench checkout |
+| `tau2` | `single` (one model as the agent), `verify` (`marina/verify:<model>[+<checker>]`); `obligations` (`marina/obligations:<model>`), `argcheck` (`marina/argcheck:<model>`) and `obligations+argcheck` (both), each only when named with `--arm` | the unmodified τ²-bench CLI, user simulator and evaluator | models, a τ²-bench checkout |
 | `futurex-backtest` | `cheap`, `verify` forecast variants | resolved FutureX questions, forecast with **date-bounded** research only | models |
 | `arena-backtest` | `baseline`, `nowcast` | MIT Social Simulation Arena rounds, scored in lock order | none (keyless) |
 

@@ -199,7 +199,7 @@ export type OpsSecurity = {
 export type OpsDecisionRow = {
   /** Agent (gate / route) or submitting entity (verify). */
   name: string;
-  stage: "gate" | "route" | "verify" | "check" | "choose" | "repair";
+  stage: "gate" | "route" | "verify" | "check" | "choose" | "repair" | "argcheck";
   verdict: string;
   /** Tool name (gate), chosen model (route) or `task #<id>` (verify). */
   subject: string;

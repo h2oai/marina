@@ -473,10 +473,26 @@ export function retrievalNeedsShell(config: string): boolean {
   return config.startsWith("alltools") || config.startsWith("terminal_use");
 }
 
+/** The agent model id for a τ² arm: the opt-in passthru prefixes combine in front of the answer model. */
+export function tau2AgentModel(arm: string, m: { answer: string; checker: string }): string {
+  switch (arm) {
+    case "single":
+      return m.answer;
+    case "obligations":
+      return `marina/obligations:${m.answer}`;
+    case "argcheck":
+      return `marina/argcheck:${m.answer}`;
+    case "obligations+argcheck":
+      return `marina/obligations:marina/argcheck:${m.answer}`;
+    default:
+      return `marina/verify:${m.answer}${m.checker !== m.answer ? `+${m.checker}` : ""}`;
+  }
+}
+
 const tau2: Setup = {
   name: "tau2",
   summary:
-    "τ²-bench — the official CLI, simulator and evaluator, with the agent served by Marina: one model vs `marina/verify` or the obligations ledger.",
+    "τ²-bench — the official CLI, simulator and evaluator, with the agent served by Marina: one model vs `marina/verify`, the obligations ledger or the argument check.",
   smoke: 10,
   full: 50,
   arms: [
@@ -490,6 +506,19 @@ const tau2: Setup = {
       name: "obligations",
       describe: "`marina/obligations:<answer>` as the agent (the obligations ledger on passthru)",
       usdPerItem: 0.07,
+      optIn: true,
+    },
+    {
+      name: "argcheck",
+      describe:
+        "`marina/argcheck:<answer>` as the agent (the argument check before writes on passthru)",
+      usdPerItem: 0.07,
+      optIn: true,
+    },
+    {
+      name: "obligations+argcheck",
+      describe: "`marina/obligations:marina/argcheck:<answer>` as the agent (both, combined)",
+      usdPerItem: 0.08,
       optIn: true,
     },
   ],
@@ -524,12 +553,7 @@ const tau2: Setup = {
     const base = `http://localhost:${port}/v1`;
     const steps: Step[] = [plainServer("tau2", port, flags.budgetUsd)];
     for (const arm of arms) {
-      const agent =
-        arm.name === "single"
-          ? m.answer
-          : arm.name === "obligations"
-            ? `marina/obligations:${m.answer}`
-            : `marina/verify:${m.answer}${m.checker !== m.answer ? `+${m.checker}` : ""}`;
+      const agent = tau2AgentModel(arm.name, m);
       const taskIds = flags.taskIds?.length ? flags.taskIds : undefined;
       const numTasks =
         !taskIds && flags.split !== TAU2_FULL_SPLIT && (flags.limit !== undefined || !splitSize)
