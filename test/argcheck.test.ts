@@ -676,6 +676,43 @@ describe("POST /v1/chat/completions with the argument check", () => {
     expect(read.headers.get("x-marina-argcheck")).toContain("check=no-write");
   });
 
+  it("classifies a dispatcher call by the tool it runs: a lookup is not checked, a write is", async () => {
+    const tools = [
+      ...TOOLS,
+      {
+        type: "function",
+        function: {
+          name: "call_tool",
+          parameters: { type: "object", properties: { tool: {}, arguments: {} } },
+        },
+      },
+    ];
+    const dispatch = (tool: string, args: string) => ({
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: `d${tool}`,
+          type: "function",
+          function: { name: "call_tool", arguments: JSON.stringify({ tool, arguments: args }) },
+        },
+      ],
+    });
+    replies = [dispatch("get_card", '{"card_id":"4471"}')];
+    const read = await post({ model: `marina/argcheck:${MODEL}`, messages: opening, tools });
+    expect(seen.map((s) => s.kind)).toEqual(["main"]);
+    expect(read.headers.get("x-marina-argcheck")).toContain("check=no-write");
+    replies = [dispatch("close_card", '{"card_id":"4471"}')];
+    seen = [];
+    const wrote = await post(
+      { model: MODEL, messages: opening, tools },
+      { "x-marina-argcheck": "observe" },
+    );
+    expect(seen.map((s) => s.kind)).toEqual(["main", "judge"]);
+    expect(lastText(seen[1]!.body)).toContain("it runs `close_card` with the arguments inside");
+    expect(wrote.headers.get("x-marina-argcheck")).toContain("checked=1;flagged=1");
+  });
+
   it("combines with the obligations ledger: both run, the judge sees the stated requests", async () => {
     replies = [closeCall("4471"), closeCall("4417")];
     const resp = await post({

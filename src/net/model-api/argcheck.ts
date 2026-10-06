@@ -41,6 +41,7 @@ import { messageText, type OpenAIMessage } from "../passthru-context";
 import { conversationKeys, ledgerCompletion } from "./obligations";
 import { COST_USD_HEADER, type PassthruAuthResult } from "./shared";
 import { isReadOnlyToolCall } from "./verify";
+import { readOnlyCall } from "../../obligations/tool-call";
 
 const log = new Logger();
 
@@ -240,7 +241,11 @@ export async function finishArgcheck(
   }
   const writes = (firstMessage(parsed)?.tool_calls ?? [])
     .map((c) => ({ name: c.function?.name ?? "", args: parseArgs(c.function?.arguments) }))
-    .filter((c) => c.name && !isReadOnlyToolCall(c.name, prep.tools));
+    .filter(
+      (c) =>
+        c.name &&
+        !readOnlyCall(c.name, c.args, (n) => isReadOnlyToolCall(n, prep.tools), prep.tools),
+    );
   if (writes.length === 0) return done(resp, text, "no-write");
   const evidence = new EvidenceIndex(conversationEvidence(prep.messages));
   for (const call of writes.slice(0, MAX_CALLS_CHECKED)) {
@@ -249,6 +254,7 @@ export async function finishArgcheck(
         memo: prep.memo,
         mode: prep.mode,
         trigger: prep.trigger,
+        tools: prep.tools,
         judge: { ...(prep.provider ? { provider: prep.provider } : {}), complete: prep.complete },
         ...(prep.stated ? { stated: prep.stated } : {}),
       }).catch((e) => {
