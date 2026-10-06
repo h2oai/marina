@@ -71,6 +71,20 @@ def parse_args() -> argparse.Namespace:
         help="OpenRouter only: comma-separated provider quantizations for the reader (e.g. bf16, "
         "the paper's unquantized Qwen3.5-9B); sent as the request's `provider` routing preference",
     )
+    p.add_argument(
+        "--reader-retries",
+        type=int,
+        default=0,
+        help="extra attempts, with exponential backoff, after a transient reader failure (429, 5xx, "
+        "timeout, connection error, empty reply) that outlived the client's own retries. "
+        "0 = the official behaviour: one failure aborts the run",
+    )
+    p.add_argument(
+        "--reader-cache",
+        default=None,
+        help="JSONL file of completed reader replies keyed by a hash of the exact request; a rerun "
+        "reuses a reply for an identical request instead of asking again (resume)",
+    )
     p.add_argument("--evaluator-model", default=os.getenv("EVALUATOR_MODEL", "gpt-5.2"))
     p.add_argument("--evaluator-base-url", default=None)
     p.add_argument("--evaluator-api-key-env", default="OPENAI_API_KEY")
@@ -171,7 +185,88 @@ def main() -> None:
             return body
 
         harness.build_extra_body = with_provider
+    if args.reader_retries > 0 or args.reader_cache:
+        install_reader_resilience(harness, args.reader_retries, args.reader_cache)
     harness.main()
+
+
+TRANSIENT_STATUS = {408, 409, 425, 429, 500, 502, 503, 504, 520, 522, 524}
+
+
+def is_transient(error: BaseException) -> bool:
+    import openai
+
+    if isinstance(error, (openai.APIConnectionError, openai.APITimeoutError)):
+        return True
+    if isinstance(error, openai.APIStatusError):
+        return error.status_code in TRANSIENT_STATUS
+    # The harness's own check for an empty reply (thinking used the whole budget).
+    return isinstance(error, RuntimeError) and "returned empty text" in str(error)
+
+
+def install_reader_resilience(harness, retries: int, cache_path: str | None) -> None:  # type: ignore[no-untyped-def]
+    """Wrap the harness's reader call; scoring, prompts and sampling are untouched.
+
+    - Retries: a call that still fails after the OpenAI client's own retries is tried again
+      up to `retries` times, waiting 30 s, 60 s, ... (capped at 600 s). Non-transient errors
+      (400, auth, a bad request) still abort, as in the official harness.
+    - Resume: every completed reply is appended to `cache_path` under the SHA-256 of the
+      exact request (model, messages, sampling); a rerun reuses it for the identical request.
+      Retrieval is deterministic, so a rerun rebuilds identical prompts.
+    """
+    import asyncio
+    import atexit
+    import hashlib
+
+    original = harness.call_reader_model_async
+    cache: dict[str, tuple[str, dict]] = {}
+    if cache_path and os.path.exists(cache_path):
+        with open(cache_path, encoding="utf-8") as fp:
+            for line in fp:
+                if line.strip():
+                    row = json.loads(line)
+                    cache[row["key"]] = (row["text"], row["usage"])
+    stats = {"reused": 0, "retried": 0}
+
+    def request_key(args, messages) -> str:  # type: ignore[no-untyped-def]
+        request = harness.build_reader_request(args, messages)
+        request.pop("timeout", None)
+        blob = json.dumps(request, sort_keys=True, ensure_ascii=False, default=str)
+        return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+    async def call(client, args, messages):  # type: ignore[no-untyped-def]
+        key = request_key(args, messages)
+        if key in cache:
+            stats["reused"] += 1
+            return cache[key]
+        attempt = 0
+        while True:
+            try:
+                text, usage = await original(client, args, messages)
+                break
+            except Exception as error:  # noqa: BLE001 - classified below
+                if attempt >= retries or not is_transient(error):
+                    raise
+                delay = min(600, 30 * 2**attempt)
+                attempt += 1
+                stats["retried"] += 1
+                print(
+                    f"reader retry {attempt}/{retries} in {delay}s after "
+                    f"{type(error).__name__}: {str(error)[:160]}",
+                    flush=True,
+                )
+                await asyncio.sleep(delay)
+        cache[key] = (text, usage)
+        if cache_path:
+            # One event loop: appends from concurrent tasks never interleave mid-line.
+            with open(cache_path, "a", encoding="utf-8") as fp:
+                fp.write(json.dumps({"key": key, "text": text, "usage": usage}) + "\n")
+        return text, usage
+
+    harness.call_reader_model_async = call
+    atexit.register(
+        lambda: print(f"reader resilience: reused {stats['reused']}, retried {stats['retried']}")
+    )
 
 
 if __name__ == "__main__":
