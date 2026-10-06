@@ -20,6 +20,7 @@ import {
   isMarket,
 } from "./dataset";
 import { fallbackForecasts, forecastsFrom, requestFor } from "./map";
+import { type DatasetPrior, priorLine } from "./priors";
 
 /** Due dates with a published resolution set, newest first. */
 export async function resolvedRounds(fetcher: Fetcher = fetch): Promise<string[]> {
@@ -41,8 +42,9 @@ export function scoreQuestion(
   q: FbQuestion,
   resolved: FbResolution[],
   answer: TypedForecastAnswer | undefined,
+  byDate?: Record<string, number>,
 ): number {
-  const forecasts = (answer && forecastsFrom(q, answer, null)) || fallbackForecasts(q);
+  const forecasts = (answer && forecastsFrom(q, answer, null)) || fallbackForecasts(q, byDate);
   const pairs = resolved
     .map((r) => ({
       r,
@@ -58,7 +60,7 @@ export function scoreQuestion(
 export function backtestItems(
   set: FbQuestionSet,
   resolutions: FbResolution[],
-  opts: { sources?: string[] } = {},
+  opts: { sources?: string[]; priors?: ReadonlyMap<string, DatasetPrior> } = {},
 ): BacktestItem[] {
   const due = set.forecast_due_date;
   const asOf = `${due}T00:00:00.000Z`;
@@ -73,10 +75,14 @@ export function backtestItems(
     if (opts.sources && !opts.sources.includes(q.source)) continue;
     const rs = byKey.get(`${q.source}|${q.id}`);
     if (!rs?.length) continue;
+    const stat = opts.priors?.get(`${q.source}|${q.id}`);
     out.push({
       id: `forecastbench:${due}/${q.source}/${q.id}`,
-      request: { ...requestFor(q, due), asOf },
-      score: (answer) => scoreQuestion(q, rs, answer),
+      request: {
+        ...requestFor(q, due, stat ? { prior: stat.prior, line: priorLine(stat) } : undefined),
+        asOf,
+      },
+      score: (answer) => scoreQuestion(q, rs, answer, stat?.byDate),
     });
   }
   return out;

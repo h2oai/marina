@@ -181,9 +181,11 @@ stored. Adapters append records as questions resolve (`recordFromAnswer` in
 **Prior shrink** (`MARINA_FORECAST_PRIOR=on`). A strong baseline caps a forecaster's large misses,
 so the answer is pooled toward the best prior available at the cutoff:
 
-1. a market or community forecast the caller supplies (`priors` on `POST /v1/forecast`: `source`,
-   `distribution` or `value`/`sd`, and `at`, the time it was observed — a prior observed after the
-   cutoff is rejected and the rejection recorded);
+1. a market, community or statistical forecast the caller supplies (`priors` on
+   `POST /v1/forecast`: `source`, `distribution` or `value`/`sd`, and `at`, the time it was
+   observed — a prior observed after the cutoff is rejected and the rejection recorded). A
+   `statistical` prior comes from data rather than people: a series' own history or a published
+   reference class's base rate (see [Statistical priors](#statistical-priors));
 2. one priced market a lookup matched, for a yes/no question (two or more matches give no prior);
 3. for a number, the freshest official reading (the lookups' anchor);
 4. the base rate of the question's class in resolved history (the caller's `category`, else the
@@ -195,7 +197,7 @@ Only an **informative** prior (1–4) earns a shrink. The type default is record
 toward, because LLM forecasters already hedge toward the middle and pooling toward uniform makes that
 worse. Probabilities are pooled in log-odds (a geometric pool for a choice); a number moves
 linearly. Before there is evidence, the weight is `MARINA_FORECAST_PRIOR_WEIGHT` (0.5) toward a
-supplied market or community prior, and 0 toward anything else. A fitted weight replaces the default
+supplied prior, and 0 toward anything else. A fitted weight replaces the default
 only when it wins on held-out history (below). Each prior also records its time to close, and its
 liquidity in USD when the caller supplies `liquidity`. When a bucket has enough records, the weight
 is fitted within it: time to close of ≤ 7 days, ≤ 30 days or more, split by liquidity below or
@@ -265,6 +267,31 @@ records, else the answer group), a candidate formation replaces the default only
   ledger uses for promotions.
 
 Otherwise the default formation answers. The decision is recorded on the answer (`route`).
+
+### Statistical priors
+
+Many questions are statistics before they are research: "will this series be higher on date d
+than on date D?", or "will this kind of event happen again?". A model asked to reason about them
+from a single number tends to make confident calls on what is close to a coin flip. A statistical
+prior answers them from data, with no model call, and is supplied to the forecaster as a
+`statistical` prior: the runs see it, and prior shrink pools toward it.
+
+- **Series history as of a cutoff** (`src/forecast/series-history.ts`): FRED (vintage-correct
+  with `FRED_API_KEY`: the observations as published the day before the cutoff; series without
+  ALFRED vintages, such as licensed market prices, are read as observed and labelled not
+  vintage), daily stock closes (split-adjusted only for splits before the cutoff, never the
+  dividend-adjusted close) and any DBnomics series. Every point is dated before the cutoff's day.
+- **The comparison prior** (`src/forecast/series-prior.ts`): the frequency of a rise over the same
+  horizon by drift, momentum or the same calendar window in past years (each also shrunk halfway
+  to 0.5). Each series chooses its own method by replaying every method at earlier cutoffs inside
+  its own past; the winner must beat 0.5 by 5 % (relative Brier), or the prior is 0.5.
+- **Reference-class rates** (`src/forecast/reference-class.ts`): from published outcomes, nested
+  classes from broadest to narrowest, each pulled toward its parent in proportion to its evidence.
+  Only outcomes settled two days before the cutoff count.
+
+A **prior-only** forecast (`src/forecast/prior-answer.ts`) is the answer the best prior gives on
+its own, at no cost. Benchmark adapters include it as a candidate configuration: a model
+configuration that cannot beat its own prior on held-out questions is adding noise.
 
 ## Keeping score
 

@@ -22,6 +22,18 @@ bun run forecastbench estimate --due 2026-10-11      # questions, forecasts, est
 bun run forecastbench run --due 2026-10-11 --set 1   # forecast everything, then write the file
 ```
 
+Dataset questions are mostly statistics, so each one also gets a **statistical prior** before the
+models see it ([Statistical priors](forecasting.md#statistical-priors)):
+
+| Source | Prior |
+|---|---|
+| FRED, yfinance, DBnomics | the series ForecastBench names, read as of the due date; the series picks drift, momentum, the same calendar window in past years, or 0.5 by replaying its own past |
+| ACLED, Wikipedia | how similar questions resolved in ForecastBench's own published resolutions known by the due date (source → question template → size → horizon) |
+
+The prior is shown to the runs, supplied for prior shrink, written to `<due>/priors.json`, and used
+as the fallback for a dataset question that could not be forecast. Market questions keep their
+market price.
+
 `run` appends each answer to `set-<N>.jsonl` as it lands. Rerun it after an interruption: it
 resumes, and retries only the questions that are missing or failed.
 
@@ -68,6 +80,14 @@ Set N files with pick N:
 bun run forecastbench select --select-budget 15                        # → data/forecastbench/selection.json
 bun run forecastbench run --due 2026-10-11 --set 1                     # pick 1
 bun run forecastbench run --due 2026-10-11 --set 2 --concurrency 8     # pick 2
+```
+
+The candidates always include `prior-only` (no model: market prices and statistical priors) and
+the cheap ensemble pooled toward the prior (`ensemble:cheap+pool`). `baseline` scores the
+model-free priors per source on resolved rounds, at no cost:
+
+```bash
+bun run forecastbench baseline --rounds 2026-08-16,2026-08-30   # prior vs 0.5, per source
 ```
 
 See [Metaculus](metaculus.md#choosing-the-configuration) for the candidate set and the leakage

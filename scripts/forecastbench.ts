@@ -13,6 +13,7 @@
  *   bun run forecastbench upload [--due …] [--set 1] --yes  copy the file to the operator's bucket folder
  *   bun run forecastbench resolve [--due …]                 score resolved questions, learn from them
  *   bun run forecastbench select … [--resume]               choose up to 3 configurations by backtest
+ *   bun run forecastbench baseline [--rounds a,b]           score the model-free priors on resolved rounds
  *   bun run forecastbench status
  *
  * `select` also files its winner (chosen on the slot's selection split) as an earned promotion on
@@ -47,6 +48,7 @@ import {
   isMarket,
   resolutionDates,
 } from "../benchmarks/forecastbench/dataset";
+import { roundPriors, savedPriors } from "../benchmarks/forecastbench/history-cache";
 import { assemble, meanCost, resolveRound, runRound } from "../benchmarks/forecastbench/run";
 import {
   coverage,
@@ -66,6 +68,7 @@ import { depsForConfig, forecasterFor } from "../benchmarks/forecasting/configs"
 import { attachWorldSpend } from "../benchmarks/forecasting/shared";
 import { forecastLessonsFor } from "../src/learning/forecast-bridge";
 import { enableOutcomeLearning, noteOutcome, settleOutcomes } from "../src/learning/service";
+import { priorAnswer } from "../src/forecast/prior-answer";
 import { MarinaDB } from "../src/persistence/database";
 
 const BENCHMARK = "forecastbench";
@@ -185,8 +188,10 @@ async function runCmd(db: MarinaDB): Promise<number> {
   log(
     `${describe(set)}\nset ${values.set} · ${chosen.config.label}: ${chosen.description} · journal ${journal}`,
   );
+  const priors = await roundPriors(values.dir!, set, { log });
   const r = await runRound({
     set,
+    priors,
     questions: selected(set),
     forecast: forecasterFor(
       chosen.config,
@@ -215,7 +220,7 @@ async function writeCmd(db: MarinaDB, given?: FbQuestionSet): Promise<number> {
       values.model ??
       (n === 1 ? DEFAULT_SET_IDENTITY.model : `${DEFAULT_SET_IDENTITY.model} (${n})`),
   };
-  const a = assemble(set, journalPath(due, values.set!));
+  const a = assemble(set, journalPath(due, values.set!), savedPriors(values.dir!, due));
   const errors = validateForecasts(set.questions, a.forecasts);
   if (errors.length) {
     log(`INVALID set: ${errors.slice(0, 5).join("; ")}`);
@@ -322,7 +327,8 @@ async function selectCmd(db: MarinaDB): Promise<number> {
   for (const due of rounds) {
     const set = await fetchQuestionSet(due);
     const resolutions = await fetchResolutionSet(due);
-    items.push(...backtestItems(set, resolutions, sources ? { sources } : {}));
+    const priors = await roundPriors(values.dir!, set, { log });
+    items.push(...backtestItems(set, resolutions, { ...(sources ? { sources } : {}), priors }));
   }
   const { configs, catalogue } = await candidates({
     ...(values.include?.length ? { include: values.include } : {}),
@@ -356,6 +362,49 @@ async function selectCmd(db: MarinaDB): Promise<number> {
   return 0;
 }
 
+/**
+ * The model-free baseline over resolved rounds, per source: each question's own
+ * prior (market price, statistical prior) against always 0.5. Costs nothing; a
+ * model configuration that does not beat it is adding noise.
+ */
+async function baselineCmd(): Promise<number> {
+  const rounds = values.rounds
+    ? values.rounds.split(",").map((s) => s.trim())
+    : (await resolvedRounds()).slice(0, 6);
+  const by = new Map<string, { n: number; prior: number; half: number }>();
+  for (const due of rounds) {
+    const set = await fetchQuestionSet(due);
+    const resolutions = await fetchResolutionSet(due);
+    const priors = await roundPriors(values.dir!, set, { log });
+    for (const item of backtestItems(set, resolutions, { priors })) {
+      const source = item.id.split("/")[1]!;
+      const b = by.get(source) ?? { n: 0, prior: 0, half: 0 };
+      b.n++;
+      b.prior += 1 - item.score(priorAnswer(item.request));
+      b.half +=
+        1 - item.score({ ...priorAnswer(item.request), distribution: halfOf(item.request) });
+      by.set(source, b);
+    }
+  }
+  log(
+    `rounds ${rounds.join(", ")} · Brier per question (mean over its resolved dates; lower is better)`,
+  );
+  log(
+    `${"source".padEnd(12)}${"questions".padStart(10)}${"prior".padStart(9)}${"0.5".padStart(9)}`,
+  );
+  for (const [s, b] of [...by].sort()) {
+    log(
+      `${s.padEnd(12)}${String(b.n).padStart(10)}${(b.prior / b.n).toFixed(3).padStart(9)}${(b.half / b.n).toFixed(3).padStart(9)}`,
+    );
+  }
+  return 0;
+}
+
+/** 0.5 on every option of a request (the uninformed forecast). */
+function halfOf(req: { answer: { type: string; options?: Array<{ id: string }> } }) {
+  return Object.fromEntries((req.answer.options ?? []).map((o) => [o.id, 0.5]));
+}
+
 function statusCmd(db: MarinaDB): number {
   for (const r of db.listExternalSubmissions(BENCHMARK, 20)) {
     log(
@@ -369,6 +418,7 @@ async function main(): Promise<number> {
   if (cmd === "fetch") return fetchCmd();
   if (cmd === "estimate") return estimateCmd();
   if (cmd === "upload") return uploadCmd();
+  if (cmd === "baseline") return baselineCmd();
   const db = new MarinaDB(process.env.DB_PATH || "marina.db");
   const detach = attachWorldSpend(db);
   try {
@@ -385,7 +435,7 @@ async function main(): Promise<number> {
         return statusCmd(db);
       default:
         console.error(
-          `unknown command ${cmd} (fetch | estimate | run | write | upload | resolve | select | status)`,
+          `unknown command ${cmd} (fetch | estimate | run | write | upload | resolve | select | baseline | status)`,
         );
         return 2;
     }

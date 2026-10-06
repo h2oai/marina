@@ -18,6 +18,7 @@ import type { Forecaster } from "../forecasting/configs";
 import { mapLimit, reasoningText } from "../forecasting/shared";
 import { type FbQuestion, type FbQuestionSet, type FbResolution, isMarket } from "./dataset";
 import { type FbForecast, fallbackForecasts, forecastsFrom, requestFor } from "./map";
+import { type DatasetPrior, priorLine } from "./priors";
 
 export interface JournalLine {
   key: string;
@@ -57,6 +58,8 @@ export interface RoundOptions {
   questions?: FbQuestion[];
   /** Stop starting new questions once this run has spent this much. */
   budgetUsd?: number;
+  /** Dataset questions' statistical priors (`./priors.ts`), by question key. */
+  priors?: ReadonlyMap<string, DatasetPrior>;
   env?: NodeJS.ProcessEnv;
   log?: (line: string) => void;
 }
@@ -100,7 +103,10 @@ export async function runRound(opts: RoundOptions): Promise<RoundRun> {
     const started = Date.now();
     let line: JournalLine;
     try {
-      const answer = await opts.forecast(requestFor(q, due));
+      const stat = opts.priors?.get(questionKey(q));
+      const answer = await opts.forecast(
+        requestFor(q, due, stat ? { prior: stat.prior, line: priorLine(stat) } : undefined),
+      );
       const forecasts = forecastsFrom(q, answer, reasoningText(answer, { maxChars: 600 }) || null);
       line = {
         key: questionKey(q),
@@ -137,6 +143,7 @@ export async function runRound(opts: RoundOptions): Promise<RoundRun> {
 export function assemble(
   set: FbQuestionSet,
   journal: string,
+  priors?: ReadonlyMap<string, { byDate: Record<string, number> }>,
 ): { forecasts: FbForecast[]; fallback: number; answered: number; costUsd: number } {
   const done = readJournal(journal);
   const forecasts: FbForecast[] = [];
@@ -150,7 +157,7 @@ export function assemble(
       forecasts.push(...j.forecasts);
       answered++;
     } else {
-      forecasts.push(...fallbackForecasts(q));
+      forecasts.push(...fallbackForecasts(q, priors?.get(questionKey(q))?.byDate));
       fallback++;
     }
   }

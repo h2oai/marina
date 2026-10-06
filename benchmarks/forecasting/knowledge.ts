@@ -96,6 +96,8 @@ export function knowledgeBoundOf(
   releases: Record<string, string> = MODEL_RELEASES,
 ): KnowledgeBound {
   const ids = [...new Set(models.map(bare))];
+  // No model, nothing to have memorised: clean on any date.
+  if (ids.length === 0) return { after: "0000-01-01" };
   const known = Object.keys(releases);
   const floating = ids.filter((m) => isFloatingAlias(m, known));
   if (floating.length) {
@@ -113,7 +115,12 @@ export function knowledgeBoundOf(
       models: unknown,
     };
   }
-  return { after: ids.map((m) => releases[m]!).sort().at(-1)! };
+  return {
+    after: ids
+      .map((m) => releases[m]!)
+      .sort()
+      .at(-1)!,
+  };
 }
 
 /** Whether a forecast with this cutoff is clean of a model bound (strictly after the margin). */

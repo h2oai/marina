@@ -12,6 +12,8 @@
  *
  *   market         a market price the asker supplied (an adapter's own feed)
  *   community      a community forecast the asker supplied
+ *   statistical    a statistical prior the asker supplied (a series' own history,
+ *                  `./series-prior.ts`, or a published reference class's base rate)
  *   market-lookup  one priced market a lookup matched, for a yes/no question
  *   anchor         the freshest official reading of the quantity (a number)
  *   base-rate      how the question's reference class resolved in history
@@ -57,9 +59,9 @@ import {
 } from "./history";
 import type { LookupResult, NumericAnchor } from "./lookups";
 
-/** A prior the asker supplies (an adapter's market price or community forecast). */
+/** A prior the asker supplies (an adapter's market price, community forecast or statistical prior). */
 export interface SuppliedPrior {
-  source: "market" | "community";
+  source: SuppliedPriorSource;
   /** Per option: a choice's probabilities, or a multi-select's per-option probabilities. */
   distribution?: Record<string, number>;
   /** A number's prior value (and spread). */
@@ -85,6 +87,10 @@ export interface PriorChoice {
   /** Priors passed over and why (after the cutoff, malformed, …). */
   rejected?: Array<{ source: string; reason: string }>;
 }
+
+/** The priors an asker may supply, best first. */
+export const SUPPLIED_PRIOR_SOURCES = ["market", "community", "statistical"] as const;
+export type SuppliedPriorSource = (typeof SUPPLIED_PRIOR_SOURCES)[number];
 
 /** Fewest offers of a label (or class events) before a base rate counts. */
 export const MIN_BASE_RATE_EVIDENCE = 10;
@@ -116,7 +122,7 @@ export function choosePrior(input: {
   const { spec } = input;
   const rejected: Array<{ source: string; reason: string }> = [];
   const cutoff = Date.parse(input.cutoff);
-  for (const source of ["market", "community"] as const) {
+  for (const source of SUPPLIED_PRIOR_SOURCES) {
     for (const s of (input.supplied ?? []).filter((x) => x.source === source)) {
       const at = Date.parse(s.at);
       if (!Number.isFinite(at)) {
@@ -340,9 +346,9 @@ export interface ShrinkWeight extends AdoptionResult<number> {
   bucket?: string;
 }
 
-/** The default weight before evidence: `priorWeight` for a supplied market/community forecast, else 0. */
+/** The default weight before evidence: `priorWeight` for a supplied prior, else 0. */
 export function defaultWeight(source: PriorSource, priorWeight: number): number {
-  return source === "market" || source === "community" ? priorWeight : 0;
+  return (SUPPLIED_PRIOR_SOURCES as readonly string[]).includes(source) ? priorWeight : 0;
 }
 
 /**

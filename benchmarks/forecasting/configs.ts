@@ -13,6 +13,7 @@
 import type { Retriever } from "../../src/arena/research/retrieve";
 import { forecastFormed, type TypedFormation, typedFormation } from "../../src/forecast/formations";
 import type { LessonStore } from "../../src/forecast/lessons";
+import { priorAnswer } from "../../src/forecast/prior-answer";
 import { typedForecastDeps } from "../../src/forecast/service";
 import type {
   TypedForecastAnswer,
@@ -37,13 +38,26 @@ export interface ForecastConfig {
   lessons?: boolean;
   /** Structured lookups: `auto` (default), `off`, or a list (`markets,fred`). */
   lookups?: string;
+  /** No models: each question's best supplied prior is the forecast (the baseline to beat). */
+  priorOnly?: boolean;
+  /** Pool the answer toward its supplied prior (`MARINA_FORECAST_PRIOR`); unset = the environment's. */
+  pool?: boolean;
 }
+
+/** The model-free baseline: every question answered by its own best prior. */
+export const PRIOR_ONLY_CONFIG: ForecastConfig = {
+  label: "prior-only",
+  formation: "ensemble",
+  analysts: [],
+  priorOnly: true,
+};
 
 const short = (m: string) => m.replace(/^openrouter\//, "").replace(/^[^/]+\//, "");
 const spec = (m: CatalogueModel | string) => `openrouter/${typeof m === "string" ? m : m.id}`;
 
 /** One line naming everything that decides a forecast (what submissions disclose). */
 export function describeConfig(c: ForecastConfig): string {
+  if (c.priorOnly) return "prior only (market price or statistical prior; no model)";
   const models = [...new Set(c.analysts.map(short))];
   const parts = [
     `${c.formation === "ensemble" ? (models.length > 1 ? "ensemble" : "single model") : c.formation} of ${models.join(", ")}`,
@@ -55,6 +69,7 @@ export function describeConfig(c: ForecastConfig): string {
       : `critic ${short(c.critic ?? c.planner ?? c.analysts[0]!)}`,
     `lessons ${c.lessons === false ? "off" : "on"}`,
     `lookups ${c.lookups ?? "auto"}`,
+    c.pool === undefined ? "" : `prior pooling ${c.pool ? "on" : "off"}`,
   ];
   return parts.filter(Boolean).join(" · ");
 }
@@ -93,7 +108,8 @@ function trio(models: CatalogueModel[]): CatalogueModel[] {
  * The candidate configurations from the candidate models: each model alone;
  * ensemble, delphi and tournament over a frontier trio and a cheap trio
  * (vendor-diverse); the verification formation (the cheapest model's runs
- * checked by the strongest); each crew named; and, with `ablate`, the cheap
+ * checked by the strongest); each crew named; the prior-only baseline and the
+ * cheap ensemble pooled toward the prior; and, with `ablate`, the cheap
  * configurations without lessons and without lookups.
  */
 export function candidateConfigs(
@@ -162,6 +178,10 @@ export function candidateConfigs(
       critique: false,
     });
   }
+  // The model-free baseline, and the cheap ensemble pooled toward each question's prior.
+  out.push(PRIOR_ONLY_CONFIG);
+  const cheapEnsemble = out.find((c) => c.label === "ensemble:cheap");
+  if (cheapEnsemble) out.push({ ...cheapEnsemble, label: "ensemble:cheap+pool", pool: true });
   if (opts.ablate) {
     for (const base of out.filter(
       (c) => c.label === `single:${cheapest?.id}` || c.label === "ensemble:cheap",
@@ -179,7 +199,12 @@ export function parseConfigs(raw: unknown): ForecastConfig[] {
   return raw.map((r, i) => {
     const c = r as Partial<ForecastConfig>;
     const formation = typedFormation(c.formation ?? "ensemble");
-    if (!c.label || !formation || !Array.isArray(c.analysts) || c.analysts.length === 0) {
+    if (
+      !c.label ||
+      !formation ||
+      !Array.isArray(c.analysts) ||
+      (c.analysts.length === 0 && !c.priorOnly)
+    ) {
       throw new Error(
         `configuration ${i}: needs label, analysts and a formation (ensemble|delphi|tournament)`,
       );
@@ -211,6 +236,7 @@ export function depsForConfig(c: ForecastConfig, opts: DepsOptions = {}): DepsFa
   const env = {
     ...(opts.env ?? process.env),
     ...(c.lookups ? { MARINA_FORECAST_LOOKUPS: c.lookups } : {}),
+    ...(c.pool !== undefined ? { MARINA_FORECAST_PRIOR: c.pool ? "on" : "off" } : {}),
   };
   return () => {
     const reports: string[] = [];
@@ -255,6 +281,11 @@ export function forecasterFor(
   } = {},
 ): Forecaster {
   return async (req) => {
+    if (c.priorOnly) {
+      const answer = priorAnswer(req);
+      opts.onAnswer?.(req, answer, []);
+      return answer;
+    }
     const made = makeDeps();
     const answer = await forecastFormed(req, made.deps, c.formation);
     answer.costUsd = Math.round(made.costUsd() * 1e6) / 1e6;
