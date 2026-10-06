@@ -100,6 +100,17 @@ describe("questions and answers", () => {
     ).toThrow(/not an option/);
     expect(() => normalizeAnswers(questions, { d: { noul: 0.1 } })).toThrow(/answer t/);
   });
+
+  it("reads a bare probability as a noul answer, only inside 0..1", () => {
+    const questions = { a: noul("?"), b: noul("?"), c: noul("?") };
+    expect(normalizeAnswers(questions, { a: 0.9, b: "0", c: { noul: 0.4 } })).toEqual({
+      a: { type: "noul", noul: 0.9 },
+      b: { type: "noul", noul: 0 },
+      c: { type: "noul", noul: 0.4 },
+    });
+    expect(() => normalizeAnswers({ a: noul("?") }, { a: 7 })).toThrow(/missing noul/);
+    expect(() => normalizeAnswers({ a: noul("?") }, { a: "yes" })).toThrow(/missing noul/);
+  });
 });
 
 describe("providers", () => {
