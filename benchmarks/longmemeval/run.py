@@ -12,6 +12,7 @@ reader prompt, the evaluator or the scoring is changed.
     --data-root <dataset> --domain web --tier small --output-dir runs/marina_lexical_web_small \
     [--limit N | --question-ids a,b] [--mode lexical|hybrid] [--retrieval unified|raw] \
     [--gate off|observe|on --gate-backend auto|decisions|model|mechanical --gate-model M] \
+    [--ingest-notes on --notes-model M --notes-base-url URL --notes-api-key-env VAR] \
     [memory budget flags] \
     [--reader-model ... --reader-base-url ... --evaluator-model ... --evaluator-base-url ...]
 
@@ -73,6 +74,22 @@ def parse_args() -> argparse.Namespace:
         default="OPENAI_API_KEY",
         help="name of the env var holding the gate endpoint's key",
     )
+    p.add_argument(
+        "--ingest-notes",
+        choices=["off", "on"],
+        default="off",
+        help="write ingest-time notes per trajectory (src/memory/ingest-notes.ts)",
+    )
+    p.add_argument(
+        "--notes-model", default=None, help="chat model that writes the notes (unset = mechanical)"
+    )
+    p.add_argument("--notes-base-url", default="http://localhost:3300/v1")
+    p.add_argument(
+        "--notes-api-key-env",
+        default="OPENAI_API_KEY",
+        help="name of the env var holding the notes endpoint's key",
+    )
+    p.add_argument("--notes-max-bytes", type=int, default=48000)
     p.add_argument("--search-limit", type=int, default=40)
     p.add_argument("--context-bytes", type=int, default=160000)
     p.add_argument("--state-bytes", type=int, default=10000)
@@ -171,6 +188,11 @@ def main() -> None:
                 "episode_bytes": args.episode_bytes,
                 "radius": args.radius,
                 "work_dir": args.work_dir,
+                "ingest_notes": args.ingest_notes,
+                "notes_model": args.notes_model,
+                "notes_base_url": args.notes_base_url,
+                "notes_api_key_env": args.notes_api_key_env,
+                "notes_max_bytes": args.notes_max_bytes,
             },
         }
     write_json(runtime_dir / "memory_config.json", memory_config)

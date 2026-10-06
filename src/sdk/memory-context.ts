@@ -120,4 +120,10 @@ export interface UnifiedContextOptions {
     maxItems?: number;
     backend?: "auto" | "mechanical";
   };
+  /**
+   * Follow a served ingest-time note with an excerpt of the record it was
+   * derived from when budget is left (default true; callers that hydrate
+   * records themselves pass false).
+   */
+  derivedSources?: boolean;
 }

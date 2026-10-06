@@ -12,12 +12,20 @@
  *     [--gate-base-url http://localhost:3300/v1] [--gate-api-key-env OPENAI_API_KEY]
  *     [--search-limit 40] [--context-bytes 160000] [--state-bytes 10000]
  *     [--episode-bytes 6000] [--radius 1]
+ *     [--ingest-notes off|on] [--notes-model <id>] [--notes-base-url http://localhost:3300/v1]
+ *     [--notes-api-key-env OPENAI_API_KEY] [--notes-max-bytes 48000]
  *
  * `--retrieval unified` (default) serves through `buildUnifiedContext`, Marina's
  * resident retrieval path; `raw` is the pilot's ungated search. The relevance gate
  * runs only in the unified path; a model gate's spend is recorded where it leaves
  * Marina (point `--gate-base-url` at a Marina `/v1`, or the decision layer's metered
  * provider with `DB_PATH`'s ledger attached).
+ *
+ * `--ingest-notes on` writes ingest-time notes (`src/memory/ingest-notes.ts`) after
+ * each trajectory: one call of `--notes-model` (behind `--notes-base-url`, a Marina
+ * `/v1` so spend lands on its ledger; the key comes from the variable named by
+ * `--notes-api-key-env`) per 12 KB chunk of the run's compact view, or, with no
+ * model named, the mechanical extractor. The insert reply carries the note counts.
  *
  * Requests: {"id":n,"op":"insert","trajectory":{…}} | {"id":n,"op":"query","query":"…"}
  *           | {"id":n,"op":"drain"} | {"id":n,"op":"stats"} | {"id":n,"op":"close"}
@@ -31,7 +39,14 @@ import { existsSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { attachCliSpendLedger } from "../../src/engine/cli-spend-ledger";
 import { DEFAULT_CONTEXT } from "./records";
-import { type GateBackend, gateProvider, LmeMemoryStore, type Retrieval } from "./store";
+import {
+  DEFAULT_NOTES_MAX_BYTES,
+  type GateBackend,
+  gateProvider,
+  LmeMemoryStore,
+  notesWriter,
+  type Retrieval,
+} from "./store";
 
 const { values } = parseArgs({
   args: process.argv.slice(2),
@@ -50,6 +65,11 @@ const { values } = parseArgs({
     "state-bytes": { type: "string", default: String(DEFAULT_CONTEXT.stateBytes) },
     "episode-bytes": { type: "string", default: String(DEFAULT_CONTEXT.episodeBytes) },
     radius: { type: "string", default: String(DEFAULT_CONTEXT.radius) },
+    "ingest-notes": { type: "string", default: "off" },
+    "notes-model": { type: "string" },
+    "notes-base-url": { type: "string", default: "http://localhost:3300/v1" },
+    "notes-api-key-env": { type: "string", default: "OPENAI_API_KEY" },
+    "notes-max-bytes": { type: "string", default: String(DEFAULT_NOTES_MAX_BYTES) },
   },
 });
 
@@ -81,10 +101,14 @@ const backend = pick<GateBackend>("gate-backend", values["gate-backend"], [
   "model",
   "mechanical",
 ]);
+const ingestNotes = pick("ingest-notes", values["ingest-notes"], ["off", "on"] as const);
 // A throwaway benchmark database: WAL without an fsync per commit.
 process.env.MARINA_DB_DURABILITY ??= "normal";
 // The decision layer's metered provider records into the world ledger (DB_PATH).
 if (gateMode !== "off" && backend !== "mechanical") attachCliSpendLedger("longmemeval memory gate");
+// The note writer checks the daily cap against the same ledger before each chunk.
+else if (ingestNotes === "on" && values["notes-model"])
+  attachCliSpendLedger("longmemeval ingest notes");
 
 const store = LmeMemoryStore.open(dbPath, {
   mode,
@@ -103,6 +127,18 @@ const store = LmeMemoryStore.open(dbPath, {
           }),
         },
       }),
+  ...(ingestNotes === "on"
+    ? {
+        notes: {
+          writer: notesWriter({
+            ...(values["notes-model"] ? { model: values["notes-model"] } : {}),
+            baseUrl: values["notes-base-url"] ?? "http://localhost:3300/v1",
+            apiKeyEnv: values["notes-api-key-env"] ?? "OPENAI_API_KEY",
+          }),
+          maxBytes: positive("notes-max-bytes", values["notes-max-bytes"], 1024),
+        },
+      }
+    : {}),
   searchLimit: positive("search-limit", values["search-limit"]),
   context: {
     contextBytes: positive("context-bytes", values["context-bytes"], 1024),
@@ -121,9 +157,33 @@ async function handle(line: string): Promise<boolean> {
     const request = JSON.parse(line) as { id?: unknown; op?: string } & Record<string, unknown>;
     id = request.id ?? null;
     switch (request.op) {
-      case "insert":
-        write({ id, ok: true, ...store.insert(request.trajectory as never) });
+      case "insert": {
+        const inserted = store.insert(request.trajectory as never);
+        const notes = await store.writeNotes(request.trajectory as never);
+        write({
+          id,
+          ok: true,
+          ...inserted,
+          ...(notes
+            ? {
+                notes: {
+                  outcome: notes.outcome,
+                  ...(notes.reason ? { reason: notes.reason } : {}),
+                  ...(notes.fallback ? { fallback: notes.fallback } : {}),
+                  writer: notes.writer,
+                  chunks: notes.chunks,
+                  calls: notes.calls,
+                  truncated: notes.truncated,
+                  written: notes.written,
+                  ungrounded: notes.ungrounded,
+                  duplicates: notes.duplicates,
+                  ms: Math.round(notes.ms),
+                },
+              }
+            : {}),
+        });
         return true;
+      }
       case "query":
         write({ id, ok: true, ...(await store.query(String(request.query ?? ""))) });
         return true;
