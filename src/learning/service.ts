@@ -42,6 +42,7 @@ import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import { rankedServing } from "../memory/admission";
 import { residentMemoryOperation } from "../memory/resident-service";
+import { selfModelToken } from "../net/self-model-token";
 import type { MarinaDB } from "../persistence/database";
 import type { MemoryOperationRequest } from "../sdk/memory-operations";
 import { lessonAdmission } from "./admission";
@@ -170,11 +171,6 @@ function selfBaseUrl(env: NodeJS.ProcessEnv): string {
   return `http://localhost:${Number(env.WS_PORT) || 3300}/v1`;
 }
 
-async function internalToken(): Promise<string> {
-  const { getInternalModelToken } = await import("../agent/agent-runtime");
-  return getInternalModelToken();
-}
-
 export interface SelfModelDeps {
   baseUrl?: string;
   token?: () => Promise<string>;
@@ -195,7 +191,7 @@ export function selfModelWriter(
         method: "POST",
         headers: {
           "content-type": "application/json",
-          authorization: `Bearer ${await (deps.token ?? internalToken)()}`,
+          authorization: `Bearer ${await (deps.token ?? (() => selfModelToken(env)))()}`,
         },
         body: JSON.stringify({
           model,
@@ -261,7 +257,7 @@ export function lessonJudgeFromEnv(
       inner ??= chatClassifierProvider({
         baseUrl: deps.baseUrl ?? selfBaseUrl(env),
         model,
-        apiKey: await (deps.token ?? internalToken)(),
+        apiKey: await (deps.token ?? (() => selfModelToken(env)))(),
         timeoutMs: SELF_TIMEOUT_MS,
         method: "verbalized",
         ...(deps.fetch ? { fetch: deps.fetch } : {}),
