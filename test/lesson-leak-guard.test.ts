@@ -421,6 +421,29 @@ describe("backfill --relearn-rejected", () => {
     expect(second).toMatchObject({ learned: 0, relearned: 0, existing: 2 });
   });
 
+  it("never resurrects a run whose earlier rejected lesson was retired", async () => {
+    recordRun("r1", { right: 6, completedAt: 1_000, target: "m/a" });
+    const sink = memoryLessonSink([
+      {
+        id: "old-1",
+        domain: "benchmark",
+        text: "[lesson:benchmark] failure · score 0.50",
+        kind: "failure",
+        trust: "rejected",
+        resolvedAt: new Date(1_000).toISOString(),
+        source: "benchmark:frames",
+        refs: ["bench:r1"],
+      },
+    ]);
+    await sink.retire!("benchmark", "old-1", { reason: "excluded", by: "operator" });
+    const deps = { sink, judge: rubricJudge(IDS) };
+    for (const relearnRejected of [false, true]) {
+      const r = await backfillLedgerLessons(db, deps, { relearnRejected });
+      expect(r).toMatchObject({ learned: 0, relearned: 0, existing: 1, retired: 1 });
+    }
+    expect(sink.all()).toHaveLength(1);
+  });
+
   it("defers runs the judge cannot decide and stops at the spend cap, writing nothing", async () => {
     recordRun("r1", { right: 6, completedAt: 1_000, target: "m/a" });
     recordRun("r2", { right: 9, completedAt: 2_000, target: "m/b" });

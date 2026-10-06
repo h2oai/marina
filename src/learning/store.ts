@@ -27,6 +27,7 @@ import {
   type LessonMergeEntry,
   type LessonRank,
   type LessonScope,
+  type LessonSelector,
   type LessonSink,
   type LessonTrust,
   lessonMatches,
@@ -107,6 +108,16 @@ export function lessonFromRecord(r: RecordLike): Lesson | undefined {
     ...(isObject(m.rank) && typeof m.rank.score === "number" ? { rank: m.rank as LessonRank } : {}),
     ...(isObject(m.admission) && typeof m.admission.action === "string"
       ? { admission: m.admission as unknown as LessonAdmissionStamp }
+      : {}),
+    ...(typeof m.retired_reason === "string"
+      ? {
+          retired: {
+            reason: m.retired_reason,
+            by: typeof m.retired_by === "string" ? m.retired_by : "",
+            ...(typeof m.superseded_by === "string" ? { supersededBy: m.superseded_by } : {}),
+            ...(typeof m.retired_at === "string" ? { at: m.retired_at } : {}),
+          },
+        }
       : {}),
     // Pessimistic: a contested lesson is held until the store checks its targets.
     ...(isObject(m.admission) && m.admission.state === "contested" ? { contested: true } : {}),
@@ -242,6 +253,41 @@ export function durableLessonSink(
       },
     });
   };
+  /** Paged symbolic reads of one domain's lessons (`validAt` given: only those valid then). */
+  const pageLessons = async (
+    domain: OutcomeDomain,
+    selector: LessonSelector,
+    limit: number,
+    validAt: number | undefined,
+    keep: (record: RecordLike, l: Lesson) => Lesson | undefined = (_r, l) => l,
+  ): Promise<Lesson[]> => {
+    const sp = await space(domain);
+    if (!sp.space_id) return [];
+    const out: Lesson[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 100 && out.length < limit; page++) {
+      const reply = await run({
+        operation: "query",
+        ...sp,
+        input: {
+          subject: LESSON_RECORD_SUBJECT,
+          ...(validAt !== undefined ? { valid_at: validAt } : {}),
+          limit: 100,
+          ...(cursor ? { cursor } : {}),
+        },
+      });
+      const r = (reply.result ?? {}) as { results?: RecordLike[]; next_cursor?: string | null };
+      for (const record of r.results ?? []) {
+        const l = lessonFromRecord(record);
+        if (!l || l.domain !== domain || !lessonMatches(l, selector)) continue;
+        const kept = keep(record, l);
+        if (kept) out.push(kept);
+      }
+      if (!r.next_cursor) break;
+      cursor = r.next_cursor;
+    }
+    return out.slice(0, limit);
+  };
   return {
     async write(lesson, writeOpts) {
       const reply = await run({
@@ -303,32 +349,18 @@ export function durableLessonSink(
       return selectServed(await releaseContested(lessons, sp.space_id), asOf, recallOpts);
     },
     async find(domain, selector, limit) {
-      const sp = await space(domain);
-      if (!sp.space_id) return [];
-      const now = Date.now();
-      const out: Lesson[] = [];
-      let cursor: string | undefined;
       // Exact symbolic reads at `now`: only current lessons, paged.
-      for (let page = 0; page < 100 && out.length < limit; page++) {
-        const reply = await run({
-          operation: "query",
-          ...sp,
-          input: {
-            subject: LESSON_RECORD_SUBJECT,
-            valid_at: now,
-            limit: 100,
-            ...(cursor ? { cursor } : {}),
-          },
-        });
-        const r = (reply.result ?? {}) as { results?: RecordLike[]; next_cursor?: string | null };
-        for (const record of r.results ?? []) {
-          const l = lessonFromRecord(record);
-          if (l && l.domain === domain && lessonMatches(l, selector)) out.push(l);
-        }
-        if (!r.next_cursor) break;
-        cursor = r.next_cursor;
-      }
-      return out.slice(0, limit);
+      return pageLessons(domain, selector, limit, Date.now());
+    },
+    async findRetired(domain, selector, limit) {
+      // Without `valid_at` the query reads every record's LATEST version, ended
+      // or not; keep those whose validity has closed. A `resolve` loser carries
+      // no retirement metadata: it is still a decision, labelled as such.
+      const now = Date.now();
+      return pageLessons(domain, selector, limit, undefined, (record, l) => {
+        if (currentLessonRecord(record, now)) return undefined;
+        return { ...l, retired: l.retired ?? { reason: "validity ended", by: "" } };
+      });
     },
     async neighbours(domain, text, opts) {
       const words = [...lessonTokens(text)].slice(0, 16).join(" ");

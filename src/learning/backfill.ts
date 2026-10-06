@@ -13,6 +13,12 @@
  *     lesson had been learned when the run was filed.
  *   - Idempotent: a run whose own lesson (first ref `bench:<id>`, any trust,
  *     current) already exists is skipped, so a second pass writes nothing.
+ *   - A retirement is a decision: a run whose lesson was retired (operator
+ *     curation, supersession, a resolve loser) counts as taught and is never
+ *     learned again — not even under `relearnRejected` (`retired`, when the
+ *     sink offers `findRetired`). The one exception is a lesson retired because
+ *     a run it cites was invalidated (`retireLessonsForRun`): once the run is
+ *     valid again (`benchmark revalidate`) the backfill learns it anew.
  *   - `relearnRejected`: a run whose current lessons are ALL rejected and were
  *     all written by an earlier learner (`provenance.learner` ≠
  *     `BENCHMARK_LEARNER`) is learned again. The rejected lessons stay as audit
@@ -40,8 +46,10 @@ import {
 export interface BackfillReport {
   /** Ledger runs looked at. */
   runs: number;
-  /** Runs that already had a lesson (idempotency). */
+  /** Runs that already had a lesson (idempotency). Includes `retired`. */
   existing: number;
+  /** Of `existing`, runs whose lesson was retired (a decision): never re-learned. */
+  retired: number;
   /** Of `learned`, runs re-learned because an earlier learner's lessons were all rejected. */
   relearned: number;
   /** Invalid, failed, unscored or empty runs: nothing to learn. */
@@ -64,6 +72,9 @@ export interface BackfillReport {
 
 /** Most runs one pass reads from the ledger. */
 export const BACKFILL_MAX_RUNS = 500;
+
+/** The retirement reason `retireLessonsForRun` writes: not a judgement on the lesson. */
+const INVALIDATED = /^benchmark run \S+ invalidated:/;
 
 /** The run a benchmark lesson was learned FROM: its first `bench:` ref. */
 function ownRun(l: Lesson): string | undefined {
@@ -93,6 +104,7 @@ export async function backfillLedgerLessons(
   const report: BackfillReport = {
     runs: 0,
     existing: 0,
+    retired: 0,
     relearned: 0,
     skipped: 0,
     learned: 0,
@@ -120,11 +132,29 @@ export async function backfillLedgerLessons(
     const old = l.trust === "rejected" && l.provenance?.learner !== BENCHMARK_LEARNER;
     stale.set(id, (stale.get(id) ?? true) && old);
   }
+  // A retired lesson is a decision about its run (and the runs merged into
+  // it): taught for good, unless it was retired only because a run it cites
+  // was invalidated — that run is re-learnable once it is valid again.
+  const decided = new Set<string>();
+  for (const l of (await deps.sink.findRetired?.("benchmark", {}, 100_000)) ?? []) {
+    if (INVALIDATED.test(l.retired?.reason ?? "")) continue;
+    for (const m of l.merged ?? []) {
+      const id = ownRun({ refs: m.refs } as Lesson);
+      if (id) decided.add(id);
+    }
+    const id = ownRun(l);
+    if (id) decided.add(id);
+  }
   const runs = db
     .queryBenchmarkRuns({ limit: BACKFILL_MAX_RUNS })
     .sort((a, b) => (a.completed_at ?? 0) - (b.completed_at ?? 0) || a.id.localeCompare(b.id));
   for (const run of runs) {
     report.runs++;
+    if (decided.has(run.id)) {
+      report.existing++;
+      report.retired++;
+      continue;
+    }
     const relearn = !!opts.relearnRejected && stale.get(run.id) === true;
     if (taught.has(run.id) && !relearn) {
       report.existing++;

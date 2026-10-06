@@ -196,6 +196,12 @@ export interface Lesson {
    * current (an open resolve case). Stores compute it on read; never written.
    */
   contested?: boolean;
+  /**
+   * Set only on a lesson whose validity has ended (`findRetired`): the
+   * retirement recorded with it — operator curation, supersession, a resolve
+   * loser, or an invalidated run. Stores compute it on read; never written.
+   */
+  retired?: LessonRetirement & { at?: string };
 }
 
 /** One duplicate merged into a lesson at admission. */
@@ -631,6 +637,12 @@ export interface LessonSink {
   /** Current (not retired) lessons of `domain` matching `selector`, any trust — for curation. */
   find?(domain: OutcomeDomain, selector: LessonSelector, limit: number): Promise<Lesson[]>;
   /**
+   * Retired lessons of `domain` matching `selector` (latest version, validity
+   * ended), each with `retired` filled — so a pass can tell a decided lesson
+   * from one never learned (the backfill never re-learns a retired run).
+   */
+  findRetired?(domain: OutcomeDomain, selector: LessonSelector, limit: number): Promise<Lesson[]>;
+  /**
    * Retire one current lesson: a new version with validity closed and the
    * retirement in its metadata. Recall stops serving it; its history stays readable.
    */
@@ -820,6 +832,14 @@ export function memoryLessonSink(initial: Lesson[] = []): LessonSink & {
       return lessons
         .filter((l) => l.domain === domain && current(l) && lessonMatches(l, selector))
         .map(view)
+        .slice(0, limit);
+    },
+    async findRetired(domain, selector, limit) {
+      return lessons
+        .filter(
+          (l) => l.domain === domain && l.id && retired.has(l.id) && lessonMatches(l, selector),
+        )
+        .map((l) => ({ ...view(l), retired: { ...retired.get(l.id!)! } }))
         .slice(0, limit);
     },
     async retire(domain, id, retirement) {
