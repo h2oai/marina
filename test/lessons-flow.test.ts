@@ -47,6 +47,7 @@ import {
   recallForWork,
   residentLessonsMode,
   retireLessons,
+  supersedeLesson,
 } from "../src/learning/service";
 import { wantsLessons } from "../src/net/model-api/chat-completions";
 import { MarinaDB } from "../src/persistence/database";
@@ -612,6 +613,98 @@ describe("benchmark outcomes and the backfill", () => {
       expect(second).toMatchObject({ learned: 0, existing: 3, skipped: 1 });
       expect(await sink.find!("benchmark", {}, 100)).toHaveLength(3);
       expect(await sink.find!("meta", {}, 100)).toHaveLength(3);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("a run whose lesson an operator retired is never re-learned, even with relearnRejected", async () => {
+    const db = freshDb();
+    try {
+      recordRun(db, "r1", { right: 10, completedAt: 1_000 });
+      recordRun(db, "r2", { right: 14, completedAt: 2_000 });
+      const sink = lessonSinkFor(db);
+      const deps = { sink, judge: judge(0.9) };
+      expect(await backfillLedgerLessons(db, deps)).toMatchObject({ learned: 2, retired: 0 });
+      const own = await sink.find!("benchmark", { ref: "bench:r1" }, 10);
+      const r1 = own.filter((l) => l.refs![0] === "bench:r1");
+      expect(r1).toHaveLength(1);
+      const res = await retireLessons(
+        db,
+        r1,
+        { reason: "excluded benchmark", by: "operator" },
+        { sink },
+      );
+      expect(res.failed).toEqual([]);
+
+      const retired = await sink.findRetired!("benchmark", {}, 10);
+      expect(retired.map((l) => l.id)).toEqual([r1[0]!.id]);
+      expect(retired[0]!.retired).toMatchObject({ reason: "excluded benchmark", by: "operator" });
+      expect((await sink.find!("benchmark", {}, 10)).every((l) => !l.retired)).toBe(true);
+
+      for (const relearnRejected of [false, true]) {
+        const again = await backfillLedgerLessons(db, deps, { relearnRejected });
+        expect(again).toMatchObject({ learned: 0, relearned: 0, existing: 2, retired: 1 });
+      }
+      expect(await sink.find!("benchmark", {}, 10)).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("a run whose lesson was superseded is not re-learned", async () => {
+    const db = freshDb();
+    try {
+      recordRun(db, "s1", { right: 10, completedAt: 1_000 });
+      const sink = lessonSinkFor(db);
+      const deps = { sink, judge: judge(0.9) };
+      await backfillLedgerLessons(db, deps);
+      const [old] = await sink.find!("benchmark", {}, 10);
+      const replacement = await supersedeLesson(
+        db,
+        old!,
+        "a curated restatement of the run",
+        { reason: "clearer wording", by: "curator" },
+        { sink },
+      );
+      const [retired] = await sink.findRetired!("benchmark", {}, 10);
+      expect(retired!.retired!.supersededBy).toBe(replacement.id);
+      const again = await backfillLedgerLessons(db, deps, { relearnRejected: true });
+      expect(again).toMatchObject({ learned: 0, existing: 1, retired: 1 });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("a run whose lessons were retired by invalidation is re-learned once valid again", async () => {
+    const db = freshDb();
+    try {
+      recordRun(db, "v1", { right: 10, completedAt: 1_000 });
+      const sink = lessonSinkFor(db);
+      const deps = { sink, judge: judge(0.9) };
+      expect(await backfillLedgerLessons(db, deps)).toMatchObject({ learned: 1 });
+      const validity = (action: "invalidate" | "revalidate") =>
+        db.setBenchmarkRunValidity({
+          run_id: "v1",
+          action,
+          reason: "test",
+          actor: "operator",
+          source: "operator",
+          created_at: Date.now(),
+        });
+      expect(validity("invalidate").ok).toBe(true);
+      const inv = await retireLessonsForRun(db, "v1", { reason: "outage", by: "op" }, { sink });
+      expect(inv.retired.length).toBeGreaterThan(0);
+      // Invalid: skipped, not counted as a retirement decision.
+      expect(await backfillLedgerLessons(db, deps)).toMatchObject({
+        learned: 0,
+        skipped: 1,
+        retired: 0,
+      });
+      expect(validity("revalidate").ok).toBe(true);
+      const relearned = await backfillLedgerLessons(db, deps);
+      expect(relearned).toMatchObject({ learned: 1, retired: 0, runIds: ["v1"] });
+      expect(await backfillLedgerLessons(db, deps)).toMatchObject({ learned: 0, existing: 1 });
     } finally {
       db.close();
     }

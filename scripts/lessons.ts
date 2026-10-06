@@ -13,7 +13,9 @@
  * through the judged outcome loop once (`backfillLedgerLessons`): ids, scores,
  * counts and category labels only, never item text; `resolvedAt` = the run's
  * completion, baselines only from runs completed by then. Re-running it is a
- * no-op for runs already taught. Invalid runs are skipped. Admission ranking
+ * no-op for runs already taught, and a run whose lesson was retired is never
+ * re-learned (unless it was retired only because a cited run was invalidated
+ * and is valid again). Invalid runs are skipped. Admission ranking
  * (`MARINA_MEMORY_RANKING`, src/memory/admission.ts) applies to each write as
  * on the server. `--relearn-rejected`
  * also re-learns runs whose lessons an EARLIER learner wrote and the judge
@@ -138,6 +140,7 @@ async function backfill() {
     [
       `${values["dry-run"] ? "would learn" : "learned"} ${report.learned} run(s) of ${report.runs}`,
       `already taught ${report.existing}`,
+      `retired (not re-learned) ${report.retired}`,
       ...(values["relearn-rejected"]
         ? [`re-learned (earlier rejections) ${report.relearned}`]
         : []),

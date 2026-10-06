@@ -266,7 +266,9 @@ export function noteBenchmarkRun(
  * its refs — lessons learned from the run, and lessons that compared another
  * run against it). Retirement is the audited `revise` path: the lesson stops
  * being served, its history and the reason stay readable. Revalidating the
- * run does not bring them back (a new outcome teaches again). Never throws.
+ * run does not bring them back; a new outcome teaches again, and the ledger
+ * backfill treats this reason (unlike any other retirement) as re-learnable.
+ * Never throws.
  */
 export async function retireLessonsForRun(
   db: MarinaDB,
