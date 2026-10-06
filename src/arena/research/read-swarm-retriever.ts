@@ -16,8 +16,9 @@
  * preserved: the readers only read pages the inner retriever returned.
  */
 
+import type { DecisionProvider } from "../../decisions/types";
 import { getCorpusDocument, parseCorpusUrl } from "../../engine/search-providers/corpus";
-import type { FirstMoveModel } from "../../retrieval/first-move";
+import { type Candidate, type FirstMoveModel, judgeRerank } from "../../retrieval/first-move";
 import { type DocReading, ReadSwarm } from "../../retrieval/read-swarm";
 import { isDateStrict, type ResearchReport, type Retriever, type Source } from "./retrieve";
 import { defaultPageText, fetchAllowed, MIN_QUOTE_CHARS, type PageText } from "./verify";
@@ -36,6 +37,30 @@ export interface ReadSwarmRetrieverOptions {
   pageText?: PageText;
   /** The readers' spend so far, so each report carries its own cost. */
   spent?: () => number;
+  /**
+   * Decision backend (Jev, or any configured engine) that orders the found
+   * pages by pointwise relevance before they are read, so a read budget
+   * (`maxDocs`) below the pages found keeps the most relevant ones. An
+   * ordering only: a failed judgement keeps the retriever's order.
+   */
+  judge?: DecisionProvider;
+  /** Called once per brief with what the swarm did (counts only, no text). */
+  onStats?: (stats: ReadSwarmBriefStats) => void;
+}
+
+export interface ReadSwarmBriefStats {
+  roundId: string;
+  /** Pages the inner retriever found. */
+  pages: number;
+  docsRead: number;
+  readerCalls: number;
+  readerFailures: number;
+  quotesVerified: number;
+  dossierLines: number;
+  clues: number;
+  /** How the reading order was decided. */
+  order: "judged" | "retriever";
+  judgeError?: string;
 }
 
 /** Dossier lines carried per brief (the most clues first). */
@@ -108,14 +133,42 @@ export function readSwarmRetriever(inner: Retriever, opts: ReadSwarmRetrieverOpt
       ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
     });
     if (opts.decompose || clues.length === 0) await swarm.open().catch(() => undefined);
-    const pages = base.sources.filter((s) => /^(https?|corpus):\/\//.test(s.url));
-    await swarm.readMany(
-      pages.map((s) => ({ id: s.url, ...(s.title ? { title: s.title } : {}), text: "" })),
-    );
+    const found = base.sources.filter((s) => /^(https?|corpus):\/\//.test(s.url));
+    let pages: Candidate[] = found.map((s) => ({
+      id: s.url,
+      ...(s.title ? { title: s.title } : {}),
+      text: "",
+    }));
+    let order: ReadSwarmBriefStats["order"] = "retriever";
+    let judgeError: string | undefined;
+    if (opts.judge && pages.length > 1) {
+      // The judge sees each page's title and the opening of the text the engine returned.
+      const shown = pages.map((p) => ({ ...p, text: (texts.get(p.id) ?? "").slice(0, 600) }));
+      const judged = await judgeRerank(question, shown, opts.judge);
+      if (judged.ok) {
+        const byId = new Map(pages.map((p) => [p.id, p]));
+        pages = judged.ranked.map((c) => byId.get(c.id)).filter((p): p is Candidate => !!p);
+        order = "judged";
+      } else judgeError = judged.error;
+    }
+    // Reads are reserved in list order, so the read budget keeps the first pages.
+    await swarm.readMany(pages);
     const readings = swarm.readings();
     const lines = swarmDossierLines(readings, titles);
     const cost = Math.max(0, (opts.spent?.() ?? before) - before);
     const st = swarm.stats();
+    opts.onStats?.({
+      roundId: brief.roundId,
+      pages: found.length,
+      docsRead: st.docsRead,
+      readerCalls: st.readerCalls,
+      readerFailures: st.readerFailures,
+      quotesVerified: st.quotesVerified,
+      dossierLines: lines.length,
+      clues: st.clues,
+      order,
+      ...(judgeError ? { judgeError } : {}),
+    });
     const sources: Source[] = base.sources.map((s) => {
       const text = texts.get(s.url);
       return text && !s.text ? { ...s, text } : s;
@@ -132,7 +185,7 @@ export function readSwarmRetriever(inner: Retriever, opts: ReadSwarmRetrieverOpt
         : base.report,
       sources,
       costUsd: base.costUsd + cost,
-      retriever: `${base.retriever}+read-swarm`,
+      retriever: `${base.retriever}+read-swarm${order === "judged" ? "+judged" : ""}`,
       ...(st.readerFailures > 0 && st.readerFailures >= st.readerCalls
         ? { warnings: [...(base.warnings ?? []), "read swarm: every reader call failed"] }
         : {}),

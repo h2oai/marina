@@ -11,7 +11,8 @@
  *   bun run deepresearch select [--seed S] [--dev 1] [--heldout 3]   pre-registered dev / held-out ids
  *   bun run deepresearch run --board drb1|drb2 --label L --lead <provider/model>
  *        [--split dev|heldout|all|ids:<a,b>] [--max-usd N] [--concurrency 2]
- *        [--search tavily,exa,searxng,duckduckgo,openrouter] [--lessons on|off]
+ *        [--search tavily,exa,searxng,duckduckgo,openrouter] [--lessons on|off] [--lessons-db PATH]
+ *        [--read-swarm <provider/model> [--read-docs N] [--decompose] [--read-judge engine|jev|off]]
  *   bun run deepresearch check --board B --from L --label L2 --checker <provider/model> [--max-usd N]
  *   bun run deepresearch score --board B --label L --max-usd N [--workers 4]   official evaluator, our key, capped
  *   bun run deepresearch summary --board B --label L
@@ -41,15 +42,28 @@ import {
 } from "../benchmarks/deepresearch/dataset";
 import { meanScore, recordScoredRun, reportOutcome } from "../benchmarks/deepresearch/ledger";
 import { JUDGE_LABEL, type OfficialRun, scoreOfficial } from "../benchmarks/deepresearch/official";
-import { factCheckRun, generateReports, loadRecords } from "../benchmarks/deepresearch/run";
+import {
+  factCheckRun,
+  generateReports,
+  loadRecords,
+  type TaskRetriever,
+} from "../benchmarks/deepresearch/run";
+import { modelComplete } from "../src/arena/model-backend";
+import {
+  type ReadSwarmBriefStats,
+  readSwarmRetriever,
+} from "../src/arena/research/read-swarm-retriever";
 import { searchBackendsFromEnv, webSearchRetriever } from "../src/arena/research/web-search";
+import { researchJudge } from "../src/decisions/config";
+import { harnessDecisionProvider } from "../src/decisions/engines";
+import type { DecisionProvider } from "../src/decisions/types";
 import { attachCliSpendLedger } from "../src/engine/cli-spend-ledger";
 import { SpendGuard } from "../src/engine/spend-guard";
 import { formatLesson } from "../src/learning/outcomes";
 import {
   enableOutcomeLearning,
   noteOutcome,
-  recallLessons,
+  recallForWork,
   settleOutcomes,
 } from "../src/learning/service";
 import { MarinaDB } from "../src/persistence/database";
@@ -73,6 +87,11 @@ const { values, positionals } = parseArgs({
     workers: { type: "string", default: "4" },
     search: { type: "string" },
     lessons: { type: "string", default: "off" },
+    "lessons-db": { type: "string" },
+    "read-swarm": { type: "string" },
+    "read-docs": { type: "string" },
+    "read-judge": { type: "string", default: "off" },
+    decompose: { type: "boolean", default: false },
     group: { type: "string" },
     a: { type: "string" },
     b: { type: "string" },
@@ -156,15 +175,70 @@ async function selectCmd(): Promise<number> {
   return 0;
 }
 
-function retrieverFactory() {
+/** The decision backend that orders pages before the read swarm reads them, or none. */
+function readJudge(): DecisionProvider | undefined {
+  const spec = values["read-judge"]?.trim().toLowerCase() ?? "off";
+  if (spec === "off" || spec === "none") return undefined;
+  const judge =
+    spec === "engine"
+      ? harnessDecisionProvider(process.env)
+      : researchJudge(spec, process.env, process.env.OPENROUTER_API_KEY?.trim() || undefined);
+  if (!judge) throw new Error(`--read-judge ${spec}: no decision backend is configured`);
+  log(`read judge: ${judge.kind} ${judge.model}${judge.calibrated ? "" : " (uncalibrated)"}`);
+  return judge;
+}
+
+function retrieverFactory(): () => TaskRetriever {
   const env = values.search
     ? { ...process.env, MARINA_RESEARCH_SEARCH_BACKENDS: values.search }
     : process.env;
   const { backends, skipped } = searchBackendsFromEnv(env);
   if (skipped.length) log(`search: skipped ${skipped.join(", ")}`);
   log(`search: ${backends.map((b) => b.name).join(" → ")}`);
-  return () =>
+  const web = () =>
     webSearchRetriever({ backends, maxQueries: 8, perQuery: 8, maxPages: 16, maxPassages: 24 });
+  const readerSpec = values["read-swarm"]?.trim();
+  if (!readerSpec) return web;
+  const judge = readJudge();
+  const maxDocs = values["read-docs"] ? Number(values["read-docs"]) : undefined;
+  if (maxDocs !== undefined && !(Number.isInteger(maxDocs) && maxDocs > 0))
+    throw new Error("--read-docs must be a positive integer");
+  log(
+    `read swarm: ${readerSpec} · docs/brief ${maxDocs ?? 24} · decompose ${values.decompose ? "on" : "off"} · order ${judge ? "judged" : "retriever"}`,
+  );
+  // One reader per task, so each task's reader spend is its own.
+  return () => {
+    const reader = modelComplete(readerSpec, process.env);
+    const briefs: ReadSwarmBriefStats[] = [];
+    const sum = (k: keyof ReadSwarmBriefStats) =>
+      briefs.reduce((n, b) => n + (typeof b[k] === "number" ? (b[k] as number) : 0), 0);
+    return Object.assign(
+      readSwarmRetriever(web(), {
+        reader: { name: readerSpec, complete: reader.complete },
+        decompose: values.decompose === true,
+        ...(maxDocs !== undefined ? { maxDocs } : {}),
+        ...(judge ? { judge } : {}),
+        onStats: (s) => briefs.push(s),
+      }),
+      {
+        extraUsd: () => reader.usage.costUsd,
+        summary: () => ({
+          reader: readerSpec,
+          briefs: briefs.length,
+          pagesFound: sum("pages"),
+          docsRead: sum("docsRead"),
+          readerCalls: sum("readerCalls"),
+          readerFailures: sum("readerFailures"),
+          quotesVerified: sum("quotesVerified"),
+          dossierLines: sum("dossierLines"),
+          clues: sum("clues"),
+          judgedBriefs: briefs.filter((b) => b.order === "judged").length,
+          judgeErrors: briefs.filter((b) => b.judgeError).length,
+          readerUsd: Number(reader.usage.costUsd.toFixed(4)),
+        }),
+      },
+    );
+  };
 }
 
 function guard(label: string): SpendGuard {
@@ -184,11 +258,13 @@ async function runCmd(): Promise<number> {
   const tasks = await tasksFor(b);
   if (tasks.length === 0) throw new Error("no tasks selected");
   let db: MarinaDB | undefined;
+  // Lessons are recalled from `--lessons-db` (default DB_PATH): the research
+  // pool, plus cross-board meta lessons within a third of the budget.
   const lessons =
     values.lessons === "on"
       ? async (t: BenchTask) => {
-          db ??= openDb();
-          const got = await recallLessons(db, "research", t.prompt.slice(0, 600));
+          db ??= values["lessons-db"] ? new MarinaDB(values["lessons-db"]) : openDb();
+          const got = await recallForWork(db, ["research"], t.prompt.slice(0, 600));
           return got.inject.length ? got.inject.map(formatLesson).join("\n") : undefined;
         }
       : undefined;
