@@ -403,51 +403,72 @@ export class MemoryService {
     );
   }
 
-  async runIndexJobs(limit = 8): Promise<number> {
+  /**
+   * Index up to `limit` pending jobs. `concurrency` (default 1) jobs are in
+   * flight at once; each claim is its own leased transaction, so concurrent
+   * claims never take the same job. Returns 0 while another run holds the queue.
+   */
+  async runIndexJobs(limit = 8, concurrency = 1): Promise<number> {
     if (this.working || !this.embeddings) return 0;
+    const embeddings = this.embeddings;
     this.working = true;
     let completed = 0;
-    try {
-      for (let i = 0; i < limit; i++) {
-        if (this.stopping) break;
-        const job = this.repository.claimJob(this.embeddings.id);
-        if (!job) break;
-        try {
-          // Inputs past the provider's per-input limit are cut to it (head kept);
-          // the job is labelled `input_truncated` so the shortened vector is visible.
-          const input = truncateEmbeddingInput(job.content, this.embeddings.maxInputTokens);
-          if (input.truncated)
-            this.logger.info("memory", "index input truncated", {
-              job: job.id,
-              estimatedTokens: input.estimatedTokens,
-              maxInputTokens: this.embeddings.maxInputTokens,
-            });
-          const vector = await this.embeddings.embed(input.text);
-          if (!validEmbedding(vector))
-            throw new MemoryError(502, "invalid_embedding", "Invalid embedding");
-          if (
-            this.repository.finishJob(
-              job,
-              vector,
-              undefined,
-              input.truncated ? "input_truncated" : undefined,
-            )
-          )
-            completed++;
-        } catch (error) {
-          this.repository.finishJob(
-            job,
-            undefined,
-            error instanceof MemoryError && error.code === "quota_exceeded"
-              ? "quota_exceeded"
-              : "embedding_failed",
-          );
+    let started = 0;
+    let exhausted = false;
+    const lane = async () => {
+      while (started < limit && !exhausted && !this.stopping) {
+        const job = this.repository.claimJob(embeddings.id);
+        if (!job) {
+          exhausted = true;
+          break;
         }
+        started++;
+        if (await this.indexJob(embeddings, job)) completed++;
       }
+    };
+    try {
+      const lanes = Math.max(1, Math.min(Math.floor(concurrency) || 1, limit));
+      await Promise.all(Array.from({ length: lanes }, lane));
     } finally {
       this.working = false;
     }
     return completed;
+  }
+
+  /** Embed one claimed job and finish it; true when its vector was stored. */
+  private async indexJob(
+    embeddings: EmbeddingProvider,
+    job: NonNullable<ReturnType<MemoryRepository["claimJob"]>>,
+  ): Promise<boolean> {
+    try {
+      // Inputs past the provider's per-input limit are cut to it (head kept);
+      // the job is labelled `input_truncated` so the shortened vector is visible.
+      const input = truncateEmbeddingInput(job.content, embeddings.maxInputTokens);
+      if (input.truncated)
+        this.logger.info("memory", "index input truncated", {
+          job: job.id,
+          estimatedTokens: input.estimatedTokens,
+          maxInputTokens: embeddings.maxInputTokens,
+        });
+      const vector = await embeddings.embed(input.text);
+      if (!validEmbedding(vector))
+        throw new MemoryError(502, "invalid_embedding", "Invalid embedding");
+      return this.repository.finishJob(
+        job,
+        vector,
+        undefined,
+        input.truncated ? "input_truncated" : undefined,
+      );
+    } catch (error) {
+      this.repository.finishJob(
+        job,
+        undefined,
+        error instanceof MemoryError && error.code === "quota_exceeded"
+          ? "quota_exceeded"
+          : "embedding_failed",
+      );
+      return false;
+    }
   }
 
   /**
@@ -458,7 +479,7 @@ export class MemoryService {
    * `pending > 0`, never throws. Without an embedding provider: nothing to do.
    */
   async drainIndex(
-    opts: { timeoutMs?: number; signal?: AbortSignal; batch?: number } = {},
+    opts: { timeoutMs?: number; signal?: AbortSignal; batch?: number; concurrency?: number } = {},
   ): Promise<{ indexed: number; pending: number; timedOut: boolean }> {
     const embeddings = this.embeddings;
     if (!embeddings) return { indexed: 0, pending: 0, timedOut: false };
@@ -471,7 +492,9 @@ export class MemoryService {
         return { indexed, pending, timedOut: !this.stopping && !opts.signal?.aborted };
       // The worker (or another drain) holds the queue, or every job left is
       // backing off after a failure: wait, then look again.
-      const done = this.working ? 0 : await this.runIndexJobs(opts.batch ?? 64);
+      const done = this.working
+        ? 0
+        : await this.runIndexJobs(opts.batch ?? 64, opts.concurrency ?? 1);
       indexed += done;
       if (done === 0) await Bun.sleep(Math.min(50, Math.max(1, deadline - Date.now())));
     }

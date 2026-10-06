@@ -245,6 +245,37 @@ it("drainIndex waits out a busy index worker instead of returning before vectors
   expect(service.repository.pendingJobs("test-only-drain-v1")).toBe(0);
 });
 
+it("indexes with several requests in flight, never claiming a job twice", async () => {
+  let inFlight = 0;
+  let peak = 0;
+  const embedded: string[] = [];
+  service = new MemoryService(db, {
+    id: "test-only-concurrent-v1",
+    embed: async (text) => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await Bun.sleep(5);
+      inFlight--;
+      embedded.push(text);
+      return [1, 0];
+    },
+  });
+  for (let i = 0; i < 10; i++) await api(route("/records"), "POST", { content: `parallel ${i}` });
+  expect(await service.drainIndex({ concurrency: 4 })).toEqual({
+    indexed: 10,
+    pending: 0,
+    timedOut: false,
+  });
+  expect(peak).toBe(4);
+  expect(new Set(embedded).size).toBe(10);
+  // The limit still bounds one run, and concurrency 1 keeps one request in flight.
+  for (let i = 0; i < 3; i++) await api(route("/records"), "POST", { content: `serial ${i}` });
+  peak = 0;
+  expect(await service.runIndexJobs(2)).toBe(2);
+  expect(peak).toBe(1);
+  expect(await service.runIndexJobs(8, 16)).toBe(1);
+});
+
 it("drainIndex is bounded: past its timeout it reports what is still pending", async () => {
   let release: () => void = () => {};
   const gate = new Promise<void>((resolve) => {
