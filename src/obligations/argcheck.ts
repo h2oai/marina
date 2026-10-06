@@ -80,9 +80,13 @@ export const MAX_VALUES_PER_CALL = 24;
 /** Short strings without digits longer than this are free text, never checked. */
 const OPTION_MAX_CHARS = 40;
 const OPTION_MAX_WORDS = 4;
-/** Argument names that carry free text (a reason, a note), never checked. */
+/**
+ * Argument names that carry free text (a reason, a note) or a program the model
+ * writes itself (a shell command line, a script, SQL), never checked: their
+ * words and digits are the model's own, not values the user or a tool supplied.
+ */
 const FREE_TEXT_KEYS =
-  /^(reason|reasons|summary|note|notes|message|comment|comments|description|content|text|body|explanation|details|query|title)$/i;
+  /^(reason|reasons|summary|note|notes|message|comment|comments|description|content|text|body|explanation|details|query|title|command|commands|cmd|script|sql)$/i;
 
 // ─── Values ──────────────────────────────────────────────────────────────────
 

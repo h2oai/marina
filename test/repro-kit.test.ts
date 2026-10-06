@@ -5,10 +5,12 @@
 // their dry-run text, and budget gating. No model call, server or benchmark run.
 
 import { describe, expect, it } from "bun:test";
+import { validGroupKey } from "../benchmarks/replicates";
 import { blocking, doctor, modelTier, type Probe, subuidWidth } from "../benchmarks/repro/doctor";
 import { budgetRefusal, parseDotEnv, renderPlan, withProviderEnv } from "../benchmarks/repro/run";
 import {
   LEDGER_KEY,
+  ledgerGroup,
   resolveModels,
   SETUPS,
   setupNamed,
@@ -229,6 +231,24 @@ describe("plans", () => {
     expect(() =>
       setup.plan(flags({ taskIds: ["1"], limit: 3, domain: "airline" }), "frontier"),
     ).toThrow("--task-ids");
+  });
+
+  it("τ² files an arm whose name holds `+` under a valid ledger group, compared by the same key", () => {
+    const plan = setupNamed("tau2")!.plan(
+      flags({ arms: ["single", "obligations+argcheck"], domain: "banking_knowledge" }),
+      "frontier",
+    );
+    const groups = plan.steps
+      .filter((s): s is CommandStep => s.kind === "command" && s.label.startsWith("ledger ←"))
+      .map((s) => s.argv[s.argv.indexOf("--group") + 1]!);
+    expect(groups).toEqual([
+      "tau2-banking_knowledge-single",
+      "tau2-banking_knowledge-obligations_argcheck",
+    ]);
+    for (const g of groups) expect(validGroupKey(g)).toBe(true);
+    const compare = plan.steps.find((s) => s.kind === "compare") as { a: string; b: string };
+    expect(compare).toMatchObject({ a: groups[1], b: groups[0] });
+    expect(ledgerGroup("swebench", "a+b c")).toBe("swebench-a_b_c");
   });
 
   it("τ² never auto-resumes a results file of another configuration", () => {

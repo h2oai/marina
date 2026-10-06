@@ -83,6 +83,25 @@ describe("values and evidence (pure)", () => {
     ]);
   });
 
+  it("never checks a command line, script or SQL the model writes", () => {
+    expect(argValues({ command: "ls kb" })).toEqual([]);
+    expect(argValues({ command: "grep -ri 'overdraft fee 35' kb/ | head -50" })).toEqual([]);
+    expect(argValues({ cmd: "cat kb/doc_118.md", script: "x = 4417", sql: "select 1" })).toEqual(
+      [],
+    );
+    // A value next to the command is still checked.
+    expect(argValues({ account_id: "acc_123", command: "ls" })).toEqual([
+      { path: "account_id", value: "acc_123", kind: "id", key: "account_id" },
+    ]);
+    // A shell-like call has nothing to check, so it is never flagged.
+    const { findings, flagged } = mechanicalCheck(
+      { command: "grep -n 'card 4417' kb/cards.md" },
+      new EvidenceIndex([{ channel: "user", text: "hi" }]),
+    );
+    expect(findings).toEqual([]);
+    expect(flagged).toEqual([]);
+  });
+
   it("walks a dispatcher tool's nested JSON arguments", () => {
     expect(
       argValues({
