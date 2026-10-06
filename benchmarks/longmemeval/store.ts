@@ -35,7 +35,7 @@ import {
   type NoteWriter,
   writeIngestNotes,
 } from "../../src/memory/ingest-notes";
-import type { RelevanceGateMode } from "../../src/memory/relevance-gate";
+import { type RelevanceGateMode, relevanceGateTimeoutMs } from "../../src/memory/relevance-gate";
 import { residentMemoryOperation } from "../../src/memory/resident-service";
 import { buildUnifiedContext, type UnifiedRelevanceReport } from "../../src/memory/unified-context";
 import { worldMemoryService } from "../../src/memory/world-service";
@@ -158,7 +158,9 @@ export function gateProvider(
       baseUrl: opts.baseUrl,
       model: opts.model,
       ...(env[opts.apiKeyEnv] ? { apiKey: env[opts.apiKeyEnv] } : {}),
-      timeoutMs: opts.timeoutMs ?? 30_000,
+      timeoutMs: opts.timeoutMs ?? relevanceGateTimeoutMs(env),
+      // A relevance judgement needs no reasoning (OpenRouter-routed models).
+      reasoning: "off",
       method: "verbalized",
     });
     return {
@@ -301,16 +303,15 @@ export class LmeMemoryStore {
     return report;
   }
 
-  /** Embed every pending record (hybrid only); returns how many were indexed. */
-  async drainIndex(): Promise<number> {
-    const service = worldMemoryService(this.db);
-    let total = 0;
-    for (let guard = 0; guard < 1_000_000; guard++) {
-      const done = await service.runIndexJobs(64);
-      if (done === 0) break;
-      total += done;
-    }
-    return total;
+  /**
+   * Embed every pending record (hybrid only) and wait for the background index
+   * worker too: returns how many this call indexed and how many are still
+   * pending when the bound (`timeoutMs`, default 60 min) ran out.
+   */
+  async drainIndex(
+    timeoutMs = 3_600_000,
+  ): Promise<{ indexed: number; pending: number; timedOut: boolean }> {
+    return worldMemoryService(this.db).drainIndex({ timeoutMs });
   }
 
   private read(ids: string[]): Map<string, Hit> {

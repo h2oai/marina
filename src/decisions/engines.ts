@@ -95,13 +95,15 @@ async function internalToken(): Promise<string> {
 /**
  * A chat model as a decision engine, answering through Marina's own `/v1`.
  * `method` overrides `MARINA_DECISION_METHOD` (`verbalized` is exactly one
- * call per request, every question answered in it).
+ * call per request, every question answered in it); `call` overrides the
+ * per-call timeout and can ask the model not to reason.
  */
 export function classifierEngine(
   model: string,
   env: NodeJS.ProcessEnv,
   deps: EngineDeps,
   method?: ClassifierMethod,
+  call: { timeoutMs?: number; reasoning?: "off" } = {},
 ): DecisionProvider {
   const tuning = classifierTuning(env);
   const id = `${CLASSIFIER_ENGINE}:${model}`;
@@ -115,7 +117,8 @@ export function classifierEngine(
         baseUrl: deps.selfBaseUrl ?? selfBaseUrl(env),
         model,
         apiKey: await (deps.token ?? internalToken)(),
-        timeoutMs: CLASSIFIER_TIMEOUT_MS,
+        timeoutMs: call.timeoutMs ?? CLASSIFIER_TIMEOUT_MS,
+        ...(call.reasoning ? { reasoning: call.reasoning } : {}),
         method: method ?? tuning.method ?? "auto",
         structured: true,
         ...(tuning.samples === undefined ? {} : { samples: tuning.samples }),

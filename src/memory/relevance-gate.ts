@@ -25,8 +25,10 @@
  *
  * Policy (pure, `gateVerdicts`):
  *   - drop only: items are kept or removed, never rewritten or reordered;
- *   - fail OPEN: a backend outage, an incomplete reply or the daily spend cap
- *     serves the ungated set, labelled in `relevance.outcome` / `reason`;
+ *   - fail OPEN: a backend outage, a reply past the bound
+ *     (`MARINA_MEMORY_RELEVANCE_GATE_TIMEOUT_MS`, reason `timeout`), an
+ *     incomplete reply or the daily spend cap serves the ungated set,
+ *     labelled in `relevance.outcome` / `reason`;
  *     an item the backend left unanswered is kept;
  *   - exempt: `core` and pinned items are never dropped and never judged;
  *   - at most `maxItems` judged items are kept (highest relevance first);
@@ -40,7 +42,7 @@
  */
 
 import { classifierEngine, type EngineDeps, harnessDecisionProvider } from "../decisions/engines";
-import type { DecisionProvider, DecisionQuestions } from "../decisions/types";
+import { DecisionError, type DecisionProvider, type DecisionQuestions } from "../decisions/types";
 import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import { dailyCapRefusal } from "../engine/spend-ledger";
@@ -52,6 +54,9 @@ import type {
 import { queryTerms, termCoverage } from "./term-match";
 
 const logger = new Logger();
+
+/** The gate's own deadline (distinct from a backend's error). */
+class GateTimeout extends Error {}
 
 export type RelevanceGateMode = UnifiedRelevanceMode;
 export type RelevanceGateReport = UnifiedRelevanceReport;
@@ -72,6 +77,8 @@ export const CALIBRATED_KEEP_AT = 0.3;
 export const UNCALIBRATED_KEEP_AT = 0.5;
 /** Mechanical floor: share of distinct query terms an item must contain. */
 export const MECHANICAL_COVERAGE_FLOOR = 0.4;
+/** Default bound on the gate's model calls (`MARINA_MEMORY_RELEVANCE_GATE_TIMEOUT_MS`). */
+export const DEFAULT_RELEVANCE_GATE_TIMEOUT_MS = 30_000;
 
 /** `MARINA_MEMORY_RELEVANCE_GATE` (default off; anything unrecognised is off). */
 export function relevanceGateMode(env: NodeJS.ProcessEnv = process.env): RelevanceGateMode {
@@ -89,6 +96,17 @@ export function relevanceGateModel(env: NodeJS.ProcessEnv = process.env): string
   return v;
 }
 
+/**
+ * `MARINA_MEMORY_RELEVANCE_GATE_TIMEOUT_MS`: how long the gate waits for its
+ * model backend (default 30 000; a positive integer, else the default). Past
+ * it the gate fails open, labelled `timeout`.
+ */
+export function relevanceGateTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.MARINA_MEMORY_RELEVANCE_GATE_TIMEOUT_MS?.trim();
+  const n = raw ? Number(raw) : Number.NaN;
+  return Number.isInteger(n) && n > 0 ? n : DEFAULT_RELEVANCE_GATE_TIMEOUT_MS;
+}
+
 const fallbacks = new Map<string, DecisionProvider>();
 
 /**
@@ -104,10 +122,13 @@ export function relevanceGateProvider(
   if (configured) return configured;
   const model = relevanceGateModel(env);
   if (!model) return undefined;
-  const key = `${model}|${env.WS_PORT ?? ""}`;
+  const timeoutMs = relevanceGateTimeoutMs(env);
+  const key = `${model}|${env.WS_PORT ?? ""}|${timeoutMs}`;
   let provider = fallbacks.get(key);
   if (!provider || deps.fetch || deps.selfBaseUrl || deps.token) {
-    provider = classifierEngine(model, env, deps, "verbalized");
+    // A yes/no judgement needs no reasoning; reasoning-by-default models
+    // otherwise spend the whole bound thinking (`reasoning: off`).
+    provider = classifierEngine(model, env, deps, "verbalized", { timeoutMs, reasoning: "off" });
     if (!deps.fetch && !deps.selfBaseUrl && !deps.token) fallbacks.set(key, provider);
   }
   return provider;
@@ -234,6 +255,8 @@ export interface GateOptions {
   /** The daily-cap check (default `dailyCapRefusal`). */
   spendCheck?: () => string | undefined;
   signal?: AbortSignal;
+  /** Bound on the backend calls (default `relevanceGateTimeoutMs()`); past it ⇒ fail open, `timeout`. */
+  timeoutMs?: number;
 }
 
 export interface GateResult {
@@ -327,18 +350,35 @@ export async function gateRelevance(
     for (let i = 0; i < indices.length; i += RELEVANCE_GATE_BATCH)
       batches.push(indices.slice(i, i + RELEVANCE_GATE_BATCH));
     let uncalibratedReply = false;
+    const timeoutMs = opts.timeoutMs ?? relevanceGateTimeoutMs();
+    const deadline = new AbortController();
+    const timer = setTimeout(
+      () => deadline.abort(new GateTimeout(`relevance gate timed out after ${timeoutMs}ms`)),
+      timeoutMs,
+    );
+    const signal = opts.signal ? AbortSignal.any([opts.signal, deadline.signal]) : deadline.signal;
+    // A backend that ignores its signal still cannot hold the gate past the bound.
+    const expired = new Promise<never>((_, reject) =>
+      deadline.signal.addEventListener("abort", () => reject(deadline.signal.reason), {
+        once: true,
+      }),
+    );
+    expired.catch(() => undefined);
     try {
-      const replies = await Promise.all(
-        batches.map((batch) =>
-          provider.ask(
-            relevanceRequest(
-              query,
-              batch.map((i) => candidates[i]!),
+      const replies = await Promise.race([
+        Promise.all(
+          batches.map((batch) =>
+            provider.ask(
+              relevanceRequest(
+                query,
+                batch.map((i) => candidates[i]!),
+              ),
+              signal,
             ),
-            opts.signal,
           ),
         ),
-      );
+        expired,
+      ]);
       calls = replies.length;
       replies.forEach((reply, b) => {
         if (reply.calibrated === false) uncalibratedReply = true;
@@ -349,11 +389,18 @@ export async function gateRelevance(
         });
       });
     } catch (error) {
+      const timedOut =
+        deadline.signal.aborted ||
+        error instanceof GateTimeout ||
+        (error instanceof DecisionError && error.code === "timeout");
       logger.debug("memory", "relevance gate backend unavailable", {
         backend,
+        ...(timedOut ? { timeoutMs } : {}),
         error: getErrorMessage(error).slice(0, 200),
       });
-      return failOpen("backend_unavailable", calls);
+      return failOpen(timedOut ? "timeout" : "backend_unavailable", calls);
+    } finally {
+      clearTimeout(timer);
     }
     if (scores.every((s) => s === undefined)) return failOpen("incomplete", calls, costUsd);
     keepAt = calibrated && !uncalibratedReply ? CALIBRATED_KEEP_AT : UNCALIBRATED_KEEP_AT;

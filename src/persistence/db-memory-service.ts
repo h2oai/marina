@@ -1123,6 +1123,8 @@ export function finishMemoryIndexJob(
   job: MemoryIndexJob,
   vector?: number[],
   failure: "embedding_failed" | "quota_exceeded" = "embedding_failed",
+  /** Kept on a READY job as its label (e.g. `input_truncated`); NULL otherwise. */
+  label?: "input_truncated",
 ): boolean {
   return db.transaction(() => {
     const current = db
@@ -1170,12 +1172,24 @@ export function finishMemoryIndexJob(
       [job.note_id, job.model, vector.length, JSON.stringify(vector)],
     );
     db.run(
-      "UPDATE memory_index_jobs SET state='ready',error=NULL,lease_token=NULL,lease_until=NULL WHERE id=?",
-      [job.id],
+      "UPDATE memory_index_jobs SET state='ready',error=?,lease_token=NULL,lease_until=NULL WHERE id=?",
+      [label ?? null, job.id],
     );
     enforceMemoryStorage(db, owner, before);
     return true;
   })();
+}
+
+/** Jobs for `model` still to index: pending or running on an active record's current version. */
+export function pendingMemoryIndexJobs(db: Database, model: string): number {
+  return (
+    db
+      .query(`SELECT count(*) AS n FROM memory_index_jobs j
+      JOIN memory_records r ON r.id=j.record_id AND r.current_note_id=j.note_id
+      JOIN memory_spaces s ON s.id=j.space_id
+      WHERE j.model=? AND r.status='active' AND s.status='active' AND j.state IN ('pending','running')`)
+      .get(model) as { n: number }
+  ).n;
 }
 
 export function memoryVectors(
@@ -1761,7 +1775,9 @@ export function memoryRepository(db: Database) {
       job: MemoryIndexJob,
       vector?: number[],
       failure?: "embedding_failed" | "quota_exceeded",
-    ) => finishMemoryIndexJob(db, job, vector, failure),
+      label?: "input_truncated",
+    ) => finishMemoryIndexJob(db, job, vector, failure, label),
+    pendingJobs: (model: string) => pendingMemoryIndexJobs(db, model),
     job: (actor: MemoryActor, space: string, id: string) =>
       readMemoryIndexJob(db, actor, space, id),
     forget: (actor: MemoryActor, space: string, input: ForgetMemoryInput, key: string) =>

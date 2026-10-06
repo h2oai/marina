@@ -71,10 +71,15 @@ export async function cachedContext(
     const created = Date.now();
     const until = Math.min(created + CONTEXT_CACHE_TTL_MS, contextDeadline(raw, created));
     const result = await retrieve();
+    // Only a write during retrieval invalidates the snapshot (retry it).
+    if (before !== contextRevision(raw)) continue;
     const finished = Date.now();
-    if (before !== contextRevision(raw) || finished < created || finished >= until) continue;
+    // Age and temporal deadlines decide CACHEABILITY only: a slow retrieval
+    // (an LLM relevance gate) over an unchanged revision is served, never kept.
     // A gate that failed open served the ungated set: retry it on the next read.
     if (
+      finished >= created &&
+      finished < until &&
       !raw.inTransaction &&
       result.degraded.length === 0 &&
       result.relevance?.outcome !== "fail_open"

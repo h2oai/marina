@@ -135,25 +135,73 @@ test("degraded results and snapshots from transactions are never retained", asyn
   raw.exec("ROLLBACK");
 });
 
-test.each(["write", "rollback-clock", "expired"] as const)(
-  "retrieval retries %s races exactly three times before refusing stale context",
-  async (race) => {
+test("retrieval retries write races exactly three times before refusing stale context", async () => {
+  let attempts = 0;
+  await expect(
+    read("port", {}, async () => {
+      attempts++;
+      // Fail promptly if mutation testing removes the retry bound.
+      if (attempts > 4) throw new Error("retry limit lost");
+      change();
+      return result();
+    }),
+  ).rejects.toThrow("Memory changed during retrieval; retry context when writes settle.");
+  expect(attempts).toBe(3);
+  expect(contextCacheStats(db).entries).toBe(0);
+});
+
+test.each([
+  ["reaches its age bound", CONTEXT_CACHE_TTL_MS],
+  ["outlives its age bound", 30_000],
+  ["sees the clock roll back", -1],
+] as const)(
+  "a retrieval that %s over an unchanged revision is served once, never cached",
+  async (_, step) => {
     let attempts = 0;
-    await expect(
-      read("port", {}, async () => {
-        attempts++;
-        // Fail promptly if mutation testing removes the retry bound.
-        if (attempts > 4) throw new Error("retry limit lost");
-        if (race === "write") change();
-        else if (race === "rollback-clock") now--;
-        else now += CONTEXT_CACHE_TTL_MS;
-        return result();
-      }),
-    ).rejects.toThrow("Memory changed during retrieval; retry context when writes settle.");
-    expect(attempts).toBe(3);
-    expect(contextCacheStats(db).entries).toBe(0);
+    const slow = async () => {
+      attempts++;
+      now += step;
+      return { ...result(), query: "slow" };
+    };
+    expect((await read("port", {}, slow)).query).toBe("slow");
+    expect(attempts).toBe(1);
+    expect(contextCacheStats(db)).toMatchObject({ entries: 0, misses: 1 });
+    await read("port", {}, slow);
+    expect(attempts).toBe(2);
   },
 );
+
+test("a retrieval one millisecond inside its age bound is still cached", async () => {
+  await read("port", {}, async () => {
+    calls++;
+    now += CONTEXT_CACHE_TTL_MS - 1;
+    return result();
+  });
+  expect(contextCacheStats(db).entries).toBe(1);
+  await read();
+  expect(calls).toBe(1);
+});
+
+test("a retrieval crossing a temporal authority deadline is served but not cached", async () => {
+  const raw = db.memoryRepository().raw;
+  const principal = (
+    raw.query("SELECT principal_id FROM principals LIMIT 1").get() as { principal_id: string }
+  ).principal_id;
+  raw.run("INSERT INTO principal_credentials VALUES ('c1',?,'h','memory','[]',?,?,NULL)", [
+    principal,
+    now,
+    now + 100,
+  ]);
+  let attempts = 0;
+  const crossing = async () => {
+    attempts++;
+    now += 100;
+    return result();
+  };
+  expect(await read("port", {}, crossing)).toEqual(result());
+  expect(attempts).toBe(1);
+  expect(contextCacheStats(db).entries).toBe(0);
+});
 
 test("a racing retrieval that settles can return and cache its final snapshot", async () => {
   let attempts = 0;

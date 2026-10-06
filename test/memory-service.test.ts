@@ -212,6 +212,95 @@ it("uses durable jobs, refuses partial semantic indexes by default and reports d
   expect(search.data.results[0].ranks).toEqual({ lexical: 1, semantic: 1 });
 });
 
+it("drainIndex waits out a busy index worker instead of returning before vectors exist", async () => {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const embedded: string[] = [];
+  service = new MemoryService(db, {
+    id: "test-only-drain-v1",
+    embed: async (text) => {
+      await gate;
+      embedded.push(text);
+      return [1, 0];
+    },
+  });
+  for (const content of ["drain one", "drain two", "drain three"])
+    await api(route("/records"), "POST", { content });
+  // The background worker holds the queue: a bare runIndexJobs answers 0 at once.
+  const worker = service.runIndexJobs(1);
+  expect(await service.runIndexJobs()).toBe(0);
+  let settled = false;
+  const drained = service.drainIndex({ timeoutMs: 10_000 }).then((r) => {
+    settled = true;
+    return r;
+  });
+  await Bun.sleep(30);
+  expect(settled).toBe(false);
+  release();
+  await worker;
+  expect(await drained).toEqual({ indexed: 2, pending: 0, timedOut: false });
+  expect(embedded).toHaveLength(3);
+  expect(service.repository.pendingJobs("test-only-drain-v1")).toBe(0);
+});
+
+it("drainIndex is bounded: past its timeout it reports what is still pending", async () => {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  service = new MemoryService(db, {
+    id: "test-only-drain-bound-v1",
+    embed: async () => {
+      await gate;
+      return [1, 0];
+    },
+  });
+  await api(route("/records"), "POST", { content: "slow record" });
+  const worker = service.runIndexJobs(1);
+  expect(await service.drainIndex({ timeoutMs: 20 })).toEqual({
+    indexed: 0,
+    pending: 1,
+    timedOut: true,
+  });
+  release();
+  await worker;
+  expect(await service.drainIndex({ timeoutMs: 20 })).toEqual({
+    indexed: 0,
+    pending: 0,
+    timedOut: false,
+  });
+  expect(await new MemoryService(db).drainIndex()).toEqual({
+    indexed: 0,
+    pending: 0,
+    timedOut: false,
+  });
+});
+
+it("cuts an index input past the provider's per-input limit and labels the job", async () => {
+  const embedded: string[] = [];
+  service = new MemoryService(db, {
+    id: "test-only-truncate-v1",
+    maxInputTokens: 4,
+    embed: async (text) => {
+      embedded.push(text);
+      return [1, 0];
+    },
+  });
+  const long = await api(route("/records"), "POST", { content: "a long record ".repeat(20) });
+  const short = await api(route("/records"), "POST", { content: "tiny" });
+  expect(await service.runIndexJobs()).toBe(2);
+  expect(embedded).toEqual(["a long recor", "tiny"]);
+  const job = (id: string) =>
+    db
+      .memoryRepository()
+      .raw.query("SELECT state,error FROM memory_index_jobs WHERE id=?")
+      .get(id) as { state: string; error: string | null };
+  expect(job(long.data.job_id)).toEqual({ state: "ready", error: "input_truncated" });
+  expect(job(short.data.job_id)).toEqual({ state: "ready", error: null });
+});
+
 it("recovers expired worker leases and refuses a late result for a revised head", async () => {
   service = new MemoryService(db, { id: "test-only-recovery-v1", embed: async () => [1, 0] });
   const saved = await api(route("/records"), "POST", { content: "original value" });

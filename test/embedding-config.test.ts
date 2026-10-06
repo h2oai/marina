@@ -8,13 +8,20 @@ import { join } from "node:path";
 import {
   CORPUS_EMBEDDING_ENV,
   EMBEDDING_ENV,
+  embeddingMaxInputTokens,
   embeddingProviderFromConfig,
   embeddingProviderId,
   LOCAL_EMBEDDING_PROVIDER_ID,
   lazyEmbeddingProvider,
   parseEmbeddingEnv,
 } from "../src/memory/embedding-config";
-import { ollamaEmbeddings, openAIEmbeddings } from "../src/memory/embeddings";
+import {
+  DEFAULT_EMBEDDING_MAX_INPUT_TOKENS,
+  estimateEmbeddingTokens,
+  ollamaEmbeddings,
+  openAIEmbeddings,
+  truncateEmbeddingInput,
+} from "../src/memory/embeddings";
 import { MemoryError } from "../src/memory/service-types";
 import { worldEmbeddingProvider, worldMemoryService } from "../src/memory/world-service";
 import { MarinaDB } from "../src/persistence/database";
@@ -339,5 +346,88 @@ describe("worldMemoryService embeddings", () => {
     } finally {
       db.close();
     }
+  });
+});
+
+describe("embedding input limits", () => {
+  it("cuts an input past the cap to its head on a character boundary and says so", () => {
+    expect(truncateEmbeddingInput("short", 8)).toEqual({
+      text: "short",
+      truncated: false,
+      estimatedTokens: 2,
+    });
+    const long = "é".repeat(40); // 80 bytes ⇒ 27 estimated tokens
+    const cut = truncateEmbeddingInput(long, 5); // 15 bytes ⇒ 7 whole characters
+    expect(cut).toMatchObject({ truncated: true, estimatedTokens: 27 });
+    expect(cut.text).toBe("é".repeat(7));
+    expect(estimateEmbeddingTokens(cut.text)).toBeLessThanOrEqual(5);
+    expect(truncateEmbeddingInput(long, 0).truncated).toBe(false);
+    expect(truncateEmbeddingInput(long, undefined).truncated).toBe(false);
+  });
+
+  it("parses the per-input cap and rejects junk", () => {
+    const base = {
+      [EMBEDDING_ENV.kind]: "openai",
+      [EMBEDDING_ENV.url]: "http://127.0.0.1:9/v1",
+      [EMBEDDING_ENV.model]: "m",
+      [EMBEDDING_ENV.revision]: "r",
+    };
+    const config = parseEmbeddingEnv({ ...base, [EMBEDDING_ENV.maxTokens]: "32768" });
+    expect(config).toMatchObject({ maxInputTokens: 32768 });
+    expect(embeddingMaxInputTokens(config)).toBe(32768);
+    expect(embeddingMaxInputTokens(parseEmbeddingEnv(base))).toBe(
+      DEFAULT_EMBEDDING_MAX_INPUT_TOKENS,
+    );
+    expect(
+      embeddingMaxInputTokens(parseEmbeddingEnv({ ...base, [EMBEDDING_ENV.maxTokens]: "0" })),
+    ).toBeUndefined();
+    expect(() => parseEmbeddingEnv({ ...base, [EMBEDDING_ENV.maxTokens]: "-1" })).toThrow(
+      EMBEDDING_ENV.maxTokens,
+    );
+    expect(
+      worldEmbeddingProvider({ ...base, [EMBEDDING_ENV.maxTokens]: "64" })?.maxInputTokens,
+    ).toBe(64);
+  });
+
+  it("sends at most the cap, and retries once at half length when the provider says too long", async () => {
+    const sent: string[][] = [];
+    let limit = Number.POSITIVE_INFINITY;
+    const provider = openAIEmbeddings({
+      baseUrl: "http://127.0.0.1:9/v1",
+      model: "m",
+      revision: "r",
+      maxInputTokens: 10,
+      fetch: (async (_url: string | URL, init?: RequestInit) => {
+        const input = JSON.parse(String(init?.body)).input as string[];
+        sent.push(input);
+        if (input.some((t) => t.length > limit))
+          return new Response(
+            JSON.stringify({ error: { message: "maximum context length is 40960 tokens" } }),
+            { status: 400 },
+          );
+        return new Response(JSON.stringify({ data: input.map(() => ({ embedding: [1, 0] })) }));
+      }) as typeof fetch,
+    });
+    expect(provider.maxInputTokens).toBe(10);
+    await provider.embed("x".repeat(100));
+    expect(sent[0]![0]).toHaveLength(30);
+    limit = 20;
+    await provider.embed("x".repeat(100));
+    expect(sent.slice(1).map((s) => s[0]!.length)).toEqual([30, 15]);
+    limit = 5;
+    await expect(provider.embed("x".repeat(100))).rejects.toBeInstanceOf(MemoryError);
+    // A refusal that is not about length is not retried.
+    const before = sent.length;
+    const plain = openAIEmbeddings({
+      baseUrl: "http://127.0.0.1:9/v1",
+      model: "m",
+      revision: "r",
+      fetch: (async () => {
+        sent.push([]);
+        return new Response("bad key", { status: 401 });
+      }) as unknown as typeof fetch,
+    });
+    await expect(plain.embed("x")).rejects.toThrow("(401)");
+    expect(sent.length - before).toBe(1);
   });
 });

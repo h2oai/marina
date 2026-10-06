@@ -10,6 +10,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { resetReasoningControlForTests } from "../src/agent/reasoning-control";
 import type { DecisionProvider, DecisionRequest, DecisionResult } from "../src/decisions/types";
 import { Engine } from "../src/engine/engine";
 import { contextCacheStats } from "../src/memory/context-cache";
@@ -24,6 +25,7 @@ import {
   relevanceGateMode,
   relevanceGateModel,
   relevanceGateProvider,
+  relevanceGateTimeoutMs,
   relevanceRequest,
   UNCALIBRATED_KEEP_AT,
 } from "../src/memory/relevance-gate";
@@ -249,6 +251,102 @@ describe("gateRelevance backends", () => {
       keepAt: UNCALIBRATED_KEEP_AT,
       dropped: ["evidence:r2"],
     });
+  });
+});
+
+describe("relevance gate bound and reasoning", () => {
+  const items = [cand("evidence:r1", "the red kettle"), cand("evidence:r2", "Lisbon weather")];
+  const reply = () =>
+    new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({ answers: { M1: { noul: 0.9 }, M2: { noul: 0.1 } } }),
+            },
+          },
+        ],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+
+  it("MARINA_MEMORY_RELEVANCE_GATE_TIMEOUT_MS: positive integers only, default 30 s", () => {
+    expect(relevanceGateTimeoutMs({})).toBe(30_000);
+    expect(relevanceGateTimeoutMs({ MARINA_MEMORY_RELEVANCE_GATE_TIMEOUT_MS: "120000" })).toBe(
+      120_000,
+    );
+    for (const bad of ["0", "-5", "1.5", "soon", " "])
+      expect(relevanceGateTimeoutMs({ MARINA_MEMORY_RELEVANCE_GATE_TIMEOUT_MS: bad })).toBe(30_000);
+  });
+
+  it("a backend past the bound fails open, labelled timeout — even one that ignores its signal", async () => {
+    let aborted = false;
+    const stuck: DecisionProvider = {
+      kind: "decisions-api",
+      model: "test/slow",
+      ask: (_request, signal) => {
+        signal?.addEventListener("abort", () => {
+          aborted = true;
+        });
+        return new Promise(() => {});
+      },
+    };
+    const r = await gateRelevance("red kettle", items, {
+      mode: "on",
+      provider: stuck,
+      timeoutMs: 20,
+    });
+    expect(aborted).toBe(true);
+    expect(r.keep.size).toBe(2);
+    expect(r.report).toMatchObject({ outcome: "fail_open", reason: "timeout" });
+  });
+
+  it("the single-LLM fallback asks an OpenRouter-routed model not to reason", async () => {
+    resetReasoningControlForTests();
+    const bodies: Record<string, unknown>[] = [];
+    const fetch = async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return reply();
+    };
+    const deps = { fetch, selfBaseUrl: "http://127.0.0.1:9/v1", token: async () => "t" };
+    const routed = relevanceGateProvider(
+      { MARINA_MEMORY_RELEVANCE_GATE_MODEL: "openrouter/qwen/qwen3.5-9b" },
+      deps,
+    );
+    await gateRelevance("red kettle", items, { mode: "on", provider: routed });
+    expect(bodies[0]!.reasoning).toEqual({ enabled: false });
+    // Not OpenRouter-routed: no reasoning directive at all (unchanged behaviour).
+    const local = relevanceGateProvider({}, deps);
+    await gateRelevance("red kettle", items, { mode: "on", provider: local });
+    expect(bodies[1]!.reasoning).toBeUndefined();
+  });
+
+  it("a model whose upstream says reasoning is mandatory is asked once more at low effort, then remembered", async () => {
+    resetReasoningControlForTests();
+    const bodies: Record<string, unknown>[] = [];
+    const fetch = async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      bodies.push(body);
+      if ((body.reasoning as { enabled?: boolean }).enabled === false)
+        return new Response(
+          JSON.stringify({ error: { message: "Reasoning is mandatory for this endpoint" } }),
+          { status: 400, headers: { "content-type": "application/json" } },
+        );
+      return reply();
+    };
+    const provider = relevanceGateProvider(
+      { MARINA_MEMORY_RELEVANCE_GATE_MODEL: "openrouter/test/thinker" },
+      { fetch, selfBaseUrl: "http://127.0.0.1:9/v1", token: async () => "t" },
+    );
+    const r = await gateRelevance("red kettle", items, { mode: "on", provider });
+    expect(r.report.outcome).toBe("applied");
+    expect(bodies.map((b) => b.reasoning)).toEqual([
+      { enabled: false },
+      { effort: "low", exclude: true },
+    ]);
+    await gateRelevance("kettle again", items, { mode: "on", provider });
+    expect(bodies[2]!.reasoning).toEqual({ effort: "low", exclude: true });
+    resetReasoningControlForTests();
   });
 });
 

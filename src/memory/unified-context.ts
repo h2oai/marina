@@ -77,6 +77,7 @@ import {
   relevanceBackendLabel,
   relevanceGateMode,
   relevanceGateProvider,
+  relevanceGateTimeoutMs,
 } from "./relevance-gate";
 import { residentMemoryOperation } from "./resident-service";
 import { expandMemoryRecall } from "./retrieval";
@@ -861,6 +862,7 @@ interface ResolvedGate {
   mode: "observe" | "on";
   provider: DecisionProvider | undefined;
   maxItems: number;
+  timeoutMs: number;
 }
 
 function resolveGate(
@@ -878,6 +880,7 @@ function resolveGate(
     mode,
     provider,
     maxItems: Math.max(0, Math.floor(opts.relevanceGate?.maxItems ?? RELEVANCE_GATE_MAX_ITEMS)),
+    timeoutMs: relevanceGateTimeoutMs(env),
   };
 }
 
@@ -966,6 +969,7 @@ async function applyRelevanceGate(
     mode: gate.mode,
     ...(gate.provider ? { provider: gate.provider } : {}),
     maxItems: gate.maxItems,
+    timeoutMs: gate.timeoutMs,
   });
   if (gate.mode !== "on") return { fetched: selected, report };
   const out: Partial<Record<UnifiedTier, UnifiedContextItem[]>> = {};

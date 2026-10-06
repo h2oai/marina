@@ -10,6 +10,7 @@
  */
 import { dailyCapRefusal, recordSpend } from "../engine/spend-ledger";
 import {
+  DEFAULT_EMBEDDING_MAX_INPUT_TOKENS,
   type EmbeddingProvider,
   embedMany,
   ollamaEmbeddings,
@@ -24,7 +25,7 @@ export type EmbeddingKind = (typeof EMBEDDING_KINDS)[number];
 export type EmbeddingConfig =
   | { kind: "none" }
   | { kind: "local"; cacheDirectory: string; localOnly: boolean }
-  | { kind: "ollama"; url: string; model: string; revision: string }
+  | { kind: "ollama"; url: string; model: string; revision: string; maxInputTokens?: number }
   | {
       kind: "openai";
       url: string;
@@ -32,6 +33,8 @@ export type EmbeddingConfig =
       revision: string;
       apiKey?: string;
       dimensions?: number;
+      /** Per-input cap in estimated tokens (default `DEFAULT_EMBEDDING_MAX_INPUT_TOKENS`). */
+      maxInputTokens?: number;
     };
 
 /** Must equal the id the extension constructs; verified when the provider loads. */
@@ -48,6 +51,7 @@ export interface EmbeddingEnvNames {
   localOnly: string;
   apiKey: string;
   dimensions: string;
+  maxTokens: string;
 }
 
 /** Durable memory (`MemoryService`). */
@@ -60,6 +64,7 @@ export const EMBEDDING_ENV = {
   localOnly: "MARINA_MEMORY_EMBEDDING_LOCAL_ONLY",
   apiKey: "MARINA_MEMORY_EMBEDDING_API_KEY",
   dimensions: "MARINA_MEMORY_EMBEDDING_DIMENSIONS",
+  maxTokens: "MARINA_MEMORY_EMBEDDING_MAX_TOKENS",
 } as const satisfies EmbeddingEnvNames;
 
 /** Local corpora (`src/engine/search-providers/corpus.ts`): query embeddings for hybrid search. */
@@ -72,6 +77,7 @@ export const CORPUS_EMBEDDING_ENV = {
   localOnly: "MARINA_CORPUS_EMBEDDING_LOCAL_ONLY",
   apiKey: "MARINA_CORPUS_EMBEDDING_API_KEY",
   dimensions: "MARINA_CORPUS_EMBEDDING_DIMENSIONS",
+  maxTokens: "MARINA_CORPUS_EMBEDDING_MAX_TOKENS",
 } as const satisfies EmbeddingEnvNames;
 
 const DEFAULT_MODEL_CACHE = "data/memory-models";
@@ -109,8 +115,19 @@ export function parseEmbeddingEnv(
     throw new Error(
       `${names.kind}=${kind} requires ${names.model} and ${names.revision} (an immutable model revision)`,
     );
+  const rawMax = read(env, names.maxTokens);
+  const maxInputTokens = rawMax === undefined ? undefined : Number(rawMax);
+  if (maxInputTokens !== undefined && (!Number.isInteger(maxInputTokens) || maxInputTokens < 0))
+    throw new Error(`${names.maxTokens} must be a non-negative integer (0 = no limit)`);
+  const max = maxInputTokens === undefined ? {} : { maxInputTokens };
   if (kind === "ollama")
-    return { kind: "ollama", url: read(env, names.url) ?? DEFAULT_OLLAMA_URL, model, revision };
+    return {
+      kind: "ollama",
+      url: read(env, names.url) ?? DEFAULT_OLLAMA_URL,
+      model,
+      revision,
+      ...max,
+    };
   // openai: any OpenAI-compatible /v1/embeddings the operator names — no default vendor.
   const url = read(env, names.url);
   if (!url)
@@ -129,6 +146,7 @@ export function parseEmbeddingEnv(
     revision,
     ...(apiKey ? { apiKey } : {}),
     ...(dimensions ? { dimensions } : {}),
+    ...max,
   };
 }
 
@@ -144,7 +162,13 @@ export async function embeddingProviderFromConfig(
   config: EmbeddingConfig,
 ): Promise<EmbeddingProvider | undefined> {
   if (config.kind === "none") return undefined;
-  if (config.kind === "ollama") return ollamaEmbeddings(config.url, config.model, config.revision);
+  if (config.kind === "ollama")
+    return ollamaEmbeddings(
+      config.url,
+      config.model,
+      config.revision,
+      config.maxInputTokens ?? DEFAULT_EMBEDDING_MAX_INPUT_TOKENS,
+    );
   if (config.kind === "openai")
     return openAIEmbeddings({
       baseUrl: config.url,
@@ -152,6 +176,7 @@ export async function embeddingProviderFromConfig(
       revision: config.revision,
       ...(config.apiKey ? { apiKey: config.apiKey } : {}),
       ...(config.dimensions ? { dimensions: config.dimensions } : {}),
+      ...(config.maxInputTokens === undefined ? {} : { maxInputTokens: config.maxInputTokens }),
       // A paid embedding is a retrieval call: the daily cap refuses it, and the
       // cost the provider reports joins the ledger as `search`.
       refuse: () => dailyCapRefusal(),
@@ -177,6 +202,7 @@ export async function embeddingProviderFromConfig(
 export function lazyEmbeddingProvider(
   id: string,
   load: () => Promise<EmbeddingProvider | undefined>,
+  maxInputTokens?: number,
 ): EmbeddingProvider {
   let pending: Promise<EmbeddingProvider> | undefined;
   const resolve = () =>
@@ -200,6 +226,7 @@ export function lazyEmbeddingProvider(
   };
   return {
     id,
+    ...(maxInputTokens ? { maxInputTokens } : {}),
     async embed(text, signal) {
       return (await loaded()).embed(text, signal);
     },
@@ -207,6 +234,13 @@ export function lazyEmbeddingProvider(
       return embedMany(await loaded(), texts, signal);
     },
   };
+}
+
+/** The per-input token cap a configuration applies (undefined: none — `local` chunks itself). */
+export function embeddingMaxInputTokens(config: EmbeddingConfig): number | undefined {
+  if (config.kind !== "openai" && config.kind !== "ollama") return undefined;
+  const max = config.maxInputTokens ?? DEFAULT_EMBEDDING_MAX_INPUT_TOKENS;
+  return max > 0 ? max : undefined;
 }
 
 /** Synchronous id for a configuration, so the lazy wrapper can be built. */
