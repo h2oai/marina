@@ -4,6 +4,7 @@
 import type { MarinaDB } from "../persistence/database";
 import {
   type EmbeddingConfig,
+  embeddingMaxInputTokens,
   embeddingProviderFromConfig,
   embeddingProviderId,
   lazyEmbeddingProvider,
@@ -25,7 +26,11 @@ export function worldEmbeddingProvider(
   const config: EmbeddingConfig = parseEmbeddingEnv(env);
   const id = embeddingProviderId(config);
   if (!id) return undefined;
-  return lazyEmbeddingProvider(id, () => embeddingProviderFromConfig(config));
+  return lazyEmbeddingProvider(
+    id,
+    () => embeddingProviderFromConfig(config),
+    embeddingMaxInputTokens(config),
+  );
 }
 
 /** HTTP and resident commands share the same service and canonical records. */

@@ -40,6 +40,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 from pathlib import Path
@@ -188,7 +189,10 @@ class MarinaMemory(Memory):
     def query(self, query: str, query_image: str | None = None) -> list[MemoryContextItem]:
         _ = query_image  # retrieval is text-only
         if self.params["mode"] == "hybrid" and not getattr(self, "_drained", False):
-            self._call({"op": "drain"})
+            drained = self._call({"op": "drain"})
+            self.last_drain = {k: drained.get(k) for k in ("indexed", "pending", "timedOut")}
+            if drained.get("pending"):
+                print(f"marina memory: index drain left {drained.get('pending')} jobs pending", file=sys.stderr)
             self._drained = True
         reply = self._call({"op": "query", "query": query})
         self.last_query = {

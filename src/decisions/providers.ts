@@ -19,6 +19,7 @@
  * local classifier on localhost is a legitimate target.
  */
 
+import { isReasoningMandatory, noteUpstreamRejection } from "../agent/reasoning-control";
 import { normalizeAnswers } from "./answers";
 import {
   answerFromDistribution,
@@ -61,6 +62,13 @@ export interface ProviderOptions {
   structured?: boolean;
   /** chat-classifier `sampled`: calls per decision (default 5, 2–15). */
   samples?: number;
+  /**
+   * chat-classifier: `off` asks an OpenRouter-routed model (an OpenRouter base
+   * URL, or an `openrouter/` model id behind a Marina `/v1`) not to reason —
+   * `reasoning: { enabled: false }`, or a low effort for a model an upstream
+   * said cannot disable it (`reasoning-control.ts`). Other targets: unchanged.
+   */
+  reasoning?: "off";
   /** Test seam. */
   fetch?: FetchLike;
 }
@@ -310,6 +318,35 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
   const capKey = `${opts.baseUrl}|${opts.model}`;
   const caps = () => unsupported.get(capKey) ?? {};
   const learn = (c: LearnedLimits) => unsupported.set(capKey, { ...caps(), ...c });
+  // Reasoning facts are keyed by the upstream model id (no `openrouter/` route prefix).
+  const reasoningModel = opts.model.replace(/^openrouter\//, "");
+  const reasoningOff =
+    opts.reasoning === "off" &&
+    (isOpenRouter(opts.baseUrl) || opts.model.startsWith("openrouter/")) &&
+    (process.env.MARINA_OPENROUTER_REASONING_OFF ?? "").trim().toLowerCase() !== "off";
+  const LOW_REASONING = { reasoning: { effort: "low", exclude: true } };
+  /** The request's reasoning directive: a disable, a low budget, or none. */
+  const reasoningDirective = (): Record<string, unknown> => {
+    // A classifier sends no tools, so the disable needs no tool-calling probe;
+    // a model whose upstream said reasoning is mandatory gets the low budget.
+    if (reasoningOff && !isReasoningMandatory(reasoningModel))
+      return { reasoning: { enabled: false } };
+    return isOpenRouter(opts.baseUrl) || reasoningOff ? LOW_REASONING : {};
+  };
+  /** POST a chat body; a refused reasoning disable is learned and asked once more at low effort. */
+  const postReasoning = async (body: Record<string, unknown>, signal?: AbortSignal) => {
+    try {
+      return await post(opts, "/chat/completions", body, signal);
+    } catch (err) {
+      const refused =
+        (body.reasoning as { enabled?: unknown } | undefined)?.enabled === false &&
+        err instanceof DecisionError &&
+        err.code === "upstream_rejected" &&
+        noteUpstreamRejection(reasoningModel, err.message) === "reasoning-mandatory";
+      if (!refused) throw err;
+      return post(opts, "/chat/completions", { ...body, ...LOW_REASONING }, signal);
+    }
+  };
 
   async function chat(
     system: string,
@@ -324,7 +361,7 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
       // 400 left several (qwen3.7-flash, glm-5.3-flash, deepseek-v4-flash)
       // with an empty reply. OpenRouter also accepts a reasoning budget.
       max_tokens: CLASSIFIER_MAX_TOKENS,
-      ...(isOpenRouter(opts.baseUrl) ? { reasoning: { effort: "low", exclude: true } } : {}),
+      ...reasoningDirective(),
       messages: [
         { role: "system", content: system },
         { role: "user", content: user },
@@ -334,9 +371,7 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
     const useSchema = !!responseFormat && opts.structured === true && !caps().schema;
     let body: unknown;
     try {
-      body = await post(
-        opts,
-        "/chat/completions",
+      body = await postReasoning(
         useSchema ? { ...base, response_format: responseFormat } : base,
         signal,
       );
@@ -351,7 +386,7 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
       ) {
         throw err;
       }
-      body = await post(opts, "/chat/completions", base, signal);
+      body = await postReasoning(base, signal);
       learn({ schema: true });
     }
     const b = body as {

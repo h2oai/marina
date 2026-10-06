@@ -49,6 +49,11 @@ export function markReasoningOffVerified(modelId: string): void {
   if (!reasoningMandatory.has(modelId)) reasoningOffVerified.add(modelId);
 }
 
+/** Whether an upstream said `modelId` cannot disable reasoning ("reasoning is mandatory"). */
+export function isReasoningMandatory(modelId: string): boolean {
+  return reasoningMandatory.has(modelId);
+}
+
 /** Whether `modelId` is known to accept an explicit reasoning disable and still call tools. */
 export function isReasoningOffVerified(modelId: string): boolean {
   return reasoningOffVerified.has(modelId) && !reasoningMandatory.has(modelId);

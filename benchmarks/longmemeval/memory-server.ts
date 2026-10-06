@@ -83,8 +83,10 @@ const backend = pick<GateBackend>("gate-backend", values["gate-backend"], [
 ]);
 // A throwaway benchmark database: WAL without an fsync per commit.
 process.env.MARINA_DB_DURABILITY ??= "normal";
-// The decision layer's metered provider records into the world ledger (DB_PATH).
-if (gateMode !== "off" && backend !== "mechanical") attachCliSpendLedger("longmemeval memory gate");
+// The decision layer's metered provider and a paid embedder (hybrid) record into
+// the world ledger (DB_PATH), where the daily and scope caps also refuse them.
+if ((gateMode !== "off" && backend !== "mechanical") || mode === "hybrid")
+  attachCliSpendLedger("longmemeval memory sidecar");
 
 const store = LmeMemoryStore.open(dbPath, {
   mode,
@@ -128,7 +130,7 @@ async function handle(line: string): Promise<boolean> {
         write({ id, ok: true, ...(await store.query(String(request.query ?? ""))) });
         return true;
       case "drain":
-        write({ id, ok: true, indexed: await store.drainIndex() });
+        write({ id, ok: true, ...(await store.drainIndex()) });
         return true;
       case "stats":
         write({ id, ok: true, ...store.stats() });

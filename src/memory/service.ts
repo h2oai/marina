@@ -14,7 +14,7 @@ import type {
   MemorySearchInput,
   MemorySearchResult,
 } from "../sdk/memory-types";
-import { type EmbeddingProvider, validEmbedding } from "./embeddings";
+import { type EmbeddingProvider, truncateEmbeddingInput, validEmbedding } from "./embeddings";
 import { configuredMemoryFederation, type MemoryFederation } from "./federation";
 import { runMemoryImport } from "./import-runner";
 import { ratificationPolicy } from "./institutional";
@@ -352,10 +352,27 @@ export class MemoryService {
         const job = this.repository.claimJob(this.embeddings.id);
         if (!job) break;
         try {
-          const vector = await this.embeddings.embed(job.content);
+          // Inputs past the provider's per-input limit are cut to it (head kept);
+          // the job is labelled `input_truncated` so the shortened vector is visible.
+          const input = truncateEmbeddingInput(job.content, this.embeddings.maxInputTokens);
+          if (input.truncated)
+            this.logger.info("memory", "index input truncated", {
+              job: job.id,
+              estimatedTokens: input.estimatedTokens,
+              maxInputTokens: this.embeddings.maxInputTokens,
+            });
+          const vector = await this.embeddings.embed(input.text);
           if (!validEmbedding(vector))
             throw new MemoryError(502, "invalid_embedding", "Invalid embedding");
-          if (this.repository.finishJob(job, vector)) completed++;
+          if (
+            this.repository.finishJob(
+              job,
+              vector,
+              undefined,
+              input.truncated ? "input_truncated" : undefined,
+            )
+          )
+            completed++;
         } catch (error) {
           this.repository.finishJob(
             job,
@@ -370,6 +387,33 @@ export class MemoryService {
       this.working = false;
     }
     return completed;
+  }
+
+  /**
+   * Wait until every pending index job for this provider is done (indexed or
+   * failed for good), running jobs itself and waiting out the background
+   * worker while it holds the queue — `runIndexJobs` alone returns 0 then.
+   * Bounded: past `timeoutMs` (default 10 min) or on `signal` it returns with
+   * `pending > 0`, never throws. Without an embedding provider: nothing to do.
+   */
+  async drainIndex(
+    opts: { timeoutMs?: number; signal?: AbortSignal; batch?: number } = {},
+  ): Promise<{ indexed: number; pending: number; timedOut: boolean }> {
+    const embeddings = this.embeddings;
+    if (!embeddings) return { indexed: 0, pending: 0, timedOut: false };
+    const deadline = Date.now() + (opts.timeoutMs ?? 600_000);
+    let indexed = 0;
+    for (;;) {
+      const pending = this.repository.pendingJobs(embeddings.id);
+      if (pending === 0) return { indexed, pending: 0, timedOut: false };
+      if (this.stopping || opts.signal?.aborted || Date.now() >= deadline)
+        return { indexed, pending, timedOut: !this.stopping && !opts.signal?.aborted };
+      // The worker (or another drain) holds the queue, or every job left is
+      // backing off after a failure: wait, then look again.
+      const done = this.working ? 0 : await this.runIndexJobs(opts.batch ?? 64);
+      indexed += done;
+      if (done === 0) await Bun.sleep(Math.min(50, Math.max(1, deadline - Date.now())));
+    }
   }
 
   async search(

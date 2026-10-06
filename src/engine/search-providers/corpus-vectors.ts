@@ -25,6 +25,7 @@ import { Database } from "bun:sqlite";
 import { readFileSync } from "node:fs";
 import {
   CORPUS_EMBEDDING_ENV,
+  embeddingMaxInputTokens,
   embeddingProviderFromConfig,
   embeddingProviderId,
   lazyEmbeddingProvider,
@@ -420,7 +421,11 @@ export function corpusEmbedder(
     const config = parseEmbeddingEnv(env, CORPUS_EMBEDDING_ENV);
     const id = embeddingProviderId(config);
     provider = id
-      ? lazyEmbeddingProvider(id, () => embeddingProviderFromConfig(config))
+      ? lazyEmbeddingProvider(
+          id,
+          () => embeddingProviderFromConfig(config),
+          embeddingMaxInputTokens(config),
+        )
       : undefined;
   } catch {
     provider = undefined;
