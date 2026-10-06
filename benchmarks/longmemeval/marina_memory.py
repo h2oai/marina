@@ -14,6 +14,15 @@ memory_params:
   marina_root      path to a Marina checkout (default: $MARINA_ROOT)
   bun              Bun executable (default: "bun")
   mode             "lexical" (default) or "hybrid"
+  retrieval        "unified" (default: Marina's resident retrieval path) or "raw"
+                   (ungated search hits, the pilot's arm)
+  gate             relevance gate: "off" (default), "observe" or "on" (unified only)
+  gate_max         judged records kept at most by the gate (default 8)
+  gate_backend     "auto" (default), "decisions", "model" or "mechanical"
+  gate_model       chat model for the "model" backend (served by gate_base_url)
+  gate_base_url    OpenAI-compatible /v1 for gate_model (default a local Marina)
+  gate_api_key_env NAME of the env var holding that endpoint's key (default
+                   OPENAI_API_KEY; the key itself never goes on a command line)
   search_limit     ranked records requested per question (default 40)
   context_bytes    reader context budget in bytes (default 160000)
   state_bytes      bytes per state in a retrieved slice (default 10000)
@@ -42,6 +51,13 @@ DEFAULTS: dict[str, Any] = {
     "marina_root": None,
     "bun": "bun",
     "mode": "lexical",
+    "retrieval": "unified",
+    "gate": "off",
+    "gate_max": 8,
+    "gate_backend": "auto",
+    "gate_model": None,
+    "gate_base_url": "http://localhost:3300/v1",
+    "gate_api_key_env": "OPENAI_API_KEY",
     "search_limit": 40,
     "context_bytes": 160000,
     "state_bytes": 10000,
@@ -65,6 +81,14 @@ class MarinaMemory(Memory):
         self.params = {**DEFAULTS, **memory_params}
         if self.params["mode"] not in ("lexical", "hybrid"):
             raise RuntimeError("marina mode must be lexical or hybrid")
+        if self.params["retrieval"] not in ("unified", "raw"):
+            raise RuntimeError("marina retrieval must be unified or raw")
+        if self.params["gate"] not in ("off", "observe", "on"):
+            raise RuntimeError("marina gate must be off, observe or on")
+        if self.params["gate"] != "off" and self.params["retrieval"] != "unified":
+            raise RuntimeError("the marina relevance gate needs retrieval=unified")
+        if self.params["gate_backend"] not in ("auto", "decisions", "model", "mechanical"):
+            raise RuntimeError("marina gate_backend must be auto, decisions, model or mechanical")
         root = self.params["marina_root"] or os.environ.get("MARINA_ROOT")
         if not root:
             raise RuntimeError("set memory_params.marina_root or MARINA_ROOT to a Marina checkout")
@@ -80,19 +104,20 @@ class MarinaMemory(Memory):
 
     # -- sidecar -----------------------------------------------------------------
 
-    def _start(self) -> subprocess.Popen[str]:
-        if self._proc is not None:
-            return self._proc
-        base = self.params["work_dir"] or os.environ.get("TMPDIR") or None
-        self._dir = tempfile.mkdtemp(prefix="marina-lme-", dir=base)
+    def argv(self, db_path: str) -> list[str]:
+        """The sidecar command line (no secrets: keys are read from the environment)."""
         p = self.params
         argv = [
             str(p["bun"]),
             str(self.server),
             "--db",
-            os.path.join(self._dir, "memory.db"),
+            db_path,
             "--mode",
             str(p["mode"]),
+            "--retrieval",
+            str(p["retrieval"]),
+            "--gate",
+            str(p["gate"]),
             "--search-limit",
             str(int(p["search_limit"])),
             "--context-bytes",
@@ -104,6 +129,27 @@ class MarinaMemory(Memory):
             "--radius",
             str(int(p["radius"])),
         ]
+        if p["gate"] != "off":
+            argv += [
+                "--gate-max",
+                str(int(p["gate_max"])),
+                "--gate-backend",
+                str(p["gate_backend"]),
+                "--gate-base-url",
+                str(p["gate_base_url"]),
+                "--gate-api-key-env",
+                str(p["gate_api_key_env"]),
+            ]
+            if p["gate_model"]:
+                argv += ["--gate-model", str(p["gate_model"])]
+        return argv
+
+    def _start(self) -> subprocess.Popen[str]:
+        if self._proc is not None:
+            return self._proc
+        base = self.params["work_dir"] or os.environ.get("TMPDIR") or None
+        self._dir = tempfile.mkdtemp(prefix="marina-lme-", dir=base)
+        argv = self.argv(os.path.join(self._dir, "memory.db"))
         self._proc = subprocess.Popen(
             argv,
             cwd=str(self.root),
@@ -150,7 +196,18 @@ class MarinaMemory(Memory):
             "used_records": len(reply.get("used") or []),
             "degraded": reply.get("degraded") or [],
             "server_ms": reply.get("ms"),
+            "retrieval": reply.get("retrieval"),
         }
+        relevance = reply.get("relevance")
+        if isinstance(relevance, dict):
+            # Numbers only: what the gate judged and dropped (or would drop).
+            keys = ("mode", "backend", "outcome", "reason", "candidates", "scored", "kept", "none")
+            summary = {k: relevance[k] for k in keys if relevance.get(k) is not None}
+            summary["dropped"] = len(relevance.get("dropped") or [])
+            for k in ("calls", "latencyMs", "costUsd"):
+                if relevance.get(k) is not None:
+                    summary[k] = relevance[k]
+            self.last_query["relevance"] = summary
         items: list[MemoryContextItem] = []
         for item in reply.get("items") or []:
             value = item.get("value")
