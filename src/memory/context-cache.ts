@@ -73,7 +73,12 @@ export async function cachedContext(
     const result = await retrieve();
     const finished = Date.now();
     if (before !== contextRevision(raw) || finished < created || finished >= until) continue;
-    if (!raw.inTransaction && result.degraded.length === 0) {
+    // A gate that failed open served the ungated set: retry it on the next read.
+    if (
+      !raw.inTransaction &&
+      result.degraded.length === 0 &&
+      result.relevance?.outcome !== "fail_open"
+    ) {
       // Expired/invalidated entries should not retain private content unnecessarily.
       for (const [id, cached] of cache.entries)
         if (cached.revision !== before || finished >= cached.until) cache.entries.delete(id);

@@ -10,6 +10,7 @@ import { isLocalProfile } from "../engine/trust-profile";
 import {
   buildUnifiedContext,
   byteLength,
+  NO_RELEVANT_MEMORY,
   truncateToBytes,
   type UnifiedContextResult,
   type UnifiedTier,
@@ -380,6 +381,14 @@ export async function buildInjectedContext(
         own++;
       }
     }
+    // Relevance gate `on` found nothing relevant: say so rather than inject
+    // nothing, so the model answers "unknown" instead of guessing.
+    if (unified.relevance?.none)
+      volatile.push({
+        tier: "relevance",
+        ref: { id: "none" },
+        text: `Own memory: ${NO_RELEVANT_MEMORY}`,
+      });
     const seenDegraded = new Set<string>();
     for (const d of unified.degraded) {
       const key = `${d.tier}:${d.code}`;

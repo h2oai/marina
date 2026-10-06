@@ -6,6 +6,7 @@ import type {
   UnifiedContextOptions,
   UnifiedContextResult,
   UnifiedDegraded,
+  UnifiedRelevanceReport,
   UnifiedTier,
   UnifiedTierResult,
 } from "../sdk/memory-context";
@@ -15,6 +16,7 @@ export type {
   UnifiedContextOptions,
   UnifiedContextResult,
   UnifiedDegraded,
+  UnifiedRelevanceReport,
   UnifiedScope,
   UnifiedTier,
   UnifiedTierResult,
@@ -46,12 +48,18 @@ export type {
  * 3.7): a helper's summary can be no more trustworthy than the least
  * trustworthy note it cites, so the item reports `confidence = min(cited)` and
  * is `verified` only when every cited legacy twin is verified.
+ *
+ * Optional relevance gate (`./relevance-gate.ts`, `MARINA_MEMORY_RELEVANCE_GATE`,
+ * default off): after fetching and before budgeting, the per-tier candidates
+ * are judged and irrelevant ones dropped (drop only; core/pinned exempt;
+ * fail-open labelled). It is the one step here that may call a model; the
+ * result's `relevance` block reports it with numbers and ids only.
  */
 
 import { creditRecalledReflections } from "../agent/standing";
+import type { DecisionProvider } from "../decisions/types";
 import { getErrorMessage } from "../engine/errors";
 import type { MarinaDB, NoteRow, ScoredNoteRow } from "../persistence/database";
-import { ftsTerms } from "../persistence/fts";
 import type { MemoryAssistanceJob, MemoryAssistancePage } from "../sdk/memory-assistance";
 import { MemoryClientError } from "../sdk/memory-client";
 import type { MemorySearchResult, MemorySourceSearchResult } from "../sdk/memory-types";
@@ -61,8 +69,17 @@ import {
   findLegacyNotesForRecord,
   LEGACY_SOURCE_SESSION,
 } from "./legacy-projection";
+import {
+  gateRelevance,
+  RELEVANCE_GATE_MAX_ITEMS,
+  type RelevanceCandidate,
+  relevanceBackendLabel,
+  relevanceGateMode,
+  relevanceGateProvider,
+} from "./relevance-gate";
 import { residentMemoryOperation } from "./resident-service";
 import { expandMemoryRecall } from "./retrieval";
+import { queryTerms, termMatcher } from "./term-match";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -96,6 +113,14 @@ export const UNIFIED_CONTEXT_HEADER =
   "[Memory — retrieved by keyword match; use only items that answer the question, preserve provenance]";
 
 /**
+ * What every render shows when the relevance gate is `on` and nothing
+ * relevant is left: an explicit absence, so a reader answers "unknown"
+ * instead of guessing from keyword noise (false-premise acceptance).
+ */
+export const NO_RELEVANT_MEMORY =
+  "[Memory — no relevant memory found for this query; memory does not support an answer]";
+
+/**
  * Relevance gate. Legacy recall runs FTS in OR mode, so one shared common
  * word ("first", "year", "river") is enough to surface a note about something
  * else; injected into a prompt, such notes measurably mislead (recall
@@ -112,12 +137,7 @@ export function minOverlap(termCount: number): number {
   return Math.max(2, Math.ceil(termCount * MIN_OVERLAP_SHARE));
 }
 
-const stem = (word: string) =>
-  word.length > 5 ? word.slice(0, Math.max(4, word.length - 2)) : word;
-
-export function queryTerms(query: string): string[] {
-  return [...new Set(ftsTerms(query).map((t) => t.toLowerCase()))];
-}
+export { queryTerms };
 
 /**
  * Distinctiveness: which query terms are RARE in the entity's own fact-like
@@ -165,17 +185,7 @@ export function relevantToQuery(
 ): boolean {
   const terms = typeof query === "string" ? queryTerms(query) : query;
   if (terms.length === 0) return true;
-  const words = new Set(
-    content
-      .toLowerCase()
-      .split(/[^\p{L}\p{N}_]+/u)
-      .filter(Boolean),
-  );
-  const prefixes = [...words].map(stem);
-  const matches = (term: string) => {
-    const st = stem(term);
-    return words.has(term) || prefixes.some((w) => w.startsWith(st) || st.startsWith(w));
-  };
+  const matches = termMatcher(content);
   let overlap = 0;
   let distinct = distinctive === undefined || distinctive.size === 0;
   for (const term of terms) {
@@ -509,12 +519,25 @@ function fetchLegacy(
   return out;
 }
 
+/**
+ * Records requested per evidence slot before the overlap filter: the filter
+ * drops keyword-only hits, so asking for exactly `records` left the tier short
+ * whenever an early hit was noise and a relevant one ranked just below the cut.
+ */
+const EVIDENCE_OVERFETCH = 2;
+
+/** `MARINA_MEMORY_CONTEXT_SEARCH` (default lexical). */
+export function contextSearchMode(env: NodeJS.ProcessEnv = process.env): "lexical" | "hybrid" {
+  return env.MARINA_MEMORY_CONTEXT_SEARCH?.trim().toLowerCase() === "hybrid" ? "hybrid" : "lexical";
+}
+
 async function fetchDurable(
   db: MarinaDB,
   entityName: string,
   query: string,
   limits: { records: number; sources: number; proposals: number },
   representedRecords: ReadonlySet<string>,
+  search: "lexical" | "hybrid" = "lexical",
 ): Promise<Fetched> {
   const out: Fetched = { items: { evidence: [], proposal: [] }, degraded: [] };
   let spaceId: string | undefined;
@@ -547,15 +570,27 @@ async function fetchDurable(
   }
 
   try {
-    const search = await residentMemoryOperation(db, entityName, {
+    const reply = await residentMemoryOperation(db, entityName, {
       operation: "search",
       input: {
         query,
-        limit: Math.min(100, limits.records + jobArtifacts.size + representedRecords.size),
+        limit: Math.min(
+          100,
+          limits.records * EVIDENCE_OVERFETCH + jobArtifacts.size + representedRecords.size,
+        ),
+        // Hybrid is the operator's explicit choice; a missing provider or an
+        // incomplete index answers lexically and is labelled, never an error.
+        ...(search === "hybrid" ? { mode: "hybrid" as const, allow_degraded: true } : {}),
       },
     });
-    spaceId = search.space_id;
-    const result = search.result as MemorySearchResult;
+    spaceId = reply.space_id;
+    const result = reply.result as MemorySearchResult;
+    if (search === "hybrid" && result.degraded?.length)
+      out.degraded.push({
+        tier: "evidence",
+        code: "semantic_degraded",
+        message: `hybrid search degraded: ${result.degraded.join(", ")}`,
+      });
     const now = Date.now();
     const terms = queryTerms(query);
     const distinctive = distinctiveTerms(db, entityName, terms);
@@ -711,17 +746,130 @@ function applyBudget(
  * use `residentMemoryOperation`. Both read canonical memory, with server-bound
  * identity rather than a caller-supplied owner.
  */
+export interface UnifiedContextDeps {
+  /**
+   * The relevance gate's model backend. Undefined ⇒ resolved from the
+   * environment (`relevanceGateProvider`); null ⇒ the mechanical floor.
+   */
+  relevanceProvider?: DecisionProvider | null;
+  env?: NodeJS.ProcessEnv;
+}
+
+interface ResolvedGate {
+  mode: "observe" | "on";
+  provider: DecisionProvider | undefined;
+  maxItems: number;
+}
+
+function resolveGate(
+  opts: UnifiedContextOptions,
+  deps: UnifiedContextDeps,
+  env: NodeJS.ProcessEnv,
+): ResolvedGate | undefined {
+  const mode = opts.relevanceGate?.mode ?? relevanceGateMode(env);
+  if (mode === "off") return undefined;
+  const provider =
+    opts.relevanceGate?.backend === "mechanical" || deps.relevanceProvider === null
+      ? undefined
+      : (deps.relevanceProvider ?? relevanceGateProvider(env));
+  return {
+    mode,
+    provider,
+    maxItems: Math.max(0, Math.floor(opts.relevanceGate?.maxItems ?? RELEVANCE_GATE_MAX_ITEMS)),
+  };
+}
+
 export async function buildUnifiedContext(
   db: MarinaDB,
   entityName: string,
   query: string,
   opts: UnifiedContextOptions = {},
+  deps: UnifiedContextDeps = {},
 ): Promise<UnifiedContextResult> {
-  const result = await cachedContext(db, entityName, query, opts, () =>
-    retrieveUnifiedContext(db, entityName, query, opts),
+  const env = deps.env ?? process.env;
+  const search = opts.search ?? contextSearchMode(env);
+  const gate = resolveGate(opts, deps, env);
+  // The cache key carries the EFFECTIVE settings (env included), never a provider object.
+  const { relevanceGate: _gate, ...rest } = opts;
+  const keyed: UnifiedContextOptions & { relevanceGateKey?: unknown } = {
+    ...rest,
+    search,
+    ...(gate
+      ? {
+          relevanceGateKey: {
+            mode: gate.mode,
+            backend: relevanceBackendLabel(gate.provider),
+            maxItems: gate.maxItems,
+          },
+        }
+      : {}),
+  };
+  const result = await cachedContext(db, entityName, query, keyed, () =>
+    retrieveUnifiedContext(db, entityName, query, opts, search, gate),
   );
   if (opts.creditReflections !== false) creditUnifiedReflections(db, result);
   return result;
+}
+
+/** Items the gate never judges or drops: `core` memory and pinned items. */
+function exemptFromGate(item: UnifiedContextItem): boolean {
+  const meta = item.meta ?? {};
+  return meta.noteTier === "core" || meta.tier === "core" || meta.pinned === true;
+}
+
+/**
+ * The items `applyBudget` would consider, per tier: sorted, legacy duplicates
+ * removed, capped at `perTier`. The gate judges exactly these, so it never
+ * pays for a candidate the tier caps would drop anyway.
+ */
+function preselect(
+  fetched: Partial<Record<UnifiedTier, UnifiedContextItem[]>>,
+  perTier: Record<UnifiedTier, number>,
+): Partial<Record<UnifiedTier, UnifiedContextItem[]>> {
+  const seenNotes = new Set<string>();
+  const out: Partial<Record<UnifiedTier, UnifiedContextItem[]>> = {};
+  for (const tier of UNIFIED_TIER_ORDER) {
+    const kept: UnifiedContextItem[] = [];
+    for (const item of sortItems([...(fetched[tier] ?? [])])) {
+      if (LEGACY_TIERS.includes(tier) && seenNotes.has(item.id)) continue;
+      if (kept.length >= perTier[tier]) break;
+      if (LEGACY_TIERS.includes(tier)) seenNotes.add(item.id);
+      kept.push(item);
+    }
+    out[tier] = kept;
+  }
+  return out;
+}
+
+async function applyRelevanceGate(
+  query: string,
+  fetched: Partial<Record<UnifiedTier, UnifiedContextItem[]>>,
+  perTier: Record<UnifiedTier, number>,
+  gate: ResolvedGate,
+): Promise<{
+  fetched: Partial<Record<UnifiedTier, UnifiedContextItem[]>>;
+  report: UnifiedRelevanceReport;
+}> {
+  const selected = preselect(fetched, perTier);
+  const candidates: RelevanceCandidate[] = [];
+  for (const tier of UNIFIED_TIER_ORDER)
+    for (const item of selected[tier] ?? [])
+      candidates.push({
+        key: `${tier}:${item.id}`,
+        tier,
+        content: item.content,
+        exempt: exemptFromGate(item),
+      });
+  const { keep, report } = await gateRelevance(query, candidates, {
+    mode: gate.mode,
+    ...(gate.provider ? { provider: gate.provider } : {}),
+    maxItems: gate.maxItems,
+  });
+  if (gate.mode !== "on") return { fetched: selected, report };
+  const out: Partial<Record<UnifiedTier, UnifiedContextItem[]>> = {};
+  for (const tier of UNIFIED_TIER_ORDER)
+    out[tier] = (selected[tier] ?? []).filter((item) => keep.has(`${tier}:${item.id}`));
+  return { fetched: out, report };
 }
 
 async function retrieveUnifiedContext(
@@ -729,6 +877,8 @@ async function retrieveUnifiedContext(
   entityName: string,
   query: string,
   opts: UnifiedContextOptions,
+  search: "lexical" | "hybrid",
+  gate: ResolvedGate | undefined,
 ): Promise<UnifiedContextResult> {
   const scope = opts.scope ?? "all";
   const budgetBytes = Math.max(0, Math.floor(opts.budgetBytes ?? DEFAULT_UNIFIED_BUDGET_BYTES));
@@ -774,13 +924,28 @@ async function retrieveUnifiedContext(
           proposals: perTier.proposal,
         },
         represented,
+        search,
       );
       Object.assign(fetched, durable.items);
       degraded.push(...durable.degraded);
     }
   }
 
-  const budgeted = applyBudget(fetched, perTier, budgetBytes, itemMaxBytes);
+  let served = fetched;
+  let relevance: UnifiedRelevanceReport | undefined;
+  if (gate && trimmed) {
+    const gated = await applyRelevanceGate(trimmed, fetched, perTier, gate);
+    served = gated.fetched;
+    relevance = gated.report;
+  }
+
+  const budgeted = applyBudget(served, perTier, budgetBytes, itemMaxBytes);
+  if (relevance && relevance.mode === "on" && relevance.outcome !== "fail_open")
+    // A failed tier means "could not look", not "nothing relevant"; a missing
+    // world account is a posture (no durable tiers to look in), not a failure.
+    relevance.none =
+      degraded.every((d) => d.code === "world_identity_required") &&
+      budgeted.tiers.every((t) => t.items.length === 0 && t.omitted === 0);
   const result: UnifiedContextResult = {
     schema: UNIFIED_CONTEXT_SCHEMA,
     entity: entityName,
@@ -791,6 +956,7 @@ async function retrieveUnifiedContext(
     truncated: budgeted.truncated,
     tiers: budgeted.tiers,
     degraded,
+    ...(relevance ? { relevance } : {}),
   };
   return result;
 }
@@ -904,6 +1070,7 @@ export function renderUnifiedContext(
     }
     blocks.push(lines.join("\n"));
   }
+  if (result.relevance?.none) return NO_RELEVANT_MEMORY;
   const body = blocks.join("\n\n");
   if (opts.header === false) return body;
   return body ? `${UNIFIED_CONTEXT_HEADER}\n${body}` : "";

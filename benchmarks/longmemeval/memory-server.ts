@@ -7,8 +7,17 @@
  * (`marina_memory.py`) talks to this process over stdio, one JSON object per line.
  *
  *   bun benchmarks/longmemeval/memory-server.ts --db <path> [--mode lexical|hybrid]
+ *     [--retrieval unified|raw] [--gate off|observe|on] [--gate-max 8]
+ *     [--gate-backend auto|decisions|model|mechanical] [--gate-model <id>]
+ *     [--gate-base-url http://localhost:3300/v1] [--gate-api-key-env OPENAI_API_KEY]
  *     [--search-limit 40] [--context-bytes 160000] [--state-bytes 10000]
  *     [--episode-bytes 6000] [--radius 1]
+ *
+ * `--retrieval unified` (default) serves through `buildUnifiedContext`, Marina's
+ * resident retrieval path; `raw` is the pilot's ungated search. The relevance gate
+ * runs only in the unified path; a model gate's spend is recorded where it leaves
+ * Marina (point `--gate-base-url` at a Marina `/v1`, or the decision layer's metered
+ * provider with `DB_PATH`'s ledger attached).
  *
  * Requests: {"id":n,"op":"insert","trajectory":{…}} | {"id":n,"op":"query","query":"…"}
  *           | {"id":n,"op":"drain"} | {"id":n,"op":"stats"} | {"id":n,"op":"close"}
@@ -20,14 +29,22 @@
 
 import { existsSync } from "node:fs";
 import { parseArgs } from "node:util";
+import { attachCliSpendLedger } from "../../src/engine/cli-spend-ledger";
 import { DEFAULT_CONTEXT } from "./records";
-import { LmeMemoryStore } from "./store";
+import { type GateBackend, gateProvider, LmeMemoryStore, type Retrieval } from "./store";
 
 const { values } = parseArgs({
   args: process.argv.slice(2),
   options: {
     db: { type: "string" },
     mode: { type: "string", default: "lexical" },
+    retrieval: { type: "string", default: "unified" },
+    gate: { type: "string", default: "off" },
+    "gate-max": { type: "string", default: "8" },
+    "gate-backend": { type: "string", default: "auto" },
+    "gate-model": { type: "string" },
+    "gate-base-url": { type: "string", default: "http://localhost:3300/v1" },
+    "gate-api-key-env": { type: "string", default: "OPENAI_API_KEY" },
     "search-limit": { type: "string", default: "40" },
     "context-bytes": { type: "string", default: String(DEFAULT_CONTEXT.contextBytes) },
     "state-bytes": { type: "string", default: String(DEFAULT_CONTEXT.stateBytes) },
@@ -48,11 +65,44 @@ if (existsSync(dbPath))
   throw new Error(`--db ${dbPath} exists; each haystack gets a fresh database`);
 const mode = values.mode === "hybrid" ? "hybrid" : values.mode === "lexical" ? "lexical" : null;
 if (!mode) throw new Error("--mode must be lexical or hybrid");
+const pick = <T extends string>(
+  name: string,
+  raw: string | undefined,
+  allowed: readonly T[],
+): T => {
+  if (allowed.includes(raw as T)) return raw as T;
+  throw new Error(`--${name} must be one of ${allowed.join(", ")}`);
+};
+const retrieval = pick<Retrieval>("retrieval", values.retrieval, ["unified", "raw"]);
+const gateMode = pick("gate", values.gate, ["off", "observe", "on"] as const);
+const backend = pick<GateBackend>("gate-backend", values["gate-backend"], [
+  "auto",
+  "decisions",
+  "model",
+  "mechanical",
+]);
 // A throwaway benchmark database: WAL without an fsync per commit.
 process.env.MARINA_DB_DURABILITY ??= "normal";
+// The decision layer's metered provider records into the world ledger (DB_PATH).
+if (gateMode !== "off" && backend !== "mechanical") attachCliSpendLedger("longmemeval memory gate");
 
 const store = LmeMemoryStore.open(dbPath, {
   mode,
+  retrieval,
+  ...(gateMode === "off"
+    ? {}
+    : {
+        gate: {
+          mode: gateMode,
+          maxItems: positive("gate-max", values["gate-max"]),
+          provider: gateProvider({
+            backend,
+            ...(values["gate-model"] ? { model: values["gate-model"] } : {}),
+            baseUrl: values["gate-base-url"] ?? "http://localhost:3300/v1",
+            apiKeyEnv: values["gate-api-key-env"] ?? "OPENAI_API_KEY",
+          }),
+        },
+      }),
   searchLimit: positive("search-limit", values["search-limit"]),
   context: {
     contextBytes: positive("context-bytes", values["context-bytes"], 1024),

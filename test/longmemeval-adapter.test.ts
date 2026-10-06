@@ -14,7 +14,12 @@ import {
   trajectoryRecords,
   truncateBytes,
 } from "../benchmarks/longmemeval/records";
-import { LME_ACCOUNT, LmeMemoryStore } from "../benchmarks/longmemeval/store";
+import {
+  gateProvider,
+  LME_ACCOUNT,
+  LmeMemoryStore,
+  NO_RELEVANT_MEMORY_ITEM,
+} from "../benchmarks/longmemeval/store";
 import { residentMemoryOperation } from "../src/memory/resident-service";
 
 const run = (id: string, goal: string, outcome: string, pages: string[]): LmeTrajectory => ({
@@ -129,6 +134,107 @@ describe("LongMemEval store", () => {
     }
   });
 
+  const seed = (store: LmeMemoryStore) => {
+    store.insert(run("a1", "change the store email", "success", ["Settings page", "Email field"]));
+    store.insert(
+      run("b2", "find the pelican coupon", "failure", [
+        "Home",
+        "[12] link 'Pelican promo' coupon code PEL-42",
+      ]),
+    );
+  };
+  const small = { contextBytes: 20_000, stateBytes: 2_000, episodeBytes: 1_000, radius: 1 };
+
+  it("unified (default) and raw retrieval both answer; only unified filters keyword noise", async () => {
+    const unified = LmeMemoryStore.open(join(dir, "u.db"), {
+      mode: "lexical",
+      searchLimit: 10,
+      context: small,
+    });
+    const raw = LmeMemoryStore.open(join(dir, "r.db"), {
+      mode: "lexical",
+      retrieval: "raw",
+      searchLimit: 10,
+      context: small,
+    });
+    try {
+      seed(unified);
+      seed(raw);
+      const u = await unified.query("What is the pelican coupon code?");
+      const r = await raw.query("What is the pelican coupon code?");
+      expect(u.retrieval).toBe("unified");
+      expect(r.retrieval).toBe("raw");
+      expect(u.items.some((i) => i.value.includes("PEL-42"))).toBe(true);
+      expect(r.items.some((i) => i.value.includes("PEL-42"))).toBe(true);
+      expect(u.relevance).toBeUndefined();
+      // One shared word among many: raw serves it, the resident path does not.
+      const noise = "Which pelican species nests near the Lisbon harbour each spring season?";
+      expect((await raw.query(noise)).hits).toBeGreaterThan(0);
+      expect((await unified.query(noise)).hits).toBe(0);
+    } finally {
+      await unified.close();
+      await raw.close();
+    }
+  });
+
+  it("gate on: drops judged-irrelevant records and says so when nothing is left", async () => {
+    const judge = {
+      kind: "decisions-api",
+      model: "test/judge",
+      async ask(request: { state: unknown }) {
+        const memories = (request.state as { memories: { id: string; text: string }[] }).memories;
+        return {
+          answers: Object.fromEntries(
+            memories.map((m) => [
+              m.id,
+              { type: "noul" as const, noul: m.text.includes("coupon") ? 0.9 : 0.02 },
+            ]),
+          ),
+          model: "test/judge",
+          provider: "decisions-api",
+          latencyMs: 1,
+        };
+      },
+    };
+    const store = LmeMemoryStore.open(join(dir, "g.db"), {
+      mode: "lexical",
+      searchLimit: 10,
+      context: small,
+      gate: { mode: "on", maxItems: 4, provider: judge },
+    });
+    try {
+      seed(store);
+      const q = await store.query("What is the pelican coupon code?");
+      expect(q.relevance).toMatchObject({ mode: "on", outcome: "applied", none: false });
+      expect(q.items.some((i) => i.value.includes("PEL-42"))).toBe(true);
+      const empty = await store.query("Which email field did I change in the store settings?");
+      expect(empty.relevance).toMatchObject({ outcome: "applied", none: true });
+      expect(empty.items).toEqual([{ type: "text", value: NO_RELEVANT_MEMORY_ITEM }]);
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("refuses the gate on raw retrieval and picks gate backends explicitly", () => {
+    expect(() =>
+      LmeMemoryStore.open(join(dir, "x.db"), {
+        mode: "lexical",
+        retrieval: "raw",
+        searchLimit: 10,
+        context: small,
+        gate: { mode: "on", maxItems: 4, provider: null },
+      }),
+    ).toThrow(/unified/);
+    const base = { baseUrl: "http://127.0.0.1:9/v1", apiKeyEnv: "LME_TEST_KEY" };
+    expect(gateProvider({ ...base, backend: "mechanical" }, {})).toBeNull();
+    expect(gateProvider({ ...base, backend: "auto" }, {})).toBeNull();
+    const model = gateProvider({ ...base, backend: "model", model: "qwen/qwen3.5-9b" }, {});
+    expect(model).toMatchObject({ kind: "marina-classifier", calibrated: false });
+    expect(gateProvider({ ...base, backend: "auto", model: "m" }, {})?.model).toBe("m");
+    expect(() => gateProvider({ ...base, backend: "model" }, {})).toThrow(/--gate-model/);
+    expect(() => gateProvider({ ...base, backend: "decisions" }, {})).toThrow(/MARINA_DECISIONS/);
+  });
+
   it("refuses hybrid without an embedding provider", () => {
     expect(() =>
       LmeMemoryStore.open(join(dir, "h.db"), {
@@ -137,6 +243,118 @@ describe("LongMemEval store", () => {
         context: { contextBytes: 4096, stateBytes: 1024, episodeBytes: 1024, radius: 1 },
       }),
     ).toThrow(/MARINA_MEMORY_EMBEDDINGS/);
+  });
+});
+
+describe("LongMemEval sidecar flag plumbing (offline)", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "marina-lme-sidecar-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const SERVER = join(import.meta.dir, "../benchmarks/longmemeval/memory-server.ts");
+
+  let n = 0;
+  async function sidecar(args: string[], requests: Record<string, unknown>[]) {
+    const proc = Bun.spawn(["bun", SERVER, "--db", join(dir, `m${n++}.db`), ...args], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, MARINA_DECISIONS: "", MARINA_DECISION_ENGINE: "", DB_PATH: "" },
+    });
+    for (const r of requests) proc.stdin.write(`${JSON.stringify(r)}\n`);
+    await proc.stdin.end();
+    const out = await new Response(proc.stdout).text();
+    const err = await new Response(proc.stderr).text();
+    const code = await proc.exited;
+    return {
+      code,
+      err,
+      replies: out
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l) as Record<string, unknown>),
+    };
+  }
+  const trajectory = run("b2", "find the pelican coupon", "failure", [
+    "Home",
+    "[12] link 'Pelican promo' coupon code PEL-42",
+  ]);
+
+  it("--retrieval raw refuses a gate; bad values are rejected", async () => {
+    const refused = await sidecar(["--retrieval", "raw", "--gate", "on"], []);
+    expect(refused.code).not.toBe(0);
+    expect(refused.err).toMatch(/unified/);
+    const bad = await sidecar(["--gate", "maybe"], []);
+    expect(bad.code).not.toBe(0);
+    expect(bad.err).toMatch(/--gate must be one of/);
+  });
+
+  it("--gate on --gate-backend mechanical serves through the unified path and reports the gate", async () => {
+    const { code, replies } = await sidecar(
+      ["--gate", "on", "--gate-backend", "mechanical", "--gate-max", "3", "--search-limit", "5"],
+      [
+        { id: 1, op: "insert", trajectory },
+        { id: 2, op: "query", query: "pelican coupon code" },
+        { id: 3, op: "close" },
+      ],
+    );
+    expect(code).toBe(0);
+    const query = replies.find((r) => r.id === 2)!;
+    expect(query.ok).toBe(true);
+    expect(query.retrieval).toBe("unified");
+    expect(query.relevance).toMatchObject({ mode: "on", backend: "mechanical", maxItems: 3 });
+    expect(JSON.stringify(query.items)).toContain("PEL-42");
+  });
+
+  it("the Python backend passes every flag to the sidecar and never a key", async () => {
+    const python = Bun.which("python3");
+    if (!python) return; // the harness side is Python; skip where it is absent
+    const stub = join(dir, "memory_modules");
+    mkdirSync(stub);
+    writeFileSync(join(stub, "__init__.py"), "");
+    writeFileSync(
+      join(stub, "memory.py"),
+      [
+        "class Memory:",
+        "    def __init__(self, params): pass",
+        "MemoryContextItem = dict",
+        "def register_memory(cls): return cls",
+      ].join("\n"),
+    );
+    const script = [
+      "import json, sys",
+      `sys.path.insert(0, ${JSON.stringify(dir)})`,
+      `sys.path.insert(0, ${JSON.stringify(join(import.meta.dir, "../benchmarks/longmemeval"))})`,
+      "import marina_memory",
+      `m = marina_memory.MarinaMemory({"marina_root": ${JSON.stringify(join(import.meta.dir, ".."))}, "gate": "on", "gate_backend": "model", "gate_model": "qwen/qwen3.5-9b", "gate_max": 5})`,
+      "print(json.dumps(m.argv('/tmp/x.db')))",
+      "try:",
+      `    marina_memory.MarinaMemory({"marina_root": ${JSON.stringify(join(import.meta.dir, ".."))}, "gate": "on", "retrieval": "raw"})`,
+      "    print('accepted')",
+      "except RuntimeError as e:",
+      "    print('refused')",
+    ].join("\n");
+    const proc = Bun.spawn([python, "-c", script], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, OPENAI_API_KEY: "sk-test-never-on-argv" },
+    });
+    const out = await new Response(proc.stdout).text();
+    expect(await proc.exited).toBe(0);
+    const [argvLine, verdict] = out.trim().split("\n");
+    const argv = JSON.parse(argvLine!) as string[];
+    const flag = (name: string) => argv[argv.indexOf(name) + 1];
+    expect(flag("--retrieval")).toBe("unified");
+    expect(flag("--gate")).toBe("on");
+    expect(flag("--gate-backend")).toBe("model");
+    expect(flag("--gate-model")).toBe("qwen/qwen3.5-9b");
+    expect(flag("--gate-max")).toBe("5");
+    expect(flag("--gate-api-key-env")).toBe("OPENAI_API_KEY");
+    expect(argv.join(" ")).not.toContain("sk-test-never-on-argv");
+    expect(verdict).toBe("refused");
   });
 });
 
