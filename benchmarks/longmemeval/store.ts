@@ -10,17 +10,27 @@
  *   world account by a memory credential — one SQLite transaction per trajectory.
  *   It skips only the HTTP transport's per-principal request budget, which is a
  *   transport concern (the paraphrase benchmark does the same).
- * - **Retrieval** is `residentMemoryOperation({ operation: "search" })`, the call
- *   `buildUnifiedContext` makes for its evidence tier: lexical (FTS5) by default,
- *   `hybrid` only when the operator configured `MARINA_MEMORY_EMBEDDINGS`. Retrieved
- *   records are hydrated (neighbouring states, the run summary) with one ACL-checked
- *   canonical read.
+ * - **Retrieval** (`retrieval`):
+ *   - `unified` (default): `buildUnifiedContext`, the path Marina serves its own
+ *     residents — the evidence tier's search, validity filter, overlap filter and,
+ *     when enabled, the relevance gate (`gate`). An `on` gate that leaves nothing
+ *     tells the reader so explicitly.
+ *   - `raw`: `residentMemoryOperation({ operation: "search" })` hits served as
+ *     ranked, with no relevance filter (the pilot's arm, kept for paired runs).
+ *   Both are lexical (FTS5) by default, `hybrid` only when the operator configured
+ *   `MARINA_MEMORY_EMBEDDINGS`. Retrieved records are hydrated (neighbouring
+ *   states, the run summary) with one ACL-checked canonical read.
  *
  * The database is created fresh and deleted by the caller; nothing is shared between
  * haystacks, so no question can see another haystack's trajectories.
  */
 
+import { harnessDecisionProvider } from "../../src/decisions/engines";
+import { chatClassifierProvider } from "../../src/decisions/providers";
+import type { DecisionProvider } from "../../src/decisions/types";
+import type { RelevanceGateMode } from "../../src/memory/relevance-gate";
 import { residentMemoryOperation } from "../../src/memory/resident-service";
+import { buildUnifiedContext, type UnifiedRelevanceReport } from "../../src/memory/unified-context";
 import { worldMemoryService } from "../../src/memory/world-service";
 import { MarinaDB } from "../../src/persistence/database";
 import type { MemoryActor } from "../../src/persistence/db-principals";
@@ -37,18 +47,104 @@ import {
 /** The world account that owns the haystack's memory. */
 export const LME_ACCOUNT = "LongMemEvalResident";
 
+export type Retrieval = "raw" | "unified";
+
+export interface GateOptions {
+  mode: RelevanceGateMode;
+  /** Judged records kept at most. */
+  maxItems: number;
+  /**
+   * The model backend; undefined ⇒ resolved from the environment (the decision
+   * layer, else the single-LLM fallback); null ⇒ the mechanical floor.
+   */
+  provider?: DecisionProvider | null;
+}
+
 export interface StoreOptions {
   mode: "lexical" | "hybrid";
+  /** `unified` (default): the resident retrieval path; `raw`: ungated search hits. */
+  retrieval?: Retrieval;
   /** Ranked records requested from search (1–100). */
   searchLimit: number;
   context: ContextOptions;
+  /** Relevance gate (unified retrieval only); default off. */
+  gate?: GateOptions;
 }
 
 export const DEFAULT_STORE: StoreOptions = {
   mode: "lexical",
+  retrieval: "unified",
   searchLimit: 40,
   context: DEFAULT_CONTEXT,
 };
+
+/** What the reader sees when the gate is on and nothing relevant was retrieved. */
+export const NO_RELEVANT_MEMORY_ITEM =
+  "No relevant memory was found for this question in the past runs of this environment. Memory does not support an answer.";
+
+export type GateBackend = "auto" | "decisions" | "model" | "mechanical";
+
+export interface GateBackendOptions {
+  backend: GateBackend;
+  /** `model`: a chat model id served by `baseUrl` (a Marina `/v1`, so spend lands on its ledger). */
+  model?: string;
+  baseUrl: string;
+  /** NAME of the environment variable holding the bearer key (never the key itself). */
+  apiKeyEnv: string;
+  timeoutMs?: number;
+}
+
+/**
+ * The gate backend for the sidecar. The process-local internal token cannot
+ * reach a separate Marina server, so the single-LLM fallback is an explicit
+ * `model` behind `baseUrl` instead of the in-server `marina/default` hop:
+ *   decisions   the configured decision layer (`MARINA_DECISIONS` / `_ENGINE`)
+ *   model       one chat model as an uncalibrated verbalized classifier
+ *   mechanical  query-term coverage, no model (returns null)
+ *   auto        decisions when configured, else model when one is named, else mechanical
+ */
+export function gateProvider(
+  opts: GateBackendOptions,
+  env: NodeJS.ProcessEnv = process.env,
+): DecisionProvider | null {
+  const decisions = () => harnessDecisionProvider(env);
+  const model = (): DecisionProvider => {
+    if (!opts.model) throw new Error("--gate-backend model needs --gate-model");
+    const inner = chatClassifierProvider({
+      baseUrl: opts.baseUrl,
+      model: opts.model,
+      ...(env[opts.apiKeyEnv] ? { apiKey: env[opts.apiKeyEnv] } : {}),
+      timeoutMs: opts.timeoutMs ?? 30_000,
+      method: "verbalized",
+    });
+    return {
+      kind: "marina-classifier",
+      model: opts.model,
+      calibrated: false,
+      ask: async (request, signal) => ({
+        ...(await inner.ask(request, signal)),
+        calibrated: false,
+      }),
+    };
+  };
+  switch (opts.backend) {
+    case "mechanical":
+      return null;
+    case "decisions": {
+      const p = decisions();
+      if (!p)
+        throw new Error("--gate-backend decisions needs MARINA_DECISIONS (a decision backend)");
+      return p;
+    }
+    case "model":
+      return model();
+    default:
+      return decisions() ?? (opts.model ? model() : null);
+  }
+}
+
+/** Byte cap per item inside the unified path (above any record: hydration reads the full record). */
+const UNIFIED_ITEM_BYTES = 65_536;
 
 export interface InsertResult {
   records: number;
@@ -63,6 +159,9 @@ export interface QueryResult {
   hits: number;
   degraded: string[];
   ms: number;
+  retrieval: Retrieval;
+  /** The relevance gate's report (numbers and ids only), when it ran. */
+  relevance?: UnifiedRelevanceReport;
 }
 
 export class LmeMemoryStore {
@@ -77,6 +176,10 @@ export class LmeMemoryStore {
   ) {}
 
   static open(dbPath: string, options: StoreOptions = DEFAULT_STORE): LmeMemoryStore {
+    if ((options.retrieval ?? "unified") === "raw" && (options.gate?.mode ?? "off") !== "off")
+      throw new Error(
+        "the relevance gate runs in the unified retrieval path; use --retrieval unified",
+      );
     const db = new MarinaDB(dbPath);
     const service = worldMemoryService(db);
     if (options.mode === "hybrid" && !service.embeddings)
@@ -134,10 +237,8 @@ export class LmeMemoryStore {
     return new Map(rows.map((r: MemoryRecord) => [r.id, toHit(r)]));
   }
 
-  async query(question: string): Promise<QueryResult> {
-    const started = performance.now();
-    const text = question.trim();
-    if (!text) throw new Error("empty query");
+  /** Ranked hits from the ungated search (the pilot's `raw` arm). */
+  private async rawHits(text: string): Promise<{ hits: Hit[]; degraded: string[] }> {
     const search = await residentMemoryOperation(this.db, LME_ACCOUNT, {
       operation: "search",
       input: {
@@ -147,7 +248,58 @@ export class LmeMemoryStore {
       },
     });
     const result = search.result as MemorySearchResult;
-    const hits = result.results.map(toHit);
+    return { hits: result.results.map(toHit), degraded: result.degraded ?? [] };
+  }
+
+  /** Ranked hits through the resident retrieval path (`buildUnifiedContext`, evidence tier). */
+  private async unifiedHits(
+    text: string,
+  ): Promise<{ hits: Hit[]; degraded: string[]; relevance?: UnifiedRelevanceReport }> {
+    const limit = Math.max(1, Math.min(100, this.options.searchLimit));
+    const gate = this.options.gate;
+    const context = await buildUnifiedContext(
+      this.db,
+      LME_ACCOUNT,
+      text,
+      {
+        scope: "evidence",
+        search: this.options.mode,
+        perTier: { evidence: limit, proposal: 0 },
+        itemMaxBytes: UNIFIED_ITEM_BYTES,
+        budgetBytes: UNIFIED_ITEM_BYTES * limit,
+        creditReflections: false,
+        relevanceGate: {
+          mode: gate?.mode ?? "off",
+          ...(gate ? { maxItems: gate.maxItems } : {}),
+        },
+      },
+      gate && gate.provider !== undefined ? { relevanceProvider: gate.provider } : {},
+    );
+    // Context items carry ids and provenance; the reader context is built from the
+    // full records (neighbouring states, run summaries), read back under the ACL.
+    const ids = context.tiers
+      .filter((tier) => tier.tier === "evidence")
+      .flatMap((tier) => tier.items)
+      .filter((item) => item.meta?.kind === "record")
+      .map((item) => item.id);
+    const records = this.read(ids);
+    const hits = ids.map((id) => records.get(id)).filter((h): h is Hit => !!h);
+    return {
+      hits,
+      degraded: context.degraded.map((d) => `${d.tier}:${d.code}`),
+      ...(context.relevance ? { relevance: context.relevance } : {}),
+    };
+  }
+
+  async query(question: string): Promise<QueryResult> {
+    const started = performance.now();
+    const text = question.trim();
+    if (!text) throw new Error("empty query");
+    const retrieval = this.options.retrieval ?? "unified";
+    const retrieved: { hits: Hit[]; degraded: string[]; relevance?: UnifiedRelevanceReport } =
+      retrieval === "raw" ? await this.rawHits(text) : await this.unifiedHits(text);
+    const relevance = retrieved.relevance;
+    const hits = retrieved.hits;
     const lookup = {
       state: async (trajectoryId: string, stateIndex: number) => {
         const id = this.ids.get(`lme:${trajectoryId}:${stateIndex}`);
@@ -169,13 +321,17 @@ export class LmeMemoryStore {
           },
           ...blocks.map((value) => ({ type: "text" as const, value })),
         ]
-      : [];
+      : relevance?.none
+        ? [{ type: "text" as const, value: NO_RELEVANT_MEMORY_ITEM }]
+        : [];
     return {
       items,
       used,
       hits: hits.length,
-      degraded: result.degraded ?? [],
+      degraded: retrieved.degraded,
       ms: performance.now() - started,
+      retrieval,
+      ...(relevance ? { relevance } : {}),
     };
   }
 

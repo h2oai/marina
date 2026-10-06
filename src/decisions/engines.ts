@@ -31,6 +31,7 @@
 
 import { Logger } from "../engine/logger";
 import { dailyCapRefusal } from "../engine/spend-ledger";
+import type { ClassifierMethod } from "./classifier-methods";
 import { combineAnswers, unsureAnswers } from "./combine";
 import { classifierTuning, getDecisionProvider } from "./config";
 import { acceptsRequestedModel } from "./model-ids";
@@ -91,11 +92,16 @@ async function internalToken(): Promise<string> {
   return getInternalModelToken();
 }
 
-/** A chat model as a decision engine, answering through Marina's own `/v1`. */
-function classifierEngine(
+/**
+ * A chat model as a decision engine, answering through Marina's own `/v1`.
+ * `method` overrides `MARINA_DECISION_METHOD` (`verbalized` is exactly one
+ * call per request, every question answered in it).
+ */
+export function classifierEngine(
   model: string,
   env: NodeJS.ProcessEnv,
   deps: EngineDeps,
+  method?: ClassifierMethod,
 ): DecisionProvider {
   const tuning = classifierTuning(env);
   const id = `${CLASSIFIER_ENGINE}:${model}`;
@@ -110,7 +116,7 @@ function classifierEngine(
         model,
         apiKey: await (deps.token ?? internalToken)(),
         timeoutMs: CLASSIFIER_TIMEOUT_MS,
-        method: tuning.method ?? "auto",
+        method: method ?? tuning.method ?? "auto",
         structured: true,
         ...(tuning.samples === undefined ? {} : { samples: tuning.samples }),
         ...(deps.fetch ? { fetch: deps.fetch } : {}),

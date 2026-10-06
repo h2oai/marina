@@ -10,7 +10,9 @@ reader prompt, the evaluator or the scoring is changed.
 
   python benchmarks/longmemeval/run.py --lme-root <LongMemEval-V2 checkout> \
     --data-root <dataset> --domain web --tier small --output-dir runs/marina_lexical_web_small \
-    [--limit N | --question-ids a,b] [--mode lexical|hybrid] [memory budget flags] \
+    [--limit N | --question-ids a,b] [--mode lexical|hybrid] [--retrieval unified|raw] \
+    [--gate off|observe|on --gate-backend auto|decisions|model|mechanical --gate-model M] \
+    [memory budget flags] \
     [--reader-model ... --reader-base-url ... --evaluator-model ... --evaluator-base-url ...]
 
 Run it with the LongMemEval-V2 Python environment. Keys are read from the
@@ -48,6 +50,29 @@ def parse_args() -> argparse.Namespace:
         help="no_retrieval is the official no-memory control (same reader and judge)",
     )
     p.add_argument("--mode", choices=["lexical", "hybrid"], default="lexical")
+    p.add_argument(
+        "--retrieval",
+        choices=["unified", "raw"],
+        default="unified",
+        help="unified: Marina's resident retrieval path (default); raw: ungated search hits (pilot arm)",
+    )
+    p.add_argument(
+        "--gate",
+        choices=["off", "observe", "on"],
+        default="off",
+        help="relevance gate after retrieval (unified only); observe records would-be drops",
+    )
+    p.add_argument("--gate-max", type=int, default=8, help="judged records kept at most")
+    p.add_argument(
+        "--gate-backend", choices=["auto", "decisions", "model", "mechanical"], default="auto"
+    )
+    p.add_argument("--gate-model", default=None, help="chat model for --gate-backend model")
+    p.add_argument("--gate-base-url", default="http://localhost:3300/v1")
+    p.add_argument(
+        "--gate-api-key-env",
+        default="OPENAI_API_KEY",
+        help="name of the env var holding the gate endpoint's key",
+    )
     p.add_argument("--search-limit", type=int, default=40)
     p.add_argument("--context-bytes", type=int, default=160000)
     p.add_argument("--state-bytes", type=int, default=10000)
@@ -133,6 +158,13 @@ def main() -> None:
                 "marina_root": str(MARINA_ROOT),
                 "bun": args.bun,
                 "mode": args.mode,
+                "retrieval": args.retrieval,
+                "gate": args.gate,
+                "gate_max": args.gate_max,
+                "gate_backend": args.gate_backend,
+                "gate_model": args.gate_model,
+                "gate_base_url": args.gate_base_url,
+                "gate_api_key_env": args.gate_api_key_env,
                 "search_limit": args.search_limit,
                 "context_bytes": args.context_bytes,
                 "state_bytes": args.state_bytes,

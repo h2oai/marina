@@ -1257,6 +1257,46 @@ export interface UnifiedContextResult {
     /** All five tiers, in render order; empty tiers have `items: []`. */
     tiers: UnifiedTierResult[];
     degraded: UnifiedDegraded[];
+    /** Present when the relevance gate ran (`observe` or `on`). Numbers and ids only. */
+    relevance?: UnifiedRelevanceReport;
+}
+export type UnifiedRelevanceMode = "off" | "observe" | "on";
+/**
+ * What the relevance gate did. `dropped` lists `<tier>:<id>` keys — under
+ * `observe` the items that WOULD have been dropped (nothing was).
+ */
+export interface UnifiedRelevanceReport {
+    mode: Exclude<UnifiedRelevanceMode, "off">;
+    /** `decision:<kind>:<model>`, `model:<engine id>` or `mechanical`. */
+    backend: string;
+    calibrated: boolean;
+    /**
+     * `applied` (on) · `observed` (observe) · `no_candidates` (nothing to judge)
+     * · `fail_open` (the ungated set was served; see `reason`).
+     */
+    outcome: "applied" | "observed" | "no_candidates" | "fail_open";
+    /** Why it failed open: `backend_unavailable`, `incomplete` or `spend_cap`. */
+    reason?: string;
+    /** Items considered (after the per-tier caps). */
+    candidates: number;
+    /** `core` / pinned items: never judged, never dropped. */
+    exempt: number;
+    /** Items the backend scored. */
+    scored: number;
+    dropped: string[];
+    kept: number;
+    maxItems: number;
+    /** The keep threshold used (relevance probability, or term coverage for `mechanical`). */
+    keepAt?: number;
+    /** Backend requests made. */
+    calls: number;
+    latencyMs: number;
+    costUsd?: number;
+    /**
+     * `on` only: the gate applied and nothing relevant is left to serve; every
+     * render says "no relevant memory found" instead of an empty block.
+     */
+    none?: boolean;
 }
 export type UnifiedScope = "all" | "evidence" | "legacy";
 export interface UnifiedContextOptions {
@@ -1278,6 +1318,21 @@ export interface UnifiedContextOptions {
     noteType?: string;
     /** Pay authors of cross-author reflection hits in the legacy tiers (default true). */
     creditReflections?: boolean;
+    /**
+     * Durable record search: `lexical` (FTS5) or `hybrid` (lexical + the vector
+     * index; needs `MARINA_MEMORY_EMBEDDINGS`, degradation labelled). Default
+     * `MARINA_MEMORY_CONTEXT_SEARCH`, else `lexical`.
+     */
+    search?: "lexical" | "hybrid";
+    /**
+     * Relevance gate overrides. Default mode `MARINA_MEMORY_RELEVANCE_GATE`
+     * (else off); `backend: "mechanical"` skips any model.
+     */
+    relevanceGate?: {
+        mode?: UnifiedRelevanceMode;
+        maxItems?: number;
+        backend?: "auto" | "mechanical";
+    };
 }
 ```
 
