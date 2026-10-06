@@ -110,3 +110,20 @@ describe("ConnectorRuntime.loadFromDB re-validates stored URLs", () => {
     expect(registered[0]!.command.kind).toBe("stdio");
   });
 });
+
+describe("ConnectorRuntime.callTool", () => {
+  it("passes tool arguments in mcporter's { args } call options", async () => {
+    const runtime = new ConnectorRuntime();
+    const calls: Array<{ server: string; tool: string; options: unknown }> = [];
+    runtime.__setRuntimeForTest({
+      callTool: async (server: string, tool: string, options: unknown) => {
+        calls.push({ server, tool, options });
+        return { ok: true };
+      },
+    });
+    expect(await runtime.callTool("srv", "search", { query: "marina" })).toEqual({ ok: true });
+    expect(calls).toEqual([
+      { server: "srv", tool: "search", options: { args: { query: "marina" } } },
+    ]);
+  });
+});

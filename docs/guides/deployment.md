@@ -359,7 +359,7 @@ Why each override exists (keep this table in sync with `package.json`):
 | `proxy-addr` `^2.0.8`, `source-map-js` `^1.2.2` | floor | security advisory floors (CVE-2026-90711 critical, Express's `trust proxy` parser; CVE-2026-93749 high, DoS in the bundler source-map chain) raised by the image scan on 2026-10-06; the dependents' ranges already admit the fixed versions, so remove once `check:overrides --strict` agrees and the lockfile holds them. |
 | `undici` `^6.28.0` | floor | security advisory floor for discord.js's fetch client (8c1aab9). Caution: as a root-wide override it also forces `jsdom` (`^8`) and astro's `unifont` (`^8`) down to 6.x — the audit flags this; the floor is met naturally today. |
 | `ws` `^8.20.1` | floor | security advisory floor (DoS with many headers) for the WebSocket client shared by discord.js and the MCP SDK (8c1aab9). |
-| `zod` `4.6.4` | pin | dedup pin, not a security floor: the MCP SDK's zod types and better-auth's zod v4 must share one copy (commit 4bf8dbd). |
+| `zod` `4.6.5` | pin | dedup pin, not a security floor: the MCP SDK's zod types and better-auth's zod v4 must share one copy (commit 4bf8dbd). |
 
 ## Continuous deployment (CI/CD)
 
