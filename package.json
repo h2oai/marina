@@ -181,7 +181,7 @@
     "@earendil-works/pi-agent-core": "^0.87.1",
     "@earendil-works/pi-ai": "^0.87.1",
     "@earendil-works/pi-tui": "0.87.1",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@sinclair/typebox": "^0.34.52",
     "discord.js": "^14.27.0",
     "grammy": "^1.46.0",
