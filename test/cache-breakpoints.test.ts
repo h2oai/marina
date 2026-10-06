@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Anthropic cache-breakpoint layout for the passthru proxy. The memory
- * addendum is appended as the LAST system block, so under auto-cache the
- * breakpoints go on the last STABLE block (the caller's prompt) AND the last
- * block, plus the last tool — within Anthropic's four-breakpoint limit and
- * never on top of a client's own markers. Measured before the fix: with one
- * breakpoint on the last block, every request whose relevance-gated memory
- * block toggled re-wrote the whole prefix (`cache_creation` on 2 of 6).
+ * Anthropic cache-breakpoint layout for the passthru proxy. Under auto-cache
+ * the breakpoints go on the last STABLE system block, the last tool and the
+ * latest message — within Anthropic's four-breakpoint limit and never on top
+ * of a client's own markers. `injectedSystemTail` keeps the stable-block
+ * breakpoint before a volatile last system block for callers that have one;
+ * the passthru's own memory addendum rides AFTER the breakpoints instead (the
+ * trailing note), so the system prompt is the same with or without it.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
@@ -255,7 +255,7 @@ describe("Anthropic passthru: cache breakpoints end to end", () => {
     return resp!;
   }
 
-  it("injected request: two system blocks, both with cache_control, the FIRST on the caller's stable prompt", async () => {
+  it("injected request: the caller's prompt is the only system block; memory trails the final user turn, unmarked", async () => {
     const resp = await post("/v1/chat/completions", {
       model: "marina",
       messages: [
@@ -265,11 +265,16 @@ describe("Anthropic passthru: cache breakpoints end to end", () => {
     });
     expect(resp.status).toBe(200);
     expect(resp.headers.get("x-marina-memory-receipt")).toBeTruthy();
-    const system = upstream[0]!.system as Block[];
-    expect(system).toHaveLength(2);
-    expect(system[0]).toEqual({ type: "text", text: "You are terse.", cache_control: EPHEMERAL });
-    expect(system[1]!.text).toStartWith(INJECTION_MARKER);
-    expect(system[1]!.cache_control).toEqual(EPHEMERAL);
+    expect(upstream[0]!.system).toEqual([
+      { type: "text", text: "You are terse.", cache_control: EPHEMERAL },
+    ]);
+    const messages = upstream[0]!.messages as { role: string; content: Block[] }[];
+    expect(messages).toHaveLength(1);
+    const blocks = messages[0]!.content;
+    expect(blocks[0]!.text).toBe(QUESTION);
+    const note = blocks.at(-1)!;
+    expect(note.text).toStartWith(INJECTION_MARKER);
+    expect(note.cache_control).toBeUndefined();
   });
 
   it("same caller with injection off: exactly one breakpoint, on the (now last) stable block", async () => {
@@ -290,7 +295,7 @@ describe("Anthropic passthru: cache breakpoints end to end", () => {
     ]);
   });
 
-  it("the stable block's marker is byte-identical whether or not memory was injected (prefix reuse)", async () => {
+  it("the system prompt is byte-identical whether or not memory was injected (prefix reuse)", async () => {
     const body = {
       model: "marina",
       messages: [
@@ -301,9 +306,8 @@ describe("Anthropic passthru: cache breakpoints end to end", () => {
     await post("/v1/chat/completions", body);
     await post("/v1/chat/completions", body, { ...AUTH, "X-Marina-Context": "off" });
     const [injected, plain] = upstream.map((b) => b.system as Block[]);
-    expect(injected![0]).toEqual(plain![0]);
+    expect(injected).toEqual(plain!);
     expect(plain).toHaveLength(1);
-    expect(injected).toHaveLength(2);
   });
 
   it("/v1/messages native body with the caller's own markers is forwarded untouched", async () => {
@@ -324,7 +328,7 @@ describe("Anthropic passthru: cache breakpoints end to end", () => {
     expect(upstream[0]).toEqual({ ...native, model: "claude-sonnet-5", stream: false });
   });
 
-  it("/v1/messages native body WITH injection: memory appended last, stable block marked first", async () => {
+  it("/v1/messages native body WITH injection: system untouched, memory trails the final user turn", async () => {
     const resp = await post("/v1/messages", {
       model: "marina",
       max_tokens: 100,
@@ -332,11 +336,13 @@ describe("Anthropic passthru: cache breakpoints end to end", () => {
       messages: [{ role: "user", content: QUESTION }],
     });
     expect(resp.status).toBe(200);
-    const system = upstream[0]!.system as Block[];
-    expect(system).toHaveLength(2);
-    expect(system[0]).toEqual({ type: "text", text: "You are Claude.", cache_control: EPHEMERAL });
-    expect(system[1]!.text).toStartWith(INJECTION_MARKER);
-    expect(system[1]!.cache_control).toEqual(EPHEMERAL);
+    expect(upstream[0]!.system).toEqual([
+      { type: "text", text: "You are Claude.", cache_control: EPHEMERAL },
+    ]);
+    const messages = upstream[0]!.messages as { role: string; content: Block[] }[];
+    expect(messages).toHaveLength(1);
+    expect(messages[0]!.content[0]).toEqual({ type: "text", text: QUESTION });
+    expect(messages[0]!.content.at(-1)!.text).toStartWith(INJECTION_MARKER);
   });
 
   it("a streamed Anthropic reply without include_usage still lands tokens + cost on the completed event", async () => {

@@ -114,7 +114,15 @@ let originalFetch: typeof fetch;
 let dir: string;
 let db: MarinaDB;
 let engine: Engine;
-let calls: { model: unknown; system: string; body: Record<string, unknown>; url: string }[];
+let calls: {
+  model: unknown;
+  system: string;
+  /** The text of the LAST message: where per-request notes (lessons, the
+   *  reviewer's note) ride, after the cache breakpoints. */
+  tail: string;
+  body: Record<string, unknown>;
+  url: string;
+}[];
 /** When it returns a status, the upstream answers that status instead. */
 let failWith: ((url: string, body: Record<string, unknown>) => number | undefined) | undefined;
 let checkerReply: string;
@@ -149,13 +157,17 @@ beforeEach(() => {
           : String(m.content),
       )
       .join("\n");
-    calls.push({ model: body.model, system, body, url });
+    const last = msgs.at(-1);
+    const tail = Array.isArray(last?.content)
+      ? (last.content as { text?: string }[]).map((p) => p.text ?? "").join("\n")
+      : String(last?.content ?? "");
+    calls.push({ model: body.model, system, tail, body, url });
     const status = failWith?.(url, body);
     if (status) {
       return Response.json({ error: { message: "upstream refused" } }, { status });
     }
     const isChecker = system.includes("You review an assistant's DRAFT");
-    const isRevision = system.includes("A reviewer checked your draft");
+    const isRevision = tail.includes("A reviewer checked your draft");
     const message = isChecker
       ? { role: "assistant", content: checkerReply }
       : isRevision
@@ -248,7 +260,9 @@ describe("POST /v1/chat/completions with marina/verify", () => {
       "anthropic/claude-opus-5.5",
       "openai/gpt-6.1-sol",
     ]);
-    expect(calls[2]!.system).toContain("Ask for explicit confirmation first.");
+    expect(calls[2]!.tail).toContain("Ask for explicit confirmation first.");
+    // The revision is the proposer's request plus a trailing note: same system prompt.
+    expect(calls[2]!.system).toBe(calls[0]!.system);
   });
 
   it("holds the drafted write action when the checker cites no concrete conflict", async () => {
@@ -278,8 +292,10 @@ describe("POST /v1/chat/completions with marina/verify", () => {
     try {
       const resp = await post(request("marina/verify:openrouter/openai/gpt-6.1-sol"));
       expect(resp?.headers.get("x-marina-lessons")).toBe("L1");
-      expect(calls[0]!.system).toContain("LESSONS (from past outcomes");
-      expect(calls[0]!.system).toContain("confirm before you cancel an order");
+      // The proposer gets them as a trailing note, never in its system prompt.
+      expect(calls[0]!.tail).toContain("LESSONS (from past outcomes");
+      expect(calls[0]!.tail).toContain("confirm before you cancel an order");
+      expect(calls[0]!.system).not.toContain("LESSONS");
     } finally {
       disableOutcomeLearning(db);
     }

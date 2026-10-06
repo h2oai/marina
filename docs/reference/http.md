@@ -1979,7 +1979,7 @@ Fields read here: `model`, `name`.
 
 ### `pathname.startsWith("/v1/")`
 
-[Source](../../src/net/model-api/ollama.ts#L533)
+[Source](../../src/net/model-api/ollama.ts#L520)
 
 ## src/net/model-api/shared.ts
 
@@ -1993,7 +1993,7 @@ Fields read here: `model`, `name`.
 
 ### `path.split(".")`
 
-[Source](../../src/net/model-api/verify.ts#L540)
+[Source](../../src/net/model-api/verify.ts#L532)
 
 ## src/net/orchestration-api.ts
 

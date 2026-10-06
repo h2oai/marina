@@ -715,8 +715,8 @@ export type EngineEvent =
       /** JSON `marina.memory.receipt.v1` — which memory tiers/ids were injected
        * into a proxied request (`src/net/memory-receipt.ts`). Passthru only. */
       memoryReceipt?: string;
-      /** Protocol surface the passthru request arrived on — the format
-       * `applyInjection` used (`src/net/passthru-context.ts`), NOT the route
+      /** Protocol surface the passthru request arrived on
+       * (`InjectionFormat`, `src/net/passthru-context.ts`), NOT the route
        * kind. Ollama `/api/chat` is OpenAI-shaped and reports `openai`. */
       surface?: "openai" | "anthropic" | "ollama-generate" | "responses";
       durationMs?: number;

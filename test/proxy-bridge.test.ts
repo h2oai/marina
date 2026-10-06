@@ -225,11 +225,12 @@ describe("proxy bridge (model API integration)", () => {
 
     expect(forwarded).toHaveLength(1);
     const messages = forwarded[0]!.messages as { role: string; content: string }[];
-    const system = messages.find((m) => m.role === "system");
-    expect(system).toBeDefined();
-    // Shared-world context marker + the entity's own note surface in the system message.
-    expect(system!.content).toContain("[marina:shared-world-context]");
-    expect(system!.content).toContain("calibration");
+    // Shared-world context marker + the entity's own note trail the caller's
+    // turn (after the cache breakpoints); no system message is added.
+    expect(messages.map((m) => m.role)).toEqual(["user"]);
+    expect(messages[0]!.content).toStartWith("tell me about the quantum widget\n\n");
+    expect(messages[0]!.content).toContain("[marina:shared-world-context]");
+    expect(messages[0]!.content).toContain("calibration");
 
     // The request is attributed to Alice in the trace.
     const alice = engine.entities.findAgentByName("Alice")!;

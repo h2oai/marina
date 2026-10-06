@@ -28,7 +28,7 @@ import { repairToolCallMessage } from "../../repair/tool-call-repair";
 import type { EntityId } from "../../types";
 import { getEndpointConfig } from "../model-endpoint";
 import { anthropicAutoCacheEnabled } from "./anthropic-bridge";
-import { passthruEntityId } from "./passthru";
+import { joinNotes, lessonQuery, passthruEntityId } from "./passthru";
 import {
   COST_USD_HEADER,
   errorJson,
@@ -41,14 +41,6 @@ import {
 import { explicitUpstreamModel, proxyToUpstream } from "./upstream";
 
 const log = new Logger();
-
-/** Lessons ride as one extra system message right after the caller's own system messages. */
-export function withLessons(messages: Msg[], block: string): Msg[] {
-  if (!block) return messages;
-  const at = messages.findIndex((m) => m.role !== "system");
-  const i = at < 0 ? messages.length : at;
-  return [...messages.slice(0, i), { role: "system", content: block }, ...messages.slice(i)];
-}
 
 export const VERIFY_MODEL_PREFIX = "marina/verify:";
 
@@ -695,13 +687,14 @@ async function callUpstream(
   signal: AbortSignal | undefined,
   reason: string,
   entityId?: EntityId,
+  trailingNote?: string,
 ): Promise<CallResult> {
   const resp = await proxyToUpstream(
     engine,
     { ...body, model, stream: false },
     undefined,
     { routeKind: "passthru", routeReason: reason, ...(entityId ? { entityId } : {}) },
-    { clientSignal: signal, providerFallback: false },
+    { clientSignal: signal, providerFallback: false, ...(trailingNote ? { trailingNote } : {}) },
   );
   const raw = await resp.text();
   const cost = Number(resp.headers.get(COST_USD_HEADER));
@@ -832,27 +825,29 @@ export async function maybeVerifyChat(
 
   // 0. Lessons from past outcomes: the proposer (the lead) and the checker see
   // the relevant ones (MARINA_LESSONS=observe recalls without injecting).
-  const lastUser = [...callerMessages].reverse().find((m) => m.role === "user");
+  // Recalled for the conversation's opening request, so the set is the same on
+  // every turn; the proposer gets them as a trailing note after the cache
+  // breakpoints, so its cached prefix never depends on them.
   // Cross-board `meta` lessons ride a third of the budget; a measurement run
   // (`x-marina-eval: …; mode=measure`) never sees lessons from its own board.
-  const lessons = await recallForWork(
-    engine.db,
-    ["tools", "code"],
-    textOf(lastUser?.content).slice(0, 500),
-    { limit: 4, maxBytes: 800, ...evalOption(req) },
-  );
+  const lessons = await recallForWork(engine.db, ["tools", "code"], lessonQuery(callerMessages), {
+    limit: 4,
+    maxBytes: 800,
+    ...evalOption(req),
+  });
   const block = lessonsBlock(lessons.inject);
-  const messages = withLessons(callerMessages, block);
+  const messages = callerMessages;
   const lessonsHeader = lessonsHeaderValue(lessons);
 
   // 1. Proposer draft.
   const first = await callUpstream(
     engine,
-    block ? { ...body, messages } : body,
+    body,
     spec.proposer,
     signal,
     "verify:proposer",
     entityId,
+    block || undefined,
   );
   if (!first.ok || !first.body) {
     return new Response(first.text ?? "", {
@@ -906,20 +901,16 @@ export async function maybeVerifyChat(
       verdictLabel = "flagged";
       break;
     }
-    // 3. Revision by the proposer, with the reviewer's note.
+    // 3. Revision by the proposer, with the reviewer's note as the trailing
+    // note (after the lessons), so the revision reads the proposer's cache.
     const revised = await callUpstream(
       engine,
-      {
-        ...body,
-        messages: [
-          ...messages,
-          { role: "system", content: revisionNote(draft, verdict.issues, verdict.conflict) },
-        ],
-      },
+      body,
       spec.proposer,
       signal,
       "verify:revision",
       entityId,
+      joinNotes(block, revisionNote(draft, verdict.issues, verdict.conflict)),
     ).catch(() => undefined);
     if (!revised?.ok || !revised.body || !firstMessage(revised.body)) {
       verdictLabel = "revision-failed";

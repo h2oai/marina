@@ -28,7 +28,6 @@ import {
   retireLessons,
   supersedeLesson,
 } from "../src/learning/service";
-import { withLessons } from "../src/net/model-api/verify";
 import { MarinaDB } from "../src/persistence/database";
 import type { EntityId, RoomContext } from "../src/types";
 
@@ -56,26 +55,6 @@ function freshDb(): MarinaDB {
 }
 afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
-});
-
-describe("withLessons", () => {
-  const msgs = [
-    { role: "system", content: "rules" },
-    { role: "system", content: "more rules" },
-    { role: "user", content: "hi" },
-  ];
-  it("inserts one system message after the caller's leading system messages", () => {
-    const out = withLessons(msgs, "LESSONS: x");
-    expect(out.map((m) => m.content)).toEqual(["rules", "more rules", "LESSONS: x", "hi"]);
-    expect(msgs.length).toBe(3); // never mutates the caller's array
-  });
-  it("is the identity for an empty block and appends when no user turn exists", () => {
-    expect(withLessons(msgs, "")).toBe(msgs);
-    expect(withLessons([{ role: "system", content: "s" }], "L").map((m) => m.content)).toEqual([
-      "s",
-      "L",
-    ]);
-  });
 });
 
 describe("recallAcross", () => {

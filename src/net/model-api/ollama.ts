@@ -10,7 +10,7 @@ import { version as MARINA_VERSION } from "../../../package.json";
 import type { Engine } from "../../engine/engine";
 import { getEnabledProfiles } from "../compat-profiles";
 import { getEndpointConfig } from "../model-endpoint";
-import { applyInjection, type OpenAIMessage } from "../passthru-context";
+import type { OpenAIMessage } from "../passthru-context";
 import type { ModelInfo } from "./models";
 import {
   capturePassthruResponse,
@@ -289,21 +289,14 @@ async function runOllamaPassthru(
     isChat ? "openai" : "ollama-generate",
   );
 
-  let messages: OpenAIMessage[];
-  if (isChat) {
-    const chat: Record<string, unknown> = { messages: [...inbound] };
-    applyInjection(chat, prep.addendum, "openai");
-    messages = chat.messages as OpenAIMessage[];
-  } else {
-    const gen: Record<string, unknown> = { system: input.system };
-    applyInjection(gen, prep.addendum, "ollama-generate");
-    messages = [
-      ...(typeof gen.system === "string" && gen.system
-        ? [{ role: "system", content: gen.system }]
-        : []),
-      { role: "user", content: input.prompt ?? "" },
-    ];
-  }
+  // The memory addendum rides the trailing note after the cache breakpoints
+  // (`passthruUpstreamHints`), so the caller's prompt is the stable prefix.
+  const messages: OpenAIMessage[] = isChat
+    ? [...inbound]
+    : [
+        ...(input.system ? [{ role: "system", content: input.system }] : []),
+        { role: "user", content: input.prompt ?? "" },
+      ];
   const options = input.options ?? {};
   const body: Record<string, unknown> = {
     model: input.model,
@@ -328,16 +321,10 @@ async function runOllamaPassthru(
   const cached = await passthruCacheLookup(engine, prep, body, forceModel);
   const resp =
     cached ??
-    (await proxyToUpstream(
-      engine,
-      body,
-      forceModel || undefined,
-      passthruTraceOptions(prep),
-      // `/api/generate` folds the addendum into ONE system string — no separate tail.
-      isChat
-        ? { ...passthruUpstreamHints(prep), clientSignal: req.signal }
-        : { clientSignal: req.signal },
-    ));
+    (await proxyToUpstream(engine, body, forceModel || undefined, passthruTraceOptions(prep), {
+      ...passthruUpstreamHints(prep),
+      clientSignal: req.signal,
+    }));
   if (!resp.ok) return resp;
   if (!cached && prep.identity?.contextOptIn) {
     void capturePassthruResponse(engine, prep.identity.entityId, inbound, resp);

@@ -74,11 +74,20 @@ describe("gateway benchmark harness", () => {
   /** Every body the stub upstream received. */
   let forwarded: { messages: { role: string; content: unknown }[] }[] = [];
 
-  function systemText(body: { messages: { role: string; content: unknown }[] }): string {
+  const MARKER = "[marina:shared-world-context]";
+  /** The injected context: it trails the caller's latest turn (after the cache breakpoints). */
+  function contextText(body: { messages: { role: string; content: unknown }[] }): string {
     return body.messages
-      .filter((m) => m.role === "system")
       .map((m) => (typeof m.content === "string" ? m.content : ""))
+      .filter((t) => t.includes(MARKER))
+      .map((t) => t.slice(t.indexOf(MARKER)))
       .join("\n");
+  }
+  /** The caller's own question: its latest user text, without the trailing context. */
+  function questionOf(content: unknown): string {
+    const text = typeof content === "string" ? content : "";
+    const at = text.indexOf(`\n\n${MARKER}`);
+    return at < 0 ? text : text.slice(0, at);
   }
 
   beforeAll(async () => {
@@ -120,7 +129,7 @@ describe("gateway benchmark harness", () => {
     });
     endpoint = `http://127.0.0.1:${server.port}`;
 
-    // Upstream stub: perfect reader over the injected system content; the
+    // Upstream stub: perfect reader over the injected context; the
     // harness's own requests to the local server pass through to the real fetch.
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const target = input instanceof Request ? input.url : String(input);
@@ -130,9 +139,9 @@ describe("gateway benchmark harness", () => {
       };
       forwarded.push(body);
       const user = [...body.messages].reverse().find((m) => m.role === "user");
-      const question = typeof user?.content === "string" ? user.content : "";
+      const question = questionOf(user?.content);
       const answer = gold.get(question);
-      const system = normalizeAnswer(systemText(body));
+      const system = normalizeAnswer(contextText(body));
       const knows = answer !== undefined && ` ${system} `.includes(` ${normalizeAnswer(answer)} `);
       const content = knows ? answer : "I do not know";
       const promptText = body.messages
@@ -215,9 +224,7 @@ describe("gateway benchmark harness", () => {
     expect(result.lift.liftPerProviderKilotoken).toBeGreaterThan(0);
 
     // The upstream saw the injected marker only for the injected arm.
-    const withMarker = forwarded.filter((b) =>
-      systemText(b).includes("[marina:shared-world-context]"),
-    ).length;
+    const withMarker = forwarded.filter((b) => contextText(b).includes(MARKER)).length;
     expect(withMarker).toBe(40);
     expect(forwarded.length).toBe(80);
 
@@ -274,7 +281,7 @@ describe("gateway benchmark harness", () => {
     expect(resp.headers.get(MEMORY_RECEIPT_HEADER)).toBeNull();
     expect(summarizeReceiptHeader(resp.headers.get(MEMORY_RECEIPT_HEADER))).toBeNull();
     expect(forwarded).toHaveLength(1);
-    expect(systemText(forwarded[0]!)).toBe("");
+    expect(contextText(forwarded[0]!)).toBe("");
   });
 
   it("fails fast with the binding checklist when the key is not bound", async () => {

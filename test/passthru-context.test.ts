@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
 import { buildUnifiedContext, UNIFIED_TIER_LABELS } from "../src/memory/unified-context";
 import {
-  applyInjection,
   buildInjectedContext,
   CAPTURE_DEDUP_WINDOW_MS,
   capturePassthruTranscript,
@@ -354,122 +353,6 @@ describe("passthru-context", () => {
       const me = resolvePassthruIdentity(engine, headers({}), {});
       const { systemAddendum } = await buildInjectedContext(engine, me.entityId, []);
       expect(systemAddendum).toBeNull();
-    });
-  });
-
-  // ─── applyInjection (format-preserving, idempotent, no-op-safe) ─────────────
-
-  describe("applyInjection", () => {
-    it("is a no-op when the addendum is null (byte-identical body)", () => {
-      const body = { model: "x", messages: [{ role: "user", content: "hi" }] };
-      const snapshot = JSON.stringify(body);
-      const out = applyInjection(body, null, "openai");
-      expect(JSON.stringify(out)).toBe(snapshot);
-    });
-
-    it("adds a SEPARATE system message right after the caller's own (stable-first, openai)", () => {
-      const body = {
-        messages: [
-          { role: "system", content: "You are helpful." },
-          { role: "user", content: "hi" },
-        ],
-      };
-      applyInjection(body, "ADDENDUM_TEXT", "openai");
-      // The caller's stable prompt is byte-identical and still first; the
-      // volatile memory block is its own message after it, before the turns.
-      expect(body.messages).toEqual([
-        { role: "system", content: "You are helpful." },
-        { role: "system", content: "ADDENDUM_TEXT" },
-        { role: "user", content: "hi" },
-      ]);
-    });
-
-    it("inserts after the whole leading run of system/developer messages (openai)", () => {
-      const body = {
-        messages: [
-          { role: "system", content: "A" },
-          { role: "developer", content: "B" },
-          { role: "user", content: "hi" },
-          { role: "system", content: "late system stays where it was" },
-        ],
-      };
-      applyInjection(body, "MEM", "openai");
-      expect(body.messages.map((m) => m.content)).toEqual([
-        "A",
-        "B",
-        "MEM",
-        "hi",
-        "late system stays where it was",
-      ]);
-    });
-
-    it("unshifts a system message when none exists (openai)", () => {
-      const body = { messages: [{ role: "user", content: "hi" }] };
-      applyInjection(body, "ADD2", "openai");
-      expect(body.messages[0]!.role).toBe("system");
-      expect(body.messages[0]!.content).toBe("ADD2");
-      expect(body.messages[1]!.role).toBe("user");
-    });
-
-    it("turns an anthropic string system into [stable, memory] blocks", () => {
-      const body: { system: unknown; messages: unknown[] } = {
-        system: "base system",
-        messages: [],
-      };
-      applyInjection(body, `${INJECTION_MARKER} ctx`, "anthropic");
-      expect(body.system).toEqual([
-        { type: "text", text: "base system" },
-        { type: "text", text: `${INJECTION_MARKER} ctx` },
-      ]);
-    });
-
-    it("appends the memory block LAST to an anthropic block-array system field", () => {
-      const body = {
-        system: [{ type: "text", text: "base", cache_control: { type: "ephemeral" } }] as unknown[],
-      };
-      applyInjection(body, `${INJECTION_MARKER} ctx`, "anthropic");
-      expect(body.system).toEqual([
-        { type: "text", text: "base", cache_control: { type: "ephemeral" } },
-        { type: "text", text: `${INJECTION_MARKER} ctx` },
-      ]);
-    });
-
-    it("sets anthropic system when absent", () => {
-      const body: { system?: unknown } = {};
-      applyInjection(body, "ONLY", "anthropic");
-      expect(body.system).toBe("ONLY");
-    });
-
-    it("a client-supplied marker in the body NO LONGER suppresses injection", () => {
-      // The literal marker used to be a client-controlled kill switch. Opt-out is
-      // now the explicit `X-Marina-Context: off` header (bound keys only).
-      const oa = { messages: [{ role: "system", content: `${INJECTION_MARKER} echoed` }] };
-      applyInjection(oa, "FRESH", "openai");
-      expect(oa.messages.map((m) => m.content)).toEqual([`${INJECTION_MARKER} echoed`, "FRESH"]);
-      const an: { system: unknown } = { system: `${INJECTION_MARKER} echoed` };
-      applyInjection(an, "FRESH", "anthropic");
-      expect((an.system as { text: string }[]).map((b) => b.text)).toEqual([
-        `${INJECTION_MARKER} echoed`,
-        "FRESH",
-      ]);
-    });
-
-    it("appends to the Ollama /api/generate `system` string (stable text first)", () => {
-      const withBase: Record<string, unknown> = { prompt: "hi", system: "base" };
-      applyInjection(withBase, "ADD", "ollama-generate");
-      expect(withBase.system).toBe("base\n\nADD");
-      const bare: Record<string, unknown> = { prompt: "hi" };
-      applyInjection(bare, "ADD", "ollama-generate");
-      expect(bare.system).toBe("ADD");
-    });
-
-    it("appends to the Responses API `instructions` string (stable text first)", () => {
-      const withBase: Record<string, unknown> = { input: "hi", instructions: "base" };
-      applyInjection(withBase, "ADD", "responses");
-      expect(withBase.instructions).toBe("base\n\nADD");
-      const bare: Record<string, unknown> = { input: "hi" };
-      applyInjection(bare, "ADD", "responses");
-      expect(bare.instructions).toBe("ADD");
     });
   });
 
