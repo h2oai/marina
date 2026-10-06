@@ -32,16 +32,17 @@ import type { CompleteText } from "../../obligations/extract";
 import { LedgerStore, type ObligationLedger, statedLines } from "../../obligations/ledger";
 import {
   argcheckModel,
+  argcheckRuleBytes,
   argcheckTrigger,
   type ObligationsMode,
   parseObligationsMode,
 } from "../../obligations/mode";
+import { readOnlyCall } from "../../obligations/tool-call";
 import type { EntityId } from "../../types";
 import { messageText, type OpenAIMessage } from "../passthru-context";
 import { conversationKeys, ledgerCompletion } from "./obligations";
 import { COST_USD_HEADER, type PassthruAuthResult } from "./shared";
 import { isReadOnlyToolCall } from "./verify";
-import { readOnlyCall } from "../../obligations/tool-call";
 
 const log = new Logger();
 
@@ -92,6 +93,8 @@ export interface ArgcheckPrep {
   mode: Exclude<ObligationsMode, "off">;
   /** Which write calls the judge sees (`MARINA_ARGCHECK_TRIGGER`). */
   trigger: ArgcheckTrigger;
+  /** Rule-passage budget for the judge (`MARINA_ARGCHECK_RULE_BYTES`, default 0). */
+  ruleBytes: number;
   memo: ArgcheckMemo;
   messages: OpenAIMessage[];
   tools: unknown[];
@@ -135,6 +138,7 @@ export function prepareArgcheck(
   return {
     mode: opts.mode,
     trigger: argcheckTrigger(),
+    ruleBytes: argcheckRuleBytes(),
     memo,
     messages,
     tools,
@@ -255,6 +259,7 @@ export async function finishArgcheck(
         mode: prep.mode,
         trigger: prep.trigger,
         tools: prep.tools,
+        ruleBytes: prep.ruleBytes,
         judge: { ...(prep.provider ? { provider: prep.provider } : {}), complete: prep.complete },
         ...(prep.stated ? { stated: prep.stated } : {}),
       }).catch((e) => {

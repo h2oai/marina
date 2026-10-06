@@ -49,12 +49,12 @@ import {
   obligationsModel,
   parseObligationsMode,
 } from "../../obligations/mode";
+import { readOnlyCall } from "../../obligations/tool-call";
 import type { EntityId } from "../../types";
 import { messageText, type OpenAIMessage } from "../passthru-context";
 import { COST_USD_HEADER, type PassthruAuthResult } from "./shared";
 import { proxyToUpstream } from "./upstream";
 import { isReadOnlyToolCall } from "./verify";
-import { readOnlyCall } from "../../obligations/tool-call";
 
 const log = new Logger();
 

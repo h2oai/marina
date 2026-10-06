@@ -64,6 +64,17 @@ export function argcheckTrigger(env: NodeJS.ProcessEnv = process.env): ArgcheckT
   return DEFAULT_ARGCHECK_TRIGGER;
 }
 
+/**
+ * `MARINA_ARGCHECK_RULE_BYTES` — UTF-8 bytes of rule passages (the instructions'
+ * and the read documents' sections that name the tool or its action) the
+ * argument check's judge sees per call. Default 0 (none: a held-out replay
+ * found no gain); the replay measured 3000. Junk or negative → 0; capped at 16000.
+ */
+export function argcheckRuleBytes(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.MARINA_ARGCHECK_RULE_BYTES?.trim());
+  return Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), 16_000) : 0;
+}
+
 /** The trigger when `MARINA_ARGCHECK_TRIGGER` is unset (chosen from the judge replay). */
 export const DEFAULT_ARGCHECK_TRIGGER: ArgcheckTrigger = "flagged";
 
