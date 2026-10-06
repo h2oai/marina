@@ -433,14 +433,23 @@ export function embeddedPageKeys(url: string): string[] {
   return keys;
 }
 
-/** One URL bar: a prefix at a path boundary; `*` stands for exactly one path segment. */
+/**
+ * One URL bar: a prefix at a path boundary. `*` matches any run of characters
+ * within one path segment (or the host, as the first character); `**` matches
+ * across segments (a bar on a name anywhere under a host).
+ */
 function prefixMatcher(prefix: string): (key: string) => boolean {
-  const p = pageKey(/^https?:\/\//i.test(prefix) ? prefix : `https://${prefix}`).toLowerCase();
+  const bare = prefix.trim().replace(/^https?:\/\//i, "");
+  // A wildcard host (`*/datasets/x` bars that path on every mirror host) is not a URL.
+  const p = bare.startsWith("*")
+    ? bare.toLowerCase().replace(/\/+$/, "")
+    : pageKey(`https://${bare}`).toLowerCase();
   if (p.includes("*")) {
+    const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const body = p
-      .split("*")
-      .map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-      .join("[^/?#]+");
+      .split("**")
+      .map((part) => part.split("*").map(esc).join("[^/?#]*"))
+      .join("[^?#]*");
     const re = new RegExp(`^${body}(?:$|[/?])`);
     return (key) => re.test(key);
   }
@@ -452,7 +461,7 @@ function prefixMatcher(prefix: string): (key: string) => boolean {
  * A predicate for a brief's `exclude`: true when a page (URL, and title when
  * known) is barred. URL prefixes compare by `pageKey` (no scheme, `www.`,
  * tracking parameters or trailing slash; case-insensitive) at a path boundary,
- * `*` standing for one path segment (an owner segment of `*` bars every fork);
+ * `*` matching any run of characters within one path segment (an owner of `*` bars every fork);
  * a URL that embeds a barred URL (proxy, archive, redirector) is barred; titles
  * by containment after folding.
  */

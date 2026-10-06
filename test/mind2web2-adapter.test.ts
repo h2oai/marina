@@ -158,6 +158,15 @@ describe("arms and policy", () => {
       "https://web.archive.org/web/2025/https://osu-nlp-group.github.io/Mind2Web-2/",
       "https://web.archive.org/web/2025/github.com/OSU-NLP-Group/Mind2Web-2",
       "https://redirect.example.org/go?url=https%3A%2F%2Fhuggingface.co%2Fdatasets%2Fosunlp%2FMind2Web-2",
+      "https://github.com/RDI-Foundation/mind2web2-agentbeats-leaderboard",
+      "https://github.zh-ak.com/OSU-NLP-Group/Mind2Web-2",
+      "https://deepwiki.com/OSU-NLP-Group/Mind2Web-2",
+      "https://hf-p-cfw.fyan.top/datasets/osunlp/Mind2Web-2/resolve/main/test_set.csv",
+      "https://82.156.9.71:9000/OSU-NLP-Group/Mind2Web-2",
+      "https://github.com/OSU-NLP-Group/QUEST/tree/main/evaluation/Mind2Web2/x/eval_scripts",
+      "https://deepwiki.com/ace-agent/ace/5.1-mind2web2-task-overview-and-data",
+      "https://mind2web.benchmarkhotline.org/",
+      "https://www.scribd.com/document/885769297/Evaluating-Agentic-Search-With-Agent-As-A-Judge",
     ]) {
       expect([url, barred(url)]).toEqual([url, true]);
     }
@@ -174,7 +183,7 @@ describe("arms and policy", () => {
     for (const url of [
       "https://huggingface.co/datasets/osunlp/Mind2Web",
       "https://github.com/huggingface/transformers",
-      "https://github.com/someone/Mind2Web-2-notes-unrelated",
+      "https://github.com/someone/Mind2Web",
       "https://www.imdb.com/title/tt0110357/",
     ]) {
       expect([url, barred(url)]).toEqual([url, false]);
