@@ -75,7 +75,7 @@ export type MemoryCreditView = {
 export type MemoryReceiptView = {
   requestId: string;
   entity: string;
-  /** The PROTOCOL surface the request arrived on (the `applyInjection` format), not the route kind. */
+  /** The PROTOCOL surface the request arrived on (`InjectionFormat`), not the route kind. */
   surface: "openai" | "anthropic" | "ollama-generate" | "responses" | "unknown";
   tiers: { tier: string; count: number; bytes: number }[];
   usedBytes: number;

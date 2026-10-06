@@ -22,6 +22,7 @@ import {
   buildInjectedContext,
   capturePassthruTranscript,
   type InjectionFormat,
+  messageText,
   type OpenAIMessage,
   type PassthruIdentity,
   resolvePassthruIdentity,
@@ -42,6 +43,7 @@ import {
   promptTokensDetails,
   requestTrace,
 } from "./shared";
+import { withTrailingNote } from "./upstream";
 
 /**
  * Whether the request carries any signal that a specific passthru identity is
@@ -119,6 +121,9 @@ export function requestImagePrincipal(
  */
 export interface PassthruPrep {
   identity?: PassthruIdentity;
+  /** The volatile per-request context (memory, plus opt-in lessons on chat):
+   *  sent as the trailing note, never in the cached prefix
+   *  (`passthruUpstreamHints`). */
   addendum: string | null;
   receipt?: MemoryReceipt;
   requestId: string;
@@ -155,6 +160,18 @@ export async function preparePassthru(
   };
 }
 
+/**
+ * The query lessons are recalled for: the conversation's OPENING user request
+ * (its task), not the latest turn. Every turn of one conversation then recalls
+ * the same set, which changes only when the lesson pool itself does.
+ */
+export function lessonQuery(
+  messages: ReadonlyArray<{ role?: unknown; content?: unknown }>,
+): string {
+  const first = messages.find((m) => m.role === "user");
+  return messageText(first?.content).trim().slice(0, 500);
+}
+
 /** The trace options every passthru surface hands `proxyToUpstream`. */
 export function passthruTraceOptions(prep: PassthruPrep) {
   return {
@@ -167,13 +184,37 @@ export function passthruTraceOptions(prep: PassthruPrep) {
   };
 }
 
-/** Upstream hints every passthru surface hands `proxyToUpstream`: the memory
- *  addendum, when injected, is the LAST system block (`applyInjection`). */
+/**
+ * The per-request notes joined into one trailing note (empty parts dropped),
+ * or undefined when there is none.
+ */
+export function joinNotes(...parts: Array<string | null | undefined>): string | undefined {
+  const kept = parts.filter((p): p is string => typeof p === "string" && p.length > 0);
+  return kept.length ? kept.join("\n\n") : undefined;
+}
+
+/**
+ * Upstream hints every passthru surface hands `proxyToUpstream`. The injected
+ * addendum (memory context, opt-in lessons) is VOLATILE — relevance-gated and
+ * re-chosen as notes and lessons accrue — so it never enters the cached prefix:
+ * it rides `trailingNote`, appended to the final user turn AFTER the cache
+ * breakpoints are placed. The caller's system prompt, tools and the whole
+ * conversation stay byte-identical from turn to turn, whatever is injected.
+ * `extraNote` (the obligations reminder, a nudge) follows the addendum.
+ */
 export function passthruUpstreamHints(
   prep: PassthruPrep,
-  extra: { anthropicNative?: Record<string, unknown> } = {},
+  extra: { anthropicNative?: Record<string, unknown>; extraNote?: string } = {},
 ) {
-  return { ...extra, injectedSystemTail: !!prep.addendum };
+  const { extraNote, ...rest } = extra;
+  const trailingNote = joinNotes(prep.addendum, extraNote);
+  return { ...rest, ...(trailingNote ? { trailingNote } : {}) };
+}
+
+/** The body the response cache keys on: the request as the upstream sees it
+ *  (the trailing addendum included, so different memory never shares an entry). */
+function effectiveBody(prep: PassthruPrep, body: Record<string, unknown>) {
+  return withTrailingNote(body, prep.addendum ?? undefined);
 }
 
 /** The identity string the response cache keys on — the pinned passthru model
@@ -199,7 +240,7 @@ export async function passthruCacheLookup(
   const lookup = await lookupResponseCache(
     engine.db,
     prep.identity.name,
-    body,
+    effectiveBody(prep, body),
     passthruModelIdentity(body, forceModel),
   );
   if (!lookup.hit) return undefined;
@@ -263,7 +304,7 @@ export function passthruCacheStore(
   void storeResponseCache(
     db,
     prep.identity.name,
-    body,
+    effectiveBody(prep, body),
     passthruModelIdentity(body, forceModel),
     resp.clone(),
     prep.receipt,

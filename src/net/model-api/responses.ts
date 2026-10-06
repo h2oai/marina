@@ -9,7 +9,7 @@ import type { Engine } from "../../engine/engine";
 import { stageRequestImages } from "../../engine/media/vision";
 import { getEndpointConfig } from "../model-endpoint";
 import { UnsupportedParameterError } from "../openai-errors";
-import { applyInjection, capturePassthruTranscript, type OpenAIMessage } from "../passthru-context";
+import { capturePassthruTranscript, type OpenAIMessage } from "../passthru-context";
 import {
   type ChatToolFields,
   type ResponsesFunctionCall,
@@ -373,9 +373,8 @@ async function runResponsesPassthru(
   // response cache is bypassed for streams by construction.
   const wantStream = input.wantStream === true;
   // `instructions` is the caller's stable system prompt; the memory addendum
-  // is injected on the chat body as its own system message right after it
-  // (`applyInjection` openai shape) so the Anthropic translation yields
-  // separate stable / memory system blocks for the cache breakpoints.
+  // rides the trailing note after the cache breakpoints
+  // (`passthruUpstreamHints`), so the cached prefix never depends on it.
   const body: Record<string, unknown> = {
     model: input.model,
     messages: [...(instructions ? [{ role: "system", content: instructions }] : []), ...turns],
@@ -388,7 +387,6 @@ async function runResponsesPassthru(
       : {}),
     ...(input.chatTools ?? {}),
   };
-  applyInjection(body, prep.addendum, "openai");
 
   const forceModel = passthruForceModel(engine, ec, body.model);
   const cached = await passthruCacheLookup(engine, prep, body, forceModel);

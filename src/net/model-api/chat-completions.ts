@@ -14,12 +14,7 @@ import { evalOption, LESSONS_HEADER } from "../../learning/eval-context";
 import type { OutcomeDomain } from "../../learning/outcomes";
 import { lessonsBlock, lessonsHeaderValue, recallForWork } from "../../learning/service";
 import { getEndpointConfig } from "../model-endpoint";
-import {
-  applyInjection,
-  type InjectionFormat,
-  messageText,
-  type OpenAIMessage,
-} from "../passthru-context";
+import { type InjectionFormat, messageText, type OpenAIMessage } from "../passthru-context";
 import {
   ARGCHECK_MODEL_PREFIX,
   argcheckRequestMode,
@@ -35,6 +30,8 @@ import {
 } from "./obligations";
 import {
   capturePassthruResponse,
+  joinNotes,
+  lessonQuery,
   passthruCacheLookup,
   passthruCacheStore,
   passthruTraceOptions,
@@ -272,11 +269,9 @@ export async function runOpenaiChat(
       !orchestration
     ) {
       // Also the `/v1/messages` path: the Anthropic bridge translates its body
-      // to this shape first, so the addendum lands in the OpenAI system message
-      // here and `proxyToAnthropic` moves it into the native `system` field.
-      // The body is OpenAI-shaped on both, so the injection format is `openai`;
-      // the SURFACE recorded on the lifecycle events is the protocol the client
-      // actually spoke (`anthropic` when the bridge called in).
+      // to this shape first. The SURFACE recorded on the lifecycle events is
+      // the protocol the client actually spoke (`anthropic` when the bridge
+      // called in).
       const shared = await preparePassthru(
         engine,
         req,
@@ -286,8 +281,12 @@ export async function runOpenaiChat(
       );
       // Opt-in lessons ride the same addendum (after the caller's context), so
       // a plain passthru request is byte-identical unless it asked for them.
+      // The set is chosen from the conversation's OPENING request, so it stays
+      // the same on every turn of one conversation and changes only when the
+      // lesson pool does; the addendum rides after the cache breakpoints
+      // (`passthruUpstreamHints`), so the cached prefix never depends on it.
       const lessons = lessonsOptIn
-        ? await recallForWork(engine.db, PASSTHRU_LESSON_DOMAINS, userText.slice(0, 500), {
+        ? await recallForWork(engine.db, PASSTHRU_LESSON_DOMAINS, lessonQuery(messages), {
             limit: 4,
             maxBytes: 800,
             ...evalOption(req),
@@ -300,14 +299,7 @@ export async function runOpenaiChat(
             addendum: shared.addendum ? `${shared.addendum}\n\n${lessonText}` : lessonText,
           }
         : shared;
-      if (prep.addendum) applyInjection(body, prep.addendum, "openai");
-      // The native Anthropic body gets the same addendum in ITS native slot (a
-      // leading system text block) so a `/v1/messages` client's own
-      // cache_control markers survive when the upstream is Anthropic.
-      let anthropicNative = runOpts?.anthropicNative;
-      if (anthropicNative && prep.addendum) {
-        anthropicNative = applyInjection({ ...anthropicNative }, prep.addendum, "anthropic");
-      }
+      const anthropicNative = runOpts?.anthropicNative;
       const forceModel = passthruForceModel(engine, ec, model);
       // Opt-in obligations ledger: read this request into its conversation's
       // ledger; the open obligations ride as a trailing note after the cache
@@ -336,16 +328,21 @@ export async function runOpenaiChat(
           ? undefined
           : await passthruCacheLookup(engine, prep, body, forceModel);
       if (cached) return cached;
-      const upstreamHints = {
-        ...passthruUpstreamHints(prep, anthropicNative ? { anthropicNative } : {}),
+      // Every per-request note (memory, lessons, the obligations reminder, a
+      // nudge) is ONE trailing note after the cache breakpoints.
+      const hintsWith = (note?: string) => ({
+        ...passthruUpstreamHints(prep, {
+          ...(anthropicNative ? { anthropicNative } : {}),
+          ...(note ? { extraNote: note } : {}),
+        }),
         clientSignal: req.signal,
-      };
+      });
       let resp = await proxyToUpstream(
         engine,
         body,
         forceModel || undefined,
         passthruTraceOptions(prep),
-        obligations?.note ? { ...upstreamHints, trailingNote: obligations.note } : upstreamHints,
+        hintsWith(obligations?.note),
       );
       if (obligations) {
         const { requestId: _first, ...retryTrace } = passthruTraceOptions(prep);
@@ -355,7 +352,7 @@ export async function runOpenaiChat(
             body,
             forceModel || undefined,
             { ...retryTrace, routeReason: "obligations:nudge" },
-            { ...upstreamHints, trailingNote: note },
+            hintsWith(note),
           ),
         );
       }
@@ -367,11 +364,8 @@ export async function runOpenaiChat(
             body,
             forceModel || undefined,
             { ...retryTrace, routeReason: "argcheck:nudge" },
-            {
-              ...upstreamHints,
-              // The open obligations stay in view next to the check's note.
-              trailingNote: obligations?.note ? `${obligations.note}\n\n${note}` : note,
-            },
+            // The open obligations stay in view next to the check's note.
+            hintsWith(joinNotes(obligations?.note, note)),
           ),
         );
       }
