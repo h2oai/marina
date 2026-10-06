@@ -1,6 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ArgcheckTrigger } from "./argcheck";
+
 /**
  * `MARINA_OBLIGATIONS=off|observe|on` — the obligations ledger for Marina's own
  * agent loops (residents, crews, Code Mode coders). Default `off`: nothing is
@@ -48,6 +50,22 @@ export function obligationsModel(env: NodeJS.ProcessEnv = process.env): string |
 export function argcheckMode(env: NodeJS.ProcessEnv = process.env): ObligationsMode {
   return parseObligationsMode(env.MARINA_ARGCHECK) ?? "off";
 }
+
+/**
+ * `MARINA_ARGCHECK_TRIGGER=flagged|all-writes` — which write calls the
+ * argument check's judge sees (agents and passthru alike): `flagged` only calls
+ * whose mechanical pass found a value not stated first-hand; `all-writes`
+ * every state-changing call. Unknown values fall back to the default.
+ */
+export function argcheckTrigger(env: NodeJS.ProcessEnv = process.env): ArgcheckTrigger {
+  const v = env.MARINA_ARGCHECK_TRIGGER?.trim().toLowerCase();
+  if (v === "flagged") return "flagged";
+  if (v === "all-writes" || v === "all") return "all-writes";
+  return DEFAULT_ARGCHECK_TRIGGER;
+}
+
+/** The trigger when `MARINA_ARGCHECK_TRIGGER` is unset (chosen from the judge replay). */
+export const DEFAULT_ARGCHECK_TRIGGER: ArgcheckTrigger = "flagged";
 
 /**
  * The model the argument check's judge uses when no decision layer is

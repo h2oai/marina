@@ -6,7 +6,9 @@
  * (read live) decides:
  *
  *   off      nothing is checked, no call is made (the default);
- *   observe  `mutate` / `consequential` calls are checked; counts are logged;
+ *   observe  `mutate` / `consequential` calls are checked (the judge sees the
+ *            flagged ones, or all of them under `MARINA_ARGCHECK_TRIGGER=all-writes`);
+ *            counts are logged;
  *            every call runs;
  *   on       an unsupported call is refused once with the values named (a
  *            tool-gate refusal); the same call issued again runs.
@@ -19,19 +21,22 @@ import type { DecisionProvider } from "../decisions/types";
 import {
   type ArgcheckMemo,
   type ArgcheckOutcome,
+  type ArgcheckTrigger,
   checkCall,
   EvidenceIndex,
   type EvidenceText,
   newArgcheckMemo,
 } from "./argcheck";
 import type { CompleteText } from "./extract";
-import { argcheckMode, type ObligationsMode } from "./mode";
+import { argcheckMode, argcheckTrigger, type ObligationsMode } from "./mode";
 
 export interface AgentArgcheckOptions {
   /** One completion on the agent's own model (the judge when no decision layer is configured). */
   complete: CompleteText;
   provider?: () => DecisionProvider | undefined;
   mode?: () => ObligationsMode;
+  /** Which write calls the judge sees (default: `MARINA_ARGCHECK_TRIGGER`, read live). */
+  trigger?: () => ArgcheckTrigger;
   /** Stated requests (the obligations ledger's lines) for the judge, when it runs too. */
   stated?: () => string[];
   now?: () => number;
@@ -99,6 +104,7 @@ export class AgentArgcheck {
         {
           memo: this.memo,
           mode,
+          trigger: (this.opts.trigger ?? argcheckTrigger)(),
           judge: { ...(provider ? { provider } : {}), complete: this.opts.complete },
           ...(stated.length ? { stated } : {}),
           ...(signal ? { signal } : {}),

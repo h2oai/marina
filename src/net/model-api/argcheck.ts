@@ -22,6 +22,7 @@ import { Logger } from "../../engine/logger";
 import {
   type ArgcheckMemo,
   type ArgcheckOutcome,
+  type ArgcheckTrigger,
   checkCall,
   EvidenceIndex,
   type EvidenceText,
@@ -29,10 +30,15 @@ import {
 } from "../../obligations/argcheck";
 import type { CompleteText } from "../../obligations/extract";
 import { LedgerStore, type ObligationLedger, statedLines } from "../../obligations/ledger";
-import { argcheckModel, type ObligationsMode, parseObligationsMode } from "../../obligations/mode";
+import {
+  argcheckModel,
+  argcheckTrigger,
+  type ObligationsMode,
+  parseObligationsMode,
+} from "../../obligations/mode";
 import type { EntityId } from "../../types";
 import { messageText, type OpenAIMessage } from "../passthru-context";
-import { conversationKey, ledgerCompletion } from "./obligations";
+import { conversationKeys, ledgerCompletion } from "./obligations";
 import { COST_USD_HEADER, type PassthruAuthResult } from "./shared";
 import { isReadOnlyToolCall } from "./verify";
 
@@ -83,6 +89,8 @@ export function conversationEvidence(messages: OpenAIMessage[]): EvidenceText[] 
 /** What `prepareArgcheck` hands to `finishArgcheck`. */
 export interface ArgcheckPrep {
   mode: Exclude<ObligationsMode, "off">;
+  /** Which write calls the judge sees (`MARINA_ARGCHECK_TRIGGER`). */
+  trigger: ArgcheckTrigger;
   memo: ArgcheckMemo;
   messages: OpenAIMessage[];
   tools: unknown[];
@@ -115,8 +123,9 @@ export function prepareArgcheck(
 ): ArgcheckPrep | undefined {
   if (!opts.mode || opts.mode === "off") return undefined;
   const now = Date.now();
-  const key = conversationKey(req, messages, opts.auth);
-  const memo = store.get(key, now) ?? newArgcheckMemo(key, now);
+  const tools = Array.isArray(body.tools) ? (body.tools as unknown[]) : [];
+  const keys = conversationKeys(req, messages, opts.auth, tools);
+  const memo = store.resolve(keys, now) ?? newArgcheckMemo(keys[keys.length - 1]!, now);
   memo.updatedAt = now;
   store.put(memo);
   const spent = { usd: 0 };
@@ -124,9 +133,10 @@ export function prepareArgcheck(
   const provider = harnessDecisionProvider();
   return {
     mode: opts.mode,
+    trigger: argcheckTrigger(),
     memo,
     messages,
-    tools: Array.isArray(body.tools) ? (body.tools as unknown[]) : [],
+    tools,
     complete: ledgerCompletion(
       engine,
       model,
@@ -170,6 +180,7 @@ export function argcheckHeaderValue(
     `writes=${outcomes.length}`,
     `checked=${outcomes.reduce((n, o) => n + o.checked, 0)}`,
     `flagged=${outcomes.reduce((n, o) => n + o.flaggedValues, 0)}`,
+    `judged=${outcomes.filter((o) => o.judgement).length}`,
     `nudges=${prep.memo.nudges}`,
     `check=${check}`,
   ].join(";");
@@ -237,6 +248,7 @@ export async function finishArgcheck(
       await checkCall(call, evidence, {
         memo: prep.memo,
         mode: prep.mode,
+        trigger: prep.trigger,
         judge: { ...(prep.provider ? { provider: prep.provider } : {}), complete: prep.complete },
         ...(prep.stated ? { stated: prep.stated } : {}),
       }).catch((e) => {
@@ -294,12 +306,14 @@ function logRequest(prep: ArgcheckPrep, outcomes: ArgcheckOutcome[], check: stri
   log.info("model-api", "argcheck", {
     conv: createHash("sha256").update(prep.memo.key).digest("hex").slice(0, 12),
     mode: prep.mode,
+    trigger: prep.trigger,
     writes: outcomes.length,
     checked: outcomes.reduce((n, o) => n + o.checked, 0),
     flagged: outcomes.reduce((n, o) => n + o.flaggedValues, 0),
     check,
     convChecks: prep.memo.checks,
     convFlagged: prep.memo.flagged,
+    convJudged: prep.memo.judged,
     convUnsupported: prep.memo.unsupported,
     convNudges: prep.memo.nudges,
     convUnjudged: prep.memo.unjudged,

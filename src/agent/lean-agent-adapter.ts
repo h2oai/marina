@@ -1887,7 +1887,8 @@ export class LeanAgentAdapter implements AgentHandle {
    * The argument check before a state-changing call (MARINA_ARGCHECK). Returns
    * a refusal reason (`on`, unsupported, first time for this exact call), else
    * undefined. Fails open: a judge outage lets the call run. Emits a numbers-
-   * and-labels `decision` event for every call the mechanical pass flagged.
+   * and-labels `decision` event for every judged call (flagged ones, or all
+   * under `MARINA_ARGCHECK_TRIGGER=all-writes`).
    */
   private async argumentCheck(
     toolName: string,
@@ -1897,14 +1898,15 @@ export class LeanAgentAdapter implements AgentHandle {
     if (this.argcheck.mode() === "off") return undefined;
     const started = Date.now();
     const { outcome, refusal } = await this.argcheck.check(toolName, args, transcript);
-    if (!outcome || outcome.flaggedValues === 0) return undefined;
+    // Only a judged call is an event (a mechanical pass is free and silent).
+    if (!outcome?.judgement) return undefined;
     const j = outcome.judgement;
     this.emitEvent({
       type: "decision",
       stage: "argcheck",
       verdict: refusal ? "nudge" : outcome.label,
       subject: toolName,
-      reason: `${outcome.flaggedValues} of ${outcome.checked} argument values not found first-hand`,
+      reason: `${outcome.flaggedValues} of ${outcome.checked} argument values not found first-hand${j.doubt ? `; doubts ${j.doubt}` : ""}`,
       signals: {
         checked: outcome.checked,
         flagged: outcome.flaggedValues,
