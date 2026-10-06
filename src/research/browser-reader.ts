@@ -35,8 +35,13 @@ export interface RenderedPage {
   error?: string;
 }
 
+export interface RenderOptions {
+  /** The caller's own policy: a request (document, redirect hop, XHR…) it refuses is aborted. */
+  refuse?: (url: string) => boolean;
+}
+
 export interface BrowserReader {
-  render(url: string): Promise<RenderedPage>;
+  render(url: string, opts?: RenderOptions): Promise<RenderedPage>;
   close(): Promise<void>;
 }
 
@@ -99,7 +104,9 @@ export async function openBrowser(opts: BrowserOptions = {}): Promise<BrowserRea
     waiters.shift()?.();
   };
 
-  async function render(url: string): Promise<RenderedPage> {
+  async function render(url: string, ro: RenderOptions = {}): Promise<RenderedPage> {
+    if (ro.refuse?.(url))
+      return { ok: false, status: 0, finalUrl: url, html: "", text: "", error: "refused" };
     const first = await check(url);
     if (first) return { ok: false, status: 0, finalUrl: url, html: "", text: "", error: first };
     await acquire();
@@ -118,6 +125,7 @@ export async function openBrowser(opts: BrowserOptions = {}): Promise<BrowserRea
           const u = req.url();
           if (u.startsWith("data:") || u.startsWith("blob:")) return await route.continue();
           if (BLOCKED_TYPES.has(req.resourceType())) return await route.abort("blockedbyclient");
+          if (ro.refuse?.(u)) return await route.abort("blockedbyclient");
           const refused = await check(u);
           if (refused) return await route.abort("blockedbyclient");
           // Fetch without following redirects and hand the response to the page:

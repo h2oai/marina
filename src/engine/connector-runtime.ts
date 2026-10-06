@@ -190,7 +190,9 @@ export class ConnectorRuntime {
     }
 
     try {
-      const result = await this.runtime.callTool(server, tool, args);
+      // mcporter's signature is callTool(server, tool, { args }); passing the
+      // arguments object directly would silently drop every tool argument.
+      const result = await this.runtime.callTool(server, tool, { args });
       return result;
     } catch (err) {
       throw new Error(`Tool call failed: ${getErrorMessage(err)}`);

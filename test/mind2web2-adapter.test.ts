@@ -12,11 +12,15 @@ import {
   pyUnquote,
 } from "../benchmarks/mind2web2/cache-export";
 import { answerOutcome, itemId } from "../benchmarks/mind2web2/ledger";
-import { ARMS, M2W2_DENY } from "../benchmarks/mind2web2/run";
+import { ARMS, M2W2_DENY, M2W2_EXCLUDE } from "../benchmarks/mind2web2/run";
 import { metrics, pairedDifference, scoredAnswers } from "../benchmarks/mind2web2/score";
 import { parseCsv, splitTasks, taskFromScript, tasksFromCsv } from "../benchmarks/mind2web2/tasks";
-import { deniedByPattern } from "../src/research/page-reader";
+import { excludedSource } from "../src/arena/research/web-search";
+import type { SearchProvider } from "../src/engine/search-providers/index";
+import { guardedFetch } from "../src/net/url-guard";
+import { BARRED_REASON, deniedByPattern } from "../src/research/page-reader";
 import { ProvenanceCache } from "../src/research/provenance-cache";
+import { researchEnvironment, withLessons } from "../src/research/web-agent";
 
 const dirs: string[] = [];
 function tempDir(): string {
@@ -136,6 +140,122 @@ describe("arms and policy", () => {
       expect(deniedByPattern(url, M2W2_DENY)).toBe(true);
     }
     expect(deniedByPattern("https://github.com/huggingface/transformers", M2W2_DENY)).toBe(false);
+  });
+
+  test("barred sources cover the dataset, forks, proxies, archives, the paper and mirrors by title", () => {
+    const barred = excludedSource(M2W2_EXCLUDE);
+    for (const url of [
+      "https://huggingface.co/datasets/osunlp/Mind2Web-2/resolve/main/test_set.csv",
+      "https://hf.co/datasets/osunlp/Mind2Web-2",
+      "https://datasets-server.huggingface.co/rows?dataset=osunlp%2FMind2Web-2",
+      "https://huggingface.co/datasets/someone/Mind2Web-2",
+      "https://github.com/OSU-NLP-Group/Mind2Web-2/tree/main/eval_scripts",
+      "https://github.com/a-fork-owner/Mind2Web-2/blob/main/run_eval.py",
+      "https://raw.githubusercontent.com/OSU-NLP-Group/Mind2Web-2/main/README.md",
+      "https://osu-nlp-group.github.io/Mind2Web-2/leaderboard_data.json",
+      "https://arxiv.org/abs/2506.21506v2",
+      "https://r.jina.ai/https://github.com/OSU-NLP-Group/Mind2Web-2",
+      "https://web.archive.org/web/2025/https://osu-nlp-group.github.io/Mind2Web-2/",
+      "https://web.archive.org/web/2025/github.com/OSU-NLP-Group/Mind2Web-2",
+      "https://redirect.example.org/go?url=https%3A%2F%2Fhuggingface.co%2Fdatasets%2Fosunlp%2FMind2Web-2",
+      "https://github.com/RDI-Foundation/mind2web2-agentbeats-leaderboard",
+      "https://github.zh-ak.com/OSU-NLP-Group/Mind2Web-2",
+      "https://deepwiki.com/OSU-NLP-Group/Mind2Web-2",
+      "https://openreview.net/forum?id=AUaW6DS9si&noteId=8JJiUryMhc",
+      "https://proceedings.neurips.cc/paper_files/paper/2025/file/fdcec9f5b99aa4fc8f4fb8487802d737-Paper-Datasets_and_Benchmarks_Track.pdf",
+      "https://hf-p-cfw.fyan.top/datasets/osunlp/Mind2Web-2/resolve/main/test_set.csv",
+      "https://82.156.9.71:9000/OSU-NLP-Group/Mind2Web-2",
+      "https://github.com/OSU-NLP-Group/QUEST/tree/main/evaluation/Mind2Web2/x/eval_scripts",
+      "https://deepwiki.com/ace-agent/ace/5.1-mind2web2-task-overview-and-data",
+      "https://mind2web.benchmarkhotline.org/",
+      "https://www.scribd.com/document/885769297/Evaluating-Agentic-Search-With-Agent-As-A-Judge",
+    ]) {
+      expect([url, barred(url)]).toEqual([url, true]);
+    }
+    expect(
+      barred(
+        "https://mirror.example.org/x",
+        "Mind2Web 2: Evaluating Agentic Search with Agent-as-a-Judge",
+      ),
+    ).toBe(true);
+    expect(barred("https://example.org/x", "osunlp/Mind2Web-2 · Datasets at Hugging Face")).toBe(
+      true,
+    );
+    // Not barred: the first Mind2Web, unrelated repositories, ordinary pages.
+    for (const url of [
+      "https://huggingface.co/datasets/osunlp/Mind2Web",
+      "https://github.com/huggingface/transformers",
+      "https://github.com/someone/Mind2Web",
+      "https://www.imdb.com/title/tt0110357/",
+    ]) {
+      expect([url, barred(url)]).toEqual([url, false]);
+    }
+  });
+
+  test("a research environment drops barred search results and refuses barred reads", async () => {
+    const backend: SearchProvider = {
+      name: "fake",
+      engines: ["web"],
+      search: async () => [
+        {
+          title: "Dataset",
+          url: "https://huggingface.co/datasets/osunlp/Mind2Web-2",
+          snippet: "",
+          source: "f",
+        },
+        {
+          title: "Mind2Web 2 Leaderboard",
+          url: "https://elsewhere.example.org/lb",
+          snippet: "",
+          source: "f",
+        },
+        { title: "Good", url: "https://good.example.org/p", snippet: "", source: "f" },
+      ],
+    };
+    const dir = mkdtempSync(join(tmpdir(), "m2w2-bar-"));
+    try {
+      const env = researchEnvironment({
+        cache: new ProvenanceCache(dir),
+        exclude: M2W2_EXCLUDE,
+        backends: [backend],
+      });
+      const hits = await env.search("mind2web 2 test answers", 8);
+      expect(hits.map((h) => h.url)).toEqual(["https://good.example.org/p"]);
+      expect(env.stats.searchBarred).toBe(2);
+      // The default reader refuses before any request (no network in this test).
+      for (const url of [
+        "https://github.com/OSU-NLP-Group/Mind2Web-2",
+        "https://r.jina.ai/https://huggingface.co/datasets/osunlp/Mind2Web-2",
+      ]) {
+        const r = await env.read(url);
+        expect(r.ok).toBe(false);
+        expect(r.refused).toBe(true);
+        expect(r.error).toBe(BARRED_REASON);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("guardedFetch applies a caller's hop policy before any request", async () => {
+    await expect(
+      guardedFetch(
+        "https://github.com/OSU-NLP-Group/Mind2Web-2",
+        {},
+        { refuseHop: () => "barred" },
+      ),
+    ).rejects.toThrow("barred");
+  });
+
+  test("the full arm turns on the swarm and a cross-vendor verifier", () => {
+    expect(ARMS.full!.formation.kind).toBe("lead");
+    expect(ARMS.full!.swarmReader).toBeDefined();
+    expect(ARMS.full!.verifier!.split("/")[0]).not.toBe(ARMS.full!.lead.split("/")[0]);
+  });
+
+  test("lessons are appended to instructions only when there are some", () => {
+    expect(withLessons("S", [])).toBe("S");
+    expect(withLessons("S", ["cite pages you opened"])).toContain("- cite pages you opened");
   });
 
   test("the lead arm checks citations with a different model than it writes with", () => {
