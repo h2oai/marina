@@ -45,6 +45,12 @@ export interface ReadPageOptions {
   cache?: ProvenanceCache;
   /** `host/path-prefix` patterns never fetched (matched without `www.`, case-insensitive). */
   deny?: readonly string[];
+  /**
+   * Barred sources (`excludedSource` of a `SourceExclusion`): checked before the
+   * request, on every redirect hop and rendered-page request, and on the page's
+   * title once read — a barred page is refused and its text never returned.
+   */
+  barred?: (url: string, title?: string) => boolean;
   timeoutMs?: number;
   maxBytes?: number;
   userAgent?: string;
@@ -218,6 +224,9 @@ export function pdftotext(bytes: Uint8Array, timeoutMs = 30_000): Promise<string
   });
 }
 
+/** The refusal reason for a barred source (a run's `SourceExclusion`). */
+export const BARRED_REASON = "barred source for this run";
+
 function refusal(url: string, why: string, cache?: ProvenanceCache): PageRead {
   cache?.record({ url, status: 0, error: why });
   return { url, ok: false, status: 0, text: "", links: [], kind: "web", error: why, refused: true };
@@ -231,7 +240,17 @@ interface Attempt {
 }
 
 async function plainRead(url: string, opts: ReadPageOptions): Promise<Attempt> {
-  const fetcher = opts.fetcher ?? ((u: string, init: RequestInit) => guardedFetch(u, init));
+  const barred = opts.barred;
+  const fetcher =
+    opts.fetcher ??
+    ((u: string, init: RequestInit) =>
+      guardedFetch(
+        u,
+        init,
+        barred
+          ? { refuseHop: (hop) => (barred(hop) ? `${BARRED_REASON} (redirect)` : undefined) }
+          : undefined,
+      ));
   const failed = (status: number, error: string, contentType?: string): Attempt => ({
     read: {
       url,
@@ -329,8 +348,12 @@ function fromHtml(
   };
 }
 
-async function renderedRead(url: string, browser: BrowserReader): Promise<Attempt | undefined> {
-  const r = await browser.render(url);
+async function renderedRead(
+  url: string,
+  browser: BrowserReader,
+  barred?: (url: string) => boolean,
+): Promise<Attempt | undefined> {
+  const r = await browser.render(url, barred ? { refuse: barred } : undefined);
   if (!r.ok) return undefined;
   const { text, title, links } = fromHtml(r.html, r.finalUrl || url, r.text);
   const contentType = "text/html; rendered";
@@ -363,14 +386,25 @@ export async function readPage(url: string, opts: ReadPageOptions = {}): Promise
   if (!fetchAllowed(url)) return refusal(url, "publisher terms bar automated access", opts.cache);
   if (deniedByPattern(url, opts.deny))
     return refusal(url, "refused by this run's deny list", opts.cache);
+  if (opts.barred?.(url)) return refusal(url, BARRED_REASON, opts.cache);
   let attempt = await plainRead(url, opts);
+  if (attempt.read.error?.startsWith(BARRED_REASON))
+    return refusal(url, attempt.read.error, opts.cache);
   // A failed read or a script shell gets one rendered read when a browser is available.
   if (opts.browser && needsRender(attempt.read)) {
-    const rendered = await renderedRead(url, opts.browser).catch(() => undefined);
+    const barred = opts.barred;
+    const rendered = await renderedRead(
+      url,
+      opts.browser,
+      barred ? (u: string) => barred(u) : undefined,
+    ).catch(() => undefined);
     if (rendered && (!attempt.read.ok || rendered.read.text.length > attempt.read.text.length)) {
       attempt = rendered;
     }
   }
+  // A page that names itself as a barred source (a mirror under another URL).
+  if (attempt.read.title && opts.barred?.(url, attempt.read.title))
+    return refusal(url, `${BARRED_REASON} (title)`, opts.cache);
   opts.cache?.record(attempt.capture);
   return attempt.read;
 }

@@ -10,13 +10,19 @@
  *   bun run mind2web2 run   --official <checkout> --out <dir> --arm single|lead
  *                           [--split tune|heldout|all] [--task <id>]… [--runs 1,2]
  *                           [--tasks <task-list.csv>] [--cap-usd 20] [--concurrency 3] [--browser]
+ *                           [--swarm] [--lessons-db <snapshot.db>]
+ *                           --swarm: the read swarm tool (arm's reader, else MARINA_READ_SWARM_READER;
+ *                           the decision backend reranks when the arm asks and one is configured);
+ *                           --lessons-db: judged lessons recalled per task from that database
+ *                           (measurement mode: this board's own lessons are excluded)
  *   bun run mind2web2 cache --out <dir> --arm single|lead
  *                           export what each run read into cache/<agent>/<task>/
  *   bun run mind2web2 judge --official <checkout> --out <dir> --arm … --cap-usd 10
  *                           [--python <venv python>] [--eval-version dev_set] [--task <id>]…
  *                           run the official judge (o4-mini) under a hard spend cap
  *   bun run mind2web2 score --out <dir> --arm … [--compare <arm>] [--split …]
- *   bun run mind2web2 record --out <dir> --arm … --split …   ledger (ids + scores) + judged lessons
+ *   bun run mind2web2 record --out <dir> --arm … --split … [--group <replicate group>]
+ *                           ledger (ids + scores) + judged lessons
  *
  * `--official` is a checkout of github.com/OSU-NLP-Group/Mind2Web-2 (its
  * `eval_scripts/dev_set/*.py` supply the dev tasks; a test run passes the task
@@ -29,10 +35,17 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { CallSpendGuard } from "../benchmarks/call-spend-guard";
+import { BudgetExhausted, CallSpendGuard } from "../benchmarks/call-spend-guard";
 import { exportTaskCache } from "../benchmarks/mind2web2/cache-export";
 import { answerOutcome, recordJudgedRun } from "../benchmarks/mind2web2/ledger";
-import { ARMS, type Arm, answerPath, runBatch } from "../benchmarks/mind2web2/run";
+import {
+  ARMS,
+  type Arm,
+  type ArmExtras,
+  answerPath,
+  M2W2_EXCLUDE,
+  runBatch,
+} from "../benchmarks/mind2web2/run";
 import {
   metrics,
   pairedDifference,
@@ -45,8 +58,16 @@ import {
   tasksFromCsv,
   tasksFromScripts,
 } from "../benchmarks/mind2web2/tasks";
+import { modelComplete } from "../src/arena/model-backend";
+import { harnessDecisionProvider } from "../src/decisions/engines";
 import { attachCliSpendLedger } from "../src/engine/cli-spend-ledger";
-import { enableOutcomeLearning, noteOutcome, settleOutcomes } from "../src/learning/service";
+import { formatLesson } from "../src/learning/outcomes";
+import {
+  enableOutcomeLearning,
+  noteOutcome,
+  recallForWork,
+  settleOutcomes,
+} from "../src/learning/service";
 import { MarinaDB } from "../src/persistence/database";
 import { openBrowser } from "../src/research/browser-reader";
 import { citedUrls } from "../src/research/cited-answer";
@@ -73,6 +94,9 @@ const { positionals, values } = parseArgs({
     "eval-version": { type: "string", default: "dev_set" },
     today: { type: "string" },
     browser: { type: "boolean" },
+    swarm: { type: "boolean" },
+    group: { type: "string" },
+    "lessons-db": { type: "string" },
   },
 });
 const [cmd] = positionals;
@@ -82,7 +106,7 @@ function fail(msg: string): never {
   process.exit(2);
 }
 
-function armOf(name: string | undefined): Arm {
+function armOf(name: string | undefined): Arm & ArmExtras {
   const arm = ARMS[name ?? ""];
   if (!arm) fail(`unknown arm ${name} (${Object.keys(ARMS).join(", ")})`);
   return arm;
@@ -106,9 +130,9 @@ function loadTasks(): M2W2Task[] {
       ? tune
       : values.split === "heldout"
         ? heldOut
-        : values.split === "all"
+        : values.split === "all" || values.split === "test"
           ? all
-          : fail(`--split tune|heldout|all`);
+          : fail(`--split tune|heldout|all|test`);
   if (values.task?.length) picked = picked.filter((t) => values.task!.includes(t.id));
   return picked;
 }
@@ -142,6 +166,47 @@ async function run(): Promise<void> {
     fail(
       "--browser: playwright-core or its Chromium build is missing (bunx playwright-core install chromium-headless-shell)",
     );
+  let swarm: import("../src/research/web-agent").SwarmConfig | undefined;
+  if (values.swarm) {
+    const spec = arm.swarmReader ?? process.env.MARINA_READ_SWARM_READER?.trim();
+    if (!spec) fail("--swarm needs a reader model (the arm's, or MARINA_READ_SWARM_READER)");
+    const reader = modelComplete(spec, process.env, { maxTokens: 4_000 });
+    const judge = arm.swarmJudge ? harnessDecisionProvider(process.env) : undefined;
+    swarm = {
+      reader: {
+        name: spec,
+        complete: async (system, user) => {
+          guard.check();
+          const before = reader.usage.costUsd;
+          try {
+            return await reader.complete(system, user);
+          } finally {
+            guard.add(reader.usage.costUsd - before);
+          }
+        },
+      },
+      ...(judge ? { judge } : {}),
+      maxDocs: 12,
+      isFatal: (e) => e instanceof BudgetExhausted,
+    };
+    console.log(
+      `read swarm on: reader ${spec}, rerank ${judge ? `decision backend ${judge.model}` : "reader (listwise)"}`,
+    );
+  }
+  let lessons: Parameters<typeof runBatch>[0]["lessons"];
+  if (values["lessons-db"]) {
+    const ldb = new MarinaDB(resolve(values["lessons-db"]));
+    lessons = async (task) => {
+      const r = await recallForWork(ldb, ["benchmark", "research"], task.description, {
+        eval: { benchmark: "mind2web2", mode: "measure" },
+      });
+      return { lines: r.inject.map(formatLesson), ids: r.inject.map((l) => l.id ?? "?") };
+    };
+    console.log(`lessons recall on (measurement mode, this board's own lessons excluded)`);
+  }
+  console.log(
+    `barred sources: ${M2W2_EXCLUDE.urls?.length ?? 0} URL prefix(es), ${M2W2_EXCLUDE.titles?.length ?? 0} title(s)`,
+  );
   console.log(
     `${arm.agent}: ${tasks.length} task(s) × runs [${runs.join(",")}], cap $${cap}${browser ? ", rendered reads on" : ""}`,
   );
@@ -155,6 +220,8 @@ async function run(): Promise<void> {
     ...(values.today ? { today: values.today } : {}),
     log: (l) => console.log(l),
     ...(browser ? { browser } : {}),
+    ...(swarm ? { swarm } : {}),
+    ...(lessons ? { lessons } : {}),
   });
   await browser?.close();
   const spent = recs.reduce((s, r) => s + r.costUsd, 0);
@@ -289,7 +356,7 @@ async function record(): Promise<void> {
   const arm = armOf(values.arm);
   const out = outDir();
   if (values.split === "all")
-    fail("--split tune|heldout is required for record (one ledger run per split)");
+    fail("--split tune|heldout|test is required for record (one ledger run per split)");
   const ids = splitIds();
   const scores = scoredAnswers(out, arm.agent, ids).filter(
     (s) => s.source === "judge" || s.score === 0,
@@ -304,7 +371,14 @@ async function record(): Promise<void> {
   const db = new MarinaDB(process.env.DB_PATH || "marina.db");
   const learning = enableOutcomeLearning(db);
   try {
-    const rec = recordJudgedRun(db, { arm, split: values.split!, scores, records, answers });
+    const rec = recordJudgedRun(db, {
+      arm,
+      split: values.split!,
+      scores,
+      records,
+      answers,
+      ...(values.group ? { replicateGroup: values.group } : {}),
+    });
     console.log(
       `ledger run ${rec.id}${rec.created ? "" : " (already recorded)"} — ${scores.length} item(s)`,
     );

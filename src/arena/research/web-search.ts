@@ -399,27 +399,71 @@ function foldTitle(title: string): string {
 const MIN_BARRED_TITLE = 16;
 
 /**
+ * Page keys a URL can stand for: its own, plus any URL embedded in its path or
+ * query — a reader proxy (`r.jina.ai/https://…`), an archive
+ * (`web.archive.org/web/2025/…`) or a redirector (`?url=https%3A%2F%2F…`)
+ * serves the embedded page, so a bar on that page bars them too. Lower case:
+ * a bar errs toward refusing.
+ */
+export function embeddedPageKeys(url: string): string[] {
+  const keys = [pageKey(url).toLowerCase()];
+  let rest: string;
+  try {
+    const u = new URL(url);
+    rest = `${u.pathname}${u.search}`;
+  } catch {
+    return keys;
+  }
+  for (let i = 0; i < 2; i++) {
+    try {
+      const d = decodeURIComponent(rest);
+      if (d === rest) break;
+      rest = d;
+    } catch {
+      break;
+    }
+  }
+  const at = /(?:^|[/=])((?:https?:\/\/?)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?:[/?][^\s]*)?)/gi;
+  for (const m of rest.matchAll(at)) {
+    if (keys.length > 8) break;
+    const inner = m[1]!.replace(/^https?:\/\/?/i, "");
+    const k = pageKey(`https://${inner}`).toLowerCase();
+    if (!keys.includes(k)) keys.push(k);
+  }
+  return keys;
+}
+
+/** One URL bar: a prefix at a path boundary; `*` stands for exactly one path segment. */
+function prefixMatcher(prefix: string): (key: string) => boolean {
+  const p = pageKey(/^https?:\/\//i.test(prefix) ? prefix : `https://${prefix}`).toLowerCase();
+  if (p.includes("*")) {
+    const body = p
+      .split("*")
+      .map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .join("[^/?#]+");
+    const re = new RegExp(`^${body}(?:$|[/?])`);
+    return (key) => re.test(key);
+  }
+  return (key) =>
+    key === p || key.startsWith(p.endsWith("/") ? p : `${p}/`) || key.startsWith(`${p}?`);
+}
+
+/**
  * A predicate for a brief's `exclude`: true when a page (URL, and title when
  * known) is barred. URL prefixes compare by `pageKey` (no scheme, `www.`,
- * tracking parameters or trailing slash) at a path boundary; titles by
- * containment after folding.
+ * tracking parameters or trailing slash; case-insensitive) at a path boundary,
+ * `*` standing for one path segment (an owner segment of `*` bars every fork);
+ * a URL that embeds a barred URL (proxy, archive, redirector) is barred; titles
+ * by containment after folding.
  */
 export function excludedSource(
   exclude: SourceExclusion | undefined,
 ): (url: string, title?: string) => boolean {
-  const prefixes = (exclude?.urls ?? []).map((u) =>
-    pageKey(/^https?:\/\//i.test(u) ? u : `https://${u}`),
-  );
+  const prefixes = (exclude?.urls ?? []).map(prefixMatcher);
   const titles = (exclude?.titles ?? []).map(foldTitle).filter((t) => t.length >= MIN_BARRED_TITLE);
   if (prefixes.length === 0 && titles.length === 0) return () => false;
   return (url, title) => {
-    const key = pageKey(url);
-    if (
-      prefixes.some(
-        (p) =>
-          key === p || key.startsWith(p.endsWith("/") ? p : `${p}/`) || key.startsWith(`${p}?`),
-      )
-    )
+    if (prefixes.length > 0 && embeddedPageKeys(url).some((k) => prefixes.some((m) => m(k))))
       return true;
     if (!title || titles.length === 0) return false;
     const t = foldTitle(title);

@@ -19,11 +19,18 @@
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { SourceExclusion } from "../../src/arena/research/briefs";
 import { getErrorMessage } from "../../src/engine/errors";
 import type { BrowserReader } from "../../src/research/browser-reader";
 import { modelTurns } from "../../src/research/model-turn";
+import { BARRED_REASON } from "../../src/research/page-reader";
 import { ProvenanceCache } from "../../src/research/provenance-cache";
-import { type Formation, researchEnvironment, runResearch } from "../../src/research/web-agent";
+import {
+  type Formation,
+  researchEnvironment,
+  runResearch,
+  type SwarmConfig,
+} from "../../src/research/web-agent";
 import { BudgetExhausted, type CallSpendGuard } from "../call-spend-guard";
 import type { M2W2Task } from "./tasks";
 
@@ -38,7 +45,7 @@ export interface Arm {
   researcherTurns?: number;
 }
 
-export const ARMS: Record<string, Arm> = {
+export const ARMS: Record<string, Arm & ArmExtras> = {
   single: {
     agent: "marina-single",
     formation: { kind: "single" },
@@ -54,6 +61,18 @@ export const ARMS: Record<string, Arm> = {
     maxTurns: 20,
     researcherTurns: 14,
   },
+  /** Every applicable feature: lead + researchers, cross-vendor verifier, read swarm. */
+  full: {
+    agent: "marina-full",
+    formation: { kind: "lead", researchers: 3 },
+    lead: "anthropic/claude-opus-5-5",
+    researcher: "anthropic/claude-opus-5-5",
+    verifier: "openai/gpt-6.1-sol",
+    maxTurns: 20,
+    researcherTurns: 14,
+    swarmReader: "openrouter/openai/gpt-6-luna",
+    swarmJudge: true,
+  },
 };
 
 /** Never fetched while answering: the benchmark's own tasks, judge scripts and board. */
@@ -64,6 +83,67 @@ export const M2W2_DENY = [
   "raw.githubusercontent.com/osu-nlp-group/mind2web-2",
   "osu-nlp-group.github.io/mind2web-2",
 ];
+
+/**
+ * The run's barred sources (the research pipeline's `SourceExclusion`): the
+ * benchmark's dataset (tasks, judge scripts with ground truth), repository and
+ * forks, project site and leaderboard, the paper and its mirrors, and known
+ * dataset mirrors. Applied to search results (dropped and counted), to every
+ * read (refused before any request, on each redirect hop and rendered request),
+ * and to page titles (a mirror under another URL). `*` is one path segment.
+ */
+export const M2W2_EXCLUDE: SourceExclusion = {
+  urls: [
+    // Hugging Face dataset (gated; holds test_set.csv and every judge script), its API and viewer
+    "huggingface.co/datasets/osunlp/mind2web-2",
+    "huggingface.co/api/datasets/osunlp/mind2web-2",
+    "hf.co/datasets/osunlp/mind2web-2",
+    "datasets-server.huggingface.co",
+    "huggingface.co/datasets/*/mind2web-2",
+    "huggingface.co/datasets/*/mind2web2",
+    "hf-mirror.com/datasets/*/mind2web-2",
+    "modelscope.cn/datasets/*/mind2web-2",
+    // the official repository, every fork or copy, raw files, archives and API
+    "github.com/osu-nlp-group/mind2web-2",
+    "github.com/*/mind2web-2",
+    "github.com/*/mind2web2",
+    "raw.githubusercontent.com/*/mind2web-2",
+    "raw.githubusercontent.com/*/mind2web2",
+    "codeload.github.com/*/mind2web-2",
+    "api.github.com/repos/*/mind2web-2",
+    "gitee.com/*/mind2web-2",
+    // project site and leaderboard
+    "osu-nlp-group.github.io/mind2web-2",
+    // the paper (arXiv 2506.21506) and its mirrors
+    "arxiv.org/abs/2506.21506",
+    "arxiv.org/abs/2506.21506v*",
+    "arxiv.org/pdf/2506.21506",
+    "arxiv.org/pdf/2506.21506v*",
+    "arxiv.org/html/2506.21506",
+    "arxiv.org/html/2506.21506v*",
+    "export.arxiv.org/abs/2506.21506",
+    "export.arxiv.org/abs/2506.21506v*",
+    "huggingface.co/papers/2506.21506",
+    "alphaxiv.org/abs/2506.21506",
+    "alphaxiv.org/abs/2506.21506v*",
+    "paperswithcode.com/paper/mind2web-2-evaluating-agentic-search-with",
+    "paperswithcode.com/dataset/mind2web-2",
+  ],
+  titles: [
+    "Mind2Web 2: Evaluating Agentic Search with Agent-as-a-Judge",
+    "osunlp/Mind2Web-2",
+    "OSU-NLP-Group/Mind2Web-2",
+    "Mind2Web 2 Leaderboard",
+  ],
+};
+
+/** Feature switches beyond the formation (all opt-in; recorded per run). */
+export interface ArmExtras {
+  /** Reader model spec for the read swarm tool (`provider/model`). */
+  swarmReader?: string;
+  /** The decision backend reranks the swarm's opening pool. */
+  swarmJudge?: boolean;
+}
 
 export type RunStatus = "answered" | "empty" | "error" | "budget";
 
@@ -102,6 +182,12 @@ export interface RunRecord {
   denied?: number;
   /** Pages read through the browser. */
   rendered?: number;
+  /** Search results dropped and reads refused as barred sources. */
+  barred?: { searchResults: number; reads: number };
+  /** Read swarm use. */
+  swarm?: { calls: number; docsRead: number; readerCalls: number; quotesVerified: number };
+  /** Ids of the judged lessons injected (none = recall found nothing or was off). */
+  lessons?: string[];
   answerChars?: number;
   error?: string;
 }
@@ -117,6 +203,10 @@ export interface RunOneOptions {
   log?: (line: string) => void;
   /** Opt-in rendered reads (`src/research/browser-reader.ts`). */
   browser?: BrowserReader;
+  /** The read swarm (`--swarm`). */
+  swarm?: SwarmConfig;
+  /** Recalled lessons for this task: formatted lines and their ids. */
+  lessons?: (task: M2W2Task) => Promise<{ lines: string[]; ids: string[] }>;
 }
 
 export function answerPath(out: string, agent: string, task: string, k: number): string {
@@ -137,8 +227,10 @@ export async function runOne(o: RunOneOptions): Promise<RunRecord> {
   const research = researchEnvironment({
     cache,
     deny: M2W2_DENY,
+    exclude: M2W2_EXCLUDE,
     env,
     ...(o.browser ? { browser: o.browser } : {}),
+    ...(o.swarm ? { swarm: o.swarm } : {}),
     onSearchSpend: (usd) => {
       searchUsd += usd;
       guard.add(usd);
@@ -180,11 +272,30 @@ export async function runOne(o: RunOneOptions): Promise<RunRecord> {
       searchFailures: research.stats.searchFailures,
       denied: cache.list().filter((p) => p.error === "refused by this run's deny list").length,
       rendered: cache.list().filter((p) => p.via === "browser").length,
+      barred: {
+        searchResults: research.stats.searchBarred,
+        reads: cache.list().filter((p) => p.error?.startsWith(BARRED_REASON)).length,
+      },
+      ...(research.stats.swarms > 0
+        ? {
+            swarm: {
+              calls: research.stats.swarms,
+              docsRead: research.stats.swarm?.docsRead ?? 0,
+              readerCalls: research.stats.swarm?.readerCalls ?? 0,
+              quotesVerified: research.stats.swarm?.quotesVerified ?? 0,
+            },
+          }
+        : {}),
+      ...(lessonIds ? { lessons: lessonIds } : {}),
     };
   };
   let rec: RunRecord;
+  let lessonIds: string[] | undefined;
   try {
+    const recalled = o.lessons ? await o.lessons(task) : undefined;
+    lessonIds = recalled?.ids;
     const result = await runResearch({
+      ...(recalled?.lines.length ? { lessons: recalled.lines } : {}),
       task: task.description,
       env: research,
       lead,
@@ -258,6 +369,8 @@ export async function runBatch(o: {
   today?: string;
   log?: (line: string) => void;
   browser?: BrowserReader;
+  swarm?: SwarmConfig;
+  lessons?: RunOneOptions["lessons"];
 }): Promise<RunRecord[]> {
   const jobs = o.tasks.flatMap((task) =>
     o.runs
@@ -281,6 +394,8 @@ export async function runBatch(o: {
           ...(o.today ? { today: o.today } : {}),
           ...(o.log ? { log: o.log } : {}),
           ...(o.browser ? { browser: o.browser } : {}),
+          ...(o.swarm ? { swarm: o.swarm } : {}),
+          ...(o.lessons ? { lessons: o.lessons } : {}),
         }),
       );
     }
