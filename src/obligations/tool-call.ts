@@ -5,7 +5,8 @@
  * Read/write classification of ONE tool call, shared by the obligations ledger
  * and the argument check (passthru and agent loops alike).
  *
- * Most tools are classified by name (or a declared `readOnlyHint`). A generic
+ * Most tools are classified by `toolEffect` (`tool-effect.ts`: declared hints,
+ * name, description, schema). A generic
  * dispatcher is different: one tool whose arguments name the tool or action to
  * run and carry that tool's arguments (`{tool: "get_account", arguments: {…}}`,
  * `{action: "refund", params: "{…}"}`, `{agent_tool_name: …, arguments: …}`).
@@ -30,6 +31,8 @@
  * read-only (declared or by name) stays read-only.
  */
 
+import { declaredProperties, declOf, type ToolEffectRole, toolEffect } from "./tool-effect";
+
 /** Keys whose value names the dispatched tool or action. */
 const NAME_KEY =
   /^(?:tool|tool_?name|tool_?id|action|action_name|name|function|function_name|method|operation|op|command)$|(?:^|_)tool_?name$/i;
@@ -47,36 +50,6 @@ export interface DispatchedCall {
   /** The argument keys the inner name and arguments sat under. */
   nameKey: string;
   argsKey: string;
-}
-
-type ToolDecl = {
-  name?: unknown;
-  function?: { name?: unknown; parameters?: unknown };
-  parameters?: unknown;
-  input_schema?: unknown;
-  inputSchema?: unknown;
-  annotations?: { readOnlyHint?: unknown; destructiveHint?: unknown };
-};
-
-/** The declaration of `name` among OpenAI-, Anthropic- or MCP-shaped tool lists. */
-function declOf(name: string, tools: readonly unknown[] | undefined): ToolDecl | undefined {
-  for (const t of tools ?? []) {
-    const d = t as ToolDecl | null;
-    if (!d || typeof d !== "object") continue;
-    if (d.function?.name === name || d.name === name) return d;
-  }
-  return undefined;
-}
-
-/** A declaration's parameter properties (undefined when it declares none). */
-function declaredProperties(d: ToolDecl | undefined): Record<string, unknown> | undefined {
-  const schema = (d?.function?.parameters ?? d?.parameters ?? d?.input_schema ?? d?.inputSchema) as
-    | { properties?: unknown }
-    | undefined;
-  const p = schema?.properties;
-  return p && typeof p === "object" && !Array.isArray(p)
-    ? (p as Record<string, unknown>)
-    : undefined;
 }
 
 function parseObject(v: unknown): Record<string, unknown> | undefined {
@@ -126,19 +99,18 @@ export function dispatchedCall(
 }
 
 /**
- * True when a call cannot change state. `readOnlyName` is the surface's own
- * name rule (it may consult declared hints). The outer tool decides first: a
- * declared `readOnlyHint: true`, or a read-only name, is read-only. Otherwise a
- * dispatcher call is read-only when its INNER tool is (by the same rule).
+ * True when a call cannot change state. The outer tool decides first
+ * (`toolEffect` in `role`, default `guard`): a read-only outer tool is
+ * read-only. Otherwise a dispatcher call is read-only when its INNER tool is,
+ * by the same rule (the inner tool is usually undeclared, so its name decides).
  */
 export function readOnlyCall(
   name: string,
   args: unknown,
-  readOnlyName: (name: string) => boolean,
-  tools?: readonly unknown[],
+  opts: { tools?: readonly unknown[]; role?: ToolEffectRole } = {},
 ): boolean {
-  if (declOf(name, tools)?.annotations?.readOnlyHint === true) return true;
-  if (readOnlyName(name)) return true;
+  const { tools, role = "guard" } = opts;
+  if (toolEffect(name, tools, role).readOnly) return true;
   const inner = dispatchedCall(name, args, tools);
-  return inner ? readOnlyName(inner.name) : false;
+  return inner ? toolEffect(inner.name, tools, role).readOnly : false;
 }

@@ -23,6 +23,7 @@ import { getErrorMessage } from "../../engine/errors";
 import { Logger } from "../../engine/logger";
 import { evalOption } from "../../learning/eval-context";
 import { lessonsBlock, lessonsHeaderValue, recallForWork } from "../../learning/service";
+import { isReadOnlyTool } from "../../obligations/tool-effect";
 import type { RepairLabel } from "../../repair/output-repair";
 import { repairToolCallMessage } from "../../repair/tool-call-repair";
 import type { EntityId } from "../../types";
@@ -469,24 +470,12 @@ export function revisionNote(draft: Msg, issues: string, conflict?: VerdictConfl
 // never to an id that appears nowhere in the conversation or its tool results.
 // Anything else returns the draft (fail open).
 
-/** Read-only by name when the tool declares nothing (lookups, calculators, notes to self). */
-const READ_ONLY_NAME =
-  /^(get|list|find|search|lookup|look_up|read|fetch|query|calculate|compute|check|describe|show|view|count|think|retrieve|validate|preview)(_|$)/i;
-
-type ToolDecl = {
-  function?: { name?: string };
-  annotations?: { readOnlyHint?: unknown; destructiveHint?: unknown };
-};
-
-/** True when a tool call cannot change state: a declared hint wins, else a read-only name. */
+/**
+ * True when a tool call cannot change state (`toolEffect`, `guard` role: a
+ * declared hint wins, then name/description verbs; anything unplaced is a write).
+ */
 export function isReadOnlyToolCall(name: string, tools: unknown[] | undefined): boolean {
-  const decl = (tools ?? []).find((t) => (t as ToolDecl).function?.name === name) as
-    | ToolDecl
-    | undefined;
-  const hints = decl?.annotations;
-  if (hints?.readOnlyHint === true) return true;
-  if (hints?.readOnlyHint === false || hints?.destructiveHint === true) return false;
-  return READ_ONLY_NAME.test(name);
+  return isReadOnlyTool(name, tools, "guard");
 }
 
 interface WriteCall {
