@@ -8,6 +8,8 @@
  *   DB_PATH=marina.db bun run lessons backfill [--dry-run] [--limit N] [--relearn-rejected]
  *   DB_PATH=marina.db bun run lessons rank [--domain d[,d…]] [--limit N] [--out rows.jsonl]
  *   DB_PATH=marina.db bun run lessons replay --ranks rows.jsonl [--domain d[,d…]] [--cutoff ISO]
+ *   DB_PATH=copy.db   bun run lessons backfill-work --dry-run [--since ISO] [--usd-per-call X]
+ *   DB_PATH=marina.db bun run lessons backfill-work --yes [--since ISO] [--limit N]
  *
  * `backfill` feeds every valid, scored ledger run that has no lesson yet
  * through the judged outcome loop once (`backfillLedgerLessons`): ids, scores,
@@ -27,6 +29,16 @@
  * database; it prints the actions admission would take (merges, supersedes,
  * contradictions) and, with `--out`, one JSONL row per lesson.
  *
+ * `backfill-work` scans what the database already recorded (agent tool
+ * results, gate holds, argument-check flags, verifier bounces and task
+ * verdicts in `event_log`, answered challenges, Code Mode exec denials)
+ * through the live collector (`src/learning/work.ts`) and reports candidate
+ * outcomes per source. `--dry-run` opens the file READ-ONLY, makes no model
+ * call and prints the estimated cost of learning them (writer + judge calls ×
+ * `--usd-per-call`, default 0.002). `--yes` learns at most `--limit` (default
+ * 50) patterns through the judged loop, owner-scoped as on the server,
+ * skipping patterns already learned or retired, stopping at the spend cap.
+ *
  * `replay` is the offline recall replay (src/learning/replay.ts): held-out
  * tasks over a frozen snapshot, today's order vs ranked serving with the
  * observed merges, reporting distractor, duplicate, contradiction-exposure and
@@ -40,9 +52,11 @@
  * database first; `--dry-run` lists what would be learned without writing.
  */
 
+import { Database } from "bun:sqlite";
 import { readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { harnessDecisionProvider } from "../src/decisions/engines";
+import { SpendGuard } from "../src/engine/spend-guard";
 import { attachDbSpendLedger, dailyCapRefusal, spentTodayUsd } from "../src/engine/spend-ledger";
 import { lessonAdmission } from "../src/learning/admission";
 import { backfillLedgerLessons } from "../src/learning/backfill";
@@ -50,13 +64,21 @@ import { OUTCOME_DOMAINS, type OutcomeDomain } from "../src/learning/outcomes";
 import { type RankRow, rankPass } from "../src/learning/rank-pass";
 import { replayRecall } from "../src/learning/replay";
 import {
+  canHoldOwnLessons,
   lessonJudgeFromEnv,
   lessonRecallSinkFor,
   lessonSinkFor,
   lessonsMetaMode,
   lessonsMode,
   lessonWriterFromEnv,
+  ownerLessonSink,
 } from "../src/learning/service";
+import { learnPatterns } from "../src/learning/work";
+import {
+  CALLS_PER_OUTCOME,
+  scanWorkHistory,
+  type WorkScanReport,
+} from "../src/learning/work-backfill";
 import { memoryRankingMode } from "../src/memory/admission";
 import { MarinaDB } from "../src/persistence/database";
 
@@ -72,11 +94,14 @@ const { positionals, values } = parseArgs({
     ranks: { type: "string" },
     cutoff: { type: "string" },
     concurrency: { type: "string" },
+    since: { type: "string" },
+    yes: { type: "boolean" },
+    "usd-per-call": { type: "string" },
   },
 });
 
 const USAGE =
-  "usage: bun run lessons backfill [--dry-run] [--limit N] [--relearn-rejected] | rank [--domain d] [--limit N] [--out f.jsonl] | replay --ranks f.jsonl [--domain d] [--cutoff ISO]";
+  "usage: bun run lessons backfill [--dry-run] [--limit N] [--relearn-rejected] | rank [--domain d] [--limit N] [--out f.jsonl] | replay --ranks f.jsonl [--domain d] [--cutoff ISO] | backfill-work --dry-run|--yes [--since ISO] [--limit N] [--usd-per-call X]";
 
 function fail(msg: string): never {
   console.error(`lessons: ${msg}`);
@@ -84,7 +109,13 @@ function fail(msg: string): never {
 }
 
 const command = positionals[0];
-if (command !== "backfill" && command !== "rank" && command !== "replay") fail(USAGE);
+if (
+  command !== "backfill" &&
+  command !== "rank" &&
+  command !== "replay" &&
+  command !== "backfill-work"
+)
+  fail(USAGE);
 if (lessonsMode() === "off") fail("MARINA_LESSONS=off: nothing is learned");
 const intArg = (name: string, raw: string | undefined) => {
   if (raw === undefined) return undefined;
@@ -98,10 +129,16 @@ const domains = (values.domain?.split(",").map((d) => d.trim().toLowerCase()) ??
   OUTCOME_DOMAINS) as OutcomeDomain[];
 for (const d of domains) if (!OUTCOME_DOMAINS.includes(d)) fail(`unknown domain ${d}`);
 
+if (command === "backfill-work" && !values.yes) {
+  await backfillWorkDryRun();
+  process.exit(0);
+}
+
 const db = new MarinaDB(process.env.DB_PATH || "marina.db");
 const release = attachDbSpendLedger(db);
 try {
   if (command === "backfill") await backfill();
+  else if (command === "backfill-work") await backfillWork();
   else if (command === "rank") await rank();
   else await replay();
 } finally {
@@ -159,6 +196,83 @@ async function backfill() {
   );
   if (report.stopped) console.log(`stopped early: ${report.stopped}`);
   if (report.failed || report.stopped) process.exitCode = 1;
+}
+
+function sinceMs(): number | undefined {
+  if (!values.since) return undefined;
+  const t = Date.parse(values.since);
+  if (!Number.isFinite(t)) fail("--since must be an ISO date");
+  return t;
+}
+
+function printScan(scan: WorkScanReport): void {
+  const fmt = (o: Record<string, number>) =>
+    Object.entries(o)
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `${k}=${v}`)
+      .join(", ") || "none";
+  console.log(`rows read: ${fmt(scan.rows)}`);
+  console.log(`signals: ${fmt(scan.signals)}; unscoped (never learned) ${scan.unscoped}`);
+  console.log(
+    `patterns ${scan.patterns.length}; candidate outcomes (at their floor): ${fmt(scan.candidates)}`,
+  );
+  console.log(`candidates by scope: shared ${scan.byScope.shared}, owner ${scan.byScope.owner}`);
+}
+
+/** Read-only scan: counts and a cost estimate, no model call, nothing written. */
+async function backfillWorkDryRun() {
+  if (!values["dry-run"])
+    fail("backfill-work learns only with --yes (paid); use --dry-run for counts");
+  const path = process.env.DB_PATH || "marina.db";
+  const raw = new Database(path, { readonly: true });
+  try {
+    const since = sinceMs();
+    const scan = scanWorkHistory(raw, since === undefined ? {} : { sinceMs: since });
+    printScan(scan);
+    const outcomes = Object.values(scan.candidates).reduce((a, b) => a + b, 0);
+    const take = Math.min(outcomes, limit ?? 50);
+    const perCall = Number(values["usd-per-call"] ?? "0.002");
+    if (!Number.isFinite(perCall) || perCall < 0) fail("--usd-per-call must be a number ≥ 0");
+    const calls = CALLS_PER_OUTCOME.writer + CALLS_PER_OUTCOME.judge;
+    console.log(
+      `estimate: ${take} outcome(s) (of ${outcomes}) × ${calls} model calls (+ up to ${CALLS_PER_OUTCOME.admissionMax} admission call with ranking on) × $${perCall}/call ≈ $${(take * calls * perCall).toFixed(4)}–$${(take * (calls + CALLS_PER_OUTCOME.admissionMax) * perCall).toFixed(4)}; read-only, nothing written`,
+    );
+  } finally {
+    raw.close();
+  }
+}
+
+/** The paid pass: learn the scanned patterns through the judged loop. */
+async function backfillWork() {
+  const since = sinceMs();
+  const raw = new Database(process.env.DB_PATH || "marina.db", { readonly: true });
+  let scan: WorkScanReport;
+  try {
+    scan = scanWorkHistory(raw, since === undefined ? {} : { sinceMs: since });
+  } finally {
+    raw.close();
+  }
+  printScan(scan);
+  const rankingJudge = harnessDecisionProvider();
+  const writer = lessonWriterFromEnv();
+  const admit = lessonAdmission({ db, ...(rankingJudge ? { judge: rankingJudge } : {}) });
+  const guard = new SpendGuard({ label: "lessons backfill-work" });
+  const report = await learnPatterns(scan.patterns, {
+    mode: "on",
+    sharedSink: lessonSinkFor(db),
+    ownerSink: (owner) => (canHoldOwnLessons(db, owner) ? ownerLessonSink(db, owner) : undefined),
+    ...(writer ? { writer } : {}),
+    judge: lessonJudgeFromEnv(),
+    ...(admit ? { admit } : {}),
+    maxPerFlush: limit ?? 50,
+    stopReason: () => guard.stopReason(),
+  });
+  for (const r of report.records)
+    console.log(`  ${r.trust} — ${r.source}${r.lessonId ? ` (${r.lessonId.slice(0, 8)})` : ""}`);
+  console.log(
+    `learned ${report.learned}; already learned or retired ${report.duplicates}; skipped spend ${report.skipped.spend}, cap ${report.skipped.cap}, no scope ${report.skipped.noScope}; failed ${report.failed}`,
+  );
+  if (report.failed || report.skipped.spend) process.exitCode = 1;
 }
 
 async function rank() {

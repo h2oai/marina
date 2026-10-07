@@ -8,6 +8,7 @@ import type { BoardManager } from "../coordination/board-manager";
 import type { ChannelManager } from "../coordination/channel-manager";
 import type { TaskManager } from "../coordination/task-manager";
 import type { FlywheelToolBackend } from "../integrations/flywheel-manager";
+import { flushWorkLessons } from "../learning/work";
 import { memoryObservabilityPollTicks, pollMemoryEvents } from "../net/memory-observability";
 import { cleanupStaleConversationChannels } from "../net/model-api";
 import type { MarinaDB } from "../persistence/database";
@@ -305,4 +306,22 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
       if (host.db) host.applyRankProgression(host.db);
     },
   });
+
+  // Hourly (own phase): lessons from work (MARINA_LESSONS_FROM_WORK, default
+  // off). The aggregated tool-work patterns become judged lessons (on) or a
+  // counts-only log line (observe). Async and self-bounded (MAX_PER_FLUSH,
+  // daily spend cap); never overlaps itself.
+  s.register({
+    name: "lessons-from-work",
+    every: NOTE_IMPORTANCE_INTERVAL,
+    phase: LESSONS_FROM_WORK_PHASE,
+    failureMessage: "Lessons from work failed",
+    run: async () => {
+      if (!host.db) return;
+      await flushWorkLessons(host.db);
+    },
+  });
 }
+
+/** The hourly phase of the lessons-from-work flush (distinct from every other hourly job). */
+export const LESSONS_FROM_WORK_PHASE = 3300;

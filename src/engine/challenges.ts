@@ -54,6 +54,7 @@
 
 import { harnessDecisionProvider } from "../decisions/engines";
 import { gateToolCall, maskSensitiveText } from "../decisions/gate";
+import { noteWorkFor } from "../learning/work";
 import type { MarinaDB } from "../persistence/database";
 import type { CodingCommandTarget } from "../sdk/command-target";
 import type { Entity, EntityRank } from "../types";
@@ -248,6 +249,17 @@ function recordOutcome(
   } catch {
     // The ledger is measurement, never a reason for an answer to fail.
   }
+  // Lessons from work (MARINA_LESSONS_FROM_WORK): the answer's class and kind
+  // only; the summary is writer context, never stored.
+  noteWorkFor(db, c.requesterName, {
+    source: "challenge",
+    tool: challengeClass(c),
+    errorClass: answer,
+    succeeded: answer === "once" || answer === "always",
+    at: Date.now(),
+    ref: `challenge:${c.token}`,
+    privateText: `${maskSensitiveText(c.summary, 240)}\n${c.reason}`,
+  });
 }
 
 export interface JudgeRecord {

@@ -40,6 +40,7 @@ import {
 } from "../../../coding/verification-plan";
 import { summarizeFlywheelEvents, WorkspaceGateway } from "../../../coding/workspace-gateway";
 import { lessonsBlock, noteOutcome, recallForWork } from "../../../learning/service";
+import { noteWorkFor } from "../../../learning/work";
 import { dim, error as fmtError, header, separator, success } from "../../../net/ansi";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Connection, Entity, EntityId, RoomContext } from "../../../types";
@@ -953,6 +954,17 @@ function makeExecAudit(
         outcome: decision.outcome ?? (decision.approved ? "approved" : "denied"),
       },
     });
+    // Lessons from work: a denied program NAME and outcome only (never argv).
+    if (!decision.approved)
+      noteWorkFor(deps.db, deps.getEntity(req.entityId)?.name ?? session.created_by, {
+        source: "code-exec-denied",
+        tool: req.argv[0] ?? "exec",
+        errorClass: decision.outcome ?? "denied",
+        succeeded: false,
+        at: Date.now(),
+        ref: `artifact:${artifact.id}`,
+        ...(decision.reason ? { privateText: decision.reason } : {}),
+      });
     // A supervised (human-approved) interactive arbitrary exec is a witnessed
     // demonstration toward code.exec.unrestricted — this is how an entity earns
     // the unsupervised competence the headless path later requires. ONLY a

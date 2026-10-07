@@ -24,6 +24,7 @@ import {
   reflectorIdleStopMs,
 } from "../engine/constants";
 import { Logger } from "../engine/logger";
+import { classifyToolError, softFailureClass } from "../learning/tool-errors";
 import {
   HUGGINGFACE_ENV_KEYS,
   inferModelCapabilities,
@@ -349,16 +350,22 @@ export function createAgentEventRelay(
           timestamp: now,
         });
         break;
-      case "tool_result":
+      case "tool_result": {
+        // A mechanical label of a failure (never the result text): lessons from work.
+        const errorClass = event.isError
+          ? classifyToolError(event.result)
+          : softFailureClass(event.result);
         onEvent({
           type: "agent_tool_result",
           name,
           toolName: event.toolName,
           ...executionTrace.trace("tool_result", event.toolName),
           isError: event.isError,
+          ...(errorClass ? { errorClass } : {}),
           timestamp: now,
         });
         break;
+      }
       case "turn_start":
         onEvent({
           type: "agent_turn_start",

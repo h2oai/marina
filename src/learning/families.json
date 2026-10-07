@@ -50,6 +50,7 @@
     "forecastbench": ["forecast.binary"],
     "metaculus": ["forecast.binary"],
     "arena": ["forecast.timeseries"],
-    "obligations": ["tool-agent.policy"]
+    "obligations": ["tool-agent.policy"],
+    "work": ["tool-agent.policy"]
   }
 }

@@ -22,6 +22,7 @@ import {
   prepareArgcheck,
   statedFromLedger,
 } from "./argcheck";
+import { notePassthruRecoveries, passthruLearnOwner } from "./learn";
 import {
   finishObligations,
   OBLIGATIONS_MODEL_PREFIX,
@@ -285,13 +286,22 @@ export async function runOpenaiChat(
       // the same on every turn of one conversation and changes only when the
       // lesson pool does; the addendum rides after the cache breakpoints
       // (`passthruUpstreamHints`), so the cached prefix never depends on it.
+      // A bound key's own lessons (learned from its opted-in work) ride with the
+      // shared pool; Marina's own agents read only the shared pool here.
+      const lessonOwner =
+        authResult && !isInternalCaller(authResult) ? authResult.boundEntityName : undefined;
       const lessons = lessonsOptIn
         ? await recallForWork(engine.db, PASSTHRU_LESSON_DOMAINS, lessonQuery(messages), {
             limit: 4,
             maxBytes: 800,
             ...evalOption(req),
+            ...(lessonOwner ? { owner: lessonOwner } : {}),
           })
         : undefined;
+      // Lessons from work: an explicitly opted-in, bound, non-measurement
+      // conversation's tool recoveries teach its owner (`x-marina-learn: on`).
+      const learnOwner = passthruLearnOwner(req, authResult);
+      if (learnOwner) notePassthruRecoveries(engine.db, learnOwner, messages);
       const lessonText = lessons ? lessonsBlock(lessons.inject) : "";
       const prep = lessonText
         ? {
@@ -322,6 +332,7 @@ export async function runOpenaiChat(
         ...(prep.identity?.entityId ? { entityId: prep.identity.entityId } : {}),
         ...(authResult ? { auth: authResult } : {}),
         ...(obligations ? { stated: statedFromLedger(obligations.ledger) } : {}),
+        ...(learnOwner ? { learnOwner } : {}),
       });
       const cached =
         obligations || argcheck

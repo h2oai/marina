@@ -9,6 +9,7 @@ import {
   type OutcomeDomain,
 } from "../../learning/outcomes";
 import { findLessons, recallAcross, retireLessons, supersedeLesson } from "../../learning/service";
+import { workScopeFor } from "../../learning/work";
 import { dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, CommandInput, EntityId, RoomContext } from "../../types";
@@ -173,7 +174,15 @@ export function lessonsCommand(deps: { db?: MarinaDB }): CommandDef {
         return;
       }
       const domains = domainArg ? [domainArg as OutcomeDomain] : OUTCOME_DOMAINS;
-      const got = await recallAcross(deps.db, domains, topic, { limit: 8, maxBytes: 2_400 });
+      // The asker's own lessons (learned from its private work) ride with the
+      // shared pool: a person reads its own, an agent its owner's.
+      const name = ctx.getEntity?.(input.entity)?.name;
+      const scope = name ? workScopeFor(deps.db, name) : undefined;
+      const got = await recallAcross(deps.db, domains, topic, {
+        limit: 8,
+        maxBytes: 2_400,
+        ...(scope?.kind === "owner" ? { owner: scope.owner } : {}),
+      });
       if (got.mode === "off") {
         ctx.send(input.entity, "Lessons are off (MARINA_LESSONS=off).");
         return;
