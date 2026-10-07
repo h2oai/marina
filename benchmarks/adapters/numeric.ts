@@ -26,7 +26,9 @@ export function extractAnswer(rawResponse: string): string {
   if (gsm) return gsm[1]!.replace(/,/g, "").trim();
 
   // 3. "The answer is X" / "Final answer: X"
-  const explicit = response.match(/(?:the\s+)?(?:final\s+)?answer\s*(?:is|:|=)\s*\$?([^\n.,]+?)(?:\.|,|\n|$)/i);
+  const explicit = response.match(
+    /(?:the\s+)?(?:final\s+)?answer\s*(?:is|:|=)\s*\$?([^\n.,]+?)(?:\.|,|\n|$)/i,
+  );
   if (explicit) return explicit[1]!.trim().replace(/^[$\s]+|[$\s]+$/g, "");
 
   // 4. Last number in text
@@ -36,37 +38,192 @@ export function extractAnswer(rawResponse: string): string {
   return "";
 }
 
-/** Normalize numeric strings for comparison.
- *  Handles: "1,000" → "1000", "1/2" → "0.5", "$42" → "42", "\frac{1}{2}" → "0.5" */
-function normalize(s: string): string {
-  let t = s.trim().toLowerCase();
-  t = t.replace(/[,$\\]/g, "");
-  t = t.replace(/^\s*\{|\}\s*$/g, "");
-  t = t.replace(/\\frac\{(-?\d+)\}\{(-?\d+)\}/g, (_m, a, b) => {
-    const n = Number.parseFloat(a) / Number.parseFloat(b);
-    return Number.isFinite(n) ? n.toString() : _m;
-  });
-  // Simple fraction a/b
-  const frac = t.match(/^(-?\d+)\/(-?\d+)$/);
-  if (frac) {
-    const n = Number.parseFloat(frac[1]!) / Number.parseFloat(frac[2]!);
-    if (Number.isFinite(n)) t = n.toString();
-  }
-  // Trailing zeros on decimals
-  if (/^-?\d+\.\d+$/.test(t)) t = Number.parseFloat(t).toString();
-  return t;
+/** Evaluate a small LaTeX-ish numeric answer to a float, or null. Supports
+ *  integers/decimals, a/b, \frac{a}{b} (braced or single-digit arguments),
+ *  \sqrt{n}, \pi, unary minus, implicit multiplication, degrees and
+ *  sums/differences. Grading-only. */
+function evalLatex(s: string): number | null {
+  const t = s
+    .replace(/\\text[a-z]*\{[^}]*\}/gi, "")
+    .replace(/\^\s*\\circ|\\circ|\\degree/g, "")
+    .replace(/^[a-z]\s*=\s*/i, "")
+    .replace(/\\[ ,;:!]/g, "")
+    .replace(/\\pi/g, "π");
+  if (!t) return null;
+  const r = parseSum(t, 0);
+  return r && skipSpace(t, r.next) === t.length ? r.value : null;
 }
 
-function answersMatch(a: string, b: string): boolean {
-  const na = normalize(a);
-  const nb = normalize(b);
-  if (na === nb) return true;
-  const fa = Number.parseFloat(na);
-  const fb = Number.parseFloat(nb);
-  if (Number.isFinite(fa) && Number.isFinite(fb)) {
-    return Math.abs(fa - fb) < 1e-6;
+function skipSpace(t: string, i: number): number {
+  while (i < t.length && /\s/.test(t[i]!)) i++;
+  return i;
+}
+
+/** The single-digit argument of an unbraced \frac (`\frac12`). */
+function readDigit(t: string, i: number): { value: number; next: number } | null {
+  i = skipSpace(t, i);
+  return i < t.length && /\d/.test(t[i]!) ? { value: Number(t[i]!), next: i + 1 } : null;
+}
+
+/** Content of the braced group at t[i] === "{" and the index after its close. */
+function braced(t: string, i: number): { content: string; next: number } | null {
+  if (t[i] !== "{") return null;
+  let depth = 0;
+  for (let j = i; j < t.length; j++) {
+    if (t[j] === "{") depth++;
+    else if (t[j] === "}") {
+      depth--;
+      if (depth === 0) return { content: t.slice(i + 1, j), next: j + 1 };
+    }
   }
-  return false;
+  return null;
+}
+
+function parseSum(t: string, i: number): { value: number; next: number } | null {
+  i = skipSpace(t, i);
+  const first = parseProduct(t, i);
+  if (!first) return null;
+  let value = first.value;
+  let next = skipSpace(t, first.next);
+  while (next < t.length && (t[next] === "+" || t[next] === "-")) {
+    const sign = t[next] === "-" ? -1 : 1;
+    const term = parseProduct(t, next + 1);
+    if (!term) return null;
+    value += sign * term.value;
+    next = skipSpace(t, term.next);
+  }
+  return { value, next };
+}
+
+function parseProduct(t: string, i: number): { value: number; next: number } | null {
+  i = skipSpace(t, i);
+  const first = parseFactor(t, i);
+  if (!first) return null;
+  let value = first.value;
+  let next = skipSpace(t, first.next);
+  while (next < t.length && t[next] !== "+" && t[next] !== "-" && t[next] !== ")") {
+    const divide = t[next] === "/";
+    const f = parseFactor(t, divide ? next + 1 : next);
+    if (!f) return null;
+    if (divide) {
+      if (f.value === 0) return null;
+      value /= f.value;
+    } else value *= f.value;
+    next = skipSpace(t, f.next);
+  }
+  return { value, next };
+}
+
+function parseFactor(t: string, i: number): { value: number; next: number } | null {
+  i = skipSpace(t, i);
+  if (i >= t.length) return null;
+  const num = t.slice(i).match(/^(?:\d+(?:\.\d+)?|\.\d+)/);
+  if (num) return { value: Number.parseFloat(num[0]), next: i + num[0].length };
+  if (t[i] === "-") {
+    const f = parseFactor(t, i + 1);
+    return f ? { value: -f.value, next: f.next } : null;
+  }
+  if (t[i] === "π") return { value: Math.PI, next: i + 1 };
+  if (t[i] === "(") {
+    const r = parseSum(t, i + 1);
+    if (!r) return null;
+    const close = skipSpace(t, r.next);
+    return t[close] === ")" ? { value: r.value, next: close + 1 } : null;
+  }
+  if (t.startsWith("\\sqrt", i)) {
+    const g = braced(t, i + 5);
+    if (!g) return null;
+    const inner = evalLatex(g.content);
+    return inner === null || inner < 0 ? null : { value: Math.sqrt(inner), next: g.next };
+  }
+  if (t.startsWith("\\frac", i)) {
+    let next = i + 5;
+    const g1 = braced(t, skipSpace(t, next));
+    let num: number;
+    if (g1) {
+      const v = evalLatex(g1.content);
+      if (v === null) return null;
+      num = v;
+      next = g1.next;
+    } else {
+      const f = readDigit(t, next);
+      if (!f) return null;
+      num = f.value;
+      next = f.next;
+    }
+    next = skipSpace(t, next);
+    const g2 = braced(t, next);
+    let den: number;
+    if (g2) {
+      const v = evalLatex(g2.content);
+      if (v === null) return null;
+      den = v;
+      next = g2.next;
+    } else {
+      const f = readDigit(t, next);
+      if (!f) return null;
+      den = f.value;
+      next = f.next;
+    }
+    return den === 0 ? null : { value: num / den, next };
+  }
+  return null;
+}
+
+/** The elements of a bracketed tuple/interval/vector, or null if `s` is not one. */
+function tupleParts(s: string): string[] | null {
+  const t = s
+    .replace(/\\left|\\right/g, "")
+    .replace(/\s+/g, "")
+    .replace(/^\$|\$$/g, "");
+  const m = t.match(/^[([](.*)[)\]]$/);
+  if (!m || !m[1]!.includes(",")) return null;
+  return m[1]!.split(",");
+}
+
+/** Whitespace-insensitive tuple/vector comparison, with numeric tolerance. */
+function tuplesMatch(a: string, b: string): boolean {
+  const pa = tupleParts(a);
+  const pb = tupleParts(b);
+  if (!pa || !pb || pa.length !== pb.length) return false;
+  return pa.every((x, i) => {
+    const na = evalLatex(x);
+    const nb = evalLatex(pb[i]!);
+    if (na !== null && nb !== null) return numsClose(na, nb);
+    return x === pb[i];
+  });
+}
+
+/** Two integers must be equal; otherwise a decimal approximation within
+ *  2·10⁻⁴ relative (√3 ≈ 1.7321) counts. */
+const numsClose = (a: number, b: number): boolean => {
+  if (a === b) return true;
+  if (Number.isInteger(a) && Number.isInteger(b)) return false;
+  return Math.abs(a - b) <= Math.max(1e-6, 2e-4 * Math.max(Math.abs(a), Math.abs(b)));
+};
+
+/** Drop dollar signs (plain or escaped) and thousands separators (`1,250` → `1250`). */
+function clean(s: string): string {
+  return s
+    .trim()
+    .replace(/\\?\$/g, "")
+    .replace(/(\d),(?=\d{3}(?!\d))/g, "$1");
+}
+
+export function answersMatch(a: string, b: string): boolean {
+  // Tuples first, on the raw text: "(1,250)" is a pair, not one thousand two hundred fifty.
+  if (tupleParts(a) && tupleParts(b)) return tuplesMatch(a, b);
+  const va = evalLatex(clean(a));
+  const vb = evalLatex(clean(b));
+  if (va !== null && vb !== null) return numsClose(va, vb);
+  // Fall back to normalized string equality (LaTeX spacing, case, whitespace).
+  const rough = (x: string) =>
+    clean(x)
+      .toLowerCase()
+      .replace(/\\[ ,;:!]/g, "")
+      .replace(/\\/g, "")
+      .replace(/\s+/g, "");
+  return rough(a) === rough(b);
 }
 
 export async function runNumeric(

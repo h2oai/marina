@@ -278,6 +278,7 @@ function parseCliArgs() {
       seed: { type: "string", short: "s" },
       partition: { type: "string" },
       timeout: { type: "string" },
+      ground: { type: "string" },
       compare: { type: "string" },
       "file-to": { type: "string" },
       "no-file": { type: "boolean" },
@@ -313,6 +314,7 @@ function parseCliArgs() {
     seed: str("seed"),
     partition: str("partition"),
     timeout: str("timeout"),
+    ground: str("ground"),
     compare: str("compare"),
     "file-to": str("file-to"),
     "no-file": values["no-file"] === true,
@@ -657,6 +659,8 @@ Options:
   -c, --concurrency <n>     Parallel requests (default: 5)
   -s, --seed <n>            Random seed for subset selection
       --timeout <ms>        Per-request timeout (default: HARNESS_TIMEOUT_MS, else 600000)
+      --ground search       Short-answer only: give the model live search results first;
+                            the benchmark's own dataset and repository pages are barred
       --compare <mode>      Run comparison (e.g., --compare passthrough)
       --file-to <url>       File the finished run into that Marina's benchmark ledger
                             (POST /v1/benchmarks/runs; key: MARINA_LEDGER_API_KEY, else
@@ -734,6 +738,19 @@ Options:
     process.exit(1);
   }
 
+  if (args.ground !== undefined) {
+    if (args.ground !== "search") {
+      console.error("--ground must be search");
+      process.exit(2);
+    }
+    if (benchDef.adapter !== "short-answer") {
+      console.error(
+        `--ground applies only to short-answer benchmarks (${benchmarkName} is ${benchDef.adapter})`,
+      );
+      process.exit(2);
+    }
+  }
+
   const mode = (args.mode ?? "passthrough") as "passthrough" | "memory";
   const config: BenchmarkConfig = {
     name: benchDef.name,
@@ -750,6 +767,7 @@ Options:
     limit: args.limit ? Number.parseInt(args.limit, 10) : undefined,
     seed: args.seed ? Number.parseInt(args.seed, 10) : undefined,
     partition: parsePartition(args.partition),
+    ...(args.ground === "search" ? { ground: "search" as const } : {}),
     judge: {
       model: args["judge-model"] ?? args.model ?? "marina",
       endpoint: args["judge-endpoint"] ?? args.endpoint ?? "http://localhost:3300",
