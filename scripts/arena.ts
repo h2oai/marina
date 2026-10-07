@@ -29,7 +29,7 @@
  *   bun run arena shadow compare <round_id|due> --forecaster formation:delphi:<models>
  *                                               paired start / Delphi / FRED / calibration experiment
  *   bun run arena shadow paired-score           score only matched comparison batches
- *   bun run arena audit <round_id|due>           check target identity and comparable input histories
+ *   bun run arena audit <round_id|due> [--fresh] check history and current source dates without model calls
  *   bun run arena evaluate [--forecaster model:<m>|crew:<m>[,<m>,<m>]|formation:<pattern>:<m>[,<m>…]|tabh2o[:forecast][@nowcast]]
  *                          [--no-learn] [--limit N] [--tracker T] [--shape profile|ranking] [--out FILE]
  *                                               score forecasters on already-resolved rounds (files nothing);
@@ -87,6 +87,7 @@ const { positionals, values } = parseArgs({
     weight: { type: "string" },
     "no-learn": { type: "boolean" },
     "weekly-anchor": { type: "boolean" },
+    fresh: { type: "boolean" },
     proposer: { type: "string" },
     n: { type: "string" },
     signal: { type: "string", multiple: true },
@@ -129,12 +130,34 @@ async function main(): Promise<number> {
           : [await data.round(arg)];
       const { auditForecastInputs } = await import("../src/arena/input-audit");
       const { lockForModels } = await import("../src/arena/service");
+      const { forecastRound } = await import("../src/arena/forecast");
+      const { auditForecastFreshness } = await import("../src/arena/freshness");
+      const { nowcastForecaster } = await import("../src/arena/research/civiqs-nowcast");
+      const { civiqsLiveEnabled, fetchCiviqsLive } = await import(
+        "../src/arena/research/civiqs-live"
+      );
+      const current = nowcastForecaster(
+        data,
+        forecastRound,
+        civiqsLiveEnabled() ? { live: fetchCiviqsLive } : {},
+      );
       const report = [];
       for (const round of rounds) {
         if (!round) throw new Error(`unknown round ${arg}`);
         try {
           const lock = await lockForModels(data, round, await data.lock(round.round_id));
-          report.push({ roundId: round.round_id, ...auditForecastInputs(round, lock) });
+          const audit = auditForecastInputs(round, lock);
+          if (values.fresh) {
+            const forecast = await current(round, lock);
+            const freshness = auditForecastFreshness(round, lock, forecast);
+            report.push({
+              roundId: round.round_id,
+              ...audit,
+              ok: audit.ok && freshness.ok,
+              freshness,
+              origins: forecast.origins,
+            });
+          } else report.push({ roundId: round.round_id, ...audit });
         } catch (error) {
           report.push({ roundId: round.round_id, ok: false, issues: [getErrorMessage(error)] });
         }
@@ -214,7 +237,10 @@ async function main(): Promise<number> {
       const round = await data.round(arg);
       if (!round) throw new Error(`no round ${arg}`);
       const spec = parseForecasterSpec(values.forecaster ?? process.env.MARINA_ARENA_FORECASTER);
-      const { forecaster } = await forecasterFor(spec, { weight: weightFlag() });
+      const { forecaster } = await forecasterFor(spec, {
+        weight: weightFlag(),
+        strictFreshness: true,
+      });
       const body = await buildForecastBody(
         data,
         arenaStatus().entrant ?? "marina-preview",

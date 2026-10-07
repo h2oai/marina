@@ -26,6 +26,28 @@ the mean of per-round skill. Everywhere else it files exact persistence.
 
 `arena show <round_id>` prints exactly what would be filed and which spread rule each series used.
 
+### Input freshness before filing
+
+Official CLI and autopilot forecasts check observation dates before model work and again before
+signing. Downloading an old observation today does not make it current. Civiqs observations must
+be at most two calendar days old, every profile cell must pass, Wikipedia allows four days for
+its publication lag, and weekly Trends/YouGov inputs allow fourteen days. Other recurring series
+allow two typical releases, with a fourteen-day minimum, so monthly observations are not judged
+as daily readings. Missing or invalid dates are refused. A refusal leaves any accepted version
+in place and reports the affected series and date; it does not silently file a stale replacement.
+
+Archive lookups and research cutoffs use the earlier of forecast time and lock time. Early
+forecasts therefore search back from today, and historical replays remain bounded by their lock.
+Trends uses a newer complete basket when available, keeping all cells in one comparison snapshot
+and showing that same history to the models. Live Civiqs failures remain in the origin trace
+when a sufficiently current archive is available. Research traces retain failed engines and
+explicit `verified`, `empty`, or `failed` dossier status; an empty dossier is never described as
+verified evidence. Evaluation and shadow experiments may inspect older inputs, but their results
+do not bypass the official submission checks.
+
+Run `bun run arena audit <round_id|due> --fresh` to inspect the current observation dates,
+age limits, and Civiqs source failures without model calls or submitting anything.
+
 ### Model backends
 
 `MARINA_ARENA_FORECASTER=model:<provider/model>` puts a model on top of the baseline — any model

@@ -9,6 +9,7 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
+import { getErrorMessage } from "../engine/errors";
 import { guardedFetch } from "../net/url-guard";
 import type { ArenaSubmissionRow } from "../persistence/db-arena";
 import type { ArenaStore } from "../persistence/interfaces/arena-store";
@@ -16,6 +17,7 @@ import type { ArenaConfig } from "./config";
 import type { ArenaData } from "./data";
 import type { Forecaster } from "./evaluate";
 import { forecastRound } from "./forecast";
+import { requireFreshForecast } from "./freshness";
 import {
   arenaTimestamp,
   FORECAST_PATH,
@@ -77,6 +79,8 @@ export interface SubmitDeps {
   forecaster?: Forecaster;
   /** Only nonsecret, explicitly selected strategy settings. */
   forecasterConfig?: Record<string, unknown>;
+  /** Required by official operator routes, including the final signing check. */
+  strictFreshness?: boolean;
 }
 
 export const baselineForecaster: Forecaster = async (round, lock) => forecastRound(round, lock);
@@ -177,7 +181,20 @@ export async function submitRound(
     } catch (err) {
       return { kind: "skipped", roundId, reason: err instanceof Error ? err.message : String(err) };
     }
-    if (opts.dryRun) return { kind: "dry-run", roundId, body };
+    if (opts.dryRun) {
+      if (deps.strictFreshness) {
+        try {
+          requireFreshForecast(round, detail.lock, detail.forecast, new Date(now).toISOString());
+        } catch (err) {
+          return {
+            kind: "skipped",
+            roundId,
+            reason: getErrorMessage(err),
+          };
+        }
+      }
+      return { kind: "dry-run", roundId, body };
+    }
     // Model/retrieval work may take minutes. Admission time is not signing time.
     const signingTime = deps.now?.() ?? Date.now();
     if (Date.parse(round.lock_at) - signingTime < LOCK_MARGIN_MS) {
@@ -186,6 +203,22 @@ export async function submitRound(
         roundId,
         reason: `forecast finished too close to lock at ${round.lock_at}`,
       };
+    }
+    if (deps.strictFreshness) {
+      try {
+        detail.forecast = requireFreshForecast(
+          round,
+          detail.lock,
+          detail.forecast,
+          new Date(signingTime).toISOString(),
+        );
+      } catch (err) {
+        return {
+          kind: "skipped",
+          roundId,
+          reason: getErrorMessage(err),
+        };
+      }
     }
     const raw = Buffer.from(JSON.stringify(body));
     if (opts.replace && accepted && accepted.body === raw.toString("utf8")) {

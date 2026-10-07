@@ -11,6 +11,7 @@
  * (Civiqs), else the last published value: older news is already in it.
  */
 
+import { forecastCutoff } from "../freshness";
 import { cellLabels } from "../profile-shape";
 import type { ArenaLock, ArenaRound } from "../types";
 
@@ -182,14 +183,22 @@ export function buildResearchBrief(
     cellNowcasts?: Record<string, BriefNowcast>;
   } = {},
 ): ResearchBrief {
+  const untilAt = forecastCutoff(round.lock_at, round.lock_at, opts.now ?? Date.now());
+  const bounded = (brief: ResearchBrief): ResearchBrief => ({
+    ...brief,
+    untilAt,
+    until: untilAt.slice(0, 10),
+    request: `${brief.request}\nInformation cutoff: ${untilAt}. Exclude anything published after this instant.`,
+  });
   if (round.target_type === "profile_energy" && (round.cells?.length ?? 0) >= 2) {
     const brief = profileBrief(round, lock, opts.cellNowcasts ?? {});
-    if (brief) return brief;
+    if (brief) return bounded(brief);
   }
   const history = lock.answer_history ?? lock.history ?? [];
   const last = history.at(-1);
   const obsDay = lock.answer_obs?.at(-1)?.date;
-  if (!last && !obsDay && !opts.nowcast) return noHistoryBrief(round, opts.now ?? Date.now());
+  if (!last && !obsDay && !opts.nowcast)
+    return bounded(noHistoryBrief(round, opts.now ?? Date.now()));
   const nowcast =
     opts.nowcast && (!last || opts.nowcast.date >= last.date) ? opts.nowcast : undefined;
   const since = nowcast?.date ?? last?.date ?? obsDay ?? round.lock_at.slice(0, 10);
@@ -217,7 +226,12 @@ export function buildResearchBrief(
     family === "attention"
       ? [round.question, ...(QUERIES.attention ?? [])]
       : [...(QUERIES[family] ?? [])];
-  return { roundId: round.round_id, since, request, queries: targetQueries(round, queries) };
+  return bounded({
+    roundId: round.round_id,
+    since,
+    request,
+    queries: targetQueries(round, queries),
+  });
 }
 
 /**

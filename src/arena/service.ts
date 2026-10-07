@@ -15,6 +15,7 @@ import { ArenaData, DEFAULT_ARENA_DATA_URL } from "./data";
 import type { Forecaster, Learner } from "./evaluate";
 import { forecastRound } from "./forecast";
 import { forecastSettings } from "./forecast-config";
+import { requireFreshForecast } from "./freshness";
 import type { Usage } from "./model-backend";
 import { publicKeyBase64 } from "./protocol";
 import {
@@ -135,35 +136,27 @@ export async function arenaRegistrationCheck(
  * `raw: true` returns the model's own answer (for shadow scoring), not the blend.
  */
 /**
- * The lock as model roles read it: a Google Trends basket whose lock carries no
- * per-cell history gets the archive's (fetched before the lock) — the same
- * history the nowcast start forecast is built from, so the cells a model is
- * shown match its start. Every other lock is returned as it is.
+ * The lock as model roles read it: refresh all Trends cells from one newer
+ * eligible snapshot, matching the nowcast start without mixing vintages.
  */
 export async function lockForModels(
   data: ArenaData,
   round: import("./types").ArenaRound,
   lock: import("./types").ArenaLock,
 ): Promise<import("./types").ArenaLock> {
-  if (
-    round.tracker !== "google_trends" ||
-    round.target_type !== "profile_energy" ||
-    lock.answer_history_by_cell
-  ) {
+  if (round.tracker !== "google_trends" || round.target_type !== "profile_energy") {
     return lock;
   }
-  const { trendsBasketHistory, TRENDS_INCLUDE_PARTIAL } = await import("./research/civiqs-nowcast");
-  const byCell = await trendsBasketHistory(data, round, TRENDS_INCLUDE_PARTIAL).catch(
-    () => undefined,
-  );
-  return byCell ? { ...lock, answer_history_by_cell: byCell } : lock;
+  const { trendsForecastLock } = await import("./research/civiqs-nowcast");
+  return trendsForecastLock(data, round, lock);
 }
 
 /** Live Civiqs reads for open rounds (on unless MARINA_ARENA_CIVIQS_LIVE=off). */
-async function liveCiviqs(env: NodeJS.ProcessEnv = process.env) {
+async function liveCiviqs(env: NodeJS.ProcessEnv = process.env, strictFreshness = false) {
   const { civiqsLiveEnabled, fetchCiviqsLive } = await import("./research/civiqs-live");
   const { horizonOptionsFromEnv } = await import("./research/civiqs-horizon");
   return {
+    strictFreshness,
     horizon: horizonOptionsFromEnv(env),
     ...(civiqsLiveEnabled(env)
       ? { live: (n: string, f?: Record<string, string>) => fetchCiviqsLive(n, f) }
@@ -233,9 +226,15 @@ export async function forecasterFor(
     env?: NodeJS.ProcessEnv;
     notes?: NotesStore;
     formationInputs?: FormationInputs;
+    strictFreshness?: boolean;
   } = {},
 ): Promise<{ forecaster: Forecaster; usage?: Usage; learner?: Learner }> {
-  if (spec === "baseline") return { forecaster: baselineForecaster };
+  if (spec === "baseline")
+    return {
+      forecaster: opts.strictFreshness
+        ? async (round, lock) => requireFreshForecast(round, lock, forecastRound(round, lock))
+        : baselineForecaster,
+    };
   if (spec === "routed" || spec.startsWith("route:")) return routedForecasterFor(spec, opts);
   if (spec === "discovered") {
     // Each family's best PROMOTED signal (arena discover), else the nowcast.
@@ -245,7 +244,11 @@ export async function forecasterFor(
       import("./discovery/signals"),
     ]);
     const data = arenaData(opts.env ?? process.env);
-    const fallback = nowcastForecaster(data, forecastRound, await liveCiviqs(opts.env));
+    const fallback = nowcastForecaster(
+      data,
+      forecastRound,
+      await liveCiviqs(opts.env, opts.strictFreshness),
+    );
     const promoted = opts.notes ? loop.promotedSignals(opts.notes) : new Map();
     return {
       forecaster: async (round, lock) => {
@@ -267,16 +270,21 @@ export async function forecasterFor(
       forecaster: nowcastForecaster(
         arenaData(opts.env ?? process.env),
         forecastRound,
-        await liveCiviqs(opts.env),
+        await liveCiviqs(opts.env, opts.strictFreshness),
       ),
     };
   }
   if (spec.startsWith("tabh2o")) return tabh2oForecasterFor(spec, opts);
   if (spec.startsWith("research:")) {
-    return researchForecasterFor(spec, opts.env ?? process.env);
+    return researchForecasterFor(spec, opts.env ?? process.env, opts.strictFreshness);
   }
   if (spec.startsWith("formation:")) {
-    return formationForecasterFor(spec, opts.env ?? process.env, opts.formationInputs);
+    return formationForecasterFor(
+      spec,
+      opts.env ?? process.env,
+      opts.formationInputs,
+      opts.strictFreshness,
+    );
   }
   if (spec.startsWith("crew:")) {
     const specs = spec.slice("crew:".length).split(",");
@@ -320,7 +328,7 @@ export async function forecasterFor(
     // baseline elsewhere), exactly as the research agent does.
     const { nowcastForecaster } = await import("./research/civiqs-nowcast");
     const start = nowcastForecaster(arenaData(env), forecastRound, {
-      ...(await liveCiviqs(env)),
+      ...(await liveCiviqs(env, opts?.strictFreshness)),
       daily: DAILY_POINTS,
     });
     return {
@@ -356,7 +364,7 @@ export async function forecasterFor(
   if (opts.raw) options.maxSdMove = Number.POSITIVE_INFINITY;
   const { nowcastForecaster } = await import("./research/civiqs-nowcast");
   const start = nowcastForecaster(arenaData(env), forecastRound, {
-    ...(await liveCiviqs(env)),
+    ...(await liveCiviqs(env, opts?.strictFreshness)),
     daily: DAILY_POINTS,
   });
   return {
@@ -391,10 +399,13 @@ async function tabh2oForecasterFor(
     ...(opts?.raw ? { maxSdMove: Number.POSITIVE_INFINITY } : {}),
   };
   const usage: Usage = { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
-  const live = await liveCiviqs(env);
+  const live = await liveCiviqs(env, opts?.strictFreshness);
   const start: Forecaster = parsed.nowcast
     ? nowcastForecaster(data, forecastRound, live)
-    : async (round, lock) => forecastRound(round, lock);
+    : async (round, lock) => {
+        const f = forecastRound(round, lock);
+        return opts?.strictFreshness ? requireFreshForecast(round, lock, f) : f;
+      };
   const { horizonSteps } = await import("./forecast");
   /** `@nowcast`: a Civiqs series learns from its daily snapshot; a bare Trends lock from the archive. */
   const seriesFor = async (
@@ -464,6 +475,7 @@ async function formationForecasterFor(
   spec: string,
   env: NodeJS.ProcessEnv,
   inputs?: FormationInputs,
+  strictFreshness = false,
 ): Promise<{ forecaster: Forecaster; usage: Usage }> {
   const [head = "", ...parts] = spec.split("+");
   const [{ modelComplete }, formations, { nowcastForecaster }] = await Promise.all([
@@ -520,7 +532,7 @@ async function formationForecasterFor(
   const usage: Usage = { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
   const data = arenaData(env);
   const start = nowcastForecaster(data, forecastRound, {
-    ...(await liveCiviqs(env)),
+    ...(await liveCiviqs(env, strictFreshness)),
     daily: DAILY_POINTS,
   });
   return {
@@ -534,6 +546,7 @@ async function formationForecasterFor(
         throw new Error("frozen inputs belong to another round");
       const given = inputs ? structuredClone(inputs.start) : await start(round, lock);
       const shown = inputs ? structuredClone(inputs.lock) : await lockForModels(data, round, lock);
+      if (strictFreshness) requireFreshForecast(round, shown, given);
       const evidence = inputs
         ? inputs.dossier
           ? { dossier: inputs.dossier }
@@ -615,8 +628,18 @@ export async function arenaDepsWithForecaster(
     const weight = weightOverride ?? deps.config.modelWeight;
     // The world's notes are the crew's memory when the store carries them.
     const notes = "getNotesByType" in store ? (store as unknown as NotesStore) : undefined;
-    const { forecaster } = await forecasterFor(spec, { weight, env, ...(notes ? { notes } : {}) });
-    return { ...deps, forecaster, forecasterConfig: forecastSettings(spec, env, weight) };
+    const { forecaster } = await forecasterFor(spec, {
+      weight,
+      env,
+      strictFreshness: true,
+      ...(notes ? { notes } : {}),
+    });
+    return {
+      ...deps,
+      forecaster,
+      strictFreshness: true,
+      forecasterConfig: { ...forecastSettings(spec, env, weight), inputFreshness: "required-v1" },
+    };
   } catch (err) {
     return { error: `Forecaster: ${(err as Error).message}` };
   }
@@ -725,6 +748,7 @@ export async function learnFromResolutions(
 async function researchForecasterFor(
   spec: string,
   env: NodeJS.ProcessEnv,
+  strictFreshness = false,
 ): Promise<{ forecaster: Forecaster; usage?: Usage }> {
   const [{ modelComplete }, research, retrieve, decisions] = await Promise.all([
     import("./model-backend"),
@@ -774,7 +798,7 @@ async function researchForecasterFor(
   const { nowcastForecaster } = await import("./research/civiqs-nowcast");
   const data = arenaData(env);
   const nowcast = nowcastForecaster(data, forecastRound, {
-    ...(await liveCiviqs(env)),
+    ...(await liveCiviqs(env, strictFreshness)),
     daily: DAILY_POINTS,
   });
   let researchCost = 0;

@@ -190,6 +190,8 @@ export interface RoundForecast {
   note: string;
   /** Dated inputs and the actual start distribution, retained through model stages. */
   origins?: Record<string, ForecastOrigin>;
+  /** Observation freshness at preparation time, rechecked before signing. */
+  freshness?: import("./freshness").FreshnessAudit;
 }
 
 export interface ForecastOrigin {
@@ -199,6 +201,8 @@ export interface ForecastOrigin {
   horizonDays: number;
   source?: string;
   fetchedAt?: string;
+  /** An unavailable live source is recorded even when a usable archive exists. */
+  liveError?: string;
   weekly?: { date: string; value: number };
   daily?: Array<{ date: string; value: number }>;
   mode: "off" | "drift" | "sd" | "both";
