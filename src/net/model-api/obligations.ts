@@ -50,11 +50,11 @@ import {
   parseObligationsMode,
 } from "../../obligations/mode";
 import { readOnlyCall } from "../../obligations/tool-call";
+import { isReadOnlyTool } from "../../obligations/tool-effect";
 import type { EntityId } from "../../types";
 import { messageText, type OpenAIMessage } from "../passthru-context";
 import { COST_USD_HEADER, type PassthruAuthResult } from "./shared";
 import { proxyToUpstream } from "./upstream";
-import { isReadOnlyToolCall } from "./verify";
 
 const log = new Logger();
 
@@ -237,7 +237,7 @@ function toolInfo(tools: unknown[]): ToolInfo[] {
     out.push({
       name: f.name,
       ...(typeof f.description === "string" ? { description: f.description } : {}),
-      write: !isReadOnlyToolCall(f.name, tools),
+      write: !isReadOnlyTool(f.name, tools, "track"),
     });
   }
   return out;
@@ -357,9 +357,10 @@ export async function prepareObligations(
     prep.skipped = "no-tools";
     return prep;
   }
-  // A dispatcher call is classified by the tool it runs (`tool-call.ts`).
+  // `track` role: a lookup counted as a write is the costly mistake here
+  // (`tool-effect.ts`); a dispatcher call is classified by the tool it runs.
   const isWrite = (name: string, args: unknown) =>
-    !readOnlyCall(name, args, (n) => isReadOnlyToolCall(n, tools), tools);
+    !readOnlyCall(name, args, { tools, role: "track" });
   try {
     const fresh = requests.filter((r) => r.turn > ledger.userTurns);
     prep.extract = "none";

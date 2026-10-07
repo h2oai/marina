@@ -194,17 +194,8 @@ export function isTransferTool(name: string): boolean {
   return TRANSFER_NAME.test(name);
 }
 
-/**
- * Read-only by name (a lookup, a calculator, a note to self), with or without
- * a namespace prefix (`marina_look`). Surfaces that know a tool's declared
- * hints (the passthru) use those first.
- */
-const READ_ONLY_NAME =
-  /^(?:[a-z0-9]+_)?(get|list|find|search|lookup|look|read|fetch|query|calculate|compute|check|describe|show|view|count|think|recall|retrieve|validate|preview|brief|inspect|status|help|tool_search)(_|$)/i;
-
-export function readOnlyByName(name: string): boolean {
-  return READ_ONLY_NAME.test(name);
-}
+/** Read-only by name alone (`tool-effect.ts`); kept here for existing importers. */
+export { readOnlyByName } from "./tool-effect";
 
 /** A tool result that reports failure (error text, or a JSON error field). */
 export function looksLikeError(text: string): boolean {

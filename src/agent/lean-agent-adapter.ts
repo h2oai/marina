@@ -1849,7 +1849,7 @@ export class LeanAgentAdapter implements AgentHandle {
           context.toolCall.name,
           context.args,
           !context.isError,
-          (name, callArgs) => !readOnlyCall(name, callArgs, readOnlyByName),
+          (name, callArgs) => !readOnlyCall(name, callArgs, { role: "track" }),
         );
         let noted: AfterToolCallResult | undefined;
         // The generic Code tool keeps a readable error result for callers.

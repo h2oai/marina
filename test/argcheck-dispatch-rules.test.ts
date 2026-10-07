@@ -85,22 +85,20 @@ describe("dispatcher calls", () => {
   it("a dispatcher lookup is not a write; a dispatcher write is", () => {
     const name = "call_discoverable_agent_tool";
     expect(readOnlyByName(name)).toBe(false);
-    expect(readOnlyCall(name, lookup, readOnlyByName)).toBe(true);
-    expect(readOnlyCall(name, write, readOnlyByName)).toBe(false);
+    expect(readOnlyCall(name, lookup)).toBe(true);
+    expect(readOnlyCall(name, write)).toBe(false);
   });
 
   it("falls back to the outer tool for malformed or unknown inner tools", () => {
     const name = "call_discoverable_agent_tool";
-    expect(
-      readOnlyCall(name, { agent_tool_name: "get_x", arguments: "{oops" }, readOnlyByName),
-    ).toBe(false);
-    expect(readOnlyCall(name, { agent_tool_name: "get_x" }, readOnlyByName)).toBe(false);
-    expect(readOnlyCall(name, "not json", readOnlyByName)).toBe(false);
+    expect(readOnlyCall(name, { agent_tool_name: "get_x", arguments: "{oops" })).toBe(false);
+    expect(readOnlyCall(name, { agent_tool_name: "get_x" })).toBe(false);
+    expect(readOnlyCall(name, "not json")).toBe(false);
     // Only a write can become a read: a read-only outer tool stays read-only.
-    expect(readOnlyCall("get_report", { name: "delete_all", args: {} }, readOnlyByName)).toBe(true);
+    expect(readOnlyCall("get_report", { name: "delete_all", args: {} })).toBe(true);
     // A declared hint on the outer tool wins.
     const tools = [{ type: "function", function: { name }, annotations: { readOnlyHint: true } }];
-    expect(readOnlyCall(name, write, readOnlyByName, tools)).toBe(true);
+    expect(readOnlyCall(name, write, { tools })).toBe(true);
   });
 
   it("the ledger settles an obligation only with a dispatched write, matched by the inner tool", () => {
@@ -114,7 +112,7 @@ describe("dispatcher calls", () => {
       status: "open",
       nudged: false,
     });
-    const isWrite = (n: string, a: unknown) => !readOnlyCall(n, a, readOnlyByName);
+    const isWrite = (n: string, a: unknown) => !readOnlyCall(n, a);
     const base = { name: "call_discoverable_agent_tool", turn: 1, ok: true };
     expect(matchCall(ledger, { ...base, args: lookup }, isWrite)).toEqual({
       satisfied: [],
