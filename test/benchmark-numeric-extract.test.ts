@@ -29,6 +29,11 @@ describe("numeric benchmark answer extraction", () => {
     expect(extractAnswer("The answer is 1.25. The calculation agrees.")).toBe("1.25");
     expect(extractAnswer("Final answer: $1,250$.")).toBe("1,250");
     expect(extractAnswer("Final answer: (1, 2).")).toBe("(1, 2)");
+    expect(extractAnswer("The answer is 18, since 3 x 6 = 18.")).toBe("18");
+    expect(extractAnswer("So the final answer is 42, which matches.")).toBe("42");
+    expect(extractAnswer("The answer is 1,250 because the total doubles.")).toBe("1,250");
+    expect(extractAnswer("The answer is $\\frac{3}{4}$ of the pie.")).toBe("\\frac{3}{4}");
+    expect(extractAnswer("The answer is x = 7.")).toBe("x = 7");
     expect(extractAnswer("\\boxed{\\frac{1}{\\sqrt{4}}}")).toBe("\\frac{1}{\\sqrt{4}}");
     expect(extractAnswer("First \\boxed{2}, corrected to \\boxed{3}.")).toBe("3");
   });

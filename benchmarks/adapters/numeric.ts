@@ -32,7 +32,12 @@ export function extractAnswer(rawResponse: string): string {
 
   // 3. "The answer is X" / "Final answer: X"
   const explicit = response.match(/(?:the\s+)?(?:final\s+)?answer\s*(?:is|:|=)\s*([^\n]+)/i);
-  if (explicit) return explicit[1]!.split(/\.(?!\d)|!/, 1)[0]!.replace(/^[$\s]+|[$\s]+$/g, "");
+  if (explicit) {
+    // Stop at the sentence end, then at trailing prose: "18, since …", "1,250 because …".
+    // A comma between digits or inside a tuple ("1,250", "(1, 2)") is part of the answer.
+    const sentence = explicit[1]!.split(/\.(?!\d)|!/, 1)[0]!.trim();
+    return sentence.split(/,\s+(?=\p{L})|\s+(?=\p{L}{2,})/u, 1)[0]!.replace(/^[$\s]+|[$\s]+$/g, "");
+  }
 
   // 4. Last number in text
   const nums = [...response.matchAll(/(-?\d+(?:\.\d+)?(?:\/\d+)?)/g)];
