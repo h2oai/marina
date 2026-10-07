@@ -392,6 +392,7 @@ export async function reviewCodingRun(
       type: action === "approve" ? "task_approved" : "task_rejected",
       entity: eid,
       taskId: meta.taskId,
+      ...(claim.entity_name ? { claimantName: claim.entity_name } : {}),
       timestamp: Date.now(),
     });
   }

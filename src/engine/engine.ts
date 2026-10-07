@@ -24,6 +24,7 @@ import { MacroManager } from "../coordination/macro-manager";
 import { TaskManager } from "../coordination/task-manager";
 import { extensionGatewayProof } from "../extensions/loader";
 import { FlywheelManager, type FlywheelToolBackend } from "../integrations/flywheel-manager";
+import { observeWorkEvent } from "../learning/work";
 import { memoryAccess } from "../memory/access";
 import { residentMemoryAPI } from "../memory/resident-service";
 import type { AdapterManager } from "../net/adapter-manager";
@@ -424,6 +425,9 @@ export class Engine {
     this.registerBuiltinCommands();
     this.tickScheduler = new TickScheduler(this.logger);
     this.registerTickJobs();
+    // Lessons from work (MARINA_LESSONS_FROM_WORK, default off — a cheap no-op
+    // then): agent tool results, gate holds and task verdicts become signals.
+    this.addEventListener((event) => observeWorkEvent(this.db, event));
   }
 
   // ─── Room Registration ──────────────────────────────────────────────────

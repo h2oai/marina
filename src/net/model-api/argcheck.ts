@@ -38,8 +38,10 @@ import {
   parseObligationsMode,
 } from "../../obligations/mode";
 import { readOnlyCall } from "../../obligations/tool-call";
+import type { MarinaDB } from "../../persistence/database";
 import type { EntityId } from "../../types";
 import { messageText, type OpenAIMessage } from "../passthru-context";
+import { noteArgcheckCorrection } from "./learn";
 import { conversationKeys, ledgerCompletion } from "./obligations";
 import { COST_USD_HEADER, type PassthruAuthResult } from "./shared";
 
@@ -103,6 +105,8 @@ export interface ArgcheckPrep {
   spent: { usd: number };
   /** Stated requests (the obligations ledger's lines, when it runs too). */
   stated?: string[];
+  /** Lessons from work: the opted-in owner a correction teaches (`./learn.ts`). */
+  learn?: { db: MarinaDB | undefined; owner: string };
 }
 
 /** The obligations ledger's requests as judge context: what, target, constraints. */
@@ -122,6 +126,8 @@ export function prepareArgcheck(
     entityId?: EntityId;
     auth?: PassthruAuthResult;
     stated?: string[];
+    /** The owner an opted-in conversation's corrections teach (`passthruLearnOwner`). */
+    learnOwner?: string;
   },
 ): ArgcheckPrep | undefined {
   if (!opts.mode || opts.mode === "off") return undefined;
@@ -153,6 +159,7 @@ export function prepareArgcheck(
     ...(provider ? { provider } : {}),
     spent,
     ...(opts.stated?.length ? { stated: opts.stated } : {}),
+    ...(opts.learnOwner ? { learn: { db: engine.db, owner: opts.learnOwner } } : {}),
   };
 }
 
@@ -295,6 +302,13 @@ export async function finishArgcheck(
     sameCalls = before.every((b) => again.includes(b));
   } catch {
     return done(resp, text, "nudge-unparsed");
+  }
+  if (!sameCalls && prep.learn) {
+    const flagged = writes
+      .slice(0, MAX_CALLS_CHECKED)
+      .filter((_c, i) => outcomes[i]?.nudge)
+      .map((c) => c.name);
+    noteArgcheckCorrection(prep.learn.db, prep.learn.owner, flagged);
   }
   return done(second, secondText, sameCalls ? "nudged-kept" : "nudged-changed");
 }

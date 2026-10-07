@@ -576,6 +576,7 @@ export function taskCommand(
               type: "task_approved",
               entity: input.entity,
               taskId: id,
+              claimantName: target.name,
               timestamp: Date.now(),
             });
           } else {
@@ -607,6 +608,7 @@ export function taskCommand(
               type: "task_rejected",
               entity: input.entity,
               taskId: id,
+              claimantName: target.name,
               timestamp: Date.now(),
             });
           } else {

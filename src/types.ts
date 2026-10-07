@@ -438,8 +438,22 @@ export type EngineEvent =
   | { type: "entity_leave"; entity: EntityId; room: RoomId; timestamp: number }
   | { type: "task_claimed"; entity: EntityId; taskId: number; timestamp: number }
   | { type: "task_submitted"; entity: EntityId; taskId: number; timestamp: number }
-  | { type: "task_approved"; entity: EntityId; taskId: number; timestamp: number }
-  | { type: "task_rejected"; entity: EntityId; taskId: number; timestamp: number }
+  | {
+      type: "task_approved";
+      entity: EntityId;
+      taskId: number;
+      /** The claimant whose submission was approved (lessons from work). */
+      claimantName?: string;
+      timestamp: number;
+    }
+  | {
+      type: "task_rejected";
+      entity: EntityId;
+      taskId: number;
+      /** The claimant whose submission was rejected (lessons from work). */
+      claimantName?: string;
+      timestamp: number;
+    }
   | {
       type: "task_released";
       entity: EntityId;
@@ -658,6 +672,14 @@ export type EngineEvent =
       /** Other request traces this span also served (span links, never parents). */
       links?: TraceLink[];
       isError: boolean;
+      /** `autonomous` (the agent's own cycle) or `request` (serving a caller); from the tracer. */
+      origin?: "autonomous" | "request";
+      /**
+       * A mechanical class of a failed result (`classifyToolError`: `not-found`,
+       * `invalid-args`, …), also set for a soft failure a command tool reported
+       * as text (`softFailureClass`). The label only — never the result text.
+       */
+      errorClass?: string;
       timestamp: number;
     }
   | {

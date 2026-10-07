@@ -106,7 +106,18 @@ export function lessonsRun(db: MarinaDB) {
 
 /** A durable lesson sink over `db`, one shared space per domain. */
 export function lessonSinkFor(db: MarinaDB): LessonSink {
-  const run = lessonsRun(db);
+  return accountLessonSink(lessonsRun(db), false);
+}
+
+type AccountRun = (request: MemoryOperationRequest) => Promise<{ ok: true; result: unknown }>;
+
+/**
+ * A durable lesson sink over the `lessons:<domain>` spaces of the account
+ * `run` is bound to, each created on first use. `strict`: a space that cannot
+ * be created fails the write instead of falling back to the account's default
+ * space (owner sinks never write outside their lesson spaces).
+ */
+function accountLessonSink(run: AccountRun, strict: boolean): LessonSink {
   const spaces = new Map<OutcomeDomain, Promise<string | undefined>>();
   const spaceFor = (domain: OutcomeDomain) => {
     let p = spaces.get(domain);
@@ -121,6 +132,7 @@ export function lessonSinkFor(db: MarinaDB): LessonSink {
         const made = (await run({ operation: "create_space", input: { name } })).result as {
           id?: string;
         };
+        if (strict && !made.id) throw new Error(`could not create the ${name} space`);
         return made.id;
       })();
       p.catch(() => spaces.delete(domain));
@@ -129,6 +141,44 @@ export function lessonSinkFor(db: MarinaDB): LessonSink {
     return p;
   };
   return durableLessonSink(run, spaceFor);
+}
+
+/**
+ * A principal's OWN lessons live in `lessons:<domain>` spaces of that
+ * principal's own memory account — owner-scoped by the memory ACLs, never the
+ * shared `marina:lessons` pool. Lessons learned from the principal's private
+ * work (`src/learning/work.ts`) are written there and served only to that
+ * principal's own requests and agents (`RecallOptions.owner`).
+ */
+export function canHoldOwnLessons(db: MarinaDB, name: string): boolean {
+  if (!name || name === LESSONS_ACCOUNT) return false;
+  const user = db.getUserByName(name);
+  const principal = db.getPrincipal("human", name);
+  return (
+    !!user && !!principal && user.id === principal.principal_id && principal.status === "active"
+  );
+}
+
+function ownerRun(db: MarinaDB, owner: string): AccountRun {
+  return (request) =>
+    residentMemoryOperation(db, owner, request) as Promise<{ ok: true; result: unknown }>;
+}
+
+/** A writable sink over `owner`'s own lesson spaces (its use throws when the account is not active). */
+export function ownerLessonSink(db: MarinaDB, owner: string): LessonSink {
+  return accountLessonSink(ownerRun(db, owner), true);
+}
+
+/** A recall-only sink over `owner`'s own lesson spaces: never creates one; none ⇒ no lessons. */
+export function ownerRecallSink(db: MarinaDB, owner: string): LessonSink | undefined {
+  if (!canHoldOwnLessons(db, owner)) return undefined;
+  const run = ownerRun(db, owner);
+  return durableLessonSink(run, async (domain) => {
+    const listed = (await run({ operation: "spaces" })).result as {
+      spaces?: Array<{ id: string; name: string }>;
+    };
+    return listed.spaces?.find((s) => s.name === `lessons:${domain}`)?.id;
+  });
 }
 
 const recallOnlySinks = new WeakMap<object, LessonSink>();
@@ -415,6 +465,14 @@ export interface RecallOptions {
   eval?: EvalContext;
   /** Task families of the work: a key match beside the lexical one. */
   families?: readonly string[];
+  /**
+   * The principal the work is for (an account name): that principal's OWN
+   * lessons (`ownerRecallSink`, learned from its private work) are recalled
+   * beside the shared pool, merged under the same budget. Only
+   * ever the authenticated principal or the owner of the agent doing the
+   * work — this is the read side of the owner scope.
+   */
+  owner?: string;
 }
 
 /**
@@ -453,13 +511,24 @@ export async function recallLessons(
   if (!sink) return { inject: [], recalled: [], mode };
   const exclude = opts.exclude ?? evalExclusionFor(db, opts.eval);
   try {
-    const recalled = await sink.recall(domain, query, opts.asOf ?? new Date().toISOString(), {
+    const asOf = opts.asOf ?? new Date().toISOString();
+    const recallOpts = {
       ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
       ...(opts.maxBytes !== undefined ? { maxBytes: opts.maxBytes } : {}),
       ...(exclude ? { exclude } : {}),
       ...(opts.families?.length ? { families: opts.families } : {}),
       ...(rankedServing(opts.env) ? { rankOrder: true } : {}),
-    });
+    };
+    const shared = await sink.recall(domain, query, asOf, recallOpts);
+    // The principal's own lessons (never for meta: own lessons are never mirrored).
+    const ownSink =
+      opts.owner && db && domain !== "meta" ? ownerRecallSink(db, opts.owner) : undefined;
+    const own = ownSink
+      ? await ownSink.recall(domain, query, asOf, recallOpts).catch(() => [] as Lesson[])
+      : [];
+    const recalled = own.length
+      ? selectServed(distinctByText([...own, ...shared]), asOf, recallOpts)
+      : shared;
     return { inject: mode === "on" ? recalled : [], recalled, mode };
   } catch {
     return { inject: [], recalled: [], mode };
@@ -498,6 +567,7 @@ export async function recallAcross(
         ...(opts.sink ? { sink: opts.sink } : {}),
         ...(exclude ? { exclude } : {}),
         ...(opts.families?.length ? { families: opts.families } : {}),
+        ...(opts.owner ? { owner: opts.owner } : {}),
       }),
     ),
   );
@@ -565,6 +635,7 @@ export async function recallForWork(
   const base = await recallAcross(db, own, query, {
     ...shared,
     ...(opts.eval ? { eval: opts.eval } : {}),
+    ...(opts.owner ? { owner: opts.owner } : {}),
     limit: limit - metaServed.length,
     maxBytes: maxBytes - metaBytes,
   });
