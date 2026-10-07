@@ -439,7 +439,10 @@ async function learnCmd(db: MarinaDB): Promise<number> {
       if (row.config?.priorOnly) break;
       if (row.config?.label) label = row.config.label;
       const e = row.entry;
-      const due = e?.id.match(/^forecastbench:(\d{4}-\d{2}-\d{2})\//)?.[1];
+      const due =
+        typeof e?.id === "string"
+          ? e.id.match(/^forecastbench:(\d{4}-\d{2}-\d{2})\//)?.[1]
+          : undefined;
       if (!e?.answer || !due) continue;
       byDue.set(due, [...(byDue.get(due) ?? []), { id: e.id, answer: e.answer }]);
     }
