@@ -56,11 +56,11 @@
 import { availableModels } from "../agent/available-models";
 import { modelComplete } from "../arena/model-backend";
 import { strictDateFilter } from "../arena/research/isolation";
-import { readSwarmRetriever } from "../arena/research/read-swarm-retriever";
 import { type Retriever, retrieverFromSpec } from "../arena/research/retrieve";
 import { defaultPageText } from "../arena/research/verify";
 import { researchJudge } from "../decisions/config";
 import { dailyCapRefusal } from "../engine/spend-ledger";
+import { researchRetriever } from "../research/retriever";
 import { type AdjustSettings, adjustSettingsFromEnv } from "./adjust";
 import { SELECTION_MODES, type SelectionMode } from "./answer-types";
 import type { ForecastHistory } from "./history";
@@ -139,16 +139,16 @@ function wire(env: NodeJS.ProcessEnv): Wired | { error: string } {
       { env },
     );
     if (retrievalFilterFromEnv(env) === "strict") base = strictDateFilter(base);
-    // Read swarm (opt-in): reader models read every page the retriever found in full.
-    const readerSpec = env.MARINA_READ_SWARM_READER?.trim();
-    if (readerSpec) {
-      const reader = modelComplete(readerSpec, env);
-      base = readSwarmRetriever(base, {
-        reader: { name: readerSpec, complete: reader.complete },
-        spent: () => reader.usage.costUsd,
-      });
-      retrieverLabel = `${retrieverSpec}+read-swarm:${readerSpec}`;
-    }
+    base = researchRetriever(
+      base,
+      env,
+      env.MARINA_FORECAST_PLANNER?.trim() ||
+        env.MARINA_FORECAST_ANALYSTS?.split(",")[0]?.trim() ||
+        defaultAnalystSpecs(env)[0],
+    );
+    if (env.MARINA_READ_SWARM_READER?.trim()) retrieverLabel += "+read-swarm";
+    if (env.MARINA_RESEARCH_EVIDENCE === "on" || Number(env.MARINA_RESEARCH_LOOP_ROUNDS ?? 1) > 1)
+      retrieverLabel += "+evidence-loop";
   } catch (err) {
     return {
       error: (err as Error).message.replace(

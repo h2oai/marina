@@ -46,5 +46,28 @@ export interface LessonStore {
   ): Promise<ForecastLesson[]>;
 }
 
+/** Recall for composed forecasts, with an explicit on/off/observe experiment mode. */
+export async function recallForecastLessons(
+  store: LessonStore | undefined,
+  query: string,
+  asOf: string,
+  mode: "on" | "observe" | "off",
+): Promise<{ injected: ForecastLesson[]; observed: ForecastLesson[]; error?: string }> {
+  if (!store || mode === "off") return { injected: [], observed: [] };
+  try {
+    const got = (await store.recall(query, asOf, { limit: 4, maxBytes: 1500 })).filter(
+      (l) =>
+        Number.isFinite(Date.parse(l.resolvedAt)) && Date.parse(l.resolvedAt) <= Date.parse(asOf),
+    );
+    return {
+      injected: mode === "on" ? got.filter((l) => !l.observed) : [],
+      observed: got.filter((l) => mode === "observe" || l.observed),
+    };
+  } catch (error) {
+    const { getErrorMessage } = await import("../engine/errors");
+    return { injected: [], observed: [], error: getErrorMessage(error).slice(0, 200) };
+  }
+}
+
 /** The subject of the retired, unjudged store's records (read only by the migration). */
 export const LEGACY_LESSON_SUBJECT = "forecast-lesson";

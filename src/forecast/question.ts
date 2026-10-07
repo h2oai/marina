@@ -50,6 +50,8 @@ export interface AnalystAnswer {
 }
 
 export interface ForecastAnswer {
+  evidence?: ResearchReport["evidence"];
+  researchLoop?: ResearchReport["researchLoop"];
   question: string;
   kind: ForecastKind;
   probability?: number;
@@ -129,6 +131,8 @@ export async function forecastQuestion(
     analysts: [],
     sources: research?.sources ?? [],
     report: research?.report ?? "",
+    ...(research?.evidence ? { evidence: research.evidence } : {}),
+    ...(research?.researchLoop ? { researchLoop: research.researchLoop } : {}),
     costUsd: research?.costUsd ?? 0,
     latencyMs: Date.now() - started,
     caveat,
@@ -144,7 +148,9 @@ export async function forecastQuestion(
   } catch (err) {
     return empty(`research failed: ${err instanceof Error ? err.message : String(err)}`);
   }
-  const checked = deps.pageText ? await verifyDossier(research.report, deps.pageText) : undefined;
+  const checked = deps.pageText
+    ? await verifyDossier(research.report, deps.pageText, research.sources)
+    : undefined;
   const dossier = checked ? checked.annotated : research.report;
   const user = [
     `Question: ${req.question}`,

@@ -19,10 +19,11 @@
  */
 
 import { createHash } from "node:crypto";
+import { getErrorMessage } from "../../engine/errors";
 import type { DataHints, ForecastLookup, LookupResult } from "../../forecast/lookup-types";
 import { type LookupName, lookupsFromSpec, runLookups } from "../../forecast/lookups";
 import type { ResearchBrief } from "./briefs";
-import type { ResearchReport, Retriever } from "./retrieve";
+import { isDateStrict, type ResearchReport, type Retriever } from "./retrieve";
 
 /**
  * Official series related to an arena round (by round id): evidence of the
@@ -56,6 +57,24 @@ export function arenaLookupHints(brief: ResearchBrief): {
   return hit ? { hints: { ...hit.hints }, related: hit.why } : { hints: {} };
 }
 
+/** Task-matched explanatory changes; opt-in so historical controls keep their inputs. */
+export function arenaSignalHints(env: NodeJS.ProcessEnv) {
+  const expanded = env.MARINA_ARENA_RESEARCH_SIGNALS?.trim() === "consumer";
+  return (brief: ResearchBrief): ReturnType<typeof arenaLookupHints> => {
+    const base = arenaLookupHints(brief);
+    if (
+      !expanded ||
+      !/^civiqs-.*-(econ-(now|direction)|family-finances|inflation-concern)$/.test(brief.roundId)
+    )
+      return base;
+    return {
+      hints: { fred: [...new Set([...(base.hints.fred ?? []), "GASREGW", "ICSA"])].slice(0, 3) },
+      related:
+        "consumer sentiment, retail gasoline prices and initial unemployment claims; different populations and units, changes only",
+    };
+  };
+}
+
 /** The brief's evidence cutoff: its exact instant, else its last allowed day, else now. */
 export function briefCutoff(brief: ResearchBrief, now: Date): Date {
   const at = brief.untilAt ? Date.parse(brief.untilAt) : Number.NaN;
@@ -81,7 +100,7 @@ export function withDataLookups(
   } = {},
 ): Retriever {
   if (lookups.length === 0) return inner;
-  return async (brief: ResearchBrief): Promise<ResearchReport> => {
+  const wrapped: Retriever = async (brief: ResearchBrief): Promise<ResearchReport> => {
     const report = await inner(brief);
     const now = (opts.now ?? (() => new Date()))();
     const { hints, related } = (opts.hints ?? arenaLookupHints)(brief);
@@ -90,6 +109,7 @@ export function withDataLookups(
     let lines: string[] = [];
     let evidence: LookupResult[] = [];
     const sources: ResearchReport["sources"] = [];
+    const warnings = [...(report.warnings ?? [])];
     try {
       const seriesNamed = !!(hints.fred?.length || hints.bls?.length);
       const usable = lookups
@@ -152,7 +172,13 @@ export function withDataLookups(
             lines.push(
               `- ${reading.date} — FRED ${reading.series}: ${reading.value}${reading.unit ? ` ${reading.unit}` : ""}; ${change}; ${update}; vintage ${reading.asOf.slice(0, 10)} [FRED](${url})`,
             );
-            sources.push({ url, title: `FRED ${reading.series}`, text: payload });
+            sources.push({
+              url,
+              title: `FRED ${reading.series}`,
+              text: payload,
+              observedAt: reading.date,
+              availableAt: reading.asOf,
+            });
           }
           continue;
         }
@@ -160,14 +186,16 @@ export function withDataLookups(
         for (const s of r.sources)
           sources.push({ url: s.url, ...(s.title ? { title: s.title } : {}) });
       }
-    } catch {
-      // allow-empty-catch: structured data is optional evidence; research stands without it
+    } catch (error) {
+      warnings.push(`Structured data failed: ${getErrorMessage(error).slice(0, 160)}`);
     }
-    if (lines.length === 0) return { ...report, data: evidence };
+    warnings.push(...evidence.filter((r) => r.skipped).map((r) => `${r.name}: ${r.skipped}`));
+    if (lines.length === 0) return { ...report, data: evidence, warnings };
     const head = `STRUCTURED DATA (as of the cutoff; evidence of CHANGES only — the round's own history sets the level${related ? `; related series: ${related}` : ""}):`;
     return {
       ...report,
       data: evidence,
+      warnings,
       report: `${report.report}\n\n${head}\n${lines.join("\n")}`,
       sources: [
         ...report.sources,
@@ -175,6 +203,7 @@ export function withDataLookups(
       ],
     };
   };
+  return isDateStrict(inner) ? Object.assign(wrapped, { dateStrict: true as const }) : wrapped;
 }
 
 /** `MARINA_ARENA_RESEARCH_LOOKUPS` (default off): the lookups arena research may add. */

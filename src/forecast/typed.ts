@@ -239,6 +239,8 @@ export interface ForecastPlan {
 }
 
 export interface ResearchRound {
+  evidence?: ResearchReport["evidence"];
+  researchLoop?: ResearchReport["researchLoop"];
   round: number;
   queries: string[];
   sources: number;
@@ -607,6 +609,8 @@ export async function forecastTyped(
     }
     if (report) {
       round.costUsd = report.costUsd;
+      if (report.evidence) round.evidence = report.evidence;
+      if (report.researchLoop) round.researchLoop = report.researchLoop;
       round.chars = report.report.length;
       if (report.funnels?.length) round.funnels = report.funnels;
       if (report.warnings?.length) round.warnings = report.warnings.map((w) => w.slice(0, 200));

@@ -73,6 +73,31 @@ before any search.
 
 ## Date-strict research for forecasts
 
+### Captured evidence and bounded follow-ups
+
+`MARINA_RESEARCH_EVIDENCE=on` captures the source text used to verify each retrieval,
+its publication/observation/vintage dates when supplied, its capture time and a content hash.
+The record is attached to general forecast research rounds, arena dossiers and research-report
+section audits. `captureEvidence`, `validateEvidence` and `replayEvidence` in
+`src/research/evidence.ts` also work without the server. Replay validates the hash and the exact
+brief, including its cutoff, and performs no network requests.
+
+`MARINA_RESEARCH_LOOP_ROUNDS=2` (allowed 1–3, default 1) additionally enables a gap reviewer.
+It requests up to three missing or contradictory facts, then reads and verifies the new evidence.
+The same source URL keeps its first captured text for the entire retrieval. A round adding no
+verified evidence stops the loop; errors and budget-forced results remain in `researchLoop`.
+The loop uses the shared Score executor and WorkBudget. `MARINA_RESEARCH_LOOP_MODEL` selects
+the reviewer; absent, it uses the caller's lead/first analyst. `MARINA_READ_SWARM_READER`
+adds full-page readers before verification on both general forecasts and arena research routes.
+
+These features are opt-in and metered through the usual spend ledger. Typed forecasts and
+research reports already have outer gap rounds: keep those at one round/disabled when measuring
+the inner loop in isolation. A capture's fetch time does not prove when the information first
+became public. Unknown publication dates are background, not evidence of a new change. Live
+captures cannot be used as historical archives: past-cutoff retrieval needs a date-strict engine
+or an existing frozen replay. Mechanical verification checks quotes and figures; it does not
+establish causation or calibrate the forecast.
+
 The research retriever (`MARINA_FORECAST_RETRIEVER`, `MARINA_ARENA_RESEARCH_RETRIEVER`) accepts
 `asof[:<providers>]`, for example `asof:gdelt,wikipedia,hn,arxiv,wayback`, or bare `asof` for all
 of them.

@@ -89,6 +89,7 @@ const PLAYBOOKS: Record<string, string[]> = {
     "Gasoline and diesel prices since that date (AAA or EIA), with levels and changes.",
     "Inflation data released since that date (CPI, PCE) and their headline numbers.",
     "Stock-market and labor-market news since that date; any preliminary or partial reading of this same survey already published.",
+    "New York Fed Survey of Consumer Expectations: newly released household finances, employment, income and credit-access expectations. State publication date, observation month, previous value and exact population. A current workbook is not proof of a historical vintage.",
   ],
   attention: [
     "Scheduled or likely events during the measured week for the items asked about: product launches, earnings, sports finals, premieres, elections, anniversaries.",
@@ -118,6 +119,8 @@ const QUERIES: Record<string, string[]> = {
     "national average gas prices AAA EIA",
     "CPI inflation report",
     "consumer sentiment survey stock market jobs",
+    "site:newyorkfed.org Survey Consumer Expectations household finances employment income credit latest release",
+    "site:dol.gov unemployment insurance weekly claims release",
   ],
   attention: ["trending news this week", "most viewed Wikipedia articles this week"],
 };
