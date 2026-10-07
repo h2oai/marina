@@ -16,20 +16,23 @@ export function extractAnswer(rawResponse: string): string {
   // literal `\b`/`\f` (as in \boxed{…} or \frac{a}{b}) is a legal escape —
   // JSON.parse turns them into backspace/formfeed control chars and the LaTeX
   // markers below never match ("\x08oxed{25}"). Restore them before matching.
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: repair JSON-decoded LaTeX escapes
   const response = rawResponse.replace(/\x08/g, "\\b").replace(/\f/g, "\\f");
-  // 1. \boxed{…} — MATH uses this. Take the INNERMOST content.
-  const boxed = [...response.matchAll(/\\boxed\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}/g)];
-  if (boxed.length > 0) return boxed[boxed.length - 1]![1]!.trim();
+  // 1. \boxed{…} — balance braces so nested fractions/radicals stay intact.
+  let boxed: string | undefined;
+  for (const match of response.matchAll(/\\boxed\{/g)) {
+    const group = braced(response, match.index + match[0].length - 1);
+    if (group) boxed = group.content.trim();
+  }
+  if (boxed !== undefined) return boxed;
 
   // 2. "#### N" — GSM8K
   const gsm = response.match(/####\s*(-?[\d,.]+(?:\/[\d]+)?)/);
   if (gsm) return gsm[1]!.replace(/,/g, "").trim();
 
   // 3. "The answer is X" / "Final answer: X"
-  const explicit = response.match(
-    /(?:the\s+)?(?:final\s+)?answer\s*(?:is|:|=)\s*\$?([^\n.,]+?)(?:\.|,|\n|$)/i,
-  );
-  if (explicit) return explicit[1]!.trim().replace(/^[$\s]+|[$\s]+$/g, "");
+  const explicit = response.match(/(?:the\s+)?(?:final\s+)?answer\s*(?:is|:|=)\s*([^\n]+)/i);
+  if (explicit) return explicit[1]!.split(/\.(?!\d)|!/, 1)[0]!.replace(/^[$\s]+|[$\s]+$/g, "");
 
   // 4. Last number in text
   const nums = [...response.matchAll(/(-?\d+(?:\.\d+)?(?:\/\d+)?)/g)];
@@ -51,7 +54,7 @@ function evalLatex(s: string): number | null {
     .replace(/\\pi/g, "π");
   if (!t) return null;
   const r = parseSum(t, 0);
-  return r && skipSpace(t, r.next) === t.length ? r.value : null;
+  return r && Number.isFinite(r.value) && skipSpace(t, r.next) === t.length ? r.value : null;
 }
 
 function skipSpace(t: string, i: number): number {
@@ -103,6 +106,8 @@ function parseProduct(t: string, i: number): { value: number; next: number } | n
   let next = skipSpace(t, first.next);
   while (next < t.length && t[next] !== "+" && t[next] !== "-" && t[next] !== ")") {
     const divide = t[next] === "/";
+    // Juxtaposed groups/radicals mean multiplication; two bare numbers do not.
+    if (!divide && !/[\\(π]/.test(t[next]!)) return null;
     const f = parseFactor(t, divide ? next + 1 : next);
     if (!f) return null;
     if (divide) {
@@ -183,6 +188,10 @@ function tupleParts(s: string): string[] | null {
 
 /** Whitespace-insensitive tuple/vector comparison, with numeric tolerance. */
 function tuplesMatch(a: string, b: string): boolean {
+  const brackets = (s: string) => s.replace(/\\left|\\right|\s|\$/g, "");
+  const aa = brackets(a);
+  const bb = brackets(b);
+  if (aa[0] !== bb[0] || aa.at(-1) !== bb.at(-1)) return false;
   const pa = tupleParts(a);
   const pb = tupleParts(b);
   if (!pa || !pb || pa.length !== pb.length) return false;
@@ -211,11 +220,16 @@ function clean(s: string): string {
 }
 
 export function answersMatch(a: string, b: string): boolean {
+  if (!a.trim() || !b.trim()) return false;
   // Tuples first, on the raw text: "(1,250)" is a pair, not one thousand two hundred fifty.
-  if (tupleParts(a) && tupleParts(b)) return tuplesMatch(a, b);
-  const va = evalLatex(clean(a));
-  const vb = evalLatex(clean(b));
+  if (tupleParts(a) || tupleParts(b)) return tuplesMatch(a, b);
+  const ca = clean(a);
+  const cb = clean(b);
+  if (/^-?\d+$/.test(ca) && /^-?\d+$/.test(cb)) return BigInt(ca) === BigInt(cb);
+  const va = evalLatex(ca);
+  const vb = evalLatex(cb);
   if (va !== null && vb !== null) return numsClose(va, vb);
+  if (va !== null || vb !== null) return false;
   // Fall back to normalized string equality (LaTeX spacing, case, whitespace).
   const rough = (x: string) =>
     clean(x)

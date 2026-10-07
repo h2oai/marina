@@ -28,7 +28,7 @@ function normalize(s: string): string {
 function substringMatch(actual: string, expected: string): boolean {
   const na = normalize(actual);
   const ne = normalize(expected);
-  if (!ne) return false;
+  if (!na || !ne) return false;
   return na.includes(ne) || ne.includes(na);
 }
 
@@ -124,6 +124,7 @@ export async function runShortAnswer(
     while (true) {
       const item = queue.shift();
       if (!item) return;
+      const start = performance.now();
       const evidence =
         config.ground === "search"
           ? await groundEvidence(item.question, config.dataset, grounding)
@@ -137,7 +138,6 @@ export async function runShortAnswer(
         { role: "system", content: system },
         { role: "user", content: item.question },
       ];
-      const start = performance.now();
       let actual = "";
       let rawResponse = "";
       let correct = false;

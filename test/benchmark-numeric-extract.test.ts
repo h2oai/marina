@@ -23,6 +23,15 @@ describe("numeric benchmark answer extraction", () => {
     expect(extractAnswer("Therefore the answer is 42.")).toBe("42");
     expect(extractAnswer("compute 3 then 7 then 99")).toBe("99");
   });
+
+  it("preserves decimals, thousands separators and nested boxed expressions", () => {
+    expect(extractAnswer("The answer is 1.25.")).toBe("1.25");
+    expect(extractAnswer("The answer is 1.25. The calculation agrees.")).toBe("1.25");
+    expect(extractAnswer("Final answer: $1,250$.")).toBe("1,250");
+    expect(extractAnswer("Final answer: (1, 2).")).toBe("(1, 2)");
+    expect(extractAnswer("\\boxed{\\frac{1}{\\sqrt{4}}}")).toBe("\\frac{1}{\\sqrt{4}}");
+    expect(extractAnswer("First \\boxed{2}, corrected to \\boxed{3}.")).toBe("3");
+  });
 });
 
 describe("numeric benchmark answer equivalence", () => {
@@ -48,5 +57,13 @@ describe("numeric benchmark answer equivalence", () => {
     expect(answersMatch("[1,2]", "(1,2,3)")).toBe(false);
     expect(answersMatch("1.73", "\\sqrt{3}")).toBe(false);
     expect(answersMatch("1/0", "0")).toBe(false);
+    expect(answersMatch("[1,2]", "(1,2)")).toBe(false);
+    expect(answersMatch("(1,250)", "1250")).toBe(false);
+    expect(answersMatch("1 2", "2")).toBe(false);
+    expect(answersMatch("1 2", "12")).toBe(false);
+    expect(answersMatch("9007199254740993", "9007199254740992")).toBe(false);
+    expect(answersMatch("", "")).toBe(false);
+    expect(answersMatch("\\text{no answer}", "")).toBe(false);
+    expect(answersMatch("9".repeat(400), "8".repeat(400))).toBe(false);
   });
 });
