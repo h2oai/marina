@@ -15,6 +15,8 @@ export interface BenchmarkConfig {
     | "checks";
   scoring: "accuracy" | "pass-at-k" | "ifeval" | "judge" | "numeric-match" | "normalized-match";
   mode: "passthrough" | "memory";
+  /** Ground factual answers in live search evidence before answering (`search`). */
+  ground?: "search";
   model: string;
   endpoint: string;
   apiKey?: string;
@@ -69,6 +71,11 @@ export interface ResultItem {
   usage?: ItemUsage;
   /** What judging this item cost (judge-scored adapters only). */
   judgeUsage?: ItemUsage;
+  /**
+   * Search results given to the model before it answered (`--ground search` runs
+   * only). 0 means grounding found nothing usable and the model answered unaided.
+   */
+  evidence?: number;
   /** Judge verdict when a judge decided the item; "error" = the judge failed. */
   judge?: "correct" | "incorrect" | "error";
   /** The target's `x-request-id` for this item (a Marina traceId); filed to the ledger. */

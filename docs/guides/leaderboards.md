@@ -82,3 +82,23 @@ A placement is claimable in public only when it is a *result*, not a candidate:
 Until then, describe it as a candidate ("a subset sweep suggests #2 territory"), not a placement.
 The distinction is what keeps a Marina claim from being the thing this project criticizes in
 others: a number without a reproduction.
+
+## Grading notes for internal academic runs
+
+GSM8K, MATH and AIME are graded by numerical equivalence, not exact LaTeX
+(`benchmarks/adapters/numeric.ts`). A correct answer written as a decimal, a fraction (`1/2`,
+`\frac{1}{2}`), a simplified radical, or with thousands separators counts as right. Integers must
+match exactly, decimals within a 2·10⁻⁴ relative tolerance, and tuples element by element. An
+exact-match number is not reported, because it penalizes the form of an answer rather than an error.
+
+SimpleQA and FRAMES accept `--ground search`, which gives the model live search results before it
+answers. That is a different configuration from the closed-book run and is filed under its own
+configuration hash. Results from the benchmark's own dataset, repository and mirrors are dropped
+before the model sees them. The run prints how many items actually received evidence, and each
+item records its `evidence` count, so a run whose search returned nothing is not reported as
+grounded.
+
+**MuSR is excluded from any claim.** The harness's MuSR set is two-choice, with answers split
+evenly between `A` and `B`. A model that answers the same letter almost every time scores whatever
+share of the sampled subset has that letter, so a subset score measures answer-letter balance,
+not reasoning. MuSR results are not reported.
