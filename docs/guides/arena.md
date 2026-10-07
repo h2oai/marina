@@ -40,9 +40,9 @@ Archive lookups and research cutoffs use the earlier of forecast time and lock t
 forecasts therefore search back from today, and historical replays remain bounded by their lock.
 Trends uses a newer complete basket when available, keeping all cells in one comparison snapshot
 and showing that same history to the models. Live Civiqs failures remain in the origin trace
-when a sufficiently current archive is available. Research traces retain failed engines and
-explicit `verified`, `empty`, or `failed` dossier status; an empty dossier is never described as
-verified evidence. Evaluation and shadow experiments may inspect older inputs, but their results
+when a sufficiently current archive is available. Research traces retain failed engines, and
+formation dossiers carry explicit `verified`, `empty`, or `failed` status; an empty dossier is
+never described as verified evidence. Evaluation and shadow experiments may inspect older inputs, but their results
 do not bypass the official submission checks.
 
 Run `bun run arena audit <round_id|due> --fresh` to inspect the current observation dates,
@@ -352,10 +352,10 @@ against the arena's recorded persistence loss for each round.
   arena's `wikitop/` archive, using days published before the lock (a two-day lag; daily lists are
   final once published, and the archive was partly backfilled); the half-life was chosen by
   backtest over the archived weeks.
-- **Google Trends baskets**: Trends re-normalises its index in every snapshot, so the lock's own
-  frozen per-cell history — what the persistence null reads — is used; the `trends/` archive only
-  fills in for a lock without one, complete weeks only (`MARINA_ARENA_TRENDS_PARTIAL=on` adds the
-  partial week; mixed in the backtest). Archive fallback requires the exact target basket, unique
+- **Google Trends baskets**: Trends re-normalises its index in every snapshot. Forecasts use a
+  newer complete basket from `trends/` when available; the original lock still defines the
+  scoring baseline. Complete weeks only are used (`MARINA_ARENA_TRENDS_PARTIAL=on` adds the
+  partial week; mixed in the backtest). Archive inputs require the exact target basket, unique
   terms, an eligible fetch timestamp, finite nonnegative indices, matching vector lengths and
   ordered periods. Extra terms change the denominator and are rejected. An empty or malformed
   snapshot does not hide an older usable one; histories are never spliced across vintages.
