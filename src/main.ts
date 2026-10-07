@@ -40,6 +40,7 @@ import { LogServer } from "./net/log-server";
 import { McpServerAdapter } from "./net/mcp-server";
 import { describeDefaultUpstream } from "./net/model-api";
 import { detectLocalContextWindow, detectOllamaDefaultModel } from "./net/model-discovery";
+import { markServingProcess } from "./net/self-model-token";
 import { TelnetServer } from "./net/telnet-server";
 import { isLoopbackHostname, resolveWsBindHostname, WebSocketServer } from "./net/websocket-server";
 import { MarinaDB } from "./persistence/database";
@@ -695,6 +696,8 @@ if (isOpenApiMode()) {
     "MARINA_OPEN_API=true — API endpoints accept unauthenticated requests (development mode)",
   );
 }
+// This process serves /v1: its own self-calls carry the in-process internal token.
+markServingProcess();
 // Local profile: a generated, persisted key instead of a closed API (see local-api-key.ts).
 // Outside it an inherited or hand-set MARINA_LOCAL_API_KEY is dropped, so it
 // can never become a bearer in a shared/public deployment (the model API also

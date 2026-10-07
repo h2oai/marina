@@ -28,14 +28,15 @@ import { type AnswerOption, type AnswerSpec, type AnswerType, normalizeText } fr
 import type { Distribution } from "./distribution";
 
 /**
- * Where a prior came from, best first: a market price or community forecast the
- * asker supplied, a market price a lookup found, the freshest official reading
+ * Where a prior came from, best first: a market price, community forecast or
+ * statistical prior the asker supplied, a market price a lookup found, the freshest official reading
  * of the quantity (persistence), the reference class's base rate, the type's
  * default (uniform / 0.5).
  */
 export type PriorSource =
   | "market"
   | "community"
+  | "statistical"
   | "market-lookup"
   | "anchor"
   | "base-rate"
@@ -44,6 +45,7 @@ export type PriorSource =
 export const PRIOR_SOURCES: readonly PriorSource[] = [
   "market",
   "community",
+  "statistical",
   "market-lookup",
   "anchor",
   "base-rate",

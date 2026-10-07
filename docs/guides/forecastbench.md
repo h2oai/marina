@@ -22,6 +22,18 @@ bun run forecastbench estimate --due 2026-10-11      # questions, forecasts, est
 bun run forecastbench run --due 2026-10-11 --set 1   # forecast everything, then write the file
 ```
 
+Dataset questions are mostly statistics, so each one also gets a **statistical prior** before the
+models see it ([Statistical priors](forecasting.md#statistical-priors)):
+
+| Source | Prior |
+|---|---|
+| FRED, yfinance, DBnomics | the series ForecastBench names, read as of the due date; the series picks drift, momentum, the same calendar window in past years, or 0.5 by replaying its own past |
+| ACLED, Wikipedia | how similar questions resolved in ForecastBench's own published resolutions known by the due date (source → question template → size → horizon) |
+
+The prior is shown to the runs, supplied for prior shrink, written to `<due>/priors.json`, and used
+as the fallback for a dataset question that could not be forecast. Market questions keep their
+market price.
+
 `run` appends each answer to `set-<N>.jsonl` as it lands. Rerun it after an interruption: it
 resumes, and retries only the questions that are missing or failed.
 
@@ -70,6 +82,14 @@ bun run forecastbench run --due 2026-10-11 --set 1                     # pick 1
 bun run forecastbench run --due 2026-10-11 --set 2 --concurrency 8     # pick 2
 ```
 
+The candidates always include `prior-only` (no model: market prices and statistical priors) and
+the cheap ensemble pooled toward the prior (`ensemble:cheap+pool`). `baseline` scores the
+model-free priors per source on resolved rounds, at no cost:
+
+```bash
+bun run forecastbench baseline --rounds 2026-08-16,2026-08-30   # prior vs 0.5, per source
+```
+
 See [Metaculus](metaculus.md#choosing-the-configuration) for the candidate set and the leakage
 guards; the two adapters share `benchmarks/forecasting/`.
 
@@ -98,3 +118,16 @@ bun run forecastbench resolve --due 2026-09-27
 `resolve` reads the round's published resolution set and scores each answered question. It
 hands each outcome to the outcome-learning loop, worst first, so that later forecasts recall the
 lessons. Each question is recorded once (`forecastbench-outcome`).
+
+Backtest answers teach the same way. `learn` turns every answer a selection journal holds
+(`<selection>-runs/*.jsonl`, or `--runs <dir>`) into its round's journal and runs `resolve` on it;
+the prior-only baseline is skipped. Lessons are visible only after each outcome was known, so a
+later backtest cannot see them early.
+
+```bash
+bun run forecastbench learn --runs data/forecastbench/selection-runs
+```
+
+The lesson writer and judge call this Marina's own `/v1`. A CLI process authenticates with the
+operator's first `MODEL_API_KEYS` secret, else the local profile's key file beside `DB_PATH`, so
+its lessons are judged rather than stored unverified.

@@ -15,7 +15,11 @@
 
 import { dailyCapRefusal } from "../engine/spend-ledger";
 import { parseAnswerSpec } from "../forecast/answer-types";
-import type { SuppliedPrior } from "../forecast/prior";
+import {
+  SUPPLIED_PRIOR_SOURCES,
+  type SuppliedPrior,
+  type SuppliedPriorSource,
+} from "../forecast/prior";
 import type { ForecastKind } from "../forecast/question";
 import type { MarinaDB } from "../persistence/database";
 import { errorJson, json } from "./model-api/shared";
@@ -88,8 +92,13 @@ export function parsePriors(raw: unknown): { priors: SuppliedPrior[] } | { error
   const priors: SuppliedPrior[] = [];
   for (const p of raw as Array<Record<string, unknown>>) {
     const source = p?.source;
-    if (source !== "market" && source !== "community") {
-      return { error: 'each prior needs source "market" or "community"' };
+    if (
+      typeof source !== "string" ||
+      !(SUPPLIED_PRIOR_SOURCES as readonly string[]).includes(source)
+    ) {
+      return {
+        error: `each prior needs source ${SUPPLIED_PRIOR_SOURCES.map((s) => `"${s}"`).join(", ")}`,
+      };
     }
     const at = isoOrUndefined(p.at);
     if (!at) return { error: "each prior needs `at`, the ISO time it was observed" };
@@ -118,7 +127,7 @@ export function parsePriors(raw: unknown): { priors: SuppliedPrior[] } | { error
       return { error: "prior value must be a number and sd a positive number" };
     }
     priors.push({
-      source,
+      source: source as SuppliedPriorSource,
       at,
       ...(distribution ? { distribution } : {}),
       ...(value !== undefined ? { value } : {}),

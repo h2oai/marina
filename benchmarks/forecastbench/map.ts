@@ -15,6 +15,7 @@
  */
 
 import type { AnswerSpec } from "../../src/forecast/answer-types";
+import type { SuppliedPrior } from "../../src/forecast/prior";
 import type { TypedForecastAnswer, TypedForecastRequest } from "../../src/forecast/typed";
 import { type FbQuestion, isMarket, resolutionDates } from "./dataset";
 
@@ -68,7 +69,13 @@ export function questionText(q: FbQuestion, due: string): string {
     .replaceAll("{resolution_date}", "the resolution date (each option below)");
 }
 
-export function requestFor(q: FbQuestion, due: string): TypedForecastRequest {
+/** A dataset question's statistical prior (`./priors.ts`), as the request carries it. */
+export interface RequestPrior {
+  prior: SuppliedPrior;
+  line: string;
+}
+
+export function requestFor(q: FbQuestion, due: string, stat?: RequestPrior): TypedForecastRequest {
   const market = isMarket(q);
   const freeze = q.freeze_datetime?.slice(0, 10);
   const value = clip(q.freeze_datetime_value, 60);
@@ -99,7 +106,9 @@ export function requestFor(q: FbQuestion, due: string): TypedForecastRequest {
             },
           ],
         }
-      : {}),
+      : stat
+        ? { priors: [stat.prior] }
+        : {}),
     ...(market && close && Number.isFinite(Date.parse(close)) ? { endTime: close } : {}),
     context: [
       clip(q.source_intro, 600),
@@ -114,6 +123,7 @@ export function requestFor(q: FbQuestion, due: string): TypedForecastRequest {
       value
         ? `On ${freeze ?? "the freeze date"}: ${value}${q.freeze_datetime_value_explanation ? ` — ${clip(q.freeze_datetime_value_explanation, 300)}` : ""}`
         : "",
+      stat?.line ?? "",
       q.background ? `Background: ${clip(q.background, 2_500)}` : "",
       q.url ? `Source: ${q.url}` : "",
     ]
@@ -160,10 +170,11 @@ export function forecastsFrom(
 
 /**
  * When a question could not be forecast: the market's own price at the freeze
- * date for a market question, else 0.5 (what ForecastBench imputes anyway).
- * Counted and reported as a fallback, never passed off as a forecast.
+ * date for a market question, a dataset question's statistical prior when it
+ * has one, else 0.5 (what ForecastBench imputes anyway). Counted and reported
+ * as a fallback, never passed off as a forecast.
  */
-export function fallbackForecasts(q: FbQuestion): FbForecast[] {
+export function fallbackForecasts(q: FbQuestion, byDate?: Record<string, number>): FbForecast[] {
   const price = Number(q.freeze_datetime_value);
   if (isMarket(q)) {
     const p = Number.isFinite(price) && price >= 0 && price <= 1 ? price : 0.5;
@@ -180,7 +191,7 @@ export function fallbackForecasts(q: FbQuestion): FbForecast[] {
   return resolutionDates(q).map((date) => ({
     id: q.id,
     source: q.source,
-    forecast: 0.5,
+    forecast: byDate?.[date] ?? 0.5,
     resolution_date: date,
     reasoning: null,
   }));

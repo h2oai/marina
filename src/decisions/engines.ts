@@ -31,6 +31,7 @@
 
 import { Logger } from "../engine/logger";
 import { dailyCapRefusal } from "../engine/spend-ledger";
+import { selfModelToken } from "../net/self-model-token";
 import type { ClassifierMethod } from "./classifier-methods";
 import { combineAnswers, unsureAnswers } from "./combine";
 import { classifierTuning, getDecisionProvider } from "./config";
@@ -86,12 +87,6 @@ function selfBaseUrl(env: NodeJS.ProcessEnv): string {
   return `http://localhost:${Number(env.WS_PORT) || 3300}/v1`;
 }
 
-async function internalToken(): Promise<string> {
-  // Lazy: the agent runtime is heavy, and only a classifier engine needs it.
-  const { getInternalModelToken } = await import("../agent/agent-runtime");
-  return getInternalModelToken();
-}
-
 /**
  * A chat model as a decision engine, answering through Marina's own `/v1`.
  * `method` overrides `MARINA_DECISION_METHOD` (`verbalized` is exactly one
@@ -116,7 +111,7 @@ export function classifierEngine(
       inner ??= chatClassifierProvider({
         baseUrl: deps.selfBaseUrl ?? selfBaseUrl(env),
         model,
-        apiKey: await (deps.token ?? internalToken)(),
+        apiKey: await (deps.token ?? (() => selfModelToken(env)))(),
         timeoutMs: call.timeoutMs ?? CLASSIFIER_TIMEOUT_MS,
         ...(call.reasoning ? { reasoning: call.reasoning } : {}),
         method: method ?? tuning.method ?? "auto",
