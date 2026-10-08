@@ -27,6 +27,7 @@ import {
 } from "./extract";
 import {
   applyExtraction,
+  CONSENT_NOTE,
   ledgerSummary,
   MAX_LISTED,
   matchCall,
@@ -38,7 +39,7 @@ import {
   statedLines,
   type ToolCallRecord,
 } from "./ledger";
-import { type ObligationsMode, obligationsMode } from "./mode";
+import { type ObligationsMode, obligationsConsentMode, obligationsMode } from "./mode";
 
 /** Requests queued between prompt builds (the oldest are dropped past this). */
 const MAX_PENDING_REQUESTS = 8;
@@ -51,6 +52,8 @@ export interface AgentObligationsOptions {
   /** The decision layer, when configured (judgements become numbers). */
   provider?: () => DecisionProvider | undefined;
   mode?: () => ObligationsMode;
+  /** Whether approvals are shown and named (`MARINA_OBLIGATIONS_CONSENT`, read live). */
+  consentShown?: () => boolean;
   now?: () => number;
 }
 
@@ -70,6 +73,10 @@ export class AgentObligations {
 
   mode(): ObligationsMode {
     return (this.opts.mode ?? obligationsMode)();
+  }
+
+  private showConsent(): boolean {
+    return (this.opts.consentShown ?? (() => obligationsConsentMode() === "on"))();
   }
 
   /** A request the agent now owes work on (first-party text only). */
@@ -143,7 +150,7 @@ export class AgentObligations {
     if (open.length === 0) return undefined;
     return [
       `[Open obligations — ${open.length}]`,
-      ...open.slice(-MAX_LISTED).map(line),
+      ...open.slice(-MAX_LISTED).map((o) => line(o, this.showConsent())),
       "Carry each out, or tell the requester why not. Settled by a successful matching action.",
     ].join("\n");
   }
@@ -160,7 +167,10 @@ export class AgentObligations {
     this.ledger.nudges++;
     return [
       "[Obligations] Your run is ending with these requests not yet carried out:",
-      ...owed.slice(0, MAX_LISTED).map(line),
+      ...owed.slice(0, MAX_LISTED).map((o) => line(o, this.showConsent())),
+      ...(this.showConsent() && owed.some((o) => o.consentTurn !== undefined)
+        ? [CONSENT_NOTE]
+        : []),
       "If one still needs an action you can take, take it now (a tool call). If it is declined or impossible, tell the requester why.",
     ].join("\n");
   }
@@ -180,6 +190,12 @@ export class AgentObligations {
   }
 }
 
-function line(o: Obligation): string {
-  return `- ${o.id}: ${o.what}${o.target ? ` (target: ${o.target})` : ""}`;
+function line(o: Obligation, showConsent: boolean): string {
+  const extra = [
+    o.target ? `target: ${o.target}` : "",
+    showConsent && o.consentTurn !== undefined ? `approved in request ${o.consentTurn}` : "",
+  ]
+    .filter(Boolean)
+    .join("; ");
+  return `- ${o.id}: ${o.what}${extra ? ` (${extra})` : ""}`;
 }

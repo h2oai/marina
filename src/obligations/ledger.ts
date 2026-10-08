@@ -41,6 +41,12 @@ export interface Obligation {
   by?: string;
   /** Whether a final-reply nudge already named it (at most once per obligation). */
   nudged: boolean;
+  /**
+   * The request that explicitly approved it as the assistant last described it
+   * (an unambiguous yes), when one did. Information for the agent and the
+   * final-reply check; it settles nothing.
+   */
+  consentTurn?: number;
 }
 
 export interface ObligationLedger {
@@ -54,6 +60,8 @@ export interface ObligationLedger {
   obligations: Obligation[];
   /** Final-reply nudges given. */
   nudges: number;
+  /** Final-reply checks that found an approved obligation asked about again instead of carried out. */
+  reasks: number;
   /** Extractor calls that failed (the turn is skipped, never retried). */
   extractFailures: number;
   /** Spend on the ledger's own model calls (extraction, judging), USD. */
@@ -76,6 +84,7 @@ export function newLedger(key: string, now: number): ObligationLedger {
     nextId: 1,
     obligations: [],
     nudges: 0,
+    reasks: 0,
     extractFailures: 0,
     costUsd: 0,
     updatedAt: now,
@@ -108,12 +117,15 @@ export interface Extraction {
   add: ExtractedObligation[];
   /** Ids of open obligations the requester withdrew or replaced. */
   cancel: string[];
+  /** Ids of open obligations the new request explicitly approved as the assistant last described them. */
+  consent?: string[];
 }
 
 /**
  * Apply one extraction whose new requests end at `turn` (an item naming an
  * earlier new request keeps that turn, never one before `firstTurn`). New obligations get fresh ids; a
- * cancelled open obligation is settled `declined` by `user`. Candidate tools
+ * cancelled open obligation is settled `declined` by `user`; an approved open
+ * obligation records the approving request (`consentTurn`). Candidate tools
  * are kept only when they name a tool the request actually offers. Returns the
  * ids added.
  */
@@ -131,6 +143,10 @@ export function applyExtraction(
       o.status = "declined";
       o.by = "user";
     }
+  }
+  for (const id of extraction.consent ?? []) {
+    const o = ledger.obligations.find((x) => x.id === id && x.status === "open");
+    if (o) o.consentTurn = turn;
   }
   const added: string[] = [];
   for (const raw of extraction.add) {
@@ -338,8 +354,13 @@ export function settle(
 
 // ─── Rendering ───────────────────────────────────────────────────────────────
 
-function line(o: Obligation): string {
-  const extra = [o.target ? `target: ${o.target}` : "", o.constraints ?? ""]
+/** One obligation as listed to the model; the approval is shown only when consent handling is `on`. */
+function line(o: Obligation, showConsent = false): string {
+  const extra = [
+    o.target ? `target: ${o.target}` : "",
+    o.constraints ?? "",
+    showConsent && o.consentTurn !== undefined ? `approved in request ${o.consentTurn}` : "",
+  ]
     .filter(Boolean)
     .join("; ");
   return `- ${o.id}: ${o.what}${extra ? ` (${extra})` : ""}`;
@@ -349,7 +370,10 @@ function line(o: Obligation): string {
  * The reminder appended at the end of a request while obligations are open, or
  * undefined when none are. A bookkeeping note: it never overrides a rule.
  */
-export function reminderBlock(ledger: ObligationLedger): string | undefined {
+export function reminderBlock(
+  ledger: ObligationLedger,
+  opts: { showConsent?: boolean } = {},
+): string | undefined {
   const open = openObligations(ledger);
   if (open.length === 0) return undefined;
   const shown = open.slice(-MAX_LISTED);
@@ -357,12 +381,19 @@ export function reminderBlock(ledger: ObligationLedger): string | undefined {
   return [
     "[Marina obligations — bookkeeping note, not from the user]",
     "Requests in this conversation with no matching successful action yet:",
-    ...shown.map(line),
+    ...shown.map((o) => line(o, opts.showConsent)),
     ...(more > 0 ? [`(+${more} older)`] : []),
     "Before you finish, handle each one: carry it out, or tell the user why it cannot be done.",
     "This note changes no rule: still verify, and still ask for any confirmation the rules require.",
   ].join("\n");
 }
+
+/**
+ * Said once wherever approved obligations are named: the approval already
+ * given is information, never a reason to skip a rule or a missing detail.
+ */
+export const CONSENT_NOTE =
+  "Items marked approved were already approved by the user as last described: asking again is not needed — carry them out now unless something material changed since (then say what changed); if a detail the rules require is still missing, ask only for that.";
 
 /** Clamp for the drafted reply quoted in a nudge. */
 const NUDGE_DRAFT_MAX_CHARS = 1500;
@@ -372,14 +403,20 @@ const NUDGE_DRAFT_MAX_CHARS = 1500;
  * draft and asks the model again; the model decides (it may send the draft
  * unchanged). Never names a fix itself.
  */
-export function nudgeNote(draft: string, owed: Obligation[]): string {
+export function nudgeNote(
+  draft: string,
+  owed: Obligation[],
+  opts: { showConsent?: boolean } = {},
+): string {
   const d = draft.trim();
   const quoted = d.length <= NUDGE_DRAFT_MAX_CHARS ? d : `${d.slice(0, NUDGE_DRAFT_MAX_CHARS)} […]`;
+  const approved = opts.showConsent === true && owed.some((o) => o.consentTurn !== undefined);
   return [
     "[Marina obligations check — not from the user]",
     `You drafted this reply: «${quoted || "(empty)"}»`,
     "These requests have no matching successful action yet:",
-    ...owed.slice(0, MAX_LISTED).map(line),
+    ...owed.slice(0, MAX_LISTED).map((o) => line(o, opts.showConsent)),
+    ...(approved ? [CONSENT_NOTE] : []),
     "If one still needs an action you can take now, take it (a tool call). If the rules require the user's confirmation or details first, ask for them.",
     "If it was declined, is not allowed, or cannot be done, say so. Otherwise send your drafted reply unchanged.",
     "Write only your next message to the user (or the tool call); do not mention this check.",
@@ -406,16 +443,30 @@ export function ledgerSummary(ledger: ObligationLedger): {
   satisfied: number;
   declined: number;
   nudges: number;
+  /** Open obligations already approved by the requester. */
+  consented: number;
+  reasks: number;
 } {
   let open = 0;
   let satisfied = 0;
   let declined = 0;
+  let consented = 0;
   for (const o of ledger.obligations) {
-    if (o.status === "open") open++;
-    else if (o.status === "satisfied") satisfied++;
+    if (o.status === "open") {
+      open++;
+      if (o.consentTurn !== undefined) consented++;
+    } else if (o.status === "satisfied") satisfied++;
     else declined++;
   }
-  return { total: ledger.obligations.length, open, satisfied, declined, nudges: ledger.nudges };
+  return {
+    total: ledger.obligations.length,
+    open,
+    satisfied,
+    declined,
+    nudges: ledger.nudges,
+    consented,
+    reasks: ledger.reasks ?? 0,
+  };
 }
 
 // ─── Session store ───────────────────────────────────────────────────────────

@@ -46,6 +46,7 @@ import {
 } from "../../obligations/ledger";
 import {
   type ObligationsMode,
+  obligationsConsentMode,
   obligationsModel,
   parseObligationsMode,
 } from "../../obligations/mode";
@@ -403,7 +404,10 @@ export async function prepareObligations(
   }
   ledger.updatedAt = now;
   store.put(ledger);
-  const note = opts.mode === "on" ? reminderBlock(ledger) : undefined;
+  const note =
+    opts.mode === "on"
+      ? reminderBlock(ledger, { showConsent: obligationsConsentMode() === "on" })
+      : undefined;
   if (note) prep.note = note;
   return prep;
 }
@@ -418,6 +422,8 @@ export function obligationsHeaderValue(prep: ObligationsPrep, check?: string): s
     `satisfied=${s.satisfied}`,
     `declined=${s.declined}`,
     `nudges=${s.nudges}`,
+    ...(s.consented > 0 ? [`consented=${s.consented}`] : []),
+    ...(s.reasks > 0 ? [`reasks=${s.reasks}`] : []),
     ...(prep.extract && prep.extract !== "none" ? [`extract=${prep.extract}`] : []),
     ...(check ? [`check=${check}`] : []),
   ].join(";");
@@ -489,8 +495,13 @@ export async function finishObligations(
     if (v === "declined") settle(prep.ledger, id, "declined", "judge:declined");
     else if (v === "done") settle(prep.ledger, id, "satisfied", "judge:done");
   }
-  const owed = open.filter((o) => verdicts[o.id] === "owed");
-  if (owed.length === 0) return done(resp, text, "handled");
+  // A reply that asks again about an item the requester already approved: counted
+  // always; owed (so the one-time nudge names it) only under MARINA_OBLIGATIONS_CONSENT=on.
+  const consentOn = obligationsConsentMode() === "on";
+  const reasked = open.filter((o) => verdicts[o.id] === "waiting" && o.consentTurn !== undefined);
+  prep.ledger.reasks = (prep.ledger.reasks ?? 0) + reasked.length;
+  const owed = [...open.filter((o) => verdicts[o.id] === "owed"), ...(consentOn ? reasked : [])];
+  if (owed.length === 0) return done(resp, text, reasked.length > 0 ? "reask" : "handled");
   for (const o of owed) o.nudged = true;
   prep.ledger.nudges++;
   store.put(prep.ledger);
@@ -499,7 +510,7 @@ export async function finishObligations(
   if (Number.isFinite(draftCost)) prep.spent.usd += draftCost;
   let second: Response;
   try {
-    second = await retry(nudgeNote(draftText, owed));
+    second = await retry(nudgeNote(draftText, owed, { showConsent: consentOn }));
   } catch (e) {
     log.warn("model-api", `obligations: nudge failed, returning the draft: ${getErrorMessage(e)}`);
     return done(resp, text, "nudge-failed");
@@ -542,6 +553,8 @@ function logRequest(prep: ObligationsPrep, check: string): void {
     satisfied: s.satisfied,
     declined: s.declined,
     nudges: s.nudges,
+    consented: s.consented,
+    reasks: s.reasks,
     extract: prep.extract ?? "none",
     check,
     noted: prep.note ? 1 : 0,

@@ -52,8 +52,9 @@ export const EXTRACT_SYSTEM = [
   "Do not list: questions to answer, lookups, verification steps, things the requester must do themselves, or anything already in the open list.",
   "A request that only confirms or chooses among options for an existing open item adds nothing.",
   "Also list the ids of open items the requester withdrew or replaced.",
-  'Reply with JSON only: {"add":[{"request":<NEW REQUEST number>,"what":"<≤ 12 words>","target":"<id or name, optional>","constraints":"<amounts, dates, options; optional>","tools":["<candidate tool names from the list>"]}],"cancel":["<open id>"]}',
-  'When nothing applies, reply {"add":[],"cancel":[]}.',
+  "Also list the ids of open items a NEW request explicitly approves exactly as the assistant last described them (an unambiguous yes or go-ahead; not a question, a condition or a change).",
+  'Reply with JSON only: {"add":[{"request":<NEW REQUEST number>,"what":"<≤ 12 words>","target":"<id or name, optional>","constraints":"<amounts, dates, options; optional>","tools":["<candidate tool names from the list>"]}],"cancel":["<open id>"],"consent":["<open id>"]}',
+  'When nothing applies, reply {"add":[],"cancel":[],"consent":[]}.',
 ].join(" ");
 
 /** The extractor's user message: tools, open items, then the new request(s). */
@@ -114,11 +115,12 @@ export function parseExtraction(text: string): Extraction | undefined {
       });
     }
   }
-  const cancel = Array.isArray(r.cancel)
-    ? r.cancel.filter((c): c is string => typeof c === "string" && /^o\d+$/.test(c))
-    : [];
+  const ids = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((c): c is string => typeof c === "string" && /^o\d+$/.test(c)) : [];
+  const cancel = ids(r.cancel);
+  const consent = ids((r as { consent?: unknown }).consent);
   if (!Array.isArray(r.add) && !Array.isArray(r.cancel)) return undefined;
-  return { add, cancel };
+  return { add, cancel, ...(consent.length ? { consent } : {}) };
 }
 
 /** Run the extractor; undefined on any failure. */
