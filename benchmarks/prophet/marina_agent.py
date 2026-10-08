@@ -192,7 +192,13 @@ def rationale_from(answer: dict[str, Any]) -> str:
 
 def call_marina(body: dict[str, Any]) -> dict[str, Any]:
     url = os.environ.get("MARINA_URL", "http://localhost:3300").rstrip("/") + "/v1/forecast"
-    headers = {"Content-Type": "application/json"}
+    # A past window is a dataset replay — a measurement, so Marina never recalls
+    # lessons learned from this board; a live window may use every lesson.
+    mode = "measure" if body.get("asOf") else "live"
+    headers = {
+        "Content-Type": "application/json",
+        "x-marina-eval": f"benchmark=prophet-arena; mode={mode}",
+    }
     key = os.environ.get("MARINA_API_KEY", "").strip()
     if key:
         headers["Authorization"] = f"Bearer {key}"

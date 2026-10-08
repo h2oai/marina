@@ -21,6 +21,7 @@
  */
 
 import { Logger } from "../engine/logger";
+import type { EvalContext } from "../learning/eval-context";
 import type { MarinaDB } from "../persistence/database";
 import type { ForecastScale } from "./service";
 import type { TypedForecastAnswer, TypedForecastRequest } from "./typed";
@@ -32,6 +33,11 @@ export interface TypedSurfaceOptions {
   runs?: number;
   researchRounds?: number;
   critique?: boolean;
+  /**
+   * The caller's measurement context (`x-marina-eval`): a measurement of a board
+   * never recalls lessons learned from that board (leakage rule 2).
+   */
+  eval?: EvalContext;
 }
 
 const logger = new Logger();
@@ -56,7 +62,11 @@ export async function typedForecastFor(
     ...(opts.runs !== undefined ? { runs: opts.runs } : {}),
     ...(opts.researchRounds !== undefined ? { researchRounds: opts.researchRounds } : {}),
     ...(opts.critique !== undefined ? { critique: opts.critique } : {}),
-    ...(opts.db ? { lessons: forecastLessonsFor(opts.db, { env }) } : {}),
+    ...(opts.db
+      ? {
+          lessons: forecastLessonsFor(opts.db, { env, ...(opts.eval ? { eval: opts.eval } : {}) }),
+        }
+      : {}),
   };
   const earned = defaults.forecastDefaultOverrides(resolved, env);
   let made = typedForecastDeps(env, { ...earned, ...surfaceOptions });

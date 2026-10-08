@@ -308,7 +308,12 @@ export async function runSelection(opts: {
   log: (line: string) => void;
 }): Promise<SavedSelection> {
   const retriever = opts.retriever ?? BACKTEST_RETRIEVER;
-  const lessons = forecastLessonsFor(opts.db);
+  // A held-out selection is a measurement of this board: lessons learned from the
+  // board itself are excluded (leakage rule 2), so the earned default reflects
+  // Marina's general knowledge, never the board's own outcomes.
+  const lessons = forecastLessonsFor(opts.db, {
+    eval: { benchmark: opts.benchmark, mode: "measure" },
+  });
   const leakAudit: Record<string, LeakCounts> = {};
   // A board whose default was earned is contested on the SAME items its
   // incumbent was measured on (a promotion pairs items on one slice).
