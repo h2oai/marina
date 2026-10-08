@@ -6,13 +6,16 @@ import type { DecisionProvider } from "../src/decisions/types";
 import { AgentObligations } from "../src/obligations/agent";
 import { applyExtraction, newLedger } from "../src/obligations/ledger";
 import {
+  capReviewMode,
   MAX_REVIEWS,
   markNamed,
   obligationsReviewMode,
+  parseReviewMode,
   REVIEW_QUESTION,
   type ReviewQuestions,
   recentToolResults,
   recordReview,
+  reviewEngaged,
   reviewFlagCount,
   reviewLabel,
   reviewNote,
@@ -21,6 +24,7 @@ import {
   reviewRules,
   reviewState,
   reviewWrite,
+  selectReview,
 } from "../src/obligations/review";
 
 const q = (p: Partial<ReviewQuestions>): ReviewQuestions => ({
@@ -218,5 +222,87 @@ describe("pre-write review (agent loop)", () => {
     const second = await ob.reviewWrite("close_card", { card_id: "4417" }, []);
     expect(second).toBeUndefined(); // both named, one open request, no rules: nothing left to ask
     expect(ob.summary().reviewNudges).toBe(1);
+  });
+});
+
+describe("review selection (auto) and ceilings", () => {
+  it("parses modes and caps a choice at the operator's ceiling", () => {
+    expect(parseReviewMode(" Auto ")).toBe("auto");
+    expect(parseReviewMode("max")).toBeUndefined();
+    expect(obligationsReviewMode({ MARINA_OBLIGATIONS_REVIEW: "auto" })).toBe("auto");
+    expect(capReviewMode(undefined, "auto")).toBe("auto");
+    expect(capReviewMode("observe", "on")).toBe("observe");
+    expect(capReviewMode("on", "auto")).toBe("auto");
+    expect(capReviewMode("auto", "observe")).toBe("observe");
+    expect(capReviewMode("on", "off")).toBe("off");
+  });
+
+  it("decides once per conversation: shape skips with no requests and no rules; else one question", async () => {
+    let asked = 0;
+    const judge = (answer: string) => ({
+      complete: async () => {
+        asked++;
+        return answer;
+      },
+    });
+    const empty = reviewState(newLedger("k", 0));
+    expect(
+      await selectReview(
+        empty,
+        { requests: [], calls: [call], rules: [] },
+        judge('{"warranted":"yes"}'),
+      ),
+    ).toEqual({ engaged: false, by: "shape" });
+    expect(asked).toBe(0);
+    const l = ledgerWith("Close card 4417");
+    const s = reviewState(l);
+    const input = { requests: l.obligations, calls: [call], rules: [] };
+    expect(await selectReview(s, input, judge('{"warranted":"yes"}'))).toEqual({
+      engaged: true,
+      by: "judge",
+    });
+    expect(await selectReview(s, input, judge('{"warranted":"no"}'))).toEqual({
+      engaged: true,
+      by: "judge",
+    }); // cached
+    expect(asked).toBe(1);
+    const s2 = reviewState(ledgerWith("Close card 4417"));
+    expect(await selectReview(s2, input, judge("not json"))).toEqual({
+      engaged: false,
+      by: "unjudged",
+    });
+    expect(reviewEngaged("on", undefined)).toBe(true);
+    expect(reviewEngaged("auto", { engaged: false, by: "judge" })).toBe(false);
+    expect(reviewEngaged("auto", { engaged: true, by: "judge" })).toBe(true);
+    expect(reviewEngaged("observe", { engaged: true, by: "judge" })).toBe(false);
+  });
+
+  it("the agent loop stays out when auto does not select the task, and reviews when it does", async () => {
+    async function agent(select: string, review: string) {
+      const replies = [
+        '{"add":[{"request":1,"what":"Close card 4417","tools":["close_card"]}],"cancel":[]}',
+        select,
+        review,
+      ];
+      let i = 0;
+      const ob = new AgentObligations({
+        complete: async () => replies[Math.min(i++, replies.length - 1)]!,
+        mode: () => "on",
+        reviewMode: () => "auto",
+        reviewRuleBytes: () => 0,
+        now: () => 0,
+      });
+      ob.noteRequest("Please close card 4417.");
+      await ob.refresh([{ name: "close_card", write: true }]);
+      return ob;
+    }
+    const out = await agent('{"warranted":"no"}', '{"evidence":"yes","requested":"no"}');
+    expect(await out.reviewWrite("close_card", { card_id: "4417" }, [])).toEqual({
+      label: "review-not-selected",
+    });
+    const engaged = await agent('{"warranted":"yes"}', '{"evidence":"yes","requested":"no"}');
+    const r = await engaged.reviewWrite("close_card", { card_id: "4417" }, []);
+    expect(r?.label).toBe("review-evidence");
+    expect(r?.refusal).toContain("[Marina pre-write review");
   });
 });

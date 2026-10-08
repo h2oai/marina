@@ -52,12 +52,17 @@ import {
 } from "../../obligations/mode";
 import {
   anyKind,
+  capReviewMode,
   markNamed,
   obligationsReviewMode,
   type PendingCall,
+  parseReviewMode,
+  REVIEW_HEADER,
   type RecentResult,
+  type ReviewMode,
   recentToolResults,
   recordReview,
+  reviewEngaged,
   reviewFlagCount,
   reviewLabel,
   reviewNote,
@@ -66,6 +71,7 @@ import {
   reviewRules,
   reviewState,
   reviewWrite,
+  selectReview,
 } from "../../obligations/review";
 import { readOnlyCall } from "../../obligations/tool-call";
 import { isReadOnlyTool } from "../../obligations/tool-effect";
@@ -283,6 +289,8 @@ export interface ObligationsPrep {
   recent?: RecentResult[];
   /** The request's messages (rule passages for the pre-write review). */
   messages?: OpenAIMessage[];
+  /** The pre-write review's mode for this request: the client's choice capped by the operator. */
+  reviewMode?: ReviewMode;
   extract?: "ok" | "failed" | "none";
 }
 
@@ -376,7 +384,11 @@ export async function prepareObligations(
     spent,
     booked: 0,
   };
-  if (obligationsReviewMode() !== "off") {
+  prep.reviewMode = capReviewMode(
+    parseReviewMode(req.headers.get(REVIEW_HEADER)),
+    obligationsReviewMode(),
+  );
+  if (prep.reviewMode !== "off") {
     prep.tools = tools;
     prep.recent = recentToolResults(messages);
     prep.messages = messages;
@@ -456,6 +468,9 @@ export function obligationsHeaderValue(prep: ObligationsPrep, check?: string): s
       ? [
           `reviews=${prep.ledger.review.reviews}`,
           `review_flags=${reviewFlagCount(prep.ledger.review)}`,
+          ...(prep.ledger.review.selection
+            ? [`review_sel=${prep.ledger.review.selection.engaged ? "engaged" : "out"}`]
+            : []),
         ]
       : []),
     ...(prep.extract && prep.extract !== "none" ? [`extract=${prep.extract}`] : []),
@@ -501,7 +516,7 @@ export async function finishObligations(
   };
   if (prep.skipped) return done(resp, undefined, "skipped");
   // The pre-write review reads replies that carry calls; without it, nothing below changes.
-  const reviewMode = obligationsReviewMode();
+  const reviewMode = prep.reviewMode ?? "off";
   if (prep.mode !== "on" && reviewMode === "off") return done(resp, undefined, "observe");
   if (body.stream === true) return done(resp, undefined, "stream");
   if (!resp.ok) return done(resp, undefined, "upstream-error");
@@ -517,15 +532,7 @@ export async function finishObligations(
   const draft = firstMessage(parsed);
   if (draft?.tool_calls?.length) {
     if (reviewMode === "off") return done(resp, text, "tool-call");
-    return reviewDraft(
-      prep,
-      draft,
-      text,
-      resp,
-      retry,
-      done,
-      reviewMode === "on" && prep.mode === "on",
-    );
+    return reviewDraft(prep, draft, text, resp, retry, done, reviewMode);
   }
   if (prep.mode !== "on") return done(resp, text, "observe");
   if (!draft) return done(resp, text, "tool-call");
@@ -595,7 +602,7 @@ async function reviewDraft(
   resp: Response,
   retry: (note: string) => Promise<Response>,
   done: (r: Response, text: string | undefined, check: string) => Response,
-  nudge: boolean,
+  mode: ReviewMode,
 ): Promise<Response> {
   const tools = prep.tools ?? [];
   const writes: PendingCall[] = (draft.tool_calls ?? [])
@@ -616,13 +623,18 @@ async function reviewDraft(
     recent: prep.recent ?? [],
     rules,
   };
-  const verdict = await reviewWrite(input, ask, {
-    ...(prep.provider ? { provider: prep.provider } : {}),
-    complete: prep.complete,
-  }).catch(() => undefined);
+  const judge = { ...(prep.provider ? { provider: prep.provider } : {}), complete: prep.complete };
+  // `auto`: the task must warrant the review (decided once per conversation); else it stays out.
+  if (mode === "auto") {
+    const sel = await selectReview(state, input, judge);
+    store.put(prep.ledger);
+    if (!sel.engaged) return done(resp, text, "review-not-selected");
+  }
+  const verdict = await reviewWrite(input, ask, judge).catch(() => undefined);
   const named = recordReview(state, verdict);
   store.put(prep.ledger);
   const label = reviewLabel(verdict);
+  const nudge = prep.mode === "on" && reviewEngaged(mode, state.selection);
   if (!nudge || !anyKind(named)) return done(resp, text, label);
   markNamed(state, named);
   store.put(prep.ledger);

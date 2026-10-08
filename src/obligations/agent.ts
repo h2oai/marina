@@ -47,6 +47,7 @@ import {
   type ReviewMode,
   recentToolResults,
   recordReview,
+  reviewEngaged,
   reviewLabel,
   reviewNote,
   reviewQuestions,
@@ -54,6 +55,7 @@ import {
   reviewRules,
   reviewState,
   reviewWrite,
+  selectReview,
 } from "./review";
 
 /** Requests queued between prompt builds (the oldest are dropped past this). */
@@ -69,7 +71,7 @@ export interface AgentObligationsOptions {
   mode?: () => ObligationsMode;
   /** Whether approvals are shown and named (`MARINA_OBLIGATIONS_CONSENT`, read live). */
   consentShown?: () => boolean;
-  /** The pre-write review's mode (default `MARINA_OBLIGATIONS_REVIEW`, read live). */
+  /** The pre-write review's mode (default `MARINA_OBLIGATIONS_REVIEW`, read live; the adapter caps the agent's own `review` preference with it). */
   reviewMode?: () => ReviewMode;
   /** Rule-passage budget for the review (default `MARINA_OBLIGATIONS_REVIEW_RULE_BYTES`, read live). */
   reviewRuleBytes?: () => number;
@@ -226,15 +228,15 @@ export class AgentObligations {
         recent: recentToolResults(transcript),
         rules,
       };
-      const verdict = await reviewWrite(
-        input,
-        ask,
-        { ...(provider ? { provider } : {}), complete: this.opts.complete },
-        signal,
-      );
+      const judge = { ...(provider ? { provider } : {}), complete: this.opts.complete };
+      // `auto`: the task must warrant the review (decided once); else it stays out.
+      if (mode === "auto" && !(await selectReview(state, input, judge, signal)).engaged)
+        return { label: "review-not-selected" };
+      const verdict = await reviewWrite(input, ask, judge, signal);
       const named = recordReview(state, verdict);
       const label = reviewLabel(verdict);
-      if (mode !== "on" || this.mode() !== "on" || !anyKind(named)) return { label };
+      const nudge = this.mode() === "on" && reviewEngaged(mode, state.selection);
+      if (!nudge || !anyKind(named)) return { label };
       markNamed(state, named);
       return { label, refusal: reviewNote(input, named) };
     } catch {

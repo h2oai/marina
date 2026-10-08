@@ -560,6 +560,7 @@ let seen: { kind: string; body: Record<string, unknown> }[];
 let extraction: string;
 let verdicts: string;
 let reviewAnswer: string;
+let selectAnswer: string;
 /** The main model's replies, in order (the last one repeats). */
 let replies: Record<string, unknown>[];
 
@@ -588,6 +589,7 @@ beforeEach(() => {
     '{"add":[{"request":1,"what":"Close card 4417","target":"4417","tools":["close_card"]}],"cancel":[]}';
   verdicts = '{"o1":"owed"}';
   reviewAnswer = '{"order":"no","evidence":"no"}';
+  selectAnswer = '{"warranted":"yes"}';
   replies = [{ role: "assistant", content: "Anything else?" }];
   originalFetch = globalThis.fetch;
   globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
@@ -604,6 +606,9 @@ beforeEach(() => {
     } else if (system.startsWith("You review a state-changing action")) {
       kind = "review";
       message = { role: "assistant", content: reviewAnswer };
+    } else if (system.startsWith("You decide whether a task warrants")) {
+      kind = "select";
+      message = { role: "assistant", content: selectAnswer };
     } else {
       const mains = seen.filter((s) => s.kind === "main").length;
       message = replies[Math.min(mains, replies.length - 1)]!;
@@ -967,6 +972,60 @@ describe("POST /v1/chat/completions with the obligations ledger", () => {
     expect(user.content).toContain("o2 [open]: Refund the annual fee");
     const note = lastUserText(seen[seen.length - 1]!.body).text;
     expect(note).toContain("Order: carrying this out now may prevent another open request");
+  });
+
+  it("lets a client lower the review below the operator's ceiling (x-marina-review)", async () => {
+    using _state = scopeProcessState({ env: { MARINA_OBLIGATIONS_REVIEW: "on" } });
+    replies = [closeDraft];
+    reviewAnswer = '{"evidence":"yes","requested":"no","permitted":"no"}';
+    const resp = await post(
+      { model: `marina/obligations:${MODEL}`, messages: opening, tools: TOOLS },
+      { "x-marina-review": "observe" },
+    );
+    expect(seen.map((s) => s.kind)).toEqual(["extract", "main", "review"]);
+    expect(resp.headers.get("x-marina-obligations")).toContain("check=review-evidence");
+  });
+
+  it("never lets a client raise the review above the ceiling", async () => {
+    using _state = scopeProcessState({ env: { MARINA_OBLIGATIONS_REVIEW: undefined } });
+    replies = [closeDraft];
+    const resp = await post(
+      { model: `marina/obligations:${MODEL}`, messages: opening, tools: TOOLS },
+      { "x-marina-review": "on" },
+    );
+    expect(seen.map((s) => s.kind)).toEqual(["extract", "main"]);
+    expect(resp.headers.get("x-marina-obligations")).toContain("check=tool-call");
+  });
+
+  it("auto stays out of a task its selection does not warrant (no review call)", async () => {
+    using _state = scopeProcessState({ env: { MARINA_OBLIGATIONS_REVIEW: "auto" } });
+    replies = [closeDraft];
+    selectAnswer = '{"warranted":"no"}';
+    const resp = await post({
+      model: `marina/obligations:${MODEL}`,
+      messages: opening,
+      tools: TOOLS,
+    });
+    expect(seen.map((s) => s.kind)).toEqual(["extract", "main", "select"]);
+    const h = resp.headers.get("x-marina-obligations") ?? "";
+    expect(h).toContain("check=review-not-selected");
+    expect(h).toContain("review_sel=out");
+  });
+
+  it("auto reviews and nudges a task its selection warrants", async () => {
+    using _state = scopeProcessState({ env: { MARINA_OBLIGATIONS_REVIEW: "auto" } });
+    replies = [closeDraft];
+    selectAnswer = '{"warranted":"yes"}';
+    reviewAnswer = '{"evidence":"yes","requested":"no","permitted":"no"}';
+    const resp = await post({
+      model: `marina/obligations:${MODEL}`,
+      messages: opening,
+      tools: TOOLS,
+    });
+    expect(seen.map((s) => s.kind)).toEqual(["extract", "main", "select", "review", "main"]);
+    const h = resp.headers.get("x-marina-obligations") ?? "";
+    expect(h).toContain("review_sel=engaged");
+    expect(h).toContain("check=reviewed-kept");
   });
 
   const approved = [
