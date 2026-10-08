@@ -271,7 +271,8 @@ async function runCmd(opts: { kind?: string; openOnly?: boolean } = {}): Promise
   if (values.lessons !== "off" && !values["no-ledger"]) {
     const ldb = openDb();
     await migrateLessons(ldb);
-    lessons = forecastLessonsFor(ldb);
+    // Live: the batch resolves in the future, so every lesson may be used (rule 2 lifted).
+    lessons = forecastLessonsFor(ldb, { eval: { benchmark: "futurex", mode: "live" } });
     console.log("lessons: recalling from the lesson pool (forecast, arena)");
   }
   for (const v of variantsFromFlags()) {

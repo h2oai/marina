@@ -162,7 +162,10 @@ async function forecastCmd(db: MarinaDB): Promise<number> {
   });
   const forecast = forecasterFor(
     chosen.config,
-    depsForConfig(chosen.config, { lessons: forecastLessonsFor(db) }),
+    // Live tournament questions: every lesson may be used (rule 2 lifted for live).
+    depsForConfig(chosen.config, {
+      lessons: forecastLessonsFor(db, { eval: { benchmark: BENCHMARK, mode: "live" } }),
+    }),
   );
   log(
     `metaculus ${dryRun ? "DRY RUN " : ""}· tournaments ${tournaments.join(", ")} · ${chosen.config.label}: ${chosen.description} · spent today $${spentToday(db, new Date()).toFixed(2)} of $${values["daily-cap"]}`,

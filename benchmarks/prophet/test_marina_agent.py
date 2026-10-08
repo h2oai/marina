@@ -153,6 +153,7 @@ class Server(unittest.TestCase):
             def do_POST(self):  # noqa: N802
                 seen["path"] = self.path
                 seen["auth"] = self.headers.get("Authorization")
+                seen["eval"] = self.headers.get("x-marina-eval")
                 seen["body"] = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 out = json.dumps({"distribution": {"A": 0.7, "B": 0.3}, "runs": []}).encode()
                 self.send_response(200)
@@ -174,6 +175,9 @@ class Server(unittest.TestCase):
         self.assertEqual(seen["path"], "/v1/forecast")
         self.assertEqual(seen["auth"], "Bearer test-key")
         self.assertEqual(out["probabilities"], {"Red": 0.7, "Green": 0.3})
+        # A live window may use every lesson; a past window is a measurement.
+        expected = "measure" if "asOf" in seen["body"] else "live"
+        self.assertEqual(seen["eval"], f"benchmark=prophet-arena; mode={expected}")
 
 
 if __name__ == "__main__":

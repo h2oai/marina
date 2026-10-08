@@ -446,6 +446,27 @@ describe("x-marina-eval self-exclusion", () => {
     expect(live.recalled.map((l) => l.id).sort()).toEqual(["mirror", "other", "own"]);
   });
 
+  it("the forecast bridge every forecasting board uses honors the measurement context", async () => {
+    const sink = memoryLessonSink([
+      lesson("own", "forecast", "polls: weight the field dates", { source: "futurex:frontier" }),
+      lesson("other", "forecast", "polls: agreement is not confidence", {
+        source: "metaculus:single",
+      }),
+    ]);
+    const measured = forecastLessonsFor(undefined, {
+      sink,
+      env: ON,
+      eval: { benchmark: "futurex", mode: "measure" },
+    });
+    expect((await measured.recall("polls", NOW)).map((l) => l.id)).toEqual(["other"]);
+    const live = forecastLessonsFor(undefined, {
+      sink,
+      env: ON,
+      eval: { benchmark: "futurex", mode: "live" },
+    });
+    expect((await live.recall("polls", NOW)).map((l) => l.id).sort()).toEqual(["other", "own"]);
+  });
+
   it("a measured board's families reach same-family lessons from other boards", async () => {
     const sink = memoryLessonSink([
       lesson("airline", "meta", "confirm the policy before a refund", {

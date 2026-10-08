@@ -21,6 +21,7 @@ import {
   type SuppliedPriorSource,
 } from "../forecast/prior";
 import type { ForecastKind } from "../forecast/question";
+import { type EvalContext, evalOption } from "../learning/eval-context";
 import type { MarinaDB } from "../persistence/database";
 import { errorJson, json } from "./model-api/shared";
 
@@ -49,7 +50,7 @@ export async function handleForecast(req: Request, db?: MarinaDB): Promise<Respo
       code: "invalid_request_error",
     });
   }
-  if (body.answer !== undefined) return typed(body, question, db);
+  if (body.answer !== undefined) return typed(body, question, db, evalOption(req));
   if (body.kind !== undefined && body.kind !== "probability" && body.kind !== "number") {
     return errorJson(400, 'kind must be "probability" or "number"', {
       code: "invalid_request_error",
@@ -155,6 +156,7 @@ async function typed(
   },
   question: string,
   db: MarinaDB | undefined,
+  measurement: { eval?: EvalContext } = {},
 ): Promise<Response> {
   const parsed = parseAnswerSpec(body.answer);
   if ("error" in parsed) return errorJson(400, parsed.error, { code: "invalid_request_error" });
@@ -219,6 +221,8 @@ async function typed(
       ...(body.runs !== undefined ? { runs } : {}),
       ...(body.researchRounds !== undefined ? { researchRounds: rounds } : {}),
       ...(typeof body.critique === "boolean" ? { critique: body.critique } : {}),
+      // A caller measuring a board (`x-marina-eval`) never recalls that board's lessons.
+      ...measurement,
     },
   );
   if ("error" in made) return errorJson(503, made.error, { code: "forecast_unavailable" });

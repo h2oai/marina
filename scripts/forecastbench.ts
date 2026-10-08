@@ -199,7 +199,10 @@ async function runCmd(db: MarinaDB): Promise<number> {
     questions: selected(set),
     forecast: forecasterFor(
       chosen.config,
-      depsForConfig(chosen.config, { lessons: forecastLessonsFor(db) }),
+      // A live round: every lesson may be used (rule 2 lifted for live).
+      depsForConfig(chosen.config, {
+        lessons: forecastLessonsFor(db, { eval: { benchmark: BENCHMARK, mode: "live" } }),
+      }),
     ),
     journal,
     concurrency: Number(values.concurrency),

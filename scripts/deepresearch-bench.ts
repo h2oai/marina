@@ -264,7 +264,11 @@ async function runCmd(): Promise<number> {
     values.lessons === "on"
       ? async (t: BenchTask) => {
           db ??= values["lessons-db"] ? new MarinaDB(values["lessons-db"]) : openDb();
-          const got = await recallForWork(db, ["research"], t.prompt.slice(0, 600));
+          // A measurement of this board: its own lessons are excluded (leakage rule 2);
+          // research lessons from every other board still flow.
+          const got = await recallForWork(db, ["research"], t.prompt.slice(0, 600), {
+            eval: { benchmark: BOARDS[b].ledger, mode: "measure" },
+          });
           return got.inject.length ? got.inject.map(formatLesson).join("\n") : undefined;
         }
       : undefined;
