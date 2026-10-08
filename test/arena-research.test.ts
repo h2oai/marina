@@ -302,6 +302,40 @@ describe("source terms", () => {
 });
 
 describe("research agent pipeline", () => {
+  it("required research rejects an outage or unverifiable dossier before analysts run", async () => {
+    let calls = 0;
+    for (const retriever of [
+      async () => {
+        throw new Error("search unavailable");
+      },
+      async () => ({
+        report: "missing sources",
+        sources: [],
+        costUsd: 0,
+        searches: 1,
+        retriever: "search",
+      }),
+    ]) {
+      await expect(
+        researchForecastRound(round, lock, {
+          requireResearch: true,
+          retriever,
+          pageText: async () => undefined,
+          analysts: [
+            {
+              name: "fixture",
+              complete: async () => {
+                calls++;
+                return '{"mean":38,"sd":1}';
+              },
+            },
+          ],
+        }),
+      ).rejects.toThrow();
+    }
+    expect(calls).toBe(0);
+  });
+
   const retriever: Retriever = async () => ({
     report: "- Echelon: 38% approve, up from 36% ([e](https://e.example/p))",
     sources: [{ url: "https://e.example/p" }],

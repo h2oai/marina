@@ -117,7 +117,7 @@ test("loop keeps the first source version and stops on duplicate verified eviden
       maxRounds: 3,
       review: async () => {
         reviews++;
-        return '{"queries":["contradictory evidence"]}';
+        return '{"queries":["contradictory evidence"],"reason":"Check conflicting reports"}';
       },
     },
   );
@@ -153,7 +153,8 @@ test("a gap round can add contrary evidence without changing the cutoff or exclu
       now,
       pageText: async () => undefined,
       maxRounds: 2,
-      review: async () => '{"queries":["contradictory evidence"]}',
+      review: async () =>
+        '{"queries":["contradictory evidence"],"reason":"Check conflicting reports"}',
     },
   );
   const result = await run(bounded);
@@ -236,4 +237,18 @@ test("formation lessons separate observe/on/off and exclude later outcomes", asy
   expect(on.observed.map((l) => l.text)).toEqual(["observe-only"]);
   await recallForecastLessons(store, "q", brief.untilAt!, "off");
   expect(calls).toBe(2);
+});
+
+test("a malformed gap review is a failed research run, never complete coverage", async () => {
+  for (const reply of ["not JSON", '{"queries":null}', '{"queries":[],"reason":""}']) {
+    const retrieved = await evidenceLoopRetriever(async () => report(), {
+      pageText: async () => undefined,
+      now,
+      maxRounds: 2,
+      review: async () => reply,
+    })(brief);
+    expect(retrieved.researchLoop?.stop).toBe("failed");
+    expect(retrieved.researchLoop?.error).toContain("invalid research gap review");
+    expect(retrieved.report).toContain("3.5");
+  }
 });

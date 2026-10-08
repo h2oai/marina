@@ -72,6 +72,7 @@
 import type { Evidence } from "../decisions/evidence";
 import type { DecisionProvider } from "../decisions/types";
 import { judgeAudit, judgeClaim, newJudgeRecord } from "../forecast/judge";
+import { requireResearchEvidence } from "../research/admission";
 import type { RoundForecast } from "./forecast";
 import { forecastRound } from "./forecast";
 import type { ProfileProposal } from "./formation-profile";
@@ -1282,6 +1283,7 @@ export interface FormationStage {
 
 /** What the research crew handed over: the verified lines, and its audit record. */
 export interface ResearchDossier {
+  readSwarm?: import("./research/retrieve").ResearchReport["readSwarm"];
   evidence?: import("../research/evidence").EvidenceSnapshot;
   researchLoop?: import("../research/evidence-loop").ResearchLoopAudit;
   since: string;
@@ -1343,6 +1345,7 @@ export async function buildDossier(
       ...(report.data ? { data: report.data } : {}),
       ...(report.evidence ? { evidence: report.evidence } : {}),
       ...(report.researchLoop ? { researchLoop: report.researchLoop } : {}),
+      ...(report.readSwarm ? { readSwarm: report.readSwarm } : {}),
     };
   } catch (err) {
     return {
@@ -1395,7 +1398,9 @@ export async function composeForecastRound(
   lock: ArenaLock,
   stages: [FormationStage, FormationStage?],
   start: RoundForecast,
-  research?: { retriever: Retriever; pageText: PageText } | { dossier: ResearchDossier },
+  research?: ({ retriever: Retriever; pageText: PageText } | { dossier: ResearchDossier }) & {
+    required?: boolean;
+  },
   /** A decision backend for model-judged aspects, handed to both formations. */
   judge?: DecisionProvider,
   additionalBrief?: string,
@@ -1409,6 +1414,14 @@ export async function composeForecastRound(
         ? structuredClone(research.dossier)
         : await buildDossier(round, lock, start, research.retriever, research.pageText)
       : undefined;
+  if (research?.required) {
+    if (!dossier) throw new Error("Required research refused: unsupported forecast shape");
+    requireResearchEvidence(
+      { ...dossier, retriever: dossier.retriever ?? "" },
+      dossier.verified,
+      dossier.error,
+    );
+  }
   const brief =
     [dossier ? dossierBlock(dossier) : undefined, additionalBrief].filter(Boolean).join("\n\n") ||
     undefined;
@@ -1421,6 +1434,8 @@ export async function composeForecastRound(
     brief,
     judge,
   );
+  if (research?.required && one.fallback)
+    throw new Error(`Required research forecast refused: ${one.fallback}`);
   if (!second || !(numeric || profiled)) return { ...one, ...(dossier ? { dossier } : {}) };
   const handoff = numeric
     ? handoffBlock(first.pattern, one, withoutDaily(start).topline!)
@@ -1439,6 +1454,8 @@ export async function composeForecastRound(
     [brief, handoff].filter(Boolean).join("\n\n"),
     judge,
   );
+  if (research?.required && two.fallback)
+    throw new Error(`Required research forecast refused: ${two.fallback}`);
   return {
     ...two,
     ...(dossier ? { dossier } : {}),

@@ -35,8 +35,8 @@ export interface TokenPrice {
 const DEFAULT_MODEL_PRICES: Record<string, TokenPrice> = {
   "gpt-6-luna": { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
   "gpt-6-sol": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
-  // OpenRouter list price, checked 2026-10-05.
-  "gpt-6.1-sol": { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 0 },
+  // Official OpenAI model page, checked 2026-10-08 (cache writes are 1.25x input).
+  "gpt-6.1-sol": { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
   "gpt-6-astra": { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
   "glm-5.3-flash": { input: 0.15, output: 0.5, cacheRead: 0.03, cacheWrite: 0 },
   "claude-sonnet-5.5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },

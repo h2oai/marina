@@ -98,6 +98,7 @@ export interface ResearchReport {
   warnings?: string[];
   evidence?: import("../../research/evidence").EvidenceSnapshot;
   researchLoop?: import("../../research/evidence-loop").ResearchLoopAudit;
+  readSwarm?: import("./read-swarm-retriever").ReadSwarmBriefStats[];
 }
 
 export type Retriever = (brief: ResearchBrief) => Promise<ResearchReport>;
@@ -293,6 +294,7 @@ export function combineRetrievers(retrievers: Retriever[]): Retriever {
       costUsd: ok.reduce((sum, r) => sum + r.costUsd, 0),
       searches: ok.reduce((sum, r) => sum + r.searches, 0),
       retriever: ok.map((r) => r.retriever).join("+"),
+      readSwarm: ok.flatMap((r) => r.readSwarm ?? []),
       ...(funnels.length ? { funnels } : {}),
       ...(warnings.length ? { warnings } : {}),
     };

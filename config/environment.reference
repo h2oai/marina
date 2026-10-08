@@ -844,6 +844,9 @@
 # MARINA_ARENA_RESEARCH_JUDGE=jev
 # MARINA_ARENA_RESEARCH_TRUST=0.5
 
+# Require configured arena research to succeed before analysts run: refuse closed-book, empty/unverified evidence, failed research loops, and an enabled read swarm with no successful reader. Applies to formation +research and research: routes. Existing accepted submissions remain intact on refusal.
+# MARINA_ARENA_RESEARCH_REQUIRED=off
+
 # Structured data in arena research dossiers (default off; same spec as MARINA_FORECAST_LOOKUPS, odds excluded): prediction-market prices for every round, and an official series only where the round has a close relative (src/arena/research/data-evidence.ts). Read as of the brief's cutoff, headed as evidence of CHANGES only — the round's own history sets the level.
 # MARINA_ARENA_RESEARCH_LOOKUPS=off
 

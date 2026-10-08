@@ -609,7 +609,9 @@ async function formationForecasterFor(
                 ...(stages[1] ? [{ pattern: stages[1].pattern, members: members[1]! }] : []),
               ] as [import("./formations").FormationStage, import("./formations").FormationStage?],
               given,
-              evidence,
+              evidence
+                ? { ...evidence, required: env.MARINA_ARENA_RESEARCH_REQUIRED === "on" }
+                : undefined,
               judge,
               lessonBrief,
             );
@@ -889,6 +891,7 @@ async function researchForecasterFor(
       try {
         f = await research.researchForecastRound(round, await lockForModels(data, round, lock), {
           retriever,
+          requireResearch: env.MARINA_ARENA_RESEARCH_REQUIRED === "on",
           analysts: made.map((m) => ({ name: m.name, complete: m.complete })),
           ...(judge ? { judge } : {}),
           trustCap: Number.isFinite(trustCap) ? trustCap : 0.5,

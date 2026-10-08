@@ -157,7 +157,7 @@ export function readSwarmRetriever(inner: Retriever, opts: ReadSwarmRetrieverOpt
     const lines = swarmDossierLines(readings, titles);
     const cost = Math.max(0, (opts.spent?.() ?? before) - before);
     const st = swarm.stats();
-    opts.onStats?.({
+    const stats: ReadSwarmBriefStats = {
       roundId: brief.roundId,
       pages: found.length,
       docsRead: st.docsRead,
@@ -168,7 +168,8 @@ export function readSwarmRetriever(inner: Retriever, opts: ReadSwarmRetrieverOpt
       clues: st.clues,
       order,
       ...(judgeError ? { judgeError } : {}),
-    });
+    };
+    opts.onStats?.(stats);
     const sources: Source[] = base.sources.map((s) => {
       const text = texts.get(s.url);
       return text && !s.text ? { ...s, text } : s;
@@ -184,6 +185,7 @@ export function readSwarmRetriever(inner: Retriever, opts: ReadSwarmRetrieverOpt
           ].join("\n")
         : base.report,
       sources,
+      readSwarm: [...(base.readSwarm ?? []), stats],
       costUsd: base.costUsd + cost,
       retriever: `${base.retriever}+read-swarm${order === "judged" ? "+judged" : ""}`,
       ...(st.readerFailures > 0 && st.readerFailures >= st.readerCalls

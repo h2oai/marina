@@ -32,7 +32,7 @@ export function researchRetriever(
   if (settings.rounds > 1 && !model) throw new Error("iterative research needs a reviewer model");
   const reviewer =
     settings.rounds > 1
-      ? modelComplete(model!, env, { maxTokens: Math.min(opts.maxTokens ?? 1000, 1000) })
+      ? modelComplete(model!, env, { maxTokens: Math.min(opts.maxTokens ?? 4000, 4000) })
       : undefined;
   return evidenceLoopRetriever(base, {
     pageText: defaultPageText(),
