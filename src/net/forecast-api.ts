@@ -11,6 +11,13 @@
  * `asOf`, `context`, `runs`, `researchRounds` and `critique`. Models stay
  * operator-configured (env), never chosen by the caller. Behind the model
  * API's auth and per-IP limit like every /v1 route.
+ *
+ * `save: true` (or `resolves: "<venue>/<ticker>"`, which implies it) keeps the
+ * answer in `forecast_answers` under the key's bound entity (a `secret:name`
+ * MODEL_API_KEYS entry), exactly as the `forecast` command does, so a resolved
+ * Sample scores it and the outcome teaches. Opt-in per call; a measurement run
+ * (`x-marina-eval` mode=measure) is never saved, since its outcomes must not
+ * reach the lesson pool.
  */
 
 import { dailyCapRefusal } from "../engine/spend-ledger";
@@ -23,9 +30,56 @@ import {
 import type { ForecastKind } from "../forecast/question";
 import { type EvalContext, evalOption } from "../learning/eval-context";
 import type { MarinaDB } from "../persistence/database";
-import { errorJson, json } from "./model-api/shared";
+import { parseSampleId } from "../resolvers/calibration";
+import { errorJson, json, type PassthruAuthResult } from "./model-api/shared";
 
-export async function handleForecast(req: Request, db?: MarinaDB): Promise<Response> {
+/** Where a saved answer goes: its owner and the Sample that will resolve it. */
+interface SaveTarget {
+  entityName: string;
+  sampleId?: string;
+}
+
+/**
+ * Validate `save` / `resolves`. Saving needs an owner (a key bound to an
+ * entity) and a database, and is refused for a measurement run.
+ */
+export function saveTarget(
+  body: { save?: unknown; resolves?: unknown },
+  req: Request,
+  db: MarinaDB | undefined,
+  auth: Pick<PassthruAuthResult, "boundEntityName"> | undefined,
+): { target?: SaveTarget } | { error: string } {
+  if (body.save !== undefined && typeof body.save !== "boolean") {
+    return { error: "save must be a boolean" };
+  }
+  if (body.resolves !== undefined) {
+    if (typeof body.resolves !== "string" || !parseSampleId(body.resolves.trim())) {
+      return { error: "resolves must be a <venue>/<ticker> Sample id" };
+    }
+    if (body.save === false) return { error: "resolves saves the answer; drop save: false" };
+  }
+  if (body.save !== true && body.resolves === undefined) return {};
+  if (evalOption(req).eval?.mode === "measure") {
+    return { error: "a measurement run (x-marina-eval mode=measure) is never saved" };
+  }
+  const entityName = auth?.boundEntityName;
+  if (!entityName) {
+    return { error: "saving needs an API key bound to an entity (MODEL_API_KEYS secret:name)" };
+  }
+  if (!db) return { error: "saving needs the world database" };
+  return {
+    target: {
+      entityName,
+      ...(typeof body.resolves === "string" ? { sampleId: body.resolves.trim() } : {}),
+    },
+  };
+}
+
+export async function handleForecast(
+  req: Request,
+  db?: MarinaDB,
+  auth?: Pick<PassthruAuthResult, "boundEntityName">,
+): Promise<Response> {
   let body: {
     question?: unknown;
     kind?: unknown;
@@ -38,6 +92,8 @@ export async function handleForecast(req: Request, db?: MarinaDB): Promise<Respo
     runs?: unknown;
     researchRounds?: unknown;
     critique?: unknown;
+    save?: unknown;
+    resolves?: unknown;
   };
   try {
     body = (await req.json()) as typeof body;
@@ -50,7 +106,9 @@ export async function handleForecast(req: Request, db?: MarinaDB): Promise<Respo
       code: "invalid_request_error",
     });
   }
-  if (body.answer !== undefined) return typed(body, question, db, evalOption(req));
+  const save = saveTarget(body, req, db, auth);
+  if ("error" in save) return errorJson(400, save.error, { code: "invalid_request_error" });
+  if (body.answer !== undefined) return typed(body, question, db, evalOption(req), save.target);
   if (body.kind !== undefined && body.kind !== "probability" && body.kind !== "number") {
     return errorJson(400, 'kind must be "probability" or "number"', {
       code: "invalid_request_error",
@@ -74,7 +132,16 @@ export async function handleForecast(req: Request, db?: MarinaDB): Promise<Respo
     made.deps,
   );
   answer.costUsd = made.costUsd();
-  return json({ ...answer, scale: made.scale });
+  const answerId =
+    save.target && db
+      ? (await import("../engine/commands/forecast")).saveAnswer(
+          db,
+          save.target.entityName,
+          answer,
+          save.target.sampleId,
+        )
+      : undefined;
+  return json({ ...answer, scale: made.scale, ...savedFields(save.target, answerId) });
 }
 
 const isoOrUndefined = (v: unknown) =>
@@ -157,6 +224,7 @@ async function typed(
   question: string,
   db: MarinaDB | undefined,
   measurement: { eval?: EvalContext } = {},
+  save?: SaveTarget,
 ): Promise<Response> {
   const parsed = parseAnswerSpec(body.answer);
   if ("error" in parsed) return errorJson(400, parsed.error, { code: "invalid_request_error" });
@@ -226,5 +294,25 @@ async function typed(
     },
   );
   if ("error" in made) return errorJson(503, made.error, { code: "forecast_unavailable" });
-  return json({ ...made.answer, scale: made.scale });
+  const answerId =
+    save && db
+      ? (await import("../engine/commands/forecast")).saveTypedAnswer(
+          db,
+          save.entityName,
+          made.answer,
+          save.sampleId,
+        )
+      : undefined;
+  return json({ ...made.answer, scale: made.scale, ...savedFields(save, answerId) });
+}
+
+/**
+ * What the caller learns about the save: the row id (for `forecast track`),
+ * or `saved: false` when the best-effort write failed — never a silent drop.
+ */
+function savedFields(save: SaveTarget | undefined, answerId: number | undefined) {
+  if (!save) return {};
+  return answerId === undefined
+    ? { saved: false }
+    : { saved: true, answerId, ...(save.sampleId ? { resolves: save.sampleId } : {}) };
 }

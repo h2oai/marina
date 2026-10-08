@@ -16,6 +16,13 @@ In the world, any entity can ask: `forecast <question>` (alias `predict`). Progr
 `POST /v1/forecast` with `{"question": "...", "kind"?: "probability" | "number", "resolveBy"?, "unit"?}`
 behind the model API's auth; the reply is the full answer, below.
 
+To have an HTTP answer scored and learned from when it resolves, as the `forecast` command's
+answers are, add `"save": true` or `"resolves": "<venue>/<ticker>"` (which also saves it). The
+answer is kept under the entity your API key is bound to (a `secret:name` entry in
+`MODEL_API_KEYS`), and the reply carries `answerId` for `forecast track`. A failed save returns
+`saved: false`. Saving is refused (400) for a key bound to no entity, and for a measurement run
+(`x-marina-eval: …; mode=measure`), whose outcomes must not teach.
+
 ## What happens
 
 1. **Research** — a search-grounded model (OpenRouter's web search) gathers dated, sourced facts:
