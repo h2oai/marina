@@ -35,6 +35,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { BOARD_EXCLUSIONS } from "../benchmarks/forecasting/barred";
 import type { ReferenceScores } from "../benchmarks/futurex/clean";
 import { cleanBacktest } from "../benchmarks/futurex/clean-run";
 import {
@@ -203,6 +204,7 @@ function depsFor(v: Variant, lessons?: LessonStore) {
       ...(v.critique === false ? { critique: false } : {}),
       ...(v.budgetMs ? { budgetMs: v.budgetMs } : {}),
       ...(v.selection ? { selection: v.selection } : {}),
+      exclude: BOARD_EXCLUSIONS.futurex!,
     });
     if ("error" in made) throw new Error(made.error);
     return made;

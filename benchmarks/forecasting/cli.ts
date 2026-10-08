@@ -25,6 +25,7 @@ import {
 import { FORECAST_CONFIG_SLOT, FORECAST_FAMILY } from "../../src/forecast/defaults";
 import { forecastLessonsFor } from "../../src/learning/forecast-bridge";
 import type { MarinaDB } from "../../src/persistence/database";
+import { boardExclusion } from "./barred";
 import {
   type CatalogueModel,
   callCost,
@@ -329,15 +330,24 @@ export async function runSelection(opts: {
     candidates: opts.configs,
     releases: releaseTable(releases(opts.catalogue)),
     makeForecaster: (c) =>
-      forecasterFor(c, depsForConfig(c, { lessons, retriever, captureEvidence: true }), {
-        onAnswer: (req, answer, reports) => {
-          if (!req.asOf) return;
-          leakAudit[c.label] = addLeakCounts(
-            leakAudit[c.label] ?? emptyLeakCounts(),
-            auditForecast(req.asOf, reports, answer),
-          );
+      forecasterFor(
+        c,
+        depsForConfig(c, {
+          lessons,
+          retriever,
+          captureEvidence: true,
+          exclude: boardExclusion(opts.benchmark),
+        }),
+        {
+          onAnswer: (req, answer, reports) => {
+            if (!req.asOf) return;
+            leakAudit[c.label] = addLeakCounts(
+              leakAudit[c.label] ?? emptyLeakCounts(),
+              auditForecast(req.asOf, reports, answer),
+            );
+          },
         },
-      }),
+      ),
     replicates: opts.replicates,
     pick: opts.pick,
     maxItems: opts.maxItems,

@@ -60,6 +60,7 @@ import {
   sha256,
   validateForecasts,
 } from "../benchmarks/forecastbench/submission";
+import { boardExclusion } from "../benchmarks/forecasting/barred";
 import {
   candidates,
   liveConfig,
@@ -202,6 +203,7 @@ async function runCmd(db: MarinaDB): Promise<number> {
       // A live round: every lesson may be used (rule 2 lifted for live).
       depsForConfig(chosen.config, {
         lessons: forecastLessonsFor(db, { eval: { benchmark: BENCHMARK, mode: "live" } }),
+        exclude: boardExclusion(BENCHMARK),
       }),
     ),
     journal,

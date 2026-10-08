@@ -10,6 +10,7 @@
  * one files. A configuration is DATA; `describeConfig` is how it is disclosed.
  */
 
+import type { SourceExclusion } from "../../src/arena/research/briefs";
 import type { Retriever } from "../../src/arena/research/retrieve";
 import { forecastFormed, type TypedFormation, typedFormation } from "../../src/forecast/formations";
 import type { LessonStore } from "../../src/forecast/lessons";
@@ -228,6 +229,8 @@ export interface DepsOptions {
   retriever?: string;
   /** Keep each question's research reports (for a leak audit). */
   captureEvidence?: boolean;
+  /** Sources research may never use (the board's own pages, `boardExclusion`). */
+  exclude?: SourceExclusion;
   env?: NodeJS.ProcessEnv;
 }
 
@@ -249,6 +252,7 @@ export function depsForConfig(c: ForecastConfig, opts: DepsOptions = {}): DepsFa
       ...(opts.lessons && c.lessons !== false ? { lessons: opts.lessons } : {}),
       ...(opts.strictRetrieval ? { strictRetrieval: true } : {}),
       ...(opts.retriever ? { retriever: opts.retriever } : {}),
+      ...(opts.exclude ? { exclude: opts.exclude } : {}),
       ...(c.runs !== undefined ? { runs: c.runs } : {}),
       ...(c.researchRounds !== undefined ? { researchRounds: c.researchRounds } : {}),
       ...(c.critique === false ? { critique: false } : {}),

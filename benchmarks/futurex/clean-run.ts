@@ -30,6 +30,7 @@ import {
   type Outcome,
   recordOutcome,
 } from "../../src/learning/outcomes";
+import { BOARD_EXCLUSIONS } from "../forecasting/barred";
 import {
   auditRow,
   batchWeek,
@@ -372,6 +373,7 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
             ...(variant.selection ? { selection: variant.selection } : {}),
             retriever: spec,
             wrapRetriever: cap.wrap,
+            exclude: BOARD_EXCLUSIONS.futurex!,
             ...(store ? { lessons: store } : {}),
             ...(history ? { history } : {}),
           });

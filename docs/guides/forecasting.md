@@ -127,6 +127,14 @@ critic all see them. `MARINA_LESSONS=observe` records them as `observedLessons` 
 no model (the ablation arm); `off` recalls nothing. A retired lesson (`lessons retire`, or every
 lesson citing a ledger run when that run is invalidated) is never recalled.
 
+**Barred sources.** Research for a board never uses that board's own pages: its dataset and
+mirrors, which hold the resolutions, and its question, answer and leaderboard pages. FutureX,
+Metaculus, ForecastBench and the `select` backtests each pass their list
+(`benchmarks/forecasting/barred.ts`) to `typedForecastDeps({ exclude })`. The list is applied to
+every retrieval engine, including the ones that ignore a brief's `exclude`. Barred sources, and
+the report lines that cite them, are dropped. A captured evidence snapshot that held a barred
+source is dropped whole. Each drop is counted in the report's warnings.
+
 **One builder.** The `forecast … type:` command and `POST /v1/forecast` with an `answer` spec build
 a forecast the same way (`src/forecast/surface.ts`): the operator's models, the lesson pool, the
 prior and recalibration settings, and the operator's formation (`MARINA_FORECAST_FORMATION`) routed
