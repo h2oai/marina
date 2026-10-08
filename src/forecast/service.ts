@@ -55,6 +55,8 @@
 
 import { availableModels } from "../agent/available-models";
 import { modelComplete } from "../arena/model-backend";
+import { barredRetriever } from "../arena/research/barred";
+import type { SourceExclusion } from "../arena/research/briefs";
 import { strictDateFilter } from "../arena/research/isolation";
 import { type Retriever, retrieverFromSpec } from "../arena/research/retrieve";
 import { defaultPageText } from "../arena/research/verify";
@@ -339,6 +341,11 @@ export function typedForecastDeps(
     strictRetrieval?: boolean;
     /** Wrap the wired retriever (an audit, a capture, a custom filter). */
     wrapRetriever?: (r: Retriever) => Retriever;
+    /**
+     * Sources research may never use (a board's own dataset, answer and
+     * leaderboard pages): applied to every engine, inside `wrapRetriever`.
+     */
+    exclude?: SourceExclusion;
     lessons?: LessonStore;
     /** Prior shrink / recalibration settings instead of the environment's (`false`: none). */
     adjust?: Partial<AdjustSettings> | false;
@@ -390,6 +397,7 @@ export function typedForecastDeps(
     retriever: _r,
     strictRetrieval: _s,
     wrapRetriever,
+    exclude,
     lessons,
     adjust: adjustOverride,
     history,
@@ -406,7 +414,9 @@ export function typedForecastDeps(
   return {
     scale: w.scale,
     deps: {
-      retriever: wrapRetriever ? wrapRetriever(w.retriever) : w.retriever,
+      retriever: ((r: Retriever) => (wrapRetriever ? wrapRetriever(r) : r))(
+        exclude ? barredRetriever(w.retriever, exclude) : w.retriever,
+      ),
       analysts: w.analysts.map((m) => ({
         name: m.name,
         complete: m.complete,

@@ -32,6 +32,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { boardExclusion } from "../benchmarks/forecasting/barred";
 import {
   candidates,
   liveConfig,
@@ -165,6 +166,7 @@ async function forecastCmd(db: MarinaDB): Promise<number> {
     // Live tournament questions: every lesson may be used (rule 2 lifted for live).
     depsForConfig(chosen.config, {
       lessons: forecastLessonsFor(db, { eval: { benchmark: BENCHMARK, mode: "live" } }),
+      exclude: boardExclusion(BENCHMARK),
     }),
   );
   log(
