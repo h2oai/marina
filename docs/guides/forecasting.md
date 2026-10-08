@@ -190,8 +190,15 @@ a question never learns from its own record (the same rule as lessons).
 record per resolved forecast: the forecast in numbers before adjustment, the prior it had, the
 outcome as option ids or a value, when the outcome became known, and optionally the formation and
 the board's score. Option labels are kept only as short hashes. No question or answer text is
-stored. Adapters append records as questions resolve (`recordFromAnswer` in
-`src/forecast/adjust.ts`).
+stored. Records are appended through `noteResolvedForecast` (`src/forecast/adjust.ts`), once per
+id and never for a measurement run. Two writers feed the shared file:
+
+- A saved typed answer (the `forecast` command, or `POST /v1/forecast` with `save`) is written when
+  its Sample resolves, at the Sample's time. Only choice and multi answers are written.
+- `bun run futurex learn` writes filed answers as their weeks resolve.
+
+The FutureX clean backtest learns only from its own resolved rows, through a fresh in-memory
+history per run, and never touches the shared file.
 
 **Prior shrink** (`MARINA_FORECAST_PRIOR=on`). A strong baseline caps a forecaster's large misses,
 so the answer is pooled toward the best prior available at the cutoff:

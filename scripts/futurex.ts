@@ -37,7 +37,7 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { BOARD_EXCLUSIONS } from "../benchmarks/forecasting/barred";
 import type { ReferenceScores } from "../benchmarks/futurex/clean";
-import { cleanBacktest } from "../benchmarks/futurex/clean-run";
+import { cleanBacktest, truthOutcome } from "../benchmarks/futurex/clean-run";
 import {
   datasetSha,
   type FuturexBatch,
@@ -52,7 +52,7 @@ import {
   recordSubmission,
 } from "../benchmarks/futurex/ledger";
 import { futurexOutcome, futurexResolvedAt } from "../benchmarks/futurex/lessons";
-import { endTimeIso } from "../benchmarks/futurex/map";
+import { endTimeIso, requestFor } from "../benchmarks/futurex/map";
 import {
   type BatchRun,
   BUILTIN_VARIANTS,
@@ -69,6 +69,8 @@ import {
   submissionFileName,
 } from "../benchmarks/futurex/submission";
 import { attachCliSpendLedger } from "../src/engine/cli-spend-ledger";
+import { noteResolvedForecast } from "../src/forecast/adjust";
+import { historyFromEnv, memoryHistory } from "../src/forecast/history";
 import type { LessonStore } from "../src/forecast/lessons";
 import {
   dueRun,
@@ -395,6 +397,9 @@ async function learnCmd(): Promise<number> {
   );
   const db = openDb();
   enableOutcomeLearning(db);
+  // Filed answers are live work: their outcomes also feed the forecast history
+  // (MARINA_FORECAST_HISTORY) that recalibration and prior shrink learn from.
+  const history = historyFromEnv();
   let queued = 0;
   try {
     await migrateLessons(db);
@@ -429,6 +434,21 @@ async function learnCmd(): Promise<number> {
               refs: [`batch:${sha.slice(0, 10)}`],
             }),
           );
+          if (history && r.answer && !r.fallback) {
+            const req = requestFor(row);
+            const outcome = truthOutcome(row, req.answer);
+            if (outcome) {
+              await noteResolvedForecast(history, {
+                id: r.id,
+                req: { ...req, id: r.id },
+                answer: r.answer,
+                truth: outcome,
+                resolvedAt,
+                formation: label,
+                score: item.score,
+              });
+            }
+          }
           learned.add(r.id);
           queued++;
         }
@@ -503,6 +523,9 @@ async function cleanBacktestCmd(batch: FuturexBatch): Promise<number> {
       lessons,
       // Each run recalls only its own in-run lessons (an honest ablation).
       ...(db && learning ? { learn: (o) => noteOutcome(db, o) } : {}),
+      // Each run also learns calibration and prior weights from its own resolved
+      // rows only (a fresh in-memory history), never the shared history file.
+      history: async () => memoryHistory(),
       ...(writer ? { lessonWriter: writer } : {}),
       ...(values.judge ? { judge: modelPart(values.judge) } : {}),
       ...(values.reference

@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { crpsNormal } from "../src/arena/score";
 import {
   forecastCommand,
@@ -9,6 +12,8 @@ import {
   saveAnswer,
   saveTypedAnswer,
 } from "../src/engine/commands/forecast";
+import { noteResolvedForecast, truthFromResolution } from "../src/forecast/adjust";
+import { jsonlHistory, memoryHistory } from "../src/forecast/history";
 import type { ForecastAnswer } from "../src/forecast/question";
 import type { TypedForecastAnswer } from "../src/forecast/typed";
 import { scoreTypedAnswer } from "../src/forecast/typed-score";
@@ -22,6 +27,8 @@ import {
 } from "../src/resolvers/calibration";
 import type { Sample } from "../src/resolvers/types";
 import type { CommandInput, RoomContext } from "../src/types";
+import { until } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 const answer = (over: Partial<ForecastAnswer>): ForecastAnswer => ({
   question: "Will X happen?",
@@ -212,5 +219,74 @@ describe("typed answers are scored when their Sample resolves", () => {
       { outcome: "yes" },
     )!;
     expect(yesNo).toMatchObject({ loss: 2, succeeded: false, outcome: ["Yes"] });
+  });
+});
+
+describe("resolved answers feed the forecast history", () => {
+  let db: MarinaDB;
+  let dir: string;
+  beforeEach(() => {
+    db = new MarinaDB(":memory:");
+    dir = mkdtempSync(join(tmpdir(), "marina-history-"));
+    clearCalibrationFinders();
+    registerBuiltinCalibrationFinders();
+  });
+  afterEach(() => {
+    clearCalibrationFinders();
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("a resolved typed answer is written once, known at the Sample's time", async () => {
+    const path = join(dir, "history.jsonl");
+    using _ = scopeProcessState({ env: { MARINA_FORECAST_HISTORY: path } });
+    saveTypedAnswer(
+      db,
+      "Ada",
+      typedAnswer({ prediction: "A", formatted: "A", distribution: { A: 0.7, B: 0.3 } }),
+      "kalshi/HIST",
+    );
+    runCalibration(db, resolved("kalshi/HIST", { option: "Home" }));
+    const history = jsonlHistory(path);
+    await until(async () => (await history.all()).length === 1);
+    const [record] = await history.all();
+    expect(record).toMatchObject({
+      answerType: "choice",
+      outcome: { options: ["A"] },
+      resolvedAt: new Date(1_900_000_000_000).toISOString(),
+    });
+    expect(record!.id).toMatch(/^forecast:\d+$/);
+  });
+
+  it("no history configured: resolution still scores, nothing is written", () => {
+    using _ = scopeProcessState({ env: { MARINA_FORECAST_HISTORY: undefined } });
+    saveTypedAnswer(db, "Ada", typedAnswer({ prediction: "A", formatted: "A" }), "kalshi/NOH");
+    runCalibration(db, resolved("kalshi/NOH", { option: "Home" }));
+    expect(db.listForecastAnswers("Ada")[0]!.score).toBeDefined();
+  });
+
+  it("never writes a measurement run, and writes an id once", async () => {
+    const history = memoryHistory();
+    const a = typedAnswer({ prediction: "A", formatted: "A", distribution: { A: 0.7, B: 0.3 } });
+    const input = {
+      id: "q1",
+      req: { question: a.question, answer: a.answer },
+      answer: a,
+      truth: { options: ["A"] },
+      resolvedAt: "2026-09-10T00:00:00.000Z",
+    };
+    expect(
+      await noteResolvedForecast(history, { ...input, eval: { benchmark: "b", mode: "measure" } }),
+    ).toBe(false);
+    expect(await noteResolvedForecast(history, input)).toBe(true);
+    expect(await noteResolvedForecast(history, input)).toBe(false);
+    expect(await noteResolvedForecast(undefined, input)).toBe(false);
+    expect(history.records).toHaveLength(1);
+  });
+
+  it("only option outcomes become history truth", () => {
+    expect(truthFromResolution(typedAnswer({}).answer, ["A"])).toEqual({ options: ["A"] });
+    expect(truthFromResolution(typedAnswer({}).answer, "B")).toEqual({ options: ["B"] });
+    expect(truthFromResolution({ type: "text" }, "x")).toBeUndefined();
   });
 });
