@@ -876,7 +876,7 @@ describe("POST /v1/chat/completions with the obligations ledger", () => {
   it("reviews a write call in observe and counts, without changing the reply", async () => {
     using _state = scopeProcessState({ env: { MARINA_OBLIGATIONS_REVIEW: "observe" } });
     replies = [closeDraft];
-    reviewAnswer = '{"evidence":"yes"}';
+    reviewAnswer = '{"evidence":"yes","requested":"no","permitted":"no"}';
     const resp = await post({
       model: `marina/obligations:${MODEL}`,
       messages: opening,
@@ -919,7 +919,7 @@ describe("POST /v1/chat/completions with the obligations ledger", () => {
   it("nudges a named concern once under on, then lets the same call run", async () => {
     using _state = scopeProcessState({ env: { MARINA_OBLIGATIONS_REVIEW: "on" } });
     replies = [closeDraft];
-    reviewAnswer = '{"evidence":"yes"}';
+    reviewAnswer = '{"evidence":"yes","requested":"no","permitted":"no"}';
     const resp = await post({
       model: `marina/obligations:${MODEL}`,
       messages: opening,
@@ -932,8 +932,9 @@ describe("POST /v1/chat/completions with the obligations ledger", () => {
     expect(note).toContain("no tool result in this conversation shows yet");
     expect(note).toContain("make it again unchanged");
     expect(resp.headers.get("x-marina-obligations")).toContain("check=reviewed-kept");
-    // Evidence was named once: the next write reply is reviewed for order only (one open request → none).
+    // Evidence was named once: the next write reply is asked only what is left (requested, permitted).
     seen = [];
+    reviewAnswer = '{"requested":"no","permitted":"no"}';
     const again = await post({
       model: `marina/obligations:${MODEL}`,
       messages: [
@@ -943,8 +944,12 @@ describe("POST /v1/chat/completions with the obligations ledger", () => {
       ],
       tools: TOOLS,
     });
-    expect(seen.map((s) => s.kind)).toEqual(["extract", "main"]);
-    expect(again.headers.get("x-marina-obligations")).toContain("check=tool-call");
+    expect(seen.map((s) => s.kind)).toEqual(["extract", "main", "review"]);
+    const asked = (seen[2]!.body.messages as { role: string; content: string }[]).find(
+      (m) => m.role === "user",
+    )!.content;
+    expect(asked).toContain("ANSWER: requested, permitted");
+    expect(again.headers.get("x-marina-obligations")).toContain("check=review-clear");
   });
 
   it("asks the order question only with two or more open requests", async () => {
@@ -952,14 +957,14 @@ describe("POST /v1/chat/completions with the obligations ledger", () => {
     extraction =
       '{"add":[{"request":1,"what":"Close card 4417","target":"4417","tools":["close_card"]},{"request":1,"what":"Refund the annual fee","tools":[]}],"cancel":[]}';
     replies = [closeDraft];
-    reviewAnswer = '{"order":"yes","evidence":"no"}';
+    reviewAnswer = '{"order":"yes","evidence":"no","requested":"no","permitted":"no"}';
     await post({ model: `marina/obligations:${MODEL}`, messages: opening, tools: TOOLS });
     const review = seen.find((s) => s.kind === "review")!;
     const user = (review.body.messages as { role: string; content: string }[]).find(
       (m) => m.role === "user",
     )!;
-    expect(user.content).toContain("ANSWER: order, evidence");
-    expect(user.content).toContain("o2: Refund the annual fee");
+    expect(user.content).toContain("ANSWER: order, evidence, requested, permitted");
+    expect(user.content).toContain("o2 [open]: Refund the annual fee");
     const note = lastUserText(seen[seen.length - 1]!.body).text;
     expect(note).toContain("Order: carrying this out now may prevent another open request");
   });

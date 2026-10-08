@@ -41,6 +41,7 @@ import {
 } from "./ledger";
 import { type ObligationsMode, obligationsConsentMode, obligationsMode } from "./mode";
 import {
+  anyKind,
   markNamed,
   obligationsReviewMode,
   type ReviewMode,
@@ -49,6 +50,8 @@ import {
   reviewLabel,
   reviewNote,
   reviewQuestions,
+  reviewRuleBytes,
+  reviewRules,
   reviewState,
   reviewWrite,
 } from "./review";
@@ -68,6 +71,8 @@ export interface AgentObligationsOptions {
   consentShown?: () => boolean;
   /** The pre-write review's mode (default `MARINA_OBLIGATIONS_REVIEW`, read live). */
   reviewMode?: () => ReviewMode;
+  /** Rule-passage budget for the review (default `MARINA_OBLIGATIONS_REVIEW_RULE_BYTES`, read live). */
+  reviewRuleBytes?: () => number;
   now?: () => number;
 }
 
@@ -205,15 +210,21 @@ export class AgentObligations {
     if (mode === "off" || this.mode() === "off") return undefined;
     try {
       const state = reviewState(this.ledger);
-      const open = openObligations(this.ledger);
-      const ask = reviewQuestions(state, open);
+      const calls = [{ name, args }];
+      const rules = reviewRules(
+        transcript,
+        calls,
+        (this.opts.reviewRuleBytes ?? reviewRuleBytes)(),
+      );
+      const ask = reviewQuestions(state, this.ledger, { hasRules: rules.length > 0 });
       if (!ask) return undefined;
       const provider = this.opts.provider?.();
       const input = {
-        open,
-        calls: [{ name, args }],
+        requests: this.ledger.obligations,
+        calls,
         draft: "",
         recent: recentToolResults(transcript),
+        rules,
       };
       const verdict = await reviewWrite(
         input,
@@ -223,8 +234,7 @@ export class AgentObligations {
       );
       const named = recordReview(state, verdict);
       const label = reviewLabel(verdict);
-      if (mode !== "on" || this.mode() !== "on" || (!named.order && !named.evidence))
-        return { label };
+      if (mode !== "on" || this.mode() !== "on" || !anyKind(named)) return { label };
       markNamed(state, named);
       return { label, refusal: reviewNote(input, named) };
     } catch {

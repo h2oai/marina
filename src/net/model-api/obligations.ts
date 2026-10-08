@@ -51,15 +51,19 @@ import {
   parseObligationsMode,
 } from "../../obligations/mode";
 import {
+  anyKind,
   markNamed,
   obligationsReviewMode,
   type PendingCall,
   type RecentResult,
   recentToolResults,
   recordReview,
+  reviewFlagCount,
   reviewLabel,
   reviewNote,
   reviewQuestions,
+  reviewRuleBytes,
+  reviewRules,
   reviewState,
   reviewWrite,
 } from "../../obligations/review";
@@ -277,6 +281,8 @@ export interface ObligationsPrep {
   tools?: unknown[];
   /** The latest tool results, clamped (context for the pre-write review). */
   recent?: RecentResult[];
+  /** The request's messages (rule passages for the pre-write review). */
+  messages?: OpenAIMessage[];
   extract?: "ok" | "failed" | "none";
 }
 
@@ -373,6 +379,7 @@ export async function prepareObligations(
   if (obligationsReviewMode() !== "off") {
     prep.tools = tools;
     prep.recent = recentToolResults(messages);
+    prep.messages = messages;
   }
   // Without tools nothing can carry an obligation out: no calls, no note.
   if (tools.length === 0) {
@@ -448,7 +455,7 @@ export function obligationsHeaderValue(prep: ObligationsPrep, check?: string): s
     ...(prep.ledger.review
       ? [
           `reviews=${prep.ledger.review.reviews}`,
-          `review_flags=${prep.ledger.review.orderRisks + prep.ledger.review.evidenceGaps}`,
+          `review_flags=${reviewFlagCount(prep.ledger.review)}`,
         ]
       : []),
     ...(prep.extract && prep.extract !== "none" ? [`extract=${prep.extract}`] : []),
@@ -599,14 +606,15 @@ async function reviewDraft(
     .filter((c) => c.name && !readOnlyCall(c.name, c.args, { tools, role: "guard" }));
   if (writes.length === 0) return done(resp, text, "tool-call");
   const state = reviewState(prep.ledger);
-  const open = openObligations(prep.ledger);
-  const ask = reviewQuestions(state, open);
+  const rules = reviewRules(prep.messages ?? [], writes, reviewRuleBytes());
+  const ask = reviewQuestions(state, prep.ledger, { hasRules: rules.length > 0 });
   if (!ask) return done(resp, text, "tool-call");
   const input = {
-    open,
+    requests: prep.ledger.obligations,
     calls: writes,
     draft: messageText(draft.content),
     recent: prep.recent ?? [],
+    rules,
   };
   const verdict = await reviewWrite(input, ask, {
     ...(prep.provider ? { provider: prep.provider } : {}),
@@ -615,7 +623,7 @@ async function reviewDraft(
   const named = recordReview(state, verdict);
   store.put(prep.ledger);
   const label = reviewLabel(verdict);
-  if (!nudge || (!named.order && !named.evidence)) return done(resp, text, label);
+  if (!nudge || !anyKind(named)) return done(resp, text, label);
   markNamed(state, named);
   store.put(prep.ledger);
   // The discarded draft is spend the review caused.
@@ -672,8 +680,7 @@ function logRequest(prep: ObligationsPrep, check: string): void {
     ...(prep.ledger.review
       ? {
           reviews: prep.ledger.review.reviews,
-          orderRisks: prep.ledger.review.orderRisks,
-          evidenceGaps: prep.ledger.review.evidenceGaps,
+          reviewFlags: prep.ledger.review.flags,
           reviewUnjudged: prep.ledger.review.unjudged,
           reviewNudges: prep.ledger.review.nudges,
         }
