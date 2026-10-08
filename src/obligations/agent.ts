@@ -40,6 +40,18 @@ import {
   type ToolCallRecord,
 } from "./ledger";
 import { type ObligationsMode, obligationsConsentMode, obligationsMode } from "./mode";
+import {
+  markNamed,
+  obligationsReviewMode,
+  type ReviewMode,
+  recentToolResults,
+  recordReview,
+  reviewLabel,
+  reviewNote,
+  reviewQuestions,
+  reviewState,
+  reviewWrite,
+} from "./review";
 
 /** Requests queued between prompt builds (the oldest are dropped past this). */
 const MAX_PENDING_REQUESTS = 8;
@@ -54,6 +66,8 @@ export interface AgentObligationsOptions {
   mode?: () => ObligationsMode;
   /** Whether approvals are shown and named (`MARINA_OBLIGATIONS_CONSENT`, read live). */
   consentShown?: () => boolean;
+  /** The pre-write review's mode (default `MARINA_OBLIGATIONS_REVIEW`, read live). */
+  reviewMode?: () => ReviewMode;
   now?: () => number;
 }
 
@@ -175,13 +189,65 @@ export class AgentObligations {
     ].join("\n");
   }
 
+  /**
+   * The pre-write review of one state-changing call (`review.ts`). Returns a
+   * one-time refusal note when a concern is named (the review is `on` and the
+   * ledger is `on`); the same call issued again runs. Undefined otherwise —
+   * including every judge failure (the call runs). Never throws.
+   */
+  async reviewWrite(
+    name: string,
+    args: unknown,
+    transcript: readonly unknown[],
+    signal?: AbortSignal,
+  ): Promise<{ label: string; refusal?: string } | undefined> {
+    const mode = (this.opts.reviewMode ?? obligationsReviewMode)();
+    if (mode === "off" || this.mode() === "off") return undefined;
+    try {
+      const state = reviewState(this.ledger);
+      const open = openObligations(this.ledger);
+      const ask = reviewQuestions(state, open);
+      if (!ask) return undefined;
+      const provider = this.opts.provider?.();
+      const input = {
+        open,
+        calls: [{ name, args }],
+        draft: "",
+        recent: recentToolResults(transcript),
+      };
+      const verdict = await reviewWrite(
+        input,
+        ask,
+        { ...(provider ? { provider } : {}), complete: this.opts.complete },
+        signal,
+      );
+      const named = recordReview(state, verdict);
+      const label = reviewLabel(verdict);
+      if (mode !== "on" || this.mode() !== "on" || (!named.order && !named.evidence))
+        return { label };
+      markNamed(state, named);
+      return { label, refusal: reviewNote(input, named) };
+    } catch {
+      return undefined;
+    }
+  }
+
   /** The requests as context for the argument check's judge (empty when off). */
   stated(): string[] {
     return this.mode() === "off" ? [] : statedLines(this.ledger);
   }
 
-  summary(): ReturnType<typeof ledgerSummary> & { pending: number } {
-    return { ...ledgerSummary(this.ledger), pending: this.pending.length };
+  summary(): ReturnType<typeof ledgerSummary> & {
+    pending: number;
+    reviews?: number;
+    reviewNudges?: number;
+  } {
+    const r = this.ledger.review;
+    return {
+      ...ledgerSummary(this.ledger),
+      pending: this.pending.length,
+      ...(r ? { reviews: r.reviews, reviewNudges: r.nudges } : {}),
+    };
   }
 
   /** Read-only view (tests, diagnostics). */

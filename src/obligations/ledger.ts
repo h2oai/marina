@@ -19,6 +19,7 @@
  * and how it injects the block.
  */
 
+import type { ReviewState } from "./review";
 import { dispatchedCall } from "./tool-call";
 
 export type ObligationStatus = "open" | "satisfied" | "declined";
@@ -62,6 +63,8 @@ export interface ObligationLedger {
   nudges: number;
   /** Final-reply checks that found an approved obligation asked about again instead of carried out. */
   reasks: number;
+  /** The pre-write review's counters and once-only flags (`review.ts`), once it has run. */
+  review?: ReviewState;
   /** Extractor calls that failed (the turn is skipped, never retried). */
   extractFailures: number;
   /** Spend on the ledger's own model calls (extraction, judging), USD. */

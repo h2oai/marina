@@ -50,6 +50,19 @@ import {
   obligationsModel,
   parseObligationsMode,
 } from "../../obligations/mode";
+import {
+  markNamed,
+  obligationsReviewMode,
+  type PendingCall,
+  type RecentResult,
+  recentToolResults,
+  recordReview,
+  reviewLabel,
+  reviewNote,
+  reviewQuestions,
+  reviewState,
+  reviewWrite,
+} from "../../obligations/review";
 import { readOnlyCall } from "../../obligations/tool-call";
 import { isReadOnlyTool } from "../../obligations/tool-effect";
 import type { EntityId } from "../../types";
@@ -260,6 +273,10 @@ export interface ObligationsPrep {
   booked: number;
   /** Why the ledger did not run (`no-tools`). */
   skipped?: string;
+  /** The request's declared tools (the pre-write review classifies the reply's calls with them). */
+  tools?: unknown[];
+  /** The latest tool results, clamped (context for the pre-write review). */
+  recent?: RecentResult[];
   extract?: "ok" | "failed" | "none";
 }
 
@@ -353,6 +370,10 @@ export async function prepareObligations(
     spent,
     booked: 0,
   };
+  if (obligationsReviewMode() !== "off") {
+    prep.tools = tools;
+    prep.recent = recentToolResults(messages);
+  }
   // Without tools nothing can carry an obligation out: no calls, no note.
   if (tools.length === 0) {
     prep.skipped = "no-tools";
@@ -424,6 +445,12 @@ export function obligationsHeaderValue(prep: ObligationsPrep, check?: string): s
     `nudges=${s.nudges}`,
     ...(s.consented > 0 ? [`consented=${s.consented}`] : []),
     ...(s.reasks > 0 ? [`reasks=${s.reasks}`] : []),
+    ...(prep.ledger.review
+      ? [
+          `reviews=${prep.ledger.review.reviews}`,
+          `review_flags=${prep.ledger.review.orderRisks + prep.ledger.review.evidenceGaps}`,
+        ]
+      : []),
     ...(prep.extract && prep.extract !== "none" ? [`extract=${prep.extract}`] : []),
     ...(check ? [`check=${check}`] : []),
   ].join(";");
@@ -466,11 +493,13 @@ export async function finishObligations(
     return text === undefined ? withHeaders(r, headers(check)) : rebuilt(text, r, headers(check));
   };
   if (prep.skipped) return done(resp, undefined, "skipped");
-  if (prep.mode !== "on") return done(resp, undefined, "observe");
+  // The pre-write review reads replies that carry calls; without it, nothing below changes.
+  const reviewMode = obligationsReviewMode();
+  if (prep.mode !== "on" && reviewMode === "off") return done(resp, undefined, "observe");
   if (body.stream === true) return done(resp, undefined, "stream");
   if (!resp.ok) return done(resp, undefined, "upstream-error");
   const open = openObligations(prep.ledger).filter((o) => !o.nudged);
-  if (open.length === 0) return done(resp, undefined, "none-open");
+  if (open.length === 0 && reviewMode === "off") return done(resp, undefined, "none-open");
   const text = await resp.text();
   let parsed: unknown;
   try {
@@ -479,7 +508,21 @@ export async function finishObligations(
     return done(resp, text, "unparsed");
   }
   const draft = firstMessage(parsed);
-  if (!draft || draft.tool_calls?.length) return done(resp, text, "tool-call");
+  if (draft?.tool_calls?.length) {
+    if (reviewMode === "off") return done(resp, text, "tool-call");
+    return reviewDraft(
+      prep,
+      draft,
+      text,
+      resp,
+      retry,
+      done,
+      reviewMode === "on" && prep.mode === "on",
+    );
+  }
+  if (prep.mode !== "on") return done(resp, text, "observe");
+  if (!draft) return done(resp, text, "tool-call");
+  if (open.length === 0) return done(resp, text, "none-open");
   const draftText = messageText(draft.content);
   const verdicts = await checkFinalReply(
     {
@@ -532,6 +575,77 @@ export async function finishObligations(
   return done(second, secondText, call ? "nudged-acted" : "nudged-kept");
 }
 
+/**
+ * The pre-write review of a reply that carries calls (`review.ts`): its write
+ * calls get the questions this conversation still needs; a named concern gets
+ * ONE retry in `on` (only when the ledger itself is `on`), and that reply is
+ * returned. Any failure returns the draft.
+ */
+async function reviewDraft(
+  prep: ObligationsPrep,
+  draft: ChatMessage,
+  text: string,
+  resp: Response,
+  retry: (note: string) => Promise<Response>,
+  done: (r: Response, text: string | undefined, check: string) => Response,
+  nudge: boolean,
+): Promise<Response> {
+  const tools = prep.tools ?? [];
+  const writes: PendingCall[] = (draft.tool_calls ?? [])
+    .map((c) => {
+      const fn = (c as { function?: { name?: string; arguments?: unknown } }).function;
+      return { name: fn?.name ?? "", args: parseArgs(fn?.arguments) };
+    })
+    .filter((c) => c.name && !readOnlyCall(c.name, c.args, { tools, role: "guard" }));
+  if (writes.length === 0) return done(resp, text, "tool-call");
+  const state = reviewState(prep.ledger);
+  const open = openObligations(prep.ledger);
+  const ask = reviewQuestions(state, open);
+  if (!ask) return done(resp, text, "tool-call");
+  const input = {
+    open,
+    calls: writes,
+    draft: messageText(draft.content),
+    recent: prep.recent ?? [],
+  };
+  const verdict = await reviewWrite(input, ask, {
+    ...(prep.provider ? { provider: prep.provider } : {}),
+    complete: prep.complete,
+  }).catch(() => undefined);
+  const named = recordReview(state, verdict);
+  store.put(prep.ledger);
+  const label = reviewLabel(verdict);
+  if (!nudge || (!named.order && !named.evidence)) return done(resp, text, label);
+  markNamed(state, named);
+  store.put(prep.ledger);
+  // The discarded draft is spend the review caused.
+  const draftCost = Number(resp.headers.get(COST_USD_HEADER));
+  if (Number.isFinite(draftCost)) prep.spent.usd += draftCost;
+  let second: Response;
+  try {
+    second = await retry(reviewNote(input, named));
+  } catch (e) {
+    log.warn(
+      "model-api",
+      `obligations: review nudge failed, returning the draft: ${getErrorMessage(e)}`,
+    );
+    return done(resp, text, "review-nudge-failed");
+  }
+  if (!second.ok) return done(resp, text, "review-nudge-failed");
+  const secondText = await second.text();
+  let same = false;
+  try {
+    const again = (firstMessage(JSON.parse(secondText))?.tool_calls ?? []).map((c) => {
+      const fn = (c as { function?: { name?: string; arguments?: unknown } }).function;
+      return JSON.stringify([fn?.name, parseArgs(fn?.arguments)]);
+    });
+    same = writes.every((w) => again.includes(JSON.stringify([w.name, w.args])));
+  } catch {
+    return done(resp, text, "review-nudge-unparsed");
+  }
+  return done(second, secondText, same ? "reviewed-kept" : "reviewed-changed");
+}
+
 function withHeaders(resp: Response, extra: Record<string, string>): Response {
   const headers = new Headers(resp.headers);
   for (const [k, v] of Object.entries(extra)) headers.set(k, v);
@@ -555,6 +669,15 @@ function logRequest(prep: ObligationsPrep, check: string): void {
     nudges: s.nudges,
     consented: s.consented,
     reasks: s.reasks,
+    ...(prep.ledger.review
+      ? {
+          reviews: prep.ledger.review.reviews,
+          orderRisks: prep.ledger.review.orderRisks,
+          evidenceGaps: prep.ledger.review.evidenceGaps,
+          reviewUnjudged: prep.ledger.review.unjudged,
+          reviewNudges: prep.ledger.review.nudges,
+        }
+      : {}),
     extract: prep.extract ?? "none",
     check,
     noted: prep.note ? 1 : 0,

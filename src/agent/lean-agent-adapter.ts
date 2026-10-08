@@ -1813,6 +1813,21 @@ export class LeanAgentAdapter implements AgentHandle {
             context.context.messages,
           );
           if (refusal) return { block: true, reason: refusal };
+          // Pre-write review (opt-in, MARINA_OBLIGATIONS_REVIEW, with the ledger):
+          // order and precondition evidence; refused once at most, the model decides.
+          const reviewed = await this.obligations.reviewWrite(
+            context.toolCall.name,
+            args,
+            context.context.messages,
+          );
+          if (reviewed) {
+            this.log.info(LEAN_AGENT_LOG_CATEGORY, `pre-write review ${reviewed.label}`, {
+              agent: this.name,
+              tool: context.toolCall.name,
+              nudged: reviewed.refusal ? 1 : 0,
+            });
+            if (reviewed.refusal) return { block: true, reason: reviewed.refusal };
+          }
         }
         const command = typeof args.command === "string" ? args.command.trim().toLowerCase() : "";
         const isChannelSend =
