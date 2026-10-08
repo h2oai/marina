@@ -69,6 +69,7 @@
     "arena": "bun run scripts/arena.ts",
     "learned": "bun run scripts/learned.ts",
     "arena:portfolio": "bun run scripts/arena-portfolio.ts",
+    "arena:research": "bun run scripts/arena-research.ts",
     "deepresearch": "bun run scripts/deepresearch-bench.ts",
     "futurex": "bun run scripts/futurex.ts",
     "mind2web2": "bun run scripts/mind2web2.ts",

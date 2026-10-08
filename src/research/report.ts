@@ -109,6 +109,8 @@ export interface ReportPlan {
 }
 
 export interface SectionAudit {
+  captures?: import("./evidence").EvidenceSnapshot[];
+  researchLoops?: import("./evidence-loop").ResearchLoopAudit[];
   heading: string;
   queries: string[];
   gapQueries: string[];
@@ -414,6 +416,8 @@ export async function writeResearchReport(
         brief(task, section, queries, evidenceChars, `report-s${i + 1}-${round}`),
       );
       searchUsd += report.costUsd;
+      if (report.evidence) (audit.captures ??= []).push(report.evidence);
+      if (report.researchLoop) (audit.researchLoops ??= []).push(report.researchLoop);
       audit.searches += report.searches;
       for (const f of report.funnels ?? []) {
         audit.pagesRead += f.read;

@@ -72,6 +72,7 @@
 import type { Evidence } from "../decisions/evidence";
 import type { DecisionProvider } from "../decisions/types";
 import { judgeAudit, judgeClaim, newJudgeRecord } from "../forecast/judge";
+import { requireResearchEvidence } from "../research/admission";
 import type { RoundForecast } from "./forecast";
 import { forecastRound } from "./forecast";
 import type { ProfileProposal } from "./formation-profile";
@@ -145,6 +146,7 @@ export interface FormationStep {
 }
 
 export interface FormationForecast extends RoundForecast {
+  lessons?: Awaited<ReturnType<typeof import("../forecast/lessons").recallForecastLessons>>;
   formation?: FormationPattern;
   /** The proposals the final aggregation used, by label. */
   proposals?: Record<string, Proposal>;
@@ -1281,6 +1283,9 @@ export interface FormationStage {
 
 /** What the research crew handed over: the verified lines, and its audit record. */
 export interface ResearchDossier {
+  readSwarm?: import("./research/retrieve").ResearchReport["readSwarm"];
+  evidence?: import("../research/evidence").EvidenceSnapshot;
+  researchLoop?: import("../research/evidence-loop").ResearchLoopAudit;
   since: string;
   verified: string;
   stats?: Record<string, number>;
@@ -1315,8 +1320,13 @@ export async function buildDossier(
         });
   try {
     const report = await retriever(brief);
-    const checked = await verifyDossier(report.report, pageText);
+    const checked = await verifyDossier(report.report, pageText, report.sources);
     const warnings = [...(report.warnings ?? [])];
+    const researchError =
+      report.researchLoop?.error ??
+      (report.researchLoop?.costFinal === false
+        ? "research requests still in flight; cost is not final"
+        : undefined);
     if (!checked.verifiedText.trim())
       warnings.push(
         "No verified research evidence; do not attribute forecast changes to research.",
@@ -1325,13 +1335,17 @@ export async function buildDossier(
       since: brief.since,
       verified: checked.verifiedText,
       stats: checked.stats,
-      status: checked.verifiedText.trim() ? "verified" : "empty",
+      status: researchError ? "failed" : checked.verifiedText.trim() ? "verified" : "empty",
+      ...(researchError ? { error: researchError } : {}),
       ...(warnings.length ? { warnings } : {}),
       ...(report.funnels ? { funnels: report.funnels } : {}),
       sources: report.sources.length,
       costUsd: report.costUsd ?? 0,
       ...(report.retriever ? { retriever: report.retriever } : {}),
       ...(report.data ? { data: report.data } : {}),
+      ...(report.evidence ? { evidence: report.evidence } : {}),
+      ...(report.researchLoop ? { researchLoop: report.researchLoop } : {}),
+      ...(report.readSwarm ? { readSwarm: report.readSwarm } : {}),
     };
   } catch (err) {
     return {
@@ -1346,7 +1360,7 @@ export async function buildDossier(
 }
 
 export function dossierBlock(d: ResearchDossier): string {
-  return `RESEARCH DOSSIER from the research crew — facts dated since ${d.since}, ONLY the lines whose figures a mechanical check found on the cited page. Use other sources for CHANGES only (how a pollster or market moved since its own previous reading, after the start reading), never to replace the level:\n${d.verified.trim() || "(no verified facts)"}${d.warnings?.length ? `\nRetrieval limitations: ${d.warnings.join("; ")}` : ""}${d.error ? `\nResearch failed: ${d.error}` : ""}`;
+  return `RESEARCH DOSSIER from the research crew — start reading dated ${d.since}. A mechanical check found the cited figures on the captured pages; this does not establish freshness or relevance. Older observations and unknown publication dates are background only. Use other sources for CHANGES only (how a pollster or market moved since its own previous reading, after the start reading), never to replace the level:\n${d.verified.trim() || "(no verified facts)"}${d.warnings?.length ? `\nRetrieval limitations: ${d.warnings.join("; ")}` : ""}${d.error ? `\nResearch failed: ${d.error}` : ""}`;
 }
 
 function handoffBlock(pattern: string, f: FormationForecast, base: Distribution): string {
@@ -1384,9 +1398,12 @@ export async function composeForecastRound(
   lock: ArenaLock,
   stages: [FormationStage, FormationStage?],
   start: RoundForecast,
-  research?: { retriever: Retriever; pageText: PageText } | { dossier: ResearchDossier },
+  research?: ({ retriever: Retriever; pageText: PageText } | { dossier: ResearchDossier }) & {
+    required?: boolean;
+  },
   /** A decision backend for model-judged aspects, handed to both formations. */
   judge?: DecisionProvider,
+  additionalBrief?: string,
 ): Promise<ComposedForecast> {
   const [first, second] = stages;
   const numeric = round.target_type === "continuous_normal" && Boolean(start.topline);
@@ -1397,7 +1414,17 @@ export async function composeForecastRound(
         ? structuredClone(research.dossier)
         : await buildDossier(round, lock, start, research.retriever, research.pageText)
       : undefined;
-  const brief = dossier ? dossierBlock(dossier) : undefined;
+  if (research?.required) {
+    if (!dossier) throw new Error("Required research refused: unsupported forecast shape");
+    requireResearchEvidence(
+      { ...dossier, retriever: dossier.retriever ?? "" },
+      dossier.verified,
+      dossier.error,
+    );
+  }
+  const brief =
+    [dossier ? dossierBlock(dossier) : undefined, additionalBrief].filter(Boolean).join("\n\n") ||
+    undefined;
   const one = await formationForecastRound(
     first.pattern,
     round,
@@ -1407,6 +1434,8 @@ export async function composeForecastRound(
     brief,
     judge,
   );
+  if (research?.required && one.fallback)
+    throw new Error(`Required research forecast refused: ${one.fallback}`);
   if (!second || !(numeric || profiled)) return { ...one, ...(dossier ? { dossier } : {}) };
   const handoff = numeric
     ? handoffBlock(first.pattern, one, withoutDaily(start).topline!)
@@ -1425,6 +1454,8 @@ export async function composeForecastRound(
     [brief, handoff].filter(Boolean).join("\n\n"),
     judge,
   );
+  if (research?.required && two.fallback)
+    throw new Error(`Required research forecast refused: ${two.fallback}`);
   return {
     ...two,
     ...(dossier ? { dossier } : {}),

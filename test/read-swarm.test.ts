@@ -339,6 +339,7 @@ describe("read swarm: research retriever", () => {
     expect(read).toEqual(["c"]);
     expect(out.retriever).toBe("inner+read-swarm+judged");
     expect(stats).toHaveLength(1);
+    expect(out.readSwarm).toEqual(stats);
     expect(stats[0]).toMatchObject({ roundId: "j", pages: 3, docsRead: 1, order: "judged" });
   });
 

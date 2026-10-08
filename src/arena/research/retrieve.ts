@@ -71,6 +71,10 @@ export interface Source {
   title?: string;
   /** ISO date the page was published, when the engine reports one. */
   published?: string;
+  /** Structured data observation period; never confused with publication/fetch time. */
+  observedAt?: string;
+  /** Information vintage when the source can establish it. */
+  availableAt?: string;
   /**
    * The page's text as the search engine fetched it. The citation check reads
    * it instead of fetching the page (bot walls, timeouts, huge pages) — never
@@ -92,6 +96,9 @@ export interface ResearchReport {
   funnels?: RetrievalFunnel[];
   /** Engines that failed while others answered (a combined retriever), one line each. */
   warnings?: string[];
+  evidence?: import("../../research/evidence").EvidenceSnapshot;
+  researchLoop?: import("../../research/evidence-loop").ResearchLoopAudit;
+  readSwarm?: import("./read-swarm-retriever").ReadSwarmBriefStats[];
 }
 
 export type Retriever = (brief: ResearchBrief) => Promise<ResearchReport>;
@@ -287,6 +294,7 @@ export function combineRetrievers(retrievers: Retriever[]): Retriever {
       costUsd: ok.reduce((sum, r) => sum + r.costUsd, 0),
       searches: ok.reduce((sum, r) => sum + r.searches, 0),
       retriever: ok.map((r) => r.retriever).join("+"),
+      readSwarm: ok.flatMap((r) => r.readSwarm ?? []),
       ...(funnels.length ? { funnels } : {}),
       ...(warnings.length ? { warnings } : {}),
     };

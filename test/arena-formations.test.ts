@@ -433,6 +433,61 @@ describe("formation protocols", () => {
     expect(f.topline!.mean).toBeCloseTo(base.mean + 0.5 * 1.5, 2);
   });
 
+  it("required research refuses failed, empty and closed-book dossiers before model calls", async () => {
+    for (const patch of [
+      { verified: "" },
+      { error: "provider credits" },
+      { retriever: "closed-book" },
+      { retriever: "search+read-swarm", readSwarm: [] },
+    ]) {
+      const { members, calls } = crew(3, () => at(1));
+      await expect(
+        composeForecastRound(
+          round,
+          lock,
+          [{ pattern: "delphi", members }],
+          forecastRound(round, lock),
+          {
+            required: true,
+            dossier: {
+              since: "2026-07-01",
+              sources: 1,
+              costUsd: 0.1,
+              retriever: "search",
+              verified: "verified fact",
+              ...patch,
+            },
+          },
+        ),
+      ).rejects.toThrow("Required research refused");
+      expect(calls).toHaveLength(0);
+    }
+  });
+
+  it("required research cannot file a baseline after all forecasters fail", async () => {
+    const { members } = crew(3, () => {
+      throw new Error("model unavailable");
+    });
+    await expect(
+      composeForecastRound(
+        round,
+        lock,
+        [{ pattern: "delphi", members }],
+        forecastRound(round, lock),
+        {
+          required: true,
+          dossier: {
+            since: "2026-07-01",
+            sources: 1,
+            costUsd: 0.1,
+            retriever: "search",
+            verified: "verified fact",
+          },
+        },
+      ),
+    ).rejects.toThrow("Required research forecast refused");
+  });
+
   it("composition: one verified dossier per round to every member; a second formation judges", async () => {
     let searches = 0;
     const retriever: Retriever = async () => {
@@ -465,7 +520,7 @@ describe("formation protocols", () => {
         { pattern: "debate", members },
       ],
       forecastRound(round, lock),
-      { retriever, pageText: async (u: string) => pages[u] },
+      { retriever, pageText: async (u: string) => pages[u], required: true },
     );
     expect(searches).toBe(1);
     expect(calls).toHaveLength(6);

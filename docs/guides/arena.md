@@ -1,5 +1,64 @@
 # Social Simulation Arena
 
+## Research integration and prospective comparisons
+
+Formations accept the shared research providers, including
+`formation:delphi:<provider/model>,<provider/model>+research@search:tavily+duckduckgo`
+and `+research@asof:gdelt+wayback`. The `+` inside a backend list is distinct from
+`+then:` and `+research@`. Provider keys being present does not change a `closed-book` route.
+See [captured evidence and follow-ups](search.md#captured-evidence-and-bounded-follow-ups).
+
+`MARINA_ARENA_RESEARCH_SIGNALS=consumer` adds FRED gasoline prices (GASREGW) and initial
+claims (ICSA) to Civiqs economic/household/inflation research. `MARINA_ARENA_RESEARCH_LOOKUPS`
+must include `fred`. The target's own history still sets its level; these different quantities
+are evidence of possible changes only. The consumer playbook also asks for dated NY Fed SCE
+household-finance, employment, income and credit evidence. It does not treat a newly downloaded
+workbook as an old information vintage.
+
+Formation lessons use the canonical judged forecast/arena pool. Set
+`MARINA_ARENA_FORMATION_LESSONS=observe` (default), `on`, or `off`; the global `MARINA_LESSONS`
+still limits injection. Recall uses the earlier of now and the lock, and its injected/observed
+records are saved with the forecast. No new lesson store or automatic strategy promotion exists.
+
+The explicit `arena:research` CLI captures and checks inputs, then runs frozen comparisons:
+
+```bash
+bun run arena:research capture <round_id> --out /private/experiment/round \
+  --models <provider/model>,<provider/model> --retriever search --research-rounds 2 --max-usd 20
+bun run arena:research run --out /private/experiment/round --max-usd 20
+bun run arena:research score --out /private/experiment
+```
+
+| Arm | Statistical start and calibration | Research |
+| --- | --- | --- |
+| A | Current configured horizon policy | Existing related-series dossier |
+| B | Scoped weekly-anchor drift; qualified final-error calibration when available | Same as A |
+| C | Same as A | Expanded structured sources and verified web research |
+| D | Same as B | Same frozen dossier as C |
+| O (optional) | Same as D | Same dossier; parallel formations and verification |
+| L (optional) | Same as D | Same dossier; judged lessons known at capture |
+
+Register optional arms at capture with `--arms A,B,C,D,O,L`; use `--lesson-db` for a lesson
+snapshot and `--history` for a validated calibration-history file. Missing calibration evidence
+leaves the spread unchanged. Models, token/call ceilings and source policy are hashed into the
+configuration. The runner requires fresh Civiqs scalar observations, preserves the first attempt
+per arm, checkpoints before paid forecasting, and refuses a late run. Capture and arm costs are
+separate; the persistent spend scope includes both. Calls already in flight can outlive a cap.
+`--max-tokens` (default 2000) bounds forecast and page-reader responses; gap review is capped at
+1000 tokens or the selected lower limit. Compile the runner with `bun build scripts/arena-research.ts
+--target=bun --outfile=/private/arena-research.js` and use that same file for capture and run to
+freeze its implementation as well as its inputs.
+
+Scoring is read-only, retains missing/failed/late attempts and exports raw final forecasts for
+future uncertainty calibration. Partial ensembles with failed or malformed responses are also
+ineligible, even if the remaining panelists produced a forecast. Qualification requires at least
+12 distinct resolved rounds,
+eight discovery and four later holdout rounds in whole lock waves, nonnegative discovery gain,
+and at least two skill points average holdout gain without a losing holdout question. Economics
+is also reported separately. Eligibility is for review only; this tool never signs, submits,
+changes routing, installs timers or promotes a strategy. Keep experiment artifacts outside the
+tracked repository and do not mix them with historical or stale captures.
+
 Marina can enter the [Social Simulation Arena](https://social-simulation-arena.com), a live
 forecasting benchmark run by Social Atoms at MIT. Every week about a dozen questions open:
 presidential approval (Economist/YouGov, Civiqs, Morning Consult), consumer sentiment (UMich,

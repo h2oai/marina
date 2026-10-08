@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -67,6 +68,7 @@ import {
   settleOutcomes,
 } from "../src/learning/service";
 import { MarinaDB } from "../src/persistence/database";
+import { researchRetriever } from "../src/research/retriever";
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -198,7 +200,7 @@ function retrieverFactory(): () => TaskRetriever {
   const web = () =>
     webSearchRetriever({ backends, maxQueries: 8, perQuery: 8, maxPages: 16, maxPassages: 24 });
   const readerSpec = values["read-swarm"]?.trim();
-  if (!readerSpec) return web;
+  if (!readerSpec) return () => researchRetriever(web(), env, values.lead);
   const judge = readJudge();
   const maxDocs = values["read-docs"] ? Number(values["read-docs"]) : undefined;
   if (maxDocs !== undefined && !(Number.isInteger(maxDocs) && maxDocs > 0))
@@ -213,13 +215,17 @@ function retrieverFactory(): () => TaskRetriever {
     const sum = (k: keyof ReadSwarmBriefStats) =>
       briefs.reduce((n, b) => n + (typeof b[k] === "number" ? (b[k] as number) : 0), 0);
     return Object.assign(
-      readSwarmRetriever(web(), {
-        reader: { name: readerSpec, complete: reader.complete },
-        decompose: values.decompose === true,
-        ...(maxDocs !== undefined ? { maxDocs } : {}),
-        ...(judge ? { judge } : {}),
-        onStats: (s) => briefs.push(s),
-      }),
+      researchRetriever(
+        readSwarmRetriever(web(), {
+          reader: { name: readerSpec, complete: reader.complete },
+          decompose: values.decompose === true,
+          ...(maxDocs !== undefined ? { maxDocs } : {}),
+          ...(judge ? { judge } : {}),
+          onStats: (s) => briefs.push(s),
+        }),
+        { ...env, MARINA_READ_SWARM_READER: "" },
+        values.lead,
+      ),
       {
         extraUsd: () => reader.usage.costUsd,
         summary: () => ({

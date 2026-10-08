@@ -2,12 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import { researchFeatures } from "../research/settings";
 import { horizonOptionsFromEnv } from "./research/civiqs-horizon";
 
 /** Explicit allowlist: never persist process.env or API keys in a forecast trace. */
 export function forecastSettings(spec: string, env: NodeJS.ProcessEnv, weight?: number) {
   const settings = {
-    version: 1,
+    version: 2,
+    research: researchFeatures(env),
+    researchRequired: env.MARINA_ARENA_RESEARCH_REQUIRED === "on",
+    signals: env.MARINA_ARENA_RESEARCH_SIGNALS ?? "off",
+    formationLessons: env.MARINA_ARENA_FORMATION_LESSONS ?? "observe",
     spec,
     routes: spec === "routed" ? (env.MARINA_ARENA_ROUTES ?? "*=nowcast") : undefined,
     horizon: horizonOptionsFromEnv(env),

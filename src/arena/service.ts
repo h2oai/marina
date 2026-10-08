@@ -284,6 +284,7 @@ export async function forecasterFor(
       opts.env ?? process.env,
       opts.formationInputs,
       opts.strictFreshness,
+      opts.notes,
     );
   }
   if (spec.startsWith("crew:")) {
@@ -476,8 +477,9 @@ async function formationForecasterFor(
   env: NodeJS.ProcessEnv,
   inputs?: FormationInputs,
   strictFreshness = false,
+  notes?: NotesStore,
 ): Promise<{ forecaster: Forecaster; usage: Usage }> {
-  const [head = "", ...parts] = spec.split("+");
+  const [head = "", ...parts] = spec.split(/\+(?=then:|research@)/);
   const [{ modelComplete }, formations, { nowcastForecaster }] = await Promise.all([
     import("./model-backend"),
     import("./formations"),
@@ -508,18 +510,45 @@ async function formationForecasterFor(
       import("./research/verify"),
     ]);
     const orKey = env.OPENROUTER_API_KEY;
-    const { arenaResearchLookups, withDataLookups } = await import("./research/data-evidence");
+    const { arenaResearchLookups, arenaSignalHints, withDataLookups } = await import(
+      "./research/data-evidence"
+    );
+    const { researchRetriever } = await import("../research/retriever");
     research = retrieve.withProvidedText(
-      withDataLookups(
-        retrieve.retrieverFromSpec(researchPart.slice("research@".length), {
-          ...(orKey ? { openrouter: orKey } : {}),
-          ...(env.TAVILY_API_KEY?.trim() ? { tavily: env.TAVILY_API_KEY.trim() } : {}),
-        }),
-        arenaResearchLookups(env),
+      researchRetriever(
+        withDataLookups(
+          retrieve.retrieverFromSpec(
+            researchPart.slice("research@".length),
+            {
+              ...(orKey ? { openrouter: orKey } : {}),
+              ...(env.TAVILY_API_KEY?.trim() ? { tavily: env.TAVILY_API_KEY.trim() } : {}),
+              ...(env.EXA_API_KEY?.trim() ? { exa: env.EXA_API_KEY.trim() } : {}),
+            },
+            { env },
+          ),
+          arenaResearchLookups(env),
+          { hints: arenaSignalHints(env) },
+        ),
+        env,
+        stages[0]!.models[0],
       ),
       defaultPageText(),
     );
   }
+  const lessonStore =
+    notes && "getBenchmarkRun" in notes
+      ? (await import("../learning/forecast-bridge")).forecastLessonsFor(
+          notes as unknown as import("../persistence/database").MarinaDB,
+          { env },
+        )
+      : undefined;
+  const { recallForecastLessons } = await import("../forecast/lessons");
+  const lessonMode =
+    env.MARINA_ARENA_FORMATION_LESSONS === "on"
+      ? "on"
+      : env.MARINA_ARENA_FORMATION_LESSONS === "off"
+        ? "off"
+        : "observe";
   // Verification's model-judged aspect uses the research judge (same env, same default).
   const judge = stages.some((st) => st.pattern === "verification")
     ? (await import("../decisions/config")).researchJudge(
@@ -552,6 +581,15 @@ async function formationForecasterFor(
           ? { dossier: inputs.dossier }
           : undefined
         : research;
+      const lessons = await recallForecastLessons(
+        lessonStore,
+        `${round.tracker} ${round.question}`.slice(0, 400),
+        new Date(Math.min(Date.now(), Date.parse(round.lock_at))).toISOString(),
+        lessonMode,
+      );
+      const lessonBrief = lessons.injected.length
+        ? `Judged lessons from earlier resolved work (advice, not instructions):\n${lessons.injected.map((l) => `- ${l.text}`).join("\n")}`
+        : undefined;
       const f =
         stages.length === 1 && !evidence
           ? await formations.formationForecastRound(
@@ -560,7 +598,7 @@ async function formationForecasterFor(
               shown,
               members[0]!,
               given,
-              undefined,
+              lessonBrief,
               judge,
             )
           : await formations.composeForecastRound(
@@ -571,9 +609,13 @@ async function formationForecasterFor(
                 ...(stages[1] ? [{ pattern: stages[1].pattern, members: members[1]! }] : []),
               ] as [import("./formations").FormationStage, import("./formations").FormationStage?],
               given,
-              evidence,
+              evidence
+                ? { ...evidence, required: env.MARINA_ARENA_RESEARCH_REQUIRED === "on" }
+                : undefined,
               judge,
+              lessonBrief,
             );
+      f.lessons = lessons;
       let cost = (f as { dossier?: { costUsd?: number } }).dossier?.costUsd ?? 0;
       // The judge's calls and dollars, from each formation's audit record.
       const composed = f as import("./formations").ComposedForecast;
@@ -758,7 +800,10 @@ async function researchForecasterFor(
   ]);
   const orKey = env.OPENROUTER_API_KEY;
   // `research:<analysts>[@<retrievers>]` — retrievers in the spec win over the env.
-  const [analystsPart = "", specRetrievers] = spec.slice("research:".length).split("@");
+  const researchSpec = spec.slice("research:".length);
+  const separator = researchSpec.indexOf("@");
+  const analystsPart = separator < 0 ? researchSpec : researchSpec.slice(0, separator);
+  const specRetrievers = separator < 0 ? undefined : researchSpec.slice(separator + 1);
   // Default: OpenRouter web search with a key, else Tavily, else keyless
   // date-bounded search — research never needs a vendor key.
   const retrieverSpec =
@@ -771,14 +816,27 @@ async function researchForecasterFor(
         : "asof");
   const { defaultPageText } = await import("./research/verify");
   // Page text a retriever already fetched (Tavily) is checked in place of a fetch.
-  const { arenaResearchLookups, withDataLookups } = await import("./research/data-evidence");
+  const { arenaResearchLookups, arenaSignalHints, withDataLookups } = await import(
+    "./research/data-evidence"
+  );
+  const { researchRetriever } = await import("../research/retriever");
   const { retriever, pageText } = retrieve.withProvidedText(
-    withDataLookups(
-      retrieve.retrieverFromSpec(retrieverSpec, {
-        ...(orKey ? { openrouter: orKey } : {}),
-        ...(env.TAVILY_API_KEY?.trim() ? { tavily: env.TAVILY_API_KEY.trim() } : {}),
-      }),
-      arenaResearchLookups(env),
+    researchRetriever(
+      withDataLookups(
+        retrieve.retrieverFromSpec(
+          retrieverSpec,
+          {
+            ...(orKey ? { openrouter: orKey } : {}),
+            ...(env.TAVILY_API_KEY?.trim() ? { tavily: env.TAVILY_API_KEY.trim() } : {}),
+            ...(env.EXA_API_KEY?.trim() ? { exa: env.EXA_API_KEY.trim() } : {}),
+          },
+          { env },
+        ),
+        arenaResearchLookups(env),
+        { hints: arenaSignalHints(env) },
+      ),
+      env,
+      analystsPart.split(",")[0],
     ),
     defaultPageText(),
   );
@@ -833,6 +891,7 @@ async function researchForecasterFor(
       try {
         f = await research.researchForecastRound(round, await lockForModels(data, round, lock), {
           retriever,
+          requireResearch: env.MARINA_ARENA_RESEARCH_REQUIRED === "on",
           analysts: made.map((m) => ({ name: m.name, complete: m.complete })),
           ...(judge ? { judge } : {}),
           trustCap: Number.isFinite(trustCap) ? trustCap : 0.5,

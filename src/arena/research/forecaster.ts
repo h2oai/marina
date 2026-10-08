@@ -48,6 +48,7 @@ import {
   judgeClaim,
   newJudgeRecord,
 } from "../../forecast/judge";
+import { requireResearchEvidence } from "../../research/admission";
 import { forecastRound, type RoundForecast } from "../forecast";
 import { median } from "../formations";
 import type { Complete } from "../model-forecaster";
@@ -90,6 +91,7 @@ const MAX_EVIDENCE_CHUNKS = 4;
 const SERIES_EVIDENCE_POINTS = 12;
 
 export interface ResearchDeps {
+  requireResearch?: boolean;
   retriever: Retriever;
   analysts: Array<{ name: string; complete: Complete }>;
   /** The judge (Jev via the decisions API, or any decision backend); omitted ⇒ equal weights. */
@@ -116,7 +118,17 @@ export interface JudgedProposal extends Distribution {
 export interface ResearchForecast extends RoundForecast {
   dossier?: Pick<
     ResearchReport,
-    "report" | "sources" | "costUsd" | "searches" | "retriever" | "data" | "warnings" | "funnels"
+    | "report"
+    | "sources"
+    | "costUsd"
+    | "searches"
+    | "retriever"
+    | "data"
+    | "warnings"
+    | "funnels"
+    | "evidence"
+    | "researchLoop"
+    | "readSwarm"
   > & {
     since: string;
     verification?: Record<string, number>;
@@ -292,11 +304,10 @@ export async function researchForecastRound(
   const given = deps.base ? await deps.base(round, lock) : forecastRound(round, lock);
   const daily = dailyOf(given);
   const baseline = withoutDaily(given);
-  const keep = (why: string, extra: Partial<ResearchForecast> = {}): ResearchForecast => ({
-    ...baseline,
-    ...extra,
-    fallback: why,
-  });
+  const keep = (why: string, extra: Partial<ResearchForecast> = {}): ResearchForecast => {
+    if (deps.requireResearch) throw new Error(`Required research forecast refused: ${why}`);
+    return { ...baseline, ...extra, fallback: why };
+  };
   const cells = round.cells ?? [];
   if (
     round.target_type === "profile_energy" &&
@@ -320,21 +331,16 @@ export async function researchForecastRound(
   try {
     research = await deps.retriever(brief);
   } catch (err) {
+    if (deps.requireResearch) throw err;
     return keep(`research failed: ${err instanceof Error ? err.message : String(err)}`);
   }
   const checked: VerifiedDossier | undefined = deps.pageText
-    ? await verifyDossier(research.report, deps.pageText)
+    ? await verifyDossier(research.report, deps.pageText, research.sources)
     : undefined;
+  if (deps.requireResearch) requireResearchEvidence(research, checked?.verifiedText ?? "");
   const dossier = {
+    ...research,
     since: brief.since,
-    report: research.report,
-    sources: research.sources,
-    costUsd: research.costUsd,
-    searches: research.searches,
-    retriever: research.retriever,
-    ...(research.data ? { data: research.data } : {}),
-    ...(research.warnings ? { warnings: research.warnings } : {}),
-    ...(research.funnels ? { funnels: research.funnels } : {}),
     ...(checked ? { verification: checked.stats } : {}),
   };
 
@@ -547,18 +553,12 @@ export async function noAnchorForecastRound(
     );
   }
   const checked: VerifiedDossier | undefined = deps.pageText
-    ? await verifyDossier(research.report, deps.pageText)
+    ? await verifyDossier(research.report, deps.pageText, research.sources)
     : undefined;
+  if (deps.requireResearch) requireResearchEvidence(research, checked?.verifiedText ?? "");
   const dossier = {
+    ...research,
     since: brief.since,
-    report: research.report,
-    sources: research.sources,
-    costUsd: research.costUsd,
-    searches: research.searches,
-    retriever: research.retriever,
-    ...(research.data ? { data: research.data } : {}),
-    ...(research.warnings ? { warnings: research.warnings } : {}),
-    ...(research.funnels ? { funnels: research.funnels } : {}),
     ...(checked ? { verification: checked.stats } : {}),
   };
   const bounds = questionBounds(round);
@@ -678,11 +678,10 @@ async function researchProfileRound(
 ): Promise<ResearchForecast> {
   const cells = round.cells ?? [];
   const base = baseline.profile!;
-  const keep = (why: string, extra: Partial<ResearchForecast> = {}): ResearchForecast => ({
-    ...baseline,
-    ...extra,
-    fallback: why,
-  });
+  const keep = (why: string, extra: Partial<ResearchForecast> = {}): ResearchForecast => {
+    if (deps.requireResearch) throw new Error(`Required research forecast refused: ${why}`);
+    return { ...baseline, ...extra, fallback: why };
+  };
   const nowcastUsed = (baseline as { nowcast?: Record<string, { date: string; value: number }> })
     .nowcast;
   const brief = buildResearchBrief(round, lock, nowcastUsed ? { cellNowcasts: nowcastUsed } : {});
@@ -690,21 +689,16 @@ async function researchProfileRound(
   try {
     research = await deps.retriever(brief);
   } catch (err) {
+    if (deps.requireResearch) throw err;
     return keep(`research failed: ${err instanceof Error ? err.message : String(err)}`);
   }
   const checked: VerifiedDossier | undefined = deps.pageText
-    ? await verifyDossier(research.report, deps.pageText)
+    ? await verifyDossier(research.report, deps.pageText, research.sources)
     : undefined;
+  if (deps.requireResearch) requireResearchEvidence(research, checked?.verifiedText ?? "");
   const dossier = {
+    ...research,
     since: brief.since,
-    report: research.report,
-    sources: research.sources,
-    costUsd: research.costUsd,
-    searches: research.searches,
-    retriever: research.retriever,
-    ...(research.data ? { data: research.data } : {}),
-    ...(research.warnings ? { warnings: research.warnings } : {}),
-    ...(research.funnels ? { funnels: research.funnels } : {}),
     ...(checked ? { verification: checked.stats } : {}),
   };
   const histories = cellHistories(round, lock);

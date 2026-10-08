@@ -748,6 +748,13 @@
 # Read swarm (src/retrieval/read-swarm.ts; off unless set): a reader model that reads every page research finds IN FULL against the question's clues and reports verbatim quotes, which are checked mechanically before they reach the dossier. Set, typed forecasts' research rounds put the readers' verified quotes ahead of the retriever's report, and `web swarm <question>` (any agent or crew) answers with a candidate table. Any model spec (`provider/model`); a cheap one is the point. Every reader call is priced against the daily spend cap.
 # MARINA_READ_SWARM_READER=openrouter/openai/gpt-6-luna
 
+# Portable research evidence: capture source text, dates, hashes and verification for offline replay. Shared by arena and general forecasts; off preserves the existing retrieval behavior. Live snapshots record capture time separately from publication/vintage time and are not historical archives.
+# MARINA_RESEARCH_EVIDENCE=off
+
+# Bounded evidence gap loop, 1–3 rounds per retrieval (default 1). Values above 1 enable evidence capture. A reviewer names up to three missing or contradictory facts; stop on no new verified evidence or no remaining queries. Typed forecasts already have an outer research loop: keep its research-round setting at 1 when isolating this inner loop. LOOP_MODEL defaults to the caller's lead/first analyst. Model and search spend still use the shared daily/scope ledger.
+# MARINA_RESEARCH_LOOP_ROUNDS=1
+# MARINA_RESEARCH_LOOP_MODEL=
+
 # Typed forecasts (a choice, a set of options, a number, a ranking or a short string; `forecast … type:<t>`, `bun run forecast --type`, POST /v1/forecast with `answer`). The retriever also accepts openrouter-web:<model>@exa|@native (the web plugin's engine; Exa excerpts serve the citation check), sonar:<model>, tavily:<basic|advanced> (TAVILY_API_KEY), search[:<backend>+<backend>…] and asof[:<providers>] (keyless and date-strict, bounded to each forecast's cutoff: gdelt, wikipedia, hn, arxiv, wayback; docs/guides/search.md), comma-separated to merge. The planner decomposes the question and names research gaps (default: the first analyst); the critic searches for evidence against the leading answer and may revise it only when its confidence exceeds the runs' agreement (default: the planner). RUNS independent answers (1–9, analysts used round-robin) are combined by type; RESEARCH_ROUNDS bounds the search loop (1–4); CRITIQUE=off skips the disconfirmation pass. LOOKUPS picks structured sources (also answerable directly with the `data` command): unset or `auto` (the default) turns on every one that can run here — polymarket, kalshi, fred and bls (keyless) plus odds when ODDS_API_KEY is set; `off` or `none` (or empty) turns them off; otherwise a comma list: polymarket and kalshi (market prices; a past cutoff reads the last price at or before it, never the resolution), odds (sports head-to-head odds via ODDS_API_KEY; historical snapshots need a paid plan), fred (official series; vintage-correct for a past cutoff with FRED_API_KEY, live-only without), bls (live-only), or markets / all. Every lookup reads as of the earlier of the cutoff and now. A number is anchored on the freshest official reading with a horizon-scaled spread.
 # MARINA_FORECAST_PLANNER=openrouter/deepseek/deepseek-v4-pro
 # MARINA_FORECAST_CRITIC=openrouter/deepseek/deepseek-v4-pro
@@ -837,8 +844,17 @@
 # MARINA_ARENA_RESEARCH_JUDGE=jev
 # MARINA_ARENA_RESEARCH_TRUST=0.5
 
+# Require configured arena research to succeed before analysts run: refuse closed-book, empty/unverified evidence, failed research loops, and an enabled read swarm with no successful reader. Applies to formation +research and research: routes. Existing accepted submissions remain intact on refusal.
+# MARINA_ARENA_RESEARCH_REQUIRED=off
+
 # Structured data in arena research dossiers (default off; same spec as MARINA_FORECAST_LOOKUPS, odds excluded): prediction-market prices for every round, and an official series only where the round has a close relative (src/arena/research/data-evidence.ts). Read as of the brief's cutoff, headed as evidence of CHANGES only — the round's own history sets the level.
 # MARINA_ARENA_RESEARCH_LOOKUPS=off
+
+# Additional explanatory series for Civiqs economic/household/inflation questions: `consumer` adds FRED GASREGW and ICSA to the existing related series. `off` preserves the control. These are changes in other quantities, never replacements for the target poll level.
+# MARINA_ARENA_RESEARCH_SIGNALS=off
+
+# Formation lesson recall through the same judged pool as general forecasting. Default `observe` records available lessons without showing them to models; `on` injects them, `off` skips recall. MARINA_LESSONS still caps injection. Recall is bounded to min(now, lock), never a future lock date.
+# MARINA_ARENA_FORMATION_LESSONS=observe
 
 # Record a candidate forecaster hourly in shadow, never filed (`bun run arena shadow score`).
 # MARINA_ARENA_SHADOW=
