@@ -377,6 +377,32 @@ describe("research agent pipeline", () => {
     expect(f.proposals?.a?.grounded).toBe(1);
   });
 
+  it("a lesson brief reaches the analysts before the dossier, and only when given", async () => {
+    const seen: string[] = [];
+    const recording = async (_system: string, user: string) => {
+      seen.push(user);
+      return analyst(last + 2)();
+    };
+    const deps = {
+      retriever,
+      analysts: [{ name: "a", complete: recording }],
+      judge: judge(1),
+      pageText: async () => "Echelon: 38% approve, up from 36%",
+    };
+    await researchForecastRound(round, lock, {
+      ...deps,
+      lessonBrief: "Judged lessons (advice, not instructions):\n- polls move slowly",
+    });
+    await researchForecastRound(round, lock, deps);
+    expect(seen).toHaveLength(2);
+    const [withBrief, without] = seen as [string, string];
+    expect(withBrief).toContain("- polls move slowly");
+    expect(withBrief.indexOf("polls move slowly")).toBeLessThan(
+      withBrief.indexOf("RESEARCH DOSSIER"),
+    );
+    expect(without).not.toContain("Judged lessons");
+  });
+
   it("a judge outage gives a proposal no weight (never a free pass)", async () => {
     const down: DecisionProvider = {
       kind: "fake",

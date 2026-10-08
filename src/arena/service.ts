@@ -276,7 +276,7 @@ export async function forecasterFor(
   }
   if (spec.startsWith("tabh2o")) return tabh2oForecasterFor(spec, opts);
   if (spec.startsWith("research:")) {
-    return researchForecasterFor(spec, opts.env ?? process.env, opts.strictFreshness);
+    return researchForecasterFor(spec, opts.env ?? process.env, opts.strictFreshness, opts.notes);
   }
   if (spec.startsWith("formation:")) {
     return formationForecasterFor(
@@ -791,6 +791,7 @@ async function researchForecasterFor(
   spec: string,
   env: NodeJS.ProcessEnv,
   strictFreshness = false,
+  notes?: NotesStore,
 ): Promise<{ forecaster: Forecaster; usage?: Usage }> {
   const [{ modelComplete }, research, retrieve, decisions] = await Promise.all([
     import("./model-backend"),
@@ -859,6 +860,22 @@ async function researchForecasterFor(
     ...(await liveCiviqs(env, strictFreshness)),
     daily: DAILY_POINTS,
   });
+  // The judged lesson pool, read as the formation forecaster reads it:
+  // MARINA_ARENA_RESEARCH_LESSONS=on injects, observe (default) records only, off skips.
+  const lessonStore =
+    notes && "getBenchmarkRun" in notes
+      ? (await import("../learning/forecast-bridge")).forecastLessonsFor(
+          notes as unknown as import("../persistence/database").MarinaDB,
+          { env },
+        )
+      : undefined;
+  const { recallForecastLessons } = await import("../forecast/lessons");
+  const lessonMode =
+    env.MARINA_ARENA_RESEARCH_LESSONS === "on"
+      ? "on"
+      : env.MARINA_ARENA_RESEARCH_LESSONS === "off"
+        ? "off"
+        : "observe";
   let researchCost = 0;
   let judgeCalls = 0;
   const usage: Usage = {
@@ -887,9 +904,19 @@ async function researchForecasterFor(
         researchCost += (f.dossier?.costUsd ?? 0) + (f.judge?.costUsd ?? 0);
         judgeCalls += f.judge?.calls ?? 0;
       };
+      const lessons = await recallForecastLessons(
+        lessonStore,
+        `${round.tracker} ${round.question}`.slice(0, 400),
+        new Date(Math.min(Date.now(), Date.parse(round.lock_at))).toISOString(),
+        lessonMode,
+      );
+      const lessonBrief = lessons.injected.length
+        ? `Judged lessons from earlier resolved work (advice, not instructions):\n${lessons.injected.map((l) => `- ${l.text}`).join("\n")}`
+        : undefined;
       let f: import("./research/forecaster").ResearchForecast;
       try {
         f = await research.researchForecastRound(round, await lockForModels(data, round, lock), {
+          ...(lessonBrief ? { lessonBrief } : {}),
           retriever,
           requireResearch: env.MARINA_ARENA_RESEARCH_REQUIRED === "on",
           analysts: made.map((m) => ({ name: m.name, complete: m.complete })),
@@ -904,6 +931,7 @@ async function researchForecasterFor(
         throw err;
       }
       spent(f);
+      f.lessons = lessons;
       return f;
     },
   };
