@@ -258,6 +258,37 @@ describe("resolved answers feed the forecast history", () => {
     expect(record!.id).toMatch(/^forecast:\d+$/);
   });
 
+  it("numeric answers are written too: a typed number and a plain numeric forecast", async () => {
+    const path = join(dir, "history.jsonl");
+    using _ = scopeProcessState({ env: { MARINA_FORECAST_HISTORY: path } });
+    saveTypedAnswer(
+      db,
+      "Ada",
+      typedAnswer({
+        answer: { type: "number" },
+        prediction: 100,
+        formatted: "100",
+        uncertainty: { sd: 10 },
+      }),
+      "fred/CPI",
+    );
+    saveAnswer(db, "Ada", answer({ kind: "number", mean: 50, sd: 5 }), "fred/GDP");
+    // No sd: nothing for number recalibration to rescale, so no record.
+    saveAnswer(db, "Ada", answer({ kind: "number", mean: 7 }), "fred/UNRATE");
+    runCalibration(db, resolved("fred/CPI", { value: 110 }));
+    runCalibration(db, resolved("fred/GDP", { value: 48 }));
+    runCalibration(db, resolved("fred/UNRATE", { value: 6 }));
+    const history = jsonlHistory(path);
+    await until(async () => (await history.all()).length === 2);
+    const records = await history.all();
+    expect(records.map((r) => ({ type: r.answerType, raw: r.raw, outcome: r.outcome }))).toEqual(
+      expect.arrayContaining([
+        { type: "number", raw: { value: 100, sd: 10 }, outcome: { value: 110 } },
+        { type: "number", raw: { value: 50, sd: 5 }, outcome: { value: 48 } },
+      ]),
+    );
+  });
+
   it("no history configured: resolution still scores, nothing is written", () => {
     using _ = scopeProcessState({ env: { MARINA_FORECAST_HISTORY: undefined } });
     saveTypedAnswer(db, "Ada", typedAnswer({ prediction: "A", formatted: "A" }), "kalshi/NOH");

@@ -20,8 +20,8 @@ import { recordScoreOutcome } from "../coordination/score-outcome";
 import { loadScore } from "../coordination/score-store";
 import { positionSettlementFinder } from "../engine/commands/position";
 import { Logger } from "../engine/logger";
-import { noteResolvedForecast, truthFromResolution } from "../forecast/adjust";
-import { historyFromEnv } from "../forecast/history";
+import { noteResolvedForecast, noteResolvedRecord, truthFromResolution } from "../forecast/adjust";
+import { historyFromEnv, resolvedRecord } from "../forecast/history";
 import type { TypedForecastAnswer } from "../forecast/typed";
 import { scoreTypedAnswer } from "../forecast/typed-score";
 import { noteOutcome } from "../learning/service";
@@ -419,6 +419,9 @@ export const forecastQuestionFinder: CalibrationFinder = {
           crps,
           sample.ts,
         );
+        if (f.mean !== null && f.sd !== null && f.sd > 0) {
+          void recordNumberHistory(f.id, f.answer_json, f.mean, f.sd, actual, sample.ts);
+        }
         if (crps !== null && f.mean !== null)
           noteOutcome(db, {
             domain: "forecast",
@@ -452,7 +455,8 @@ export const forecastQuestionFinder: CalibrationFinder = {
           r.loss,
           sample.ts,
         );
-        void recordResolvedHistory(f.id, answer, r.outcome, sample.ts);
+        const truth = truthFromResolution(answer.answer, r.outcome);
+        if (truth) void recordResolvedHistory(f.id, answer, truth, sample.ts);
         noteOutcome(db, {
           domain: "forecast",
           source: `forecast:${f.kind}`,
@@ -477,14 +481,12 @@ export const forecastQuestionFinder: CalibrationFinder = {
 async function recordResolvedHistory(
   id: number,
   answer: TypedForecastAnswer,
-  outcome: string[] | string,
+  truth: { options?: string[]; value?: number },
   ts: number,
 ): Promise<void> {
   try {
     const history = historyFromEnv();
     if (!history) return;
-    const truth = truthFromResolution(answer.answer, outcome);
-    if (!truth) return;
     await noteResolvedForecast(history, {
       id: `forecast:${id}`,
       req: { question: answer.question, answer: answer.answer },
@@ -492,6 +494,44 @@ async function recordResolvedHistory(
       truth,
       resolvedAt: new Date(ts).toISOString(),
     });
+  } catch (err) {
+    logger.warn("calibration", "Forecast history not written", { id, error: String(err) });
+  }
+}
+
+/**
+ * A resolved numeric answer into the forecast history. A typed number
+ * (`forecast … type:number`) keeps its pre-adjustment forecast and prior; a
+ * plain numeric forecast has no adjustment stage, so its saved mean and sd
+ * are the raw forecast. Needs an sd: number recalibration rescales it.
+ */
+async function recordNumberHistory(
+  id: number,
+  answerJson: string,
+  mean: number,
+  sd: number,
+  actual: number,
+  ts: number,
+): Promise<void> {
+  let typed: TypedForecastAnswer | undefined;
+  try {
+    const parsed = JSON.parse(answerJson) as Partial<TypedForecastAnswer>;
+    if (parsed?.answer?.type === "number") typed = parsed as TypedForecastAnswer;
+  } catch {
+    // allow-empty-catch: an unreadable answer is recorded from its saved mean and sd
+  }
+  if (typed) return recordResolvedHistory(id, typed, { value: actual }, ts);
+  try {
+    await noteResolvedRecord(
+      historyFromEnv(),
+      resolvedRecord({
+        id: `forecast:${id}`,
+        spec: { type: "number" },
+        resolvedAt: new Date(ts).toISOString(),
+        numbers: { value: mean, sd },
+        truth: { value: actual },
+      }),
+    );
   } catch (err) {
     logger.warn("calibration", "Forecast history not written", { id, error: String(err) });
   }

@@ -497,7 +497,20 @@ export async function noteResolvedForecast(
   if (!history || input.eval?.mode === "measure") return false;
   const { eval: _eval, ...rest } = input;
   const record = recordFromAnswer(rest);
-  if (!record) return false;
+  return record ? noteResolvedRecord(history, record) : false;
+}
+
+/**
+ * A record built elsewhere (an answer with no typed spec, such as a plain
+ * numeric forecast) into the history, under the same rules: once per id,
+ * never for a measurement run.
+ */
+export async function noteResolvedRecord(
+  history: ForecastHistory | undefined,
+  record: ResolvedRecord,
+  measurement: { eval?: import("../learning/eval-context").EvalContext } = {},
+): Promise<boolean> {
+  if (!history || measurement.eval?.mode === "measure") return false;
   if ((await history.all()).some((r) => r.id === record.id)) return false;
   await history.add(record);
   return true;
