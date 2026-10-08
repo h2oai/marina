@@ -193,8 +193,10 @@ the board's score. Option labels are kept only as short hashes. No question or a
 stored. Records are appended through `noteResolvedForecast` (`src/forecast/adjust.ts`), once per
 id and never for a measurement run. Two writers feed the shared file:
 
-- A saved typed answer (the `forecast` command, or `POST /v1/forecast` with `save`) is written when
-  its Sample resolves, at the Sample's time. Only choice and multi answers are written.
+- A saved answer (the `forecast` command, or `POST /v1/forecast` with `save`) is written when its
+  Sample resolves, at the Sample's time. This covers choice, multi and number answers, including a
+  plain numeric forecast. A plain numeric forecast has no adjustment stage, so its saved mean and
+  sd are its raw forecast. A number needs an sd, because number recalibration rescales it.
 - `bun run futurex learn` writes filed answers as their weeks resolve.
 
 The FutureX clean backtest learns only from its own resolved rows, through a fresh in-memory
