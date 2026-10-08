@@ -16,6 +16,7 @@ import { lessonsBlock, lessonsHeaderValue, recallForWork } from "../../learning/
 import { getEndpointConfig } from "../model-endpoint";
 import { type InjectionFormat, messageText, type OpenAIMessage } from "../passthru-context";
 import {
+  ARGCHECK_HEADER,
   ARGCHECK_MODEL_PREFIX,
   argcheckRequestMode,
   finishArgcheck,
@@ -25,6 +26,7 @@ import {
 import { notePassthruRecoveries, passthruLearnOwner } from "./learn";
 import {
   finishObligations,
+  OBLIGATIONS_HEADER,
   OBLIGATIONS_MODEL_PREFIX,
   obligationsRequestMode,
   prepareObligations,
@@ -66,6 +68,7 @@ import {
   type PassthruAuthResult,
   readModelJsonBody,
   requestTrace,
+  unsupportedParam,
 } from "./shared";
 import { explicitUpstreamModel, passthruForceModel, proxyToUpstream } from "./upstream";
 import { maybeVerifyChat, VERIFY_MODEL_PREFIX } from "./verify";
@@ -215,6 +218,15 @@ export async function runOpenaiChat(
     if (bare !== body.model) body = { ...body, model: bare };
     const model = typeof body.model === "string" ? body.model : "marina";
     const messages = Array.isArray(body.messages) ? (body.messages as OpenAIMessage[]) : [];
+
+    // The verification formation answers before the ledger and the argument
+    // check would run: asking for both is refused, never silently half-served.
+    if (model.startsWith(VERIFY_MODEL_PREFIX) && (obligationsMode || argcheckMode)) {
+      return unsupportedParam(
+        "model",
+        "marina/obligations: and marina/argcheck: (or their x-marina-* headers) cannot be combined with marina/verify: — the verification formation runs instead of the obligations ledger and the argument check. Send one or the other.",
+      );
+    }
 
     // `marina/verify:<proposer>[+<checker>]` — the verification formation as a
     // model id (proposer → checker review → bounded revision), tools included.
@@ -403,6 +415,15 @@ export async function runOpenaiChat(
     // than return a plain answer the client will misread as "no tool call".
     const rejected = rejectUnsupportedForAgents(body);
     if (rejected) return rejected;
+    // The ledger and the argument check are passthru instruments; this request
+    // routes to Marina's agents, which would ignore them. (Lessons need no
+    // refusal here: the agent route recalls them already.)
+    if (obligationsMode || argcheckMode) {
+      return unsupportedParam(
+        obligationsMode ? OBLIGATIONS_HEADER : ARGCHECK_HEADER,
+        "The obligations ledger and the argument check run only on passthru requests (an explicit upstream id such as anthropic/<model>, the passthru endpoint mode, or an internal caller); this request routes to Marina's agents.",
+      );
+    }
 
     // Agents hear the request as clamped text, so its images go on the
     // caller's private inbox canvas and the text names each node for `canvas look`.

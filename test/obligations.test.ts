@@ -16,14 +16,18 @@ import { modelSourceEnvKeys } from "../src/agent/available-models";
 import { Engine } from "../src/engine/engine";
 import { appendTrailingNote, buildAnthropicRequest } from "../src/net/anthropic-tools";
 import { handleModelApi } from "../src/net/model-api";
-import { stripOptInPrefixes } from "../src/net/model-api/chat-completions";
+import { ARGCHECK_MODEL_PREFIX } from "../src/net/model-api/argcheck";
+import { LESSONS_MODEL_PREFIX, stripOptInPrefixes } from "../src/net/model-api/chat-completions";
 import {
   conversationKey,
   conversationKeys,
+  OBLIGATIONS_MODEL_PREFIX,
   readConversation,
   resetObligationsForTests,
 } from "../src/net/model-api/obligations";
+import { CHAT_ONLY_MODEL_PREFIXES } from "../src/net/model-api/shared";
 import { withTrailingNote } from "../src/net/model-api/upstream";
+import { VERIFY_MODEL_PREFIX } from "../src/net/model-api/verify";
 import { AgentObligations } from "../src/obligations/agent";
 import {
   checkFinalReply,
@@ -1026,6 +1030,74 @@ describe("POST /v1/chat/completions with the obligations ledger", () => {
     const h = resp.headers.get("x-marina-obligations") ?? "";
     expect(h).toContain("review_sel=engaged");
     expect(h).toContain("check=reviewed-kept");
+  });
+
+  async function postTo(path: string, body: unknown) {
+    const url = new URL(`http://localhost:3300${path}`);
+    const req = new Request(url.toString(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return (await handleModelApi(url, "POST", req, engine))!;
+  }
+  const code = async (r: Response) =>
+    ((await r.json()) as { error?: { code?: string; param?: string } }).error;
+
+  it("refuses the ledger or argument check combined with marina/verify: (never half-served)", async () => {
+    const r = await post({
+      model: `marina/obligations:marina/verify:${MODEL}`,
+      messages: opening,
+      tools: TOOLS,
+    });
+    expect(r.status).toBe(400);
+    expect((await code(r))?.code).toBe("unsupported_parameter");
+    const viaHeader = await post(
+      { model: `marina/verify:${MODEL}`, messages: opening, tools: TOOLS },
+      { "x-marina-argcheck": "observe" },
+    );
+    expect(viaHeader.status).toBe(400);
+    expect(seen).toEqual([]); // nothing reached an upstream
+  });
+
+  it("refuses the ledger on a request that routes to Marina's agents", async () => {
+    const r = await post({ model: "marina/obligations:marina", messages: opening });
+    expect(r.status).toBe(400);
+    const e = await code(r);
+    expect(e?.code).toBe("unsupported_parameter");
+    expect(e?.param).toBe("x-marina-obligations");
+  });
+
+  it("refuses chat-only prefixes on /v1/responses and the Ollama routes", async () => {
+    const responses = await postTo("/v1/responses", {
+      model: `marina/argcheck:${MODEL}`,
+      input: "hello",
+    });
+    expect(responses.status).toBe(400);
+    expect((await code(responses))?.code).toBe("unsupported_parameter");
+    const chat = await postTo("/api/chat", {
+      model: `marina/lessons:${MODEL}`,
+      messages: [{ role: "user", content: "hello" }],
+    });
+    expect(chat.status).toBe(400);
+    const gen = await postTo("/api/generate", { model: `marina/verify:${MODEL}`, prompt: "hi" });
+    expect(gen.status).toBe(400);
+  });
+
+  it("keeps the chat-only prefix list in step with the features' own prefixes", () => {
+    expect(([...CHAT_ONLY_MODEL_PREFIXES] as string[]).sort()).toEqual(
+      [
+        LESSONS_MODEL_PREFIX,
+        OBLIGATIONS_MODEL_PREFIX,
+        ARGCHECK_MODEL_PREFIX,
+        VERIFY_MODEL_PREFIX,
+      ].sort(),
+    );
+  });
+
+  it("still serves a plain prefixed passthru request", async () => {
+    const r = await post({ model: `marina/obligations:${MODEL}`, messages: opening, tools: TOOLS });
+    expect(r.status).toBe(200);
   });
 
   const approved = [

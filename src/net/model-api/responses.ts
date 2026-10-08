@@ -54,6 +54,7 @@ import {
   json,
   type PassthruAuthResult,
   readModelJsonBody,
+  rejectChatOnlyPrefix,
   SSE_HEADERS,
 } from "./shared";
 import { explicitUpstreamModel, passthruForceModel, proxyToUpstream } from "./upstream";
@@ -140,6 +141,8 @@ export async function handleResponsesCreate(
       parallel_tool_calls?: unknown;
     };
 
+    const refusedPrefix = rejectChatOnlyPrefix(body.model, "/v1/responses");
+    if (refusedPrefix) return refusedPrefix;
     const model = body.model ?? "marina";
     // Typed input items (message / function_call / function_call_output) →
     // chat messages for passthru, plus a text rendering for the conversation

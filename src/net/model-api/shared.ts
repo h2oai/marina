@@ -311,6 +311,35 @@ export function unsupportedParam(param: string, detail?: string): Response {
   return json(unsupportedParameterBody(param, detail), 400);
 }
 
+/**
+ * The `marina/<feature>:` model prefixes that only `/v1/chat/completions` and
+ * `/v1/messages` honor (`runOpenaiChat`). Kept here, at the root of the
+ * model-api import graph, so every route can refuse them; a test pins this list
+ * to the prefix constants the features export.
+ */
+export const CHAT_ONLY_MODEL_PREFIXES = [
+  "marina/lessons:",
+  "marina/obligations:",
+  "marina/argcheck:",
+  "marina/verify:",
+] as const;
+
+/**
+ * A 400 `unsupported_parameter` for a chat-only prefix on another route —
+ * never a silent drop: a client that asked for the ledger and got a plain
+ * answer has no way to notice.
+ */
+export function rejectChatOnlyPrefix(model: unknown, route: string): Response | undefined {
+  if (typeof model !== "string") return undefined;
+  const p = CHAT_ONLY_MODEL_PREFIXES.find((x) => model.startsWith(x));
+  return p
+    ? unsupportedParam(
+        "model",
+        `The '${p}' prefix is honored only on /v1/chat/completions and /v1/messages; ${route} would ignore it.`,
+      )
+    : undefined;
+}
+
 /** Close a ReadableStreamDefaultController safely. The stream may have been
  *  closed already by a client disconnect, a prior end-of-response, or a
  *  response race with the cleanup timer. Swallow the second-close throw. */

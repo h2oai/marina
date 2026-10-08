@@ -36,6 +36,7 @@ import {
   ollamaStreamEnd,
   type PassthruAuthResult,
   readModelJsonBody,
+  rejectChatOnlyPrefix,
   safeClose,
   unsupportedParam,
 } from "./shared";
@@ -367,6 +368,8 @@ export async function handleOllamaChat(
   const body = read.body as Record<string, any>;
   const invalid = validateOllamaRequest("chat", body);
   if (invalid) return invalid;
+  const refusedPrefix = rejectChatOnlyPrefix(body.model, "/api/chat");
+  if (refusedPrefix) return refusedPrefix;
   try {
     const model = body.model ?? "marina";
     const messages = body.messages ?? [];
@@ -440,6 +443,8 @@ export async function handleOllamaGenerate(
   const body = read.body as Record<string, any>;
   const invalid = validateOllamaRequest("generate", body);
   if (invalid) return invalid;
+  const refusedPrefix = rejectChatOnlyPrefix(body.model, "/api/generate");
+  if (refusedPrefix) return refusedPrefix;
   try {
     const model = body.model ?? "marina";
     const prompt = body.prompt;
