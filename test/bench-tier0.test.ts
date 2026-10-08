@@ -426,6 +426,20 @@ describe("tier0 preset", () => {
     expect(args[args.indexOf("--judge-model") + 1]).toBe("marina/default");
   });
 
+  it("forwards lessons and the measurement mode to every harness child", () => {
+    const target = resolveTier0Target("openrouter/openai/gpt-6.1-sol", {}, {});
+    const set = { benchmark: "gpqa", limit: 4 };
+    expect(tier0HarnessArgs(set, target, { seed: 42, concurrency: 1 })).not.toContain("--lessons");
+    const args = tier0HarnessArgs(set, target, {
+      seed: 42,
+      concurrency: 1,
+      lessons: true,
+      lessonsMode: "measure",
+    });
+    expect(args).toContain("--lessons");
+    expect(args[args.indexOf("--lessons-mode") + 1]).toBe("measure");
+  });
+
   it("gives crews a generous per-request timeout and lets --timeout override it", () => {
     const set = { benchmark: "hle-verified-gold", limit: 40 };
     const crew = resolveTier0Target("marina:answerer", {}, {});

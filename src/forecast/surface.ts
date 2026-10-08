@@ -38,6 +38,8 @@ export interface TypedSurfaceOptions {
    * never recalls lessons learned from that board (leakage rule 2).
    */
   eval?: EvalContext;
+  /** Analyst models chosen by the caller (they win over an earned default). */
+  analysts?: string[];
 }
 
 const logger = new Logger();
@@ -62,6 +64,7 @@ export async function typedForecastFor(
     ...(opts.runs !== undefined ? { runs: opts.runs } : {}),
     ...(opts.researchRounds !== undefined ? { researchRounds: opts.researchRounds } : {}),
     ...(opts.critique !== undefined ? { critique: opts.critique } : {}),
+    ...(opts.analysts?.length ? { analysts: opts.analysts } : {}),
     ...(opts.db
       ? {
           lessons: forecastLessonsFor(opts.db, { env, ...(opts.eval ? { eval: opts.eval } : {}) }),

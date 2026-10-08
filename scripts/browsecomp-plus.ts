@@ -121,6 +121,8 @@ const { positionals, values } = parseArgs({
     "search-paging": { type: "boolean" },
     "first-move": { type: "string" },
     "first-move-judge": { type: "boolean" },
+    lessons: { type: "boolean" },
+    "lessons-mode": { type: "string" },
     "reader-model": { type: "string" },
     "swarm-docs": { type: "string" },
     "swarm-open": { type: "string" },
@@ -245,7 +247,22 @@ async function run(): Promise<number> {
     ? parseQrels(readFileSync(values["gold-qrels"], "utf8"))
     : undefined;
   const guard = new CallSpendGuard(parseMaxUsd(values["max-usd"]));
-  const endpoint = { baseUrl: values.endpoint!, apiKey, guard };
+  // Every call is tagged a measurement of this board (leakage rule 2: lessons
+  // learned from it are never recalled); --lessons opts into judged lessons.
+  const lessonsMode = values["lessons-mode"] ?? "measure";
+  if (lessonsMode !== "measure" && lessonsMode !== "live") {
+    console.error("--lessons-mode must be measure or live");
+    process.exit(2);
+  }
+  const endpoint = {
+    baseUrl: values.endpoint!,
+    apiKey,
+    guard,
+    headers: {
+      "x-marina-eval": `benchmark=Tevatron/browsecomp-plus; mode=${lessonsMode}`,
+      ...(values.lessons ? { "x-marina-lessons": "on" } : {}),
+    },
+  };
   const timeoutMs = int("timeout-s", values["timeout-s"]) * 1000;
   const backend = workerPool(values.corpus!, corpusDir(), int("workers", values.workers));
   // A forced-final-answer arm is its own configuration: its own target, never

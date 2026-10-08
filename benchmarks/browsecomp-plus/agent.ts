@@ -59,6 +59,8 @@ export interface ChatEndpoint {
   fetch?: typeof fetch;
   /** Hard spend stop: checked before every call, fed every call's cost. */
   guard?: CallSpendGuard;
+  /** Marina opt-in headers on every call (the measurement tag, lessons). */
+  headers?: Record<string, string>;
 }
 
 /** Where tool calls are answered. In-process by default; `corpus-pool.ts` runs them in workers. */
@@ -301,6 +303,7 @@ export async function chat(
     [DEADLINE_HEADER]: String(timeoutMs),
   };
   if (ep.apiKey) headers.Authorization = `Bearer ${ep.apiKey}`;
+  for (const [k, v] of Object.entries(ep.headers ?? {})) headers[k] = v;
   const resp = await doFetch(`${ep.baseUrl.replace(/\/+$/, "")}/v1/chat/completions`, {
     method: "POST",
     headers,

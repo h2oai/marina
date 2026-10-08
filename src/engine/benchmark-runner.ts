@@ -30,6 +30,7 @@ import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent, EntityId } from "../types";
 import { fallbackInvalidReason, isFallbackItem } from "./benchmark-ledger";
 import { getErrorMessage } from "./errors";
+import { featureEnvSnapshot } from "./feature-env";
 
 interface BenchmarkSpec {
   name: string;
@@ -197,6 +198,13 @@ export interface BenchmarkRunOptions {
   subjects?: BenchmarkSubject[];
   /** Judge on the fixed `holdout` split, iterate on `tune` (benchmarks/partition.ts). */
   partition?: "holdout" | "tune";
+  /** Recall judged lessons on the target's requests (`--lessons`). */
+  lessons?: boolean;
+  /**
+   * `measure` (default): a measurement — the board's own lessons are never
+   * recalled (leakage rule 2); `live` lifts that for an actual entry.
+   */
+  lessonsMode?: "measure" | "live";
 }
 
 export interface BenchmarkSubject {
@@ -348,6 +356,32 @@ export interface HarnessTarget {
   apiKey?: string;
 }
 
+/**
+ * The configuration a run records (and hashes): what was asked for, plus the
+ * Marina feature settings of THIS server — the run executes inside it, so its
+ * instruments are part of what was measured and a changed setting is a
+ * different configuration.
+ */
+export function benchmarkRunConfig(
+  opts: BenchmarkRunOptions,
+  env: Record<string, string | undefined> = process.env,
+) {
+  const serverFeatures = featureEnvSnapshot(env);
+  return {
+    benchmark: opts.benchmark,
+    limit: opts.limit ?? 100,
+    seed: opts.seed ?? 42,
+    model: opts.model ?? "marina",
+    judgeModel: opts.judgeModel,
+    concurrency: opts.concurrency ?? 5,
+    ...(opts.subjects?.length ? { subjects: opts.subjects } : {}),
+    ...(opts.partition ? { partition: opts.partition } : {}),
+    ...(opts.lessons ? { lessons: true } : {}),
+    ...(opts.lessonsMode ? { lessonsMode: opts.lessonsMode } : {}),
+    ...(Object.keys(serverFeatures).length ? { serverFeatures } : {}),
+  };
+}
+
 /** The harness child's argv and environment. The key travels in the environment,
  * never argv, so it is not visible in the process list. */
 export function harnessInvocation(
@@ -359,6 +393,8 @@ export function harnessInvocation(
     judgeModel?: string;
     concurrency: number;
     partition?: string;
+    lessons?: boolean;
+    lessonsMode?: "measure" | "live";
   },
   target: HarnessTarget,
   resultFile?: string,
@@ -383,6 +419,8 @@ export function harnessInvocation(
   ];
   if (config.judgeModel) args.push("--judge-model", config.judgeModel);
   if (config.partition) args.push("--partition", config.partition);
+  if (config.lessons) args.push("--lessons");
+  if (config.lessonsMode) args.push("--lessons-mode", config.lessonsMode);
   const env: Record<string, string> = {};
   if (target.apiKey) env.MARINA_BENCH_API_KEY = target.apiKey;
   if (resultFile) env.MARINA_BENCH_RESULT_FILE = resultFile;
@@ -444,16 +482,7 @@ export class BenchmarkRunner {
       );
     }
 
-    const config = {
-      benchmark: opts.benchmark,
-      limit: opts.limit ?? 100,
-      seed: opts.seed ?? 42,
-      model: opts.model ?? "marina",
-      judgeModel: opts.judgeModel,
-      concurrency: opts.concurrency ?? 5,
-      ...(opts.subjects?.length ? { subjects: opts.subjects } : {}),
-      ...(opts.partition ? { partition: opts.partition } : {}),
-    };
+    const config = benchmarkRunConfig(opts);
     const configHash = hashConfig(config);
     const id = `br_${configHash}_${Date.now().toString(36)}`;
     const started = Date.now();
@@ -494,6 +523,8 @@ export class BenchmarkRunner {
       model: string;
       judgeModel?: string;
       concurrency: number;
+      lessons?: boolean;
+      lessonsMode?: "measure" | "live";
     },
     started: number,
   ): Promise<void> {

@@ -58,6 +58,12 @@ export interface ReproFlags {
   serverEnv?: Record<string, string>;
   /** τ²: the pre-write review mode the agent requests choose (`x-marina-review`; capped by the server). */
   review?: string;
+  /**
+   * τ²: recall judged lessons on the agent's requests (`marina/lessons:` on every
+   * arm). The board's own lessons are still excluded (the requests are tagged a
+   * measurement).
+   */
+  lessons?: boolean;
 }
 
 export interface ServerStep {

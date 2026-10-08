@@ -98,6 +98,7 @@ async function main(): Promise<number> {
       ledger: { type: "string" },
       "server-env": { type: "string", multiple: true },
       review: { type: "string" },
+      lessons: { type: "boolean" },
       "dry-run": { type: "boolean" },
       help: { type: "boolean" },
     },
@@ -171,6 +172,7 @@ async function main(): Promise<number> {
     ledgerDb: values.ledger ?? join(runDir, "ledger.db"),
     ...(values["server-env"]?.length ? { serverEnv: parseServerEnv(values["server-env"]) } : {}),
     ...(values.review ? { review: values.review } : {}),
+    ...(values.lessons ? { lessons: true } : {}),
   };
   const { tier } = doctor(probe, { runDir: homedir(), only: setup.requires });
   const plan = setup.plan(flags, tier);

@@ -676,7 +676,7 @@ Run, track, and rank benchmark evaluations from inside the world.
 Usage:
   benchmark list                                   — show available benchmarks + cache status
   benchmark orchestrations                         — show live marina:<name> endpoints
-  benchmark run <name> [--limit N] [--seed N] [--model M] [--judge M] [--concurrency N] [--partition holdout|tune]
+  benchmark run <name> [--limit N] [--seed N] [--model M] [--judge M] [--concurrency N] [--partition holdout|tune] [lessons:on] [lessons-mode:measure|live]
                                                    — kick off one run
   benchmark sweep <name|all> [--limit N] [--seed N] [--judge M]
                                                    — fan out across every live orchestration
@@ -878,7 +878,7 @@ Effect: unknown.
 - Group `option-1`: `--seed N`.
 - Group `option-2`: `--model M`.
 
-### `benchmark run <name> [--limit N] [--seed N] [--model M] [--judge M] [--concurrency N] [--partition holdout|tune]`
+### `benchmark run <name> [--limit N] [--seed N] [--model M] [--judge M] [--concurrency N] [--partition holdout|tune] [lessons:on] [lessons-mode:measure|live]`
 
 Effect: unknown.
 
@@ -889,12 +889,16 @@ Effect: unknown.
 - `field-4` (`--judge`): text, optional group `option-3`.
 - `field-5` (`--concurrency`): number, optional group `option-4`.
 - `field-6` (`holdout|tune`): choice, optional group `option-5`, choices `holdout`, `tune`.
+- `field-7` (`lessons`): text, optional group `option-6`.
+- `field-8` (`lessons-mode`): text, optional group `option-7`, choices `measure`, `live`.
 - Group `option-0`: `--limit N`.
 - Group `option-1`: `--seed N`.
 - Group `option-2`: `--model M`.
 - Group `option-3`: `--judge M`.
 - Group `option-4`: `--concurrency N`.
 - Group `option-5`: `--partition holdout|tune`.
+- Group `option-6`: `lessons:on`.
+- Group `option-7`: `lessons-mode:measure|live`.
 
 ### `benchmark runs [--benchmark X] [--limit N]`
 

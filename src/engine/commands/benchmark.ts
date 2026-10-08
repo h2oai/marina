@@ -65,7 +65,7 @@ const HELP = `Run, track, and rank benchmark evaluations from inside the world.
 Usage:
   benchmark list                                   — show available benchmarks + cache status
   benchmark orchestrations                         — show live marina:<name> endpoints
-  benchmark run <name> [--limit N] [--seed N] [--model M] [--judge M] [--concurrency N] [--partition holdout|tune]
+  benchmark run <name> [--limit N] [--seed N] [--model M] [--judge M] [--concurrency N] [--partition holdout|tune] [lessons:on] [lessons-mode:measure|live]
                                                    — kick off one run
   benchmark sweep <name|all> [--limit N] [--seed N] [--judge M]
                                                    — fan out across every live orchestration
@@ -193,7 +193,7 @@ export function benchmarkCommand(deps: {
       "benchmark result <id>",
       "benchmark revalidate <run> reason:<text>",
       "benchmark run <name> [--limit N] [--seed N] [--model M]",
-      "benchmark run <name> [--limit N] [--seed N] [--model M] [--judge M] [--concurrency N] [--partition holdout|tune]",
+      "benchmark run <name> [--limit N] [--seed N] [--model M] [--judge M] [--concurrency N] [--partition holdout|tune] [lessons:on] [lessons-mode:measure|live]",
       "benchmark runs [--benchmark X] [--limit N]",
       "benchmark sweep <name|all> [--limit N] [--seed N] [--judge M]",
     ],
@@ -397,10 +397,17 @@ export function benchmarkCommand(deps: {
             "judge",
             "concurrency",
             "partition",
+            "lessons",
+            "lessons-mode",
           ]);
           const limit = Number.parseInt(modifiers.limit ?? "", 10);
           const seed = Number.parseInt(modifiers.seed ?? "", 10);
           const concurrency = Number.parseInt(modifiers.concurrency ?? "", 10);
+          const lessonsMode = modifiers["lessons-mode"]?.toLowerCase();
+          if (lessonsMode !== undefined && lessonsMode !== "measure" && lessonsMode !== "live") {
+            ctx.send(input.entity, "lessons-mode must be measure or live.");
+            return;
+          }
           try {
             const handle = runner.start({
               benchmark: name,
@@ -417,6 +424,8 @@ export function benchmarkCommand(deps: {
               concurrency:
                 Number.isFinite(concurrency) && concurrency > 0 ? concurrency : undefined,
               agentId: entity.id,
+              ...(/^(on|true|yes|1)$/i.test(modifiers.lessons ?? "") ? { lessons: true } : {}),
+              ...(lessonsMode ? { lessonsMode } : {}),
             });
             ctx.send(
               input.entity,

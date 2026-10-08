@@ -186,6 +186,10 @@ export function tier0HarnessArgs(
     filing?: Tier0Filing;
     /** Replicate group every filed run of this invocation shares. */
     group?: string;
+    /** Recall judged lessons on the target's requests (harness `--lessons`). */
+    lessons?: boolean;
+    /** `measure` (default: the board's own lessons are excluded) or `live`. */
+    lessonsMode?: "measure" | "live";
   },
 ): string[] {
   const args = [
@@ -211,6 +215,8 @@ export function tier0HarnessArgs(
   if (opts.judgeEndpoint) args.push("--judge-endpoint", opts.judgeEndpoint);
   const timeoutMs = opts.timeoutMs ?? target.defaultTimeoutMs;
   if (timeoutMs) args.push("--timeout", String(timeoutMs));
+  if (opts.lessons) args.push("--lessons");
+  if (opts.lessonsMode) args.push("--lessons-mode", opts.lessonsMode);
   if (opts.filing) {
     args.push(
       "--file-to",
@@ -357,6 +363,8 @@ async function main(): Promise<void> {
       target: { type: "string" },
       label: { type: "string" },
       replicates: { type: "string" },
+      lessons: { type: "boolean" },
+      "lessons-mode": { type: "string" },
       "replicate-concurrency": { type: "string" },
       group: { type: "string" },
       help: { type: "boolean", short: "h" },
@@ -380,6 +388,11 @@ async function main(): Promise<void> {
     frames: int(values.frames),
   });
   const seed = int(values.seed) ?? 42;
+  const lessonsMode = values["lessons-mode"] as "measure" | "live" | undefined;
+  if (lessonsMode !== undefined && lessonsMode !== "measure" && lessonsMode !== "live") {
+    console.error("--lessons-mode must be measure or live");
+    process.exit(2);
+  }
   const concurrency = int(values.concurrency) ?? 5;
   const outDir =
     values["out-dir"] ?? join(import.meta.dir, "results", `tier0-${target.label}-${Date.now()}`);
@@ -433,6 +446,8 @@ async function main(): Promise<void> {
             timeoutMs: int(values.timeout),
             filing,
             ...(group ? { group } : {}),
+            ...(values.lessons ? { lessons: true } : {}),
+            ...(lessonsMode ? { lessonsMode } : {}),
           }),
         ],
         { env, stdout: "inherit", stderr: "pipe" },

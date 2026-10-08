@@ -597,7 +597,7 @@ const tau2: Setup = {
     const steps: Step[] = [plainServer("tau2", port, flags.budgetUsd)];
     const features = kitFeatures(flags);
     for (const arm of arms) {
-      const agent = tau2AgentModel(arm.name, m);
+      const agent = `${flags.lessons ? "marina/lessons:" : ""}${tau2AgentModel(arm.name, m)}`;
       const taskIds = flags.taskIds?.length ? flags.taskIds : undefined;
       const numTasks =
         !taskIds && flags.split !== TAU2_FULL_SPLIT && (flags.limit !== undefined || !splitSize)
