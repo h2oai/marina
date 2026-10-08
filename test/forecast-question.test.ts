@@ -6,7 +6,8 @@ import { modelSourceEnvKeys } from "../src/agent/available-models";
 import type { Retriever } from "../src/arena/research/retrieve";
 import type { DecisionProvider } from "../src/decisions/types";
 import { forecastQuestion, inferKind } from "../src/forecast/question";
-import { handleForecast } from "../src/net/forecast-api";
+import { handleForecast, saveTarget } from "../src/net/forecast-api";
+import type { MarinaDB } from "../src/persistence/database";
 import { scopeProcessState } from "./process-state";
 
 const retriever: Retriever = async () => ({
@@ -209,5 +210,39 @@ describe("POST /v1/forecast", () => {
     );
     const res = await post({ question: "q", answer: { type: "choice", options: ["A", "B"] } });
     expect(res.status).toBe(503);
+  });
+
+  it("saves only on request, under the key's bound entity, never for a measurement run", async () => {
+    using _ = noModels();
+    const req = (eval_?: string) =>
+      new Request("http://x/v1/forecast", {
+        method: "POST",
+        ...(eval_ ? { headers: { "x-marina-eval": eval_ } } : {}),
+      });
+    const db = {} as MarinaDB;
+    const bound = { boundEntityName: "ada" };
+    expect(saveTarget({}, req(), db, bound)).toEqual({});
+    expect(saveTarget({ save: true }, req(), db, bound)).toEqual({
+      target: { entityName: "ada" },
+    });
+    expect(saveTarget({ resolves: "kalshi/FED-26OCT" }, req(), db, bound)).toEqual({
+      target: { entityName: "ada", sampleId: "kalshi/FED-26OCT" },
+    });
+    expect(
+      saveTarget({ save: true }, req("benchmark=prophet-arena; mode=live"), db, bound),
+    ).toEqual({ target: { entityName: "ada" } });
+    for (const [body, r, auth] of [
+      [{ save: "yes" }, req(), bound],
+      [{ resolves: "no-slash" }, req(), bound],
+      [{ resolves: "kalshi/X", save: false }, req(), bound],
+      [{ save: true }, req(), {}],
+      [{ save: true }, req("benchmark=prophet-arena; mode=measure"), bound],
+    ] as const) {
+      expect("error" in saveTarget(body, r, db, auth)).toBe(true);
+    }
+    expect("error" in saveTarget({ save: true }, req(), undefined, bound)).toBe(true);
+    // Refused before any model is reached.
+    const res = await post({ question: "q", save: true });
+    expect(res.status).toBe(400);
   });
 });

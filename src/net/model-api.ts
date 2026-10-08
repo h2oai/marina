@@ -153,7 +153,7 @@ export async function handleModelApi(
 
   // Forecast any question (research → verified evidence → analysts → judge) — src/forecast.
   if (url.pathname === "/v1/forecast" && method === "POST") {
-    return await handleForecast(req, engine.db);
+    return await handleForecast(req, engine.db, authResult);
   }
 
   // Decisions API (noul / choice / score) for any harness — src/net/decisions-api.ts.
