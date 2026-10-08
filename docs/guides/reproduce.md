@@ -40,6 +40,8 @@ bootstrap over runs, then items). A single run is labelled "not replicated".
 | `--retrieval-config` | τ³ `banking_knowledge` only: τ²'s knowledge-base retrieval configuration (default `alltools`, the board's reference configuration; it is shown on the board and is part of the run's configuration tag). Refused for other domains |
 | `--task-ids a,b,c` | τ² only: run exactly these task ids (τ²'s `--task-ids`), for a pre-registered subset. Not with `--limit` or the board split `base`; the ids are part of the configuration tag |
 | `--env-image` | SWE-bench: run the agent's tests inside each instance's environment image (full agent rather than agentless) |
+| `--server-env KEY=VALUE` | Marina feature settings for every server the kit starts (repeatable; feature variables only — `MARINA_OBLIGATIONS_*`, `MARINA_ARGCHECK*`, `MARINA_LESSONS*`, `MARINA_DECISION*`, `MARINA_ANTHROPIC_AUTO_CACHE`, … — never a credential). The servers' effective feature settings (your environment plus these) are part of the τ² configuration tag and are filed with every result (`benchmark-import --server-features`), so runs with different instruments never resume, pool or promote together |
+| `--review off\|observe\|auto\|on` | τ²: the pre-write review mode the agent's requests choose (`x-marina-review`), capped by the server's `MARINA_OBLIGATIONS_REVIEW`. The agent's requests always carry `x-marina-eval: benchmark=tau2-<domain>; mode=measure`, so lessons learned on the board are never served back to it |
 | `--run-dir`, `--ledger` | where runs, servers and the ledger live (default under `~/.local/share/marina-repro/`, on disk) |
 | `--dry-run` | print the plan and the estimate, then stop |
 

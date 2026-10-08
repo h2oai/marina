@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -52,6 +53,7 @@ import {
   type SweBenchmark,
   selectSubset,
 } from "../benchmarks/swebench/adapter";
+import { featureEnvSnapshot } from "../src/engine/feature-env";
 import { SpendGuard } from "../src/engine/spend-guard";
 import { projectSlug } from "./code";
 
@@ -116,6 +118,12 @@ interface ArmRecord extends SweArm {
   n: number | null;
   mode: "agentless" | "env-image";
   benchmark: SweBenchmark;
+  /**
+   * The Marina feature settings the agent ran with (`featureEnvSnapshot` of the
+   * environment `marina -p` inherits): obligations, review, argcheck, decisions…
+   * A replicate never continues under different ones, and `file` records them.
+   */
+  features?: Record<string, string>;
 }
 
 /**
@@ -124,7 +132,17 @@ interface ArmRecord extends SweArm {
  * recorded is not compared (the review model always is: absent means none).
  */
 function armMismatch(prior: Partial<ArmRecord>, next: ArmRecord): string[] {
-  const keys = ["name", "model", "reviewModel", "ids", "seed", "n", "mode", "benchmark"] as const;
+  const keys = [
+    "name",
+    "model",
+    "reviewModel",
+    "ids",
+    "seed",
+    "n",
+    "mode",
+    "benchmark",
+    "features",
+  ] as const;
   return keys.filter(
     (k) =>
       (k === "reviewModel" || k in prior) &&
@@ -215,6 +233,7 @@ async function runCmd(): Promise<number> {
     n: values.ids ? null : Number(values.n),
     mode: values["env-image"] ? "env-image" : "agentless",
     benchmark,
+    features: featureEnvSnapshot(process.env as Record<string, string | undefined>),
   };
   // A replicate continues only under its own configuration: attempts made by
   // another model, mode or subset must never be mixed into it.
@@ -422,6 +441,9 @@ async function fileCmd(): Promise<number> {
       cost.toFixed(4),
       "--group",
       values.group ?? `${benchmark === "pro" ? "swebench-pro" : "swebench"}-${arm.name}`,
+      ...(arm.features && Object.keys(arm.features).length
+        ? ["--server-features", JSON.stringify(arm.features)]
+        : []),
     ],
     {
       cwd: REPO_ROOT,

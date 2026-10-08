@@ -30,6 +30,7 @@
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { featureEnvSnapshot } from "../../src/engine/feature-env";
 import { capEnvValue } from "../../src/engine/spend-guard";
 import type {
   ArmSpec,
@@ -153,6 +154,17 @@ export function ledgerGroup(setup: string, arm: string): string {
   return `${setup}-${arm}`.replace(/[^A-Za-z0-9:._@/-]/g, "_");
 }
 
+/**
+ * The feature settings the kit's servers run with: the operator's environment
+ * (servers inherit it) overlaid by `--server-env`. Filed with every result.
+ */
+export function kitFeatures(flags: ReproFlags): Record<string, string> {
+  return featureEnvSnapshot({
+    ...(process.env as Record<string, string | undefined>),
+    ...(flags.serverEnv ?? {}),
+  });
+}
+
 function importStep(
   flags: ReproFlags,
   dir: string,
@@ -160,6 +172,7 @@ function importStep(
   target: string,
   group: string,
 ): CommandStep {
+  const features = kitFeatures(flags);
   return {
     kind: "command",
     label: `ledger ← ${group}`,
@@ -175,6 +188,7 @@ function importStep(
       group,
       "--group",
       group,
+      ...(Object.keys(features).length ? ["--server-features", JSON.stringify(features)] : []),
     ],
     env: { DB_PATH: flags.ledgerDb },
   };
@@ -469,12 +483,32 @@ export function tau2ConfigTag(config: Record<string, unknown>): string {
  * τ² sets `drop_params`, and LiteLLM drops a top-level `reasoning_effort` for ids it
  * does not recognise, which is every id routed through Marina.
  */
-export function tau2LlmArgs(apiBase: string, effort: string): string {
+export function tau2LlmArgs(
+  apiBase: string,
+  effort: string,
+  headers: Record<string, string> = {},
+): string {
   return JSON.stringify({
     api_base: apiBase,
     api_key: LEDGER_KEY,
     extra_body: { reasoning_effort: effort },
+    ...(Object.keys(headers).length ? { extra_headers: headers } : {}),
   });
+}
+
+/**
+ * Headers on the τ² AGENT's requests (never the user simulator's): the
+ * measurement tag, so lessons learned on this board are never served back to it
+ * and the run is labelled a measurement, and the review mode when chosen.
+ */
+export function tau2AgentHeaders(domain: string, review?: string): Record<string, string> {
+  if (review !== undefined && !/^(off|observe|auto|on)$/.test(review)) {
+    throw new Error(`--review must be off, observe, auto or on (got '${review}')`);
+  }
+  return {
+    "x-marina-eval": `benchmark=tau2-${domain}; mode=measure`,
+    ...(review ? { "x-marina-review": review } : {}),
+  };
 }
 
 /** τ² retrieval configs that give the agent a sandboxed shell over the knowledge base. */
@@ -561,6 +595,7 @@ const tau2: Setup = {
     const port = BASE_PORT + 50;
     const base = `http://localhost:${port}/v1`;
     const steps: Step[] = [plainServer("tau2", port, flags.budgetUsd)];
+    const features = kitFeatures(flags);
     for (const arm of arms) {
       const agent = tau2AgentModel(arm.name, m);
       const taskIds = flags.taskIds?.length ? flags.taskIds : undefined;
@@ -584,11 +619,15 @@ const tau2: Setup = {
         ...(retrieval ? { retrieval } : {}),
         // Likewise only subset runs carry their task ids.
         ...(taskIds ? { taskIds: [...taskIds].sort() } : {}),
+        // …and only runs with feature settings or a review choice carry those, so a
+        // changed instrument never resumes another configuration's file.
+        ...(Object.keys(features).length ? { features } : {}),
+        ...(flags.review ? { review: flags.review } : {}),
       });
       const name = `marina-repro-${basename(flags.runDir)}-${domain}${flags.split ? `-${flags.split}` : ""}-${arm.name}-${tag}`;
       const results = `$TAU2_HOME/data/simulations/${name}/results.json`;
       const ledgerFile = join(flags.runDir, "results", `${name}-ledger.json`);
-      const agentArgs = tau2LlmArgs(base, effort);
+      const agentArgs = tau2LlmArgs(base, effort, tau2AgentHeaders(domain, flags.review));
       const userArgs = tau2LlmArgs(base, userEffort);
       steps.push({
         kind: "command",
@@ -637,7 +676,9 @@ const tau2: Setup = {
           "--require-clean",
         ],
       });
-      steps.push(importStep(flags, ledgerFile, "model", agent, ledgerGroup(`tau2-${domain}`, arm.name)));
+      steps.push(
+        importStep(flags, ledgerFile, "model", agent, ledgerGroup(`tau2-${domain}`, arm.name)),
+      );
     }
     steps.push({ kind: "stop", id: "tau2" });
     steps.push(...comparisons(`tau2-${domain}`, `tau2-${domain}`, arms));

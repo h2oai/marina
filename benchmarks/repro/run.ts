@@ -146,6 +146,8 @@ export interface RunOptions {
   ledgerDb: string;
   /** Inherited environment (the operator's .env); keys stay in the child env only. */
   env: Record<string, string | undefined>;
+  /** `--server-env` feature settings, applied last to EVERY server the plan starts. */
+  serverEnv?: Record<string, string>;
   log?: (line: string) => void;
 }
 
@@ -231,6 +233,7 @@ async function startServer(
     ASSETS_DIR: join(opts.runDir, "servers", `${step.id}-assets`),
   };
   for (const [k, v] of Object.entries(step.env)) env[k] = expand(v, vars);
+  for (const [k, v] of Object.entries(opts.serverEnv ?? {})) env[k] = v;
   const out = openSync(join(opts.runDir, "servers", `${step.id}.log`), "a");
   log(`> server ${step.id} :${step.port}`);
   const proc = spawn(["bun", "run", "src/main.ts"], { cwd: REPO, env, stdout: out, stderr: out });

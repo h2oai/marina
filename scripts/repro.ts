@@ -31,6 +31,7 @@ import { blocking, doctor, type Probe, renderChecks } from "../benchmarks/repro/
 import { budgetRefusal, executePlan, renderPlan } from "../benchmarks/repro/run";
 import { SETUPS, setupNamed } from "../benchmarks/repro/setups";
 import type { ReproFlags } from "../benchmarks/repro/types";
+import { parseServerEnv } from "../src/engine/feature-env";
 
 const FS_TYPES: Record<number, string> = { 16914836: "tmpfs", 2240043254: "ramfs" };
 
@@ -95,6 +96,8 @@ async function main(): Promise<number> {
       seed: { type: "string", default: "42" },
       "run-dir": { type: "string" },
       ledger: { type: "string" },
+      "server-env": { type: "string", multiple: true },
+      review: { type: "string" },
       "dry-run": { type: "boolean" },
       help: { type: "boolean" },
     },
@@ -166,6 +169,8 @@ async function main(): Promise<number> {
     seed: Number(values.seed) || 42,
     runDir,
     ledgerDb: values.ledger ?? join(runDir, "ledger.db"),
+    ...(values["server-env"]?.length ? { serverEnv: parseServerEnv(values["server-env"]) } : {}),
+    ...(values.review ? { review: values.review } : {}),
   };
   const { tier } = doctor(probe, { runDir: homedir(), only: setup.requires });
   const plan = setup.plan(flags, tier);
@@ -183,7 +188,12 @@ async function main(): Promise<number> {
     console.log(`\n${refusal}`);
     return 1;
   }
-  return executePlan(plan, { runDir, ledgerDb: flags.ledgerDb, env });
+  return executePlan(plan, {
+    runDir,
+    ledgerDb: flags.ledgerDb,
+    env,
+    ...(flags.serverEnv ? { serverEnv: flags.serverEnv } : {}),
+  });
 }
 
 if (import.meta.main) process.exit(await main());

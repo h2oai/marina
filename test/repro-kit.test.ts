@@ -4,7 +4,7 @@
 // The reproduction kit's pure parts: doctor checks (mocked probe), plans and
 // their dry-run text, and budget gating. No model call, server or benchmark run.
 
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { validGroupKey } from "../benchmarks/replicates";
 import { blocking, doctor, modelTier, type Probe, subuidWidth } from "../benchmarks/repro/doctor";
 import { budgetRefusal, parseDotEnv, renderPlan, withProviderEnv } from "../benchmarks/repro/run";
@@ -17,6 +17,8 @@ import {
   tau2ConfigTag,
 } from "../benchmarks/repro/setups";
 import type { CommandStep, ReproFlags, ServerStep } from "../benchmarks/repro/types";
+import { isFeatureEnvName } from "../src/engine/feature-env";
+import { scopeProcessState } from "./process-state";
 
 function probe(over: Partial<Probe> = {}): Probe {
   return {
@@ -112,6 +114,22 @@ describe("repro doctor", () => {
 });
 
 describe("plans", () => {
+  // Plans snapshot the operator's Marina feature settings (bun loads .env in
+  // tests): clear them so every expectation is the same on every machine.
+  let state: DisposableStack | undefined;
+  beforeEach(() => {
+    const cleared = Object.fromEntries(
+      Object.keys(process.env)
+        .filter(isFeatureEnvName)
+        .map((k) => [k, undefined]),
+    );
+    state = scopeProcessState({ env: cleared });
+  });
+  afterEach(() => {
+    state?.dispose();
+    state = undefined;
+  });
+
   it("every setup plans at every tier, with a dry-run that hides the ledger key", () => {
     for (const setup of SETUPS) {
       for (const tier of ["frontier", "single-provider", "single-local"] as const) {
@@ -170,6 +188,45 @@ describe("plans", () => {
     );
     expect(convert.length).toBe(2);
     for (const c of convert) expect(c.argv).toContain("--require-clean");
+  });
+
+  it("τ² tags the agent's requests as a measurement (never the simulator's) and passes a review choice", () => {
+    const setup = setupNamed("tau2")!;
+    const run = (p: ReturnType<typeof setup.plan>) =>
+      p.steps.find((s): s is CommandStep => s.kind === "command" && s.label.includes("τ²"))!;
+    const arg = (r: CommandStep, flag: string) => JSON.parse(r.argv[r.argv.indexOf(flag) + 1]!);
+    const plain = run(setup.plan(flags({ domain: "retail" }), "frontier"));
+    expect(arg(plain, "--agent-llm-args").extra_headers).toEqual({
+      "x-marina-eval": "benchmark=tau2-retail; mode=measure",
+    });
+    expect(arg(plain, "--user-llm-args").extra_headers).toBeUndefined();
+    const reviewed = run(setup.plan(flags({ domain: "retail", review: "auto" }), "frontier"));
+    expect(arg(reviewed, "--agent-llm-args").extra_headers["x-marina-review"]).toBe("auto");
+    expect(() => setup.plan(flags({ review: "max" }), "frontier")).toThrow("--review must be");
+  });
+
+  it("feature settings change the τ² save name and are filed with the result", () => {
+    const setup = setupNamed("tau2")!;
+    const saveTo = (p: ReturnType<typeof setup.plan>) =>
+      p.steps
+        .filter((s): s is CommandStep => s.kind === "command" && s.label.includes("τ²"))
+        .map((s) => s.argv[s.argv.indexOf("--save-to") + 1])[0];
+    const importOf = (p: ReturnType<typeof setup.plan>) =>
+      p.steps.find(
+        (s): s is CommandStep =>
+          s.kind === "command" && s.argv.includes("scripts/benchmark-import.ts"),
+      )!;
+    const plain = setup.plan(flags(), "frontier");
+    const featured = setup.plan(
+      flags({ serverEnv: { MARINA_OBLIGATIONS_REVIEW: "auto" } }),
+      "frontier",
+    );
+    expect(saveTo(featured)).not.toBe(saveTo(plain));
+    expect(importOf(plain).argv).not.toContain("--server-features");
+    const imp = importOf(featured).argv;
+    expect(JSON.parse(imp[imp.indexOf("--server-features") + 1]!)).toEqual({
+      MARINA_OBLIGATIONS_REVIEW: "auto",
+    });
   });
 
   it("τ² --split runs the whole named split, sized for the estimate", () => {

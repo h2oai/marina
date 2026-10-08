@@ -50,6 +50,14 @@ export interface ReproFlags {
   runDir: string;
   /** The ledger every run files into. */
   ledgerDb: string;
+  /**
+   * Marina feature settings for the kit's own servers (`--server-env KEY=VALUE`,
+   * feature variables only). Explicit, so a run never depends on what happens
+   * to be in the operator's shell; recorded with the results either way.
+   */
+  serverEnv?: Record<string, string>;
+  /** τ²: the pre-write review mode the agent requests choose (`x-marina-review`; capped by the server). */
+  review?: string;
 }
 
 export interface ServerStep {
