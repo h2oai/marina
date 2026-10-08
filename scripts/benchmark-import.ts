@@ -9,7 +9,8 @@
  *   DB_PATH=marina.db bun run benchmark:import <file.json | tier0-dir> ... \
  *     --target-kind model|crew|population --target '<json or model id>' \
  *     [--label name] [--judge "<model> @ <route>"] [--cost-usd N] [--dry-run] \
- *     [--group key | --replicate-of <runId>] [--no-learn]
+ *     [--group key | --replicate-of <runId>] [--no-learn] \
+ *     [--server-features '<json of the server's feature settings>']
  *   DB_PATH=marina.db bun run benchmark:import --attach-to <runId> \
  *     --source-db <original-world.db> --source-run <original-runId> [--dry-run]
  *   DB_PATH=marina.db bun run benchmark:import --regroup <runId,runId,…> --group key --reason "<why>"
@@ -63,6 +64,7 @@ import {
 } from "../src/engine/benchmark-ledger";
 import { replicateGroupOf, validReplicateGroup } from "../src/engine/benchmark-replicates";
 import { retireOutcomeNotesForRun } from "../src/engine/benchmark-runner";
+import { isFeatureEnvName } from "../src/engine/feature-env";
 import { noteBenchmarkRun, retireLessonsForRun } from "../src/learning/intake";
 import { enableOutcomeLearning, settleOutcomes } from "../src/learning/service";
 import { MarinaDB } from "../src/persistence/database";
@@ -94,6 +96,7 @@ const { positionals, values } = parseArgs({
     invalidate: { type: "string" },
     revalidate: { type: "string" },
     reason: { type: "string" },
+    "server-features": { type: "string" },
   },
 });
 
@@ -316,6 +319,32 @@ if (values["replicate-of"] !== undefined) {
     });
   }
 }
+/**
+ * The feature settings of the server the run used (`featureEnvSnapshot`), filed
+ * into the result's config: runs with different instruments are different
+ * configurations (their config hash differs), so they never pool or promote
+ * together. Only feature variables are accepted — never a credential.
+ */
+const serverFeatures = ((): Record<string, string> | undefined => {
+  const raw = values["server-features"];
+  if (raw === undefined) return undefined;
+  let obj: unknown;
+  try {
+    obj = JSON.parse(raw);
+  } catch {
+    fail("--server-features must be a JSON object of feature settings");
+  }
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) {
+    fail("--server-features must be a JSON object of feature settings");
+  }
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+    if (!isFeatureEnvName(k)) fail(`--server-features: '${k}' is not a Marina feature setting`);
+    if (typeof v !== "string") fail(`--server-features: '${k}' must be a string`);
+    out[k] = v;
+  }
+  return out;
+})();
 let failed = 0;
 try {
   for (const file of files) {
@@ -327,6 +356,12 @@ try {
       console.log(`${file}: not JSON — skipped`);
       failed++;
       continue;
+    }
+    if (serverFeatures) {
+      parsed = {
+        ...parsed,
+        config: { ...(parsed.config ?? {}), server_features: serverFeatures },
+      } as HarnessResultFile;
     }
     try {
       const { run, items } = ledgerFromHarnessResult(parsed, {
