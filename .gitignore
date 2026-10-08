@@ -4,6 +4,9 @@ dist/
 *.db-journal
 *.db-wal
 *.db-shm
+# Secrets the server writes beside its database (<DB_PATH>.key-secret, <DB_PATH>.local-api-key)
+*.key-secret
+*.local-api-key
 .env
 .env.local
 .DS_Store
