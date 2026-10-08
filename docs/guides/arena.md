@@ -26,6 +26,28 @@ the mean of per-round skill. Everywhere else it files exact persistence.
 
 `arena show <round_id>` prints exactly what would be filed and which spread rule each series used.
 
+### Input freshness before filing
+
+Official CLI and autopilot forecasts check observation dates before model work and again before
+signing. Downloading an old observation today does not make it current. Civiqs observations must
+be at most two calendar days old, every profile cell must pass, Wikipedia allows four days for
+its publication lag, and weekly Trends/YouGov inputs allow fourteen days. Other recurring series
+allow two typical releases, with a fourteen-day minimum, so monthly observations are not judged
+as daily readings. Missing or invalid dates are refused. A refusal leaves any accepted version
+in place and reports the affected series and date; it does not silently file a stale replacement.
+
+Archive lookups and research cutoffs use the earlier of forecast time and lock time. Early
+forecasts therefore search back from today, and historical replays remain bounded by their lock.
+Trends uses a newer complete basket when available, keeping all cells in one comparison snapshot
+and showing that same history to the models. Live Civiqs failures remain in the origin trace
+when a sufficiently current archive is available. Research traces retain failed engines, and
+formation dossiers carry explicit `verified`, `empty`, or `failed` status; an empty dossier is
+never described as verified evidence. Evaluation and shadow experiments may inspect older inputs, but their results
+do not bypass the official submission checks.
+
+Run `bun run arena audit <round_id|due> --fresh` to inspect the current observation dates,
+age limits, and Civiqs source failures without model calls or submitting anything.
+
 ### Model backends
 
 `MARINA_ARENA_FORECASTER=model:<provider/model>` puts a model on top of the baseline — any model
@@ -330,10 +352,10 @@ against the arena's recorded persistence loss for each round.
   arena's `wikitop/` archive, using days published before the lock (a two-day lag; daily lists are
   final once published, and the archive was partly backfilled); the half-life was chosen by
   backtest over the archived weeks.
-- **Google Trends baskets**: Trends re-normalises its index in every snapshot, so the lock's own
-  frozen per-cell history — what the persistence null reads — is used; the `trends/` archive only
-  fills in for a lock without one, complete weeks only (`MARINA_ARENA_TRENDS_PARTIAL=on` adds the
-  partial week; mixed in the backtest). Archive fallback requires the exact target basket, unique
+- **Google Trends baskets**: Trends re-normalises its index in every snapshot. Forecasts use a
+  newer complete basket from `trends/` when available; the original lock still defines the
+  scoring baseline. Complete weeks only are used (`MARINA_ARENA_TRENDS_PARTIAL=on` adds the
+  partial week; mixed in the backtest). Archive inputs require the exact target basket, unique
   terms, an eligible fetch timestamp, finite nonnegative indices, matching vector lengths and
   ordered periods. Extra terms change the denominator and are rejected. An empty or malformed
   snapshot does not hide an older usable one; histories are never spliced across vintages.

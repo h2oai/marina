@@ -14,10 +14,12 @@
  * leakage, and needs no model.
  */
 
+import { getErrorMessage } from "../../engine/errors";
 import type { ArenaData } from "../data";
-import type { ForecastOrigin } from "../forecast";
+import type { ForecastOrigin, RoundForecast } from "../forecast";
+import { auditForecastFreshness, forecastCutoff, requireFreshForecast } from "../freshness";
 import { auditedTrendsHistory } from "../input-audit";
-import type { ArenaRound } from "../types";
+import type { ArenaLock, ArenaRound } from "../types";
 import {
   type HorizonOptions,
   horizonDays,
@@ -171,6 +173,7 @@ export async function civiqsNowcast(
   maxLookbackDays = 6,
   live?: LiveCiviqs,
 ): Promise<Nowcast | undefined> {
+  asOf = forecastCutoff(round.lock_at, asOf);
   const series = round.series ? CIVIQS_SERIES[round.series] : undefined;
   if (!series) return undefined;
   const archived = await archivedNowcast(data, round, series, asOf, maxLookbackDays);
@@ -182,6 +185,7 @@ export async function civiqsNowcast(
   const snap = await live(series.name, series.filters).catch(() => undefined);
   const point = snap?.points.at(-1);
   if (!snap || !point) return archived;
+  if (!eligibleObservationDay(point[0], asOf)) return archived;
   if (archived && archived.date > point[0]) return archived;
   const value = seriesValue(snap as Snapshot, point, series);
   if (value === undefined) return archived;
@@ -236,11 +240,25 @@ async function latestArchivedSnapshot(
     const day = new Date(start - back * 86_400_000).toISOString().slice(0, 10);
     const snap = await data.civiqsSnapshot(dir, day).catch(() => undefined);
     if (!snap?.points.at(-1)) continue;
+    if (!eligibleObservationDay(snap.points.at(-1)![0], asOf)) continue;
     const fetchedAt = (snap as { fetched_at?: string }).fetched_at;
-    if (fetchedAt && Date.parse(fetchedAt) > Date.parse(asOf)) continue;
+    if (
+      fetchedAt &&
+      (!Number.isFinite(Date.parse(fetchedAt)) || Date.parse(fetchedAt) > Date.parse(asOf))
+    )
+      continue;
     return { snap: snap as Snapshot, path: `civiqs/${dir}/${day}.json` };
   }
   return undefined;
+}
+
+function eligibleObservationDay(day: string, asOf: string): boolean {
+  return (
+    /^\d{4}-\d{2}-\d{2}$/.test(day) &&
+    Number.isFinite(Date.parse(day)) &&
+    new Date(day).toISOString().slice(0, 10) === day &&
+    day <= asOf.slice(0, 10)
+  );
 }
 
 /** A Civiqs tracker's recent DAILY readings, as one snapshot showed them. */
@@ -268,7 +286,7 @@ export async function civiqsDailySeries(
   const series = round.series ? CIVIQS_SERIES[round.series] : undefined;
   if (!series) return undefined;
   const days = opts.days ?? 21;
-  const asOf = opts.asOf ?? round.lock_at;
+  const asOf = forecastCutoff(round.lock_at, opts.asOf ?? round.lock_at);
   const pick = (snap: Snapshot, source: string): CiviqsDaily | undefined => {
     const points: CiviqsDaily["points"] = [];
     for (const p of snap.points.slice(-days)) {
@@ -284,6 +302,7 @@ export async function civiqsDailySeries(
   const snap = await opts.live(series.name, series.filters).catch(() => undefined);
   const last = snap?.points.at(-1);
   if (!snap || !last) return archived;
+  if (!eligibleObservationDay(last[0], asOf)) return archived;
   if (archived && archived.points.at(-1)!.date > last[0]) return archived;
   return pick(snap as Snapshot, `live:${snap.url}`) ?? archived;
 }
@@ -311,17 +330,36 @@ export function nowcastForecaster(
     live?: LiveCiviqs;
     daily?: number;
     horizon?: HorizonOptions;
+    /** Official submissions refuse stale inputs before any model work. */
+    strictFreshness?: boolean;
   } = {},
 ) {
   const horizon = opts.horizon ?? horizonOptionsFromEnv();
   // One live read per tracker per forecast call — a profile's cells share it.
   const live = opts.live;
   return async (round: ArenaRound, lock: import("../types").ArenaLock) => {
+    const asOf = forecastCutoff(round.lock_at);
+    const liveErrors = new Map<string, string>();
+    const keyFor = (name: string, filters?: Record<string, string>) =>
+      `${name}?${JSON.stringify(filters ?? {})}`;
+    const checked = <T extends RoundForecast>(f: T, inputs = lock): T => {
+      if (opts.strictFreshness) return requireFreshForecast(round, inputs, f, asOf);
+      return inputs === lock
+        ? f
+        : { ...f, freshness: auditForecastFreshness(round, inputs, f, asOf) };
+    };
     const cache = new Map<string, ReturnType<LiveCiviqs>>();
     const cachedLive: LiveCiviqs | undefined = live
       ? (name, filters) => {
-          const key = `${name}?${JSON.stringify(filters ?? {})}`;
-          if (!cache.has(key)) cache.set(key, live(name, filters));
+          const key = keyFor(name, filters);
+          if (!cache.has(key))
+            cache.set(
+              key,
+              live(name, filters).catch((err) => {
+                liveErrors.set(key, getErrorMessage(err));
+                throw err;
+              }),
+            );
           return cache.get(key)!;
         }
       : undefined;
@@ -329,23 +367,21 @@ export function nowcastForecaster(
       // Fuller, fresher inputs than the lock carries: the archived daily lists
       // fetched before the lock, three weeks back.
       const obs = await wikitopObservations(data, round);
-      if (obs.length) return base(round, { ...lock, answer_obs: obs });
+      if (obs.length) {
+        const inputs = { ...lock, answer_obs: obs };
+        return checked(base(round, inputs), inputs);
+      }
     }
-    // Trends re-normalises its index per snapshot, so the lock's own frozen
-    // history (what the persistence null reads) wins; the archive only fills in
-    // for a lock that carries none.
-    if (
-      round.tracker === "google_trends" &&
-      round.target_type === "profile_energy" &&
-      !lock.answer_history_by_cell
-    ) {
-      const byCell = await trendsBasketHistory(data, round, TRENDS_INCLUDE_PARTIAL);
-      if (byCell) return base(round, { ...lock, answer_history_by_cell: byCell });
+    // Refresh the whole basket together: shares from different query vintages
+    // cannot be mixed. The original lock still defines the scoring baseline.
+    if (round.tracker === "google_trends" && round.target_type === "profile_energy") {
+      const inputs = await trendsForecastLock(data, round, lock);
+      return checked(base(round, inputs), inputs);
     }
     const f = base(round, lock);
-    if (round.tracker !== "civiqs") return f;
+    if (round.tracker !== "civiqs") return checked(f);
     const reading = async (seriesId: string) => {
-      return civiqsNowcast(data, { ...round, series: seriesId }, round.lock_at, 6, cachedLive);
+      return civiqsNowcast(data, { ...round, series: seriesId }, asOf, 6, cachedLive);
     };
     // Horizon corrections for one series, given the plain nowcast's reading
     // and the baseline sd: the drifted centre and/or sd(h), else unchanged.
@@ -397,6 +433,8 @@ export function nowcastForecaster(
         if (projected) c = { mean: projected.mean, sd: start.sd, detail: projected.detail };
       }
       const origin = selected ?? weekly;
+      const spec = CIVIQS_SERIES[seriesId];
+      const liveError = spec ? liveErrors.get(keyFor(spec.name, spec.filters)) : undefined;
       if (origin) {
         const scoped = !horizon.series || horizon.series.includes(seriesId);
         const detail = c.detail;
@@ -407,6 +445,7 @@ export function nowcastForecaster(
           horizonDays: horizonDays(origin.date, round.release_at),
           ...(n ? { source: n.snapshot, daily: n.recent } : {}),
           ...(n?.fetchedAt ? { fetchedAt: n.fetchedAt } : {}),
+          ...(liveError ? { liveError } : {}),
           ...(weekly ? { weekly } : {}),
           mode: scoped ? horizon.mode : "off",
           reason:
@@ -443,14 +482,14 @@ export function nowcastForecaster(
       if (n) {
         const detail = origins[round.series]?.projection;
         const hz = detail ? ` (horizon ${horizon.mode}: h ${detail.h}, drift ${detail.drift})` : "";
-        return {
+        return checked({
           ...withDaily,
           topline: { mean: c.mean, sd: c.sd },
           note: `${f.note}; Civiqs daily nowcast ${n.date}${hz}`,
           nowcast: used,
-        };
+        });
       }
-      return { ...withDaily, topline: { mean: c.mean, sd: c.sd } };
+      return checked({ ...withDaily, topline: { mean: c.mean, sd: c.sd } });
     }
     if (f.profile) {
       const profile = { ...f.profile };
@@ -458,11 +497,13 @@ export function nowcastForecaster(
         const c = await resolve(cell, lock.answer_history_by_cell?.[cell]?.at(-1), profile[cell]!);
         profile[cell] = { mean: c.mean, sd: c.sd };
       }
-      return Object.keys(used).length
-        ? { ...f, profile, origins, note: `${f.note}; Civiqs daily nowcast`, nowcast: used }
-        : { ...f, profile, origins };
+      return checked(
+        Object.keys(used).length
+          ? { ...f, profile, origins, note: `${f.note}; Civiqs daily nowcast`, nowcast: used }
+          : { ...f, profile, origins },
+      );
     }
-    return f;
+    return checked(f);
   };
 }
 
@@ -480,6 +521,24 @@ export const WIKITOP_PUBLICATION_LAG_DAYS = 2;
 /** Whether a Trends basket's current partial week counts as its latest reading. */
 export const TRENDS_INCLUDE_PARTIAL = process.env.MARINA_ARENA_TRENDS_PARTIAL === "on";
 
+/** Use a newer complete basket only as one internally comparable snapshot. */
+export async function trendsForecastLock(
+  data: ArenaData,
+  round: ArenaRound,
+  lock: ArenaLock,
+): Promise<ArenaLock> {
+  if (round.tracker !== "google_trends" || round.target_type !== "profile_energy") return lock;
+  const byCell = await trendsBasketHistory(data, round, TRENDS_INCLUDE_PARTIAL);
+  if (!byCell) return lock;
+  const cells = round.cells ?? [];
+  const newer = cells.every((cell) => {
+    const next = byCell[cell]?.at(-1)?.date;
+    const prior = lock.answer_history_by_cell?.[cell]?.at(-1)?.date;
+    return next && (!prior || next > prior);
+  });
+  return newer ? { ...lock, answer_history_by_cell: byCell } : lock;
+}
+
 export async function wikitopObservations(
   data: ArenaData,
   round: ArenaRound,
@@ -487,7 +546,7 @@ export async function wikitopObservations(
 ): Promise<Array<{ date: string; items: string[]; views: Record<string, number> }>> {
   const spec = round.ranking as { project?: string; access?: string } | undefined;
   const dir = `${spec?.project ?? "en.wikipedia"}.${spec?.access ?? "all-access"}`;
-  const lockDay = Date.parse(round.lock_at.slice(0, 10));
+  const lockDay = Date.parse(forecastCutoff(round.lock_at).slice(0, 10));
   const days = Array.from({ length: daysBack }, (_, k) =>
     new Date(lockDay - (k + WIKITOP_PUBLICATION_LAG_DAYS) * 86_400_000).toISOString().slice(0, 10),
   );
@@ -518,13 +577,14 @@ export async function trendsBasketHistory(
 ): Promise<Record<string, Array<{ date: string; value: number }>> | undefined> {
   const cells = round.cells ?? [];
   if (round.tracker !== "google_trends" || cells.length < 2) return undefined;
-  const lock = Date.parse(round.lock_at);
+  const cutoff = forecastCutoff(round.lock_at);
+  const lock = Date.parse(cutoff);
   for (let back = 0; back <= maxLookbackDays; back++) {
     const day = new Date(lock - back * 86_400_000).toISOString().slice(0, 10);
     for (const dir of await data.trendsBasketDirs()) {
       const snap = await data.trendsSnapshot(dir, day).catch(() => undefined);
       if (!snap) continue;
-      const out = auditedTrendsHistory(round, snap, includePartial);
+      const out = auditedTrendsHistory({ ...round, lock_at: cutoff }, snap, includePartial);
       if (out) return out;
     }
   }

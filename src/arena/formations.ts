@@ -1288,6 +1288,9 @@ export interface ResearchDossier {
   costUsd: number;
   retriever?: string;
   error?: string;
+  status?: "verified" | "empty" | "failed";
+  warnings?: string[];
+  funnels?: import("./research/retrieve").ResearchReport["funnels"];
   data?: import("./research/retrieve").ResearchReport["data"];
 }
 
@@ -1313,10 +1316,18 @@ export async function buildDossier(
   try {
     const report = await retriever(brief);
     const checked = await verifyDossier(report.report, pageText);
+    const warnings = [...(report.warnings ?? [])];
+    if (!checked.verifiedText.trim())
+      warnings.push(
+        "No verified research evidence; do not attribute forecast changes to research.",
+      );
     return {
       since: brief.since,
       verified: checked.verifiedText,
       stats: checked.stats,
+      status: checked.verifiedText.trim() ? "verified" : "empty",
+      ...(warnings.length ? { warnings } : {}),
+      ...(report.funnels ? { funnels: report.funnels } : {}),
       sources: report.sources.length,
       costUsd: report.costUsd ?? 0,
       ...(report.retriever ? { retriever: report.retriever } : {}),
@@ -1328,13 +1339,14 @@ export async function buildDossier(
       verified: "",
       sources: 0,
       costUsd: 0,
+      status: "failed",
       error: (err instanceof Error ? err.message : String(err)).slice(0, 200),
     };
   }
 }
 
 export function dossierBlock(d: ResearchDossier): string {
-  return `RESEARCH DOSSIER from the research crew — facts dated since ${d.since}, ONLY the lines whose figures a mechanical check found on the cited page. Use other sources for CHANGES only (how a pollster or market moved since its own previous reading, after the start reading), never to replace the level:\n${d.verified.trim() || "(no verified facts)"}`;
+  return `RESEARCH DOSSIER from the research crew — facts dated since ${d.since}, ONLY the lines whose figures a mechanical check found on the cited page. Use other sources for CHANGES only (how a pollster or market moved since its own previous reading, after the start reading), never to replace the level:\n${d.verified.trim() || "(no verified facts)"}${d.warnings?.length ? `\nRetrieval limitations: ${d.warnings.join("; ")}` : ""}${d.error ? `\nResearch failed: ${d.error}` : ""}`;
 }
 
 function handoffBlock(pattern: string, f: FormationForecast, base: Distribution): string {
@@ -1429,6 +1441,6 @@ export async function composeForecastRound(
       ...(one.trust !== undefined ? { trust: one.trust } : {}),
       ...(one.protocol ? { protocol: one.protocol } : {}),
     },
-    note: `${two.note ?? `marina ${second.pattern}`} judging ${first.pattern}${dossier ? " with a verified research dossier" : ""}`,
+    note: `${two.note ?? `marina ${second.pattern}`} judging ${first.pattern}${dossier?.verified.trim() ? " with a verified research dossier" : dossier ? " without verified research evidence" : ""}`,
   };
 }

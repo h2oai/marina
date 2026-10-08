@@ -116,7 +116,7 @@ export interface JudgedProposal extends Distribution {
 export interface ResearchForecast extends RoundForecast {
   dossier?: Pick<
     ResearchReport,
-    "report" | "sources" | "costUsd" | "searches" | "retriever" | "data"
+    "report" | "sources" | "costUsd" | "searches" | "retriever" | "data" | "warnings" | "funnels"
   > & {
     since: string;
     verification?: Record<string, number>;
@@ -333,6 +333,8 @@ export async function researchForecastRound(
     searches: research.searches,
     retriever: research.retriever,
     ...(research.data ? { data: research.data } : {}),
+    ...(research.warnings ? { warnings: research.warnings } : {}),
+    ...(research.funnels ? { funnels: research.funnels } : {}),
     ...(checked ? { verification: checked.stats } : {}),
   };
 
@@ -555,6 +557,8 @@ export async function noAnchorForecastRound(
     searches: research.searches,
     retriever: research.retriever,
     ...(research.data ? { data: research.data } : {}),
+    ...(research.warnings ? { warnings: research.warnings } : {}),
+    ...(research.funnels ? { funnels: research.funnels } : {}),
     ...(checked ? { verification: checked.stats } : {}),
   };
   const bounds = questionBounds(round);
@@ -699,6 +703,8 @@ async function researchProfileRound(
     searches: research.searches,
     retriever: research.retriever,
     ...(research.data ? { data: research.data } : {}),
+    ...(research.warnings ? { warnings: research.warnings } : {}),
+    ...(research.funnels ? { funnels: research.funnels } : {}),
     ...(checked ? { verification: checked.stats } : {}),
   };
   const histories = cellHistories(round, lock);
