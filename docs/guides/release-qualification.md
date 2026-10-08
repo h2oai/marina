@@ -30,6 +30,18 @@ IDs, artifacts, environment prerequisites (never secret values), source commit, 
 checkpoint with the release record. World Collective comparisons should cite the exact baseline and
 candidate variant IDs and retain the promotion rationale and evidence references.
 
+## Bundled server
+
+`bun run build` keeps Zod as an external runtime dependency. Bun 1.4.2 can emit MCP's static
+schema construction before Zod's constructors initialize when Zod is bundled alongside dynamic
+imports. Loading the installed package preserves its module initialization order. Keep the
+production dependencies installed beside `dist/`; the server bundle is not a standalone executable.
+
+`bun run build:sdk && bun run qualify:server` starts the actual bundle from a temporary instance
+directory, checks its web assets and settings, exercises a Node SDK command, and checks shutdown.
+Build the dashboard first with `bun run dashboard:build`. The same qualification runs in pull-request
+CI and in the release gate, so a successful build alone cannot qualify server startup.
+
 ## Script knobs
 
 These are read by the qualification scripts, not by the Marina server, so they are not in

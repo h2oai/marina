@@ -102,6 +102,9 @@ jobs:
         run: bun run typecheck
       - name: Build
         run: bun run build
+      - name: Qualify bundled server and Node SDK
+        working-directory: .
+        run: bun run build:sdk && bun run qualify:server
 
   desktop:
     name: Build and test desktop v2
