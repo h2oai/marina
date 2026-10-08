@@ -20,6 +20,8 @@ import { recordScoreOutcome } from "../coordination/score-outcome";
 import { loadScore } from "../coordination/score-store";
 import { positionSettlementFinder } from "../engine/commands/position";
 import { Logger } from "../engine/logger";
+import { noteResolvedForecast, truthFromResolution } from "../forecast/adjust";
+import { historyFromEnv } from "../forecast/history";
 import type { TypedForecastAnswer } from "../forecast/typed";
 import { scoreTypedAnswer } from "../forecast/typed-score";
 import { noteOutcome } from "../learning/service";
@@ -450,6 +452,7 @@ export const forecastQuestionFinder: CalibrationFinder = {
           r.loss,
           sample.ts,
         );
+        void recordResolvedHistory(f.id, answer, r.outcome, sample.ts);
         noteOutcome(db, {
           domain: "forecast",
           source: `forecast:${f.kind}`,
@@ -465,6 +468,34 @@ export const forecastQuestionFinder: CalibrationFinder = {
     }
   },
 };
+
+/**
+ * A resolved typed answer into the forecast history (`MARINA_FORECAST_HISTORY`),
+ * so recalibration and prior shrink learn from live outcomes. Saved answers are
+ * live work (a measurement run is never saved), known at the Sample's time.
+ */
+async function recordResolvedHistory(
+  id: number,
+  answer: TypedForecastAnswer,
+  outcome: string[] | string,
+  ts: number,
+): Promise<void> {
+  try {
+    const history = historyFromEnv();
+    if (!history) return;
+    const truth = truthFromResolution(answer.answer, outcome);
+    if (!truth) return;
+    await noteResolvedForecast(history, {
+      id: `forecast:${id}`,
+      req: { question: answer.question, answer: answer.answer },
+      answer,
+      truth,
+      resolvedAt: new Date(ts).toISOString(),
+    });
+  } catch (err) {
+    logger.warn("calibration", "Forecast history not written", { id, error: String(err) });
+  }
+}
 
 /** Register the built-in finders. Idempotent. */
 export function registerBuiltinCalibrationFinders(): void {

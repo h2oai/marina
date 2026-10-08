@@ -478,3 +478,37 @@ function priorNumbers(p: ChosenPrior): ForecastNumbers & { source: PriorSource }
 }
 
 export type { SuppliedPrior };
+
+/**
+ * One resolved answer into the history recalibration, prior shrink and routing
+ * learn from (`MARINA_FORECAST_HISTORY`; no history ⇒ nothing). Written once
+ * per id (the file is append-only), never for a measurement run — a board's
+ * measured outcomes must not tune what is measured on it — and with
+ * `resolvedAt` the time the outcome became known, so `visibleRecords` keeps it
+ * from every forecast cut off before then. Best-effort: false when nothing
+ * was written (no history, measurement, unusable answer, or a duplicate).
+ */
+export async function noteResolvedForecast(
+  history: ForecastHistory | undefined,
+  input: Parameters<typeof recordFromAnswer>[0] & {
+    eval?: import("../learning/eval-context").EvalContext;
+  },
+): Promise<boolean> {
+  if (!history || input.eval?.mode === "measure") return false;
+  const { eval: _eval, ...rest } = input;
+  const record = recordFromAnswer(rest);
+  if (!record) return false;
+  if ((await history.all()).some((r) => r.id === record.id)) return false;
+  await history.add(record);
+  return true;
+}
+
+/** A typed resolution's outcome as history truth (option ids), or undefined. */
+export function truthFromResolution(
+  spec: AnswerSpec,
+  outcome: string[] | string,
+): { options: string[] } | undefined {
+  if (spec.type !== "choice" && spec.type !== "multi") return undefined;
+  const options = Array.isArray(outcome) ? outcome : [outcome];
+  return options.length ? { options } : undefined;
+}
