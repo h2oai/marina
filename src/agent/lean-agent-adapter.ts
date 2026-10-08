@@ -81,6 +81,7 @@ import {
 import { AgentObligations } from "../obligations/agent";
 import { AgentArgcheck } from "../obligations/argcheck-agent";
 import { readOnlyByName } from "../obligations/ledger";
+import { capReviewMode, obligationsReviewMode } from "../obligations/review";
 import { dispatchedCall, readOnlyCall } from "../obligations/tool-call";
 import { outputRepairMode, repairFinalAnswer } from "../repair/output-repair";
 import { MarinaClient, TELL_NOTICE_PREFIX } from "../sdk/client";
@@ -1210,6 +1211,8 @@ export class LeanAgentAdapter implements AgentHandle {
   private readonly obligations = new AgentObligations({
     complete: (system, user) => this.obligationsComplete(system, user),
     provider: () => harnessDecisionProvider(),
+    // The agent's own `review` loop preference, within the operator's ceiling.
+    reviewMode: () => capReviewMode(this.loopPrefs.review, obligationsReviewMode()),
   });
   /**
    * Argument check (`MARINA_ARGCHECK=off|observe|on`, default off): before a

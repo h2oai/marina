@@ -15,15 +15,22 @@
  *   focus; the harness never clears it.
  * - `autonomy full` — a crew responder opts into an autonomous life (own
  *   cycles, reflection, consolidation) instead of waking only on messages.
+ * - `review off|observe|auto|on` — the pre-write review on the agent's own
+ *   state-changing calls, within the operator ceiling `MARINA_OBLIGATIONS_REVIEW`
+ *   (`src/obligations/review.ts`); unset means the ceiling.
  *
  * Pure parsing lives here so the adapter and tests share one grammar.
  */
+
+import { parseReviewMode, type ReviewMode } from "../obligations/review";
 
 export interface LoopPreferences {
   rest: string | null;
   channelSends: number | null;
   focusPersistent: boolean;
   autonomyFull: boolean;
+  /** The agent's chosen pre-write review mode (capped by the operator), or null for the ceiling. */
+  review: ReviewMode | null;
 }
 
 export const LOOP_PREFERENCE_KEYS = [
@@ -31,11 +38,18 @@ export const LOOP_PREFERENCE_KEYS = [
   "channel_sends",
   "focus_persistent",
   "autonomy",
+  "review",
 ] as const;
 export type LoopPreferenceKey = (typeof LOOP_PREFERENCE_KEYS)[number];
 
 export function defaultLoopPreferences(): LoopPreferences {
-  return { rest: null, channelSends: null, focusPersistent: false, autonomyFull: false };
+  return {
+    rest: null,
+    channelSends: null,
+    focusPersistent: false,
+    autonomyFull: false,
+    review: null,
+  };
 }
 
 /** Apply one core-memory value (undefined = key absent/deleted) to `prefs`. */
@@ -59,6 +73,9 @@ export function applyLoopPreference(
       return;
     case "autonomy":
       prefs.autonomyFull = /^full$/i.test(value);
+      return;
+    case "review":
+      prefs.review = parseReviewMode(value) ?? null;
       return;
   }
 }

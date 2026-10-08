@@ -91,6 +91,21 @@ describe("loop preference grammar", () => {
     applyLoopPreference(prefs, "channel_sends", "0");
     expect(prefs.channelSends).toBe(0);
   });
+
+  it("lets the agent choose its own pre-write review mode (capped by the operator elsewhere)", () => {
+    const prefs = defaultLoopPreferences();
+    expect(prefs.review).toBeNull();
+    expect(parseLoopPreferenceCommand("memory set review auto")).toEqual({
+      key: "review",
+      value: "auto",
+    });
+    applyLoopPreference(prefs, "review", "Observe");
+    expect(prefs.review).toBe("observe");
+    applyLoopPreference(prefs, "review", "maximum");
+    expect(prefs.review).toBeNull();
+    applyLoopPreference(prefs, "review", undefined);
+    expect(prefs.review).toBeNull();
+  });
 });
 
 describe("channel send budget", () => {
