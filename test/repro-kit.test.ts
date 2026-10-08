@@ -205,6 +205,20 @@ describe("plans", () => {
     expect(() => setup.plan(flags({ review: "max" }), "frontier")).toThrow("--review must be");
   });
 
+  it("τ² --lessons recalls judged lessons on every arm and is its own configuration", () => {
+    const setup = setupNamed("tau2")!;
+    const runOf = (p: ReturnType<typeof setup.plan>) =>
+      p.steps.find((s): s is CommandStep => s.kind === "command" && s.label.includes("τ²"))!;
+    const agentOf = (r: CommandStep) => r.argv[r.argv.indexOf("--agent-llm") + 1];
+    const plain = runOf(setup.plan(flags(), "frontier"));
+    const learning = runOf(setup.plan(flags({ lessons: true }), "frontier"));
+    expect(agentOf(learning)).toBe(
+      `openai/marina/lessons:${agentOf(plain)!.slice("openai/".length)}`,
+    );
+    const saveTo = (r: CommandStep) => r.argv[r.argv.indexOf("--save-to") + 1];
+    expect(saveTo(learning)).not.toBe(saveTo(plain));
+  });
+
   it("feature settings change the τ² save name and are filed with the result", () => {
     const setup = setupNamed("tau2")!;
     const saveTo = (p: ReturnType<typeof setup.plan>) =>

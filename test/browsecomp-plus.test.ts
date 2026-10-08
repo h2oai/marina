@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   type AgentOptions,
+  chat,
   crewPrompt,
   executeTool,
   runCrew,
@@ -782,5 +783,32 @@ describe("Marina harness options (off = the official harness)", () => {
     ).toHaveProperty("offset");
     // The official tool schema is unchanged.
     expect(Object.keys(toolSchemas(5)[1]!.function.parameters.properties)).toEqual(["docid"]);
+  });
+});
+
+describe("Marina opt-in headers", () => {
+  it("every call carries the endpoint's headers (the measurement tag, lessons)", async () => {
+    let seen: Headers | undefined;
+    const fetchStub = (async (_url: string | URL | Request, init?: RequestInit) => {
+      seen = new Headers(init?.headers);
+      return Response.json({
+        choices: [{ message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      });
+    }) as typeof fetch;
+    await chat(
+      {
+        baseUrl: "http://localhost:3300",
+        fetch: fetchStub,
+        headers: {
+          "x-marina-eval": "benchmark=Tevatron/browsecomp-plus; mode=measure",
+          "x-marina-lessons": "on",
+        },
+      },
+      { model: "m", messages: [{ role: "user", content: "q" }] },
+      5000,
+    );
+    expect(seen?.get("x-marina-eval")).toBe("benchmark=Tevatron/browsecomp-plus; mode=measure");
+    expect(seen?.get("x-marina-lessons")).toBe("on");
   });
 });

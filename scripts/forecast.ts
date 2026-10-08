@@ -16,6 +16,11 @@
  *   bun run forecast "Top 3 films by weekend gross?" --type ranking --size 3 --end 2026-10-12T00:00:00Z
  *   bun run forecast "Factory orders, $bn?" --type number --unit '$bn' --runs 5 --context "Census M3, first print"
  *
+ * Typed answers go through the same builder as the in-world `forecast` command
+ * and POST /v1/forecast (`typedForecastFor`): judged lessons from the world
+ * database (DB_PATH; `--no-lessons` skips them), earned defaults, and formation
+ * routing. `--formation <name>` picks the formation for this run.
+ *
  * Research (web, cited) → citation verification → analysts → Jev judge →
  * aggregate. Runs on whatever models are configured (OpenRouter's three-vendor
  * default, other provider keys, or one local model); a degraded setup says so. Typical cost $0.05–0.10 (typed: more,
@@ -26,8 +31,9 @@ import { parseArgs } from "node:util";
 import { attachCliSpendLedger } from "../src/engine/cli-spend-ledger";
 import { type AnswerSpec, parseAnswerSpec } from "../src/forecast/answer-types";
 import { type ForecastKind, forecastQuestion } from "../src/forecast/question";
-import { forecastDeps, typedForecastDeps } from "../src/forecast/service";
-import { forecastFormed } from "../src/forecast/formations";
+import { forecastDeps } from "../src/forecast/service";
+import { typedForecastFor } from "../src/forecast/surface";
+import { MarinaDB } from "../src/persistence/database";
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -46,6 +52,8 @@ const { positionals, values } = parseArgs({
     rounds: { type: "string" },
     "no-critique": { type: "boolean" },
     analysts: { type: "string" },
+    formation: { type: "string" },
+    "no-lessons": { type: "boolean" },
   },
 });
 const question = positionals.join(" ").trim();
@@ -55,7 +63,7 @@ if (!question) {
       'usage: bun run forecast "<question>" [--kind probability|number] [--by YYYY-MM-DD] [--unit U] [--json]',
       '       bun run forecast "<question>" --type choice|multi|number|ranking|text [--options "A=label|B=label"]',
       "         [--size N] [--end ISO] [--as-of ISO] [--context TEXT] [--runs K] [--rounds R] [--no-critique]",
-      "         [--analysts m1,m2] [--json]",
+      "         [--analysts m1,m2] [--formation ensemble|delphi|tournament|verify|skeptic] [--no-lessons] [--json]",
     ].join("\n"),
   );
   process.exit(2);
@@ -86,17 +94,14 @@ async function typed(): Promise<void> {
     process.exit(2);
   }
   const spec: AnswerSpec = parsed.spec;
-  const made = typedForecastDeps(process.env, {
-    ...(values.runs ? { runs: Number(values.runs) } : {}),
-    ...(values.rounds ? { researchRounds: Number(values.rounds) } : {}),
-    ...(values["no-critique"] ? { critique: false } : {}),
-    ...(values.analysts ? { analysts: values.analysts.split(",").map((s) => s.trim()) } : {}),
-  });
-  if ("error" in made) {
-    console.error(made.error);
-    process.exit(1);
-  }
-  const a = await forecastFormed(
+  // The world database holds the lesson pool and the earned defaults.
+  const dbPath = process.env.DB_PATH?.trim();
+  const db =
+    values["no-lessons"] || !dbPath || dbPath === ":memory:" ? undefined : new MarinaDB(dbPath);
+  const env = values.formation
+    ? { ...process.env, MARINA_FORECAST_FORMATION: values.formation }
+    : process.env;
+  const result = await typedForecastFor(
     {
       question,
       answer: spec,
@@ -104,10 +109,22 @@ async function typed(): Promise<void> {
       ...(values["as-of"] ? { asOf: values["as-of"] } : {}),
       ...(values.context ? { context: values.context } : {}),
     },
-    made.deps,
-    "ensemble",
+    {
+      ...(db ? { db } : {}),
+      env,
+      ...(values.runs ? { runs: Number(values.runs) } : {}),
+      ...(values.rounds ? { researchRounds: Number(values.rounds) } : {}),
+      ...(values["no-critique"] ? { critique: false } : {}),
+      ...(values.analysts ? { analysts: values.analysts.split(",").map((s) => s.trim()) } : {}),
+    },
   );
-  a.costUsd = made.costUsd();
+  db?.close();
+  if ("error" in result) {
+    console.error(result.error);
+    process.exit(1);
+  }
+  const made = { scale: result.scale };
+  const a = result.answer;
   if (values.json) {
     console.log(JSON.stringify({ ...a, scale: made.scale }, null, 2));
     return;

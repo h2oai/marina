@@ -11,7 +11,12 @@ import {
   referenceScoresForBenchmark,
   referenceScoresForModel,
 } from "../benchmarks/reference-scores";
-import { BenchmarkRunner, harnessFailure, harnessInvocation } from "../src/engine/benchmark-runner";
+import {
+  BenchmarkRunner,
+  benchmarkRunConfig,
+  harnessFailure,
+  harnessInvocation,
+} from "../src/engine/benchmark-runner";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
@@ -256,6 +261,30 @@ describe("benchmark runner → harness", () => {
     expect(args[args.indexOf("--endpoint") + 1]).toBe("http://localhost:3410");
     expect(args.join(" ")).not.toContain("marina-internal-secret");
     expect(env.MARINA_BENCH_API_KEY).toBe("marina-internal-secret");
+  });
+
+  it("passes lessons and the measurement mode through to the harness", () => {
+    const plain = harnessInvocation("gsm8k", config, { endpoint: "http://localhost:3410" });
+    expect(plain.args).not.toContain("--lessons");
+    const live = harnessInvocation(
+      "gsm8k",
+      { ...config, lessons: true, lessonsMode: "live" },
+      { endpoint: "http://localhost:3410" },
+    );
+    expect(live.args).toContain("--lessons");
+    expect(live.args[live.args.indexOf("--lessons-mode") + 1]).toBe("live");
+  });
+
+  it("records this server's feature settings in the run config, never a credential", () => {
+    const opts = { benchmark: "smoke", lessons: true };
+    const bare = benchmarkRunConfig(opts, {});
+    expect(bare).not.toHaveProperty("serverFeatures");
+    expect(bare.lessons).toBe(true);
+    const featured = benchmarkRunConfig(opts, {
+      MARINA_OBLIGATIONS_REVIEW: "auto",
+      MARINA_DECISION_API_KEY: "secret",
+    });
+    expect(featured.serverFeatures).toEqual({ MARINA_OBLIGATIONS_REVIEW: "auto" });
   });
 
   it("names each run's own result file, so concurrent runs never read each other's", () => {
