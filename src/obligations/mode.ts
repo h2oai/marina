@@ -76,6 +76,18 @@ export function argcheckRuleBytes(env: NodeJS.ProcessEnv = process.env): number 
 }
 
 /** The trigger when `MARINA_ARGCHECK_TRIGGER` is unset (chosen from the judge replay). */
+/**
+ * What the final-reply check does when the requester already approved an open
+ * obligation and the drafted reply asks about it again
+ * (`MARINA_OBLIGATIONS_CONSENT`): `observe` (default) counts the re-ask only;
+ * `on` treats it as owed, so the one-time nudge names it. Read live.
+ */
+export type ConsentMode = "observe" | "on";
+
+export function obligationsConsentMode(env: NodeJS.ProcessEnv = process.env): ConsentMode {
+  return env.MARINA_OBLIGATIONS_CONSENT?.trim().toLowerCase() === "on" ? "on" : "observe";
+}
+
 export const DEFAULT_ARGCHECK_TRIGGER: ArgcheckTrigger = "flagged";
 
 /**

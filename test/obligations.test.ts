@@ -35,8 +35,10 @@ import {
 import { recoveredObligationOutcome } from "../src/obligations/learn";
 import {
   applyExtraction,
+  CONSENT_NOTE,
   idTokens,
   LedgerStore,
+  ledgerSummary,
   looksLikeError,
   matchCall,
   newLedger,
@@ -45,10 +47,15 @@ import {
   readOnlyByName,
   reminderBlock,
 } from "../src/obligations/ledger";
-import { obligationsMode, parseObligationsMode } from "../src/obligations/mode";
+import {
+  obligationsConsentMode,
+  obligationsMode,
+  parseObligationsMode,
+} from "../src/obligations/mode";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { MockConnection, makeTestRoom } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 const writes = (name: string) => !readOnlyByName(name);
 
@@ -308,6 +315,77 @@ describe("model calls (extraction, matching, final check)", () => {
     expect(o.attempted).not.toContain("4417");
     expect(o.detail).not.toContain("4417");
     expect(o.privateContext).toContain("4417");
+  });
+});
+
+describe("consent (approval of a pending action)", () => {
+  it("parses consent ids and records the approving request on open items only", () => {
+    const e = parseExtraction('{"add":[],"cancel":[],"consent":["o1","o9","bad"]}')!;
+    expect(e.consent).toEqual(["o1", "o9"]);
+    expect(parseExtraction('{"add":[],"cancel":[]}')!.consent).toBeUndefined();
+    expect(EXTRACT_SYSTEM).toContain('"consent"');
+    const l = newLedger("k", 0);
+    applyExtraction(
+      l,
+      1,
+      { add: [{ what: "Close card 4417" }, { what: "Refund W1" }], cancel: [] },
+      new Set(),
+      0,
+    );
+    l.obligations[1]!.status = "satisfied";
+    applyExtraction(l, 2, { add: [], cancel: [], consent: ["o1", "o2", "o7"] }, new Set(), 0);
+    expect(l.obligations[0]!.consentTurn).toBe(2);
+    expect(l.obligations[1]!.consentTurn).toBeUndefined(); // settled items are not marked
+    expect(ledgerSummary(l)).toMatchObject({ open: 1, consented: 1, reasks: 0 });
+    expect(reminderBlock(l)).toContain("- o1: Close card 4417\n"); // observe: nothing shown
+    expect(reminderBlock(l, { showConsent: true })).toContain(
+      "o1: Close card 4417 (approved in request 2)",
+    );
+  });
+
+  it("names the approval in a nudge only when an owed item was approved", () => {
+    const l = newLedger("k", 0);
+    applyExtraction(
+      l,
+      1,
+      { add: [{ what: "Close card 4417" }, { what: "Refund W1" }], cancel: [] },
+      new Set(),
+      0,
+    );
+    const plain = nudgeNote("Shall I go ahead?", openObligations(l));
+    expect(plain).not.toContain(CONSENT_NOTE);
+    applyExtraction(l, 2, { add: [], cancel: [], consent: ["o1"] }, new Set(), 0);
+    expect(nudgeNote("Shall I go ahead?", openObligations(l))).not.toContain(CONSENT_NOTE);
+    const withConsent = nudgeNote("Shall I go ahead?", openObligations(l), { showConsent: true });
+    expect(withConsent).toContain(CONSENT_NOTE);
+    expect(withConsent).toContain(
+      "if a detail the rules require is still missing, ask only for that",
+    );
+  });
+
+  it("reads MARINA_OBLIGATIONS_CONSENT live: observe by default, on when set", () => {
+    expect(obligationsConsentMode({})).toBe("observe");
+    expect(obligationsConsentMode({ MARINA_OBLIGATIONS_CONSENT: "junk" })).toBe("observe");
+    expect(obligationsConsentMode({ MARINA_OBLIGATIONS_CONSENT: " ON " })).toBe("on");
+  });
+
+  it("the agent loop marks approved items in its section and follow-up", async () => {
+    let reply =
+      '{"add":[{"request":1,"what":"Close card 4417","tools":["close_card"]}],"cancel":[]}';
+    const ob = new AgentObligations({
+      complete: async () => reply,
+      mode: () => "on",
+      consentShown: () => true,
+      now: () => 0,
+    });
+    const tools = [{ name: "close_card", write: true }];
+    ob.noteRequest("Please close card 4417.");
+    await ob.refresh(tools);
+    reply = '{"add":[],"cancel":[],"consent":["o1"]}';
+    ob.noteRequest("Yes, go ahead.");
+    await ob.refresh(tools);
+    expect(ob.section()).toContain("o1: Close card 4417 (approved in request 2)");
+    expect(ob.nudge()).toContain(CONSENT_NOTE);
   });
 });
 
@@ -763,5 +841,83 @@ describe("POST /v1/chat/completions with the obligations ledger", () => {
     expect(resp.status).toBe(200);
     expect(resp.headers.get("x-marina-obligations")).toContain("extract=failed");
     expect(lastUserText(seen[1]!.body).text).toBe("Please close my card 4417.");
+  });
+
+  const approved = [
+    ...opening,
+    { role: "assistant", content: "Shall I close card 4417?" },
+    { role: "user", content: "Yes, go ahead." },
+  ];
+
+  it("counts a re-ask after approval (observe, the default) without nudging", async () => {
+    using _state = scopeProcessState({ env: { MARINA_OBLIGATIONS_CONSENT: undefined } });
+    // The opening: the agent proposes and asks once (a legitimate wait, no nudge).
+    verdicts = '{"o1":"waiting"}';
+    replies = [{ role: "assistant", content: "Shall I close card 4417?" }];
+    await post({ model: `marina/obligations:${MODEL}`, messages: opening, tools: TOOLS });
+    seen = [];
+    extraction = '{"add":[],"cancel":[],"consent":["o1"]}';
+    verdicts = '{"o1":"waiting"}';
+    replies = [{ role: "assistant", content: "Just to confirm once more: close card 4417?" }];
+    const resp = await post({
+      model: `marina/obligations:${MODEL}`,
+      messages: approved,
+      tools: TOOLS,
+    });
+    expect(seen.map((s) => s.kind)).toEqual(["extract", "main", "check"]);
+    const h = resp.headers.get("x-marina-obligations") ?? "";
+    expect(h).toContain("consented=1");
+    expect(h).toContain("reasks=1");
+    expect(h).toContain("check=reask");
+    // observe shows the model nothing new
+    expect(lastUserText(seen[1]!.body).text).not.toContain("approved in request");
+  });
+
+  it("nudges a re-ask after approval under MARINA_OBLIGATIONS_CONSENT=on, once", async () => {
+    using _state = scopeProcessState({ env: { MARINA_OBLIGATIONS_CONSENT: "on" } });
+    // The opening: the agent proposes and asks once (a legitimate wait, no nudge).
+    verdicts = '{"o1":"waiting"}';
+    replies = [{ role: "assistant", content: "Shall I close card 4417?" }];
+    await post({ model: `marina/obligations:${MODEL}`, messages: opening, tools: TOOLS });
+    seen = [];
+    extraction = '{"add":[],"cancel":[],"consent":["o1"]}';
+    verdicts = '{"o1":"waiting"}';
+    replies = [
+      { role: "assistant", content: "Just to confirm once more: close card 4417?" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: "t5",
+            type: "function",
+            function: { name: "close_card", arguments: '{"card_id":"4417"}' },
+          },
+        ],
+      },
+    ];
+    const resp = await post({
+      model: `marina/obligations:${MODEL}`,
+      messages: approved,
+      tools: TOOLS,
+    });
+    expect(seen.map((s) => s.kind)).toEqual(["extract", "main", "check", "main"]);
+    const nudge = lastUserText(seen[3]!.body).text;
+    expect(nudge).toContain("o1: Close card 4417 (target: 4417; approved in request 2)");
+    expect(nudge).toContain(CONSENT_NOTE);
+    expect(resp.headers.get("x-marina-obligations")).toContain("check=nudged-acted");
+  });
+
+  it("leaves an unapproved waiting reply alone even under consent on", async () => {
+    using _state = scopeProcessState({ env: { MARINA_OBLIGATIONS_CONSENT: "on" } });
+    verdicts = '{"o1":"waiting"}';
+    replies = [{ role: "assistant", content: "Do you confirm closing card 4417?" }];
+    const resp = await post({
+      model: `marina/obligations:${MODEL}`,
+      messages: opening,
+      tools: TOOLS,
+    });
+    expect(seen.map((s) => s.kind)).toEqual(["extract", "main", "check"]);
+    expect(resp.headers.get("x-marina-obligations")).toContain("check=handled");
   });
 });
