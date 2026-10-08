@@ -102,6 +102,11 @@ export interface ResearchDeps {
   pageText?: PageText;
   /** The starting forecast (e.g. the Civiqs nowcast); the calibrated baseline when omitted. */
   base?: (round: ArenaRound, lock: ArenaLock) => Promise<RoundForecast>;
+  /**
+   * Judged lessons for this round, already rendered (advice, not instructions),
+   * shown to the analysts before the dossier. Omitted ⇒ nothing is added.
+   */
+  lessonBrief?: string;
 }
 
 export interface JudgedProposal extends Distribution {
@@ -149,6 +154,8 @@ export interface ResearchForecast extends RoundForecast {
   anchor?: "none";
   /** How the no-anchor answer was aggregated from the proposals. */
   noAnchor?: NoAnchorAudit;
+  /** Judged lessons recalled for the round (injected only under `on`). */
+  lessons?: Awaited<ReturnType<typeof import("../../forecast/lessons").recallForecastLessons>>;
 }
 
 /** A judged whole-profile proposal: the cells it answered validly, one judge weight. */
@@ -358,6 +365,7 @@ export async function researchForecastRound(
     "",
     startLine(round, baseline, history),
     "",
+    ...(deps.lessonBrief ? [deps.lessonBrief, ""] : []),
     checked
       ? `RESEARCH DOSSIER (facts since ${brief.since}). Each cited line is tagged by a mechanical check of its figures against the cited page: rely on [verified] lines; treat [unverified] figures as likely wrong and [unreachable] ones as unconfirmed.\n${checked.annotated}`
       : `RESEARCH DOSSIER (facts since ${brief.since}):\n${research.report}`,
@@ -574,6 +582,7 @@ export async function noAnchorForecastRound(
     "",
     "History: (none — this quantity has never been published; there is no start forecast)",
     "",
+    ...(deps.lessonBrief ? [deps.lessonBrief, ""] : []),
     checked
       ? `RESEARCH DOSSIER (facts since ${brief.since}). Each cited line is tagged by a mechanical check of its figures against the cited page: rely on [verified] lines; treat [unverified] figures as likely wrong and [unreachable] ones as unconfirmed.\n${checked.annotated}`
       : `RESEARCH DOSSIER (facts since ${brief.since}):\n${research.report}`,
@@ -715,6 +724,7 @@ async function researchProfileRound(
     "",
     cellBlock(round, histories, baseline, SERIES_EVIDENCE_POINTS),
     "",
+    ...(deps.lessonBrief ? [deps.lessonBrief, ""] : []),
     checked
       ? `RESEARCH DOSSIER (facts since ${brief.since}). Each cited line is tagged by a mechanical check of its figures against the cited page: rely on [verified] lines; treat [unverified] figures as likely wrong and [unreachable] ones as unconfirmed.\n${checked.annotated}`
       : `RESEARCH DOSSIER (facts since ${brief.since}):\n${research.report}`,
