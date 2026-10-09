@@ -19,8 +19,9 @@ import type { OutcomeInput, OutcomeKind } from "../persistence/db-outcomes";
 export function consumersFor(
   kind: OutcomeKind,
   basis: OutcomeInput["basis"] = "mechanical",
+  opts: { deliverJudged?: boolean } = {},
 ): string[] {
-  if (basis === "judged") return [];
+  if (basis === "judged" && !opts.deliverJudged) return [];
   return kind === "forecast" ? ["lessons", "history"] : ["lessons"];
 }
 
@@ -59,8 +60,10 @@ export async function settleDelivery(db: MarinaDB): Promise<void> {
 export function recordResolved(
   db: MarinaDB,
   input: OutcomeInput,
+  /** Deliver a judged outcome (its judge has earned agreement; see agreement.ts). */
+  opts: { deliverJudged?: boolean } = {},
 ): { id: number; created: boolean } {
-  const recorded = db.recordOutcomeRow(input, consumersFor(input.kind, input.basis));
+  const recorded = db.recordOutcomeRow(input, consumersFor(input.kind, input.basis, opts));
   if (recorded.created) deliverSoon(db);
   return recorded;
 }

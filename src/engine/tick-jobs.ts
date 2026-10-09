@@ -13,6 +13,7 @@ import { memoryObservabilityPollTicks, pollMemoryEvents } from "../net/memory-ob
 import { cleanupStaleConversationChannels } from "../net/model-api";
 import { autoresolveLinked } from "../outcomes/autoresolve";
 import { deliverOutcomes } from "../outcomes/deliver";
+import { judgeOpenResolutions } from "../outcomes/judge-resolution";
 import type { MarinaDB } from "../persistence/database";
 import { syncOperationalAlerts } from "./commands/ops";
 import {
@@ -350,7 +351,24 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
       await autoresolveLinked(host.db);
     },
   });
+
+  // Hourly: past-end answers no market settles get a judged resolution
+  // (MARINA_OUTCOME_JUDGE, default off): observe records it; on also settles
+  // when the judge has earned agreement. Bounded and spend-capped.
+  s.register({
+    name: "outcome-judge",
+    every: NOTE_IMPORTANCE_INTERVAL,
+    phase: OUTCOME_JUDGE_PHASE,
+    failureMessage: "Judged outcome resolution failed",
+    run: async () => {
+      if (!host.db) return;
+      await judgeOpenResolutions(host.db);
+    },
+  });
 }
+
+/** The hourly phase of judged resolution of unlinked answers (src/outcomes/judge-resolution.ts). */
+export const OUTCOME_JUDGE_PHASE = 3150;
 
 /** The hourly phase of automatic resolution of market-linked answers (src/outcomes/autoresolve.ts). */
 export const OUTCOME_AUTORESOLVE_PHASE = 3450;

@@ -20,7 +20,7 @@ import type { TypedForecastAnswer } from "../forecast/typed";
 import { scoreTypedAnswer } from "../forecast/typed-score";
 import type { MarinaDB } from "../persistence/database";
 import type { ForecastAnswerRow } from "../persistence/db-markets";
-import type { OutcomeBasis } from "../persistence/db-outcomes";
+import type { OutcomeBasis, OutcomeInput } from "../persistence/db-outcomes";
 import { recordResolved } from "./record";
 
 /** A resolution's yes/no (`{ outcome: "yes" | "no" }`), tolerantly. */
@@ -126,32 +126,16 @@ function score(f: ForecastAnswerRow, value: unknown): Scored | undefined {
   };
 }
 
-/**
- * Score and settle one filed answer against its resolution, and record the
- * outcome. `value` is the resolution as a Sample's value carries it
- * (`{ outcome: "yes" }`, `{ option: "Home" }`, `{ value: 110 }`, …).
- * Undefined when the answer is unknown, already settled, or cannot be scored
- * against this value (it stays open).
- */
-export function resolveForecast(
-  db: MarinaDB,
-  answerId: number,
-  value: unknown,
+function outcomeInput(
+  f: ForecastAnswerRow,
+  s: Scored & { learn: NonNullable<Scored["learn"]> },
+  subject: string,
   resolvedAt: number,
-  opts: { refs?: string[]; basis?: OutcomeBasis; judge?: string; participants?: unknown } = {},
-): ForecastResolution | undefined {
-  const f = db.getForecastAnswer(answerId);
-  if (!f || f.resolved_at !== null) return undefined;
-  const s = score(f, value);
-  if (!s) return undefined;
-  const refs = [`forecast:${f.id}`, ...(opts.refs ?? [])];
-  if (
-    !db.resolveForecastAnswer(f.id, JSON.stringify({ ...s.outcomeJson, refs }), s.loss, resolvedAt)
-  )
-    return undefined;
-  if (!s.learn) return { answerId: f.id, loss: s.loss };
-  const recorded = recordResolved(db, {
-    subject: `forecast:${f.id}`,
+  refs: string[],
+  opts: { basis?: OutcomeBasis; judge?: string; participants?: unknown },
+): OutcomeInput {
+  return {
+    subject,
     kind: "forecast",
     source:
       f.source && f.source !== "command" && f.source !== "api"
@@ -171,7 +155,53 @@ export function resolveForecast(
     ...(opts.participants !== undefined ? { participants: opts.participants } : {}),
     refs,
     resolvedAt,
-  });
+  };
+}
+
+/**
+ * Score and settle one filed answer against its resolution, and record the
+ * outcome. `value` is the resolution as a Sample's value carries it
+ * (`{ outcome: "yes" }`, `{ option: "Home" }`, `{ value: 110 }`, …).
+ * Undefined when the answer is unknown, already settled, or cannot be scored
+ * against this value (it stays open). A `judged` settlement is delivered only
+ * with `deliverJudged` (its judge has earned agreement); otherwise it is
+ * recorded and teaches nothing.
+ */
+export function resolveForecast(
+  db: MarinaDB,
+  answerId: number,
+  value: unknown,
+  resolvedAt: number,
+  opts: {
+    refs?: string[];
+    basis?: OutcomeBasis;
+    judge?: string;
+    participants?: unknown;
+    deliverJudged?: boolean;
+  } = {},
+): ForecastResolution | undefined {
+  const f = db.getForecastAnswer(answerId);
+  if (!f || f.resolved_at !== null) return undefined;
+  const s = score(f, value);
+  if (!s) return undefined;
+  const refs = [`forecast:${f.id}`, ...(opts.refs ?? [])];
+  if (
+    !db.resolveForecastAnswer(f.id, JSON.stringify({ ...s.outcomeJson, refs }), s.loss, resolvedAt)
+  )
+    return undefined;
+  if (!s.learn) return { answerId: f.id, loss: s.loss };
+  const recorded = recordResolved(
+    db,
+    outcomeInput(
+      f,
+      s as Scored & { learn: NonNullable<Scored["learn"]> },
+      `forecast:${f.id}`,
+      resolvedAt,
+      refs,
+      opts,
+    ),
+    { deliverJudged: opts.deliverJudged === true },
+  );
   return {
     answerId: f.id,
     outcomeId: recorded.id,
@@ -179,4 +209,39 @@ export function resolveForecast(
     succeeded: s.learn.succeeded,
     ...(s.learn.quality !== undefined ? { quality: s.learn.quality } : {}),
   };
+}
+
+/**
+ * A judge's proposed resolution of an open answer, recorded as a JUDGED
+ * outcome (`judged:forecast:<id>`) without settling the answer: an opinion
+ * that teaches nothing, measured against the mechanical resolution if one
+ * comes (`judgeAgreement`). Once per answer. Undefined when the proposal
+ * cannot be scored against the answer.
+ */
+export function proposeForecastResolution(
+  db: MarinaDB,
+  answerId: number,
+  value: unknown,
+  at: number,
+  judge: string,
+): { outcomeId: number; succeeded: boolean } | undefined {
+  const f = db.getForecastAnswer(answerId);
+  if (!f) return undefined;
+  const s = score(f, value);
+  if (!s?.learn) return undefined;
+  const recorded = recordResolved(
+    db,
+    outcomeInput(
+      f,
+      s as Scored & { learn: NonNullable<Scored["learn"]> },
+      `judged:forecast:${f.id}`,
+      at,
+      [`forecast:${f.id}`],
+      {
+        basis: "judged",
+        judge,
+      },
+    ),
+  );
+  return { outcomeId: recorded.id, succeeded: s.learn.succeeded };
 }

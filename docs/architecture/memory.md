@@ -229,6 +229,17 @@ learning instead of losing it.
     with the mechanical outcome for the same subject: the creator's later verdict on the same
     attempt, or the market's resolution of the same answer. It counts false passes separately.
   - A judge is `earned` only at ≥ 25 comparisons with a Wilson 95 % lower bound ≥ 0.85.
+- **Judged resolution** (`src/outcomes/judge-resolution.ts`, hourly `outcome-judge` job, phase 3150,
+  `MARINA_OUTCOME_JUDGE=off|observe|on`, default off).
+  - **Which answers:** an open choice answer that no market settles, not a measurement run, past its
+    end time plus 2 days.
+  - **How it is judged:** it is researched after the fact. The decision backend then answers a
+    choice question over the answer's own options, plus `not_resolved`.
+  - **`observe`** records the proposal as `judged:forecast:<id>`, which settles and teaches nothing.
+  - **`on`** also settles the answer through `resolveForecast(…, { basis: "judged", deliverJudged })`,
+    but only when the judge is `earned` (`judgeEarned`) and confidence is ≥ 0.9.
+  - `not_resolved` waits a day before the answer is judged again. An outage records nothing.
+  - At most 5 answers per pass, and the daily spend cap stops it.
 - **Rules, held in one place.**
   - A `measure` outcome is recorded, but every consumer marks it `skipped: measurement`.
   - `MARINA_LESSONS=off` skips lessons.

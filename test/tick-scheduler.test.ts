@@ -228,6 +228,7 @@ describe("Engine tick schedule", () => {
       { name: "lessons-from-work", every: 3600, phase: 3300 },
       { name: "outcome-delivery", every: 300, phase: 150 },
       { name: "outcome-autoresolve", every: 3600, phase: 3450 },
+      { name: "outcome-judge", every: 3600, phase: 3150 },
     ]);
   });
 
