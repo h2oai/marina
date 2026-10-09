@@ -143,18 +143,53 @@ export function getOutcomeBySubject(db: Database, subject: string): OutcomeRow |
   );
 }
 
-export function listOutcomes(
-  db: Database,
-  opts: { kind?: OutcomeKind; limit?: number } = {},
-): OutcomeRow[] {
-  const limit = Math.max(1, Math.min(opts.limit ?? 50, 1000));
-  return (
-    opts.kind
-      ? db
-          .query("SELECT * FROM outcomes WHERE kind = ? ORDER BY id DESC LIMIT ?")
-          .all(opts.kind, limit)
-      : db.query("SELECT * FROM outcomes ORDER BY id DESC LIMIT ?").all(limit)
-  ) as OutcomeRow[];
+export interface OutcomeFilter {
+  kind?: OutcomeKind;
+  /** A source, or a prefix ending in `:` (`code:` matches `code:verify`). */
+  source?: string;
+  owner?: string;
+  basis?: OutcomeBasis;
+  /** Resolved at or after this time (ms). */
+  since?: number;
+  limit?: number;
+}
+
+/** Newest first, at most `limit` (default 50, at most 10 000). */
+export function listOutcomes(db: Database, opts: OutcomeFilter = {}): OutcomeRow[] {
+  const where: string[] = [];
+  const args: Array<string | number> = [];
+  if (opts.kind) {
+    where.push("kind = ?");
+    args.push(opts.kind);
+  }
+  if (opts.source) {
+    if (opts.source.endsWith(":")) {
+      where.push("substr(source, 1, ?) = ?");
+      args.push(opts.source.length, opts.source);
+    } else {
+      where.push("source = ?");
+      args.push(opts.source);
+    }
+  }
+  if (opts.owner) {
+    where.push("owner = ?");
+    args.push(opts.owner);
+  }
+  if (opts.basis) {
+    where.push("basis = ?");
+    args.push(opts.basis);
+  }
+  if (opts.since !== undefined) {
+    where.push("resolved_at >= ?");
+    args.push(opts.since);
+  }
+  const limit = Math.max(1, Math.min(opts.limit ?? 50, 10_000));
+  return db
+    .query(
+      `SELECT * FROM outcomes${where.length ? ` WHERE ${where.join(" AND ")}` : ""}
+       ORDER BY id DESC LIMIT ?`,
+    )
+    .all(...args, limit) as OutcomeRow[];
 }
 
 /** Outcomes still pending for `consumer`, oldest first. */

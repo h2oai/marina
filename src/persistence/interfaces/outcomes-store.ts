@@ -12,7 +12,7 @@ export interface OutcomesStore {
   ): { id: number; created: boolean };
   getOutcome(id: number): outcomesDb.OutcomeRow | undefined;
   getOutcomeBySubject(subject: string): outcomesDb.OutcomeRow | undefined;
-  listOutcomes(opts?: { kind?: outcomesDb.OutcomeKind; limit?: number }): outcomesDb.OutcomeRow[];
+  listOutcomes(opts?: outcomesDb.OutcomeFilter): outcomesDb.OutcomeRow[];
   pendingOutcomes(consumer: string, limit: number): outcomesDb.OutcomeRow[];
   setOutcomeDelivery(
     outcomeId: number,

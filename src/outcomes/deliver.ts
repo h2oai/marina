@@ -22,8 +22,14 @@ import { noteResolvedForecast, noteResolvedRecord } from "../forecast/adjust";
 import { type ForecastHistory, historyFromEnv, resolvedRecord } from "../forecast/history";
 import type { TypedForecastAnswer } from "../forecast/typed";
 import { lessonsMode } from "../learning/modes";
-import { type Outcome, type OutcomeDomain, recordOutcome } from "../learning/outcomes";
-import { armedLearner } from "../learning/service";
+import {
+  type LessonSink,
+  type Outcome,
+  type OutcomeDomain,
+  recordOutcome,
+} from "../learning/outcomes";
+import { armedLearner, canHoldOwnLessons, ownerLessonSink } from "../learning/service";
+import { workScopeFor } from "../learning/work";
 import type { MarinaDB } from "../persistence/database";
 import type { ForecastAnswerRow } from "../persistence/db-markets";
 import type { OutcomeRow } from "../persistence/db-outcomes";
@@ -150,25 +156,98 @@ async function deliverHistory(
 }
 
 /** The lesson loop's view of an outcome, with private context read back from its subject. */
+/**
+ * What the work was and its private context, read back from the subject:
+ * a forecast's question, a task's title and description, a verification's
+ * failing output. Never stored on the outcome.
+ */
+function subjectContext(
+  db: MarinaDB,
+  o: OutcomeRow,
+): { attempted: string; privateContext?: string; signals?: string[] } {
+  if (o.kind === "forecast") {
+    const row = answerFor(db, o);
+    return row
+      ? {
+          attempted: attemptedFor(row.kind),
+          privateContext: `${row.question}\n${o.truth_json ?? ""}\n${row.prediction ?? ""}`,
+        }
+      : { attempted: `forecast (${o.source})` };
+  }
+  if (o.subject.startsWith("task:")) {
+    const task = db.getTask(Number(o.subject.split(":")[1]));
+    return {
+      attempted: "complete a posted task to its creator's satisfaction",
+      ...(task
+        ? {
+            privateContext: [task.title, task.description ?? "", task.deliverables ?? ""]
+              .filter(Boolean)
+              .join("\n")
+              .slice(0, 2_000),
+          }
+        : {}),
+    };
+  }
+  if (o.subject.startsWith("artifact:")) {
+    const artifact = db.getCodingArtifact(o.subject.slice("artifact:".length));
+    const meta = (parse(artifact?.metadata_json ?? null) ?? {}) as {
+      commands?: string[][];
+      artifactIds?: string[];
+      stoppedAt?: string[];
+    };
+    const commands = meta.commands ?? [];
+    // The failing step's output (the last step that ran) is what a failure teaches from.
+    const lastId = o.succeeded ? undefined : meta.artifactIds?.at(-1);
+    const output = lastId ? db.getCodingArtifact(lastId)?.content_text : undefined;
+    return {
+      attempted: `verify a change with ${commands.map((c) => c[0]).join(", ") || "checks"}`,
+      signals: commands.map((c) => c.join(" ")),
+      ...(output ? { privateContext: output.slice(-1_200) } : {}),
+    };
+  }
+  return { attempted: `${o.kind} ${o.source}` };
+}
+
 function lessonOutcome(db: MarinaDB, o: OutcomeRow): Outcome {
-  const row = o.kind === "forecast" ? answerFor(db, o) : undefined;
   const refs = (parse(o.refs_json) as string[] | undefined) ?? [];
+  const context = subjectContext(db, o);
   return {
     domain: o.domain as OutcomeDomain,
     source: o.source,
     succeeded: o.succeeded === 1,
     ...(o.quality !== null ? { score: o.quality } : {}),
     resolvedAt: new Date(o.resolved_at).toISOString(),
-    attempted: row ? attemptedFor(row.kind) : `${o.kind} ${o.source}`,
+    attempted: context.attempted,
+    ...(context.signals?.length ? { signals: context.signals } : {}),
     ...(o.detail ? { detail: o.detail } : {}),
     ...(refs.length ? { refs } : {}),
     ...(o.basis === "judged"
       ? { provenance: { basis: "judged", judge: o.judge ?? "unknown" } }
       : {}),
-    ...(row
-      ? { privateContext: `${row.question}\n${o.truth_json ?? ""}\n${row.prediction ?? ""}` }
-      : {}),
+    ...(context.privateContext ? { privateContext: context.privateContext } : {}),
   };
+}
+
+/**
+ * Where a lesson from this outcome may be written. Forecasts teach the shared
+ * pool (as they always have). Live work follows whose work it was
+ * (`workScopeFor`): a world agent's work teaches the shared pool, a person's
+ * (or the agents it spawned) only that person's own lesson spaces, and work
+ * whose scope cannot be resolved teaches nothing.
+ */
+function lessonSink(
+  db: MarinaDB,
+  o: OutcomeRow,
+  shared: LessonSink,
+): { sink: LessonSink } | { skip: string } {
+  if (o.kind === "forecast") return { sink: shared };
+  if (!o.owner) return { skip: "no owner" };
+  const scope = workScopeFor(db, o.owner);
+  if (!scope) return { skip: "owner scope unresolved" };
+  if (scope.kind === "shared") return { sink: shared };
+  return canHoldOwnLessons(db, scope.owner)
+    ? { sink: ownerLessonSink(db, scope.owner) }
+    : { skip: "owner cannot hold lessons" };
 }
 
 /**
@@ -217,8 +296,6 @@ export async function deliverOutcomes(
   const lessonsOff = lessonsMode(env) === "off";
   const learner = lessonsOff ? undefined : armedLearner(db, env);
   const pending = db.pendingOutcomes("lessons", max);
-  const room = learner ? learner.take(pending.filter((o) => o.eval_mode !== "measure").length) : 0;
-  let used = 0;
   for (const o of pending) {
     const t = tally("lessons");
     if (o.eval_mode === "measure" || lessonsOff) {
@@ -226,13 +303,26 @@ export async function deliverOutcomes(
       t.skipped++;
       continue;
     }
-    if (!learner || used >= room) {
+    if (!learner) {
       t.waiting++;
       continue;
     }
-    used++;
+    const target = lessonSink(db, o, learner.deps.sink);
+    if ("skip" in target) {
+      db.setOutcomeDelivery(o.id, "lessons", "skipped", target.skip);
+      t.skipped++;
+      continue;
+    }
+    // One unit of the shared hourly budget per judged lesson; over it, wait.
+    if (learner.take(1) === 0) {
+      t.waiting++;
+      continue;
+    }
     try {
-      const r = await recordOutcome({ ...learner.deps, deferUnjudged: true }, lessonOutcome(db, o));
+      const r = await recordOutcome(
+        { ...learner.deps, sink: target.sink, deferUnjudged: true },
+        lessonOutcome(db, o),
+      );
       if (r.deferred) t[retryOrFail(db, o, "lessons", `no verdict: ${r.reason}`)]++;
       else {
         db.setOutcomeDelivery(o.id, "lessons", "done", r.trust);

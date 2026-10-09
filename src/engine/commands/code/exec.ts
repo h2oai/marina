@@ -39,9 +39,10 @@ import {
   type VerificationVerdict,
 } from "../../../coding/verification-plan";
 import { summarizeFlywheelEvents, WorkspaceGateway } from "../../../coding/workspace-gateway";
-import { lessonsBlock, noteOutcome, recallForWork } from "../../../learning/service";
+import { lessonsBlock, recallForWork } from "../../../learning/service";
 import { noteWorkFor } from "../../../learning/work";
 import { dim, error as fmtError, header, separator, success } from "../../../net/ansi";
+import { recordVerification } from "../../../outcomes/live";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Connection, Entity, EntityId, RoomContext } from "../../../types";
 import { getRank } from "../../permissions";
@@ -696,19 +697,18 @@ export async function runVerificationCommands(
     createdBy: entity.name,
   });
   // Only a check that ran teaches: not_run and error are neither a pass nor a failure.
+  // One outcome on the shared path: lessons scoped to whose work it was, and
+  // evidence of what this agent's model and role get done.
   if (passed || failed)
-    noteOutcome(deps.db, {
-      domain: "code",
-      source: "code:verify",
-      succeeded: passed,
-      resolvedAt: new Date().toISOString(),
-      attempted: `verify a change with ${results.map((item) => item.result.command[0]).join(", ")}`,
-      signals: results.map((item) => item.result.command.join(" ")),
+    recordVerification(deps.db, {
+      artifactId: artifact.id,
+      actor: entity.name,
+      passed,
+      commands: results.map((item) => item.result.command),
       detail: failed
         ? `failed at ${failedRun?.command.join(" ") ?? "a check"} (exit ${failedRun?.stored?.result.exitCode})`
         : `passed ${results.length} check${results.length === 1 ? "" : "s"}`,
-      refs: [`artifact:${artifact.id}`],
-      ...(failed ? { privateContext: (failedRun?.stored?.result.output ?? "").slice(-1_200) } : {}),
+      sessionId: session.id,
     });
   deps.db.createCodingEvent({
     sessionId: session.id,
