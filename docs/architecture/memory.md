@@ -240,6 +240,21 @@ learning instead of losing it.
     but only when the judge is `earned` (`judgeEarned`) and confidence is ≥ 0.9.
   - `not_resolved` waits a day before the answer is judged again. An outage records nothing.
   - At most 5 answers per pass, and the daily spend cap stops it.
+- **Reported requests** (`POST /v1/outcomes`, `src/net/outcomes-api.ts`). An agent reports how a
+  request turned out, as `{ requestId, succeeded, quality?, detail? }`. `requestId` is the
+  `x-request-id` Marina returned.
+  - Only the caller that made the request may report it: the key must be bound to an entity, and
+    the request's lifecycle must name that caller. Otherwise the reply is 404, the same as for an
+    unknown id.
+  - Each request is reported once (a second report gets 409).
+  - The outcome `request:<id>` records the model that served the request. It feeds evidence only:
+    it carries no text to learn a lesson from.
+  - A report sent with `x-marina-eval: …; mode=measure` is recorded as measurement and never counts.
+- **Live evidence in routing** (`MARINA_ROUTE_EVIDENCE_LIVE=on`, default off). Spawn-time route
+  evidence also weighs live cells as families `live:<source>`: role-level cells first, then model
+  level (`liveEvidenceEntries`, `pickWithRoleFallback`). The ledger evidence's MIN_N, objective and
+  observe/on mode all apply. The `agent_decision` signals carry `evidence_live` (the outcomes
+  weighed).
 - **Rules, held in one place.**
   - A `measure` outcome is recorded, but every consumer marks it `skipped: measurement`.
   - `MARINA_LESSONS=off` skips lessons.
