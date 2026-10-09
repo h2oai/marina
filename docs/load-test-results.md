@@ -1,48 +1,16 @@
-# Load Test Results
+# Load testing
 
-> ⚠ **Captured 2026-02 (Bun 1.3.9).** These numbers predate several substrate refactors — civic substrate (single blended standing replacing per-feature scoreboards), crews, the chronicle layer, and the resolver/watcher loop. They remain useful as an order-of-magnitude reference for the WebSocket + command-queue path, but specific timings should be re-measured before being quoted.
+Measure the revision, runtime, hardware and workload you intend to deploy. The repository includes
+WebSocket load and churn harnesses:
 
-Tested on macOS Darwin 24.6.0, Bun 1.3.9, single-threaded server.
+```bash
+bun run soak
+bun run soak:churn
+```
 
-## Test 1: 100 Connections, 3 cmd/s each (30s)
+Record the source revision, configuration, command rate, connection count, latency, errors and
+resource usage with each run. See the [testing guide](guides/testing.md) for the broader validation
+workflow and `test/load/` for the harness controls.
 
-| Metric            | Value       |
-|-------------------|-------------|
-| Connections       | 100/100     |
-| Total commands    | 8,900       |
-| Errors            | 0           |
-| Throughput        | 296.6 cmd/s |
-| Connect time p50  | 15.1ms      |
-| Connect time p95  | 61.1ms      |
-| Connect time p99  | 61.5ms      |
-| Round-trip p50    | 2.0ms       |
-| Round-trip p95    | 8.6ms       |
-| Round-trip p99    | 11.4ms      |
-| Server heap       | 9.7MB       |
-| Server RSS        | 92.6MB      |
-
-## Test 2: 200 Connections, 5 cmd/s each (30s)
-
-| Metric            | Value        |
-|-------------------|--------------|
-| Connections       | 200/200      |
-| Total commands    | 29,644       |
-| Errors            | 0            |
-| Throughput        | 988.0 cmd/s  |
-| Connect time p50  | 60.4ms       |
-| Connect time p95  | 75.3ms       |
-| Connect time p99  | 76.5ms       |
-| Round-trip p50    | 2.6ms        |
-| Round-trip p95    | 12.0ms       |
-| Round-trip p99    | 18.3ms       |
-| Server heap       | 11.7MB       |
-| Server RSS        | 114.8MB      |
-
-## Summary
-
-- Server handles 200+ concurrent WebSocket connections with zero errors
-- Throughput scales linearly: ~300 cmd/s at 100 connections, ~1000 cmd/s at 200
-- Round-trip latency stays well under 20ms even at p99 under heavy load
-- Memory usage is modest: ~12MB heap, ~115MB RSS at peak
-- Connection establishment is fast: p95 under 80ms even with 200 simultaneous connections
-- Exceeds the target of 100+ concurrent connections with <100ms p95 latency
+Historical qualification results are maintained in the private `marina-internal` repository at
+`docs/research/qualification/load-test-results-2026-02.md`.
