@@ -14,6 +14,7 @@ import {
 } from "../../../coding/task-run";
 import { codingWorkerState } from "../../../coding/worker-state";
 import { TaskManager } from "../../../coordination/task-manager";
+import { recordTaskVerdict } from "../../../outcomes/live";
 import type { CodingArtifactRow, MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
 import { getErrorMessage } from "../../errors";
@@ -351,6 +352,14 @@ export async function reviewCodingRun(
         kind: "task_run_accepted_unverified",
         payload: { ...meta, runId: run.id },
       });
+    });
+    // The owner's acceptance is a verdict like an approval (no event is emitted here).
+    recordTaskVerdict(deps.db, {
+      taskId: meta.taskId,
+      claimant: deps.getEntity(claim.entity_id)?.name ?? meta.workerName ?? claim.entity_id,
+      approved: true,
+      at: meta.unverifiedAcceptance?.acceptedAt ?? Date.now(),
+      detail: "accepted by the task's owner without verification",
     });
     if (run.status === "active") {
       publishCodingRun(deps, deps.db.getCodingArtifact(run.id)!);

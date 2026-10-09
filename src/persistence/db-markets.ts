@@ -272,6 +272,19 @@ export function listForecastAnswers(
     .all(entityName, limit) as ForecastAnswerRow[];
 }
 
+/** Sample ids that open answers wait on, oldest answer first (automatic resolution). */
+export function openLinkedSampleIds(db: Database, limit: number): string[] {
+  return (
+    db
+      .query(
+        `SELECT sample_id FROM forecast_answers
+         WHERE sample_id IS NOT NULL AND resolved_at IS NULL
+         GROUP BY sample_id ORDER BY MIN(created_at) LIMIT ?`,
+      )
+      .all(Math.max(0, limit)) as Array<{ sample_id: string }>
+  ).map((r) => r.sample_id);
+}
+
 export function openForecastsForSample(db: Database, sampleId: string): ForecastAnswerRow[] {
   return db
     .query("SELECT * FROM forecast_answers WHERE sample_id = ? AND resolved_at IS NULL")

@@ -11,8 +11,16 @@
 import type { MarinaDB } from "../persistence/database";
 import type { OutcomeInput, OutcomeKind } from "../persistence/db-outcomes";
 
-/** The consumers that learn from each kind of outcome. */
-export function consumersFor(kind: OutcomeKind): string[] {
+/**
+ * The consumers that learn from an outcome. A judged outcome has none: it is
+ * an opinion, recorded for agreement and evidence, until its judge has
+ * earned the right to settle results (see `src/outcomes/agreement.ts`).
+ */
+export function consumersFor(
+  kind: OutcomeKind,
+  basis: OutcomeInput["basis"] = "mechanical",
+): string[] {
+  if (basis === "judged") return [];
   return kind === "forecast" ? ["lessons", "history"] : ["lessons"];
 }
 
@@ -52,7 +60,7 @@ export function recordResolved(
   db: MarinaDB,
   input: OutcomeInput,
 ): { id: number; created: boolean } {
-  const recorded = db.recordOutcomeRow(input, consumersFor(input.kind));
+  const recorded = db.recordOutcomeRow(input, consumersFor(input.kind, input.basis));
   if (recorded.created) deliverSoon(db);
   return recorded;
 }

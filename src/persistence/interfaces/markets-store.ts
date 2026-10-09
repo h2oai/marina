@@ -42,6 +42,7 @@ export interface MarketsStore {
   linkForecastToSample(id: number, entityName: string, sampleId: string): boolean;
   listForecastAnswers(entityName: string, limit?: number): ForecastAnswerRow[];
   openForecastsForSample(sampleId: string): ForecastAnswerRow[];
+  openLinkedSampleIds(limit: number): string[];
   getForecastAnswer(id: number): ForecastAnswerRow | undefined;
   getForecastAnswerByExternalId(
     entityName: string,
@@ -72,6 +73,7 @@ export const MARKETS_STORE_METHODS = [
   "linkForecastToSample",
   "listForecastAnswers",
   "openForecastsForSample",
+  "openLinkedSampleIds",
   "getForecastAnswer",
   "getForecastAnswerByExternalId",
   "resolveForecastAnswer",
