@@ -272,6 +272,17 @@ export function listForecastAnswers(
     .all(entityName, limit) as ForecastAnswerRow[];
 }
 
+/** Open answers no market is linked to, never a measurement run, oldest first (judged resolution). */
+export function openUnlinkedForecasts(db: Database, limit: number): ForecastAnswerRow[] {
+  return db
+    .query(
+      `SELECT * FROM forecast_answers
+       WHERE sample_id IS NULL AND resolved_at IS NULL AND (eval_mode IS NULL OR eval_mode = 'live')
+       ORDER BY created_at, id LIMIT ?`,
+    )
+    .all(Math.max(0, limit)) as ForecastAnswerRow[];
+}
+
 /** Sample ids that open answers wait on, oldest answer first (automatic resolution). */
 export function openLinkedSampleIds(db: Database, limit: number): string[] {
   return (
