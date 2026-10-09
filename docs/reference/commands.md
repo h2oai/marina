@@ -6015,6 +6015,46 @@ Aliases: `status`, `briefing`.
 Effect: unknown.
 
 
+## outcome
+
+Every resolved result — forecasts, task verdicts, Code Mode checks — is recorded once and learned from.
+Usage: outcome [stats] | outcome evidence [source:<s>] [since:<duration>] [judged] | outcome list [kind:<k>] [limit:<n>]
+
+stats: whether lessons and history keep up (pending, done, skipped, failed). evidence: live success rates per kind of work, model and role, from real work (mechanical outcomes; `judged` shows judged ones instead). list: your own outcomes. Read-only.
+
+Category: Information. Minimum rank: 0.
+Aliases: `outcomes`.
+
+### `outcome`
+
+Effect: unknown.
+
+
+### `outcome stats`
+
+Effect: unknown.
+
+
+### `outcome evidence [source:<s>] [since:<duration>] [judged]`
+
+Effect: unknown.
+
+- `field-0` (`source`): text, optional group `option-0`.
+- `field-1` (`since`): text, optional group `option-1`.
+- `field-2` (`judged`): text, optional group `option-2`.
+- Group `option-0`: `source:s`.
+- Group `option-1`: `since:duration`.
+- Group `option-2`: `judged`.
+
+### `outcome list [kind:<k>] [limit:<n>]`
+
+Effect: unknown.
+
+- `field-0` (`kind`): text, optional group `option-0`.
+- `field-1` (`limit`): number, optional group `option-1`.
+- Group `option-0`: `kind:k`.
+- Group `option-1`: `limit:n`.
+
 ## plan
 
 plan <goal> — launch an observable plan project with tasks, shared memory, a fitting orchestration pattern, and an agent.
