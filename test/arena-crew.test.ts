@@ -8,8 +8,9 @@ import { ArenaData } from "../src/arena/data";
 import { evaluateResolved } from "../src/arena/evaluate";
 import { forecastRound } from "../src/arena/forecast";
 import type { Complete } from "../src/arena/model-forecaster";
-import { learnFromResolutions } from "../src/arena/service";
+import { learnFromResolutions, resolveArenaFilings } from "../src/arena/service";
 import type { ArenaLock, ArenaPoint, ArenaRound } from "../src/arena/types";
+import { settleDelivery } from "../src/outcomes/record";
 import { MarinaDB } from "../src/persistence/database";
 import { cleanupDb } from "./helpers";
 
@@ -317,6 +318,42 @@ describe("crew memory", () => {
     expect(await learnFromResolutions(db, { config, data })).toBe(1);
     expect(await learnFromResolutions(db, { config, data })).toBe(0);
     expect(recallLessons(db, "civiqs_net_approval")[0]).toContain("published 45");
+  });
+
+  it("every accepted filing is filed and resolved once on the outcome path", async () => {
+    const files: Record<string, unknown> = {
+      "questions/season0.json": { rounds: [round] },
+      [`locks/${round.round_id}.json`]: lock,
+      "resolutions/resolved.json": { [round.round_id]: { value: 45 } },
+    };
+    const data = new ArenaData("https://example.test", async (url) => {
+      const path = url.replace("https://example.test/", "");
+      return path in files ? Response.json(files[path]) : new Response("", { status: 404 });
+    });
+    const config = arenaConfigFromEnv({ MARINA_ARENA_ENTRANT: "marina-test" })!;
+    const id = db.insertArenaSubmission({
+      entrant: "marina-test",
+      roundId: round.round_id,
+      requestId: "r-2",
+      url: "https://x",
+      meta: "{}",
+      body: JSON.stringify({ round_id: round.round_id, topline: { mean: 41, sd: 1.5 } }),
+    });
+    expect(await resolveArenaFilings(db, { config, data })).toBe(0); // not accepted yet
+    db.updateArenaSubmission(id, { status: "accepted", httpStatus: 201 });
+    expect(await resolveArenaFilings(db, { config, data })).toBe(1);
+    expect(await resolveArenaFilings(db, { config, data })).toBe(0);
+    const filed = db.getForecastAnswerByExternalId(
+      "marina:arena/marina-test",
+      `arena:${round.round_id}`,
+    )!;
+    expect(filed).toMatchObject({ kind: "number", mean: 41, sd: 1.5, source: "arena" });
+    expect(db.getOutcomeBySubject(`forecast:${filed.id}`)).toMatchObject({
+      source: "arena:number",
+      metric: "crps",
+      succeeded: 0, // 45 is outside 41 ± 1.28·1.5
+    });
+    await settleDelivery(db);
   });
 
   it("accepts a crew spec with one model or one per role", () => {

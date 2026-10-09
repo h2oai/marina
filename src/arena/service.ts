@@ -7,7 +7,9 @@
  * a key rotation or an autopilot switch takes effect without a restart.
  */
 
+import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
+import type { MarinaDB } from "../persistence/database";
 import type { ArenaStore } from "../persistence/interfaces/arena-store";
 import type { NotesStore } from "../persistence/interfaces/notes-store";
 import { type ArenaConfig, arenaConfigFromEnv, loadArenaKey } from "./config";
@@ -720,6 +722,13 @@ export async function runArenaAutopilot(
       logger.warn("arena", "autopilot skipped", { error: deps.error });
       return [];
     }
+    // Every accepted filing resolves on the one outcome path, whatever the
+    // forecaster: scored, learned and added to the forecast history.
+    if ("getForecastAnswerByExternalId" in store) {
+      await resolveArenaFilings(store as unknown as MarinaDB, deps).catch((err) =>
+        logger.warn("arena", "resolving filings failed", { error: getErrorMessage(err) }),
+      );
+    }
     if (deps.config.forecaster.startsWith("crew:") && "getNotesByType" in store) {
       await learnFromResolutions(store as unknown as ArenaStore & NotesStore, deps);
     }
@@ -737,6 +746,55 @@ export async function runArenaAutopilot(
     running = false;
   }
   return outcomes;
+}
+
+/**
+ * File every accepted submission on the outcome path (`src/outcomes/`) and
+ * resolve it once the arena publishes its value: the round's mean and sd,
+ * scored by CRPS, learned and added to the forecast history. Idempotent: a
+ * filed answer is filed once and settled once. Returns how many resolved now.
+ */
+export async function resolveArenaFilings(
+  db: MarinaDB,
+  deps: Pick<SubmitDeps, "config" | "data">,
+): Promise<number> {
+  const { fileAnswer, resolveFiled } = await import("../outcomes/filing");
+  const resolved = await deps.data.resolutions();
+  const owner = `marina:arena/${deps.config.entrant}`;
+  let settled = 0;
+  for (const row of db.listArenaSubmissions({ entrant: deps.config.entrant, limit: 500 })) {
+    const value = resolved[row.round_id]?.value;
+    if (row.status !== "accepted" || typeof value !== "number") continue;
+    const externalId = `arena:${row.round_id}`;
+    const filed = db.getForecastAnswerByExternalId(owner, externalId);
+    if (filed?.resolved_at != null) continue;
+    if (!filed) {
+      const body = JSON.parse(row.body) as { topline?: { mean: number; sd: number } };
+      const round = await deps.data.round(row.round_id);
+      if (!body.topline || !(body.topline.sd > 0) || !round) continue;
+      fileAnswer(
+        db,
+        {
+          question: round.question,
+          kind: "number",
+          mean: body.topline.mean,
+          sd: body.topline.sd,
+          answer: {
+            roundId: row.round_id,
+            topline: body.topline,
+            forecaster: deps.config.forecaster,
+          },
+        },
+        { owner, source: "arena", externalId, evalMode: "live" },
+      );
+    }
+    // resolvedAt = now: conservative, the resolution is seen live.
+    const r = resolveFiled(db, owner, externalId, { value }, Date.now(), [
+      `arena:${deps.config.entrant}`,
+    ]);
+    if (r && typeof r === "object") settled++;
+  }
+  return settled;
 }
 
 /**

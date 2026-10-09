@@ -23,6 +23,7 @@ import {
 } from "../benchmarks/forecastbench/map";
 import {
   assemble,
+  forecastbenchId,
   OUTCOME_BENCHMARK,
   readJournal,
   resolveRound,
@@ -38,6 +39,8 @@ import {
 import type { AnswerSpec } from "../src/forecast/answer-types";
 import type { TypedForecastAnswer, TypedForecastRequest } from "../src/forecast/typed";
 import type { Outcome } from "../src/learning/outcomes";
+import { fileAnswer, resolveFiled } from "../src/outcomes/filing";
+import { settleDelivery } from "../src/outcomes/record";
 import { MarinaDB } from "../src/persistence/database";
 
 const due = "2026-10-11";
@@ -224,6 +227,68 @@ describe("forecastbench: a round", () => {
 });
 
 describe("forecastbench: outcomes teach", () => {
+  it("files every horizon and resolves filed forecasts on the outcome path, uncapped", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fb-"));
+    const db = new MarinaDB(":memory:");
+    const owner = "marina:forecastbench";
+    try {
+      const journal = join(dir, "set-1.jsonl");
+      await runRound({
+        set,
+        forecast: async (r) => answer(r),
+        journal,
+        file: (q, f, externalId) =>
+          fileAnswer(
+            db,
+            { question: q.question, kind: "probability", probability: f.forecast, answer: f },
+            { owner, source: "forecastbench", externalId, evalMode: "live" },
+          ),
+      });
+      const due = set.forecast_due_date;
+      expect(forecastbenchId(due, { source: "s", id: "q" }, null)).toBe(
+        `forecastbench:${due}/s/q@close`,
+      );
+      const filed = db.listForecastAnswers(owner, 100);
+      expect(filed.length).toBeGreaterThan(0);
+      expect(filed.every((f) => f.external_id?.startsWith(`forecastbench:${due}/`))).toBe(true);
+      const learned: Outcome[] = [];
+      const resolutions = [
+        {
+          id: "m1",
+          source: "polymarket",
+          resolution_date: "2026-12-01",
+          resolved_to: 1,
+          resolved: true,
+        },
+        {
+          id: "SYN",
+          source: "yfinance",
+          resolution_date: dates[0]!,
+          resolved_to: 0,
+          resolved: true,
+        },
+      ];
+      const r = await resolveRound({
+        set,
+        journal,
+        resolutions,
+        db,
+        resolveFiled: (id, value, at) => resolveFiled(db, owner, id, value, at),
+        learn: (o) => learned.push(o),
+        maxLessons: 1,
+      });
+      expect(r).toMatchObject({ resolved: 2, learned: 2 });
+      expect(learned).toHaveLength(0);
+      const outcomes = db.listOutcomes({ kind: "forecast" });
+      expect(outcomes).toHaveLength(2);
+      expect(outcomes.every((o) => o.source === "forecastbench:probability")).toBe(true);
+      await settleDelivery(db);
+    } finally {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("scores resolved questions and hands outcomes to the learning loop worst-first, once", async () => {
     const dir = mkdtempSync(join(tmpdir(), "fb-"));
     try {

@@ -10,6 +10,7 @@ import { jsonlHistory } from "../src/forecast/history";
 import { memoryLessonSink } from "../src/learning/outcomes";
 import { disableOutcomeLearning, enableOutcomeLearning } from "../src/learning/service";
 import { deliverOutcomes, MAX_DELIVERY_ATTEMPTS } from "../src/outcomes/deliver";
+import { fileAnswer, resolveFiled } from "../src/outcomes/filing";
 import { resolveForecast } from "../src/outcomes/forecast";
 import { settleDelivery } from "../src/outcomes/record";
 import { MarinaDB } from "../src/persistence/database";
@@ -225,5 +226,30 @@ describe("one outcome path", () => {
     expect(db.getForecastAnswerByExternalId("Ada", "metaculus:q42")?.id).toBe(id);
     expect(() => file(db, { externalId: "metaculus:q42" })).toThrow();
     expect(file(db, { entityName: "Bo", externalId: "metaculus:q42" })).toBeGreaterThan(id);
+  });
+});
+
+describe("board filing on the outcome path", () => {
+  it("files once per owner and id, and tells unfiled from settled", async () => {
+    const db = new MarinaDB(":memory:");
+    const filing = { owner: "marina:board", source: "board", externalId: "board:q1" };
+    const id = fileAnswer(
+      db,
+      { question: "q", kind: "probability", probability: 0.6, answer: {} },
+      filing,
+    );
+    expect(
+      fileAnswer(db, { question: "q", kind: "probability", probability: 0.1, answer: {} }, filing),
+    ).toBe(id);
+    expect(db.getForecastAnswer(id!)!.probability).toBe(0.6);
+    expect(resolveFiled(db, "marina:board", "board:q2", { outcome: "yes" }, 1)).toBe("unfiled");
+    expect(resolveFiled(db, "marina:board", "board:q1", { outcome: "yes" }, 1)).toMatchObject({
+      answerId: id,
+      succeeded: true,
+    });
+    expect(resolveFiled(db, "marina:board", "board:q1", { outcome: "no" }, 2)).toBe("settled");
+    expect(db.getOutcomeBySubject(`forecast:${id}`)!.source).toBe("board:probability");
+    await settleDelivery(db);
+    db.close();
   });
 });

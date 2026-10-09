@@ -52,7 +52,7 @@ import {
   recordSubmission,
 } from "../benchmarks/futurex/ledger";
 import { futurexOutcome, futurexResolvedAt } from "../benchmarks/futurex/lessons";
-import { endTimeIso, requestFor } from "../benchmarks/futurex/map";
+import { endTimeIso } from "../benchmarks/futurex/map";
 import {
   type BatchRun,
   BUILTIN_VARIANTS,
@@ -60,7 +60,7 @@ import {
   runBatch,
   type Variant,
 } from "../benchmarks/futurex/run";
-import { scoreBatch, scoreItem } from "../benchmarks/futurex/score";
+import { parseTruth, scoreBatch, scoreItem } from "../benchmarks/futurex/score";
 import {
   DEFAULT_IDENTITY,
   emailFields,
@@ -69,8 +69,7 @@ import {
   submissionFileName,
 } from "../benchmarks/futurex/submission";
 import { attachCliSpendLedger } from "../src/engine/cli-spend-ledger";
-import { noteResolvedForecast } from "../src/forecast/adjust";
-import { historyFromEnv, memoryHistory } from "../src/forecast/history";
+import { memoryHistory } from "../src/forecast/history";
 import type { LessonStore } from "../src/forecast/lessons";
 import {
   dueRun,
@@ -82,6 +81,8 @@ import { modelPart, typedForecastDeps } from "../src/forecast/service";
 import { forecastLessonsFor } from "../src/learning/forecast-bridge";
 import { migrateLegacyForecastLessons } from "../src/learning/legacy-forecast";
 import { enableOutcomeLearning, noteOutcome, settleOutcomes } from "../src/learning/service";
+import { fileTypedAnswer, resolveFiled } from "../src/outcomes/filing";
+import { settleDelivery } from "../src/outcomes/record";
 import { MarinaDB } from "../src/persistence/database";
 
 const { positionals, values } = parseArgs({
@@ -397,9 +398,6 @@ async function learnCmd(): Promise<number> {
   );
   const db = openDb();
   enableOutcomeLearning(db);
-  // Filed answers are live work: their outcomes also feed the forecast history
-  // (MARINA_FORECAST_HISTORY) that recalibration and prior shrink learn from.
-  const history = historyFromEnv();
   let queued = 0;
   try {
     await migrateLessons(db);
@@ -423,31 +421,35 @@ async function learnCmd(): Promise<number> {
           // week share one end time, and a replay's cutoff is that end time.
           const resolvedAt = futurexResolvedAt(row);
           if (!resolvedAt) continue;
-          noteOutcome(
-            db,
-            futurexOutcome({
-              row,
-              result: r,
-              item,
-              label,
-              resolvedAt,
-              refs: [`batch:${sha.slice(0, 10)}`],
-            }),
-          );
-          if (history && r.answer && !r.fallback) {
-            const req = requestFor(row);
-            const outcome = truthOutcome(row, req.answer);
-            if (outcome) {
-              await noteResolvedForecast(history, {
-                id: r.id,
-                req: { ...req, id: r.id },
-                answer: r.answer,
-                truth: outcome,
+          // A filed answer resolves on the one outcome path (scoring, lessons,
+          // history). A fallback is an infrastructure outcome, never learned;
+          // a result with no answer object (older runs) keeps the board lesson.
+          if (r.answer && !r.fallback) {
+            const filing = {
+              owner: `marina:futurex/${label}`,
+              source: "futurex",
+              externalId: `futurex:${r.id}`,
+              evalMode: "live" as const,
+            };
+            fileTypedAnswer(db, r.answer, filing);
+            const value = truthOutcome(row, r.answer.answer) ?? {
+              value: parseTruth(row.ground_truth),
+            };
+            resolveFiled(db, filing.owner, filing.externalId, value, Date.parse(resolvedAt), [
+              `batch:${sha.slice(0, 10)}`,
+            ]);
+          } else if (!r.fallback) {
+            noteOutcome(
+              db,
+              futurexOutcome({
+                row,
+                result: r,
+                item,
+                label,
                 resolvedAt,
-                formation: label,
-                score: item.score,
-              });
-            }
+                refs: [`batch:${sha.slice(0, 10)}`],
+              }),
+            );
           }
           learned.add(r.id);
           queued++;
@@ -456,6 +458,7 @@ async function learnCmd(): Promise<number> {
       }
     }
     await settleOutcomes(db);
+    await settleDelivery(db);
   } finally {
     db.close();
   }
