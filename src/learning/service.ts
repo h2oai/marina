@@ -59,6 +59,7 @@ import {
   type LessonWriter,
   type Outcome,
   type OutcomeDomain,
+  type OutcomeLearnerDeps,
   recordOutcomes,
   selectServed,
 } from "./outcomes";
@@ -437,6 +438,40 @@ async function drain(a: Armed, env: NodeJS.ProcessEnv): Promise<void> {
     if (result.failed)
       logger.warn("main", "some outcomes could not be learned", { failed: result.failed });
   }
+}
+
+/**
+ * The armed learner for `db`, for a durable producer that manages its own
+ * queue (`src/outcomes/deliver.ts`): the same sink, writer, judge and
+ * admission as `noteOutcome`, and `take(n)` to draw from the same hourly
+ * budget (returns how many may run now; the rest wait, never dropped).
+ * Undefined when learning is not armed.
+ */
+export function armedLearner(
+  db: object,
+  env: NodeJS.ProcessEnv = process.env,
+): { deps: OutcomeLearnerDeps; take(n: number): number } | undefined {
+  const a = armed.get(db);
+  if (!a) return undefined;
+  return {
+    deps: {
+      sink: a.sink,
+      ...(a.writer ? { writer: a.writer } : {}),
+      ...(a.judge ? { judge: a.judge } : {}),
+      ...(a.admit ? { admit: a.admit } : {}),
+      meta: lessonsMetaMode(env) !== "off",
+    },
+    take(n) {
+      const now = Date.now();
+      if (now - a.windowStart >= 3_600_000) {
+        a.windowStart = now;
+        a.processed = 0;
+      }
+      const k = Math.max(0, Math.min(n, maxPerHour(env) - a.processed));
+      a.processed += k;
+      return k;
+    },
+  };
 }
 
 /** Wait until queued outcomes are processed (tests, scripts before exit). */

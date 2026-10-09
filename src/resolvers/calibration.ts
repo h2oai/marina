@@ -15,16 +15,11 @@
 // the closure-relevant signal. Open markets and no-change polls skip this
 // path entirely (writeSample's status check upstream).
 
-import { crpsNormal } from "../arena/score";
 import { recordScoreOutcome } from "../coordination/score-outcome";
 import { loadScore } from "../coordination/score-store";
 import { positionSettlementFinder } from "../engine/commands/position";
 import { Logger } from "../engine/logger";
-import { noteResolvedForecast, noteResolvedRecord, truthFromResolution } from "../forecast/adjust";
-import { historyFromEnv, resolvedRecord } from "../forecast/history";
-import type { TypedForecastAnswer } from "../forecast/typed";
-import { scoreTypedAnswer } from "../forecast/typed-score";
-import { noteOutcome } from "../learning/service";
+import { numberOf, resolveForecast, yesNoOf } from "../outcomes/forecast";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent, EntityId, RoomId } from "../types";
 import type { Sample } from "./types";
@@ -94,10 +89,7 @@ export function parseSampleId(id: string): { venue: string; ticker: string } | u
 /** Extract the YES/NO outcome from a resolved Sample's value, tolerantly.
  *  Different resolvers shape value differently; this is the common path. */
 export function extractOutcome(sample: Sample): "yes" | "no" | undefined {
-  const v = sample.value as Record<string, unknown> | undefined;
-  const outcome = v?.outcome;
-  if (outcome === "yes" || outcome === "no") return outcome;
-  return undefined;
+  return yesNoOf(sample.value);
 }
 
 // ─── Built-in finders ───────────────────────────────────────────────────────
@@ -342,14 +334,7 @@ export const conductorScoreFinder: CalibrationFinder = {
 
 /** A numeric resolution: `value` itself, or its `value` / `actual` field. */
 export function extractNumericOutcome(sample: Sample): number | undefined {
-  const v = sample.value;
-  const n =
-    typeof v === "number"
-      ? v
-      : typeof v === "object" && v !== null
-        ? ((v as Record<string, unknown>).value ?? (v as Record<string, unknown>).actual)
-        : undefined;
-  return typeof n === "number" && Number.isFinite(n) ? n : undefined;
+  return numberOf(sample.value);
 }
 
 /**
@@ -369,173 +354,13 @@ export function extractNumericOutcome(sample: Sample): number | undefined {
 export const forecastQuestionFinder: CalibrationFinder = {
   name: "forecast-question",
   calibrate(db, sample) {
-    const open = db.openForecastsForSample(sample.id);
-    if (open.length === 0) return;
-    const outcome = extractOutcome(sample);
-    const actual = extractNumericOutcome(sample);
-    for (const f of open) {
-      if (f.kind === "probability") {
-        if (!outcome) continue;
-        const y = outcome === "yes" ? 1 : 0;
-        const brier = f.probability === null ? null : (f.probability - y) ** 2;
-        db.resolveForecastAnswer(
-          f.id,
-          JSON.stringify({
-            sampleId: sample.id,
-            outcome,
-            ...(brier === null
-              ? {}
-              : { brier, correct: (f.probability ?? 0) >= 0.5 === (outcome === "yes") }),
-          }),
-          brier,
-          sample.ts,
-        );
-        if (brier !== null)
-          noteOutcome(db, {
-            domain: "forecast",
-            source: "forecast:probability",
-            succeeded: (f.probability ?? 0) >= 0.5 === (outcome === "yes"),
-            score: 1 - brier,
-            resolvedAt: new Date(sample.ts).toISOString(),
-            attempted: "probability forecast of a yes/no question",
-            detail: `brier ${brier.toFixed(3)} (said ${Math.round((f.probability ?? 0) * 100)}%)`,
-            refs: [`forecast:${f.id}`, `sample:${sample.id}`],
-            privateContext: f.question,
-          });
-      } else if (f.kind === "number") {
-        if (actual === undefined) continue;
-        const crps = f.mean === null || f.sd === null ? null : crpsNormal(f.mean, f.sd, actual);
-        const within80 =
-          f.mean === null || f.sd === null ? undefined : Math.abs(actual - f.mean) <= 1.2816 * f.sd;
-        db.resolveForecastAnswer(
-          f.id,
-          JSON.stringify({
-            sampleId: sample.id,
-            actual,
-            ...(crps === null
-              ? {}
-              : { crps, absError: Math.abs(actual - (f.mean ?? 0)), within80 }),
-          }),
-          crps,
-          sample.ts,
-        );
-        if (f.mean !== null && f.sd !== null && f.sd > 0) {
-          void recordNumberHistory(f.id, f.answer_json, f.mean, f.sd, actual, sample.ts);
-        }
-        if (crps !== null && f.mean !== null)
-          noteOutcome(db, {
-            domain: "forecast",
-            source: "forecast:number",
-            succeeded: within80 === true,
-            resolvedAt: new Date(sample.ts).toISOString(),
-            attempted: "numeric forecast with an uncertainty band",
-            detail: `${within80 ? "inside" : "outside"} the 80% band; error ${actual === 0 ? "n/a" : `${(((f.mean - actual) / Math.abs(actual)) * 100).toFixed(1)}%`}`,
-            refs: [`forecast:${f.id}`, `sample:${sample.id}`],
-            privateContext: f.question,
-          });
-      } else {
-        let answer: TypedForecastAnswer;
-        try {
-          answer = JSON.parse(f.answer_json) as TypedForecastAnswer;
-        } catch {
-          continue;
-        }
-        if (!answer?.answer || answer.answer.type !== f.kind) continue;
-        const r = scoreTypedAnswer(answer, sample.value);
-        if (!r) continue;
-        db.resolveForecastAnswer(
-          f.id,
-          JSON.stringify({
-            sampleId: sample.id,
-            outcome: r.outcome,
-            metric: r.metric,
-            quality: r.quality,
-            correct: r.succeeded,
-          }),
-          r.loss,
-          sample.ts,
-        );
-        const truth = truthFromResolution(answer.answer, r.outcome);
-        if (truth) void recordResolvedHistory(f.id, answer, truth, sample.ts);
-        noteOutcome(db, {
-          domain: "forecast",
-          source: `forecast:${f.kind}`,
-          succeeded: r.succeeded,
-          score: r.quality,
-          resolvedAt: new Date(sample.ts).toISOString(),
-          attempted: `${f.kind} forecast`,
-          detail: `${r.metric} loss ${r.loss.toFixed(3)}`,
-          refs: [`forecast:${f.id}`, `sample:${sample.id}`],
-          privateContext: `${f.question}\n${JSON.stringify(r.outcome)}\n${f.prediction ?? ""}`,
-        });
-      }
+    // One scoring path for every filed answer (src/outcomes/forecast.ts): settle
+    // once, record the outcome, and let lessons and history learn from it.
+    for (const f of db.openForecastsForSample(sample.id)) {
+      resolveForecast(db, f.id, sample.value, sample.ts, { refs: [`sample:${sample.id}`] });
     }
   },
 };
-
-/**
- * A resolved typed answer into the forecast history (`MARINA_FORECAST_HISTORY`),
- * so recalibration and prior shrink learn from live outcomes. Saved answers are
- * live work (a measurement run is never saved), known at the Sample's time.
- */
-async function recordResolvedHistory(
-  id: number,
-  answer: TypedForecastAnswer,
-  truth: { options?: string[]; value?: number },
-  ts: number,
-): Promise<void> {
-  try {
-    const history = historyFromEnv();
-    if (!history) return;
-    await noteResolvedForecast(history, {
-      id: `forecast:${id}`,
-      req: { question: answer.question, answer: answer.answer },
-      answer,
-      truth,
-      resolvedAt: new Date(ts).toISOString(),
-    });
-  } catch (err) {
-    logger.warn("calibration", "Forecast history not written", { id, error: String(err) });
-  }
-}
-
-/**
- * A resolved numeric answer into the forecast history. A typed number
- * (`forecast … type:number`) keeps its pre-adjustment forecast and prior; a
- * plain numeric forecast has no adjustment stage, so its saved mean and sd
- * are the raw forecast. Needs an sd: number recalibration rescales it.
- */
-async function recordNumberHistory(
-  id: number,
-  answerJson: string,
-  mean: number,
-  sd: number,
-  actual: number,
-  ts: number,
-): Promise<void> {
-  let typed: TypedForecastAnswer | undefined;
-  try {
-    const parsed = JSON.parse(answerJson) as Partial<TypedForecastAnswer>;
-    if (parsed?.answer?.type === "number") typed = parsed as TypedForecastAnswer;
-  } catch {
-    // allow-empty-catch: an unreadable answer is recorded from its saved mean and sd
-  }
-  if (typed) return recordResolvedHistory(id, typed, { value: actual }, ts);
-  try {
-    await noteResolvedRecord(
-      historyFromEnv(),
-      resolvedRecord({
-        id: `forecast:${id}`,
-        spec: { type: "number" },
-        resolvedAt: new Date(ts).toISOString(),
-        numbers: { value: mean, sd },
-        truth: { value: actual },
-      }),
-    );
-  } catch (err) {
-    logger.warn("calibration", "Forecast history not written", { id, error: String(err) });
-  }
-}
 
 /** Register the built-in finders. Idempotent. */
 export function registerBuiltinCalibrationFinders(): void {

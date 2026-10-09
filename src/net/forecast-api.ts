@@ -37,6 +37,7 @@ import { errorJson, json, type PassthruAuthResult } from "./model-api/shared";
 interface SaveTarget {
   entityName: string;
   sampleId?: string;
+  filing: { source: "api"; evalMode?: "live" };
 }
 
 /**
@@ -70,6 +71,10 @@ export function saveTarget(
   return {
     target: {
       entityName,
+      filing: {
+        source: "api",
+        ...(evalOption(req).eval?.mode === "live" ? { evalMode: "live" as const } : {}),
+      },
       ...(typeof body.resolves === "string" ? { sampleId: body.resolves.trim() } : {}),
     },
   };
@@ -139,6 +144,7 @@ export async function handleForecast(
           save.target.entityName,
           answer,
           save.target.sampleId,
+          save.target.filing,
         )
       : undefined;
   return json({ ...answer, scale: made.scale, ...savedFields(save.target, answerId) });
@@ -301,6 +307,7 @@ async function typed(
           save.entityName,
           made.answer,
           save.sampleId,
+          save.filing,
         )
       : undefined;
   return json({ ...made.answer, scale: made.scale, ...savedFields(save, answerId) });

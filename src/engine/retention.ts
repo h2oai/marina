@@ -229,6 +229,11 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
   },
   { table: "benchmark_items", kind: "append-only", note: "per-item outcomes of the ledger" },
   {
+    table: "outcomes",
+    kind: "append-only",
+    note: "every resolved result, once per subject (src/outcomes/): what lessons and history learn from",
+  },
+  {
     table: "benchmark_promotions",
     kind: "append-only",
     note: "earned-promotion history of benchmark defaults (seeds, wins, refusals)",

@@ -130,6 +130,9 @@ export const EXPORT_TABLES = [
   "market_positions",
   "market_scores",
   "forecast_answers",
+  // The outcome path (migration 162): what resolved, and each consumer's delivery state.
+  "outcomes",
+  "outcome_deliveries",
   "mem_api_keys",
   // Civic substrate + agent identity (added 2026-06 — previously dropped on
   // export/import, permanently losing standing/ranks/competence/roles on restore).

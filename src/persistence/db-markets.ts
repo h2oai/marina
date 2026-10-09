@@ -169,6 +169,12 @@ export interface ForecastAnswerRow {
   created_at: number;
   resolved_at: number | null;
   outcome_json: string | null;
+  /** A board's own id for the question (`metaculus:q123`), unique per owner (migration 162). */
+  external_id?: string | null;
+  /** The surface that filed it (`command`, `api`, `metaculus`, …). */
+  source?: string | null;
+  /** `measure`: a measurement run (its outcome never teaches); `live` or unset otherwise. */
+  eval_mode?: "live" | "measure" | null;
   /**
    * A loss, lower is better: Brier (probability, choice), CRPS (number), per-option
    * Brier (multi), overlap / exact-match loss (ranking, text).
@@ -188,13 +194,17 @@ export function saveForecastAnswer(
     prediction?: string;
     answerJson: string;
     sampleId?: string;
+    externalId?: string;
+    source?: string;
+    evalMode?: "live" | "measure";
     now?: number;
   },
 ): number {
   const result = db.run(
     `INSERT INTO forecast_answers
-       (entity_name, question, kind, probability, mean, sd, prediction, answer_json, sample_id, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (entity_name, question, kind, probability, mean, sd, prediction, answer_json, sample_id,
+        created_at, external_id, source, eval_mode)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       input.entityName,
       input.question,
@@ -206,9 +216,32 @@ export function saveForecastAnswer(
       input.answerJson,
       input.sampleId ?? null,
       input.now ?? Date.now(),
+      input.externalId ?? null,
+      input.source ?? null,
+      input.evalMode ?? null,
     ],
   );
   return Number(result.lastInsertRowid);
+}
+
+export function getForecastAnswer(db: Database, id: number): ForecastAnswerRow | undefined {
+  return (
+    (db.query("SELECT * FROM forecast_answers WHERE id = ?").get(id) as ForecastAnswerRow | null) ??
+    undefined
+  );
+}
+
+/** A board-filed answer by its owner and the board's own id. */
+export function getForecastAnswerByExternalId(
+  db: Database,
+  entityName: string,
+  externalId: string,
+): ForecastAnswerRow | undefined {
+  return (
+    (db
+      .query("SELECT * FROM forecast_answers WHERE entity_name = ? AND external_id = ?")
+      .get(entityName, externalId) as ForecastAnswerRow | null) ?? undefined
+  );
 }
 
 /** Link the caller's own unresolved forecast to a Sample id. False when not theirs or settled. */

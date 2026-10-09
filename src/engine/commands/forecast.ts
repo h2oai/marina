@@ -214,15 +214,28 @@ export function typedSpec(
   return { spec, ...(ends ? { endTime: new Date(ends).toISOString() } : {}) };
 }
 
+/**
+ * Where an answer was filed: the surface (`command`, `api`, a board), the
+ * board's own id for the question, and the measurement context (`measure`
+ * answers resolve and are scored, but never teach).
+ */
+export interface AnswerFiling {
+  source: string;
+  externalId?: string;
+  evalMode?: "live" | "measure";
+}
+
 /** Persist a typed answer (best-effort, like `saveAnswer`). */
 export function saveTypedAnswer(
   db: NonNullable<ForecastCommandDeps["db"]>,
   entityName: string,
   a: TypedForecastAnswer,
   sampleId?: string,
+  filing: AnswerFiling = { source: "command" },
 ): number | undefined {
   try {
     return db.saveForecastAnswer({
+      ...filing,
       entityName,
       question: a.question,
       kind: a.answer.type,
@@ -285,9 +298,11 @@ export function saveAnswer(
   entityName: string,
   a: ForecastAnswer,
   sampleId?: string,
+  filing: AnswerFiling = { source: "command" },
 ): number | undefined {
   try {
     return db.saveForecastAnswer({
+      ...filing,
       entityName,
       question: a.question,
       kind: a.kind,
