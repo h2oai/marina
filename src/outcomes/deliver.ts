@@ -174,8 +174,10 @@ function subjectContext(
         }
       : { attempted: `forecast (${o.source})` };
   }
-  if (o.subject.startsWith("task:")) {
-    const task = db.getTask(Number(o.subject.split(":")[1]));
+  // A judged outcome's work is its subject without the `judged:` prefix.
+  const subject = o.subject.startsWith("judged:") ? o.subject.slice("judged:".length) : o.subject;
+  if (subject.startsWith("task:")) {
+    const task = db.getTask(Number(subject.split(":")[1]));
     return {
       attempted: "complete a posted task to its creator's satisfaction",
       ...(task

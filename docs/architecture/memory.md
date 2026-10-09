@@ -231,15 +231,27 @@ learning instead of losing it.
   - A judge is `earned` only at ≥ 25 comparisons with a Wilson 95 % lower bound ≥ 0.85.
 - **Judged resolution** (`src/outcomes/judge-resolution.ts`, hourly `outcome-judge` job, phase 3150,
   `MARINA_OUTCOME_JUDGE=off|observe|on`, default off).
-  - **Which answers:** an open choice answer that no market settles, not a measurement run, past its
-    end time plus 2 days.
-  - **How it is judged:** it is researched after the fact. The decision backend then answers a
-    choice question over the answer's own options, plus `not_resolved`.
+  - **Which answers:** an open choice, multi-select or number answer that no market settles, not a
+    measurement run, past its end time plus 2 days. It is researched after the fact.
+  - **Choice:** a choice question over the answer's options, plus `not_resolved`.
+  - **Multi-select:** a yes/no per option behind a "has it resolved" gate (at most 30 options).
+    Confidence is the least sure of these answers.
+  - **Number:** a model (`MARINA_OUTCOME_JUDGE_MODEL`) proposes the value with a quote. The quote
+    must appear verbatim in the evidence and contain the number, a mechanical check; the backend
+    must then confirm it.
   - **`observe`** records the proposal as `judged:forecast:<id>`, which settles and teaches nothing.
   - **`on`** also settles the answer through `resolveForecast(…, { basis: "judged", deliverJudged })`,
-    but only when the judge is `earned` (`judgeEarned`) and confidence is ≥ 0.9.
-  - `not_resolved` waits a day before the answer is judged again. An outage records nothing.
-  - At most 5 answers per pass, and the daily spend cap stops it.
+    but only when the judge is `earned` and confidence is ≥ 0.9.
+  - `not_resolved` waits a day before the answer is judged again. An outage records nothing. At most
+    5 answers per pass, and the spend cap stops it.
+- **Judged quality** (`src/outcomes/judge-quality.ts`, same job and switch). A task submission its
+  creator has not decided within 3 days is judged with one yes/no: does it complete the task?
+  - It becomes a judged outcome `judged:task:<id>:<claimant>:<t>`. Each submission is judged once;
+    an earlier verifier opinion counts.
+  - In `on`, an earned and confident judgement is also delivered: a lesson scoped to whose work it
+    was, labelled judged.
+  - A creator's verdict always records its own mechanical outcome whenever it comes, and is what
+    the opinion is measured against.
 - **Reported requests** (`POST /v1/outcomes`, `src/net/outcomes-api.ts`). An agent reports how a
   request turned out, as `{ requestId, succeeded, quality?, detail? }`. `requestId` is the
   `x-request-id` Marina returned.

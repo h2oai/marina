@@ -219,6 +219,24 @@ export function listTasksClaimedBy(db: Database, entityId: string): TaskRow[] {
     .all(entityId) as TaskRow[];
 }
 
+/**
+ * Submissions still waiting for their creator's verdict, submitted at or
+ * before `submittedBefore`, oldest first (judged quality, src/outcomes/).
+ */
+export function waitingSubmissions(
+  db: Database,
+  submittedBefore: number,
+  limit: number,
+): TaskClaimRow[] {
+  return db
+    .query(
+      `SELECT * FROM task_claims
+         WHERE status = 'submitted' AND submitted_at IS NOT NULL AND submitted_at <= ?
+         ORDER BY submitted_at, task_id LIMIT ?`,
+    )
+    .all(submittedBefore, Math.max(0, limit)) as TaskClaimRow[];
+}
+
 export function getTaskClaims(db: Database, taskId: number): TaskClaimRow[] {
   return db.query("SELECT * FROM task_claims WHERE task_id = ?").all(taskId) as TaskClaimRow[];
 }
