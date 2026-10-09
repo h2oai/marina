@@ -28,6 +28,10 @@ export type OpenAIErrorCode =
   | "decisions_disabled"
   // POST /v1/forecast without the keys forecasting needs (src/net/forecast-api.ts).
   | "forecast_unavailable"
+  | "outcome_unbound"
+  | "outcome_unavailable"
+  | "outcome_unknown_request"
+  | "outcome_already_reported"
   // The world's MARINA_DAILY_SPEND_CAP_USD is spent (src/engine/spend-ledger.ts).
   | "spend_cap_reached"
   // A ledger write (POST /v1/benchmarks/runs) by the read-only open-API sentinel.

@@ -47,6 +47,7 @@ import {
   type PeerAddr,
   readModelJsonBody,
 } from "./model-api/shared";
+import { handleOutcomeReport } from "./outcomes-api";
 
 // Public surface consumed by other modules, scripts and tests (main.ts,
 // engine.ts, command-registry.ts, readiness.ts, ops-api.ts, websocket-server.ts,
@@ -149,6 +150,11 @@ export async function handleModelApi(
   // Benchmark runs file themselves into this Marina's ledger — src/net/benchmarks-api.ts.
   if (url.pathname === "/v1/benchmarks/runs" && method === "POST") {
     return await handleBenchmarkFile(req, engine, authResult);
+  }
+
+  // An agent reports how a request turned out — src/net/outcomes-api.ts (the outcome path).
+  if (url.pathname === "/v1/outcomes" && method === "POST") {
+    return await handleOutcomeReport(req, engine, authResult);
   }
 
   // Forecast any question (research → verified evidence → analysts → judge) — src/forecast.

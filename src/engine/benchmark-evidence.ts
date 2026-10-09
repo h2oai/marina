@@ -42,6 +42,7 @@
  */
 
 import { mcnemarExact, wilsonInterval } from "../../benchmarks/stats";
+import { liveEvidence } from "../outcomes/evidence";
 import type { BenchmarkItemRow, BenchmarkRunRow } from "../persistence/db-benchmarks";
 import { benchmarksInFamilies } from "./benchmark-families";
 
@@ -62,6 +63,12 @@ export interface RouteEvidenceSettings {
   objective?: RouteEvidenceObjective;
   /** `value`: the largest accuracy gap below the best candidate still acceptable. */
   tolerance?: number;
+  /**
+   * Also weigh live evidence: what each model (and role) actually got done on
+   * real work, from the outcome path (`MARINA_ROUTE_EVIDENCE_LIVE=on`).
+   * Mechanical outcomes only, families `live:<source>`.
+   */
+  live?: boolean;
 }
 
 export const DEFAULT_ROUTE_EVIDENCE_MIN_N = 30;
@@ -90,6 +97,7 @@ export function routeEvidenceSettingsFromEnv(
     objective: obj === "value" || obj === "budget" ? obj : "lcb",
     tolerance:
       Number.isFinite(tol) && tol >= 0 && tol <= 1 ? tol : DEFAULT_ROUTE_EVIDENCE_TOLERANCE,
+    live: env.MARINA_ROUTE_EVIDENCE_LIVE?.trim().toLowerCase() === "on",
   };
 }
 
@@ -413,6 +421,47 @@ export interface EvidenceSource {
   /** Role and trait rows, for a role's declared families (optional). */
   getRole?(name: string): { traits: string } | undefined;
   getTrait?(name: string): { capabilities: string } | undefined;
+  /** The outcome path, for live evidence (optional). */
+  listOutcomes?: import("../persistence/interfaces/outcomes-store").OutcomesStore["listOutcomes"];
+}
+
+/** Live evidence entries: what models achieved on real work, per role and in all (families `live:<source>`). */
+export interface LiveEntries {
+  role: EvidenceEntry[];
+  model: EvidenceEntry[];
+}
+
+export function liveEvidenceEntries(db: EvidenceSource, role: string | undefined): LiveEntries {
+  if (!db.listOutcomes) return { role: [], model: [] };
+  const cells = liveEvidence({ listOutcomes: db.listOutcomes.bind(db) });
+  const entry = (c: (typeof cells)[number]): EvidenceEntry =>
+    toEntry("model", c.model, modelKey(c.model), `live:${c.source}`, c.n, c.successes, 0, 0, {
+      trace: 0,
+      target: 0,
+      window: 0,
+    });
+  // One cell per (source, model) in all; per (source, model, role) for the role level.
+  const byModel = new Map<string, { model: string; source: string; n: number; s: number }>();
+  for (const c of cells) {
+    const k = `${c.source}\u0000${c.model}`;
+    const m = byModel.get(k) ?? { model: c.model, source: c.source, n: 0, s: 0 };
+    m.n += c.n;
+    m.s += c.successes;
+    byModel.set(k, m);
+  }
+  return {
+    role: role ? cells.filter((c) => c.role === role).map(entry) : [],
+    model: [...byModel.values()].map((m) =>
+      entry({
+        source: m.source,
+        model: m.model,
+        n: m.n,
+        successes: m.s,
+        rate: m.s / m.n,
+        lower: 0,
+      }),
+    ),
+  };
 }
 
 /** A cached `agent → role` lookup over the store; undefined when the store has none. */
@@ -695,18 +744,27 @@ export function pickWithRoleFallback(
   >,
   role: string | undefined,
   roleOf: ((agent: string) => string | undefined) | undefined,
+  live: LiveEntries = { role: [], model: [] },
 ): EvidencePick & { level: "role" | "model" } {
-  if (role && roleOf) {
-    const roleEntries = collectEvidence(items, {
-      includeWindow: settings.includeWindow,
-      role,
-      roleOf,
-    });
+  if (role && (roleOf || live.role.length)) {
+    const roleEntries = [
+      ...(roleOf
+        ? collectEvidence(items, {
+            includeWindow: settings.includeWindow,
+            role,
+            roleOf,
+          })
+        : []),
+      ...live.role,
+    ];
     const rolePick = pickByEvidence(candidates, roleEntries, settings);
     if (rolePick.pick)
       return { ...rolePick, reason: `role ${role}: ${rolePick.reason}`, level: "role" };
   }
-  const entries = collectEvidence(items, { includeWindow: settings.includeWindow });
+  const entries = [
+    ...collectEvidence(items, { includeWindow: settings.includeWindow }),
+    ...live.model,
+  ];
   return { ...pickByEvidence(candidates, entries, settings), level: "model" };
 }
 
@@ -742,7 +800,9 @@ export function applyRouteEvidence(
   });
   if (settings.mode === "off") return unchanged();
   const { families, source: familySource } = evidenceFamilies(settings, role, db);
-  if (families.length === 0 || !db) {
+  const live = settings.live && db?.listOutcomes ? liveEvidenceEntries(db, role) : undefined;
+  const hasLive = !!live && live.model.length > 0;
+  if ((families.length === 0 && !hasLive) || !db) {
     return unchanged({
       evidence_mode: settings.mode,
       evidence: families.length === 0 ? "no_family" : "no_ledger",
@@ -751,13 +811,15 @@ export function applyRouteEvidence(
   try {
     const result = pickWithRoleFallback(
       candidates,
-      loadEvidenceItems(db, families),
+      families.length ? loadEvidenceItems(db, families) : [],
       settings,
       role,
       roleLookup(db),
+      live,
     );
     const signals: Record<string, number | string> = {
       evidence_mode: settings.mode,
+      ...(live ? { evidence_live: live.model.reduce((s, e) => s + e.n, 0) } : {}),
       evidence_families: families.join(","),
       evidence_family_source: familySource,
       evidence_objective: result.objective,

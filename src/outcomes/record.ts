@@ -22,6 +22,8 @@ export function consumersFor(
   opts: { deliverJudged?: boolean } = {},
 ): string[] {
   if (basis === "judged" && !opts.deliverJudged) return [];
+  // A reported request carries no text to judge a lesson from: evidence only.
+  if (kind === "request") return [];
   return kind === "forecast" ? ["lessons", "history"] : ["lessons"];
 }
 
