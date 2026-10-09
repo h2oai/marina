@@ -243,10 +243,9 @@ and institutions meet. Each capability below is one line here; the linked doc is
 Every entity has layered, generational memory: mutable core memory, immutable typed notes with
 importance and schema-enforced tiers, a typed knowledge graph with spreading-activation recall,
 provenance and contradiction cases, shared pools, and reflection. What one agent learns compounds
-into the next agent's starting point. The effect is measured, not asserted: on a six-benchmark
-sweep the same model scored **65.0% bare → 71.7% memory-cold → 75.0% memory-warm** — +10 points
-over bare carried by 19 curated notes, with zero regressions
-([benchmarks/HISTORY.md](benchmarks/HISTORY.md) §5). Full architecture and workflows:
+into the next agent's starting point. The [memory benchmark harness](benchmarks/memory/README.md)
+supports controlled comparisons of retrieval and memory configurations. Full architecture and
+workflows:
 [docs/guides/memory.md](docs/guides/memory.md).
 
 ## Who Is This For
@@ -319,10 +318,9 @@ with frontier-model reference scores seeded so leaderboards always have a baseli
 fan out across every live `marina:<crew>` orchestration endpoint, and `admin snapshot --compact`
 preserves a trained population as the next generation's warm start.
 
-The 2026-09-01 confirmation sweep (N=10, seed=42, gpt-4o-mini, six benchmarks) measured the
-stair-step directly: **bare 65.0% → memory-cold 71.7% → memory-warm 75.0%**, zero cold→warm
-regressions, +10.0pp over bare carried by 19 curated notes. Details and lineage:
-[benchmarks/HISTORY.md](benchmarks/HISTORY.md).
+The [benchmark guide](benchmarks/README.md) documents the harness, configuration and output
+contracts. Research results and qualification history are maintained in the private
+`marina-internal` repository.
 
 To reproduce a published setup (HLE-Verified, SWE-bench Verified, τ²-bench, FutureX, the Social
 Simulation Arena) on your own models with one command — prerequisites checked, replicated arms,
@@ -552,16 +550,9 @@ bun install && marina-desktop/scripts/build.sh   # workspace install at the repo
 
 ## Performance
 
-Load tested with 200 concurrent WebSocket connections at 5 commands/second (measured 2026-02 on the then-current build — see [docs/load-test-results.md](docs/load-test-results.md); re-measure before relying on exact numbers):
-
-| Metric | Value |
-|--------|-------|
-| Throughput | 988 cmd/s |
-| Round-trip p50 | 2.6ms |
-| Round-trip p99 | 18.3ms |
-| Memory | 12MB heap |
-
-See [docs/load-test-results.md](docs/load-test-results.md) for full results.
+Measure performance on your deployment's current revision, runtime, hardware and workload.
+The [load-testing guide](docs/load-test-results.md) describes the available harnesses;
+historical qualification results are maintained in the private `marina-internal` repository.
 
 ## Documentation
 
@@ -581,7 +572,7 @@ See [docs/load-test-results.md](docs/load-test-results.md) for full results.
 | [docs/guides/reproduction-and-meshes.md](docs/guides/reproduction-and-meshes.md) | Cognitive and Marina reproduction plus transparent multi-mesh federation |
 | [docs/guides/economics-simulation-and-recursion.md](docs/guides/economics-simulation-and-recursion.md) | Asset-neutral economics, simulation replay levels, and recursive mutation lineage |
 | [docs/mcp.md](docs/mcp.md) | MCP server setup and tool reference |
-| [docs/load-test-results.md](docs/load-test-results.md) | Performance benchmarks |
+| [docs/load-test-results.md](docs/load-test-results.md) | Load-testing harnesses |
 | [docs/guides/memory.md](docs/guides/memory.md) | Memory architecture and everyday memory workflows |
 | [docs/guides/emergent-organization.md](docs/guides/emergent-organization.md) | Bottom-up coordination and organization patterns |
 | [docs/guides/integrations.md](docs/guides/integrations.md) | Connect LangChain, n8n, coding agents and existing applications; deploy your own instance |
