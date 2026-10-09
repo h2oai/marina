@@ -59,7 +59,12 @@ import {
 import { timerUnits } from "../benchmarks/metaculus/timer";
 import { forecastLessonsFor } from "../src/learning/forecast-bridge";
 import { enableOutcomeLearning, noteOutcome, settleOutcomes } from "../src/learning/service";
+import { fileTypedAnswer, resolveFiled } from "../src/outcomes/filing";
+import { settleDelivery } from "../src/outcomes/record";
 import { MarinaDB } from "../src/persistence/database";
+
+/** Whose answers Metaculus filings are, on the outcome path. */
+const METACULUS_OWNER = "marina:metaculus";
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -182,6 +187,15 @@ async function forecastCmd(db: MarinaDB): Promise<number> {
     outDir: values.out!,
     dailyCapUsd: Number(values["daily-cap"]),
     ...(values.limit ? { limit: Number(values.limit) } : {}),
+    // Every submitted answer is filed on the outcome path: scored, learned and
+    // added to the forecast history when Metaculus resolves it.
+    file: (answer, externalId, sd) =>
+      fileTypedAnswer(
+        db,
+        answer,
+        { owner: METACULUS_OWNER, source: BENCHMARK, externalId, evalMode: "live" },
+        sd,
+      ),
     log,
   });
   log(
@@ -194,8 +208,15 @@ async function forecastCmd(db: MarinaDB): Promise<number> {
 async function resolveCmd(db: MarinaDB): Promise<number> {
   if (values.fixture) return 0;
   enableOutcomeLearning(db);
-  const r = await resolvePass({ client: client(), db, learn: (o) => noteOutcome(db, o), log });
+  const r = await resolvePass({
+    client: client(),
+    db,
+    resolveFiled: (id, value, at) => resolveFiled(db, METACULUS_OWNER, id, value, at),
+    learn: (o) => noteOutcome(db, o),
+    log,
+  });
   await settleOutcomes(db);
+  await settleDelivery(db);
   log(
     `resolve: checked ${r.checked} · resolved ${r.resolved} · learned ${r.learned} · failed ${r.failed}`,
   );

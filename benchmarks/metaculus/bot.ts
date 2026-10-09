@@ -83,9 +83,36 @@ export interface PassOptions {
   dailyCapUsd?: number;
   /** At most this many new forecasts per pass. */
   limit?: number;
+  /**
+   * Files each submitted answer through the one outcome path
+   * (`src/outcomes/filing.ts`) under `metaculusId(questionId)`.
+   */
+  file?: (answer: TypedForecastAnswer, externalId: string, sd?: number) => void;
   env?: NodeJS.ProcessEnv;
   now?: () => Date;
   log?: (line: string) => void;
+}
+
+/** A Metaculus question's id on the outcome path. */
+export const metaculusId = (questionId: number) => `metaculus:q${questionId}`;
+
+/**
+ * A Metaculus resolution as a resolution value for the filed answer: yes/no
+ * for a binary question, the option for a multiple-choice one, the number
+ * for a numeric one. Undefined for annulled or ambiguous.
+ */
+export function resolutionValue(
+  q: Pick<MetaculusQuestion, "type">,
+  resolution: string | number,
+): unknown {
+  const r = String(resolution).trim();
+  if (/^(annulled|ambiguous)$/i.test(r)) return undefined;
+  if (q.type === "binary") {
+    return /^yes$/i.test(r) ? { outcome: "yes" } : /^no$/i.test(r) ? { outcome: "no" } : undefined;
+  }
+  if (q.type === "multiple_choice") return { option: r };
+  const n = Number(r);
+  return Number.isFinite(n) ? { value: n } : undefined;
 }
 
 export interface PassResult {
@@ -245,6 +272,7 @@ export async function forecastPass(opts: PassOptions): Promise<PassResult> {
           meta_json: JSON.stringify(meta),
           created_at: now().getTime(),
         });
+        opts.file?.(answer, metaculusId(qid), meta.sd);
         log(`  q${qid} ${q.type} → ${summary(meta)} · $${answer.costUsd.toFixed(3)}`);
       }
       result.forecast++;
@@ -357,7 +385,13 @@ export function outcomeFor(
 export interface ResolveOptions {
   client: MetaculusClient;
   db: Ledger;
-  /** Hands each scored outcome to the learning loop (`noteOutcome`). */
+  /**
+   * Resolves the filed answer through the one outcome path (scoring, lessons,
+   * history). `unfiled` (a forecast filed before the outcome path) falls back
+   * to `learn`.
+   */
+  resolveFiled?: (externalId: string, value: unknown, resolvedAt: number) => unknown;
+  /** Hands each scored outcome of an unfiled forecast to the learning loop (`noteOutcome`). */
   learn?: (o: Outcome) => void;
   now?: () => Date;
   log?: (line: string) => void;
@@ -381,7 +415,14 @@ export async function resolvePass(
       const q = (await opts.client.post(meta.postId)).question;
       if (q?.status !== "resolved" || q.resolution == null) continue;
       const score = outcomeScore(meta, q.resolution);
-      if (score !== undefined && opts.learn) {
+      const value = resolutionValue(q, q.resolution);
+      const shared =
+        value !== undefined && opts.resolveFiled
+          ? opts.resolveFiled(metaculusId(meta.questionId), value, now().getTime())
+          : "unfiled";
+      if (shared !== "unfiled") {
+        if (shared && typeof shared === "object") out.learned++;
+      } else if (score !== undefined && opts.learn) {
         opts.learn(outcomeFor(meta, q, score, now().toISOString()));
         out.learned++;
       }

@@ -60,8 +60,29 @@ export interface RoundOptions {
   budgetUsd?: number;
   /** Dataset questions' statistical priors (`./priors.ts`), by question key. */
   priors?: ReadonlyMap<string, DatasetPrior>;
+  /**
+   * Files each forecast (one per horizon) through the one outcome path
+   * (`src/outcomes/filing.ts`) under `forecastbenchId`.
+   */
+  file?: (q: FbQuestion, f: FbForecast, externalId: string) => void;
   env?: NodeJS.ProcessEnv;
   log?: (line: string) => void;
+}
+
+/** A ForecastBench forecast's id on the outcome path: round, question and horizon. */
+export const forecastbenchId = (
+  due: string,
+  q: Pick<FbQuestion, "source" | "id">,
+  horizon: string | null,
+) => `forecastbench:${due}/${q.source}/${q.id}@${horizon ?? "close"}`;
+
+/** A resolution as a yes/no value; undefined unless it resolved to exactly 0 or 1. */
+export function resolvedValue(r: Pick<FbResolution, "resolved_to">): unknown {
+  return r.resolved_to === 1
+    ? { outcome: "yes" }
+    : r.resolved_to === 0
+      ? { outcome: "no" }
+      : undefined;
 }
 
 export interface RoundRun {
@@ -128,6 +149,8 @@ export async function runRound(opts: RoundOptions): Promise<RoundRun> {
       };
     }
     appendFileSync(opts.journal, `${JSON.stringify(line)}\n`);
+    if (line.ok)
+      for (const f of line.forecasts) opts.file?.(q, f, forecastbenchId(due, q, f.resolution_date));
     run.costUsd += line.costUsd;
     if (line.ok) run.ok++;
     else run.failed++;
@@ -180,7 +203,13 @@ export interface ResolveRoundOptions {
   journal: string;
   resolutions: FbResolution[];
   db: OutcomeLedger;
-  /** Hands each scored outcome to the learning loop (`noteOutcome`). */
+  /**
+   * Resolves a filed forecast through the one outcome path (scoring, lessons,
+   * history). `unfiled` (a journal from before the outcome path, or a
+   * backtest) falls back to `learn`.
+   */
+  resolveFiled?: (externalId: string, value: unknown, resolvedAt: number) => unknown;
+  /** Hands each scored outcome of an unfiled forecast to the learning loop (`noteOutcome`). */
   learn?: (o: Outcome) => void;
   /** The configuration that filed this set (label), carried into the outcomes. */
   config?: string;
@@ -229,8 +258,21 @@ export async function resolveRound(
   }
   scored.sort((a, b) => b.brier - a.brier);
   let learned = 0;
-  for (const [i, s] of scored.entries()) {
-    const teach = opts.learn && i < (opts.maxLessons ?? 60);
+  let legacy = 0;
+  for (const s of scored) {
+    const value = resolvedValue(s.r);
+    const shared =
+      value !== undefined && opts.resolveFiled
+        ? opts.resolveFiled(
+            forecastbenchId(due, s.q, s.f.resolution_date),
+            value,
+            Date.parse(`${s.r.resolution_date}T23:59:59Z`),
+          )
+        : "unfiled";
+    // A filed forecast learns through the outcome path (its lessons wait for
+    // the hourly budget, never capped away); only unfiled ones use `learn`.
+    const teach = shared === "unfiled" && opts.learn && legacy++ < (opts.maxLessons ?? 60);
+    if (shared !== "unfiled" && shared && typeof shared === "object") learned++;
     if (teach) {
       const market = isMarket(s.q);
       opts.learn!({

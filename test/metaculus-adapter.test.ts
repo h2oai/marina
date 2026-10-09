@@ -20,8 +20,10 @@ import {
   ATTEMPT_BENCHMARK,
   BENCHMARK,
   forecastPass,
+  metaculusId,
   OUTCOME_BENCHMARK,
   outcomeScore,
+  resolutionValue,
   resolvePass,
   spentToday,
 } from "../benchmarks/metaculus/bot";
@@ -36,6 +38,8 @@ import {
   noteOutcome,
   settleOutcomes,
 } from "../src/learning/service";
+import { fileTypedAnswer, resolveFiled } from "../src/outcomes/filing";
+import { settleDelivery } from "../src/outcomes/record";
 import { MarinaDB } from "../src/persistence/database";
 
 const config = { label: "test", description: "test configuration" };
@@ -377,6 +381,49 @@ describe("metaculus: outcomes teach", () => {
       disableOutcomeLearning(db);
       db.close();
     }
+  });
+});
+
+describe("metaculus: the outcome path", () => {
+  it("files each submitted answer and resolves it once through the shared scorer", async () => {
+    const db = new MarinaDB(":memory:");
+    const owner = "marina:metaculus";
+    const { client } = recordingClient([post(1, binary)]);
+    await forecastPass({
+      client,
+      db,
+      forecast: fakeForecast,
+      tournaments: ["t"],
+      config,
+      file: (a, externalId, sd) =>
+        fileTypedAnswer(db, a, { owner, source: "metaculus", externalId, evalMode: "live" }, sd),
+    });
+    const filed = db.getForecastAnswerByExternalId(owner, metaculusId(binary.id))!;
+    expect(filed).toMatchObject({ source: "metaculus", eval_mode: "live", kind: "choice" });
+    const learned: Outcome[] = [];
+    const opts = {
+      client: fixtureClient([post(1, { ...binary, status: "resolved", resolution: "no" })]),
+      db,
+      resolveFiled: (id: string, value: unknown, at: number) =>
+        resolveFiled(db, owner, id, value, at),
+      learn: (o: Outcome) => learned.push(o),
+    };
+    expect(await resolvePass(opts)).toMatchObject({ resolved: 1, learned: 1 });
+    expect(learned).toHaveLength(0); // the shared path taught, not the legacy hook
+    const o = db.getOutcomeBySubject(`forecast:${filed.id}`)!;
+    expect(o).toMatchObject({ source: "metaculus:choice", succeeded: 0 });
+    expect(o.quality).toBeCloseTo(0.51, 6);
+    expect(JSON.parse(o.refs_json!)).toContain(metaculusId(binary.id));
+    expect((await resolvePass(opts)).resolved).toBe(0);
+    await settleDelivery(db);
+    db.close();
+  });
+
+  it("maps Metaculus resolutions to resolution values", () => {
+    expect(resolutionValue({ type: "binary" }, "Yes")).toEqual({ outcome: "yes" });
+    expect(resolutionValue({ type: "binary" }, "annulled")).toBeUndefined();
+    expect(resolutionValue({ type: "multiple_choice" }, "Green")).toEqual({ option: "Green" });
+    expect(resolutionValue({ type: "numeric" }, "41.5")).toEqual({ value: 41.5 });
   });
 });
 

@@ -182,6 +182,20 @@ learning instead of losing it.
     - a plain number's mean and sd;
     - a plain probability as a yes/no choice.
     - With no history configured, the delivery is skipped, with that reason.
+- **Boards.** Each adapter files through `src/outcomes/filing.ts` (`fileTypedAnswer`, `fileAnswer`)
+  under its own owner and the board's id. It then resolves by that id with `resolveFiled`, passing
+  the board's outcome as a resolution value.
+  - **Metaculus** (`marina:metaculus`, `metaculus:q<id>`): filed when submitted. Resolved by
+    `resolve` (yes/no, an option, a number).
+  - **ForecastBench** (`marina:forecastbench`, `forecastbench:<due>/<source>/<id>@<horizon>`): one
+    row per submitted horizon. Resolved by `resolve` on the earliest resolved horizon. The legacy
+    60-lesson cap no longer applies, because lessons wait for the hourly budget instead.
+  - **FutureX** (`marina:futurex/<variant>`, `futurex:<id>`): the standing answer, filed and
+    resolved by `learn`.
+  - **Arena** (`marina:arena/<entrant>`, `arena:<round>`): every accepted submission, from any
+    forecaster, filed and resolved by the hourly autopilot.
+  - `unfiled` (an answer from before this path, or a backtest) keeps the adapter's old lesson hook.
+  - A fallback is never learned.
 - **Rules, held in one place.**
   - A `measure` outcome is recorded, but every consumer marks it `skipped: measurement`.
   - `MARINA_LESSONS=off` skips lessons.

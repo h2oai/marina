@@ -73,7 +73,12 @@ import { priorAnswer } from "../src/forecast/prior-answer";
 import type { TypedForecastAnswer } from "../src/forecast/typed";
 import { forecastLessonsFor } from "../src/learning/forecast-bridge";
 import { enableOutcomeLearning, noteOutcome, settleOutcomes } from "../src/learning/service";
+import { fileAnswer, resolveFiled } from "../src/outcomes/filing";
+import { settleDelivery } from "../src/outcomes/record";
 import { MarinaDB } from "../src/persistence/database";
+
+/** Whose answers ForecastBench filings are, on the outcome path. */
+const FORECASTBENCH_OWNER = "marina:forecastbench";
 
 const BENCHMARK = "forecastbench";
 /** $/question assumed before any of this round is measured. */
@@ -209,6 +214,14 @@ async function runCmd(db: MarinaDB): Promise<number> {
     journal,
     concurrency: Number(values.concurrency),
     ...(values.budget ? { budgetUsd: Number(values.budget) } : {}),
+    // Every submitted forecast is filed on the outcome path: scored, learned
+    // and added to the forecast history when the round resolves.
+    file: (q, f, externalId) =>
+      fileAnswer(
+        db,
+        { question: q.question, kind: "probability", probability: f.forecast, answer: f },
+        { owner: FORECASTBENCH_OWNER, source: BENCHMARK, externalId, evalMode: "live" },
+      ),
     log,
   });
   log(
@@ -318,9 +331,11 @@ async function resolveCmd(db: MarinaDB): Promise<number> {
     resolutions,
     db,
     config: chosenConfig(db).config.label,
+    resolveFiled: (id, value, at) => resolveFiled(db, FORECASTBENCH_OWNER, id, value, at),
     learn: (o) => noteOutcome(db, o),
   });
   await settleOutcomes(db);
+  await settleDelivery(db);
   log(
     `resolved ${r.resolved} · learned ${r.learned}${r.meanBrier !== undefined ? ` · mean Brier ${r.meanBrier.toFixed(4)}` : ""}`,
   );
