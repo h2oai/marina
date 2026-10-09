@@ -783,8 +783,14 @@
 # Automatic resolution (src/outcomes/autoresolve.ts): every hour, the markets that open saved answers are linked to (`resolves:<venue>/<ticker>`) are read, at most 20 per pass, and a resolved one settles every answer waiting on it. Public Kalshi/Polymarket reads only. `off` waits for a `probe`.
 # MARINA_OUTCOME_AUTORESOLVE=on
 
-# Judged resolution (src/outcomes/judge-resolution.ts): a saved choice answer that no market settles is researched after its end time (plus 2 days), and the decision backend picks the option that resolved, at most 5 per hour. Spend-capped; no backend means nothing. `off` (default): nothing. `observe`: the proposal is recorded as a judged outcome that settles and teaches nothing, measured against any mechanical resolution (`outcome agreement`). `on`: as observe, and a confident judge (≥ 0.9) that has earned agreement (≥ 25 comparisons, Wilson lower bound ≥ 0.85) also settles the answer, labelled judged.
+# Judged outcomes (src/outcomes/judge-resolution.ts, judge-quality.ts), hourly, spend-capped; no decision backend means nothing.
+# - Resolution: a saved answer that no market settles is researched after its end time plus 2 days, and the decision backend judges how it resolved, at most 5 per hour. Choice answers: it picks an option. Multi-select: a yes/no per option behind a "has it resolved" gate. Numbers: MARINA_OUTCOME_JUDGE_MODEL proposes the value with a verbatim quote that must be in the evidence, and the backend confirms it.
+# - Quality: a task submission its creator has not decided within 3 days is judged for whether it completes the task, at most 5 per hour.
+# - `off` (default): nothing. `observe`: every judgement is recorded as a judged outcome that settles and teaches nothing, measured against any mechanical result (`outcome agreement`). `on`: as observe, and a confident judgement (≥ 0.9) from a judge that has earned agreement (≥ 25 comparisons, Wilson lower bound ≥ 0.85) settles the answer or is delivered as a lesson, labelled judged.
 # MARINA_OUTCOME_JUDGE=off
+
+# The model that proposes a number's resolved value for judged resolution; default the first MARINA_FORECAST_ANALYSTS model, else marina/default.
+# MARINA_OUTCOME_JUDGE_MODEL=
 
 # Formation routing for POST /v1/forecast (src/forecast/routing.ts): `off` (default) answers with MARINA_FORECAST_FORMATION; `observe` records which formation routing would pick; `on` uses it. Per question class (the caller's `category`, else the answer group) a challenger replaces the default only when, on at least ROUTE_MIN_N questions both answered (resolved records in MARINA_FORECAST_HISTORY carrying their formation and score), its paired gain has a 95 % lower bound above 0 and clears the fishing margin 0.02 + 0.01·log₂(1 + challengers tried). CANDIDATES is a comma list of formations (default all four).
 # MARINA_FORECAST_ROUTE=off

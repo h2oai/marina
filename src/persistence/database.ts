@@ -1440,6 +1440,10 @@ export class MarinaDB implements MarinaStores {
     return tasksDb.listTasksClaimedBy(this.db, entityId);
   }
 
+  waitingSubmissions(submittedBefore: number, limit: number): TaskClaimRow[] {
+    return tasksDb.waitingSubmissions(this.db, submittedBefore, limit);
+  }
+
   getTaskClaims(taskId: number): TaskClaimRow[] {
     return tasksDb.getTaskClaims(this.db, taskId);
   }

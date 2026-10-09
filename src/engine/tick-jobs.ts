@@ -13,6 +13,7 @@ import { memoryObservabilityPollTicks, pollMemoryEvents } from "../net/memory-ob
 import { cleanupStaleConversationChannels } from "../net/model-api";
 import { autoresolveLinked } from "../outcomes/autoresolve";
 import { deliverOutcomes } from "../outcomes/deliver";
+import { judgeWaitingWork } from "../outcomes/judge-quality";
 import { judgeOpenResolutions } from "../outcomes/judge-resolution";
 import type { MarinaDB } from "../persistence/database";
 import { syncOperationalAlerts } from "./commands/ops";
@@ -363,6 +364,7 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
     run: async () => {
       if (!host.db) return;
       await judgeOpenResolutions(host.db);
+      await judgeWaitingWork(host.db);
     },
   });
 }

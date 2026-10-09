@@ -38,6 +38,7 @@ export interface TasksStore {
   getTaskClaim(taskId: number, entityId: string): TaskClaimRow | undefined;
   listTasksClaimedBy(entityId: string): TaskRow[];
   getTaskClaims(taskId: number): TaskClaimRow[];
+  waitingSubmissions(submittedBefore: number, limit: number): TaskClaimRow[];
   updateTaskClaimStatus(
     taskId: number,
     entityId: string,
@@ -85,6 +86,7 @@ export const TASKS_STORE_METHODS = [
   "getTaskClaim",
   "listTasksClaimedBy",
   "getTaskClaims",
+  "waitingSubmissions",
   "updateTaskClaimStatus",
   "renewTaskClaim",
   "recoverExpiredTaskClaims",
