@@ -187,11 +187,13 @@ invent outcomes; mutations do not bypass subsystem activation or safety boundari
 ## Knowledge & Cognition
 
 `lessons <topic> [domain:<forecast|code|tools|benchmark|arena|research>]` recalls what past outcomes taught.
-- **Where lessons come from:** every verdict becomes a candidate lesson, including a benchmark run filed, a forecast resolved, a Code Mode verification, and an arena round scored.
+- **Where lessons come from:** every verdict becomes a candidate lesson, including a benchmark run filed, a forecast resolved, a task creator's verdict on a submission, a Code Mode verification, and an arena round scored. Your own work, and the agents you spawned, teach only your own lessons. A world agent's work teaches the shared pool.
 - **Judging:** the decision layer (or the operator's own model, uncalibrated) judges each candidate.
 - **What recall returns:** passing lessons come first, then unjudged ones labelled `(unverified)`. Rejected candidates are never served.
 - **Leakage rule:** a lesson is never visible to work whose cutoff precedes its outcome.
 - **Retiring a wrong lesson:** `lessons retire <id> reason:<text>` (the id or its 8-character prefix, as listed) or `lessons retire source:<s>|match:<text> [domain:<d>] [confirm:yes] reason:<text>` (criteria preview the matches until `confirm:yes`). `lessons supersede <id> reason:<text> -- <replacement>` writes a corrected lesson (labelled `unverified`) and retires the original. Both need `role.edit`. Nothing is erased: recall stops serving the lesson and its history stays readable.
+
+`outcome [stats]` shows whether learning keeps up with resolved results: per consumer (`lessons`, `history`), how many are pending, done, skipped and failed. `outcome evidence [source:<s>] [since:<duration>] [judged]` shows live success rates per kind of work, model and role, from real work rather than benchmarks, with a Wilson 95 % lower bound. `outcome list [kind:<forecast|task|request|benchmark>] [limit:<n>]` lists your own outcomes. Alias: `outcomes`. Read-only.
 
 The same lessons also reach the people and agents doing the work:
 - the forecaster;

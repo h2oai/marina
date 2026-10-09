@@ -196,6 +196,24 @@ learning instead of losing it.
     forecaster, filed and resolved by the hourly autopilot.
   - `unfiled` (an answer from before this path, or a backtest) keeps the adapter's old lesson hook.
   - A fallback is never learned.
+- **Live work** (`src/outcomes/live.ts`). What agents actually get done is a resolved result too.
+  - A task creator's verdict (`task_approved` / `task_rejected`) is recorded as
+    `task:<id>:<claimant>:<time>` (`task:verdict`, domain `tools`).
+  - A Code Mode verification that ran is recorded as `artifact:<id>` (`code:verify`, domain
+    `code`).
+  - Each records its participant: the agent, plus its model and role from its agent config.
+  - Lessons from live work follow whose work it was (`workScopeFor`):
+    - a world agent's work teaches the shared pool;
+    - a person's work, or the work of agents it spawned, teaches only that person's own lesson
+      spaces (`ownerLessonSink`);
+    - work whose scope cannot be resolved teaches nothing (`skipped: owner scope unresolved`).
+  - Private context is read back from the subject: a task's title and description, or a failed
+    check's output.
+- **Live evidence** (`src/outcomes/evidence.ts`, `outcome evidence`). Success rates per source,
+  model and role, with a Wilson 95 % lower bound.
+  - Only mechanical outcomes count by default, and measurement runs never count.
+  - Kept separate from the benchmark ledger, so a number is always known to come from real work or
+    from a board.
 - **Rules, held in one place.**
   - A `measure` outcome is recorded, but every consumer marks it `skipped: measurement`.
   - `MARINA_LESSONS=off` skips lessons.

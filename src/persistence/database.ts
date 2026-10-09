@@ -3718,7 +3718,7 @@ export class MarinaDB implements MarinaStores {
     return outcomesDb.getOutcomeBySubject(this.db, subject);
   }
 
-  listOutcomes(opts?: { kind?: outcomesDb.OutcomeKind; limit?: number }): outcomesDb.OutcomeRow[] {
+  listOutcomes(opts?: outcomesDb.OutcomeFilter): outcomesDb.OutcomeRow[] {
     return outcomesDb.listOutcomes(this.db, opts);
   }
 

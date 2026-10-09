@@ -18,6 +18,7 @@ import { memoryCommand } from "../commands/memory";
 import { nextCommand } from "../commands/next";
 import { noveltyCommand } from "../commands/novelty";
 import { orientCommand } from "../commands/orient";
+import { outcomeCommand } from "../commands/outcome";
 import { poolCommand } from "../commands/pool";
 import { positionCommand } from "../commands/position";
 import { recallCommand } from "../commands/recall";
@@ -116,6 +117,9 @@ export function registerMemoryCommands(engine: Engine): void {
     }),
   );
   engine.commands.registerBuiltin(lessonsCommand({ db: engine.db }));
+  engine.commands.registerBuiltin(
+    outcomeCommand({ db: engine.db, getEntity: (id) => engine.entities.get(id as EntityId) }),
+  );
   engine.commands.registerBuiltin(learnedCommand({ db: engine.db }));
   engine.commands.registerBuiltin(
     noveltyCommand({

@@ -30,6 +30,7 @@ import { residentMemoryAPI } from "../memory/resident-service";
 import type { AdapterManager } from "../net/adapter-manager";
 import { connects } from "../net/ansi";
 import { guardedFetch, validateFetchUrl } from "../net/url-guard";
+import { observeOutcomeEvent } from "../outcomes/live";
 import type { MarinaDB } from "../persistence/database";
 import { writeSample } from "../resolvers/sample-writer";
 import type { StorageProvider } from "../storage/provider";
@@ -428,6 +429,9 @@ export class Engine {
     // Lessons from work (MARINA_LESSONS_FROM_WORK, default off — a cheap no-op
     // then): agent tool results, gate holds and task verdicts become signals.
     this.addEventListener((event) => observeWorkEvent(this.db, event));
+    // The outcome path (src/outcomes/): a creator's verdict on a task
+    // submission is a resolved result — recorded once, learned from.
+    this.addEventListener((event) => observeOutcomeEvent(this.db, event));
   }
 
   // ─── Room Registration ──────────────────────────────────────────────────
