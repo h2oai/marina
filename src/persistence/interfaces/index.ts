@@ -46,6 +46,7 @@ export type { MemoryServiceStore } from "./memory-service-store";
 export type { MeshesStore } from "./meshes-store";
 export type { MutationsStore } from "./mutations-store";
 export type { NotesStore } from "./notes-store";
+export type { OutcomesStore } from "./outcomes-store";
 export type { PrincipalsStore } from "./principals-store";
 export type { ReproductionStore } from "./reproduction-store";
 export type { RoomsStore } from "./rooms-store";
@@ -138,6 +139,8 @@ import type { MutationsStore } from "./mutations-store";
 import { MUTATIONS_STORE_METHODS } from "./mutations-store";
 import type { NotesStore } from "./notes-store";
 import { NOTES_STORE_METHODS } from "./notes-store";
+import type { OutcomesStore } from "./outcomes-store";
+import { OUTCOMES_STORE_METHODS } from "./outcomes-store";
 import type { PrincipalsStore } from "./principals-store";
 import { PRINCIPALS_STORE_METHODS } from "./principals-store";
 import type { ReproductionStore } from "./reproduction-store";
@@ -205,6 +208,7 @@ export interface MarinaStores
     MeshesStore,
     MutationsStore,
     NotesStore,
+    OutcomesStore,
     PrincipalsStore,
     ReproductionStore,
     RoomsStore,
@@ -255,6 +259,7 @@ export const STORE_METHOD_MANIFEST: Readonly<Record<string, readonly string[]>> 
   MacrosStore: MACROS_STORE_METHODS,
   MaintenanceStore: MAINTENANCE_STORE_METHODS,
   MarketsStore: MARKETS_STORE_METHODS,
+  OutcomesStore: OUTCOMES_STORE_METHODS,
   MediaStore: MEDIA_STORE_METHODS,
   MemoryServiceStore: MEMORY_SERVICE_STORE_METHODS,
   MeshesStore: MESHES_STORE_METHODS,

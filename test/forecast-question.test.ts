@@ -223,14 +223,14 @@ describe("POST /v1/forecast", () => {
     const bound = { boundEntityName: "ada" };
     expect(saveTarget({}, req(), db, bound)).toEqual({});
     expect(saveTarget({ save: true }, req(), db, bound)).toEqual({
-      target: { entityName: "ada" },
+      target: { entityName: "ada", filing: { source: "api" } },
     });
     expect(saveTarget({ resolves: "kalshi/FED-26OCT" }, req(), db, bound)).toEqual({
-      target: { entityName: "ada", sampleId: "kalshi/FED-26OCT" },
+      target: { entityName: "ada", sampleId: "kalshi/FED-26OCT", filing: { source: "api" } },
     });
     expect(
       saveTarget({ save: true }, req("benchmark=prophet-arena; mode=live"), db, bound),
-    ).toEqual({ target: { entityName: "ada" } });
+    ).toEqual({ target: { entityName: "ada", filing: { source: "api", evalMode: "live" } } });
     for (const [body, r, auth] of [
       [{ save: "yes" }, req(), bound],
       [{ resolves: "no-slash" }, req(), bound],

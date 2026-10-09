@@ -11,6 +11,7 @@ import type { FlywheelToolBackend } from "../integrations/flywheel-manager";
 import { flushWorkLessons } from "../learning/work";
 import { memoryObservabilityPollTicks, pollMemoryEvents } from "../net/memory-observability";
 import { cleanupStaleConversationChannels } from "../net/model-api";
+import { deliverOutcomes } from "../outcomes/deliver";
 import type { MarinaDB } from "../persistence/database";
 import { syncOperationalAlerts } from "./commands/ops";
 import {
@@ -321,7 +322,26 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
       await flushWorkLessons(host.db);
     },
   });
+
+  // Every five minutes: deliver recorded outcomes still pending (src/outcomes/).
+  // Producers schedule delivery as they record; this pass catches what waited
+  // for the lesson budget or a verdict, and what a restart interrupted.
+  s.register({
+    name: "outcome-delivery",
+    every: OUTCOME_DELIVERY_INTERVAL,
+    phase: OUTCOME_DELIVERY_PHASE,
+    failureMessage: "Outcome delivery failed",
+    run: async () => {
+      if (!host.db) return;
+      await deliverOutcomes(host.db);
+    },
+  });
 }
+
+/** Ticks between outcome-delivery passes (src/outcomes/deliver.ts). */
+export const OUTCOME_DELIVERY_INTERVAL = 300;
+/** Its phase within that interval. */
+export const OUTCOME_DELIVERY_PHASE = 150;
 
 /** The hourly phase of the lessons-from-work flush (distinct from every other hourly job). */
 export const LESSONS_FROM_WORK_PHASE = 3300;

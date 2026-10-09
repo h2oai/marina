@@ -144,6 +144,49 @@ Recall never creates the `marina:lessons` account or its spaces as a side effect
 
 **Backfill.** `DB_PATH=<db> bun run lessons backfill [--dry-run] [--limit N] [--relearn-rejected]` (`backfillLedgerLessons`, `src/learning/backfill.ts`) feeds every valid, scored ledger run with no lesson yet through the loop, oldest first, one at a time: ids, scores, counts, cost per item, judge label, families and subjects, never item text (the ledger holds none). `resolvedAt` is the run's completion. A run whose own lesson (first ref `bench:<id>`, any trust) exists is skipped, so a second pass writes nothing; invalid, failed, unscored and empty runs are skipped. A retirement is a decision: a run whose lesson was retired (operator `retireLessons`, supersession, a resolve loser) counts as taught and is never learned again, with or without `--relearn-rejected` (the store's `findRetired` reads each lesson's latest version with its validity closed; the report prints `retired (not re-learned) N`). The exception is a lesson retired because a run it cites was invalidated (`retireLessonsForRun`, reason `benchmark run <id> invalidated: …`): once `benchmark revalidate` makes the run valid again, the next pass learns it anew. Trusted, transferable lessons are mirrored as on any write. Writer and judge are the server's. A run the judge cannot decide (outage, spend cap) is deferred: nothing is written, so a later pass learns it, instead of an `unverified` lesson being left behind. The pass also stops before the next run once `dailyCapRefusal` reports the cap. `--relearn-rejected` re-learns a run whose current lessons are all `rejected` and were all written by an earlier learner (a `provenance.learner` other than `BENCHMARK_LEARNER`, `bench-rule-v2`, or none). The old rejections stay as audit records. The new lesson carries the current learner, so a second pass skips the run whatever its verdict. Back up the database first; `--dry-run` writes nothing (not even the lessons account).
 
+### One outcome path (`src/outcomes/`)
+
+A resolved result is recorded once, durably, before anything learns from it. Each consumer then
+reads it on its own schedule. This way a restart, a spent lesson budget or a judge outage defers
+learning instead of losing it.
+
+- **Filing.** Every surface keeps its answer in `forecast_answers`, with three columns added in
+  migration 162:
+  - `source`: the surface that filed it (`command`, `api`, or a board's name);
+  - `external_id`: the board's own id for the question, unique per owner;
+  - `eval_mode`: `measure` or `live`.
+- **Resolution.** `resolveForecast(db, answerId, value, resolvedAt)` (`src/outcomes/forecast.ts`)
+  is the one place an answer is scored:
+  - a probability by Brier, a number by CRPS (it needs its sd), a typed answer by
+    `scoreTypedAnswer`;
+  - the answer is settled once (`resolved_at IS NULL`);
+  - an outcome that cannot be scored leaves the answer open;
+  - the resolver finder (`forecast-question`) and every board adapter call it.
+- **Record.** `recordResolved` writes one append-only `outcomes` row per subject
+  (`forecast:<id>`, …), plus a pending `outcome_deliveries` row for each consumer of its kind.
+  - The row holds numbers and labels only: success, quality (0–1), loss, metric, truth, a short
+    detail, `basis` (`mechanical` or `judged`, with the judge), `eval_mode`, participants and refs.
+  - Question text stays on the subject row.
+- **Delivery.** `deliverOutcomes` (`src/outcomes/deliver.ts`) runs in the background when an
+  outcome is recorded, and again on the `outcome-delivery` tick job (every 300 ticks, phase 150).
+  Scripts await `settleDelivery`.
+  - `lessons`: a judged lesson through the armed learner (`armedLearner`, the same sink, writer,
+    judge and hourly budget as `noteOutcome`). The question is read back from the subject as
+    private context.
+    - An outcome over budget, or with learning not armed, waits.
+    - An outcome with no verdict is retried. After `MAX_DELIVERY_ATTEMPTS` it ends `failed`, with
+      the reason.
+  - `history`: one `MARINA_FORECAST_HISTORY` record (`noteResolvedForecast` or
+    `noteResolvedRecord`):
+    - a typed answer's pre-adjustment forecast and prior;
+    - a plain number's mean and sd;
+    - a plain probability as a yes/no choice.
+    - With no history configured, the delivery is skipped, with that reason.
+- **Rules, held in one place.**
+  - A `measure` outcome is recorded, but every consumer marks it `skipped: measurement`.
+  - `MARINA_LESSONS=off` skips lessons.
+  - `outcomeDeliveryCounts()` shows whether learning is keeping up.
+
 ### Lessons from work (`src/learning/work.ts`)
 
 Marina's own tool work teaches through the same loop. `MARINA_LESSONS_FROM_WORK=off|observe|on` (default `off`; `MARINA_LESSONS=off` turns it off too).

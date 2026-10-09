@@ -62,6 +62,7 @@ import * as meshesDb from "./db-meshes";
 import * as metaDb from "./db-meta";
 import * as mutationsDb from "./db-mutations";
 import * as notesDb from "./db-notes";
+import * as outcomesDb from "./db-outcomes";
 import * as principalsDb from "./db-principals";
 import * as reproductionDb from "./db-reproduction";
 import { type ResourceChange, subscribeResourceChanges } from "./db-resource-changes";
@@ -3689,6 +3690,58 @@ export class MarinaDB implements MarinaStores {
 
   openForecastsForSample(sampleId: string): marketsDb.ForecastAnswerRow[] {
     return marketsDb.openForecastsForSample(this.db, sampleId);
+  }
+
+  getForecastAnswer(id: number): marketsDb.ForecastAnswerRow | undefined {
+    return marketsDb.getForecastAnswer(this.db, id);
+  }
+
+  getForecastAnswerByExternalId(
+    entityName: string,
+    externalId: string,
+  ): marketsDb.ForecastAnswerRow | undefined {
+    return marketsDb.getForecastAnswerByExternalId(this.db, entityName, externalId);
+  }
+
+  recordOutcomeRow(
+    input: outcomesDb.OutcomeInput,
+    consumers: readonly string[],
+  ): { id: number; created: boolean } {
+    return outcomesDb.recordOutcomeRow(this.db, input, consumers);
+  }
+
+  getOutcome(id: number): outcomesDb.OutcomeRow | undefined {
+    return outcomesDb.getOutcome(this.db, id);
+  }
+
+  getOutcomeBySubject(subject: string): outcomesDb.OutcomeRow | undefined {
+    return outcomesDb.getOutcomeBySubject(this.db, subject);
+  }
+
+  listOutcomes(opts?: { kind?: outcomesDb.OutcomeKind; limit?: number }): outcomesDb.OutcomeRow[] {
+    return outcomesDb.listOutcomes(this.db, opts);
+  }
+
+  pendingOutcomes(consumer: string, limit: number): outcomesDb.OutcomeRow[] {
+    return outcomesDb.pendingOutcomes(this.db, consumer, limit);
+  }
+
+  setOutcomeDelivery(
+    outcomeId: number,
+    consumer: string,
+    state: outcomesDb.DeliveryState,
+    reason?: string,
+    now?: number,
+  ): void {
+    outcomesDb.setOutcomeDelivery(this.db, outcomeId, consumer, state, reason, now);
+  }
+
+  outcomeDeliveries(outcomeId: number): outcomesDb.DeliveryRow[] {
+    return outcomesDb.outcomeDeliveries(this.db, outcomeId);
+  }
+
+  outcomeDeliveryCounts(): Array<{ consumer: string; state: outcomesDb.DeliveryState; n: number }> {
+    return outcomesDb.outcomeDeliveryCounts(this.db);
   }
 
   resolveForecastAnswer(

@@ -646,6 +646,58 @@ CREATE TRIGGER upstream_events_no_update BEFORE UPDATE ON upstream_events
 BEGIN SELECT RAISE(ABORT, 'upstream_events is append-only'); END;
 `,
   },
+  // Migration 162: one outcome path (src/outcomes/). Every surface files its
+  // answer in `forecast_answers` (a board's own id in `external_id`, unique per
+  // owner; `eval_mode` measure|live); every resolved result is ONE append-only
+  // `outcomes` row per subject, holding numbers and labels only (never the
+  // question text, which stays on its subject row). `outcome_deliveries` is
+  // each consumer's durable state for it (lessons, history), so a budget or a
+  // restart defers learning and never drops it.
+  {
+    version: 162,
+    sql: `
+ALTER TABLE forecast_answers ADD COLUMN external_id TEXT;
+ALTER TABLE forecast_answers ADD COLUMN source TEXT;
+ALTER TABLE forecast_answers ADD COLUMN eval_mode TEXT
+  CHECK (eval_mode IS NULL OR eval_mode IN ('live', 'measure'));
+CREATE UNIQUE INDEX idx_forecast_answers_external
+  ON forecast_answers(entity_name, external_id) WHERE external_id IS NOT NULL;
+CREATE TABLE outcomes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  subject TEXT NOT NULL UNIQUE,
+  kind TEXT NOT NULL CHECK (kind IN ('forecast', 'task', 'request', 'benchmark')),
+  source TEXT NOT NULL,
+  domain TEXT NOT NULL,
+  owner TEXT,
+  succeeded INTEGER NOT NULL CHECK (succeeded IN (0, 1)),
+  quality REAL CHECK (quality IS NULL OR (quality >= 0 AND quality <= 1)),
+  loss REAL,
+  metric TEXT,
+  truth_json TEXT,
+  detail TEXT,
+  basis TEXT NOT NULL CHECK (basis IN ('mechanical', 'judged')),
+  judge TEXT,
+  eval_mode TEXT CHECK (eval_mode IS NULL OR eval_mode IN ('live', 'measure')),
+  participants_json TEXT,
+  refs_json TEXT,
+  resolved_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_outcomes_kind ON outcomes(kind, resolved_at);
+CREATE TRIGGER outcomes_no_update BEFORE UPDATE ON outcomes
+BEGIN SELECT RAISE(ABORT, 'outcomes is append-only'); END;
+CREATE TABLE outcome_deliveries (
+  outcome_id INTEGER NOT NULL REFERENCES outcomes(id),
+  consumer TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('pending', 'done', 'skipped', 'failed')),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  reason TEXT,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (outcome_id, consumer)
+);
+CREATE INDEX idx_outcome_deliveries_pending ON outcome_deliveries(consumer, state, outcome_id);
+`,
+  },
 ];
 
 /** Migration 143 body — self-contained so later edits to db-notes never change it. */
