@@ -16,6 +16,7 @@
  */
 
 import { bold, dim, header, separator } from "../../net/ansi";
+import { EARNED_MIN_COMPARED, EARNED_MIN_LOWER, judgeAgreement } from "../../outcomes/agreement";
 import { liveEvidence } from "../../outcomes/evidence";
 import type { MarinaDB } from "../../persistence/database";
 import type { OutcomeKind } from "../../persistence/db-outcomes";
@@ -24,8 +25,8 @@ import { canonicalSub, parseModifiers, unknownSubcommand } from "../parse-input"
 import { requiresPersistence } from "./command-messages";
 
 const USAGE =
-  "Usage: outcome [stats] | outcome evidence [source:<s>] [since:<duration>] [judged] | outcome list [kind:<k>] [limit:<n>]";
-const SUBS = ["stats", "evidence", "list"] as const;
+  "Usage: outcome [stats] | outcome evidence [source:<s>] [since:<duration>] [judged] | outcome list [kind:<k>] [limit:<n>] | outcome agreement";
+const SUBS = ["stats", "evidence", "list", "agreement"] as const;
 const KINDS: readonly OutcomeKind[] = ["forecast", "task", "request", "benchmark"];
 
 const pct = (x: number) => `${(x * 100).toFixed(0)}%`;
@@ -44,8 +45,9 @@ export function outcomeCommand(deps: {
       "outcome stats",
       "outcome evidence [source:<s>] [since:<duration>] [judged]",
       "outcome list [kind:<k>] [limit:<n>]",
+      "outcome agreement",
     ],
-    help: `Every resolved result — forecasts, task verdicts, Code Mode checks — is recorded once and learned from.\n${USAGE}\n\nstats: whether lessons and history keep up (pending, done, skipped, failed). evidence: live success rates per kind of work, model and role, from real work (mechanical outcomes; \`judged\` shows judged ones instead). list: your own outcomes. Read-only.`,
+    help: `Every resolved result — forecasts, task verdicts, Code Mode checks — is recorded once and learned from.\n${USAGE}\n\nstats: whether lessons and history keep up (pending, done, skipped, failed). evidence: live success rates per kind of work, model and role, from real work (mechanical outcomes; \`judged\` shows judged ones instead). list: your own outcomes. agreement: how often each judge's opinions match the mechanical results for the same work (a judge settles results on its own only once earned). Read-only.`,
     handler: (ctx: RoomContext, input) => {
       const db = deps.db;
       if (!db) {
@@ -146,6 +148,23 @@ export function outcomeCommand(deps: {
                     `${o.succeeded ? "✓" : "✗"} ${bold(o.source)} ${dim(o.subject)} ${o.detail ?? ""}${o.quality !== null ? dim(` · quality ${o.quality.toFixed(2)}`) : ""}`,
                 )
               : ["None yet."]),
+          ].join("\n"),
+        );
+        return;
+      }
+      if (sub === "agreement") {
+        const rows = judgeAgreement(db);
+        ctx.send(
+          input.entity,
+          [
+            header("Judge agreement"),
+            separator(),
+            ...(rows.length
+              ? rows.map(
+                  (a) =>
+                    `${bold(a.judge)}: agreed ${a.agreed}/${a.compared} compared (${a.judged} judged)${a.falsePass ? ` · false pass ${a.falsePass}` : ""} ${dim(`lower ${pct(a.lower)}`)} ${a.earned ? bold("earned") : dim(`not earned (needs ${EARNED_MIN_COMPARED} compared, lower ≥ ${pct(EARNED_MIN_LOWER)})`)}`,
+                )
+              : ["No judged outcomes yet."]),
           ].join("\n"),
         );
         return;

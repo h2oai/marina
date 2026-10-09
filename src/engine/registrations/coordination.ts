@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { resolveEvidence } from "../../decisions/evidence";
+import { recordTaskOpinion } from "../../outcomes/live";
 import type { EntityId } from "../../types";
 import { setChallengeHost } from "../challenges";
 import { arenaCommand } from "../commands/arena";
@@ -272,6 +273,15 @@ export function registerCoordinationCommands(engine: Engine): void {
         (row) =>
           tryLog(engine.logger, "decisions", "Judge observation not recorded", () => {
             engine.db?.recordJudgeObservation(row);
+            // The same opinion on the outcome path: a judged outcome, measured
+            // against the creator's verdict when it comes (`outcome agreement`).
+            if (engine.db)
+              recordTaskOpinion(engine.db, {
+                taskId: row.taskId,
+                claimant: row.claimantName,
+                judge: row.evaluator,
+                opinion: row.opinion,
+              });
           }),
         (work) => engine.trackBackground(work),
       ),

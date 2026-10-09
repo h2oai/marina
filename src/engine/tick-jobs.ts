@@ -11,6 +11,7 @@ import type { FlywheelToolBackend } from "../integrations/flywheel-manager";
 import { flushWorkLessons } from "../learning/work";
 import { memoryObservabilityPollTicks, pollMemoryEvents } from "../net/memory-observability";
 import { cleanupStaleConversationChannels } from "../net/model-api";
+import { autoresolveLinked } from "../outcomes/autoresolve";
 import { deliverOutcomes } from "../outcomes/deliver";
 import type { MarinaDB } from "../persistence/database";
 import { syncOperationalAlerts } from "./commands/ops";
@@ -336,7 +337,23 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
       await deliverOutcomes(host.db);
     },
   });
+
+  // Hourly: check the markets that open answers are linked to; a resolved one
+  // settles them through the calibration finder (MARINA_OUTCOME_AUTORESOLVE).
+  s.register({
+    name: "outcome-autoresolve",
+    every: NOTE_IMPORTANCE_INTERVAL,
+    phase: OUTCOME_AUTORESOLVE_PHASE,
+    failureMessage: "Automatic outcome resolution failed",
+    run: async () => {
+      if (!host.db) return;
+      await autoresolveLinked(host.db);
+    },
+  });
 }
+
+/** The hourly phase of automatic resolution of market-linked answers (src/outcomes/autoresolve.ts). */
+export const OUTCOME_AUTORESOLVE_PHASE = 3450;
 
 /** Ticks between outcome-delivery passes (src/outcomes/deliver.ts). */
 export const OUTCOME_DELIVERY_INTERVAL = 300;

@@ -30,32 +30,81 @@ export function participantOf(
   };
 }
 
+/** The subject a task attempt's outcomes share: `task:<id>:<claimant>`. */
+export const taskBase = (taskId: number, claimant: string) => `task:${taskId}:${claimant}`;
+
 /**
- * A creator's verdict on a task submission (`task_approved` / `task_rejected`)
- * as one outcome. Each verdict is its own subject (a resubmission after a
- * rejection is a new attempt). No-op for any other event.
+ * A creator's verdict on a task submission as one outcome. Each verdict is its
+ * own subject (a resubmission after a rejection is a new attempt).
  */
-export function observeOutcomeEvent(db: MarinaDB | undefined, event: EngineEvent): void {
-  if (!db || (event.type !== "task_approved" && event.type !== "task_rejected")) return;
-  const claimant = event.claimantName;
-  if (!claimant) return;
-  const approved = event.type === "task_approved";
+export function recordTaskVerdict(
+  db: MarinaDB,
+  input: { taskId: number; claimant: string; approved: boolean; at: number; detail?: string },
+): void {
   recordResolved(db, {
-    subject: `task:${event.taskId}:${claimant}:${event.timestamp}`,
+    subject: `${taskBase(input.taskId, input.claimant)}:${input.at}`,
     kind: "task",
     source: "task:verdict",
     domain: "tools",
-    owner: claimant,
-    succeeded: approved,
-    quality: approved ? 1 : 0,
+    owner: input.claimant,
+    succeeded: input.approved,
+    quality: input.approved ? 1 : 0,
     metric: "creator-verdict",
-    detail: approved
-      ? "submission approved by the task's creator"
-      : "submission rejected by the task's creator",
+    detail:
+      input.detail ??
+      (input.approved
+        ? "submission approved by the task's creator"
+        : "submission rejected by the task's creator"),
     basis: "mechanical",
-    participants: [participantOf(db, claimant)],
-    refs: [`task:${event.taskId}`],
-    resolvedAt: event.timestamp,
+    participants: [participantOf(db, input.claimant)],
+    refs: [`task:${input.taskId}`],
+    resolvedAt: input.at,
+  });
+}
+
+/** `task_approved` / `task_rejected` as a verdict outcome; no-op for any other event. */
+export function observeOutcomeEvent(db: MarinaDB | undefined, event: EngineEvent): void {
+  if (!db || (event.type !== "task_approved" && event.type !== "task_rejected")) return;
+  if (!event.claimantName) return;
+  recordTaskVerdict(db, {
+    taskId: event.taskId,
+    claimant: event.claimantName,
+    approved: event.type === "task_approved",
+    at: event.timestamp,
+  });
+}
+
+/**
+ * A judge's opinion of a task submission (the submission verifier, any
+ * decision backend) as a JUDGED outcome: recorded, never delivered — an
+ * opinion teaches nothing until its judge has earned agreement with creators'
+ * verdicts (`judgeAgreement`). `none` (outage, missing signals) is no outcome.
+ */
+export function recordTaskOpinion(
+  db: MarinaDB,
+  input: {
+    taskId: number;
+    claimant: string;
+    judge: string;
+    opinion: "pass" | "fail" | "none";
+    at?: number;
+  },
+): void {
+  if (input.opinion === "none") return;
+  const at = input.at ?? Date.now();
+  recordResolved(db, {
+    subject: `judged:${taskBase(input.taskId, input.claimant)}:${at}`,
+    kind: "task",
+    source: "task:verdict",
+    domain: "tools",
+    owner: input.claimant,
+    succeeded: input.opinion === "pass",
+    metric: "judge-opinion",
+    basis: "judged",
+    judge: input.judge,
+    participants: [participantOf(db, input.claimant)],
+    refs: [`task:${input.taskId}`],
+    resolvedAt: at,
   });
 }
 

@@ -777,6 +777,9 @@
 # MARINA_FORECAST_HISTORY=data/forecast/history.jsonl
 # MARINA_FORECAST_HISTORY_MIN=50
 
+# Automatic resolution (src/outcomes/autoresolve.ts): every hour, the markets that open saved answers are linked to (`resolves:<venue>/<ticker>`) are read, at most 20 per pass, and a resolved one settles every answer waiting on it. Public Kalshi/Polymarket reads only. `off` waits for a `probe`.
+# MARINA_OUTCOME_AUTORESOLVE=on
+
 # Formation routing for POST /v1/forecast (src/forecast/routing.ts): `off` (default) answers with MARINA_FORECAST_FORMATION; `observe` records which formation routing would pick; `on` uses it. Per question class (the caller's `category`, else the answer group) a challenger replaces the default only when, on at least ROUTE_MIN_N questions both answered (resolved records in MARINA_FORECAST_HISTORY carrying their formation and score), its paired gain has a 95 % lower bound above 0 and clears the fishing margin 0.02 + 0.01·log₂(1 + challengers tried). CANDIDATES is a comma list of formations (default all four).
 # MARINA_FORECAST_ROUTE=off
 # MARINA_FORECAST_ROUTE_CANDIDATES=ensemble,delphi,tournament,skeptic

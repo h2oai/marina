@@ -3692,6 +3692,10 @@ export class MarinaDB implements MarinaStores {
     return marketsDb.openForecastsForSample(this.db, sampleId);
   }
 
+  openLinkedSampleIds(limit: number): string[] {
+    return marketsDb.openLinkedSampleIds(this.db, limit);
+  }
+
   getForecastAnswer(id: number): marketsDb.ForecastAnswerRow | undefined {
     return marketsDb.getForecastAnswer(this.db, id);
   }

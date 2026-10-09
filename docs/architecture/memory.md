@@ -214,6 +214,21 @@ learning instead of losing it.
   - Only mechanical outcomes count by default, and measurement runs never count.
   - Kept separate from the benchmark ledger, so a number is always known to come from real work or
     from a board.
+- **Automatic resolution** (`src/outcomes/autoresolve.ts`, hourly `outcome-autoresolve` job, phase
+  3450).
+  - The markets that open answers are linked to (`resolves:<venue>/<ticker>`) are read, at most 20
+    per pass, oldest waiting answer first.
+  - A resolved market is written as a Sample, exactly as `probe` writes it, so every answer waiting
+    on it settles through `resolveForecast`.
+  - Public reads only. `MARINA_OUTCOME_AUTORESOLVE=off` turns it off.
+- **Judged outcomes** (`basis: judged`, subject `judged:<subject>`). A judge's opinion is recorded
+  but has no consumers: it teaches and tunes nothing.
+  - The submission verifier's pass/fail opinions (`MARINA_DECISION_VERIFY`) are recorded this way.
+  - An owner's `code review accept-unverified` is recorded as a verdict.
+  - `judgeAgreement` (`src/outcomes/agreement.ts`, `outcome agreement`) compares each judged outcome
+    with the mechanical outcome for the same subject: the creator's later verdict on the same
+    attempt, or the market's resolution of the same answer. It counts false passes separately.
+  - A judge is `earned` only at ≥ 25 comparisons with a Wilson 95 % lower bound ≥ 0.85.
 - **Rules, held in one place.**
   - A `measure` outcome is recorded, but every consumer marks it `skipped: measurement`.
   - `MARINA_LESSONS=off` skips lessons.

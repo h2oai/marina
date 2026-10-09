@@ -151,6 +151,8 @@ export interface OutcomeFilter {
   basis?: OutcomeBasis;
   /** Resolved at or after this time (ms). */
   since?: number;
+  /** Subjects starting with this (`task:7:Ada:` — every verdict on that attempt). */
+  subjectPrefix?: string;
   limit?: number;
 }
 
@@ -182,6 +184,10 @@ export function listOutcomes(db: Database, opts: OutcomeFilter = {}): OutcomeRow
   if (opts.since !== undefined) {
     where.push("resolved_at >= ?");
     args.push(opts.since);
+  }
+  if (opts.subjectPrefix) {
+    where.push("substr(subject, 1, ?) = ?");
+    args.push(opts.subjectPrefix.length, opts.subjectPrefix);
   }
   const limit = Math.max(1, Math.min(opts.limit ?? 50, 10_000));
   return db
