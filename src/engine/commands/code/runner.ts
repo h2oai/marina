@@ -213,11 +213,16 @@ export function applySessionRunner(
   const runner = effectiveRunner(db ? sessionRunnerSetting(db, session.id) : null, env);
   if (runner.kind === "host") return ws;
   if (runner.kind === "unavailable")
-    return new UnavailableContainerWorkspace(ws.root, new Error(runner.reason));
+    return new UnavailableContainerWorkspace(ws.root, new Error(runner.reason), ws.fileGrants);
   try {
-    return new ContainerWorkspace(ws.root, resolveContainerRunner(runner.config, env));
+    return new ContainerWorkspace(
+      ws.root,
+      resolveContainerRunner(runner.config, env),
+      undefined,
+      ws.fileGrants,
+    );
   } catch (error) {
-    return new UnavailableContainerWorkspace(ws.root, error);
+    return new UnavailableContainerWorkspace(ws.root, error, ws.fileGrants);
   }
 }
 

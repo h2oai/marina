@@ -489,6 +489,19 @@ console.log("snapshot stayed stable");`,
     expect(meta().verification).toBe("passed");
   });
 
+  it("never accepts whitespace-only snapshot checks as completed task validation", async () => {
+    f.db.updateCodingArtifact(run.id, {
+      metadata: { ...meta(), verificationRequirement: "candidate" },
+    });
+    rmSync(join(root, "package.json"));
+    await verify();
+    expect(artifact("verification").status).toBe("complete");
+    await send("code summary Whitespace is clean");
+    expect(current().status).toBe("active");
+    expect(meta().verification).toBe("not_run");
+    expect(meta().verificationReason).toContain("Whitespace");
+  });
+
   it("checks staged snapshot whitespace against its base rather than an empty working diff", async () => {
     rmSync(join(root, "package.json"));
     writeFileSync(join(root, "source.txt"), "trailing whitespace   \n");

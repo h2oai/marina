@@ -4,6 +4,7 @@
 import { existsSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { LocalWorkspace, type WorkspaceRuntime } from "./local-workspace";
+import { type WorkspaceFileGrant, workspaceFileGrants } from "./workspace-file-grants";
 
 export interface WorkspaceChoice {
   label: string;
@@ -14,8 +15,17 @@ export class WorkspaceRegistry {
   readonly roots: string[];
   readonly defaultRoot: string;
   readonly usesCwdFallback: boolean;
+  readonly fileGrants: readonly WorkspaceFileGrant[];
 
-  constructor(opts: { defaultRoot?: string; roots?: string[]; usesCwdFallback?: boolean } = {}) {
+  constructor(
+    opts: {
+      defaultRoot?: string;
+      roots?: string[];
+      inputRoots?: string[];
+      outputRoots?: string[];
+      usesCwdFallback?: boolean;
+    } = {},
+  ) {
     // SECURITY (Finding 2): when no code root is configured, process.cwd() is
     // Marina's OWN source tree. We keep it here only as a READ-ONLY display /
     // resolution fallback so `code doctor`, `code status`, and inspect verbs
@@ -33,13 +43,21 @@ export class WorkspaceRegistry {
       throw new Error(`Default code workspace is outside allowed roots: ${requestedDefault}`);
     }
     this.defaultRoot = requestedDefault;
+    this.fileGrants = workspaceFileGrants(opts.inputRoots, opts.outputRoots);
   }
 
   static fromEnv(env: NodeJS.ProcessEnv = process.env): WorkspaceRegistry {
     const roots = splitEnvList(env.MARINA_CODE_ROOTS);
     return new WorkspaceRegistry({
       defaultRoot: env.MARINA_CODE_DEFAULT_ROOT,
-      roots: roots.length > 0 ? roots : undefined,
+      roots:
+        roots.length > 0
+          ? roots
+          : env.MARINA_CODE_DEFAULT_ROOT
+            ? [env.MARINA_CODE_DEFAULT_ROOT]
+            : undefined,
+      inputRoots: splitEnvList(env.MARINA_CODE_INPUT_ROOTS),
+      outputRoots: splitEnvList(env.MARINA_CODE_OUTPUT_ROOTS),
       usesCwdFallback: roots.length === 0 && !env.MARINA_CODE_DEFAULT_ROOT,
     });
   }
@@ -55,11 +73,11 @@ export class WorkspaceRegistry {
   }
 
   defaultWorkspace(): WorkspaceRuntime {
-    return new LocalWorkspace(this.defaultRoot);
+    return new LocalWorkspace(this.defaultRoot, this.fileGrants);
   }
 
   workspaceForRoot(root: string): WorkspaceRuntime {
-    return new LocalWorkspace(this.resolveRoot(root).root);
+    return new LocalWorkspace(this.resolveRoot(root).root, this.fileGrants);
   }
 
   resolveRoot(input: string): WorkspaceChoice {

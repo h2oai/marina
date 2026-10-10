@@ -54,7 +54,7 @@ export function ChatMessageList({
   viewMode: "compact" | "rich";
   copy(text: string, key: number | "all"): Promise<void>;
   copied: number | "all" | null;
-  sendCommandWithOverlay(command: string): boolean;
+  sendCommandWithOverlay(command: string, target?: { sessionId: string }): boolean;
 }) {
   const outputRef = useRef<HTMLDivElement>(null);
   const feedEvents = useFeedState((s) => s.events);

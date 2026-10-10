@@ -77,7 +77,8 @@ const videoGenerateSchema = Type.Object({
 
 const lookSchema = Type.Object({
   source: Type.String({
-    description: "Canvas node id, asset id, or http(s) URL of an image, PDF, video or text",
+    description:
+      "Workspace image path (workspace:<path>), canvas node id, asset id, or http(s) URL",
   }),
   question: Type.Optional(Type.String({ description: "What to look for or answer" })),
 });
@@ -135,13 +136,25 @@ export function createMediaTools(ctx: ToolContext): AgentTool[] {
       name: "marina_see",
       label: "See",
       description:
-        "See an image, PDF page, video keyframes or text on the canvas (or at a URL) and answer a question about it; canvas results are written back as a linked node.",
+        "Inspect a workspace image, canvas source or URL. Workspace observations are saved as coding artifacts: reopen with marina_code show without another vision call. Canvas results link to their source.",
       parameters: lookSchema,
       execute: async (_id: string, params: unknown, signal?: AbortSignal) => {
         const p = params as Static<typeof lookSchema>;
         const source = p.source.trim();
-        if (!source || /\s/.test(source)) throw new Error("source must be one id or URL.");
         const question = sanitizePrompt(p.question ?? "");
+        const workspace =
+          source.startsWith("workspace:") ||
+          source.startsWith("/") ||
+          source.startsWith("./") ||
+          source.startsWith("../") ||
+          (!/^[a-z]+:/i.test(source) && /\.(png|jpe?g|gif|webp)$/i.test(source));
+        if (workspace) {
+          const path = source.replace(/^workspace:/, "");
+          if (!path.trim() || /[\0\r\n]/.test(path))
+            throw new Error("Invalid workspace image path.");
+          return execCommand(ctx, `code see ${JSON.stringify({ path, question })}`, signal);
+        }
+        if (!source || /\s/.test(source)) throw new Error("source must be one id or URL.");
         return execCommand(ctx, `canvas look ${source}${question ? ` ${question}` : ""}`, signal);
       },
     },

@@ -39,11 +39,12 @@
  *   none of it: it only gets the explicit `-e` values below.
  */
 
-import { lstatSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { WorkspaceDescriptor, WorkspaceRunResult } from "./local-workspace";
 import { LocalWorkspace, runCapture, runWorkspaceCommand } from "./local-workspace";
+import type { WorkspaceFileGrant } from "./workspace-file-grants";
 
 export type ContainerRuntime = "podman" | "docker";
 export type ContainerSync = "mount" | "patch";
@@ -285,12 +286,15 @@ export function containerRunArgv(
     gid?: number;
     /** Root-relative git metadata paths bound read-only over the worktree mount (default `.git`). */
     readOnlyPaths?: string[];
+    fileGrants?: readonly WorkspaceFileGrant[];
   } = {},
 ): string[] {
   const ids = {
     uid: opts.uid ?? process.getuid?.() ?? 1000,
     gid: opts.gid ?? process.getgid?.() ?? 1000,
   };
+  if (runner.sync === "patch" && opts.fileGrants?.length)
+    throw new Error("Task file roots require mount sync; patch sync never mounts host paths.");
   const applyPatch = runner.sync === "patch" && opts.applyPatch === true;
   const argv = [
     runner.runtime,
@@ -329,6 +333,14 @@ export function containerRunArgv(
     for (const rel of opts.readOnlyPaths ?? [".git"]) {
       argv.push("-v", `${root}/${rel}:${runner.workdir}/${rel}:ro`);
     }
+    for (const grant of opts.fileGrants ?? []) {
+      if (realpathSync(grant.root) !== grant.root)
+        throw new Error("Task file root changed before container execution.");
+      argv.push("-v", `${grant.root}:${grant.guestPath}:${grant.access === "read" ? "ro" : "rw"}`);
+      if (grant.access === "write")
+        for (const rel of gitMetadataPaths(grant.root, true))
+          argv.push("-v", `${grant.root}/${rel}:${grant.guestPath}/${rel}:ro`);
+    }
     if (runner.runtime === "podman") argv.push("--userns=keep-id");
     else argv.push("--user", `${ids.uid}:${ids.gid}`);
   } else if (applyPatch) {
@@ -364,8 +376,16 @@ export function containerRunArgv(
  * common directory too. Throws when `.git` is missing or a symlink: the
  * container could then create or redirect it, and host git would read it.
  */
-export function gitMetadataPaths(root: string): string[] {
+export function gitMetadataPaths(root: string, allowMissing = false): string[] {
   const dotGit = join(root, ".git");
+  if (!existsSync(dotGit)) {
+    if (lstatSync(dotGit, { throwIfNoEntry: false })?.isSymbolicLink())
+      throw new Error("Container mount sync refuses a dangling .git symlink.");
+    if (allowMissing) return [];
+    throw new Error(
+      "Container mount sync needs a git repository root with its own .git metadata as the primary workspace. Prepare the workspace before dispatch; additional artifact roots need no Git repository.",
+    );
+  }
   let stat: ReturnType<typeof lstatSync>;
   try {
     stat = lstatSync(dotGit);
@@ -408,10 +428,21 @@ export class ContainerWorkspace extends LocalWorkspace {
     root: string,
     runner: ResolvedContainerRunner,
     runtimeEnv: Record<string, string> = OPERATOR_RUNTIME_ENV,
+    fileGrants: readonly WorkspaceFileGrant[] = [],
   ) {
-    super(root);
+    super(root, fileGrants);
+    if (runner.sync === "patch" && fileGrants.length)
+      throw new Error("Task file roots require mount sync; patch sync never mounts host paths.");
     this.runner = runner;
     this.runtimeEnv = runtimeEnv;
+  }
+
+  override assertExecutionReady(): void {
+    super.assertExecutionReady();
+    if (this.runner.sync === "mount") gitMetadataPaths(this.root);
+    for (const grant of this.fileGrants)
+      if (realpathSync(grant.root) !== grant.root)
+        throw new Error("Task file root changed before dispatch.");
   }
 
   /** Where this runner's images live (podman), for `code doctor`. */
@@ -422,6 +453,9 @@ export class ContainerWorkspace extends LocalWorkspace {
   override describe(): WorkspaceDescriptor {
     return {
       ...super.describe(),
+      ...(this.fileGrants.length
+        ? { fileGrants: this.fileGrants.map((grant) => ({ ...grant })) }
+        : {}),
       runner: {
         kind: "container",
         runtime: this.runner.runtime,
@@ -459,6 +493,7 @@ export class ContainerWorkspace extends LocalWorkspace {
     const name = `marina-run-${crypto.randomUUID().slice(0, 12)}`;
     const argv = containerRunArgv(this.runner, this.root, normalized, name, {
       applyPatch: stdin !== undefined,
+      fileGrants: this.fileGrants,
       ...(this.runner.sync === "mount" ? { readOnlyPaths: gitMetadataPaths(this.root) } : {}),
     });
     const result = await runWorkspaceCommand(
@@ -528,9 +563,13 @@ export class ContainerWorkspace extends LocalWorkspace {
 export class UnavailableContainerWorkspace extends LocalWorkspace {
   private readonly reason: string;
 
-  constructor(root: string, error: unknown) {
-    super(root);
+  constructor(root: string, error: unknown, fileGrants: readonly WorkspaceFileGrant[] = []) {
+    super(root, fileGrants);
     this.reason = error instanceof Error ? error.message : String(error);
+  }
+
+  override assertExecutionReady(): never {
+    throw new Error(`Container runner unavailable: ${this.reason}`);
   }
 
   override prepareCandidateDependencies(): never {

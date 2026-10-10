@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  constants,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -13,13 +14,15 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { captureGitCandidate } from "./candidate";
 import { prepareCandidateBunDependencies } from "./candidate-dependencies";
 import type { ExecApprover } from "./exec-approver";
 import { CODE_RUN_HOME, hostGitArgv, hostGitEnv, isGitArgv } from "./host-git";
 import { preparationStepKind } from "./verification-plan";
+import { insideRoot, type WorkspaceFileGrant } from "./workspace-file-grants";
 
 const DEFAULT_MAX_READ_BYTES = 64 * 1024;
 const DEFAULT_MAX_LIST_ENTRIES = 200;
@@ -106,6 +109,8 @@ export interface WorkspaceDescriptor {
   target: "local" | "flywheel";
   persistence: "host" | "durable-sandbox";
   capabilities: WorkspaceCapability[];
+  /** Explicit operator-owned task roots; guest paths only when shared by the runner. */
+  fileGrants?: { root: string; access: "read" | "write"; guestPath?: string }[];
   /** Present when finite commands run inside a container instead of on the host. */
   runner?: { kind: "container"; runtime: string; image: string; sync: "mount" | "patch" };
 }
@@ -123,6 +128,8 @@ export interface WorkspaceFiles {
     input: string,
     maxBytes?: number,
   ): Promise<{ path: string; content: string; truncated: boolean; size: number }>;
+  /** Bounded bytes from the same authorized file surface; never a guest-only path. */
+  readBytes?(input: string, maxBytes: number): Promise<{ path: string; data: Uint8Array }>;
   search(query: string, limit?: number, path?: string): Promise<SearchHit[]>;
   diff(
     input?: string,
@@ -162,6 +169,8 @@ export interface WorkspaceExec {
   ): Promise<WorkspaceRunResult>;
   /** Paths changed against HEAD (tracked, staged and untracked), for verification scoping. */
   changedPaths?(): Promise<string[]>;
+  /** Model-free check of known execution blockers; never installs or executes task code. */
+  assertExecutionReady?(): void;
   /**
    * Run one fixed verification-preparation argv from the closed table in
    * `verification-plan.ts`: an environment probe anywhere, a dependency install
@@ -240,8 +249,21 @@ export class LocalWorkspace implements WorkspaceRuntime {
   private execApproverEntityId?: string;
   protected hostExecForbidden = false;
 
-  constructor(root = process.cwd()) {
+  constructor(
+    root = process.cwd(),
+    readonly fileGrants: readonly WorkspaceFileGrant[] = [],
+  ) {
     this.root = realpathSync(root);
+    if (
+      fileGrants.some(
+        (grant) => insideRoot(this.root, grant.root) || insideRoot(grant.root, this.root),
+      )
+    )
+      throw new Error("Task file grants must be separate from the primary workspace.");
+  }
+
+  assertExecutionReady(): void {
+    assertHostExecAllowed(this.hostExecForbidden);
   }
 
   captureCandidate(
@@ -274,22 +296,38 @@ export class LocalWorkspace implements WorkspaceRuntime {
       target: "local",
       persistence: "host",
       capabilities: ["files", "patches", "finite-exec"],
+      ...(this.fileGrants.length
+        ? { fileGrants: this.fileGrants.map(({ root, access }) => ({ root, access })) }
+        : {}),
     };
   }
 
-  resolvePath(input = "."): string {
-    const rel = input.trim() || ".";
-    if (rel.startsWith("/") || rel.includes("\0")) {
-      throw new Error("Use a relative path inside the workspace.");
-    }
-    const target = realpathMaybe(resolve(this.root, rel));
-    if (!isInside(this.root, target)) {
-      throw new Error("Path escapes the workspace root.");
-    }
+  resolvePath(input = ".", access: "read" | "write" = "read"): string {
+    const path = input.trim() || ".";
+    if (path.includes("\0")) throw new Error("Path contains a null byte.");
+    let root = this.root;
+    let target: string;
+    if (isAbsolute(path)) {
+      const grant = this.fileGrants.find((item) => insideRoot(item.root, resolve(path)));
+      if (!grant)
+        throw new Error(
+          "Use a relative path inside the workspace or an explicitly granted task root.",
+        );
+      if (access === "write" && grant.access !== "write")
+        throw new Error("Task input root is read-only.");
+      root = grant.root;
+      target = realpathMaybe(path);
+    } else target = realpathMaybe(resolve(root, path));
+    if (!insideRoot(root, target)) throw new Error("Path escapes the workspace root.");
     return target;
   }
 
+  private fileRoot(target: string): string {
+    return this.fileGrants.find((grant) => insideRoot(grant.root, target))?.root ?? this.root;
+  }
+
   relativePath(abs: string): string {
+    if (!insideRoot(this.root, abs)) return abs;
     const rel = relative(this.root, abs);
     return rel === "" ? "." : rel.split(sep).join("/");
   }
@@ -333,6 +371,39 @@ export class LocalWorkspace implements WorkspaceRuntime {
       truncated: bytes.byteLength > maxBytes,
       size: bytes.byteLength,
     };
+  }
+
+  async readBytes(input: string, maxBytes: number): Promise<{ path: string; data: Uint8Array }> {
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 100 * 1024 * 1024)
+      throw new Error("Invalid file byte limit.");
+    // Absolute paths within the primary root name the same already-authorized files.
+    const path =
+      isAbsolute(input) && insideRoot(this.root, resolve(input))
+        ? relative(this.root, resolve(input))
+        : input;
+    const target = this.resolvePath(path);
+    const file = await open(
+      target,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    try {
+      const stat = await file.stat();
+      const current = statSync(this.resolvePath(path));
+      if (!stat.isFile() || stat.dev !== current.dev || stat.ino !== current.ino)
+        throw new Error("Path is not a stable regular file.");
+      if (stat.size > maxBytes) throw new Error("File is larger than the byte limit.");
+      const bytes = new Uint8Array(maxBytes + 1);
+      let length = 0;
+      while (length < bytes.length) {
+        const result = await file.read(bytes, length, bytes.length - length, length);
+        if (!result.bytesRead) break;
+        length += result.bytesRead;
+      }
+      if (length > maxBytes) throw new Error("File is larger than the byte limit.");
+      return { path: this.relativePath(target), data: bytes.slice(0, length) };
+    } finally {
+      await file.close();
+    }
   }
 
   async search(
@@ -412,13 +483,15 @@ export class LocalWorkspace implements WorkspaceRuntime {
     newText: string,
     opts?: { replaceAll?: boolean },
   ): Promise<{ ok: boolean; output: string; occurrences: number }> {
-    const target = this.resolvePath(path);
-    assertNotGitMetadata(this.root, target);
+    const target = this.resolvePath(path, "write");
+    assertNotGitMetadata(this.fileRoot(target), target);
     const rel = this.relativePath(target);
     if (!oldText) {
       return { ok: false, output: "oldText must be non-empty.", occurrences: 0 };
     }
-    return withRootLock(this.root, async () => {
+    return withRootLock(this.fileRoot(target), async () => {
+      if (this.resolvePath(path, "write") !== target)
+        throw new Error("Path changed before the write.");
       const stat = statSync(target, { throwIfNoEntry: false });
       if (!stat?.isFile()) {
         return { ok: false, output: `File not found: ${rel}`, occurrences: 0 };
@@ -461,10 +534,12 @@ export class LocalWorkspace implements WorkspaceRuntime {
     path: string,
     content: string,
   ): Promise<{ ok: boolean; output: string; created: boolean }> {
-    const target = this.resolvePath(path);
-    assertNotGitMetadata(this.root, target);
+    const target = this.resolvePath(path, "write");
+    assertNotGitMetadata(this.fileRoot(target), target);
     const rel = this.relativePath(target);
-    return withRootLock(this.root, async () => {
+    return withRootLock(this.fileRoot(target), async () => {
+      if (this.resolvePath(path, "write") !== target)
+        throw new Error("Path changed before the write.");
       const stat = statSync(target, { throwIfNoEntry: false });
       if (stat?.isDirectory()) {
         return { ok: false, output: `Path is a directory: ${rel}`, created: false };
@@ -746,7 +821,10 @@ export function codeRunPolicy(): CodeRunPolicy {
 }
 
 function realpathMaybe(path: string): string {
-  return existsSync(path) ? realpathSync(path) : path;
+  const stat = lstatSync(path, { throwIfNoEntry: false });
+  if (stat) return realpathSync(path); // A dangling symlink must fail, not become a writable path.
+  const parent = dirname(path);
+  return parent === path ? path : join(realpathMaybe(parent), basename(path));
 }
 
 function isInside(root: string, target: string): boolean {
@@ -756,7 +834,7 @@ function isInside(root: string, target: string): boolean {
 
 function entryFor(root: string, path: string, stat: Stats): WorkspaceEntry {
   return {
-    path: relative(root, path).split(sep).join("/") || ".",
+    path: insideRoot(root, path) ? relative(root, path).split(sep).join("/") || "." : path,
     type: stat.isDirectory() ? "dir" : stat.isFile() ? "file" : "other",
     size: Number(stat.size),
   };
@@ -832,6 +910,12 @@ export function normalizeAllowedCodeCommand(root: string, command: string[]): st
   }
   if (binary === "npm" || binary === "pnpm" || binary === "yarn") {
     return normalizePackageScriptCommand(root, binary, args);
+  }
+  if (binary === "env" && args[0] === "PYTHONPATH=.venv/marina-site-packages") {
+    const wrapped = normalizeTestRunnerCommand(root, args[1] ?? "", args.slice(2));
+    if (!wrapped || (wrapped[0] !== "python" && wrapped[0] !== "python3"))
+      throw new Error("The project Python environment wraps an allowed Python check only.");
+    return ["env", args[0], ...wrapped];
   }
   if (binary === "uv") {
     // `uv run --frozen --no-sync <allowlisted python check>`: the project's own

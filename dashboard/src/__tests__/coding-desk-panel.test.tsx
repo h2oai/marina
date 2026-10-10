@@ -44,3 +44,40 @@ it("a connection lacking explicit session targeting cannot silently send to the 
   expect(screen.getByRole("button", { name: "Review coding request" })).toBeDisabled();
   expect(send).not.toHaveBeenCalled();
 });
+
+it("freezes the delivery manifest and session until the reviewed action is sent", () => {
+  render(<CodingDeskPanel binding={{ kind: "coding", id: "package-session" }} />);
+  fireEvent.change(screen.getByLabelText("Delivery manifest path"), {
+    target: { value: "delivery.json" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Review delivery check" }));
+  fireEvent.change(screen.getByLabelText("Delivery manifest path"), {
+    target: { value: "another.json" },
+  });
+  expect(send).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Run delivery check" }));
+  expect(send).toHaveBeenCalledExactlyOnceWith(
+    "code verify delivery manifest:delivery.json",
+    false,
+    { sessionId: "package-session" },
+  );
+});
+
+it("freezes the reviewed image path and session without sending on open or draft edits", () => {
+  const view = render(<CodingDeskPanel binding={{ kind: "coding", id: "images" }} />);
+  fireEvent.change(screen.getByLabelText("Workspace image path"), {
+    target: { value: "first image.png" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Review image inspection" }));
+  fireEvent.change(screen.getByLabelText("Workspace image path"), {
+    target: { value: "later.png" },
+  });
+  expect(send).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Inspect image" }));
+  expect(send).toHaveBeenCalledExactlyOnceWith('code see {"path":"first image.png"}', false, {
+    sessionId: "images",
+  });
+  view.rerender(<CodingDeskPanel binding={{ kind: "coding", id: "different" }} />);
+  expect(screen.getByLabelText("Workspace image path")).toHaveValue("");
+  view.unmount();
+});

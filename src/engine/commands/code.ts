@@ -9,6 +9,7 @@
 // subcommand inside Code Mode is a natural-language task routed to `doCode`.
 
 import { CodeSessionDriver } from "../../coding/code-session-driver";
+import { parseCommandArgv } from "../../coding/command-argv";
 import { parseCodeSearchInput } from "../../coding/search-input";
 import { codingRunMetadata } from "../../coding/task-run";
 import {
@@ -104,7 +105,14 @@ import {
   reviewCodingRun,
 } from "./code/task-run";
 import { startVerification } from "./code/verification";
-import { doctor, getWorkspaceRegistry, handleWorkspace, handleWorktree } from "./code/workspace";
+import { seeWorkspaceFile } from "./code/visual";
+import {
+  doctor,
+  getWorkspaceRegistry,
+  handleWorkspace,
+  handleWorktree,
+  workspaceForSession,
+} from "./code/workspace";
 import { requiresPersistence } from "./command-messages";
 
 // Public surface consumed by other modules and tests (engine.ts, websocket
@@ -145,6 +153,7 @@ const TARGETED_SUBCOMMANDS = new Set([
   "history",
   "files",
   "read",
+  "see",
   "search",
   "diff",
   "artifacts",
@@ -155,6 +164,8 @@ const TARGETED_SUBCOMMANDS = new Set([
   "decision",
   "observe",
   "summary",
+  "handoff",
+  "writer",
   "patch",
   "propose",
   "apply",
@@ -209,7 +220,7 @@ const stopHandler: SubcommandHandler = async (c) => {
   await stopSessionAgent(c.ctx, c.eid, c.entity, c.deps);
 };
 const VERIFY_USAGE =
-  "code verify [start|candidate] [dependencies:none|check|auto|<manager>] [scope:auto|changed|full|changed+full] [typecheck:auto|off] [budget:<duration>]";
+  "code verify [start|candidate|delivery] [manifest:<path>] [dependencies:none|check|auto|<manager>] [scope:auto|changed|full|changed+full] [typecheck:auto|off] [budget:<duration>]";
 
 /**
  * Subcommand dispatch table, keyed by the profile-canonical subcommand name.
@@ -331,6 +342,9 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
   ls: filesHandler,
   read: readHandler,
   cat: readHandler,
+  see: async (c) => {
+    await seeWorkspaceFile(c.ctx, c.eid, c.entity, c.deps, c.rawAfterSub, c.args);
+  },
   search: async (c) => {
     const parsed = parseCodeSearchInput(c.rawAfterSub);
     await search(c.ctx, c.eid, c.entity, c.deps, parsed.query, parsed.path);
@@ -339,10 +353,11 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
     await diff(c.ctx, c.eid, c.entity, c.deps, c.args.join(" "));
   },
   run: async (c) => {
-    await runWorkspaceCommand(c.ctx, c.eid, c.entity, c.deps, c.args);
+    await runWorkspaceCommand(c.ctx, c.eid, c.entity, c.deps, parseCommandArgv(c.rawAfterSub));
   },
   verify: async (c) => {
     const parsed = parseModifiers(c.args, {
+      manifest: { type: "string" },
       dependencies: { type: "string" },
       scope: { type: "string" },
       typecheck: { type: "string" },
@@ -352,9 +367,14 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
     if (
       parsed.errors.length ||
       parsed.rest.length > 1 ||
-      (mode !== undefined && mode !== "start" && mode !== "candidate")
+      (mode !== undefined && mode !== "start" && mode !== "candidate" && mode !== "delivery")
     )
       throw new Error(`Usage: ${VERIFY_USAGE}`);
+    const manifest = parsed.values.manifest as string | undefined;
+    if ((mode === "delivery") !== !!manifest)
+      throw new Error(
+        "Delivery verification requires manifest:<relative path>; other modes do not accept a manifest.",
+      );
     let options: VerificationOptions;
     try {
       options = resolveVerificationOptions({
@@ -366,8 +386,16 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
     } catch (error) {
       throw new Error(`${getErrorMessage(error)}\nUsage: ${VERIFY_USAGE}`);
     }
-    if (mode === "start" || mode === "candidate") {
-      await startVerification(c.ctx, c.eid, c.entity, c.deps, mode === "candidate", options);
+    if (mode === "start" || mode === "candidate" || mode === "delivery") {
+      await startVerification(
+        c.ctx,
+        c.eid,
+        c.entity,
+        c.deps,
+        mode === "candidate",
+        options,
+        manifest,
+      );
       return;
     }
     await verifyWorkspace(c.ctx, c.eid, c.entity, c.deps, options);
@@ -457,7 +485,7 @@ export function codeCommand(deps: CodeDeps): CommandDef {
       "code ask <request>",
       "code assign <agent> <req>",
       "code assign <agent> verification:candidate -- <req>",
-      "code do verification:candidate -- <task>",
+      "code do [verification:candidate|checks|delivery] [owner:unattended] -- <task>",
       "code blocked <reason>",
       "code branch [title]",
       "code checkpoint [title]",
@@ -522,7 +550,9 @@ export function codeCommand(deps: CodeDeps): CommandDef {
       "code project reconcile",
       "code project status",
       "code project switch <id|name>",
+      "code run --argv <json-array>",
       "code read <path>",
+      "code see <path> [question]",
       "code recipe",
       "code recipe list",
       "code recipe run <name>",
@@ -595,6 +625,7 @@ export function codeCommand(deps: CodeDeps): CommandDef {
       "code verify",
       "code verify start",
       "code verify candidate",
+      "code verify delivery manifest:<path>",
       "code verify candidate dependencies:auto",
       "code verify scope:changed+full budget:10m",
       "code workspace",
@@ -637,6 +668,10 @@ export function codeCommand(deps: CodeDeps): CommandDef {
         answerPrompt: deps.answerPrompt,
         db: deps.db,
         getEntity: deps.getEntity,
+        describeWorkspace: (session) =>
+          session.execution_target === "local"
+            ? workspaceForSession(depsWithDb, session).describe?.()
+            : undefined,
         onRun: (run, handle) => observeCodingRun(depsWithDb, run, handle),
         onRunEnd: (run) => publishCodingRun(depsWithDb, run),
       });

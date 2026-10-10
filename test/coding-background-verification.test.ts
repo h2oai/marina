@@ -291,7 +291,7 @@ console.log("real verification completed");`,
       if (change === "transport") protocol = "telnet";
       release.resolve();
       await f.engine.drainCommands();
-      expect(receipt().status).toBe("failed");
+      expect(receipt().status).toBe("error");
       expect(final()).toBeUndefined();
     },
   );
@@ -329,7 +329,7 @@ console.log("real verification completed");`,
     release.resolve();
     await f.engine.drainCommands();
     expect(calls).toHaveLength(1);
-    expect(receipt().status).toBe("failed");
+    expect(receipt().status).toBe("error");
     const command = f.db.listCodingArtifacts("b").find((a) => a.kind === "command_output")!;
     expect(JSON.parse(command.metadata_json).runId).toBe(original.id);
     expect(f.db.listCodingRunArtifacts(next.id)).toEqual([]);
@@ -415,7 +415,7 @@ console.log("real verification completed");`,
     );
     runner.start(input);
     await f.engine.drainCommands();
-    expect(receipt().status).toBe("failed");
+    expect(receipt().status).toBe("error");
   });
 
   it("the real local execution path never consults an approver and rechecks authority under its root lock", async () => {

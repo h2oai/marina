@@ -2035,11 +2035,15 @@ Effect: unknown.
 - `field-0` (`agent`): text, required.
 - `field-1` (`req`): text, required.
 
-### `code do verification:candidate -- <task>`
+### `code do [verification:candidate|checks|delivery] [owner:unattended] -- <task>`
 
 Effect: unknown.
 
-- `field-0` (`task`): text, required.
+- `field-0` (`verification`): text, optional group `option-0`, choices `candidate`, `checks`, `delivery`.
+- `field-1` (`owner`): text, optional group `option-1`.
+- `field-2` (`task`): text, required.
+- Group `option-0`: `verification:candidate|checks|delivery`.
+- Group `option-1`: `owner:unattended`.
 
 ### `code blocked <reason>`
 
@@ -2437,11 +2441,25 @@ Effect: unknown.
 
 - `field-0` (`id|name`): text, required, choices `id`, `name`.
 
+### `code run --argv <json-array>`
+
+Effect: unknown.
+
+- `field-0` (`json-array`): json, required.
+
 ### `code read <path>`
 
 Effect: unknown.
 
 - `field-0` (`path`): text, required.
+
+### `code see <path> [question]`
+
+Effect: unknown.
+
+- `field-0` (`path`): text, required.
+- `field-1` (`question`): text, optional group `option-0`.
+- Group `option-0`: `question`.
 
 ### `code recipe`
 
@@ -2860,6 +2878,12 @@ Effect: unknown.
 
 Effect: unknown.
 
+
+### `code verify delivery manifest:<path>`
+
+Effect: unknown.
+
+- `field-0` (`manifest`): text, required.
 
 ### `code verify candidate dependencies:auto`
 

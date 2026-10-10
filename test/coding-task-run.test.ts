@@ -10,6 +10,7 @@ import type { AgentOperatorStatus } from "../src/agent/lean-agent-adapter";
 import { LocalWorkspace } from "../src/coding/local-workspace";
 import {
   beginCodingRun,
+  canReclaimCodingWriter,
   codingRunMetadata,
   endCodingRun,
   recoverCodingRuns,
@@ -60,7 +61,11 @@ describe("durable coding task attempts", () => {
     db.close();
     rmSync(dir, { recursive: true, force: true });
   });
-  function begin(sessionId = "s", verificationRequirement?: "candidate") {
+  function begin(
+    sessionId = "s",
+    verificationRequirement?: "candidate" | "checks",
+    ownerMode?: "unattended",
+  ) {
     return beginCodingRun(db, {
       session: db.getCodingSession(sessionId)!,
       owner,
@@ -68,6 +73,7 @@ describe("durable coding task attempts", () => {
       prompt: "Fix the bug",
       profile: "marina",
       verificationRequirement,
+      ownerMode,
     });
   }
   function artifact(kind: string, status = "complete") {
@@ -213,17 +219,65 @@ describe("durable coding task attempts", () => {
     ])
       expect(parseCodingTask(raw)).toEqual({
         verificationRequirement: "candidate",
+        ownerMode: undefined,
         prompt: "fix this",
       });
     expect(parseCodingTask("-- explain verification:candidate")).toEqual({
       prompt: "explain verification:candidate",
       verificationRequirement: undefined,
+      ownerMode: undefined,
     });
     expect(
       parseCodingTask("explain verification:candidate").verificationRequirement,
     ).toBeUndefined();
     expect(() => parseCodingTask("verification:none task")).toThrow("Usage");
     expect(() => parseCodingTask("--verification")).toThrow("Usage");
+  });
+
+  it("limits unattended write recovery to the live designated worker and the owner-held lock", () => {
+    const run = begin("s", "checks", "unattended");
+    db.updateCodingSession("s", { writer: owner.name });
+    const allowed = (actor = worker, target = worker.name) =>
+      canReclaimCodingWriter(db, db.getCodingSession("s")!, actor, target);
+    expect(allowed()).toBe(true);
+    expect(allowed(owner)).toBe(false);
+    expect(allowed(worker, "Collaborator")).toBe(false);
+    db.updateCodingSession("s", { writer: "Collaborator" });
+    expect(allowed()).toBe(false);
+    db.updateCodingSession("s", { writer: owner.name });
+    endCodingRun(db, run.id, "cancelled", "owner stopped it");
+    expect(allowed()).toBe(false);
+    begin();
+    expect(allowed()).toBe(false);
+    expect(() => begin("s", undefined, "unattended")).toThrow("owner contract");
+  });
+
+  it("keeps live checks bound to their task, workspace and last execution event", async () => {
+    const run = begin("s", "checks");
+    const summarize = () => submitCodingRun(db, "s", worker, artifact("summary"));
+    expect((await summarize())?.status).toBe("active");
+    const receipt = (command: string, workspace = dir) =>
+      db.createCodingArtifact({
+        sessionId: "s",
+        kind: "verification",
+        status: "complete",
+        title: "Checks",
+        contentText: "Measured checks",
+        createdBy: worker.name,
+        metadata: { executionTarget: "local", workspace, steps: [{ command, outcome: "passed" }] },
+      });
+    receipt("git diff --check");
+    expect((await summarize())?.status).toBe("active");
+    receipt("bun test", "/wrong/workspace");
+    expect((await summarize())?.status).toBe("active");
+    receipt("bun test");
+    db.createCodingEvent({ sessionId: "s", actor: worker.name, kind: "file_written", payload: {} });
+    expect(codingRunMetadata((await summarize())!).verification).toBe("stale");
+    receipt("bun test");
+    const submitted = (await summarize())!;
+    expect(submitted.id).toBe(run.id);
+    expect(submitted.status).toBe("submitted");
+    expect(codingRunMetadata(submitted).verification).toBe("passed");
   });
 
   it("reuses one claimed canonical task when the operator steers an active attempt", () => {
@@ -323,7 +377,7 @@ describe("durable coding task attempts", () => {
     ).toHaveLength(1);
   });
 
-  it.each([false, true])(
+  it.each([undefined, "checks", "candidate"] as const)(
     "runs Code Mode with real checks, owner review, and required=%s",
     async (required) => {
       writeFileSync(join(dir, "package.json"), JSON.stringify({ scripts: { test: "bun test" } }));
@@ -331,7 +385,7 @@ describe("durable coding task attempts", () => {
         join(dir, "sample.test.ts"),
         'import { expect, test } from "bun:test"; test("check", () => expect(2 + 2).toBe(4));',
       );
-      if (required) {
+      if (required === "candidate") {
         writeFileSync(join(dir, ".gitignore"), "world.db*\n");
         for (const args of [
           ["init", "--quiet", "--template="],
@@ -407,8 +461,26 @@ describe("durable coding task attempts", () => {
       const request = required
         ? `Check the arithmetic test. ${"Additional task detail. ".repeat(80)}Keep the final constraint.`
         : "Check the arithmetic test";
-      await send(owner, `do ${required ? "verification:candidate -- " : ""}${request}`);
+      await send(
+        owner,
+        `do ${required ? `verification:${required} ${required === "checks" ? "owner:unattended " : ""}-- ` : ""}${request}`,
+      );
       expect(attention[0]).toContain("Task #");
+      if (required === "checks") {
+        await send(worker, "handoff to:Owner -- progress for review");
+        expect(db.getCodingSession("s")!.writer, messages.join("\n")).toBe(owner.name);
+        await send(worker, "writer Worker");
+        expect(db.getCodingSession("s")!.writer).toBe(worker.name);
+        expect(
+          db
+            .listCodingEvents("s")
+            .some(
+              (event) =>
+                event.kind === "writer_changed" &&
+                JSON.parse(event.payload_json).reason === "owner_authorized_reclaim",
+            ),
+        ).toBe(true);
+      }
       if (required) expect(owner.properties.coding_session_id).toBe("other");
       expect(db.listCodingRuns({ sessionId: "s", status: "active" })).toHaveLength(1);
       for (const listener of listeners)
@@ -416,10 +488,18 @@ describe("durable coding task attempts", () => {
       expect(db.listCodingRuns({ status: "active" })).toHaveLength(1);
       const initial = db.listCodingRuns({ sessionId: "s", status: "active" })[0]!;
       if (required) {
-        expect(attention[0]).toContain("Completion requires current candidate verification");
+        expect(attention[0]).toContain(
+          required === "candidate"
+            ? "Completion requires current candidate verification"
+            : "Completion requires current task checks",
+        );
         const reminder = String(worker.properties.coding_task).slice(0, 800);
         expect(reminder).toContain(`code show ${initial.id}`);
-        expect(reminder).toContain("Completion requires current candidate verification");
+        expect(reminder).toContain(
+          required === "candidate"
+            ? "Completion requires current candidate verification"
+            : "Completion requires current task checks",
+        );
         expect(initial.content_text).toBe(request);
         expect(attention[0]).toContain("Finish source and regression-test edits before");
         await send(worker, "summary I forgot the verification");
@@ -436,8 +516,9 @@ describe("durable coding task attempts", () => {
         ).toBeUndefined();
         expect(db.listCodingEvents("s").some((e) => e.kind === "verification_required")).toBe(true);
       }
-      await send(worker, required ? "verify candidate" : "verify");
+      await send(worker, required === "candidate" ? "verify candidate" : "verify");
       await Promise.all(pending);
+      if (required === "candidate") await send(worker, "run git status --short");
       await send(worker, "summary Arithmetic check passed");
       const run = db.listCodingRuns({ sessionId: "s", limit: 1 })[0]!;
       expect(run.status).toBe("submitted");

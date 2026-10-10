@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentEvent, AgentHandle } from "../src/agent/agent-types";
 import { CodeSessionDriver } from "../src/coding/code-session-driver";
+import { UnavailableContainerWorkspace } from "../src/coding/container-workspace";
 import { LocalWorkspace, type WorkspaceRuntime } from "../src/coding/local-workspace";
 import type { WorkspaceRegistry } from "../src/coding/workspace-registry";
 import { codeCommand } from "../src/engine/commands/code";
@@ -152,6 +153,7 @@ function makeEditableWorkspace(): {
 function makeRegistryStub(workspace: WorkspaceRuntime): WorkspaceRegistry {
   const root = workspace.displayRoot();
   return {
+    fileGrants: [],
     roots: [root],
     defaultRoot: root,
     usesCwdFallback: false,
@@ -173,6 +175,47 @@ describe("code single-agent binding (writer lock + role-aware recruit)", () => {
     db.close();
     cleanupDb(TEST_DB);
   });
+
+  it.each(["do", "assign Coder"])(
+    "refuses %s before recruiting, spawning or claiming when the runner is unavailable",
+    async (dispatch) => {
+      const owner = makeAgentEntity("preflight_owner", "Owner");
+      const worker = makeAgentEntity("preflight_worker", "Coder");
+      db.saveEntity(owner);
+      db.saveEntity(worker);
+      grant(db, owner.id, "code.exec");
+      grant(db, owner.id, "agent.spawn");
+      const fixture = fakeHandle(worker.name, worker.id);
+      let spawns = 0;
+      const sent: string[] = [];
+      const workspace = new UnavailableContainerWorkspace(process.cwd(), "runtime missing");
+      const command = codeCommand({
+        db,
+        workspace,
+        workspaceRegistry: makeRegistryStub(workspace),
+        getEntity: (id) => (id === owner.id ? owner : id === worker.id ? worker : undefined),
+        agentRuntime: {
+          get: () => fixture.handle,
+          isAvailable: () => true,
+          list: () => [],
+          spawn: async () => {
+            spawns++;
+            return fixture.handle;
+          },
+        },
+      });
+      const ctx = testRoomContext(sent);
+      await command.handler(ctx, inputFor(owner, "code start task"));
+      await command.handler(ctx, inputFor(owner, `code ${dispatch} verify the deliverable`));
+      expect(sent.join("\n")).toContain("Container runner unavailable: runtime missing");
+      expect(spawns).toBe(0);
+      expect(fixture.attention).toHaveLength(0);
+      expect(worker.properties.coding_task).toBeUndefined();
+      expect(db.listCodingRuns()).toHaveLength(0);
+      expect(db.listTasks()).toHaveLength(0);
+      expect(db.getCodingSession(owner.properties.coding_session_id as string)?.agent).toBeNull();
+    },
+  );
 
   it("automatic recruitment preserves busy, focused and already-claimed workers", () => {
     const coder = makeAgentEntity("recruit-coder", "Coder");
@@ -601,6 +644,42 @@ describe("assignAgent workspace-convention ingestion", () => {
     db.close();
     cleanupDb(TEST_DB);
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("does not leave a claim when workspace description fails before assignment", async () => {
+    const owner = makeAgentEntity("descriptor_owner", "Owner");
+    const worker = makeAgentEntity("descriptor_worker", "Coder");
+    db.saveEntity(owner);
+    db.saveEntity(worker);
+    const session = db.createCodingSession({
+      id: "descriptor_failure",
+      title: "Task",
+      workspaceRoot: dir,
+      createdBy: owner.name,
+    });
+    const { handle, attention } = fakeHandle(worker.name, worker.id);
+    const driver = new CodeSessionDriver({
+      db,
+      agentRuntime: { get: () => handle },
+      getEntity: (id) => (id === worker.id ? worker : owner),
+      describeWorkspace: () => {
+        throw new Error("workspace access changed");
+      },
+    });
+    await expect(
+      driver.assignAgent({
+        actor: owner.name,
+        actorEntity: owner,
+        agentName: worker.name,
+        profile: "marina",
+        prompt: "validate task output",
+        session,
+      }),
+    ).rejects.toThrow("workspace access changed");
+    expect(db.listCodingRuns()).toHaveLength(0);
+    expect(db.listTasks()).toHaveLength(0);
+    expect(worker.properties.coding_task).toBeUndefined();
+    expect(attention).toHaveLength(0);
   });
 
   it("appends CLAUDE.md/.marina.md under Project conventions, bounded to ~4KB", async () => {

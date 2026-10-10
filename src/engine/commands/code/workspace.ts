@@ -740,7 +740,11 @@ export function workspaceForSession(deps: CodeDeps, session: CodingSessionRow): 
   // falls back to host execution (src/engine/commands/code/runner.ts).
   if (session.worktree_path && existsSync(session.worktree_path)) {
     return stampHostExecPolicy(
-      applySessionRunner(new LocalWorkspace(session.worktree_path), deps.db, session),
+      applySessionRunner(
+        new LocalWorkspace(session.worktree_path, getWorkspaceRegistry(deps).fileGrants),
+        deps.db,
+        session,
+      ),
       deps,
     );
   }

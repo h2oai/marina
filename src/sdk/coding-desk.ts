@@ -13,6 +13,8 @@ export function codingDesk(input: {
 }): A2UINodeData {
   const target = parseCodingCommandTarget({ sessionId: input.sessionId });
   const form = compileCommandForms(["code ask <request>"])[0]!;
+  const seeForm = compileCommandForms(["code see <path> [question]"])[0]!;
+  const deliveryForm = compileCommandForms(["code verify delivery manifest:<path>"])[0]!;
   const components: A2UIComponent[] = [
     {
       id: "root",
@@ -22,6 +24,10 @@ export function codingDesk(input: {
         "work",
         "request",
         "ask",
+        "image",
+        "see",
+        "delivery-manifest",
+        "delivery-check",
         ...(input.taskId ? ["task"] : []),
         ...(input.participantId ? ["participant", "message", "send"] : []),
         "world",
@@ -49,6 +55,42 @@ export function codingDesk(input: {
         syntax: form.syntax,
         codingTarget: target,
         values: { [form.fields[0]!.id]: { field: "request" } },
+      },
+    },
+    {
+      id: "image",
+      component: "TextField",
+      label: "Workspace image path",
+      placeholder: "images/diagram.png",
+    },
+    {
+      id: "see",
+      component: "Button",
+      label: "Review image inspection",
+      operation: {
+        kind: "command",
+        command: "code",
+        syntax: seeForm.syntax,
+        codingTarget: target,
+        values: { [seeForm.fields[0]!.id]: { field: "image" } },
+      },
+    },
+    {
+      id: "delivery-manifest",
+      component: "TextField",
+      label: "Delivery manifest path",
+      placeholder: "delivery.json",
+    },
+    {
+      id: "delivery-check",
+      component: "Button",
+      label: "Review delivery check",
+      operation: {
+        kind: "command",
+        command: "code",
+        syntax: deliveryForm.syntax,
+        codingTarget: target,
+        values: { [deliveryForm.fields[0]!.id]: { field: "delivery-manifest" } },
       },
     },
     ...(input.taskId

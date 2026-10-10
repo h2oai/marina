@@ -101,7 +101,7 @@ export function artifacts(
   }
   const limit = filter.mode === "recent" ? 10 : 30;
   const artifacts = deps.db
-    .listCodingArtifacts(session.id, 50)
+    .listCodingArtifacts(session.id, 50, filter.kind)
     .filter((artifact) => artifactMatchesListFilter(artifact, filter))
     .slice(0, limit);
   if (artifacts.length === 0) {

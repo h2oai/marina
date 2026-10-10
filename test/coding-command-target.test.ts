@@ -215,6 +215,7 @@ describe("request-local coding destinations", () => {
       },
     });
     const registry = {
+      fileGrants: [],
       hostExecAllowed: true,
       workspaceForRoot: () => workspace,
     } as unknown as WorkspaceRegistry;

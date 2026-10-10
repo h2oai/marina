@@ -64,8 +64,12 @@ export class VerificationRunner {
         });
       } catch (error) {
         this.db.updateCodingArtifact(receipt.id, {
-          status: "failed",
-          metadata: { ...metadata, error: getErrorMessage(error) },
+          status: "error",
+          metadata: {
+            ...metadata,
+            error: getErrorMessage(error),
+            outcomeReason: getErrorMessage(error),
+          },
         });
       } finally {
         this.roots.delete(root);

@@ -34,30 +34,46 @@ import {
   stopCodeStreamsFor,
   streamSessionAgent,
 } from "./stream";
-import { getWorkspaceRegistry } from "./workspace";
+import { getWorkspaceRegistry, workspaceForSession } from "./workspace";
 
 /** Parse only leading options; prose after -- (or the first task word) stays literal. */
 export function parseCodingTask(raw: string) {
   const parsed = parseModifiers(
     raw.trim().split(/\s+/),
-    { verification: { type: "string" } },
+    { verification: { type: "string" }, owner: { type: "string" } },
     { leading: true },
   );
   if (
     parsed.errors.length ||
-    (parsed.values.verification !== undefined && parsed.values.verification !== "candidate")
+    (parsed.values.verification !== undefined &&
+      !["candidate", "checks", "delivery"].includes(String(parsed.values.verification))) ||
+    (parsed.values.owner !== undefined && parsed.values.owner !== "unattended")
   )
-    throw new Error("Usage: code do [verification:candidate] -- <task>");
+    throw new Error(
+      "Usage: code do [verification:candidate|checks|delivery] [owner:unattended] -- <task>",
+    );
   return {
     prompt: parsed.rest.join(" ").trim(),
-    verificationRequirement:
-      parsed.values.verification === "candidate" ? ("candidate" as const) : undefined,
+    verificationRequirement: parsed.values.verification as
+      | "candidate"
+      | "checks"
+      | "delivery"
+      | undefined,
+    ownerMode: parsed.values.owner as "unattended" | undefined,
   };
 }
-function validateTaskContract(session: CodingSessionRow, requirement?: "candidate") {
-  if (requirement && (session.execution_target !== "local" || session.driver === "crew"))
+function validateTaskContract(
+  session: CodingSessionRow,
+  requirement?: "candidate" | "checks" | "delivery",
+) {
+  if (requirement && session.driver === "crew")
+    throw new Error("Required verification currently needs the single-agent driver.");
+  if (
+    (requirement === "candidate" || requirement === "delivery") &&
+    session.execution_target !== "local"
+  )
     throw new Error(
-      "Candidate-required tasks currently need a local Git workspace and the single-agent driver. Use code target/code driver to select them, or dispatch an ordinary task.",
+      "Snapshot or delivery verification requires a local workspace and the single-agent driver. Candidate mode also requires Git.",
     );
 }
 
@@ -119,10 +135,12 @@ export async function assignCode(
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
   const agentName = args[0];
-  const { prompt, verificationRequirement } = parseCodingTask(args.slice(1).join(" "));
+  const { prompt, verificationRequirement, ownerMode } = parseCodingTask(args.slice(1).join(" "));
   if (!sameEntityName(session.created_by, entity.name))
     throw new Error("Only the coding session creator may dispatch its task.");
   validateTaskContract(session, verificationRequirement);
+  if (session.execution_target === "local")
+    workspaceForSession(deps, session).assertExecutionReady?.();
   const profile = getCodeProfile(entity);
   const modelTarget = getSessionModelTarget(deps.db, session.id);
   const handle = agentName ? getAgentHandle(deps, agentName) : undefined;
@@ -135,6 +153,7 @@ export async function assignCode(
     profile: profile.name,
     prompt,
     verificationRequirement,
+    ownerMode,
     session,
   });
   updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
@@ -200,7 +219,7 @@ export async function doCode(
   driver: CodeSessionDriver,
   rawTask: string,
 ): Promise<void> {
-  const { prompt: task, verificationRequirement } = parseCodingTask(rawTask);
+  const { prompt: task, verificationRequirement, ownerMode } = parseCodingTask(rawTask);
   if (!task) {
     ctx.send(eid, 'Describe what you want done, e.g. "fix the off-by-one in the tokenizer".');
     return;
@@ -264,6 +283,8 @@ export async function doCode(
   if (!sameEntityName(session.created_by, entity.name))
     throw new Error("Only the coding session creator may dispatch its task.");
   validateTaskContract(session, verificationRequirement);
+  if (session.execution_target === "local")
+    workspaceForSession(deps, session).assertExecutionReady?.();
   const strategy = (session.driver ?? "single").toLowerCase();
   if (strategy === "crew") {
     await crewPlan(ctx, eid, entity, deps, task);
@@ -297,6 +318,7 @@ export async function doCode(
       profile: profile.name,
       prompt: task,
       verificationRequirement,
+      ownerMode,
       session,
     });
     ctx.send(
@@ -376,8 +398,8 @@ async function ensureSessionAgent(
       goal: [
         `You are the autonomous coder for Marina coding session ${session.id}.`,
         `Workspace: ${session.workspace_root}`,
-        "Follow this operating contract for every task: inspect status and relevant files first; record a short plan; make the smallest reviewable patch; inspect the resulting diff; run the relevant verification chain; fix failures within the task scope; then record a summary citing changed paths and successful checks.",
-        "Do not claim completion before verification succeeds. Do not modify unrelated files, install dependencies, launch applications, or expand scope without a user decision. Prefer one bounded tool action at a time so progress remains observable and steerable.",
+        "Use Marina's tools to deliver the requested outcome. Inspect relevant instructions, files and current state. Choose an approach appropriate to the task: source changes, generated artifacts or authorized service actions. Validate the result with meaningful checks, fix failures within scope, and summarize the deliverable and its evidence. Record unresolved blockers explicitly.",
+        "Do not claim completion before verification succeeds. Stay within the task scope and the operator's execution permissions. Use already-authorized dependency preparation and managed services when needed; seek a decision only for additional authority. Prefer one bounded tool action at a time so progress remains observable and steerable.",
       ].join("\n"),
       model: modelTarget,
       name,

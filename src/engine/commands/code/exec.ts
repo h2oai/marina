@@ -3,6 +3,7 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { parseCommandArgv } from "../../../coding/command-argv";
 import {
   clearSessionExecState,
   type ExecApprover,
@@ -98,7 +99,7 @@ export async function runWorkspaceCommand(
     artifactId: artifact.id,
     artifactKind: artifact.kind,
     command: result.command,
-    commands: [`code show ${artifact.id}`, `code run ${result.command.join(" ")}`],
+    commands: [`code show ${artifact.id}`, `code run --argv ${JSON.stringify(result.command)}`],
     content: result.output,
     durationMs: result.durationMs,
     event: "command_ran",
@@ -128,7 +129,7 @@ async function resolveTestShorthand(
     );
     // The detected test command (a bare `test` for Bun still means `bun run test`).
     const test = runner?.testCommand;
-    if (test) return normalizeCodeRunArgs(test.split(/\s+/).filter(Boolean));
+    if (test) return normalizeCodeRunArgs(parseCommandArgv(test));
   }
   return normalizeCodeRunArgs(args);
 }
@@ -595,7 +596,7 @@ export async function runVerificationCommands(
       preparation?.wrapTests && /^python3?\s/.test(step.command)
         ? `${preparation.wrapTests} ${step.command}`
         : step.command;
-    const command = normalizeCodeRunArgs(text.split(/\s+/).filter(Boolean));
+    const command = normalizeCodeRunArgs(parseCommandArgv(text));
     let stored: StoredCommandResult | undefined;
     let outcome: StepOutcome;
     try {
@@ -639,9 +640,11 @@ export async function runVerificationCommands(
     (plan && stepPlan.scopeNote !== "configured recipe"
       ? `\n${dim(`Scope: ${stepPlan.scopeNote}.${relevant?.files.length ? ` Relevant tests: ${relevant.files.slice(0, 8).join(", ")}${relevant.files.length > 8 ? ", …" : ""}` : ""}`)}`
       : "") +
-    (candidateEvidence
-      ? `\nCandidate evidence: ${candidateEvidence.freshness}. Source snapshot: ${candidateEvidence.candidateId}.\nRecipe: ${candidateEvidence.recipeType}.${typeof candidateEvidence.observedAt === "number" ? `\nObserved: ${new Date(candidateEvidence.observedAt).toISOString()}` : ""}${candidateEvidence.freshnessReason ? `\n${candidateEvidence.freshnessReason}` : ""}`
-      : "\nLive-workspace check results; no immutable candidate binding.");
+    (candidateEvidence?.delivery
+      ? "\nDelivery checks used only the manifest's files in a clean working directory under the configured runner. The inventory and digests are saved. Check coverage and task acceptance still require review."
+      : candidateEvidence
+        ? `\nCandidate evidence: ${candidateEvidence.freshness}. Source snapshot: ${candidateEvidence.candidateId}.\nRecipe: ${candidateEvidence.recipeType}.${typeof candidateEvidence.observedAt === "number" ? `\nObserved: ${new Date(candidateEvidence.observedAt).toISOString()}` : ""}${candidateEvidence.freshnessReason ? `\n${candidateEvidence.freshnessReason}` : ""}`
+        : "\nLive-workspace check results; no immutable candidate binding.");
   const runner = (background?.workspace ?? plan?.workspace)?.describe?.().runner;
   const artifact = deps.db.createCodingArtifact({
     sessionId: session.id,
@@ -651,6 +654,8 @@ export async function runVerificationCommands(
     contentText: summary,
     metadata: {
       ...candidateEvidence,
+      workspace: session.worktree_path ?? session.workspace_root,
+      executionTarget: session.execution_target,
       ...(background ? { requestId: background.receiptId } : {}),
       outcome: verdict.outcome,
       outcomeReason: verdict.reason,
@@ -749,6 +754,7 @@ export async function runVerificationCommands(
       runId: JSON.parse(artifact.metadata_json).runId,
       outcome: verdict.outcome,
       outcomeReason: verdict.reason,
+      ...(candidateEvidence?.delivery ? { delivery: candidateEvidence.delivery } : {}),
       ...(lessons?.recalled.length
         ? {
             lessons: lessons.recalled.map((l) => l.id ?? "?"),

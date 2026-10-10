@@ -499,6 +499,13 @@
 # @restart
 # MARINA_CODE_DEFAULT_ROOT=
 
+# Extra, separate read-only task input roots (comma separated); explicit operator authority for file tools, not additional executable workspace roots. Must exist; may not overlap each other or the primary workspace. Container mount sync maps these read-only to /marina-task/inputs/0, /1, etc.; patch sync refuses extra roots.
+# MARINA_CODE_INPUT_ROOTS=
+
+# Extra writable task output roots (comma separated); direct file writes use normal session writer permissions. Container mount sync maps these to /marina-task/outputs/0, /1, etc. These grants do not sandbox host processes; use a container runner for OS-enforced input protection.
+# MARINA_CODE_OUTPUT_ROOTS=
+
+
 # Comma-separated entity ids or names eligible for headless approval of arbitrary (non-allowlisted) host commands. Each also needs the code.exec.unrestricted gate unsupervised and a trusted identity on the acting connection (signed in, or loopback). Interactive approval (`code exec-mode prompt`) does not use this list.
 # @protected
 # MARINA_CODE_EXEC_UNRESTRICTED=

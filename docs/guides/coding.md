@@ -689,6 +689,54 @@ why; it never changes missing or failed verification to passed. Normal approval 
 current evidence for a candidate-required task. World communication and other agents continue
 while background checks run.
 
+For generated artifacts and service work, dispatch with `code do verification:checks -- <task>`.
+This requires passing checks from the same attempt and execution workspace, with no subsequent
+recorded file change or command. A whitespace-only receipt is insufficient. Use `code recipe save
+default <validation command>` to check the requested output or read back the service state, then
+`code verify`. Receipts distinguish tests, type checks and other checks. Passing live checks means
+those checks passed at the recorded time; it does not claim immutable source or complete coverage.
+Use `verification:candidate` when you require source-bound evidence.
+
+For a package or set of files that must work away from the active workspace, use
+`code do verification:delivery -- <task>`. The worker can choose its implementation and
+checks; submission requires current delivery evidence. To verify manually, write a JSON
+manifest such as `delivery.json`:
+
+```json
+{
+  "files": ["report.ts", "helper.ts", "report.test.ts"],
+  "checks": ["bun test report.test.ts"]
+}
+```
+
+Run `code verify delivery manifest:delivery.json`, then inspect the returned receipt with
+`code show <id>`. Marina copies only the listed regular files into a clean directory and
+runs those finite commands using the session's configured host or mount-sync container runner. Missing
+companion files therefore cannot be supplied accidentally by the active workspace. Checks use
+the runner's existing environment; this is file isolation, not a new security sandbox or a
+guarantee that every recipient has the same dependencies. Files changed by the checks or after
+verification require fresh evidence before submission. The manifest itself is also hashed.
+
+Delivery mode supports local file workspaces, requires explicit relative file paths (no globs,
+directories, symlinks or `.git`), and does not install dependencies. Include the files needed
+by both the deliverable and its checks. A manifest may contain up to 128 files, with a 16 MiB
+per-file and 64 MiB total capture limit. Background checks retain the normal execution gates
+and finite-command allowlist. Patch-sync and unsupported targets are refused without host fallback.
+
+Personal and published coding desks offer **Review delivery check** for an existing manifest.
+Opening a desk or its evidence does not execute checks. Chat and canvas show the same recorded
+file inventory and digests. Passing checks establishes their recorded scope; owner acceptance
+and the adequacy of test coverage remain separate. Whitespace-only checks cannot satisfy a
+required task verification contract, including candidate mode.
+
+Marina's one-shot `-p` path selects `verification:checks owner:unattended` and exits successfully
+only after a matching attempt submits with current verification. Submission remains separate from
+owner approval. Old completions from another attempt cannot finish the current task. The
+`owner:unattended` contract also lets the designated active worker run `code writer <its-name>`
+to reclaim a lock handed back to the owner. It cannot reclaim a collaborator's lock, transfer the
+lock to somebody else, or revive a stopped or expired attempt. A handoff without `to:` remains a
+note. These are owner-selected contracts; agents choose their work and coordination methods.
+
 `code stop` retains changes and ends the attempt as cancelled. Worker death records failure.
 On server restart, unfinished attempts become interrupted and their claims are released;
 Marina does not replay uncertain host actions. Inspect `code review` and artifacts before retrying.
@@ -835,7 +883,13 @@ and persists: a candidate snapshot's Bun text lockfile on the host (below), or a
 with `sync:mount` and `network:on` (`npm ci --ignore-scripts`, `pnpm`/`yarn`/`bun install
 --frozen-lockfile --ignore-scripts`, `uv sync --frozen`). Elsewhere, a missing environment is
 reported as `not_run` with the reason. A `sync:patch` runner starts every command from its image,
-so the image must already hold the environment (SWE-bench instance images do).
+so the image must already hold the environment. Python projects with `requirements.txt` can use
+`dependencies:pip`: the container installs hash-locked binary wheels into
+`.venv/marina-site-packages`, and checks use `env PYTHONPATH=.venv/marina-site-packages python …`.
+Unhashed or source-only requirements fail preparation instead of falling back to unrestricted
+installation. UV checks use the declared UV environment. Explicit installation modes reconcile
+locked dependencies even if a test-runner probe succeeds; `dependencies:check` only probes.
+Commands use argv, so a bare `PYTHONPATH=… python …` is not shell assignment syntax.
 
 For a local workspace, `code verify start` starts that same chain and returns a durable
 `verification_request` artifact immediately. Its command completion acknowledges admission;
@@ -1048,6 +1102,25 @@ Then `code workspace list`, `code workspace discover` (find likely projects), an
 `code workspace use <path>` choose where new sessions open. `code doctor` confirms git + ripgrep
 are present (they power `diff`/`checkpoint`/`revert` and fast `search`).
 
+Separate task data from source with operator-configured roots:
+
+```bash
+MARINA_CODE_INPUT_ROOTS=/srv/task-inputs
+MARINA_CODE_OUTPUT_ROOTS=/srv/task-outputs
+```
+
+These existing directories must be separate from the workspace and from one another. File tools
+use their absolute paths; inputs are read-only, outputs support normal writer-authorized `write`
+and `edit`. They do not become selectable executable workspace roots. Git patches and candidate
+snapshots still belong to the primary workspace. Symlinks cannot escape a granted root.
+
+With container `sync:mount`, input directories map read-only to `/marina-task/inputs/0`, `/1`, etc.;
+outputs map to `/marina-task/outputs/0`, `/1`, etc. `code status` and assignment context show the
+mapping. Container commands use guest paths; file tools use server paths. `sync:patch` refuses
+extra roots because it mounts no host files. Host processes retain their existing execution
+permissions; file-tool grants alone are not an OS sandbox. Use a container runner to enforce
+read-only inputs for executed programs.
+
 ### The project's own test runner
 
 `code test`, `code verify` and `code recipe run detected` follow the project's language rather
@@ -1187,3 +1260,34 @@ copy-paste or run the script to watch the whole loop end to end.
 - [Agent Development](agent-development.md) — drive coding sessions from the TypeScript SDK
 - [Coordination](coordination.md) — crews, roles, projects, and tasks in depth
 - [Connecting](connecting.md) — WebChat, WebSocket, Telnet, MCP, SDK, and the ACP editor bridge
+
+### Inspect workspace images
+
+Use `marina_see` with `source: "workspace:images/diagram.png"`, or
+`code see images/diagram.png What labels are visible?`. PNG, JPEG, GIF and WebP
+files are read through the active session's workspace and explicit task input grants.
+Absolute paths inside that workspace are accepted. Files outside those grants and
+sandbox-only paths are refused; no copying into internal scratch storage is needed.
+
+The result is a saved `visual_evidence` artifact with the question, model, source path
+and SHA-256 of the observed bytes. It is model output, not independently verified fact.
+After a context reset, use `code artifacts kind visual_evidence` and `code show <id>`
+to recover the complete observation without another vision request. A changed image
+requires another inspection; the saved observation identifies the bytes seen earlier.
+
+The file list offers **Inspect image**. A canvas coding desk offers **Review image
+inspection** and displays the same saved evidence under **Artifacts & verification**.
+Opening a desk or reopening evidence does not start a model call. Canvas readers use
+their existing session permissions; publishing a desk never copies private image bytes.
+
+Verification receipts cover only the checks shown. A successful workspace test does
+not establish that a separately collected deliverable works: include its dependencies
+in the delivery contract and check the collected files in the intended environment.
+Task review remains a separate decision.
+
+`code run` groups single- or double-quoted arguments without invoking a shell:
+`code run python -c 'import json; print(json.load(open("result.json")))'`.
+For literal arguments, including nested quotes, use
+`code run --argv ["python", "-c", "print(1 + 2)"]`. Both forms use the same
+execution permissions, allowlist and approval audit as other workspace commands.
+Variables, pipes, substitutions and globs are not expanded.

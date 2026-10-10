@@ -1,7 +1,15 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
+
 import { realpathSync } from "node:fs";
 import { candidateFingerprint, observeCandidate } from "../../../coding/candidate";
+import { parseCommandArgv } from "../../../coding/command-argv";
+import {
+  captureDelivery,
+  deliveryFingerprint,
+  prepareDeliveryMount,
+  readDeliveryManifest,
+} from "../../../coding/delivery";
 import { LocalWorkspace, normalizeAllowedCodeCommand } from "../../../coding/local-workspace";
 import {
   assessCodingVerification,
@@ -10,6 +18,7 @@ import {
   codingVerificationUnchanged,
 } from "../../../coding/task-run";
 import {
+  recipeSteps,
   resolveVerificationOptions,
   type VerificationOptions,
 } from "../../../coding/verification-plan";
@@ -40,6 +49,7 @@ export async function startVerification(
   deps: CodeDeps & { db: MarinaDB },
   candidate = false,
   options: VerificationOptions = resolveVerificationOptions(),
+  deliveryManifest?: string,
 ): Promise<void> {
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
@@ -55,6 +65,10 @@ export async function startVerification(
   if (candidate && !workspace.captureCandidate)
     throw new Error("This runtime does not support local Git candidate materialization.");
   const root = realpathSync(workspace.displayRoot());
+  if (deliveryManifest && workspace.describe().runner?.sync === "patch")
+    throw new Error(
+      "Delivery verification needs mount sync to exclude undeclared workspace files. Patch sync cannot establish that boundary.",
+    );
   const runId = codingRunContext.getStore()?.runId;
   const beforeSpawn = () => {
     const actor = deps.getEntity(eid);
@@ -63,7 +77,7 @@ export async function startVerification(
       throw new Error("Verification stopped: session access is no longer active.");
     if (current.writer && !sameEntityName(current.writer, actor.name))
       throw new Error("Verification stopped: another participant holds the session's write lock.");
-    if (deps.getConnectionProtocol?.(eid) === "telnet")
+    if (deps.hostExecForbidden || deps.getConnectionProtocol?.(eid) === "telnet")
       throw new Error("Verification stopped: host execution is unavailable over telnet.");
     // Background checks cannot borrow a live command's challenge pass or witness window.
     if (!isLocalUngated() && !checkUnattendedGate(deps.db, eid, "code.exec").ok)
@@ -85,11 +99,16 @@ export async function startVerification(
   const forCandidate = (command: string) =>
     candidate && command === "git diff --check" ? "git diff --cached --check" : command;
   // The live plan validates admission; a candidate is re-planned on its snapshot.
-  const livePlan = await planVerification(deps, session, workspace, options, candidate);
+  const delivery = deliveryManifest
+    ? await readDeliveryManifest(workspace, deliveryManifest)
+    : undefined;
+  const livePlan = delivery
+    ? { commands: delivery.manifest.checks, steps: recipeSteps(delivery.manifest.checks), options }
+    : await planVerification(deps, session, workspace, options, candidate);
   const commands = livePlan.commands.map(forCandidate);
   assertBoundedVerification(commands);
   for (const command of commands)
-    normalizeAllowedCodeCommand(root, normalizeCodeRunArgs(command.split(/\s+/).filter(Boolean)));
+    normalizeAllowedCodeCommand(root, normalizeCodeRunArgs(parseCommandArgv(command)));
   beforeSpawn();
   // Background results are durable even if the caller disconnects or loses access. Never
   // forward private evidence to a caller whose bound-agent membership was revoked meanwhile.
@@ -126,6 +145,51 @@ export async function startVerification(
     root,
     commands,
     execute: async (receiptId) => {
+      if (deliveryManifest && delivery) {
+        const snapshot = await captureDelivery(workspace, deliveryManifest, beforeSpawn);
+        try {
+          if (snapshot.evidence.manifestSha256 !== delivery.sha256)
+            throw new Error("Delivery manifest changed after admission; inspect it and retry.");
+          if (workspace.describe().runner)
+            await prepareDeliveryMount(snapshot.directory, beforeSpawn);
+          const prepared = applySessionRunner(
+            new LocalWorkspace(snapshot.directory),
+            deps.db,
+            session,
+          );
+          prepared.setHostExecForbidden?.(deps.hostExecForbidden === true);
+          return await runVerificationCommands(
+            backgroundContext,
+            eid,
+            entity,
+            deps,
+            session,
+            commands,
+            "Delivery verification",
+            {
+              receiptId,
+              workspace: prepared,
+              beforeSpawn,
+              candidateEvidence: async () => {
+                beforeSpawn();
+                const checkedFingerprint = await deliveryFingerprint(
+                  prepared,
+                  snapshot.manifest.files,
+                );
+                return {
+                  delivery: { ...snapshot.evidence, checkedFingerprint },
+                  executionLocation: "delivery-materialization",
+                  executionRunner: prepared.describe().runner ?? { kind: "host" },
+                  observedAt: Date.now(),
+                };
+              },
+            },
+            { ...livePlan, workspace: prepared },
+          );
+        } finally {
+          await snapshot.dispose();
+        }
+      }
       if (!candidate)
         return runVerificationCommands(
           backgroundContext,

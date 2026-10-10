@@ -33,7 +33,9 @@ import {
   parseCrewMembers,
   parseMetadata,
 } from "../lib/webchat-format";
+import { DeliveryEvidenceDetails } from "./DeliveryEvidenceDetails";
 import { DiffViewer } from "./DiffViewer";
+import { VisualEvidenceDetails } from "./VisualEvidenceDetails";
 
 /** Shared code transcript and artifact rendering; all actions use the caller's command path. */
 export function createCodeRenderers({
@@ -44,10 +46,10 @@ export function createCodeRenderers({
 }: {
   copy(text: string, key: number | "all"): Promise<void>;
   copied: number | "all" | null;
-  sendCommandWithOverlay(command: string): boolean;
+  sendCommandWithOverlay(command: string, target?: { sessionId: string }): boolean;
   renderTextContent(text: string, className?: string): ReactNode;
 }) {
-  const renderCodeActions = (commands?: string[]) => {
+  const renderCodeActions = (commands?: string[], sessionId?: string) => {
     const actionable = (commands ?? []).filter((cmd) => cmd && !cmd.includes("<"));
     if (actionable.length === 0) return null;
     return (
@@ -56,7 +58,9 @@ export function createCodeRenderers({
           <button
             key={cmd}
             type="button"
-            onClick={() => sendCommandWithOverlay(cmd)}
+            onClick={() =>
+              sessionId ? sendCommandWithOverlay(cmd, { sessionId }) : sendCommandWithOverlay(cmd)
+            }
             className="rounded border border-primary/40 bg-primary/10 px-2 py-0.5 font-mono text-[10px] text-primary transition-colors hover:border-primary hover:bg-primary/20"
           >
             {cmd}
@@ -155,7 +159,7 @@ export function createCodeRenderers({
     );
   };
 
-  const renderCodeRows = (rows: CodeMessageData["rows"]) => {
+  const renderCodeRows = (rows: CodeMessageData["rows"], sessionId?: string) => {
     if (!rows || rows.length === 0) return null;
     return (
       <div className="mt-2 overflow-hidden rounded border border-border/70">
@@ -187,6 +191,23 @@ export function createCodeRenderers({
               )}
             </div>
             <div className="flex shrink-0 items-center gap-1 text-[9px] uppercase tracking-wide text-text-dim">
+              {sessionId &&
+                row.type === "file" &&
+                row.path &&
+                /\.(png|jpe?g|gif|webp)$/i.test(row.path) && (
+                  <button
+                    type="button"
+                    aria-label={`Inspect image ${row.path}`}
+                    onClick={() =>
+                      sendCommandWithOverlay(`code see ${JSON.stringify({ path: row.path })}`, {
+                        sessionId,
+                      })
+                    }
+                    className="rounded border border-primary/40 px-2 py-1 text-primary hover:bg-primary/10"
+                  >
+                    Inspect image
+                  </button>
+                )}
               {row.kind && <span>{row.kind}</span>}
               {row.grade && <span>{row.grade}</span>}
               {row.status && <span className="rounded bg-bg-hover px-1 py-0.5">{row.status}</span>}
@@ -579,10 +600,18 @@ export function createCodeRenderers({
                 </p>
               </div>
             ) : null}
+            {artifactKind === "visual_evidence" && <VisualEvidenceDetails metadata={cardMeta} />}
+            {!!cardMeta.delivery && <DeliveryEvidenceDetails metadata={cardMeta} />}
+            {type === "verification" && !cardMeta.delivery && (
+              <p className="mt-2 text-xs text-text-dim">
+                This result covers the recorded checks. Task acceptance and delivered-file
+                validation are separate.
+              </p>
+            )}
             {type === "lifecycle" ? renderLifecycle(code.phase) : null}
             {type === "tree" ? renderCodeTree(code.tree) : null}
             {renderCodeChecks(code.checks)}
-            {renderCodeRows(code.rows)}
+            {renderCodeRows(code.rows, code.event === "files_listed" ? code.sessionId : undefined)}
             {renderCodeEvents(code.events)}
             {content.trim()
               ? renderCodeBlock(content, blockVariant)
@@ -597,7 +626,10 @@ export function createCodeRenderers({
                 {code.truncated && <span>truncated</span>}
               </div>
             )}
-            {renderCodeActions(code.commands)}
+            {renderCodeActions(
+              code.commands,
+              artifactKind === "visual_evidence" ? code.sessionId : undefined,
+            )}
           </>
         )}
         <button

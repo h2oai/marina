@@ -264,7 +264,14 @@ export function listCodingArtifacts(
   db: Database,
   sessionId: string,
   limit = 20,
+  kind?: string,
 ): CodingArtifactRow[] {
+  if (kind !== undefined)
+    return db
+      .query(
+        "SELECT * FROM coding_artifacts WHERE session_id = ? AND kind = ? ORDER BY created_at DESC, rowid DESC LIMIT ?",
+      )
+      .all(sessionId, kind, limit) as CodingArtifactRow[];
   return db
     .query(
       "SELECT * FROM coding_artifacts WHERE session_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?",
@@ -395,12 +402,17 @@ export function listCodingRuns(db: Database, query: CodingRunQuery = {}): Coding
     .all(...values) as CodingArtifactRow[];
 }
 
-export function listCodingRunArtifacts(db: Database, runId: string): CodingArtifactRow[] {
+export function listCodingRunArtifacts(
+  db: Database,
+  runId: string,
+  kinds?: string[],
+): CodingArtifactRow[] {
+  if (kinds && !kinds.length) return [];
   return db
     .query(
-      "SELECT * FROM coding_artifacts WHERE json_extract(metadata_json, '$.runId') = ? ORDER BY rowid DESC LIMIT 500",
+      `SELECT * FROM coding_artifacts WHERE json_extract(metadata_json, '$.runId') = ?${kinds ? ` AND kind IN (${kinds.map(() => "?").join(",")})` : ""} ORDER BY rowid DESC LIMIT 500`,
     )
-    .all(runId) as CodingArtifactRow[];
+    .all(runId, ...(kinds ?? [])) as CodingArtifactRow[];
 }
 
 function withCodingRun(db: Database, sessionId: string, value: unknown): unknown {

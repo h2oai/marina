@@ -379,7 +379,7 @@ describe("terminalCodeLifecycle (one-shot completion predicate)", () => {
   it("matches failed only when flagged terminal (agent death / stop-interrupt)", () => {
     expect(
       terminalCodeLifecycle(lifecycle("failed", { reason: "agent_died", terminal: true })),
-    ).toEqual({ phase: "failed", sessionId: "code_abc", summary: undefined });
+    ).toEqual({ phase: "failed", sessionId: "code_abc", reason: "agent_died" });
     // A recoverable mid-run tool error also streams as "failed" — never terminal.
     expect(terminalCodeLifecycle(lifecycle("failed", { tool: "marina_code" }))).toBeUndefined();
   });

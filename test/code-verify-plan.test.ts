@@ -262,6 +262,45 @@ describe("preparation by project type", () => {
     );
   });
 
+  it("prepares locked Python dependencies even when pytest is already available, only in an authorized persistent runner", async () => {
+    const profile = detectProjectRunner({ markers: markers("requirements.txt", "pyproject.toml") });
+    const plan = planPreparation(profile, "auto", {
+      installsPermitted: true,
+      hostCandidate: false,
+    });
+    expect(plan.install).toContain("--require-hashes");
+    expect(plan.install).toContain("--only-binary=:all:");
+    const commands: string[][] = [];
+    const result = await executePreparation(plan, {
+      runPreparationStep: async (argv) => {
+        commands.push(argv);
+        return run(argv, 0);
+      },
+    });
+    expect(result.status).toBe("installed");
+    expect(result.wrapTests).toBe("env PYTHONPATH=.venv/marina-site-packages");
+    expect(commands).toHaveLength(2);
+    expect(preparationStepKind([...plan.install!])).toBe("install");
+    const denied = planPreparation(profile, "auto", {
+      installsPermitted: false,
+      hostCandidate: false,
+    });
+    expect(denied.install).toBeUndefined();
+    const noDeclaration = planPreparation(python, "auto", {
+      installsPermitted: true,
+      hostCandidate: false,
+    });
+    expect(noDeclaration.install).toBeUndefined();
+    const root = mkdtempSync(join(tmpdir(), "marina-python-host-"));
+    try {
+      await expect(new LocalWorkspace(root).runPreparationStep([...plan.install!])).rejects.toThrow(
+        "not permitted",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("refuses preparation installs on a host workspace", async () => {
     const root = mkdtempSync(join(tmpdir(), "marina-prep-host-"));
     try {

@@ -160,6 +160,7 @@ export interface CodeLifecycleEnd {
   /** The run's recorded verification (`passed`, `missing`, `failed`, …). */
   verification?: string;
   verificationReason?: string;
+  reason?: string;
   taskId?: number;
   runId?: string;
 }
@@ -219,9 +220,28 @@ export function terminalCodeLifecycle(p: Perception): CodeLifecycleEnd | undefin
     };
   }
   if (code.phase === "failed" && metadata.terminal === true) {
-    return { phase: "failed", sessionId };
+    return {
+      phase: "failed",
+      sessionId,
+      reason: typeof metadata.reason === "string" ? metadata.reason : undefined,
+    };
   }
   return undefined;
+}
+
+/** Ignore other sessions and delayed terminal events from an older attempt. */
+export function codingTaskCompletionMatcher(sessionId?: string): (p: Perception) => boolean {
+  let runId: string | undefined;
+  return (p) => {
+    const code = p.data?.code as
+      | { event?: string; sessionId?: string; phase?: string; metadata?: { runId?: string } }
+      | undefined;
+    if (code?.event !== "code_lifecycle" || (sessionId && code.sessionId !== sessionId))
+      return false;
+    if (code.phase === "received" && typeof code.metadata?.runId === "string")
+      runId = code.metadata.runId;
+    return !!runId && code.metadata?.runId === runId && terminalCodeLifecycle(p) !== undefined;
+  };
 }
 
 function freePort(): Promise<number> {
@@ -798,12 +818,15 @@ export async function runCodeSession(
     const timeoutMs =
       Number.parseInt(process.env.MARINA_CODE_TASK_TIMEOUT_MS ?? "", 10) || DEFAULT_TASK_TIMEOUT_MS;
     // Arm the waiter BEFORE dispatching so a fast completion can't slip past.
-    const outcome = agent.waitForMessage((p) => terminalCodeLifecycle(p) !== undefined, timeoutMs);
+    const outcome = agent.waitForMessage(
+      codingTaskCompletionMatcher(sessionConsole.currentSessionId),
+      timeoutMs,
+    );
     outcome.catch(() => {
       /* handled below — avoid unhandled-rejection noise */
     });
     try {
-      await sessionConsole.task(task);
+      await sessionConsole.task(task, false, timeoutMs, true);
     } catch (error) {
       console.error(String(error));
       await finishPrint(printOutcome(undefined));
@@ -822,8 +845,8 @@ export async function runCodeSession(
       return;
     }
     if (!terminal || terminal.phase === "failed") {
-      console.error("Task failed.");
-      await finishPrint(printOutcome(terminal));
+      console.error(`Task failed${terminal?.reason ? `: ${terminal.reason}` : "."}`);
+      await finishPrint(printOutcome(terminal), terminal);
       return;
     }
     // Completed: show the session diff, then the durable summary text.

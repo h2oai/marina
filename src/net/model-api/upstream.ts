@@ -43,6 +43,11 @@ import {
   streamUsageSidecar,
 } from "./anthropic-bridge";
 import {
+  prepareOpenAIReasoning,
+  proxyToOpenAIResponses,
+  usesOpenAIResponses,
+} from "./openai-responses-bridge";
+import {
   CACHE_READ_TOKENS_HEADER,
   CACHE_WRITE_TOKENS_HEADER,
   COST_USD_HEADER,
@@ -597,6 +602,15 @@ async function dispatchOpenAICompatible(
   networkError?: boolean;
   timedOut?: boolean;
 }> {
+  if (url === PROVIDER_UPSTREAM.openai!.url && usesOpenAIResponses(body)) {
+    try {
+      return { response: await proxyToOpenAIResponses(body, apiKey, extraHeaders, clientSignal) };
+    } catch (error) {
+      if (error instanceof UnsupportedParameterError)
+        return { response: json(error.toBody(), 400) };
+      throw error;
+    }
+  }
   // Deadline for the call (headers for a stream, the whole reply otherwise);
   // a non-streaming caller that disconnects aborts it too.
   const abort = upstreamAbort(clientSignal);
@@ -1066,7 +1080,7 @@ export function prepareUpstreamBody(
   if (luna && defaultRoute && body.reasoning_effort === undefined && body.reasoning === undefined)
     prepared = { ...prepared, reasoning_effort: "none" };
   if (provider !== "openai") return prepared;
-  const bounded = { ...prepared };
+  const bounded = { ...prepareOpenAIReasoning(prepared) };
   // Luna requires the modern token field. Preserve an explicitly supplied
   // max_completion_tokens and let the provider reject conflicting fields.
   if (luna && bounded.max_tokens !== undefined && bounded.max_completion_tokens === undefined) {
