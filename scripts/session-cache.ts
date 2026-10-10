@@ -1,6 +1,6 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -27,7 +27,48 @@ export function participantUrl(input: string): string {
   return serverUrl(input, true);
 }
 
-const SESSION_DIRECTORY = join(homedir(), ".marina", "sessions");
+/** Comparable form of a cached server URL (keeps a reverse-proxy base path). */
+export function cachedServerUrl(input: string): string {
+  return serverUrl(input, false);
+}
+
+export const SESSION_DIRECTORY = join(homedir(), ".marina", "sessions");
+
+export interface CachedParticipant {
+  name: string;
+  /** Normalized server URL the credential is bound to. */
+  url: string;
+}
+
+/**
+ * Identities with a usable cached credential, sorted by name. Only names that are
+ * valid Marina account names are listed; tokens are never returned.
+ */
+export function listCachedParticipants(directory = SESSION_DIRECTORY): CachedParticipant[] {
+  let files: string[];
+  try {
+    files = readdirSync(directory);
+  } catch {
+    return [];
+  }
+  const identities: CachedParticipant[] = [];
+  for (const file of files) {
+    const match = /^([a-zA-Z0-9_]{1,20})\.json$/.exec(file);
+    if (!match) continue;
+    try {
+      const cached = JSON.parse(readFileSync(join(directory, file), "utf8")) as {
+        url?: unknown;
+        token?: unknown;
+      };
+      if (typeof cached.url !== "string" || typeof cached.token !== "string" || !cached.token)
+        continue;
+      identities.push({ name: match[1]!, url: serverUrl(cached.url, false) });
+    } catch {
+      // A malformed or unbound cache entry is not an identity.
+    }
+  }
+  return identities.sort((a, b) => a.name.localeCompare(b.name));
+}
 
 function sessionPath(name: string, directory: string): string {
   if (!/^[a-zA-Z0-9_-]{1,64}$/.test(name))
