@@ -212,6 +212,7 @@ export function publishCodingRun(deps: CodeDeps & { db: MarinaDB }, run: CodingA
     reason: meta.reason?.startsWith("Blocked:") ? "blocked" : meta.reason,
     summary,
     verification: meta.verification,
+    verificationReason: meta.verificationReason,
     verificationId: meta.verificationId,
     candidateId: meta.candidateId,
     verificationObservedAt: meta.verificationObservedAt,

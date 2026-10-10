@@ -3,7 +3,10 @@
 
 import { describe, expect, it } from "bun:test";
 import {
+  diffFileStats,
   execApprovalRequest,
+  PRINT_EXIT,
+  printOutcome,
   projectSlug,
   pushTailLines,
   resolveExecMode,
@@ -125,6 +128,20 @@ describe("marina dispatcher routing", () => {
     expect(parseDispatch(["-p"])).toEqual({ kind: "usage-error", arg: "-p" });
     expect(parseDispatch(["-p", "--fresh"])).toEqual({ kind: "usage-error", arg: "-p" });
     expect(parseDispatch(["--print"])).toEqual({ kind: "usage-error", arg: "--print" });
+  });
+
+  it("parses the one-shot result flags, and only with -p", () => {
+    expect(parseDispatch(["-p", "fix it", "--json", "--allow-unverified"])).toMatchObject({
+      kind: "code",
+      print: "fix it",
+      json: true,
+      allowUnverified: true,
+    });
+    expect(parseDispatch(["--json"])).toEqual({ kind: "usage-error", arg: "--json" });
+    expect(parseDispatch([".", "--allow-unverified"])).toEqual({
+      kind: "usage-error",
+      arg: "--allow-unverified",
+    });
   });
 
   it("rejects a second positional directory", () => {
@@ -394,5 +411,85 @@ describe("code launcher stderr tail", () => {
     const tail: string[] = [];
     pushTailLines(tail, ["", "  ", "boom: EADDRINUSE"], 5);
     expect(tail).toEqual(["boom: EADDRINUSE"]);
+  });
+});
+
+describe("one-shot exits say whether the work was verified", () => {
+  const completed = (verification?: string, verificationReason?: string) => ({
+    phase: "completed" as const,
+    ...(verification ? { verification } : {}),
+    ...(verificationReason ? { verificationReason } : {}),
+  });
+
+  it("is 0 only for verified work; 3 for every other completion; 1 failed; 2 timed out", () => {
+    expect(printOutcome(completed("passed"))).toEqual({ status: "verified", exitCode: 0 });
+    for (const v of ["missing", "not_run", "error", "failed", "stale", "unbound", "unavailable"]) {
+      const o = printOutcome(completed(v, "why"));
+      expect(o).toMatchObject({ status: "unverified", exitCode: PRINT_EXIT.unverified });
+      expect(o.notice).toBe(`Completed but not verified: ${v} — why`);
+    }
+    expect(printOutcome(completed()).notice).toBe("Completed but not verified: unknown");
+    expect(printOutcome({ phase: "failed" })).toEqual({ status: "failed", exitCode: 1 });
+    expect(printOutcome(undefined)).toEqual({ status: "failed", exitCode: 1 });
+    expect(printOutcome("timeout")).toEqual({ status: "timeout", exitCode: 2 });
+  });
+
+  it("--allow-unverified turns 3 into 0 and still reports it", () => {
+    const o = printOutcome(completed("missing"), true);
+    expect(o).toMatchObject({ status: "unverified", exitCode: 0 });
+    expect(o.notice).toContain("not verified");
+  });
+
+  it("reads the run's verification from the completion signal", () => {
+    const end = terminalCodeLifecycle({
+      kind: "message",
+      text: "",
+      data: {
+        code: {
+          event: "code_lifecycle",
+          phase: "completed",
+          sessionId: "s1",
+          metadata: {
+            summary: "done",
+            verification: "stale",
+            verificationReason: "source changed",
+            taskId: 7,
+            runId: "r1",
+          },
+        },
+      },
+    } as unknown as Perception);
+    expect(end).toEqual({
+      phase: "completed",
+      sessionId: "s1",
+      summary: "done",
+      verification: "stale",
+      verificationReason: "source changed",
+      taskId: 7,
+      runId: "r1",
+    });
+  });
+
+  it("counts added and removed lines per file of a unified diff", () => {
+    const diff = [
+      "diff --git a/src/a.ts b/src/a.ts",
+      "--- a/src/a.ts",
+      "+++ b/src/a.ts",
+      "@@ -1,2 +1,3 @@",
+      " keep",
+      "-old",
+      "+new",
+      "+more",
+      "diff --git a/b.md b/b.md",
+      "--- a/b.md",
+      "+++ b/b.md",
+      "@@ -1 +1 @@",
+      "-x",
+      "+y",
+    ].join("\n");
+    expect(diffFileStats(diff)).toEqual([
+      { path: "src/a.ts", added: 2, removed: 1 },
+      { path: "b.md", added: 1, removed: 1 },
+    ]);
   });
 });
