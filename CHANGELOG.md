@@ -9,6 +9,110 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `marina attach [url] [--name N] [--session S] [--tui]` (#368) attaches a coding terminal to an
+  existing session, resolving server, account and session from arguments, `MARINA_URL` or the
+  cached identity. `bun run setup:cli` links `marina` onto the PATH so it runs from any folder, and
+  a folder server announces itself in `server.json` (#372). Diff and patch results render as a
+  per-file stat plus locally coloured hunks (never under `NO_COLOR` or without a TTY) (#370,
+  #373). `marina -p` exits 0 only when the work completed AND verified (3 otherwise;
+  `--allow-unverified` restores 0) and `--json` prints one result object (#371). The first screen
+  is shorter and the provider check asks the server (#369); terminal journey tests record time to
+  prompt, screen lines and keystrokes (#367).
+- One durable outcome path (#356–#363, migration 162): every filed answer lives in
+  `forecast_answers`, each resolution is one append-only `outcomes` row with durable per-consumer
+  deliveries. Board adapters file and resolve through it; task verdicts and Code Mode checks are
+  recorded as live outcomes, owner-scoped so a person's work never reaches the shared pool. Opt-in
+  hourly jobs resolve answers from linked markets (`MARINA_OUTCOME_AUTORESOLVE`) and judge answers
+  no market settles — choices, multi-select and numbers with a verbatim evidence quote
+  (`MARINA_OUTCOME_JUDGE=off|observe|on`). `POST /v1/outcomes` lets a caller report how a request
+  turned out; `MARINA_ROUTE_EVIDENCE_LIVE=on` lets spawn-time routing weigh that live evidence.
+- Obligations ledger (#322, #325, #329, #335, #336, #344–#346): opt-in per request
+  (`marina/obligations:<model>`, `x-marina-obligations`) or for agents (`MARINA_OBLIGATIONS`).
+  Requests become tracked obligations settled by matching writes, with a trailing reminder and at
+  most one nudge per owed obligation; approvals are tracked so a re-ask is noticed; an advisory
+  pre-write review (order, evidence, requested, permitted) with `MARINA_OBLIGATIONS_REVIEW=auto`
+  per-task selection. The argument check (`marina/argcheck:<model>`, `MARINA_ARGCHECK`) looks up a
+  write call's ids, amounts and dates in the conversation before it runs; dispatcher calls are
+  classified by the inner tool, one read/write classifier serves both, and judge rule passages are
+  opt-in (`MARINA_ARGCHECK_RULE_BYTES`); a command line the model writes is never
+  checked as values. Never rewrites output or arguments; fails open.
+- Lessons from every outcome (#242, #245, #290, #299, #315, #321, #323, #338, #349–#351): each
+  verdict becomes at most one judged, leak-guarded lesson recalled by the forecaster,
+  `marina/verify`, crews and Code Mode (rank-0 `lessons` command). Benchmark runs teach only
+  general configuration rules, never item text. Lessons retire and supersede; lesson writes can be
+  ranked for admission (`MARINA_MEMORY_RANKING`); measurement runs never recall lessons from the
+  board they measure. `MARINA_LESSONS_FROM_WORK=off|observe|on` (default off) turns recurring tool
+  failures, gate holds, argcheck flags, challenge answers and task verdicts into tool-use lessons,
+  scoped to their owner. Signed `marina.learned.v1` bundles export what Marina learned (lessons,
+  conventions, promoted defaults, roles) for opt-in, trust-capped import elsewhere.
+- Forecasting (#228, #231, #233, #241, #255, #273, #280, #288, #343, #352–#355): typed answers
+  (choice, multi-select, number, ranked list, short string) with planning, research rounds, K runs
+  and critique; probabilistic options; retrieval isolation to a cutoff; market, odds and
+  official-series lookups read as of the cutoff (`MARINA_FORECAST_LOOKUPS`, now `auto`, plus a
+  `data` command and room verbs); model-free statistical priors from series history and published
+  outcomes; prior shrinkage, recalibration and a skeptic crew adopted only on a held-out win;
+  barred sources on every engine. `POST /v1/forecast` takes `save: true` / `resolves:` so HTTP
+  answers resolve and teach; resolved answers write the forecast history (`MARINA_FORECAST_HISTORY`,
+  numbers and label hashes only).
+- Research and retrieval (#232, #254, #286, #296, #331, #332): research that reads, quotes and
+  verifies pages across a search backend chain; date-bounded keyless providers (GDELT, Wikipedia,
+  HN, arXiv, Wayback) and a search tool room; offline BM25 local corpora (`bun run corpus`);
+  optional hybrid search with a shared vector index and any-provider embeddings; a read swarm of
+  cheap readers over whole documents (`MARINA_READ_SWARM_READER`); a live-web research agent with
+  a provenance cache and cited, audited research reports; barred sources on every web-agent path.
+- Memory (#324, #326, #327, #330): an optional relevance gate inside unified context
+  (`MARINA_MEMORY_RELEVANCE_GATE=off|observe|on`), hybrid context search, ingest-time grounded
+  notes linked to their source (`MARINA_MEMORY_INGEST_NOTES`), and a concurrent index drain.
+- `marina/verify:<proposer>[+<checker>]` (#235, #243, #269): the verification formation as a model
+  id for any OpenAI-compatible client, tool calls included. Drafted write actions are held unless
+  the checker cites a grounded conflict; the checker inherits the caller's effort.
+- Vision (#251, #253): `canvas look <node> [question]`, `image describe`, `video describe` and
+  the `marina_see` agent tool read canvas images, PDFs and video keyframes as untrusted bytes.
+- Every budget ends in an answer (#279): loops with a turn, step or time budget steer at 75 % then
+  block tools and ask for the answer, labelled `BudgetForced`; crews get deadlines.
+- Benchmark ledger (#214, #216, #218, #226, #262, #278, #282): every run is filed with cost,
+  interval, slice, judge, target, participants from traces and per-item outcomes (ids only, never
+  case content); replicate groups with pooled comparison; audited `benchmark invalidate`. Defaults
+  change only by earned promotion on a held-out split and are read through one resolution path
+  (env > local slot > family slot > built-in, each resolution traced).
+- Benchmark tooling as thin, opt-in adapters: a Tier-0 preset with paired comparison (#202),
+  seeded crew-task generators with exact oracles (#200), a formation adherence scorer (#188), a
+  multimodal HLE set (#253), numeric-equivalence grading (#339), a one-command reproduction kit
+  (`bun run repro`, #244, #250, #272), adapters for SWE-bench and SWE-bench Pro (#234, #267),
+  FutureX (#230, #249), Metaculus (#255), Prophet Arena (#259), BrowseComp-Plus (#254, #271),
+  τ²/τ³ (#235, #248), LongMemEval-V2 and DeepResearch Bench (#320, #331), with hard spend caps,
+  resume journals and recorded server features (`--server-env`, #348).
+- Model routing evidence (#217, #223): `MARINA_ROUTE_EVIDENCE` lets spawn-time `model:route` prefer
+  another of its own candidates from ledger evidence, with objectives `lcb|budget|value` and
+  role-level evidence first.
+- Six new orchestration patterns (#186, #187, #189, #191): delphi, tournament, verification,
+  auction, ledger and sharding; formations now drive dispatch with named leads. Serving crews route
+  `marina:<crew>` requests to their outward face and consult specialists per request (#225).
+- Macros take arguments (`$*`, `$@`, `$1`..`$9`), posture-aware expansion limits and room-scoped
+  macros (#201). `MARINA_AGENT_MODELS` maps seeded agents to models (#213).
+- Agent loop options (#199, #203, #205, #207): terse agent communication, reply obligations only
+  for requests, an opt-in nudge scope, and a 48k-token conversation cap with old reasoning dropped
+  by default (`MARINA_AGENT_CONTEXT_CAP_TOKENS=off`, `MARINA_DROP_OLD_THINKING_SIGNATURES=off`).
+- Coding: project test-runner detection and container-backed workspaces (`code workspace runner
+  container image:<ref>`, #238); project-aware `code verify` with four result states (#277);
+  guided coding workflow, live TUI workspace with parallel panes, scoped guidance, live coding
+  desks published across dashboard and terminal, recovery and confirmed-identity resume of native
+  Claude sessions (#366); reversible dashboard panel arrangement.
+- Passthru: rolling cache breakpoints, with `cache_control` kept for Claude via OpenRouter (#260);
+  per-request injections ride after the breakpoints (#334); Claude 5 `reasoning_effort` maps to
+  adaptive thinking (#265).
+- Every model-using feature runs degraded on one local runtime or one key (#247). Novelty-driven
+  exploration is grounded in observed execution and outcomes (#293).
+- Optional marketplace extension (`extensions/marina-market`, loaded only via `MARINA_PLUGINS`)
+  for licensed worlds and memory on top of `marina.learned.v1`.
+- Desktop app migrated to Electrobun v2 with native release qualification; adoption guides for
+  integrations. Opt-in `docker-compose.local.yml` for a single-user container; the compose bind
+  address is configurable (#316).
+- Arena forecasters (#183, #184, #187, #194, #227): orchestration patterns as forecasters
+  (`formation:<pattern>:<models>`), per-family routing (`route:<family>=<spec|skip>`), Tavily and
+  Perplexity Sonar retrievers, a TabH2O forecaster, a horizon-aware nowcast (off by default),
+  bounded shadow portfolios and settlement qualified on frozen evidence. OpenSSH Ed25519 keys load
+  directly and `arena status` checks the key against the registration.
 - Environment configuration split: `.env.example` is now a short commented starter, the complete
   annotated server catalog is `config/environment.reference` (feeding Admin → Settings and the
   generated `docs/reference/environment.md`), SDK example knobs moved to
@@ -21,8 +125,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Trial score split: each arm now shows its answer rate and its accuracy on answered items, and a
   `split:` line says whether a difference came from better answers or from answering more often
   (also in `evolve adoption` offers and `world adopt` requests). The gates still judge the overall
-  score — a role that does not answer is worse. Read on the first real held-out trial, scout-v2's
-  +6.0 was +0.2 points of quality and +6 answered items.
+  score — a role that does not answer is worse.
 - Bringing a winner home (Phase 4): `evolve adoption <role>` in a child offers a role only with an
   accepted run whose trial EARNED its win (the same `earnedWin` test as replication);
   `world adopt <child> <role> [into:<existing>]` records a pending request with that evidence,
@@ -126,17 +229,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that starts the race; everyone works the task, only the depositor writes
   the deliverable. A two-shot coverage fallback nudges at 90s/150s when no
   deposit lands, and a `[crew-deposit]` echo marks delivered work "verify,
-  don't redo". Measured duplicate deposits per task fell from ~3x to ~1x.
+  don't redo".
 - `PATTERN_VALIDATION` records per-pattern sweep evidence beside
   `PATTERN_FIT`; `project recommend` tags each suggestion
-  `[validated|partial|unvalidated]`. After the fix stack landed, all ten
-  patterns are validated (every formation answers 10/10 on gsm8k; all seven
-  habitat-tested formations complete 3/3 project tasks).
+  `[validated|partial|unvalidated]`.
 - Councilor, Debater, and Decomposer traits teach the explicit RESPONSE
   PROTOCOL envelope (seed-guarded — fresh worlds only).
 
 ### Changed
 
+- Defaults: the daily spend cap is $50 and shared across every spending process on the same world
+  database, with budget scopes and one `SpendGuard` (#275); `MARINA_DEFAULT_MAX_TOKENS` is 16384;
+  seeded agents auto-respawn on a local install with a usable provider; the Ollama default is the
+  first installed model; model defaults are current, routable ids; the arena's default forecaster
+  is the nowcast.
+- Stored provider keys are encrypted by default with a generated `<DB_PATH>.key-secret` (0600);
+  existing plaintext rows keep working. The local profile's API key also opens `/mem`.
+- Self-URLs, MCP and log ports follow the port actually bound.
+- Explicit provider ids never fall back to another provider; a named provider's 4xx is returned as
+  is and the full id goes only to an aggregator (#206, #209, #215, #314).
+- Opt-in instruments never drop silently: an unsupported combination or route returns 400
+  `unsupported_parameter` (#347).
+- Harness decisions: only the writing parts of a batch are gated, web egress is its own class,
+  second opinions are asked only where they can change the verdict, with a bounded wait (#195,
+  #197, #208, #211).
+- Orchestration templates read as invitations rather than imperatives.
 - `inherit` and `inheritance` merged into one `inheritance` command
   (`list | export <pool> | import <token>`); `inherit <token>` survives as an
   alias routed to `import`, which keeps its rank-2 floor.
@@ -147,6 +264,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Coding (#240, #276, #283, #289, #292, #365): task execution, delivery verification and evidence
+  hardened; bounded worker context and recovery; `code handoff … to <agent>` parses recipients
+  unambiguously; the container runtime uses the operator's image storage; SWE-bench workspaces hold
+  the base commit only.
+- Agents (#198, #219, #220, #258): commands after `;` outside `batch` are flagged; seeded
+  `model:route` configs route at first spawn and boot respawn never drops an agent to the spawn
+  cooldown; models that reason unasked reach their tool calls, with labelled output repair
+  (`MARINA_OUTPUT_REPAIR`); command evidence and pending replies survive restarts.
+- A persisted crew survives `crew complete` (#210); span links carry request traces through busy,
+  batched and handed-over work (#224).
+- `calc` runs in a bounded worker with a 10 s deadline instead of freezing the event loop (#222).
+- Passthru image parts survive Responses and Anthropic translation (#246); base64 images are
+  labelled by their bytes (#266); request images and private canvas nodes share one read check
+  with expiring grants (#281, #284); Responses reasoning tool loops are preserved (#365).
+- Memory: retired records are excluded at the search layer (#263); slow context is served once
+  rather than failed, the relevance gate is bounded and embedding inputs capped (#326); a bare
+  probability reads as a `noul` answer (#328).
+- Lessons judged from CLI processes use a key the server accepts; the ledger backfill never
+  re-learns a retired lesson (#323).
+- Benchmark runners: finished rows are kept on a cap stop (#288), a null reply is an empty answer
+  (#212), fallback rows write no lessons (#261), attempt-less instances are filed unresolved
+  (#268), and selection and adapter runs stop cleanly before budget or cap and fetch pointer
+  datasets correctly (#252, #264, #270, #274).
+- An invalid `LOG_LEVEL` or `STANDING_HALF_LIFE_DAYS` falls back to its default; the hot-reload
+  list names only hot-reloadable variables.
+- Release and CI: bundled server startup qualified (#340), Docker build no longer copies removed
+  desktop patches (#287), deploy image store bounded, browser suite serialised with CI retries
+  (#317, #318).
+- A quality pass over access scoping, agent loop bounds, command ingress, API hardening and
+  persistence (#185).
 - The container image shipped devDependencies, including the TypeScript 7 native compiler (a Go
   binary with its own Go stdlib), so the Trivy image scan failed on 10 HIGH Go CVEs on every PR.
   The runtime stage now takes `node_modules` from a production-only install (`prod-deps` stage);
@@ -197,14 +344,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   specific correction when the channel name is omitted, and the channel tool
   schema marks it required.
 - Benchmark answer extraction repairs JSON-escape-mangled LaTeX (`\boxed`,
-  `\frac` arriving as backspace/formfeed control characters) before matching;
-  a 9/10-correct gsm8k run previously scored 10%.
+  `\frac` arriving as backspace/formfeed control characters) before matching, so
+  correct answers are no longer scored wrong.
 - Crew deposit-fallback timers can no longer fire into a closed database.
   `Engine.stop()` tears down crew timers even when the engine was never
   started, a timer that outlives its channel store degrades to a logged
   warning instead of an unhandled throw, and the schedule is injectable for
   tests. This leak surfaced as "Database has closed" errors between unrelated
   test files, failing the suite with zero failing tests.
+
+### Security
+
+- Docker builds no longer copy `<DB_PATH>.key-secret`, `<DB_PATH>.local-api-key` or database
+  backups into the image, and `.gitignore` covers them (#341, #374).
+- The local API key is accepted only under the `local` trust profile; MCP Host validation fails
+  closed on a non-loopback bind without `MARINA_MCP_ALLOWED_HOSTS`.
+- Code Mode containers mount `.git` read-only and every host git call is hardened against planted
+  hooks, fsmonitor and diff drivers (#283).
+- Dependency upgrades for CVE-2026-104850 (MCP client, #333), `http-cache-semantics` (#319),
+  `fast-uri` and `ip-address`; the image scan refreshes the OS security layer daily (#196).
 
 ## [0.7.0] — 2026-09-01
 
@@ -418,3 +576,8 @@ system, resolvers/watchers/calibration, orchestration patterns, benchmark
 runner, TabH2O integration, drop-in compat surfaces (OpenAI, Ollama, ACP), and
 the live-visualization dashboard. The `hermes`/`openclaw` migration worlds and
 their third-party aliases were removed in 0.4.2.
+
+[Unreleased]: https://github.com/h2oai/marina/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/h2oai/marina/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/h2oai/marina/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/h2oai/marina/releases/tag/v0.5.0
