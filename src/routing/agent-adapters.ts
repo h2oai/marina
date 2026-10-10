@@ -1,7 +1,12 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import {
+  getSessionInfo,
+  type HookCallback,
+  query,
+  type SDKUserMessage,
+} from "@anthropic-ai/claude-agent-sdk";
 import { getErrorMessage } from "../engine/errors";
 import type { RuntimeRequest, RuntimeState } from "../sdk/routing-runtime-types";
 import { AgentTransport, type WireMessage } from "./agent-transport";
@@ -252,11 +257,43 @@ async function pi(options: AgentOptions): Promise<ManagedAgent> {
   };
 }
 
-async function claude(options: AgentOptions): Promise<ManagedAgent> {
-  // The SDK has no pre-input identity acknowledgement for resume. A transcript lookup
-  // alone cannot prove which conversation the live process opened (upstream #455).
-  if (options.resumeSessionId)
-    throw new Error("Claude cannot confirm resumed identity before input; resume is unavailable");
+/** The two SDK entry points the Claude adapter uses; injectable so tests need no CLI. */
+export interface ClaudeSdk {
+  query: typeof query;
+  getSessionInfo: typeof getSessionInfo;
+}
+
+export const CLAUDE_RESUME_MISMATCH = "Claude did not resume the recorded session";
+const UNCONFIRMED_TOOL = "Tool use is held until Claude confirms it resumed the recorded session";
+
+/**
+ * Claude Code reports its session identity (`system/init`) only after it consumes the
+ * first user message, so a resume cannot be confirmed before input. Instead: the recorded
+ * transcript must exist before the process starts; every tool is denied until `init`
+ * names the recorded session; a different session interrupts the query and fails the run.
+ * The first prompt text reaches the opened conversation before confirmation; no tool can.
+ */
+export function createClaudeAdapter(sdk: ClaudeSdk): AgentAdapter["start"] {
+  return (options) => claude(sdk, options);
+}
+
+async function claude(sdk: ClaudeSdk, options: AgentOptions): Promise<ManagedAgent> {
+  const resumeId = options.resumeSessionId;
+  if (resumeId && !(await sdk.getSessionInfo(resumeId, { dir: options.cwd })))
+    throw new Error("Claude has no recorded session with this id in this directory; not resuming");
+  // Fresh sessions have no identity to confirm; a resume confirms on `init`.
+  let confirmed = !resumeId;
+  let mismatch: string | undefined;
+  const holdTools: HookCallback = async () =>
+    confirmed
+      ? { continue: true }
+      : {
+          hookSpecificOutput: {
+            hookEventName: "PreToolUse",
+            permissionDecision: "deny",
+            permissionDecisionReason: UNCONFIRMED_TOOL,
+          },
+        };
   const pending: SDKUserMessage[] = [];
   let wake: (() => void) | undefined;
   let stopped = false;
@@ -269,11 +306,18 @@ async function claude(options: AgentOptions): Promise<ManagedAgent> {
       while (pending.length && !stopped) yield pending.shift()!;
     }
   }
-  const stream = query({
+  const stream = sdk.query({
     prompt: messages(),
     options: {
       cwd: options.cwd,
       model: options.model,
+      ...(resumeId
+        ? {
+            resume: resumeId,
+            // Settings allow-rules skip canUseTool; this hook holds those tools as well.
+            hooks: { PreToolUse: [{ hooks: [holdTools] }] },
+          }
+        : {}),
       env: options.env,
       pathToClaudeCodeExecutable: options.executable,
       permissionMode: "default",
@@ -281,6 +325,7 @@ async function claude(options: AgentOptions): Promise<ManagedAgent> {
       includePartialMessages: true,
       stderr: (text) => options.emit("stderr", { text }),
       canUseTool: async (tool, input, context) => {
+        if (!confirmed) return { behavior: "deny", message: UNCONFIRMED_TOOL };
         const question = tool === "AskUserQuestion";
         const answer = await options.ask(
           {
@@ -306,7 +351,21 @@ async function claude(options: AgentOptions): Promise<ManagedAgent> {
       for await (const message of stream) {
         const event = record(message);
         if (event.type === "system" && event.subtype === "init") {
-          options.state({ nativeSessionId: String(event.session_id) });
+          const sessionId = String(event.session_id);
+          if (resumeId && sessionId !== resumeId) {
+            mismatch = CLAUDE_RESUME_MISMATCH;
+            options.emit("adapter.error", { text: mismatch, nativeSessionId: sessionId });
+            options.state({ status: "failed", error: mismatch });
+            stopped = true;
+            wake?.();
+            await stream
+              .interrupt()
+              .catch((error) => options.emit("adapter.error", { text: getErrorMessage(error) }));
+            stream.close();
+            break;
+          }
+          confirmed = true;
+          options.state({ nativeSessionId: sessionId });
         }
         const partial = record(event.event);
         const delta = record(partial.delta);
@@ -315,11 +374,13 @@ async function claude(options: AgentOptions): Promise<ManagedAgent> {
         else if (message.type !== "stream_event") options.emit(`native.${message.type}`, message);
         if (message.type === "result") options.state({ status: "idle" });
       }
+      if (mismatch) return;
       options.state({
         status: stopped ? "stopped" : "failed",
         error: stopped ? undefined : "Claude stream ended",
       });
     } catch (error) {
+      if (mismatch) return;
       options.state({
         status: stopped ? "stopped" : "failed",
         error: stopped ? undefined : getErrorMessage(error),
@@ -329,6 +390,7 @@ async function claude(options: AgentOptions): Promise<ManagedAgent> {
   options.state({ status: "idle" });
   return {
     async prompt(text, id) {
+      if (mismatch) throw new Error(mismatch);
       if (stopped) throw new Error("Claude session stopped");
       pending.push({
         type: "user",
@@ -353,7 +415,13 @@ async function claude(options: AgentOptions): Promise<ManagedAgent> {
 
 /** Registry is extensible; transport, supervisor and dashboard do not assume a participant count. */
 export const BUILTIN_AGENT_ADAPTERS: AgentAdapter[] = [
-  { id: "claude", label: "Claude Code", executable: "claude", start: claude },
+  {
+    id: "claude",
+    label: "Claude Code",
+    executable: "claude",
+    start: createClaudeAdapter({ query, getSessionInfo }),
+    supportsResume: true,
+  },
   { id: "codex", label: "Codex", executable: "codex", start: codex, supportsResume: true },
   { id: "pi", label: "pi", executable: "pi", start: pi, supportsResume: true },
 ];

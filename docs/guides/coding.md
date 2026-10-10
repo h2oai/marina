@@ -175,10 +175,14 @@ all native processes owned by this terminal and closes its local Marina. Worktre
 the output journal remain available for inspection. Restarting preserves history but
 does **not** replay uncertain work or resume a native process automatically. Run `/agents` to
 restore the recorded roster, inspect its history and workspace, then `/resume <exact-name-or-id>`
-to reconnect a stopped Codex or pi session. Recovery preserves its directory and model, refuses
+to reconnect a stopped Claude, Codex or pi session. Recovery preserves its directory and model, refuses
 missing or changed identities, and sends no prior task again. The dashboard Streams controls offer
-the same action. Claude managed resume remains unavailable until its SDK can confirm the resumed
-identity before input; recover those conversations in Claude itself.
+the same action. Claude reports which conversation it opened only after it reads the first new
+prompt, so a Claude resume is confirmed in two steps: Marina refuses to start unless Claude has a
+recorded session with that id in that directory, and it denies every tool until Claude reports the
+recorded id. If Claude reports a different conversation, Marina interrupts it and marks the run
+failed with `Claude did not resume the recorded session`. The remaining risk is that this first
+prompt's text reaches the opened conversation before confirmation; no tool can run on it.
 
 ### Complete names from your current work
 

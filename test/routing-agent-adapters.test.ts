@@ -3,7 +3,8 @@
 
 /**
  * The native Codex (app-server JSON-RPC) and pi (RPC mode) adapters driven
- * against small fake executables that speak each wire protocol over stdio,
+ * against small fake executables that speak each wire protocol over stdio, the
+ * Claude adapter's resume confirmation against an injected fake SDK `query`,
  * plus `prepareAgentWorkspace` in shared and worktree modes on a throwaway
  * git repository. No real agent binaries, no network.
  */
@@ -20,7 +21,14 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type AgentOptions, BUILTIN_AGENT_ADAPTERS } from "../src/routing/agent-adapters";
+import type { Options, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import {
+  type AgentOptions,
+  BUILTIN_AGENT_ADAPTERS,
+  CLAUDE_RESUME_MISMATCH,
+  type ClaudeSdk,
+  createClaudeAdapter,
+} from "../src/routing/agent-adapters";
 import { prepareAgentWorkspace, restoreAgentWorkspace } from "../src/routing/agent-workspace";
 import type { RuntimeState } from "../src/sdk/routing-runtime-types";
 import { git as gitIn } from "./git-helpers";
@@ -87,13 +95,151 @@ describe("builtin adapter registry", () => {
   });
 });
 
-it("does not launch Claude for a resume that cannot be identity-verified before input", async () => {
-  const h = harness("executable-must-not-run", []);
-  h.options.resumeSessionId = "recorded-session";
-  expect(adapter("claude").supportsResume).not.toBe(true);
-  await expect(adapter("claude").start(h.options)).rejects.toThrow("before input");
-  expect(h.states).toEqual([]);
-  expect(h.events).toEqual([]);
+/**
+ * A fake Claude SDK `query`: like the real CLI (see the S6 spike), it emits nothing until the
+ * first user message is consumed, then `system/init`. `toolBeforeInit` makes the fake request a
+ * tool before `init`; after `init` it always requests one. A tool "runs" only when both the
+ * PreToolUse hook and `canUseTool` allow it.
+ */
+function fakeClaudeSdk(opts: {
+  recorded?: string;
+  initSessionId: string;
+  toolBeforeInit?: boolean;
+}) {
+  const calls = {
+    queries: [] as Array<Record<string, unknown>>,
+    consumed: [] as string[],
+    toolDecisions: [] as string[],
+    toolsRun: 0,
+    interrupted: 0,
+    closed: 0,
+  };
+  const sdk: ClaudeSdk = {
+    getSessionInfo: (async (id: string) =>
+      id === opts.recorded ? { sessionId: id, summary: "s", lastModified: 0 } : undefined) as never,
+    query: (({ prompt, options }: { prompt: AsyncIterable<SDKUserMessage>; options: Options }) => {
+      calls.queries.push(options as Record<string, unknown>);
+      let closed = false;
+      const tryTool = async () => {
+        const signal = new AbortController().signal;
+        const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
+        const hooked = hook ? await hook({} as never, "t1", { signal }) : {};
+        const hookDecision = (hooked as { hookSpecificOutput?: { permissionDecision?: string } })
+          .hookSpecificOutput?.permissionDecision;
+        const decision =
+          hookDecision === "deny"
+            ? { behavior: "deny" }
+            : await options.canUseTool!("Bash", { command: "ls" }, { signal } as never);
+        calls.toolDecisions.push(decision?.behavior ?? "none");
+        if (decision?.behavior === "allow") calls.toolsRun++;
+      };
+      async function* run() {
+        for await (const message of prompt) {
+          if (closed) return;
+          calls.consumed.push(String(message.message.content));
+          if (calls.consumed.length === 1) {
+            if (opts.toolBeforeInit) await tryTool();
+            yield { type: "system", subtype: "init", session_id: opts.initSessionId };
+            if (closed) return;
+          }
+          await tryTool();
+          yield { type: "result", subtype: "success", session_id: opts.initSessionId };
+        }
+      }
+      const iterator = run();
+      return Object.assign(iterator, {
+        interrupt: async () => {
+          calls.interrupted++;
+        },
+        close: () => {
+          closed = true;
+          calls.closed++;
+        },
+      });
+    }) as never,
+  };
+  return { sdk, calls };
+}
+
+describe("claude adapter resume", () => {
+  it("is registered as resumable", () => {
+    expect(adapter("claude").supportsResume).toBe(true);
+  });
+
+  it("resumes the recorded session, holds tools until init confirms it, and replays nothing", async () => {
+    const fake = fakeClaudeSdk({
+      recorded: "recorded-session",
+      initSessionId: "recorded-session",
+      toolBeforeInit: true,
+    });
+    const h = harness("claude", [{ allow: true }]);
+    h.options.resumeSessionId = "recorded-session";
+    const agent = await createClaudeAdapter(fake.sdk)(h.options);
+    try {
+      expect(fake.calls.queries[0]).toMatchObject({ resume: "recorded-session", cwd: scratch });
+      expect(fake.calls.consumed).toEqual([]);
+      await agent.prompt("continue", "33333333-3333-3333-3333-333333333333");
+      await until(() => fake.calls.toolDecisions.length === 2);
+      expect(fake.calls.consumed).toEqual(["continue"]);
+      expect(fake.calls.toolDecisions).toEqual(["deny", "allow"]);
+      expect(fake.calls.toolsRun).toBe(1);
+      expect(h.asked).toHaveLength(1);
+      expect(h.states).toContainEqual({ nativeSessionId: "recorded-session" });
+      expect(h.states.some((s) => s.status === "failed")).toBe(false);
+    } finally {
+      await agent.stop();
+    }
+  });
+
+  it("fails a mismatched session before any tool runs", async () => {
+    const fake = fakeClaudeSdk({
+      recorded: "recorded-session",
+      initSessionId: "other-session",
+      toolBeforeInit: true,
+    });
+    const h = harness("claude", [{ allow: true }]);
+    h.options.resumeSessionId = "recorded-session";
+    const agent = await createClaudeAdapter(fake.sdk)(h.options);
+    await agent.prompt("continue", "44444444-4444-4444-4444-444444444444");
+    await until(() => h.states.some((s) => s.status === "failed"));
+    await until(() => fake.calls.closed > 0);
+    expect(h.states.at(-1)).toEqual({ status: "failed", error: CLAUDE_RESUME_MISMATCH });
+    expect(fake.calls.toolsRun).toBe(0);
+    expect(fake.calls.toolDecisions).toEqual(["deny"]);
+    expect(fake.calls.interrupted).toBe(1);
+    expect(h.asked).toEqual([]);
+    expect(h.states.some((s) => s.nativeSessionId === "other-session")).toBe(false);
+    await expect(agent.prompt("again", "55555555-5555-5555-5555-555555555555")).rejects.toThrow(
+      CLAUDE_RESUME_MISMATCH,
+    );
+    await agent.stop();
+    expect(h.states.at(-1)).toEqual({ status: "failed", error: CLAUDE_RESUME_MISMATCH });
+  });
+
+  it("refuses an unknown session id before starting Claude", async () => {
+    const fake = fakeClaudeSdk({ recorded: "recorded-session", initSessionId: "x" });
+    const h = harness("claude", []);
+    h.options.resumeSessionId = "unknown-session";
+    await expect(createClaudeAdapter(fake.sdk)(h.options)).rejects.toThrow("no recorded session");
+    expect(fake.calls.queries).toEqual([]);
+    expect(h.states).toEqual([]);
+    expect(h.events).toEqual([]);
+  });
+
+  it("a fresh session needs no recorded identity and installs no tool hold", async () => {
+    const fake = fakeClaudeSdk({ initSessionId: "fresh" });
+    const h = harness("claude", [{ allow: true }]);
+    const agent = await createClaudeAdapter(fake.sdk)(h.options);
+    try {
+      expect(fake.calls.queries[0]?.resume).toBeUndefined();
+      expect(fake.calls.queries[0]?.hooks).toBeUndefined();
+      await agent.prompt("hi", "66666666-6666-6666-6666-666666666666");
+      await until(() => fake.calls.toolsRun === 1);
+      expect(h.states).toContainEqual({ nativeSessionId: "fresh" });
+    } finally {
+      await agent.stop();
+    }
+  });
 });
 
 describe("codex adapter", () => {
