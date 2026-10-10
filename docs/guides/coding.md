@@ -28,8 +28,8 @@ aliases. `--model` selects a model understood by the chosen runtime. Native agen
 their own configuration and permission systems; Marina's `--allow-exec` flags apply
 only to Marina's own Code Mode commands. There is no automatic provider failover.
 
-For the fullscreen workspace, run **`marina --tui`** (or add `--tui` to your connected
-`--url … --name … --session …` invocation). It keeps the project location, active
+For the fullscreen workspace, run **`marina --tui`** (or add `--tui` to `marina attach`
+or a connected `--url … --name … --session …` invocation). It keeps the project location, active
 conversation, task status and unread counts visible around the transcript and composer.
 Coding remains a single session; World messages and independent agents continue alongside it.
 Omit `--tui` to use the scrollback terminal described below.
@@ -291,7 +291,7 @@ never grant execution permission. Native external runtimes keep their own instru
 
 Use connected coding when your Marina already contains conversations, agents and ongoing
 work. Authenticate as your own resident, select a workspace configured on that server,
-and create or find your session:
+and start a session:
 
 ```bash
 marina connect Owner --url ws://localhost:3300
@@ -300,16 +300,37 @@ marina connect Owner --url ws://localhost:3300
 ```text
 code workspace use /srv/projects/my-project
 code start Repair the application
-code list
 ```
 
-Note the session ID, then disconnect that terminal with Ctrl+D. Attach the coding terminal:
+Disconnect that terminal with Ctrl+D, then attach the coding terminal:
+
+```bash
+marina attach ws://localhost:3300
+```
+
+`marina attach [url] [--name <account>] [--session <id>] [--tui]` fills in what you leave
+out:
+
+| Piece | Resolution |
+|---|---|
+| Server | The argument, then `MARINA_URL`, then the server of your only cached identity. |
+| Account | `--name`, then the only identity cached for that server in `~/.marina/sessions/`. Several: a numbered choice in a terminal, otherwise an error that names them. |
+| Credential | `MARINA_TOKEN`, then the cached credential. None: in a terminal, the `marina connect <name>` login runs first; otherwise attach stops and asks you to authenticate. |
+| Session | `--session`, then your active coding sessions on that server (`code list`). One is attached directly; several give a numbered choice in a terminal, otherwise an error listing them. |
+
+With no active session, attach stops with
+`No active coding sessions for <name> on <url>. Start one there with: marina <folder>.`
+Attach only chooses among identities and sessions you already have. It never creates one.
+
+The explicit form still works, and `MARINA_URL` stands in for `--url`:
 
 ```bash
 marina --url ws://localhost:3300 --name Owner --session code_<id>
 ```
 
-This reconnects the same resident using its cached credential for that server; an explicit
+If a piece is missing, the error names exactly what is missing and suggests `marina attach`.
+
+Attaching reconnects the same resident using its cached credential for that server; an explicit
 `MARINA_TOKEN` also works. An invalid credential or inaccessible session is refused. It
 does not create a replacement identity or world. Reconnection rotates and privately saves
 the credential, including when a later session check refuses the attach. A resident can

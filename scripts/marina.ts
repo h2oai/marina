@@ -7,6 +7,7 @@
  *
  *   marina [dir]                 folder-scoped coding session (the default flow)
  *   marina connect <name> [...]  connect to a running Marina (REPL / -c one-shot / pipe)
+ *   marina attach [url] [...]    code in an existing coding session on a running Marina
  *   marina start                 run the full server in the foreground
  *   marina status                is a Marina running? health + capability readiness
  *   marina init                  interactive .env setup
@@ -21,13 +22,15 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { ATTACH_USAGE } from "./code-attach";
 
 export type Dispatch =
   | { kind: "help" }
   | { kind: "version" }
   | { kind: "init" }
   | { kind: "status" }
-  | { kind: "usage-error"; arg: string }
+  /** `message`, when present, is a complete one-line error printed without the usage text. */
+  | { kind: "usage-error"; arg: string; message?: string }
   /** A bare word that is neither a subcommand nor a directory (`marina myname`). */
   | { kind: "unknown-target"; arg: string }
   | {
@@ -46,6 +49,7 @@ export type Dispatch =
     }
   | { kind: "connect"; rest: string[] }
   | { kind: "code-connected"; url: string; name: string; session: string; tui?: boolean }
+  | { kind: "attach"; url?: string; name?: string; session?: string; tui?: boolean }
   | { kind: "route"; rest: string[] }
   | { kind: "supervise"; rest: string[] }
   | { kind: "start" };
@@ -71,10 +75,52 @@ export function looksLikeDirectory(arg: string, isDir: (p: string) => boolean): 
   return isDir(arg);
 }
 
+/** `marina attach [url] [--name N] [--session S] [--tui]`; resolution happens at run time. */
+function parseAttach(argv: string[]): Dispatch {
+  const attach: { url?: string; name?: string; session?: string; tui?: boolean } = {};
+  const invalid = (arg: string, problem: string): Dispatch => ({
+    kind: "usage-error",
+    arg,
+    message: `${problem}. Usage: ${ATTACH_USAGE}`,
+  });
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (arg === "--tui") {
+      attach.tui = true;
+      continue;
+    }
+    if (arg === "--name" || arg === "--session" || arg === "--url") {
+      const value = argv[++i];
+      if (!value || value.startsWith("-")) return invalid(arg, `${arg} needs a value`);
+      const key = arg.slice(2) as "name" | "session" | "url";
+      if (attach[key] !== undefined) return invalid(arg, `${arg} given twice`);
+      attach[key] = value;
+      continue;
+    }
+    if (arg.startsWith("-")) return invalid(arg, `Unknown attach option ${arg}`);
+    if (attach.url !== undefined) return invalid(arg, `Unexpected argument ${arg}`);
+    attach.url = arg;
+  }
+  return { kind: "attach", ...attach };
+}
+
+/** One line naming exactly what the flag form of connected coding is missing. */
+function missingConnectedPieces(connected: { url?: string; name?: string; session?: string }) {
+  const missing = [
+    ...(connected.url ? [] : ["--url <url> (or MARINA_URL)"]),
+    ...(connected.name ? [] : ["--name <account>"]),
+    ...(connected.session ? [] : ["--session <id>"]),
+  ];
+  const list =
+    missing.length === 1 ? missing[0] : `${missing.slice(0, -1).join(", ")} and ${missing.at(-1)}`;
+  return `Connected coding is missing ${list}. Or let Marina find them: ${ATTACH_USAGE}`;
+}
+
 /** Pure routing: argv (after the script path) → which flow to run. */
 export function parseDispatch(
   argv: string[],
   isDir: (p: string) => boolean = isExistingDirectory,
+  env: Record<string, string | undefined> = process.env,
 ): Dispatch {
   const [first] = argv;
   if (first === "--help" || first === "-h" || first === "help") return { kind: "help" };
@@ -84,6 +130,7 @@ export function parseDispatch(
   if (first === "supervise") return { kind: "supervise", rest: argv.slice(1) };
   if (first === "route") return { kind: "route", rest: argv.slice(1) };
   if (first === "connect") return { kind: "connect", rest: argv.slice(1) };
+  if (first === "attach") return parseAttach(argv.slice(1));
   if (first === "start") return { kind: "start" };
   // Coding flow: [dir] plus optional --fresh, -p/--print "<task>", and the
   // exec-approval flags, in any order.
@@ -145,9 +192,6 @@ export function parseDispatch(
   }
   if (Object.keys(connected).length) {
     if (
-      !connected.url ||
-      !connected.name ||
-      !connected.session ||
       dir !== undefined ||
       fresh ||
       print !== undefined ||
@@ -158,6 +202,13 @@ export function parseDispatch(
       return {
         kind: "usage-error",
         arg: "Connected coding requires --url, --name and --session together; folder, one-shot and local runtime options belong to standalone coding.",
+      };
+    connected.url ??= env.MARINA_URL || undefined;
+    if (!connected.url || !connected.name || !connected.session)
+      return {
+        kind: "usage-error",
+        arg: "connected",
+        message: missingConnectedPieces(connected),
       };
     return {
       kind: "code-connected",
@@ -185,8 +236,11 @@ export const USAGE = `marina — you think, therefore you are here
 Usage:
   marina [dir]                 code in a folder (defaults to the current directory)
   marina -p "<task>" [dir]     one-shot: run a task, print the diff + summary, exit
+  marina attach [url]          code in an existing coding session on a running Marina;
+                               picks the cached account and active session, logs in
+                               when needed (TTY); closing leaves the world running
   marina --url <url> --name <account> --session <id>
-                               code in an existing world session; closing leaves it running
+                               the same, with every piece given explicitly
   marina connect <name> [...]  connect to a running Marina (-c "cmd" for one-shot)
   marina supervise [...]       manage local coding agents from the dashboard
   marina route [...]           join, publish, and exchange participant messages
@@ -199,8 +253,9 @@ Usage:
 Options:
   --tui                      interactive workspace with inline command guidance;
                               omit for scrollback; one-shot and pipes stay plain
-  --url --name --session      connected interactive coding, using the server's workspace
-                              authenticate first with marina connect; no new world is started
+  --url --name --session      connected interactive coding, using the server's workspace;
+                              --url defaults to MARINA_URL; no new world is started
+                              (marina attach takes the same --name/--session/--tui)
   --agent <runtime>           marina (default), claude, codex, or pi
   --model <id>                model for the selected runtime
   --profile <dialect>         Marina command dialect: marina, claude, codex, pi
@@ -231,7 +286,8 @@ Exit codes (one-shot -p):
   2  task timed out (MARINA_CODE_TASK_TIMEOUT_MS, default 600000) — code stop sent
 
 Environment:
-  MARINA_URL                   server URL for connect/status (default: ws://localhost:3300)
+  MARINA_URL                   server URL for connect/status/attach and connected coding
+                               (connect/status default: ws://localhost:3300)
   MARINA_TOKEN                 credential for connected coding or status readiness;
                                connected coding otherwise uses that account's server-bound cache
   MARINA_CODE_FRESH=1          same as --fresh
@@ -390,7 +446,9 @@ if (import.meta.main) {
       console.log(readPackageVersion());
       break;
     case "usage-error":
-      console.error(`Invalid option or combination: ${dispatch.arg}\n\n${USAGE}`);
+      console.error(
+        dispatch.message ?? `Invalid option or combination: ${dispatch.arg}\n\n${USAGE}`,
+      );
       process.exit(1);
       break;
     case "unknown-target":
@@ -436,6 +494,22 @@ if (import.meta.main) {
           ...dispatch,
           token: process.env.MARINA_TOKEN,
         });
+      } catch (error) {
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exitCode = 1;
+      }
+      break;
+    }
+    case "attach": {
+      const { loginWithConnect, resolveAttach, terminalAttachIO } = await import("./code-attach");
+      const { runConnectedCodeSession } = await import("./code-connected");
+      try {
+        const options = await resolveAttach(dispatch, {
+          env: process.env,
+          io: terminalAttachIO(),
+          login: loginWithConnect,
+        });
+        process.exitCode = await runConnectedCodeSession(options);
       } catch (error) {
         console.error(error instanceof Error ? error.message : String(error));
         process.exitCode = 1;
