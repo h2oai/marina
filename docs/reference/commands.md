@@ -2441,11 +2441,25 @@ Effect: unknown.
 
 - `field-0` (`id|name`): text, required, choices `id`, `name`.
 
+### `code run --argv <json-array>`
+
+Effect: unknown.
+
+- `field-0` (`json-array`): json, required.
+
 ### `code read <path>`
 
 Effect: unknown.
 
 - `field-0` (`path`): text, required.
+
+### `code see <path> [question]`
+
+Effect: unknown.
+
+- `field-0` (`path`): text, required.
+- `field-1` (`question`): text, optional group `option-0`.
+- Group `option-0`: `question`.
 
 ### `code recipe`
 

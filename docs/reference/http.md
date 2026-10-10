@@ -862,7 +862,7 @@ Fields read here: `clampLimit(url.searchParams.get("limit"), 100)`, `url.searchP
 
 ### `url.pathname.match(/^\/api\/coding\/session\/([^/]+)$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L444)
+[Source](../../src/net/dashboard-api/world.ts#L443)
 
 - Guard: `codingSessionDetailMatch && method === "GET" && db`
 - Guard: `method === "GET"`
