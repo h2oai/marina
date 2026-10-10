@@ -47,6 +47,14 @@ test("open a personal coding desk and an authored multi-source publication witho
   );
   expect(commands.map((c) => c.command)).toEqual(["code start Personal development"]);
 
+  await desk.getByLabel("Workspace image path").fill("inputs/drawing.png");
+  await desk.getByRole("button", { name: "Review image inspection", exact: true }).click();
+  const imageReview = desk.getByRole("region", { name: "Review image inspection" });
+  await expect(imageReview).toContainText("inputs/drawing.png");
+  await expect(imageReview).toContainText(session.id);
+  await desk.screenshot({ path: test.info().outputPath("workspace-image-review.png") });
+  expect(commands.map((c) => c.command)).toEqual(["code start Personal development"]);
+
   const catalog = await (await request.get("/api/panel-resources", { headers })).json();
   expect(catalog.resources.map((r: { id: string }) => r.id)).toContain("coding.sessions");
   const canvas = await (
@@ -173,6 +181,7 @@ test("publish a coding desk, exchange live output and messages, reconnect and cl
   await library.getByRole("button", { name: "Publish and open desk" }).click();
   const desk = page.locator('[data-pane-key="view:published:1"]');
   await expect(desk.getByRole("heading", { name: "Browser coding desk" })).toBeVisible();
+  await expect(desk.getByLabel("Workspace image path")).toBeVisible();
   await desk.getByLabel("Request for coder").fill("Keep the coding request draft");
   await expect(input).toHaveValue("Keep my world conversation draft");
   // A write through the normal participant API must become visible before the 5s recovery poll.

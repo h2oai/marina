@@ -437,8 +437,7 @@ export async function handleCoordinationRoutes(
     const sessionId = decodeURIComponent(codingArtifactsMatch[1]!);
     const kind = url.searchParams.get("kind") ?? undefined;
     const limit = clampLimit(url.searchParams.get("limit"), 100);
-    const artifacts = db.listCodingArtifacts(sessionId, limit);
-    return json(kind ? artifacts.filter((a) => a.kind === kind) : artifacts);
+    return json(db.listCodingArtifacts(sessionId, limit, kind));
   }
 
   const codingSessionDetailMatch = url.pathname.match(/^\/api\/coding\/session\/([^/]+)$/);
@@ -450,6 +449,7 @@ export async function handleCoordinationRoutes(
       session,
       events: db.listCodingEvents(sessionId, clampLimit(null, 200)),
       artifacts: db.listCodingArtifacts(sessionId, clampLimit(null, 100)),
+      visualEvidence: db.listCodingArtifacts(sessionId, 5, "visual_evidence"),
     });
   }
 

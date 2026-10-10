@@ -173,6 +173,7 @@ export function resolveVerificationOptions(
 
 /** Environment probes: read-only checks that the toolchain and dependencies are present. */
 export const PREPARATION_PROBES = {
+  python: ["python", "--version"],
   pytest: ["python", "-m", "pytest", "--version"],
   django: ["python", "-c", "import django"],
   nodeModules: ["test", "-d", "node_modules"],
@@ -222,8 +223,8 @@ export function preparationStepKind(argv: readonly string[]): "probe" | "install
   if (Object.values(PREPARATION_PROBES).some((probe) => sameArgv(probe, argv))) return "probe";
   for (const prefix of [UV_WRAPPER, PIP_WRAPPER])
     if (
-      [PREPARATION_PROBES.pytest, PREPARATION_PROBES.django].some((probe) =>
-        sameArgv([...prefix.split(" "), ...probe], argv),
+      [PREPARATION_PROBES.python, PREPARATION_PROBES.pytest, PREPARATION_PROBES.django].some(
+        (probe) => sameArgv([...prefix.split(" "), ...probe], argv),
       )
     )
       return "probe";
@@ -262,9 +263,10 @@ export interface PreparationPlan {
 function probeFor(profile: ProjectRunnerProfile): readonly string[] | undefined {
   switch (profile.language) {
     case "python":
-      return profile.testCommand && /runtests\.py|manage\.py/.test(profile.testCommand)
-        ? PREPARATION_PROBES.django
-        : PREPARATION_PROBES.pytest;
+      if (profile.testCommand?.includes("manage.py")) return PREPARATION_PROBES.django;
+      if (profile.testCommand?.includes("pytest")) return PREPARATION_PROBES.pytest;
+      // A custom Python runner is not evidence of a Django dependency.
+      return PREPARATION_PROBES.python;
     case "javascript":
       // A package without dependencies has nothing to install.
       return profile.declaresDependencies ? PREPARATION_PROBES.nodeModules : undefined;
@@ -289,7 +291,7 @@ function missingReasonFor(profile: ProjectRunnerProfile, target: PreparationTarg
       : " Use an environment that has them: a container runner image (code workspace runner container image:<ref>), or install them first.";
   switch (profile.language) {
     case "python":
-      return `The Python test environment is unavailable (${profile.testCommand?.includes("pytest") === false ? "django is not importable" : "pytest is not importable"}).${where}`;
+      return `The Python test environment is unavailable (${profile.testCommand?.includes("manage.py") ? "django is not importable" : profile.testCommand?.includes("pytest") ? "pytest is not importable" : "python is unavailable"}).${where}`;
     case "javascript":
       return `Dependencies are not installed (no node_modules).${target.hostCandidate ? " Request dependencies:auto for a Bun text lockfile." : ""}${where}`;
     case "go":

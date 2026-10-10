@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  constants,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -13,6 +14,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { captureGitCandidate } from "./candidate";
@@ -126,6 +128,8 @@ export interface WorkspaceFiles {
     input: string,
     maxBytes?: number,
   ): Promise<{ path: string; content: string; truncated: boolean; size: number }>;
+  /** Bounded bytes from the same authorized file surface; never a guest-only path. */
+  readBytes?(input: string, maxBytes: number): Promise<{ path: string; data: Uint8Array }>;
   search(query: string, limit?: number, path?: string): Promise<SearchHit[]>;
   diff(
     input?: string,
@@ -367,6 +371,39 @@ export class LocalWorkspace implements WorkspaceRuntime {
       truncated: bytes.byteLength > maxBytes,
       size: bytes.byteLength,
     };
+  }
+
+  async readBytes(input: string, maxBytes: number): Promise<{ path: string; data: Uint8Array }> {
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 100 * 1024 * 1024)
+      throw new Error("Invalid file byte limit.");
+    // Absolute paths within the primary root name the same already-authorized files.
+    const path =
+      isAbsolute(input) && insideRoot(this.root, resolve(input))
+        ? relative(this.root, resolve(input))
+        : input;
+    const target = this.resolvePath(path);
+    const file = await open(
+      target,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    try {
+      const stat = await file.stat();
+      const current = statSync(this.resolvePath(path));
+      if (!stat.isFile() || stat.dev !== current.dev || stat.ino !== current.ino)
+        throw new Error("Path is not a stable regular file.");
+      if (stat.size > maxBytes) throw new Error("File is larger than the byte limit.");
+      const bytes = new Uint8Array(maxBytes + 1);
+      let length = 0;
+      while (length < bytes.length) {
+        const result = await file.read(bytes, length, bytes.length - length, length);
+        if (!result.bytesRead) break;
+        length += result.bytesRead;
+      }
+      if (length > maxBytes) throw new Error("File is larger than the byte limit.");
+      return { path: this.relativePath(target), data: bytes.slice(0, length) };
+    } finally {
+      await file.close();
+    }
   }
 
   async search(

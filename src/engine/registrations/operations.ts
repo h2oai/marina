@@ -32,7 +32,7 @@ import { universalIntentCommands, usecaseCommand } from "../commands/usecase";
 import { webCommand } from "../commands/web";
 import type { Engine } from "../engine";
 import { roomMacroOwner } from "../macro-expansion";
-import { lookAndReply } from "../media/vision";
+import { describeVisual, lookAndReply } from "../media/vision";
 import { computeReadiness } from "../readiness";
 import { answerCodeViaLocalModel, parseExecApprovalTimeout } from "./model-helpers";
 
@@ -172,6 +172,12 @@ export function registerOperationCommands(engine: Engine): void {
   }
   engine.commands.registerBuiltin(
     codeCommand({
+      describeVisual: (source, question, entity) =>
+        describeVisual(engine, source, {
+          question,
+          entityId: entity.id,
+          agentModel: engine.db?.getAgentConfig(entity.name)?.model ?? undefined,
+        }),
       verificationRunner: engine.db
         ? new VerificationRunner(engine.db, (pending) => engine.trackBackgroundCommand(pending))
         : undefined,

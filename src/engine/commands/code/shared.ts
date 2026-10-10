@@ -20,6 +20,7 @@ import type {
 } from "../../../types";
 import { failCommandResponse } from "../../command-response";
 import { sanitizeEntityName } from "../../entity-name";
+import type { VisualDescription, VisualSource } from "../../media/vision";
 
 export const ACTIVE_SESSION_KEY = "coding_session_id";
 export const ACTIVE_MODAL_KEY = "active_modal";
@@ -381,6 +382,11 @@ export function refuseTelnetDispatch(ctx: RoomContext, eid: EntityId, deps: Code
 }
 
 export interface CodeDeps {
+  describeVisual?: (
+    source: VisualSource,
+    question: string,
+    entity: Entity,
+  ) => Promise<VisualDescription>;
   verificationRunner?: VerificationRunner;
   logEvent?: (event: EngineEvent) => void;
   agentRuntime?: CodingAgentRuntime;

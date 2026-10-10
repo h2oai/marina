@@ -3,6 +3,7 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { parseCommandArgv } from "../../../coding/command-argv";
 import {
   clearSessionExecState,
   type ExecApprover,
@@ -98,7 +99,7 @@ export async function runWorkspaceCommand(
     artifactId: artifact.id,
     artifactKind: artifact.kind,
     command: result.command,
-    commands: [`code show ${artifact.id}`, `code run ${result.command.join(" ")}`],
+    commands: [`code show ${artifact.id}`, `code run --argv ${JSON.stringify(result.command)}`],
     content: result.output,
     durationMs: result.durationMs,
     event: "command_ran",
@@ -128,7 +129,7 @@ async function resolveTestShorthand(
     );
     // The detected test command (a bare `test` for Bun still means `bun run test`).
     const test = runner?.testCommand;
-    if (test) return normalizeCodeRunArgs(test.split(/\s+/).filter(Boolean));
+    if (test) return normalizeCodeRunArgs(parseCommandArgv(test));
   }
   return normalizeCodeRunArgs(args);
 }
@@ -595,7 +596,7 @@ export async function runVerificationCommands(
       preparation?.wrapTests && /^python3?\s/.test(step.command)
         ? `${preparation.wrapTests} ${step.command}`
         : step.command;
-    const command = normalizeCodeRunArgs(text.split(/\s+/).filter(Boolean));
+    const command = normalizeCodeRunArgs(parseCommandArgv(text));
     let stored: StoredCommandResult | undefined;
     let outcome: StepOutcome;
     try {

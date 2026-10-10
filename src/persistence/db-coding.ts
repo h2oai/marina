@@ -264,7 +264,14 @@ export function listCodingArtifacts(
   db: Database,
   sessionId: string,
   limit = 20,
+  kind?: string,
 ): CodingArtifactRow[] {
+  if (kind !== undefined)
+    return db
+      .query(
+        "SELECT * FROM coding_artifacts WHERE session_id = ? AND kind = ? ORDER BY created_at DESC, rowid DESC LIMIT ?",
+      )
+      .all(sessionId, kind, limit) as CodingArtifactRow[];
   return db
     .query(
       "SELECT * FROM coding_artifacts WHERE session_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?",

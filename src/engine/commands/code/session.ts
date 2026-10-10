@@ -552,6 +552,7 @@ export async function status(
   const events = deps.db.listCodingEvents(session.id, 5);
   const artifacts = deps.db.listCodingArtifacts(session.id, 50);
   const latestArtifact = artifacts[0];
+  const visualEvidence = deps.db.listCodingArtifacts(session.id, 5, "visual_evidence");
   const model = latestActiveArtifact(deps.db, session.id, "model_setting");
   const modelMeta = model ? parseJsonObject(model.metadata_json) : {};
   const modelTarget =
@@ -615,6 +616,9 @@ export async function status(
         `Task ${grant.access === "read" ? "input (read-only)" : "output (writable)"}: ${grant.root}${grant.guestPath ? ` → container ${grant.guestPath}` : " (server filesystem)"}`,
     ),
     `Latest artifact: ${latestArtifact ? `${latestArtifact.id} (${latestArtifact.kind}, ${latestArtifact.status})` : dim("none")}`,
+    ...visualEvidence.map(
+      (artifact) => `Saved image observation: ${artifact.title} — code show ${artifact.id}`,
+    ),
     `Pending patches: ${pendingPatches.length}`,
     `Updated: ${new Date(session.updated_at).toLocaleString()}`,
   ];
@@ -628,6 +632,7 @@ export async function status(
     commands: [
       "code history",
       "code artifacts",
+      ...visualEvidence.map((artifact) => `code show ${artifact.id}`),
       "code patches",
       ...(runMeta ? [`task info ${runMeta.taskId}`] : []),
       ...(worker && runMeta

@@ -752,6 +752,12 @@ const newLookLimiter = () =>
   new RateLimiter({ maxTokens: 6, refillRate: 1, refillInterval: 10_000 });
 let lookLimiter = newLookLimiter();
 
+/** Shared admission for canvas and workspace observations. */
+export function admitVisualLook(entityId: EntityId): void {
+  if (!lookLimiter.consume(entityId))
+    throw new Error("Vision rate limit reached (6 looks, then one every 10 s); try again shortly.");
+}
+
 /** For tests: forget every entity's look budget. */
 export function resetVisionRateLimits(): void {
   lookLimiter = newLookLimiter();

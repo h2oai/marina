@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { CodingArtifactEntry } from "../lib/types";
 import { verificationLabel, verificationOutcomeFromStatus } from "../lib/verification-outcome";
+import { parseMetadata } from "../lib/webchat-format";
 import { DiffViewer } from "./DiffViewer";
+import { VisualEvidenceDetails } from "./VisualEvidenceDetails";
 
 /** Read existing session/evidence rows; an artifact's status is never promoted into proof. */
 export function CodingDeskResource({ value }: { value: Record<string, unknown> }) {
@@ -12,7 +14,11 @@ export function CodingDeskResource({ value }: { value: Record<string, unknown> }
     agent: string | null;
     workspace_root?: string;
   };
-  const artifacts = (value.artifacts ?? []) as CodingArtifactEntry[];
+  const recent = (value.artifacts ?? []) as CodingArtifactEntry[];
+  const observations = (value.visualEvidence ?? []) as CodingArtifactEntry[];
+  const artifacts = [
+    ...new Map([...observations, ...recent].map((artifact) => [artifact.id, artifact])).values(),
+  ];
   const events = (value.events ?? []) as Array<{
     id: string;
     kind: string;
@@ -68,6 +74,15 @@ export function CodingDeskResource({ value }: { value: Record<string, unknown> }
                 <pre className="whitespace-pre-wrap break-words">
                   {artifact.content_text.slice(0, 16000)}
                 </pre>
+              )}
+              {artifact.kind === "visual_evidence" && (
+                <VisualEvidenceDetails metadata={parseMetadata(artifact.metadata_json)} />
+              )}
+              {artifact.kind === "verification" && (
+                <p>
+                  This result covers the recorded checks. Task acceptance and delivered-file
+                  validation are separate.
+                </p>
               )}
               {artifact.kind === "task_run" && (
                 <p>

@@ -50,7 +50,7 @@ export function ChatStatusOverlay({
   codingDetailQuery: ReturnType<typeof useCodingSessionDetail>;
   copy(text: string, key: number | "all"): Promise<void>;
   copied: number | "all" | null;
-  sendCommandWithOverlay(command: string): boolean;
+  sendCommandWithOverlay(command: string, target?: { sessionId: string }): boolean;
 }) {
   const messages = useChatState((s) => s.messages);
   // Artifact id whose full content is expanded in the coding-artifacts overlay.

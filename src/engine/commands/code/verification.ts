@@ -1,7 +1,9 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
+
 import { realpathSync } from "node:fs";
 import { candidateFingerprint, observeCandidate } from "../../../coding/candidate";
+import { parseCommandArgv } from "../../../coding/command-argv";
 import { LocalWorkspace, normalizeAllowedCodeCommand } from "../../../coding/local-workspace";
 import {
   assessCodingVerification,
@@ -89,7 +91,7 @@ export async function startVerification(
   const commands = livePlan.commands.map(forCandidate);
   assertBoundedVerification(commands);
   for (const command of commands)
-    normalizeAllowedCodeCommand(root, normalizeCodeRunArgs(command.split(/\s+/).filter(Boolean)));
+    normalizeAllowedCodeCommand(root, normalizeCodeRunArgs(parseCommandArgv(command)));
   beforeSpawn();
   // Background results are durable even if the caller disconnects or loses access. Never
   // forward private evidence to a caller whose bound-agent membership was revoked meanwhile.

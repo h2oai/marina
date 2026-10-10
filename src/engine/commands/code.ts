@@ -9,6 +9,7 @@
 // subcommand inside Code Mode is a natural-language task routed to `doCode`.
 
 import { CodeSessionDriver } from "../../coding/code-session-driver";
+import { parseCommandArgv } from "../../coding/command-argv";
 import { parseCodeSearchInput } from "../../coding/search-input";
 import { codingRunMetadata } from "../../coding/task-run";
 import {
@@ -104,6 +105,7 @@ import {
   reviewCodingRun,
 } from "./code/task-run";
 import { startVerification } from "./code/verification";
+import { seeWorkspaceFile } from "./code/visual";
 import {
   doctor,
   getWorkspaceRegistry,
@@ -151,6 +153,7 @@ const TARGETED_SUBCOMMANDS = new Set([
   "history",
   "files",
   "read",
+  "see",
   "search",
   "diff",
   "artifacts",
@@ -339,6 +342,9 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
   ls: filesHandler,
   read: readHandler,
   cat: readHandler,
+  see: async (c) => {
+    await seeWorkspaceFile(c.ctx, c.eid, c.entity, c.deps, c.rawAfterSub, c.args);
+  },
   search: async (c) => {
     const parsed = parseCodeSearchInput(c.rawAfterSub);
     await search(c.ctx, c.eid, c.entity, c.deps, parsed.query, parsed.path);
@@ -347,7 +353,7 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
     await diff(c.ctx, c.eid, c.entity, c.deps, c.args.join(" "));
   },
   run: async (c) => {
-    await runWorkspaceCommand(c.ctx, c.eid, c.entity, c.deps, c.args);
+    await runWorkspaceCommand(c.ctx, c.eid, c.entity, c.deps, parseCommandArgv(c.rawAfterSub));
   },
   verify: async (c) => {
     const parsed = parseModifiers(c.args, {
@@ -530,7 +536,9 @@ export function codeCommand(deps: CodeDeps): CommandDef {
       "code project reconcile",
       "code project status",
       "code project switch <id|name>",
+      "code run --argv <json-array>",
       "code read <path>",
+      "code see <path> [question]",
       "code recipe",
       "code recipe list",
       "code recipe run <name>",

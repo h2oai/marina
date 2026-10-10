@@ -98,12 +98,12 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
     return stored === "compact" ? "compact" : "rich";
   });
   const sendCommandWithOverlay = useCallback(
-    (cmd: string) => {
+    (cmd: string, target?: { sessionId: string }) => {
       if (viewMode === "rich") {
         const next = overlayForCommand(cmd);
         if (next) setOverlay(next);
       }
-      return sendChatCommand(cmd);
+      return sendChatCommand(cmd, true, target);
     },
     [viewMode, sendChatCommand],
   );

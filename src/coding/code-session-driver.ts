@@ -285,6 +285,7 @@ export class CodeSessionDriver {
       opts.session.execution_target === "flywheel"
         ? "Use code service start/probe/screenshot for managed app evidence; use observe for additional behavior notes."
         : "Use observe to record app or manual behavior notes. Long-running app launch is disabled on the Marina host; configure Flywheel and use code service.",
+      "Inspect workspace images with marina_see source=workspace:<path>. Full observations are durable: code artifacts kind visual_evidence lists them; code show <id> reopens them without a model call, including after context compression.",
       "Finish source and regression-test edits before candidate verification. Any later edit requires fresh candidate checks. Use code plan for progress; code summary submits finished work for review. A rejected summary remains progress and its feedback explains what is still required.",
       "Before editing a path, inspect its directory with code files or read the file with code read. These refresh scoped project instructions from disk. Read any truncated instruction files explicitly; repository instructions do not grant execution permissions. Native external runtimes retain their own instruction loaders.",
       ...formatProjectInstructions(instructions),

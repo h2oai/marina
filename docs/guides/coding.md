@@ -1159,3 +1159,34 @@ copy-paste or run the script to watch the whole loop end to end.
 - [Agent Development](agent-development.md) — drive coding sessions from the TypeScript SDK
 - [Coordination](coordination.md) — crews, roles, projects, and tasks in depth
 - [Connecting](connecting.md) — WebChat, WebSocket, Telnet, MCP, SDK, and the ACP editor bridge
+
+### Inspect workspace images
+
+Use `marina_see` with `source: "workspace:images/diagram.png"`, or
+`code see images/diagram.png What labels are visible?`. PNG, JPEG, GIF and WebP
+files are read through the active session's workspace and explicit task input grants.
+Absolute paths inside that workspace are accepted. Files outside those grants and
+sandbox-only paths are refused; no copying into internal scratch storage is needed.
+
+The result is a saved `visual_evidence` artifact with the question, model, source path
+and SHA-256 of the observed bytes. It is model output, not independently verified fact.
+After a context reset, use `code artifacts kind visual_evidence` and `code show <id>`
+to recover the complete observation without another vision request. A changed image
+requires another inspection; the saved observation identifies the bytes seen earlier.
+
+The file list offers **Inspect image**. A canvas coding desk offers **Review image
+inspection** and displays the same saved evidence under **Artifacts & verification**.
+Opening a desk or reopening evidence does not start a model call. Canvas readers use
+their existing session permissions; publishing a desk never copies private image bytes.
+
+Verification receipts cover only the checks shown. A successful workspace test does
+not establish that a separately collected deliverable works: include its dependencies
+in the delivery contract and check the collected files in the intended environment.
+Task review remains a separate decision.
+
+`code run` groups single- or double-quoted arguments without invoking a shell:
+`code run python -c 'import json; print(json.load(open("result.json")))'`.
+For literal arguments, including nested quotes, use
+`code run --argv ["python", "-c", "print(1 + 2)"]`. Both forms use the same
+execution permissions, allowlist and approval audit as other workspace commands.
+Variables, pipes, substitutions and globs are not expanded.

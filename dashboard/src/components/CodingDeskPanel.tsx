@@ -102,6 +102,10 @@ function CodingDeskView({
               </button>
             </section>
           )}
+          <WorkspaceImageInspection
+            key={JSON.stringify([resident, sessionId])}
+            sessionId={sessionId}
+          />
           {message && <p role="status">{message}</p>}
           <p className="text-xs">
             This is your local view. Closing it leaves the coder and world running.
@@ -112,5 +116,75 @@ function CodingDeskView({
         <p className="p-3">Open an existing coding session from Work.</p>
       )}
     </GlassPanel>
+  );
+}
+
+function WorkspaceImageInspection({ sessionId }: { sessionId: string }) {
+  const connected = useChatState((s) => s.loggedIn && s.connected && s.codingTargetSupported);
+  const [path, setPath] = useState("");
+  const [review, setReview] = useState<string>();
+  const [message, setMessage] = useState("");
+  function inspect() {
+    if (!connected || !review) return;
+    try {
+      const sent = useChatState
+        .getState()
+        .sendCommand(`code see ${JSON.stringify({ path: review })}`, false, { sessionId });
+      if (!sent) {
+        setMessage("Reconnect before inspecting the image.");
+        return;
+      }
+      setReview(undefined);
+      setMessage(
+        "Inspection requested. Its saved observation will appear under artifacts and in Chat.",
+      );
+    } catch {
+      setReview(undefined);
+      setMessage(
+        "Inspection could not be confirmed. Check saved observations before requesting it again.",
+      );
+    }
+  }
+  return (
+    <div className="space-y-2">
+      <label className="block text-sm">
+        Workspace image path
+        <input
+          className="mission-field"
+          value={path}
+          onChange={(e) => setPath(e.target.value)}
+          placeholder="images/diagram.png"
+        />
+      </label>
+      <button
+        type="button"
+        className="text-primary"
+        disabled={!connected || !path.trim()}
+        onClick={() => {
+          setReview(path.trim());
+          setMessage("");
+        }}
+      >
+        Review image inspection
+      </button>
+      {review && (
+        <section
+          aria-label="Review image inspection"
+          className="rounded border border-border p-3 space-y-2"
+        >
+          <p>
+            Inspect {review} in session {sessionId}. This uses the configured vision model and saves
+            the observation.
+          </p>
+          <button type="button" className="mr-3 text-primary" onClick={() => setReview(undefined)}>
+            Cancel inspection
+          </button>
+          <button type="button" className="text-primary" disabled={!connected} onClick={inspect}>
+            Inspect image
+          </button>
+        </section>
+      )}
+      {message && <p role="status">{message}</p>}
+    </div>
   );
 }
