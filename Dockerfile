@@ -28,7 +28,7 @@ RUN bun install --frozen-lockfile --filter "marina" --filter "marina-dashboard"
 
 # Copy the rest of the source and build the dashboard. vite is configured to
 # emit to /app/dist/dashboard — exactly where the server serves it from
-# (src/net/websocket-server.ts → ../../dist/dashboard). No post-build move.
+# (src/net/websocket-server.ts serves join(MARINA_ROOT, "dist/dashboard")). No post-build move.
 COPY . .
 RUN bun run dashboard:build
 
