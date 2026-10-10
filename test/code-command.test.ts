@@ -2137,6 +2137,9 @@ diff --git a/example.txt b/example.txt
       );
       const proposed = sent.at(-1) ?? "";
       expect(proposed).toContain("Patch proposed:");
+      // The proposal reads as a stat and its first hunk, in plain text.
+      expect(stripAnsi(proposed)).toContain("1 file · +1 −1\n  example.txt  +1 −1");
+      expect(stripAnsi(proposed)).toContain("@@ -1 +1 @@\n-hello\n+hello marina");
       const patchId = proposed.match(/patch_[a-f0-9-]+/)?.[0];
       expect(patchId).toBeTruthy();
       expect(metadata.at(-1)?.code).toMatchObject({
@@ -2175,14 +2178,23 @@ diff --git a/example.txt b/example.txt
         type: "list",
       });
 
+      // Unrelated uncommitted work: apply reports only what the patch changed.
+      writeFileSync(join(root, "unrelated.txt"), "keep\n");
+      Bun.spawnSync(["git", "add", "-N", "unrelated.txt"], { cwd: root });
       await command.handler(ctx, inputFor(entity, "code apply last patch"));
       expect(sent.at(-1) ?? "").toContain("Patch applied:");
+      expect(stripAnsi(sent.at(-1) ?? "")).toContain("1 file · +1 −1\n  example.txt  +1 −1");
+      expect(stripAnsi(sent.at(-1) ?? "")).not.toContain("unrelated.txt");
+      expect(stripAnsi(sent.at(-1) ?? "")).not.toContain("+hello marina");
       expect(metadata.at(-1)?.code).toMatchObject({
         artifactId: patchId,
         event: "patch_applied",
         status: "applied",
         type: "patch",
       });
+      expect(
+        String((metadata.at(-1)?.code as { content?: string } | undefined)?.content),
+      ).not.toContain("unrelated.txt");
       expect(readFileSync(join(root, "example.txt"), "utf8")).toBe("hello marina\n");
 
       const artifact = db.getCodingArtifact(patchId!);

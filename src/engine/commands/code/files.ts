@@ -8,6 +8,7 @@ import {
   projectInstructionContextBlocks,
   projectInstructionMetadata,
 } from "../../../coding/project-instructions";
+import { diffStat, firstHunk, formatDiffStat, hunkCount } from "../../../coding/unified-diff";
 import { dim, error as fmtError, header, separator, success } from "../../../net/ansi";
 import type { CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
@@ -233,7 +234,12 @@ export async function diff(
     payload: { path: path || ".", exitCode: result.exitCode, truncated: result.truncated },
   });
   const body = result.content.trim() || dim("No git diff.");
-  const suffix = result.truncated ? dim("\n[truncated]") : "";
+  const totalBytes = (result as { totalBytes?: number }).totalBytes;
+  const suffix = result.truncated
+    ? dim(
+        `\n[truncated: showing ${Buffer.byteLength(result.content)}${totalBytes ? ` of ${totalBytes}` : ""} bytes; code diff <path> reads one file]`,
+      )
+    : "";
   sendCode(ctx, eid, `${header(`Diff: ${path || "."}`)}\n${body}${suffix}`, {
     commands: ["code patch <title>", "code verify"],
     content: result.content,
@@ -242,10 +248,23 @@ export async function diff(
     paths: [path || "."],
     sessionId: session.id,
     title: `Diff: ${path || "."}`,
+    ...(totalBytes ? { totalBytes } : {}),
     truncated: result.truncated,
     type: "diff",
     workspace: session.workspace_root,
   });
+}
+
+/** Plain first-hunk preview of a proposed patch; `code show` prints all of it. */
+function patchPreview(patch: string, id: string): string[] {
+  const hunk = firstHunk(patch);
+  const total = hunkCount(patch);
+  return [
+    ...(hunk ? [hunk] : []),
+    ...(total > 1
+      ? [dim(`[First of ${total} hunks shown · code show ${id} prints the whole diff]`)]
+      : []),
+  ];
 }
 
 export async function proposePatch(
@@ -305,6 +324,10 @@ export async function proposePatch(
       `Paths: ${check.paths.join(", ")}`,
       dim(`Review: code show ${artifact.id}`),
       dim(`Apply:  code apply ${artifact.id}`),
+      separator(),
+      formatDiffStat(diffStat(artifact.content_text)),
+      "",
+      ...patchPreview(artifact.content_text, artifact.id),
     ].join("\n"),
     {
       artifactId: artifact.id,
@@ -373,8 +396,7 @@ export async function applyPatch(
     appliedAt: Date.now(),
   });
   updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
-  const diffResult = await workspace.diff();
-  const diffBody = diffResult.content.trim() || dim("Patch applied; no git diff remains.");
+  // Report what this patch changed; the whole workspace diff stays one `code diff` away.
   sendCode(
     ctx,
     eid,
@@ -382,13 +404,14 @@ export async function applyPatch(
       success(`Patch applied: ${artifact.id}`),
       `Paths: ${result.paths.join(", ")}`,
       separator(),
-      diffBody,
+      formatDiffStat(diffStat(artifact.content_text)),
+      dim(`Whole patch: code show ${artifact.id} · workspace: code diff`),
     ].join("\n"),
     {
       artifactId: artifact.id,
       artifactKind: artifact.kind,
       commands: ["code diff", `code show ${artifact.id}`],
-      content: diffResult.content,
+      content: artifact.content_text,
       event: "patch_applied",
       paths: result.paths,
       sessionId: session.id,

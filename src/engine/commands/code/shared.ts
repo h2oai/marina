@@ -57,6 +57,8 @@ interface CodeMessageMetadata {
   status?: string;
   timedOut?: boolean;
   title?: string;
+  /** Full size before truncation, when the server cut the content. */
+  totalBytes?: number;
   tree?: CodeTreeNode[];
   truncated?: boolean;
   type:

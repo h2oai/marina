@@ -4,7 +4,26 @@
 import { stripVTControlCharacters } from "node:util";
 import { formatPerception } from "../src/net/formatter";
 import type { Perception } from "../src/sdk/client";
+import { diffPayloadFor, renderDiff } from "./code-diff";
+import type { EntryFormat } from "./code-views";
 import { workflowShortcut } from "./code-workflow";
+
+/** "diff" when a perception carries structured diff content the terminal renders itself. */
+export function codePerceptionFormat(p: Perception): EntryFormat | undefined {
+  const code = p.data?.code;
+  return code && typeof code === "object" && diffPayloadFor(code as Record<string, unknown>)
+    ? "diff"
+    : undefined;
+}
+
+function diffHeading(served: string): string {
+  const lines: string[] = [];
+  for (const line of served.split("\n")) {
+    if (/^─{8,}$/.test(line.trim()) || /^(diff --git |--- |@@ )/.test(line)) break;
+    lines.push(line);
+  }
+  return lines.join("\n").trimEnd() || (served.split("\n", 1)[0] ?? "");
+}
 
 /** Native tool output is data, never terminal instructions (OSC links/clipboard, cursor escapes). */
 export function terminalText(text: string): string {
@@ -96,8 +115,17 @@ export function workerActivityLabel(meta: {
 
 /** Transcript categories add orientation without interpreting prose as authorization or success. */
 export function formatCodePerception(p: Perception, selectedSessionId?: string): string {
-  const text = formatPerception(p, "plaintext");
-  if (!text) return "";
+  const served = formatPerception(p, "plaintext");
+  if (!served) return "";
+  const diff = diffPayloadFor(
+    p.data?.code && typeof p.data.code === "object"
+      ? (p.data.code as Record<string, unknown>)
+      : undefined,
+  );
+  // Diffs render from structured content: stat first, hunks, and an explicit
+  // truncation note. The server's summary lines (before its separator or the
+  // first diff header) stay as the heading.
+  const text = diff ? `${diffHeading(served)}\n${renderDiff(diff)}` : served;
   const code = p.data?.code as
     | {
         event?: string;

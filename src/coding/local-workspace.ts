@@ -373,6 +373,7 @@ export class LocalWorkspace implements WorkspaceRuntime {
     content: string;
     truncated: boolean;
     exitCode: number;
+    totalBytes?: number;
   }> {
     const args = ["diff", "--"];
     if (input?.trim()) {
@@ -1352,7 +1353,7 @@ export async function runCapture(
   maxBytes: number,
   hostExecForbidden = false,
   environment: Record<string, string> = {},
-): Promise<{ content: string; truncated: boolean; exitCode: number }> {
+): Promise<{ content: string; truncated: boolean; exitCode: number; totalBytes?: number }> {
   assertHostExecAllowed(hostExecForbidden); // chokepoint: telnet-origin never spawns
   const git = isGitArgv(cmd);
   const argv = git ? hostGitArgv(cmd) : cmd;
@@ -1372,10 +1373,13 @@ export async function runCapture(
       new Response(proc.stderr).text(),
     ]);
     const content = stderr.trim() ? `${stdout}\n--- stderr ---\n${stderr}` : stdout;
+    const truncated = content.length > maxBytes;
     return {
-      content: content.length > maxBytes ? content.slice(0, maxBytes) : content,
-      truncated: content.length > maxBytes,
+      content: truncated ? content.slice(0, maxBytes) : content,
+      truncated,
       exitCode,
+      // Lets a reader say how much was left out instead of truncating silently.
+      ...(truncated ? { totalBytes: Buffer.byteLength(content) } : {}),
     };
   } catch (err) {
     return {

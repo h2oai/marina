@@ -3,7 +3,7 @@
 
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import type { PanelInput, TerminalPanelState } from "./code-panel-form";
-import type { TerminalView } from "./code-views";
+import type { EntryFormat, TerminalView } from "./code-views";
 import type { WorkspaceLayout } from "./code-workspace-panes";
 
 /** Presentation boundary shared by scrollback and fullscreen; actions stay in CodeTerminal. */
@@ -39,6 +39,9 @@ export interface CodeEditor {
   focus(view: TerminalView): void;
   reset(view: TerminalView): void;
   follow?(): void;
-  print(text: string): void;
+  /** `format: "diff"` lets the renderer colour sanitised diff text locally. */
+  print(text: string, format?: EntryFormat): void;
+  /** Fullscreen renderers open a navigable diff view; scrollback renderers return false. */
+  showDiff?(text: string): boolean;
   close(): void;
 }
