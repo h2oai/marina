@@ -37,9 +37,9 @@ The `better-auth` package is an **optional dependency**. A normal `bun install` 
 production install that skips optional deps must include it when auth is enabled:
 
 ```bash
-bun install              # includes optional deps (better-auth, jose)
+bun install              # includes optional deps (better-auth)
 # or, if you installed with --production --omit=optional:
-bun add better-auth jose
+bun add better-auth
 ```
 
 ## Local setup — email/password (quickstart)

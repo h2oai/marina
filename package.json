@@ -197,7 +197,6 @@
   },
   "optionalDependencies": {
     "better-auth": "^1.7.4",
-    "jose": "^6.2.12",
     "playwright-core": "1.63.0"
   },
   "exports": {
