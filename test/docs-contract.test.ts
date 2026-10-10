@@ -347,6 +347,19 @@ describe("documentation contract — structure", () => {
     expect(pages.filter((page) => !readme.includes(`(${page})`)).sort()).toEqual([]);
   });
 
+  it("lists every user guide in the guides index and the site sidebar", async () => {
+    const index = await readDoc("docs/guides/README.md");
+    const sidebar = await readDoc("site/astro.config.mjs");
+    const guides: string[] = [];
+    for await (const file of new Bun.Glob("*.md").scan({ cwd: "docs/guides" })) {
+      if (file !== "README.md") guides.push(file.replace(/\.md$/, ""));
+    }
+
+    expect(guides.length).toBeGreaterThan(0);
+    expect(guides.filter((g) => !sidebar.includes(`slug: "docs/guides/${g}"`)).sort()).toEqual([]);
+    expect(guides.filter((g) => !index.includes(`(${g}.md)`)).sort()).toEqual([]);
+  });
+
   it("resolves every docs/architecture pointer in CLAUDE.md", async () => {
     const claudeMd = await readDoc("CLAUDE.md");
     const pointers = [...new Set(claudeMd.match(/docs\/architecture\/[\w.-]+\.md/g) ?? [])];

@@ -1,6 +1,6 @@
 # Flywheel live qualification
 
-Marina's ordinary test suite never requires Flywheel. The M5e release gate is an explicit live run
+Marina's ordinary test suite never requires Flywheel. Its release qualification is an explicit live run
 against an independently reachable Flywheel public RPC endpoint:
 
 ```bash
