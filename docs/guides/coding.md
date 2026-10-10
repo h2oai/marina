@@ -626,6 +626,22 @@ why; it never changes missing or failed verification to passed. Normal approval 
 current evidence for a candidate-required task. World communication and other agents continue
 while background checks run.
 
+For generated artifacts and service work, dispatch with `code do verification:checks -- <task>`.
+This requires passing checks from the same attempt and execution workspace, with no subsequent
+recorded file change or command. A whitespace-only receipt is insufficient. Use `code recipe save
+default <validation command>` to check the requested output or read back the service state, then
+`code verify`. Receipts distinguish tests, type checks and other checks. Passing live checks means
+those checks passed at the recorded time; it does not claim immutable source or complete coverage.
+Use `verification:candidate` when you require source-bound evidence.
+
+Marina's one-shot `-p` path selects `verification:checks owner:unattended` and exits successfully
+only after a matching attempt submits with current verification. Submission remains separate from
+owner approval. Old completions from another attempt cannot finish the current task. The
+`owner:unattended` contract also lets the designated active worker run `code writer <its-name>`
+to reclaim a lock handed back to the owner. It cannot reclaim a collaborator's lock, transfer the
+lock to somebody else, or revive a stopped or expired attempt. A handoff without `to:` remains a
+note. These are owner-selected contracts; agents choose their work and coordination methods.
+
 `code stop` retains changes and ends the attempt as cancelled. Worker death records failure.
 On server restart, unfinished attempts become interrupted and their claims are released;
 Marina does not replay uncertain host actions. Inspect `code review` and artifacts before retrying.
@@ -772,7 +788,13 @@ and persists: a candidate snapshot's Bun text lockfile on the host (below), or a
 with `sync:mount` and `network:on` (`npm ci --ignore-scripts`, `pnpm`/`yarn`/`bun install
 --frozen-lockfile --ignore-scripts`, `uv sync --frozen`). Elsewhere, a missing environment is
 reported as `not_run` with the reason. A `sync:patch` runner starts every command from its image,
-so the image must already hold the environment (SWE-bench instance images do).
+so the image must already hold the environment. Python projects with `requirements.txt` can use
+`dependencies:pip`: the container installs hash-locked binary wheels into
+`.venv/marina-site-packages`, and checks use `env PYTHONPATH=.venv/marina-site-packages python …`.
+Unhashed or source-only requirements fail preparation instead of falling back to unrestricted
+installation. UV checks use the declared UV environment. Explicit installation modes reconcile
+locked dependencies even if a test-runner probe succeeds; `dependencies:check` only probes.
+Commands use argv, so a bare `PYTHONPATH=… python …` is not shell assignment syntax.
 
 For a local workspace, `code verify start` starts that same chain and returns a durable
 `verification_request` artifact immediately. Its command completion acknowledges admission;
@@ -978,6 +1000,25 @@ MARINA_CODE_DEFAULT_ROOT=/srv/repos/acme
 Then `code workspace list`, `code workspace discover` (find likely projects), and
 `code workspace use <path>` choose where new sessions open. `code doctor` confirms git + ripgrep
 are present (they power `diff`/`checkpoint`/`revert` and fast `search`).
+
+Separate task data from source with operator-configured roots:
+
+```bash
+MARINA_CODE_INPUT_ROOTS=/srv/task-inputs
+MARINA_CODE_OUTPUT_ROOTS=/srv/task-outputs
+```
+
+These existing directories must be separate from the workspace and from one another. File tools
+use their absolute paths; inputs are read-only, outputs support normal writer-authorized `write`
+and `edit`. They do not become selectable executable workspace roots. Git patches and candidate
+snapshots still belong to the primary workspace. Symlinks cannot escape a granted root.
+
+With container `sync:mount`, input directories map read-only to `/marina-task/inputs/0`, `/1`, etc.;
+outputs map to `/marina-task/outputs/0`, `/1`, etc. `code status` and assignment context show the
+mapping. Container commands use guest paths; file tools use server paths. `sync:patch` refuses
+extra roots because it mounts no host files. Host processes retain their existing execution
+permissions; file-tool grants alone are not an OS sandbox. Use a container runner to enforce
+read-only inputs for executed programs.
 
 ### The project's own test runner
 

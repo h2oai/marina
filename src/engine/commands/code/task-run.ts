@@ -317,7 +317,7 @@ export async function reviewCodingRun(
     meta.verification !== "passed"
   ) {
     throw new Error(
-      `Candidate approval withheld: verification is ${meta.verification}. ${meta.verificationReason ?? "Inspect the check output."} Reverify the intended source in a new attempt before approval.`,
+      `${meta.verificationRequirement === "checks" ? "Approval" : "Candidate approval"} withheld: verification is ${meta.verification}. ${meta.verificationReason ?? "Inspect the check output."} Reverify the intended source in a new attempt before approval.`,
     );
   }
   if (action === "accept-unverified") {

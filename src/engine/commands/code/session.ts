@@ -48,6 +48,7 @@ import {
   getSelectedWorkspace,
   getSelectedWorkspaceRoot,
   getWorkspaceRegistry,
+  workspaceForSession,
 } from "./workspace";
 
 export function enterCodeMode(
@@ -174,6 +175,13 @@ export function startSession(
       success(`Coding session started: ${session.id}`),
       `Title: ${session.title}`,
       `Workspace: ${session.workspace_root}`,
+      ...(session.execution_target === "local" && getWorkspaceRegistry(deps).fileGrants.length
+        ? (workspaceForSession(deps, session).describe?.().fileGrants ?? [])
+        : []
+      ).map(
+        (grant) =>
+          `Task ${grant.access === "read" ? "input (read-only)" : "output (writable)"}: ${grant.root}${grant.guestPath ? ` → container ${grant.guestPath}` : " (server filesystem)"}`,
+      ),
       registry.usesCwdFallback
         ? dim(
             "Workspace is the process cwd fallback. Use code workspace use <path> or MARINA_CODE_ROOTS for production.",
@@ -238,6 +246,13 @@ export function branchSession(
       `Parent: ${parent.id}`,
       `Title: ${session.title}`,
       `Workspace: ${session.workspace_root}`,
+      ...(session.execution_target === "local" && getWorkspaceRegistry(deps).fileGrants.length
+        ? (workspaceForSession(deps, session).describe?.().fileGrants ?? [])
+        : []
+      ).map(
+        (grant) =>
+          `Task ${grant.access === "read" ? "input (read-only)" : "output (writable)"}: ${grant.root}${grant.guestPath ? ` → container ${grant.guestPath}` : " (server filesystem)"}`,
+      ),
       dim("Use: code tree | code status | code files"),
     ].join("\n"),
     {
@@ -592,6 +607,13 @@ export async function status(
     `Execution target: ${session.execution_target}`,
     `Model target: ${modelTarget}`,
     `Workspace: ${session.workspace_root}`,
+    ...(session.execution_target === "local" && getWorkspaceRegistry(deps).fileGrants.length
+      ? (workspaceForSession(deps, session).describe?.().fileGrants ?? [])
+      : []
+    ).map(
+      (grant) =>
+        `Task ${grant.access === "read" ? "input (read-only)" : "output (writable)"}: ${grant.root}${grant.guestPath ? ` → container ${grant.guestPath}` : " (server filesystem)"}`,
+    ),
     `Latest artifact: ${latestArtifact ? `${latestArtifact.id} (${latestArtifact.kind}, ${latestArtifact.status})` : dim("none")}`,
     `Pending patches: ${pendingPatches.length}`,
     `Updated: ${new Date(session.updated_at).toLocaleString()}`,
@@ -1044,8 +1066,8 @@ export async function recordCodingNote(
       const meta = codingRunMetadata(run);
       const text =
         meta.verification === "not_run" || meta.verification === "error"
-          ? `Summary saved as progress; task remains active. Candidate checks ${meta.verification === "not_run" ? "were not run" : "could not complete"}: ${meta.verificationReason ?? "see the verification artifact"}. This is not a test failure. If the environment cannot run them, use code blocked <reason> so the owner can decide, or the owner may accept the work unverified.`
-          : `Summary saved as progress; task remains active. Candidate verification is ${meta.verification}. ${meta.verificationReason ?? "Inspect the check output, fix the problem, and run code verify candidate again."} After checks pass, submit code summary again. If blocked, use code blocked <reason>.`;
+          ? `Summary saved as progress; task remains active. Required checks ${meta.verification === "not_run" ? "were not run" : "could not complete"}: ${meta.verificationReason ?? "see the verification artifact"}. This is not a test failure. If the environment cannot run them, use code blocked <reason> so the owner can decide, or the owner may accept the work unverified.`
+          : `Summary saved as progress; task remains active. Required verification is ${meta.verification}. ${meta.verificationReason ?? "Inspect the check output, fix the problem, and run code verify candidate again."} After checks pass, submit code summary again. If blocked, use code blocked <reason>.`;
       const message = {
         type: "verification" as const,
         event: "verification_required",
@@ -1060,7 +1082,11 @@ export async function recordCodingNote(
           runId: run.id,
           verificationReadiness: codingVerificationReadiness(deps.db, run),
         },
-        commands: ["code verify candidate", "code status", `code show ${artifact.id}`],
+        commands: [
+          meta.verificationRequirement === "candidate" ? "code verify candidate" : "code verify",
+          "code status",
+          `code show ${artifact.id}`,
+        ],
       };
       sendCode(ctx, eid, text, message);
       const owner = deps.findEntityExact?.(meta.ownerName) ?? deps.getEntity(meta.ownerKey);

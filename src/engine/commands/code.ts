@@ -104,7 +104,13 @@ import {
   reviewCodingRun,
 } from "./code/task-run";
 import { startVerification } from "./code/verification";
-import { doctor, getWorkspaceRegistry, handleWorkspace, handleWorktree } from "./code/workspace";
+import {
+  doctor,
+  getWorkspaceRegistry,
+  handleWorkspace,
+  handleWorktree,
+  workspaceForSession,
+} from "./code/workspace";
 import { requiresPersistence } from "./command-messages";
 
 // Public surface consumed by other modules and tests (engine.ts, websocket
@@ -155,6 +161,8 @@ const TARGETED_SUBCOMMANDS = new Set([
   "decision",
   "observe",
   "summary",
+  "handoff",
+  "writer",
   "patch",
   "propose",
   "apply",
@@ -457,7 +465,7 @@ export function codeCommand(deps: CodeDeps): CommandDef {
       "code ask <request>",
       "code assign <agent> <req>",
       "code assign <agent> verification:candidate -- <req>",
-      "code do verification:candidate -- <task>",
+      "code do [verification:candidate|checks] [owner:unattended] -- <task>",
       "code blocked <reason>",
       "code branch [title]",
       "code checkpoint [title]",
@@ -637,6 +645,10 @@ export function codeCommand(deps: CodeDeps): CommandDef {
         answerPrompt: deps.answerPrompt,
         db: deps.db,
         getEntity: deps.getEntity,
+        describeWorkspace: (session) =>
+          session.execution_target === "local"
+            ? workspaceForSession(depsWithDb, session).describe?.()
+            : undefined,
         onRun: (run, handle) => observeCodingRun(depsWithDb, run, handle),
         onRunEnd: (run) => publishCodingRun(depsWithDb, run),
       });

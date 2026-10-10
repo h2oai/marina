@@ -194,10 +194,25 @@ export const PREPARATION_INSTALLS: Readonly<Partial<Record<PackageManager, reado
   pnpm: ["pnpm", "install", "--frozen-lockfile", "--ignore-scripts"],
   yarn: ["yarn", "install", "--frozen-lockfile", "--ignore-scripts"],
   uv: ["uv", "sync", "--frozen"],
+  pip: [
+    "python",
+    "-m",
+    "pip",
+    "install",
+    "--require-hashes",
+    "--only-binary=:all:",
+    "--no-compile",
+    "--upgrade",
+    "--target",
+    ".venv/marina-site-packages",
+    "-r",
+    "requirements.txt",
+  ],
 };
 
 /** After a `uv sync`, Python checks run in the project environment through this wrapper. */
 const UV_WRAPPER = "uv run --frozen --no-sync";
+const PIP_WRAPPER = "env PYTHONPATH=.venv/marina-site-packages";
 
 const sameArgv = (a: readonly string[], b: readonly string[]) =>
   a.length === b.length && a.every((part, i) => part === b[i]);
@@ -205,6 +220,13 @@ const sameArgv = (a: readonly string[], b: readonly string[]) =>
 /** Whether an argv is one of the fixed preparation steps above, and which kind. */
 export function preparationStepKind(argv: readonly string[]): "probe" | "install" | null {
   if (Object.values(PREPARATION_PROBES).some((probe) => sameArgv(probe, argv))) return "probe";
+  for (const prefix of [UV_WRAPPER, PIP_WRAPPER])
+    if (
+      [PREPARATION_PROBES.pytest, PREPARATION_PROBES.django].some((probe) =>
+        sameArgv([...prefix.split(" "), ...probe], argv),
+      )
+    )
+      return "probe";
   if (Object.values(PREPARATION_INSTALLS).some((install) => install && sameArgv(install, argv)))
     return "install";
   return null;
@@ -316,11 +338,23 @@ export function planPreparation(
   };
   const probe = probeFor(profile);
   if (!probe) return plan;
-  plan.probe = probe;
+  const wrapper =
+    manager === "uv"
+      ? UV_WRAPPER
+      : manager === "pip" && profile.declaresDependencies
+        ? PIP_WRAPPER
+        : undefined;
+  plan.probe = wrapper ? [...wrapper.split(" "), ...probe] : probe;
+  if (wrapper) plan.wrapTests = wrapper;
   if (mode === "check") return plan;
   if (profile.language === "javascript" && manager === "bun" && target.hostCandidate) {
     plan.hostBun = true;
-  } else if (target.installsPermitted && manager && PREPARATION_INSTALLS[manager]) {
+  } else if (
+    target.installsPermitted &&
+    manager &&
+    PREPARATION_INSTALLS[manager] &&
+    (manager !== "pip" || profile.declaresDependencies)
+  ) {
     plan.install = PREPARATION_INSTALLS[manager];
     if (manager === "uv") plan.wrapTests = UV_WRAPPER;
   }
@@ -409,11 +443,13 @@ export async function executePreparation(
     if (isVerificationStop(error)) throw error;
     return { status: "error", reason: errorText(error), runs: [] };
   }
-  if (ok(probe))
+  // An available test runner does not prove all locked dependencies are present.
+  if (ok(probe) && !plan.install && !plan.hostBun)
     return {
       status: "ready",
       reason: `Environment ready (${plan.probe.join(" ")}).${note}`,
       runs: [],
+      ...(plan.wrapTests ? { wrapTests: plan.wrapTests } : {}),
     };
   if (probe.exitCode === 125)
     return { status: "error", reason: firstLine(probe.output) || "runner error", runs: [probe] };

@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { canReclaimCodingWriter } from "../../../coding/task-run";
 import { CrewError } from "../../../coordination/crew-manager";
 import { dim, error as fmtError, header, separator, success } from "../../../net/ansi";
 import type { CodingSessionRow, MarinaDB } from "../../../persistence/database";
@@ -639,14 +640,23 @@ export function writerCommand(
   // login-sanitized entity name.
   const isOwner = sameEntityName(session.created_by, entity.name);
   const isHolder = sameEntityName(session.writer, entity.name);
-  if (session.writer && !isHolder && !isOwner) {
+  const reclaim = canReclaimCodingWriter(deps.db, session, entity, target);
+  if (session.writer && !isHolder && !isOwner && !reclaim) {
     ctx.send(
       eid,
       `Only ${session.writer} (current holder) or ${session.created_by} (session creator) can reassign the write lock.`,
     );
     return;
   }
-  reassignWriter(ctx, eid, entity, deps, session, target, "manual_reassign");
+  reassignWriter(
+    ctx,
+    eid,
+    entity,
+    deps,
+    session,
+    target,
+    reclaim ? "owner_authorized_reclaim" : "manual_reassign",
+  );
 }
 
 /**

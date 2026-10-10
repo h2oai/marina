@@ -2035,11 +2035,15 @@ Effect: unknown.
 - `field-0` (`agent`): text, required.
 - `field-1` (`req`): text, required.
 
-### `code do verification:candidate -- <task>`
+### `code do [verification:candidate|checks] [owner:unattended] -- <task>`
 
 Effect: unknown.
 
-- `field-0` (`task`): text, required.
+- `field-0` (`verification`): text, optional group `option-0`, choices `candidate`, `checks`.
+- `field-1` (`owner`): text, optional group `option-1`.
+- `field-2` (`task`): text, required.
+- Group `option-0`: `verification:candidate|checks`.
+- Group `option-1`: `owner:unattended`.
 
 ### `code blocked <reason>`
 

@@ -28,7 +28,9 @@ export interface CodingRunMetadata {
   workspaceEventId?: string;
   summaryId?: string;
   /** Frozen owner intent for this attempt; omission preserves ordinary task behavior. */
-  verificationRequirement?: "candidate";
+  verificationRequirement?: "candidate" | "checks";
+  /** Owner preauthorizes only its active worker to reclaim an owner-held lock. */
+  ownerMode?: "unattended";
   unverifiedAcceptance?: { ownerKey: string; reason: string; acceptedAt: number };
   verificationId?: string;
   verification?:
@@ -74,7 +76,9 @@ export function beginCodingRun(
     profile: string;
     modelTarget?: string;
     runtimeName?: string;
-    verificationRequirement?: "candidate";
+    verificationRequirement?: "candidate" | "checks";
+    /** Owner preauthorizes only its active worker to reclaim an owner-held lock. */
+    ownerMode?: "unattended";
   },
 ): CodingArtifactRow {
   return db.transaction(() => {
@@ -84,7 +88,7 @@ export function beginCodingRun(
     ) {
       throw new Error("Only the coding session creator may dispatch its task.");
     }
-    if (input.verificationRequirement && input.session.execution_target !== "local")
+    if (input.verificationRequirement === "candidate" && input.session.execution_target !== "local")
       throw new Error("Candidate-required tasks need a local Git workspace.");
     const workerKey = db.durableEntityKey(input.worker.id);
     const ownerKey = db.durableEntityKey(input.owner.id);
@@ -105,7 +109,11 @@ export function beginCodingRun(
         meta.verificationRequirement !== input.verificationRequirement
       )
         throw new Error(
-          "This attempt's verification contract is already set. Stop it before starting a candidate-required task.",
+          "This attempt's verification contract is already set. Stop it before changing the verification requirement.",
+        );
+      if (input.ownerMode && meta.ownerMode !== input.ownerMode)
+        throw new Error(
+          "This attempt's owner contract is already set. Stop it before changing it.",
         );
       if (!heartbeatCodingRun(db, active)) {
         throw new Error(
@@ -149,6 +157,7 @@ export function beginCodingRun(
       workspace: input.session.workspace_root,
       executionTarget: input.session.execution_target,
       verificationRequirement: input.verificationRequirement,
+      ownerMode: input.ownerMode,
     };
     const run = db.createCodingArtifact({
       sessionId: input.session.id,
@@ -199,7 +208,7 @@ export async function submitCodingRun(
       );
     meta.summaryId = summary.id;
     Object.assign(meta, assessed);
-    if (meta.verificationRequirement === "candidate" && meta.verification !== "passed") {
+    if (meta.verificationRequirement && meta.verification !== "passed") {
       db.updateCodingArtifact(run.id, { metadata: meta });
       db.createCodingEvent({
         sessionId,
@@ -245,7 +254,7 @@ export function codingVerificationReadiness(
   if (meta.verification === "passed") return "ready" as const;
   if (meta.verification === "not_run") return "not-run" as const;
   if (meta.verification && meta.verification !== "missing") return "needs-attention" as const;
-  return meta.verificationRequirement === "candidate" ? ("required" as const) : undefined;
+  return meta.verificationRequirement ? ("required" as const) : undefined;
 }
 
 /** No async observation may overwrite a concurrent attempt/evidence transition. */
@@ -288,8 +297,7 @@ export async function assessCodingVerification(
   if (!verification)
     return {
       ...result,
-      verificationReason:
-        "No candidate checks recorded. Run code verify candidate, inspect its result, then submit a summary.",
+      verificationReason: `No required checks recorded. Run ${meta.verificationRequirement === "checks" ? "code verify" : "code verify candidate"}, inspect its result, then submit a summary.`,
     };
   if (verification.kind === "verification_request" && verification.status === "running")
     return {
@@ -297,7 +305,11 @@ export async function assessCodingVerification(
       verificationReason: `Checks are still running. Inspect code show ${verification.id}; wait for the result before resubmitting.`,
     };
   const evidence = JSON.parse(verification.metadata_json) as Record<string, unknown>;
-  const retry = candidateVerificationRetry(evidence.verificationOptions);
+  const candidateRetry = candidateVerificationRetry(evidence.verificationOptions);
+  const retry =
+    meta.verificationRequirement === "checks" && !evidence.candidateId
+      ? candidateRetry.replace("code verify candidate", "code verify")
+      : candidateRetry;
   result.candidateId = typeof evidence.candidateId === "string" ? evidence.candidateId : undefined;
   // Checks that never ran (or whose runner broke) are neither a pass nor a failure.
   if (verification.status === "not_run" || verification.status === "error")
@@ -317,12 +329,40 @@ export async function assessCodingVerification(
       verification: "failed" as const,
       verificationReason: `Inspect code show ${verification.id}, fix the failed checks, then run ${retry}.`,
     };
-  if (evidence.workspaceEventId !== meta.workspaceEventId)
+  if (!evidence.candidateId && evidence.workspaceEventId !== meta.workspaceEventId)
     return {
       ...result,
       verification: "stale" as const,
       verificationReason: `Source changed after verification. Finish edits and run ${retry}; inspect the completed receipt before resubmitting.`,
     };
+  if (meta.verificationRequirement === "checks" && !evidence.candidateId) {
+    const session = db.getCodingSession(run.session_id);
+    const steps = Array.isArray(evidence.steps) ? evidence.steps : [];
+    // A whitespace-only fallback is useful evidence, but cannot certify a deliverable.
+    const meaningful = steps.some((step) => {
+      if (!step || typeof step !== "object" || step.outcome !== "passed") return false;
+      const command = (
+        typeof step.command === "string"
+          ? step.command
+          : Array.isArray(step.command)
+            ? step.command.join(" ")
+            : ""
+      ).trim();
+      return command.length > 0 && command !== "git diff --check";
+    });
+    if (
+      !meaningful ||
+      evidence.executionTarget !== session?.execution_target ||
+      evidence.workspace !== (session?.worktree_path ?? session?.workspace_root)
+    )
+      return {
+        ...result,
+        verification: "unbound" as const,
+        verificationReason:
+          "No current task checks bound to this workspace. Use code recipe save default <validation command> then code verify; inspect what the checks actually validate.",
+      };
+    return { ...result, verification: "passed" as const };
+  }
   const row =
     typeof evidence.candidateId === "string"
       ? db.getCodingArtifact(evidence.candidateId)
@@ -459,4 +499,34 @@ function bindRunContext(run: CodingArtifactRow): void {
       runId: run.id,
       taskId: codingRunMetadata(run).taskId,
     });
+}
+
+/** The owner opts in at dispatch; a worker cannot grant itself this authority. */
+export function canReclaimCodingWriter(
+  db: MarinaDB,
+  session: CodingSessionRow,
+  actor: Entity,
+  target: string,
+): boolean {
+  const same = (a: string | null | undefined, b: string) =>
+    !!a && sanitizeEntityName(a).toLowerCase() === sanitizeEntityName(b).toLowerCase();
+  if (
+    session.status !== "active" ||
+    !same(target, actor.name) ||
+    !same(session.writer, session.created_by)
+  )
+    return false;
+  const run = db.listCodingRuns({ sessionId: session.id, status: "active", limit: 1 })[0];
+  if (!run) return false;
+  const meta = codingRunMetadata(run);
+  const claim = codingRunClaim(db, run);
+  return (
+    meta.ownerMode === "unattended" &&
+    same(meta.ownerName, session.created_by) &&
+    meta.workerKey === db.durableEntityKey(actor.id) &&
+    same(meta.workerName, actor.name) &&
+    db.getTask(meta.taskId)?.status === "claimed" &&
+    claim?.status === "claimed" &&
+    (claim.lease_expires_at === null || claim.lease_expires_at > Date.now())
+  );
 }

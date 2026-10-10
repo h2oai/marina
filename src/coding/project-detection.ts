@@ -326,6 +326,9 @@ function profileFor(
     ...(testCommand ? { testCommand } : {}),
     ...(typecheck ? { typecheck } : {}),
     ...(language === "javascript" ? packageInfo(snapshot.packageJson) : {}),
+    ...(language === "python"
+      ? { declaresDependencies: snapshot.markers.has("requirements.txt") }
+      : {}),
   };
 }
 

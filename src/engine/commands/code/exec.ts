@@ -651,6 +651,8 @@ export async function runVerificationCommands(
     contentText: summary,
     metadata: {
       ...candidateEvidence,
+      workspace: session.worktree_path ?? session.workspace_root,
+      executionTarget: session.execution_target,
       ...(background ? { requestId: background.receiptId } : {}),
       outcome: verdict.outcome,
       outcomeReason: verdict.reason,

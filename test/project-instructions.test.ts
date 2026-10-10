@@ -170,6 +170,7 @@ describe("scoped project instructions", () => {
         workspace,
         workspaceRegistry: {
           defaultRoot: root,
+          fileGrants: [],
           roots: [root],
           usesCwdFallback: false,
           workspaceForRoot: () => workspace,

@@ -147,7 +147,15 @@ export function projectSlug(absPath: string): string {
  */
 export function terminalCodeLifecycle(
   p: Perception,
-): { phase: "completed" | "failed"; sessionId?: string; summary?: string } | undefined {
+):
+  | {
+      phase: "completed" | "failed";
+      sessionId?: string;
+      summary?: string;
+      verification?: string;
+      reason?: string;
+    }
+  | undefined {
   if (p.kind !== "message") return undefined;
   const code = (p.data as Record<string, unknown> | undefined)?.code as
     | Record<string, unknown>
@@ -159,13 +167,33 @@ export function terminalCodeLifecycle(
     return {
       phase: "completed",
       sessionId,
+      verification: typeof metadata.verification === "string" ? metadata.verification : undefined,
       summary: typeof metadata.summary === "string" ? metadata.summary : undefined,
     };
   }
   if (code.phase === "failed" && metadata.terminal === true) {
-    return { phase: "failed", sessionId };
+    return {
+      phase: "failed",
+      sessionId,
+      reason: typeof metadata.reason === "string" ? metadata.reason : undefined,
+    };
   }
   return undefined;
+}
+
+/** Ignore other sessions and delayed terminal events from an older attempt. */
+export function codingTaskCompletionMatcher(sessionId?: string): (p: Perception) => boolean {
+  let runId: string | undefined;
+  return (p) => {
+    const code = p.data?.code as
+      | { event?: string; sessionId?: string; phase?: string; metadata?: { runId?: string } }
+      | undefined;
+    if (code?.event !== "code_lifecycle" || (sessionId && code.sessionId !== sessionId))
+      return false;
+    if (code.phase === "received" && typeof code.metadata?.runId === "string")
+      runId = code.metadata.runId;
+    return !!runId && code.metadata?.runId === runId && terminalCodeLifecycle(p) !== undefined;
+  };
 }
 
 function freePort(): Promise<number> {
@@ -588,12 +616,15 @@ export async function runCodeSession(
     const timeoutMs =
       Number.parseInt(process.env.MARINA_CODE_TASK_TIMEOUT_MS ?? "", 10) || DEFAULT_TASK_TIMEOUT_MS;
     // Arm the waiter BEFORE dispatching so a fast completion can't slip past.
-    const outcome = agent.waitForMessage((p) => terminalCodeLifecycle(p) !== undefined, timeoutMs);
+    const outcome = agent.waitForMessage(
+      codingTaskCompletionMatcher(sessionConsole.currentSessionId),
+      timeoutMs,
+    );
     outcome.catch(() => {
       /* handled below — avoid unhandled-rejection noise */
     });
     try {
-      await sessionConsole.task(task);
+      await sessionConsole.task(task, false, timeoutMs, true);
     } catch (error) {
       console.error(String(error));
       await sessionConsole.close(1);
@@ -612,7 +643,15 @@ export async function runCodeSession(
       return;
     }
     if (!terminal || terminal.phase === "failed") {
-      console.error("Task failed.");
+      console.error(`Task failed${terminal?.reason ? `: ${terminal.reason}` : "."}`);
+      await sessionConsole.close(1);
+      return;
+    }
+    if (terminal.verification !== "passed") {
+      console.error(
+        `Task submitted without current verification (${terminal.verification ?? "unknown"}). Inspect code review before accepting it.`,
+      );
+      if (terminal.summary) process.stdout.write(`\n${terminal.summary}\n`);
       await sessionConsole.close(1);
       return;
     }

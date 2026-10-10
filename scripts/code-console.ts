@@ -132,6 +132,9 @@ export class CodeConsole {
     }
     return result;
   }
+  get currentSessionId(): string | undefined {
+    return this.sessionId;
+  }
   private activity() {
     if (this.runSettled || this.marinaPhase === "interrupt requested") return this.marinaPhase;
     return (
@@ -498,7 +501,7 @@ export class CodeConsole {
       `Harness · ${harness.agent}${harness.model ? ` · ${harness.model}` : " · runtime default model"}${harness.profile ? ` · Marina dialect: ${harness.profile}` : ""}`,
     );
   }
-  async task(text: string, wait = false, timeoutMs = 600_000) {
+  async task(text: string, wait = false, timeoutMs = 600_000, unattended = false) {
     this.interrupted = false;
     if (this.selected) {
       const id = this.selected;
@@ -508,7 +511,9 @@ export class CodeConsole {
       this.marinaBusy = true;
       this.marinaPhase = "working";
       this.updatePrompt();
-      await this.command(`code do ${text}`);
+      await this.command(
+        `code do ${unattended ? "verification:checks owner:unattended " : ""}-- ${text}`,
+      );
     }
   }
   private select(agent: TerminalAgent) {

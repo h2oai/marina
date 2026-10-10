@@ -4,6 +4,7 @@
 import type { AgentHandle } from "../agent/agent-types";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../persistence/database";
 import type { Entity } from "../types";
+import type { WorkspaceDescriptor } from "./local-workspace";
 import {
   formatProjectInstructions,
   loadProjectInstructions,
@@ -45,6 +46,7 @@ export interface CodeSessionDriverDeps {
   agentRuntime?: CodingAgentRuntime;
   db: MarinaDB;
   getEntity?: (id: string) => Entity | undefined;
+  describeWorkspace?: (session: CodingSessionRow) => WorkspaceDescriptor | undefined;
   onRun?: (run: CodingArtifactRow, handle: AgentHandle) => void;
   onRunEnd?: (run: CodingArtifactRow) => void;
 }
@@ -146,7 +148,8 @@ export class CodeSessionDriver {
     agentName: string;
     actorEntity?: Entity;
     modelTarget?: string;
-    verificationRequirement?: "candidate";
+    verificationRequirement?: "candidate" | "checks";
+    ownerMode?: "unattended";
     profile: string;
     prompt: string;
     session: CodingSessionRow;
@@ -203,10 +206,11 @@ export class CodeSessionDriver {
         `Agent "${opts.agentName}" changed while loading instructions. Retry assignment.`,
       );
     }
+    const workspaceDescriptor = this.deps.describeWorkspace?.(opts.session);
     const instructionMetadata = projectInstructionMetadata(instructions);
     const worker = workerId ? this.deps.getEntity?.(workerId) : undefined;
-    if (opts.verificationRequirement && (!opts.actorEntity || !worker))
-      throw new Error("Candidate-required tasks need a bound Marina worker.");
+    if ((opts.verificationRequirement || opts.ownerMode) && (!opts.actorEntity || !worker))
+      throw new Error("Task contracts need a bound Marina worker.");
     const run =
       opts.actorEntity && worker
         ? beginCodingRun(this.deps.db, {
@@ -218,12 +222,19 @@ export class CodeSessionDriver {
             modelTarget: opts.modelTarget,
             runtimeName: agent.name,
             verificationRequirement: opts.verificationRequirement,
+            ownerMode: opts.ownerMode,
           })
         : undefined;
     if (run) this.deps.onRun?.(run, agent);
     const requirement =
       run && codingRunMetadata(run).verificationRequirement === "candidate"
-        ? "Completion requires current candidate verification: use marina_code verify with verificationMode=candidate, inspect its receipt/result, then summary. Early summaries remain progress. If blocked, use marina_code blocked with the reason; do not loop indefinitely or install dependencies without permission."
+        ? "Completion requires current candidate verification: use marina_code verify with verificationMode=candidate, inspect its receipt/result, then summary. Early summaries remain progress. If blocked, use marina_code blocked with the reason; do not loop indefinitely. Honor existing operator authorization for bounded dependency preparation."
+        : run && codingRunMetadata(run).verificationRequirement === "checks"
+          ? "Completion requires current task checks. Use code verify or a saved validation recipe; inspect the receipt before summary. Validate the requested artifact or service state, including failure cases; whitespace alone is insufficient. These are live checks, not immutable source evidence. If blocked, use code blocked <reason>."
+          : undefined;
+    const ownership =
+      run && codingRunMetadata(run).ownerMode === "unattended"
+        ? `The owner is unattended. Progress notes need no ownership transfer. If you hand the write lock back to the owner while this task remains active, you are authorized to reclaim it with code writer ${worker!.name}. This does not authorize taking a collaborator's lock or restarting a finished task.`
         : undefined;
     // The resident's bounded reminder may truncate a long request. Keep the
     // completion contract and a durable full-request pointer ahead of it.
@@ -231,6 +242,7 @@ export class CodeSessionDriver {
       ? [
           `Task #${codingRunMetadata(run).taskId}; full request: code show ${run.id} (marina_code action=show, artifactId=${run.id}). Read the full request before editing; this reminder may be abbreviated.`,
           requirement,
+          ownership,
           prompt,
         ]
           .filter(Boolean)
@@ -241,10 +253,16 @@ export class CodeSessionDriver {
     // restates this task every cycle until code.ts clears it (stop/summary).
     agent.setActiveCodingTask?.(activeTask);
 
+    const fileRoots =
+      workspaceDescriptor?.fileGrants?.map(
+        (grant) =>
+          `Task ${grant.access === "read" ? "input (read-only)" : "output (writable)"}: file tools use ${grant.root}.${grant.guestPath ? ` Container commands use ${grant.guestPath} (explicit shared mount).` : " These are server filesystem paths; no guest mount is implied."}`,
+      ) ?? [];
     const attention = [
       `You have been assigned to Marina coding session ${opts.session.id}.`,
       `Requester: ${opts.actor}`,
       requirement,
+      ownership,
       run
         ? `Task #${codingRunMetadata(run).taskId}; attempt artifact:${run.id}. Record a summary only after finishing checks. A stored summary submits the task for the requester to review.`
         : undefined,
@@ -252,6 +270,7 @@ export class CodeSessionDriver {
       `Execution target: ${opts.session.execution_target}`,
       opts.modelTarget ? `Model target: ${opts.modelTarget}` : undefined,
       `Workspace: ${opts.session.worktree_path ?? opts.session.workspace_root}`,
+      ...fileRoots,
       boundEntity
         ? `Your active Code Mode session has been bound to ${opts.session.id}.`
         : "This adapter did not expose an entity id, so resume the session explicitly before using session-scoped commands.",
@@ -260,7 +279,7 @@ export class CodeSessionDriver {
       boundEntity
         ? opts.session.execution_target === "flywheel"
           ? "Start with marina_code status, then inspect with files/read/search/diff. Finite commands run in the active Flywheel project with no host fallback; use code service for long-running apps."
-          : "Start with marina_code status, then inspect with files/read/search/diff. For a supported local Git root, use verify with verificationMode=candidate for immutable source evidence. It returns a receipt: inspect its result before submitting a summary. Ignored dependencies are not copied; report missing prerequisites. Ordinary verify checks the live workspace and is unbound evidence. Run only host-allowlisted checks."
+          : "Start with marina_code status, then inspect with files/read/search/diff. For a supported local Git root, use verify with verificationMode=candidate for immutable source evidence. It returns a receipt: inspect its result before submitting a summary. Ignored dependencies are not copied. Use code verify dependencies:auto only where the configured runner permits installation; otherwise report missing prerequisites. Commands are argv-based: shell prefixes such as VAR=value are not shell execution; an explicit env command still needs execution authorization. Ordinary verify checks the live workspace; it is not immutable source evidence. Use code allowed and code exec-mode to inspect the actual command policy. Already-authorized commands and dependency installation within this task do not need a repeated user decision; additional authority does. Execution uses argv, not implicit shell syntax."
         : `First run: code resume ${opts.session.id}. Then use marina_code status/files/read/search/diff/verify when available.`,
       "Use marina_code action=edit with path, oldText and newText for exact replacements: choose a small unique oldText copied from the file and literal newText without diff markers. Use action=write with path and content for new files or deliberate full rewrites. These use the existing writer permissions and record durable changes. Use patch for unified diffs; show/artifacts/patches/history retain the evidence.",
       opts.session.execution_target === "flywheel"
