@@ -105,6 +105,16 @@ For the selected Marina session, `/status` shows the task, `/diff` shows working
 `/history` lists recent task attempts, and `/show <artifact-id>` opens a recorded artifact.
 These are bounded server listings; local transcript pages are available through `/view older`.
 
+Diffs are rendered by the terminal from the structured result, not from the server's text. A
+per-file stat comes first (`3 files · +42 −7`, then one line per file), followed by the hunks:
+added lines green, removed lines red, `@@` hunk headers cyan and file headers bold. Colour is
+added only on an interactive terminal and never when `NO_COLOR` is set; redirected output stays
+plain. A diff entry is kept whole in local history up to the server's 64 KB limit. When the
+server cuts a larger diff, the terminal says so, with the bytes shown versus the total, and
+suggests `code diff <path>` to read one file in full. In `marina --tui`, `/diff` also opens a
+diff view: `n`/`p` jump between files, `]`/`[` between hunks, arrows and PageUp/PageDown scroll,
+and `q` (or Escape) returns to the conversation with your draft unchanged.
+
 Complete an ordinary verified task from this terminal:
 
 ```text
@@ -163,6 +173,12 @@ a worktree and reports an error if it cannot create one. Agent output is labeled
 terminal and recorded through Marina's existing participant routing. There is no fixed
 three-agent limit. `/agents` lists this terminal's managed roster; independently joined
 participants remain discoverable through `marina route` and the browser Streams view.
+
+When a native agent asks to change a file (Claude `Edit`, `MultiEdit` or `Write`, or a Codex or
+pi patch request), the terminal shows a unified diff against the current file, with its stat,
+before `Allow? [y/N]`. If the text to replace is not in the current file, it shows the requested
+replacement and says the file could not be compared. Other requests still show their JSON input.
+The answer means the same thing either way: only `y` or `yes` allows.
 
 `/dashboard` opens an authenticated Streams workspace with output replay, agent controls,
 permissions and delivery history, without reconnecting the terminal's chat session.
@@ -920,12 +936,18 @@ diff --git a/src/parser.ts b/src/parser.ts
 +  for (let i = 0; i < tokens.length; i++) {
 ```
 
-Marina checks it applies cleanly and stores it as a pending patch. Apply it when you're happy:
+Marina checks it applies cleanly and stores it as a pending patch. The reply shows the patch's
+stat and its first hunk; `code show <patch-id>` prints the whole diff. Apply it when you're happy:
 
 ```
 > code apply last patch
-Applied patch_2a9f… (1 file)
+Patch applied: patch_2a9f…
+1 file · +1 −1
+  src/parser.ts  +1 −1
 ```
+
+The apply reply lists what that patch changed, not the whole workspace; `code diff` shows all
+working changes.
 
 **7. Stay safe.** Snapshot before risky work and reverse it instantly if needed:
 

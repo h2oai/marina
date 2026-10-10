@@ -7,12 +7,16 @@ import { terminalText } from "./code-presentation";
 export type ConversationView = "coding" | "world";
 export type TerminalView = ConversationView | "approvals" | "panel";
 export type TranscriptView = ConversationView | "all";
+/** Structured presentation hint: "diff" text is coloured locally and not clipped at 16 KB. */
+export type EntryFormat = "diff";
 
 export const TERMINAL_HISTORY_LIMITS = {
   entries: 400,
   perView: 200,
   totalBytes: 512 * 1024,
   entryBytes: 16 * 1024,
+  /** Diff entries keep the server's whole 64 KB diff plus its stat and heading. */
+  diffEntryBytes: 80 * 1024,
   pageEntries: 12,
   pageBytes: 24 * 1024,
 };
@@ -78,8 +82,17 @@ export class TerminalViews {
       throw new Error("Terminal history entries need at least 128 bytes");
   }
 
-  append(view: TranscriptView, text: string): { visible: boolean; firstUnread: boolean } {
-    const retained = clipped(terminalText(text), this.limits.entryBytes);
+  append(
+    view: TranscriptView,
+    text: string,
+    format?: EntryFormat,
+  ): { visible: boolean; firstUnread: boolean } {
+    const retained = clipped(
+      terminalText(text),
+      format === "diff"
+        ? Math.max(this.limits.entryBytes, this.limits.diffEntryBytes)
+        : this.limits.entryBytes,
+    );
     this.entries.push({
       view,
       sequence: ++this.sequence,

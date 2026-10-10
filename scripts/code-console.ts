@@ -7,11 +7,12 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { getErrorMessage } from "../src/engine/errors";
 import type { CommandOptions, MarinaAgent, Perception } from "../src/sdk/client";
+import { colorizeDiff, diffColorEnabled } from "./code-diff";
 import { CodeDiscovery } from "./code-discovery";
 import { type CodingHarness, codingAgent, type HarnessStore } from "./code-harness";
 import { inferCodeDefaultModel } from "./code-model";
 import { installedCodingAdapters, NativeTerminal, type TerminalAgent } from "./code-native";
-import { codingSessionPhase, workerActivityLabel } from "./code-presentation";
+import { codePerceptionFormat, codingSessionPhase, workerActivityLabel } from "./code-presentation";
 import {
   CodeTerminal,
   type CodeTerminalOptions,
@@ -23,7 +24,7 @@ import {
   terminalText,
   verificationReadinessLabel,
 } from "./code-terminal";
-import { perceptionView, type TranscriptView } from "./code-views";
+import { type EntryFormat, perceptionView, type TranscriptView } from "./code-views";
 import { workflowCommand } from "./code-workflow";
 
 export interface CodeConsoleOptions {
@@ -156,11 +157,16 @@ export class CodeConsole {
         .replaceAll(encodeURIComponent(token), "[redacted]");
     return terminalText(text);
   }
-  write(text: string, view: TranscriptView = "all", urgent = false) {
+  write(text: string, view: TranscriptView = "all", urgent = false, format?: EntryFormat) {
     this.updatePrompt();
     text = this.safeText(text);
-    if (this.terminal) this.terminal.write(text, view, urgent);
-    else (this.options.plainOutput ?? process.stdout).write(`${text}\n`);
+    if (this.terminal) this.terminal.write(text, view, urgent, format);
+    else {
+      const out = this.options.plainOutput ?? process.stdout;
+      out.write(
+        `${format === "diff" ? colorizeDiff(text, diffColorEnabled(out as { isTTY?: boolean })) : text}\n`,
+      );
+    }
   }
   /** The one perception printer: metadata drives local views, never rendered prose. */
   /**
@@ -181,6 +187,7 @@ export class CodeConsole {
         text,
         perceptionView(p),
         p.kind === "error" || p.kind === "auth_error" || !!p.data?.execApproval,
+        codePerceptionFormat(p),
       );
   }
   ask(text: string, signal?: AbortSignal) {
@@ -437,7 +444,7 @@ export class CodeConsole {
           token: this.options.agent.getSession()!.token,
           root: this.options.root,
           directory: this.options.directory,
-          write: (text) => this.write(text, "coding"),
+          write: (text, format) => this.write(text, "coding", false, format),
           ask: (text, signal) => this.ask(text, signal),
         });
         await runtime.start();
@@ -606,10 +613,16 @@ export class CodeConsole {
         throw new Error(
           "These controls inspect Marina's coding session. /use marina selects it; native agents keep their own tools.",
         );
-      await this.command(
+      const results = await this.command(
         workflow,
         destination.sessionId ? { codingTarget: { sessionId: destination.sessionId } } : undefined,
       );
+      // In --tui, /diff also opens the navigable diff view over the same
+      // structured result. The transcript entry is unchanged.
+      if (verb === "/diff" && this.terminal) {
+        const shown = results.find((p) => codePerceptionFormat(p) === "diff");
+        if (shown) this.terminal.showDiff(this.safeText(formatCodePerception(shown)));
+      }
       return;
     }
     if (verb === "/agents") {

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { mkdirSync } from "node:fs";
+import { isAbsolute } from "node:path";
+import { diffStat, formatDiffStat } from "../src/coding/unified-diff";
 import { getErrorMessage } from "../src/engine/errors";
 import { type AgentAdapter, BUILTIN_AGENT_ADAPTERS } from "../src/routing/agent-adapters";
 import { MarinaSupervisor } from "../src/routing/supervisor";
@@ -11,6 +13,7 @@ import {
   type RuntimeState,
 } from "../src/sdk/routing-client";
 import type { RoutingEventInput, RoutingSession } from "../src/sdk/routing-types";
+import { nativeEditDiff, readCurrentFile } from "./code-diff";
 import type { CodingHarness } from "./code-harness";
 import { participantInstructions } from "./supervise";
 
@@ -26,7 +29,8 @@ export interface NativeTerminalOptions {
   token: string;
   root: string;
   directory: string;
-  write: (text: string) => void;
+  /** `format: "diff"` marks sanitised diff text the terminal may colour. */
+  write: (text: string, format?: "diff") => void;
   ask: (text: string, signal?: AbortSignal) => Promise<string>;
   client?: MarinaRoutingClient;
   adapters?: AgentAdapter[];
@@ -41,6 +45,21 @@ export function installedCodingAdapters(): AgentAdapter[] {
 }
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+/** A unified diff for a native file-change approval, or undefined to keep the JSON. */
+export function approvalDiff(input: unknown, agent?: { state: { cwd?: string } }) {
+  const cwd = agent?.state.cwd;
+  try {
+    return nativeEditDiff(
+      input,
+      (path) => (cwd || isAbsolute(path) ? readCurrentFile(cwd ?? "/", path) : undefined),
+      cwd,
+    );
+  } catch {
+    // An unreadable request falls back to the JSON presentation.
+    return undefined;
+  }
 }
 
 /** Owns local native processes; every control still passes Marina's authenticated routing API. */
@@ -193,10 +212,18 @@ export class NativeTerminal {
     this.requests.set(id, cancellation);
     try {
       this.flush();
-      this.options.write(
-        `[${session.label}] ${payload.title}\n${JSON.stringify(payload.input, null, 2)}`,
-      );
       const question = payload.kind === "question";
+      const diff = question ? undefined : approvalDiff(payload.input, this.agents.get(session.id));
+      // File edits read as a diff against the current file; anything else keeps the JSON.
+      if (diff)
+        this.options.write(
+          `[${session.label}] ${payload.title}\n${formatDiffStat(diffStat(diff))}\n\n${diff}`,
+          "diff",
+        );
+      else
+        this.options.write(
+          `[${session.label}] ${payload.title}\n${JSON.stringify(payload.input, null, 2)}`,
+        );
       const answer = await this.options.ask(
         `[${session.label}] ${question ? "Answer (blank cancels)" : "Allow? [y/N]"}: `,
         cancellation.signal,

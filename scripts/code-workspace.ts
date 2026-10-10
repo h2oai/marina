@@ -17,6 +17,7 @@ import type { CodeEditor, CodeEditorOptions, CodeEditorState } from "./code-edit
 import { CodePanelForm } from "./code-panel-form";
 import { terminalText } from "./code-presentation";
 import type { TerminalView } from "./code-views";
+import { WorkspaceDiffView } from "./code-workspace-diff";
 import { WorkspacePanes } from "./code-workspace-panes";
 
 const plain = (text: string) => text;
@@ -48,6 +49,7 @@ export class WorkspaceCodeEditor implements CodeEditor {
   private readonly editors: Record<TerminalView, DraftEditor>;
   private readonly panelForm: CodePanelForm;
   private readonly panes = new WorkspacePanes();
+  private readonly diff: WorkspaceDiffView;
   private focusView: TerminalView = "coding";
   private state?: CodeEditorState;
   private notice = "";
@@ -63,6 +65,7 @@ export class WorkspaceCodeEditor implements CodeEditor {
       mouse: false,
       copyOnSelect: false,
     });
+    this.diff = new WorkspaceDiffView(() => this.tui.requestRender());
     this.editors = {
       coding: this.makeEditor("coding"),
       world: this.makeEditor("world"),
@@ -101,7 +104,20 @@ export class WorkspaceCodeEditor implements CodeEditor {
           ),
           basis: 1,
         },
-        { component: this.panes.component, basis: 0, grow: 1, minSize: 1 },
+        {
+          component: this.panes.component,
+          basis: 0,
+          grow: 1,
+          minSize: 1,
+          visible: () => !this.diff.active,
+        },
+        {
+          component: this.diff.component,
+          basis: 0,
+          grow: 1,
+          minSize: 1,
+          visible: () => this.diff.active,
+        },
         {
           component: line(() => this.notice),
           basis: 1,
@@ -150,6 +166,11 @@ export class WorkspaceCodeEditor implements CodeEditor {
       if (data.startsWith("\x1b[200~")) return;
       if (matchesKey(data, "ctrl+c")) {
         options.interrupt();
+        return { consume: true };
+      }
+      // The diff view reads keys until q/Escape; drafts stay untouched.
+      if (this.diff.active) {
+        this.diff.handleInput(data);
         return { consume: true };
       }
       if (
@@ -242,6 +263,12 @@ export class WorkspaceCodeEditor implements CodeEditor {
     return this.focusView === "panel" && this.state?.panel
       ? this.panelForm
       : this.editors[this.focusView];
+  }
+
+  showDiff(text: string) {
+    if (this.closed) return false;
+    this.diff.open(text);
+    return true;
   }
 
   print(text: string) {

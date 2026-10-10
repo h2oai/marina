@@ -7,7 +7,12 @@ import type { CodeEditor, CodeEditorOptions } from "./code-editor";
 import type { PanelInput, TerminalPanelState } from "./code-panel-form";
 import { terminalText } from "./code-presentation";
 import { ReadlineCodeEditor } from "./code-readline";
-import { type TerminalView, TerminalViews, type TranscriptView } from "./code-views";
+import {
+  type EntryFormat,
+  type TerminalView,
+  TerminalViews,
+  type TranscriptView,
+} from "./code-views";
 import { WorkspaceCodeEditor } from "./code-workspace";
 import type { WorkspaceLayout } from "./code-workspace-panes";
 
@@ -276,9 +281,9 @@ export class CodeTerminal {
     else this.redraw();
   }
 
-  write(text: string, view: TranscriptView = "all", urgent = false) {
+  write(text: string, view: TranscriptView = "all", urgent = false, format?: EntryFormat) {
     if (this.views) {
-      const delivery = this.views.append(view, text);
+      const delivery = this.views.append(view, text, format);
       if (this.workspace) {
         if ((urgent && !delivery.visible) || (this.views.focus === "approvals" && view === "all"))
           this.editor.print(text);
@@ -294,11 +299,17 @@ export class CodeTerminal {
         return;
       }
     }
-    this.print(text);
+    this.print(text, format);
   }
 
-  private print(text: string) {
-    this.editor.print(terminalText(text));
+  /** Opens the fullscreen diff view (--tui only). Scrollback output is unchanged. */
+  showDiff(text: string): boolean {
+    if (this.closed || !this.workspace) return false;
+    return this.editor.showDiff?.(terminalText(text)) ?? false;
+  }
+
+  private print(text: string, format?: EntryFormat) {
+    this.editor.print(terminalText(text), format);
     this.redraw();
   }
 

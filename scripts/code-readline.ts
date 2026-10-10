@@ -11,9 +11,10 @@ import {
   moveCursor,
 } from "node:readline";
 import { terminalCompletionItems } from "./code-completion";
+import { colorizeDiff, diffColorEnabled } from "./code-diff";
 import type { CodeEditor, CodeEditorOptions, CodeEditorState } from "./code-editor";
 import { terminalText } from "./code-presentation";
-import type { TerminalView } from "./code-views";
+import type { EntryFormat, TerminalView } from "./code-views";
 
 interface Draft {
   text: string;
@@ -160,9 +161,13 @@ export class ReadlineCodeEditor implements CodeEditor {
     return rows;
   }
 
-  print(text: string) {
+  print(text: string, format?: EntryFormat) {
     const rows = this.tty && !this.closed ? this.clearPrompt() : 0;
-    this.options.output.write(`${terminalText(text)}\n`);
+    const safe = terminalText(text);
+    // Colour is added after sanitising, only from the structured diff hint.
+    this.options.output.write(
+      `${format === "diff" ? colorizeDiff(safe, diffColorEnabled(this.options.output)) : safe}\n`,
+    );
     if (rows) this.options.output.write("\n".repeat(rows));
     this.redraw();
   }
