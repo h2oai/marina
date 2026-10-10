@@ -264,6 +264,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `benchmark run` / `benchmark sweep` rank floors are posture-aware (`rankFloorRefusal`): the
+  local profile and `open` pass them, and a refusal raises a challenge instead of a dead end.
+- Delivered-trace bookkeeping is released when an entity is removed (it grew per entity forever).
 - Coding (#240, #276, #283, #289, #292, #365): task execution, delivery verification and evidence
   hardened; bounded worker context and recovery; `code handoff … to <agent>` parses recipients
   unambiguously; the container runtime uses the operator's image storage; SWE-bench workspaces hold
