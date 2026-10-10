@@ -39,6 +39,8 @@ export interface CodeConsoleOptions {
   sessionId?: string;
   tui?: boolean;
   terminalStreams?: Pick<CodeTerminalOptions, "input" | "output">;
+  /** Where plain (non-terminal) output goes; default stdout. `-p --json` uses stderr. */
+  plainOutput?: NodeJS.WritableStream;
 }
 
 export class CodeConsole {
@@ -158,7 +160,7 @@ export class CodeConsole {
     this.updatePrompt();
     text = this.safeText(text);
     if (this.terminal) this.terminal.write(text, view, urgent);
-    else process.stdout.write(`${text}\n`);
+    else (this.options.plainOutput ?? process.stdout).write(`${text}\n`);
   }
   /** The one perception printer: metadata drives local views, never rendered prose. */
   /**

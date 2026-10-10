@@ -58,6 +58,10 @@ export interface CodeSessionOptions {
   dangerouslyAllowAll?: boolean;
   /** Print startup details (database, endpoints, federation address). */
   verbose?: boolean;
+  /** `-p`: exit 0 for completed work that was not verified (it is still reported). */
+  allowUnverified?: boolean;
+  /** `-p`: one JSON result object as the last stdout line; human output goes to stderr. */
+  json?: boolean;
 }
 
 /** Interactive host-exec approval posture negotiated with the server. */
@@ -147,9 +151,52 @@ export function projectSlug(absPath: string): string {
  * recoverable mid-run tool errors also stream as `failed` but never carry
  * `terminal: true`.
  */
-export function terminalCodeLifecycle(
-  p: Perception,
-): { phase: "completed" | "failed"; sessionId?: string; summary?: string } | undefined {
+/** A run's end, as the one-shot exit decides on it. */
+export interface CodeLifecycleEnd {
+  phase: "completed" | "failed";
+  sessionId?: string;
+  summary?: string;
+  /** The run's recorded verification (`passed`, `missing`, `failed`, …). */
+  verification?: string;
+  verificationReason?: string;
+  taskId?: number;
+  runId?: string;
+}
+
+/** `marina -p` exit codes. */
+export const PRINT_EXIT = {
+  verified: 0,
+  failed: 1,
+  timeout: 2,
+  unverified: 3,
+} as const;
+
+/**
+ * The one-shot outcome: completed AND verified is success (0); completed
+ * without passing verification is 3, unless the caller accepts unverified
+ * work (`--allow-unverified`, then 0 with the same notice); failed is 1,
+ * timed out 2.
+ */
+export function printOutcome(
+  end: CodeLifecycleEnd | "timeout" | undefined,
+  allowUnverified = false,
+): {
+  status: "verified" | "unverified" | "failed" | "timeout";
+  exitCode: number;
+  notice?: string;
+} {
+  if (end === "timeout") return { status: "timeout", exitCode: PRINT_EXIT.timeout };
+  if (!end || end.phase === "failed") return { status: "failed", exitCode: PRINT_EXIT.failed };
+  if (end.verification === "passed") return { status: "verified", exitCode: PRINT_EXIT.verified };
+  const notice = `Completed but not verified: ${end.verification ?? "unknown"}${end.verificationReason ? ` — ${end.verificationReason}` : ""}`;
+  return {
+    status: "unverified",
+    exitCode: allowUnverified ? PRINT_EXIT.verified : PRINT_EXIT.unverified,
+    notice,
+  };
+}
+
+export function terminalCodeLifecycle(p: Perception): CodeLifecycleEnd | undefined {
   if (p.kind !== "message") return undefined;
   const code = (p.data as Record<string, unknown> | undefined)?.code as
     | Record<string, unknown>
@@ -162,6 +209,12 @@ export function terminalCodeLifecycle(
       phase: "completed",
       sessionId,
       summary: typeof metadata.summary === "string" ? metadata.summary : undefined,
+      ...(typeof metadata.verification === "string" ? { verification: metadata.verification } : {}),
+      ...(typeof metadata.verificationReason === "string"
+        ? { verificationReason: metadata.verificationReason }
+        : {}),
+      ...(typeof metadata.taskId === "number" ? { taskId: metadata.taskId } : {}),
+      ...(typeof metadata.runId === "string" ? { runId: metadata.runId } : {}),
     };
   }
   if (code.phase === "failed" && metadata.terminal === true) {
@@ -593,6 +646,13 @@ export async function runCodeSession(
     directory: fresh ? `${dbPath}.runner` : join(projectDirectory, "terminal-runner"),
     harness,
     store: harnessStore,
+    // `-p --json` keeps stdout for the one result object: everything else to stderr.
+    ...(opts.json && opts.print !== undefined
+      ? {
+          plainOutput: process.stderr,
+          terminalStreams: { output: process.stderr as unknown as NodeJS.WriteStream },
+        }
+      : {}),
     finish: (code) => {
       agent.disconnect();
       void cleanup(code);
@@ -605,30 +665,66 @@ export async function runCodeSession(
     await sessionConsole.close(1);
     return;
   }
+  const started = Date.now();
+  /** The one-shot result: a notice on stderr, the JSON object last on stdout. */
+  const finishPrint = async (
+    outcome: ReturnType<typeof printOutcome>,
+    end?: CodeLifecycleEnd,
+    diff?: string,
+  ) => {
+    if (outcome.notice) console.error(outcome.notice);
+    if (opts.json) {
+      process.stdout.write(
+        `${JSON.stringify({
+          status: outcome.status,
+          exitCode: outcome.exitCode,
+          verification: end?.verification ?? null,
+          verificationReason: end?.verificationReason ?? null,
+          taskId: end?.taskId ?? null,
+          runId: end?.runId ?? null,
+          files: diff ? diffFileStats(diff) : [],
+          durationMs: Date.now() - started,
+        })}\n`,
+      );
+    }
+    await sessionConsole?.close(outcome.exitCode);
+  };
+
   if (opts.print !== undefined && harness.agent !== "marina") {
     const timeout =
       Number.parseInt(process.env.MARINA_CODE_TASK_TIMEOUT_MS ?? "", 10) || DEFAULT_TASK_TIMEOUT_MS;
-    let code = 0;
     try {
       await sessionConsole.task(opts.print, true, timeout);
-      console.error(
-        "Native turn finished. Review its output and workspace changes; task approval is separate.",
-      );
     } catch (error) {
       console.error(String(error));
-      code = /timed out/i.test(String(error)) ? 2 : 1;
+      await finishPrint(
+        /timed out/i.test(String(error)) ? printOutcome("timeout") : printOutcome(undefined),
+      );
+      return;
     }
-    await sessionConsole.close(code);
+    // A native turn has no Marina verification: finished is not verified.
+    await finishPrint(
+      printOutcome(
+        {
+          phase: "completed",
+          verification: "missing",
+          verificationReason:
+            "Native turn finished; Marina did not verify it. Review its output and workspace changes; task approval is separate.",
+        },
+        opts.allowUnverified,
+      ),
+    );
     return;
   }
 
   // One-shot mode (`marina -p "<task>"`): dispatch, stream, await the terminal
-  // lifecycle signal, then exit — 0 completed, 1 failed, 2 timeout.
+  // lifecycle signal, then exit — 0 verified, 3 completed but not verified,
+  // 1 failed, 2 timeout (`printOutcome`).
   if (opts.print !== undefined) {
     const task = opts.print.trim();
     if (!task) {
       console.error("Empty task — nothing to do.");
-      await sessionConsole.close(1);
+      await finishPrint(printOutcome(undefined));
       return;
     }
     const timeoutMs =
@@ -642,7 +738,7 @@ export async function runCodeSession(
       await sessionConsole.task(task);
     } catch (error) {
       console.error(String(error));
-      await sessionConsole.close(1);
+      await finishPrint(printOutcome(undefined));
       return;
     }
     let terminal: ReturnType<typeof terminalCodeLifecycle>;
@@ -654,19 +750,45 @@ export async function runCodeSession(
       await agent.command("code stop").catch(() => {
         /* best-effort */
       });
-      await sessionConsole.close(2);
+      await finishPrint(printOutcome("timeout"));
       return;
     }
     if (!terminal || terminal.phase === "failed") {
       console.error("Task failed.");
-      await sessionConsole.close(1);
+      await finishPrint(printOutcome(terminal));
       return;
     }
     // Completed: show the session diff, then the durable summary text.
-    await agent.command("code diff"); // output streams through the perception echo
-    if (terminal.summary) process.stdout.write(`\n${terminal.summary}\n`);
-    await sessionConsole.close(0);
+    const diffReply = await agent.command("code diff"); // output streams through the perception echo
+    const diff = diffReply
+      .map((p) => p.data?.code as { type?: unknown; content?: unknown } | undefined)
+      .find((c) => c?.type === "diff" && typeof c.content === "string")?.content as
+      | string
+      | undefined;
+    if (terminal.summary)
+      (opts.json ? process.stderr : process.stdout).write(`\n${terminal.summary}\n`);
+    await finishPrint(printOutcome(terminal, opts.allowUnverified), terminal, diff);
   }
+}
+
+/** Per-file added/removed line counts of a unified diff. */
+export function diffFileStats(
+  diff: string,
+): Array<{ path: string; added: number; removed: number }> {
+  const files: Array<{ path: string; added: number; removed: number }> = [];
+  let current: { path: string; added: number; removed: number } | undefined;
+  for (const line of diff.split("\n")) {
+    const header = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
+    if (header) {
+      current = { path: header[2]!, added: 0, removed: 0 };
+      files.push(current);
+      continue;
+    }
+    if (!current || line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) current.added++;
+    else if (line.startsWith("-")) current.removed++;
+  }
+  return files;
 }
 
 if (import.meta.main) {

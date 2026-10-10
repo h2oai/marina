@@ -251,8 +251,9 @@ select a runtime, model and dialect; they do not yet package teams, Scores, role
 credentials or approval policies. Changing a bound Marina worker's model takes effect
 between tasks; stop or finish active work first.
 
-Native runtimes also support `marina --agent codex -p "<task>"`. Exit 0 means the native
-turn finished without a reported error, not that Marina verified or approved its work.
+Native runtimes also support `marina --agent codex -p "<task>"`. Marina does not verify a native
+turn, so a finished turn exits `3` ("Native turn finished; Marina did not verify it");
+`--allow-unverified` makes it `0`. Neither means Marina approved the work.
 Missing terminal input denies native permission requests. Marina-native tasks retain
 the canonical task/submission/review workflow described below.
 
@@ -544,13 +545,22 @@ yours to keep or remove.
 **One-shot mode** (`marina -p "<task>" [dir]`, alias `--print`) dispatches a single task
 non-interactively: it boots (persistent DB by default, so `-p` runs accrete history), streams the
 agent's work as usual, then waits for the structured completion signal. On completion it prints
-the session diff and the agent's summary and exits `0`; if the run fails (the agent dies mid-task
-or is stopped) it exits `1`; if nothing terminal arrives within `MARINA_CODE_TASK_TIMEOUT_MS`
-(default 600000 ms) it sends `code stop` and exits `2` — script-friendly for CI and cron.
+the session diff and the agent's summary. The exit code says what you can rely on:
+
+| Code | Meaning |
+|---|---|
+| `0` | completed, and the run's checks passed (verification `passed`) |
+| `3` | completed but **not verified**: no checks ran, they failed, or the source changed after them. The reason is printed on stderr. `--allow-unverified` makes this `0` (the notice still prints). |
+| `1` | failed: the agent died mid-task or the run was stopped |
+| `2` | timed out after `MARINA_CODE_TASK_TIMEOUT_MS` (default 600000 ms); `code stop` was sent |
+
+`--json` prints one JSON object as the last line of stdout and sends everything else to stderr:
+`{"status":"verified|unverified|failed|timeout","exitCode":…,"verification":…,"verificationReason":…,"taskId":…,"runId":…,"files":[{"path":…,"added":…,"removed":…}],"durationMs":…}`.
 
 ```bash
 marina -p "fix the off-by-one in the tokenizer and add a regression test" ~/projects/acme
-echo $?   # 0 completed · 1 failed · 2 timed out
+echo $?   # 0 verified · 3 completed, not verified · 1 failed · 2 timed out
+marina -p "…" ~/projects/acme --json | tail -1 | jq .status
 ```
 
 Or inside an already-running Marina:

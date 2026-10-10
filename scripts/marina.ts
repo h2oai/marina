@@ -43,6 +43,8 @@ export type Dispatch =
       harness?: string;
       tui?: boolean;
       verbose?: boolean;
+      allowUnverified?: boolean;
+      json?: boolean;
     }
   | { kind: "connect"; rest: string[] }
   | { kind: "code-connected"; url: string; name: string; session: string; tui?: boolean }
@@ -91,6 +93,8 @@ export function parseDispatch(
   let fresh: boolean | undefined;
   let tui: boolean | undefined;
   let verbose: boolean | undefined;
+  let allowUnverified: boolean | undefined;
+  let json: boolean | undefined;
   let print: string | undefined;
   let allowExec: boolean | undefined;
   let dangerouslyAllowAll: boolean | undefined;
@@ -122,6 +126,14 @@ export function parseDispatch(
       verbose = true;
       continue;
     }
+    if (arg === "--allow-unverified") {
+      allowUnverified = true;
+      continue;
+    }
+    if (arg === "--json") {
+      json = true;
+      continue;
+    }
     if (arg === "--allow-exec") {
       allowExec = true;
       continue;
@@ -143,6 +155,9 @@ export function parseDispatch(
     if (!looksLikeDirectory(arg, isDir)) return { kind: "unknown-target", arg };
     dir = arg;
   }
+  // The one-shot result flags shape a -p run only.
+  if ((allowUnverified || json) && print === undefined)
+    return { kind: "usage-error", arg: allowUnverified ? "--allow-unverified" : "--json" };
   if (Object.keys(connected).length) {
     if (
       !connected.url ||
@@ -173,6 +188,8 @@ export function parseDispatch(
     ...selection,
     ...(tui ? { tui } : {}),
     ...(verbose ? { verbose } : {}),
+    ...(allowUnverified ? { allowUnverified } : {}),
+    ...(json ? { json } : {}),
     ...(fresh !== undefined ? { fresh } : {}),
     ...(print !== undefined ? { print } : {}),
     ...(allowExec !== undefined ? { allowExec } : {}),
@@ -207,6 +224,10 @@ Options:
   --harness <name-or-path>    saved harness or explicit portable JSON file
                               /harness save <name> remembers a folder's default
   -p, --print <task>           dispatch one coding task, await completion, then exit
+  --allow-unverified           with -p: exit 0 for completed work that was not verified
+                               (still reported on stderr)
+  --json                       with -p: print one JSON result object as the last stdout
+                               line; everything else goes to stderr
   --verbose                    print startup details (database, server endpoints,
                                federation address) before the prompt
   --fresh                      throwaway database (deleted on exit) instead of the
@@ -226,7 +247,10 @@ loosen that only in an interactive local terminal you own; without a TTY they ar
 refused and the session stays allowlist-only.
 
 Exit codes (one-shot -p):
-  0  task completed (summary recorded; session diff printed)
+  0  task completed and its checks passed (verified; session diff printed)
+  3  task completed but was not verified (the reason is printed; --allow-unverified
+     makes this 0). A native agent's turn (--agent claude|codex|pi) is never
+     verified by Marina, so it ends 3 unless --allow-unverified.
   1  task failed (the agent died mid-task or the run was stopped)
   2  task timed out (MARINA_CODE_TASK_TIMEOUT_MS, default 600000) — code stop sent
 
@@ -459,6 +483,8 @@ if (import.meta.main) {
         harness: dispatch.harness,
         tui: dispatch.tui,
         verbose: dispatch.verbose,
+        allowUnverified: dispatch.allowUnverified,
+        json: dispatch.json,
       }).catch((error: unknown) => {
         console.error(error instanceof Error ? error.message : String(error));
         process.exitCode = 1;
