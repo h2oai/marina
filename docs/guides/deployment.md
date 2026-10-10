@@ -348,19 +348,10 @@ Why each override exists (keep this table in sync with `package.json`):
 
 | Override | Kind | Reason |
 |----------|------|--------|
-| `@hono/node-server` `^1.19.15`, `hono` `^4.13.5` | floor | security advisory floors for the MCP SDK's HTTP transport (initial audit, commit 8c1aab9). |
-| `@protobufjs/utf8` `^1.1.1`, `protobufjs` `^7.6.3` | floor | security advisory floors below the Google GenAI / gRPC transitive chain (8c1aab9). |
-| `basic-ftp` `^5.3.1` | floor | security advisory floor for a transitive of the upstream provider SDKs (8c1aab9). |
-| `body-parser` `^2.3.0`, `qs` `^6.16.0`, `path-to-regexp` `^8.4.0` | floor | Express 5 transitive security advisories (body-parser floor from 90321d5 "update vulnerable dependencies"). |
-| `express-rate-limit` `^8.2.2`, `ip-address` `^10.5.0` | floor | security advisory floors for the MCP SDK's rate limiter; the `ip-address` floor was lifted from `marina-desktop` (socks proxy chain under electrobun) when the workspace was unified. |
-| `fast-uri` `^3.1.6` | floor | security advisory floor for ajv's URI parser (8c1aab9). |
-| `fast-xml-builder` `^1.1.7`, `fast-xml-parser` `^5.7.0` | floor | security advisory floors for the AWS SDK XML layer (8c1aab9); nothing in the current graph depends on them — remove once `check:overrides --strict` agrees. |
-| `lodash` `^4.18.0` | floor | prototype-pollution security advisories in older 4.17.x (8c1aab9). |
+| `qs` `^6.16.0` | floor | Express 5 transitive security advisory; `typed-rest-client` still pins `qs` 6.15.1, so the floor forces the patched version. |
 | `postcss-selector-parser` `^7.1.6` | floor | GHSA-rj75-hqrm-r3gf (CPU exhaustion on flat selectors). Expressive Code still pulls parser 6.x through `postcss-nested` 6.x; the site build qualifies compatibility with the patched 7.x parser. Remove when that dependency chain accepts the fix. |
-| `proxy-addr` `^2.0.8`, `source-map-js` `^1.2.2` | floor | security advisory floors (CVE-2026-90711 critical, Express's `trust proxy` parser; CVE-2026-93749 high, DoS in the bundler source-map chain) raised by the image scan on 2026-10-06; the dependents' ranges already admit the fixed versions, so remove once `check:overrides --strict` agrees and the lockfile holds them. |
-| `undici` `^6.28.0` | floor | security advisory floor for discord.js's fetch client (8c1aab9). Caution: as a root-wide override it also forces `jsdom` (`^8`) and astro's `unifont` (`^8`) down to 6.x — the audit flags this; the floor is met naturally today. |
-| `ws` `^8.20.1` | floor | security advisory floor (DoS with many headers) for the WebSocket client shared by discord.js and the MCP SDK (8c1aab9). |
-| `zod` `4.6.5` | pin | dedup pin, not a security floor: the MCP SDK's zod types and better-auth's zod v4 must share one copy (commit 4bf8dbd). |
+
+Floors whose dependents already resolve at or above the patched version on their own were removed on 2026-10-10 once `check:overrides --strict` agreed (the lockfile holds the fixed versions). That includes the root `undici` floor, which had been forcing `jsdom` and `unifont` down to 6.x, and the dashboard's own `overrides` table, which Bun ignores in workspace members. Re-add a floor here, with its advisory, if an audit finds a regression.
 
 ## Continuous deployment (CI/CD)
 
