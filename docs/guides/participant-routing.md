@@ -96,15 +96,17 @@ acknowledged deliveries are not executed again.
 
 Ctrl+C requests shutdown of owned agents. After a supervisor restart, prior sessions are marked
 **disconnected** and ambiguous delivery attempts are marked **uncertain**. They are never automatically
-relaunched or replayed. Inspect native session IDs, output and worktrees first. For an owned Codex or pi
-session, **Resume native session** reconnects to its recorded history in the same existing directory,
+relaunched or replayed. Inspect native session IDs, output and worktrees first. For an owned Claude, Codex
+or pi session, **Resume native session** reconnects to its recorded history in the same existing directory,
 using its recorded model. It sends no prompt and does not replay a previous instruction. The directory
 must remain inside the configured root or supervisor-owned worktrees; a deleted directory, redirected
 symlink, missing history, or mismatched native identity is refused. Stop a still-connected process
 before resuming it; resuming never takes over a running terminal.
 
-Claude remains available for new work, but managed resume is unavailable: its SDK cannot acknowledge
-the opened session identity before receiving input. Use Claude's own session recovery for now. Forking
+Claude reports the opened session identity only after it receives the first prompt. A Claude resume is
+therefore refused unless Claude has a recorded session with that id in that directory, and every tool is
+denied until Claude reports the recorded id; a different id interrupts the run and marks it failed. The
+first prompt's text can reach the opened conversation before confirmation, but no tool can run. Forking
 native history and transferring uncommitted changes into a new workspace are separate operations.
 After an abrupt crash, a `journal.db.lock` file deliberately prevents another supervisor from claiming
 the same state. It contains the old supervisor PID; only remove that lock after verifying that process
