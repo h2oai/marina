@@ -314,17 +314,26 @@ export function passthruCacheStore(
 }
 
 /** Best-effort text + usage extraction from a completed (non-streaming) proxy response. */
-export async function extractResponseTextAndUsage(
-  resp: Response,
-): Promise<{ content: string; usage?: CompletionUsage; toolCalls?: ResponsesFunctionCall[] }> {
+export async function extractResponseTextAndUsage(resp: Response): Promise<{
+  content: string;
+  usage?: CompletionUsage;
+  toolCalls?: ResponsesFunctionCall[];
+  incomplete?: boolean;
+  reasoningItems?: Record<string, unknown>[];
+}> {
   const ct = resp.headers.get("content-type") ?? "";
   // Streaming capture is intentionally skipped in v1 — keep the memory write cheap.
   if (ct.includes("text/event-stream")) return { content: "" };
   try {
     const data = (await resp.json()) as {
       choices?: {
-        message?: { content?: unknown; tool_calls?: unknown };
+        message?: {
+          content?: unknown;
+          tool_calls?: unknown;
+          marina_reasoning?: Record<string, unknown>[];
+        };
         text?: unknown;
+        finish_reason?: string;
       }[];
       usage?: {
         prompt_tokens?: unknown;
@@ -354,6 +363,10 @@ export async function extractResponseTextAndUsage(
     return {
       content: typeof content === "string" ? content : "",
       usage,
+      ...(choice?.finish_reason === "length" ? { incomplete: true } : {}),
+      ...(choice?.message?.marina_reasoning?.length
+        ? { reasoningItems: choice.message.marina_reasoning }
+        : {}),
       ...(toolCalls && toolCalls.length > 0 ? { toolCalls } : {}),
     };
   } catch {

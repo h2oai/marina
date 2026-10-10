@@ -17,6 +17,13 @@ import { type CompletionUsage, promptTokensDetails, SSE_HEADERS, safeClose } fro
 // previous_response_id threads continuations onto the same channel.
 // Memory-only index (restart wipes the id map; messages remain in channels).
 
+/** Shared immutable prefix avoids quadratic copies for long tool conversations. */
+export interface ResponseHistory {
+  previous?: ResponseHistory;
+  turn: import("../passthru-context").OpenAIMessage[];
+  bytes: number;
+}
+
 export interface ResponseRecord {
   id: string;
   conversationId: string;
@@ -24,11 +31,16 @@ export interface ResponseRecord {
   content: string;
   createdAt: number;
   previousResponseId?: string;
-  status: "completed" | "failed";
+  status: "completed" | "failed" | "incomplete";
   /** Upstream-reported usage (passthru) or trace-derived usage (agents); omitted when unknown. */
   usage?: CompletionUsage;
   /** Structured function calls, in arrival order (see `ResponsesFunctionCall`). */
   toolCalls?: ResponsesFunctionCall[];
+  /** Encrypted reasoning, never inserted into memory text. Position preserves streaming order. */
+  reasoningItems?: Record<string, unknown>[];
+  reasoningPositions?: number[];
+  /** Full structured history, held only in the owner-scoped response index. */
+  upstreamHistory?: ResponseHistory;
   /**
    * How many function calls precede the assistant message item in `output`.
    * A stream decides this by arrival order (text before or after the first
@@ -74,7 +86,7 @@ function responsesFunctionCallItemId(rec: Pick<ResponseRecord, "id">, position: 
 function responsesMessageItem(
   rec: Pick<ResponseRecord, "id">,
   text: string,
-  status: "completed" | "in_progress" = "completed",
+  status: "completed" | "in_progress" | "incomplete" = "completed",
 ): Record<string, unknown> {
   return {
     type: "message",
@@ -82,7 +94,9 @@ function responsesMessageItem(
     role: "assistant",
     status,
     content:
-      status === "completed" ? [{ type: "output_text", text, annotations: [] }] : ([] as unknown[]),
+      status !== "in_progress"
+        ? [{ type: "output_text", text, annotations: [] }]
+        : ([] as unknown[]),
   };
 }
 
@@ -90,14 +104,14 @@ function responsesFunctionCallItem(
   rec: Pick<ResponseRecord, "id">,
   call: ResponsesFunctionCall,
   position: number,
-  status: "completed" | "in_progress" = "completed",
+  status: "completed" | "in_progress" | "incomplete" = "completed",
 ): Record<string, unknown> {
   return {
     type: "function_call",
     id: responsesFunctionCallItemId(rec, position),
     call_id: call.callId,
     name: call.name,
-    arguments: status === "completed" ? call.arguments : "",
+    arguments: status !== "in_progress" ? call.arguments : "",
     status,
   };
 }
@@ -111,10 +125,14 @@ function responsesHasMessageItem(rec: Pick<ResponseRecord, "content" | "toolCall
  *  (`messageAfter` of them), the message, the remaining function calls. */
 function responsesOutputItems(rec: ResponseRecord): Record<string, unknown>[] {
   const calls = rec.toolCalls ?? [];
-  const items = calls.map((call, i) => responsesFunctionCallItem(rec, call, i));
-  if (!responsesHasMessageItem(rec)) return items;
-  const at = Math.min(rec.messageAfter ?? 0, items.length);
-  items.splice(at, 0, responsesMessageItem(rec, rec.content));
+  const status = rec.status === "incomplete" ? "incomplete" : "completed";
+  const items = calls.map((call, i) => responsesFunctionCallItem(rec, call, i, status));
+  if (responsesHasMessageItem(rec)) {
+    const at = Math.min(rec.messageAfter ?? 0, items.length);
+    items.splice(at, 0, responsesMessageItem(rec, rec.content, status));
+  }
+  for (const [index, item] of (rec.reasoningItems ?? []).entries())
+    items.splice(rec.reasoningPositions?.[index] ?? index, 0, item);
   return items;
 }
 
@@ -128,6 +146,7 @@ export function formatResponseRecord(rec: ResponseRecord): Record<string, unknow
     output: responsesOutputItems(rec),
     output_text: rec.content,
     previous_response_id: rec.previousResponseId ?? null,
+    ...(rec.status === "incomplete" ? { incomplete_details: { reason: "max_output_tokens" } } : {}),
     ...responsesUsage(rec.usage),
   };
 }
@@ -167,6 +186,8 @@ export class ResponsesSseEmitter {
   private readonly calls: (ResponsesFunctionCall & { outputIndex: number })[] = [];
   private readonly callPositions = new Map<number, number>();
   private nextOutputIndex = 0;
+  private readonly reasoningItems: Record<string, unknown>[] = [];
+  private readonly reasoningPositions: number[] = [];
   private done = false;
 
   constructor(
@@ -266,8 +287,20 @@ export class ResponsesSseEmitter {
     }
   }
 
+  reasoningItem(item: Record<string, unknown>): void {
+    if (this.done) return;
+    const outputIndex = this.nextOutputIndex++;
+    this.reasoningItems.push(item);
+    this.reasoningPositions.push(outputIndex);
+    this.emit("response.output_item.added", {
+      output_index: outputIndex,
+      item: { ...item, encrypted_content: undefined, status: "in_progress" },
+    });
+    this.emit("response.output_item.done", { output_index: outputIndex, item });
+  }
+
   /** Close every open item (in output order) and emit `response.completed`. */
-  finish(usage?: CompletionUsage): ResponseRecord {
+  finish(usage?: CompletionUsage, incomplete = false): ResponseRecord {
     if (this.done) return this.skeleton();
     this.done = true;
     // An empty answer still renders one (empty) message item, like the
@@ -277,7 +310,10 @@ export class ResponsesSseEmitter {
       ...this.base,
       content: this.text,
       createdAt: this.base.createdAt,
-      status: "completed",
+      status: incomplete ? "incomplete" : "completed",
+      ...(this.reasoningItems.length
+        ? { reasoningItems: this.reasoningItems, reasoningPositions: this.reasoningPositions }
+        : {}),
       ...(usage ? { usage } : {}),
       ...(this.calls.length > 0
         ? {
@@ -312,7 +348,7 @@ export class ResponsesSseEmitter {
           });
           this.emit("response.output_item.done", {
             output_index: this.messageIndex,
-            item: responsesMessageItem(rec, this.text),
+            item: responsesMessageItem(rec, this.text, incomplete ? "incomplete" : "completed"),
           });
         },
       });
@@ -328,14 +364,21 @@ export class ResponsesSseEmitter {
           });
           this.emit("response.output_item.done", {
             output_index: call.outputIndex,
-            item: responsesFunctionCallItem(rec, call, position),
+            item: responsesFunctionCallItem(
+              rec,
+              call,
+              position,
+              incomplete ? "incomplete" : "completed",
+            ),
           });
         },
       });
     });
     closers.sort((a, b) => a.outputIndex - b.outputIndex);
     for (const closer of closers) closer.run();
-    this.emit("response.completed", { response: formatResponseRecord(rec) });
+    this.emit(incomplete ? "response.incomplete" : "response.completed", {
+      response: formatResponseRecord(rec),
+    });
     return rec;
   }
 
@@ -365,6 +408,7 @@ export function responsesSseStream(
     start(controller) {
       emitter.bind((frame) => controller.enqueue(frame));
       emitter.start();
+      for (const item of rec.reasoningItems ?? []) emitter.reasoningItem(item);
       let position = 0;
       const before = Math.min(rec.messageAfter ?? 0, rec.toolCalls?.length ?? 0);
       const calls = rec.toolCalls ?? [];
@@ -377,7 +421,7 @@ export function responsesSseStream(
       for (; position < before; position++) feedCall(calls[position]!, position);
       if (responsesHasMessageItem(rec)) emitter.textDelta(rec.content);
       for (; position < calls.length; position++) feedCall(calls[position]!, position);
-      emitter.finish(rec.usage);
+      emitter.finish(rec.usage, rec.status === "incomplete");
       safeClose(controller);
     },
   });
@@ -392,8 +436,14 @@ export function responsesSseStream(
 async function forEachSseData(
   body: ReadableStream<Uint8Array>,
   onData: (chunk: Record<string, unknown>) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const reader = body.getReader();
+  const cancel = () => {
+    void reader.cancel(signal?.reason).catch(() => {});
+  };
+  signal?.addEventListener("abort", cancel, { once: true });
+  if (signal?.aborted) cancel();
   const decoder = new TextDecoder();
   let buf = "";
   const handle = (line: string): boolean => {
@@ -401,12 +451,13 @@ async function forEachSseData(
     if (!trimmed.startsWith("data:")) return false;
     const payload = trimmed.slice(5).trim();
     if (payload === "[DONE]") return true;
+    let parsed: unknown;
     try {
-      const parsed = JSON.parse(payload);
-      if (parsed && typeof parsed === "object") onData(parsed as Record<string, unknown>);
+      parsed = JSON.parse(payload);
     } catch {
-      // Malformed frame — skip it.
-    }
+      return false;
+    } // Malformed frame; downstream failures must still propagate.
+    if (parsed && typeof parsed === "object") onData(parsed as Record<string, unknown>);
     return false;
   };
   try {
@@ -422,7 +473,12 @@ async function forEachSseData(
     }
     buf += decoder.decode();
     if (buf.trim()) handle(buf);
+  } catch (error) {
+    // Stop paid upstream work when decoding or downstream processing fails.
+    await reader.cancel(error).catch(() => {});
+    throw error;
   } finally {
+    signal?.removeEventListener("abort", cancel);
     reader.releaseLock();
   }
 }
@@ -466,6 +522,7 @@ export function responsesPassthruStream(
   onComplete: (rec: ResponseRecord) => void,
 ): ReadableStream<Uint8Array> {
   let cancelled = false;
+  const abort = new AbortController();
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       emitter.bind((frame) => {
@@ -473,32 +530,48 @@ export function responsesPassthruStream(
       });
       emitter.start();
       let usage: CompletionUsage | undefined;
+      let incomplete = false;
       try {
-        await forEachSseData(upstream, (chunk) => {
-          usage = usageFromChunk(chunk) ?? usage;
-          const choice = (chunk.choices as { delta?: Record<string, unknown> }[] | undefined)?.[0];
-          const delta = choice?.delta ?? {};
-          if (typeof delta.content === "string") emitter.textDelta(delta.content);
-          const calls = delta.tool_calls;
-          if (Array.isArray(calls)) {
-            for (const fragment of calls) {
-              if (fragment && typeof fragment === "object")
-                emitter.toolCallDelta(fragment as ToolCallDeltaFragment);
+        await forEachSseData(
+          upstream,
+          (chunk) => {
+            usage = usageFromChunk(chunk) ?? usage;
+            const choice = (
+              chunk.choices as
+                | { delta?: Record<string, unknown>; finish_reason?: string }[]
+                | undefined
+            )?.[0];
+            incomplete ||= choice?.finish_reason === "length";
+            if (chunk.error)
+              throw new Error(
+                String((chunk.error as { message?: string }).message ?? "Upstream stream failed"),
+              );
+            const delta = choice?.delta ?? {};
+            if (typeof delta.content === "string") emitter.textDelta(delta.content);
+            if (Array.isArray(delta.marina_reasoning))
+              for (const item of delta.marina_reasoning) emitter.reasoningItem(item);
+            const calls = delta.tool_calls;
+            if (Array.isArray(calls)) {
+              for (const fragment of calls) {
+                if (fragment && typeof fragment === "object")
+                  emitter.toolCallDelta(fragment as ToolCallDeltaFragment);
+              }
             }
-          }
-        });
+          },
+          abort.signal,
+        );
       } catch (e) {
         if (!cancelled) emitter.fail(`Upstream stream failed: ${getErrorMessage(e)}`);
         safeClose(controller);
         return;
       }
       if (cancelled) return;
-      onComplete(emitter.finish(usage));
+      onComplete(emitter.finish(usage, incomplete));
       safeClose(controller);
     },
     cancel(reason) {
       cancelled = true;
-      upstream.cancel(reason).catch(() => {});
+      abort.abort(reason);
     },
   });
 }

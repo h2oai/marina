@@ -83,6 +83,8 @@ export interface ResponsesFunctionCall {
 export interface ChatToolMessage extends OpenAIMessage {
   tool_calls?: Rec[];
   tool_call_id?: string;
+  /** Opaque encrypted OpenAI reasoning for stateless tool replay. */
+  marina_reasoning?: Rec[];
 }
 
 /** Chat-completions tool fields produced from a Responses request. */
@@ -290,6 +292,16 @@ export function responsesInputToMessages(input: unknown): ResponsesTurn {
     if (!isRec(item)) return;
     const type = typeof item.type === "string" ? item.type : "message";
 
+    if (type === "reasoning") {
+      if (typeof item.encrypted_content !== "string")
+        throw new ResponsesRequestError(
+          `input[${i}].encrypted_content`,
+          "Replay the completed encrypted reasoning item.",
+        );
+      openCalls = undefined;
+      messages.push({ role: "assistant", content: "", marina_reasoning: [item] });
+      return;
+    }
     if (type === "function_call") {
       const callId = typeof item.call_id === "string" ? item.call_id : "";
       const name = typeof item.name === "string" ? item.name : "";
@@ -324,7 +336,13 @@ export function responsesInputToMessages(input: unknown): ResponsesTurn {
         );
       }
       const output = outputText(item.output);
-      const result: ChatToolMessage = { role: "tool", tool_call_id: callId, content: output };
+      const result: ChatToolMessage = {
+        role: "tool",
+        tool_call_id: callId,
+        content: Array.isArray(item.output)
+          ? messageContent(item.output, `input[${i}].output`).content
+          : output,
+      };
       messages.push(result);
       text.push(`[tool result ${callId}] ${output}`);
       return;

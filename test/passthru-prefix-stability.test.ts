@@ -317,7 +317,7 @@ describe("passthru with nothing opted in", () => {
         id: "chatcmpl-up",
         object: "chat.completion",
         created: 1,
-        model: "gpt-6.1-sol",
+        model: "gpt-4.1",
         choices: [
           { index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" },
         ],
@@ -327,7 +327,7 @@ describe("passthru with nothing opted in", () => {
     db = new MarinaDB(join(dir, "w.db"));
     engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
     engine.registerRoom(roomId("test/start"), makeTestRoom({ short: "Start" }));
-    setEndpointConfig(db, { mode: "passthru", passthruModel: "openai/gpt-6.1-sol" });
+    setEndpointConfig(db, { mode: "passthru", passthruModel: "openai/gpt-4.1" });
     processState = pending.move();
   });
 
@@ -345,6 +345,7 @@ describe("passthru with nothing opted in", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  // This is the Chat wire contract; Responses protocol translation has its own tests.
   it("forwards every turn byte-identical to the client's body, even with lessons in the pool", async () => {
     const sink = memoryLessonSink([lesson("L1", "check the Amber deployment port first")]);
     enableOutcomeLearning(db, { sink, writer: null, judge: null, env: {} });
@@ -359,9 +360,7 @@ describe("passthru with nothing opted in", () => {
       const resp = await handleModelApi(url, "POST", req, engine);
       expect(resp?.status).toBe(200);
       expect(resp!.headers.get("x-marina-lessons")).toBeNull();
-      expect(JSON.stringify(upstream.at(-1))).toBe(
-        JSON.stringify({ ...body, model: "gpt-6.1-sol" }),
-      );
+      expect(JSON.stringify(upstream.at(-1))).toBe(JSON.stringify({ ...body, model: "gpt-4.1" }));
     }
   });
 });

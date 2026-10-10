@@ -7,6 +7,7 @@
 import { createHash } from "node:crypto";
 import type { Engine } from "../../engine/engine";
 import { stageRequestImages } from "../../engine/media/vision";
+import { maxRequestBodyBytes } from "../http-utils";
 import { getEndpointConfig } from "../model-endpoint";
 import { UnsupportedParameterError } from "../openai-errors";
 import { capturePassthruTranscript, type OpenAIMessage } from "../passthru-context";
@@ -30,6 +31,7 @@ import {
 } from "./passthru";
 import {
   formatResponseRecord,
+  type ResponseHistory,
   type ResponseRecord,
   ResponsesSseEmitter,
   responsesPassthruStream,
@@ -159,8 +161,7 @@ export async function handleResponsesCreate(
     if (!userInput || turn.messages.length === 0) {
       return errorJson(400, "`input` is required", { param: "input" });
     }
-    // Streaming: the answer is produced whole on this surface, then emitted as
-    // the standard Responses SSE sequence (see `responsesSseStream`).
+    // Both agent and provider streams are emitted incrementally as Responses SSE.
     const wantStream = body.stream === true;
 
     // Resolve conversation: previous_response_id > explicit conversation_id > new
@@ -214,6 +215,12 @@ export async function handleResponsesCreate(
         userInput,
         turn: turn.messages,
         chatTools,
+        priorHistory: previousResponseId
+          ? responseIndex.get(previousResponseId)?.upstreamHistory
+          : [...responseIndex.values()]
+              .reverse()
+              .find((record) => record.owner === owner && record.conversationId === conversationId)
+              ?.upstreamHistory,
         priorToolCalls: previousResponseId
           ? responseIndex.get(previousResponseId)?.toolCalls
           : undefined,
@@ -344,11 +351,15 @@ async function runResponsesPassthru(
       top_p?: unknown;
       max_output_tokens?: unknown;
       store?: boolean;
+      reasoning?: unknown;
+      text?: { format?: Record<string, unknown>; verbosity?: unknown };
+      service_tier?: unknown;
     };
     userInput: string;
     turn: OpenAIMessage[];
     chatTools?: ChatToolFields;
     priorToolCalls?: ResponsesFunctionCall[];
+    priorHistory?: ResponseHistory;
     conversationId: string;
     previousResponseId?: string;
     owner: string;
@@ -365,8 +376,17 @@ async function runResponsesPassthru(
           content: entry.content,
         }))
       : [];
+  if (input.priorHistory && input.priorHistory.bytes > maxRequestBodyBytes())
+    return errorJson(
+      413,
+      "Structured conversation exceeds the request size limit. Start a new conversation with the needed context.",
+    );
+  const segments: OpenAIMessage[][] = [];
+  for (let node = input.priorHistory; node; node = node.previous) segments.push(node.turn);
   const turns: OpenAIMessage[] = [
-    ...restorePriorToolCalls(history, input.priorToolCalls, input.turn),
+    ...(input.priorHistory
+      ? segments.reverse().flat()
+      : restorePriorToolCalls(history, input.priorToolCalls, input.turn)),
     ...input.turn,
   ];
   const prep = await preparePassthru(engine, req, auth, turns, "responses");
@@ -389,8 +409,24 @@ async function runResponsesPassthru(
       ? { max_tokens: input.body.max_output_tokens }
       : {}),
     ...(input.chatTools ?? {}),
+    ...(input.body.reasoning !== undefined ? { reasoning: input.body.reasoning } : {}),
+    ...(input.body.service_tier !== undefined ? { service_tier: input.body.service_tier } : {}),
+    ...(input.body.text?.verbosity !== undefined ? { verbosity: input.body.text.verbosity } : {}),
+    ...(input.body.text?.format
+      ? {
+          response_format:
+            input.body.text.format.type === "json_schema"
+              ? { type: "json_schema", json_schema: { ...input.body.text.format, type: undefined } }
+              : input.body.text.format,
+        }
+      : {}),
   };
 
+  if (Buffer.byteLength(JSON.stringify(body)) > maxRequestBodyBytes())
+    return errorJson(
+      413,
+      "Structured conversation exceeds the request size limit. Start a new conversation with the needed context.",
+    );
   const forceModel = passthruForceModel(engine, ec, body.model);
   const cached = await passthruCacheLookup(engine, prep, body, forceModel);
   const resp =
@@ -422,7 +458,29 @@ async function runResponsesPassthru(
       cm.send(convChannel.id, "__model_conv__", "user", input.userInput);
       cm.send(convChannel.id, "__model_passthru__", "assistant", rec.content);
     }
-    if (input.body.store !== false) responseIndex.set(rec.id, rec);
+    if (input.body.store !== false) {
+      const assistant = {
+        role: "assistant",
+        content: rec.content,
+        ...(rec.reasoningItems?.length ? { marina_reasoning: rec.reasoningItems } : {}),
+        ...(rec.toolCalls?.length
+          ? {
+              tool_calls: rec.toolCalls.map((call) => ({
+                id: call.callId,
+                type: "function",
+                function: { name: call.name, arguments: call.arguments },
+              })),
+            }
+          : {}),
+      };
+      const newTurn = input.priorHistory ? [...input.turn, assistant] : [...turns, assistant];
+      rec.upstreamHistory = {
+        previous: input.priorHistory,
+        turn: newTurn,
+        bytes: (input.priorHistory?.bytes ?? 0) + Buffer.byteLength(JSON.stringify(newTurn)),
+      };
+      responseIndex.set(rec.id, rec);
+    }
   };
   const base = {
     id: newResponseId(),
@@ -449,12 +507,14 @@ async function runResponsesPassthru(
     void capturePassthruResponse(engine, prep.identity.entityId, turns, resp);
     passthruCacheStore(engine, prep, body, forceModel, resp);
   }
-  const { content, usage, toolCalls } = await extractResponseTextAndUsage(resp.clone());
+  const { content, usage, toolCalls, reasoningItems, incomplete } =
+    await extractResponseTextAndUsage(resp.clone());
   const rec: ResponseRecord = {
     ...base,
     content,
-    status: "completed",
+    status: incomplete ? "incomplete" : "completed",
     usage,
+    ...(reasoningItems?.length ? { reasoningItems } : {}),
     ...(toolCalls && toolCalls.length > 0 ? { toolCalls } : {}),
   };
   finalize(rec);
