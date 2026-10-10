@@ -45,6 +45,7 @@ import {
 } from "../benchmark-runner";
 import { recentResolutions } from "../default-resolution";
 import { extractModifiers, parseModifiers, resolveMultiWordName } from "../parse-input";
+import { rankFloorRefusal } from "../rank-floor";
 import { checkRoleEdit } from "../role-guard";
 import { formatAge } from "./format-duration";
 
@@ -260,11 +261,13 @@ export function benchmarkCommand(deps: {
             );
             return;
           }
-          if ((entity.properties?.rank ?? 0) < 4) {
-            ctx.send(
-              input.entity,
-              "benchmark sweep requires rank 4 (builder). Benchmarks fan out across every live orchestration and burn real tokens — earn the rank via competence.",
-            );
+          const sweepFloor = rankFloorRefusal(
+            entity,
+            4,
+            "benchmark sweep requires rank 4 (builder). Benchmarks fan out across every live orchestration and burn real tokens — earn the rank via competence.",
+          );
+          if (sweepFloor) {
+            ctx.send(input.entity, sweepFloor);
             return;
           }
           // Voice-friendly name resolution: accept "mmlu pro" / "simple qa" /
@@ -371,11 +374,13 @@ export function benchmarkCommand(deps: {
             );
             return;
           }
-          if ((entity.properties?.rank ?? 0) < 4) {
-            ctx.send(
-              input.entity,
-              "benchmark run requires rank 4 (builder). Every run burns real tokens — earn the rank via competence.",
-            );
+          const runFloor = rankFloorRefusal(
+            entity,
+            4,
+            "benchmark run requires rank 4 (builder). Every run burns real tokens — earn the rank via competence.",
+          );
+          if (runFloor) {
+            ctx.send(input.entity, runFloor);
             return;
           }
           // Voice-friendly name resolution: "mmlu pro" == "mmlu-pro", etc.
