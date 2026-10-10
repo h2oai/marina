@@ -85,7 +85,6 @@ const DAY_MS = 86_400_000;
 
 const toMs = (d: string) => Date.parse(`${d}T00:00:00Z`);
 const toDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
-const addDays = (d: string, n: number) => toDay(toMs(d) + n * DAY_MS);
 const daysBetween = (a: string, b: string) => Math.round((toMs(b) - toMs(a)) / DAY_MS);
 
 /** A sorted series with day-indexed lookups. */
@@ -270,6 +269,3 @@ export function comparisonPrior(
     detail: `${method} (replay on ${replay[0]?.n ?? 0} past windows: ${top.join(", ") || "none"}); latest ${last.value} on ${last.date}`,
   };
 }
-
-/** For tests and callers that phrase a horizon as days after the baseline. */
-export const targetAfter = (baseline: string, days: number) => addDays(baseline, days);

@@ -82,19 +82,6 @@ export type WorkSource =
   | "passthru-recovery"
   | "argcheck-correction";
 
-export const WORK_SOURCES: readonly WorkSource[] = [
-  "tool-recovery",
-  "tool-repeat-failure",
-  "tool-budget",
-  "gate-hold",
-  "challenge",
-  "task-verdict",
-  "task-bounce",
-  "code-exec-denied",
-  "passthru-recovery",
-  "argcheck-correction",
-];
-
 /** Shared pool (world agents), or one principal's own lesson spaces. */
 export type WorkScope = { kind: "shared" } | { kind: "owner"; owner: string };
 

@@ -34,11 +34,6 @@ export function familyDescription(tag: string): string {
   return DESCRIPTIONS[tag] ?? tag;
 }
 
-/** Every family in the vocabulary (for docs and validation). */
-export function familyVocabulary(): string[] {
-  return [...FAMILIES];
-}
-
 /**
  * A ledger run's families: the harness result's own `config.families` when it
  * declared them, else the vocabulary's map for the benchmark name.

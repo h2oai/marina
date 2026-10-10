@@ -22,7 +22,6 @@ import {
   type DiffEntry,
   ITEM_FILES,
   ITEM_KINDS,
-  type ItemKind,
   LEARNED_SCHEMA,
   type LearnedItem,
   type Manifest,
@@ -174,15 +173,6 @@ export function verifyBundle(dir: string, pinned: readonly PinnedKey[]): VerifyO
       diff,
     },
   };
-}
-
-export function itemsByKind(items: readonly LearnedItem[]): Record<ItemKind, LearnedItem[]> {
-  const out = Object.fromEntries(ITEM_KINDS.map((k) => [k, [] as LearnedItem[]])) as Record<
-    ItemKind,
-    LearnedItem[]
-  >;
-  for (const i of items) out[i.kind].push(i);
-  return out;
 }
 
 // ─── Revocations ─────────────────────────────────────────────────────────────

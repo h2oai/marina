@@ -3,7 +3,6 @@
 
 import type { Database } from "bun:sqlite";
 import type { MemoryRecordInput } from "../memory/service-types";
-import { bindNumericRecord } from "./db-memory-numeric";
 import { deleteStoredNote } from "./db-note-storage";
 import { normalizeClaim } from "./db-notes";
 
@@ -14,7 +13,6 @@ export function boundMemoryRecordId(db: Database, noteId: number): string | unde
     )
     .get(noteId)?.record_id;
 }
-export const bindMemoryNote = bindNumericRecord;
 
 /** Only world metadata changes here. Content/importance are read through the
  * numeric_notes view from the exact canonical version, never copied. */

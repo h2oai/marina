@@ -490,21 +490,6 @@ function termStats(db: Database, path: string, query: string, depth: number): Co
   return { avgChars: s.avgChars, termIdf, phraseIdf, candidates };
 }
 
-/** Term statistics for a query's top `depth` FTS5 candidates (for rescoring and parameter sweeps). */
-export function corpusTermStats(
-  name: string,
-  query: string,
-  opts: { dir?: string; depth?: number } = {},
-): CorpusTermStats {
-  const dir = opts.dir ?? corpusDir();
-  return termStats(
-    corpusDb(name, dir),
-    corpusPath(name, dir),
-    query,
-    opts.depth ?? CORPUS_RESCORE_DEPTH,
-  );
-}
-
 /** One candidate's BM25 score (terms plus phrase boosts) under `p`. */
 export function bm25Score(
   t: CorpusTermStats,

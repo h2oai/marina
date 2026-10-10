@@ -67,15 +67,6 @@ export function sessionRunnerSetting(
   return runner && typeof runner.image === "string" ? { kind: "container", config: runner } : null;
 }
 
-/** The session's container runner configuration, if one is set explicitly. */
-export function activeRunnerConfig(
-  db: Pick<MarinaDB, "listCodingArtifacts">,
-  sessionId: string,
-): ContainerRunnerConfig | null {
-  const setting = sessionRunnerSetting(db, sessionId);
-  return setting?.kind === "container" ? setting.config : null;
-}
-
 /**
  * Operator default runner from the environment (`MARINA_CODE_CONTAINER_*`):
  * every local session without an explicit setting runs its commands in this

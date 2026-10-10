@@ -42,16 +42,6 @@ export type PriorSource =
   | "base-rate"
   | "type-default";
 
-export const PRIOR_SOURCES: readonly PriorSource[] = [
-  "market",
-  "community",
-  "statistical",
-  "market-lookup",
-  "anchor",
-  "base-rate",
-  "type-default",
-];
-
 /** A forecast in numbers: per-option probabilities, or a value with its sd. */
 export interface ForecastNumbers {
   distribution?: Distribution;
