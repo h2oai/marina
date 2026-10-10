@@ -59,16 +59,23 @@ requests discard their partial answers. The workspace restores the shell on exit
 copying unsent drafts into scrollback. It requires interactive input and output; one-shot
 `-p` and redirected output keep their existing stream behavior. `NO_COLOR=1` disables accents.
 
-Inside the terminal, `/help` shows the controls; Tab completes their names and the
-`/verify` and `/review` actions. Streaming
+The first screen is short: the Marina version, the folder, the agent and its model, whether the
+session is new or resumed, and a one-line hint. A missing model provider is reported only when the
+server itself has none. `--verbose` adds the database, the server endpoints and the federation
+address; `/status` and `/project` show the rest whenever you want them.
+
+Inside the terminal, `/help` shows one screen of essentials and `/help all` lists every control;
+Tab completes their names and the `/verify` and `/review` actions. `/quit`, `/exit` and Ctrl+D
+leave. Streaming
 output preserves the current draft and cursor, including wrapped lines and terminal resizing.
-The prompt shows task/check activity; transcript labels distinguish world messages, check
+The prompt names the folder and what the agent is doing (`myapp · working ›`), and adds what
+is waiting only when something is (`myapp · ready · 1 request · World 3 ›`); transcript labels distinguish world messages, check
 receipts, results, submitted work and review. Permission details appear above a short answer
 prompt. End a line with `\` to continue a task on another line.
 
 In an interactive terminal, **Coding** is the initial view. F6 switches between Coding and
 **World**, preserving each view's draft, cursor, multiline input and command history. The
-prompt's C/W counters show unread output in the other conversation. Use `/view coding` or
+prompt counts unread output in the other conversation (`World 3`, `Coding 2`). Use `/view coding` or
 `/view world` when function keys are unavailable. World input uses normal Marina commands;
 `/world <command>` also works from either conversation. Incoming world events and coding
 output continue to arrive while you focus elsewhere.
@@ -481,8 +488,9 @@ rm -rf /tmp/marina-coding-agent-demo
 
 ### If it does not start
 
-- **“No provider key” or model error:** export a supported provider key in the same shell, then
-  relaunch `bun run code …`.
+- **“No model provider is configured”:** the server found no provider key. Put one in the Marina
+  repository's `.env` (or run `marina init`), or export it in the same shell, then relaunch. A
+  native agent (`/use claude`, `/use codex`, `/use pi`) needs no Marina key.
 - **Server timeout:** run `bun install` in the Marina repository, confirm Bun is at least 1.4.2, and
   retry.
 - **Stale project database:** a per-folder DB written by an older Marina version can block boot.
@@ -491,7 +499,8 @@ rm -rf /tmp/marina-coding-agent-demo
 - **Agent cannot run checks:** use the folder-scoped launcher above; it boots `coder` as the local
   operator. In a shared Marina, `code.exec` remains safety-gated.
 - **Wrong files appear:** exit immediately and relaunch with the explicit absolute demo path. The
-  startup banner prints the directory Marina is confined to; verify it before sending the task.
+  first screen names the folder (`--verbose` prints its full path); `/status` shows the workspace
+  Marina is confined to. Verify it before sending the task.
 
 Once this works, replace the demo path with a clean branch or disposable worktree of your own
 project. Keep the task bounded and name the checks that define completion.

@@ -15,7 +15,11 @@ export const TERMINAL_CONTROLS = [
     usage: "/layout auto|focus|split",
     help: "Arrange TUI panes without changing your session",
   },
-  { name: "/help", usage: "/help", help: "Show terminal controls and keyboard shortcuts" },
+  {
+    name: "/help",
+    usage: "/help [all]",
+    help: "Show the essentials; /help all lists every control",
+  },
   {
     name: "/view",
     usage: "/view coding|world|approvals|panel|older|newer|latest",
@@ -56,8 +60,42 @@ export const TERMINAL_CONTROLS = [
     usage: "/harness [save|use|list|export]",
     help: "Inspect or select runtime, model and dialect",
   },
-  { name: "/quit", usage: "/quit", help: "Exit; connected worlds keep running, owned agents stop" },
+  {
+    name: "/quit",
+    usage: "/quit (or /exit)",
+    help: "Exit; connected worlds keep running, owned agents stop",
+  },
 ];
+
+/** Inputs that leave the terminal. */
+export const QUIT_INPUTS = ["/quit", "/exit", "exit", "quit"];
+
+/**
+ * One screen: what most sessions need. Everything else is in `/help all`.
+ */
+export function terminalEssentials(connected = false, runtimes: string[] = []): string {
+  const rows: Array<[string, string]> = [
+    ["/diff", "see what changed"],
+    ["/checks", "run the project's checks"],
+    ["/review", "review the result"],
+    ["/status", "session, workspace and model"],
+    ["/project", "readiness and the verify recipe"],
+    ["/agents", "agents and their status"],
+    ["/world <cmd>", "a Marina command in the world (people, agents, tasks)"],
+    [
+      connected ? "/use marina" : "/use <agent>",
+      connected
+        ? "the server-side agent"
+        : `switch agent (available: ${["marina", ...runtimes].join(", ")})`,
+    ],
+    ["/quit", connected ? "detach; the world keeps running" : "exit"],
+  ];
+  return [
+    "Type what you want done in plain words; the agent works on it. End a line with \\ for more lines.",
+    ...rows.map(([usage, help]) => `  ${usage.padEnd(14)} ${help}`),
+    "Ctrl+C interrupts work. More: /help all",
+  ].join("\n");
+}
 export const TERMINAL_COMMANDS = TERMINAL_CONTROLS.map((control) => control.name);
 
 export function terminalControls(connected = false) {

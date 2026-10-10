@@ -125,18 +125,34 @@ afterAll(() => {
 });
 
 describe.skipIf(process.platform === "win32")("terminal journeys", () => {
-  test("start: a fresh folder reaches a prompt, and exits cleanly", async () => {
-    const { metrics: m } = await journey("start", []);
+  test("start: a short first screen, a plain prompt, and a clean /exit", async () => {
+    const {
+      metrics: m,
+      firstScreen,
+      text,
+    } = await journey("start", [], {
+      exitKeys: "/exit\r",
+    });
     expect(m.exitCode).toBe(0);
-    // Regression guard: today the prompt appears in about 3 s.
+    expect(m.linesBeforePrompt).toBeLessThanOrEqual(6);
+    expect(firstScreen).toMatch(/^Marina \d+\.\d+\.\d+ · project · /m);
+    expect(firstScreen).toContain("New session.");
+    // Internals stay off the first screen; they are one command away.
+    for (const internal of ["WS ·", "Federate", "Flywheel", "Dependencies:", "[C*", "…·…"])
+      expect(text).not.toContain(internal);
+    expect(text).toMatch(/^project · \S.* › /m);
+    // Regression guard: today the prompt appears in about 2 s.
     expect(m.promptMs).toBeLessThan(15_000);
   }, 60_000);
 
-  test("help: /help answers on screen", async () => {
-    const { metrics: m } = await journey("help", [
-      { keys: "/help\r", until: (t) => /help|commands?/i.test(t) && PROMPT.test(t.trimEnd()) },
+  test("help: /help is one screen of essentials; /help all lists everything", async () => {
+    const { metrics: m, text } = await journey("help", [
+      { keys: "/help\r", until: (t) => t.includes("More: /help all") },
+      { keys: "/help all\r", until: (t) => t.includes("F6 switches coding/world") },
     ]);
     expect(m.exitCode).toBe(0);
+    expect(text).toContain("/diff");
+    expect(text).toContain("switch agent (available: marina");
   }, 60_000);
 
   test("status: /status answers on screen", async () => {
@@ -144,5 +160,14 @@ describe.skipIf(process.platform === "win32")("terminal journeys", () => {
       { keys: "/status\r", until: (t) => /session|status/i.test(t) && PROMPT.test(t.trimEnd()) },
     ]);
     expect(m.exitCode).toBe(0);
+  }, 60_000);
+
+  test("verbose: --verbose shows the startup details the first screen leaves out", async () => {
+    const { metrics: m, firstScreen } = await journey("verbose", [], {
+      args: ["--fresh", "--verbose"],
+    });
+    expect(m.exitCode).toBe(0);
+    expect(firstScreen).toContain("WS · ws://localhost:");
+    expect(firstScreen).toContain("DB · ephemeral");
   }, 60_000);
 });

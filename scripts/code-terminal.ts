@@ -11,7 +11,14 @@ import { type TerminalView, TerminalViews, type TranscriptView } from "./code-vi
 import { WorkspaceCodeEditor } from "./code-workspace";
 import type { WorkspaceLayout } from "./code-workspace-panes";
 
-export { isWorldInput, TERMINAL_COMMANDS, TERMINAL_HELP, terminalHelp } from "./code-controls";
+export {
+  isWorldInput,
+  QUIT_INPUTS,
+  TERMINAL_COMMANDS,
+  TERMINAL_HELP,
+  terminalEssentials,
+  terminalHelp,
+} from "./code-controls";
 export {
   formatCodePerception,
   terminalText,
