@@ -79,6 +79,7 @@
     "swebench": "bun run scripts/swebench.ts",
     "start": "bun run src/main.ts",
     "code": "bun run scripts/code.ts",
+    "setup:cli": "bun install && bun run scripts/setup-cli.ts",
     "dev": "bun run src/main.ts",
     "build": "bun build src/main.ts --outdir dist --target bun --external zod && bun build src/memory/import-process.ts --outfile dist/memory-import.js --target bun && bun run build:memory",
     "test": "bun run scripts/test-backend.ts",

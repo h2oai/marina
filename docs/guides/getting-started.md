@@ -20,6 +20,17 @@ bun run start
 
 Open **http://localhost:3300**. The root redirects to the dashboard.
 
+#### Use `marina` from any folder
+
+```bash
+bun run setup:cli     # links marina into Bun's bin folder (~/.bun/bin)
+marina version        # then, in any project: marina .
+```
+
+If the folder is not on your PATH, the command prints the exact `export PATH=…` line to add.
+The terminal works without building the dashboard; only `/dashboard` needs
+`bun run dashboard:build`.
+
 ### Packaged desktop app
 
 If you are using a packaged Electrobun build, open Marina directly. It contains the engine and

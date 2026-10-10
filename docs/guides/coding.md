@@ -519,6 +519,9 @@ rm -rf /tmp/marina-coding-agent-demo
   native agent (`/use claude`, `/use codex`, `/use pi`) needs no Marina key.
 - **Server timeout:** run `bun install` in the Marina repository, confirm Bun is at least 1.4.2, and
   retry.
+- **“Marina is already open in this folder”:** another terminal has this folder's session open
+  (the message names its process). Close it, or use `--fresh` for a separate disposable session.
+  A leftover record from a crashed session is detected and cleared automatically.
 - **Stale project database:** a per-folder DB written by an older Marina version can block boot.
   The failure hint prints the exact path (`~/.marina/projects/<slug>/marina.db`) — remove it, or
   relaunch with `--fresh` to use a throwaway DB.
