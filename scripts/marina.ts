@@ -42,6 +42,7 @@ export type Dispatch =
       profile?: string;
       harness?: string;
       tui?: boolean;
+      verbose?: boolean;
     }
   | { kind: "connect"; rest: string[] }
   | { kind: "code-connected"; url: string; name: string; session: string; tui?: boolean }
@@ -89,6 +90,7 @@ export function parseDispatch(
   let dir: string | undefined;
   let fresh: boolean | undefined;
   let tui: boolean | undefined;
+  let verbose: boolean | undefined;
   let print: string | undefined;
   let allowExec: boolean | undefined;
   let dangerouslyAllowAll: boolean | undefined;
@@ -114,6 +116,10 @@ export function parseDispatch(
     }
     if (arg === "--fresh") {
       fresh = true;
+      continue;
+    }
+    if (arg === "--verbose") {
+      verbose = true;
       continue;
     }
     if (arg === "--allow-exec") {
@@ -166,6 +172,7 @@ export function parseDispatch(
     dir,
     ...selection,
     ...(tui ? { tui } : {}),
+    ...(verbose ? { verbose } : {}),
     ...(fresh !== undefined ? { fresh } : {}),
     ...(print !== undefined ? { print } : {}),
     ...(allowExec !== undefined ? { allowExec } : {}),
@@ -200,6 +207,8 @@ Options:
   --harness <name-or-path>    saved harness or explicit portable JSON file
                               /harness save <name> remembers a folder's default
   -p, --print <task>           dispatch one coding task, await completion, then exit
+  --verbose                    print startup details (database, server endpoints,
+                               federation address) before the prompt
   --fresh                      throwaway database (deleted on exit) instead of the
                                per-folder default at ~/.marina/projects/<slug>/marina.db
   --allow-exec                 permit non-allowlisted host commands, prompting for
@@ -449,6 +458,7 @@ if (import.meta.main) {
         profile: dispatch.profile,
         harness: dispatch.harness,
         tui: dispatch.tui,
+        verbose: dispatch.verbose,
       }).catch((error: unknown) => {
         console.error(error instanceof Error ? error.message : String(error));
         process.exitCode = 1;

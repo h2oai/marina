@@ -344,6 +344,9 @@ describe("connected coding in an existing world", () => {
     };
     try {
       await view.start(true);
+      // Inspection is one command away, never a startup dump.
+      expect(output.join("\n")).not.toContain("Code Doctor");
+      await view.submit("/project");
       expect(output.join("\n")).toContain("Code Doctor");
       const project = seen.find((p) => (p.data.code as { event?: string })?.event === "doctor_ran");
       expect(project?.data.code).toMatchObject({

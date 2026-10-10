@@ -25,7 +25,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { mkdirSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { createServer } from "node:net";
 import { homedir, hostname, tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
@@ -34,7 +34,7 @@ import { waitForDatabaseLease } from "../src/persistence/database-lease";
 import { MarinaAgent, type Perception } from "../src/sdk/client";
 import { CodeConsole } from "./code-console";
 import { HarnessStore, validateHarness } from "./code-harness";
-import { inferCodeDefaultModel, PROVIDER_KEY_ENV_VARS } from "./code-model";
+import { inferCodeDefaultModel } from "./code-model";
 import { installedCodingAdapters } from "./code-native";
 import { formatCodePerception, terminalText } from "./code-terminal";
 
@@ -56,6 +56,8 @@ export interface CodeSessionOptions {
   allowExec?: boolean;
   /** Auto-approve every host command with no prompt (`--dangerously-allow-all`). */
   dangerouslyAllowAll?: boolean;
+  /** Print startup details (database, endpoints, federation address). */
+  verbose?: boolean;
 }
 
 /** Interactive host-exec approval posture negotiated with the server. */
@@ -204,6 +206,43 @@ async function waitForReady(
   return false;
 }
 
+/**
+ * A status line on stderr in the terminal's own colour. `console.error` is
+ * printed red on a terminal, which makes ordinary news look like a failure;
+ * real errors still use it.
+ */
+function say(line: string): void {
+  process.stderr.write(`${line}\n`);
+}
+
+/** Marina's own version (package.json), or "" when it cannot be read. */
+function packageVersion(): string {
+  try {
+    const pkg = JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf8")) as {
+      version?: unknown;
+    };
+    return typeof pkg.version === "string" ? pkg.version : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Whether the folder server can reach a model provider — asked of the server,
+ * which loads its own environment, rather than guessed from the launcher's.
+ * Unknown (the endpoint failed) counts as yes: never warn on a guess.
+ */
+export async function serverHasModel(port: number): Promise<boolean> {
+  try {
+    const res = await fetch(`http://localhost:${port}/api/setup-status`);
+    if (!res.ok) return true;
+    const body = (await res.json()) as { hasLlmKey?: unknown };
+    return body.hasLlmKey !== false;
+  } catch {
+    return true;
+  }
+}
+
 /** Grace for the server's own shutdown; `src/main.ts` force-exits after 30 s. */
 export const SERVER_STOP_GRACE_MS = 35_000;
 
@@ -299,30 +338,23 @@ export async function runCodeSession(
       : inferCodeDefaultModel(process.env);
   if (harness.agent === "marina" && defaultModel) harness.model = defaultModel;
 
-  console.error(`Marina · ${dir}`);
-  console.error("Booting a folder-scoped session…");
-  console.error(fresh ? "DB · ephemeral (deleted on exit)" : `DB · ${dbPath}`);
-  if (harness.agent !== "marina") {
-    console.error(`Runtime · ${harness.agent} · ${harness.model ?? "native default model"}`);
-  } else if (defaultModel) {
-    console.error(`Model · ${defaultModel}`);
-  } else {
-    // The world still boots without a provider key — agents just can't think.
-    console.error("Warning · no LLM provider key found; the coding agent won't be able to think.");
-    console.error(`  Checked: MARINA_DEFAULT_MODEL, ${PROVIDER_KEY_ENV_VARS.join(", ")}`);
-    console.error(
-      "  Configure a provider, or use /use claude, /use codex, or /use pi for an installed native agent.",
-    );
-  }
+  // The first screen is short: where you are, what runs, and what to type.
+  // Everything else is one command away (/status, /project, --verbose).
+  const verbose = opts.verbose === true;
+  const folderName = basename(dir) || dir;
+  const agentLabel =
+    harness.agent !== "marina"
+      ? `${harness.agent} (${harness.model ?? "its default model"})`
+      : (defaultModel ?? "default model");
+  say(`Starting Marina in ${folderName}…`);
+  if (verbose) say(fresh ? "DB · ephemeral (deleted on exit)" : `DB · ${dbPath}`);
 
   if (execResolution.refusal) {
     // A flag was set but refused (no owned TTY) — say so and stay allowlist-only.
     console.error(`Refused · ${execResolution.refusal}`);
   }
   if (execMode === "prompt") {
-    console.error(
-      "Exec · non-allowlisted host commands will prompt for approval (y/N/a) before running.",
-    );
+    say("Exec · non-allowlisted host commands will prompt for approval (y/N/a) before running.");
   } else if (execMode === "auto") {
     // A loud, one-time banner — this session auto-runs arbitrary host commands.
     console.error("");
@@ -341,7 +373,7 @@ export async function runCodeSession(
     try {
       const { waitedMs } = await waitForDatabaseLease(dbPath);
       if (waitedMs >= 1_000) {
-        console.error(
+        say(
           `Waited ${Math.round(waitedMs / 1000)}s for a previous server to release the database.`,
         );
       }
@@ -488,23 +520,34 @@ export async function runCodeSession(
 
   try {
     const session = await agent.connect("coder");
-    console.error(`Ready as ${session.name}.`);
+    if (verbose) say(`Ready as ${session.name}.`);
   } catch (err) {
     console.error(`Failed to connect: ${(err as Error).message}`);
     await cleanup(1);
   }
 
-  // Instance coordinates — every Marina announces its own invitation.
-  const host = hostname();
-  console.error(`WS · ws://localhost:${port}`);
-  console.error(`Dashboard · http://localhost:${port}`);
-  console.error(`Federate · gateway add ${host} ws://${host}:${port}`);
+  say(`Marina ${packageVersion()} · ${folderName} · ${agentLabel}`);
+  // The provider check asks the SERVER, which loads its own environment (the
+  // repo .env): the launcher's environment says nothing about what it can use.
+  if (harness.agent === "marina" && !(await serverHasModel(port))) {
+    console.error(
+      `No model provider is configured for the agent. Set a key in ${join(REPO_ROOT, ".env")} or run marina init; or use /use claude, /use codex or /use pi.`,
+    );
+  }
+  if (verbose) {
+    // Instance coordinates — every Marina announces its own invitation.
+    const host = hostname();
+    say(`WS · ws://localhost:${port}`);
+    say(`Dashboard · http://localhost:${port}`);
+    say(`Federate · gateway add ${host} ws://${host}:${port}`);
+  }
 
-  // Let the login bootstrap drain silently, then start echoing and enter Code
-  // Mode — its banner and everything after arrive via the onPerception stream.
+  // Let the login bootstrap drain silently, then enter Code Mode. Its banner
+  // is for other clients; this terminal prints its own short summary, and
+  // echoes everything after it.
   await new Promise((r) => setTimeout(r, 400));
-  echoPerceptions = true;
   const entered = await agent.command("code");
+  echoPerceptions = true;
 
   // Resume status: the code_mode_entered metadata says whether a prior session
   // (persistent DB) was picked back up. Ephemeral runs always start clean.
@@ -517,9 +560,12 @@ export async function runCodeSession(
       const createdAt = typeof code.sessionCreatedAt === "number" ? code.sessionCreatedAt : 0;
       const age = createdAt > 0 ? `${formatAge(Date.now() - createdAt)} ago` : "earlier";
       const workspace = typeof code.workspace === "string" ? code.workspace : dir;
-      console.error(`Resuming session ${code.sessionId} — started ${age}, workspace ${workspace}`);
+      const title = typeof code.title === "string" && code.title ? `“${code.title}”, ` : "";
+      say(`Resuming ${title}started ${age}${workspace !== dir ? ` in ${workspace}` : ""}.`);
     } else {
-      console.error("No active session yet.");
+      say("New session.");
+      if (!opts.print)
+        say("Tip: /project shows readiness; /diff, /checks and /review follow a task.");
     }
     break;
   }

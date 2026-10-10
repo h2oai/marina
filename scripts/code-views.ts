@@ -102,9 +102,21 @@ export class TerminalViews {
     return { visible, firstUnread };
   }
 
+  /**
+   * What is waiting outside the focused view, in words; empty when nothing is
+   * (`1 request · World 12`). Zero counts are never shown.
+   */
   badge(questions: number): string {
     const count = (value: number) => (value > 999 ? "999+" : String(value));
-    return `[C${this.focus === "coding" ? "*" : ""}:${count(this.unread.coding)} W${this.focus === "world" ? "*" : ""}:${count(this.unread.world)} A${this.focus === "approvals" ? "*" : ""}:${questions}]`;
+    return [
+      questions && this.focus !== "approvals"
+        ? `${count(questions)} request${questions === 1 ? "" : "s"}`
+        : "",
+      this.unread.coding && this.focus !== "coding" ? `Coding ${count(this.unread.coding)}` : "",
+      this.unread.world && this.focus !== "world" ? `World ${count(this.unread.world)}` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
   }
 
   navigation(questions: number): string {
