@@ -77,9 +77,10 @@ it("bounds local conversation history, marks gaps and pages through byte-limited
   expect(views.stats().entries).toBe(8);
   expect(views.stats().bytes).toBeLessThanOrEqual(1024);
   expect(views.stats().evicted.world).toBe(4);
-  expect(views.badge(1)).toBe("[C*:0 W:12 A:1]");
+  expect(views.badge(1)).toBe("1 request · World 12");
   views.select("world");
-  expect(views.badge(1)).toBe("[C:0 W*:0 A:1]");
+  expect(views.badge(1)).toBe("1 request");
+  expect(views.badge(0)).toBe("");
   expect(views.snapshot("world")).toContain("4 earlier entries evicted");
   expect(views.snapshot("world")).toContain("excerpt truncated");
   expect(views.snapshot("world")).not.toContain("\ufffd");
@@ -392,7 +393,8 @@ it("receives typed worker output in Coding, world messages in World, and redacts
     expect(terminalText(transcript)).toContain("hidden worker [redacted]");
     expect(transcript).not.toContain("secret/token");
     expect(transcript).not.toContain("\x1b]52");
-    expect(requests).toEqual(["code doctor", "/tell Peer responding"]); // inspection at startup; focus is local
+    // Startup runs no inspection (it is one /project away); focus is local.
+    expect(requests).toEqual(["/tell Peer responding"]);
     expect(view.busy()).toBe(false); // agent prose does not manufacture task lifecycle
   } finally {
     await view.close(0);
@@ -625,7 +627,7 @@ it("routes terminal inspection and verification shortcuts through the selected M
     expect(requests).toHaveLength(13);
     await view.submit("/world\tlook");
     expect(requests.at(-1)).toEqual({ text: "/look", options: undefined });
-    await view.submit("/help");
+    await view.submit("/help all");
     expect(output.join("\n")).toContain("Detach; world agents and tasks keep running");
     view.observe({
       kind: "message",
@@ -1467,7 +1469,7 @@ it("runs several native adapters through routing, journals output, resolves inpu
   expect(stopped).toBe(3);
 });
 
-it("keeps project inspection ordered with coding input while world messages bypass the local wait", async () => {
+it("keeps an explicit /project inspection ordered with coding input while world messages bypass the local wait", async () => {
   const inspected = Promise.withResolvers<void>();
   const started = Promise.withResolvers<void>();
   const requests: string[] = [];
@@ -1498,12 +1500,16 @@ it("keeps project inspection ordered with coding input while world messages bypa
   });
   const startup = view.start(true);
   try {
+    await startup;
+    // Startup itself inspects nothing; the person asks for it.
+    expect(requests).toEqual([]);
+    const inspecting = view.submit("/project");
     await started.promise;
     const task = view.submit("/task Fix the boundary");
     await view.submit("/world tell Peer still available");
     expect(requests).toEqual(["code doctor", "/tell Peer still available"]);
     inspected.resolve();
-    await startup;
+    await inspecting;
     await task;
     expect(requests.at(-1)).toBe("code do verification:candidate -- Fix the boundary");
   } finally {

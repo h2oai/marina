@@ -1,6 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { basename } from "node:path";
+
 import {
   clearScreenDown,
   createInterface,
@@ -9,9 +11,10 @@ import {
   moveCursor,
 } from "node:readline";
 import { terminalCompletionItems } from "./code-completion";
+import { colorizeDiff, diffColorEnabled } from "./code-diff";
 import type { CodeEditor, CodeEditorOptions, CodeEditorState } from "./code-editor";
 import { terminalText } from "./code-presentation";
-import type { TerminalView } from "./code-views";
+import type { EntryFormat, TerminalView } from "./code-views";
 
 interface Draft {
   text: string;
@@ -127,23 +130,26 @@ export class ReadlineCodeEditor implements CodeEditor {
 
   private redraw() {
     if (this.closed || !this.tty || !this.state) return;
-    const { target, status, focus, answer, multiline, badge } = this.state;
+    const { target, status, focus, answer, multiline, badge, location } = this.state;
     const columns = (this.options.output as { columns?: number }).columns ?? 80;
     const limit = Math.max(2, Math.floor((columns - 8) / 2));
     const compact = (text: string, length: number) => {
       const chars = [...text];
       return chars.length > length ? `${chars.slice(0, Math.max(0, length - 1)).join("")}…` : text;
     };
-    const label = compact(target, Math.min(18, Math.max(1, Math.floor(limit / 2) - 1)));
+    // The folder names where you are; the selected agent only when it is not Marina's own.
+    const folder = basename(location?.split(" · ").at(-1)?.trim() || "") || "marina";
+    const agent = target && !target.startsWith("marina") ? ` · ${compact(target, 18)}` : "";
+    const busy = status ? ` · ${compact(status, Math.max(8, limit - 24))}` : "";
     const destination = answer
       ? "answer"
       : focus === "world"
         ? "world command"
         : focus === "panel"
           ? "panel control"
-          : `${label}·${compact(status, Math.max(1, limit - [...label].length - 1))}`;
-    const prompt = `${destination}${multiline && !answer ? " …" : ""} › `;
-    this.rl.setPrompt(badge ? `${badge}\n${prompt}` : prompt);
+          : `${compact(folder, 24)}${agent}${busy}`;
+    const waiting = badge ? ` · ${badge}` : "";
+    this.rl.setPrompt(`${destination}${waiting}${multiline && !answer ? " …" : ""} › `);
     this.rl.prompt(true);
   }
 
@@ -155,9 +161,13 @@ export class ReadlineCodeEditor implements CodeEditor {
     return rows;
   }
 
-  print(text: string) {
+  print(text: string, format?: EntryFormat) {
     const rows = this.tty && !this.closed ? this.clearPrompt() : 0;
-    this.options.output.write(`${terminalText(text)}\n`);
+    const safe = terminalText(text);
+    // Colour is added after sanitising, only from the structured diff hint.
+    this.options.output.write(
+      `${format === "diff" ? colorizeDiff(safe, diffColorEnabled(this.options.output)) : safe}\n`,
+    );
     if (rows) this.options.output.write("\n".repeat(rows));
     this.redraw();
   }

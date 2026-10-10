@@ -15,10 +15,36 @@ import { cachedParticipantToken, participantUrl, saveParticipantToken } from "./
 export interface ConnectedCodeOptions {
   url: string;
   name: string;
-  session: string;
+  /** Omitted only with `chooseSession`, which picks from the identity's active sessions. */
+  session?: string;
   token?: string;
   cacheDirectory?: string;
   tui?: boolean;
+  /**
+   * Chooses among this identity's active coding sessions once authenticated, on the same
+   * connection. Throws when none fits; the connection is closed without dispatching work.
+   */
+  chooseSession?: (sessions: ActiveCodingSession[]) => Promise<string>;
+}
+
+export interface ActiveCodingSession {
+  id: string;
+  title: string;
+}
+
+/** Active sessions from a `code list` reply (owner-scoped by the server). */
+export function activeCodingSessions(perceptions: Perception[]): ActiveCodingSession[] {
+  const sessions: ActiveCodingSession[] = [];
+  for (const p of perceptions) {
+    const code = p.data.code as
+      | { event?: string; rows?: { id?: unknown; status?: unknown; title?: unknown }[] }
+      | undefined;
+    if (code?.event !== "sessions_listed") continue;
+    for (const row of code.rows ?? [])
+      if (typeof row.id === "string" && row.status === "active")
+        sessions.push({ id: row.id, title: typeof row.title === "string" ? row.title : "" });
+  }
+  return sessions;
 }
 
 /** Authenticated existing-session attach. No server spawn, name-login fallback or local filesystem assumption. */
@@ -29,7 +55,12 @@ export async function openConnectedCodeSession(
   const url = participantUrl(options.url);
   if (!/^[a-zA-Z0-9_]{1,20}$/.test(options.name))
     throw new Error("Use the exact Marina account name (1–20 letters, digits or underscores).");
-  const target = parseCodingCommandTarget({ sessionId: options.session });
+  if (options.session === undefined && !options.chooseSession)
+    throw new Error("Connected coding requires a session id.");
+  let target =
+    options.session === undefined
+      ? undefined
+      : parseCodingCommandTarget({ sessionId: options.session });
   const token = options.token ?? cachedParticipantToken(options.name, url, options.cacheDirectory);
   if (!token)
     throw new Error(
@@ -40,7 +71,11 @@ export async function openConnectedCodeSession(
     commandMode: "correlated",
     connectTimeout: 10_000,
   });
-  agent.onPerception(observe);
+  // Listing sessions for the picker is not part of the attached view's output.
+  let listing = false;
+  agent.onPerception((p) => {
+    if (!listing) observe(p);
+  });
   try {
     const identity = await agent.reconnect(token);
     // Reconnect rotates the credential even when a later session preflight is refused.
@@ -51,6 +86,17 @@ export async function openConnectedCodeSession(
       );
     if (identity.name !== options.name)
       saveParticipantToken(options.name, url, identity.token, options.cacheDirectory);
+    if (!target) {
+      listing = true;
+      let sessions: ActiveCodingSession[];
+      try {
+        sessions = activeCodingSessions(await agent.command("code list"));
+      } finally {
+        listing = false;
+      }
+      target = parseCodingCommandTarget({ sessionId: await options.chooseSession!(sessions) });
+    }
+    const sessionId = target.sessionId;
     const result = await agent.command("code status", { codingTarget: target });
     const status = result
       .map(
@@ -65,16 +111,16 @@ export async function openConnectedCodeSession(
               }
             | undefined,
       )
-      .find((code) => code?.event === "session_status" && code.sessionId === target.sessionId);
+      .find((code) => code?.event === "session_status" && code.sessionId === sessionId);
     if (!status?.workspace || status.status !== "active")
       throw new Error(
         "Connected coding requires an accessible active session. Inspect code list before retrying.",
       );
-    const resumed = await agent.command(`code resume ${target.sessionId}`);
+    const resumed = await agent.command(`code resume ${sessionId}`);
     if (
       !resumed.some((p) => {
         const code = p.data.code as { event?: string; sessionId?: string } | undefined;
-        return code?.event === "session_resumed" && code.sessionId === target.sessionId;
+        return code?.event === "session_resumed" && code.sessionId === sessionId;
       })
     )
       throw new Error(
@@ -84,7 +130,7 @@ export async function openConnectedCodeSession(
     if (
       !entered.some((p) => {
         const code = p.data.code as { event?: string; sessionId?: string } | undefined;
-        return code?.event === "code_mode_entered" && code.sessionId === target.sessionId;
+        return code?.event === "code_mode_entered" && code.sessionId === sessionId;
       })
     )
       throw new Error(
@@ -96,7 +142,7 @@ export async function openConnectedCodeSession(
       profile: status.metadata?.profile,
       model: status.metadata?.model,
     });
-    return { agent, url, sessionId: target.sessionId, workspace: status.workspace, harness };
+    return { agent, url, sessionId, workspace: status.workspace, harness };
   } catch (error) {
     agent.disconnect();
     throw error;

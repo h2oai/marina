@@ -28,8 +28,8 @@ aliases. `--model` selects a model understood by the chosen runtime. Native agen
 their own configuration and permission systems; Marina's `--allow-exec` flags apply
 only to Marina's own Code Mode commands. There is no automatic provider failover.
 
-For the fullscreen workspace, run **`marina --tui`** (or add `--tui` to your connected
-`--url … --name … --session …` invocation). It keeps the project location, active
+For the fullscreen workspace, run **`marina --tui`** (or add `--tui` to `marina attach`
+or a connected `--url … --name … --session …` invocation). It keeps the project location, active
 conversation, task status and unread counts visible around the transcript and composer.
 Coding remains a single session; World messages and independent agents continue alongside it.
 Omit `--tui` to use the scrollback terminal described below.
@@ -59,16 +59,23 @@ requests discard their partial answers. The workspace restores the shell on exit
 copying unsent drafts into scrollback. It requires interactive input and output; one-shot
 `-p` and redirected output keep their existing stream behavior. `NO_COLOR=1` disables accents.
 
-Inside the terminal, `/help` shows the controls; Tab completes their names and the
-`/verify` and `/review` actions. Streaming
+The first screen is short: the Marina version, the folder, the agent and its model, whether the
+session is new or resumed, and a one-line hint. A missing model provider is reported only when the
+server itself has none. `--verbose` adds the database, the server endpoints and the federation
+address; `/status` and `/project` show the rest whenever you want them.
+
+Inside the terminal, `/help` shows one screen of essentials and `/help all` lists every control;
+Tab completes their names and the `/verify` and `/review` actions. `/quit`, `/exit` and Ctrl+D
+leave. Streaming
 output preserves the current draft and cursor, including wrapped lines and terminal resizing.
-The prompt shows task/check activity; transcript labels distinguish world messages, check
+The prompt names the folder and what the agent is doing (`myapp · working ›`), and adds what
+is waiting only when something is (`myapp · ready · 1 request · World 3 ›`); transcript labels distinguish world messages, check
 receipts, results, submitted work and review. Permission details appear above a short answer
 prompt. End a line with `\` to continue a task on another line.
 
 In an interactive terminal, **Coding** is the initial view. F6 switches between Coding and
 **World**, preserving each view's draft, cursor, multiline input and command history. The
-prompt's C/W counters show unread output in the other conversation. Use `/view coding` or
+prompt counts unread output in the other conversation (`World 3`, `Coding 2`). Use `/view coding` or
 `/view world` when function keys are unavailable. World input uses normal Marina commands;
 `/world <command>` also works from either conversation. Incoming world events and coding
 output continue to arrive while you focus elsewhere.
@@ -97,6 +104,16 @@ For the selected Marina session, `/status` shows the task, `/diff` shows working
 `/checks` lists recorded verification results; `/status` shows checks still in progress.
 `/history` lists recent task attempts, and `/show <artifact-id>` opens a recorded artifact.
 These are bounded server listings; local transcript pages are available through `/view older`.
+
+Diffs are rendered by the terminal from the structured result, not from the server's text. A
+per-file stat comes first (`3 files · +42 −7`, then one line per file), followed by the hunks:
+added lines green, removed lines red, `@@` hunk headers cyan and file headers bold. Colour is
+added only on an interactive terminal and never when `NO_COLOR` is set; redirected output stays
+plain. A diff entry is kept whole in local history up to the server's 64 KB limit. When the
+server cuts a larger diff, the terminal says so, with the bytes shown versus the total, and
+suggests `code diff <path>` to read one file in full. In `marina --tui`, `/diff` also opens a
+diff view: `n`/`p` jump between files, `]`/`[` between hunks, arrows and PageUp/PageDown scroll,
+and `q` (or Escape) returns to the conversation with your draft unchanged.
 
 Complete an ordinary verified task from this terminal:
 
@@ -157,6 +174,12 @@ terminal and recorded through Marina's existing participant routing. There is no
 three-agent limit. `/agents` lists this terminal's managed roster; independently joined
 participants remain discoverable through `marina route` and the browser Streams view.
 
+When a native agent asks to change a file (Claude `Edit`, `MultiEdit` or `Write`, or a Codex or
+pi patch request), the terminal shows a unified diff against the current file, with its stat,
+before `Allow? [y/N]`. If the text to replace is not in the current file, it shows the requested
+replacement and says the file could not be compared. Other requests still show their JSON input.
+The answer means the same thing either way: only `y` or `yes` allows.
+
 `/dashboard` opens an authenticated Streams workspace with output replay, agent controls,
 permissions and delivery history, without reconnecting the terminal's chat session.
 The browser consumes the credential from the URL fragment into tab storage and removes
@@ -168,10 +191,14 @@ all native processes owned by this terminal and closes its local Marina. Worktre
 the output journal remain available for inspection. Restarting preserves history but
 does **not** replay uncertain work or resume a native process automatically. Run `/agents` to
 restore the recorded roster, inspect its history and workspace, then `/resume <exact-name-or-id>`
-to reconnect a stopped Codex or pi session. Recovery preserves its directory and model, refuses
+to reconnect a stopped Claude, Codex or pi session. Recovery preserves its directory and model, refuses
 missing or changed identities, and sends no prior task again. The dashboard Streams controls offer
-the same action. Claude managed resume remains unavailable until its SDK can confirm the resumed
-identity before input; recover those conversations in Claude itself.
+the same action. Claude reports which conversation it opened only after it reads the first new
+prompt, so a Claude resume is confirmed in two steps: Marina refuses to start unless Claude has a
+recorded session with that id in that directory, and it denies every tool until Claude reports the
+recorded id. If Claude reports a different conversation, Marina interrupts it and marks the run
+failed with `Claude did not resume the recorded session`. The remaining risk is that this first
+prompt's text reaches the opened conversation before confirmation; no tool can run on it.
 
 ### Complete names from your current work
 
@@ -244,8 +271,9 @@ select a runtime, model and dialect; they do not yet package teams, Scores, role
 credentials or approval policies. Changing a bound Marina worker's model takes effect
 between tasks; stop or finish active work first.
 
-Native runtimes also support `marina --agent codex -p "<task>"`. Exit 0 means the native
-turn finished without a reported error, not that Marina verified or approved its work.
+Native runtimes also support `marina --agent codex -p "<task>"`. Marina does not verify a native
+turn, so a finished turn exits `3` ("Native turn finished; Marina did not verify it");
+`--allow-unverified` makes it `0`. Neither means Marina approved the work.
 Missing terminal input denies native permission requests. Marina-native tasks retain
 the canonical task/submission/review workflow described below.
 
@@ -284,7 +312,7 @@ never grant execution permission. Native external runtimes keep their own instru
 
 Use connected coding when your Marina already contains conversations, agents and ongoing
 work. Authenticate as your own resident, select a workspace configured on that server,
-and create or find your session:
+and start a session:
 
 ```bash
 marina connect Owner --url ws://localhost:3300
@@ -293,16 +321,37 @@ marina connect Owner --url ws://localhost:3300
 ```text
 code workspace use /srv/projects/my-project
 code start Repair the application
-code list
 ```
 
-Note the session ID, then disconnect that terminal with Ctrl+D. Attach the coding terminal:
+Disconnect that terminal with Ctrl+D, then attach the coding terminal:
+
+```bash
+marina attach ws://localhost:3300
+```
+
+`marina attach [url] [--name <account>] [--session <id>] [--tui]` fills in what you leave
+out:
+
+| Piece | Resolution |
+|---|---|
+| Server | The argument, then `MARINA_URL`, then the server of your only cached identity. |
+| Account | `--name`, then the only identity cached for that server in `~/.marina/sessions/`. Several: a numbered choice in a terminal, otherwise an error that names them. |
+| Credential | `MARINA_TOKEN`, then the cached credential. None: in a terminal, the `marina connect <name>` login runs first; otherwise attach stops and asks you to authenticate. |
+| Session | `--session`, then your active coding sessions on that server (`code list`). One is attached directly; several give a numbered choice in a terminal, otherwise an error listing them. |
+
+With no active session, attach stops with
+`No active coding sessions for <name> on <url>. Start one there with: marina <folder>.`
+Attach only chooses among identities and sessions you already have. It never creates one.
+
+The explicit form still works, and `MARINA_URL` stands in for `--url`:
 
 ```bash
 marina --url ws://localhost:3300 --name Owner --session code_<id>
 ```
 
-This reconnects the same resident using its cached credential for that server; an explicit
+If a piece is missing, the error names exactly what is missing and suggests `marina attach`.
+
+Attaching reconnects the same resident using its cached credential for that server; an explicit
 `MARINA_TOKEN` also works. An invalid credential or inaccessible session is refused. It
 does not create a replacement identity or world. Reconnection rotates and privately saves
 the credential, including when a later session check refuses the attach. A resident can
@@ -481,17 +530,22 @@ rm -rf /tmp/marina-coding-agent-demo
 
 ### If it does not start
 
-- **“No provider key” or model error:** export a supported provider key in the same shell, then
-  relaunch `bun run code …`.
+- **“No model provider is configured”:** the server found no provider key. Put one in the Marina
+  repository's `.env` (or run `marina init`), or export it in the same shell, then relaunch. A
+  native agent (`/use claude`, `/use codex`, `/use pi`) needs no Marina key.
 - **Server timeout:** run `bun install` in the Marina repository, confirm Bun is at least 1.4.2, and
   retry.
+- **“Marina is already open in this folder”:** another terminal has this folder's session open
+  (the message names its process). Close it, or use `--fresh` for a separate disposable session.
+  A leftover record from a crashed session is detected and cleared automatically.
 - **Stale project database:** a per-folder DB written by an older Marina version can block boot.
   The failure hint prints the exact path (`~/.marina/projects/<slug>/marina.db`) — remove it, or
   relaunch with `--fresh` to use a throwaway DB.
 - **Agent cannot run checks:** use the folder-scoped launcher above; it boots `coder` as the local
   operator. In a shared Marina, `code.exec` remains safety-gated.
 - **Wrong files appear:** exit immediately and relaunch with the explicit absolute demo path. The
-  startup banner prints the directory Marina is confined to; verify it before sending the task.
+  first screen names the folder (`--verbose` prints its full path); `/status` shows the workspace
+  Marina is confined to. Verify it before sending the task.
 
 Once this works, replace the demo path with a clean branch or disposable worktree of your own
 project. Keep the task bounded and name the checks that define completion.
@@ -535,13 +589,22 @@ yours to keep or remove.
 **One-shot mode** (`marina -p "<task>" [dir]`, alias `--print`) dispatches a single task
 non-interactively: it boots (persistent DB by default, so `-p` runs accrete history), streams the
 agent's work as usual, then waits for the structured completion signal. On completion it prints
-the session diff and the agent's summary and exits `0`; if the run fails (the agent dies mid-task
-or is stopped) it exits `1`; if nothing terminal arrives within `MARINA_CODE_TASK_TIMEOUT_MS`
-(default 600000 ms) it sends `code stop` and exits `2` — script-friendly for CI and cron.
+the session diff and the agent's summary. The exit code says what you can rely on:
+
+| Code | Meaning |
+|---|---|
+| `0` | completed, and the run's checks passed (verification `passed`) |
+| `3` | completed but **not verified**: no checks ran, they failed, or the source changed after them. The reason is printed on stderr. `--allow-unverified` makes this `0` (the notice still prints). |
+| `1` | failed: the agent died mid-task or the run was stopped |
+| `2` | timed out after `MARINA_CODE_TASK_TIMEOUT_MS` (default 600000 ms); `code stop` was sent |
+
+`--json` prints one JSON object as the last line of stdout and sends everything else to stderr:
+`{"status":"verified|unverified|failed|timeout","exitCode":…,"verification":…,"verificationReason":…,"taskId":…,"runId":…,"files":[{"path":…,"added":…,"removed":…}],"durationMs":…}`.
 
 ```bash
 marina -p "fix the off-by-one in the tokenizer and add a regression test" ~/projects/acme
-echo $?   # 0 completed · 1 failed · 2 timed out
+echo $?   # 0 verified · 3 completed, not verified · 1 failed · 2 timed out
+marina -p "…" ~/projects/acme --json | tail -1 | jq .status
 ```
 
 Or inside an already-running Marina:
@@ -927,12 +990,18 @@ diff --git a/src/parser.ts b/src/parser.ts
 +  for (let i = 0; i < tokens.length; i++) {
 ```
 
-Marina checks it applies cleanly and stores it as a pending patch. Apply it when you're happy:
+Marina checks it applies cleanly and stores it as a pending patch. The reply shows the patch's
+stat and its first hunk; `code show <patch-id>` prints the whole diff. Apply it when you're happy:
 
 ```
 > code apply last patch
-Applied patch_2a9f… (1 file)
+Patch applied: patch_2a9f…
+1 file · +1 −1
+  src/parser.ts  +1 −1
 ```
+
+The apply reply lists what that patch changed, not the whole workspace; `code diff` shows all
+working changes.
 
 **7. Stay safe.** Snapshot before risky work and reverse it instantly if needed:
 

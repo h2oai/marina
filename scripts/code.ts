@@ -25,16 +25,17 @@
  */
 
 import { createHash } from "node:crypto";
-import { mkdirSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { homedir, hostname, tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
+import { diffStat } from "../src/coding/unified-diff";
 import { formatAge } from "../src/engine/commands/format-duration";
 import { waitForDatabaseLease } from "../src/persistence/database-lease";
 import { MarinaAgent, type Perception } from "../src/sdk/client";
 import { CodeConsole } from "./code-console";
 import { HarnessStore, validateHarness } from "./code-harness";
-import { inferCodeDefaultModel, PROVIDER_KEY_ENV_VARS } from "./code-model";
+import { inferCodeDefaultModel } from "./code-model";
 import { installedCodingAdapters } from "./code-native";
 import { formatCodePerception, terminalText } from "./code-terminal";
 
@@ -56,6 +57,12 @@ export interface CodeSessionOptions {
   allowExec?: boolean;
   /** Auto-approve every host command with no prompt (`--dangerously-allow-all`). */
   dangerouslyAllowAll?: boolean;
+  /** Print startup details (database, endpoints, federation address). */
+  verbose?: boolean;
+  /** `-p`: exit 0 for completed work that was not verified (it is still reported). */
+  allowUnverified?: boolean;
+  /** `-p`: one JSON result object as the last stdout line; human output goes to stderr. */
+  json?: boolean;
 }
 
 /** Interactive host-exec approval posture negotiated with the server. */
@@ -145,17 +152,53 @@ export function projectSlug(absPath: string): string {
  * recoverable mid-run tool errors also stream as `failed` but never carry
  * `terminal: true`.
  */
-export function terminalCodeLifecycle(
-  p: Perception,
-):
-  | {
-      phase: "completed" | "failed";
-      sessionId?: string;
-      summary?: string;
-      verification?: string;
-      reason?: string;
-    }
-  | undefined {
+/** A run's end, as the one-shot exit decides on it. */
+export interface CodeLifecycleEnd {
+  phase: "completed" | "failed";
+  sessionId?: string;
+  summary?: string;
+  /** The run's recorded verification (`passed`, `missing`, `failed`, …). */
+  verification?: string;
+  verificationReason?: string;
+  reason?: string;
+  taskId?: number;
+  runId?: string;
+}
+
+/** `marina -p` exit codes. */
+export const PRINT_EXIT = {
+  verified: 0,
+  failed: 1,
+  timeout: 2,
+  unverified: 3,
+} as const;
+
+/**
+ * The one-shot outcome: completed AND verified is success (0); completed
+ * without passing verification is 3, unless the caller accepts unverified
+ * work (`--allow-unverified`, then 0 with the same notice); failed is 1,
+ * timed out 2.
+ */
+export function printOutcome(
+  end: CodeLifecycleEnd | "timeout" | undefined,
+  allowUnverified = false,
+): {
+  status: "verified" | "unverified" | "failed" | "timeout";
+  exitCode: number;
+  notice?: string;
+} {
+  if (end === "timeout") return { status: "timeout", exitCode: PRINT_EXIT.timeout };
+  if (!end || end.phase === "failed") return { status: "failed", exitCode: PRINT_EXIT.failed };
+  if (end.verification === "passed") return { status: "verified", exitCode: PRINT_EXIT.verified };
+  const notice = `Completed but not verified: ${end.verification ?? "unknown"}${end.verificationReason ? ` — ${end.verificationReason}` : ""}`;
+  return {
+    status: "unverified",
+    exitCode: allowUnverified ? PRINT_EXIT.verified : PRINT_EXIT.unverified,
+    notice,
+  };
+}
+
+export function terminalCodeLifecycle(p: Perception): CodeLifecycleEnd | undefined {
   if (p.kind !== "message") return undefined;
   const code = (p.data as Record<string, unknown> | undefined)?.code as
     | Record<string, unknown>
@@ -167,8 +210,13 @@ export function terminalCodeLifecycle(
     return {
       phase: "completed",
       sessionId,
-      verification: typeof metadata.verification === "string" ? metadata.verification : undefined,
       summary: typeof metadata.summary === "string" ? metadata.summary : undefined,
+      ...(typeof metadata.verification === "string" ? { verification: metadata.verification } : {}),
+      ...(typeof metadata.verificationReason === "string"
+        ? { verificationReason: metadata.verificationReason }
+        : {}),
+      ...(typeof metadata.taskId === "number" ? { taskId: metadata.taskId } : {}),
+      ...(typeof metadata.runId === "string" ? { runId: metadata.runId } : {}),
     };
   }
   if (code.phase === "failed" && metadata.terminal === true) {
@@ -230,6 +278,91 @@ async function waitForReady(
     await new Promise((r) => setTimeout(r, 250));
   }
   return false;
+}
+
+/**
+ * A status line on stderr in the terminal's own colour. `console.error` is
+ * printed red on a terminal, which makes ordinary news look like a failure;
+ * real errors still use it.
+ */
+function say(line: string): void {
+  process.stderr.write(`${line}\n`);
+}
+
+/** Where a folder's running server announces itself (persistent sessions only). */
+export function serverInfoPath(projectDirectory: string): string {
+  return join(projectDirectory, "server.json");
+}
+
+export interface FolderServer {
+  pid: number;
+  port: number;
+  startedAt: number;
+}
+
+/**
+ * The server already running for this folder, if one is: its announcement
+ * exists, its process is alive, and its port answers. A stale announcement
+ * (dead process, silent port) is removed and ignored.
+ */
+export async function runningFolderServer(
+  projectDirectory: string,
+): Promise<FolderServer | undefined> {
+  const path = serverInfoPath(projectDirectory);
+  let info: FolderServer;
+  try {
+    info = JSON.parse(readFileSync(path, "utf8")) as FolderServer;
+  } catch {
+    return undefined;
+  }
+  const alive = (() => {
+    try {
+      process.kill(info.pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+  if (alive && Number.isInteger(info.port)) {
+    try {
+      const res = await fetch(`http://localhost:${info.port}/api/setup-status`, {
+        signal: AbortSignal.timeout(800),
+      });
+      if (res.ok) return info;
+    } catch {
+      // not answering: stale
+    }
+  }
+  rmSync(path, { force: true });
+  return undefined;
+}
+
+/** Marina's own version (package.json), or "" when it cannot be read. */
+function packageVersion(): string {
+  try {
+    const pkg = JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf8")) as {
+      version?: unknown;
+    };
+    return typeof pkg.version === "string" ? pkg.version : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Whether the folder server can reach a model provider — asked of the server,
+ * which loads its own environment, rather than guessed from the launcher's.
+ * Unknown (the endpoint failed) counts as yes: never warn on a guess.
+ */
+export async function serverHasModel(port: number): Promise<boolean> {
+  try {
+    const res = await fetch(`http://localhost:${port}/api/setup-status`);
+    if (!res.ok) return true;
+    const body = (await res.json()) as { hasLlmKey?: unknown };
+    return body.hasLlmKey !== false;
+  } catch {
+    return true;
+  }
 }
 
 /** Grace for the server's own shutdown; `src/main.ts` force-exits after 30 s. */
@@ -327,30 +460,23 @@ export async function runCodeSession(
       : inferCodeDefaultModel(process.env);
   if (harness.agent === "marina" && defaultModel) harness.model = defaultModel;
 
-  console.error(`Marina · ${dir}`);
-  console.error("Booting a folder-scoped session…");
-  console.error(fresh ? "DB · ephemeral (deleted on exit)" : `DB · ${dbPath}`);
-  if (harness.agent !== "marina") {
-    console.error(`Runtime · ${harness.agent} · ${harness.model ?? "native default model"}`);
-  } else if (defaultModel) {
-    console.error(`Model · ${defaultModel}`);
-  } else {
-    // The world still boots without a provider key — agents just can't think.
-    console.error("Warning · no LLM provider key found; the coding agent won't be able to think.");
-    console.error(`  Checked: MARINA_DEFAULT_MODEL, ${PROVIDER_KEY_ENV_VARS.join(", ")}`);
-    console.error(
-      "  Configure a provider, or use /use claude, /use codex, or /use pi for an installed native agent.",
-    );
-  }
+  // The first screen is short: where you are, what runs, and what to type.
+  // Everything else is one command away (/status, /project, --verbose).
+  const verbose = opts.verbose === true;
+  const folderName = basename(dir) || dir;
+  const agentLabel =
+    harness.agent !== "marina"
+      ? `${harness.agent} (${harness.model ?? "its default model"})`
+      : (defaultModel ?? "default model");
+  say(`Starting Marina in ${folderName}…`);
+  if (verbose) say(fresh ? "DB · ephemeral (deleted on exit)" : `DB · ${dbPath}`);
 
   if (execResolution.refusal) {
     // A flag was set but refused (no owned TTY) — say so and stay allowlist-only.
     console.error(`Refused · ${execResolution.refusal}`);
   }
   if (execMode === "prompt") {
-    console.error(
-      "Exec · non-allowlisted host commands will prompt for approval (y/N/a) before running.",
-    );
+    say("Exec · non-allowlisted host commands will prompt for approval (y/N/a) before running.");
   } else if (execMode === "auto") {
     // A loud, one-time banner — this session auto-runs arbitrary host commands.
     console.error("");
@@ -366,10 +492,19 @@ export async function runCodeSession(
   // crashed launcher's orphan) may still be draining and hold the database
   // lease. Wait, bounded, for it to exit; never boot into a held lease.
   if (!fresh) {
+    // A folder already open in another terminal: say so at once, instead of
+    // waiting out the database lease and failing.
+    const open = await runningFolderServer(projectDirectory);
+    if (open) {
+      console.error(
+        `Marina is already open in this folder (pid ${open.pid}, started ${new Date(open.startedAt).toLocaleString()}). Close it, or open a separate disposable session with --fresh.`,
+      );
+      process.exit(1);
+    }
     try {
       const { waitedMs } = await waitForDatabaseLease(dbPath);
       if (waitedMs >= 1_000) {
-        console.error(
+        say(
           `Waited ${Math.round(waitedMs / 1000)}s for a previous server to release the database.`,
         );
       }
@@ -435,6 +570,7 @@ export async function runCodeSession(
     cleaning ??= (async () => {
       if ((await stopServerProcess(server)) === "killed")
         console.error("Server did not stop in time; killed it.");
+      if (!fresh) rmSync(serverInfoPath(projectDirectory), { force: true });
       // Only ephemeral (--fresh) DBs are deleted — the per-folder persistent
       // DB is the whole point of resume.
       if (fresh) {
@@ -513,26 +649,46 @@ export async function runCodeSession(
     }
     await cleanup(1);
   }
+  if (!fresh) {
+    // Announce this folder's server so a second launch here can say so at once.
+    mkdirSync(projectDirectory, { recursive: true });
+    writeFileSync(
+      serverInfoPath(projectDirectory),
+      JSON.stringify({ pid: server.pid, port, startedAt: Date.now() } satisfies FolderServer),
+      { mode: 0o600 },
+    );
+  }
 
   try {
     const session = await agent.connect("coder");
-    console.error(`Ready as ${session.name}.`);
+    if (verbose) say(`Ready as ${session.name}.`);
   } catch (err) {
     console.error(`Failed to connect: ${(err as Error).message}`);
     await cleanup(1);
   }
 
-  // Instance coordinates — every Marina announces its own invitation.
-  const host = hostname();
-  console.error(`WS · ws://localhost:${port}`);
-  console.error(`Dashboard · http://localhost:${port}`);
-  console.error(`Federate · gateway add ${host} ws://${host}:${port}`);
+  say(`Marina ${packageVersion()} · ${folderName} · ${agentLabel}`);
+  // The provider check asks the SERVER, which loads its own environment (the
+  // repo .env): the launcher's environment says nothing about what it can use.
+  if (harness.agent === "marina" && !(await serverHasModel(port))) {
+    console.error(
+      `No model provider is configured for the agent. Set a key in ${join(REPO_ROOT, ".env")} or run marina init; or use /use claude, /use codex or /use pi.`,
+    );
+  }
+  if (verbose) {
+    // Instance coordinates — every Marina announces its own invitation.
+    const host = hostname();
+    say(`WS · ws://localhost:${port}`);
+    say(`Dashboard · http://localhost:${port}`);
+    say(`Federate · gateway add ${host} ws://${host}:${port}`);
+  }
 
-  // Let the login bootstrap drain silently, then start echoing and enter Code
-  // Mode — its banner and everything after arrive via the onPerception stream.
+  // Let the login bootstrap drain silently, then enter Code Mode. Its banner
+  // is for other clients; this terminal prints its own short summary, and
+  // echoes everything after it.
   await new Promise((r) => setTimeout(r, 400));
-  echoPerceptions = true;
   const entered = await agent.command("code");
+  echoPerceptions = true;
 
   // Resume status: the code_mode_entered metadata says whether a prior session
   // (persistent DB) was picked back up. Ephemeral runs always start clean.
@@ -545,9 +701,12 @@ export async function runCodeSession(
       const createdAt = typeof code.sessionCreatedAt === "number" ? code.sessionCreatedAt : 0;
       const age = createdAt > 0 ? `${formatAge(Date.now() - createdAt)} ago` : "earlier";
       const workspace = typeof code.workspace === "string" ? code.workspace : dir;
-      console.error(`Resuming session ${code.sessionId} — started ${age}, workspace ${workspace}`);
+      const title = typeof code.title === "string" && code.title ? `“${code.title}”, ` : "";
+      say(`Resuming ${title}started ${age}${workspace !== dir ? ` in ${workspace}` : ""}.`);
     } else {
-      console.error("No active session yet.");
+      say("New session.");
+      if (!opts.print)
+        say("Tip: /project shows readiness; /diff, /checks and /review follow a task.");
     }
     break;
   }
@@ -575,6 +734,13 @@ export async function runCodeSession(
     directory: fresh ? `${dbPath}.runner` : join(projectDirectory, "terminal-runner"),
     harness,
     store: harnessStore,
+    // `-p --json` keeps stdout for the one result object: everything else to stderr.
+    ...(opts.json && opts.print !== undefined
+      ? {
+          plainOutput: process.stderr,
+          terminalStreams: { output: process.stderr as unknown as NodeJS.WriteStream },
+        }
+      : {}),
     finish: (code) => {
       agent.disconnect();
       void cleanup(code);
@@ -587,30 +753,66 @@ export async function runCodeSession(
     await sessionConsole.close(1);
     return;
   }
+  const started = Date.now();
+  /** The one-shot result: a notice on stderr, the JSON object last on stdout. */
+  const finishPrint = async (
+    outcome: ReturnType<typeof printOutcome>,
+    end?: CodeLifecycleEnd,
+    diff?: string,
+  ) => {
+    if (outcome.notice) console.error(outcome.notice);
+    if (opts.json) {
+      process.stdout.write(
+        `${JSON.stringify({
+          status: outcome.status,
+          exitCode: outcome.exitCode,
+          verification: end?.verification ?? null,
+          verificationReason: end?.verificationReason ?? null,
+          taskId: end?.taskId ?? null,
+          runId: end?.runId ?? null,
+          files: diff ? diffFileStats(diff) : [],
+          durationMs: Date.now() - started,
+        })}\n`,
+      );
+    }
+    await sessionConsole?.close(outcome.exitCode);
+  };
+
   if (opts.print !== undefined && harness.agent !== "marina") {
     const timeout =
       Number.parseInt(process.env.MARINA_CODE_TASK_TIMEOUT_MS ?? "", 10) || DEFAULT_TASK_TIMEOUT_MS;
-    let code = 0;
     try {
       await sessionConsole.task(opts.print, true, timeout);
-      console.error(
-        "Native turn finished. Review its output and workspace changes; task approval is separate.",
-      );
     } catch (error) {
       console.error(String(error));
-      code = /timed out/i.test(String(error)) ? 2 : 1;
+      await finishPrint(
+        /timed out/i.test(String(error)) ? printOutcome("timeout") : printOutcome(undefined),
+      );
+      return;
     }
-    await sessionConsole.close(code);
+    // A native turn has no Marina verification: finished is not verified.
+    await finishPrint(
+      printOutcome(
+        {
+          phase: "completed",
+          verification: "missing",
+          verificationReason:
+            "Native turn finished; Marina did not verify it. Review its output and workspace changes; task approval is separate.",
+        },
+        opts.allowUnverified,
+      ),
+    );
     return;
   }
 
   // One-shot mode (`marina -p "<task>"`): dispatch, stream, await the terminal
-  // lifecycle signal, then exit — 0 completed, 1 failed, 2 timeout.
+  // lifecycle signal, then exit — 0 verified, 3 completed but not verified,
+  // 1 failed, 2 timeout (`printOutcome`).
   if (opts.print !== undefined) {
     const task = opts.print.trim();
     if (!task) {
       console.error("Empty task — nothing to do.");
-      await sessionConsole.close(1);
+      await finishPrint(printOutcome(undefined));
       return;
     }
     const timeoutMs =
@@ -627,7 +829,7 @@ export async function runCodeSession(
       await sessionConsole.task(task, false, timeoutMs, true);
     } catch (error) {
       console.error(String(error));
-      await sessionConsole.close(1);
+      await finishPrint(printOutcome(undefined));
       return;
     }
     let terminal: ReturnType<typeof terminalCodeLifecycle>;
@@ -639,27 +841,32 @@ export async function runCodeSession(
       await agent.command("code stop").catch(() => {
         /* best-effort */
       });
-      await sessionConsole.close(2);
+      await finishPrint(printOutcome("timeout"));
       return;
     }
     if (!terminal || terminal.phase === "failed") {
       console.error(`Task failed${terminal?.reason ? `: ${terminal.reason}` : "."}`);
-      await sessionConsole.close(1);
-      return;
-    }
-    if (terminal.verification !== "passed") {
-      console.error(
-        `Task submitted without current verification (${terminal.verification ?? "unknown"}). Inspect code review before accepting it.`,
-      );
-      if (terminal.summary) process.stdout.write(`\n${terminal.summary}\n`);
-      await sessionConsole.close(1);
+      await finishPrint(printOutcome(terminal), terminal);
       return;
     }
     // Completed: show the session diff, then the durable summary text.
-    await agent.command("code diff"); // output streams through the perception echo
-    if (terminal.summary) process.stdout.write(`\n${terminal.summary}\n`);
-    await sessionConsole.close(0);
+    const diffReply = await agent.command("code diff"); // output streams through the perception echo
+    const diff = diffReply
+      .map((p) => p.data?.code as { type?: unknown; content?: unknown } | undefined)
+      .find((c) => c?.type === "diff" && typeof c.content === "string")?.content as
+      | string
+      | undefined;
+    if (terminal.summary)
+      (opts.json ? process.stderr : process.stdout).write(`\n${terminal.summary}\n`);
+    await finishPrint(printOutcome(terminal, opts.allowUnverified), terminal, diff);
   }
+}
+
+/** Per-file added/removed line counts of a unified diff (the shared, hunk-aware parser). */
+export function diffFileStats(
+  diff: string,
+): Array<{ path: string; added: number; removed: number }> {
+  return diffStat(diff).map(({ path, added, removed }) => ({ path, added, removed }));
 }
 
 if (import.meta.main) {

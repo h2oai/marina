@@ -7,21 +7,24 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { getErrorMessage } from "../src/engine/errors";
 import type { CommandOptions, MarinaAgent, Perception } from "../src/sdk/client";
+import { colorizeDiff, diffColorEnabled } from "./code-diff";
 import { CodeDiscovery } from "./code-discovery";
 import { type CodingHarness, codingAgent, type HarnessStore } from "./code-harness";
 import { inferCodeDefaultModel } from "./code-model";
 import { installedCodingAdapters, NativeTerminal, type TerminalAgent } from "./code-native";
-import { codingSessionPhase, workerActivityLabel } from "./code-presentation";
+import { codePerceptionFormat, codingSessionPhase, workerActivityLabel } from "./code-presentation";
 import {
   CodeTerminal,
   type CodeTerminalOptions,
   formatCodePerception,
   isWorldInput,
+  QUIT_INPUTS,
+  terminalEssentials,
   terminalHelp,
   terminalText,
   verificationReadinessLabel,
 } from "./code-terminal";
-import { perceptionView, type TranscriptView } from "./code-views";
+import { type EntryFormat, perceptionView, type TranscriptView } from "./code-views";
 import { workflowCommand } from "./code-workflow";
 
 export interface CodeConsoleOptions {
@@ -37,6 +40,8 @@ export interface CodeConsoleOptions {
   sessionId?: string;
   tui?: boolean;
   terminalStreams?: Pick<CodeTerminalOptions, "input" | "output">;
+  /** Where plain (non-terminal) output goes; default stdout. `-p --json` uses stderr. */
+  plainOutput?: NodeJS.WritableStream;
 }
 
 export class CodeConsole {
@@ -155,22 +160,37 @@ export class CodeConsole {
         .replaceAll(encodeURIComponent(token), "[redacted]");
     return terminalText(text);
   }
-  write(text: string, view: TranscriptView = "all", urgent = false) {
+  write(text: string, view: TranscriptView = "all", urgent = false, format?: EntryFormat) {
     this.updatePrompt();
     text = this.safeText(text);
-    if (this.terminal) this.terminal.write(text, view, urgent);
-    else process.stdout.write(`${text}\n`);
+    if (this.terminal) this.terminal.write(text, view, urgent, format);
+    else {
+      const out = this.options.plainOutput ?? process.stdout;
+      out.write(
+        `${format === "diff" ? colorizeDiff(text, diffColorEnabled(out as { isTTY?: boolean })) : text}\n`,
+      );
+    }
   }
   /** The one perception printer: metadata drives local views, never rendered prose. */
+  /**
+   * While the console sets itself up (selecting the launch harness), the
+   * replies to its own setup commands are bookkeeping, not news: they are
+   * observed but not printed. Errors and approval requests always print.
+   */
+  private settingUp = false;
+
   receive(p: Perception) {
     this.observe(p);
     this.discovery.observe(p, this.sessionId);
+    const urgent = p.kind === "error" || p.kind === "auth_error" || !!p.data?.execApproval;
+    if (this.settingUp && !urgent) return;
     const text = formatCodePerception(p, this.sessionId);
     if (text)
       this.write(
         text,
         perceptionView(p),
         p.kind === "error" || p.kind === "auth_error" || !!p.data?.execApproval,
+        codePerceptionFormat(p),
       );
   }
   ask(text: string, signal?: AbortSignal) {
@@ -346,7 +366,7 @@ export class CodeConsole {
     if (
       isWorldInput(text) ||
       /^\/(?:view|panel)(?:\s|$)/.test(text) ||
-      ["/help", "/agents", "/stop", "/quit", "exit", "quit"].includes(text)
+      ["/help", "/help all", "/agents", "/stop", ...QUIT_INPUTS].includes(text)
     )
       return this.line(text, destination).catch(report);
     this.commands = this.commands.then(() => this.line(text, destination)).catch(report);
@@ -398,30 +418,21 @@ export class CodeConsole {
         },
       });
     }
-    if (interactive) {
-      this.write(
-        "Start with /project to inspect readiness, then /task <request> for verified work. /diff → /checks → /review follows the result; /history recalls prior attempts.",
-      );
-      this.write(
-        "F6 switches Coding/World; F7 opens pending requests. /view lists views; /help lists controls.",
-      );
-      this.write(
-        `Available runtimes: marina${(this.options.connected ? [] : installedCodingAdapters())
-          .map((a) => `, ${a.id}`)
-          .join("")}`,
-      );
-    }
+    if (interactive) this.write("Type a task in plain words, or /help.");
     if (this.options.connected) {
       this.terminal?.setTarget(`marina:${this.sessionId}`);
       this.write(
         "Connected to an existing world. Closing this terminal leaves its agents and tasks running.",
       );
-      if (interactive) await this.submit("/project");
       return;
     }
-    this.commands = this.selectHarness(this.harness);
-    await this.commands;
-    if (interactive && this.harness.agent === "marina") await this.submit("/project");
+    this.settingUp = true;
+    try {
+      this.commands = this.selectHarness(this.harness, { quiet: true });
+      await this.commands;
+    } finally {
+      this.settingUp = false;
+    }
   }
   private async runtime() {
     if (this.options.connected)
@@ -436,7 +447,7 @@ export class CodeConsole {
           token: this.options.agent.getSession()!.token,
           root: this.options.root,
           directory: this.options.directory,
-          write: (text) => this.write(text, "coding"),
+          write: (text, format) => this.write(text, "coding", false, format),
           ask: (text, signal) => this.ask(text, signal),
         });
         await runtime.start();
@@ -452,7 +463,7 @@ export class CodeConsole {
     }
     return this.startingNative;
   }
-  private async selectHarness(harness: CodingHarness) {
+  private async selectHarness(harness: CodingHarness, opts: { quiet?: boolean } = {}) {
     if (this.options.connected && harness.agent !== "marina")
       throw new Error(
         "Connected mode uses Marina's server-side coding agent; no local native runtime was launched.",
@@ -497,9 +508,10 @@ export class CodeConsole {
           ? `marina:${this.sessionId}`
           : "marina",
     );
-    this.write(
-      `Harness · ${harness.agent}${harness.model ? ` · ${harness.model}` : " · runtime default model"}${harness.profile ? ` · Marina dialect: ${harness.profile}` : ""}`,
-    );
+    if (!opts.quiet)
+      this.write(
+        `Harness · ${harness.agent}${harness.model ? ` · ${harness.model}` : " · runtime default model"}${harness.profile ? ` · Marina dialect: ${harness.profile}` : ""}`,
+      );
   }
   async task(text: string, wait = false, timeoutMs = 600_000, unattended = false) {
     this.interrupted = false;
@@ -532,7 +544,7 @@ export class CodeConsole {
   }
   private async line(text: string, destination: { sessionId?: string; nativeId?: string }) {
     if (this.closing) return;
-    if (["/quit", "exit", "quit"].includes(text)) {
+    if (QUIT_INPUTS.includes(text)) {
       await this.close(0);
       return;
     }
@@ -555,7 +567,14 @@ export class CodeConsole {
       return;
     }
     if (verb === "/help") {
-      this.write(terminalHelp(this.options.connected));
+      this.write(
+        argument === "all"
+          ? terminalHelp(this.options.connected)
+          : terminalEssentials(
+              this.options.connected,
+              this.options.connected ? [] : installedCodingAdapters().map((a) => a.id),
+            ),
+      );
       return;
     }
     if (verb === "/stop") {
@@ -599,10 +618,16 @@ export class CodeConsole {
         throw new Error(
           "These controls inspect Marina's coding session. /use marina selects it; native agents keep their own tools.",
         );
-      await this.command(
+      const results = await this.command(
         workflow,
         destination.sessionId ? { codingTarget: { sessionId: destination.sessionId } } : undefined,
       );
+      // In --tui, /diff also opens the navigable diff view over the same
+      // structured result. The transcript entry is unchanged.
+      if (verb === "/diff" && this.terminal) {
+        const shown = results.find((p) => codePerceptionFormat(p) === "diff");
+        if (shown) this.terminal.showDiff(this.safeText(formatCodePerception(shown)));
+      }
       return;
     }
     if (verb === "/agents") {
