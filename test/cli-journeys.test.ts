@@ -45,7 +45,12 @@ const screen = (raw: string) => terminalText(raw);
 async function journey(
   name: string,
   steps: Step[],
-  opts: { args?: string[]; exitKeys?: string } = {},
+  opts: {
+    args?: string[];
+    exitKeys?: string;
+    /** Runs at the first prompt, with the scratch folder, HOME and project paths. */
+    atPrompt?: (paths: { project: string; home: string }) => Promise<void>;
+  } = {},
 ): Promise<{ metrics: JourneyMetrics; text: string; firstScreen: string }> {
   const scratch = mkdtempSync(join(tmpdir(), "marina-journey-"));
   const project = join(scratch, "project");
@@ -93,6 +98,7 @@ async function journey(
     const promptLine = lines.findIndex((l) => PROMPT.test(l));
     const firstScreen = lines.slice(0, promptLine).join("\n");
     const linesBeforePrompt = lines.slice(0, promptLine).filter((l) => l.trim()).length;
+    await opts.atPrompt?.({ project, home });
     for (const step of steps) {
       const from = raw.length;
       tty.write(step.keys);
@@ -160,6 +166,29 @@ describe.skipIf(process.platform === "win32")("terminal journeys", () => {
       { keys: "/status\r", until: (t) => /session|status/i.test(t) && PROMPT.test(t.trimEnd()) },
     ]);
     expect(m.exitCode).toBe(0);
+  }, 60_000);
+
+  test("open twice: a second marina in an open folder says so at once", async () => {
+    let second: { exitCode: number | null; stderr: string; ms: number } | undefined;
+    const { metrics: m } = await journey("open-twice", [], {
+      args: [],
+      atPrompt: async ({ project, home }) => {
+        const started = performance.now();
+        const r = Bun.spawnSync(
+          [process.execPath, "--env-file=/dev/null", resolve("scripts/marina.ts"), project],
+          { cwd: project, env: { PATH: process.env.PATH, HOME: home, NO_COLOR: "1" } },
+        );
+        second = {
+          exitCode: r.exitCode,
+          stderr: r.stderr.toString(),
+          ms: performance.now() - started,
+        };
+      },
+    });
+    expect(m.exitCode).toBe(0);
+    expect(second?.exitCode).toBe(1);
+    expect(second?.stderr).toContain("Marina is already open in this folder");
+    expect(second!.ms).toBeLessThan(5_000);
   }, 60_000);
 
   test("verbose: --verbose shows the startup details the first screen leaves out", async () => {

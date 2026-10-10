@@ -25,7 +25,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { homedir, hostname, tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
@@ -268,6 +268,54 @@ function say(line: string): void {
   process.stderr.write(`${line}\n`);
 }
 
+/** Where a folder's running server announces itself (persistent sessions only). */
+export function serverInfoPath(projectDirectory: string): string {
+  return join(projectDirectory, "server.json");
+}
+
+export interface FolderServer {
+  pid: number;
+  port: number;
+  startedAt: number;
+}
+
+/**
+ * The server already running for this folder, if one is: its announcement
+ * exists, its process is alive, and its port answers. A stale announcement
+ * (dead process, silent port) is removed and ignored.
+ */
+export async function runningFolderServer(
+  projectDirectory: string,
+): Promise<FolderServer | undefined> {
+  const path = serverInfoPath(projectDirectory);
+  let info: FolderServer;
+  try {
+    info = JSON.parse(readFileSync(path, "utf8")) as FolderServer;
+  } catch {
+    return undefined;
+  }
+  const alive = (() => {
+    try {
+      process.kill(info.pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+  if (alive && Number.isInteger(info.port)) {
+    try {
+      const res = await fetch(`http://localhost:${info.port}/api/setup-status`, {
+        signal: AbortSignal.timeout(800),
+      });
+      if (res.ok) return info;
+    } catch {
+      // not answering: stale
+    }
+  }
+  rmSync(path, { force: true });
+  return undefined;
+}
+
 /** Marina's own version (package.json), or "" when it cannot be read. */
 function packageVersion(): string {
   try {
@@ -423,6 +471,15 @@ export async function runCodeSession(
   // crashed launcher's orphan) may still be draining and hold the database
   // lease. Wait, bounded, for it to exit; never boot into a held lease.
   if (!fresh) {
+    // A folder already open in another terminal: say so at once, instead of
+    // waiting out the database lease and failing.
+    const open = await runningFolderServer(projectDirectory);
+    if (open) {
+      console.error(
+        `Marina is already open in this folder (pid ${open.pid}, started ${new Date(open.startedAt).toLocaleString()}). Close it, or open a separate disposable session with --fresh.`,
+      );
+      process.exit(1);
+    }
     try {
       const { waitedMs } = await waitForDatabaseLease(dbPath);
       if (waitedMs >= 1_000) {
@@ -492,6 +549,7 @@ export async function runCodeSession(
     cleaning ??= (async () => {
       if ((await stopServerProcess(server)) === "killed")
         console.error("Server did not stop in time; killed it.");
+      if (!fresh) rmSync(serverInfoPath(projectDirectory), { force: true });
       // Only ephemeral (--fresh) DBs are deleted — the per-folder persistent
       // DB is the whole point of resume.
       if (fresh) {
@@ -569,6 +627,15 @@ export async function runCodeSession(
       );
     }
     await cleanup(1);
+  }
+  if (!fresh) {
+    // Announce this folder's server so a second launch here can say so at once.
+    mkdirSync(projectDirectory, { recursive: true });
+    writeFileSync(
+      serverInfoPath(projectDirectory),
+      JSON.stringify({ pid: server.pid, port, startedAt: Date.now() } satisfies FolderServer),
+      { mode: 0o600 },
+    );
   }
 
   try {
