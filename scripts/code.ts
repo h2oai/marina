@@ -29,6 +29,7 @@ import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:f
 import { createServer } from "node:net";
 import { homedir, hostname, tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
+import { diffStat } from "../src/coding/unified-diff";
 import { formatAge } from "../src/engine/commands/format-duration";
 import { waitForDatabaseLease } from "../src/persistence/database-lease";
 import { MarinaAgent, type Perception } from "../src/sdk/client";
@@ -838,24 +839,11 @@ export async function runCodeSession(
   }
 }
 
-/** Per-file added/removed line counts of a unified diff. */
+/** Per-file added/removed line counts of a unified diff (the shared, hunk-aware parser). */
 export function diffFileStats(
   diff: string,
 ): Array<{ path: string; added: number; removed: number }> {
-  const files: Array<{ path: string; added: number; removed: number }> = [];
-  let current: { path: string; added: number; removed: number } | undefined;
-  for (const line of diff.split("\n")) {
-    const header = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
-    if (header) {
-      current = { path: header[2]!, added: 0, removed: 0 };
-      files.push(current);
-      continue;
-    }
-    if (!current || line.startsWith("+++") || line.startsWith("---")) continue;
-    if (line.startsWith("+")) current.added++;
-    else if (line.startsWith("-")) current.removed++;
-  }
-  return files;
+  return diffStat(diff).map(({ path, added, removed }) => ({ path, added, removed }));
 }
 
 if (import.meta.main) {
