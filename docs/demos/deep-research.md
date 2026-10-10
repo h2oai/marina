@@ -53,7 +53,7 @@ linked notes.
 Optional: export the state for later replay.
 
 ```bash
-./scripts/export.sh demos/deep-research
+./scripts/export.sh marina.db demos/deep-research.json
 ```
 
 This loop demonstrates how external context (Memory API), continuous monitors

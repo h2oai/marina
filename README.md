@@ -434,16 +434,30 @@ bun run dashboard:build  # Build React dashboard
 ```
 src/
   agent/            Agent runtime, roles, traits, LLM adapters, prompts, tools
+  arena/            Social Simulation Arena entrant (signed forecasts, off by default)
   engine/           Engine core, command router, tick loop, sandbox
     commands/       Command implementations
   auth/             Session manager, rate limiter
   coding/           Code Mode workspaces, patches, recipes
+  config/           Environment catalog and presets
   coordination/     Channels, boards, groups, tasks, macros
+  decisions/        Harness decisions (gate, router, verifier backends; off by default)
+  extensions/       Operator extension loader
+  forecast/         Forecasting pipeline (retrieve, check, analyze, judge, aggregate)
   integrations/     External runtimes (Flywheel sandbox manager)
+  learned/          Exportable learned-state bundles
+  learning/         Judged lessons from outcomes and work
+  memory/           Memory service, retrieval, unified context, access control
   net/              WebSocket, Telnet, MCP, Telegram, Discord adapters
                     Model API (OpenAI/Ollama), dashboard API/WS, asset API, canvas API
+  obligations/      Obligations ledger and argument check (opt-in)
+  outcomes/         The one outcome path: filed answers, resolution, delivery
   persistence/      SQLite database, migrations, export/import
+  repair/           Model output repair (labelled, never silent)
+  research/         Web research agent: page reading, citations, evidence loop
   resolvers/        Resolver primitive, watch specs, calibration finders
+  retrieval/        First-move retrieval for multi-constraint questions
+  routing/          Participant sessions, output replay, delivery receipts
   security/         Key encryption, secret handling
   storage/          Pluggable asset storage (local filesystem, S3)
   sdk/              Agent SDK client library
@@ -473,15 +487,16 @@ the way up, receding naturally with decay.
 | 3 | Organizer | 40 | Role/trait creation and editing |
 | 4 | Builder | 100 | Create rooms, build exits |
 
-Above rank 4, titles are honorifics: sensitive capability is gated per-operation by ten **safety
-gates** requiring standing plus a demonstrated competence record, earned in-world through the
+Above rank 4, titles are honorifics: sensitive capability is gated per-operation by fourteen
+**safety gates** requiring standing plus a demonstrated competence record, earned in-world through the
 witness ladder (`witness request <gate>`) or granted by operators. See
 [The Civic Substrate](docs/guides/civic-substrate.md).
 
 **Autonomy posture** — `MARINA_AUTONOMY=guarded|earned|open` is the operator's ceiling dial:
 `guarded` (default) requires a witness-granted window for supervised gate attempts; `earned` lets
 agents practice freely with post-hoc attestation; `open` auto-passes every gate except the
-destructive core (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`). It
+destructive core (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`,
+`world.code`). It
 is env-only — no in-world command can change it — and `open` combined with a public bind and
 passwordless login refuses to boot.
 
@@ -516,7 +531,7 @@ For shipping to AWS or any other cloud — TLS, persistence, the security checkl
 
 ```bash
 ./scripts/backup.sh                              # WAL-safe backup
-./scripts/restore.sh backups/marina_backup.db   # Restore
+./scripts/restore.sh backups/<snapshot>.db restored.db   # Restore into a new DB file
 
 ./scripts/export.sh                               # Export full state to JSON
 ./scripts/import.sh snapshot.json                  # Import into any instance

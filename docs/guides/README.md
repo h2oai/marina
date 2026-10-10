@@ -15,6 +15,7 @@ and operate the environment. Start with one path below; the full catalog follows
 | Connect coding assistants or an ACP editor | [Coding agents and editors](coding-agent-integrations.md) | [Coding](coding.md) |
 | Compare desktop, dashboard and TUI | [Interface guide](interfaces.md) | [Published panels](published-panels.md) |
 | Run Marina and see one useful result | [Getting Started](getting-started.md) | [Dashboard](dashboard.md) |
+| [Dashboard accessibility](dashboard-accessibility.md) | The axe-core scan (`bun run test:a11y`) and the accessibility lint contract |
 | Use the packaged desktop app | [Getting Started: packaged desktop](getting-started.md#packaged-desktop-app) | [Dashboard](dashboard.md) |
 | Connect Claude or another MCP client | [MCP Integration](mcp-integration.md) | [Connecting](connecting.md) |
 | Point an OpenAI-compatible client at Marina | [Model API](model-api.md) | [Execution Traces](observability.md) |
@@ -23,10 +24,14 @@ and operate the environment. Start with one path below; the full catalog follows
 | Build a long-running agent | [Agent Development](agent-development.md) | [Memory](memory.md) |
 | Use Marina only as an external agent's memory | [Symbolic memory interfaces](memory-interfaces.md) | TypeScript SDK, MCP for coding agents, portable skill, resident and human access without embeddings |
 | Ask agents to help with memory | [Memory assistance](memory-assistance.md) | Librarians, reflectors, evaluators, and recursive delegation through Marina's model router |
+| [Put memory to work](memory-workflows.md) | Retrieve evidence now, or hand work to a task a fresh agent can continue |
+| [Portable memory extensions](memory-extensions.md) | External interfaces (e.g. LangGraph store) over the same durable memory service |
 | Deploy a standalone memory service | [Standalone Memory Service](memory-service.md) | [Storage admission and failure recovery](memory-service.md#storage-admission-and-failure-recovery) |
 | Run an autonomous coding task | [Coding in Marina](coding.md#first-autonomous-fix-copy-and-paste) | [Troubleshooting](troubleshooting.md) |
 | Keep coding, messages and world activity together | [Coding terminal](coding.md#start-in-your-project-folder) | [Coding desks](published-panels.md#create-a-coding-desk) |
 | Deploy a shared instance | [Deployment](deployment.md) | [Authentication](../authentication.md) |
+| [Backup and recovery](recovery.md) | Snapshots, restore, and recovering a damaged database |
+| [Compatibility and upgrades](compatibility.md) | Supported contract per surface, how each is qualified, and upgrades |
 | Review human and agent identity controls | [Identity and workload security](identity.md) | [Authentication](../authentication.md) |
 | Run isolated A/B Marina variants | [World Collective](world-collective.md) | [Execution Traces](observability.md) |
 | Register another Marina without assuming trust | [Federation discovery](federation-discovery.md) | [Inheritance](inheritance.md) |
@@ -103,11 +108,14 @@ degraded, or off and gives the next concrete action without exposing secrets.
 | [Memory System](memory.md) | Notes, recall, core memory, knowledge graph, reflection, pools, goals, learning |
 | [Autonomous Quality Loops](autonomous-quality-loops.md) | Provenance-aware contradictions, outcome-trained attention, and productivity measurement |
 | [Behavior Surfaces](behavior-surfaces.md) | When to use roles, traits, skills, guide notes, project pools, tradition pools, or the chronicle |
+| [Agent prompt architecture](agent-prompt-architecture.md) | How system and continuation prompts are composed, budgeted and edited through roles |
+| [Native Evolution Protocols](native-evolution.md) | Durable iterative experiments without a privileged evolver agent (off by default) |
 | [Memory API](memory-api.md) | REST API for external agents — notes, recall, knowledge graph, pools |
 | [Standalone Memory Service](memory-service.md) | Scoped HTTP memory, hybrid retrieval, raw sources, checkpoints and a forced-restart agent proof |
 | [Memory assistance](memory-assistance.md) | Scoped agent-to-agent requests, cited proposals, recoverable leases, and bounded delegation |
 | [Coordination](coordination.md) | Channels, boards, groups, tasks, goals, projects, orchestration, use-case recipes |
 | [Building Worlds](building-worlds.md) | Create rooms, worlds, room agents, quests, and custom commands |
+| [Extending Marina](extending.md) | Command extensions, external worlds, or the SDK — which to use when |
 | [Focused Example Worlds](example-worlds.md) | Launch Prediction Lab, Deep Research, Red Team, Due Diligence, and Data Investigation workflows |
 | [Agent Development](agent-development.md) | Hello world agent, web access, goals, recipes, TypeScript SDK |
 | [Model API](model-api.md) | Use Marina as an OpenAI-compatible LLM endpoint |

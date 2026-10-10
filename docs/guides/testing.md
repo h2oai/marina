@@ -61,7 +61,7 @@ The public API explorer has a separate browser check: `bun run test:explorer`. I
 the site and exercises schema expansion, templates, deep links, search and mobile layout.
 
 Use `bun run test` for the backend and `bun run test:ui` for the dashboard.
-The backend contains more than 4,500 tests and can take several minutes, depending
+The backend suite has thousands of tests and can take several minutes, depending
 on available CPU and storage. A 120-second external cutoff is not a leak detector. This
 guide covers the shorter loops and the conventions that keep them short. The
 reference for file layout and rules is `test/README.md`.

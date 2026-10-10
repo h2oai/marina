@@ -90,7 +90,7 @@ Five read commands at rank 0 (anyone can inspect):
 - `chronicle kinds` — distinct source counts (e.g. how many `crew_completed` vs `rank_change`)
 - `chronicle pending [since <dur>]` — un-narrated `event` entries, the Chronicler's work queue. Cursor defaults to "since the most recent narrative or digest entry"; falls back to 1 hour ago when no synthesis exists.
 
-`recap chronicle [day|week]` (pass 3) will be the LLM-synthesized lens over the same data — secondary, not primary. The chronicle command is always the source of truth.
+`recap chronicle [day|week]` (pass 3) is the LLM-synthesized lens over the same data — secondary, not primary. The chronicle command is always the source of truth.
 
 ## Writing to the chronicle
 
