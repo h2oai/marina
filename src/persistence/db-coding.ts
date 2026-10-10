@@ -402,12 +402,17 @@ export function listCodingRuns(db: Database, query: CodingRunQuery = {}): Coding
     .all(...values) as CodingArtifactRow[];
 }
 
-export function listCodingRunArtifacts(db: Database, runId: string): CodingArtifactRow[] {
+export function listCodingRunArtifacts(
+  db: Database,
+  runId: string,
+  kinds?: string[],
+): CodingArtifactRow[] {
+  if (kinds && !kinds.length) return [];
   return db
     .query(
-      "SELECT * FROM coding_artifacts WHERE json_extract(metadata_json, '$.runId') = ? ORDER BY rowid DESC LIMIT 500",
+      `SELECT * FROM coding_artifacts WHERE json_extract(metadata_json, '$.runId') = ?${kinds ? ` AND kind IN (${kinds.map(() => "?").join(",")})` : ""} ORDER BY rowid DESC LIMIT 500`,
     )
-    .all(runId) as CodingArtifactRow[];
+    .all(runId, ...(kinds ?? [])) as CodingArtifactRow[];
 }
 
 function withCodingRun(db: Database, sessionId: string, value: unknown): unknown {

@@ -10,10 +10,18 @@ import { type Static, Type } from "@sinclair/typebox";
 import { execCommand, type ToolContext, wrap } from "./shared";
 
 const verificationMode = Type.Optional(
-  Type.Union([Type.Literal("live"), Type.Literal("start"), Type.Literal("candidate")], {
-    description:
-      "live: workspace checks; start: background; candidate: isolated Git snapshot. Before summary inspect receipts with action=show, artifactId=<id>, never read/path.",
-  }),
+  Type.Union(
+    [
+      Type.Literal("live"),
+      Type.Literal("start"),
+      Type.Literal("candidate"),
+      Type.Literal("delivery"),
+    ],
+    {
+      description:
+        "live: workspace; start: background; candidate: Git snapshot; delivery: manifest files only. Inspect receipts using show/artifactId before summary.",
+    },
+  ),
 );
 const DEPENDENCY_MODES = ["none", "check", "auto", "bun", "npm", "pnpm", "yarn", "uv"] as const;
 const dependencies = Type.Optional(
@@ -60,6 +68,11 @@ const codeWriteSchema = Type.Object({
 // verificationCommand.
 const codeSchema = Type.Object({
   verificationMode,
+  manifest: Type.Optional(
+    Type.String({
+      description: "delivery verify: relative JSON manifest path with files and checks",
+    }),
+  ),
   dependencies: Type.Optional(
     Type.String({ description: "verify: check (default), none, auto or a manager" }),
   ),
@@ -258,7 +271,7 @@ export function createCodeTool(ctx: ToolContext): AgentTool<typeof codeSchema> {
     name: "marina_code",
     label: "Code",
     description:
-      "Work inside the active Marina coding session: inspect files, edit exact text, write files, run allowed checks, propose/apply patches, and record durable artifacts. For small edits prefer edit with oldText/newText; if a patch fails, inspect and use edit instead of repeating the same diff. Use write with content for new files or complete rewrites.",
+      "Inspect/edit files, run allowed checks, and save artifacts in the active coding session. Prefer edit with oldText/newText; after a failed patch inspect and use edit. Use write/content for new files or rewrites.",
     parameters: codeSchema,
     execute: async (_id, params: Static<typeof codeSchema>, signal) => {
       try {
@@ -330,8 +343,13 @@ export function createTypedCodeTools(ctx: ToolContext): AgentTool[] {
       "marina_code_verify",
       "Code Verify",
       "Run the detected verification chain where the session runs (host or its container runner): prepare by project type, then tests relevant to the change. The result is passed, failed (checks ran and failed), not_run (no tests found, or the environment is not ready) or error. Candidate mode binds results to an isolated local Git snapshot; ignored dependencies are excluded. Background admission is not a passing result.",
-      Type.Object({ verificationMode, dependencies, scope }),
-      (p) => verificationCommand(p.verificationMode, p.dependencies, p.scope),
+      Type.Object({
+        verificationMode,
+        dependencies,
+        scope,
+        manifest: Type.Optional(Type.String()),
+      }),
+      (p) => verificationCommand(p.verificationMode, p.dependencies, p.scope, p.manifest),
       ctx,
     ),
     wrap(
@@ -653,9 +671,20 @@ export function createTypedCodeTools(ctx: ToolContext): AgentTool[] {
   ];
 }
 
-function verificationCommand(mode: unknown, dependencies?: unknown, scopeValue?: unknown): string {
-  if (mode !== undefined && mode !== "live" && mode !== "start" && mode !== "candidate")
-    throw new Error("verificationMode must be live, start or candidate");
+function verificationCommand(
+  mode: unknown,
+  dependencies?: unknown,
+  scopeValue?: unknown,
+  manifest?: unknown,
+): string {
+  if (
+    mode !== undefined &&
+    mode !== "live" &&
+    mode !== "start" &&
+    mode !== "candidate" &&
+    mode !== "delivery"
+  )
+    throw new Error("verificationMode must be live, start, candidate or delivery");
   if (
     dependencies !== undefined &&
     !(DEPENDENCY_MODES as readonly unknown[]).includes(dependencies)
@@ -663,9 +692,16 @@ function verificationCommand(mode: unknown, dependencies?: unknown, scopeValue?:
     throw new Error(`dependencies must be one of ${DEPENDENCY_MODES.join(", ")}`);
   if (scopeValue !== undefined && !(VERIFY_SCOPES as readonly unknown[]).includes(scopeValue))
     throw new Error(`scope must be one of ${VERIFY_SCOPES.join(", ")}`);
+  if ((mode === "delivery") !== (typeof manifest === "string" && manifest.length > 0))
+    throw new Error(
+      "Delivery verification requires a manifest path; other modes do not accept one.",
+    );
+  if (manifest !== undefined && (typeof manifest !== "string" || /\s/.test(manifest)))
+    throw new Error("Manifest must be a path without whitespace.");
   return [
     "code verify",
-    ...(mode === "start" || mode === "candidate" ? [mode] : []),
+    ...(mode === "start" || mode === "candidate" || mode === "delivery" ? [mode] : []),
+    ...(manifest ? [`manifest:${manifest}`] : []),
     ...(dependencies !== undefined ? [`dependencies:${dependencies}`] : []),
     ...(scopeValue !== undefined ? [`scope:${scopeValue}`] : []),
   ].join(" ");
@@ -696,7 +732,12 @@ function buildCodeCommand(params: Record<string, unknown>): string {
     case "run":
       return `code run ${requiredSingleLineCodeParam(command, "command", "action=run requires command")}`;
     case "verify":
-      return verificationCommand(params.verificationMode, params.dependencies, params.scope);
+      return verificationCommand(
+        params.verificationMode,
+        params.dependencies,
+        params.scope,
+        params.manifest,
+      );
     case "observe":
       return `code observe ${requiredSingleLineCodeParam(text, "text", "action=observe requires text")}`;
     case "patch":

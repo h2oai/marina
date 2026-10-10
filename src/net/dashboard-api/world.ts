@@ -450,6 +450,7 @@ export async function handleCoordinationRoutes(
       events: db.listCodingEvents(sessionId, clampLimit(null, 200)),
       artifacts: db.listCodingArtifacts(sessionId, clampLimit(null, 100)),
       visualEvidence: db.listCodingArtifacts(sessionId, 5, "visual_evidence"),
+      verificationEvidence: db.listCodingArtifacts(sessionId, 5, "verification"),
     });
   }
 

@@ -106,6 +106,7 @@ function CodingDeskView({
             key={JSON.stringify([resident, sessionId])}
             sessionId={sessionId}
           />
+          <WorkspaceImageInspection sessionId={sessionId} delivery />
           {message && <p role="status">{message}</p>}
           <p className="text-xs">
             This is your local view. Closing it leaves the coder and world running.
@@ -119,68 +120,79 @@ function CodingDeskView({
   );
 }
 
-function WorkspaceImageInspection({ sessionId }: { sessionId: string }) {
+function WorkspaceImageInspection({
+  sessionId,
+  delivery = false,
+}: {
+  sessionId: string;
+  delivery?: boolean;
+}) {
   const connected = useChatState((s) => s.loggedIn && s.connected && s.codingTargetSupported);
   const [path, setPath] = useState("");
   const [review, setReview] = useState<string>();
   const [message, setMessage] = useState("");
   function inspect() {
-    if (!connected || !review) return;
+    if (!connected || !review || (delivery && /\s/.test(review))) return;
     try {
       const sent = useChatState
         .getState()
-        .sendCommand(`code see ${JSON.stringify({ path: review })}`, false, { sessionId });
+        .sendCommand(
+          delivery
+            ? `code verify delivery manifest:${review}`
+            : `code see ${JSON.stringify({ path: review })}`,
+          false,
+          { sessionId },
+        );
       if (!sent) {
-        setMessage("Reconnect before inspecting the image.");
+        setMessage("Reconnect before starting the operation.");
         return;
       }
       setReview(undefined);
-      setMessage(
-        "Inspection requested. Its saved observation will appear under artifacts and in Chat.",
-      );
+      setMessage("Request sent. Follow the saved evidence under artifacts and in Chat.");
     } catch {
       setReview(undefined);
       setMessage(
-        "Inspection could not be confirmed. Check saved observations before requesting it again.",
+        "The request could not be confirmed. Check saved evidence before requesting it again.",
       );
     }
   }
   return (
     <div className="space-y-2">
       <label className="block text-sm">
-        Workspace image path
+        {delivery ? "Delivery manifest path" : "Workspace image path"}
         <input
           className="mission-field"
           value={path}
           onChange={(e) => setPath(e.target.value)}
-          placeholder="images/diagram.png"
+          placeholder={delivery ? "delivery.json" : "images/diagram.png"}
         />
       </label>
       <button
         type="button"
         className="text-primary"
-        disabled={!connected || !path.trim()}
+        disabled={!connected || !path.trim() || (delivery && /\s/.test(path.trim()))}
         onClick={() => {
           setReview(path.trim());
           setMessage("");
         }}
       >
-        Review image inspection
+        {delivery ? "Review delivery check" : "Review image inspection"}
       </button>
       {review && (
         <section
-          aria-label="Review image inspection"
+          aria-label={delivery ? "Review delivery check" : "Review image inspection"}
           className="rounded border border-border p-3 space-y-2"
         >
           <p>
-            Inspect {review} in session {sessionId}. This uses the configured vision model and saves
-            the observation.
+            {delivery
+              ? `Check the files listed in ${review} in session ${sessionId}. Checks run in a clean directory using this session’s configured runner.`
+              : `Inspect ${review} in session ${sessionId}. This uses the configured vision model and saves the observation.`}
           </p>
           <button type="button" className="mr-3 text-primary" onClick={() => setReview(undefined)}>
-            Cancel inspection
+            {delivery ? "Cancel delivery check" : "Cancel inspection"}
           </button>
           <button type="button" className="text-primary" disabled={!connected} onClick={inspect}>
-            Inspect image
+            {delivery ? "Run delivery check" : "Inspect image"}
           </button>
         </section>
       )}

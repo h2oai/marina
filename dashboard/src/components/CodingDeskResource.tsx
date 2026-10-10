@@ -3,6 +3,7 @@
 import type { CodingArtifactEntry } from "../lib/types";
 import { verificationLabel, verificationOutcomeFromStatus } from "../lib/verification-outcome";
 import { parseMetadata } from "../lib/webchat-format";
+import { DeliveryEvidenceDetails } from "./DeliveryEvidenceDetails";
 import { DiffViewer } from "./DiffViewer";
 import { VisualEvidenceDetails } from "./VisualEvidenceDetails";
 
@@ -16,8 +17,11 @@ export function CodingDeskResource({ value }: { value: Record<string, unknown> }
   };
   const recent = (value.artifacts ?? []) as CodingArtifactEntry[];
   const observations = (value.visualEvidence ?? []) as CodingArtifactEntry[];
+  const verifications = (value.verificationEvidence ?? []) as CodingArtifactEntry[];
   const artifacts = [
-    ...new Map([...observations, ...recent].map((artifact) => [artifact.id, artifact])).values(),
+    ...new Map(
+      [...verifications, ...observations, ...recent].map((artifact) => [artifact.id, artifact]),
+    ).values(),
   ];
   const events = (value.events ?? []) as Array<{
     id: string;
@@ -79,11 +83,15 @@ export function CodingDeskResource({ value }: { value: Record<string, unknown> }
                 <VisualEvidenceDetails metadata={parseMetadata(artifact.metadata_json)} />
               )}
               {artifact.kind === "verification" && (
-                <p>
-                  This result covers the recorded checks. Task acceptance and delivered-file
-                  validation are separate.
-                </p>
+                <DeliveryEvidenceDetails metadata={parseMetadata(artifact.metadata_json)} />
               )}
+              {artifact.kind === "verification" &&
+                !parseMetadata(artifact.metadata_json).delivery && (
+                  <p>
+                    This result covers the recorded checks. Task acceptance and delivered-file
+                    validation are separate.
+                  </p>
+                )}
               {artifact.kind === "task_run" && (
                 <p>
                   Recorded verification: {verification(artifact)}. Later edits may require new

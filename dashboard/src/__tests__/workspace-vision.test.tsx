@@ -34,6 +34,44 @@ it("image inspection is an explicit action with a literal path, not a side effec
   });
 });
 
+it("chat and canvas expose the same delivery inventory without executing checks on open", () => {
+  const metadata = {
+    delivery: {
+      manifestPath: "delivery.json",
+      files: [{ path: "report.json", bytes: 42, sha256: "abc123" }],
+    },
+  };
+  const send = show({ type: "verification", artifactId: "v1", status: "complete", metadata });
+  expect(screen.getByRole("region", { name: "Delivery check scope" })).toHaveTextContent(
+    "report.json",
+  );
+  expect(screen.getByText(/Changed files need fresh verification/)).toBeInTheDocument();
+  expect(send).not.toHaveBeenCalled();
+  cleanup();
+  render(
+    <CodingDeskResource
+      value={{
+        session: { title: "Delivery", status: "active", agent: "Ada" },
+        verificationEvidence: [
+          {
+            id: "v1",
+            kind: "verification",
+            title: "Delivery",
+            status: "complete",
+            content_text: "Checks passed",
+            metadata_json: JSON.stringify(metadata),
+          },
+        ],
+        artifacts: [],
+      }}
+    />,
+  );
+  expect(screen.getByRole("region", { name: "Delivery check scope" })).toHaveTextContent(
+    "report.json",
+  );
+  expect(screen.getByText("abc123")).toBeInTheDocument();
+});
+
 it("chat reopens saved evidence without requesting vision again", () => {
   const send = show({
     type: "artifact",

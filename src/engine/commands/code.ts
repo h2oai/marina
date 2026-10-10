@@ -220,7 +220,7 @@ const stopHandler: SubcommandHandler = async (c) => {
   await stopSessionAgent(c.ctx, c.eid, c.entity, c.deps);
 };
 const VERIFY_USAGE =
-  "code verify [start|candidate] [dependencies:none|check|auto|<manager>] [scope:auto|changed|full|changed+full] [typecheck:auto|off] [budget:<duration>]";
+  "code verify [start|candidate|delivery] [manifest:<path>] [dependencies:none|check|auto|<manager>] [scope:auto|changed|full|changed+full] [typecheck:auto|off] [budget:<duration>]";
 
 /**
  * Subcommand dispatch table, keyed by the profile-canonical subcommand name.
@@ -357,6 +357,7 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
   },
   verify: async (c) => {
     const parsed = parseModifiers(c.args, {
+      manifest: { type: "string" },
       dependencies: { type: "string" },
       scope: { type: "string" },
       typecheck: { type: "string" },
@@ -366,9 +367,14 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
     if (
       parsed.errors.length ||
       parsed.rest.length > 1 ||
-      (mode !== undefined && mode !== "start" && mode !== "candidate")
+      (mode !== undefined && mode !== "start" && mode !== "candidate" && mode !== "delivery")
     )
       throw new Error(`Usage: ${VERIFY_USAGE}`);
+    const manifest = parsed.values.manifest as string | undefined;
+    if ((mode === "delivery") !== !!manifest)
+      throw new Error(
+        "Delivery verification requires manifest:<relative path>; other modes do not accept a manifest.",
+      );
     let options: VerificationOptions;
     try {
       options = resolveVerificationOptions({
@@ -380,8 +386,16 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
     } catch (error) {
       throw new Error(`${getErrorMessage(error)}\nUsage: ${VERIFY_USAGE}`);
     }
-    if (mode === "start" || mode === "candidate") {
-      await startVerification(c.ctx, c.eid, c.entity, c.deps, mode === "candidate", options);
+    if (mode === "start" || mode === "candidate" || mode === "delivery") {
+      await startVerification(
+        c.ctx,
+        c.eid,
+        c.entity,
+        c.deps,
+        mode === "candidate",
+        options,
+        manifest,
+      );
       return;
     }
     await verifyWorkspace(c.ctx, c.eid, c.entity, c.deps, options);
@@ -471,7 +485,7 @@ export function codeCommand(deps: CodeDeps): CommandDef {
       "code ask <request>",
       "code assign <agent> <req>",
       "code assign <agent> verification:candidate -- <req>",
-      "code do [verification:candidate|checks] [owner:unattended] -- <task>",
+      "code do [verification:candidate|checks|delivery] [owner:unattended] -- <task>",
       "code blocked <reason>",
       "code branch [title]",
       "code checkpoint [title]",
@@ -611,6 +625,7 @@ export function codeCommand(deps: CodeDeps): CommandDef {
       "code verify",
       "code verify start",
       "code verify candidate",
+      "code verify delivery manifest:<path>",
       "code verify candidate dependencies:auto",
       "code verify scope:changed+full budget:10m",
       "code workspace",

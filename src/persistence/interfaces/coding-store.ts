@@ -54,7 +54,7 @@ export interface CodingStore {
     createdBy: string;
   }): CodingArtifactRow;
   listCodingRuns(query?: CodingRunQuery): CodingArtifactRow[];
-  listCodingRunArtifacts(runId: string): CodingArtifactRow[];
+  listCodingRunArtifacts(runId: string, kinds?: string[]): CodingArtifactRow[];
   getCodingArtifact(id: string): CodingArtifactRow | null;
   listCodingArtifacts(sessionId: string, limit?: number, kind?: string): CodingArtifactRow[];
   recoverCodingVerifications(): void;

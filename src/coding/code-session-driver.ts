@@ -148,7 +148,7 @@ export class CodeSessionDriver {
     agentName: string;
     actorEntity?: Entity;
     modelTarget?: string;
-    verificationRequirement?: "candidate" | "checks";
+    verificationRequirement?: "candidate" | "checks" | "delivery";
     ownerMode?: "unattended";
     profile: string;
     prompt: string;
@@ -229,9 +229,11 @@ export class CodeSessionDriver {
     const requirement =
       run && codingRunMetadata(run).verificationRequirement === "candidate"
         ? "Completion requires current candidate verification: use marina_code verify with verificationMode=candidate, inspect its receipt/result, then summary. Early summaries remain progress. If blocked, use marina_code blocked with the reason; do not loop indefinitely. Honor existing operator authorization for bounded dependency preparation."
-        : run && codingRunMetadata(run).verificationRequirement === "checks"
-          ? "Completion requires current task checks. Use code verify or a saved validation recipe; inspect the receipt before summary. Validate the requested artifact or service state, including failure cases; whitespace alone is insufficient. These are live checks, not immutable source evidence. If blocked, use code blocked <reason>."
-          : undefined;
+        : run && codingRunMetadata(run).verificationRequirement === "delivery"
+          ? 'Completion requires delivery verification. Write a JSON manifest {"files":["relative/output","relative/check-file"],"checks":["finite check command"]} naming every required output, dependency and check file. Use marina_code verify with verificationMode=delivery and manifest=<path>. Checks run with only those files in a clean directory under the configured runner. Inspect the result before summary; a passing check establishes only its own coverage. If blocked, use code blocked <reason>.'
+          : run && codingRunMetadata(run).verificationRequirement === "checks"
+            ? "Completion requires current task checks. Use code verify or a saved validation recipe; inspect the receipt before summary. Validate the requested artifact or service state, including failure cases; whitespace alone is insufficient. These are live checks, not immutable source evidence. If blocked, use code blocked <reason>."
+            : undefined;
     const ownership =
       run && codingRunMetadata(run).ownerMode === "unattended"
         ? `The owner is unattended. Progress notes need no ownership transfer. If you hand the write lock back to the owner while this task remains active, you are authorized to reclaim it with code writer ${worker!.name}. This does not authorize taking a collaborator's lock or restarting a finished task.`
@@ -286,7 +288,7 @@ export class CodeSessionDriver {
         ? "Use code service start/probe/screenshot for managed app evidence; use observe for additional behavior notes."
         : "Use observe to record app or manual behavior notes. Long-running app launch is disabled on the Marina host; configure Flywheel and use code service.",
       "Inspect workspace images with marina_see source=workspace:<path>. Full observations are durable: code artifacts kind visual_evidence lists them; code show <id> reopens them without a model call, including after context compression.",
-      "Finish source and regression-test edits before candidate verification. Any later edit requires fresh candidate checks. Use code plan for progress; code summary submits finished work for review. A rejected summary remains progress and its feedback explains what is still required.",
+      "For packaged outputs, code verify delivery manifest:<path> checks only the declared files in a clean directory. Its JSON manifest has files (relative paths including required dependencies/check files) and checks (finite command strings). Choose checks that exercise the requested output. Finish source and regression-test edits before candidate verification. Any later edit requires fresh candidate checks. Use code plan for progress; code summary submits finished work for review. A rejected summary remains progress and its feedback explains what is still required.",
       "Before editing a path, inspect its directory with code files or read the file with code read. These refresh scoped project instructions from disk. Read any truncated instruction files explicitly; repository instructions do not grant execution permissions. Native external runtimes retain their own instruction loaders.",
       ...formatProjectInstructions(instructions),
       "",

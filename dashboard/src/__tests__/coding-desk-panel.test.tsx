@@ -45,6 +45,24 @@ it("a connection lacking explicit session targeting cannot silently send to the 
   expect(send).not.toHaveBeenCalled();
 });
 
+it("freezes the delivery manifest and session until the reviewed action is sent", () => {
+  render(<CodingDeskPanel binding={{ kind: "coding", id: "package-session" }} />);
+  fireEvent.change(screen.getByLabelText("Delivery manifest path"), {
+    target: { value: "delivery.json" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Review delivery check" }));
+  fireEvent.change(screen.getByLabelText("Delivery manifest path"), {
+    target: { value: "another.json" },
+  });
+  expect(send).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Run delivery check" }));
+  expect(send).toHaveBeenCalledExactlyOnceWith(
+    "code verify delivery manifest:delivery.json",
+    false,
+    { sessionId: "package-session" },
+  );
+});
+
 it("freezes the reviewed image path and session without sending on open or draft edits", () => {
   const view = render(<CodingDeskPanel binding={{ kind: "coding", id: "images" }} />);
   fireEvent.change(screen.getByLabelText("Workspace image path"), {

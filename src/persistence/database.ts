@@ -3565,8 +3565,8 @@ export class MarinaDB implements MarinaStores {
     return codingDb.listCodingRuns(this.db, query);
   }
 
-  listCodingRunArtifacts(runId: string): CodingArtifactRow[] {
-    return codingDb.listCodingRunArtifacts(this.db, runId);
+  listCodingRunArtifacts(runId: string, kinds?: string[]): CodingArtifactRow[] {
+    return codingDb.listCodingRunArtifacts(this.db, runId, kinds);
   }
 
   getCodingArtifact(id: string): CodingArtifactRow | null {

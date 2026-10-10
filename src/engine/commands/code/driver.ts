@@ -46,22 +46,34 @@ export function parseCodingTask(raw: string) {
   if (
     parsed.errors.length ||
     (parsed.values.verification !== undefined &&
-      !["candidate", "checks"].includes(String(parsed.values.verification))) ||
+      !["candidate", "checks", "delivery"].includes(String(parsed.values.verification))) ||
     (parsed.values.owner !== undefined && parsed.values.owner !== "unattended")
   )
-    throw new Error("Usage: code do [verification:candidate|checks] [owner:unattended] -- <task>");
+    throw new Error(
+      "Usage: code do [verification:candidate|checks|delivery] [owner:unattended] -- <task>",
+    );
   return {
     prompt: parsed.rest.join(" ").trim(),
-    verificationRequirement: parsed.values.verification as "candidate" | "checks" | undefined,
+    verificationRequirement: parsed.values.verification as
+      | "candidate"
+      | "checks"
+      | "delivery"
+      | undefined,
     ownerMode: parsed.values.owner as "unattended" | undefined,
   };
 }
-function validateTaskContract(session: CodingSessionRow, requirement?: "candidate" | "checks") {
+function validateTaskContract(
+  session: CodingSessionRow,
+  requirement?: "candidate" | "checks" | "delivery",
+) {
   if (requirement && session.driver === "crew")
     throw new Error("Required verification currently needs the single-agent driver.");
-  if (requirement === "candidate" && session.execution_target !== "local")
+  if (
+    (requirement === "candidate" || requirement === "delivery") &&
+    session.execution_target !== "local"
+  )
     throw new Error(
-      "Candidate-required tasks currently need a local Git workspace and the single-agent driver. Use code target/code driver to select them, or dispatch an ordinary task.",
+      "Snapshot or delivery verification requires a local workspace and the single-agent driver. Candidate mode also requires Git.",
     );
 }
 

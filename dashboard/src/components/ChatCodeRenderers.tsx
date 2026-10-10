@@ -33,6 +33,7 @@ import {
   parseCrewMembers,
   parseMetadata,
 } from "../lib/webchat-format";
+import { DeliveryEvidenceDetails } from "./DeliveryEvidenceDetails";
 import { DiffViewer } from "./DiffViewer";
 import { VisualEvidenceDetails } from "./VisualEvidenceDetails";
 
@@ -600,7 +601,8 @@ export function createCodeRenderers({
               </div>
             ) : null}
             {artifactKind === "visual_evidence" && <VisualEvidenceDetails metadata={cardMeta} />}
-            {type === "verification" && (
+            {!!cardMeta.delivery && <DeliveryEvidenceDetails metadata={cardMeta} />}
+            {type === "verification" && !cardMeta.delivery && (
               <p className="mt-2 text-xs text-text-dim">
                 This result covers the recorded checks. Task acceptance and delivered-file
                 validation are separate.

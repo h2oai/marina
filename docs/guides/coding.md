@@ -634,6 +634,38 @@ default <validation command>` to check the requested output or read back the ser
 those checks passed at the recorded time; it does not claim immutable source or complete coverage.
 Use `verification:candidate` when you require source-bound evidence.
 
+For a package or set of files that must work away from the active workspace, use
+`code do verification:delivery -- <task>`. The worker can choose its implementation and
+checks; submission requires current delivery evidence. To verify manually, write a JSON
+manifest such as `delivery.json`:
+
+```json
+{
+  "files": ["report.ts", "helper.ts", "report.test.ts"],
+  "checks": ["bun test report.test.ts"]
+}
+```
+
+Run `code verify delivery manifest:delivery.json`, then inspect the returned receipt with
+`code show <id>`. Marina copies only the listed regular files into a clean directory and
+runs those finite commands using the session's configured host or mount-sync container runner. Missing
+companion files therefore cannot be supplied accidentally by the active workspace. Checks use
+the runner's existing environment; this is file isolation, not a new security sandbox or a
+guarantee that every recipient has the same dependencies. Files changed by the checks or after
+verification require fresh evidence before submission. The manifest itself is also hashed.
+
+Delivery mode supports local file workspaces, requires explicit relative file paths (no globs,
+directories, symlinks or `.git`), and does not install dependencies. Include the files needed
+by both the deliverable and its checks. A manifest may contain up to 128 files, with a 16 MiB
+per-file and 64 MiB total capture limit. Background checks retain the normal execution gates
+and finite-command allowlist. Patch-sync and unsupported targets are refused without host fallback.
+
+Personal and published coding desks offer **Review delivery check** for an existing manifest.
+Opening a desk or its evidence does not execute checks. Chat and canvas show the same recorded
+file inventory and digests. Passing checks establishes their recorded scope; owner acceptance
+and the adequacy of test coverage remain separate. Whitespace-only checks cannot satisfy a
+required task verification contract, including candidate mode.
+
 Marina's one-shot `-p` path selects `verification:checks owner:unattended` and exits successfully
 only after a matching attempt submits with current verification. Submission remains separate from
 owner approval. Old completions from another attempt cannot finish the current task. The
