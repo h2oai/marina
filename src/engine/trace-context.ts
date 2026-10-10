@@ -44,11 +44,6 @@ export function runWithTraceLinks<T>(
   return frames.run({ entityId, links: links.map((l) => ({ ...l })) }, fn);
 }
 
-/** The links of the command executing now, if it carries any. */
-export function currentTraceLinks(): { entityId: string; links: readonly TraceLink[] } | undefined {
-  return frames.getStore();
-}
-
 /** Keep only the links whose trace Marina delivered to this entity. */
 export function ownedTraceLinks(entityId: string, links: readonly TraceLink[]): TraceLink[] {
   const seen = delivered.get(entityId);
@@ -108,7 +103,10 @@ export function stampTraceLinks(target: string, perception: Perception): Percept
   return out;
 }
 
-/** Forget an entity's delivered traces (it disconnected or was removed). */
+/**
+ * Forget an entity's delivered traces once it is removed (`EntityManager.remove`).
+ * A transient disconnect keeps them, so a reconnecting entity can still propagate.
+ */
 export function forgetDeliveredTraces(entityId: string): void {
   delivered.delete(entityId);
 }

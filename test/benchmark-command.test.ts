@@ -18,6 +18,7 @@ import {
   harnessInvocation,
 } from "../src/engine/benchmark-runner";
 import { Engine } from "../src/engine/engine";
+import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
@@ -66,6 +67,26 @@ describe("benchmark command (rank-gated in-world primitive)", () => {
     expect(text).toContain("declared:    Scout2 (role scout-v2, prompt ab12cd34ef56)");
     expect(text).toContain("Observed residents: unproven.");
     expect(text).not.toContain("subjects=");
+  });
+
+  it("`benchmark run` below rank 4 is a posture-aware floor: refused when shared, passed locally", async () => {
+    const conn = new MockConnection("c-floor");
+    engine.addConnection(conn);
+    engine.login("c-floor", "Newcomer");
+    conn.clear();
+    await engine.dispatchCommand(conn.entity!, "benchmark run no-such-benchmark");
+    expect(stripAnsi(conn.allTextJoined())).toContain("benchmark run requires rank 4");
+
+    setTrustProfile("local");
+    try {
+      conn.clear();
+      await engine.dispatchCommand(conn.entity!, "benchmark run no-such-benchmark");
+      const text = stripAnsi(conn.allTextJoined());
+      expect(text).not.toContain("requires rank 4");
+      expect(text).toContain("Unknown benchmark: no-such-benchmark");
+    } finally {
+      resetTrustProfileForTests();
+    }
   });
 
   it("registers the benchmark command", () => {

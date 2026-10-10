@@ -41,12 +41,6 @@ import {
 } from "./project-detection";
 
 export type VerificationOutcome = "passed" | "failed" | "not_run" | "error";
-export const VERIFICATION_OUTCOMES: readonly VerificationOutcome[] = [
-  "passed",
-  "failed",
-  "not_run",
-  "error",
-];
 
 /** The coding-artifact status a verification outcome is stored under. */
 export const OUTCOME_STATUS: Readonly<Record<VerificationOutcome, string>> = {
@@ -55,13 +49,6 @@ export const OUTCOME_STATUS: Readonly<Record<VerificationOutcome, string>> = {
   not_run: "not_run",
   error: "error",
 };
-
-/** The outcome a stored verification status stands for (legacy rows: complete/failed). */
-export function outcomeFromStatus(status: string): VerificationOutcome | undefined {
-  if (status === "complete") return "passed";
-  if (status === "failed" || status === "not_run" || status === "error") return status;
-  return undefined;
-}
 
 export type VerificationScope = "auto" | "changed" | "full" | "changed+full";
 export const VERIFICATION_SCOPES: readonly VerificationScope[] = [

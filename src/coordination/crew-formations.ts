@@ -263,9 +263,6 @@ const START_MOVES: Partial<Record<CrewFormation, (n: Required<FormationNames>) =
     `just fix them.`,
 };
 
-/** Formations whose per-task dispatch restates a starting move. */
-export const START_MOVE_FORMATIONS = Object.keys(START_MOVES) as CrewFormation[];
-
 /**
  * The per-task starting move appended to a formation's `[crew-task]`
  * dispatch, or undefined when the formation has none. Missing names fall

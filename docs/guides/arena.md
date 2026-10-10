@@ -656,18 +656,18 @@ automatically changes `MARINA_ARENA_ROUTES`, timers or submissions.
 
 ## Integrity: what the backtest numbers can and cannot claim
 
-Audited 2026-09-25 (`src/arena/evaluate.ts`, `test/arena-*.test.ts`):
+Enforced in `src/arena/evaluate.ts` and covered by `test/arena-*.test.ts`:
 
 - **No outcome reaches a forecaster.** Only the evaluator and the live lesson writer read
   resolutions; every forecaster sees only a round's lock file and archives filtered to what existed
   before the lock (Civiqs snapshots *fetched* before it; Wikipedia lists *published* before it).
 - **Rounds whose answer was already public are excluded** for every forecaster
   (`outcomePublicBeforeLock`).
-- **Model memorisation.** Probed closed-book, DeepSeek V4 Pro, Claude Sonnet 5 and GPT-6 Luna
-  claimed to know none of five resolved values. The baseline and the nowcast use no model at all.
-- **In-sample design choices.** The spread-selection metric, the Wikipedia half-life and the
-  Trends partial-week default were chosen after looking at the resolved rounds; the Civiqs nowcast
-  has no fitted parameter. Treat backtest numbers as optimistic. The honest test is forward:
+- **Model memorisation.** A model-backed forecaster may have seen resolved values in training;
+  the baseline and the nowcast use no model at all.
+- **In-sample design choices.** Settings chosen after looking at resolved rounds (such as the
+  spread-selection metric, the Wikipedia half-life and the Trends partial-week default) make
+  backtest numbers optimistic; the Civiqs nowcast has no fitted parameter. The honest test is forward:
   `arena shadow run due --forecaster <spec>` records predictions before the lock (for the nowcast,
   within a day of it), and `arena shadow score` scores them only once the arena resolves them.
 - **Source terms.** Civiqs, Wikipedia and Google Trends are rights-approved in the arena's own

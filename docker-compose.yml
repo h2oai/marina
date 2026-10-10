@@ -186,7 +186,7 @@ services:
   # Enable by running `--profile vibethinker`; otherwise this service stays down.
   #
   # NOT YET VALIDATED ON THE GPU HOST — confirm before relying on it:
-  #   - pin a specific vllm/vllm-openai digest (the tag below floats),
+  #   - the image is pinned to vLLM v0.31.0 by digest; bump it deliberately,
   #   - tool calling needs `--enable-auto-tool-choice` + a `--tool-call-parser`
   #     matching VibeThinker's template; the right parser is model-specific,
   #   - vLLM writes caches and uses shared memory, so it can't run `read_only`
@@ -201,7 +201,7 @@ services:
   # clearly on an empty --model if you forget).
   vibethinker:
     profiles: ["vibethinker"]
-    image: vllm/vllm-openai:latest # pin a digest in production
+    image: vllm/vllm-openai:v0.31.0@sha256:c1c9f6fd5c109ba7f0546a59f5b2f15fb87f64c77782e90a27b648b42a8e67c3
     command:
       - "--model"
       - "${VIBETHINKER_MODEL:-}"

@@ -19,7 +19,7 @@ import { recordScoreOutcome } from "../coordination/score-outcome";
 import { loadScore } from "../coordination/score-store";
 import { positionSettlementFinder } from "../engine/commands/position";
 import { Logger } from "../engine/logger";
-import { numberOf, resolveForecast, yesNoOf } from "../outcomes/forecast";
+import { resolveForecast, yesNoOf } from "../outcomes/forecast";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent, EntityId, RoomId } from "../types";
 import type { Sample } from "./types";
@@ -331,11 +331,6 @@ export const conductorScoreFinder: CalibrationFinder = {
     }
   },
 };
-
-/** A numeric resolution: `value` itself, or its `value` / `actual` field. */
-export function extractNumericOutcome(sample: Sample): number | undefined {
-  return numberOf(sample.value);
-}
 
 /**
  * Forecast-question finder — closes the loop for `forecast <question>`

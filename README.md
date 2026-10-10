@@ -566,7 +566,7 @@ bun install && marina-desktop/scripts/build.sh   # workspace install at the repo
 ## Performance
 
 Measure performance on your deployment's current revision, runtime, hardware and workload.
-The [load-testing guide](docs/load-test-results.md) describes the available harnesses;
+The [load-testing guide](docs/load-testing.md) describes the available harnesses;
 historical qualification results are maintained in the private `marina-internal` repository.
 
 ## Documentation
@@ -587,7 +587,7 @@ historical qualification results are maintained in the private `marina-internal`
 | [docs/guides/reproduction-and-meshes.md](docs/guides/reproduction-and-meshes.md) | Cognitive and Marina reproduction plus transparent multi-mesh federation |
 | [docs/guides/economics-simulation-and-recursion.md](docs/guides/economics-simulation-and-recursion.md) | Asset-neutral economics, simulation replay levels, and recursive mutation lineage |
 | [docs/mcp.md](docs/mcp.md) | MCP server setup and tool reference |
-| [docs/load-test-results.md](docs/load-test-results.md) | Load-testing harnesses |
+| [docs/load-testing.md](docs/load-testing.md) | Load-testing harnesses |
 | [docs/guides/memory.md](docs/guides/memory.md) | Memory architecture and everyday memory workflows |
 | [docs/guides/emergent-organization.md](docs/guides/emergent-organization.md) | Bottom-up coordination and organization patterns |
 | [docs/guides/integrations.md](docs/guides/integrations.md) | Connect LangChain, n8n, coding agents and existing applications; deploy your own instance |

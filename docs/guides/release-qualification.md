@@ -73,5 +73,5 @@ A memory *claim* in a release record needs a real-model run under the same harne
 (`--model <id> --judge <id> --seeds 5` or more against a running instance), and must quote the
 per-arm Wilson 95% intervals, token-F1 next to judge accuracy, tokens injected, latency, cost,
 the judge prompt version, split salt, harness git sha, and `residentContextVersion` from the
-result JSON in `benchmarks/results/memory/`. Do not cite the `HISTORY.md` §5 pilot figures as a
+result JSON in `benchmarks/results/memory/`. Do not cite historical pilot figures as a
 result; the reporting standard and its rationale are in `benchmarks/memory/README.md`.

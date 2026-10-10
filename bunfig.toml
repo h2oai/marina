@@ -3,7 +3,17 @@
 
 [test]
 # Keep plain `bun test` on the backend; the other workspaces own their runners.
-pathIgnorePatterns = ["**/dashboard/**", "**/examples/coding-agent-demo/**", "**/marina-desktop/**"]
+# Local, gitignored state (`data/`, `marina-data/`, benchmark datasets/results) can hold
+# third-party checkouts with their own *.test.* files; never collect them.
+pathIgnorePatterns = [
+  "**/dashboard/**",
+  "**/examples/coding-agent-demo/**",
+  "**/marina-desktop/**",
+  "data/**",
+  "marina-data/**",
+  "benchmarks/datasets/**",
+  "benchmarks/results/**",
+]
 # Coverage is OPT-IN: plain `bun test` is unchanged and unaffected. Everything
 # below only takes effect when `--coverage` is passed (`bun run test:coverage`).
 # Coverage of a test file measures the test, not the code under test.

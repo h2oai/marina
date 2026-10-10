@@ -109,15 +109,6 @@ export function visionModelCandidates(
   return [...new Set(list)];
 }
 
-/** The first model to see with (see `visionModelCandidates`). */
-export function resolveVisionModel(
-  explicit: string | undefined,
-  agentModel: string | undefined,
-  env: Record<string, string | undefined> = process.env,
-): string {
-  return visionModelCandidates(explicit, agentModel, env)[0] as string;
-}
-
 // ─── Loading ────────────────────────────────────────────────────────────────
 
 /** Raster image types by magic bytes (mirrors the asset pipeline's check). */
@@ -396,11 +387,6 @@ async function acquireToolSlot(): Promise<(() => void) | undefined> {
     if (next) next();
     else toolSlotsInUse--;
   };
-}
-
-/** For tests: the slots in use and the waiters. */
-export function visionToolLoad(): { inUse: number; waiting: number } {
-  return { inUse: toolSlotsInUse, waiting: toolSlotWaiters.length };
 }
 
 function toDataUrl(mime: string, data: Uint8Array): string {

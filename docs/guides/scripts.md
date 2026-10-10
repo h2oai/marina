@@ -83,6 +83,27 @@ budget flag. Write their reports outside the public checkout.
 | `qualify:memory:reliability` / `:storage` / `:sustained` / `:load` | Restart and fault recovery; real ENOSPC and read-only faults in a private mount; elapsed-time resident continuity; concurrent tenants with cancellation and retry. |
 | `qualify:memory:assistance` / `:resident` / `:workflow` / `:task-workflows` / `:utility` / `:scale` / `:clients` | Research qualifications for memory assistance, residents, workflows, utility, synthetic scale, and installed coding clients. See [Memory assistance](memory-assistance.md). |
 
+Research probes and audits without a `package.json` alias run directly with
+`bun run scripts/research/<name>.ts`. They use synthetic identities and disposable databases;
+the ones marked *live* need an output directory outside the public checkout.
+
+| Script | What it does |
+|---|---|
+| `memory-api-baseline` | Records observed memory API behavior (a probe, not a conformance test). |
+| `memory-surface-audit` | Wider-surface audit over real authenticated route handlers; lists unresolved boundaries. |
+| `memory-long-horizon-audit` | Long-horizon functional audit with simulated time, real handlers and compactor; no models. |
+| `memory-retrieval-bench` | Reproducible local retrieval microbenchmark with result checks; no models. |
+| `memory-embedding-review` | Boundary diagnostic for local embeddings; optional model-cache path, never downloads. |
+| `bridge-translation-audit` | Functional observations of the Anthropic ↔ OpenAI translator; no provider calls. |
+| `memory-extension-qualification` | *Live*: extension sockets, persistent restart and paired fresh agents. |
+| `memory-handoff-qualification` | *Live*: agent-to-agent memory handoff (`--directory`, `--budget-usd`). |
+| `memory-transfer-qualification <dir>` | *Live*: transfer between two memory servers. |
+
+The shell launchers under `benchmarks/` (`build.sh`, `run.sh`, `launch-stack.sh`,
+`launch-providers.sh`, `launch-synthesis.sh`, `launch-translators.sh`, `sweep.sh`,
+`run-sweep.sh`, `sweep-translators.sh`) start the self-referential provider stack and sweep the
+harness across substrates; each documents its usage in its header.
+
 ## Load and soak
 
 | Script | What it does |

@@ -23,7 +23,8 @@ import {
 } from "../src/engine/trace-context";
 import { projectTraces } from "../src/engine/trace-projection";
 import { MarinaDB } from "../src/persistence/database";
-import type { EngineEvent, EntityId, Perception } from "../src/types";
+import type { EngineEvent, EntityId, Perception, RoomId } from "../src/types";
+import { EntityManager } from "../src/world/entity-manager";
 import { cleanupDb, MockConnection } from "./helpers";
 
 const T0 = 1_800_000_000_000;
@@ -181,6 +182,27 @@ describe("handoff propagation", () => {
     stampTraceLinks("e_member", { kind: "message", timestamp: T0, data: { content: body } });
     expect(ownedTraceLinks("e_member", [linkA])).toEqual([linkA]);
     expect(ownedTraceLinks("e_stranger", [linkA])).toEqual([]);
+  });
+
+  it("forgets an entity's delivered traces when it is removed, not when it disconnects", () => {
+    const entities = new EntityManager();
+    const helper = entities.create({
+      kind: "agent",
+      name: "Helper",
+      short: "a helper",
+      long: "A helper.",
+      room: "test/lobby" as RoomId,
+    });
+    const cm = new ConnectionManager();
+    cm.add(new MockConnection("c1"));
+    cm.bindEntity("c1", helper.id);
+    runWithTraceLinks("e_lead", [linkA], () =>
+      stampTraceLinks(helper.id, { kind: "message", timestamp: T0, data: { text: "x" } }),
+    );
+    cm.unbindEntity(helper.id); // a transient drop keeps ownership for the reconnect
+    expect(ownedTraceLinks(helper.id, [linkA])).toEqual([linkA]);
+    entities.remove(helper.id);
+    expect(ownedTraceLinks(helper.id, [linkA])).toEqual([]);
   });
 
   it("delivers stamped links through ConnectionManager.sendToEntity", () => {
