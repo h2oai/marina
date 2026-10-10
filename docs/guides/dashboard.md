@@ -308,7 +308,7 @@ Tick time: 3.2ms
 Spawn and manage AI agents directly from the dashboard:
 
 - **Name** — agent's identity in the world
-- **Model** — dropdown of common models across all 9 providers (google, anthropic, openai, openrouter, groq, mistral, xai, cerebras, deepseek), plus a "Custom..." option for any `provider/model` string
+- **Model** — dropdown of common models across all 11 provider groups (local self-hosted, anthropic, openai, google, openrouter, huggingface, groq, mistral, xai, cerebras, deepseek), plus a "Custom..." option for any `provider/model` string
 - **Role** — assign a composable role (populated from the world's role definitions)
 - **API Key** — select a stored key or use environment variable defaults
 - **Goal** — optional goal text for the agent

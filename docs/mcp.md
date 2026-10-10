@@ -14,6 +14,10 @@ The server manages sessions automatically via the `mcp-session-id` header. Each 
 
 ## Available Tools
 
+The tables below cover the core tools. The complete, generated list (including `capabilities`,
+`invoke`, `context`, the `memory_*` service tools and the `watch_*` tools) is in
+[reference/mcp.md](reference/mcp.md).
+
 ### Bootstrap
 
 | Tool    | Parameters              | Description                                              |

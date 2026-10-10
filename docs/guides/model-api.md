@@ -5,7 +5,7 @@ Use Marina as an OpenAI-compatible LLM endpoint. When your tools send requests, 
 ## Direct upstream defaults
 
 Marina can also proxy directly to a configured provider when no model agent serves the route.
-The built-in OpenAI default is `gpt-5.6-luna`; OpenRouter uses `openai/gpt-5.6-luna`. Existing
+The built-in OpenAI default is `gpt-6-luna`; OpenRouter uses `openai/gpt-6-luna`. Existing
 provider priority and operator-selected models still apply. Override a provider with
 `MARINA_DEFAULT_OPENAI_MODEL` or `MARINA_DEFAULT_OPENROUTER_MODEL`; a configured database
 `default_model` selects the provider/model before fallback. Keys authorize upstream calls;
@@ -18,7 +18,7 @@ translates a legacy `max_tokens` field when no modern limit is supplied. Conflic
 remain subject to provider validation. Other model request contracts are preserved.
 
 Use a higher reasoning effort explicitly when the task warrants it, and compare outcomes and
-total tokens on your own workload. See the [official Luna model reference](https://developers.openai.com/api/docs/models/gpt-5.6-luna)
+total tokens on your own workload. See the [official Luna model reference](https://developers.openai.com/api/docs/models/gpt-6-luna)
 for current capabilities and pricing.
 
 ---
@@ -52,7 +52,7 @@ proxying with configured provider keys.
 PROVIDER_URL=http://localhost:11434/v1 PROVIDER_MODEL=llama3 bun run src/sdk/examples/provider.ts
 
 # Using OpenAI
-PROVIDER_URL=https://api.openai.com/v1 PROVIDER_KEY=sk-your-key PROVIDER_MODEL=gpt-4 bun run src/sdk/examples/provider.ts
+PROVIDER_URL=https://api.openai.com/v1 PROVIDER_KEY=sk-your-key PROVIDER_MODEL=gpt-6-luna bun run src/sdk/examples/provider.ts
 ```
 
 ### 3. Send a Request

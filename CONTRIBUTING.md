@@ -39,7 +39,8 @@ bun run test           # full backend test suite
 cd dashboard && bun run test   # frontend smoke tests
 ```
 
-CI runs the same commands. All four must pass.
+CI runs the same checks (`bun run lint` covers formatting via `biome check`), plus the
+additional drift checks in `.github/workflows/ci.yml`. All must pass.
 
 ## Code style
 
@@ -52,9 +53,9 @@ CI runs the same commands. All four must pass.
 
 These are easier to get right than to undo later. The full list is in [CLAUDE.md](CLAUDE.md) under "Architecture Rules"; the highlights:
 
-- **Migrations are append-only.** Never modify an existing migration once it has been released. Add a new entry to the `migrations` array in `src/persistence/database.ts`.
+- **Migrations are append-only.** Never modify an existing migration once it has been released. Append a new entry to `FORWARD_MIGRATIONS` in `src/persistence/schema.ts` (re-exported as `MIGRATIONS` by `database.ts`); verify with `bun run schema:check`.
 - **One file per command** in `src/engine/commands/`. Register it in `src/engine/command-registry.ts`.
-- **MCP tools** go through `runCmd()` in `src/net/mcp-server.ts` — that wrapper enforces rate limits.
+- **MCP tools** go through `runCmd()` / `cmdTool()` (`src/net/mcp-world-tools.ts`) — that wrapper enforces rate limits. New world commands need no MCP schema: `CommandDef` metadata publishes them.
 - **Use `minRank` / `gate` on `CommandDef`** for permission gates. Don't add custom rank checks in handlers.
 - **Tick budget**: room `onTick` handlers must complete within 200 ms total. Async work is fine as long as it throttles.
 

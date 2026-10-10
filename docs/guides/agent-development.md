@@ -525,7 +525,7 @@ Marina has two kinds of agents that coexist in the same world:
 **User agents** are spawned by humans via the dashboard, CLI (`agent spawn`), or SDK. You choose the model, role, and goal. They connect to whatever LLM provider you configure and can roam freely across rooms.
 
 ```
-> agent spawn Scout model anthropic/claude-sonnet-4-20250514 role scholar goal Catalog all rooms
+> agent spawn Scout model anthropic/claude-sonnet-5 role scholar goal Catalog all rooms
 ```
 
 **Room agents** are spawned by the world itself. When a room's `onEnter` handler calls `ctx.spawnRoomAgent()`, the world creates an agent bound to that room with a predefined role (guide, oracle, proctor, etc.). Room agents use the `marina/default` model, which routes through the local `/v1/chat/completions` endpoint and proxies to whichever upstream provider has an API key configured. They authenticate automatically via an internal token.
