@@ -18,8 +18,9 @@
  *              every challenger considered for the class, so fishing through
  *              formations costs
  *
- * Anything short of that falls open to the default formation. `observe`
- * records what routing would pick without acting on it. Pure except for
+ * Anything short of that falls open to the default formation, so `on` (the
+ * default) is safe with no history. `observe` records what routing would pick
+ * without acting on it. Pure except for
  * `forecastRouted`, which runs the chosen formation.
  */
 
@@ -48,8 +49,9 @@ export const DEFAULT_ROUTE_MIN_N = 30;
 
 export function routeSettingsFromEnv(env: NodeJS.ProcessEnv = process.env): RouteSettings {
   const m = env.MARINA_FORECAST_ROUTE?.trim().toLowerCase();
-  // `observe` by default: the pick is recorded on every answer, the default formation answers.
-  const mode: RouteMode = m === "off" || m === "on" ? m : "observe";
+  // `on` by default: an earned pick answers; without enough paired evidence the
+  // pick IS the default formation (falls open). `observe` records the pick only.
+  const mode: RouteMode = m === "off" || m === "observe" ? m : "on";
   const listed = (env.MARINA_FORECAST_ROUTE_CANDIDATES ?? "")
     .split(",")
     .map((s) => typedFormation(s))

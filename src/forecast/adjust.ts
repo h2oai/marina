@@ -99,20 +99,39 @@ const num = (v: string | undefined, lo: number, hi: number, d: number) => {
   return v?.trim() && Number.isFinite(n) && n >= lo && n <= hi ? n : d;
 };
 
-/** Settings from MARINA_FORECAST_PRIOR / _PRIOR_WEIGHT / _CALIBRATION / _CALIBRATION_MARGIN / _CALIBRATION_SCORE / _HISTORY / _HISTORY_MIN. */
+/**
+ * Settings from MARINA_FORECAST_PRIOR / _PRIOR_WEIGHT / _CALIBRATION /
+ * _CALIBRATION_MARGIN / _CALIBRATION_SCORE / _HISTORY / _HISTORY_MIN.
+ *
+ * Unset PRIOR and CALIBRATION mean `earned` (the default): both stages run,
+ * and a learned weight or map changes an answer only when it won on the
+ * held-out split by the margin. An earned prior shrink has no cold-start
+ * weight (PRIOR_WEIGHT defaults to 0 there), so with no history nothing moves.
+ * `on` keeps the operator's cold-start weight; `off` skips the stage.
+ */
 export function adjustSettingsFromEnv(env: NodeJS.ProcessEnv = process.env): AdjustSettings {
-  const on = (v: string | undefined) => ["on", "true", "1"].includes(v?.trim().toLowerCase() ?? "");
-  const cal = env.MARINA_FORECAST_CALIBRATION?.trim().toLowerCase();
+  const word = (v: string | undefined) => v?.trim().toLowerCase() ?? "";
+  const on = (v: string | undefined) => ["on", "true", "1"].includes(word(v));
+  const earned = (v: string | undefined) => word(v) === "" || word(v) === "earned";
+  const priorEarned = earned(env.MARINA_FORECAST_PRIOR);
+  const cal = earned(env.MARINA_FORECAST_CALIBRATION)
+    ? "on"
+    : env.MARINA_FORECAST_CALIBRATION?.trim().toLowerCase();
   const fixed = cal?.startsWith("fixed:") ? fixedSlope(cal.slice("fixed:".length)) : undefined;
   const clamp = num(env.MARINA_FORECAST_PROB_CLAMP, 0.0001, 0.2, Number.NaN);
   const history = historyFromEnv(env);
   return {
-    prior: on(env.MARINA_FORECAST_PRIOR) ? "on" : "off",
+    prior: priorEarned || on(env.MARINA_FORECAST_PRIOR) ? "on" : "off",
     calibration:
       fixed !== undefined ? "fixed" : cal === "observe" ? "observe" : on(cal) ? "on" : "off",
     ...(fixed !== undefined ? { fixedSlope: fixed } : {}),
     ...(Number.isFinite(clamp) ? { clamp } : {}),
-    priorWeight: num(env.MARINA_FORECAST_PRIOR_WEIGHT, 0, 1, DEFAULT_ADJUST.priorWeight),
+    priorWeight: num(
+      env.MARINA_FORECAST_PRIOR_WEIGHT,
+      0,
+      1,
+      priorEarned ? 0 : DEFAULT_ADJUST.priorWeight,
+    ),
     margin: num(env.MARINA_FORECAST_CALIBRATION_MARGIN, 0, 1, DEFAULT_ADJUST.margin),
     score: env.MARINA_FORECAST_CALIBRATION_SCORE?.trim().toLowerCase() === "log" ? "log" : "brier",
     minRecords: Math.round(
