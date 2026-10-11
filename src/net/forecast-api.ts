@@ -19,9 +19,11 @@
  * `save: true` (or `resolves: "<venue>/<ticker>"`, which implies it) keeps the
  * answer in `forecast_answers` under the key's bound entity (a `secret:name`
  * MODEL_API_KEYS entry), exactly as the `forecast` command does, so a resolved
- * Sample scores it and the outcome teaches. Opt-in per call; a measurement run
- * (`x-marina-eval` mode=measure) is never saved, since its outcomes must not
- * reach the lesson pool.
+ * Sample scores it and the outcome teaches. Opt-in per call. A measurement
+ * run (`x-marina-eval` mode=measure) is filed under its board's name with
+ * `eval_mode = measure`: its outcome names the board, so it teaches every
+ * other board while leakage rule 2 keeps the lesson out of that board's own
+ * measurements (src/learning/eval-context.ts), and it never writes history.
  */
 
 import { dailyCapRefusal } from "../engine/spend-ledger";
@@ -33,7 +35,7 @@ import {
 } from "../forecast/prior";
 import type { ForecastAnswer, ForecastKind } from "../forecast/question";
 import type { ForecastScale } from "../forecast/service";
-import { type EvalContext, evalOption } from "../learning/eval-context";
+import { type EvalContext, evalOption, sourceNamesBoard } from "../learning/eval-context";
 import type { MarinaDB } from "../persistence/database";
 import { parseSampleId } from "../resolvers/calibration";
 import { errorJson, json, type PassthruAuthResult } from "./model-api/shared";
@@ -42,12 +44,13 @@ import { errorJson, json, type PassthruAuthResult } from "./model-api/shared";
 interface SaveTarget {
   entityName: string;
   sampleId?: string;
-  filing: { source: "api"; evalMode?: "live" };
+  filing: { source: string; evalMode?: "live" | "measure" };
 }
 
 /**
  * Validate `save` / `resolves`. Saving needs an owner (a key bound to an
- * entity) and a database, and is refused for a measurement run.
+ * entity) and a database. A measurement run files under its board's name, so
+ * that name must name a board (not a generic domain such as `forecast`).
  */
 export function saveTarget(
   body: { save?: unknown; resolves?: unknown },
@@ -65,8 +68,11 @@ export function saveTarget(
     if (body.save === false) return { error: "resolves saves the answer; drop save: false" };
   }
   if (body.save !== true && body.resolves === undefined) return {};
-  if (evalOption(req).eval?.mode === "measure") {
-    return { error: "a measurement run (x-marina-eval mode=measure) is never saved" };
+  const measured = evalOption(req).eval;
+  if (measured?.mode === "measure" && !sourceNamesBoard(measured.benchmark)) {
+    return {
+      error: `a measurement run is saved under its board's name; "${measured.benchmark}" names no board`,
+    };
   }
   const entityName = auth?.boundEntityName;
   if (!entityName) {
@@ -76,10 +82,10 @@ export function saveTarget(
   return {
     target: {
       entityName,
-      filing: {
-        source: "api",
-        ...(evalOption(req).eval?.mode === "live" ? { evalMode: "live" as const } : {}),
-      },
+      filing:
+        measured?.mode === "measure"
+          ? { source: measured.benchmark, evalMode: "measure" as const }
+          : { source: "api", ...(measured?.mode === "live" ? { evalMode: "live" as const } : {}) },
       ...(typeof body.resolves === "string" ? { sampleId: body.resolves.trim() } : {}),
     },
   };

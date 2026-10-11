@@ -50,6 +50,8 @@ async function journey(
     exitKeys?: string;
     /** Runs at the first prompt, with the scratch folder, HOME and project paths. */
     atPrompt?: (paths: { project: string; home: string }) => Promise<void>;
+    /** Extra environment for the spawned `marina` (e.g. a dummy provider key). */
+    env?: Record<string, string>;
   } = {},
 ): Promise<{ metrics: JourneyMetrics; text: string; firstScreen: string }> {
   const scratch = mkdtempSync(join(tmpdir(), "marina-journey-"));
@@ -79,7 +81,13 @@ async function journey(
     {
       cwd: project,
       terminal: tty,
-      env: { PATH: process.env.PATH, TERM: "xterm-256color", NO_COLOR: "1", HOME: home },
+      env: {
+        PATH: process.env.PATH,
+        TERM: "xterm-256color",
+        NO_COLOR: "1",
+        HOME: home,
+        ...opts.env,
+      },
     },
   );
   let keystrokes = 0;
@@ -138,6 +146,7 @@ describe.skipIf(process.platform === "win32")("terminal journeys", () => {
       text,
     } = await journey("start", [], {
       exitKeys: "/exit\r",
+      env: { OPENAI_API_KEY: "journey-test-key" },
     });
     expect(m.exitCode).toBe(0);
     expect(m.linesBeforePrompt).toBeLessThanOrEqual(6);
@@ -149,6 +158,38 @@ describe.skipIf(process.platform === "win32")("terminal journeys", () => {
     expect(text).toMatch(/^project · \S.* › /m);
     // Regression guard: today the prompt appears in about 2 s.
     expect(m.promptMs).toBeLessThan(15_000);
+  }, 60_000);
+
+  test("zero-config: no provider key names the missing thing and offers init", async () => {
+    const { metrics: m, firstScreen } = await journey("zero-config", [], {});
+    expect(m.exitCode).toBe(0);
+    expect(firstScreen).toMatch(/No LLM provider key/);
+    expect(firstScreen).toContain("marina init");
+    expect(m.linesBeforePrompt).toBeLessThanOrEqual(6);
+  }, 60_000);
+
+  test("memory: /memory save remembers a line and /memory lists it", async () => {
+    const { text } = await journey(
+      "memory",
+      [
+        {
+          keys: "/memory save onramp-note-123\r",
+          until: (t) => /onramp-note-123/i.test(t) && PROMPT.test(t.trimEnd()),
+        },
+        { keys: "/memory\r", until: (t) => PROMPT.test(t.trimEnd()) },
+      ],
+      { env: { OPENAI_API_KEY: "journey-test-key" } },
+    );
+    expect(text).toContain("onramp-note-123");
+  }, 60_000);
+
+  test("model: /model shows the current selection", async () => {
+    const { text } = await journey(
+      "model",
+      [{ keys: "/model\r", until: (t) => /Model · /.test(t) && PROMPT.test(t.trimEnd()) }],
+      { env: { OPENAI_API_KEY: "journey-test-key" } },
+    );
+    expect(text).toContain("Model · ");
   }, 60_000);
 
   test("help: /help is one screen of essentials; /help all lists everything", async () => {

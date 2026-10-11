@@ -334,14 +334,30 @@ describe("the adjustment stage", () => {
   });
 });
 
-describe("defaults: unset settings change nothing", () => {
-  it("an environment with no forecast settings turns no mechanism on", () => {
+describe("defaults: learned settings are earned, so unset settings change no answer without evidence", () => {
+  it("an environment with no forecast settings runs the earned stages with no cold-start weight", () => {
     const s = adjustSettingsFromEnv({});
-    expect(adjustActive(s)).toBe(false);
+    expect(adjustActive(s)).toBe(true);
+    expect(s).toMatchObject({ prior: "on", calibration: "on", priorWeight: 0 });
+    expect(adjustSettingsFromEnv({ MARINA_FORECAST_PRIOR: "earned" }).priorWeight).toBe(0);
+    // `on` keeps the operator's cold-start weight toward a supplied prior; `off` skips.
+    expect(adjustSettingsFromEnv({ MARINA_FORECAST_PRIOR: "on" }).priorWeight).toBe(0.5);
+    expect(
+      adjustSettingsFromEnv({ MARINA_FORECAST_PRIOR: "off", MARINA_FORECAST_CALIBRATION: "off" }),
+    ).toMatchObject({ prior: "off", calibration: "off" });
+    expect(
+      adjustActive(
+        adjustSettingsFromEnv({
+          MARINA_FORECAST_PRIOR: "off",
+          MARINA_FORECAST_CALIBRATION: "off",
+        }),
+      ),
+    ).toBe(false);
     expect(s.history).toBeUndefined();
     expect(typedOptionsFromEnv({}).pool).toBeUndefined();
-    // Routing observes by default: the pick is recorded, the default formation still answers.
-    expect(routeSettingsFromEnv({}).mode).toBe("observe");
+    // Routing is on by default and falls open to the default formation without evidence.
+    expect(routeSettingsFromEnv({}).mode).toBe("on");
+    expect(routeSettingsFromEnv({ MARINA_FORECAST_ROUTE: "observe" }).mode).toBe("observe");
     expect(routeSettingsFromEnv({ MARINA_FORECAST_ROUTE: "off" }).mode).toBe("off");
     // The run checker is on by default; `off` turns it off.
     expect(typedOptionsFromEnv({}).verify).toBe(true);
@@ -349,7 +365,7 @@ describe("defaults: unset settings change nothing", () => {
     expect(formationFromEnv({})).toBe("ensemble");
   });
 
-  it("the ensemble formation with settings unset answers exactly as the typed forecaster", async () => {
+  it("with no history, unset settings answer exactly as the unadjusted forecaster (even with a market prior)", async () => {
     const part = (name: string): ModelPart => ({
       name,
       complete: async (system) =>
@@ -372,10 +388,20 @@ describe("defaults: unset settings change nothing", () => {
       options: { researchRounds: 1, critique: false },
       adjust: adjustSettingsFromEnv({}),
     };
-    const req = { question: "Will it?", answer: yn, asOf: CUTOFF };
-    const typed = await forecastTyped(req, deps);
+    const req = {
+      question: "Will it?",
+      answer: yn,
+      asOf: CUTOFF,
+      priors: [
+        { source: "market" as const, distribution: { Yes: 0.1 }, at: "2026-08-31T00:00:00Z" },
+      ],
+    };
+    const { adjust: _adjust, ...bare } = deps;
+    const typed = await forecastTyped(req, bare);
     const formed = await forecastFormed(req, deps, "ensemble");
-    expect(formed.adjustment).toBeUndefined();
+    // The stage ran and recorded itself, but nothing earned a change.
+    expect(formed.adjustment?.shrink?.applied).toBe(false);
+    expect(formed.adjustment?.calibration?.applied).not.toBe(true);
     expect(formed.distribution).toEqual(typed.distribution);
     expect(formed.formatted).toBe(typed.formatted);
   });

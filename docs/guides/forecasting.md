@@ -203,8 +203,13 @@ id and never for a measurement run. Two writers feed the shared file:
 The FutureX clean backtest learns only from its own resolved rows, through a fresh in-memory
 history per run, and never touches the shared file.
 
-**Prior shrink** (`MARINA_FORECAST_PRIOR=on`). A strong baseline caps a forecaster's large misses,
-so the answer is pooled toward the best prior available at the cutoff:
+**Prior shrink** (`MARINA_FORECAST_PRIOR`, default `earned`). A strong baseline caps a
+forecaster's large misses, so the answer is pooled toward the best prior available at the cutoff.
+By default the weight is earned: it starts at 0 and changes an answer only after a fitted weight
+wins on held-out history. Recalibration (`MARINA_FORECAST_CALIBRATION`) and formation routing
+(`MARINA_FORECAST_ROUTE=on`) also run by default on the same rule, so with no history no answer
+changes. `on` adds the operator's cold-start weight toward a supplied prior, and `off` skips the
+stage. The priors, in order:
 
 1. a market, community or statistical forecast the caller supplies (`priors` on
    `POST /v1/forecast`: `source`, `distribution` or `value`/`sd`, and `at`, the time it was

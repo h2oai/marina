@@ -124,10 +124,25 @@ describe("marina dispatcher routing", () => {
     });
   });
 
-  it("rejects -p without a task (or with a flag-shaped follow-up)", () => {
-    expect(parseDispatch(["-p"])).toEqual({ kind: "usage-error", arg: "-p" });
-    expect(parseDispatch(["-p", "--fresh"])).toEqual({ kind: "usage-error", arg: "-p" });
-    expect(parseDispatch(["--print"])).toEqual({ kind: "usage-error", arg: "--print" });
+  it("accepts -p without an inline task as one task from stdin", () => {
+    expect(parseDispatch(["-p"])).toEqual({ kind: "code", dir: undefined, taskFromStdin: true });
+    expect(parseDispatch(["-p", "--fresh"])).toEqual({
+      kind: "code",
+      dir: undefined,
+      fresh: true,
+      taskFromStdin: true,
+    });
+    expect(parseDispatch(["--print"])).toEqual({
+      kind: "code",
+      dir: undefined,
+      taskFromStdin: true,
+    });
+    expect(parseDispatch(["-p", "--json"])).toEqual({
+      kind: "code",
+      dir: undefined,
+      json: true,
+      taskFromStdin: true,
+    });
   });
 
   it("parses the one-shot result flags, and only with -p", () => {

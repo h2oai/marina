@@ -42,6 +42,8 @@ export type Dispatch =
       dir?: string;
       fresh?: boolean;
       print?: string;
+      /** `-p` given without an inline task: read the task from stdin (a pipe). */
+      taskFromStdin?: boolean;
       allowExec?: boolean;
       dangerouslyAllowAll?: boolean;
       agent?: string;
@@ -150,6 +152,7 @@ export function parseDispatch(
   let verification: PrintVerification | undefined;
   let json: boolean | undefined;
   let print: string | undefined;
+  let taskFromStdin: boolean | undefined;
   let allowExec: boolean | undefined;
   let dangerouslyAllowAll: boolean | undefined;
   const selection: { agent?: string; model?: string; profile?: string; harness?: string } = {};
@@ -209,8 +212,12 @@ export function parseDispatch(
     }
     if (arg === "-p" || arg === "--print") {
       const task = argv[i + 1];
-      // A missing or flag-shaped follow-up is a usage error, not a task.
-      if (task === undefined || task.startsWith("-")) return { kind: "usage-error", arg };
+      // A missing or flag-shaped follow-up means the task comes from stdin
+      // (a pipe): `printf "…" | marina -p`.
+      if (task === undefined || task.startsWith("-")) {
+        taskFromStdin = true;
+        continue;
+      }
       print = task;
       i++;
       continue;
@@ -221,7 +228,7 @@ export function parseDispatch(
     dir = arg;
   }
   // The one-shot result flags shape a -p run only.
-  if ((allowUnverified || json || verification) && print === undefined)
+  if ((allowUnverified || json || verification) && print === undefined && !taskFromStdin)
     return {
       kind: "usage-error",
       arg: allowUnverified ? "--allow-unverified" : json ? "--json" : "--verification",
@@ -265,6 +272,7 @@ export function parseDispatch(
     ...(verification ? { verification } : {}),
     ...(fresh !== undefined ? { fresh } : {}),
     ...(print !== undefined ? { print } : {}),
+    ...(taskFromStdin ? { taskFromStdin } : {}),
     ...(allowExec !== undefined ? { allowExec } : {}),
     ...(dangerouslyAllowAll !== undefined ? { dangerouslyAllowAll } : {}),
   };
@@ -489,6 +497,20 @@ async function runStatus(): Promise<number> {
   return 0;
 }
 
+/** Read a one-shot task from piped stdin (`printf "…" | marina -p`). */
+async function readStdinTask(): Promise<string> {
+  if (process.stdin.isTTY) {
+    console.error('marina -p needs a task — give one inline (`marina -p "task"`) or pipe one in.');
+    process.exit(1);
+  }
+  const task = (await new Response(Bun.stdin.stream()).text()).trim();
+  if (!task) {
+    console.error("marina -p: no task on stdin.");
+    process.exit(1);
+  }
+  return task;
+}
+
 if (import.meta.main) {
   const dispatch = parseDispatch(process.argv.slice(2));
   switch (dispatch.kind) {
@@ -575,9 +597,10 @@ if (import.meta.main) {
       break;
     case "code": {
       const { runCodeSession } = await import("./code");
+      const print = dispatch.taskFromStdin ? await readStdinTask() : dispatch.print;
       await runCodeSession(dispatch.dir ?? process.cwd(), {
         fresh: dispatch.fresh,
-        print: dispatch.print,
+        print,
         allowExec: dispatch.allowExec,
         dangerouslyAllowAll: dispatch.dangerouslyAllowAll,
         agent: dispatch.agent,

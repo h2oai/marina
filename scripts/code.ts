@@ -543,6 +543,15 @@ export async function runCodeSession(
       : inferCodeDefaultModel(process.env);
   if (harness.agent === "marina" && defaultModel) harness.model = defaultModel;
 
+  // Zero-config: with no LLM provider key, name the one missing thing in a single
+  // line and point at `marina init` — never a wall of text, never a false "ready".
+  const noProviderKey = harness.agent === "marina" && defaultModel === undefined;
+  if (noProviderKey) {
+    console.error(
+      "No LLM provider key — set one (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, …) or run `marina init`.",
+    );
+  }
+
   // The first screen is short: where you are, what runs, and what to type.
   // Everything else is one command away (/status, /project, --verbose).
   const verbose = opts.verbose === true;
@@ -753,7 +762,8 @@ export async function runCodeSession(
   say(`Marina ${packageVersion()} · ${folderName} · ${agentLabel}`);
   // The provider check asks the SERVER, which loads its own environment (the
   // repo .env): the launcher's environment says nothing about what it can use.
-  if (harness.agent === "marina" && !(await serverHasModel(port))) {
+  // The zero-config line above already named the missing key: say it once.
+  if (harness.agent === "marina" && !noProviderKey && !(await serverHasModel(port))) {
     console.error(
       `No model provider is configured for the agent. Set a key in ${join(REPO_ROOT, ".env")} or run marina init; or use /use claude, /use codex or /use pi.`,
     );

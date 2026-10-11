@@ -13,6 +13,8 @@ import { stageRequestImages } from "../../engine/media/vision";
 import { evalOption, LESSONS_HEADER } from "../../learning/eval-context";
 import type { OutcomeDomain } from "../../learning/outcomes";
 import { lessonsBlock, lessonsHeaderValue, recallForWork } from "../../learning/service";
+import { lessonsFromWorkMode } from "../../learning/work";
+import type { ObligationsMode } from "../../obligations/mode";
 import { getEndpointConfig } from "../model-endpoint";
 import { type InjectionFormat, messageText, type OpenAIMessage } from "../passthru-context";
 import {
@@ -23,7 +25,7 @@ import {
   prepareArgcheck,
   statedFromLedger,
 } from "./argcheck";
-import { notePassthruRecoveries, passthruLearnOwner } from "./learn";
+import { evalRef, notePassthruRecoveries, passthruLearnOwner } from "./learn";
 import {
   finishObligations,
   OBLIGATIONS_HEADER,
@@ -37,6 +39,7 @@ import {
   lessonQuery,
   passthruCacheLookup,
   passthruCacheStore,
+  passthruEntityId,
   passthruTraceOptions,
   passthruUpstreamHints,
   preparePassthru,
@@ -70,8 +73,18 @@ import {
   requestTrace,
   unsupportedParam,
 } from "./shared";
+import {
+  FULL_MODEL_PREFIX,
+  type PassthruStack,
+  resolvePassthruStack,
+  STACK_HEADER,
+  STACK_MEMBERS,
+  type StackMember,
+  stackHeaderValue,
+  withoutMember,
+} from "./stack";
 import { explicitUpstreamModel, passthruForceModel, proxyToUpstream } from "./upstream";
-import { maybeVerifyChat, VERIFY_MODEL_PREFIX } from "./verify";
+import { maybeVerifyChat, VERIFY_MODEL_PREFIX, verifyPin, verifyProposer } from "./verify";
 
 /**
  * `marina/lessons:<model>` — the plain request to <model>, with judged lessons
@@ -88,7 +101,72 @@ const OPT_IN_PREFIXES = [
   LESSONS_MODEL_PREFIX,
   OBLIGATIONS_MODEL_PREFIX,
   ARGCHECK_MODEL_PREFIX,
+  FULL_MODEL_PREFIX,
 ] as const;
+
+/** Did the request say `off` (or `false`/`0`) to one instrument's own header? */
+function headerSaysOff(req: Request, name: string): boolean {
+  const v = req.headers.get(name)?.trim().toLowerCase();
+  return v === "off" || v === "false" || v === "0";
+}
+
+/** Why `context` / `learn` cannot run for a caller without its own identity. */
+const NEEDS_IDENTITY =
+  "it needs a distinct identity (a key bound to an entity, or an authorized name-map)";
+
+/**
+ * The request as the context rules should read it: an explicit stack that
+ * lists `context` (or `full`) turns `X-Marina-Context` on, `none` turns it
+ * off; any other explicit list, and the default, leave the caller's own
+ * context settings alone.
+ */
+function contextRequest(req: Request, stack: PassthruStack): Request {
+  if (stack.source !== "header" && stack.source !== "prefix") return req;
+  const want = stack.members.has("context") ? "on" : stack.members.size === 0 ? "off" : undefined;
+  if (!want || req.headers.get("X-Marina-Context")?.trim().toLowerCase() === want) return req;
+  const headers = new Headers(req.headers);
+  headers.set("X-Marina-Context", want);
+  return new Request(req.url, { method: req.method, headers, signal: req.signal });
+}
+
+/**
+ * The principal this request's work teaches (`passthruLearnOwner`), or an
+ * error when an explicitly listed `learn` member cannot run. `ran` is false
+ * when the server collects nothing (`MARINA_LESSONS_FROM_WORK=off`).
+ */
+function learnFor(
+  req: Request,
+  auth: PassthruAuthResult | undefined,
+  stack: PassthruStack,
+): { owner?: string; ran: boolean } | { error: string } {
+  const owner = passthruLearnOwner(req, auth, stack.members.has("learn"));
+  if (stack.members.has("learn")) {
+    const reason = !owner
+      ? NEEDS_IDENTITY.replace(" or an authorized name-map", "")
+      : lessonsFromWorkMode() === "off"
+        ? "lessons from work are off on this server (MARINA_LESSONS_FROM_WORK)"
+        : undefined;
+    if (reason) {
+      const error = withoutMember(stack, "learn", reason);
+      if (error) return { error };
+    }
+  }
+  return {
+    ...(owner ? { owner } : {}),
+    ran: !!owner && stack.members.has("learn") && lessonsFromWorkMode() !== "off",
+  };
+}
+
+/** The members that ran, in declaration order. */
+function ranMembers(ran: Partial<Record<StackMember, unknown>>): StackMember[] {
+  return STACK_MEMBERS.filter((m) => !!ran[m]);
+}
+
+/** The response with the effective stack recorded (nothing added when no stack applied). */
+function withStack(resp: Response, stack: PassthruStack, ran: StackMember[]): Response {
+  if (stack.source === "none") return resp;
+  return withResponseHeader(resp, STACK_HEADER, stackHeaderValue(ran, stack));
+}
 
 /**
  * `model` with the opt-in prefixes stripped, except `keep` (left in front when
@@ -117,6 +195,92 @@ export function wantsLessons(req: Request, model: unknown): boolean {
   if (typeof model === "string" && model.startsWith(LESSONS_MODEL_PREFIX)) return true;
   const v = req.headers.get(LESSONS_HEADER)?.trim().toLowerCase();
   return v === "on" || v === "true" || v === "1";
+}
+
+/**
+ * The verification formation with the rest of the stack around it: the
+ * caller's memory context and the open obligations ride the proposer's
+ * trailing note (after the lessons), the caller's own lessons ride with the
+ * shared pool, the ledger reads the conversation before the proposer, and
+ * the ledger's final-answer check and the argument check read the VERIFIED
+ * reply — a nudge re-runs the formation with the note.
+ */
+async function runVerifyStack(
+  engine: Engine,
+  req: Request,
+  body: Record<string, unknown>,
+  messages: OpenAIMessage[],
+  authResult: PassthruAuthResult | undefined,
+  o: {
+    stack: PassthruStack;
+    obligationsMode?: ObligationsMode;
+    argcheckMode?: ObligationsMode;
+    surface: InjectionFormat;
+  },
+): Promise<Response> {
+  const { stack } = o;
+  const prep = await preparePassthru(engine, req, authResult, messages, o.surface);
+  if (stack.members.has("context") && !prep.identity?.contextOptIn) {
+    const error = withoutMember(stack, "context", NEEDS_IDENTITY);
+    if (error) return unsupportedParam(STACK_HEADER, error);
+  }
+  const learn = learnFor(req, authResult, stack);
+  if ("error" in learn) return unsupportedParam(STACK_HEADER, learn.error);
+  if (learn.owner) notePassthruRecoveries(engine.db, learn.owner, messages, evalRef(req));
+  const lessonOwner =
+    authResult && !isInternalCaller(authResult) ? authResult.boundEntityName : undefined;
+  const run = async (note?: string): Promise<Response> =>
+    (await maybeVerifyChat(engine, req, body, authResult, {
+      ...(joinNotes(prep.addendum, note) ? { note: joinNotes(prep.addendum, note) } : {}),
+      ...(lessonOwner ? { lessonOwner } : {}),
+    })) ?? errorJson(400, "Not a marina/verify: model id");
+  // The ledger and the check read the request as the proposer would answer it.
+  const proposer = verifyProposer(engine, String(body.model));
+  const ledgerBody =
+    proposer && explicitUpstreamModel(engine, proposer) ? { ...body, model: proposer } : undefined;
+  const forceModel = verifyPin(engine);
+  const scoped = {
+    ...(prep.identity?.entityId ? { entityId: prep.identity.entityId } : {}),
+    ...(authResult ? { auth: authResult } : {}),
+  };
+  const obligations =
+    ledgerBody && o.obligationsMode
+      ? await prepareObligations(engine, req, ledgerBody, messages, {
+          mode: o.obligationsMode,
+          forceModel,
+          ...scoped,
+        })
+      : undefined;
+  const argcheck = ledgerBody
+    ? prepareArgcheck(engine, req, ledgerBody, messages, {
+        mode: o.argcheckMode,
+        forceModel,
+        ...scoped,
+        ...(obligations ? { stated: statedFromLedger(obligations.ledger) } : {}),
+        ...(learn.owner ? { learnOwner: learn.owner } : {}),
+      })
+    : undefined;
+  let resp = await run(obligations?.note);
+  if (obligations && ledgerBody)
+    resp = await finishObligations(engine, obligations, ledgerBody, resp, run);
+  if (argcheck && ledgerBody)
+    resp = await finishArgcheck(argcheck, ledgerBody, resp, (note) =>
+      run(joinNotes(obligations?.note, note)),
+    );
+  if (prep.identity?.contextOptIn)
+    void capturePassthruResponse(engine, prep.identity.entityId, messages, resp);
+  return withStack(
+    resp,
+    stack,
+    ranMembers({
+      lessons: true,
+      obligations,
+      argcheck,
+      verify: true,
+      context: prep.identity?.contextOptIn,
+      learn: learn.ran,
+    }),
+  );
 }
 
 /** The upstream's response with one more header (its headers may be immutable). */
@@ -205,34 +369,74 @@ export async function runOpenaiChat(
     // `marina/argcheck:<model>` (or `x-marina-argcheck: on|observe`) into the
     // argument check before writes; they combine in any order, and the
     // prefixes are stripped before anything else sees the model id.
-    const lessonsOptIn = wantsLessons(req, stripOptInPrefixes(body.model, LESSONS_MODEL_PREFIX));
-    const obligationsMode = obligationsRequestMode(
+    const lessonsAsked = wantsLessons(req, stripOptInPrefixes(body.model, LESSONS_MODEL_PREFIX));
+    const obligationsAsked = obligationsRequestMode(
       req,
       stripOptInPrefixes(body.model, OBLIGATIONS_MODEL_PREFIX),
     );
-    const argcheckMode = argcheckRequestMode(
+    const argcheckAsked = argcheckRequestMode(
       req,
       stripOptInPrefixes(body.model, ARGCHECK_MODEL_PREFIX),
     );
+    // The instrument stack (`stack.ts`): `x-marina-stack`, `marina/full:`, or
+    // the operator default for an identified caller. A per-instrument header
+    // still wins for its own instrument (`off` opts out of a default).
+    const fullPrefix = String(stripOptInPrefixes(body.model, FULL_MODEL_PREFIX)).startsWith(
+      FULL_MODEL_PREFIX,
+    );
+    const resolved = resolvePassthruStack(
+      req,
+      authResult,
+      fullPrefix,
+      () => passthruEntityId(engine, req, authResult) !== undefined,
+    );
+    if ("error" in resolved) return unsupportedParam(STACK_HEADER, resolved.error);
+    const stack = resolved;
+    const lessonsOptIn =
+      !headerSaysOff(req, LESSONS_HEADER) && (lessonsAsked || stack.members.has("lessons"));
+    const obligationsMode =
+      obligationsAsked ??
+      (stack.members.has("obligations") && !headerSaysOff(req, OBLIGATIONS_HEADER)
+        ? "on"
+        : undefined);
+    const argcheckMode =
+      argcheckAsked ??
+      (stack.members.has("argcheck") && !headerSaysOff(req, ARGCHECK_HEADER) ? "on" : undefined);
     const bare = stripOptInPrefixes(body.model);
     if (bare !== body.model) body = { ...body, model: bare };
-    const model = typeof body.model === "string" ? body.model : "marina";
+    let model = typeof body.model === "string" ? body.model : "marina";
     const messages = Array.isArray(body.messages) ? (body.messages as OpenAIMessage[]) : [];
 
-    // The verification formation answers before the ledger and the argument
-    // check would run: asking for both is refused, never silently half-served.
-    if (model.startsWith(VERIFY_MODEL_PREFIX) && (obligationsMode || argcheckMode)) {
-      return unsupportedParam(
-        "model",
-        "marina/obligations: and marina/argcheck: (or their x-marina-* headers) cannot be combined with marina/verify: — the verification formation runs instead of the obligations ledger and the argument check. Send one or the other.",
-      );
+    // `verify` in the stack routes the model through the verification
+    // formation (`marina/verify:<model>`) when this request can take it.
+    if (stack.members.has("verify") && !model.startsWith(VERIFY_MODEL_PREFIX)) {
+      const why =
+        body.stream === true
+          ? "streaming (the formation reviews a complete draft)"
+          : typeof body.n === "number" && body.n > 1
+            ? "n > 1"
+            : !verifyPin(engine) && !explicitUpstreamModel(engine, model)
+              ? "the model is not an explicit upstream id"
+              : undefined;
+      if (why) {
+        const error = withoutMember(stack, "verify", why);
+        if (error) return unsupportedParam(STACK_HEADER, error);
+      } else {
+        model = `${VERIFY_MODEL_PREFIX}${model}`;
+        body = { ...body, model };
+      }
     }
 
     // `marina/verify:<proposer>[+<checker>]` — the verification formation as a
-    // model id (proposer → checker review → bounded revision), tools included.
+    // model id (proposer → checker review → bounded revision), tools included,
+    // with the rest of the stack around it.
     if (model.startsWith(VERIFY_MODEL_PREFIX)) {
-      const verified = await maybeVerifyChat(engine, req, body, authResult);
-      if (verified) return verified;
+      return runVerifyStack(engine, contextRequest(req, stack), body, messages, authResult, {
+        stack,
+        ...(obligationsMode ? { obligationsMode } : {}),
+        ...(argcheckMode ? { argcheckMode } : {}),
+        surface: runOpts?.surface ?? "openai",
+      });
     }
 
     // Extract last user message
@@ -287,11 +491,15 @@ export async function runOpenaiChat(
       // called in).
       const shared = await preparePassthru(
         engine,
-        req,
+        contextRequest(req, stack),
         authResult,
         messages,
         runOpts?.surface ?? "openai",
       );
+      if (stack.members.has("context") && !shared.identity?.contextOptIn) {
+        const error = withoutMember(stack, "context", NEEDS_IDENTITY);
+        if (error) return unsupportedParam(STACK_HEADER, error);
+      }
       // Opt-in lessons ride the same addendum (after the caller's context), so
       // a plain passthru request is byte-identical unless it asked for them.
       // The set is chosen from the conversation's OPENING request, so it stays
@@ -310,10 +518,13 @@ export async function runOpenaiChat(
             ...(lessonOwner ? { owner: lessonOwner } : {}),
           })
         : undefined;
-      // Lessons from work: an explicitly opted-in, bound, non-measurement
-      // conversation's tool recoveries teach its owner (`x-marina-learn: on`).
-      const learnOwner = passthruLearnOwner(req, authResult);
-      if (learnOwner) notePassthruRecoveries(engine.db, learnOwner, messages);
+      // Lessons from work: a bound conversation whose stack includes `learn`
+      // (or `x-marina-learn: on`) teaches its owner from its tool recoveries;
+      // a measurement run's signals carry its eval ref.
+      const learn = learnFor(req, authResult, stack);
+      if ("error" in learn) return unsupportedParam(STACK_HEADER, learn.error);
+      const learnOwner = learn.owner;
+      if (learnOwner) notePassthruRecoveries(engine.db, learnOwner, messages, evalRef(req));
       const lessonText = lessons ? lessonsBlock(lessons.inject) : "";
       const prep = lessonText
         ? {
@@ -346,10 +557,14 @@ export async function runOpenaiChat(
         ...(obligations ? { stated: statedFromLedger(obligations.ledger) } : {}),
         ...(learnOwner ? { learnOwner } : {}),
       });
-      const cached =
-        obligations || argcheck
-          ? undefined
-          : await passthruCacheLookup(engine, prep, body, forceModel);
+      // A request with tools under the ledger or the check depends on their
+      // state, so the response cache is not consulted (without tools both are
+      // no-ops).
+      const instrumented =
+        !!(obligations || argcheck) && Array.isArray(body.tools) && body.tools.length > 0;
+      const cached = instrumented
+        ? undefined
+        : await passthruCacheLookup(engine, prep, body, forceModel);
       if (cached) return cached;
       // Every per-request note (memory, lessons, the obligations reminder, a
       // nudge) is ONE trailing note after the cache breakpoints.
@@ -394,9 +609,19 @@ export async function runOpenaiChat(
       }
       if (prep.identity?.contextOptIn) {
         void capturePassthruResponse(engine, prep.identity.entityId, messages, resp);
-        if (!obligations && !argcheck) passthruCacheStore(engine, prep, body, forceModel, resp);
+        if (!instrumented) passthruCacheStore(engine, prep, body, forceModel, resp);
       }
-      return lessons ? withResponseHeader(resp, LESSONS_HEADER, lessonsHeaderValue(lessons)) : resp;
+      const ran = ranMembers({
+        lessons,
+        obligations,
+        argcheck,
+        context: prep.identity?.contextOptIn,
+        learn: learn.ran,
+      });
+      const withLessons = lessons
+        ? withResponseHeader(resp, LESSONS_HEADER, lessonsHeaderValue(lessons))
+        : resp;
+      return withStack(withLessons, stack, ran);
     }
 
     // Non-passthru routing modes synthesize an answer from the user's text (or
@@ -417,11 +642,22 @@ export async function runOpenaiChat(
     if (rejected) return rejected;
     // The ledger and the argument check are passthru instruments; this request
     // routes to Marina's agents, which would ignore them. (Lessons need no
-    // refusal here: the agent route recalls them already.)
-    if (obligationsMode || argcheckMode) {
+    // refusal here: the agent route recalls them already.) A default stack
+    // does not apply here — the agents' own loops carry the instruments — but
+    // an explicit one that asks for more than lessons is refused.
+    if (obligationsAsked || argcheckAsked) {
       return unsupportedParam(
-        obligationsMode ? OBLIGATIONS_HEADER : ARGCHECK_HEADER,
+        obligationsAsked ? OBLIGATIONS_HEADER : ARGCHECK_HEADER,
         "The obligations ledger and the argument check run only on passthru requests (an explicit upstream id such as anthropic/<model>, the passthru endpoint mode, or an internal caller); this request routes to Marina's agents.",
+      );
+    }
+    if (
+      (stack.source === "header" || stack.source === "prefix") &&
+      [...stack.members].some((m) => m !== "lessons")
+    ) {
+      return unsupportedParam(
+        STACK_HEADER,
+        "The instrument stack runs on passthru requests (an explicit upstream id such as anthropic/<model>, or the passthru endpoint mode); this request routes to Marina's agents, whose own loops carry the instruments. Send x-marina-stack: lessons or none here.",
       );
     }
 

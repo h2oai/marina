@@ -48,6 +48,7 @@ import { scanWorkHistory } from "../src/learning/work-backfill";
 import { PASSTHRU_LESSON_DOMAINS } from "../src/net/model-api/chat-completions";
 import {
   conversationRecoveries,
+  evalRef,
   notePassthruRecoveries,
   passthruLearnOwner,
   resetPassthruLearnForTests,
@@ -563,15 +564,17 @@ describe("passthru: explicit opt-in, owner-scoped, never measurement", () => {
   const req = (headers: Record<string, string>) => ({ headers: new Headers(headers) });
   const bound = { internal: false, openMode: false, boundEntityName: "jeff" } as PassthruAuthResult;
 
-  it("needs the opt-in, a bound key, no eval header, not an internal caller", () => {
+  it("needs the opt-in or the stack, a bound key, not an internal caller; eval traffic teaches", () => {
     expect(passthruLearnOwner(req({ "x-marina-learn": "on" }), bound)).toBe("jeff");
     expect(passthruLearnOwner(req({}), bound)).toBeUndefined();
-    expect(
-      passthruLearnOwner(
-        req({ "x-marina-learn": "on", "x-marina-eval": "benchmark=tau2-retail; mode=measure" }),
-        bound,
-      ),
-    ).toBeUndefined();
+    expect(passthruLearnOwner(req({}), bound, true)).toBe("jeff");
+    expect(passthruLearnOwner(req({ "x-marina-learn": "off" }), bound, true)).toBeUndefined();
+    const measured = req({
+      "x-marina-learn": "on",
+      "x-marina-eval": "benchmark=tau2-retail; mode=measure",
+    });
+    expect(passthruLearnOwner(measured, bound)).toBe("jeff");
+    expect(evalRef(measured)).toBe("eval:tau2-retail:measure");
     expect(
       passthruLearnOwner(req({ "x-marina-learn": "on" }), { ...bound, internal: true }),
     ).toBeUndefined();

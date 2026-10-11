@@ -23,3 +23,23 @@ export function inferCodeDefaultModel(env: Record<string, string | undefined>): 
   }
   return undefined;
 }
+
+/** Preferred "fast" (cheapest-tier) routable models, cheapest first. When
+ *  prices are unknown, ordering falls back to each vendor's light/cheap tier
+ *  (flash/lite/luna/sonnet/open-weight). `/fast` picks the first one reachable. */
+const FAST_MODELS = [
+  ["GEMINI_API_KEY", "google/gemini-3.1-flash-lite"],
+  ["GROQ_API_KEY", "groq/openai/gpt-oss-120b"],
+  ["OPENAI_API_KEY", "openai/gpt-6-luna"],
+  ["HUGGINGFACE_API_KEY", "huggingface/zai-org/GLM-5.3-Flash"],
+  ["OPENROUTER_API_KEY", "openrouter/openai/gpt-6-luna"],
+  ["ANTHROPIC_API_KEY", "anthropic/claude-sonnet-5"],
+] as const;
+
+/** Cheapest reachable model: the first configured key in `FAST_MODELS`. */
+export function fastestModelFor(env: Record<string, string | undefined>): string | undefined {
+  for (const [key, model] of FAST_MODELS) {
+    if (env[key]?.trim()) return model;
+  }
+  return undefined;
+}

@@ -212,7 +212,7 @@ describe("POST /v1/forecast", () => {
     expect(res.status).toBe(503);
   });
 
-  it("saves only on request, under the key's bound entity, never for a measurement run", async () => {
+  it("saves only on request, under the key's bound entity; a measurement under its board", async () => {
     using _ = noModels();
     const req = (eval_?: string) =>
       new Request("http://x/v1/forecast", {
@@ -231,12 +231,20 @@ describe("POST /v1/forecast", () => {
     expect(
       saveTarget({ save: true }, req("benchmark=prophet-arena; mode=live"), db, bound),
     ).toEqual({ target: { entityName: "ada", filing: { source: "api", evalMode: "live" } } });
+    // A measurement run files under its board's name, so its outcome names the
+    // board: it teaches other boards and is excluded from that board's own runs.
+    expect(
+      saveTarget({ save: true }, req("benchmark=prophet-arena; mode=measure"), db, bound),
+    ).toEqual({
+      target: { entityName: "ada", filing: { source: "prophet-arena", evalMode: "measure" } },
+    });
     for (const [body, r, auth] of [
       [{ save: "yes" }, req(), bound],
       [{ resolves: "no-slash" }, req(), bound],
       [{ resolves: "kalshi/X", save: false }, req(), bound],
       [{ save: true }, req(), {}],
-      [{ save: true }, req("benchmark=prophet-arena; mode=measure"), bound],
+      // A generic domain is no board name.
+      [{ save: true }, req("benchmark=forecast; mode=measure"), bound],
     ] as const) {
       expect("error" in saveTarget(body, r, db, auth)).toBe(true);
     }

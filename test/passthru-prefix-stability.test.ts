@@ -47,6 +47,7 @@ const ENV = [
   "MARINA_ANTHROPIC_AUTO_CACHE",
   "MARINA_PROFILE",
   "MARINA_LESSONS",
+  "MARINA_PASSTHRU_STACK",
 ] as const;
 
 const QUESTION = `what is the ${FIXTURE_QUERY}?`;
@@ -156,6 +157,9 @@ for (const route of ["anthropic", "openrouter"] as const) {
       else process.env.OPENROUTER_API_KEY = "sk-or-test";
       process.env.MARINA_ANTHROPIC_AUTO_CACHE = "true";
       process.env.MODEL_API_KEYS = "sk-ada:Ada";
+      // These pin the memory and lessons notes alone; the bound key's default
+      // stack (the ledger's own calls) is covered in obligations.test.ts.
+      process.env.MARINA_PASSTHRU_STACK = "off";
       resetTrustProfileForTests();
       originalFetch = globalThis.fetch;
       upstream = [];
