@@ -33,6 +33,10 @@ export interface CodingRunMetadata {
   verificationRequirement?: "candidate" | "checks" | "delivery";
   /** Owner preauthorizes only its active worker to reclaim an owner-held lock. */
   ownerMode?: "unattended";
+  /** Interpretations made where no person could answer (`code assume`, answered blocks). */
+  assumptions?: CodingAssumption[];
+  /** Blocks answered automatically on this owner-unattended attempt. */
+  blocksAnswered?: number;
   unverifiedAcceptance?: { ownerKey: string; reason: string; acceptedAt: number };
   verificationId?: string;
   verification?:
@@ -48,6 +52,51 @@ export interface CodingRunMetadata {
   verificationObservedAt?: number;
   verificationReason?: string;
   reason?: string;
+}
+
+/** A recorded interpretation; it never carries authority (no gate, permission or install). */
+export interface CodingAssumption {
+  text: string;
+  /** `worker`: stated with `code assume`; `block`: a block answered because nobody attends. */
+  source: "worker" | "block";
+  at: number;
+  artifactId?: string;
+}
+
+/** Blocks answered automatically per owner-unattended attempt; the next block ends it. */
+export const UNATTENDED_BLOCK_ANSWERS = 2;
+export const MAX_CODING_ASSUMPTIONS = 32;
+const MAX_ASSUMPTION_CHARS = 1000;
+
+/** Append an assumption to the active attempt (bounded; never alters claims or authority). */
+export function recordCodingAssumption(
+  db: MarinaDB,
+  runId: string,
+  assumption: Omit<CodingAssumption, "at">,
+  update: (meta: CodingRunMetadata) => void = () => {},
+): CodingRunMetadata | undefined {
+  return db.transaction(() => {
+    const run = db.getCodingArtifact(runId);
+    if (run?.kind !== "task_run" || run.status !== "active") return undefined;
+    const meta = codingRunMetadata(run);
+    const list = meta.assumptions ?? [];
+    if (list.length >= MAX_CODING_ASSUMPTIONS)
+      throw new Error(
+        `This attempt already records ${MAX_CODING_ASSUMPTIONS} assumptions; consolidate them in the summary.`,
+      );
+    const text = assumption.text.trim().slice(0, MAX_ASSUMPTION_CHARS);
+    meta.assumptions = [...list, { ...assumption, text, at: Date.now() }];
+    update(meta);
+    db.updateCodingArtifact(run.id, { metadata: meta });
+    return meta;
+  });
+}
+
+/** Assumptions as the receipt/summary lines a reviewer reads. */
+export function assumptionLines(meta: Pick<CodingRunMetadata, "assumptions">): string[] {
+  return (meta.assumptions ?? []).map(
+    (a) => `- ${a.source === "block" ? "(answered block) " : ""}${a.text}`,
+  );
 }
 
 export function codingRunMetadata(run: CodingArtifactRow): CodingRunMetadata {
@@ -220,7 +269,8 @@ export async function submitCodingRun(
       });
       return db.getCodingArtifact(run.id)!;
     }
-    const evidence = `${summary.content_text}\n\nCoding attempt: artifact:${run.id}\nSummary: artifact:${summary.id}\nRecorded verification: ${meta.verification}${verification ? ` (artifact:${verification.id})` : ""}`;
+    const assumed = assumptionLines(meta);
+    const evidence = `${summary.content_text}\n\nCoding attempt: artifact:${run.id}\nSummary: artifact:${summary.id}\nRecorded verification: ${meta.verification}${verification ? ` (artifact:${verification.id})` : ""}${assumed.length ? `\nAssumptions (no person could answer):\n${assumed.join("\n")}` : ""}`;
     const claim = codingRunClaim(db, run);
     if (!claim || !tasks.submit(meta.taskId, claim.entity_id, evidence)) {
       throw new Error(

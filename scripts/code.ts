@@ -163,8 +163,37 @@ export interface CodeLifecycleEnd {
   verification?: string;
   verificationReason?: string;
   reason?: string;
+  /** The full reason when `reason` is a category (`blocked`). */
+  detail?: string;
+  /** Interpretations recorded where no person could answer (`code assume`, answered blocks). */
+  assumptions?: CodeAssumption[];
   taskId?: number;
   runId?: string;
+}
+
+export interface CodeAssumption {
+  text: string;
+  source: "worker" | "block";
+}
+
+function lifecycleAssumptions(metadata: Record<string, unknown>): CodeAssumption[] | undefined {
+  if (!Array.isArray(metadata.assumptions)) return undefined;
+  const list = metadata.assumptions.flatMap((item) => {
+    const entry = item as Record<string, unknown> | null;
+    return entry && typeof entry.text === "string"
+      ? [{ text: entry.text, source: entry.source === "block" ? "block" : "worker" } as const]
+      : [];
+  });
+  return list.length ? list : undefined;
+}
+
+/** The human-readable assumption block printed after a one-shot result. */
+export function formatAssumptions(assumptions: CodeAssumption[] | undefined): string | undefined {
+  if (!assumptions?.length) return undefined;
+  return [
+    "Assumptions (no person could answer during this run):",
+    ...assumptions.map((a) => `  - ${a.source === "block" ? "[answered block] " : ""}${a.text}`),
+  ].join("\n");
 }
 
 /** `marina -p` exit codes. */
@@ -208,6 +237,7 @@ export function terminalCodeLifecycle(p: Perception): CodeLifecycleEnd | undefin
   if (code?.event !== "code_lifecycle") return undefined;
   const metadata = (code.metadata ?? {}) as Record<string, unknown>;
   const sessionId = typeof code.sessionId === "string" ? code.sessionId : undefined;
+  const assumptions = lifecycleAssumptions(metadata);
   if (code.phase === "completed") {
     return {
       phase: "completed",
@@ -219,6 +249,7 @@ export function terminalCodeLifecycle(p: Perception): CodeLifecycleEnd | undefin
         : {}),
       ...(typeof metadata.taskId === "number" ? { taskId: metadata.taskId } : {}),
       ...(typeof metadata.runId === "string" ? { runId: metadata.runId } : {}),
+      ...(assumptions ? { assumptions } : {}),
     };
   }
   if (code.phase === "failed" && metadata.terminal === true) {
@@ -226,6 +257,10 @@ export function terminalCodeLifecycle(p: Perception): CodeLifecycleEnd | undefin
       phase: "failed",
       sessionId,
       reason: typeof metadata.reason === "string" ? metadata.reason : undefined,
+      ...(typeof metadata.detail === "string" ? { detail: metadata.detail } : {}),
+      ...(typeof metadata.taskId === "number" ? { taskId: metadata.taskId } : {}),
+      ...(typeof metadata.runId === "string" ? { runId: metadata.runId } : {}),
+      ...(assumptions ? { assumptions } : {}),
     };
   }
   return undefined;
@@ -763,6 +798,8 @@ export async function runCodeSession(
     diff?: string,
   ) => {
     if (outcome.notice) console.error(outcome.notice);
+    const assumed = formatAssumptions(end?.assumptions);
+    if (assumed) (opts.json ? process.stderr : process.stdout).write(`${assumed}\n`);
     if (opts.json) {
       process.stdout.write(
         `${JSON.stringify({
@@ -770,6 +807,8 @@ export async function runCodeSession(
           exitCode: outcome.exitCode,
           verification: end?.verification ?? null,
           verificationReason: end?.verificationReason ?? null,
+          reason: end?.detail ?? end?.reason ?? null,
+          assumptions: end?.assumptions ?? [],
           taskId: end?.taskId ?? null,
           runId: end?.runId ?? null,
           files: diff ? diffFileStats(diff) : [],
@@ -846,18 +885,22 @@ export async function runCodeSession(
       await finishPrint(printOutcome("timeout"));
       return;
     }
+    // The session diff is what the run produced, whether it completed or not: a failed or
+    // blocked attempt keeps its edits, and the result lists them.
+    const sessionDiff = async () =>
+      (await agent.command("code diff").catch(() => [])) // output streams through the perception echo
+        .map((p) => p.data?.code as { type?: unknown; content?: unknown } | undefined)
+        .find((c) => c?.type === "diff" && typeof c.content === "string")?.content as
+        | string
+        | undefined;
     if (!terminal || terminal.phase === "failed") {
-      console.error(`Task failed${terminal?.reason ? `: ${terminal.reason}` : "."}`);
-      await finishPrint(printOutcome(terminal), terminal);
+      const why = terminal?.detail ?? terminal?.reason;
+      console.error(`Task failed${why ? `: ${why}` : "."}`);
+      await finishPrint(printOutcome(terminal), terminal, await sessionDiff());
       return;
     }
     // Completed: show the session diff, then the durable summary text.
-    const diffReply = await agent.command("code diff"); // output streams through the perception echo
-    const diff = diffReply
-      .map((p) => p.data?.code as { type?: unknown; content?: unknown } | undefined)
-      .find((c) => c?.type === "diff" && typeof c.content === "string")?.content as
-      | string
-      | undefined;
+    const diff = await sessionDiff();
     if (terminal.summary)
       (opts.json ? process.stderr : process.stdout).write(`\n${terminal.summary}\n`);
     await finishPrint(printOutcome(terminal, opts.allowUnverified), terminal, diff);

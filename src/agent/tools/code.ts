@@ -99,6 +99,7 @@ const codeSchema = Type.Object({
       Type.Literal("plan"),
       Type.Literal("summary"),
       Type.Literal("blocked"),
+      Type.Literal("assume"),
       Type.Literal("handoff"),
       Type.Literal("decision"),
       Type.Literal("workspace"),
@@ -134,8 +135,7 @@ const codeSchema = Type.Object({
   query: Type.Optional(Type.String({ description: "Search query for action=search" })),
   command: Type.Optional(
     Type.String({
-      description:
-        "Allowed command for action=run, or workspace subcommand for action=workspace: show, list, or use",
+      description: "action=run: allowed command; action=workspace: show, list or use",
     }),
   ),
   title: Type.Optional(Type.String({ description: "Artifact title for action=patch" })),
@@ -151,7 +151,7 @@ const codeSchema = Type.Object({
   ),
   text: Type.Optional(
     Type.String({
-      description: "Single-line text for plan/summary/blocked/handoff/decision/observe/reject",
+      description: "One-line text: plan/summary/blocked/assume/handoff/decision/observe/reject",
     }),
   ),
   to: Type.Optional(Type.String({ description: "handoff: new lock holder" })),
@@ -839,6 +839,7 @@ function buildCodeCommand(params: Record<string, unknown>): string {
       return codeHandoffCommand(text, params.to, "action=handoff requires text");
     case "plan":
     case "blocked":
+    case "assume":
     case "summary":
     case "decision":
       return `code ${action} ${requiredSingleLineCodeParam(

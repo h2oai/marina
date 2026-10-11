@@ -332,7 +332,9 @@ Exit codes (one-shot -p):
   3  task completed but was not verified (the reason is printed; --allow-unverified
      makes this 0). A native agent's turn (--agent claude|codex|pi) is never
      verified by Marina, so it ends 3 unless --allow-unverified.
-  1  task failed (the agent died mid-task or the run was stopped)
+  1  task failed (the agent died mid-task, the run was stopped, or it ended
+     blocked); edits already made stay and are listed. A block over an
+     interpretation is answered automatically and recorded as an assumption
   2  task timed out (MARINA_CODE_TASK_TIMEOUT_MS, default 600000) — code stop sent
 
 Environment:

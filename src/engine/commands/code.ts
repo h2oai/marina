@@ -99,6 +99,7 @@ import {
 } from "./code/shared";
 import { spawnRequest } from "./code/spawn";
 import {
+  assumeCodingRun,
   blockCodingRun,
   observeCodingRun,
   publishCodingRun,
@@ -147,6 +148,7 @@ const TARGETED_SUBCOMMANDS = new Set([
   "setup",
   "review",
   "blocked",
+  "assume",
   "do",
   "assign",
   "status",
@@ -291,6 +293,7 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
     writerCommand(c.ctx, c.eid, c.entity, c.deps, c.args);
   },
   blocked: (c) => blockCodingRun(c.ctx, c.eid, c.entity, c.deps, c.args),
+  assume: (c) => assumeCodingRun(c.ctx, c.eid, c.entity, c.deps, c.args),
   review: (c) => reviewCodingRun(c.ctx, c.eid, c.entity, c.deps, c.args),
   task: (c) => {
     sessionTask(c.ctx, c.eid, c.entity, c.deps, c.rawAfterSub);
@@ -486,7 +489,8 @@ export function codeCommand(deps: CodeDeps): CommandDef {
       "code assign <agent> <req>",
       "code assign <agent> verification:candidate -- <req>",
       "code do [verification:candidate|checks|delivery] [owner:unattended] -- <task>",
-      "code blocked <reason>",
+      "code assume <interpretation>",
+      "code blocked [kind:decision|impossible] <reason>",
       "code branch [title]",
       "code checkpoint [title]",
       "code crew <goal> [with <a,b>]",

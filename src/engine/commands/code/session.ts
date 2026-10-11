@@ -1071,7 +1071,7 @@ export async function recordCodingNote(
       const meta = codingRunMetadata(run);
       const text =
         meta.verification === "not_run" || meta.verification === "error"
-          ? `Summary saved as progress; task remains active. Required checks ${meta.verification === "not_run" ? "were not run" : "could not complete"}: ${meta.verificationReason ?? "see the verification artifact"}. This is not a test failure. If the environment cannot run them, use code blocked <reason> so the owner can decide, or the owner may accept the work unverified.`
+          ? `Summary saved as progress; task remains active. Required checks ${meta.verification === "not_run" ? "were not run" : "could not complete"}: ${meta.verificationReason ?? "see the verification artifact"}. This is not a test failure. ${meta.ownerMode === "unattended" ? "No person attends this task: if the environment cannot run them, use code blocked kind:impossible <reason>." : "If the environment cannot run them, use code blocked <reason> so the owner can decide, or the owner may accept the work unverified."}`
           : `Summary saved as progress; task remains active. Required verification is ${meta.verification}. ${meta.verificationReason ?? "Inspect the check output, fix the problem, and run code verify candidate again."} After checks pass, submit code summary again. If blocked, use code blocked <reason>.`;
       const message = {
         type: "verification" as const,
