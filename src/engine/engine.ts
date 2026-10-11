@@ -24,7 +24,12 @@ import { MacroManager } from "../coordination/macro-manager";
 import { TaskManager } from "../coordination/task-manager";
 import { extensionGatewayProof } from "../extensions/loader";
 import { FlywheelManager, type FlywheelToolBackend } from "../integrations/flywheel-manager";
-import { flushWorkLessons, observeWorkEvent, pendingWorkPatterns } from "../learning/work";
+import {
+  flushWorkLessons,
+  observeWorkEvent,
+  parkWorkCarry,
+  pendingWorkPatterns,
+} from "../learning/work";
 import { memoryAccess } from "../memory/access";
 import { residentMemoryAPI } from "../memory/resident-service";
 import type { AdapterManager } from "../net/adapter-manager";
@@ -1948,7 +1953,10 @@ export class Engine {
       .then(finish);
   }
 
-  /** The final lessons-from-work flush, bounded; never throws. */
+  /**
+   * The final lessons-from-work flush, bounded, then park what is still below
+   * its floor for the next process (`parkWorkCarry`); never throws.
+   */
   private async flushWorkOnShutdown(): Promise<void> {
     if (!this.db) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1959,6 +1967,7 @@ export class Engine {
       }),
     ]);
     if (timer) clearTimeout(timer);
+    parkWorkCarry(this.db);
   }
 
   /**
