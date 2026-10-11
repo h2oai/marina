@@ -751,6 +751,27 @@ function addUsage(a: Usage | undefined, b: unknown): Usage | undefined {
   };
 }
 
+/** The proposer a `marina/verify:` id names (the same resolution the formation uses), if any. */
+export function verifyProposer(engine: Engine, model: string): string | undefined {
+  const pin = verifyPin(engine);
+  return parseVerifyModel(
+    model,
+    process.env,
+    pin || undefined,
+    pin ? undefined : engine.db,
+    (id) => !!explicitUpstreamModel(engine, id),
+  )?.proposer;
+}
+
+/** What the passthru instrument stack adds around a verified request (`stack.ts`). */
+export interface VerifyExtras {
+  /** Rides after the lessons in the proposer's (and every revision's) trailing note:
+   *  the caller's memory context, the open obligations, a ledger or argument-check nudge. */
+  note?: string;
+  /** The caller's own lessons ride with the shared pool (`recallForWork` owner). */
+  lessonOwner?: string;
+}
+
 /**
  * Handle a `marina/verify:` chat completion. Returns undefined when `model` is
  * not a verify id (the caller continues with normal routing).
@@ -760,6 +781,7 @@ export async function maybeVerifyChat(
   req: Request,
   body: Record<string, unknown>,
   authResult?: PassthruAuthResult,
+  extras: VerifyExtras = {},
 ): Promise<Response | undefined> {
   const model = typeof body.model === "string" ? body.model : "";
   if (!model.startsWith(VERIFY_MODEL_PREFIX)) return undefined;
@@ -824,8 +846,10 @@ export async function maybeVerifyChat(
     limit: 4,
     maxBytes: 800,
     ...evalOption(req),
+    ...(extras.lessonOwner ? { owner: extras.lessonOwner } : {}),
   });
   const block = lessonsBlock(lessons.inject);
+  const proposerNote = joinNotes(block, extras.note);
   const messages = callerMessages;
   const lessonsHeader = lessonsHeaderValue(lessons);
 
@@ -837,7 +861,7 @@ export async function maybeVerifyChat(
     signal,
     "verify:proposer",
     entityId,
-    block || undefined,
+    proposerNote,
   );
   if (!first.ok || !first.body) {
     return new Response(first.text ?? "", {
@@ -900,7 +924,7 @@ export async function maybeVerifyChat(
       signal,
       "verify:revision",
       entityId,
-      joinNotes(block, revisionNote(draft, verdict.issues, verdict.conflict)),
+      joinNotes(proposerNote, revisionNote(draft, verdict.issues, verdict.conflict)),
     ).catch(() => undefined);
     if (!revised?.ok || !revised.body || !firstMessage(revised.body)) {
       verdictLabel = "revision-failed";

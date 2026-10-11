@@ -1,37 +1,57 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-// Lessons from a caller's passthru conversation — EXPLICIT opt-in only
-// (`x-marina-learn: on`), owner-scoped. A request contributes only when
-// MARINA_LESSONS_FROM_WORK is observe/on, it carries the opt-in, it is not a
-// measurement run (`x-marina-eval`), it is not Marina's own agent (their loop
-// teaches through engine events), and its key is bound to a principal
-// (`secret:entity`) — the lessons go to THAT principal's own lesson spaces and
-// are served only to its own requests. Without all of that nothing here runs.
-// The signals carry tool names and error classes; the failing tool output
-// rides as writer context, never stored.
+// Lessons from a caller's passthru conversation, owner-scoped. A request
+// contributes when MARINA_LESSONS_FROM_WORK is observe/on, its stack includes
+// `learn` (an identified caller's default, `x-marina-stack`, or the explicit
+// `x-marina-learn: on`; `x-marina-learn: off` opts out), it is not Marina's own
+// agent (their loop teaches through engine events), and its key is bound to a
+// principal (`secret:entity`) — the lessons go to THAT principal's own lesson
+// spaces and are served only to its own requests. Measurement traffic
+// (`x-marina-eval`) teaches too: its signals carry an `eval:<benchmark>` ref,
+// and the outcome writer's leak checks (`leaksCase`, `itemLeak`) keep item
+// text, ids and answers out of every lesson. The signals carry tool names and
+// error classes; the failing tool output rides as writer context, never stored.
 
-import { EVAL_HEADER } from "../../learning/eval-context";
+import { evalOption } from "../../learning/eval-context";
 import { noteWork, softFailureClass } from "../../learning/work";
 import type { MarinaDB } from "../../persistence/database";
 import { messageText, type OpenAIMessage } from "../passthru-context";
 import type { PassthruAuthResult } from "./shared";
 
-/** Request: `on` opts this conversation into lessons from work (owner-scoped). */
+/** Request: `on` opts this conversation into lessons from work (owner-scoped); `off` opts out. */
 export const LEARN_HEADER = "x-marina-learn";
+
+/** The request's own `x-marina-learn` answer: `on`, `off`, or undefined when absent. */
+export function learnHeader(req: { headers: Headers }): "on" | "off" | undefined {
+  const v = req.headers.get(LEARN_HEADER)?.trim().toLowerCase();
+  if (v === "on" || v === "true" || v === "1") return "on";
+  if (v === "off" || v === "false" || v === "0") return "off";
+  return undefined;
+}
 
 /**
  * The principal a passthru request's work may be learned for, or undefined:
- * explicit opt-in, a bound key, never an internal caller or a measurement run.
+ * its stack includes `learn` (`stacked`) or it says `x-marina-learn: on`, it
+ * did not say `off`, and its key is bound — never an internal caller or the
+ * open-API sentinel. Measurement runs included.
  */
 export function passthruLearnOwner(
   req: { headers: Headers },
   auth: PassthruAuthResult | undefined,
+  stacked = false,
 ): string | undefined {
-  if (req.headers.get(LEARN_HEADER)?.trim().toLowerCase() !== "on") return undefined;
-  if (req.headers.get(EVAL_HEADER)) return undefined;
+  const asked = learnHeader(req);
+  if (asked === "off" || (asked !== "on" && !stacked)) return undefined;
   if (!auth || auth.internal || auth.openMode) return undefined;
   return auth.boundEntityName || undefined;
+}
+
+/** The ref a measurement request's signals carry (`eval:<benchmark>[/<slice>]:<mode>`). */
+export function evalRef(req: { headers: Headers }): string | undefined {
+  const ctx = evalOption(req).eval;
+  if (!ctx) return undefined;
+  return `eval:${ctx.benchmark}${ctx.slice ? `/${ctx.slice}` : ""}:${ctx.mode}`;
 }
 
 /** A tool message's failure class, or undefined when it reads as a success. */
@@ -113,6 +133,7 @@ export function notePassthruRecoveries(
   db: MarinaDB | undefined,
   owner: string,
   messages: readonly OpenAIMessage[],
+  ref?: string,
 ): void {
   for (const r of conversationRecoveries(messages)) {
     const key = `${owner}|${r.failId}`;
@@ -126,6 +147,7 @@ export function notePassthruRecoveries(
       succeeded: true,
       scope: { kind: "owner", owner },
       at: Date.now(),
+      ...(ref ? { ref } : {}),
       privateText: r.failText,
     });
   }

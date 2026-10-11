@@ -323,7 +323,9 @@ describe("Anthropic passthru: cache breakpoints end to end", () => {
       ],
       tools: [TOOL],
     };
-    const resp = await post("/v1/messages", native, { ...AUTH, "X-Marina-Context": "off" });
+    // Nothing per request (the bound key's default instrument stack would add
+    // the ledger's note): the caller's body reaches the upstream as sent.
+    const resp = await post("/v1/messages", native, { ...AUTH, "x-marina-stack": "none" });
     expect(resp.status).toBe(200);
     expect(upstream[0]).toEqual({ ...native, model: "claude-sonnet-5", stream: false });
   });

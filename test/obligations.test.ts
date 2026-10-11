@@ -26,6 +26,7 @@ import {
   resetObligationsForTests,
 } from "../src/net/model-api/obligations";
 import { CHAT_ONLY_MODEL_PREFIXES } from "../src/net/model-api/shared";
+import { FULL_MODEL_PREFIX } from "../src/net/model-api/stack";
 import { withTrailingNote } from "../src/net/model-api/upstream";
 import { VERIFY_MODEL_PREFIX } from "../src/net/model-api/verify";
 import { AgentObligations } from "../src/obligations/agent";
@@ -553,6 +554,9 @@ const ENV = [
   "MARINA_DECISIONS",
   "MARINA_DECISION_ENGINE",
   "MARINA_ANTHROPIC_AUTO_CACHE",
+  "MARINA_PASSTHRU_STACK",
+  "MARINA_PROFILE",
+  "MARINA_LESSONS_FROM_WORK",
 ] as const;
 
 let saved: Map<string, string | undefined>;
@@ -1032,11 +1036,11 @@ describe("POST /v1/chat/completions with the obligations ledger", () => {
     expect(h).toContain("check=reviewed-kept");
   });
 
-  async function postTo(path: string, body: unknown) {
+  async function postTo(path: string, body: unknown, headers: Record<string, string> = {}) {
     const url = new URL(`http://localhost:3300${path}`);
     const req = new Request(url.toString(), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...headers },
       body: JSON.stringify(body),
     });
     return (await handleModelApi(url, "POST", req, engine))!;
@@ -1044,20 +1048,24 @@ describe("POST /v1/chat/completions with the obligations ledger", () => {
   const code = async (r: Response) =>
     ((await r.json()) as { error?: { code?: string; param?: string } }).error;
 
-  it("refuses the ledger or argument check combined with marina/verify: (never half-served)", async () => {
-    const r = await post({
-      model: `marina/obligations:marina/verify:${MODEL}`,
-      messages: opening,
-      tools: TOOLS,
-    });
-    expect(r.status).toBe(400);
-    expect((await code(r))?.code).toBe("unsupported_parameter");
-    const viaHeader = await post(
-      { model: `marina/verify:${MODEL}`, messages: opening, tools: TOOLS },
+  it("runs the ledger and the argument check around marina/verify:", async () => {
+    const r = await post(
+      { model: `marina/obligations:marina/verify:${MODEL}`, messages: opening, tools: TOOLS },
       { "x-marina-argcheck": "observe" },
     );
-    expect(viaHeader.status).toBe(400);
-    expect(seen).toEqual([]); // nothing reached an upstream
+    expect(r.status).toBe(200);
+    expect(r.headers.get("x-marina-verify")).toBeTruthy();
+    expect(r.headers.get("x-marina-obligations")).toContain("open=1");
+    expect(r.headers.get("x-marina-argcheck")).toBeTruthy();
+    // The ledger reads the request before the proposer, whose trailing note lists it.
+    const kinds = seen.map((s) => s.kind);
+    expect(kinds[0]).toBe("extract");
+    const proposer = seen.find((s) => s.kind === "main")!.body;
+    expect(proposer.model).toBe(MODEL.replace(/^openrouter\//, ""));
+    expect(lastUserText(proposer).text).toContain("[Marina obligations");
+    // The final-answer check read the verified reply and nudged once: the formation ran again.
+    expect(kinds).toContain("check");
+    expect(seen.filter((s) => s.kind === "main").length).toBeGreaterThanOrEqual(2);
   });
 
   it("refuses the ledger on a request that routes to Marina's agents", async () => {
@@ -1091,8 +1099,92 @@ describe("POST /v1/chat/completions with the obligations ledger", () => {
         OBLIGATIONS_MODEL_PREFIX,
         ARGCHECK_MODEL_PREFIX,
         VERIFY_MODEL_PREFIX,
+        FULL_MODEL_PREFIX,
       ].sort(),
     );
+  });
+
+  describe("the instrument stack", () => {
+    it("runs exactly the listed members and records them", async () => {
+      const r = await post(
+        { model: MODEL, messages: opening, tools: TOOLS },
+        { "x-marina-stack": "obligations,argcheck" },
+      );
+      expect(r.status).toBe(200);
+      expect(seen[0]!.kind).toBe("extract");
+      expect(r.headers.get("x-marina-stack")).toBe("obligations,argcheck; source=header");
+      expect(r.headers.get("x-marina-obligations")).toContain("open=1");
+    });
+
+    it("none and an anonymous default stay byte-identical", async () => {
+      const none = await post(
+        { model: MODEL, messages: opening, tools: TOOLS },
+        { "x-marina-stack": "none" },
+      );
+      expect(none.headers.get("x-marina-stack")).toBe("none; source=header");
+      expect(none.headers.get("x-marina-obligations")).toBeNull();
+      const anon = await post({ model: MODEL, messages: opening, tools: TOOLS });
+      expect(anon.headers.get("x-marina-stack")).toBeNull();
+      expect(seen.map((s) => s.kind)).toEqual(["main", "main"]);
+      expect(seen[1]!.body.messages).toEqual(opening);
+    });
+
+    it("refuses an unknown member or one the caller cannot use, never dropping it", async () => {
+      const bogus = await post({ model: MODEL, messages: opening }, { "x-marina-stack": "magic" });
+      expect(bogus.status).toBe(400);
+      expect((await code(bogus))?.param).toBe("x-marina-stack");
+      // The open-API sentinel has no identity to learn for.
+      const learn = await post({ model: MODEL, messages: opening }, { "x-marina-stack": "learn" });
+      expect(learn.status).toBe(400);
+      expect(seen).toEqual([]);
+    });
+
+    it("full runs what it can (verify included) and reports what it skipped", async () => {
+      const r = await post({ model: `marina/full:${MODEL}`, messages: opening, tools: TOOLS });
+      expect(r.status).toBe(200);
+      expect(r.headers.get("x-marina-verify")).toBeTruthy();
+      const stack = r.headers.get("x-marina-stack") ?? "";
+      expect(stack.startsWith("lessons,obligations,argcheck,verify; source=prefix")).toBe(true);
+      expect(stack).toContain("skipped=context(");
+      expect(stack).toContain("learn(");
+      // Streaming cannot take the formation: skipped and reported, the rest still runs.
+      const streamed = await post(
+        { model: MODEL, messages: opening, tools: TOOLS, stream: true },
+        { "x-marina-stack": "full" },
+      );
+      expect(streamed.headers.get("x-marina-stack")).toContain("verify(streaming");
+    });
+
+    it("an identified caller gets the default stack; a per-instrument off opts out", async () => {
+      delete process.env.MARINA_OPEN_API;
+      process.env.MODEL_API_KEYS = "sk-bound:Alice";
+      const auth = { Authorization: "Bearer sk-bound" };
+      const r = await post({ model: MODEL, messages: opening, tools: TOOLS }, auth);
+      expect(r.status).toBe(200);
+      expect(r.headers.get("x-marina-stack")).toBe("lessons,obligations,argcheck; source=default");
+      expect(seen[0]!.kind).toBe("extract");
+      seen = [];
+      const off = await post(
+        { model: MODEL, messages: opening, tools: TOOLS },
+        { ...auth, "x-marina-obligations": "off" },
+      );
+      expect(off.headers.get("x-marina-stack")).toBe("lessons,argcheck; source=default");
+      expect(seen.map((s) => s.kind)).not.toContain("extract");
+      // The operator can turn the default off.
+      process.env.MARINA_PASSTHRU_STACK = "off";
+      const plain = await post({ model: MODEL, messages: opening, tools: TOOLS }, auth);
+      expect(plain.headers.get("x-marina-stack")).toBeNull();
+    });
+
+    it("refuses stack headers on /v1/responses", async () => {
+      const r = await postTo(
+        "/v1/responses",
+        { model: MODEL, input: "hello" },
+        { "x-marina-stack": "obligations" },
+      );
+      expect(r.status).toBe(400);
+      expect((await code(r))?.param).toBe("x-marina-stack");
+    });
   });
 
   it("still serves a plain prefixed passthru request", async () => {
