@@ -243,3 +243,49 @@ describe("regression: genuine writes stay writes", () => {
     expect(isReadOnlyTool("refund", undefined, "track")).toBe(false);
   });
 });
+
+describe("generic HTTP request tools", () => {
+  const fetchTool = fn("api_fetch", "Fetch a URL from the connected APIs.", {
+    method: { type: "string" },
+    url: { type: "string" },
+    params: { type: "string" },
+    body: { type: "string" },
+  });
+  const getOnly = fn("http_get", "Request a URL.", {
+    method: { type: "string", enum: ["GET", "HEAD"] },
+    url: { type: "string" },
+  });
+
+  it("a request-shaped tool is placed by its methods, not its read-verb name", () => {
+    expect(roles("api_fetch", [fetchTool])).toEqual([false, false]);
+    expect(toolEffect("api_fetch", [fetchTool]).basis).toBe("http");
+    expect(roles("http_get", [getOnly])).toEqual([true, true]);
+  });
+
+  it("each call is placed by the method it uses", () => {
+    const post = { method: "POST", url: "https://example.test/deals", body: "{}" };
+    const get = { method: "get", url: "https://example.test/deals" };
+    for (const role of both) {
+      expect(readOnlyCall("api_fetch", post, { tools: [fetchTool], role })).toBe(false);
+      expect(readOnlyCall("api_fetch", get, { tools: [fetchTool], role })).toBe(true);
+      expect(readOnlyCall("api_fetch", JSON.stringify(post), { tools: [fetchTool], role })).toBe(
+        false,
+      );
+      // Without a declaration the name alone would say read; the method still decides.
+      expect(readOnlyCall("api_fetch", post, { role })).toBe(false);
+      expect(readOnlyCall("fetch_page", { method: "DELETE", path: "/items/1" }, { role })).toBe(
+        false,
+      );
+    }
+  });
+
+  it("a declared hint still wins, and method-like values that are not HTTP verbs are ignored", () => {
+    const hinted = fn("api_fetch", "Fetch.", { method: {}, url: {} }, { readOnlyHint: true });
+    expect(readOnlyCall("api_fetch", { method: "POST", url: "/x" }, { tools: [hinted] })).toBe(
+      true,
+    );
+    // No url/path beside the method: not an HTTP call; the name decides as before.
+    expect(readOnlyCall("get_report", { method: "POST" })).toBe(true);
+    expect(readOnlyCall("get_report", { method: "summary", url: "/r" })).toBe(true);
+  });
+});

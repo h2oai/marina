@@ -27,6 +27,13 @@
  *    `account`, `card`, `order`, `booking`, …). "Unlock a tool you have
  *    access to" is a read; "unlock the user's card" stays a write.
  *
+ * A generic HTTP request tool (a method parameter beside a url/path parameter) is
+ * placed by the method, not by its name: `api_fetch` / `http_request` can create
+ * or delete records. Without a declared hint such a tool is a write at the tool
+ * level unless its declared methods are all read methods; per call,
+ * `readOnlyCall` (tool-call.ts) reads the method actually used (`GET`, `HEAD`,
+ * `OPTIONS` read; `POST`, `PUT`, `PATCH`, `DELETE` write).
+ *
  * Everything else is a write, with one exception that depends on the role:
  *
  * - **`guard`** (argument check, write-action guard — the default): stops
@@ -53,7 +60,14 @@
 export type ToolEffectRole = "guard" | "track";
 
 /** What decided a classification (tests, logs). */
-export type ToolEffectBasis = "declared" | "name" | "description" | "access" | "weak" | "default";
+export type ToolEffectBasis =
+  | "declared"
+  | "http"
+  | "name"
+  | "description"
+  | "access"
+  | "weak"
+  | "default";
 
 export interface ToolEffect {
   readOnly: boolean;
@@ -353,6 +367,59 @@ function descriptionOf(d: ToolDecl | undefined): string {
   return typeof raw === "string" ? raw.replace(/`[^`]*`/g, " ") : "";
 }
 
+const HTTP_METHODS = ["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"] as const;
+const HTTP_READ_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD", "OPTIONS"]);
+const METHOD_KEY = /^(?:method|http_?method|request_?method|verb)$/i;
+const TARGET_KEY = /^(?:url|uri|path|endpoint|href|route)$/i;
+
+/** True for `GET`, `HEAD`, `OPTIONS` (any case). */
+export function isReadHttpMethod(method: string): boolean {
+  return HTTP_READ_METHODS.has(method.toUpperCase());
+}
+
+/**
+ * The HTTP method a generic request call uses: a method-like argument holding
+ * an HTTP verb beside a url/path-like argument. Undefined for anything else.
+ */
+export function httpMethodOf(args: unknown): string | undefined {
+  let a = args;
+  if (typeof a === "string") {
+    try {
+      a = JSON.parse(a) as unknown;
+    } catch {
+      return undefined;
+    }
+  }
+  if (!a || typeof a !== "object" || Array.isArray(a)) return undefined;
+  const o = a as Record<string, unknown>;
+  const keys = Object.keys(o);
+  if (!keys.some((k) => TARGET_KEY.test(k))) return undefined;
+  for (const k of keys) {
+    const v = o[k];
+    if (!METHOD_KEY.test(k) || typeof v !== "string") continue;
+    const m = v.trim().toUpperCase();
+    if ((HTTP_METHODS as readonly string[]).includes(m)) return m;
+  }
+  return undefined;
+}
+
+/**
+ * For a tool shaped like a generic HTTP request (declared method and url/path
+ * parameters): `true` when its declared methods are all read methods, `false`
+ * when it can write, undefined when the tool is not request-shaped.
+ */
+function httpToolReadOnly(d: ToolDecl | undefined): boolean | undefined {
+  const props = declaredProperties(d);
+  if (!props) return undefined;
+  const keys = Object.keys(props);
+  const methodKey = keys.find((k) => METHOD_KEY.test(k));
+  if (!methodKey || !keys.some((k) => TARGET_KEY.test(k))) return undefined;
+  const allowed = (props[methodKey] as { enum?: unknown } | undefined)?.enum;
+  if (Array.isArray(allowed) && allowed.length > 0 && allowed.every((m) => typeof m === "string"))
+    return allowed.every((m) => isReadHttpMethod(m as string));
+  return false;
+}
+
 function hintsOf(d: ToolDecl | undefined): Hints | undefined {
   return d?.annotations ?? d?.function?.annotations;
 }
@@ -379,6 +446,8 @@ export function toolEffect(
   if (hints?.readOnlyHint === true) return { readOnly: true, basis: "declared" };
   if (hints?.readOnlyHint === false || hints?.destructiveHint === true)
     return { readOnly: false, basis: "declared" };
+  const http = httpToolReadOnly(decl);
+  if (http !== undefined) return { readOnly: http, basis: "http" };
 
   const byName = nameVerb(name);
   const description = descriptionOf(decl);

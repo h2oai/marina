@@ -31,7 +31,14 @@
  * read-only (declared or by name) stays read-only.
  */
 
-import { declaredProperties, declOf, type ToolEffectRole, toolEffect } from "./tool-effect";
+import {
+  declaredProperties,
+  declOf,
+  httpMethodOf,
+  isReadHttpMethod,
+  type ToolEffectRole,
+  toolEffect,
+} from "./tool-effect";
 
 /** Keys whose value names the dispatched tool or action. */
 const NAME_KEY =
@@ -99,10 +106,14 @@ export function dispatchedCall(
 }
 
 /**
- * True when a call cannot change state. The outer tool decides first
- * (`toolEffect` in `role`, default `guard`): a read-only outer tool is
- * read-only. Otherwise a dispatcher call is read-only when its INNER tool is,
- * by the same rule (the inner tool is usually undeclared, so its name decides).
+ * True when a call cannot change state. A declared hint on the outer tool
+ * decides first. Next, a generic HTTP request call (a method argument beside a
+ * url/path argument) is placed by the method it uses — a `POST` through a tool
+ * named `api_fetch` is a write, a `GET` through `http_request` a read. Then
+ * the outer tool (`toolEffect` in `role`, default `guard`): a read-only outer
+ * tool is read-only. Otherwise a dispatcher call is read-only when its INNER
+ * tool is, by the same rule (the inner tool is usually undeclared, so its name
+ * decides).
  */
 export function readOnlyCall(
   name: string,
@@ -110,7 +121,11 @@ export function readOnlyCall(
   opts: { tools?: readonly unknown[]; role?: ToolEffectRole } = {},
 ): boolean {
   const { tools, role = "guard" } = opts;
-  if (toolEffect(name, tools, role).readOnly) return true;
+  const outer = toolEffect(name, tools, role);
+  if (outer.basis === "declared") return outer.readOnly;
+  const method = httpMethodOf(args);
+  if (method) return isReadHttpMethod(method);
+  if (outer.readOnly) return true;
   const inner = dispatchedCall(name, args, tools);
   return inner ? toolEffect(inner.name, tools, role).readOnly : false;
 }

@@ -2000,7 +2000,7 @@ Fields read here: `model`, `name`.
 
 ### `path.split(".")`
 
-[Source](../../src/net/model-api/verify.ts#L521)
+[Source](../../src/net/model-api/verify.ts#L522)
 
 ## src/net/orchestration-api.ts
 
