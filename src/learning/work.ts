@@ -610,6 +610,8 @@ function learnerFor(db: MarinaDB): WorkLearnerState {
     };
     s = { aggregator, tracker: new WorkEventTracker(scopeOf, (sig) => aggregator.add(sig)) };
     learners.set(db, s);
+    // What an earlier process parked when it exited keeps waiting here.
+    aggregator.restore(claimParkedCarry(db, Date.now()));
   }
   return s;
 }
@@ -684,6 +686,109 @@ export function resetWorkLearner(db: MarinaDB): void {
 export const MAX_PER_FLUSH = 20;
 /** A pattern below its floor waits at most this long for more occurrences. */
 const CARRY_MS = 24 * 3_600_000;
+
+// ─── Carry across processes ─────────────────────────────────────────────────
+//
+// A short-lived process (a one-shot CLI task) exits with patterns still below
+// their floor. `parkWorkCarry` (engine shutdown) leaves them in one system-owned
+// core-memory row, merged with whatever is already parked; the next process
+// claims that row (read + delete in one transaction) when its learner starts
+// and at every flush. A pattern therefore lives in exactly one process or in
+// the row, never both — nothing is counted twice. Stored: source, tool name,
+// error class, result, scope, counts, times and ref ids — never the case
+// samples (`samples` is dropped).
+
+/** System-owned core-memory owner of the parked carry (never a login name: names are `[A-Za-z0-9_]`). */
+export const WORK_CARRY_OWNER = "learning:work";
+const WORK_CARRY_KEY = "carry";
+
+const SOURCES = new Set(Object.keys(MIN_OCCURRENCES));
+
+function parsePatterns(raw: string | undefined, now: number): WorkPattern[] {
+  if (!raw) return [];
+  let rows: unknown;
+  try {
+    rows = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(rows)) return [];
+  const out: WorkPattern[] = [];
+  for (const r of rows as Array<Partial<WorkPattern>>) {
+    const scope = r?.scope;
+    const validScope =
+      scope?.kind === "shared" || (scope?.kind === "owner" && typeof scope.owner === "string");
+    if (
+      !r ||
+      !SOURCES.has(String(r.source)) ||
+      typeof r.tool !== "string" ||
+      typeof r.errorClass !== "string" ||
+      typeof r.succeeded !== "boolean" ||
+      !validScope ||
+      !Number.isFinite(r.count) ||
+      !Number.isFinite(r.firstAt) ||
+      !Number.isFinite(r.lastAt) ||
+      now - (r.lastAt as number) >= CARRY_MS
+    )
+      continue;
+    out.push({
+      source: r.source as WorkSource,
+      tool: r.tool,
+      errorClass: r.errorClass,
+      succeeded: r.succeeded,
+      scope: scope as WorkScope,
+      count: r.count as number,
+      firstAt: r.firstAt as number,
+      lastAt: r.lastAt as number,
+      refs: Array.isArray(r.refs)
+        ? r.refs.filter((x) => typeof x === "string").slice(0, MAX_REFS)
+        : [],
+      samples: [],
+    });
+  }
+  return out;
+}
+
+/** Take the parked carry (read + delete); empty when none or unreadable. Never throws. */
+export function claimParkedCarry(db: MarinaDB, now = Date.now()): WorkPattern[] {
+  try {
+    return db.transaction(() => {
+      const row = db.getCoreMemory(WORK_CARRY_OWNER, WORK_CARRY_KEY);
+      if (!row) return [];
+      db.deleteCoreMemory(WORK_CARRY_OWNER, WORK_CARRY_KEY);
+      return parsePatterns(row.value, now);
+    });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Park `db`'s remaining collected patterns for the next process (engine
+ * shutdown, after the final flush), merged with any already parked. Never
+ * throws.
+ */
+export function parkWorkCarry(db: MarinaDB, now = Date.now()): number {
+  const state = learners.get(db);
+  if (!state || state.flushing) return 0;
+  const mine = state.aggregator.take().filter((p) => now - p.lastAt < CARRY_MS);
+  if (mine.length === 0) return 0;
+  try {
+    return db.transaction(() => {
+      const merged = new WorkAggregator();
+      const row = db.getCoreMemory(WORK_CARRY_OWNER, WORK_CARRY_KEY);
+      merged.restore(parsePatterns(row?.value, now));
+      merged.restore(mine);
+      const parked = merged.take().map(({ samples: _samples, ...p }) => p);
+      // Replace rather than update: the carry is state, not a belief with history.
+      db.deleteCoreMemory(WORK_CARRY_OWNER, WORK_CARRY_KEY);
+      db.setCoreMemory(WORK_CARRY_OWNER, WORK_CARRY_KEY, JSON.stringify(parked));
+      return parked.length;
+    });
+  } catch {
+    return 0;
+  }
+}
 
 export interface FlushDeps {
   /** The sink for shared work (default: the shared lesson pool). */
@@ -831,6 +936,8 @@ export async function flushWorkLessons(
   }
   if (!state || state.flushing) return state?.flushing;
   const run = (async () => {
+    // Absorb what other processes parked since this learner started.
+    state.aggregator.restore(claimParkedCarry(db, deps.now ?? Date.now()));
     const patterns = state.aggregator.take();
     const filled = await withDefaults(db, deps, mode);
     const report = await learnPatterns(patterns, { ...filled, mode });
