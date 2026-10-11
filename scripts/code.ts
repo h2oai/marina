@@ -231,6 +231,9 @@ export function unverifiedRequirements(coverage: CodeRequirementCoverage | undef
   return [
     ...(coverage.listed ? [] : ["no acceptance checklist was recorded"]),
     ...coverage.unverified,
+    ...coverage.notCheckable.map(
+      ({ text, reason }) => `${text} (not machine-checkable: ${reason})`,
+    ),
   ];
 }
 

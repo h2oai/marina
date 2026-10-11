@@ -201,6 +201,8 @@ it("records a requirement marked not machine-checkable and proceeds, visibly", a
     { text: "the wording reads naturally", reason: "a matter of judgement, not a property" },
   ]);
   expect(claim().submission_text).toContain("not machine-checkable: the wording reads naturally");
+  expect(outcome()).toMatchObject({ status: "unverified", exitCode: 3 });
+  expect(outcome().notice).toContain("the wording reads naturally");
 });
 
 it("bounds the refusal: a second submission proceeds and reports what is still unverified", async () => {

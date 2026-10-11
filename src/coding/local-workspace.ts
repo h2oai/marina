@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { captureGitCandidate } from "./candidate";
 import { prepareCandidateBunDependencies } from "./candidate-dependencies";
+import { prepareCandidateNpmDependencies } from "./candidate-npm-dependencies";
 import type { ExecApprover } from "./exec-approver";
 import { CODE_RUN_HOME, hostGitArgv, hostGitEnv, isGitArgv } from "./host-git";
 import { preparationStepKind } from "./verification-plan";
@@ -130,6 +131,8 @@ export interface WorkspaceFiles {
   ): Promise<{ path: string; content: string; truncated: boolean; size: number }>;
   /** Bounded bytes from the same authorized file surface; never a guest-only path. */
   readBytes?(input: string, maxBytes: number): Promise<{ path: string; data: Uint8Array }>;
+  /** Bounded streaming reads for large deliverables on this same authorized file surface. */
+  readByteChunks?(input: string, maxBytes: number): AsyncIterable<Uint8Array>;
   search(query: string, limit?: number, path?: string): Promise<SearchHit[]>;
   diff(
     input?: string,
@@ -376,6 +379,18 @@ export class LocalWorkspace implements WorkspaceRuntime {
   async readBytes(input: string, maxBytes: number): Promise<{ path: string; data: Uint8Array }> {
     if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 100 * 1024 * 1024)
       throw new Error("Invalid file byte limit.");
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of this.readByteChunks(input, maxBytes)) chunks.push(chunk);
+    const path =
+      isAbsolute(input) && insideRoot(this.root, resolve(input))
+        ? relative(this.root, resolve(input))
+        : input;
+    return { path: this.relativePath(this.resolvePath(path)), data: Buffer.concat(chunks) };
+  }
+
+  async *readByteChunks(input: string, maxBytes: number): AsyncIterable<Uint8Array> {
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 1)
+      throw new Error("Invalid file byte limit.");
     // Absolute paths within the primary root name the same already-authorized files.
     const path =
       isAbsolute(input) && insideRoot(this.root, resolve(input))
@@ -392,15 +407,26 @@ export class LocalWorkspace implements WorkspaceRuntime {
       if (!stat.isFile() || stat.dev !== current.dev || stat.ino !== current.ino)
         throw new Error("Path is not a stable regular file.");
       if (stat.size > maxBytes) throw new Error("File is larger than the byte limit.");
-      const bytes = new Uint8Array(maxBytes + 1);
       let length = 0;
-      while (length < bytes.length) {
-        const result = await file.read(bytes, length, bytes.length - length, length);
+      while (true) {
+        const bytes = new Uint8Array(Math.min(64 * 1024, maxBytes - length + 1));
+        const result = await file.read(bytes, 0, bytes.length, length);
         if (!result.bytesRead) break;
         length += result.bytesRead;
+        if (length > maxBytes) throw new Error("File is larger than the byte limit.");
+        yield bytes.subarray(0, result.bytesRead);
       }
-      if (length > maxBytes) throw new Error("File is larger than the byte limit.");
-      return { path: this.relativePath(target), data: bytes.slice(0, length) };
+      const after = await file.stat();
+      const currentAfter = statSync(this.resolvePath(path));
+      if (
+        after.size !== stat.size ||
+        after.mtimeMs !== stat.mtimeMs ||
+        after.ctimeMs !== stat.ctimeMs ||
+        length !== stat.size ||
+        after.dev !== currentAfter.dev ||
+        after.ino !== currentAfter.ino
+      )
+        throw new Error("File changed while being read. Retry after edits finish.");
     } finally {
       await file.close();
     }
@@ -662,7 +688,7 @@ export class LocalWorkspace implements WorkspaceRuntime {
     return [...out];
   }
 
-  /** Host workspaces never install dependencies here; only the hardened Bun candidate path does. */
+  /** Host installs use only the separate hardened Bun/npm snapshot preparation path. */
   installsPermitted(): boolean {
     return false;
   }
@@ -682,12 +708,14 @@ export class LocalWorkspace implements WorkspaceRuntime {
   }
 
   /** Fixed opt-in preparation for a disposable candidate; never widens code run's allowlist. */
-  prepareCandidateDependencies(beforeSpawn: () => void) {
+  prepareCandidateDependencies(beforeSpawn: () => void, manager: "bun" | "npm" = "bun") {
     assertHostExecAllowed(this.hostExecForbidden);
     return withRootLock(this.root, () => {
       assertHostExecAllowed(this.hostExecForbidden);
       beforeSpawn();
-      return prepareCandidateBunDependencies(this.root, async (command, environment) => {
+      const prepare =
+        manager === "npm" ? prepareCandidateNpmDependencies : prepareCandidateBunDependencies;
+      return prepare(this.root, async (command, environment) => {
         beforeSpawn();
         const started = Date.now();
         const result = await runWorkspaceCommand(

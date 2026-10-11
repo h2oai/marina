@@ -1,12 +1,24 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
-import { afterEach, beforeEach, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
+import {
+  closeSync,
+  ftruncateSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ContainerWorkspace, resolveContainerRunner } from "../src/coding/container-workspace";
 import {
   captureDelivery,
+  deliveryFingerprint,
+  deliveryLimits,
   parseDeliveryManifest,
   prepareDeliveryMount,
 } from "../src/coding/delivery";
@@ -140,6 +152,137 @@ it("rechecks output bytes and the manifest at submission even without a Marina w
   writeFileSync(join(root, "helper.ts"), "export const amount = 11;");
   manifest();
   expect((await assessCodingVerification(f.db, current())).verification).toBe("stale");
+});
+
+it("captures and rechecks a large binary delivery without the buffered read limit", async () => {
+  const size = 186_721_216;
+  const fd = openSync(join(root, "model.bin"), "w");
+  try {
+    ftruncateSync(fd, size);
+  } finally {
+    closeSync(fd);
+  }
+  manifest(["model.bin"]);
+  const workspace = new LocalWorkspace(root);
+  const buffered = workspace.readBytes.bind(workspace);
+  workspace.readBytes = (path, maxBytes) => {
+    expect(path).not.toBe("model.bin");
+    return buffered(path, maxBytes);
+  };
+  const captured = await captureDelivery(workspace, "delivery.json", () => {});
+  try {
+    expect(captured.evidence.files[0]?.bytes).toBe(size);
+    expect(statSync(join(captured.directory, "model.bin")).size).toBe(size);
+    expect(await deliveryFingerprint(new LocalWorkspace(captured.directory), ["model.bin"])).toBe(
+      captured.evidence.fingerprint,
+    );
+  } finally {
+    await captured.dispose();
+  }
+}, 20_000);
+
+it("keeps configured capture limits and rejects changes during streaming reads", async () => {
+  expect(() => deliveryLimits({ MARINA_CODE_DELIVERY_MAX_FILE_BYTES: "0" })).toThrow("positive");
+  expect(() => deliveryLimits({ MARINA_CODE_DELIVERY_MAX_TOTAL_BYTES: "Infinity" })).toThrow(
+    "positive",
+  );
+  using _limits = scopeProcessState({
+    env: {
+      MARINA_CODE_DELIVERY_MAX_FILE_BYTES: "12",
+      MARINA_CODE_DELIVERY_MAX_TOTAL_BYTES: "16",
+    },
+  });
+  writeFileSync(join(root, "one.bin"), "1234567890");
+  writeFileSync(join(root, "two.bin"), "1234567890");
+  manifest(["one.bin", "two.bin"]);
+  await expect(
+    captureDelivery(new LocalWorkspace(root), "delivery.json", () => {}),
+  ).rejects.toThrow();
+  const iterator = new LocalWorkspace(root).readByteChunks("one.bin", 12)[Symbol.asyncIterator]();
+  expect((await iterator.next()).value?.length).toBe(10);
+  writeFileSync(join(root, "one.bin"), "changed");
+  await expect(iterator.next()).rejects.toThrow("changed while");
+});
+
+it("honors dependency preparation for the delivery snapshot without borrowing live dependencies", async () => {
+  writeFileSync(
+    join(root, "package.json"),
+    JSON.stringify({
+      dependencies: { fixture: "1.0.0" },
+      scripts: { test: "bun test report.test.ts" },
+    }),
+  );
+  writeFileSync(
+    join(root, "bun.lock"),
+    JSON.stringify({
+      lockfileVersion: 2,
+      workspaces: { "": { dependencies: { fixture: "1.0.0" } } },
+      packages: {},
+    }),
+  );
+  manifest([...files, "helper.ts", "package.json", "bun.lock"]);
+  // check-only must diagnose the missing captured environment before running any tests.
+  await send("code verify delivery manifest:delivery.json dependencies:check");
+  await f.engine.drainCommands();
+  expect(checks()[0]?.status, owner.connection.allTextJoined()).toBe("not_run");
+  const evidence = JSON.parse(checks()[0]!.metadata_json);
+  expect(evidence.preparation.reason).toContain("Dependencies are not installed");
+  expect(evidence.steps.every((step: { outcome: string }) => step.outcome === "not_run")).toBe(
+    true,
+  );
+});
+
+it("runs npm preparation in the captured delivery before checking its unchanged manifest commands", async () => {
+  writeFileSync(join(root, "helper.ts"), 'export { amount } from "fixture";');
+  writeFileSync(
+    join(root, "package.json"),
+    JSON.stringify({
+      dependencies: { fixture: "1.0.0" },
+      scripts: { test: "bun test report.test.ts" },
+    }),
+  );
+  writeFileSync(
+    join(root, "package-lock.json"),
+    JSON.stringify({ lockfileVersion: 3, packages: {} }),
+  );
+  manifest([...files, "helper.ts", "package.json", "package-lock.json"]);
+  const prepare = spyOn(
+    LocalWorkspace.prototype,
+    "prepareCandidateDependencies",
+  ).mockImplementation(async function (this: LocalWorkspace, beforeSpawn, manager) {
+    beforeSpawn();
+    expect(manager).toBe("npm");
+    expect(this.root).not.toBe(root);
+    mkdirSync(join(this.root, "node_modules/fixture"), { recursive: true });
+    writeFileSync(join(this.root, "node_modules/fixture/package.json"), '{"main":"index.js"}');
+    writeFileSync(join(this.root, "node_modules/fixture/index.js"), "export const amount = 11;");
+    return {
+      policy: "fixture-npm",
+      result: {
+        command: ["npm", "ci"],
+        exitCode: 0,
+        output: "installed",
+        timedOut: false,
+        truncated: false,
+        durationMs: 1,
+      },
+    };
+  });
+  try {
+    await send("code verify delivery manifest:delivery.json dependencies:auto");
+    await f.engine.drainCommands();
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(checks()[0]?.status, owner.connection.allTextJoined()).toBe("complete");
+    const evidence = JSON.parse(checks()[0]!.metadata_json);
+    expect(evidence.preparation).toMatchObject({ outcome: "installed", policy: "fixture-npm" });
+    await send("code summary Delivery dependencies and output checked");
+    expect(current().status).toBe("submitted");
+    expect(codingRunMetadata(current()).requirements?.verified).toEqual([
+      "the delivered report exports amount 11",
+    ]);
+  } finally {
+    prepare.mockRestore();
+  }
 });
 
 it("keeps older verification available after hundreds of later observations", async () => {

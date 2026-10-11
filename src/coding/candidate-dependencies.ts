@@ -19,17 +19,18 @@ import type { WorkspaceRunResult } from "./local-workspace";
 export const BUN_PREPARATION_POLICY = "bun-frozen-public-no-scripts-v1";
 export interface CandidatePreparation {
   result: WorkspaceRunResult;
-  policy: typeof BUN_PREPARATION_POLICY;
+  policy: string;
   lockfileSha256?: string;
 }
 
-function object(value: unknown): Record<string, unknown> {
+export function dependencyObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new Error(
       "Dependency preparation requires object-shaped manifests and a Bun text lockfile.",
     );
   return value as Record<string, unknown>;
 }
+const object = dependencyObject;
 
 function safePath(path: string): void {
   if (
@@ -42,7 +43,7 @@ function safePath(path: string): void {
     throw new Error("Dependency preparation refuses external or ambiguous workspace/patch paths.");
 }
 
-function readInside(root: string, path: string): string {
+export function readDependencyFile(root: string, path: string): string {
   safePath(path);
   let current = root;
   for (const part of path.split("/")) {
@@ -50,10 +51,14 @@ function readInside(root: string, path: string): string {
     if (lstatSync(current).isSymbolicLink())
       throw new Error("Dependency manifests and patches must be captured files, not symlinks.");
   }
+  const info = lstatSync(current);
+  if (!info.isFile() || info.size > 16 * 1024 * 1024)
+    throw new Error("Dependency manifests and patches must be regular files of at most 16 MiB.");
   return readFileSync(current, "utf8");
 }
+const readInside = readDependencyFile;
 
-function validateManifest(value: unknown): string[] {
+export function validateDependencyManifest(value: unknown): string[] {
   const manifest = object(value);
   for (const key of [
     "dependencies",
@@ -89,8 +94,9 @@ function validateManifest(value: unknown): string[] {
   }
   return [];
 }
+const validateManifest = validateDependencyManifest;
 
-function rejectCapturedDependencies(root: string): void {
+export function rejectCapturedDependencies(root: string): void {
   for (const entry of readdirSync(root, { withFileTypes: true })) {
     if (entry.name === ".git") continue;
     if (entry.name === "node_modules")

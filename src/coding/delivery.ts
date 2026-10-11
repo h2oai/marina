@@ -3,18 +3,30 @@
 
 import { createHash } from "node:crypto";
 import { lstatSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { hostGitArgv, hostGitEnv } from "./host-git";
 import type { WorkspaceFiles } from "./local-workspace";
 
 const MAX_FILES = 128;
-const MAX_FILE_BYTES = 16 * 1024 * 1024;
-const MAX_TOTAL_BYTES = 64 * 1024 * 1024;
 const MAX_REQUIREMENTS = 32;
 const MAX_REQUIREMENT_CHARS = 500;
 const hash = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).digest("hex");
+
+export function deliveryLimits(env: NodeJS.ProcessEnv = process.env) {
+  const limit = (name: string, fallback: number) => {
+    if (env[name] === undefined) return fallback;
+    const value = Number(env[name]);
+    if (!Number.isSafeInteger(value) || value < 1)
+      throw new Error(`${name} must be a positive safe integer in bytes.`);
+    return value;
+  };
+  return {
+    fileBytes: limit("MARINA_CODE_DELIVERY_MAX_FILE_BYTES", 1024 ** 3),
+    totalBytes: limit("MARINA_CODE_DELIVERY_MAX_TOTAL_BYTES", 4 * 1024 ** 3),
+  };
+}
 
 export interface DeliveryManifest {
   files: string[];
@@ -201,23 +213,45 @@ function assertRegularFile(workspace: WorkspaceFiles, path: string) {
   }
 }
 
-async function readFiles(workspace: WorkspaceFiles, paths: string[]) {
-  if (!workspace.readBytes) throw new Error("This workspace cannot capture delivery files.");
+async function readFiles(workspace: WorkspaceFiles, paths: string[], directory?: string) {
+  if (!workspace.readByteChunks && !workspace.readBytes)
+    throw new Error("This workspace cannot capture delivery files.");
+  const limits = deliveryLimits();
   let total = 0;
   const files = [];
   for (const path of paths) {
     assertRegularFile(workspace, path);
-    const { data } = await workspace.readBytes(deliveryPath(path), MAX_FILE_BYTES);
-    total += data.length;
-    if (total > MAX_TOTAL_BYTES) throw new Error("Delivery exceeds the 64 MiB capture limit.");
-    files.push({ path, data, sha256: hash(data), bytes: data.length });
+    const remaining = limits.totalBytes - total;
+    if (remaining < 0) throw new Error("Delivery exceeds MARINA_CODE_DELIVERY_MAX_TOTAL_BYTES.");
+    const destination = directory ? join(directory, path) : undefined;
+    if (destination) await mkdir(dirname(destination), { recursive: true });
+    const output = destination ? await open(destination, "wx", 0o600) : undefined;
+    try {
+      const maxBytes = Math.max(1, Math.min(limits.fileBytes, remaining));
+      const chunks = workspace.readByteChunks
+        ? workspace.readByteChunks(path, maxBytes)
+        : [(await workspace.readBytes!(path, maxBytes)).data];
+      const digest = createHash("sha256");
+      let bytes = 0;
+      for await (const chunk of chunks) {
+        bytes += chunk.length;
+        total += chunk.length;
+        if (bytes > limits.fileBytes || total > limits.totalBytes)
+          throw new Error("Delivery exceeds its configured file or total capture limit.");
+        digest.update(chunk);
+        await output?.writeFile(chunk);
+      }
+      files.push({ path, sha256: digest.digest("hex"), bytes });
+    } finally {
+      await output?.close();
+    }
   }
   return files;
 }
 
 export async function deliveryFingerprint(workspace: WorkspaceFiles, paths: string[]) {
   const files = await readFiles(workspace, paths);
-  return hash(JSON.stringify(files.map(({ path, sha256, bytes }) => ({ path, sha256, bytes }))));
+  return hash(JSON.stringify(files));
 }
 
 /** Container mount runners protect Git metadata read-only. Initialize only this disposable root,
@@ -243,24 +277,18 @@ export async function captureDelivery(
 ) {
   beforeCapture();
   const { manifest, sha256 } = await readDeliveryManifest(workspace, manifestPath);
-  const files = await readFiles(workspace, manifest.files);
-  beforeCapture();
-  const inventory = files.map(({ path, sha256, bytes }) => ({ path, sha256, bytes }));
-  const evidence: DeliveryEvidence = {
-    version: 1,
-    manifestPath,
-    manifestSha256: sha256,
-    files: inventory,
-    fingerprint: hash(JSON.stringify(inventory)),
-  };
   const directory = await mkdtemp(join(tmpdir(), "marina-delivery-"));
   const dispose = () => rm(directory, { recursive: true, force: true });
   try {
-    for (const file of files) {
-      const destination = join(directory, file.path);
-      await mkdir(dirname(destination), { recursive: true });
-      await writeFile(destination, file.data, { flag: "wx", mode: 0o600 });
-    }
+    const inventory = await readFiles(workspace, manifest.files, directory);
+    beforeCapture();
+    const evidence: DeliveryEvidence = {
+      version: 1,
+      manifestPath,
+      manifestSha256: sha256,
+      files: inventory,
+      fingerprint: hash(JSON.stringify(inventory)),
+    };
     // Detect edits during capture instead of presenting a mixed-version bundle as current.
     if (
       (await deliveryFingerprint(workspace, manifest.files)) !== evidence.fingerprint ||
