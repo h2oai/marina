@@ -543,6 +543,14 @@ export async function runCodeSession(
       : inferCodeDefaultModel(process.env);
   if (harness.agent === "marina" && defaultModel) harness.model = defaultModel;
 
+  // Zero-config: with no LLM provider key, name the one missing thing in a single
+  // line and point at `marina init` — never a wall of text, never a false "ready".
+  if (harness.agent === "marina" && defaultModel === undefined) {
+    console.error(
+      "No LLM provider key — set one (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, …) or run `marina init`.",
+    );
+  }
+
   // The first screen is short: where you are, what runs, and what to type.
   // Everything else is one command away (/status, /project, --verbose).
   const verbose = opts.verbose === true;
