@@ -56,9 +56,24 @@ export const TERMINAL_CONTROLS = [
     help: "Send a Marina world command without leaving this view",
   },
   {
+    name: "/memory",
+    usage: "/memory [save <line> | recall <query>]",
+    help: "Remember this folder and recall what the world knows",
+  },
+  {
     name: "/harness",
     usage: "/harness [save|use|list|export]",
     help: "Inspect or select runtime, model and dialect",
+  },
+  {
+    name: "/model",
+    usage: "/model [<id>]",
+    help: "Show or switch Marina's model for this session",
+  },
+  {
+    name: "/fast",
+    usage: "/fast",
+    help: "Switch to the cheapest reachable model across vendors",
   },
   {
     name: "/quit",
@@ -82,12 +97,14 @@ export function terminalEssentials(connected = false, runtimes: string[] = []): 
     ["/project", "readiness and the verify recipe"],
     ["/agents", "agents and their status"],
     ["/world <cmd>", "a Marina command in the world (people, agents, tasks)"],
+    ["/memory", "remember + recall this folder"],
     [
       connected ? "/use marina" : "/use <agent>",
       connected
         ? "the server-side agent"
         : `switch agent (available: ${["marina", ...runtimes].join(", ")})`,
     ],
+    ["/model <id>", "switch model (or /fast for cheapest)"],
     ["/quit", connected ? "detach; the world keeps running" : "exit"],
   ];
   return [
