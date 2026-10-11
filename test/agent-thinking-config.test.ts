@@ -88,7 +88,7 @@ describe("thinking level — parsing and defaults", () => {
     expect(
       resolveAgentThinkingLevel({ thinkingDefault: "low", thinkingLevel: "high" }, none, true),
     ).toBe("high");
-    expect(codeThinkingDefault(none)).toBe("low");
+    expect(codeThinkingDefault(none)).toBe("high");
     expect(codeThinkingDefault({ MARINA_CODE_THINKING: "medium" } as NodeJS.ProcessEnv)).toBe(
       "medium",
     );

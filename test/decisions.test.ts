@@ -321,11 +321,11 @@ describe("config", () => {
     expect(decisionConfigFromEnv({ MARINA_DECISIONS: "off", OPENROUTER_API_KEY: "or" })).toBe(
       undefined,
     );
-    // Unset / on / auto: a chat classifier on the provider the world already has.
+    // Unset / on / auto: Marina's own /v1 with the world's default model, never a cheaper stand-in.
     for (const v of [undefined, "on", "auto"]) {
       expect(
         decisionConfigFromEnv({ MARINA_DECISIONS: v, OPENROUTER_API_KEY: "or" }),
-      ).toMatchObject({ kind: "chat-classifier", model: "openai/gpt-6-luna", apiKey: "or" });
+      ).toMatchObject({ kind: "marina-self", model: "marina/default" });
     }
     // Only a direct vendor key: Marina's own /v1 answers with its default model,
     // never a keyless OpenRouter call that fails closed.

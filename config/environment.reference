@@ -404,8 +404,8 @@
 # Default extended-thinking level for spawned agents: off, minimal, low, medium, high or xhigh. `agent spawn … thinking:<level>` wins; crew responders stay off unless set explicitly. Unset: off, except Code Mode coders (MARINA_CODE_THINKING).
 # MARINA_AGENT_THINKING=off
 
-# Thinking level for Code Mode coders (and `marina -p`; `--thinking <level>` sets it) when neither the agent nor MARINA_AGENT_THINKING sets one. Applied only where the coder's model declares reasoning support, never forced onto a model that may reject reasoning parameters. Default low; `off` disables it.
-# MARINA_CODE_THINKING=low
+# Thinking level for Code Mode coders (and `marina -p`; `--thinking <level>` sets it) when neither the agent nor MARINA_AGENT_THINKING sets one. Applied only where the coder's model declares reasoning support, never forced onto a model that may reject reasoning parameters. Default high; `off` disables it.
+# MARINA_CODE_THINKING=high
 
 # Multi-tool turn execution. `auto` runs batches containing a world-mutating tool in order and fans read-only batches out; `parallel` and `sequential` apply to every batch.
 # MARINA_TOOL_EXECUTION=auto
@@ -661,7 +661,7 @@
 # Total deadline per advisory judgment, including fallback (1-60000 ms, default 4000). With two backends, half is reserved for fallback. Caller cancellation and the daily spend cap stop the chain. The normal safety gate retains its own failure policy.
 # MARINA_ADVISORY_TIMEOUT_MS=4000
 
-# Decision backend for cheap per-step judgements (it receives tool names and redacted arguments). `auto` (default; alias `on`): a chat classifier on a provider the world already sends its prompts to — OpenRouter with its key, else the Hugging Face router with its key, else a configured local runtime, else this Marina's own /v1 with its default model (`marina-self`; e.g. only an Anthropic or OpenAI key); with no provider at all decisions are off. `off` turns them off. `decisions-api` (alias `jev`): a Jev-family model over the Decisions API on OpenRouter, or a self-hosted OpenJev. `typesafe`: TypeSafe's API. `chat-classifier` (aliases `classifier`, `llm`): any chat model (see MARINA_DECISION_MODEL). Every MARINA_DECISION* setting except base URLs, paths and API keys can also be changed at runtime (`admin decisions set …`, Admin → Ops → Decisions); a value set here wins and locks it.
+# Decision backend for cheap per-step judgements (it receives tool names and redacted arguments). `auto` (default; alias `on`): a chat classifier answering through this Marina's own /v1 with the world's default model (`marina-self`; MARINA_DECISION_MODEL overrides) — the strongest model the operator configured, on providers the world already uses, never a cheaper stand-in; with no provider at all decisions are off. `off` turns them off. `decisions-api` (alias `jev`): a Jev-family model over the Decisions API on OpenRouter, or a self-hosted OpenJev. `typesafe`: TypeSafe's API. `chat-classifier` (aliases `classifier`, `llm`): any chat model (see MARINA_DECISION_MODEL). Every MARINA_DECISION* setting except base URLs, paths and API keys can also be changed at runtime (`admin decisions set …`, Admin → Ops → Decisions); a value set here wins and locks it.
 # MARINA_DECISIONS=auto
 
 # Backend model. Defaults: typesafe/jev-1.13 for decisions-api, jev-latest for typesafe; chat-classifier uses openai/gpt-6-luna on OpenRouter, zai-org/GLM-5.3-Flash on the Hugging Face router, or the local runtime's default model on a configured llama.cpp / Ollama / vLLM server, and any other base URL must name a model.

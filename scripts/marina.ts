@@ -323,7 +323,7 @@ Options:
   --model <id>                model for the selected runtime; \`route\` picks a tier
                               model for the task from MARINA_ROUTES / tier models
   --thinking <level>          the coder's reasoning depth (off, minimal, low, medium,
-                              high, xhigh); default MARINA_CODE_THINKING (low), used
+                              high, xhigh); default MARINA_CODE_THINKING (high), used
                               only where the model declares reasoning support
   --profile <dialect>         Marina command dialect: marina, claude, codex, pi
   --harness <name-or-path>    saved harness or explicit portable JSON file

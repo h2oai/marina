@@ -62,12 +62,12 @@ export function resolveAgentThinkingLevel(
 
 /**
  * `MARINA_CODE_THINKING` (off | minimal | low | medium | high | xhigh; default
- * `low`): the soft thinking default for Code Mode coders — applied only where
+ * `high`): the soft thinking default for Code Mode coders — applied only where
  * the coder's model declares reasoning support and neither the agent nor
  * `MARINA_AGENT_THINKING` sets a level.
  */
 export function codeThinkingDefault(env: NodeJS.ProcessEnv = process.env): AgentThinkingLevel {
-  return parseAgentThinkingLevel(env.MARINA_CODE_THINKING) ?? "low";
+  return parseAgentThinkingLevel(env.MARINA_CODE_THINKING) ?? "high";
 }
 
 export interface AgentConfig {
@@ -112,7 +112,7 @@ export interface AgentConfig {
    * A soft default below `thinkingLevel` and `MARINA_AGENT_THINKING`: used
    * only when neither is set AND the resolved model declares reasoning support
    * (never forced onto a model that may reject reasoning parameters). Code
-   * Mode coders get `MARINA_CODE_THINKING` (default `low`) this way.
+   * Mode coders get `MARINA_CODE_THINKING` (default `high`) this way.
    */
   thinkingDefault?: AgentThinkingLevel;
   /**

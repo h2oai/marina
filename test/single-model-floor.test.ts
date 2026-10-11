@@ -198,7 +198,7 @@ describe("forecasting on a single local model", () => {
     expect(made.scale.analysts).toEqual(["llama/test-model"]);
     expect(made.scale.retriever).toBe("search");
     // Decisions are on by default (auto): the one local model also judges.
-    expect(made.scale.judge).toBe("test-model");
+    expect(made.scale.judge).toBe("marina/default");
     expect(made.scale.notes.join(" ")).toContain("single model");
   });
 

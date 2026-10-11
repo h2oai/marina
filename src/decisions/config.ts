@@ -3,13 +3,13 @@
 
 /**
  * Decision configuration, read from `process.env` on every call. ON by default
- * when a provider is available (`auto`): a chat classifier on a provider the
- * world already sends its prompts to — OpenRouter with its key, else the
- * Hugging Face router with its key, else a configured local runtime, else
- * Marina's own `/v1` with its default model. With no provider at all,
- * decisions are off. A backend that receives tool arguments from a NEW third
- * party (Jev, TypeSafe) stays an explicit choice; `MARINA_DECISIONS=off` turns
- * decisions off. Besides the
+ * when a provider is available (`auto`): a chat classifier answering through
+ * Marina's own `/v1` with the world's default model (`MARINA_DECISION_MODEL`
+ * overrides) — the strongest model the operator configured, on providers the
+ * world already sends its prompts to, never a cheaper stand-in. With no
+ * provider at all, decisions are off. A backend that receives tool arguments
+ * from a NEW third party (Jev, TypeSafe) stays an explicit choice;
+ * `MARINA_DECISIONS=off` turns decisions off. Besides the
  * environment, an OPERATOR can change most of these at runtime through
  * `settings.ts` (`admin decisions set …` / Admin → Ops → Decisions: rank 5 +
  * `admin.destructive`, refused for any agent-driven entity, audited), which
@@ -17,8 +17,8 @@
  * environment locks that setting; base URLs, paths and API keys
  * (`MARINA_DECISION_BASE_URL`, `_PATH`, `_API_KEY`) are env-only.
  *
- *   MARINA_DECISIONS           auto (default; alias on: chat-classifier on the
- *                              best available host) | off | decisions-api
+ *   MARINA_DECISIONS           auto (default; alias on: a chat classifier on
+ *                              Marina's own `/v1`, `marina-self`) | off | decisions-api
  *                              (alias jev) | typesafe (TypeSafe's direct API) |
  *                              chat-classifier (alias classifier, llm). A chat
  *                              classifier with no host of its own answers
@@ -125,11 +125,6 @@ const SELF_CLASSIFIER_TIMEOUT_MS = 15_000;
 
 function preset(raw: string | undefined): Preset | undefined {
   switch ((raw ?? "").trim().toLowerCase()) {
-    // Unset, `on` and `auto`: a chat classifier on the best available host.
-    case "":
-    case "on":
-    case "auto":
-      return "chat-classifier";
     case "decisions-api":
     case "jev":
       return "openrouter";
@@ -206,6 +201,9 @@ function selfConfig(env: NodeJS.ProcessEnv): DecisionConfig | undefined {
 export function decisionConfigFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): DecisionConfig | undefined {
+  // Unset, `on` and `auto`: Marina's own `/v1` with the world's default model.
+  const raw = (env.MARINA_DECISIONS ?? "").trim().toLowerCase();
+  if (raw === "" || raw === "on" || raw === "auto") return selfConfig(env);
   const name = preset(env.MARINA_DECISIONS);
   if (!name) return undefined;
   const d = PRESETS[name];
