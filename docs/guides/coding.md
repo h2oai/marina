@@ -605,11 +605,14 @@ manifest of output files and checks, run alone in a clean directory with
 requirement; agents still choose the implementation and the checks.
 
 `--json` prints one JSON object as the last line of stdout and sends everything else to stderr:
-`{"status":"verified|unverified|failed|timeout","exitCode":…,"verification":…,"verificationReason":…,"reason":…,"assumptions":[{"text":…,"source":"worker|block"}],"taskId":…,"runId":…,"files":[{"path":…,"added":…,"removed":…}],"durationMs":…}`.
+`{"status":"verified|unverified|failed|timeout","exitCode":…,"verification":…,"verificationReason":…,"requirements":…,"reason":…,"assumptions":[{"text":…,"source":"worker|block"}],"taskId":…,"runId":…,"files":[{"path":…,"added":…,"removed":…}],"durationMs":…}`.
 `files` is what the run changed in the session, also when it failed or ended blocked; `reason` is
 the full reason a run failed (`null` otherwise); `assumptions` lists the interpretations made
 where no person could answer (below). The human-readable output prints the same assumptions
 after the summary.
+With `--verification delivery`, `requirements` is `{"listed":…,"verified":[…],"unverified":[…],"notCheckable":[{"text":…,"reason":…}]}`
+(otherwise `null`). A run whose checks passed but left a stated requirement unverified, or
+recorded no checklist, is `unverified` (exit `3`) and the notice names those requirements.
 
 ```bash
 marina -p "fix the off-by-one in the tokenizer and add a regression test" ~/projects/acme
@@ -714,10 +717,33 @@ manifest such as `delivery.json`:
 
 ```json
 {
-  "files": ["report.ts", "helper.ts", "report.test.ts"],
-  "checks": ["bun test report.test.ts"]
+  "files": ["report.ts", "helper.ts", "report.test.ts", "order.test.ts"],
+  "checks": ["bun test report.test.ts", "bun test order.test.ts"],
+  "requirements": [
+    { "text": "the report total is 11", "checks": [0] },
+    { "text": "items are listed in input order", "checks": ["bun test order.test.ts"] },
+    { "text": "the wording suits a non-technical reader", "notCheckable": "a judgement, not a property" }
+  ]
 }
 ```
+
+`requirements` is the acceptance checklist: each explicit requirement of the task, in the
+worker's words, mapped to the checks (by 0-based index or exact text) that **observe** it. Each
+check should measure the timing, ordering or output the requirement names, against the delivered
+files. Restating a requirement in prose does not count. Only a mapped check that ran and passed
+in the current delivery verification counts. Those checks are bound to the current files and the
+hashed manifest, so mapping a requirement after the checks ran makes the evidence stale. The
+receipt lists each requirement as verified, not machine-checkable (with its reason), or
+UNVERIFIED.
+
+Enforcement under `verification:delivery`: a submission whose checks passed but which leaves a
+requirement unverified, or has no checklist at all, is refused **once**. The summary is kept as
+progress, and the reply lists exactly which requirements lack an observing check. The worker can
+add and map checks, or mark a requirement `notCheckable` with a reason; that marking is recorded
+and shown, never counted as verified. The next submission proceeds (bounded, never a loop). Any
+requirement still unverified is written into the submitted evidence and the terminal lifecycle
+`requirements` field. `marina -p` reports such a run as `unverified`. Other verification modes
+are unchanged.
 
 Run `code verify delivery manifest:delivery.json`, then inspect the returned receipt with
 `code show <id>`. Marina copies only the listed regular files into a clean directory and

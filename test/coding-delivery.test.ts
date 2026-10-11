@@ -34,7 +34,11 @@ const files = ["report.ts", "report.test.ts"];
 function manifest(paths = files) {
   writeFileSync(
     join(root, "delivery.json"),
-    JSON.stringify({ files: paths, checks: ["bun test report.test.ts"] }),
+    JSON.stringify({
+      files: paths,
+      checks: ["bun test report.test.ts"],
+      requirements: [{ text: "the delivered report exports amount 11", checks: [0] }],
+    }),
   );
 }
 const current = () => f.db.getCodingArtifact(run.id)!;

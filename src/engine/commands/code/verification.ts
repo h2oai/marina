@@ -178,6 +178,7 @@ export async function startVerification(
                 );
                 return {
                   delivery: { ...snapshot.evidence, checkedFingerprint },
+                  requirements: snapshot.manifest.requirements ?? [],
                   executionLocation: "delivery-materialization",
                   executionRunner: prepared.describe().runner ?? { kind: "host" },
                   observedAt: Date.now(),

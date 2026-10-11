@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { basename } from "node:path";
+import { type RequirementCoverage, requirementsComplete } from "../../../coding/delivery";
 import { clearSessionExecState } from "../../../coding/exec-approver";
 import {
   assessCodingVerification,
@@ -1069,8 +1070,15 @@ export async function recordCodingNote(
     const run = await submitSessionRun(deps, session.id, entity, artifact);
     if (run?.status === "active") {
       const meta = codingRunMetadata(run);
-      const text =
-        meta.verification === "not_run" || meta.verification === "error"
+      const unobserved =
+        meta.verification === "passed" &&
+        meta.requirements &&
+        !requirementsComplete(meta.requirements)
+          ? requirementsRefusal(meta.requirements)
+          : undefined;
+      const text = unobserved
+        ? unobserved
+        : meta.verification === "not_run" || meta.verification === "error"
           ? `Summary saved as progress; task remains active. Required checks ${meta.verification === "not_run" ? "were not run" : "could not complete"}: ${meta.verificationReason ?? "see the verification artifact"}. This is not a test failure. ${meta.ownerMode === "unattended" ? "No person attends this task: if the environment cannot run them, use code blocked kind:impossible <reason>." : "If the environment cannot run them, use code blocked <reason> so the owner can decide, or the owner may accept the work unverified."}`
           : `Summary saved as progress; task remains active. Required verification is ${meta.verification}. ${meta.verificationReason ?? "Inspect the check output, fix the problem, and run code verify candidate again."} After checks pass, submit code summary again. If blocked, use code blocked <reason>.`;
       const message = {
@@ -1088,7 +1096,11 @@ export async function recordCodingNote(
           verificationReadiness: codingVerificationReadiness(deps.db, run),
         },
         commands: [
-          meta.verificationRequirement === "candidate" ? "code verify candidate" : "code verify",
+          meta.verificationRequirement === "candidate"
+            ? "code verify candidate"
+            : meta.verificationRequirement === "delivery"
+              ? "code verify delivery manifest:<path>"
+              : "code verify",
           "code status",
           `code show ${artifact.id}`,
         ],
@@ -1122,4 +1134,22 @@ export async function recordCodingNote(
     type: "note",
     workspace: session.workspace_root,
   });
+}
+
+/** The one bounded refusal: exactly which stated requirements no passing check observed. */
+function requirementsRefusal(coverage: RequirementCoverage): string {
+  const missing = [
+    ...(coverage.listed
+      ? []
+      : [
+          'no acceptance checklist: add "requirements":[{"text":"<each explicit requirement>","checks":[<check index>]}] to the manifest',
+        ]),
+    ...coverage.unverified,
+  ];
+  return [
+    "Summary saved as progress; task remains active. Delivery checks passed, but these stated requirements have no passing check that observes them:",
+    ...missing.map((text, index) => `${index + 1}. ${text}`),
+    "Add checks that observe each one (measure the timing, ordering or output it names, against the delivered files), map them in the manifest's requirements, run code verify delivery manifest:<path> again, then resubmit.",
+    'Mark a requirement {"text":…,"notCheckable":"<why>"} only if no finite check can observe it; that is recorded. The next submission proceeds and reports anything still unverified.',
+  ].join("\n");
 }
