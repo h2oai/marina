@@ -161,6 +161,7 @@ import {
 import { SocialAwareness } from "./social";
 import { describeToolProbe } from "./tool-call-probe";
 import {
+  classifyToolRisk,
   type GatedRisk,
   gateScopedArgs,
   isAdditiveDeposit,
@@ -1867,7 +1868,12 @@ export class LeanAgentAdapter implements AgentHandle {
           context.toolCall.name,
           context.args,
           !context.isError,
-          (name, callArgs) => !readOnlyCall(name, callArgs, { role: "track" }),
+          (name, callArgs) =>
+            !(
+              (name === "marina_code" &&
+                classifyToolRisk(name, (callArgs ?? {}) as Record<string, unknown>) === "read") ||
+              readOnlyCall(name, callArgs, { role: "track" })
+            ),
         );
         let noted: AfterToolCallResult | undefined;
         // The generic Code tool keeps a readable error result for callers.

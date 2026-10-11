@@ -358,4 +358,22 @@ describe("agent tool reference monitor", () => {
       ]).block,
     ).toBeUndefined();
   });
+
+  it("classifies the generic Code tool by its action, like the typed Code tools", () => {
+    for (const action of [
+      "status",
+      "files",
+      "read",
+      "search",
+      "diff",
+      "show",
+      "history",
+      "observe",
+    ])
+      expect(classifyToolRisk("marina_code", { action, path: "src/a1.ts" })).toBe("read");
+    expect(classifyToolRisk("marina_code", { action: "workspace", command: "list" })).toBe("read");
+    for (const action of ["edit", "write", "run", "apply", "verify", "summary", "assume"])
+      expect(classifyToolRisk("marina_code", { action })).toBe("mutate");
+    expect(classifyToolRisk("marina_code", { action: "workspace", command: "use" })).toBe("mutate");
+  });
 });
