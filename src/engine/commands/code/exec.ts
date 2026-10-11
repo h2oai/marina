@@ -5,6 +5,11 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { parseCommandArgv } from "../../../coding/command-argv";
 import {
+  type DeliveryRequirement,
+  requirementCoverage,
+  requirementLines,
+} from "../../../coding/delivery";
+import {
   clearSessionExecState,
   type ExecApprover,
   type ExecAuditSink,
@@ -629,6 +634,13 @@ export async function runVerificationCommands(
   const failed = verdict.outcome === "failed";
   const candidateEvidence = await background?.candidateEvidence?.();
   const relevant = stepPlan.relevant;
+  // Delivery receipts say which stated requirements these steps observed (index-aligned).
+  const coverage = Array.isArray(candidateEvidence?.requirements)
+    ? requirementCoverage(
+        { requirements: candidateEvidence.requirements as DeliveryRequirement[] },
+        ran.map((item) => ({ command: item.command, outcome: item.outcome.outcome })),
+      )
+    : undefined;
   const summary =
     (preparationArtifact
       ? `Dependency preparation: ${preparationArtifact.status} (${preparationArtifact.id}).${blocked ? " Checks were not run." : preparation?.policy ? " Install scripts disabled." : ""}\n`
@@ -641,7 +653,13 @@ export async function runVerificationCommands(
       ? `\n${dim(`Scope: ${stepPlan.scopeNote}.${relevant?.files.length ? ` Relevant tests: ${relevant.files.slice(0, 8).join(", ")}${relevant.files.length > 8 ? ", …" : ""}` : ""}`)}`
       : "") +
     (candidateEvidence?.delivery
-      ? "\nDelivery checks used only the manifest's files in a clean working directory under the configured runner. The inventory and digests are saved. Check coverage and task acceptance still require review."
+      ? `\nDelivery checks used only the manifest's files in a clean working directory under the configured runner. The inventory and digests are saved. Check coverage and task acceptance still require review.${
+          coverage
+            ? `\nRequirements:\n${requirementLines(coverage)
+                .map((line) => `- ${line}`)
+                .join("\n")}`
+            : ""
+        }`
       : candidateEvidence
         ? `\nCandidate evidence: ${candidateEvidence.freshness}. Source snapshot: ${candidateEvidence.candidateId}.\nRecipe: ${candidateEvidence.recipeType}.${typeof candidateEvidence.observedAt === "number" ? `\nObserved: ${new Date(candidateEvidence.observedAt).toISOString()}` : ""}${candidateEvidence.freshnessReason ? `\n${candidateEvidence.freshnessReason}` : ""}`
         : "\nLive-workspace check results; no immutable candidate binding.");
@@ -654,6 +672,7 @@ export async function runVerificationCommands(
     contentText: summary,
     metadata: {
       ...candidateEvidence,
+      ...(coverage ? { requirementCoverage: coverage } : {}),
       workspace: session.worktree_path ?? session.workspace_root,
       executionTarget: session.execution_target,
       ...(background ? { requestId: background.receiptId } : {}),

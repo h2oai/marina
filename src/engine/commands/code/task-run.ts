@@ -225,6 +225,7 @@ export function publishCodingRun(deps: CodeDeps & { db: MarinaDB }, run: CodingA
     unverifiedAcceptance: meta.unverifiedAcceptance,
     verificationRequirement: meta.verificationRequirement,
     verificationReadiness: codingVerificationReadiness(deps.db, run),
+    ...(meta.requirements ? { requirements: meta.requirements } : {}),
   };
   deps.db.createCodingEvent({
     sessionId: run.session_id,

@@ -9,7 +9,15 @@ import { codingRunContext } from "../persistence/coding-run-context";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../persistence/database";
 import type { Entity, EntityId } from "../types";
 import { CANDIDATE_POLICY, type CandidateIdentity, observeCandidate } from "./candidate";
-import { type DeliveryEvidence, deliveryFingerprint, readDeliveryManifest } from "./delivery";
+import {
+  type DeliveryEvidence,
+  deliveryFingerprint,
+  type RequirementCoverage,
+  readDeliveryManifest,
+  requirementCoverage,
+  requirementLines,
+  requirementsComplete,
+} from "./delivery";
 import { LocalWorkspace } from "./local-workspace";
 import { candidateVerificationRetry } from "./verification-plan";
 
@@ -51,6 +59,10 @@ export interface CodingRunMetadata {
   candidateId?: string;
   verificationObservedAt?: number;
   verificationReason?: string;
+  /** Delivery mode: which stated requirements a passing check observed on the current files. */
+  requirements?: RequirementCoverage;
+  /** Submissions refused for unverified requirements (bounded by REQUIREMENT_REFUSALS). */
+  requirementRefusals?: number;
   reason?: string;
 }
 
@@ -98,6 +110,10 @@ export function assumptionLines(meta: Pick<CodingRunMetadata, "assumptions">): s
     (a) => `- ${a.source === "block" ? "(answered block) " : ""}${a.text}`,
   );
 }
+
+/** A delivery submission with unverified requirements is refused this many times, then
+ * proceeds with them reported UNVERIFIED (never a silent pass, never an endless loop). */
+export const REQUIREMENT_REFUSALS = 1;
 
 export function codingRunMetadata(run: CodingArtifactRow): CodingRunMetadata {
   return JSON.parse(run.metadata_json) as CodingRunMetadata;
@@ -269,8 +285,24 @@ export async function submitCodingRun(
       });
       return db.getCodingArtifact(run.id)!;
     }
+    if (
+      meta.verificationRequirement === "delivery" &&
+      !requirementsComplete(meta.requirements) &&
+      (meta.requirementRefusals ?? 0) < REQUIREMENT_REFUSALS
+    ) {
+      meta.requirementRefusals = (meta.requirementRefusals ?? 0) + 1;
+      db.updateCodingArtifact(run.id, { metadata: meta });
+      db.createCodingEvent({
+        sessionId,
+        actor: worker.name,
+        kind: "requirements_unverified",
+        payload: { runId: run.id, summaryId: summary.id, requirements: meta.requirements },
+      });
+      return db.getCodingArtifact(run.id)!;
+    }
+    const requirements = meta.requirements ? requirementLines(meta.requirements) : [];
     const assumed = assumptionLines(meta);
-    const evidence = `${summary.content_text}\n\nCoding attempt: artifact:${run.id}\nSummary: artifact:${summary.id}\nRecorded verification: ${meta.verification}${verification ? ` (artifact:${verification.id})` : ""}${assumed.length ? `\nAssumptions (no person could answer):\n${assumed.join("\n")}` : ""}`;
+    const evidence = `${summary.content_text}${requirements.length ? `\n\nRequirements:\n${requirements.map((line) => `- ${line}`).join("\n")}` : ""}\n\nCoding attempt: artifact:${run.id}\nSummary: artifact:${summary.id}\nRecorded verification: ${meta.verification}${verification ? ` (artifact:${verification.id})` : ""}${assumed.length ? `\nAssumptions (no person could answer):\n${assumed.join("\n")}` : ""}`;
     const claim = codingRunClaim(db, run);
     if (!claim || !tasks.submit(meta.taskId, claim.entity_id, evidence)) {
       throw new Error(
@@ -339,12 +371,14 @@ export async function assessCodingVerification(
     | "candidateId"
     | "verificationObservedAt"
     | "verificationReason"
+    | "requirements"
   > = {
     verification: "missing",
     verificationId: verification?.id,
     candidateId: undefined,
     verificationObservedAt: Date.now(),
     verificationReason: undefined,
+    requirements: undefined,
   };
   if (!verification)
     return {
@@ -445,6 +479,8 @@ export async function assessCodingVerification(
         verificationReason: fresh
           ? undefined
           : "Delivery files or manifest changed. Re-run delivery verification before submission.",
+        // Only checks bound to these exact files and this manifest observe its requirements.
+        requirements: fresh ? requirementCoverage(manifest.manifest, steps) : undefined,
       };
     } catch (error) {
       return {

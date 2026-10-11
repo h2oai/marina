@@ -306,7 +306,8 @@ Options:
   --verification <mode>        with -p: what the task must verify before it can submit:
                                checks (default; the project's own checks), candidate
                                (a Git snapshot), or delivery (the declared output files
-                               checked alone in a clean directory)
+                               checked alone in a clean directory, each stated
+                               requirement mapped to a check that observes it)
   --json                       with -p: print one JSON result object as the last stdout
                                line; everything else goes to stderr
   --verbose                    print startup details (database, server endpoints,

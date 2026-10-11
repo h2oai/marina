@@ -162,6 +162,8 @@ export interface CodeLifecycleEnd {
   /** The run's recorded verification (`passed`, `missing`, `failed`, …). */
   verification?: string;
   verificationReason?: string;
+  /** Delivery mode: stated requirements and whether a passing check observed each. */
+  requirements?: CodeRequirementCoverage;
   reason?: string;
   /** The full reason when `reason` is a category (`blocked`). */
   detail?: string;
@@ -196,6 +198,42 @@ export function formatAssumptions(assumptions: CodeAssumption[] | undefined): st
   ].join("\n");
 }
 
+export interface CodeRequirementCoverage {
+  listed: boolean;
+  verified: string[];
+  unverified: string[];
+  notCheckable: { text: string; reason: string }[];
+}
+
+function lifecycleRequirements(value: unknown): CodeRequirementCoverage | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Record<string, unknown>;
+  const texts = (list: unknown) =>
+    Array.isArray(list) ? list.filter((item): item is string => typeof item === "string") : [];
+  return {
+    listed: raw.listed === true,
+    verified: texts(raw.verified),
+    unverified: texts(raw.unverified),
+    notCheckable: Array.isArray(raw.notCheckable)
+      ? raw.notCheckable.flatMap((item) => {
+          const entry = item as Record<string, unknown> | null;
+          return entry && typeof entry.text === "string"
+            ? [{ text: entry.text, reason: typeof entry.reason === "string" ? entry.reason : "" }]
+            : [];
+        })
+      : [],
+  };
+}
+
+/** Stated requirements no passing check observed (a missing checklist counts as one). */
+export function unverifiedRequirements(coverage: CodeRequirementCoverage | undefined): string[] {
+  if (!coverage) return [];
+  return [
+    ...(coverage.listed ? [] : ["no acceptance checklist was recorded"]),
+    ...coverage.unverified,
+  ];
+}
+
 /** `marina -p` exit codes. */
 export const PRINT_EXIT = {
   verified: 0,
@@ -220,8 +258,13 @@ export function printOutcome(
 } {
   if (end === "timeout") return { status: "timeout", exitCode: PRINT_EXIT.timeout };
   if (!end || end.phase === "failed") return { status: "failed", exitCode: PRINT_EXIT.failed };
-  if (end.verification === "passed") return { status: "verified", exitCode: PRINT_EXIT.verified };
-  const notice = `Completed but not verified: ${end.verification ?? "unknown"}${end.verificationReason ? ` — ${end.verificationReason}` : ""}`;
+  const unobserved = unverifiedRequirements(end.requirements);
+  if (end.verification === "passed" && !unobserved.length)
+    return { status: "verified", exitCode: PRINT_EXIT.verified };
+  const notice =
+    end.verification === "passed"
+      ? `Completed but not verified: checks passed, but no passing check observed ${unobserved.length === 1 ? "this stated requirement" : "these stated requirements"}: ${unobserved.join("; ")}`
+      : `Completed but not verified: ${end.verification ?? "unknown"}${end.verificationReason ? ` — ${end.verificationReason}` : ""}`;
   return {
     status: "unverified",
     exitCode: allowUnverified ? PRINT_EXIT.verified : PRINT_EXIT.unverified,
@@ -246,6 +289,9 @@ export function terminalCodeLifecycle(p: Perception): CodeLifecycleEnd | undefin
       ...(typeof metadata.verification === "string" ? { verification: metadata.verification } : {}),
       ...(typeof metadata.verificationReason === "string"
         ? { verificationReason: metadata.verificationReason }
+        : {}),
+      ...(lifecycleRequirements(metadata.requirements)
+        ? { requirements: lifecycleRequirements(metadata.requirements) }
         : {}),
       ...(typeof metadata.taskId === "number" ? { taskId: metadata.taskId } : {}),
       ...(typeof metadata.runId === "string" ? { runId: metadata.runId } : {}),
@@ -809,6 +855,7 @@ export async function runCodeSession(
           verificationReason: end?.verificationReason ?? null,
           reason: end?.detail ?? end?.reason ?? null,
           assumptions: end?.assumptions ?? [],
+          requirements: end?.requirements ?? null,
           taskId: end?.taskId ?? null,
           runId: end?.runId ?? null,
           files: diff ? diffFileStats(diff) : [],

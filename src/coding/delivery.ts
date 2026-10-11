@@ -12,12 +12,34 @@ import type { WorkspaceFiles } from "./local-workspace";
 const MAX_FILES = 128;
 const MAX_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 64 * 1024 * 1024;
+const MAX_REQUIREMENTS = 32;
+const MAX_REQUIREMENT_CHARS = 500;
 const hash = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).digest("hex");
 
 export interface DeliveryManifest {
   files: string[];
   /** Finite argv commands, parsed and authorized by the normal verification path. */
   checks: string[];
+  /** The task's explicit requirements, each mapped to the checks that observe it. */
+  requirements?: DeliveryRequirement[];
+}
+
+/** One stated requirement (worker-authored) and how it is observed. */
+export interface DeliveryRequirement {
+  text: string;
+  /** 0-based indexes into `checks` (the manifest may also name a check by its exact text). */
+  checks: number[];
+  /** Explicitly not machine-checkable, with the reason. Recorded and shown, never a pass. */
+  notCheckable?: string;
+}
+
+/** Which stated requirements a passing delivery check observed on the current files. */
+export interface RequirementCoverage {
+  /** False when the manifest lists no requirements at all. */
+  listed: boolean;
+  verified: string[];
+  unverified: string[];
+  notCheckable: { text: string; reason: string }[];
 }
 
 export interface DeliveryEvidence {
@@ -55,7 +77,104 @@ export function parseDeliveryManifest(value: unknown): DeliveryManifest {
     checks.some((check) => typeof check !== "string" || !check.trim() || check.length > 8192)
   )
     throw new Error("Delivery requires 1–8 finite check commands.");
-  return { files: paths, checks: checks as string[] };
+  const requirements = parseRequirements(
+    (value as Record<string, unknown>).requirements,
+    checks as string[],
+  );
+  return { files: paths, checks: checks as string[], ...(requirements ? { requirements } : {}) };
+}
+
+function parseRequirements(value: unknown, checks: string[]): DeliveryRequirement[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > MAX_REQUIREMENTS)
+    throw new Error(`Delivery requirements must be a list of at most ${MAX_REQUIREMENTS}.`);
+  return value.map((item, index) => {
+    const entry = (item && typeof item === "object" ? item : {}) as Record<string, unknown>;
+    const text = typeof entry.text === "string" ? entry.text.trim() : "";
+    if (!text || text.length > MAX_REQUIREMENT_CHARS)
+      throw new Error(
+        `Delivery requirement ${index} needs text of 1–${MAX_REQUIREMENT_CHARS} characters.`,
+      );
+    const refs = entry.checks === undefined ? [] : entry.checks;
+    if (!Array.isArray(refs))
+      throw new Error(`Delivery requirement ${index}: checks must be a list.`);
+    const indexes = refs.map((ref) => {
+      const at =
+        typeof ref === "number"
+          ? ref
+          : typeof ref === "string"
+            ? checks.findIndex((check) => check.trim() === ref.trim())
+            : -1;
+      if (!Number.isInteger(at) || at < 0 || at >= checks.length)
+        throw new Error(
+          `Delivery requirement ${index} names a check that is not in the manifest: ${JSON.stringify(ref)}.`,
+        );
+      return at;
+    });
+    const notCheckable =
+      typeof entry.notCheckable === "string" ? entry.notCheckable.trim() : undefined;
+    if (entry.notCheckable !== undefined && !notCheckable)
+      throw new Error(`Delivery requirement ${index}: notCheckable needs a reason.`);
+    if (notCheckable && indexes.length)
+      throw new Error(`Delivery requirement ${index}: use checks or notCheckable, not both.`);
+    return {
+      text,
+      checks: [...new Set(indexes)],
+      ...(notCheckable ? { notCheckable: notCheckable.slice(0, MAX_REQUIREMENT_CHARS) } : {}),
+    };
+  });
+}
+
+/** A whitespace check observes no requirement. */
+function observes(command: unknown): boolean {
+  const argv = Array.isArray(command) ? command.map(String) : String(command ?? "").split(/\s+/);
+  return !!argv[0] && !(argv[0] === "git" && argv[1] === "diff" && argv.includes("--check"));
+}
+
+/**
+ * Map each stated requirement to the recorded check steps (index-aligned with the manifest's
+ * checks). Only a step that ran and passed counts; a requirement with no such step is unverified,
+ * whatever the summary asserts. `notCheckable` entries are listed apart, never as verified.
+ */
+export function requirementCoverage(
+  manifest: Pick<DeliveryManifest, "requirements">,
+  steps: readonly unknown[],
+): RequirementCoverage {
+  const coverage: RequirementCoverage = {
+    listed: !!manifest.requirements?.length,
+    verified: [],
+    unverified: [],
+    notCheckable: [],
+  };
+  for (const requirement of manifest.requirements ?? []) {
+    if (requirement.notCheckable) {
+      coverage.notCheckable.push({ text: requirement.text, reason: requirement.notCheckable });
+      continue;
+    }
+    const observed = requirement.checks.some((at) => {
+      const step = steps[at] as { outcome?: unknown; command?: unknown } | undefined;
+      return step?.outcome === "passed" && observes(step.command);
+    });
+    (observed ? coverage.verified : coverage.unverified).push(requirement.text);
+  }
+  return coverage;
+}
+
+/** True when every stated requirement is observed or explicitly marked not machine-checkable. */
+export function requirementsComplete(coverage: RequirementCoverage | undefined): boolean {
+  return !coverage || (coverage.listed && coverage.unverified.length === 0);
+}
+
+/** The reviewer-facing lines for a coverage record. */
+export function requirementLines(coverage: RequirementCoverage): string[] {
+  return [
+    ...(coverage.listed ? [] : ["UNVERIFIED: no acceptance checklist (manifest requirements)"]),
+    ...coverage.verified.map((text) => `verified: ${text}`),
+    ...coverage.notCheckable.map(
+      ({ text, reason }) => `not machine-checkable: ${text} (${reason})`,
+    ),
+    ...coverage.unverified.map((text) => `UNVERIFIED: ${text}`),
+  ];
 }
 
 export async function readDeliveryManifest(workspace: WorkspaceFiles, path: string) {
