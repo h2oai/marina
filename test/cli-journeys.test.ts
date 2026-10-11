@@ -183,6 +183,15 @@ describe.skipIf(process.platform === "win32")("terminal journeys", () => {
     expect(text).toContain("onramp-note-123");
   }, 60_000);
 
+  test("model: /model shows the current selection", async () => {
+    const { text } = await journey(
+      "model",
+      [{ keys: "/model\r", until: (t) => /Model · /.test(t) && PROMPT.test(t.trimEnd()) }],
+      { env: { OPENAI_API_KEY: "journey-test-key" } },
+    );
+    expect(text).toContain("Model · ");
+  }, 60_000);
+
   test("help: /help is one screen of essentials; /help all lists everything", async () => {
     const { metrics: m, text } = await journey("help", [
       { keys: "/help\r", until: (t) => t.includes("More: /help all") },

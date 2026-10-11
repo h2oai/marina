@@ -10,7 +10,7 @@ import type { CommandOptions, MarinaAgent, Perception } from "../src/sdk/client"
 import { colorizeDiff, diffColorEnabled } from "./code-diff";
 import { CodeDiscovery } from "./code-discovery";
 import { type CodingHarness, codingAgent, type HarnessStore } from "./code-harness";
-import { inferCodeDefaultModel } from "./code-model";
+import { fastestModelFor, inferCodeDefaultModel } from "./code-model";
 import { installedCodingAdapters, NativeTerminal, type TerminalAgent } from "./code-native";
 import { codePerceptionFormat, codingSessionPhase, workerActivityLabel } from "./code-presentation";
 import {
@@ -723,6 +723,26 @@ export class CodeConsole {
         return;
       }
       throw new Error("Usage: /harness [list|save <name>|use <name-or-path>|export]");
+    }
+    if (verb === "/model") {
+      if (this.harness.agent !== "marina")
+        throw new Error(
+          "/model switches Marina's model. /use marina selects it; native agents keep their own model.",
+        );
+      if (!argument) {
+        this.write(`Model · ${this.harness.model ?? "runtime default (cheapest available)"}`);
+        return;
+      }
+      await this.selectHarness({ ...this.harness, agent: "marina", model: argument });
+      return;
+    }
+    if (verb === "/fast") {
+      if (this.harness.agent !== "marina")
+        throw new Error("/fast selects Marina's cheapest reachable model. /use marina selects it.");
+      const fast = fastestModelFor(process.env);
+      if (!fast) throw new Error("No provider key configured — set one or run `marina init`.");
+      await this.selectHarness({ ...this.harness, agent: "marina", model: fast });
+      return;
     }
     if (verb === "/panel") {
       this.panels ??= new CodePanels(

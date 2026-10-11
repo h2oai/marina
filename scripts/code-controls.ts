@@ -66,6 +66,16 @@ export const TERMINAL_CONTROLS = [
     help: "Inspect or select runtime, model and dialect",
   },
   {
+    name: "/model",
+    usage: "/model [<id>]",
+    help: "Show or switch Marina's model for this session",
+  },
+  {
+    name: "/fast",
+    usage: "/fast",
+    help: "Switch to the cheapest reachable model across vendors",
+  },
+  {
     name: "/quit",
     usage: "/quit (or /exit)",
     help: "Exit; connected worlds keep running, owned agents stop",
@@ -94,6 +104,7 @@ export function terminalEssentials(connected = false, runtimes: string[] = []): 
         ? "the server-side agent"
         : `switch agent (available: ${["marina", ...runtimes].join(", ")})`,
     ],
+    ["/model <id>", "switch model (or /fast for cheapest)"],
     ["/quit", connected ? "detach; the world keeps running" : "exit"],
   ];
   return [
