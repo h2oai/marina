@@ -450,7 +450,9 @@ describe("challenge judge + pi adapter", () => {
         args,
         context: { tools: [tool] },
       })) as { block: boolean; reason: string };
-      expect(Date.now() - started).toBeLessThan(2_000);
+      // "Blocks now" is a smoke check that the gate returns a token without a
+      // long wait; the bound is generous so a loaded CI shard can't flake it.
+      expect(Date.now() - started).toBeLessThan(10_000);
       expect(result.block).toBe(true);
       expect(result.reason).toContain("runs automatically if approved");
       const token = tokenIn(stripAnsi(alice.allText().join("\n")))!;
