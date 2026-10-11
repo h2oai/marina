@@ -46,7 +46,7 @@ import { closeSync, mkdtempSync, openSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { arenaWindowHours, parseForecasterSpec } from "../src/arena/config";
+import { arenaWindowHours, arenaWindowNotice, parseForecasterSpec } from "../src/arena/config";
 import {
   evaluateResolved,
   evaluateShapes,
@@ -118,6 +118,8 @@ async function main(): Promise<number> {
   if (cmd && SPENDING_COMMANDS.has(cmd)) {
     attachCliSpendLedger(`bun run arena ${cmd}`, { dbPath: process.env.DB_PATH || "marina.db" });
   }
+  const windowNotice = arenaWindowNotice();
+  if (windowNotice) console.error(`warning: ${windowNotice}`);
   switch (cmd) {
     case "audit": {
       if (!arg) throw new Error("usage: bun run arena audit <round_id|due>");

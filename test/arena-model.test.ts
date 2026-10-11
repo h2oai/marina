@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "bun:test";
-import { arenaConfigFromEnv, arenaWindowHours, parseForecasterSpec } from "../src/arena/config";
+import {
+  arenaConfigFromEnv,
+  arenaWindowHours,
+  arenaWindowNotice,
+  parseForecasterSpec,
+} from "../src/arena/config";
 import { ArenaData } from "../src/arena/data";
 import { evaluateResolved } from "../src/arena/evaluate";
 import { forecastRound, forecastScalar, PERSISTENCE_SD } from "../src/arena/forecast";
@@ -249,16 +254,24 @@ describe("evaluation on resolved rounds", () => {
 });
 
 describe("MARINA_ARENA_WINDOW_HOURS", () => {
-  it("one parser: default 24, capped at one week, junk ⇒ default", () => {
+  it("one parser: default 24, clamped to one week, junk ⇒ default", () => {
     expect(arenaWindowHours({})).toBe(24);
     expect(arenaWindowHours({ MARINA_ARENA_WINDOW_HOURS: "48" })).toBe(48);
     expect(arenaWindowHours({ MARINA_ARENA_WINDOW_HOURS: "168" })).toBe(168);
-    expect(arenaWindowHours({ MARINA_ARENA_WINDOW_HOURS: "500" })).toBe(24);
+    expect(arenaWindowHours({ MARINA_ARENA_WINDOW_HOURS: "500" })).toBe(168);
+    expect(arenaWindowHours({ MARINA_ARENA_WINDOW_HOURS: "170" })).toBe(168);
     expect(arenaWindowHours({ MARINA_ARENA_WINDOW_HOURS: "-1" })).toBe(24);
     expect(arenaWindowHours({ MARINA_ARENA_WINDOW_HOURS: "soon" })).toBe(24);
     expect(
       arenaConfigFromEnv({ MARINA_ARENA_ENTRANT: "x-y", MARINA_ARENA_WINDOW_HOURS: "500" })
         ?.windowHours,
-    ).toBe(24);
+    ).toBe(168);
+  });
+
+  it("says when the window used differs from the one asked for", () => {
+    expect(arenaWindowNotice({})).toBeUndefined();
+    expect(arenaWindowNotice({ MARINA_ARENA_WINDOW_HOURS: "48" })).toBeUndefined();
+    expect(arenaWindowNotice({ MARINA_ARENA_WINDOW_HOURS: "170" })).toContain("using 168 h");
+    expect(arenaWindowNotice({ MARINA_ARENA_WINDOW_HOURS: "soon" })).toContain("using 24 h");
   });
 });

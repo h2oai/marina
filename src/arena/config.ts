@@ -97,15 +97,27 @@ export const MAX_ARENA_WINDOW_HOURS = 168;
 
 /**
  * `MARINA_ARENA_WINDOW_HOURS`: file when a round's lock is this close. One
- * parser for every caller; unset, non-numeric, ≤ 0 or above the one-week cap
- * is the 24 h default.
+ * parser for every caller; unset, non-numeric or ≤ 0 is the 24 h default, and
+ * a window above the one-week cap is clamped to the cap (an operator asking for
+ * "everything this week" gets the week, never a silent 24 h).
  */
 export function arenaWindowHours(env: NodeJS.ProcessEnv = process.env): number {
   const raw = env.MARINA_ARENA_WINDOW_HOURS?.trim();
   const hours = raw ? Number(raw) : Number.NaN;
-  return Number.isFinite(hours) && hours > 0 && hours <= MAX_ARENA_WINDOW_HOURS
-    ? hours
-    : DEFAULT_ARENA_WINDOW_HOURS;
+  if (!Number.isFinite(hours) || hours <= 0) return DEFAULT_ARENA_WINDOW_HOURS;
+  return Math.min(hours, MAX_ARENA_WINDOW_HOURS);
+}
+
+/** Why the effective window differs from what `MARINA_ARENA_WINDOW_HOURS` asked for, if it does. */
+export function arenaWindowNotice(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const raw = env.MARINA_ARENA_WINDOW_HOURS?.trim();
+  if (!raw) return undefined;
+  const hours = Number(raw);
+  const used = arenaWindowHours(env);
+  if (Number.isFinite(hours) && hours === used) return undefined;
+  return Number.isFinite(hours) && hours > MAX_ARENA_WINDOW_HOURS
+    ? `MARINA_ARENA_WINDOW_HOURS=${raw} is above the ${MAX_ARENA_WINDOW_HOURS} h cap; using ${used} h`
+    : `MARINA_ARENA_WINDOW_HOURS=${raw} is not a positive number of hours; using ${used} h`;
 }
 
 export function arenaConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ArenaConfig | undefined {

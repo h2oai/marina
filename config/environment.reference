@@ -837,7 +837,7 @@
 # MARINA_ARENA_KEY_FILE=/srv/marina/arena-key.pem
 # MARINA_ARENA_KEY_ID=k1
 
-# File each round automatically during its last MARINA_ARENA_WINDOW_HOURS hours (default 24, max 168; an invalid value falls back to 24).
+# File each round automatically during its last MARINA_ARENA_WINDOW_HOURS hours (default 24; above 168 is clamped to 168 with a warning; an invalid value falls back to 24).
 # MARINA_ARENA_AUTOPILOT=off
 # MARINA_ARENA_WINDOW_HOURS=24
 
