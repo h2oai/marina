@@ -34,6 +34,11 @@ export interface FuturexBatch {
   repo: string;
   sha: string;
   fetchedAt: string;
+  /**
+   * When the dataset commit was published (Hugging Face `lastModified` of the
+   * sha that was read), when the API reports it. Older saved batches lack it.
+   */
+  publishedAt?: string;
   rows: FuturexRow[];
 }
 
@@ -42,11 +47,23 @@ type Fetcher = (url: string) => Promise<Response>;
 const PAGE = 100;
 
 export async function datasetSha(repo: string, fetcher: Fetcher = fetch): Promise<string> {
+  return (await datasetCommit(repo, fetcher)).sha;
+}
+
+/** The dataset's current commit sha and, when reported, when it was published. */
+export async function datasetCommit(
+  repo: string,
+  fetcher: Fetcher = fetch,
+): Promise<{ sha: string; publishedAt?: string }> {
   const res = await fetcher(`https://huggingface.co/api/datasets/${repo}`);
   if (!res.ok) throw new Error(`Hugging Face ${repo}: HTTP ${res.status}`);
-  const data = (await res.json()) as { sha?: unknown };
+  const data = (await res.json()) as { sha?: unknown; lastModified?: unknown };
   if (typeof data.sha !== "string" || !data.sha) throw new Error(`Hugging Face ${repo}: no sha`);
-  return data.sha;
+  const at = typeof data.lastModified === "string" ? Date.parse(data.lastModified) : Number.NaN;
+  return {
+    sha: data.sha,
+    ...(Number.isFinite(at) ? { publishedAt: new Date(at).toISOString() } : {}),
+  };
 }
 
 async function rowsPage(
@@ -92,7 +109,8 @@ export async function fetchBatch(
 ): Promise<FuturexBatch> {
   const fetcher = opts.fetcher ?? fetch;
   for (let attempt = 1; attempt <= 3; attempt++) {
-    const before = await datasetSha(repo, fetcher);
+    const commit = await datasetCommit(repo, fetcher);
+    const before = commit.sha;
     const rows: FuturexRow[] = [];
     let total = Number.POSITIVE_INFINITY;
     for (let offset = 0; offset < total && offset < (opts.maxRows ?? 50_000); offset += PAGE) {
@@ -107,6 +125,7 @@ export async function fetchBatch(
         repo,
         sha: before,
         fetchedAt: (opts.now?.() ?? new Date()).toISOString(),
+        ...(commit.publishedAt ? { publishedAt: commit.publishedAt } : {}),
         rows: opts.maxRows ? rows.slice(0, opts.maxRows) : rows,
       };
     }

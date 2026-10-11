@@ -19,7 +19,11 @@
 
 import type { AnswerSpec } from "../../src/forecast/answer-types";
 import { forecastFormed, type TypedFormation } from "../../src/forecast/formations";
-import type { TypedForecastAnswer, TypedForecastDeps } from "../../src/forecast/typed";
+import type {
+  GroundingFollowUpMode,
+  TypedForecastAnswer,
+  TypedForecastDeps,
+} from "../../src/forecast/typed";
 import { idsDigest, openJournal } from "../journal";
 import type { FuturexRow } from "./dataset";
 import { requestFor } from "./map";
@@ -44,6 +48,12 @@ export interface Variant {
   selection?: "agreement" | "confidence";
   /** How the runs combine (default `ensemble`, the typed forecaster as is). */
   formation?: TypedFormation;
+  /**
+   * The follow-up after ungrounded runs (`TypedForecastOptions.groundingFollowUp`):
+   * `all` (the forecaster's default) redoes every run, `one` a single run, `off`
+   * skips the round.
+   */
+  groundingFollowUp?: GroundingFollowUpMode;
 }
 
 /**

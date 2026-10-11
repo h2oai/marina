@@ -144,4 +144,53 @@ describe("cadence", () => {
     ).toBeNull();
     expect(dueRun({ ...base, now: new Date("2026-10-07T16:00:00Z") })).toBeNull();
   });
+
+  it("starts nothing while a started run is unfinished, until it is abandoned", () => {
+    const started = "2026-10-04T06:10:00Z";
+    // An overlapping check an hour later: the run is in progress.
+    expect(
+      dueRun({
+        ...base,
+        now: new Date("2026-10-04T07:10:00Z"),
+        lastRunAt: started,
+        inProgressSince: started,
+      }),
+    ).toBeNull();
+    // Even the final run waits for a run in progress.
+    expect(
+      dueRun({
+        ...base,
+        now: new Date("2026-10-07T13:00:00Z"),
+        lastRunAt: "2026-10-07T11:30:00Z",
+        inProgressSince: "2026-10-07T11:30:00Z",
+      }),
+    ).toBeNull();
+    // Past the window the run is abandoned: it used its day's slot, the next day runs.
+    expect(
+      dueRun({
+        ...base,
+        now: new Date("2026-10-04T20:00:00Z"),
+        lastRunAt: started,
+        inProgressSince: started,
+        inProgressMs: 6 * 3_600_000,
+      }),
+    ).toBeNull();
+    expect(
+      dueRun({
+        ...base,
+        now: new Date("2026-10-05T06:30:00Z"),
+        lastRunAt: started,
+        inProgressSince: started,
+      }),
+    ).toBe("daily");
+    // An abandoned run before the lead window does not stand in for the final.
+    expect(
+      dueRun({
+        ...base,
+        now: new Date("2026-10-07T13:00:00Z"),
+        lastRunAt: "2026-10-07T06:10:00Z",
+        inProgressSince: "2026-10-07T06:10:00Z",
+      }),
+    ).toBe("final");
+  });
 });

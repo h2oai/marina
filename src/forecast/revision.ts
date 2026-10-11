@@ -161,10 +161,18 @@ export function nextWeeklyDeadline(now: Date, weekday: number, hourUtc: number):
 
 export type DueRun = "final" | "daily";
 
+/** How long a started, unfinished run counts as still in progress (default for `dueRun`). */
+export const DEFAULT_IN_PROGRESS_MS = 6 * 3_600_000;
+
 /**
  * Which re-forecast, if any, is due at `now`: the `final` run once inside the
  * lead window before the deadline (once), else a `daily` run on the first
  * check of each UTC day at or after `dailyHourUtc`. Nothing at or after the deadline.
+ *
+ * `lastRunAt` is when the last run STARTED (finished or not). A run started
+ * within `inProgressMs` that has not finished (`inProgressSince`) is still in
+ * progress: nothing new is due, so an overlapping check never starts a second
+ * pass. Past that window it is abandoned and counts only as a run at its start.
  */
 export function dueRun(input: {
   now: Date;
@@ -172,10 +180,22 @@ export function dueRun(input: {
   lastRunAt?: string;
   finalLeadMs: number;
   dailyHourUtc?: number;
+  /** Start time of a run that has not recorded its finish. */
+  inProgressSince?: string;
+  /** How long such a run counts as in progress (default `DEFAULT_IN_PROGRESS_MS`). */
+  inProgressMs?: number;
 }): DueRun | null {
   const now = input.now.getTime();
   const deadline = input.deadline.getTime();
   if (now >= deadline) return null;
+  const running = input.inProgressSince ? Date.parse(input.inProgressSince) : Number.NaN;
+  if (
+    Number.isFinite(running) &&
+    running <= now &&
+    now - running < (input.inProgressMs ?? DEFAULT_IN_PROGRESS_MS)
+  ) {
+    return null;
+  }
   const last = input.lastRunAt ? Date.parse(input.lastRunAt) : Number.NEGATIVE_INFINITY;
   const finalAt = deadline - input.finalLeadMs;
   if (now >= finalAt) return last < finalAt ? "final" : null;

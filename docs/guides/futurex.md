@@ -20,6 +20,8 @@ bun run futurex backtest --clean --isolation closed-book --variant cheap --limit
 bun run futurex watch --once --run cheap   # poll for a new batch; on one, fetch and run
 bun run futurex watch --once --run cheap --daily --learn
                                       # …and re-forecast open rows daily (see Standing answers)
+bun run futurex watch --once --run cheap --daily --daily-rows stale --near-end-hours 48
+                                      # …daily runs touch only stale rows (see Standing answers)
 bun run futurex learn                 # resolved rows of filed batches → outcome lessons
 bun run futurex status                # every submission recorded so far
 ```
@@ -68,8 +70,23 @@ FutureX questions stay open for days, so a filed answer is a *standing* answer p
 (`out/<sha>/<variant>/standing.json`). `watch --daily` re-forecasts the rows still open:
 
 - **Cadence:** once per UTC day at or after `--daily-hour` (default 06:00), plus one **final** run
-  `--final-lead-hours` (default 4) before the batch's deadline, Wednesday 16:00 UTC. Nothing runs
-  after the deadline. Runs are listed in `out/<sha>/schedule.json`.
+  `--final-lead-hours` (default 4) before the batch's deadline. Nothing runs after the deadline,
+  and only the batch that is still the latest is re-forecast: a newer batch ends the older one's
+  re-forecasts.
+- **Deadline:** the first Wednesday 16:00 UTC after the batch was *published* (the Hugging Face
+  commit time of its sha, recorded as `publishedAt` when the batch is fetched), never later than
+  its last row's end time. It never depends on when this machine fetched the batch, so a batch
+  first seen after its deadline gets no daily runs. A batch saved before `publishedAt` was recorded
+  falls back to its first fetch time (`benchmarks/futurex/schedule.ts`).
+- **Rows:** the first run of a new batch forecasts every row. A daily run re-forecasts open rows
+  only: with `--daily-rows all` (the default) every open row; with `--daily-rows stale` only open
+  rows whose standing answer (per variant) is missing or a fallback, or whose end time is within
+  `--near-end-hours` (default 48) of now. The final run re-forecasts every open row.
+- **Schedule:** each run is written to `out/<sha>/schedule.json` when it *starts*
+  (`status: "running"`, with the planned rows per variant) and marked `done` or `failed` when it
+  ends. A check while a run is in progress starts nothing. A run that never recorded its end is
+  treated as in progress for `--in-progress-hours` (default 6); after that it is abandoned and
+  counts as that day's run.
 - **Revision rule** (`src/forecast/revision.ts`): a new answer replaces the standing one only on a
   material change:
   - its confidence rises by at least 0.1; or
@@ -83,8 +100,10 @@ FutureX questions stay open for days, so a filed answer is a *standing* answer p
   already recorded, and prints nothing to send.
 
 `--learn` (or `bun run futurex learn`) hands resolved weeks to the
-[outcome-lesson loop](../architecture/memory.md#outcome-lessons-srclearning). Each standing answer
-whose row has a ground truth in the past dataset is scored and recorded once per variant and row.
+[outcome-lesson loop](../architecture/memory.md#outcome-lessons-srclearning) on every watch tick,
+whether or not a re-forecast is due. Each standing answer whose row has a ground truth in the past
+dataset is scored and recorded once per variant and row (`learned.json`), so a repeated pass adds
+nothing; the past dataset is re-read only when its commit changed.
 The question, truth and answer are seen only by the lesson writer as private context, never stored.
 A row's outcome counts as known one day after its end time (`SETTLEMENT_MARGIN_MS` in
 `benchmarks/futurex/lessons.ts`), never at the end time itself: the rows of a week share one end
@@ -109,8 +128,14 @@ Built-ins are:
 - `crew`: a Marina crew as the analyst, via `marina:<crew>`.
 
 Model ids are pinned, never floating aliases. `--variants <file.json>` supplies others: an array of
-`{ label, model, analysts, planner?, critic?, verifier?, verify?, runs?, researchRounds?, critique?, selection?, budgetMs? }`.
+`{ label, model, analysts, planner?, critic?, verifier?, verify?, runs?, researchRounds?, critique?, selection?, budgetMs?, groundingFollowUp? }`.
 `selection: "confidence"` takes each row's most self-confident run (see [Forecasting](forecasting.md#typed-answers)). `budgetMs` is a per-row time budget: the answer is combined from what has finished, and is labelled `budget_forced` in the ledger.
+`groundingFollowUp` bounds the forecaster's follow-up when no run is grounded in verified evidence.
+With `"all"` (the default) one more research round runs, and every run is redone if that round
+verified something new. With `"one"` a single fresh run reads the fuller dossier and replaces the
+least-grounded run before the runs combine. With `"off"` the round is skipped. When the trigger
+fires, the answer records the mode, whether the round ran and how many runs were redone in its
+`groundingFollowUp` field.
 
 `bun benchmarks/futurex/rescore-selection.ts --dataset <past batch json> --runs <answers.json>,…` re-scores saved runs under each selection mode, with no model calls. Rows split into selection and holdout halves by a stable hash. It reports whether `confidence` clears the promotion margin over `agreement` on the holdout half; pass `--tried` with the number of candidates already examined.
 

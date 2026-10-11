@@ -25,6 +25,7 @@ import {
   runBatch,
   type Variant,
 } from "../benchmarks/futurex/run";
+import { batchDeadline, dailyRows, scheduleState } from "../benchmarks/futurex/schedule";
 import { parseTruth, scoreBatch, scoreItem } from "../benchmarks/futurex/score";
 import {
   DEFAULT_IDENTITY,
@@ -33,6 +34,7 @@ import {
   submissionBody,
   submissionFileName,
 } from "../benchmarks/futurex/submission";
+import { dueRun } from "../src/forecast/revision";
 import type { ModelPart, TypedForecastDeps } from "../src/forecast/typed";
 import { MarinaDB } from "../src/persistence/database";
 
@@ -272,6 +274,96 @@ describe("dataset fetch", () => {
     expect(b.rows).toEqual([
       { id: "x", prompt: "p", end_time: "2026-10-01", level: 1, en_title: "T" },
     ]);
+    expect(b.publishedAt).toBeUndefined();
+  });
+
+  it("records the commit's publication time when the API reports it", async () => {
+    const fetcher = async (url: string) =>
+      url.includes("/api/datasets/")
+        ? new Response(JSON.stringify({ sha: "s1", lastModified: "2026-10-05T09:00:00.000Z" }))
+        : new Response(JSON.stringify({ num_rows_total: 0, rows: [] }));
+    const b = await fetchBatch("org/ds", { fetcher });
+    expect(b.publishedAt).toBe("2026-10-05T09:00:00.000Z");
+  });
+});
+
+describe("watch schedule", () => {
+  const endsAt = (id: string, end: string): FuturexRow => row({ id, end_time: end });
+
+  it("derives the deadline from the batch's publication, not from when it was fetched", () => {
+    const rows = [endsAt("a", "2026-10-11T12:00:00Z")];
+    // Published Monday, fetched promptly: this Wednesday.
+    expect(
+      batchDeadline({
+        rows,
+        publishedAt: "2026-10-05T09:00:00Z",
+        fetchedAt: "2026-10-05T10:00:00Z",
+      }).deadline.toISOString(),
+    ).toBe("2026-10-07T16:00:00.000Z");
+    // Same batch first fetched Thursday: still this Wednesday — already past.
+    const late = batchDeadline({
+      rows,
+      publishedAt: "2026-10-05T09:00:00Z",
+      fetchedAt: "2026-10-08T10:00:00Z",
+    });
+    expect(late.deadline.toISOString()).toBe("2026-10-07T16:00:00.000Z");
+    expect(late.basis).toBe("published");
+    expect(
+      dueRun({
+        now: new Date("2026-10-08T11:00:00Z"),
+        deadline: late.deadline,
+        finalLeadMs: 4 * 3_600_000,
+        dailyHourUtc: 6,
+      }),
+    ).toBeNull();
+  });
+
+  it("falls back to the first fetch, bounded by the last row end time", () => {
+    const b = batchDeadline({
+      rows: [endsAt("a", "2026-10-09T12:00:00Z"), endsAt("b", "2026-10-10T12:00:00Z")],
+      fetchedAt: "2026-10-08T10:00:00Z",
+    });
+    // The next Wednesday would be 10-14, after every row has closed: the last end time bounds it.
+    expect(b).toMatchObject({ basis: "fetched", boundedByEnd: true });
+    expect(b.deadline.toISOString()).toBe("2026-10-10T12:00:00.000Z");
+  });
+
+  it("reads the last run's start and whether it is still running", () => {
+    expect(scheduleState({ runs: [] })).toEqual({});
+    // Entries written before the status existed count as finished runs.
+    expect(
+      scheduleState({ runs: [{ at: "2026-10-04T06:00:00Z", kind: "daily", variants: ["v"] }] }),
+    ).toEqual({ lastRunAt: "2026-10-04T06:00:00Z" });
+    expect(
+      scheduleState({
+        runs: [
+          { at: "2026-10-04T06:00:00Z", kind: "daily", variants: ["v"], status: "done" },
+          { at: "2026-10-05T06:00:00Z", kind: "daily", variants: ["v"], status: "running" },
+        ],
+      }),
+    ).toEqual({ lastRunAt: "2026-10-05T06:00:00Z", inProgressSince: "2026-10-05T06:00:00Z" });
+  });
+
+  it("re-forecasts every open row, or only stale ones", () => {
+    const now = new Date("2026-10-06T06:00:00Z");
+    const rows = [
+      endsAt("closed", "2026-10-05T12:00:00Z"),
+      endsAt("kept", "2026-10-12T12:00:00Z"),
+      endsAt("fallback", "2026-10-12T12:00:00Z"),
+      endsAt("missing", "2026-10-12T12:00:00Z"),
+      endsAt("soon", "2026-10-07T12:00:00Z"),
+    ];
+    const at = "2026-10-05T06:00:00Z";
+    const standing = {
+      closed: { prediction: "A", at },
+      kept: { prediction: "A", confidence: 0.9, at },
+      fallback: { prediction: "A", fallback: true, at },
+      soon: { prediction: "B", at },
+    };
+    const ids = (mode: "all" | "stale") =>
+      dailyRows(rows, standing, now, { mode, nearEndMs: 48 * 3_600_000 }).map((r) => r.id);
+    expect(ids("all")).toEqual(["kept", "fallback", "missing", "soon"]);
+    expect(ids("stale")).toEqual(["fallback", "missing", "soon"]);
   });
 });
 

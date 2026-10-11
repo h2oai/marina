@@ -23,7 +23,8 @@
  *   follow-up  when no run is grounded in verified evidence, ONE more research
  *              round on the gaps the runs and the judge leave; the runs are
  *              redone only if it verified something new (the first runs stay in
- *              `initialRuns`)
+ *              `initialRuns`) — all of them, one of them, or no round at all
+ *              per `groundingFollowUp` (recorded on the answer)
  *   critique   a disconfirmation pass searches for evidence AGAINST the leading
  *              answer; the critic may revise it only when its own confidence
  *              exceeds the runs' agreement
@@ -162,6 +163,17 @@ export interface TypedForecastOptions {
    */
   followUp?: boolean;
   /**
+   * What the follow-up after UNGROUNDED runs may redo once its round verified
+   * something new (`followUp` off disables it entirely):
+   * - `all` (default): every run is redone on the fuller dossier;
+   * - `one`: a single fresh run reads it and replaces the least-grounded run,
+   *   then the runs combine as usual (bounded cost: one run, not K);
+   * - `off`: no follow-up round after the runs (the pre-run evidence round,
+   *   `minEvidenceLines`, is unaffected).
+   * Which mode ran is recorded in `TypedForecastAnswer.groundingFollowUp`.
+   */
+  groundingFollowUp?: GroundingFollowUpMode;
+  /**
    * Verified dossier lines wanted before the runs; fewer triggers one more
    * research round (default 5; 0 = off). Shares the single extra round with
    * `followUp`.
@@ -192,6 +204,9 @@ export interface TypedForecastOptions {
    */
   completion?: boolean;
 }
+
+export type GroundingFollowUpMode = "all" | "one" | "off";
+export const GROUNDING_FOLLOW_UP_MODES: readonly GroundingFollowUpMode[] = ["all", "one", "off"];
 
 export interface ModelPart {
   name: string;
@@ -344,6 +359,18 @@ export interface TypedForecastAnswer {
   critique?: Critique;
   /** The first runs, when a follow-up round added verified evidence and the runs were redone. */
   initialRuns?: TypedRun[];
+  /**
+   * The follow-up after ungrounded runs, when its trigger fired: the mode in
+   * force (`options.groundingFollowUp`), whether its research round ran, and
+   * how many runs were redone (0 when it was off or verified nothing new;
+   * `replaced` = the run number a `one` re-run replaced).
+   */
+  groundingFollowUp?: {
+    mode: GroundingFollowUpMode;
+    researched: boolean;
+    rerun: number;
+    replaced?: number;
+  };
   /** How much evidence the runs read: the budget, the dossier, the verified part. */
   evidence?: {
     budgetChars: number;
@@ -770,13 +797,20 @@ export async function forecastTyped(
   const thin = (a: typeof assembled, runs: TypedRun[]) =>
     (a.checked !== undefined && a.checked.stats.verified === 0) ||
     (a.evidence.length > 0 && !!deps.judge && runs.every((r) => (r.grounded ?? 0) < 0.3));
-  if (
+  const groundingMode: GroundingFollowUpMode = GROUNDING_FOLLOW_UP_MODES.includes(
+    opts.groundingFollowUp as GroundingFollowUpMode,
+  )
+    ? opts.groundingFollowUp!
+    : "all";
+  const groundingDue =
     opts.followUp !== false &&
     !extraRound &&
     !researchDown &&
     phase() === "work" &&
-    thin(assembled, out.runs)
-  ) {
+    thin(assembled, out.runs);
+  if (groundingDue) out.groundingFollowUp = { mode: groundingMode, researched: false, rerun: 0 };
+  if (groundingDue && groundingMode !== "off") {
+    const record = out.groundingFollowUp!;
     const { reply } = await askAnalyst(
       planner,
       followUpSystem(),
@@ -809,13 +843,39 @@ export async function forecastTyped(
       };
       const before = assembled.checked?.stats.verified ?? 0;
       await research(round, researchRequest(req, plan, next, cutoffDay, round.round));
+      record.researched = true;
       const again = await assemble();
       round.verifiedAdded = Math.max(0, (again.checked?.stats.verified ?? 0) - before);
       // The runs are redone only when the round added verified evidence.
       if (round.verifiedAdded > 0) {
         out.initialRuns = out.runs;
         assembled = again;
-        out.runs = await runAll(assembled);
+        if (groundingMode === "all") {
+          out.runs = await runAll(assembled);
+          record.rerun = out.runs.length;
+        } else {
+          // `one`: a single fresh run reads the fuller dossier and takes the
+          // place of the least-grounded run (an unanswered run first).
+          const [fresh] = await runIndependent(
+            req,
+            deps,
+            opts,
+            1,
+            verifier,
+            assembled.user,
+            assembled.evidence.length ? deps.judge : undefined,
+            assembled.evidence,
+            judgeRecord,
+            runBudget,
+            out.runs.length,
+          );
+          if (fresh) {
+            const slot = leastGrounded(out.runs);
+            record.replaced = out.runs[slot]!.run;
+            out.runs = out.runs.map((r, i) => (i === slot ? fresh : r));
+            record.rerun = 1;
+          }
+        }
       }
     }
   }
@@ -982,6 +1042,14 @@ export async function forecastTyped(
   return finish(
     lowGrounding ? "the judge found little verified evidence behind every run" : undefined,
   );
+}
+
+/** Index of the run a single follow-up re-run replaces: unanswered first, else the least grounded. */
+export function leastGrounded(runs: readonly TypedRun[]): number {
+  let best = 0;
+  const score = (r: TypedRun) => (r.formatted === undefined ? -1 : (r.grounded ?? 0));
+  for (let i = 1; i < runs.length; i++) if (score(runs[i]!) < score(runs[best]!)) best = i;
+  return best;
 }
 
 /**

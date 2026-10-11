@@ -11,7 +11,11 @@
  *   bun run futurex backtest [--limit 40] …        resolved rows: forecast with an early cutoff, score, ledger
  *   bun run futurex watch [--once] [--run cheap]   poll the dataset sha; on a new batch, fetch (and run)
  *         [--daily] [--learn]                    …re-forecast OPEN rows daily + a final run before the
- *                                                Wed 16:00 UTC deadline; feed resolved weeks to lessons
+ *                                                batch's deadline; --learn feeds resolved weeks to
+ *                                                lessons on EVERY tick (idempotent: once per row)
+ *         [--daily-rows all|stale]               which open rows a daily run re-forecasts (default all;
+ *         [--near-end-hours 48]                  stale = missing/fallback answers + rows ending soon)
+ *         [--in-progress-hours 6]                a started, unfinished run blocks new ones this long
  *   bun run futurex learn                          resolved rows of filed batches → outcome lessons
  *   bun run futurex migrate-lessons                copy the retired forecast-lesson store into the pool
  *   bun run futurex status                         what has been filed (external_submissions)
@@ -28,7 +32,16 @@
  * connector) sends it. Answers are frozen before each row's end time. Re-forecasts keep a standing
  * answer per row and revise it only on a material change (`src/forecast/revision.ts`); every
  * decision goes to `revisions.jsonl` and a revised file is a new `external_submissions` row (an
- * unchanged file is already recorded). DB_PATH selects the ledger
+ * unchanged file is already recorded).
+ *
+ * Watch cadence (`benchmarks/futurex/schedule.ts`): a batch's deadline is the first Wednesday
+ * 16:00 UTC after the batch was PUBLISHED (its Hugging Face commit time; the first fetch for a
+ * batch saved before that was recorded), never later than its last row's end time — so a batch
+ * first seen after its deadline gets no dailies — and only the batch that is still `latest` is
+ * re-forecast. The first pass of a new batch forecasts every row. Each run is written to
+ * `out/<sha>/schedule.json` when it STARTS (`running`) and marked `done`/`failed` when it ends;
+ * a check while a run is in progress starts nothing. A variant's `groundingFollowUp`
+ * (`all` | `one` | `off`) bounds the forecaster's follow-up after ungrounded runs. DB_PATH selects the ledger
  * (default marina.db). Needs OPENROUTER_API_KEY (as `bun run forecast`).
  */
 
@@ -41,6 +54,7 @@ import { cleanBacktest, truthOutcome } from "../benchmarks/futurex/clean-run";
 import {
   datasetSha,
   type FuturexBatch,
+  type FuturexRow,
   fetchBatch,
   ONLINE_REPO,
   PAST_REPO,
@@ -60,6 +74,15 @@ import {
   runBatch,
   type Variant,
 } from "../benchmarks/futurex/run";
+import {
+  batchDeadline,
+  DAILY_ROWS_MODES,
+  type DailyRowsMode,
+  dailyRows,
+  type Schedule,
+  type ScheduleEntry,
+  scheduleState,
+} from "../benchmarks/futurex/schedule";
 import { parseTruth, scoreBatch, scoreItem } from "../benchmarks/futurex/score";
 import {
   DEFAULT_IDENTITY,
@@ -71,12 +94,7 @@ import {
 import { attachCliSpendLedger } from "../src/engine/cli-spend-ledger";
 import { memoryHistory } from "../src/forecast/history";
 import type { LessonStore } from "../src/forecast/lessons";
-import {
-  dueRun,
-  nextWeeklyDeadline,
-  reviseStanding,
-  type StandingAnswer,
-} from "../src/forecast/revision";
+import { dueRun, reviseStanding, type StandingAnswer } from "../src/forecast/revision";
 import { modelPart, typedForecastDeps } from "../src/forecast/service";
 import { forecastLessonsFor } from "../src/learning/forecast-bridge";
 import { migrateLegacyForecastLessons } from "../src/learning/legacy-forecast";
@@ -108,6 +126,11 @@ const { positionals, values } = parseArgs({
     learn: { type: "boolean" },
     "final-lead-hours": { type: "string", default: "4" },
     "daily-hour": { type: "string", default: "6" },
+    // Which open rows a daily re-forecast touches: every one, or only stale ones.
+    "daily-rows": { type: "string", default: "all" },
+    "near-end-hours": { type: "string", default: "48" },
+    // A started run with no recorded end counts as in progress this long.
+    "in-progress-hours": { type: "string", default: "6" },
     "no-ledger": { type: "boolean" },
     // Continue a stopped run from the rows it finished (rows.jsonl), same configuration only.
     resume: { type: "boolean" },
@@ -207,6 +230,7 @@ function depsFor(v: Variant, lessons?: LessonStore) {
       ...(v.critique === false ? { critique: false } : {}),
       ...(v.budgetMs ? { budgetMs: v.budgetMs } : {}),
       ...(v.selection ? { selection: v.selection } : {}),
+      ...(v.groundingFollowUp ? { groundingFollowUp: v.groundingFollowUp } : {}),
       exclude: BOARD_EXCLUSIONS.futurex!,
     });
     if ("error" in made) throw new Error(made.error);
@@ -231,10 +255,6 @@ async function fetchCmd(): Promise<number> {
   return 0;
 }
 
-/** FutureX's weekly submission deadline: Wednesday 16:00 UTC. */
-const DEADLINE_WEEKDAY = 3;
-const DEADLINE_HOUR_UTC = 16;
-
 /** Per batch and variant: the standing answer per row and the result that produced it. */
 interface Standing {
   answers: Record<string, StandingAnswer>;
@@ -248,28 +268,91 @@ function loadStanding(out: string): Standing {
     : { answers: {}, results: {} };
 }
 
-interface Schedule {
-  runs: Array<{ at: string; kind: string; variants: string[] }>;
-}
-
 const schedulePath = (sha: string) => join(dir, "out", sha, "schedule.json");
 function loadSchedule(sha: string): Schedule {
   const path = schedulePath(sha);
   return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as Schedule) : { runs: [] };
 }
 
+/** Append one schedule entry, or replace the one with the same start time and kind. */
+function writeScheduleEntry(sha: string, entry: ScheduleEntry): void {
+  const sched = loadSchedule(sha);
+  const i = sched.runs.findIndex((r) => r.at === entry.at && r.kind === entry.kind);
+  if (i >= 0) sched.runs[i] = entry;
+  else sched.runs.push(entry);
+  mkdirSync(join(dir, "out", sha), { recursive: true });
+  writeFileSync(schedulePath(sha), JSON.stringify(sched, null, 1));
+}
+
+function dailyRowsMode(): DailyRowsMode {
+  const m = values["daily-rows"] as DailyRowsMode;
+  if (!DAILY_ROWS_MODES.includes(m)) {
+    throw new Error(`--daily-rows ${values["daily-rows"]}: expected ${DAILY_ROWS_MODES.join("|")}`);
+  }
+  return m;
+}
+
+/**
+ * Forecast a batch. `openOnly` (a re-forecast) touches only rows still open;
+ * closed rows keep their standing answer. A `daily` re-forecast under
+ * `--daily-rows stale` re-runs only open rows whose standing answer (per
+ * variant) is missing or a fallback, or that end within `--near-end-hours`.
+ * The run is recorded in schedule.json when it STARTS (`running`) and marked
+ * `done` or `failed` when it ends, so an overlapping or later check sees it.
+ */
 async function runCmd(opts: { kind?: string; openOnly?: boolean } = {}): Promise<number> {
   const batch = loadBatch(ONLINE_REPO, values.batch) ?? (await fetchBatch(ONLINE_REPO));
   if (!loadBatch(ONLINE_REPO, batch.sha)) saveBatch(batch);
   const kind = opts.kind ?? "run";
   const startedAt = new Date();
   const limited = values.limit ? batch.rows.slice(0, Number(values.limit)) : batch.rows;
-  // A re-forecast touches only rows still open; closed rows keep their standing answer.
-  const rows = opts.openOnly
-    ? limited.filter((r) => (Date.parse(endTimeIso(r.end_time) ?? "") || 0) > startedAt.getTime())
-    : limited;
-  console.log(`${describe(batch)}\n${kind}: ${rows.length} rows`);
-  if (rows.length === 0) return 0;
+  const variants = variantsFromFlags();
+  const mode: DailyRowsMode = opts.openOnly && kind === "daily" ? dailyRowsMode() : "all";
+  const nearEndMs = Number(values["near-end-hours"]) * 3_600_000;
+  const rowsFor = (v: Variant): FuturexRow[] =>
+    opts.openOnly
+      ? dailyRows(limited, loadStanding(join(dir, "out", batch.sha, v.label)).answers, startedAt, {
+          mode,
+          nearEndMs,
+        })
+      : limited;
+  const planned = Object.fromEntries(variants.map((v) => [v.label, rowsFor(v).length]));
+  console.log(
+    `${describe(batch)}\n${kind}: ${Object.entries(planned)
+      .map(([l, n]) => `${l} ${n} rows`)
+      .join(" · ")}${mode === "stale" ? " (stale rows only)" : ""}`,
+  );
+  if (Object.values(planned).every((n) => n === 0)) return 0;
+  const entry: ScheduleEntry = {
+    at: startedAt.toISOString(),
+    kind,
+    variants: variants.map((v) => v.label),
+    status: "running",
+    rows: planned,
+  };
+  writeScheduleEntry(batch.sha, entry);
+  try {
+    await runVariants(batch, kind, limited, variants, rowsFor);
+  } catch (err) {
+    writeScheduleEntry(batch.sha, {
+      ...entry,
+      status: "failed",
+      finishedAt: new Date().toISOString(),
+      error: (err instanceof Error ? err.message : String(err)).slice(0, 300),
+    });
+    throw err;
+  }
+  writeScheduleEntry(batch.sha, { ...entry, status: "done", finishedAt: new Date().toISOString() });
+  return 0;
+}
+
+async function runVariants(
+  batch: FuturexBatch,
+  kind: string,
+  limited: FuturexRow[],
+  variants: Variant[],
+  rowsFor: (v: Variant) => FuturexRow[],
+): Promise<void> {
   // Live forecasts read every lesson learned so far (now is after every resolution),
   // from the one judged pool (MARINA_LESSONS on / observe / off).
   let lessons: LessonStore | undefined;
@@ -280,7 +363,12 @@ async function runCmd(opts: { kind?: string; openOnly?: boolean } = {}): Promise
     lessons = forecastLessonsFor(ldb, { eval: { benchmark: "futurex", mode: "live" } });
     console.log("lessons: recalling from the lesson pool (forecast, arena)");
   }
-  for (const v of variantsFromFlags()) {
+  for (const v of variants) {
+    const rows = rowsFor(v);
+    if (rows.length === 0) {
+      console.log(`\n── variant ${v.label}: no rows to re-forecast`);
+      continue;
+    }
     console.log(`\n── variant ${v.label} (${v.analysts.join(", ")}) · ${rows.length} rows`);
     const out = join(dir, "out", batch.sha, v.label);
     const run = await runBatch(rows, v, depsFor(v, lessons), {
@@ -371,15 +459,6 @@ async function runCmd(opts: { kind?: string; openOnly?: boolean } = {}): Promise
         .join("\n")}`,
     );
   }
-  const sched = loadSchedule(batch.sha);
-  sched.runs.push({
-    at: startedAt.toISOString(),
-    kind,
-    variants: variantsFromFlags().map((v) => v.label),
-  });
-  mkdirSync(join(dir, "out", batch.sha), { recursive: true });
-  writeFileSync(schedulePath(batch.sha), JSON.stringify(sched, null, 1));
-  return 0;
 }
 
 /**
@@ -391,8 +470,11 @@ async function runCmd(opts: { kind?: string; openOnly?: boolean } = {}): Promise
 async function learnCmd(): Promise<number> {
   const outRoot = join(dir, "out");
   if (!existsSync(outRoot)) return 0;
-  const past = await fetchBatch(PAST_REPO);
-  saveBatch(past);
+  // The resolved dataset is re-read only when its commit moved (learn runs every watch tick).
+  const saved = loadBatch(PAST_REPO, "latest");
+  const past =
+    saved && saved.sha === (await datasetSha(PAST_REPO)) ? saved : await fetchBatch(PAST_REPO);
+  if (past !== saved) saveBatch(past);
   const truth = new Map(
     past.rows.filter((r) => r.ground_truth !== undefined).map((r) => [r.id, r]),
   );
@@ -640,30 +722,40 @@ async function watchCmd(): Promise<number> {
         await runCmd({ kind: "new" });
       }
     }
-    if (values.daily && values.run && have?.sha === sha) {
+    // Dailies only ever run for the batch that is still `latest` (a newer batch
+    // ends the older one's re-forecasts), against the batch's own deadline.
+    const current = have?.sha === sha ? have : undefined;
+    if (values.daily && values.run && current) {
       // Re-forecast open rows daily, plus one final run before the batch's deadline.
       const now = new Date();
-      const deadline = nextWeeklyDeadline(
-        new Date(have.fetchedAt),
-        DEADLINE_WEEKDAY,
-        DEADLINE_HOUR_UTC,
-      );
-      const last = loadSchedule(sha).runs.at(-1);
+      const { deadline, basis, boundedByEnd } = batchDeadline(current);
+      const state = scheduleState(loadSchedule(sha));
+      const inProgressMs = Number(values["in-progress-hours"]) * 3_600_000;
       const due = dueRun({
         now,
         deadline,
-        ...(last ? { lastRunAt: last.at } : {}),
+        ...state,
+        inProgressMs,
         finalLeadMs: Number(values["final-lead-hours"]) * 3_600_000,
         dailyHourUtc: Number(values["daily-hour"]),
       });
-      if (due) {
-        console.log(`${now.toISOString()} ${due} re-forecast (deadline ${deadline.toISOString()})`);
+      const deadlineNote = `deadline ${deadline.toISOString()} from ${basis} time${boundedByEnd ? ", bounded by the last end time" : ""}`;
+      if (
+        state.inProgressSince &&
+        now.getTime() - Date.parse(state.inProgressSince) < inProgressMs
+      ) {
+        console.log(`${now.toISOString()} a run started ${state.inProgressSince} is in progress`);
+      } else if (due) {
+        console.log(`${now.toISOString()} ${due} re-forecast (${deadlineNote})`);
         values.variant = values.run.split(",").map((s) => s.trim());
         values.batch = sha;
         await runCmd({ kind: due, openOnly: true });
-        if (values.learn) await learnCmd().catch((e) => console.error(`learn failed: ${e}`));
+      } else if (now >= deadline) {
+        console.log(`${now.toISOString()} past the batch deadline (${deadlineNote})`);
       }
     }
+    // Learning is cheap and idempotent (each variant and row is learned once): every tick.
+    if (values.learn) await learnCmd().catch((e) => console.error(`learn failed: ${e}`));
     if (values.once) return 0;
     await Bun.sleep(interval);
   }
