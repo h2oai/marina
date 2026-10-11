@@ -801,7 +801,7 @@ is missing or readable by other users.
 | `MARINA_ARENA_KEY_FILE` | — | PKCS#8 PEM (or raw 32-byte seed), mode 0600 |
 | `MARINA_ARENA_KEY_ID` | `k1` | the key's id in the registration |
 | `MARINA_ARENA_AUTOPILOT` | off | `on` files due rounds hourly |
-| `MARINA_ARENA_WINDOW_HOURS` | `24` | how close to its lock a round is filed (max 168; invalid ⇒ 24) |
+| `MARINA_ARENA_WINDOW_HOURS` | `24` | how close to its lock a round is filed (above 168 ⇒ 168, with a warning; invalid ⇒ 24) |
 | `MARINA_ARENA_URL` / `MARINA_ARENA_AUDIENCE` | production | a rehearsal fork's intake |
 | `MARINA_ARENA_DATA_URL` | the arena repo on GitHub | where rounds, locks and resolutions are read |
 | `MARINA_ARENA_FORECASTER` | `nowcast` | no model calls; every non-Civiqs round is the baseline. Or `baseline`, `discovered`, `tabh2o[:forecast][@nowcast]` (experimental, `TABH2O_API_KEY`), `model:<m>`, `crew:<m>[,<m>,<m>]`, `formation:<pattern>:<m>[,…][+then:<pattern>:<m>[,…]][+research@<retriever>[,…]]`, `research:<m>[,<m>,<m>]` |
