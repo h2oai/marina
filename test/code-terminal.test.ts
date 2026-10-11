@@ -1174,6 +1174,34 @@ it("preserves a multiline task around world input and emits no editing controls 
   }
 });
 
+it("dispatches an unattended task with the requested verification requirement", async () => {
+  const commands: string[] = [];
+  const terminal = new CodeConsole({
+    agent: {
+      getSession: () => null,
+      command: async (text: string) => {
+        commands.push(text);
+        return [];
+      },
+    } as unknown as MarinaAgent,
+    url: "http://local.test",
+    root: directory,
+    directory,
+    harness: { version: 1, agent: "marina" },
+    store: new HarnessStore(directory),
+    finish: () => {},
+  });
+  terminal.write = () => undefined;
+  await terminal.task("ship it", false, 1000, true);
+  await terminal.task("ship it", false, 1000, true, "delivery");
+  await terminal.task("interactive", false, 1000, false, "delivery");
+  expect(commands).toEqual([
+    "code do verification:checks owner:unattended -- ship it",
+    "code do verification:delivery owner:unattended -- ship it",
+    "code do -- interactive",
+  ]);
+});
+
 it("interrupts once when readline and SIGINT report the same physical keypress", async () => {
   const commands: string[] = [];
   let exits = 0;

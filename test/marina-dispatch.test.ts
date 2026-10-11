@@ -144,6 +144,27 @@ describe("marina dispatcher routing", () => {
     });
   });
 
+  it("parses the one-shot verification requirement, and only with -p", () => {
+    expect(parseDispatch(["-p", "fix it", "--verification", "delivery"])).toMatchObject({
+      kind: "code",
+      print: "fix it",
+      verification: "delivery",
+    });
+    expect(parseDispatch(["-p", "fix it"])).not.toHaveProperty("verification");
+    expect(parseDispatch(["-p", "fix it", "--verification", "all"])).toMatchObject({
+      kind: "usage-error",
+      arg: "--verification",
+    });
+    expect(parseDispatch(["-p", "fix it", "--verification"])).toMatchObject({
+      kind: "usage-error",
+      arg: "--verification",
+    });
+    expect(parseDispatch([".", "--verification", "checks"])).toEqual({
+      kind: "usage-error",
+      arg: "--verification",
+    });
+  });
+
   it("rejects a second positional directory", () => {
     expect(parseDispatch(["/a", "/b"])).toEqual({ kind: "usage-error", arg: "/b" });
   });

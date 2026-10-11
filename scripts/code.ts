@@ -61,6 +61,8 @@ export interface CodeSessionOptions {
   verbose?: boolean;
   /** `-p`: exit 0 for completed work that was not verified (it is still reported). */
   allowUnverified?: boolean;
+  /** `-p` only: the verification the task must pass (`code do verification:<mode>`). */
+  verification?: "checks" | "candidate" | "delivery";
   /** `-p`: one JSON result object as the last stdout line; human output goes to stderr. */
   json?: boolean;
 }
@@ -826,7 +828,7 @@ export async function runCodeSession(
       /* handled below — avoid unhandled-rejection noise */
     });
     try {
-      await sessionConsole.task(task, false, timeoutMs, true);
+      await sessionConsole.task(task, false, timeoutMs, true, opts.verification);
     } catch (error) {
       console.error(String(error));
       await finishPrint(printOutcome(undefined));

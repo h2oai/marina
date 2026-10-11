@@ -598,6 +598,12 @@ the session diff and the agent's summary. The exit code says what you can rely o
 | `1` | failed: the agent died mid-task or the run was stopped |
 | `2` | timed out after `MARINA_CODE_TASK_TIMEOUT_MS` (default 600000 ms); `code stop` was sent |
 
+`--verification <mode>` sets what a one-shot task must verify before it can submit: `checks`
+(default — the project's own checks), `candidate` (a captured Git snapshot), or `delivery` (a JSON
+manifest of output files and checks, run alone in a clean directory with
+`code verify delivery manifest:<path>`). The mode is the task's `code do verification:<mode>`
+requirement; agents still choose the implementation and the checks.
+
 `--json` prints one JSON object as the last line of stdout and sends everything else to stderr:
 `{"status":"verified|unverified|failed|timeout","exitCode":…,"verification":…,"verificationReason":…,"taskId":…,"runId":…,"files":[{"path":…,"added":…,"removed":…}],"durationMs":…}`.
 
