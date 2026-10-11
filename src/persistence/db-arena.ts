@@ -13,6 +13,58 @@ import type { Database } from "bun:sqlite";
 
 export type ArenaSubmissionStatus = "prepared" | "accepted" | "rejected" | "error";
 
+export interface ArenaAttemptRow {
+  id: number;
+  attempt_id: string;
+  entrant: string;
+  round_id: string;
+  phase: "started" | "finished";
+  status: string;
+  detail: string;
+  created_at: number;
+}
+
+export type InsertArenaAttempt = Omit<ArenaAttemptRow, "id">;
+
+export function recordArenaAttempt(db: Database, row: InsertArenaAttempt): void {
+  db.run(
+    "INSERT INTO arena_attempts (attempt_id, entrant, round_id, phase, status, detail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    [row.attempt_id, row.entrant, row.round_id, row.phase, row.status, row.detail, row.created_at],
+  );
+}
+
+export function listArenaAttempts(
+  db: Database,
+  opts: { entrant: string; roundId?: string; limit?: number },
+): ArenaAttemptRow[] {
+  const limit = Math.min(Math.max(opts.limit ?? 200, 1), 2000);
+  return (
+    opts.roundId
+      ? db
+          .query(
+            "SELECT * FROM arena_attempts WHERE entrant = ? AND round_id = ? ORDER BY id DESC LIMIT ?",
+          )
+          .all(opts.entrant, opts.roundId, limit)
+      : db
+          .query("SELECT * FROM arena_attempts WHERE entrant = ? ORDER BY id DESC LIMIT ?")
+          .all(opts.entrant, limit)
+  ) as ArenaAttemptRow[];
+}
+
+export function acceptedArenaSubmission(
+  db: Database,
+  entrant: string,
+  roundId: string,
+): ArenaSubmissionRow | undefined {
+  return (
+    (db
+      .query(
+        "SELECT * FROM arena_submissions WHERE entrant = ? AND round_id = ? AND status = 'accepted' ORDER BY id DESC LIMIT 1",
+      )
+      .get(entrant, roundId) as ArenaSubmissionRow | null) ?? undefined
+  );
+}
+
 export interface ArenaSubmissionRow {
   id: number;
   entrant: string;

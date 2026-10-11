@@ -40,6 +40,37 @@ const budget = (calls = 32, concurrency = 2) =>
 const reply = async () => JSON.stringify({ mean: 10.5, sd: 2, reason: "frozen history" });
 
 describe("arena portfolios reuse Score", () => {
+  test("independent dossiers stay separate until aggregation", async () => {
+    const seen: string[] = [];
+    const dossier = (text: string) => ({
+      since: "2025-12-01",
+      verified: text,
+      sources: 1,
+      costUsd: 0,
+    });
+    const run = await runArenaPortfolio(
+      arenaPortfolioPlan("independent", models),
+      {
+        ...inputs,
+        dossiersByStep: {
+          control: dossier("MEASUREMENT_ONLY"),
+          complement: dossier("CONTRARY_ONLY"),
+        },
+      },
+      budget(),
+      async (_model, _system, user) => {
+        seen.push(user);
+        return reply();
+      },
+    );
+    expect(run.complete).toBe(true);
+    expect(seen.some((s) => s.includes("MEASUREMENT_ONLY"))).toBe(true);
+    expect(seen.some((s) => s.includes("CONTRARY_ONLY"))).toBe(true);
+    expect(seen.some((s) => s.includes("MEASUREMENT_ONLY") && s.includes("CONTRARY_ONLY"))).toBe(
+      false,
+    );
+    expect(run.budget.attempted).toBe(8);
+  });
   test("runs parallel branches, aggregation and refinement with one original anchor", async () => {
     const plan = arenaPortfolioPlan("layered", models);
     let active = 0;

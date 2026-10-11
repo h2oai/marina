@@ -1360,7 +1360,18 @@ export async function buildDossier(
 }
 
 export function dossierBlock(d: ResearchDossier): string {
-  return `RESEARCH DOSSIER from the research crew — start reading dated ${d.since}. A mechanical check found the cited figures on the captured pages; this does not establish freshness or relevance. Older observations and unknown publication dates are background only. Use other sources for CHANGES only (how a pollster or market moved since its own previous reading, after the start reading), never to replace the level:\n${d.verified.trim() || "(no verified facts)"}${d.warnings?.length ? `\nRetrieval limitations: ${d.warnings.join("; ")}` : ""}${d.error ? `\nResearch failed: ${d.error}` : ""}`;
+  const index = d.researchLoop?.selection?.mode === "on" ? d.evidence?.index : undefined;
+  const identity = index
+    ? `\nTyped evidence: ${index.stats.target} matching measurements; ${index.stats.change} related changes; ${index.stats.background} background claims; ${index.stats.independentOrigins} distinct recorded origins. Unstructured identity is not a matching measurement.\n${index.claims
+        .filter((c) => c.measurement && c.eligibility !== "rejected" && d.verified.includes(c.text))
+        .slice(0, 40)
+        .map(
+          (c) =>
+            `${c.eligibility}: ${c.reason}; ${c.measurement!.source} / ${c.measurement!.population ?? "unknown population"} / ${c.measurement!.response ?? "unknown response"} / ${c.measurement!.subgroup ?? "unknown subgroup"}: ${c.measurement!.value} ${c.measurement!.unit ?? "unknown unit"} [source](${c.measurement!.url})`,
+        )
+        .join("\n")}`
+    : "";
+  return `RESEARCH DOSSIER from the research crew — start reading dated ${d.since}. A mechanical check found the cited figures on the captured pages; this does not establish freshness or relevance. Older observations and unknown publication dates are background only. Use other sources for CHANGES only (how a pollster or market moved since its own previous reading, after the start reading), never to replace the level:\n${d.verified.trim() || "(no verified facts)"}${identity}${d.warnings?.length ? `\nRetrieval limitations: ${d.warnings.join("; ")}` : ""}${d.error ? `\nResearch failed: ${d.error}` : ""}`;
 }
 
 function handoffBlock(pattern: string, f: FormationForecast, base: Distribution): string {
@@ -1373,6 +1384,13 @@ function handoffBlock(pattern: string, f: FormationForecast, base: Distribution)
 
 export interface ComposedForecast extends FormationForecast {
   dossier?: ResearchDossier;
+  evidenceRefresh?: {
+    key: string;
+    forecastAt: string;
+    checkedAt: string;
+    reused: boolean;
+    reason: string;
+  };
   /** The first formation's forecast when a second one judged it. */
   upstream?: Pick<
     FormationForecast,
@@ -1400,6 +1418,7 @@ export async function composeForecastRound(
   start: RoundForecast,
   research?: ({ retriever: Retriever; pageText: PageText } | { dossier: ResearchDossier }) & {
     required?: boolean;
+    refresh?: { key: string; previous?: ComposedForecast; now?: () => Date };
   },
   /** A decision backend for model-judged aspects, handed to both formations. */
   judge?: DecisionProvider,
@@ -1422,6 +1441,43 @@ export async function composeForecastRound(
       dossier.error,
     );
   }
+  let evidenceRefresh: ComposedForecast["evidenceRefresh"];
+  if (research?.refresh && dossier) {
+    const { decideEvidenceRefresh } = await import("../research/refresh");
+    const { key, previous } = research.refresh;
+    const now = (research.refresh.now?.() ?? new Date()).toISOString();
+    const prior = previous?.evidenceRefresh;
+    const decision = decideEvidenceRefresh({
+      target: round.round_id,
+      releases: dossier.evidence?.brief.releaseEvents,
+      key,
+      evidence: dossier.evidence?.index,
+      now,
+      deadline: round.lock_at,
+      researchComplete: dossier.status === "verified" && !dossier.error,
+      ...(prior && previous?.dossier?.evidence?.index
+        ? {
+            previous: {
+              key: prior.key,
+              forecastAt: prior.forecastAt,
+              evidence: previous.dossier.evidence.index,
+              complete: !previous.fallback && !previous.rounds?.some((r) => r.status !== "ok"),
+            },
+          }
+        : {}),
+    });
+    if (!decision.run && decision.reason !== "same claims and inputs; reuse complete forecast")
+      throw new Error(decision.reason);
+    evidenceRefresh = {
+      key,
+      forecastAt: decision.run ? now : prior!.forecastAt,
+      checkedAt: now,
+      reused: !decision.run,
+      reason: decision.reason,
+    };
+    if (!decision.run && previous)
+      return { ...structuredClone(previous), dossier, evidenceRefresh };
+  }
   const brief =
     [dossier ? dossierBlock(dossier) : undefined, additionalBrief].filter(Boolean).join("\n\n") ||
     undefined;
@@ -1436,7 +1492,12 @@ export async function composeForecastRound(
   );
   if (research?.required && one.fallback)
     throw new Error(`Required research forecast refused: ${one.fallback}`);
-  if (!second || !(numeric || profiled)) return { ...one, ...(dossier ? { dossier } : {}) };
+  if (!second || !(numeric || profiled))
+    return {
+      ...one,
+      ...(dossier ? { dossier } : {}),
+      ...(evidenceRefresh ? { evidenceRefresh } : {}),
+    };
   const handoff = numeric
     ? handoffBlock(first.pattern, one, withoutDaily(start).topline!)
     : (await import("./formation-profile")).profileHandoffBlock(
@@ -1458,6 +1519,7 @@ export async function composeForecastRound(
     throw new Error(`Required research forecast refused: ${two.fallback}`);
   return {
     ...two,
+    ...(evidenceRefresh ? { evidenceRefresh } : {}),
     ...(dossier ? { dossier } : {}),
     rounds: [
       ...(one.rounds ?? []).map((s) => ({ ...s, stage: `${first.pattern}/${s.stage}` })),

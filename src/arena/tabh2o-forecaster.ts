@@ -22,8 +22,7 @@
  *     the test rows are the next `steps` period dates and the last is used.
  *
  * The model's answer becomes a distribution — mean from the prediction, sd
- * from the returned confidence interval (the API does not document its level;
- * a 90 % interval is assumed, {@link CI_Z}), else from the residual spread of
+ * from an interval ONLY when its coverage is explicit; otherwise from the spread of
  * the training targets — and is then SHRUNK toward the start forecast (the
  * baseline, or the nowcast with `@nowcast`) exactly as `model-forecaster.ts`
  * does, with the same blowup guard. Any failure — no key, an HTTP error, too
@@ -31,21 +30,25 @@
  */
 
 import { dailyCapRefusal, recordSpend } from "../engine/spend-ledger";
+import { type CovariateVintage, covariatesAt } from "../forecast/numeric";
 import {
   type TabH2OPredictRequest,
   type TabH2OResult,
   type TabH2ORow,
   tabh2oPredict,
 } from "../net/tabh2o-client";
+import { availableInstant } from "../research/measurement";
 import type { RoundForecast } from "./forecast";
 import { horizonSteps } from "./forecast";
 import type { Usage } from "./model-backend";
 import { blend, type ModelRoundForecast } from "./model-forecaster";
 import { withoutDaily } from "./prompt-context";
+import { normalQuantile } from "./score-shapes";
 import type { ArenaLock, ArenaPoint, ArenaRound, Distribution } from "./types";
 
-/** z of the interval TabH2O returns — its level is undocumented; 90 % assumed. */
+/** Standard normal 90% central interval half-width; never an assumed API coverage. */
 export const CI_Z = 1.645;
+
 /** Lags a row reads (the origin and three before it). */
 const LAGS = 3;
 /** Fewer training rows than this and the start forecast is kept. */
@@ -88,6 +91,9 @@ export interface SeriesInput {
   key: string;
   points: ArenaPoint[];
   steps: number;
+  covariates?: CovariateVintage[];
+  /** Exact live information cutoff, required with external covariates. */
+  asOf?: string;
 }
 
 export interface BuiltTable {
@@ -134,6 +140,18 @@ export function buildTable(inputs: SeriesInput[], mode: TabH2OMode): BuiltTable 
   const predict: TabH2ORow[] = [];
   const series: BuiltTable["series"] = [];
   for (const [s, input] of inputs.entries()) {
+    if (input.covariates?.length && availableInstant(input.asOf) === undefined)
+      throw new Error("covariates require an explicit information cutoff");
+    const covariates = (origin: string) =>
+      covariatesAt(
+        input.covariates ?? [],
+        new Date(
+          Math.min(
+            availableInstant(origin) ?? Number.NaN,
+            availableInstant(input.asOf) ?? Infinity,
+          ),
+        ).toISOString(),
+      );
     const pts = input.points.filter((p) => Number.isFinite(p.value)).slice(-MAX_POINTS);
     const v = pts.map((p) => p.value);
     const n = v.length;
@@ -145,17 +163,28 @@ export function buildTable(inputs: SeriesInput[], mode: TabH2OMode): BuiltTable 
     const cell: TabH2ORow = multi ? { cell: s } : {};
     if (mode === "forecast") {
       const item: TabH2ORow = multi ? { item_id: `c${s}` } : {};
-      for (const p of pts) training.push({ ...item, date: p.date.slice(0, 10), y: p.value });
+      for (const p of pts)
+        training.push({
+          ...item,
+          ...covariates(p.date),
+          date: p.date.slice(0, 10),
+          y: p.value,
+        });
       const gap = spacingDays(pts) * DAY_MS;
       const last = Date.parse(pts.at(-1)!.date);
       for (let k = 1; k <= steps; k++) {
-        predict.push({ ...item, date: new Date(last + k * gap).toISOString().slice(0, 10) });
+        predict.push({
+          ...item,
+          ...covariates(pts.at(-1)!.date),
+          date: new Date(last + k * gap).toISOString().slice(0, 10),
+        });
       }
       series.push({ key: input.key, origin: v.at(-1)!, residualSd, testRows: steps });
       continue;
     }
     const features = (o: number, h: number): TabH2ORow => ({
       ...cell,
+      ...covariates(pts[o]!.date),
       t: o - (n - 1),
       dow: dow(pts[o]!.date),
       h,
@@ -205,7 +234,13 @@ export function distributionsFrom(
     const mean = mode === "forecast" ? value : s.origin + value;
     const ci = p.confidence_interval;
     const width = ci ? ci[1] - ci[0] : Number.NaN;
-    const fromCi = Number.isFinite(width) && width > 0 ? width / (2 * CI_Z) : undefined;
+    const level = p.confidence_level;
+    const z =
+      typeof level === "number" && level > 0 && level < 1
+        ? normalQuantile(0, 1, (1 + level) / 2)
+        : undefined;
+    const fromCi =
+      Number.isFinite(width) && width > 0 && z && Number.isFinite(z) ? width / (2 * z) : undefined;
     const sd = fromCi ?? s.residualSd;
     if (!Number.isFinite(sd) || sd <= 0) return undefined;
     const shift = mode === "forecast" ? 0 : s.origin;

@@ -52,6 +52,7 @@ export const EXPORT_TABLES = [
   "economic_contracts",
   "economic_events",
   "arena_submissions",
+  "arena_attempts",
   "arena_shadow",
   "judge_observations",
   "challenge_outcomes",

@@ -16,7 +16,12 @@ import {
   runArenaPortfolio,
   validateArenaPlan,
 } from "../src/arena/portfolio";
+import {
+  freezePortfolioResearch,
+  validatePortfolioResearch,
+} from "../src/arena/portfolio-research";
 import { recordPortfolioShadow, scorePortfolioShadows } from "../src/arena/portfolio-shadow";
+import { buildResearchBrief } from "../src/arena/research/briefs";
 import { horizonOptionsFromEnv } from "../src/arena/research/civiqs-horizon";
 import { nowcastForecaster } from "../src/arena/research/civiqs-nowcast";
 import { arenaResearchLookups, withDataLookups } from "../src/arena/research/data-evidence";
@@ -28,6 +33,8 @@ import { researchJudge } from "../src/decisions/config";
 import { attachCliSpendLedger } from "../src/engine/cli-spend-ledger";
 import { getErrorMessage } from "../src/engine/errors";
 import { MarinaDB } from "../src/persistence/database";
+import { researchHypotheses } from "../src/research/hypotheses";
+import { researchRetriever } from "../src/research/retriever";
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -35,6 +42,11 @@ const { positionals, values } = parseArgs({
     models: { type: "string" },
     plan: { type: "string", default: "parallel" },
     "plan-file": { type: "string" },
+    "research-paths": { type: "string", default: "off" },
+    "research-queries": { type: "string", default: "6" },
+    "research-save": { type: "string" },
+    "research-replay": { type: "string" },
+    retriever: { type: "string", default: "search" },
     selector: { type: "string", default: "none" },
     evidence: { type: "string" },
     "max-calls": { type: "string", default: "32" },
@@ -50,7 +62,7 @@ const { positionals, values } = parseArgs({
 async function main() {
   if (values.help || !positionals[0]) {
     console.log(
-      "bun run arena:portfolio <round_id|score> --db <shadow.db> --models <provider/model,...> [--plan control|parallel|layered|auto] [--selector jev|decisions|none] [--plan-file plan.json] [--evidence evidence.json] [--max-calls 32] [--concurrency 4] [--timeout-ms 300000] [--max-tokens 2000] [--out report.json]",
+      "bun run arena:portfolio <round_id|score> --db <shadow.db> --models <provider/model,...> [--plan control|parallel|layered|independent|auto] [--research-paths off|shared|independent] [--research-queries 6] [--research-save capture.json] [--research-replay capture.json] [--selector jev|decisions|none] [--plan-file plan.json] [--evidence evidence.json] [--max-calls 32] [--concurrency 4] [--timeout-ms 300000] [--max-tokens 2000] [--out report.json]",
     );
     return;
   }
@@ -67,11 +79,23 @@ async function main() {
       );
     if (!["none", "jev", "decisions"].includes(values.selector))
       throw new Error("invalid --selector");
-    if (!["control", "parallel", "layered", "auto"].includes(values.plan))
+    if (!["control", "parallel", "layered", "independent", "auto"].includes(values.plan))
       throw new Error("invalid --plan");
+    if (!["off", "shared", "independent"].includes(values["research-paths"]))
+      throw new Error("invalid --research-paths");
+    if (
+      (values["research-save"] || values["research-replay"]) &&
+      values["research-paths"] === "off"
+    )
+      throw new Error("research capture/replay requires --research-paths shared|independent");
+    if (
+      values["research-paths"] !== "off" &&
+      (values.plan !== "independent" || values["plan-file"])
+    )
+      throw new Error("research-path comparison requires --plan independent without a custom plan");
     const models = values.models?.split(",").map((s) => s.trim()) ?? [];
     const plans = Object.fromEntries(
-      (["control", "parallel", "layered"] as const).map((kind) => [
+      (["control", "parallel", "layered", "independent"] as const).map((kind) => [
         kind,
         arenaPortfolioPlan(kind, models),
       ]),
@@ -95,24 +119,97 @@ async function main() {
       throw new Error("ranking formations are not supported");
     if (Date.now() >= Date.parse(round.lock_at) - 300_000)
       throw new Error("less than five minutes before lock");
-    const lock = await lockForModels(data, round, await data.lock(round.round_id));
+    const replay = values["research-replay"]
+      ? validatePortfolioResearch(
+          await Bun.file(values["research-replay"]).json(),
+          round,
+          new Date().toISOString(),
+        )
+      : undefined;
+    const lock =
+      replay?.lock ?? (await lockForModels(data, round, await data.lock(round.round_id)));
     const audit = auditForecastInputs(round, lock);
     if (!audit.ok) throw new Error(`input audit failed: ${audit.issues.join("; ")}`);
-    const start = await nowcastForecaster(data, forecastRound, {
-      daily: 21,
-      horizon: horizonOptionsFromEnv(process.env),
-    })(round, lock);
+    const start =
+      replay?.start ??
+      (await nowcastForecaster(data, forecastRound, {
+        daily: 21,
+        horizon: horizonOptionsFromEnv(process.env),
+      })(round, lock));
     const lookup = withProvidedText(
       withDataLookups(retrieverFromSpec("closed-book", {}), arenaResearchLookups(process.env)),
       async () => undefined,
     );
-    const dossier = await buildDossier(round, lock, start, lookup.retriever, lookup.pageText);
+    let dossier =
+      values["research-paths"] === "off"
+        ? await buildDossier(round, lock, start, lookup.retriever, lookup.pageText)
+        : { since: "", verified: "", sources: 0, costUsd: 0 };
+    let dossiersByStep: import("../src/arena/portfolio").PortfolioInputs["dossiersByStep"];
+    let paths: Awaited<ReturnType<typeof researchHypotheses>> | undefined;
+    if (values["research-paths"] !== "off") {
+      const brief = buildResearchBrief(round, lock);
+      const retriever = researchRetriever(
+        retrieverFromSpec(
+          values.retriever,
+          {
+            openrouter: process.env.OPENROUTER_API_KEY,
+            tavily: process.env.TAVILY_API_KEY,
+            exa: process.env.EXA_API_KEY,
+          },
+          { env: process.env },
+        ),
+        { ...process.env, MARINA_RESEARCH_EVIDENCE: "on", MARINA_RESEARCH_LOOP_ROUNDS: "1" },
+      );
+      paths =
+        replay?.paths ??
+        (await researchHypotheses(
+          brief,
+          retriever,
+          new WorkBudget({ calls: 3, concurrency: 3, timeoutMs: Number(values["timeout-ms"]) }),
+          Number(values["research-queries"]),
+        ));
+      if (values["research-save"]) {
+        const captured = freezePortfolioResearch({
+          round,
+          lock,
+          start,
+          paths,
+          capturedAt: new Date().toISOString(),
+        });
+        validatePortfolioResearch(captured, round, new Date().toISOString());
+        await Bun.write(values["research-save"], `${JSON.stringify(captured, null, 2)}\n`);
+      }
+      const combine = async (ids: import("../src/research/hypotheses").ResearchHypothesis[]) => {
+        const reports = ids.flatMap((id) => paths!.paths[id]?.report ?? []);
+        return buildDossier(
+          round,
+          lock,
+          start,
+          async () => ({
+            report: reports.map((r) => r.report).join("\n"),
+            sources: reports.flatMap((r) => r.sources),
+            costUsd: reports.reduce((sum, r) => sum + r.costUsd, 0),
+            searches: reports.reduce((sum, r) => sum + r.searches, 0),
+            retriever: "independent-hypotheses",
+          }),
+          async () => undefined,
+        );
+      };
+      dossier = await combine(["measurement", "mechanism", "challenge"]);
+      if (values["research-paths"] === "independent")
+        dossiersByStep = {
+          control: await combine(["measurement", "mechanism"]),
+          complement: await combine(["challenge"]),
+        };
+    }
     const capturedAt = new Date().toISOString();
     const budget = new WorkBudget({
       calls: Number(values["max-calls"]),
       concurrency: Number(values.concurrency),
       timeoutMs: Number(values["timeout-ms"]),
     });
+    if (paths && (!paths.complete || paths.budget.active > 0))
+      budget.cancel(new Error("independent research incomplete; retained as failed experiment"));
     const backend = await portfolioModels(process.env, Number(values["max-tokens"]));
     const selector =
       values.plan === "auto"
@@ -170,18 +267,23 @@ async function main() {
     const plan = custom ?? plans[selection?.selected ?? values.plan]!;
     const run = await runArenaPortfolio(
       plan,
-      { round, lock, start, dossier },
+      { round, lock, start, dossier, ...(dossiersByStep ? { dossiersByStep } : {}) },
       budget,
       backend.complete,
     );
-    const costUsd = backend.usage.costUsd + dossier.costUsd + (selection?.decision?.costUsd ?? 0);
+    const costUsd =
+      backend.usage.costUsd + (replay ? 0 : dossier.costUsd) + (selection?.decision?.costUsd ?? 0);
     const metadata = {
+      ...(paths ? { researchAudit: paths } : {}),
+      ...(replay ? { researchReplayed: replay.hash, originalResearchCostUsd: paths!.costUsd } : {}),
       capturedAt,
       completedAt: new Date().toISOString(),
       costUsd,
       costFinal: run.budget.active === 0,
       selection,
       settings: {
+        researchPaths: values["research-paths"],
+        researchQueries: Number(values["research-queries"]),
         ...forecastSettings(`portfolio:${run.planHash}`, {
           ...process.env,
           MARINA_ARENA_CIVIQS_LIVE: "off",

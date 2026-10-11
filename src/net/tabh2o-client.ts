@@ -54,6 +54,8 @@ export interface TabH2OPrediction {
   probabilities?: Record<string, number>;
   /** For regression/forecast: [low, high] CI bounds. */
   confidence_interval?: [number, number];
+  /** Coverage probability, ONLY when the server explicitly supplies it. */
+  confidence_level?: number;
 }
 
 export interface TabH2OPredictResponse {
@@ -98,7 +100,7 @@ export interface TabH2OWireResponse {
   /** Regression / forecast: per-row [lower, upper]. */
   confidence_intervals?: Array<[number, number]>;
   usage?: { cells?: number; multiplier?: number; price_usd?: string };
-  metadata?: { task?: string; model?: string; time_ms?: number };
+  metadata?: { task?: string; model?: string; time_ms?: number; confidence_level?: number };
 }
 
 /** Row objects → the API's `{train, test}` column/row arrays. */
@@ -151,6 +153,11 @@ export function fromWireResponse(
         : {}),
       ...(Array.isArray(ci) && ci.length === 2 && ci.every((x) => Number.isFinite(x))
         ? { confidence_interval: [ci[0], ci[1]] as [number, number] }
+        : {}),
+      ...(typeof json.metadata?.confidence_level === "number" &&
+      json.metadata.confidence_level > 0 &&
+      json.metadata.confidence_level < 1
+        ? { confidence_level: json.metadata.confidence_level }
         : {}),
     };
   });

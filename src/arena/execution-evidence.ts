@@ -15,6 +15,8 @@ export function arenaExecutionSummary(detail: string): string {
     record.forecast && typeof record.forecast === "object"
       ? (record.forecast as Record<string, unknown>)
       : record;
+  if ((forecast.evidenceRefresh as { reused?: boolean } | undefined)?.reused)
+    return "Evidence checked; prior complete forecast reused. No new formation execution claimed.";
   const steps = Array.isArray(forecast.rounds) ? forecast.rounds : [];
   const valid = steps.filter(
     (s) =>

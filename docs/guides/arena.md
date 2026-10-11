@@ -383,8 +383,9 @@ routes are per family, so the family's rounds that do have history go through re
 
 `MARINA_ARENA_FORECASTER=tabh2o` asks [TabH2O](https://tabh2o.h2oai.com/docs), H2O.ai's tabular
 foundation model (`TABH2O_API_KEY`), for each numeric round (`src/arena/tabh2o-forecaster.ts`).
-The training table is built only from what the round froze at its lock, the spread comes from
-the returned interval, and the answer is shrunk toward the start forecast with
+The training table is built only from what the round froze at its lock. An interval supplies
+the spread only when the server explicitly provides its coverage probability; otherwise
+Marina uses horizon-matched historical change errors. The answer is shrunk toward the start forecast with
 `MARINA_ARENA_MODEL_WEIGHT`, as `model:` does.
 
 | Spec | Starts from |
@@ -794,6 +795,113 @@ is missing or readable by other users.
   SSRF guard.
 
 ## Configuration
+
+### Evidence and delivery health
+
+Use `arena health` in-world or `bun run arena health` in the operator CLI to inspect each
+round's accepted version, input dates, strategy fingerprint and latest refresh attempt.
+Failures before signing and interrupted attempts are recorded separately from signed
+submissions. A rejected replacement does not erase an earlier accepted forecast. CLI output
+includes the spend state recorded at each attempt; this does not change your spending limits.
+
+`MARINA_RESEARCH_TARGET_EVIDENCE=observe|on` adds claim identity and target-aware selection
+to the shared capture layer. `observe` records the index; `on` also selects whole claims
+within the prompt budget. Matching measurements retain population, response, subgroup,
+units, observation period, availability, source and supporting passage. Other instruments
+supply changes only; unknown metadata stays background. Repeated citations do not become
+new observations. Distinct recorded origin URLs are a provenance diagnostic, not proof
+that their information is statistically independent.
+
+`MARINA_RESEARCH_ADVICE=observe|on` also applies to the evidence gap loop. Advice uses the
+configured decision backend, a Marina classifier when available, and the deterministic
+research plan on outage. It cannot override dates, invent measurements, lift spending caps,
+or turn incomplete required research into a successful filing. Its receipts travel with the
+dossier and can be attributed to the exact resolved submission through the outcome ledger.
+
+`MARINA_ARENA_EVIDENCE_REFRESH=on` rechecks sources before deciding whether an accepted
+formation needs another panel. Reuse requires the same round, strategy, inputs and evidence
+fingerprint, a complete prior run, and a forecast under 24 hours old. The final two hours
+before lock require a fresh forecast if the previous one predates that window. Source
+failures retain the accepted answer and appear in the attempt ledger.
+
+### Structured survey imports
+
+For a workbook you are permitted to use, convert it without network access:
+
+```bash
+python3 scripts/arena-survey-import.py /path/to/archived.xlsx \
+  --source-url https://example.org/permitted-archive.xlsx \
+  --available-at 2026-10-01T20:00:00Z \
+  --measure 'presidential job approval' > /private/survey-waves.json
+```
+
+The importer binds sheet names through workbook relationships, checks the wave axis and
+responses, retains base sizes, and hashes the original document. Set
+`MARINA_RESEARCH_SURVEY_FILE=/private/survey-waves.json` to add the newest two eligible
+waves per source (up to 20 waves total) to matching research requests. Use the actual availability of the archived vintage,
+not a survey field date. A day-only availability is conservatively the end of that UTC day.
+Existing publisher restrictions still apply. The generic `releasesDue()` calendar helper
+can request a refresh after a scheduled release; a schedule is never proof of publication.
+`MARINA_RESEARCH_CALENDAR_FILE` accepts a JSON array of events with `source`, `target`
+(the round ID), `scheduledAt`, `announcedAt`, `url` and `status`
+(`scheduled`, `delayed`, or `published`). Due events add source reads and trigger a panel
+refresh. Unavailable imports are reported while ordinary retrieval continues.
+
+### Additional prospective challengers
+
+The following tool records comparisons in the existing shadow ledger, without signing,
+submitting, or changing routes:
+
+```bash
+bun run scripts/arena-challengers.ts <round_id> --db /private/shadow.db --kind attention
+bun run scripts/arena-challengers.ts <round_id> --db /private/shadow.db --kind numeric --tabh2o
+bun run scripts/arena-challengers.ts <round_id> --db /path/to/world.db --kind uncertainty
+bun run scripts/arena-challengers.ts <round_id> --db /private/shadow.db --kind population --input /private/scenario.json
+bun run scripts/arena-challengers.ts score --db /private/shadow.db --out /private/scores.json
+```
+
+`attention` compares consistent Trends basket vintages, aligned seasonal weeks and partial
+weeks, or Wikipedia pageview trajectories. Optional `events` in the input JSON contain
+`item`, `startsAt`, `endsAt`, `knownAt`, `source` and an explicit scenario `multiplier`.
+These multipliers are assumptions, not measured effects. Basket means sum to 100; independent
+survey cells are never forced into a composition.
+
+`numeric` compares fixed local-level models and optionally the existing metered TabH2O
+adapter. Input `covariates` carry `name`, `value`, `observedAt` and `availableAt`; each training
+row sees only vintages available at its origin. No external foundation-model weights or
+licenses are required. `uncertainty` derives predeclared scales and Civiqs floors from a
+complete accepted final forecast, retaining its exact estimator fingerprint.
+
+`population` requires `population.target` (measure, population, response, subgroup and unit
+matching the arena target exactly), `population.strata` (a disjoint partition with measured shares,
+effective sample sizes, population weights and source dates), `population.scenario`
+(dated, explicitly hypothetical percentage-point changes),
+and `population.priorShare`, `population.priorStrength` and `population.commonSd`.
+Only matching percent-share targets are eligible. Outputs remain labelled simulations. Common error does not disappear by
+adding synthetic participants. These are testable scenarios, not new survey observations.
+
+Scoring keeps the latest whole batch, including failed and missing candidates, with native
+CRPS, energy or RBO loss and paired skill differences. Family summaries include attempt
+counts, failure counts and cost. Its
+`calibrationObservations` feed the existing calibration-history importer; `revisions`
+separately inventory changes to previously published readings. Floors can qualify only
+through the same chronological final-error gate (12 distinct rounds, at least 8 earlier
+training and 4 later validation rounds, whole waves kept together). Tail protection can
+additionally veto a loss in 95% coverage or worst normalized loss. No tool automatically
+promotes these candidates.
+
+To compare shared evidence against independently researched hypotheses at a fixed query
+and formation allowance, run `arena:portfolio` with `--plan independent`,
+`--research-paths shared|independent`, `--research-queries 6` and `--retriever search`.
+The three paths investigate measurement, mechanisms and disconfirming evidence before
+either formation sees the others' findings. Both modes use two Delphi formations and the
+same aggregation. Use separate shadow ledgers and record every attempt and cost.
+For an exact paired comparison, add `--research-save /private/paired.json` to the shared
+run, then `--research-replay /private/paired.json` to the independent run before the lock.
+Replay validates source hashes and reuses the same numeric anchor and three research paths;
+it makes no new research calls. Original research cost is retained separately from the
+replay's actual cost. Re-running search separately is a prospective comparison but does
+not isolate evidence sharing as cleanly.
 
 | Variable | Default | Meaning |
 |---|---|---|

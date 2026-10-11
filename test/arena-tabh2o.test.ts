@@ -63,7 +63,10 @@ function mockPredict(
             prediction: delta,
             ...(half === undefined
               ? {}
-              : { confidence_interval: [delta - half, delta + half] as [number, number] }),
+              : {
+                  confidence_interval: [delta - half, delta + half] as [number, number],
+                  confidence_level: 0.9,
+                }),
           })),
           model_version: "mock",
           usage: { cells: 10, priceUsd: 0.001 },

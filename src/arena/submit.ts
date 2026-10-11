@@ -9,7 +9,10 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
-import { getErrorMessage } from "../engine/errors";
+import { maskSensitiveText } from "../decisions/gate";
+import { getErrorMessage, tryLog } from "../engine/errors";
+import { Logger } from "../engine/logger";
+import { dailySpend } from "../engine/spend-ledger";
 import { guardedFetch } from "../net/url-guard";
 import type { ArenaSubmissionRow } from "../persistence/db-arena";
 import type { ArenaStore } from "../persistence/interfaces/arena-store";
@@ -146,6 +149,47 @@ export async function submitRound(
     replace?: boolean;
   } = {},
 ): Promise<SubmitOutcome> {
+  if (opts.dryRun) return submitRoundInner(deps, roundId, opts);
+  const attempt = randomUUID();
+  const now = () => deps.now?.() ?? Date.now();
+  const record = (phase: "started" | "finished", status: string, detail: Record<string, unknown>) =>
+    tryLog(new Logger(), "forecast", "Could not record arena attempt", () =>
+      deps.store.recordArenaAttempt({
+        attempt_id: attempt,
+        entrant: deps.config.entrant,
+        round_id: roundId,
+        phase,
+        status,
+        detail: JSON.stringify(detail),
+        created_at: now(),
+      }),
+    );
+  record("started", "running", {
+    config: deps.forecasterConfig ?? { spec: deps.config.forecaster },
+    budget: dailySpend(),
+  });
+  try {
+    const result = await submitRoundInner(deps, roundId, opts);
+    record("finished", result.kind === "accepted" && result.already ? "unchanged" : result.kind, {
+      ...("reason" in result ? { reason: maskSensitiveText(result.reason, 1000) } : {}),
+      ...("row" in result && result.row ? { submissionId: result.row.id } : {}),
+      budget: dailySpend(),
+    });
+    return result;
+  } catch (error) {
+    record("finished", "error", {
+      reason: maskSensitiveText(getErrorMessage(error), 1000),
+      budget: dailySpend(),
+    });
+    throw error;
+  }
+}
+
+async function submitRoundInner(
+  deps: SubmitDeps,
+  roundId: string,
+  opts: { dryRun?: boolean; replace?: boolean },
+): Promise<SubmitOutcome> {
   const now = deps.now?.() ?? Date.now();
   const { config, store } = deps;
   const round = await deps.data.round(roundId);
@@ -154,10 +198,10 @@ export async function submitRound(
     return { kind: "skipped", roundId, reason: `locked (or locking) at ${round.lock_at}` };
   }
   const latest = store.latestArenaSubmission(config.entrant, roundId);
-  if (latest?.status === "accepted" && !opts.dryRun && !opts.replace) {
-    return { kind: "accepted", roundId, row: latest, already: true };
+  const accepted = store.acceptedArenaSubmission(config.entrant, roundId);
+  if (accepted && !opts.dryRun && !opts.replace) {
+    return { kind: "accepted", roundId, row: accepted, already: true };
   }
-  const accepted = latest?.status === "accepted" ? latest : undefined;
 
   let row: ArenaSubmissionRow;
   if (
@@ -304,8 +348,7 @@ export async function dueRounds(
     return (
       lock <= horizon &&
       lock - now >= LOCK_MARGIN_MS &&
-      (opts.includeAccepted ||
-        deps.store.latestArenaSubmission(deps.config.entrant, r.round_id)?.status !== "accepted")
+      (opts.includeAccepted || !deps.store.acceptedArenaSubmission(deps.config.entrant, r.round_id))
     );
   });
 }

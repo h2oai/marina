@@ -563,7 +563,7 @@ describe("research agent on a profile round", () => {
     expect(brief.since).toBe(last);
     expect(brief.request).toContain("item by item (3 items)");
     expect(brief.request).toContain("Scheduled or likely events");
-    expect(brief.queries).toContain("alpha news this week");
+    expect(brief.queries).toContain("alpha launch earnings premiere scheduled 2026-08-08");
     const nowcast = buildResearchBrief(basketRound, basketLock, {
       cellNowcasts: { trends_share_beta: { date: "2099-01-01", value: 31 } },
     });

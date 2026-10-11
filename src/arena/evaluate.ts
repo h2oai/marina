@@ -15,7 +15,7 @@
 
 import type { ArenaData } from "./data";
 import type { RoundForecast } from "./forecast";
-import { PERSISTENCE_SD } from "./forecast";
+import { forecastRound, PERSISTENCE_SD } from "./forecast";
 import { crpsNormal, skill } from "./score";
 import type { ArenaLock, ArenaRound, Distribution } from "./types";
 
@@ -255,12 +255,15 @@ export interface ShadowScore {
   /** The resolved value (NaN for a profile round, whose outcome is a profile). */
   outcome: number;
   /** Set for a profile round: scored by the arena's energy score. */
-  shape?: "profile_energy";
+  shape?: "profile_energy" | "ranking_list";
   /** vs the arena's persistence (the leaderboard's skill). */
   skill: number;
   /** The calibrated baseline's skill on the same round, for the head-to-head. */
   baselineSkill: number;
   costUsd: number;
+  loss?: number;
+  persistenceLoss?: number;
+  metric?: "crps" | "energy" | "rbo-loss";
 }
 
 /**
@@ -300,9 +303,13 @@ export async function scoreShadow(
     if (typeof outcome !== "number") {
       // A profile round: scored on the arena's energy score, as evaluateShapes does.
       const round = await data.round(row.round_id);
-      if (round?.target_type !== "profile_energy") continue;
+      if (round?.target_type !== "profile_energy" && round?.target_type !== "ranking_list")
+        continue;
       site ??= await data.siteRounds().catch(() => []);
-      const scored = await scoreShadowProfile(data, round, row, site);
+      const scored =
+        round.target_type === "ranking_list"
+          ? await scoreShadowRanking(data, round, row, site)
+          : await scoreShadowProfile(data, round, row, site);
       if (scored) out.push(scored);
       continue;
     }
@@ -322,9 +329,59 @@ export async function scoreShadow(
       skill: skill(crpsNormal(topline.mean, topline.sd, outcome), persistence),
       baselineSkill: skill(crpsNormal(base.mean, base.sd, outcome), persistence),
       costUsd: row.cost_usd,
+      loss: crpsNormal(topline.mean, topline.sd, outcome),
+      persistenceLoss: persistence,
+      metric: "crps",
     });
   }
   return out;
+}
+
+async function scoreShadowRanking(
+  data: ArenaData,
+  round: ArenaRound,
+  row: { round_id: string; forecaster: string; forecast: string; cost_usd: number },
+  site: Awaited<ReturnType<ArenaData["siteRounds"]>>,
+): Promise<ShadowScore | undefined> {
+  const published = site.find((r) => r.round_id === round.round_id);
+  const persistence = published?.scores?.persistence?.loss;
+  const outcome = published?.resolution?.outcome;
+  const ranking = (JSON.parse(row.forecast) as { ranking?: string[] }).ranking;
+  if (
+    published?.status !== "resolved" ||
+    persistence === undefined ||
+    !Array.isArray(outcome) ||
+    !outcome.every((s) => typeof s === "string") ||
+    !ranking?.length
+  )
+    return undefined;
+  const { rboLoss } = await import("./score-shapes");
+  const spec = round.ranking as { length: number; rbo_p?: number } | undefined;
+  const score = (list: string[]) =>
+    persistence === 0
+      ? 0
+      : 1 - rboLoss(list, outcome, spec?.rbo_p ?? 0.9, spec?.length) / persistence;
+  let baselineSkill = Number.NaN;
+  try {
+    const lock = await data.lock(round.round_id);
+    const base = forecastRound(round, lock);
+    if (base.ranking) baselineSkill = score(base.ranking);
+  } catch {
+    baselineSkill = Number.NaN; /* Missing historical input cannot erase a recorded ranking. */
+  }
+  return {
+    roundId: row.round_id,
+    tracker: round.tracker,
+    forecaster: row.forecaster,
+    outcome: Number.NaN,
+    shape: "ranking_list",
+    skill: score(ranking),
+    baselineSkill,
+    costUsd: row.cost_usd,
+    loss: rboLoss(ranking, outcome, spec?.rbo_p ?? 0.9, spec?.length),
+    persistenceLoss: persistence,
+    metric: "rbo-loss",
+  };
 }
 
 /**
@@ -365,7 +422,6 @@ async function scoreShadowProfile(
   } catch {
     base = undefined; // No per-cell history: no baseline to compare against.
   }
-  if (!base) return undefined;
   const skillOf = (p: Record<string, Distribution>) =>
     1 - profileEnergy(p, outcome, cells) / persistence;
   return {
@@ -375,8 +431,11 @@ async function scoreShadowProfile(
     outcome: Number.NaN,
     shape: "profile_energy",
     skill: skillOf(profile),
-    baselineSkill: skillOf(base),
+    baselineSkill: base ? skillOf(base) : Number.NaN,
     costUsd: row.cost_usd,
+    loss: profileEnergy(profile, outcome, cells),
+    persistenceLoss: persistence,
+    metric: "energy",
   };
 }
 

@@ -19,3 +19,15 @@ Arena filing traces (migration 154) live in `arena_submissions.detail`, separate
 Arena experiments: `shadow horizons --weekly-anchor` adds aged daily-slope projections from authoritative weekly levels, without enabling them in submissions. `shadow compare` records start / Delphi / FRED / calibrated scalar candidates with a shared input hash; use `shadow paired-score` for matched comparisons, retaining failed/incomplete batches. Frozen data views memoize failures and isolate mutations. Final-forecast uncertainty calibration is shadow-only, estimator/family/unit-bound, chronological and gated on later outcomes; never train model uncertainty on persistence errors. `arena audit` checks source identity, timing and history comparability. Trends archive fallback requires an exact basket and one eligible complete snapshot; never splice rescaled vintages or change its denominator.
 
 `arena:portfolio` is an explicit shadow-only adapter over the existing Score executor: parallel formations, uncertainty-preserving aggregation and recursive refinement share one frozen input set and one `WorkBudget`. Preserve the original forecast anchor at every layer. Never silently turn budget exhaustion into a successful formation fallback. `task-routing.ts` accepts only time-safe paired evidence; keep native metrics/cohorts separate and cross-benchmark transfers labelled as hypotheses. Latest failed attempts remain in qualification. Plans and selector advice never promote themselves into live arena routes.
+
+`research/measurement.ts` and `evidence-index.ts` add target identity and claim provenance
+to captured snapshots, without a second truth store. Availability, unit/population matching,
+exact source passages and numeric checks remain deterministic. Unknown metadata stays
+unknown; configured JEV/classifier advice cannot upgrade it. Semantic deduplication is
+limited to structured measurement identity; unstructured paraphrases remain separate.
+`arena_attempts` (migration 164) records start/finish events even when a refresh fails before
+signing. Accepted submissions remain in their existing ledger. Refresh reuse requires an
+exact configuration/input scope and fresh checked evidence; the final lock window overrides
+reuse. Challenger tools record every attempt in `arena_shadow`, preserving failures and
+whole input batches. Survey-import, numeric, attention and population contracts are
+documented in the [arena guide](../guides/arena.md).

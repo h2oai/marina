@@ -24,6 +24,7 @@ import type {
   TypedForecastAnswer,
   TypedForecastDeps,
 } from "../../src/forecast/typed";
+import { mergeEvidenceIndexes } from "../../src/research/evidence-index";
 import { idsDigest, openJournal } from "../journal";
 import type { FuturexRow } from "./dataset";
 import { requestFor } from "./map";
@@ -153,6 +154,7 @@ export interface RowResult {
   caveat?: string;
   /** The research lines the forecast actually kept (for a leak audit), when captured. */
   evidence?: string;
+  evidenceIndex?: import("../../src/research/evidence-index").EvidenceIndex;
   answer: TypedForecastAnswer;
 }
 
@@ -349,6 +351,7 @@ async function runRow(
     latencyMs: answer.latencyMs,
     ...(answer.caveat ? { caveat: answer.caveat } : {}),
     ...(made.evidence ? { evidence: made.evidence() } : {}),
+    evidenceIndex: mergeEvidenceIndexes(answer.research.map((r) => r.evidence?.index)),
     answer,
   };
 }
