@@ -1986,7 +1986,7 @@ Fields read here: `model`, `name`.
 
 ### `pathname.startsWith("/v1/")`
 
-[Source](../../src/net/model-api/ollama.ts#L525)
+[Source](../../src/net/model-api/ollama.ts#L528)
 
 ## src/net/model-api/shared.ts
 

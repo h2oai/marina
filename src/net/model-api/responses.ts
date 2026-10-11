@@ -59,6 +59,7 @@ import {
   rejectChatOnlyPrefix,
   SSE_HEADERS,
 } from "./shared";
+import { rejectStackHeaders } from "./stack";
 import { explicitUpstreamModel, passthruForceModel, proxyToUpstream } from "./upstream";
 
 /** Stable per-credential owner key for Responses records. Hashes the matched
@@ -143,7 +144,8 @@ export async function handleResponsesCreate(
       parallel_tool_calls?: unknown;
     };
 
-    const refusedPrefix = rejectChatOnlyPrefix(body.model, "/v1/responses");
+    const refusedPrefix =
+      rejectChatOnlyPrefix(body.model, "/v1/responses") ?? rejectStackHeaders(req, "/v1/responses");
     if (refusedPrefix) return refusedPrefix;
     const model = body.model ?? "marina";
     // Typed input items (message / function_call / function_call_output) →

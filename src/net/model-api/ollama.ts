@@ -40,6 +40,7 @@ import {
   safeClose,
   unsupportedParam,
 } from "./shared";
+import { rejectStackHeaders } from "./stack";
 import {
   describeDefaultUpstream,
   explicitUpstreamModel,
@@ -368,7 +369,8 @@ export async function handleOllamaChat(
   const body = read.body as Record<string, any>;
   const invalid = validateOllamaRequest("chat", body);
   if (invalid) return invalid;
-  const refusedPrefix = rejectChatOnlyPrefix(body.model, "/api/chat");
+  const refusedPrefix =
+    rejectChatOnlyPrefix(body.model, "/api/chat") ?? rejectStackHeaders(req, "/api/chat");
   if (refusedPrefix) return refusedPrefix;
   try {
     const model = body.model ?? "marina";
@@ -443,7 +445,8 @@ export async function handleOllamaGenerate(
   const body = read.body as Record<string, any>;
   const invalid = validateOllamaRequest("generate", body);
   if (invalid) return invalid;
-  const refusedPrefix = rejectChatOnlyPrefix(body.model, "/api/generate");
+  const refusedPrefix =
+    rejectChatOnlyPrefix(body.model, "/api/generate") ?? rejectStackHeaders(req, "/api/generate");
   if (refusedPrefix) return refusedPrefix;
   try {
     const model = body.model ?? "marina";
