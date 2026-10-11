@@ -30,10 +30,9 @@
  * lesson spaces (`ownerLessonSink`), served only to its own requests and
  * agents. Only shared/world agents (no human owner up their spawn chain) feed
  * the shared `lessons:<domain>` pool. An actor whose scope cannot be resolved
- * is never learned from. Measurement work is never learned from: request-
- * driven agent turns are skipped (they serve a caller; their own opt-in is
- * the passthru path), and a passthru request carrying `x-marina-eval` never
- * contributes.
+ * is never learned from. Request-driven agent turns and measurement runs
+ * teach too, under the same scope and leak rules: a lesson is a general rule,
+ * never an item's text or answer.
  */
 
 import type { DecisionProvider } from "../decisions/types";
@@ -432,8 +431,8 @@ const MAX_STREAKS = 2_000;
  * same tool by the same agent within `RECOVERY_WINDOW_MS` (recovery), three
  * failures of one tool in a row (repeat failure), a run's tool budget, a
  * decision-gate hold, an argument-check flag, a verifier bounce, a task
- * verdict. Only AUTONOMOUS agent work counts (a request-driven turn serves a
- * caller — measurement runs included).
+ * verdict. Autonomous and request-driven agent work both count, measurement
+ * runs included; the scope (`workScopeFor`) still decides whose lessons learn.
  */
 export class WorkEventTracker {
   private streaks = new Map<string, ToolStreak>();
@@ -446,7 +445,7 @@ export class WorkEventTracker {
   onEvent(event: EngineEvent): void {
     switch (event.type) {
       case "agent_tool_result":
-        if (!autonomous(event)) return;
+        if (!agentWork(event)) return;
         this.onToolResult(event);
         return;
       case "agent_decision": {
@@ -574,8 +573,9 @@ export class WorkEventTracker {
 }
 
 /** Only a turn the agent took on its own: never one serving a request (incl. measurement). */
-function autonomous(event: { origin?: string; traceId?: string }): boolean {
-  if (event.origin) return event.origin === "autonomous";
+/** Agent work, autonomous or request-driven (measurement runs included): all of it teaches. */
+function agentWork(event: { origin?: string; traceId?: string }): boolean {
+  if (event.origin) return event.origin === "autonomous" || event.origin === "request";
   return typeof event.traceId === "string" && event.traceId.startsWith("agent-trace-");
 }
 

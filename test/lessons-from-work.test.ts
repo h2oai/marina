@@ -262,11 +262,11 @@ describe("event tracker: every agent-loop source", () => {
     expect(out).toHaveLength(0);
   });
 
-  it("request-driven turns (incl. measurement runs) never teach", () => {
+  it("request-driven turns (incl. measurement runs) teach like autonomous work", () => {
     const { out, t } = collect();
     t.onEvent(result({ isError: true, origin: "request", traceId: "req-1" }));
     t.onEvent(result({ origin: "request", traceId: "req-1" }));
-    expect(out).toHaveLength(0);
+    expect(out.map((s) => s.source)).toEqual(["tool-recovery"]);
   });
 
   it("gate holds (one per ask), argcheck flags, verifier bounces and task verdicts", () => {
