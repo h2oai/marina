@@ -234,6 +234,21 @@ describe("durable coding task attempts", () => {
     expect(() => parseCodingTask("--verification")).toThrow("Usage");
   });
 
+  it("parses mode:plan as read-only plan mode", () => {
+    expect(parseCodingTask("mode:plan -- design the migration")).toEqual({
+      prompt: "design the migration",
+      verificationRequirement: undefined,
+      ownerMode: undefined,
+      planMode: true,
+    });
+    expect(parseCodingTask("-- explain mode:plan")).toEqual({
+      prompt: "explain mode:plan",
+      verificationRequirement: undefined,
+      ownerMode: undefined,
+    });
+    expect(() => parseCodingTask("mode:none task")).toThrow("Usage");
+  });
+
   it("limits unattended write recovery to the live designated worker and the owner-held lock", () => {
     const run = begin("s", "checks", "unattended");
     db.updateCodingSession("s", { writer: owner.name });

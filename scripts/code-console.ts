@@ -638,6 +638,19 @@ export class CodeConsole {
       );
       return;
     }
+    if (verb === "/plan") {
+      if (destination.nativeId || this.selected || this.harness.agent !== "marina")
+        throw new Error(
+          "/plan uses Marina's plan mode. /use marina selects it; native agents keep their own tools.",
+        );
+      if (!argument) throw new Error("Usage: /plan <request>");
+      this.interrupted = false;
+      await this.command(
+        `code do mode:plan -- ${argument}`,
+        destination.sessionId ? { codingTarget: { sessionId: destination.sessionId } } : undefined,
+      );
+      return;
+    }
     const workflow = workflowCommand(verb, argument);
     if (workflow) {
       if (destination.nativeId || this.selected)

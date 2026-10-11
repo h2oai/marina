@@ -40,17 +40,22 @@ import { getWorkspaceRegistry, workspaceForSession } from "./workspace";
 export function parseCodingTask(raw: string) {
   const parsed = parseModifiers(
     raw.trim().split(/\s+/),
-    { verification: { type: "string" }, owner: { type: "string" } },
+    {
+      verification: { type: "string" },
+      owner: { type: "string" },
+      mode: { type: "string" },
+    },
     { leading: true },
   );
   if (
     parsed.errors.length ||
     (parsed.values.verification !== undefined &&
       !["candidate", "checks", "delivery"].includes(String(parsed.values.verification))) ||
-    (parsed.values.owner !== undefined && parsed.values.owner !== "unattended")
+    (parsed.values.owner !== undefined && parsed.values.owner !== "unattended") ||
+    (parsed.values.mode !== undefined && parsed.values.mode !== "plan")
   )
     throw new Error(
-      "Usage: code do [verification:candidate|checks|delivery] [owner:unattended] -- <task>",
+      "Usage: code do [verification:candidate|checks|delivery] [owner:unattended] [mode:plan] -- <task>",
     );
   return {
     prompt: parsed.rest.join(" ").trim(),
@@ -60,6 +65,7 @@ export function parseCodingTask(raw: string) {
       | "delivery"
       | undefined,
     ownerMode: parsed.values.owner as "unattended" | undefined,
+    ...(parsed.values.mode === "plan" ? { planMode: true } : {}),
   };
 }
 function validateTaskContract(
@@ -135,7 +141,9 @@ export async function assignCode(
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
   const agentName = args[0];
-  const { prompt, verificationRequirement, ownerMode } = parseCodingTask(args.slice(1).join(" "));
+  const { prompt, verificationRequirement, ownerMode, planMode } = parseCodingTask(
+    args.slice(1).join(" "),
+  );
   if (!sameEntityName(session.created_by, entity.name))
     throw new Error("Only the coding session creator may dispatch its task.");
   validateTaskContract(session, verificationRequirement);
@@ -154,6 +162,7 @@ export async function assignCode(
     prompt,
     verificationRequirement,
     ownerMode,
+    planMode,
     session,
   });
   updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
@@ -219,7 +228,7 @@ export async function doCode(
   driver: CodeSessionDriver,
   rawTask: string,
 ): Promise<void> {
-  const { prompt: task, verificationRequirement, ownerMode } = parseCodingTask(rawTask);
+  const { prompt: task, verificationRequirement, ownerMode, planMode } = parseCodingTask(rawTask);
   if (!task) {
     ctx.send(eid, 'Describe what you want done, e.g. "fix the off-by-one in the tokenizer".');
     return;
@@ -319,6 +328,7 @@ export async function doCode(
       prompt: task,
       verificationRequirement,
       ownerMode,
+      planMode,
       session,
     });
     ctx.send(

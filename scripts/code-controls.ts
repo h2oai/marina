@@ -31,6 +31,11 @@ export const TERMINAL_CONTROLS = [
     help: "Work toward candidate verification before review",
   },
   {
+    name: "/plan",
+    usage: "/plan <request>",
+    help: "Research and propose first; write nothing",
+  },
+  {
     name: "/panel",
     usage: "/panel desk|publish|list|open|views|use|resources|refresh|field|act|confirm|close",
     help: "Inspect and use published panels beside coding and world conversations",
@@ -90,6 +95,8 @@ export const QUIT_INPUTS = ["/quit", "/exit", "exit", "quit"];
  */
 export function terminalEssentials(connected = false, runtimes: string[] = []): string {
   const rows: Array<[string, string]> = [
+    ["/task", "work toward candidate verification"],
+    ["/plan <request>", "propose first, write nothing"],
     ["/diff", "see what changed"],
     ["/checks", "run the project's checks"],
     ["/review", "review the result"],
