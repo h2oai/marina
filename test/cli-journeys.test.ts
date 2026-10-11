@@ -168,6 +168,21 @@ describe.skipIf(process.platform === "win32")("terminal journeys", () => {
     expect(m.linesBeforePrompt).toBeLessThanOrEqual(6);
   }, 60_000);
 
+  test("memory: /memory save remembers a line and /memory lists it", async () => {
+    const { text } = await journey(
+      "memory",
+      [
+        {
+          keys: "/memory save onramp-note-123\r",
+          until: (t) => /onramp-note-123/i.test(t) && PROMPT.test(t.trimEnd()),
+        },
+        { keys: "/memory\r", until: (t) => PROMPT.test(t.trimEnd()) },
+      ],
+      { env: { OPENAI_API_KEY: "journey-test-key" } },
+    );
+    expect(text).toContain("onramp-note-123");
+  }, 60_000);
+
   test("help: /help is one screen of essentials; /help all lists everything", async () => {
     const { metrics: m, text } = await journey("help", [
       { keys: "/help\r", until: (t) => t.includes("More: /help all") },

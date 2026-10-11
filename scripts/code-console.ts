@@ -605,6 +605,26 @@ export class CodeConsole {
       await this.command(`/${argument}`);
       return;
     }
+    if (verb === "/memory") {
+      const [sub] = argument.split(/\s+/);
+      if (!argument) {
+        await this.command("/note list");
+        return;
+      }
+      if (sub === "save") {
+        const line = argument.slice("save".length).trim();
+        if (!line) throw new Error("Usage: /memory save <line>");
+        await this.command(`/note ${line}`);
+        return;
+      }
+      if (sub === "recall") {
+        const query = argument.slice("recall".length).trim();
+        if (!query) throw new Error("Usage: /memory recall <query>");
+        await this.command(`/recall ${query}`);
+        return;
+      }
+      throw new Error("Usage: /memory [save <line> | recall <query>]");
+    }
     if (verb === "/task") {
       if (destination.nativeId || this.selected || this.harness.agent !== "marina")
         throw new Error(
