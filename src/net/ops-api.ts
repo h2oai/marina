@@ -287,7 +287,7 @@ function measureToolSchemas(): Pick<
   const resident: Record<OpsToolProfile, number> = { full: 0, crew: 0, minimal: 0 };
   let deferredSchemaBytes = 0;
   let deferredToolCount = 0;
-  for (const profile of ["full", "crew", "minimal"] as ToolProfile[]) {
+  for (const profile of ["full", "crew", "minimal"] as OpsToolProfile[]) {
     try {
       const set = createProfileToolset(ctx, memory, profile);
       resident[profile] = serializedToolBytes(set.resident);

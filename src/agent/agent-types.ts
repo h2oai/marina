@@ -140,7 +140,7 @@ export interface AgentConfig {
    *               which runs any world command as an escape hatch.
    * Unset = "full" (backward compatible).
    */
-  toolProfile?: "full" | "crew" | "minimal";
+  toolProfile?: "full" | "crew" | "minimal" | "plan";
   /**
    * Crew-responder mode — when true, the agent runs as a thin specialist
    * that only wakes on perceptions, not on its own cognitive cycle:
