@@ -42,6 +42,25 @@ test("calibrates final errors on a later validation block while preserving centr
   expect(result.metrics?.calibratedLoss).toBeLessThan(result.metrics!.originalLoss);
 });
 
+test("predeclared floors qualify on final errors and retain tail diagnostics", () => {
+  const narrow = { mean: -40, sd: 0.01 };
+  const rows = observations().map((o) => ({ ...o, forecast: narrow, outcome: -39.6 }));
+  const result = calibrateUncertainty(narrow, context, rows, {
+    floors: [0.25, 0.5],
+    protectTails: true,
+  });
+  expect(result.applied).toBe(true);
+  expect(result.floor).toBe(0.5);
+  expect(result.metrics?.coverage95After).toBe(1);
+  expect(result.metrics?.worstNormalizedLossAfter).toBeLessThan(
+    result.metrics!.worstNormalizedLossBefore!,
+  );
+  expect(
+    calibrateUncertainty(narrow, context, rows.slice(0, 11), { floors: [0.5], protectTails: true })
+      .applied,
+  ).toBe(false);
+});
+
 test("late outcomes, post-lock predictions, mismatched estimators and duplicate rounds cannot earn calibration", () => {
   const rows = observations();
   const rejected = rows.flatMap((o) => [

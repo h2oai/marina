@@ -4,6 +4,7 @@
 import type { ArenaData } from "../../arena/data";
 import { arenaExecutionSummary } from "../../arena/execution-evidence";
 import { backtestSeries, forecastRound } from "../../arena/forecast";
+import { arenaHealth, formatArenaHealth } from "../../arena/health";
 import { arenaData, arenaStatus } from "../../arena/service";
 import { buildForecastBody } from "../../arena/submit";
 import type { ArenaRound } from "../../arena/types";
@@ -21,13 +22,14 @@ import {
 } from "./arena-lab";
 
 const USAGE = [
-  "Usage: arena [status] | arena rounds [n] | arena show <round_id> | arena submissions | arena backtest [n]",
+  "Usage: arena [status] | arena health | arena rounds [n] | arena show <round_id> | arena submissions | arena backtest [n]",
   "       arena evaluate [baseline|nowcast|discovered] [tracker:T] [limit:N]   — score on resolved rounds",
   "       arena shadow [list] | arena shadow score | arena shadow run <round_id|due> [forecaster:F]",
   "       arena discover [tracker:T] [n:N] | arena signals [tracker:T]         — find new signals",
 ].join("\n");
 const SUBS = [
   "status",
+  "health",
   "rounds",
   "show",
   "submissions",
@@ -56,6 +58,7 @@ export function arenaCommand(deps: {
     category: "Markets & Forecasting",
     usage: [
       "arena [status]",
+      "arena health",
       "arena backtest [n]",
       "arena discover [tracker:T] [n:N]",
       "arena evaluate [baseline|nowcast|discovered] [tracker:T] [limit:N]",
@@ -93,6 +96,12 @@ export function arenaCommand(deps: {
       if (sub === "shadow") return arenaShadow(lab, rest, reply).catch(fail);
       if (sub === "discover") return arenaDiscover(lab, input.entity, rest, reply).catch(fail);
       if (sub === "signals") return arenaSignals(lab, rest, reply);
+      if (sub === "health") {
+        if (!deps.store) return reply("Arena ledger unavailable.");
+        return arenaHealth(lab.data(), deps.store, entrant)
+          .then((health) => reply(formatArenaHealth(health)))
+          .catch(fail);
+      }
 
       if (sub === "status") {
         const s = arenaStatus();

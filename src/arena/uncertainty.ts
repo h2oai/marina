@@ -27,6 +27,7 @@ export interface CalibrationResult {
   forecast: Distribution;
   applied: boolean;
   scale: number;
+  floor?: number;
   reason: string;
   eligible: number;
   training: string[];
@@ -36,6 +37,10 @@ export interface CalibrationResult {
     calibratedLoss: number;
     coverage80Before: number;
     coverage80After: number;
+    coverage95Before?: number;
+    coverage95After?: number;
+    worstNormalizedLossBefore?: number;
+    worstNormalizedLossAfter?: number;
   };
 }
 
@@ -57,6 +62,7 @@ export function calibrateUncertainty(
   forecast: Distribution,
   context: CalibrationContext,
   observations: CalibrationObservation[],
+  options: { floors?: number[]; protectTails?: boolean } = {},
 ): CalibrationResult {
   const latest = new Map<string, CalibrationObservation>();
   for (const o of observations) {
@@ -111,13 +117,17 @@ export function calibrateUncertainty(
   );
   if (training.length < 8 || validation.length < 4)
     return unchanged("insufficient chronological training/validation split (need 8/4)");
-  const loss = (samples: CalibrationObservation[], scale: number) => {
+  const floors = options.floors ?? [];
+  if (floors.length > 3 || floors.some((floor) => !Number.isFinite(floor) || floor <= 0))
+    throw new Error("at most three positive uncertainty floors in the target unit");
+  const loss = (samples: CalibrationObservation[], scale: number, floor = 0) => {
     const weights = samples.map((s) => weight(context, s));
     return (
       samples.reduce(
         (sum, s, i) =>
           sum +
-          (weights[i]! * crpsNormal(s.forecast.mean, s.forecast.sd * scale, s.outcome)) /
+          (weights[i]! *
+            crpsNormal(s.forecast.mean, Math.max(floor, s.forecast.sd * scale), s.outcome)) /
             s.persistenceCrps,
         0,
       ) / weights.reduce((a, b) => a + b, 0)
@@ -125,21 +135,46 @@ export function calibrateUncertainty(
   };
   // Conservative bounded changes; include identity and prefer it on ties.
   let scale = 1;
+  let floor = 0;
   for (const candidate of [0.65, 0.8, 1.25, 1.5])
     if (loss(training, candidate) < loss(training, scale)) scale = candidate;
+  for (const candidate of floors)
+    if (loss(training, 1, candidate) < loss(training, scale, floor)) {
+      scale = 1;
+      floor = candidate;
+    }
   const originalLoss = loss(validation, 1);
-  const calibratedLoss = loss(validation, scale);
-  const applied = scale !== 1 && calibratedLoss < originalLoss * 0.95;
-  const coverage = (s: number) =>
-    validation.filter((o) => Math.abs(o.outcome - o.forecast.mean) <= 1.281552 * o.forecast.sd * s)
-      .length / validation.length;
+  const calibratedLoss = loss(validation, scale, floor);
+  const coverage = (s: number, f = 0, z = 1.281552) =>
+    validation.filter(
+      (o) => Math.abs(o.outcome - o.forecast.mean) <= z * Math.max(f, o.forecast.sd * s),
+    ).length / validation.length;
+  const worst = (s: number, f = 0) =>
+    Math.max(
+      ...validation.map(
+        (o) =>
+          crpsNormal(o.forecast.mean, Math.max(f, o.forecast.sd * s), o.outcome) /
+          o.persistenceCrps,
+      ),
+    );
+  const tailsSafe =
+    !options.protectTails ||
+    (coverage(scale, floor, 1.959964) >= coverage(1, 0, 1.959964) &&
+      worst(scale, floor) <= worst(1));
+  const applied = (scale !== 1 || floor > 0) && calibratedLoss < originalLoss * 0.95 && tailsSafe;
   return {
-    forecast: { mean: forecast.mean, sd: forecast.sd * (applied ? scale : 1) },
+    forecast: {
+      mean: forecast.mean,
+      sd: applied ? Math.max(floor, forecast.sd * scale) : forecast.sd,
+    },
     applied,
     scale: applied ? scale : 1,
+    ...(floors.length ? { floor: applied ? floor : 0 } : {}),
     reason: applied
       ? "validated on later final-forecast errors; shadow only"
-      : "held-out improvement below five percent",
+      : !tailsSafe
+        ? "held-out tail protection failed"
+        : "held-out improvement below five percent",
     eligible: rows.length,
     training: training.map((r) => r.roundId),
     validation: validation.map((r) => r.roundId),
@@ -147,7 +182,11 @@ export function calibrateUncertainty(
       originalLoss,
       calibratedLoss,
       coverage80Before: coverage(1),
-      coverage80After: coverage(applied ? scale : 1),
+      coverage80After: coverage(applied ? scale : 1, applied ? floor : 0),
+      coverage95Before: coverage(1, 0, 1.959964),
+      coverage95After: coverage(applied ? scale : 1, applied ? floor : 0, 1.959964),
+      worstNormalizedLossBefore: worst(1),
+      worstNormalizedLossAfter: worst(applied ? scale : 1, applied ? floor : 0),
     },
   };
 }

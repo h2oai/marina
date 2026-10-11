@@ -720,6 +720,26 @@ CREATE TABLE decision_outcomes (
 );
 `,
   },
+  // Migration 164: attempted arena refreshes, including failures before signing.
+  {
+    version: 164,
+    sql: `
+CREATE TABLE arena_attempts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  attempt_id TEXT NOT NULL,
+  entrant TEXT NOT NULL,
+  round_id TEXT NOT NULL,
+  phase TEXT NOT NULL CHECK (phase IN ('started', 'finished')),
+  status TEXT NOT NULL,
+  detail TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  UNIQUE(attempt_id, phase)
+);
+CREATE INDEX idx_arena_attempts_round ON arena_attempts(entrant, round_id, id);
+CREATE TRIGGER arena_attempts_no_update BEFORE UPDATE ON arena_attempts
+BEGIN SELECT RAISE(ABORT, 'arena_attempts is append-only'); END;
+`,
+  },
 ];
 
 /** Migration 143 body — self-contained so later edits to db-notes never change it. */

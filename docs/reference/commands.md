@@ -394,7 +394,7 @@ Effect: unknown.
 ## arena
 
 Marina in the Social Simulation Arena: open questions, Marina's forecasts, its filed record.
-Usage: arena [status] | arena rounds [n] | arena show <round_id> | arena submissions | arena backtest [n]
+Usage: arena [status] | arena health | arena rounds [n] | arena show <round_id> | arena submissions | arena backtest [n]
        arena evaluate [baseline|nowcast|discovered] [tracker:T] [limit:N]   — score on resolved rounds
        arena shadow [list] | arena shadow score | arena shadow run <round_id|due> [forecaster:F]
        arena discover [tracker:T] [n:N] | arena signals [tracker:T]         — find new signals
@@ -408,6 +408,11 @@ Effect: unknown.
 
 - `field-0` (`status`): text, optional group `option-0`.
 - Group `option-0`: `status`.
+
+### `arena health`
+
+Effect: unknown.
+
 
 ### `arena backtest [n]`
 

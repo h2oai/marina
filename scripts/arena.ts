@@ -55,6 +55,7 @@ import {
   scoreShadow,
 } from "../src/arena/evaluate";
 import { backtestSeries } from "../src/arena/forecast";
+import { arenaHealth } from "../src/arena/health";
 import { generateArenaKey } from "../src/arena/protocol";
 import {
   arenaData,
@@ -203,6 +204,21 @@ async function main(): Promise<number> {
       console.error(
         `Add this as entrants/${s.entrant}.json in a fork of Social-Atoms/social-sim-arena and open the PR from ${values.github}.`,
       );
+      return 0;
+    }
+    case "health": {
+      const db = openDb();
+      try {
+        console.log(
+          JSON.stringify(
+            await arenaHealth(arenaData(), db, arenaStatus().entrant ?? "marina-preview"),
+            null,
+            2,
+          ),
+        );
+      } finally {
+        db.close();
+      }
       return 0;
     }
     case "status": {

@@ -406,6 +406,7 @@ async function runVariants(
           ...(r.confidence !== undefined ? { confidence: r.confidence } : {}),
           ...(r.fallback ? { fallback: true } : {}),
           ...(r.evidence !== undefined ? { evidence: r.evidence } : {}),
+          ...(r.evidenceIndex ? { evidenceIndex: r.evidenceIndex } : {}),
           at: run.finishedAt,
         },
       })),

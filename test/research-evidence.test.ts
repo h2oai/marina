@@ -6,6 +6,7 @@ import { buildDossier } from "../src/arena/formations";
 import type { ResearchBrief } from "../src/arena/research/briefs";
 import { arenaSignalHints, withDataLookups } from "../src/arena/research/data-evidence";
 import type { ResearchReport } from "../src/arena/research/retrieve";
+import { DecisionError, type DecisionProvider } from "../src/decisions/types";
 import { recallForecastLessons } from "../src/forecast/lessons";
 import { captureEvidence, replayEvidence, validateEvidence } from "../src/research/evidence";
 import { evidenceLoopRetriever } from "../src/research/evidence-loop";
@@ -26,6 +27,104 @@ const report = (value = 3.5): ResearchReport => ({
   searches: 1,
   costUsd: 0.1,
   retriever: "fixture",
+});
+
+test("shared research advice falls back locally and deterministically without overriding spend stops", async () => {
+  const good: DecisionProvider = {
+    kind: "fixture",
+    model: "local",
+    async ask() {
+      return {
+        provider: "local",
+        model: "local",
+        calibrated: false,
+        latencyMs: 0,
+        answers: {
+          coverage: { type: "choice", choice: "incomplete" },
+          conflict: { type: "choice", choice: "no" },
+          progress: { type: "choice", choice: "added" },
+        },
+      };
+    },
+  };
+  for (const mode of ["on", "observe"] as const)
+    for (const failure of ["upstream_error", "spend_cap"] as const) {
+      let fallbackCalls = 0;
+      let reviewPrompt = "";
+      const result = await evidenceLoopRetriever(async () => report(), {
+        now,
+        pageText: async () => undefined,
+        maxRounds: 2,
+        advice: mode,
+        advisory: {
+          providers: [
+            {
+              ...good,
+              async ask() {
+                throw new DecisionError("fixture failure", failure);
+              },
+            },
+            {
+              ...good,
+              async ask(r, s) {
+                fallbackCalls++;
+                return good.ask(r, s);
+              },
+            },
+          ],
+        },
+        review: async (_s, u) => {
+          reviewPrompt = u;
+          return '{"queries":[],"reason":"No decisive missing source"}';
+        },
+      })(brief);
+      expect(result.report).toContain("3.5");
+      expect(fallbackCalls).toBe(failure === "spend_cap" ? 0 : 1);
+      expect(reviewPrompt.includes("[Research advice;")).toBe(
+        mode === "on" && failure !== "spend_cap",
+      );
+      expect(result.researchLoop!.rounds[0]!.advice?.calibration).toBe("unmeasured");
+      expect(result.researchLoop!.error).toBeUndefined();
+    }
+  const deterministic = await evidenceLoopRetriever(async () => report(), {
+    now,
+    pageText: async () => undefined,
+    maxRounds: 2,
+    advice: "on",
+    advisory: { providers: [] },
+    review: async () => '{"queries":[],"reason":"Done"}',
+  })(brief);
+  expect(deterministic.researchLoop!.rounds[0]!.advice?.status).toBe("unavailable");
+  expect(deterministic.report).toContain("3.5");
+});
+
+test("target selection stops mirror-only research by claim novelty", async () => {
+  let retrievals = 0;
+  let reviews = 0;
+  const result = await evidenceLoopRetriever(
+    async () => {
+      const url = `https://example.org/mirror-${++retrievals}`;
+      return {
+        ...report(),
+        report: `Rate 3.5% [source](${url})`,
+        sources: [{ url, text: "Rate 3.5%", published: "2026-10-06" }],
+      };
+    },
+    {
+      now,
+      pageText: async () => undefined,
+      maxRounds: 3,
+      targetEvidence: "on",
+      review: async () => {
+        reviews++;
+        return '{"queries":["contrary source"],"reason":"Check"}';
+      },
+    },
+  )(brief);
+  expect(retrievals).toBe(2);
+  expect(reviews).toBe(1);
+  expect(result.researchLoop!.stop).toBe("no-new-evidence");
+  expect(result.researchLoop!.rounds[1]!.addedClaims).toBe(0);
 });
 
 test("partial verified evidence does not hide a failed paid research loop", async () => {

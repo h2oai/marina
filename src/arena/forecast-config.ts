@@ -11,6 +11,7 @@ export function forecastSettings(spec: string, env: NodeJS.ProcessEnv, weight?: 
     version: 2,
     research: researchFeatures(env),
     researchRequired: env.MARINA_ARENA_RESEARCH_REQUIRED === "on",
+    evidenceRefresh: env.MARINA_ARENA_EVIDENCE_REFRESH === "on",
     signals: env.MARINA_ARENA_RESEARCH_SIGNALS ?? "off",
     formationLessons: env.MARINA_ARENA_FORMATION_LESSONS ?? "observe",
     spec,

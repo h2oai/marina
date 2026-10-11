@@ -488,6 +488,79 @@ describe("formation protocols", () => {
     ).rejects.toThrow("Required research forecast refused");
   });
 
+  it("reuses identical complete evidence but renews at the final lock window", async () => {
+    const { captureEvidence } = await import("../src/research/evidence");
+    const now = new Date(Date.parse(round.lock_at) - 4 * 3_600_000);
+    const evidence = await captureEvidence(
+      {
+        roundId: round.round_id,
+        since: "2026-01-01",
+        untilAt: now.toISOString(),
+        request: "Evidence",
+        queries: [],
+      },
+      {
+        report:
+          "- The measured approval value was 38 percent [source](https://example.org/release)",
+        sources: [
+          {
+            url: "https://example.org/release",
+            text: "The measured approval value was 38 percent",
+          },
+        ],
+        costUsd: 0,
+        searches: 0,
+        retriever: "fixture",
+      },
+      async () => undefined,
+      { now: () => now },
+    );
+    const dossier = {
+      since: "2026-01-01",
+      verified: evidence.verified,
+      sources: 1,
+      costUsd: 0,
+      status: "verified" as const,
+      retriever: "search",
+      evidence,
+    };
+    const { members, calls } = crew(3, () => at(1));
+    const stages = [{ pattern: "ensemble" as const, members }] as const;
+    const first = await composeForecastRound(round, lock, [...stages], forecastRound(round, lock), {
+      dossier,
+      required: true,
+      refresh: { key: "scope", now: () => now },
+    });
+    const count = calls.length;
+    const again = await composeForecastRound(round, lock, [...stages], forecastRound(round, lock), {
+      dossier,
+      required: true,
+      refresh: { key: "scope", previous: first, now: () => new Date(now.getTime() + 1000) },
+    });
+    expect(calls).toHaveLength(count);
+    expect(again.evidenceRefresh?.reused).toBe(true);
+    expect(again.topline).toEqual(first.topline);
+    await composeForecastRound(round, lock, [...stages], forecastRound(round, lock), {
+      dossier,
+      required: true,
+      refresh: {
+        key: "scope",
+        previous: again,
+        now: () => new Date(Date.parse(round.lock_at) - 3_600_000),
+      },
+    });
+    expect(calls.length).toBeGreaterThan(count);
+    const finalCount = calls.length;
+    await expect(
+      composeForecastRound(round, lock, [...stages], forecastRound(round, lock), {
+        dossier: { ...dossier, status: "failed", error: "credits" },
+        required: true,
+        refresh: { key: "scope", previous: again, now: () => now },
+      }),
+    ).rejects.toThrow();
+    expect(calls).toHaveLength(finalCount);
+  });
+
   it("composition: one verified dossier per round to every member; a second formation judges", async () => {
     let searches = 0;
     const retriever: Retriever = async () => {

@@ -11,12 +11,16 @@
  * (Civiqs), else the last published value: older news is already in it.
  */
 
+import type { EvidenceTarget } from "../../research/measurement";
 import { forecastCutoff } from "../freshness";
 import { cellLabels } from "../profile-shape";
 import type { ArenaLock, ArenaRound } from "../types";
 
 export interface ResearchBrief {
   roundId: string;
+  /** Machine-readable target identity; missing dimensions remain unknown. */
+  target?: EvidenceTarget;
+  releaseEvents?: import("../../research/survey").ReleaseEvent[];
   /** ISO date of the latest known reading (nowcast, else last published value) — evidence must be newer. */
   since: string;
   /** The research request, for a search-capable model. */
@@ -135,11 +139,92 @@ function pollIdentityRules(round: ArenaRound): string[] {
 }
 
 function targetQueries(round: ArenaRound, queries: string[]): string[] {
+  if (round.tracker === "google_trends") {
+    const items = Object.values(cellLabels(round.cells ?? [])).join(" ");
+    return [
+      `${items || round.question} Google Trends interest same basket weekly seasonal comparison`,
+      ...Object.values(cellLabels(round.cells ?? []))
+        .slice(0, MAX_ITEM_QUERIES)
+        .map(
+          (item) => `${item} launch earnings premiere scheduled ${round.release_at.slice(0, 10)}`,
+        ),
+    ];
+  }
+  if (round.tracker === "wikipedia")
+    return [
+      round.question.slice(0, 300),
+      `${round.release_at.slice(0, 10)} scheduled sports finals premieres elections Wikipedia`,
+      "Wikimedia pageviews top articles daily trajectories",
+    ];
   // Keep the search budget unchanged while making the first query about the
   // actual target rather than generic approval (especially RV/strong approval).
   return round.tracker.includes("yougov")
     ? [round.question.slice(0, 300), ...queries.slice(1)]
     : queries;
+}
+
+export function arenaEvidenceTarget(round: ArenaRound): EvidenceTarget {
+  const series = round.series ?? "profile";
+  const yougov = round.tracker.includes("yougov");
+  const approval =
+    yougov &&
+    (/approv/i.test(series) ||
+      (round.tracker === "yougov_xtab" &&
+        !!round.cells?.length &&
+        round.cells.every((c) => c.startsWith("yougov_xtab_approve_"))));
+  const subgroupNames: Record<string, string> = {
+    dem: "Democrat",
+    ind: "Independent",
+    rep: "Republican",
+    age_under_30: "Under 30",
+    age_30_44: "30-44",
+    age_45_64: "45-64",
+    age_65_up: "65+",
+    race_white: "White",
+    race_black: "Black",
+    race_hispanic: "Hispanic",
+    male: "Male",
+    female: "Female",
+    edu_hs_or_less: "HS or less",
+    edu_some_college: "Some college",
+    edu_college_grad: "College grad",
+    edu_postgrad: "Postgrad",
+  };
+  return {
+    source: round.tracker,
+    measure: approval ? "presidential job approval" : series,
+    ...(approval ? { unit: "percent" } : round.unit ? { unit: round.unit } : {}),
+    ...(approval
+      ? {
+          population:
+            round.tracker === "yougov_xtab" || /(?:^|_)rv(?:_|$)|registered/i.test(series)
+              ? "registered voters"
+              : "adults",
+          response: /strong/i.test(series) ? "strong approval" : "total approval",
+          ...(round.target_type === "continuous_normal" ? { subgroup: "all" } : {}),
+        }
+      : {}),
+    ...(round.cells?.length
+      ? {
+          cells: round.cells.map((cell) =>
+            round.tracker === "yougov_xtab"
+              ? (subgroupNames[cell.replace(/^yougov_xtab_approve_/, "")] ?? cell)
+              : cell,
+          ),
+        }
+      : {}),
+    terms: [round.tracker, series, ...Object.values(cellLabels(round.cells ?? []))],
+  };
+}
+
+function playbook(round: ArenaRound): string[] {
+  const items = PLAYBOOKS[familyOf(round)]!;
+  return round.tracker === "google_trends"
+    ? [
+        ...items.filter((s) => !s.includes("Wikipedia")),
+        "Compare aligned seasonal weeks and any partial current-week readings on the SAME geography, query definitions and jointly normalized basket. Preserve observation and capture dates; independently scaled query levels cannot be mixed.",
+      ]
+    : items;
 }
 
 /**
@@ -189,6 +274,7 @@ export function buildResearchBrief(
   const untilAt = forecastCutoff(round.lock_at, round.lock_at, opts.now ?? Date.now());
   const bounded = (brief: ResearchBrief): ResearchBrief => ({
     ...brief,
+    target: arenaEvidenceTarget(round),
     untilAt,
     until: untilAt.slice(0, 10),
     request: `${brief.request}\nInformation cutoff: ${untilAt}. Exclude anything published after this instant.`,
@@ -213,7 +299,7 @@ export function buildResearchBrief(
         ? `The latest observed list is from ${obsDay}.`
         : "";
   const family = familyOf(round);
-  const asks = PLAYBOOKS[family]!.map((a, i) => `${i + 1}. ${a}`);
+  const asks = playbook(round).map((a, i) => `${i + 1}. ${a}`);
   const request = [
     `A forecaster must predict: ${round.question}`,
     `The answer is published around ${round.release_at.slice(0, 10)}. ${lastLine}`,
@@ -302,7 +388,7 @@ function profileBrief(
   const family = familyOf(round);
   const items = cells.map((c) => labels[c]).join(", ");
   const asks = [
-    ...PLAYBOOKS[family]!,
+    ...playbook(round),
     family === "attention"
       ? `For EACH item — ${items} — anything scheduled during the measured week or reported since that date that bears on that item specifically (launches, announcements, earnings, premieres, finals, outages, recalls); say "nothing found" for an item with nothing.`
       : `For EACH subgroup — ${items} — any poll crosstab since that date that reports it, with the same pollster's previous reading for that subgroup.`,

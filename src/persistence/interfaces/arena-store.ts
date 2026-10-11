@@ -6,6 +6,13 @@ import type { ExactKeys } from "./exact-keys";
 
 /** Social Simulation Arena submissions (`db-arena.ts`). */
 export interface ArenaStore {
+  recordArenaAttempt(row: arenaDb.InsertArenaAttempt): void;
+  listArenaAttempts(opts: {
+    entrant: string;
+    roundId?: string;
+    limit?: number;
+  }): arenaDb.ArenaAttemptRow[];
+  acceptedArenaSubmission(entrant: string, roundId: string): arenaDb.ArenaSubmissionRow | undefined;
   insertArenaSubmission(row: arenaDb.InsertArenaSubmission): number;
   updateArenaSubmission(
     id: number,
@@ -25,6 +32,9 @@ export interface ArenaStore {
 
 /** Runtime mirror of `ArenaStore`'s method names — the drift test compares it to the facade. */
 export const ARENA_STORE_METHODS = [
+  "recordArenaAttempt",
+  "listArenaAttempts",
+  "acceptedArenaSubmission",
   "insertArenaSubmission",
   "updateArenaSubmission",
   "latestArenaSubmission",

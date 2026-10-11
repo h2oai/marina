@@ -2328,6 +2328,25 @@ export class MarinaDB implements MarinaStores {
 
   // ─── Social Simulation Arena (delegated to db-arena.ts) ─────────────────
 
+  recordArenaAttempt(row: arenaDb.InsertArenaAttempt): void {
+    arenaDb.recordArenaAttempt(this.db, row);
+  }
+
+  listArenaAttempts(opts: {
+    entrant: string;
+    roundId?: string;
+    limit?: number;
+  }): arenaDb.ArenaAttemptRow[] {
+    return arenaDb.listArenaAttempts(this.reader, opts);
+  }
+
+  acceptedArenaSubmission(
+    entrant: string,
+    roundId: string,
+  ): arenaDb.ArenaSubmissionRow | undefined {
+    return arenaDb.acceptedArenaSubmission(this.reader, entrant, roundId);
+  }
+
   insertArenaSubmission(row: arenaDb.InsertArenaSubmission): number {
     return arenaDb.insertArenaSubmission(this.db, row);
   }

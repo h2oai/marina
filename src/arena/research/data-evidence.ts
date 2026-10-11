@@ -178,6 +178,21 @@ export function withDataLookups(
               text: payload,
               observedAt: reading.date,
               availableAt: reading.asOf,
+              origin: `https://fred.stlouisfed.org/series/${encodeURIComponent(reading.series)}`,
+              measurements: [
+                {
+                  source: "FRED",
+                  measure: reading.series,
+                  value: reading.value,
+                  unit: reading.unit,
+                  url,
+                  origin: `https://fred.stlouisfed.org/series/${encodeURIComponent(reading.series)}`,
+                  quote: JSON.stringify(reading),
+                  observedFrom: reading.date,
+                  availableAt: reading.asOf,
+                  relation: "explanatory",
+                },
+              ],
             });
           }
           continue;

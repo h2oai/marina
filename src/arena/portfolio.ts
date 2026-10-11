@@ -4,6 +4,7 @@
 import { createHash } from "node:crypto";
 import type { WorkBudget } from "../coordination/work-budget";
 import { getErrorMessage } from "../engine/errors";
+import { validateEvidence } from "../research/evidence";
 import { type Score, validateScore } from "../sdk/score";
 import { type DispatchContext, executeScore } from "../sdk/score-executor";
 import type { RoundForecast } from "./forecast";
@@ -78,7 +79,7 @@ export function validateArenaPlan(plan: ArenaPlan): void {
 
 /** All presets include the same Delphi control. Only the additional work differs. */
 export function arenaPortfolioPlan(
-  kind: "control" | "parallel" | "layered",
+  kind: "control" | "parallel" | "layered" | "independent",
   models: string[],
 ): ArenaPlan {
   const steps: Score["steps"] = [
@@ -107,7 +108,14 @@ export function arenaPortfolioPlan(
         access: ["control", "complement"],
       },
     );
-    operations.complement = { kind: "formation", pattern: "symbiosis", models: [...models] };
+    operations.complement = {
+      kind: "formation",
+      pattern: kind === "independent" ? "delphi" : "symbiosis",
+      models: [...models],
+    };
+    if (kind === "independent")
+      steps[1]!.instruction =
+        "Pre-mortem: identify how the obvious forecast could fail. Use contrary evidence and exact target definitions; do not invent observations.";
     operations.aggregate = { kind: "aggregate" };
   }
   if (kind === "layered") {
@@ -153,6 +161,8 @@ export interface PortfolioInputs {
   lock: ArenaLock;
   start: RoundForecast;
   dossier?: ResearchDossier;
+  /** Frozen independently before forecasting. Omit for the shared-dossier control. */
+  dossiersByStep?: Record<string, ResearchDossier>;
 }
 export type PortfolioComplete = (
   spec: string,
@@ -193,6 +203,15 @@ export async function runArenaPortfolio(
   const plan = structuredClone(original);
   validateArenaPlan(plan);
   const inputs = structuredClone(originalInputs);
+  for (const dossier of [inputs.dossier, ...Object.values(inputs.dossiersByStep ?? {})]) {
+    if (!dossier?.evidence) continue;
+    validateEvidence(dossier.evidence);
+    if (
+      Date.parse(dossier.evidence.cutoff) > Date.parse(inputs.round.lock_at) ||
+      Date.parse(dossier.evidence.capturedAt) >= Date.parse(inputs.round.lock_at)
+    )
+      throw new Error("portfolio evidence is after lock");
+  }
   const audit = auditForecastInputs(inputs.round, inputs.lock);
   if (!audit.ok) throw new Error(`input audit failed: ${audit.issues.join("; ")}`);
   if (inputs.round.target_type === "ranking_list")
@@ -243,8 +262,9 @@ export async function runArenaPortfolio(
               ]),
             );
         } else {
+          const dossier = inputs.dossiersByStep?.[ctx.step.id] ?? inputs.dossier;
           const briefing = [
-            inputs.dossier ? dossierBlock(inputs.dossier) : "",
+            dossier ? dossierBlock(dossier) : "",
             ...(ctx.step.id === "control" ? [] : [`Step: ${ctx.step.instruction}`]),
             ...(prior.length
               ? ["Upstream candidate distributions (hypotheses, not new observations):", ...prior]

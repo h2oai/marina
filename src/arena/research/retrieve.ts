@@ -68,6 +68,9 @@ export { EXA_USD_PER_SEARCH, TAVILY_USD_PER_CREDIT };
 
 export interface Source {
   url: string;
+  /** Established primary source, for mirrors/syndication; never guessed from a hostname. */
+  origin?: string;
+  measurements?: import("../../research/measurement").Measurement[];
   title?: string;
   /** ISO date the page was published, when the engine reports one. */
   published?: string;

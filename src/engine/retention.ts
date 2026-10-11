@@ -322,6 +322,11 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     note: "signed public forecasts; the audit record behind the arena's reveal",
   },
   {
+    table: "arena_attempts",
+    kind: "append-only",
+    note: "refresh attempts and failures before signing; accepted forecasts remain in arena_submissions",
+  },
+  {
     table: "arena_shadow",
     kind: "append-only",
     note: "candidate forecasts scored live; the evidence a forecaster is promoted on",

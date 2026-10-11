@@ -771,6 +771,20 @@
 
 # Portable research evidence: capture source text, dates, hashes and verification for offline replay. Shared by arena and general forecasts; off preserves the existing retrieval behavior. Live snapshots record capture time separately from publication/vintage time and are not historical archives.
 # MARINA_RESEARCH_EVIDENCE=off
+# Target-aware whole-claim selection and independent-origin balancing: off, observe, on.
+# Uses the captured evidence contract; judges cannot override dates or target identity.
+# MARINA_RESEARCH_TARGET_EVIDENCE=off
+# Operator-imported survey-wave JSON array, produced by scripts/arena-survey-import.py.
+# No automatic publisher scraping. Availability and target identity are checked at capture.
+# @protected
+# MARINA_RESEARCH_SURVEY_FILE=
+# Imported ReleaseEvent JSON array, keyed by round/question id in each target field.
+# Adds due release source reads; scheduled events never stand in for published results.
+# @protected
+# MARINA_RESEARCH_CALENDAR_FILE=
+# Recheck evidence before reusing an accepted formation. Changed inputs, daily expiry,
+# or the final two hours before lock require a new forecast. Operator-only, opt-in.
+# MARINA_ARENA_EVIDENCE_REFRESH=off
 
 # Bounded evidence gap loop, 1–3 rounds per retrieval (default 1). Values above 1 enable evidence capture. A reviewer names up to three missing or contradictory facts; stop on no new verified evidence or no remaining queries. Typed forecasts already have an outer research loop: keep its research-round setting at 1 when isolating this inner loop. LOOP_MODEL defaults to the caller's lead/first analyst. Model and search spend still use the shared daily/scope ledger.
 # MARINA_RESEARCH_LOOP_ROUNDS=1

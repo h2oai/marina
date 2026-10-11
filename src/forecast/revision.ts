@@ -20,6 +20,7 @@ export interface StandingAnswer {
   fallback?: boolean;
   /** The research lines the forecast kept, for the evidence-change test. */
   evidence?: string;
+  evidenceIndex?: import("../research/evidence-index").EvidenceIndex;
   /** ISO time the answer was produced. */
   at: string;
 }
@@ -102,7 +103,19 @@ export function decideRevision(
     return { revise: true, reason: `confidence +${gain.toFixed(2)}` };
   }
   if (prev.evidence !== undefined && next.evidence !== undefined) {
-    const overlap = evidenceOverlap(prev.evidence, next.evidence);
+    const oldClaims = prev.evidenceIndex?.claims
+      .filter((c) => c.eligibility !== "rejected")
+      .map((c) => c.id);
+    const newClaims = next.evidenceIndex?.claims
+      .filter((c) => c.eligibility !== "rejected")
+      .map((c) => c.id);
+    const overlap =
+      oldClaims && newClaims
+        ? new Set([...oldClaims, ...newClaims]).size === 0
+          ? 1
+          : oldClaims.filter((id) => newClaims.includes(id)).length /
+            new Set([...oldClaims, ...newClaims]).size
+        : evidenceOverlap(prev.evidence, next.evidence);
     if (overlap < policy.evidenceOverlapBelow && gain > -policy.minConfidenceGain / 2) {
       return { revise: true, reason: `new evidence (overlap ${overlap.toFixed(2)})` };
     }

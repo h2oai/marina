@@ -365,4 +365,64 @@ describe("crew memory", () => {
     ).toContain("claude-sonnet-5");
     expect(() => parseForecasterSpec("crew:a/b,c/d,e/f,g/h")).toThrow();
   });
+
+  it("attributes research advice only to the exact latest accepted forecast version", async () => {
+    const data = new ArenaData("https://example.test", async (url) =>
+      Response.json(
+        url.endsWith("season0.json")
+          ? { rounds: [round] }
+          : url.endsWith("resolved.json")
+            ? { [round.round_id]: { value: 45 } }
+            : lock,
+      ),
+    );
+    const config = arenaConfigFromEnv({ MARINA_ARENA_ENTRANT: "marina-test" })!;
+    const owner = "marina:arena/marina-test";
+    const create = (requestId: string, mean: number) => {
+      const receipt = {
+        id: requestId,
+        family: "research",
+        version: "1",
+        questionsHash: "test",
+        mode: "on",
+        status: "answered",
+        calibration: "unmeasured",
+        fallback: false,
+        attempts: 1,
+        latencyMs: 1,
+        costComplete: true,
+        costUsd: 0.01,
+        signals: { coverage: "incomplete" },
+        action: "fill_gap",
+        applied: true,
+        createdAt: Date.now(),
+      };
+      const id = db.insertArenaSubmission({
+        entrant: "marina-test",
+        roundId: round.round_id,
+        requestId,
+        url: "https://x",
+        meta: "{}",
+        body: JSON.stringify({ round_id: round.round_id, topline: { mean, sd: 1.5 } }),
+        detail: JSON.stringify({
+          forecast: { dossier: { researchLoop: { rounds: [{ advice: receipt }] } } },
+        }),
+      });
+      db.updateArenaSubmission(id, { status: "accepted" });
+      return id;
+    };
+    create("superseded-advice", 30);
+    const latest = create("filed-advice", 41);
+    expect(await resolveArenaFilings(db, { config, data })).toBe(1);
+    const filed = db.getForecastAnswerByExternalId(owner, `arena:${round.round_id}`)!;
+    expect(JSON.parse(filed.answer_json).submissionId).toBe(latest);
+    expect(filed.mean).toBe(41);
+    const outcome = db.getOutcomeBySubject(`forecast:${filed.id}`)!;
+    expect(db.decisionOutcomeIds(owner, "filed-advice")).toEqual([outcome.id]);
+    expect(db.decisionOutcomeIds(owner, "superseded-advice")).toEqual([]);
+    create("later-trace", 50);
+    expect(await resolveArenaFilings(db, { config, data })).toBe(0);
+    expect(db.decisionOutcomeIds(owner, "later-trace")).toEqual([]);
+    await settleDelivery(db);
+  });
 });

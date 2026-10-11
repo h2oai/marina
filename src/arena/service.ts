@@ -229,6 +229,7 @@ export async function forecasterFor(
     notes?: NotesStore;
     formationInputs?: FormationInputs;
     strictFreshness?: boolean;
+    previous?: (roundId: string) => import("./formations").ComposedForecast | undefined;
   } = {},
 ): Promise<{ forecaster: Forecaster; usage?: Usage; learner?: Learner }> {
   if (spec === "baseline")
@@ -287,6 +288,7 @@ export async function forecasterFor(
       opts.formationInputs,
       opts.strictFreshness,
       opts.notes,
+      opts.previous,
     );
   }
   if (spec.startsWith("crew:")) {
@@ -480,6 +482,7 @@ async function formationForecasterFor(
   inputs?: FormationInputs,
   strictFreshness = false,
   notes?: NotesStore,
+  previous?: (roundId: string) => import("./formations").ComposedForecast | undefined,
 ): Promise<{ forecaster: Forecaster; usage: Usage }> {
   const [head = "", ...parts] = spec.split(/\+(?=then:|research@)/);
   const [{ modelComplete }, formations, { nowcastForecaster }] = await Promise.all([
@@ -612,7 +615,26 @@ async function formationForecasterFor(
               ] as [import("./formations").FormationStage, import("./formations").FormationStage?],
               given,
               evidence
-                ? { ...evidence, required: env.MARINA_ARENA_RESEARCH_REQUIRED === "on" }
+                ? {
+                    ...evidence,
+                    required: env.MARINA_ARENA_RESEARCH_REQUIRED === "on",
+                    ...(env.MARINA_ARENA_EVIDENCE_REFRESH === "on" && previous
+                      ? {
+                          refresh: {
+                            key: (await import("../research/evidence")).evidenceHash({
+                              round,
+                              shown,
+                              topline: given.topline,
+                              profile: given.profile,
+                              origins: given.origins,
+                              lessons: lessons.injected,
+                              config: forecastSettings(spec, env),
+                            }),
+                            previous: previous(round.round_id),
+                          },
+                        }
+                      : {}),
+                  }
                 : undefined,
               judge,
               lessonBrief,
@@ -621,7 +643,9 @@ async function formationForecasterFor(
       let cost = (f as { dossier?: { costUsd?: number } }).dossier?.costUsd ?? 0;
       // The judge's calls and dollars, from each formation's audit record.
       const composed = f as import("./formations").ComposedForecast;
-      for (const p of [composed.protocol, composed.upstream?.protocol]) {
+      for (const p of composed.evidenceRefresh?.reused
+        ? []
+        : [composed.protocol, composed.upstream?.protocol]) {
         const j = (p as { judge?: { calls?: number; costUsd?: number } } | undefined)?.judge;
         usage.calls += j?.calls ?? 0;
         cost += j?.costUsd ?? 0;
@@ -633,7 +657,11 @@ async function formationForecasterFor(
         cost += m.usage.costUsd;
       }
       usage.costUsd += cost;
-      return cost > 0 || made.flat().some((m) => m.usage.calls > 0) ? { ...f, costUsd: cost } : f;
+      return composed.evidenceRefresh?.reused ||
+        cost > 0 ||
+        made.flat().some((m) => m.usage.calls > 0)
+        ? { ...f, costUsd: cost }
+        : f;
     },
   };
 }
@@ -672,17 +700,28 @@ export async function arenaDepsWithForecaster(
     const weight = weightOverride ?? deps.config.modelWeight;
     // The world's notes are the crew's memory when the store carries them.
     const notes = "getNotesByType" in store ? (store as unknown as NotesStore) : undefined;
+    const settings = forecastSettings(spec, env, weight);
     const { forecaster } = await forecasterFor(spec, {
       weight,
       env,
       strictFreshness: true,
       ...(notes ? { notes } : {}),
+      previous: (roundId) => {
+        const row = store.acceptedArenaSubmission(deps.config.entrant, roundId);
+        if (!row) return undefined;
+        try {
+          const detail = JSON.parse(row.detail);
+          return detail.config?.fingerprint === settings.fingerprint ? detail.forecast : undefined;
+        } catch {
+          return undefined;
+        }
+      },
     });
     return {
       ...deps,
       forecaster,
       strictFreshness: true,
-      forecasterConfig: { ...forecastSettings(spec, env, weight), inputFreshness: "required-v1" },
+      forecasterConfig: { ...settings, inputFreshness: "required-v1" },
     };
   } catch (err) {
     return { error: `Forecaster: ${(err as Error).message}` };
@@ -762,12 +801,18 @@ export async function resolveArenaFilings(
   const resolved = await deps.data.resolutions();
   const owner = `marina:arena/${deps.config.entrant}`;
   let settled = 0;
+  const seen = new Set<string>();
   for (const row of db.listArenaSubmissions({ entrant: deps.config.entrant, limit: 500 })) {
     const value = resolved[row.round_id]?.value;
     if (row.status !== "accepted" || typeof value !== "number") continue;
+    if (seen.has(row.round_id)) continue;
+    seen.add(row.round_id);
     const externalId = `arena:${row.round_id}`;
     const filed = db.getForecastAnswerByExternalId(owner, externalId);
-    if (filed?.resolved_at != null) continue;
+    if (filed?.resolved_at != null) {
+      linkArenaAdvice(db, owner, row, filed.id);
+      continue;
+    }
     if (!filed) {
       const body = JSON.parse(row.body) as { topline?: { mean: number; sd: number } };
       const round = await deps.data.round(row.round_id);
@@ -781,6 +826,7 @@ export async function resolveArenaFilings(
           sd: body.topline.sd,
           answer: {
             roundId: row.round_id,
+            submissionId: row.id,
             topline: body.topline,
             forecaster: deps.config.forecaster,
           },
@@ -793,8 +839,37 @@ export async function resolveArenaFilings(
       `arena:${deps.config.entrant}`,
     ]);
     if (r && typeof r === "object") settled++;
+    const answer = db.getForecastAnswerByExternalId(owner, externalId);
+    if (answer) linkArenaAdvice(db, owner, row, answer.id);
   }
   return settled;
+}
+
+/** Attribute only the exact filed version. An advisory opinion is not an outcome. */
+function linkArenaAdvice(
+  db: MarinaDB,
+  owner: string,
+  row: import("../persistence/db-arena").ArenaSubmissionRow,
+  answerId: number,
+): void {
+  try {
+    const answer = db.getForecastAnswer(answerId);
+    if (!answer || JSON.parse(answer.answer_json).submissionId !== row.id) return;
+    const outcome = db.getOutcomeBySubject(`forecast:${answerId}`);
+    if (!outcome) return;
+    const detail = JSON.parse(row.detail);
+    const rounds = detail.forecast?.dossier?.researchLoop?.rounds ?? [];
+    for (const round of rounds) {
+      const receipt = round.advice as import("../sdk/decision-receipt").DecisionReceipt | undefined;
+      if (!receipt?.id || receipt.family !== "research") continue;
+      db.recordDecisionReceipt(owner, `forecast:${answerId}`, receipt);
+      db.linkDecisionOutcome(owner, receipt.id, outcome.id);
+    }
+  } catch (error) {
+    logger.warn("arena", "advisory outcome attribution unavailable", {
+      error: getErrorMessage(error),
+    });
+  }
 }
 
 /**

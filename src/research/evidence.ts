@@ -7,6 +7,7 @@ import type { ResearchBrief } from "../arena/research/briefs";
 import type { ResearchReport, Retriever, Source } from "../arena/research/retrieve";
 import { fetchAllowed, type PageText, verifyDossier } from "../arena/research/verify";
 import { getErrorMessage } from "../engine/errors";
+import { type EvidenceIndex, indexEvidence } from "./evidence-index";
 
 export const evidenceHash = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -30,6 +31,8 @@ export interface EvidenceSnapshot {
   verified: string;
   stats: Record<string, number>;
   warnings: string[];
+  /** Additive: legacy frozen snapshots remain valid and replayable. */
+  index?: EvidenceIndex;
   hash: string;
 }
 
@@ -113,6 +116,7 @@ export async function captureEvidence(
     verified: checked.verifiedText,
     stats: checked.stats,
     warnings,
+    index: indexEvidence(brief, checked.verifiedText, sources, cutoff),
   };
   return { ...value, hash: evidenceHash(value) };
 }
