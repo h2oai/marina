@@ -13,7 +13,9 @@
  * A lesson comes from a board when any of these names it:
  *   - its `source` (`benchmark:<name>`, `<name>`, or `<producer>:…` where the
  *     board is `<producer>` or `<producer>-…`, e.g. `futurex:…` for `futurex-past-clean`);
- *   - a `bench:<run id>` in its refs whose ledger run is of that benchmark.
+ *   - a `bench:<run id>` in its refs whose ledger run is of that benchmark;
+ *   - an `eval:<name>` in its refs (a measurement outcome names the board it
+ *     measured, so measured traffic can teach without teaching its own board).
  *
  * `mode=live` (an actual competition entry or daily answer) lifts the rule:
  * live outcomes are genuinely in the future, so every lesson may be used.
@@ -31,6 +33,15 @@ export interface EvalContext {
 }
 
 export const EVAL_HEADER = "x-marina-eval";
+
+/** The ref a measurement outcome carries: `eval:<board>` (leakage rule 2 keys on it). */
+export const EVAL_REF_PREFIX = "eval:";
+
+/** Does `source` (an outcome or lesson source label) name a board, not just a producer kind? */
+export function sourceNamesBoard(source: string): boolean {
+  const prefix = source.split(":")[0] ?? "";
+  return Boolean(prefix) && !GENERIC_PREFIXES.has(prefix);
+}
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$/;
 
@@ -105,6 +116,7 @@ const GENERIC_PREFIXES = new Set([
   "meta",
   "supersede",
   "legacy",
+  "request",
 ]);
 
 /** Does the board named by `origin` (a source label or benchmark name) cover `benchmark`? */
@@ -141,6 +153,10 @@ export function evalExclusion(
     ];
     if (origins.some((o) => sameBoard(o, ctx.benchmark))) return true;
     for (const ref of lesson.refs ?? []) {
+      if (ref.startsWith(EVAL_REF_PREFIX)) {
+        if (sameBoard(ref.slice(EVAL_REF_PREFIX.length), ctx.benchmark)) return true;
+        continue;
+      }
       if (!ref.startsWith("bench:")) continue;
       const name = runBenchmark(ref.slice("bench:".length));
       if (name && sameBoard(name, ctx.benchmark)) return true;

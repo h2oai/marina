@@ -17,7 +17,7 @@
  */
 
 import type { Engine } from "../engine/engine";
-import { evalOption } from "../learning/eval-context";
+import { EVAL_REF_PREFIX, evalOption } from "../learning/eval-context";
 import { recordResolved } from "../outcomes/record";
 import type { EngineEvent } from "../types";
 import { errorJson, json, type PassthruAuthResult } from "./model-api/shared";
@@ -78,6 +78,8 @@ export async function handleOutcomeReport(
   }
   const served = [...events].reverse().find((e) => e.target)?.target ?? events[0]!.model;
   const at = Date.now();
+  const evalCtx = evalOption(req).eval;
+  const measured = evalCtx?.mode === "measure" ? evalCtx : undefined;
   const recorded = recordResolved(db, {
     subject: `request:${requestId}`,
     kind: "request",
@@ -91,9 +93,10 @@ export async function handleOutcomeReport(
       ? { detail: body.detail.trim() }
       : {}),
     basis: "mechanical",
-    ...(evalOption(req).eval?.mode === "measure" ? { evalMode: "measure" as const } : {}),
+    ...(measured ? { evalMode: "measure" as const } : {}),
     participants: [{ model: served }],
-    refs: [`trace:${requestId}`],
+    // A measurement names its board, so what it teaches never reaches that board's measurements.
+    refs: [`trace:${requestId}`, ...(measured ? [`${EVAL_REF_PREFIX}${measured.benchmark}`] : [])],
     resolvedAt: at,
   });
   if (!recorded.created) {

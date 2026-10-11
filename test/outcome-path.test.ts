@@ -160,25 +160,60 @@ describe("one outcome path", () => {
     expect(lessons().reason).toContain("no verdict");
   });
 
-  it("a measurement run is recorded but never teaches or tunes", async () => {
+  it("a measurement run of a named board teaches (as that board) but never tunes", async () => {
     const path = join(dir, "history.jsonl");
-    enableOutcomeLearning(db, {
-      sink: memoryLessonSink(),
-      writer: null,
-      judge: judge(),
-      env: env(),
-    });
+    const sink = memoryLessonSink();
+    enableOutcomeLearning(db, { sink, writer: null, judge: judge(), env: env() });
     const id = file(db, { evalMode: "measure", source: "prophet" });
     resolveForecast(db, id, { outcome: "yes" }, 1);
     await settleDelivery(db);
     await deliverOutcomes(db, { env: env({ MARINA_FORECAST_HISTORY: path }) });
     const o = db.getOutcomeBySubject(`forecast:${id}`)!;
     expect(o).toMatchObject({ eval_mode: "measure", source: "prophet:probability" });
-    expect(db.outcomeDeliveries(o.id).map((d) => [d.consumer, d.state, d.reason])).toEqual([
-      ["history", "skipped", "measurement"],
-      ["lessons", "skipped", "measurement"],
-    ]);
+    const states = db.outcomeDeliveries(o.id).map((d) => [d.consumer, d.state, d.reason]);
+    expect(states[0]).toEqual(["history", "skipped", "measurement"]);
+    expect(states[1]?.[0]).toBe("lessons");
+    expect(states[1]?.[1]).not.toBe("skipped");
     expect(await jsonlHistory(path).all()).toHaveLength(0);
+  });
+
+  it("a measurement run that names no board is skipped (its own board could not be fenced off)", async () => {
+    enableOutcomeLearning(db, {
+      sink: memoryLessonSink(),
+      writer: null,
+      judge: judge(),
+      env: env(),
+    });
+    const id = file(db, { evalMode: "measure" });
+    resolveForecast(db, id, { outcome: "yes" }, 1);
+    await settleDelivery(db);
+    await deliverOutcomes(db, { env: env() });
+    const o = db.getOutcomeBySubject(`forecast:${id}`)!;
+    expect(o).toMatchObject({ eval_mode: "measure", source: "forecast:probability" });
+    expect(db.outcomeDeliveries(o.id).find((d) => d.consumer === "lessons")).toMatchObject({
+      state: "skipped",
+      reason: "measurement without a board",
+    });
+  });
+
+  it("history records the formation that answered and its score (routing evidence)", async () => {
+    const path = join(dir, "history.jsonl");
+    const id = file(db, {
+      probability: 0.7,
+      answerJson: JSON.stringify({
+        pipeline: "typed",
+        typed: { formation: { pattern: "delphi" } },
+      }),
+    });
+    {
+      using _ = scopeProcessState({ env: { MARINA_FORECAST_HISTORY: path } });
+      resolveForecast(db, id, { outcome: "yes" }, 1_900_000_000_000);
+      await settleDelivery(db);
+      await deliverOutcomes(db);
+    }
+    const [record] = await jsonlHistory(path).all();
+    expect(record).toMatchObject({ id: `forecast:${id}`, formation: "delphi" });
+    expect(record!.score).toBeGreaterThan(0.9);
   });
 
   it("history gets a plain probability as a yes/no record, and skips with a reason when unset", async () => {

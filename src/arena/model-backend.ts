@@ -18,6 +18,7 @@ import {
   openRouterModelPrice,
   type TokenUsage,
 } from "../agent/provider-cost";
+import { grownOutputCap, reasoningHeadroomCap } from "../agent/reasoning-control";
 import { dailyCapRefusal, recordSpend } from "../engine/spend-ledger";
 import { HUGGINGFACE_ENV_KEYS, LOCAL_PROVIDERS } from "../net/model-discovery";
 import type { Complete } from "./model-forecaster";
@@ -72,7 +73,13 @@ export function modelAccess(
   spec: string,
   env: NodeJS.ProcessEnv = process.env,
 ): { model: ReturnType<typeof resolveModel>; apiKey: string } {
-  const provider = spec.split("/")[0] ?? "";
+  const provider = spec.split("@")[0]!.split("/")[0] ?? "";
+  if (provider === "marina") {
+    // A Marina /v1 endpoint (this server, or `marina@<host>/…`): any key it accepts.
+    const apiKey = env.MODEL_API_KEYS?.split(",")[0]?.split(":")[0]?.trim();
+    if (!apiKey) throw new Error("no key for marina/* (set MODEL_API_KEYS)");
+    return { model: resolveModel(spec), apiKey };
+  }
   const local = LOCAL_PROVIDERS[provider];
   const apiKey = local
     ? env[local.keyEnv]?.trim() || "local"
@@ -85,7 +92,16 @@ export function modelAccess(
   return { model: resolveModel(spec), apiKey };
 }
 
-/** A `Complete` for `provider/model`, plus the running usage it has accumulated. */
+/** The automatic output cap: room for a model's hidden reasoning, never past its own ceiling. */
+const AUTOMATIC_MAX_TOKENS = 8_000;
+
+/**
+ * A `Complete` for `provider/model` (also `marina/…` through a Marina /v1
+ * endpoint), plus the running usage it has accumulated. Without an explicit
+ * `maxTokens` the cap leaves room for hidden reasoning, and a reply that ends
+ * on its length limit with no text is asked once more with a grown cap; an
+ * explicit cap never grows.
+ */
 export function modelComplete(
   spec: string,
   env: NodeJS.ProcessEnv = process.env,
@@ -93,34 +109,46 @@ export function modelComplete(
 ): { complete: Complete; usage: Usage; contextWindow?: number } {
   const { model, apiKey } = modelAccess(spec, env);
   const usage: Usage = { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
+  const own = (model as { maxTokens?: number }).maxTokens;
+  const ceiling = own && Number.isFinite(own) && own > 0 ? own : 64_000;
+  const automaticCap = reasoningHeadroomCap(AUTOMATIC_MAX_TOKENS, ceiling);
   const complete: Complete = async (system, user) => {
     opts.signal?.throwIfAborted();
     const capped = dailyCapRefusal(env);
     if (capped) throw new Error(capped);
     const messages = [{ role: "user", content: user, timestamp: Date.now() }] as Message[];
-    const result = await piModels.completeSimple(
-      model,
-      { systemPrompt: system, messages },
-      {
-        apiKey,
-        maxTokens: opts.maxTokens ?? 8_000,
-        signal: AbortSignal.any([
-          AbortSignal.timeout(opts.timeoutMs ?? 180_000),
-          ...(opts.signal ? [opts.signal] : []),
-        ]),
-      },
-    );
-    usage.calls++;
-    usage.inputTokens += result.usage?.input ?? 0;
-    usage.outputTokens += result.usage?.output ?? 0;
-    const cost = await callCost(spec, model, result.usage);
-    usage.costUsd += cost;
-    recordSpend("forecast", cost);
-    if (result.stopReason === "error") throw new Error(result.errorMessage ?? "model error");
-    return (Array.isArray(result.content) ? result.content : [])
-      .filter((b): b is TextContent => b.type === "text")
-      .map((b) => b.text)
-      .join("\n");
+    const call = async (maxTokens: number) => {
+      const result = await piModels.completeSimple(
+        model,
+        { systemPrompt: system, messages },
+        {
+          apiKey,
+          maxTokens,
+          signal: AbortSignal.any([
+            AbortSignal.timeout(opts.timeoutMs ?? 180_000),
+            ...(opts.signal ? [opts.signal] : []),
+          ]),
+        },
+      );
+      usage.calls++;
+      usage.inputTokens += result.usage?.input ?? 0;
+      usage.outputTokens += result.usage?.output ?? 0;
+      const cost = await callCost(spec, model, result.usage);
+      usage.costUsd += cost;
+      recordSpend("forecast", cost);
+      if (result.stopReason === "error") throw new Error(result.errorMessage ?? "model error");
+      const text = (Array.isArray(result.content) ? result.content : [])
+        .filter((b): b is TextContent => b.type === "text")
+        .map((b) => b.text)
+        .join("\n");
+      return { text, truncated: result.stopReason === "length" && !text.trim() };
+    };
+    if (opts.maxTokens !== undefined) return (await call(opts.maxTokens)).text;
+    const first = await call(automaticCap);
+    if (!first.truncated) return first.text;
+    // Hidden reasoning spent the whole cap before any text: once more, with room.
+    const grown = grownOutputCap(automaticCap, ceiling);
+    return grown === undefined ? first.text : (await call(grown)).text;
   };
   const window = (model as { contextWindow?: number }).contextWindow;
   return {

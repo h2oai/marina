@@ -34,7 +34,7 @@
  *   MARINA_FORECAST_LOOKUPS    optional structured sources: polymarket, kalshi, odds, fred,
  *                              bls, markets, all, off (default auto: every available
  *                              lookup; keys ODDS_API_KEY, FRED_API_KEY, BLS_API_KEY)
- *   MARINA_FORECAST_VERIFY     on | off (default off): each run's draft is checked by
+ *   MARINA_FORECAST_VERIFY     on | off (default on): each run's draft is checked by
  *                              MARINA_FORECAST_VERIFIER (default: the critic) before it counts
  *   MARINA_FORECAST_RETRIEVAL_FILTER  strict | none (default none): keep only report lines
  *                              whose cited pages are provably published by the cutoff
@@ -323,7 +323,8 @@ export function typedOptionsFromEnv(
       : {}),
     ...(rounds !== undefined ? { researchRounds: rounds } : {}),
     ...(critique === "off" || critique === "false" || critique === "0" ? { critique: false } : {}),
-    ...(verify === "on" || verify === "true" || verify === "1" ? { verify: true } : {}),
+    // On by default (the checker defaults to the critic, so one model runs it too).
+    ...(verify === "off" || verify === "false" || verify === "0" ? {} : { verify: true }),
     ...overrides,
   };
 }

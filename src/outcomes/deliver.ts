@@ -11,16 +11,21 @@
  *   history  one record in MARINA_FORECAST_HISTORY (recalibration, prior
  *            shrink, routing), from the answer's pre-adjustment forecast.
  *
- * One rule set for every producer: a measurement run (`eval_mode = measure`)
- * is recorded but never delivered (`skipped: measurement`); private context
+ * One rule set for every producer. A measurement run (`eval_mode = measure`)
+ * teaches like any other outcome when its board is named (its source or an
+ * `eval:<board>` ref; leakage rule 2 keeps the lesson out of that board's own
+ * measurements) and is skipped otherwise; it never writes history, which tunes
+ * the very forecasts the board measures (`skipped: measurement`). Private context
  * (the question) is read back from the subject row, never stored on the
  * outcome. A delivery that keeps failing ends `failed`, with its reason.
  */
 
 import { Logger } from "../engine/logger";
 import { noteResolvedForecast, noteResolvedRecord } from "../forecast/adjust";
+import { typedFormation } from "../forecast/formations";
 import { type ForecastHistory, historyFromEnv, resolvedRecord } from "../forecast/history";
 import type { TypedForecastAnswer } from "../forecast/typed";
+import { EVAL_REF_PREFIX, sourceNamesBoard } from "../learning/eval-context";
 import { lessonsMode } from "../learning/modes";
 import {
   type LessonSink,
@@ -64,6 +69,17 @@ function typedOf(row: ForecastAnswerRow): TypedForecastAnswer | undefined {
   }
 }
 
+/**
+ * A measurement outcome teaches only when its board is named — by its source
+ * (`futurex:…`) or an `eval:<board>` ref — so leakage rule 2 can keep the
+ * lesson out of that board's own measurements.
+ */
+function measuredBoardNamed(o: OutcomeRow): boolean {
+  if (sourceNamesBoard(o.source)) return true;
+  const refs = (parse(o.refs_json) as string[] | undefined) ?? [];
+  return refs.some((r) => typeof r === "string" && r.startsWith(EVAL_REF_PREFIX));
+}
+
 const parse = (s: string | null) => {
   if (!s) return undefined;
   try {
@@ -93,6 +109,27 @@ function retryOrFail(
 }
 
 /**
+ * The formation that produced a saved answer (a typed answer's `formation`, or
+ * the typed run behind a plain answer) and the outcome's score (0–1, higher is
+ * better) — what `MARINA_FORECAST_ROUTE` compares formations on.
+ */
+function routingEvidence(
+  row: ForecastAnswerRow,
+  o: OutcomeRow,
+): { formation?: string; score?: number } {
+  const a = parse(row.answer_json) as
+    | { formation?: { pattern?: unknown }; typed?: { formation?: { pattern?: unknown } } }
+    | undefined;
+  const formation = typedFormation(
+    String(a?.formation?.pattern ?? a?.typed?.formation?.pattern ?? ""),
+  );
+  return {
+    ...(formation ? { formation } : {}),
+    ...(o.quality !== null && Number.isFinite(o.quality) ? { score: o.quality } : {}),
+  };
+}
+
+/**
  * The history record for a resolved forecast: a typed answer through
  * `noteResolvedForecast` (its pre-adjustment forecast and prior); a plain
  * probability or number from its saved values (that path has no adjustment
@@ -108,6 +145,8 @@ async function deliverHistory(
   const truth = parse(o.truth_json) as { options?: string[]; value?: number } | undefined;
   if (!truth) return "skipped";
   const resolvedAt = new Date(o.resolved_at).toISOString();
+  // Routing evidence: which formation answered, and how well (numbers only).
+  const routed = routingEvidence(row, o);
   const typed = typedOf(row);
   if (typed) {
     const wrote = await noteResolvedForecast(history, {
@@ -116,6 +155,7 @@ async function deliverHistory(
       answer: typed,
       truth,
       resolvedAt,
+      ...routed,
     });
     return wrote || (await history.all()).some((r) => r.id === o.subject) ? "done" : "skipped";
   }
@@ -129,6 +169,7 @@ async function deliverHistory(
         resolvedAt,
         numbers: { value: row.mean, sd: row.sd },
         truth,
+        ...routed,
       }),
     );
     return "done";
@@ -148,6 +189,7 @@ async function deliverHistory(
         resolvedAt,
         numbers: { distribution: { yes: row.probability, no: 1 - row.probability } },
         truth,
+        ...routed,
       }),
     );
     return "done";
@@ -300,8 +342,14 @@ export async function deliverOutcomes(
   const pending = db.pendingOutcomes("lessons", max);
   for (const o of pending) {
     const t = tally("lessons");
-    if (o.eval_mode === "measure" || lessonsOff) {
-      db.setOutcomeDelivery(o.id, "lessons", "skipped", lessonsOff ? "lessons off" : "measurement");
+    const unnamed = o.eval_mode === "measure" && !measuredBoardNamed(o);
+    if (unnamed || lessonsOff) {
+      db.setOutcomeDelivery(
+        o.id,
+        "lessons",
+        "skipped",
+        lessonsOff ? "lessons off" : "measurement without a board",
+      );
       t.skipped++;
       continue;
     }

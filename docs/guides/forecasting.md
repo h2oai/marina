@@ -104,7 +104,8 @@ What happens:
    exceeds the answer's `confidence` (the runs' agreement, or the chosen run's own confidence
    under confidence selection); both are kept in the record.
 
-**Verification** (`MARINA_FORECAST_VERIFY=on`, opt-in) — the verification formation inside one
+**Verification** (`MARINA_FORECAST_VERIFY`, on by default; `off` skips it; `--formation verify`
+turns it on for one CLI run) — the verification formation inside one
 forecast: before a run counts, an independent verifier (`MARINA_FORECAST_VERIFIER`, default the
 critic) checks its draft against the dossier and the resolution rules — option semantics, unit and
 scale, the latest reading, arithmetic — and a concrete correction replaces the draft. Each run
@@ -281,7 +282,9 @@ log-odds mean stands unshrunk, and extremity is left to calibration. With one
 configured model, every role runs on it. Rankings and short strings have no prior: the two
 proposals are combined like runs.
 
-**Formation routing** (`MARINA_FORECAST_ROUTE=observe|on`, `POST /v1/forecast`;
+**Formation routing** (`MARINA_FORECAST_ROUTE=off|observe|on`, default `observe`: the pick is
+recorded on every answer while the default formation answers; every forecast surface. Resolved
+history — kept by default next to the world database — carries each answer's formation and score;
 `src/forecast/routing.ts`). For each question class (the caller's `category` if it has enough
 records, else the answer group), a candidate formation replaces the default only when both hold:
 
