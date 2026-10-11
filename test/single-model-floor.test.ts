@@ -197,7 +197,8 @@ describe("forecasting on a single local model", () => {
     expect(made.scale.tier).toBe("degraded");
     expect(made.scale.analysts).toEqual(["llama/test-model"]);
     expect(made.scale.retriever).toBe("search");
-    expect(made.scale.judge).toBe("none");
+    // Decisions are on by default (auto): the one local model also judges.
+    expect(made.scale.judge).toBe("test-model");
     expect(made.scale.notes.join(" ")).toContain("single model");
   });
 
@@ -264,8 +265,8 @@ describe("decisions on a single local model", () => {
     expect(researchJudge("jev", process.env, undefined)?.model).toBe("test-model");
   });
 
-  it("with no backend at all the judge is absent (equal weights), not an error", () => {
-    using _ = scopeProcessState({ env: localOnly() });
+  it("with decisions off the judge is absent (equal weights), not an error", () => {
+    using _ = scopeProcessState({ env: { ...localOnly(), MARINA_DECISIONS: "off" } });
     expect(researchJudge("jev", process.env, undefined)).toBeUndefined();
   });
 });

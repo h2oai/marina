@@ -16,7 +16,10 @@ import {
 } from "../../../coding/task-run";
 import { codingWorkerState } from "../../../coding/worker-state";
 import { TaskManager } from "../../../coordination/task-manager";
-import { recordTaskVerdict } from "../../../outcomes/live";
+import { harnessDecisionProvider } from "../../../decisions/engines";
+import { judgeOpinion } from "../../../decisions/policy";
+import { decisionVerifyMode, verifySubmission } from "../../../decisions/verify";
+import { recordTaskOpinion, recordTaskVerdict } from "../../../outcomes/live";
 import type { CodingArtifactRow, MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
 import { getErrorMessage } from "../../errors";
@@ -276,8 +279,75 @@ export async function submitSessionRun(
       timestamp: Date.now(),
     });
     publishCodingRun(deps, run);
+    observeCodingSubmission(deps, run, worker, summary.content_text ?? "");
   }
   return run;
+}
+
+/**
+ * The submission verifier on a Code Mode submit (`MARINA_DECISION_VERIFY`,
+ * default observe): the same judge `task submit` uses scores the submitted
+ * summary in the background and its opinion is recorded beside the
+ * submission (`judge_observations` + the task's outcome opinion), so its
+ * agreement with the owner's verdict is measured. A Code Mode submission has
+ * already passed its required checks, so the judge never bounces it — under
+ * `on` too its opinion is advice; approval still decides. Never throws.
+ */
+export function observeCodingSubmission(
+  deps: CodeDeps & { db: MarinaDB },
+  run: CodingArtifactRow,
+  worker: Entity,
+  summaryText: string,
+): void {
+  const mode = decisionVerifyMode();
+  const provider = mode === "off" ? undefined : harnessDecisionProvider();
+  if (!provider) return;
+  const meta = codingRunMetadata(run);
+  const task = deps.db.getTask(meta.taskId);
+  if (!task) return;
+  const observation = verifySubmission(provider, task, summaryText, 1)
+    .then((verdict) => {
+      const evaluator = `${verdict.provider ?? provider.kind}:${verdict.model ?? provider.model}`;
+      const opinion = verdict.error ? "none" : judgeOpinion(verdict.signals, ["delivered"]);
+      deps.logEvent?.({
+        type: "agent_decision",
+        name: worker.name,
+        stage: "verify",
+        verdict: "observed",
+        subject: `task #${meta.taskId}`,
+        reason: verdict.reason,
+        signals: verdict.signals,
+        ...(verdict.provider ? { provider: verdict.provider } : {}),
+        ...(verdict.model ? { model: verdict.model } : {}),
+        ...(verdict.latencyMs === undefined ? {} : { latencyMs: verdict.latencyMs }),
+        ...(verdict.costUsd === undefined ? {} : { costUsd: verdict.costUsd }),
+        ...(verdict.error ? { error: verdict.error } : {}),
+        timestamp: Date.now(),
+      });
+      deps.db.recordJudgeObservation({
+        taskId: meta.taskId,
+        claimantName: worker.name,
+        evaluator,
+        calibrated: provider.calibrated !== false,
+        mode: "observe",
+        opinion,
+        signals: verdict.signals,
+        ...(verdict.error ? { error: verdict.error.slice(0, 300) } : {}),
+      });
+      recordTaskOpinion(deps.db, {
+        taskId: meta.taskId,
+        claimant: worker.name,
+        judge: evaluator,
+        opinion,
+      });
+    })
+    .catch((error) =>
+      logger.warn("code", "Submission verifier opinion not recorded", {
+        runId: run.id,
+        error: getErrorMessage(error),
+      }),
+    );
+  deps.trackBackground?.(observation);
 }
 
 /** Review remains the canonical task approval path, exposed within Code Mode. */

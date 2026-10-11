@@ -475,11 +475,15 @@ export function computeReadiness(engine: Engine): ReadinessReport {
       id: "decisions",
       label: "Decisions (route / gate / verify)",
       status: "off",
-      detail: classifierEngineModels(env)
-        ? "MARINA_DECISIONS unset — no configured backend; Marina's own engines still answer /v1/systemone (see decision-engines)"
-        : "MARINA_DECISIONS unset — no decision backend; /v1/decisions returns 404",
+      detail:
+        (env.MARINA_DECISIONS?.trim().toLowerCase() === "off"
+          ? "MARINA_DECISIONS=off"
+          : `MARINA_DECISIONS=${env.MARINA_DECISIONS?.trim() || "auto"} found no provider to answer with`) +
+        (classifierEngineModels(env)
+          ? " — no configured backend; Marina's own engines still answer /v1/systemone (see decision-engines)"
+          : " — no decision backend; /v1/decisions returns 404"),
       remediation:
-        "Turn a backend on at runtime (operator): `admin decisions set backend jev` or Admin → Ops → Decisions; or set MARINA_DECISIONS=decisions-api (Jev family / OpenJev) / chat-classifier (any chat model) in the environment — see config/environment.reference.",
+        "Configure any model provider (auto then answers through it), turn a backend on at runtime (operator): `admin decisions set backend jev` or Admin → Ops → Decisions; or set MARINA_DECISIONS=decisions-api (Jev family / OpenJev) / chat-classifier (any chat model) in the environment — see config/environment.reference.",
     });
   } else if (!decisions.apiKey && /^https:\/\//.test(decisions.baseUrl)) {
     checks.push({
@@ -511,8 +515,8 @@ export function computeReadiness(engine: Engine): ReadinessReport {
       label: "Decisions (route / gate / verify)",
       status: "ok",
       detail:
-        `${decisions.kind} → ${decisions.model}; agent tool gate ${harnessGateEnabled(env) ? "on" : "off"} (MARINA_DECISION_GATE)` +
-        (decisions.kind === "chat-classifier"
+        `${decisions.kind} → ${decisions.model}${decisions.kind === "marina-self" ? " through Marina's own /v1" : ` at ${decisions.baseUrl}`} (MARINA_DECISIONS=${env.MARINA_DECISIONS?.trim() || "auto"}); agent tool gate ${harnessGateEnabled(env) ? "on" : "off"} (MARINA_DECISION_GATE)` +
+        (decisions.kind !== "decisions-api"
           ? " — scores are uncalibrated: the gate uses one threshold (0.5) and asks a person; a decisions-api / typesafe backend gives graded probabilities"
           : ""),
     });

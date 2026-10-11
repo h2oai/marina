@@ -146,9 +146,15 @@ export function challengesEnabled(env: NodeJS.ProcessEnv = process.env): boolean
 
 export type JudgeMode = "off" | "observe" | "on";
 
+/**
+ * `MARINA_CHALLENGE_JUDGE`: `observe` (default — score held commands in
+ * shadow so the judge's agreement with people can be measured; nothing is
+ * scored without a decision provider), `on` (may approve earned classes),
+ * `off`.
+ */
 export function judgeMode(env: NodeJS.ProcessEnv = process.env): JudgeMode {
   const v = env.MARINA_CHALLENGE_JUDGE?.trim().toLowerCase();
-  return v === "on" || v === "observe" ? v : "off";
+  return v === "on" || v === "off" ? v : "observe";
 }
 
 /** The judge earns a class after this many people-answered cases it called allow… */

@@ -315,9 +315,29 @@ describe("gate runtime", () => {
 });
 
 describe("config", () => {
-  it("is off by default and only an explicit backend turns it on", () => {
+  it("is on when a provider exists (auto), off without one or when told", () => {
     expect(decisionConfigFromEnv({})).toBeUndefined();
     expect(decisionConfigFromEnv({ MARINA_DECISIONS: "off" })).toBeUndefined();
+    expect(decisionConfigFromEnv({ MARINA_DECISIONS: "off", OPENROUTER_API_KEY: "or" })).toBe(
+      undefined,
+    );
+    // Unset / on / auto: a chat classifier on the provider the world already has.
+    for (const v of [undefined, "on", "auto"]) {
+      expect(
+        decisionConfigFromEnv({ MARINA_DECISIONS: v, OPENROUTER_API_KEY: "or" }),
+      ).toMatchObject({ kind: "chat-classifier", model: "openai/gpt-6-luna", apiKey: "or" });
+    }
+    // Only a direct vendor key: Marina's own /v1 answers with its default model,
+    // never a keyless OpenRouter call that fails closed.
+    expect(decisionConfigFromEnv({ ANTHROPIC_API_KEY: "a" })).toMatchObject({
+      kind: "marina-self",
+      model: "marina/default",
+      baseUrl: "http://localhost:3300/v1",
+    });
+    expect(
+      decisionConfigFromEnv({ MARINA_DECISIONS: "llm", OPENAI_API_KEY: "o", WS_PORT: "4100" }),
+    ).toMatchObject({ kind: "marina-self", baseUrl: "http://localhost:4100/v1" });
+    expect(decisionConfigFromEnv({ MARINA_DECISIONS: "llm" })).toBeUndefined();
     expect(decisionConfigFromEnv({ MARINA_DECISIONS: "jev", OPENROUTER_API_KEY: "or" })).toEqual({
       kind: "decisions-api",
       model: "typesafe/jev-1.13",
@@ -328,7 +348,9 @@ describe("config", () => {
     });
     // chat-classifier defaults to a current cheap model on the hosts Marina
     // knows (OpenRouter, the HF router); any other base URL must name one.
-    expect(decisionConfigFromEnv({ MARINA_DECISIONS: "llm" })?.model).toBe("openai/gpt-6-luna");
+    expect(
+      decisionConfigFromEnv({ MARINA_DECISIONS: "llm", OPENROUTER_API_KEY: "or" })?.model,
+    ).toBe("openai/gpt-6-luna");
     expect(
       decisionConfigFromEnv({
         MARINA_DECISIONS: "llm",

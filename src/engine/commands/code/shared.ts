@@ -391,6 +391,8 @@ export interface CodeDeps {
   ) => Promise<VisualDescription>;
   verificationRunner?: VerificationRunner;
   logEvent?: (event: EngineEvent) => void;
+  /** Background work the engine drains before shutdown (the submission verifier). */
+  trackBackground?: (work: Promise<void>) => void;
   agentRuntime?: CodingAgentRuntime;
   answerPrompt?: CodePromptAnswerer;
   channelManager?: ChannelManager;

@@ -36,6 +36,7 @@
  */
 
 import type { DecisionProvider } from "../decisions/types";
+import { availableModels } from "../agent/available-models";
 import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import { dailyCapRefusal } from "../engine/spend-ledger";
@@ -59,13 +60,19 @@ const logger = new Logger();
 
 export type WorkLearnMode = "off" | "observe" | "on";
 
-/** `MARINA_LESSONS_FROM_WORK` (default off). `MARINA_LESSONS=off` turns it off too. */
+/**
+ * `MARINA_LESSONS_FROM_WORK`. Unset: `on` when the world has a model provider
+ * to write and judge lessons with (spend-capped, ≤ 20 per flush), `observe`
+ * otherwise (signals counted, nothing written). `MARINA_LESSONS=off` turns it
+ * off too.
+ */
 export function lessonsFromWorkMode(env: NodeJS.ProcessEnv = process.env): WorkLearnMode {
   if (lessonsMode(env) === "off") return "off";
   const v = env.MARINA_LESSONS_FROM_WORK?.trim().toLowerCase();
   if (v === "on" || v === "true" || v === "1") return "on";
   if (v === "observe") return "observe";
-  return "off";
+  if (v === "off" || v === "false" || v === "0") return "off";
+  return availableModels(env).length > 0 ? "on" : "observe";
 }
 
 /** Where an outcome of work came from. */

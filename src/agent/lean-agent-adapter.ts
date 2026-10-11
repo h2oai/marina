@@ -81,6 +81,7 @@ import {
 import { AgentObligations } from "../obligations/agent";
 import { AgentArgcheck } from "../obligations/argcheck-agent";
 import { readOnlyByName } from "../obligations/ledger";
+import { obligationsMode } from "../obligations/mode";
 import { capReviewMode, obligationsReviewMode } from "../obligations/review";
 import { dispatchedCall, readOnlyCall } from "../obligations/tool-call";
 import { outputRepairMode, repairFinalAnswer } from "../repair/output-repair";
@@ -1205,11 +1206,13 @@ export class LeanAgentAdapter implements AgentHandle {
   /** The agent's API key, resolved per call (rotation-safe); set in the constructor. */
   private resolveKeyNow: () => Promise<string | undefined> = async () => undefined;
   /**
-   * Obligations ledger (`MARINA_OBLIGATIONS=off|observe|on`, default off): the
-   * requests this agent owes work on, settled by matching successful actions.
-   * Its calls use the agent's own model (one model is enough).
+   * Obligations ledger (`MARINA_OBLIGATIONS=off|observe|on`; unset: on while
+   * working a Code Mode task, observe otherwise): the requests this agent owes
+   * work on, settled by matching successful actions. Its calls use the
+   * agent's own model (one model is enough).
    */
   private readonly obligations = new AgentObligations({
+    mode: () => obligationsMode(process.env, { coder: this.activeCodingTask !== null }),
     complete: (system, user) => this.obligationsComplete(system, user),
     provider: () => harnessDecisionProvider(),
     // The agent's own `review` loop preference, within the operator's ceiling.

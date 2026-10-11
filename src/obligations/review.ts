@@ -18,9 +18,9 @@
  *              (`MARINA_OBLIGATIONS_REVIEW_RULE_BYTES`): do those rules, applied
  *              to the conversation's facts, forbid it or require a step first?
  *
- *   off      nothing runs, no call is made (the default);
+ *   off      nothing runs, no call is made;
  *   observe  the questions are asked and counted; the reply is untouched;
- *   auto     per conversation, at the first write it would review, a selection
+ *   auto     (the default) per conversation, at the first write it would review, a selection
  *            decides whether the task warrants the review: no requests and no
  *            rule text → no (free); otherwise ONE decision question (would a
  *            mistaken action on someone's behalf here be costly or hard to undo,
@@ -59,9 +59,9 @@ export function parseReviewMode(raw: string | null | undefined): ReviewMode | un
   return v === "off" || v === "observe" || v === "auto" || v === "on" ? v : undefined;
 }
 
-/** The operator's ceiling (`MARINA_OBLIGATIONS_REVIEW`, read live; default off). */
+/** The operator's ceiling (`MARINA_OBLIGATIONS_REVIEW`, read live; default auto). */
 export function obligationsReviewMode(env: NodeJS.ProcessEnv = process.env): ReviewMode {
-  return parseReviewMode(env.MARINA_OBLIGATIONS_REVIEW) ?? "off";
+  return parseReviewMode(env.MARINA_OBLIGATIONS_REVIEW) ?? "auto";
 }
 
 /** A chosen mode never exceeds the ceiling; no choice means the ceiling. */

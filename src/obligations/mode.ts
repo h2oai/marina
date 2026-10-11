@@ -5,11 +5,13 @@ import type { ArgcheckTrigger } from "./argcheck";
 
 /**
  * `MARINA_OBLIGATIONS=off|observe|on` — the obligations ledger for Marina's own
- * agent loops (residents, crews, Code Mode coders). Default `off`: nothing is
- * extracted, no call is made, prompts are unchanged. `observe` extracts and
- * tracks (and logs counts) without showing anything to the model; `on` also
- * lists open obligations in the continuation prompt and nudges a run that
- * would end with one open (once per obligation).
+ * agent loops (residents, crews, Code Mode coders). Unset: `on` while an agent
+ * works a Code Mode task (a coder, a CLI one-shot), `observe` otherwise. `off`:
+ * nothing is extracted, no call is made, prompts are unchanged. `observe`
+ * extracts and tracks (and logs counts) without showing anything to the model;
+ * `on` also lists open obligations in the continuation prompt and nudges a run
+ * that would end with one open (once per obligation). The ledger's calls use
+ * the decision layer or the agent's own model, so one model is enough.
  *
  * The `/v1` passthru never reads this: a request opts in itself
  * (`marina/obligations:<model>` or `x-marina-obligations: on|observe`).
@@ -24,8 +26,11 @@ export function parseObligationsMode(raw: string | undefined | null): Obligation
   return undefined;
 }
 
-export function obligationsMode(env: NodeJS.ProcessEnv = process.env): ObligationsMode {
-  return parseObligationsMode(env.MARINA_OBLIGATIONS) ?? "off";
+export function obligationsMode(
+  env: NodeJS.ProcessEnv = process.env,
+  scope: { coder?: boolean } = {},
+): ObligationsMode {
+  return parseObligationsMode(env.MARINA_OBLIGATIONS) ?? (scope.coder ? "on" : "observe");
 }
 
 /**
@@ -39,16 +44,18 @@ export function obligationsModel(env: NodeJS.ProcessEnv = process.env): string |
 
 /**
  * `MARINA_ARGCHECK=off|observe|on` — the argument check before a state-changing
- * tool call in Marina's own agent loops (`argcheck.ts`). Default `off`: nothing
- * is checked. `observe` checks and logs counts; `on` also refuses a call whose
- * arguments the conversation does not support, once per call signature, with
- * the reason (the model decides what to send next).
+ * tool call in Marina's own agent loops (`argcheck.ts`). Default `on` with the
+ * `flagged` trigger: the mechanical pass is free, and only a call carrying a
+ * value nobody stated first-hand reaches the judge. `observe` checks and logs
+ * counts; `on` also refuses a call whose arguments the conversation does not
+ * support, once per call signature, with the reason (the model decides what
+ * to send next); `off` checks nothing.
  *
  * The `/v1` passthru never reads this: a request opts in itself
  * (`marina/argcheck:<model>` or `x-marina-argcheck: on|observe`).
  */
 export function argcheckMode(env: NodeJS.ProcessEnv = process.env): ObligationsMode {
-  return parseObligationsMode(env.MARINA_ARGCHECK) ?? "off";
+  return parseObligationsMode(env.MARINA_ARGCHECK) ?? "on";
 }
 
 /**

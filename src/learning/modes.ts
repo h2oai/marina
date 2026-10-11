@@ -31,16 +31,18 @@ export function lessonsMetaMode(env: NodeJS.ProcessEnv = process.env): LessonsMo
 }
 
 /**
- * `MARINA_LESSONS_RESIDENT=off|observe|on` (default off): resident agents'
+ * `MARINA_LESSONS_RESIDENT=off|observe|on` (default on): resident agents'
  * continuation prompt. `on` adds a `[Lessons]` section for the agent's focus
- * (judged lessons from every domain, cross-board meta included, labelled);
- * `observe` logs the ids it would have shown; `off` never asks. Capped by
- * `MARINA_LESSONS` (off ⇒ off, observe ⇒ at most observe).
+ * (judged lessons from every domain, cross-board meta included, labelled; a
+ * lexical recall, no model call); `observe` logs the ids it would have shown;
+ * `off` never asks. Capped by `MARINA_LESSONS` (off ⇒ off, observe ⇒ at most
+ * observe).
  */
 export function residentLessonsMode(env: NodeJS.ProcessEnv = process.env): LessonsMode {
   const base = lessonsMode(env);
   const v = env.MARINA_LESSONS_RESIDENT?.trim().toLowerCase();
-  const mode: LessonsMode = v === "on" || v === "true" ? "on" : v === "observe" ? "observe" : "off";
+  const mode: LessonsMode =
+    v === "off" || v === "false" || v === "0" ? "off" : v === "observe" ? "observe" : "on";
   if (base === "off") return "off";
   return mode === "on" && base === "observe" ? "observe" : mode;
 }

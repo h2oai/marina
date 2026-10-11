@@ -2,9 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Decision configuration, read from `process.env` on every call. OFF by
- * default: a decision backend receives tool arguments and request text, so
- * sending them to a third party is an explicit operator choice. Besides the
+ * Decision configuration, read from `process.env` on every call. ON by default
+ * when a provider is available (`auto`): a chat classifier on a provider the
+ * world already sends its prompts to — OpenRouter with its key, else the
+ * Hugging Face router with its key, else a configured local runtime, else
+ * Marina's own `/v1` with its default model. With no provider at all,
+ * decisions are off. A backend that receives tool arguments from a NEW third
+ * party (Jev, TypeSafe) stays an explicit choice; `MARINA_DECISIONS=off` turns
+ * decisions off. Besides the
  * environment, an OPERATOR can change most of these at runtime through
  * `settings.ts` (`admin decisions set …` / Admin → Ops → Decisions: rank 5 +
  * `admin.destructive`, refused for any agent-driven entity, audited), which
@@ -12,9 +17,12 @@
  * environment locks that setting; base URLs, paths and API keys
  * (`MARINA_DECISION_BASE_URL`, `_PATH`, `_API_KEY`) are env-only.
  *
- *   MARINA_DECISIONS           off (default) | decisions-api (alias jev) |
- *                              typesafe (TypeSafe's direct API) |
- *                              chat-classifier (alias classifier, llm)
+ *   MARINA_DECISIONS           auto (default; alias on: chat-classifier on the
+ *                              best available host) | off | decisions-api
+ *                              (alias jev) | typesafe (TypeSafe's direct API) |
+ *                              chat-classifier (alias classifier, llm). A chat
+ *                              classifier with no host of its own answers
+ *                              through Marina's own `/v1` (`marina-self`).
  *   MARINA_DECISION_MODEL      backend model id. decisions-api default
  *                              `typesafe/jev-1.13` (pin a version; any Jev-family
  *                              or OpenJev id works). chat-classifier: default
@@ -48,11 +56,16 @@ import { availableModels } from "../agent/available-models";
 import { positiveNumberFromEnv } from "../engine/constants";
 import { dailyCapRefusal, recordSpend } from "../engine/spend-ledger";
 import { LOCAL_PROVIDERS, localProviderBaseUrl } from "../net/model-discovery";
+import { selfModelToken } from "../net/self-model-token";
 import { type ClassifierMethod, parseClassifierMethod } from "./classifier-methods";
 import { chatClassifierProvider, decisionsApiProvider } from "./providers";
 import { DecisionError, type DecisionProvider } from "./types";
 
-export type DecisionBackendKind = "decisions-api" | "chat-classifier";
+/**
+ * `marina-self`: a chat classifier answering through this Marina's own `/v1`
+ * (the self-proxy bearer, every provider Marina routes, its spend ledger).
+ */
+export type DecisionBackendKind = "decisions-api" | "chat-classifier" | "marina-self";
 
 export interface DecisionConfig {
   kind: DecisionBackendKind;
@@ -105,8 +118,18 @@ const PRESETS: Record<
   },
 };
 
+/** The self-proxy model when no MARINA_DECISION_MODEL is set: Marina's default upstream. */
+export const SELF_CLASSIFIER_MODEL = "marina/default";
+/** A classifier through the self-proxy may take several calls (auto method). */
+const SELF_CLASSIFIER_TIMEOUT_MS = 15_000;
+
 function preset(raw: string | undefined): Preset | undefined {
   switch ((raw ?? "").trim().toLowerCase()) {
+    // Unset, `on` and `auto`: a chat classifier on the best available host.
+    case "":
+    case "on":
+    case "auto":
+      return "chat-classifier";
     case "decisions-api":
     case "jev":
       return "openrouter";
@@ -159,6 +182,26 @@ function classifierHost(
     : undefined;
 }
 
+/** `http://localhost:$WS_PORT/v1` — this Marina's own `/v1`. */
+export function selfDecisionBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
+  return `http://localhost:${Number(env.WS_PORT) || 3300}/v1`;
+}
+
+/** A chat classifier on Marina's own `/v1`, when the world routes any model at all. */
+function selfConfig(env: NodeJS.ProcessEnv): DecisionConfig | undefined {
+  if (availableModels(env).length === 0) return undefined;
+  const tuning = classifierTuning(env);
+  return {
+    kind: "marina-self",
+    model: env.MARINA_DECISION_MODEL?.trim() || SELF_CLASSIFIER_MODEL,
+    baseUrl: selfDecisionBaseUrl(env),
+    timeoutMs:
+      positiveNumberFromEnv("MARINA_DECISION_TIMEOUT_MS", env) ?? SELF_CLASSIFIER_TIMEOUT_MS,
+    method: tuning.method ?? "auto",
+    ...(tuning.samples === undefined ? {} : { samples: tuning.samples }),
+  };
+}
+
 /** Parse the decision config, or undefined when decisions are off / incomplete. */
 export function decisionConfigFromEnv(
   env: NodeJS.ProcessEnv = process.env,
@@ -168,6 +211,17 @@ export function decisionConfigFromEnv(
   const d = PRESETS[name];
   const kind = d.kind;
   const sized = kind === "chat-classifier" ? classifierHost(env) : undefined;
+  // A chat classifier with nowhere of its own to run (no OpenRouter or Hugging
+  // Face key, no local runtime, no base URL) answers through Marina's own
+  // `/v1` instead of failing closed on a keyless OpenRouter call.
+  if (
+    kind === "chat-classifier" &&
+    !sized &&
+    !env.OPENROUTER_API_KEY?.trim() &&
+    !env.MARINA_DECISION_BASE_URL?.trim()
+  ) {
+    return selfConfig(env);
+  }
   const baseUrl = env.MARINA_DECISION_BASE_URL?.trim() || sized?.baseUrl || d.baseUrl;
   const model =
     env.MARINA_DECISION_MODEL?.trim() ||
@@ -216,7 +270,37 @@ export function classifierTuning(env: NodeJS.ProcessEnv = process.env): {
   };
 }
 
+/**
+ * A chat classifier on Marina's own `/v1`. The bearer is resolved on first use
+ * (the in-process internal token, or the operator/local key from a CLI). The
+ * passthru hop records the upstream spend itself, so this checks the cap but
+ * never records the reported cost a second time.
+ */
+function selfClassifierProvider(config: DecisionConfig): DecisionProvider {
+  let inner: DecisionProvider | undefined;
+  return {
+    kind: "marina-self",
+    model: config.model,
+    calibrated: false,
+    async ask(request, signal) {
+      const capped = dailyCapRefusal();
+      if (capped) throw new DecisionError(capped, "spend_cap", 429);
+      inner ??= chatClassifierProvider({
+        baseUrl: config.baseUrl,
+        model: config.model,
+        apiKey: await selfModelToken(),
+        timeoutMs: config.timeoutMs,
+        method: config.method ?? "auto",
+        structured: true,
+        ...(config.samples === undefined ? {} : { samples: config.samples }),
+      });
+      return { ...(await inner.ask(request, signal)), provider: "marina-self" };
+    },
+  };
+}
+
 export function providerFromConfig(config: DecisionConfig): DecisionProvider {
+  if (config.kind === "marina-self") return selfClassifierProvider(config);
   const opts = {
     baseUrl: config.baseUrl,
     model: config.model,

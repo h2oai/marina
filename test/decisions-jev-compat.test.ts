@@ -232,7 +232,7 @@ describe("research judge", () => {
     expect(
       researchJudge(
         "decisions",
-        { MARINA_DECISIONS: "classifier", MARINA_DECISION_MODEL: "x" },
+        { MARINA_DECISIONS: "classifier", MARINA_DECISION_MODEL: "x", OPENROUTER_API_KEY: "k" },
         "k",
       )?.calibrated,
     ).toBe(false);
