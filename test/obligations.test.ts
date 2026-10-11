@@ -1165,14 +1165,17 @@ describe("POST /v1/chat/completions with the obligations ledger", () => {
       const auth = { Authorization: "Bearer sk-bound" };
       const r = await post({ model: MODEL, messages: opening, tools: TOOLS }, auth);
       expect(r.status).toBe(200);
-      expect(r.headers.get("x-marina-stack")).toBe("lessons,obligations,argcheck; source=default");
+      // Lessons from work default on with a provider, so the stack also learns.
+      expect(r.headers.get("x-marina-stack")).toBe(
+        "lessons,obligations,argcheck,learn; source=default",
+      );
       expect(seen[0]!.kind).toBe("extract");
       seen = [];
       const off = await post(
         { model: MODEL, messages: opening, tools: TOOLS },
         { ...auth, "x-marina-obligations": "off" },
       );
-      expect(off.headers.get("x-marina-stack")).toBe("lessons,argcheck; source=default");
+      expect(off.headers.get("x-marina-stack")).toBe("lessons,argcheck,learn; source=default");
       expect(seen.map((s) => s.kind)).not.toContain("extract");
       // The operator can turn the default off.
       process.env.MARINA_PASSTHRU_STACK = "off";
