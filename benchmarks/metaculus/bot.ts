@@ -67,6 +67,8 @@ export interface ForecastMeta {
   /** The configuration that forecast (label), disclosed in the comment too. */
   config?: string;
   critiqueApplied?: boolean;
+  /** The question's scheduled resolve time when it was filed: past it, the resolve pass checks it first. */
+  resolvesAt?: string;
 }
 
 export interface PassOptions {
@@ -299,6 +301,7 @@ function metaFor(
     cutoff: answer.cutoff.at,
     runs: answer.runs.length,
     ...(answer.critique?.applied ? { critiqueApplied: true } : {}),
+    ...(q.scheduled_resolve_time ? { resolvesAt: q.scheduled_resolve_time } : {}),
   };
   if (payload.probability_yes !== null) meta.probabilityYes = payload.probability_yes;
   if (payload.probability_yes_per_category) meta.perCategory = payload.probability_yes_per_category;
@@ -395,21 +398,92 @@ export interface ResolveOptions {
   learn?: (o: Outcome) => void;
   now?: () => Date;
   log?: (line: string) => void;
+  /**
+   * At most this many question lookups per pass (default {@link RESOLVE_MAX_CHECKS}). Questions
+   * past their scheduled resolve time go first; the rest rotate across passes, so an early
+   * resolution is still found without fetching every open question every pass.
+   */
+  maxChecks?: number;
+  /** Pause between lookups (default {@link RESOLVE_PACE_MS}). */
+  paceMs?: number;
+  /** How long one rotation window lasts (default {@link RESOLVE_ROTATE_MS}). */
+  rotateMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/** Lookups per resolve pass: a pass runs every 20 minutes, so this is ~36 lookups an hour. */
+export const RESOLVE_MAX_CHECKS = 12;
+export const RESOLVE_PACE_MS = 2_000;
+export const RESOLVE_ROTATE_MS = 20 * 60_000;
+
+/** A rate-limit refusal (HTTP 429, including Cloudflare 1015): stop the pass, try next time. */
+export function isRateLimited(err: unknown): boolean {
+  return / → 429:|\b1015\b/.test((err as Error)?.message ?? "");
+}
+
+/**
+ * The rows to look up this pass: due rows (scheduled resolve time passed) oldest first, then a
+ * rotating window over the rest, `max` in all.
+ */
+export function resolveOrder<T extends { resolvesAt?: string }>(
+  rows: T[],
+  nowMs: number,
+  max: number,
+  rotateMs: number,
+): T[] {
+  const due: T[] = [];
+  const rest: T[] = [];
+  for (const r of rows) {
+    const at = r.resolvesAt ? Date.parse(r.resolvesAt) : Number.NaN;
+    (Number.isFinite(at) && at <= nowMs ? due : rest).push(r);
+  }
+  due.sort((a, b) => Date.parse(a.resolvesAt!) - Date.parse(b.resolvesAt!));
+  const room = Math.max(0, max - due.length);
+  if (room === 0 || rest.length === 0) return due.slice(0, max);
+  if (rest.length <= room) return [...due, ...rest];
+  const start = (Math.floor(nowMs / rotateMs) * room) % rest.length;
+  const window = [...rest.slice(start), ...rest.slice(0, start)].slice(0, room);
+  return [...due, ...window];
 }
 
 /** Score every recorded question that has resolved since; learn from it; record it once. */
-export async function resolvePass(
-  opts: ResolveOptions,
-): Promise<{ checked: number; resolved: number; learned: number; failed: number }> {
+export async function resolvePass(opts: ResolveOptions): Promise<{
+  checked: number;
+  resolved: number;
+  learned: number;
+  failed: number;
+  pending: number;
+  rateLimited: boolean;
+}> {
   const now = opts.now ?? (() => new Date());
   const log = opts.log ?? (() => {});
+  const sleep = opts.sleep ?? ((ms: number) => Bun.sleep(ms));
+  const paceMs = opts.paceMs ?? RESOLVE_PACE_MS;
   const done = new Set(
     opts.db.listExternalSubmissions(OUTCOME_BENCHMARK, 10_000).map((r) => r.file_sha256),
   );
-  const out = { checked: 0, resolved: 0, learned: 0, failed: 0 };
+  const open: Array<{ row: ExternalSubmissionRow; meta: ForecastMeta; resolvesAt?: string }> = [];
   for (const row of opts.db.listExternalSubmissions(BENCHMARK, 10_000)) {
     const meta = row.meta_json ? (JSON.parse(row.meta_json) as ForecastMeta) : undefined;
     if (!meta || done.has(outcomeKey(meta.questionId))) continue;
+    open.push({ row, meta, ...(meta.resolvesAt ? { resolvesAt: meta.resolvesAt } : {}) });
+  }
+  const batch = resolveOrder(
+    open,
+    now().getTime(),
+    opts.maxChecks ?? RESOLVE_MAX_CHECKS,
+    opts.rotateMs ?? RESOLVE_ROTATE_MS,
+  );
+  const out = {
+    checked: 0,
+    resolved: 0,
+    learned: 0,
+    failed: 0,
+    pending: open.length,
+    rateLimited: false,
+  };
+  for (const { row, meta } of batch) {
+    if (out.checked > 0 && paceMs > 0) await sleep(paceMs);
     out.checked++;
     try {
       const q = (await opts.client.post(meta.postId)).question;
@@ -440,8 +514,14 @@ export async function resolvePass(
         created_at: now().getTime(),
       });
       out.resolved++;
+      out.pending--;
       log(`  q${meta.questionId} resolved · score ${score?.toFixed(3) ?? "n/a"}`);
     } catch (err) {
+      if (isRateLimited(err)) {
+        out.rateLimited = true;
+        log(`  rate limited at q${meta.questionId}; the rest wait for the next pass`);
+        break;
+      }
       out.failed++;
       log(`  q${meta.questionId} resolve failed: ${(err as Error).message.slice(0, 200)}`);
     }

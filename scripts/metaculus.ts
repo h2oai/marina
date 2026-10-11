@@ -218,7 +218,7 @@ async function resolveCmd(db: MarinaDB): Promise<number> {
   await settleOutcomes(db);
   await settleDelivery(db);
   log(
-    `resolve: checked ${r.checked} · resolved ${r.resolved} · learned ${r.learned} · failed ${r.failed}`,
+    `resolve: checked ${r.checked} · resolved ${r.resolved} · learned ${r.learned} · failed ${r.failed} · pending ${r.pending}${r.rateLimited ? " · rate limited (resumes next pass)" : ""}`,
   );
   return 0;
 }
