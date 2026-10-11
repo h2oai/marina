@@ -24,6 +24,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { ATTACH_USAGE } from "./code-attach";
 
+/** Verification a one-shot `-p` task must pass before it can submit. */
+export const PRINT_VERIFICATION_MODES = ["checks", "candidate", "delivery"] as const;
+export type PrintVerification = (typeof PRINT_VERIFICATION_MODES)[number];
+
 export type Dispatch =
   | { kind: "help" }
   | { kind: "version" }
@@ -47,6 +51,8 @@ export type Dispatch =
       tui?: boolean;
       verbose?: boolean;
       allowUnverified?: boolean;
+      /** One-shot verification requirement (`code do verification:<mode>`); default `checks`. */
+      verification?: PrintVerification;
       json?: boolean;
     }
   | { kind: "connect"; rest: string[] }
@@ -141,6 +147,7 @@ export function parseDispatch(
   let tui: boolean | undefined;
   let verbose: boolean | undefined;
   let allowUnverified: boolean | undefined;
+  let verification: PrintVerification | undefined;
   let json: boolean | undefined;
   let print: string | undefined;
   let allowExec: boolean | undefined;
@@ -181,6 +188,17 @@ export function parseDispatch(
       json = true;
       continue;
     }
+    if (arg === "--verification") {
+      const value = argv[++i];
+      if (!PRINT_VERIFICATION_MODES.includes(value as PrintVerification))
+        return {
+          kind: "usage-error",
+          arg,
+          message: `--verification takes one of: ${PRINT_VERIFICATION_MODES.join(", ")}`,
+        };
+      verification = value as PrintVerification;
+      continue;
+    }
     if (arg === "--allow-exec") {
       allowExec = true;
       continue;
@@ -203,8 +221,11 @@ export function parseDispatch(
     dir = arg;
   }
   // The one-shot result flags shape a -p run only.
-  if ((allowUnverified || json) && print === undefined)
-    return { kind: "usage-error", arg: allowUnverified ? "--allow-unverified" : "--json" };
+  if ((allowUnverified || json || verification) && print === undefined)
+    return {
+      kind: "usage-error",
+      arg: allowUnverified ? "--allow-unverified" : json ? "--json" : "--verification",
+    };
   if (Object.keys(connected).length) {
     if (
       dir !== undefined ||
@@ -241,6 +262,7 @@ export function parseDispatch(
     ...(verbose ? { verbose } : {}),
     ...(allowUnverified ? { allowUnverified } : {}),
     ...(json ? { json } : {}),
+    ...(verification ? { verification } : {}),
     ...(fresh !== undefined ? { fresh } : {}),
     ...(print !== undefined ? { print } : {}),
     ...(allowExec !== undefined ? { allowExec } : {}),
@@ -281,6 +303,10 @@ Options:
   -p, --print <task>           dispatch one coding task, await completion, then exit
   --allow-unverified           with -p: exit 0 for completed work that was not verified
                                (still reported on stderr)
+  --verification <mode>        with -p: what the task must verify before it can submit:
+                               checks (default; the project's own checks), candidate
+                               (a Git snapshot), or delivery (the declared output files
+                               checked alone in a clean directory)
   --json                       with -p: print one JSON result object as the last stdout
                                line; everything else goes to stderr
   --verbose                    print startup details (database, server endpoints,
@@ -558,6 +584,7 @@ if (import.meta.main) {
         tui: dispatch.tui,
         verbose: dispatch.verbose,
         allowUnverified: dispatch.allowUnverified,
+        verification: dispatch.verification,
         json: dispatch.json,
       }).catch((error: unknown) => {
         console.error(error instanceof Error ? error.message : String(error));

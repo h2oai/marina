@@ -513,7 +513,13 @@ export class CodeConsole {
         `Harness · ${harness.agent}${harness.model ? ` · ${harness.model}` : " · runtime default model"}${harness.profile ? ` · Marina dialect: ${harness.profile}` : ""}`,
       );
   }
-  async task(text: string, wait = false, timeoutMs = 600_000, unattended = false) {
+  async task(
+    text: string,
+    wait = false,
+    timeoutMs = 600_000,
+    unattended = false,
+    verification: "checks" | "candidate" | "delivery" = "checks",
+  ) {
     this.interrupted = false;
     if (this.selected) {
       const id = this.selected;
@@ -524,7 +530,7 @@ export class CodeConsole {
       this.marinaPhase = "working";
       this.updatePrompt();
       await this.command(
-        `code do ${unattended ? "verification:checks owner:unattended " : ""}-- ${text}`,
+        `code do ${unattended ? `verification:${verification} owner:unattended ` : ""}-- ${text}`,
       );
     }
   }
