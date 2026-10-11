@@ -46,6 +46,7 @@ import { JUDGE_LABEL, type OfficialRun, scoreOfficial } from "../benchmarks/deep
 import {
   factCheckRun,
   generateReports,
+  generationSpend,
   loadRecords,
   type TaskRetriever,
 } from "../benchmarks/deepresearch/run";
@@ -68,6 +69,7 @@ import {
   settleOutcomes,
 } from "../src/learning/service";
 import { MarinaDB } from "../src/persistence/database";
+import { researchFingerprint } from "../src/research/checkpoint";
 import { researchRetriever } from "../src/research/retriever";
 
 const { values, positionals } = parseArgs({
@@ -247,10 +249,11 @@ function retrieverFactory(): () => TaskRetriever {
   };
 }
 
-function guard(label: string): SpendGuard {
+function guard(label: string, spentUsd = 0): SpendGuard {
   const budget = maxUsd();
   return new SpendGuard({
     label,
+    spentUsd,
     ...(budget !== undefined ? { budgetUsd: budget } : {}),
     concurrency: Number(values.concurrency),
     minReserveUsd: 1,
@@ -283,11 +286,30 @@ async function runCmd(): Promise<number> {
   );
   const r = await generateReports({
     tasks,
-    config: { label, lead, ...(lessons ? { lessons } : {}) },
+    config: {
+      label,
+      lead,
+      ...(lessons ? { lessons } : {}),
+      retrievalIdentity: {
+        search: values.search ?? "default",
+        reader: values["read-swarm"] ?? "",
+        readDocs: values["read-docs"] ?? "default",
+        decompose: values.decompose === true,
+        judge: values["read-judge"] ?? "default",
+        // Persist only a digest; configuration can contain private endpoints/keys.
+        environment: researchFingerprint(
+          Object.entries(process.env)
+            .filter(([key]) =>
+              /^(MARINA_(RESEARCH|READ_SWARM|DECISION)|SEARXNG|TAVILY|EXA|OPENROUTER)/.test(key),
+            )
+            .sort(([a], [b]) => a.localeCompare(b)),
+        ),
+      },
+    },
     retriever: retrieverFactory(),
     outDir: out,
     concurrency: Number(values.concurrency),
-    guard: guard(`deepresearch ${label}`),
+    guard: guard(`deepresearch ${label}`, generationSpend(out, label)),
     log,
   });
   db?.close();

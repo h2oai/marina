@@ -36,7 +36,9 @@
 import type { ResearchBrief, SourceExclusion } from "../arena/research/briefs";
 import type { ResearchReport, Retriever } from "../arena/research/retrieve";
 import { defaultPageText, type PageText, quoteBody, verifyDossier } from "../arena/research/verify";
+import { getErrorMessage } from "../engine/errors";
 import { extractJsonValue } from "../repair/output-repair";
+import { type ResearchCheckpoint, ResearchInterrupted } from "./checkpoint";
 import {
   auditCitations,
   type CitationAudit,
@@ -89,6 +91,10 @@ export interface ReportOptions {
   concurrency?: number;
   /** Lessons to show the planner (a pre-formatted block; the caller recalls them). */
   lessons?: string;
+  /** Persist successful stages under an exact task/configuration identity. */
+  checkpoint?: ResearchCheckpoint;
+  /** Stops before another paid stage; interruptions propagate to the caller. */
+  stopReason?: () => string | undefined;
   log?: (line: string) => void;
 }
 
@@ -127,6 +133,8 @@ export interface SectionAudit {
 }
 
 export interface ResearchReportResult {
+  /** Partial reports retain completed sections and explicitly identify gaps. */
+  status?: "complete" | "partial";
   language: string;
   plan: ReportPlan;
   /** The finished report: markdown with `[n]` markers and the reference list. */
@@ -197,11 +205,21 @@ export function parsePlan(
 
 async function pool<T>(items: T[], n: number, run: (item: T, i: number) => Promise<void>) {
   let next = 0;
-  await Promise.all(
+  let failed = false;
+  const results = await Promise.allSettled(
     Array.from({ length: Math.min(Math.max(1, n), items.length) }, async () => {
-      for (let i = next++; i < items.length; i = next++) await run(items[i]!, i);
+      for (let i = next++; !failed && i < items.length; i = next++) {
+        try {
+          await run(items[i]!, i);
+        } catch (error) {
+          failed = true;
+          throw error;
+        }
+      }
     }),
   );
+  const rejected = results.find((r) => r.status === "rejected");
+  if (rejected?.status === "rejected") throw rejected.reason;
 }
 
 /** One evidence line as the `search` retriever writes it: `- <date> — "<quote>" [title](url)`. */
@@ -248,20 +266,21 @@ async function verifiedEvidence(
 /** Global source numbering shared by every section. */
 class SourceBook {
   private byUrl = new Map<string, NumberedSource>();
-  private quotes = new Set<string>();
+  private quotes = new Map<string, Evidence>();
   readonly evidence: Evidence[] = [];
 
-  add(e: RawEvidence): Evidence | undefined {
+  add(e: RawEvidence): Evidence {
     let s = this.byUrl.get(e.url);
     if (!s) {
       s = { n: this.byUrl.size + 1, url: e.url, ...(e.title ? { title: e.title } : {}) };
       this.byUrl.set(e.url, s);
     }
     const key = `${s.n}\u0000${e.quote}`;
-    if (this.quotes.has(key)) return undefined;
-    this.quotes.add(key);
+    const existing = this.quotes.get(key);
+    if (existing) return existing;
     const ev: Evidence = { n: s.n, quote: e.quote, ...(e.date ? { date: e.date } : {}) };
     this.evidence.push(ev);
+    this.quotes.set(key, ev);
     return ev;
   }
 
@@ -352,6 +371,21 @@ export async function writeResearchReport(
   const pageText = opts.pageText ?? defaultPageText();
   const warnings: string[] = [];
   const barredTitles = task.exclude?.titles ?? [];
+  const stage = async <T>(key: string, input: unknown, action: () => Promise<T>): Promise<T> => {
+    const reason = opts.stopReason?.();
+    if (reason) throw new ResearchInterrupted(reason);
+    return opts.checkpoint ? opts.checkpoint.run(key, input, action) : action();
+  };
+  const complete = (key: string, system: string, user: string) =>
+    stage(key, { model: opts.lead.name, system, user }, async () => {
+      const text = await opts.lead.complete(system, user);
+      if (
+        !text.trim() ||
+        (key.startsWith("write:") && !text.replace(/^#+[^\n]*(?:\n|$)/gm, "").trim())
+      )
+        throw new Error("empty model reply");
+      return text;
+    });
 
   // ── Plan ──────────────────────────────────────────────────────────────
   const planUser = [
@@ -366,12 +400,9 @@ export async function writeResearchReport(
     .join("\n\n");
   let plan: ReportPlan | undefined;
   try {
-    plan = parsePlan(
-      await opts.lead.complete(PLAN_SYSTEM, planUser),
-      maxSections,
-      queriesPerSection,
-    );
+    plan = parsePlan(await complete("plan", PLAN_SYSTEM, planUser), maxSections, queriesPerSection);
   } catch (err) {
+    if (err instanceof ResearchInterrupted) throw err;
     warnings.push(`plan failed: ${(err as Error).message.slice(0, 160)}`);
   }
   if (!plan) {
@@ -393,7 +424,9 @@ export async function writeResearchReport(
   );
 
   // ── Research (two rounds per section) and verification ────────────────
-  const book = new SourceBook();
+  // Local books keep gap-review inputs independent of parallel completion order.
+  // Global numbering is assigned in section order after retrieval completes.
+  const books = plan.sections.map(() => new SourceBook());
   const sectionEvidence: Evidence[][] = plan.sections.map(() => []);
   const audits: SectionAudit[] = plan.sections.map((s) => ({
     heading: s.heading,
@@ -411,9 +444,19 @@ export async function writeResearchReport(
   const retrieve = async (i: number, queries: string[], round: string) => {
     const section = plan.sections[i]!;
     const audit = audits[i]!;
+    const book = books[i]!;
     try {
-      const report = await opts.retriever(
-        brief(task, section, queries, evidenceChars, `report-s${i + 1}-${round}`),
+      const { report, kept, dropped } = await stage(
+        `research:${i}:${round}`,
+        { task, section, queries, evidenceChars },
+        async () => {
+          const report = await opts.retriever(
+            brief(task, section, queries, evidenceChars, `report-s${i + 1}-${round}`),
+          );
+          const checked = await verifiedEvidence(report, pageText);
+          if (!checked.kept.length) throw new Error("no verified evidence in retrieval");
+          return { report, ...checked };
+        },
       );
       searchUsd += report.costUsd;
       if (report.evidence) (audit.captures ??= []).push(report.evidence);
@@ -423,14 +466,14 @@ export async function writeResearchReport(
         audit.pagesRead += f.read;
         audit.excluded += f.excluded ?? 0;
       }
-      const { kept, dropped } = await verifiedEvidence(report, pageText);
       audit.dropped += dropped;
       for (const e of kept) {
         const ev = book.add(e);
-        if (ev) sectionEvidence[i]!.push(ev);
+        if (!sectionEvidence[i]!.includes(ev)) sectionEvidence[i]!.push(ev);
       }
       audit.evidence = sectionEvidence[i]!.length;
     } catch (err) {
+      if (err instanceof ResearchInterrupted) throw err;
       retrievalFailures++;
       warnings.push(
         `research failed (${section.heading}, ${round}): ${(err as Error).message.slice(0, 160)}`,
@@ -440,9 +483,10 @@ export async function writeResearchReport(
   await pool(plan.sections, concurrency, async (section, i) => {
     await retrieve(i, section.queries, "r1");
     if (opts.gapRound === false) return;
-    const seen = evidenceBlock(sectionEvidence[i]!, (n) => book.title(n), GAP_VIEW_CHARS);
+    const seen = evidenceBlock(sectionEvidence[i]!, (n) => books[i]!.title(n), GAP_VIEW_CHARS);
     try {
-      const reply = await opts.lead.complete(
+      const reply = await complete(
+        `gaps:${i}`,
         GAP_SYSTEM,
         [
           `Report language: ${languageName(language)}.`,
@@ -455,15 +499,30 @@ export async function writeResearchReport(
       audits[i]!.gapQueries = queries;
       if (queries.length) await retrieve(i, queries, "r2");
     } catch (err) {
+      if (err instanceof ResearchInterrupted) throw err;
       warnings.push(
         `gap round failed (${section.heading}): ${(err as Error).message.slice(0, 160)}`,
       );
     }
     log(`researched ${i + 1}/${plan.sections.length}: ${audits[i]!.evidence} passages`);
   });
-  if (retrievalFailures > 0 && book.evidence.length === 0) {
+  const book = new SourceBook();
+  books.forEach((local, i) => {
+    sectionEvidence[i] = local.evidence.map((ev) => {
+      const source = local.sources.find((s) => s.n === ev.n)!;
+      return book.add({
+        url: source.url,
+        title: source.title ?? "",
+        quote: ev.quote,
+        date: ev.date,
+      });
+    });
+  });
+  if (book.evidence.length === 0) {
     throw new Error(
-      `research report: retrieval failed for every section (${warnings.join("; ").slice(0, 400)})`,
+      retrievalFailures > 0
+        ? `research report: retrieval failed for every section (${warnings.join("; ").slice(0, 400)})`
+        : "research report: no verified evidence found; report was not written",
     );
   }
 
@@ -492,13 +551,19 @@ export async function writeResearchReport(
       .filter(Boolean)
       .join("\n\n");
     try {
-      let text = normalizeCitationMarkers((await opts.lead.complete(SECTION_SYSTEM, user)).trim());
+      if (sectionEvidence[i]!.length === 0)
+        throw new Error("no verified evidence for this section");
+      let text = normalizeCitationMarkers(
+        (await complete(`write:${i}`, SECTION_SYSTEM, user)).trim(),
+      );
       if (!/^##\s/m.test(text.split("\n")[0] ?? "")) text = `## ${section.heading}\n\n${text}`;
       texts[i] = text;
       audits[i]!.words = words(text);
     } catch (err) {
+      if (err instanceof ResearchInterrupted) throw err;
       writeFailures++;
       audits[i]!.failed = (err as Error).message.slice(0, 160);
+      warnings.push(`section failed (${section.heading}): ${getErrorMessage(err).slice(0, 160)}`);
       texts[i] =
         `## ${section.heading}\n\n${language === "zh" ? "（本节未能完成。）" : "(This section could not be completed.)"}`;
     }
@@ -515,7 +580,8 @@ export async function writeResearchReport(
   let conclusion = "";
   try {
     const v = extractJsonValue(
-      await opts.lead.complete(
+      await complete(
+        "frame",
         FRAME_SYSTEM,
         [
           `Report language: ${languageName(language)}.`,
@@ -531,6 +597,7 @@ export async function writeResearchReport(
     summary = normalizeCitationMarkers(str(v?.summary));
     conclusion = normalizeCitationMarkers(str(v?.conclusion));
   } catch (err) {
+    if (err instanceof ResearchInterrupted) throw err;
     warnings.push(`opening/conclusion failed: ${(err as Error).message.slice(0, 160)}`);
   }
   const zh = language === "zh";
@@ -586,6 +653,7 @@ export function finishReport(input: {
     .map((e) => ({ ...e, n: renumber.get(e.n)! }));
   const references = referenceList(sources, input.language === "zh" ? "参考文献" : "References");
   return {
+    status: input.sections.some((s) => s.failed || s.evidence === 0) ? "partial" : "complete",
     language: input.language,
     plan: input.plan,
     body,

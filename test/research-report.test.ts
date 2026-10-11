@@ -9,6 +9,9 @@
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ResearchBrief } from "../src/arena/research/briefs";
 import type { ResearchReport, Retriever } from "../src/arena/research/retrieve";
 import { figuresMissing } from "../src/arena/research/verify";
@@ -21,6 +24,7 @@ import {
 } from "../src/arena/research/web-search";
 import { resetSearchHealthForTests } from "../src/engine/search-providers/health";
 import type { SearchProvider, SearchResult } from "../src/engine/search-providers/index";
+import { FileResearchCheckpoint, ResearchInterrupted } from "../src/research/checkpoint";
 import {
   auditCitations,
   citedNumbers,
@@ -284,6 +288,155 @@ function fakeLead(calls: Array<{ system: string; user: string }>): ReportModel {
 }
 
 describe("research report pipeline", () => {
+  it("shares a verified passage across sections while listing it only once globally", async () => {
+    const calls: Array<{ system: string; user: string }> = [];
+    const report = await fakeRetriever([])({
+      roundId: "shared",
+      since: "1900-01-01",
+      request: "Coverage",
+    });
+    const result = await writeResearchReport(
+      { prompt: "Compare coverage and causes" },
+      {
+        lead: fakeLead(calls),
+        retriever: async () => report,
+        gapRound: false,
+      },
+    );
+    expect(result.sections.map((s) => s.evidence)).toEqual([1, 1]);
+    expect(result.evidence).toHaveLength(1);
+    expect(result.sources).toHaveLength(1);
+    for (const call of calls.filter((c) => c.system.includes("You write one section")))
+      expect(call.user).toContain(report.sources[0]!.text!.slice(7, -12));
+  });
+
+  it("does not write a report on empty retrieval or count empty sections as success", async () => {
+    const calls: Array<{ system: string; user: string }> = [];
+    await expect(
+      writeResearchReport(
+        { prompt: "research" },
+        {
+          lead: fakeLead(calls),
+          gapRound: false,
+          retriever: async () => ({
+            report: "",
+            sources: [],
+            searches: 1,
+            costUsd: 0,
+            retriever: "empty",
+          }),
+        },
+      ),
+    ).rejects.toThrow(/retrieval failed/);
+    expect(calls.filter((c) => c.system.includes("You write one section"))).toHaveLength(0);
+    const lead = fakeLead([]);
+    await expect(
+      writeResearchReport(
+        { prompt: "research" },
+        {
+          lead: {
+            name: lead.name,
+            complete: (s, u) =>
+              s.includes("You write one section")
+                ? Promise.resolve("## Empty\n")
+                : lead.complete(s, u),
+          },
+          retriever: fakeRetriever([]),
+          gapRound: false,
+        },
+      ),
+    ).rejects.toThrow(/every section failed/);
+  });
+
+  it("resumes paid stages from disk and retries only an unsuccessful draft", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "marina-report-resume-"));
+    try {
+      const path = join(dir, "checkpoint.json");
+      const identity = { task: "coverage", model: "fake/lead", recipe: "test" };
+      const calls: Array<{ system: string; user: string }> = [];
+      const briefs: ResearchBrief[] = [];
+      const lead = fakeLead(calls);
+      let interrupt = true;
+      const opts = {
+        lead: {
+          name: lead.name,
+          complete: async (s: string, u: string) => {
+            if (interrupt && s.includes("You write one section") && u.includes("WRITE SECTION 2:"))
+              throw new ResearchInterrupted("operator stop");
+            return lead.complete(s, u);
+          },
+        },
+        retriever: fakeRetriever(briefs),
+        gapRound: false,
+        concurrency: 1,
+      };
+      await expect(
+        writeResearchReport(
+          { prompt: "coverage" },
+          {
+            ...opts,
+            checkpoint: new FileResearchCheckpoint(path, identity),
+          },
+        ),
+      ).rejects.toThrow("operator stop");
+      expect(briefs).toHaveLength(2);
+      expect(calls.filter((c) => c.system.includes("You write one section"))).toHaveLength(1);
+      interrupt = false;
+      const result = await writeResearchReport(
+        { prompt: "coverage" },
+        {
+          ...opts,
+          checkpoint: new FileResearchCheckpoint(path, identity),
+        },
+      );
+      expect(result.status).toBe("complete");
+      expect(briefs).toHaveLength(2);
+      expect(calls.filter((c) => c.system.includes("You plan"))).toHaveLength(1);
+      expect(calls.filter((c) => c.system.includes("You write one section"))).toHaveLength(2);
+      expect(result.sections.every((s) => s.evidence > 0)).toBe(true);
+      expect(() => new FileResearchCheckpoint(path, { ...identity, model: "changed" })).toThrow(
+        "configuration changed",
+      );
+      expect(JSON.parse(readFileSync(path, "utf8")).entries["write:1"]).toBeDefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("drains in-flight stages before reporting an interruption", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "marina-report-drain-"));
+    try {
+      let release!: () => void;
+      const pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let written = false;
+      const retriever = fakeRetriever([]);
+      await expect(
+        writeResearchReport(
+          { prompt: "coverage" },
+          {
+            lead: fakeLead([]),
+            gapRound: false,
+            concurrency: 2,
+            retriever: async (brief) => {
+              if (brief.request.startsWith("Coverage")) {
+                await pending;
+                written = true;
+                return retriever(brief);
+              }
+              release();
+              throw new ResearchInterrupted("stop");
+            },
+            checkpoint: new FileResearchCheckpoint(join(dir, "checkpoint.json"), "drain"),
+          },
+        ),
+      ).rejects.toThrow("stop");
+      expect(written).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
   it("plans, researches two rounds per section, writes with citations and appends references", async () => {
     const briefs: ResearchBrief[] = [];
     const calls: Array<{ system: string; user: string }> = [];
