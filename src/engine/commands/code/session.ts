@@ -405,6 +405,28 @@ export function resumeSession(
   });
 }
 
+/** Resume the most recent session whose workspace is the selected folder. */
+export function continueSession(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+): void {
+  const root = getSelectedWorkspaceRoot(entity, deps);
+  const here = deps.db
+    .listCodingSessions(entity.name, 50)
+    .filter((row) => row.workspace_root === root);
+  if (!here.length) {
+    ctx.send(
+      eid,
+      'No coding session in this folder yet. Start one with "code start", or type a task.',
+    );
+    return;
+  }
+  const target = here.find((row) => row.status === "active") ?? here[0]!;
+  resumeSession(ctx, eid, entity, deps, target.id);
+}
+
 export function sessionTask(
   ctx: RoomContext,
   eid: EntityId,

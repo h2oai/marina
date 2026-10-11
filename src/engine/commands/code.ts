@@ -68,6 +68,7 @@ import { serviceLifecycle } from "./code/service";
 import {
   branchSession,
   completeSession,
+  continueSession,
   enterCodeMode,
   exitCodeMode,
   history,
@@ -200,6 +201,9 @@ const listHandler: SubcommandHandler = (c) => {
 };
 const resumeHandler: SubcommandHandler = (c) => {
   resumeSession(c.ctx, c.eid, c.entity, c.deps, c.args[0]);
+};
+const continueHandler: SubcommandHandler = (c) => {
+  continueSession(c.ctx, c.eid, c.entity, c.deps);
 };
 const filesHandler: SubcommandHandler = async (c) => {
   await files(c.ctx, c.eid, c.entity, c.deps, c.args.join(" ") || ".");
@@ -337,6 +341,7 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
   list: listHandler,
   sessions: listHandler,
   resume: resumeHandler,
+  continue: continueHandler,
   use: resumeHandler,
   status: async (c) => {
     await status(c.ctx, c.eid, c.entity, c.deps, c.args[0]);

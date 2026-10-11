@@ -600,6 +600,14 @@ export class CodeConsole {
       );
       return;
     }
+    if (verb === "/continue") {
+      if (this.harness.agent !== "marina")
+        throw new Error(
+          "/continue resumes Marina's session in this folder. /use marina selects it; native agents use /resume.",
+        );
+      await this.command("code continue");
+      return;
+    }
     if (verb === "/world") {
       if (!argument) throw new Error("Usage: /world <Marina command>");
       await this.command(`/${argument}`);

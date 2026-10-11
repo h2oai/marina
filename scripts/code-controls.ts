@@ -48,6 +48,11 @@ export const TERMINAL_CONTROLS = [
     help: "Reconnect a recorded native session without replaying its last task",
   },
   {
+    name: "/continue",
+    usage: "/continue",
+    help: "Resume Marina's most recent session in this folder",
+  },
+  {
     name: "/spawn",
     usage: "/spawn claude|codex|pi [name]",
     help: "Add a native agent in an isolated Git worktree",
@@ -112,6 +117,7 @@ export function terminalEssentials(connected = false, runtimes: string[] = []): 
         : `switch agent (available: ${["marina", ...runtimes].join(", ")})`,
     ],
     ["/model <id>", "switch model (or /fast for cheapest)"],
+    ["/continue", "resume this folder's session"],
     ["/quit", connected ? "detach; the world keeps running" : "exit"],
   ];
   return [
