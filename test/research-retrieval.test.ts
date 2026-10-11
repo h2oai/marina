@@ -45,7 +45,9 @@ import {
   budgetDossier,
   dossierBudgetChars,
   forecastTyped,
+  leastGrounded,
   type ModelPart,
+  type TypedRun,
 } from "../src/forecast/typed";
 
 afterEach(() => {
@@ -593,6 +595,7 @@ describe("typed forecast: evidence budget and follow-up", () => {
     });
     expect(a.initialRuns).toHaveLength(2);
     expect(runCalls).toBe(4);
+    expect(a.groundingFollowUp).toEqual({ mode: "all", researched: true, rerun: 2 });
 
     const off = await forecastTyped(
       { question: "Will it be A?", answer: yesNo },
@@ -606,6 +609,72 @@ describe("typed forecast: evidence budget and follow-up", () => {
       },
     );
     expect(off.research.some((r) => r.followUp)).toBe(false);
+  });
+
+  it("bounds the grounding follow-up to one re-run, or skips it, and records the mode", async () => {
+    let runCalls = 0;
+    const analyst: ModelPart = {
+      name: "m",
+      complete: async () => {
+        runCalls++;
+        return `{"answer":"${runCalls === 3 ? "B" : "A"}","confidence":0.6,"reason":"r"}`;
+      },
+    };
+    const deps = (groundingFollowUp: "one" | "off") => ({
+      retriever: gapRetriever([]),
+      analysts: [analyst],
+      planner: gapPlanner(),
+      pageText,
+      now: () => NOW,
+      options: {
+        runs: 2,
+        researchRounds: 1,
+        critique: false,
+        minEvidenceLines: 0,
+        disagreementRound: false,
+        groundingFollowUp,
+      },
+    });
+    const one = await forecastTyped({ question: "Will it be A?", answer: yesNo }, deps("one"));
+    expect(runCalls).toBe(3); // two runs, then ONE re-run on the fuller dossier
+    expect(one.research.find((r) => r.followUp)).toMatchObject({
+      trigger: "grounding",
+      verifiedAdded: 1,
+    });
+    expect(one.groundingFollowUp).toEqual({
+      mode: "one",
+      researched: true,
+      rerun: 1,
+      replaced: 1,
+    });
+    expect(one.initialRuns?.map((r) => r.run)).toEqual([1, 2]);
+    // The fresh run takes the first run's place and combines with the other.
+    expect(one.runs.map((r) => [r.run, r.formatted])).toEqual([
+      [3, "B"],
+      [2, "A"],
+    ]);
+
+    runCalls = 0;
+    const off = await forecastTyped({ question: "Will it be A?", answer: yesNo }, deps("off"));
+    expect(runCalls).toBe(2);
+    expect(off.research.some((r) => r.followUp)).toBe(false);
+    expect(off.groundingFollowUp).toEqual({ mode: "off", researched: false, rerun: 0 });
+    expect(off.initialRuns).toBeUndefined();
+  });
+
+  it("picks an unanswered run, else the least grounded, for a single re-run", () => {
+    const run = (n: number, over: Partial<TypedRun> = {}): TypedRun => ({
+      run: n,
+      model: "m",
+      weight: 1,
+      status: "ok",
+      formatted: "A",
+      ...over,
+    });
+    expect(leastGrounded([run(1, { grounded: 0.2 }), run(2, { grounded: 0.1 })])).toBe(1);
+    expect(leastGrounded([run(1, { grounded: 0 }), run(2, { formatted: undefined }), run(3)])).toBe(
+      1,
+    );
   });
 
   it("when the runs disagree, searches the crux and pools one more run", async () => {

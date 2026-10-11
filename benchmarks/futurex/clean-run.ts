@@ -371,6 +371,7 @@ export async function cleanBacktest(opts: CleanOptions): Promise<CleanRunSummary
             ...(variant.critique === false ? { critique: false } : {}),
             ...(variant.budgetMs ? { budgetMs: variant.budgetMs } : {}),
             ...(variant.selection ? { selection: variant.selection } : {}),
+            ...(variant.groundingFollowUp ? { groundingFollowUp: variant.groundingFollowUp } : {}),
             retriever: spec,
             wrapRetriever: cap.wrap,
             exclude: BOARD_EXCLUSIONS.futurex!,
