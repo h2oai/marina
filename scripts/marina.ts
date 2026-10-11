@@ -22,6 +22,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { AGENT_THINKING_LEVELS, parseAgentThinkingLevel } from "../src/agent/agent-types";
 import { ATTACH_USAGE } from "./code-attach";
 
 /** Verification a one-shot `-p` task must pass before it can submit. */
@@ -53,8 +54,10 @@ export type Dispatch =
       tui?: boolean;
       verbose?: boolean;
       allowUnverified?: boolean;
-      /** One-shot verification requirement (`code do verification:<mode>`); default `checks`. */
+      /** One-shot verification requirement (`code do verification:<mode>`); default `delivery`. */
       verification?: PrintVerification;
+      /** The coder's thinking level (`MARINA_CODE_THINKING` for the folder server). */
+      thinking?: string;
       json?: boolean;
     }
   | { kind: "connect"; rest: string[] }
@@ -150,6 +153,7 @@ export function parseDispatch(
   let verbose: boolean | undefined;
   let allowUnverified: boolean | undefined;
   let verification: PrintVerification | undefined;
+  let thinking: string | undefined;
   let json: boolean | undefined;
   let print: string | undefined;
   let taskFromStdin: boolean | undefined;
@@ -200,6 +204,17 @@ export function parseDispatch(
           message: `--verification takes one of: ${PRINT_VERIFICATION_MODES.join(", ")}`,
         };
       verification = value as PrintVerification;
+      continue;
+    }
+    if (arg === "--thinking") {
+      const value = argv[++i];
+      if (!parseAgentThinkingLevel(value))
+        return {
+          kind: "usage-error",
+          arg,
+          message: `--thinking takes one of: ${AGENT_THINKING_LEVELS.join(", ")}`,
+        };
+      thinking = parseAgentThinkingLevel(value);
       continue;
     }
     if (arg === "--allow-exec") {
@@ -270,6 +285,7 @@ export function parseDispatch(
     ...(allowUnverified ? { allowUnverified } : {}),
     ...(json ? { json } : {}),
     ...(verification ? { verification } : {}),
+    ...(thinking ? { thinking } : {}),
     ...(fresh !== undefined ? { fresh } : {}),
     ...(print !== undefined ? { print } : {}),
     ...(taskFromStdin ? { taskFromStdin } : {}),
@@ -304,7 +320,11 @@ Options:
                               --url defaults to MARINA_URL; no new world is started
                               (marina attach takes the same --name/--session/--tui)
   --agent <runtime>           marina (default), claude, codex, or pi
-  --model <id>                model for the selected runtime
+  --model <id>                model for the selected runtime; \`route\` picks a tier
+                              model for the task from MARINA_ROUTES / tier models
+  --thinking <level>          the coder's reasoning depth (off, minimal, low, medium,
+                              high, xhigh); default MARINA_CODE_THINKING (low), used
+                              only where the model declares reasoning support
   --profile <dialect>         Marina command dialect: marina, claude, codex, pi
   --harness <name-or-path>    saved harness or explicit portable JSON file
                               /harness save <name> remembers a folder's default
@@ -312,10 +332,11 @@ Options:
   --allow-unverified           with -p: exit 0 for completed work that was not verified
                                (still reported on stderr)
   --verification <mode>        with -p: what the task must verify before it can submit:
-                               checks (default; the project's own checks), candidate
-                               (a Git snapshot), or delivery (the declared output files
-                               checked alone in a clean directory, each stated
-                               requirement mapped to a check that observes it)
+                               checks (the project's own checks), candidate (a Git
+                               snapshot), or delivery (default, MARINA_CODE_VERIFICATION:
+                               the declared output files checked alone in a clean
+                               directory, each stated requirement mapped to a check
+                               that observes it)
   --json                       with -p: print one JSON result object as the last stdout
                                line; everything else goes to stderr
   --verbose                    print startup details (database, server endpoints,
@@ -611,6 +632,7 @@ if (import.meta.main) {
         verbose: dispatch.verbose,
         allowUnverified: dispatch.allowUnverified,
         verification: dispatch.verification,
+        thinking: dispatch.thinking,
         json: dispatch.json,
       }).catch((error: unknown) => {
         console.error(error instanceof Error ? error.message : String(error));

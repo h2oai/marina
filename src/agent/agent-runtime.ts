@@ -668,12 +668,13 @@ export class AgentRuntime {
       // false. Explicit values from the caller win.
       // `model:route` — pick a tier model from the goal ONCE, before the
       // conversation exists (src/decisions/route.ts). The resolved id is what
-      // gets persisted, so respawns never re-route mid-history.
-      const routedModel = isRouteModel(config.model)
+      // gets persisted, so respawns never re-route mid-history. A `route`
+      // world/process default (`marina -p --model route`) routes the same way.
+      const askedModel = config.model ?? this.db?.getDefaultModel() ?? MARINA_DEFAULT_MODEL;
+      const routedModel = isRouteModel(askedModel)
         ? await resolveRouteModel(config, this.db, this.onEvent)
         : undefined;
-      const requestedModel =
-        routedModel ?? config.model ?? this.db?.getDefaultModel() ?? MARINA_DEFAULT_MODEL;
+      const requestedModel = routedModel ?? askedModel;
       // A boot respawn (seeded/saved agent) whose vendor has no key on THIS
       // installation runs on `marina/default` — whatever intelligence is here,
       // down to one local model — instead of not existing. The saved config

@@ -135,7 +135,7 @@ Where lessons are recalled. Every work site goes through `recallForWork(db, doma
 | `marina:<crew>` requests | `tools`, `code`, `forecast` | 3 / 600 B | a `lessons` field on the `model_request` payload; `x-marina-lessons` header |
 | failed `code verify` | `code` | default | appended to the failure summary; ids in the event metadata |
 | plain `/v1/chat/completions` passthru: model `marina/lessons:<model>`, header `x-marina-lessons: on`, or the instrument stack (`x-marina-stack`, `marina/full:`, and by default for an identified caller — `MARINA_PASSTHRU_STACK`) | `tools`, `code` | 4 / 800 B | the trailing note after the cache breakpoints; `x-marina-lessons` header. `x-marina-lessons: off` opts out of the default; an anonymous or shared caller with no opt-in is byte-identical to before |
-| resident agents, opt-in: `MARINA_LESSONS_RESIDENT=on` (`observe` logs ids; default `off`) | all, via `lessons <focus>` | 600 B, every tenth cycle | a `[Lessons]` continuation section for the agent's focus |
+| resident agents: `MARINA_LESSONS_RESIDENT` (default `on`; `observe` logs ids; `off`) | all, via `lessons <focus>` | 600 B, every tenth cycle | a `[Lessons]` continuation section for the agent's focus |
 | `lessons <topic>` command | all, `meta` included | 8 / 2,400 B | listing (`retire` / `supersede` curate, above) |
 
 Recall never creates the `marina:lessons` account or its spaces as a side effect; on a database with no pool it returns nothing. The `x-marina-lessons` response header lists the injected ids, then `observe:`-prefixed ids recalled but not injected, `;`-separated (`0` when none); `parseLessonsHeader` reads it.
@@ -278,7 +278,7 @@ learning instead of losing it.
 
 ### Lessons from work (`src/learning/work.ts`)
 
-Marina's own tool work teaches through the same loop. `MARINA_LESSONS_FROM_WORK=off|observe|on` (default `off`; `MARINA_LESSONS=off` turns it off too).
+Marina's own tool work teaches through the same loop. `MARINA_LESSONS_FROM_WORK=off|observe|on` (unset: `on` with a model provider, else `observe`; `MARINA_LESSONS=off` turns it off too).
 
 | source | signal | domain |
 |---|---|---|

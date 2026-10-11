@@ -1565,8 +1565,9 @@ export class LeanAgentAdapter implements AgentHandle {
     // Resolve model (pass WS port for marina/ provider routing)
     const modelStr = config.model ?? MARINA_DEFAULT_MODEL;
     this.wsPort = Number(new URL(wsUrl).port) || 3300;
-    this.thinkingLevel = resolveAgentThinkingLevel(config);
-    this.model = applyThinkingLevel(resolveModel(modelStr, this.wsPort), this.thinkingLevel);
+    const resolvedModel = resolveModel(modelStr, this.wsPort);
+    this.thinkingLevel = resolveAgentThinkingLevel(config, process.env, !!resolvedModel.reasoning);
+    this.model = applyThinkingLevel(resolvedModel, this.thinkingLevel);
     this.applyModelLimits(modelStr);
 
     // Create tools — profile controls how much schema goes to the LLM.

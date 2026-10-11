@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { codeThinkingDefault } from "../../../agent/agent-types";
 import type { CodeSessionDriver } from "../../../coding/code-session-driver";
 import { codingRunMetadata, endCodingRun } from "../../../coding/task-run";
 import { bold, dim, error as fmtError, separator, success } from "../../../net/ansi";
@@ -405,6 +406,7 @@ async function ensureSessionAgent(
       name,
       role: "coding-agent",
       spawnedBy: entity.name,
+      thinkingDefault: codeThinkingDefault(),
     });
     bindSpawnedAgentEntity(handle, session, getCodeProfile(entity).name, deps);
     const spawnedId = handle.getStatus().entityId;
