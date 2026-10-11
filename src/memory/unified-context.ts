@@ -57,13 +57,21 @@ export type {
  */
 
 import { creditRecalledReflections } from "../agent/standing";
+import {
+  type AdvisoryOptions,
+  advisoryIdentity,
+  advisoryMode,
+  persistDecisionReceipt,
+} from "../decisions/advisory";
 import type { DecisionProvider } from "../decisions/types";
 import { getErrorMessage } from "../engine/errors";
 import type { MarinaDB, NoteRow, ScoredNoteRow } from "../persistence/database";
+import type { AdvisoryMode, DecisionReceipt } from "../sdk/decision-receipt";
 import type { MemoryAssistanceJob, MemoryAssistancePage } from "../sdk/memory-assistance";
 import { MemoryClientError } from "../sdk/memory-client";
 import type { MemorySearchResult, MemorySourceSearchResult } from "../sdk/memory-types";
 import { cachedContext } from "./context-cache";
+import { judgeContextValue, orderContextValue } from "./context-value";
 import { INGEST_NOTE_KIND } from "./ingest-notes";
 import {
   findDurableTwin,
@@ -699,13 +707,14 @@ function applyBudget(
   perTier: Record<UnifiedTier, number>,
   budgetBytes: number,
   itemMaxBytes: number,
+  values?: ReadonlyMap<string, number>,
 ): { tiers: UnifiedTierResult[]; usedBytes: number; truncated: boolean } {
   let used = 0;
   let truncated = false;
   const seenNotes = new Set<string>();
   const tiers: UnifiedTierResult[] = [];
   for (const tier of UNIFIED_TIER_ORDER) {
-    const candidates = sortItems([...(fetched[tier] ?? [])]);
+    const candidates = orderContextValue(sortItems([...(fetched[tier] ?? [])]), values);
     const result: UnifiedTierResult = {
       tier,
       label: UNIFIED_TIER_LABELS[tier],
@@ -856,6 +865,8 @@ export interface UnifiedContextDeps {
    */
   relevanceProvider?: DecisionProvider | null;
   env?: NodeJS.ProcessEnv;
+  /** Injectable advisory backend chain; environment controls whether selection runs. */
+  valueOptions?: AdvisoryOptions;
 }
 
 interface ResolvedGate {
@@ -894,11 +905,14 @@ export async function buildUnifiedContext(
   const env = deps.env ?? process.env;
   const search = opts.search ?? contextSearchMode(env);
   const gate = resolveGate(opts, deps, env);
+  const valueMode = advisoryMode(env.MARINA_MEMORY_CONTEXT_VALUE);
+  const valueOptions = { ...deps.valueOptions, env };
   // The cache key carries the EFFECTIVE settings (env included), never a provider object.
   const { relevanceGate: _gate, ...rest } = opts;
-  const keyed: UnifiedContextOptions & { relevanceGateKey?: unknown } = {
+  const keyed: UnifiedContextOptions & { relevanceGateKey?: unknown; valueKey?: unknown } = {
     ...rest,
     search,
+    ...(valueMode !== "off" ? { valueKey: [valueMode, advisoryIdentity(valueOptions)] } : {}),
     ...(gate
       ? {
           relevanceGateKey: {
@@ -910,8 +924,15 @@ export async function buildUnifiedContext(
       : {}),
   };
   const result = await cachedContext(db, entityName, query, keyed, () =>
-    retrieveUnifiedContext(db, entityName, query, opts, search, gate),
+    retrieveUnifiedContext(db, entityName, query, opts, search, gate, valueMode, valueOptions),
   );
+  if (result.valueDecision)
+    persistDecisionReceipt(
+      db,
+      entityName,
+      `context:${result.valueDecision.id}`,
+      result.valueDecision,
+    );
   if (opts.creditReflections !== false) creditUnifiedReflections(db, result);
   return result;
 }
@@ -985,6 +1006,8 @@ async function retrieveUnifiedContext(
   opts: UnifiedContextOptions,
   search: "lexical" | "hybrid",
   gate: ResolvedGate | undefined,
+  valueMode: AdvisoryMode = "off",
+  valueOptions: AdvisoryOptions = {},
 ): Promise<UnifiedContextResult> {
   const scope = opts.scope ?? "all";
   const budgetBytes = Math.max(0, Math.floor(opts.budgetBytes ?? DEFAULT_UNIFIED_BUDGET_BYTES));
@@ -1045,7 +1068,20 @@ async function retrieveUnifiedContext(
     relevance = gated.report;
   }
 
-  const budgeted = applyBudget(served, perTier, budgetBytes, itemMaxBytes);
+  let values: Map<string, number> | undefined;
+  let valueDecision: DecisionReceipt | undefined;
+  if (valueMode !== "off" && trimmed && budgetBytes > 0) {
+    const selected = preselect(served, perTier);
+    const judged = await judgeContextValue(
+      trimmed,
+      UNIFIED_TIER_ORDER.flatMap((tier) => selected[tier] ?? []),
+      valueMode,
+      valueOptions,
+    );
+    values = judged.values;
+    valueDecision = judged.receipt;
+  }
+  const budgeted = applyBudget(served, perTier, budgetBytes, itemMaxBytes, values);
   if (trimmed && opts.derivedSources !== false)
     await expandDerivedNotes(db, entityName, trimmed, budgeted, budgetBytes, itemMaxBytes);
   if (relevance && relevance.mode === "on" && relevance.outcome !== "fail_open")
@@ -1065,6 +1101,7 @@ async function retrieveUnifiedContext(
     tiers: budgeted.tiers,
     degraded,
     ...(relevance ? { relevance } : {}),
+    ...(valueDecision ? { valueDecision } : {}),
   };
   return result;
 }

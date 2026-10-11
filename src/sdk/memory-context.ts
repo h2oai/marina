@@ -1,5 +1,6 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
+import type { DecisionReceipt } from "./decision-receipt";
 export type UnifiedTier = "skill" | "trusted" | "evidence" | "proposal" | "unverified";
 export interface UnifiedContextItem {
   tier: UnifiedTier;
@@ -46,6 +47,8 @@ export interface UnifiedContextResult {
   degraded: UnifiedDegraded[];
   /** Present when the relevance gate ran (`observe` or `on`). Numbers and ids only. */
   relevance?: UnifiedRelevanceReport;
+  /** Optional within-tier value assessment; no content is stored in the receipt. */
+  valueDecision?: DecisionReceipt;
 }
 
 export type UnifiedRelevanceMode = "off" | "observe" | "on";

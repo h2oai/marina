@@ -40,6 +40,7 @@ import type {
 import { budgetFinalRequest, budgetSteerAt, budgetSteerNote } from "../agent/budget-terminal";
 import type { SourceExclusion } from "../arena/research/briefs";
 import { excludedSource, searchBackendsFromEnv } from "../arena/research/web-search";
+import { type AdvisoryOptions, advisoryMode } from "../decisions/advisory";
 import type { DecisionProvider } from "../decisions/types";
 import { getErrorMessage } from "../engine/errors";
 import { standaloneSearchHttp } from "../engine/search-providers/asof-http";
@@ -47,6 +48,7 @@ import { recordSearchOutcome, searchBackendDown } from "../engine/search-provide
 import type { SearchHttp, SearchProvider, SearchResult } from "../engine/search-providers/index";
 import type { FirstMoveModel } from "../retrieval/first-move";
 import { ReadSwarm, renderCandidateTable, type SwarmStats } from "../retrieval/read-swarm";
+import type { DecisionReceipt } from "../sdk/decision-receipt";
 import type { BrowserReader } from "./browser-reader";
 import {
   auditCitedUrls,
@@ -57,6 +59,7 @@ import {
   readUrlFor,
   repairRequest,
 } from "./cited-answer";
+import { researchAdvice, researchDecisionProvider } from "./decision-advice";
 import { type ModelTurns, messageText } from "./model-turn";
 import { BARRED_REASON, type PageRead, readPage } from "./page-reader";
 import type { ProvenanceCache } from "./provenance-cache";
@@ -81,6 +84,13 @@ export interface ToolEvent {
 
 /** What the tools act on: search, page reads and the provenance cache of one run. */
 export interface ResearchEnvironment {
+  /** Shared across lead/researcher/repair loops: at most six advisory calls per run. */
+  advisory?: {
+    mode: "observe" | "on";
+    options: AdvisoryOptions;
+    calls: number;
+    receipts: DecisionReceipt[];
+  };
   cache: ProvenanceCache;
   search(query: string, max: number): Promise<SearchResult[]>;
   read(url: string): Promise<PageRead>;
@@ -118,6 +128,7 @@ export interface SwarmConfig {
 }
 
 export interface EnvironmentOptions {
+  advisoryOptions?: AdvisoryOptions;
   cache: ProvenanceCache;
   deny?: readonly string[];
   /**
@@ -140,6 +151,7 @@ export interface EnvironmentOptions {
 }
 
 export function researchEnvironment(opts: EnvironmentOptions): ResearchEnvironment {
+  const decisionMode = advisoryMode((opts.env ?? process.env).MARINA_RESEARCH_ADVICE);
   const backends = opts.backends ?? searchBackendsFromEnv(opts.env).backends;
   const http = opts.http ?? standaloneSearchHttp();
   const failedHere = new Map<string, number>();
@@ -163,6 +175,16 @@ export function researchEnvironment(opts: EnvironmentOptions): ResearchEnvironme
         ...(opts.browser ? { browser: opts.browser } : {}),
       }));
   const env: ResearchEnvironment = {
+    ...(decisionMode !== "off"
+      ? {
+          advisory: {
+            mode: decisionMode,
+            options: { ...opts.advisoryOptions, env: opts.env ?? process.env },
+            calls: 0,
+            receipts: [],
+          },
+        }
+      : {}),
     cache: opts.cache,
     stats,
     events: [],
@@ -572,6 +594,8 @@ export async function researchLoop(o: LoopOptions): Promise<LoopResult> {
   const steerAt = budgetSteerAt(o.maxTurns);
   let steered = false;
   let toolCalls = 0;
+  const evidenceWindow: { tool: string; ok: boolean; text: string }[] = [];
+  let previousAdvice = "";
   const ask = async (toolChoice?: "none"): Promise<AssistantMessage> => {
     o.beforeTurn?.();
     const ctx: Context = { systemPrompt: o.system, messages, ...(tools ? { tools } : {}) };
@@ -603,6 +627,33 @@ export async function researchLoop(o: LoopOptions): Promise<LoopResult> {
     );
     toolCalls += calls.length;
     const used = turn + 1;
+    evidenceWindow.push(...results.map(({ call, out }) => ({ tool: call.name, ...out })));
+    if (evidenceWindow.length > 6) evidenceWindow.splice(0, evidenceWindow.length - 6);
+    let advice = "";
+    const advisor = o.env.advisory;
+    if (advisor && used % 3 === 0 && used < o.maxTurns && advisor.calls < 6) {
+      o.beforeTurn?.();
+      advisor.calls++;
+      const judged = await researchAdvice(
+        {
+          task: o.prompt,
+          draft: messageText(reply),
+          usedTurns: used,
+          maxTurns: o.maxTurns,
+          results: evidenceWindow,
+        },
+        advisor.mode,
+        {
+          localFallback: researchDecisionProvider(o.model),
+          isFatal: (e) => e instanceof Error && e.name === "BudgetExhausted",
+          ...advisor.options,
+        },
+      );
+      advice = judged.note !== previousAdvice ? judged.note : "";
+      judged.receipt.applied = !!advice;
+      advisor.receipts.push(judged.receipt);
+      if (advice) previousAdvice = advice;
+    }
     const steer = !steered && used >= steerAt && used < o.maxTurns;
     results.forEach(({ call, out }, i) => {
       const note =
@@ -613,7 +664,12 @@ export async function researchLoop(o: LoopOptions): Promise<LoopResult> {
         role: "toolResult",
         toolCallId: call.id,
         toolName: call.name,
-        content: [{ type: "text", text: out.text + note }],
+        content: [
+          {
+            type: "text",
+            text: out.text + note + (i === results.length - 1 && advice ? `\n\n${advice}` : ""),
+          },
+        ],
         isError: !out.ok,
         timestamp: Date.now(),
       } as Message);
@@ -706,6 +762,8 @@ export interface VerificationReport {
 }
 
 export interface ResearchAnswer {
+  /** Available for paired evaluation and explicit attribution to scored outcomes. */
+  decisions?: DecisionReceipt[];
   answer: string;
   audit: CitationAudit;
   repaired: boolean;
@@ -855,7 +913,15 @@ async function finish(
       repaired = true;
     }
   }
-  return { answer, audit, repaired, turns, toolCalls, budgetForced: loop.budgetForced };
+  return {
+    answer,
+    audit,
+    repaired,
+    turns,
+    toolCalls,
+    budgetForced: loop.budgetForced,
+    ...(o.env.advisory ? { decisions: [...o.env.advisory.receipts] } : {}),
+  };
 }
 
 /** The lead's plan: up to `n` complementary sub-questions (JSON array of strings). */

@@ -12,6 +12,7 @@ import type {
   ToolCall,
   ToolResultMessage,
 } from "@earendil-works/pi-ai";
+import type { DecisionProvider } from "../src/decisions/types";
 import type { SearchProvider } from "../src/engine/search-providers/index";
 import type { ModelTurns, TurnFn } from "../src/research/model-turn";
 import type { PageRead } from "../src/research/page-reader";
@@ -119,6 +120,91 @@ function fakeEnv(pages: Record<string, string>) {
 }
 
 describe("research loop", () => {
+  test("bounded next-step advice preserves tool execution and observe leaves the transcript unchanged", async () => {
+    for (const mode of ["observe", "on"] as const) {
+      const env = fakeEnv({ "https://src.org/a": "The same fact again." });
+      const backend: DecisionProvider = {
+        kind: "test",
+        model: "test/advisor",
+        calibrated: false,
+        ask: async () => ({
+          model: "test/advisor",
+          provider: "test",
+          latencyMs: 1,
+          answers: {
+            coverage: { type: "choice", choice: "incomplete" },
+            conflict: { type: "choice", choice: "no" },
+            progress: { type: "choice", choice: "repeated" },
+          },
+        }),
+      };
+      env.advisory = { mode, calls: 0, receipts: [], options: { providers: [backend] } };
+      const model = scripted([
+        () => assistant([call("a", "fetch_page", { url: "https://src.org/a" })]),
+        () => assistant([call("b", "fetch_page", { url: "https://src.org/a" })]),
+        () => assistant([call("c", "fetch_page", { url: "https://src.org/a" })]),
+        () => assistant([text("answer")]),
+      ]);
+      const r = await researchLoop({ model, env, system: "sys", prompt: "q", maxTurns: 8 });
+      expect(r.text).toBe("answer");
+      expect(r.toolCalls).toBe(3);
+      expect(r.budgetForced).toBe(false);
+      expect(env.advisory.receipts).toHaveLength(1);
+      expect(env.advisory.receipts[0]?.action).toBe("change_search");
+      expect(JSON.stringify(r.messages).includes("Research advice")).toBe(mode === "on");
+    }
+  });
+
+  test("standalone research uses its own model as a Jev-like fallback", async () => {
+    const env = fakeEnv({ "https://src.org/a": "The evidence." });
+    env.advisory = { mode: "on", calls: 0, receipts: [], options: { env: {} } };
+    const model = scripted([
+      () => assistant([call("a", "fetch_page", { url: "https://src.org/a" })]),
+      () => assistant([call("b", "fetch_page", { url: "https://src.org/a" })]),
+      () => assistant([call("c", "fetch_page", { url: "https://src.org/a" })]),
+      (ctx) => {
+        expect(ctx.tools).toBeUndefined();
+        return assistant([
+          text(
+            JSON.stringify({
+              answers: {
+                coverage: { type: "choice", choice: "unknown" },
+                conflict: { type: "choice", choice: "unknown" },
+                progress: { type: "choice", choice: "unknown" },
+              },
+            }),
+          ),
+        ]);
+      },
+      () => assistant([text("answer")]),
+    ]);
+    const r = await researchLoop({ model, env, system: "sys", prompt: "q", maxTurns: 8 });
+    expect(r.text).toBe("answer");
+    expect(env.advisory.receipts[0]).toMatchObject({
+      provider: "research-classifier",
+      calibration: "unmeasured",
+      applied: false,
+    });
+  });
+
+  test("advice failure preserves research and its forced-answer budget", async () => {
+    const env = fakeEnv({ "https://src.org/a": "fact" });
+    env.advisory = { mode: "on", calls: 0, receipts: [], options: { providers: [] } };
+    const model = scripted([
+      (ctx) =>
+        String((ctx.messages.at(-1) as { content: unknown }).content).includes("[Budget reached]")
+          ? assistant([text("best effort")])
+          : assistant([
+              call(`c${ctx.messages.length}`, "fetch_page", { url: "https://src.org/a" }),
+            ]),
+    ]);
+    const r = await researchLoop({ model, env, system: "sys", prompt: "q", maxTurns: 4 });
+    expect(r.text).toBe("best effort");
+    expect(r.budgetForced).toBe(true);
+    expect(r.toolCalls).toBe(4);
+    expect(env.advisory.receipts[0]?.status).toBe("unavailable");
+  });
+
   test("runs tools, files reads in the provenance cache, and returns the final text", async () => {
     const env = fakeEnv({ "https://src.org/a": "Line one\nThe answer is 42.\nLine three" });
     const model = scripted([

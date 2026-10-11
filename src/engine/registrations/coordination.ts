@@ -119,6 +119,9 @@ export function registerCoordinationCommands(engine: Engine): void {
     const channels = engine.channelManager;
     engine.commands.registerBuiltin(
       crewCommand({
+        trackBackground: (work) => {
+          engine.trackBackground(work);
+        },
         crews: engine.crewManager,
         channels,
         getEntity: (id) => engine.entities.get(id as EntityId),

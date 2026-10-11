@@ -299,6 +299,18 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     note: "a decision backend's opinion of task submissions, for agreement with human verdicts",
   },
   {
+    table: "decision_receipts",
+    timeColumn: "created_at",
+    kind: "telemetry",
+    keepMs: 30 * DAY_MS,
+    note: "content-free advisory judgments; attribution links cascade on receipt removal",
+  },
+  {
+    table: "decision_outcomes",
+    kind: "append-only",
+    note: "explicit attribution, retained with its receipt",
+  },
+  {
     table: "challenge_outcomes",
     timeColumn: "answered_at",
     kind: "ledger",

@@ -25,6 +25,7 @@ const USAGE = [
   "       decision list | decision approve <token> | decision deny <token> [reason]",
   "       decision qualify   — run the labeled gate + route cases against this world's backend",
   "       decision agreement — how often each judge agreed with task creators' verdicts",
+  "       decision receipts — your recent advisory judgments and linked outcomes",
   "       decision settings  — the decision settings; change one with the earned decisions.configure gate",
 ].join("\n");
 
@@ -76,6 +77,7 @@ export function decisionCommand(deps: {
       "decision deny <token> [reason]",
       "decision list",
       "decision qualify",
+      "decision receipts",
       "decision settings [set <setting> <value> | unset <setting> | history]",
     ],
     name: "decision",
@@ -94,8 +96,32 @@ export function decisionCommand(deps: {
         "choose",
         "qualify",
         "agreement",
+        "receipts",
         "settings",
       ]);
+
+      if (sub === "receipts") {
+        const rows = deps.store?.listDecisionReceipts(me.name, 30) ?? [];
+        ctx.send(
+          input.entity,
+          rows.length
+            ? rows
+                .map((row) => {
+                  const receipt = JSON.parse(
+                    row.receipt_json,
+                  ) as import("../../sdk/decision-receipt").DecisionReceipt;
+                  const outcomes = deps.store!.decisionOutcomeIds(me.name, row.id);
+                  return (
+                    `${row.id} · ${row.family} · ${receipt.mode}/${receipt.status} · ${receipt.action}` +
+                    ` · ${receipt.model ?? receipt.reason ?? "unavailable"} · ${receipt.latencyMs}ms` +
+                    ` · applied:${receipt.applied} · outcomes:${outcomes.join(",") || "none"} · calibration:unmeasured`
+                  );
+                })
+                .join("\n")
+            : "No advisory decision receipts for your account.",
+        );
+        return;
+      }
 
       // Decision settings: anyone reads; changing one takes admin.destructive
       // (a person) or the earned decisions.configure gate (anyone, agents too).

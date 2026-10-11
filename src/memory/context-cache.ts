@@ -82,7 +82,8 @@ export async function cachedContext(
       finished < until &&
       !raw.inTransaction &&
       result.degraded.length === 0 &&
-      result.relevance?.outcome !== "fail_open"
+      result.relevance?.outcome !== "fail_open" &&
+      result.valueDecision?.status !== "unavailable"
     ) {
       // Expired/invalidated entries should not retain private content unnecessarily.
       for (const [id, cached] of cache.entries)

@@ -16,7 +16,7 @@ import { dailyCapRefusal, recordSpend, type SpendSource } from "../engine/spend-
 
 export type TurnFn = (
   context: Context,
-  opts?: { toolChoice?: ToolChoice },
+  opts?: { toolChoice?: ToolChoice; signal?: AbortSignal; maxTokens?: number },
 ) => Promise<AssistantMessage>;
 
 export interface ModelTurns {
@@ -46,11 +46,12 @@ export function modelTurns(
     if (capped) throw new Error(capped);
     const result = await piModels.completeSimple(model, context, {
       apiKey,
-      maxTokens: opts.maxTokens ?? 16_000,
+      maxTokens: Math.min(opts.maxTokens ?? 16_000, o.maxTokens ?? Number.POSITIVE_INFINITY),
       ...(o.toolChoice ? { toolChoice: o.toolChoice } : {}),
       signal: AbortSignal.any([
         AbortSignal.timeout(opts.timeoutMs ?? 300_000),
         ...(opts.signal ? [opts.signal] : []),
+        ...(o.signal ? [o.signal] : []),
       ]),
     });
     usage.calls++;

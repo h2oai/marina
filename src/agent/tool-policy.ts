@@ -199,6 +199,7 @@ const READ_SUBCOMMANDS: Record<string, (words: string[]) => boolean> = {
   // Default is `list`; `history` falls through to the usage reply.
   board: ([a]) => !a || has(["list", "read", "search", "scores", "history"], a),
   challenge: ([a]) => !a || has(["list", "stats"], a),
+  decision: ([a]) => a === "receipts",
   channel: ([a]) => has(["list", "listall", "history"], a),
   task: ([a]) => has(["list", "info", "children"], a),
   // `project list|info …`, `project <name> status|tasks`
@@ -225,6 +226,7 @@ const READ_SUBCOMMANDS: Record<string, (words: string[]) => boolean> = {
   evolve: ([a]) => !a || has(["loop", "adoption", "sessions", "qualify", "status", "analyze"], a),
 };
 const SUBCOMMAND_ALIASES: Record<string, string> = {
+  decisions: "decision",
   challenges: "challenge",
   ch: "channel",
   proj: "project",

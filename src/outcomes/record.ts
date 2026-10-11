@@ -8,8 +8,12 @@
  * a producer never waits on a judge and nothing is lost to a restart.
  */
 
+import { tryLog } from "../engine/errors";
+import { Logger } from "../engine/logger";
 import type { MarinaDB } from "../persistence/database";
 import type { OutcomeInput, OutcomeKind } from "../persistence/db-outcomes";
+
+const logger = new Logger();
 
 /**
  * The consumers that learn from an outcome. A judged outcome has none: it is
@@ -61,11 +65,17 @@ export async function settleDelivery(db: MarinaDB): Promise<void> {
  */
 export function recordResolved(
   db: MarinaDB,
-  input: OutcomeInput,
+  input: OutcomeInput & { decisionIds?: readonly string[] },
   /** Deliver a judged outcome (its judge has earned agreement; see agreement.ts). */
   opts: { deliverJudged?: boolean } = {},
 ): { id: number; created: boolean } {
   const recorded = db.recordOutcomeRow(input, consumersFor(input.kind, input.basis, opts));
+  if (input.owner && input.decisionIds?.length) {
+    tryLog(logger, "decisions", "Could not attribute outcome to decisions", () => {
+      for (const id of new Set(input.decisionIds!.slice(0, 100)))
+        db.linkDecisionOutcome(input.owner!, id, recorded.id);
+    });
+  }
   if (recorded.created) deliverSoon(db);
   return recorded;
 }

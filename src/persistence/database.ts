@@ -2192,6 +2192,26 @@ export class MarinaDB implements MarinaStores {
 
   // ─── Judge observations (delegated to db-decisions.ts) ──────────────────
 
+  recordDecisionReceipt(
+    owner: string,
+    subject: string,
+    receipt: import("../sdk/decision-receipt").DecisionReceipt,
+  ): void {
+    decisionsDb.recordDecisionReceipt(this.db, owner, subject, receipt);
+  }
+
+  listDecisionReceipts(owner: string, limit?: number): decisionsDb.DecisionReceiptRow[] {
+    return decisionsDb.listDecisionReceipts(this.reader, owner, limit);
+  }
+
+  linkDecisionOutcome(owner: string, decisionId: string, outcomeId: number): boolean {
+    return decisionsDb.linkDecisionOutcome(this.db, owner, decisionId, outcomeId);
+  }
+
+  decisionOutcomeIds(owner: string, decisionId: string): number[] {
+    return decisionsDb.decisionOutcomeIds(this.reader, owner, decisionId);
+  }
+
   recordJudgeObservation(row: decisionsDb.JudgeObservationInput): number {
     return decisionsDb.recordJudgeObservation(this.db, row);
   }

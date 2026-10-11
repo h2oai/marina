@@ -698,6 +698,28 @@ CREATE TABLE outcome_deliveries (
 CREATE INDEX idx_outcome_deliveries_pending ON outcome_deliveries(consumer, state, outcome_id);
 `,
   },
+  // Migration 163: scoped, content-free advisory receipts and explicit outcome attribution.
+  {
+    version: 163,
+    sql: `
+CREATE TABLE decision_receipts (
+  id TEXT PRIMARY KEY,
+  owner TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  family TEXT NOT NULL,
+  receipt_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_decision_receipts_owner ON decision_receipts(owner, created_at);
+CREATE TRIGGER decision_receipts_no_update BEFORE UPDATE ON decision_receipts
+BEGIN SELECT RAISE(ABORT, 'decision_receipts is append-only'); END;
+CREATE TABLE decision_outcomes (
+  decision_id TEXT NOT NULL REFERENCES decision_receipts(id) ON DELETE CASCADE,
+  outcome_id INTEGER NOT NULL REFERENCES outcomes(id) ON DELETE CASCADE,
+  PRIMARY KEY (decision_id, outcome_id)
+);
+`,
+  },
 ];
 
 /** Migration 143 body — self-contained so later edits to db-notes never change it. */
