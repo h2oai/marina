@@ -677,6 +677,47 @@ describe("typed forecast: evidence budget and follow-up", () => {
     );
   });
 
+  it("keeps earlier usable answers when follow-up attempts fail, with the failures audited", async () => {
+    for (const mode of ["all", "one"] as const) {
+      let calls = 0;
+      const answer = await forecastTyped(
+        { question: "Will it be A?", answer: yesNo },
+        {
+          retriever: gapRetriever([]),
+          analysts: [
+            {
+              name: "m",
+              complete: async () => {
+                if (++calls > 2) throw new Error("provider unavailable on retry");
+                return '{"answer":"A","confidence":0.6,"reason":"initial reasoning"}';
+              },
+            },
+          ],
+          planner: gapPlanner(),
+          pageText,
+          now: () => NOW,
+          options: {
+            runs: 2,
+            researchRounds: 1,
+            critique: false,
+            minEvidenceLines: 0,
+            disagreementRound: false,
+            groundingFollowUp: mode,
+          },
+        },
+      );
+      expect(answer.prediction).toBe("A");
+      expect(answer.runs).toEqual(answer.initialRuns!);
+      expect(answer.groundingFollowUp?.failedRuns).toHaveLength(mode === "all" ? 2 : 1);
+      expect(
+        answer.groundingFollowUp?.failedRuns?.every((r) =>
+          r.status.includes("provider unavailable"),
+        ),
+      ).toBe(true);
+      expect(answer.caveat).toContain("original dossier");
+    }
+  });
+
   it("when the runs disagree, searches the crux and pools one more run", async () => {
     let n = 0;
     const a = await forecastTyped(
