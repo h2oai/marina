@@ -20,10 +20,12 @@ import {
   ATTEMPT_BENCHMARK,
   BENCHMARK,
   forecastPass,
+  isRateLimited,
   metaculusId,
   OUTCOME_BENCHMARK,
   outcomeScore,
   resolutionValue,
+  resolveOrder,
   resolvePass,
   spentToday,
 } from "../benchmarks/metaculus/bot";
@@ -473,5 +475,117 @@ describe("metaculus: client and timer", () => {
     expect(u.service).toContain("--tournament 33121 --tournament minibench");
     expect(u.service).not.toContain("METACULUS_TOKEN=");
     expect(u.timer).toContain("OnUnitActiveSec=20min");
+  });
+});
+
+describe("metaculus: the resolve pass stays inside the rate limit", () => {
+  const filed = async (db: MarinaDB, qs: MetaculusQuestion[]) => {
+    await forecastPass({
+      client: recordingClient(qs.map((q, i) => post(i + 1, q))).client,
+      db,
+      forecast: fakeForecast,
+      tournaments: ["t"],
+      config,
+    });
+  };
+  const many = (n: number, resolveTime = "2027-01-01T00:00:00Z") =>
+    Array.from({ length: n }, (_, i) => ({
+      ...binary,
+      id: 500 + i,
+      scheduled_resolve_time: resolveTime,
+    }));
+
+  it("records the scheduled resolve time with each filing", async () => {
+    const db = new MarinaDB(":memory:");
+    try {
+      await filed(db, [binary]);
+      const [row] = db.listExternalSubmissions(BENCHMARK);
+      expect(JSON.parse(row!.meta_json!).resolvesAt).toBe(binary.scheduled_resolve_time);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("orders due questions first and rotates the rest across passes", () => {
+    const now = Date.parse("2026-10-11T00:00:00Z");
+    const rows = [
+      { id: "a", resolvesAt: "2027-01-01T00:00:00Z" },
+      { id: "b", resolvesAt: "2026-10-01T00:00:00Z" },
+      { id: "c" },
+      { id: "d", resolvesAt: "2026-09-01T00:00:00Z" },
+      { id: "e", resolvesAt: "2027-02-01T00:00:00Z" },
+    ];
+    const first = resolveOrder(rows, now, 3, 60_000).map((r) => r.id);
+    expect(first.slice(0, 2)).toEqual(["d", "b"]);
+    const seen = new Set<string>();
+    for (let k = 0; k < 3; k++) {
+      for (const r of resolveOrder(rows, now + k * 60_000, 3, 60_000)) seen.add(r.id);
+    }
+    expect(seen).toEqual(new Set(["a", "b", "c", "d", "e"]));
+    expect(resolveOrder(rows, now, 10, 60_000)).toHaveLength(5);
+  });
+
+  it("caps lookups per pass and paces them", async () => {
+    const db = new MarinaDB(":memory:");
+    try {
+      const qs = many(20);
+      await filed(db, qs);
+      let calls = 0;
+      const pauses: number[] = [];
+      const base = fixtureClient(qs.map((q, i) => post(i + 1, q)));
+      const r = await resolvePass({
+        client: {
+          ...base,
+          post: (id) => {
+            calls++;
+            return base.post(id);
+          },
+        },
+        db,
+        maxChecks: 5,
+        paceMs: 1_000,
+        sleep: async (ms) => {
+          pauses.push(ms);
+        },
+      });
+      expect(r).toMatchObject({ checked: 5, resolved: 0, pending: 20, rateLimited: false });
+      expect(calls).toBe(5);
+      expect(pauses).toEqual([1_000, 1_000, 1_000, 1_000]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("stops the pass at the first rate-limit refusal instead of failing every question", async () => {
+    const db = new MarinaDB(":memory:");
+    try {
+      const qs = many(6);
+      await filed(db, qs);
+      let calls = 0;
+      const base = fixtureClient(qs.map((q, i) => post(i + 1, q)));
+      const r = await resolvePass({
+        client: {
+          ...base,
+          post: async (id) => {
+            calls++;
+            if (calls === 2) {
+              throw new Error(`metaculus GET /posts/${id}/ → 429: {"error":"error-1015"}`);
+            }
+            return base.post(id);
+          },
+        },
+        db,
+        sleep: async () => {},
+      });
+      expect(r).toMatchObject({ checked: 2, failed: 0, rateLimited: true, pending: 6 });
+      expect(calls).toBe(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("recognises rate-limit refusals only", () => {
+    expect(isRateLimited(new Error("metaculus GET /posts/1/ → 429: cloudflare"))).toBe(true);
+    expect(isRateLimited(new Error("metaculus GET /posts/1/ → 404: not found"))).toBe(false);
   });
 });

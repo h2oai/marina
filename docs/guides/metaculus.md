@@ -28,7 +28,11 @@ One pass (`bun run metaculus pass`):
    the evidence cutoff, and the configuration that produced it;
 4. records it (append-only, one row per question, with its cost);
 5. checks recorded questions that have resolved, scores them and hands each outcome to the
-   outcome-learning loop (`src/learning`), recorded once (`metaculus-outcome`).
+   outcome-learning loop (`src/learning`), recorded once (`metaculus-outcome`). Lookups stay
+   inside Metaculus's rate limit: at most 12 per pass, 2 s apart. Questions past their
+   scheduled resolve time go first, and the rest rotate across passes, so early resolutions
+   are still found. A 429 (including Cloudflare 1015) ends the pass; the remaining questions
+   wait for the next one.
 
 Spend: each question's cost is recorded; a pass stops at `--daily-cap` (default $10 per UTC day,
 from those records) and at the world's `MARINA_DAILY_SPEND_CAP_USD`.
