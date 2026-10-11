@@ -23,6 +23,7 @@ import { getErrorMessage } from "../../engine/errors";
 import { Logger } from "../../engine/logger";
 import { evalOption } from "../../learning/eval-context";
 import { lessonsBlock, lessonsHeaderValue, recallForWork } from "../../learning/service";
+import { readOnlyCall } from "../../obligations/tool-call";
 import { isReadOnlyTool } from "../../obligations/tool-effect";
 import type { RepairLabel } from "../../repair/output-repair";
 import { repairToolCallMessage } from "../../repair/tool-call-repair";
@@ -495,7 +496,7 @@ function parseArgs(raw: string | undefined): unknown {
 function writeCalls(m: Msg | undefined, tools: unknown[] | undefined): WriteCall[] {
   return (m?.tool_calls ?? [])
     .map((c) => ({ name: c.function?.name ?? "", args: parseArgs(c.function?.arguments) }))
-    .filter((c) => c.name && !isReadOnlyToolCall(c.name, tools));
+    .filter((c) => c.name && !readOnlyCall(c.name, c.args, { tools, role: "guard" }));
 }
 
 function canonical(v: unknown): unknown {
