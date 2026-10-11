@@ -65,7 +65,7 @@ import { Logger } from "../engine/logger";
 import { takeSettledProxyCall } from "../engine/proxy-settlement";
 import { dailyBudget, dailyCapRefusal, formatSpendUsd, recordSpend } from "../engine/spend-ledger";
 import { isLocalProfile } from "../engine/trust-profile";
-import { residentLessonsMode } from "../learning/modes";
+import { lessonsMode, residentLessonsMode } from "../learning/modes";
 import {
   renderUnifiedContext,
   truncateToBytes,
@@ -161,6 +161,7 @@ import {
 import { SocialAwareness } from "./social";
 import { describeToolProbe } from "./tool-call-probe";
 import {
+  classifyToolRisk,
   type GatedRisk,
   gateScopedArgs,
   isAdditiveDeposit,
@@ -1476,6 +1477,9 @@ export class LeanAgentAdapter implements AgentHandle {
   // and restates the task every cycle. NOT crewResponder: the loop must
   // keep cycling without fresh perceptions so mid-task work continues.
   private activeCodingTask: string | null = null;
+  // Lessons recalled once for the current coding task (MARINA_LESSONS):
+  // `null` text = not asked yet; shown with the task until the task changes.
+  private codingTaskLessons: { task: string; text: string | null } | null = null;
 
   // ─── Perception Dedup ──────────────────────────────────────────────
   private recentPerceptionHashes = new Set<string>();
@@ -1867,7 +1871,12 @@ export class LeanAgentAdapter implements AgentHandle {
           context.toolCall.name,
           context.args,
           !context.isError,
-          (name, callArgs) => !readOnlyCall(name, callArgs, { role: "track" }),
+          (name, callArgs) =>
+            !(
+              (name === "marina_code" &&
+                classifyToolRisk(name, (callArgs ?? {}) as Record<string, unknown>) === "read") ||
+              readOnlyCall(name, callArgs, { role: "track" })
+            ),
         );
         let noted: AfterToolCallResult | undefined;
         // The generic Code tool keeps a readable error result for callers.
@@ -3663,6 +3672,10 @@ export class LeanAgentAdapter implements AgentHandle {
         MANDATORY_SECTION_PRIORITY,
         "active_coding_task",
       );
+      // What earlier outcomes taught about this kind of work (the actor's own
+      // lessons with the shared pool), asked once per task and kept beside it.
+      const taskLessons = await this.lessonsForCodingTask(this.activeCodingTask);
+      if (taskLessons) parts.push(`[Lessons]\n${taskLessons}`);
     }
 
     // ── 1c. Obligations ledger (MARINA_OBLIGATIONS, default off) ──
@@ -5102,6 +5115,33 @@ The goal is a smaller, sharper memory — not more notes.`;
 
   setFocus(description: string): void {
     this.updateFocus({ description, startedAt: Date.now() });
+  }
+
+  /**
+   * Lessons for a coding task, recalled once per task (`MARINA_LESSONS`, on by
+   * default; `observe` logs the ids and shows nothing). Best-effort: a recall
+   * failure leaves the task without lessons and is not retried.
+   */
+  private async lessonsForCodingTask(task: string): Promise<string | undefined> {
+    if (this.codingTaskLessons?.task !== task) this.codingTaskLessons = { task, text: null };
+    const cached = this.codingTaskLessons;
+    if (cached.text !== null) return cached.text || undefined;
+    cached.text = "";
+    const mode = lessonsMode();
+    if (mode === "off") return undefined;
+    try {
+      const got = await this.platformMemory.lessonsFor(task);
+      if (mode === "on" && got.lines.length > 0)
+        cached.text = clampText(got.lines.map((l) => `- ${l}`).join("\n"), 600);
+      else if (got.ids.length > 0)
+        this.log.info(LEAN_AGENT_LOG_CATEGORY, "lessons observed for coding task (not shown)", {
+          agent: this.name,
+          lessons: got.ids.join(","),
+        });
+    } catch {
+      // best-effort; the coder works without lessons
+    }
+    return cached.text || undefined;
   }
 
   /** See AgentHandle.setActiveCodingTask — task-mode toggle for a bound coder. */

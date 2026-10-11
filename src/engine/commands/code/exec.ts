@@ -46,7 +46,7 @@ import {
 } from "../../../coding/verification-plan";
 import { summarizeFlywheelEvents, WorkspaceGateway } from "../../../coding/workspace-gateway";
 import { lessonsBlock, recallForWork } from "../../../learning/service";
-import { noteWorkFor } from "../../../learning/work";
+import { noteWorkFor, workScopeFor } from "../../../learning/work";
 import { dim, error as fmtError, header, separator, success } from "../../../net/ansi";
 import { recordVerification } from "../../../outcomes/live";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../../../persistence/database";
@@ -752,14 +752,15 @@ export async function runVerificationCommands(
     updateCodeContext(currentEntity, deps.db, currentSession);
 
   // A failure brings back what earlier verifications taught about this kind of
-  // work, plus cross-board method lessons within a third of the budget
+  // work — the actor's own lessons (its owner's, for a spawned coder) with the
+  // shared pool — plus cross-board method lessons within a third of the budget
   // (MARINA_LESSONS / MARINA_LESSONS_META; observe records the ids without showing them).
   const lessons = failed
     ? await recallForWork(
         deps.db,
         ["code"],
         `${results.map((item) => item.result.command.join(" ")).join(" ")} ${(failedRun?.stored?.result.output ?? "").slice(-300)}`,
-        { limit: 3, maxBytes: 600 },
+        { limit: 3, maxBytes: 600, ...lessonOwner(deps.db, entity.name) },
       )
     : undefined;
   const lessonText = lessons?.inject.length ? `\n${lessonsBlock(lessons.inject)}` : "";
@@ -1235,4 +1236,10 @@ function formatVerificationSummary(
     lines.push(dim("Stopped at first failed verification command."));
   }
   return lines.join("\n");
+}
+
+/** Recall scope for an actor's own lessons: the owner its work is recorded under (`workScopeFor`). */
+function lessonOwner(db: MarinaDB, actor: string): { owner?: string } {
+  const scope = workScopeFor(db, actor);
+  return scope?.kind === "owner" ? { owner: scope.owner } : {};
 }

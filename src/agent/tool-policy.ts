@@ -122,6 +122,22 @@ const READ_MEMORY_OPERATIONS: ReadonlySet<string> = new Set([
   "job",
 ]);
 
+/** `marina_code` actions that only observe — the same set as the typed read-only `marina_code_*` tools. */
+const READ_CODE_ACTIONS: ReadonlySet<string> = new Set([
+  "status",
+  "files",
+  "read",
+  "search",
+  "diff",
+  "show",
+  "patches",
+  "artifacts",
+  "history",
+  "doctor",
+  "thread",
+  "observe",
+]);
+
 /** Platform `memory` tool actions that only read. */
 const READ_MEMORY_TOOL_ACTIONS: ReadonlySet<string> = new Set(["search", "orient", "skill_search"]);
 
@@ -380,6 +396,11 @@ export function classifyToolRisk(toolName: string, args: Record<string, unknown>
   }
   if (toolName === "memory") {
     return READ_MEMORY_TOOL_ACTIONS.has(str(args.action)) ? "read" : "mutate";
+  }
+  if (toolName === "marina_code") {
+    const action = str(args.action);
+    const workspaceView = action === "workspace" && str(args.command) !== "use";
+    return READ_CODE_ACTIONS.has(action) || workspaceView ? "read" : "mutate";
   }
   const command = typedToolCommand(toolName, args);
   if (command !== undefined) return classifyCommandRisk(command);

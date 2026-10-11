@@ -24,7 +24,7 @@ import { MacroManager } from "../coordination/macro-manager";
 import { TaskManager } from "../coordination/task-manager";
 import { extensionGatewayProof } from "../extensions/loader";
 import { FlywheelManager, type FlywheelToolBackend } from "../integrations/flywheel-manager";
-import { observeWorkEvent } from "../learning/work";
+import { flushWorkLessons, observeWorkEvent, pendingWorkPatterns } from "../learning/work";
 import { memoryAccess } from "../memory/access";
 import { residentMemoryAPI } from "../memory/resident-service";
 import type { AdapterManager } from "../net/adapter-manager";
@@ -85,6 +85,12 @@ import { type TickJobStatus, TickScheduler } from "./tick-scheduler";
 const TICK_ERROR_LOG_INTERVAL_MS = 30_000;
 /** Longest `shutdown()` waits for detached work and async tick jobs (under main.ts's 30 s watchdog). */
 export const BACKGROUND_DRAIN_TIMEOUT_MS = 10_000;
+/**
+ * Longest `shutdown()` waits for the final lessons-from-work flush, after the
+ * drain: a short-lived process (a one-shot CLI task) would otherwise exit
+ * before the hourly flush and lose what its work taught.
+ */
+export const WORK_FLUSH_SHUTDOWN_TIMEOUT_MS = 12_000;
 
 export type { LoginIdentity } from "./auth-coordinator";
 
@@ -1934,9 +1940,25 @@ export class Engine {
       this.roomTickCoordinator.pendingCount +
       this.background.size +
       this.tickScheduler.pendingCount;
-    return pending
-      ? Promise.all([this.roomTickCoordinator.drain(), this.drainBackground()]).then(finish)
-      : finish();
+    const drain = () => Promise.all([this.roomTickCoordinator.drain(), this.drainBackground()]);
+    const learn = this.db !== undefined && pendingWorkPatterns(this.db) > 0;
+    if (!pending && !learn) return finish();
+    return (pending ? drain() : Promise.resolve())
+      .then(() => (learn ? this.flushWorkOnShutdown() : undefined))
+      .then(finish);
+  }
+
+  /** The final lessons-from-work flush, bounded; never throws. */
+  private async flushWorkOnShutdown(): Promise<void> {
+    if (!this.db) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      flushWorkLessons(this.db).catch(() => undefined),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, WORK_FLUSH_SHUTDOWN_TIMEOUT_MS);
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
   }
 
   /**
