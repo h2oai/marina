@@ -647,6 +647,17 @@
 
 # ── Harness decisions ────────────────────────────────────────────────────────
 
+# Optional advisory use cases (all off by default). observe records judgments without applying advice or reordering context; on applies bounded advice or within-tier context ordering. Both modes consume time and model budget. These do not change tool safety gates or approvals. Enabling a feature sends its authorized, masked evidence excerpts to the configured decision backend, then the fallback below if needed. No usable backend leaves the existing operation intact.
+# MARINA_RESEARCH_ADVICE=off
+# MARINA_MEMORY_CONTEXT_VALUE=off
+# MARINA_CREW_DELIVERABLE_REVIEW=off
+
+# Advisory fallback: one verbalized classifier call through Marina's own /v1 using this model. The default also lets standalone web research use its existing model without a running server. none disables the fallback; it does not disable a configured primary. Receipts identify the actual answering model and mark task calibration unmeasured. No extra provider credentials are required beyond the model's usual configuration.
+# MARINA_ADVISORY_FALLBACK_MODEL=marina/default
+
+# Total deadline per advisory judgment, including fallback (1-60000 ms, default 4000). With two backends, half is reserved for fallback. Caller cancellation and the daily spend cap stop the chain. The normal safety gate retains its own failure policy.
+# MARINA_ADVISORY_TIMEOUT_MS=4000
+
 # Decision backend for cheap per-step judgements (off by default; it receives tool names and redacted arguments). `decisions-api` (alias `jev`): a Jev-family model over the Decisions API on OpenRouter, or a self-hosted OpenJev. `typesafe`: TypeSafe's API. `chat-classifier` (aliases `classifier`, `llm`): any chat model (see MARINA_DECISION_MODEL). Every MARINA_DECISION* setting except base URLs, paths and API keys can also be changed at runtime (`admin decisions set …`, Admin → Ops → Decisions); a value set here wins and locks it.
 # MARINA_DECISIONS=off
 

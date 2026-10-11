@@ -81,6 +81,7 @@ export const ERASED_ACCOUNT = "[erased]";
 
 /** Rows touched by one account erasure, per table (also the audit body). */
 export interface AccountErasure {
+  decision_receipts: number;
   entity_standing: number;
   entity_standing_cache: number;
   entity_competence: number;
@@ -112,6 +113,9 @@ export interface AccountErasure {
  */
 export function deleteUser(db: Database, id: string): AccountErasure {
   return db.transaction(() => {
+    const decisionReceipts = db.run("DELETE FROM decision_receipts WHERE owner = ?", [
+      `user:${id}`,
+    ]).changes;
     // Counted before the write: `changes` also counts FTS trigger writes.
     const count = (table: string, column: string) =>
       (db.query(`SELECT COUNT(*) AS n FROM ${table} WHERE ${column} = ?`).get(id) as { n: number })
@@ -131,6 +135,7 @@ export function deleteUser(db: Database, id: string): AccountErasure {
       return n;
     };
     const counts: AccountErasure = {
+      decision_receipts: decisionReceipts,
       entity_standing: del("entity_standing"),
       entity_standing_cache: del("entity_standing_cache"),
       entity_competence: del("entity_competence"),

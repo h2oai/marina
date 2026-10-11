@@ -39,6 +39,8 @@ describe("agent tool reference monitor", () => {
       "board history project:hab",
       "board read general 4",
       "challenge list",
+      "decision receipts",
+      "decisions receipts",
       "challenges",
       "memory get focus",
       "memory kv history pace",

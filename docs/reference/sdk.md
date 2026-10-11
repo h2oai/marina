@@ -597,6 +597,41 @@ export declare function composeStepMessage(ctx: DispatchContext): string;
 export declare function runScore(score: Score, deps: RunScoreDeps): Promise<ScoreRun>;
 ```
 
+## decision-receipt
+
+[Source](../../src/sdk/decision-receipt.ts)
+
+```typescript
+export type AdvisoryMode = "off" | "observe" | "on";
+export type AdvisoryFamily = "research" | "context" | "deliverable";
+/** Measurements of a judgment, never task text or proof of downstream success. */
+export interface DecisionReceipt {
+    id: string;
+    family: AdvisoryFamily;
+    version: string;
+    questionsHash: string;
+    mode: Exclude<AdvisoryMode, "off">;
+    status: "answered" | "unavailable";
+    reason?: "timeout" | "aborted" | "spend_cap" | "invalid_response" | "backend_unavailable" | "no_evidence";
+    /** The actual answering backend; purpose-built does not imply task calibration. */
+    provider?: string;
+    model?: string;
+    providerCalibrated?: boolean;
+    calibration: "unmeasured";
+    fallback: boolean;
+    attempts: number;
+    latencyMs: number;
+    costUsd?: number;
+    /** False if any attempted backend did not report its cost (e.g. timeout). */
+    costComplete: boolean;
+    /** Only fixed question/option labels and numbers. No free-form model output. */
+    signals: Record<string, string | number>;
+    action: string;
+    applied: boolean;
+    createdAt: number;
+}
+```
+
 ## extensions
 
 [Source](../../src/sdk/extensions.ts)
@@ -745,6 +780,7 @@ export type * from "./routing-types.js";
 [Source](../../src/sdk/memory.ts)
 
 ```typescript
+export type { AdvisoryFamily, AdvisoryMode, DecisionReceipt } from "./decision-receipt.js";
 export { type MemoryExportFormat, translateMemoryExport } from "./memory-adapters.js";
 export type { MemoryAnswer, MemoryAnswerContract, MemoryAnswerSchema, MemoryCitation, MemoryEvidence, } from "./memory-answer.js";
 export { assertMemoryAnswerContract, collectMemoryEvidence, createMemoryCitation, validateMemoryAnswer, } from "./memory-answer.js";
@@ -1216,6 +1252,7 @@ export declare class MarinaMemoryClient {
 [Source](../../src/sdk/memory-context.ts)
 
 ```typescript
+import type { DecisionReceipt } from "./decision-receipt.js";
 export type UnifiedTier = "skill" | "trusted" | "evidence" | "proposal" | "unverified";
 export interface UnifiedContextItem {
     tier: UnifiedTier;
@@ -1259,6 +1296,8 @@ export interface UnifiedContextResult {
     degraded: UnifiedDegraded[];
     /** Present when the relevance gate ran (`observe` or `on`). Numbers and ids only. */
     relevance?: UnifiedRelevanceReport;
+    /** Optional within-tier value assessment; no content is stored in the receipt. */
+    valueDecision?: DecisionReceipt;
 }
 export type UnifiedRelevanceMode = "off" | "observe" | "on";
 /**

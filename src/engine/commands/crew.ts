@@ -3,6 +3,8 @@
 
 import type { ChannelManager } from "../../coordination/channel-manager";
 import { CrewError, type CrewManager } from "../../coordination/crew-manager";
+import { type AdvisoryOptions, advisoryMode } from "../../decisions/advisory";
+import { reviewCrewDeliverable } from "../../decisions/deliverable";
 import { memoryAccess } from "../../memory/access";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
@@ -15,6 +17,8 @@ import type {
   RoomContext,
 } from "../../types";
 import { normalizePatternName } from "../../world/templates/orchestration";
+import { tryLogAsync } from "../errors";
+import { Logger } from "../logger";
 import { canonicalSub, parseModifiers, splitOnTerminator, unknownSubcommand } from "../parse-input";
 
 const VALID_FORMATIONS: ReadonlySet<CrewFormation> = new Set<CrewFormation>([
@@ -38,6 +42,8 @@ const VALID_FORMATIONS: ReadonlySet<CrewFormation> = new Set<CrewFormation>([
 ]);
 
 interface CrewCommandDeps {
+  trackBackground?: (work: Promise<void>) => void;
+  advisoryOptions?: AdvisoryOptions;
   crews: CrewManager;
   channels: ChannelManager;
   getEntity: (id: string) => Entity | undefined;
@@ -132,6 +138,35 @@ function fmtCrewLine(crew: Crew): string {
 }
 
 export function crewCommand(deps: CrewCommandDeps): CommandDef {
+  const logger = new Logger();
+  const review = (
+    ctx: RoomContext,
+    caller: Entity,
+    crew: Crew,
+    submission: string,
+    kind: string,
+    referenceOnly: boolean,
+  ) => {
+    const env = deps.advisoryOptions?.env ?? process.env;
+    if (!deps.db || advisoryMode(env.MARINA_CREW_DELIVERABLE_REVIEW) === "off") return;
+    const work = tryLogAsync(logger, "decisions", "Crew deliverable review failed", async () => {
+      const result = await reviewCrewDeliverable(
+        deps.db!,
+        { name: caller.name, id: caller.id },
+        {
+          subject: `crew:${crew.id}`,
+          goal: crew.goal,
+          submission,
+          kind,
+          referenceOnly,
+        },
+        deps.advisoryOptions,
+      );
+      if (result?.note && deps.getEntity(caller.id)?.name === caller.name)
+        ctx.send(caller.id, result.note);
+    });
+    deps.trackBackground?.(work);
+  };
   return {
     category: "Coordination",
     usage: [
@@ -650,6 +685,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
         try {
           deps.crews.recordArtifactDeposit(crew.id, caller.name, ref, kind);
           ctx.send(input.entity, `Deposited ${kind} artifact "${ref}" to crew "${crew.name}".`);
+          review(ctx, caller, crew, ref, kind, true);
         } catch (e) {
           if (e instanceof CrewError) ctx.send(input.entity, e.message);
           else throw e;
@@ -731,6 +767,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
             input.entity,
             `Crew "${crew.name}" completed${noteHint}${standingHint}${retainedHint}`,
           );
+          review(ctx, caller, crew, summary, "completion", false);
         } catch (e) {
           if (e instanceof CrewError) ctx.send(input.entity, e.message);
           else throw e;

@@ -1,6 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+export type { AdvisoryFamily, AdvisoryMode, DecisionReceipt } from "./decision-receipt";
+
 export { type MemoryExportFormat, translateMemoryExport } from "./memory-adapters";
 export type {
   MemoryAnswer,

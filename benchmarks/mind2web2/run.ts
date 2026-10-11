@@ -31,6 +31,7 @@ import {
   runResearch,
   type SwarmConfig,
 } from "../../src/research/web-agent";
+import type { DecisionReceipt } from "../../src/sdk/decision-receipt";
 import { BudgetExhausted, type CallSpendGuard } from "../call-spend-guard";
 import type { M2W2Task } from "./tasks";
 
@@ -202,6 +203,9 @@ export interface ArmExtras {
 export type RunStatus = "answered" | "empty" | "error" | "budget";
 
 export interface RunRecord {
+  decisions?: DecisionReceipt[];
+  /** Advisory backends outside the already-metered lead/researcher models. */
+  advisoryUsd?: number;
   task: string;
   agent: string;
   k: number;
@@ -278,11 +282,19 @@ export async function runOne(o: RunOneOptions): Promise<RunRecord> {
   const log = (l: string) => o.log?.(`${arm.agent}/${task.id}#${k} ${l}`);
   const cache = new ProvenanceCache(join(out, "provenance", arm.agent, task.id, String(k)));
   let searchUsd = 0;
+  let advisoryUsd = 0;
   const research = researchEnvironment({
     cache,
     deny: M2W2_DENY,
     exclude: M2W2_EXCLUDE,
     env,
+    advisoryOptions: {
+      spendCheck: () => guard.stoppedBy,
+      onCost: (usd) => {
+        advisoryUsd += usd;
+        guard.add(usd);
+      },
+    },
     ...(o.browser ? { browser: o.browser } : {}),
     ...(o.swarm ? { swarm: o.swarm } : {}),
     onSearchSpend: (usd) => {
@@ -316,7 +328,8 @@ export async function runOne(o: RunOneOptions): Promise<RunRecord> {
       status,
       startedAt,
       seconds: Math.round((Date.now() - started) / 1000),
-      costUsd: modelUsd + searchUsd,
+      costUsd: modelUsd + searchUsd + advisoryUsd,
+      ...(research.advisory ? { advisoryUsd, decisions: [...research.advisory.receipts] } : {}),
       modelUsd,
       searchUsd,
       models: ms,

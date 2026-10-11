@@ -3416,6 +3416,7 @@ Usage: decision check [<request> |] <draft>   — score your own draft before yo
        decision list | decision approve <token> | decision deny <token> [reason]
        decision qualify   — run the labeled gate + route cases against this world's backend
        decision agreement — how often each judge agreed with task creators' verdicts
+       decision receipts — your recent advisory judgments and linked outcomes
        decision settings  — the decision settings; change one with the earned decisions.configure gate
 
 Category: Agents. Minimum rank: 0.
@@ -3464,6 +3465,11 @@ Effect: unknown.
 
 
 ### `decision qualify`
+
+Effect: unknown.
+
+
+### `decision receipts`
 
 Effect: unknown.
 

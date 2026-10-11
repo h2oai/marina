@@ -150,6 +150,42 @@ test("retrieval retries write races exactly three times before refusing stale co
   expect(contextCacheStats(db).entries).toBe(0);
 });
 
+test("an unavailable value judgment is retried; an answered judgment can be cached", async () => {
+  let status: "unavailable" | "answered" = "unavailable";
+  const judged = async (): Promise<UnifiedContextResult> => {
+    calls++;
+    return {
+      ...result(),
+      valueDecision: {
+        id: "value-check",
+        family: "context",
+        version: "1",
+        questionsHash: "test",
+        mode: "on",
+        status,
+        calibration: "unmeasured",
+        fallback: false,
+        attempts: 1,
+        latencyMs: 1,
+        costComplete: false,
+        signals: {},
+        action: status === "answered" ? "order_within_tiers" : "baseline",
+        applied: status === "answered",
+        createdAt: now,
+      },
+    };
+  };
+  expect((await read("port", {}, judged)).valueDecision?.status).toBe("unavailable");
+  await read("port", {}, judged);
+  expect(calls).toBe(2);
+  expect(contextCacheStats(db)).toMatchObject({ entries: 0, hits: 0 });
+  status = "answered";
+  expect((await read("port", {}, judged)).valueDecision?.status).toBe("answered");
+  await read("port", {}, judged);
+  expect(calls).toBe(3);
+  expect(contextCacheStats(db)).toMatchObject({ entries: 1, hits: 1 });
+});
+
 test.each([
   ["reaches its age bound", CONTEXT_CACHE_TTL_MS],
   ["outlives its age bound", 30_000],

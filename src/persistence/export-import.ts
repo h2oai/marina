@@ -133,6 +133,8 @@ export const EXPORT_TABLES = [
   // The outcome path (migration 162): what resolved, and each consumer's delivery state.
   "outcomes",
   "outcome_deliveries",
+  "decision_receipts",
+  "decision_outcomes",
   "mem_api_keys",
   // Civic substrate + agent identity (added 2026-06 — previously dropped on
   // export/import, permanently losing standing/ranks/competence/roles on restore).
