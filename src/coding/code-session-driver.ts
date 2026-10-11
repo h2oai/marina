@@ -236,7 +236,7 @@ export class CodeSessionDriver {
             : undefined;
     const ownership =
       run && codingRunMetadata(run).ownerMode === "unattended"
-        ? `The owner is unattended. Progress notes need no ownership transfer. If you hand the write lock back to the owner while this task remains active, you are authorized to reclaim it with code writer ${worker!.name}. This does not authorize taking a collaborator's lock or restarting a finished task.`
+        ? `The owner is unattended. Progress notes need no ownership transfer. If you hand the write lock back to the owner while this task remains active, you are authorized to reclaim it with code writer ${worker!.name}. This does not authorize taking a collaborator's lock or restarting a finished task. No person can answer during this task: code blocked over ambiguity or conflicting requirements is answered at once with a directive to proceed; record each interpretation with code assume <text>. That grants no authority. Use code blocked kind:impossible <reason> only when required data, credentials or a working environment are missing.`
         : undefined;
     // The resident's bounded reminder may truncate a long request. Keep the
     // completion contract and a durable full-request pointer ahead of it.

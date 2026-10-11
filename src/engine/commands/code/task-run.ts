@@ -10,7 +10,9 @@ import {
   codingVerificationUnchanged,
   endCodingRun,
   heartbeatCodingRun,
+  recordCodingAssumption,
   submitCodingRun,
+  UNATTENDED_BLOCK_ANSWERS,
 } from "../../../coding/task-run";
 import { codingWorkerState } from "../../../coding/worker-state";
 import { TaskManager } from "../../../coordination/task-manager";
@@ -202,6 +204,7 @@ export function publishCodingRun(deps: CodeDeps & { db: MarinaDB }, run: CodingA
       ? `Task #${meta.taskId} accepted by its owner without verified evidence: ${meta.unverifiedAcceptance.reason}. Recorded verification: ${meta.verification}.`
       : `Task #${meta.taskId} submitted for review. Recorded verification: ${meta.verification}.`
     : `Task #${meta.taskId} ${run.status}: ${meta.reason === "agent_died" ? "Worker stopped before submitting." : meta.reason}`;
+  const assumptions = (meta.assumptions ?? []).map(({ text, source }) => ({ text, source }));
   const payload = {
     runId: run.id,
     taskId: meta.taskId,
@@ -210,6 +213,8 @@ export function publishCodingRun(deps: CodeDeps & { db: MarinaDB }, run: CodingA
     terminal: true,
     outcome: run.status,
     reason: meta.reason?.startsWith("Blocked:") ? "blocked" : meta.reason,
+    ...(meta.reason?.startsWith("Blocked:") ? { detail: meta.reason } : {}),
+    ...(assumptions.length ? { assumptions } : {}),
     summary,
     verification: meta.verification,
     verificationReason: meta.verificationReason,
@@ -239,7 +244,9 @@ export function publishCodingRun(deps: CodeDeps & { db: MarinaDB }, run: CodingA
         sessionId: run.session_id,
         status: run.status,
         phase: payload.phase,
-        title: detail,
+        title: assumptions.length
+          ? `${detail} Assumptions recorded: ${assumptions.length}.`
+          : detail,
         metadata: payload,
         commands: [`code review ${run.id}`, `code show ${run.id}`],
       },
@@ -456,7 +463,28 @@ export async function reviewCodingRun(
   );
 }
 
-/** A blocked attempt releases its claim without declaring success or changing other agents. */
+/** A leading `kind:<decision|impossible>` (also `kind=`, `--kind <v>`) on `code blocked`. */
+function blockKind(args: string[]): { kind: "decision" | "impossible"; rest: string[] } {
+  const [first = "", second] = args;
+  const inline = /^(?:--)?kind[:=](\w+)$/i.exec(first)?.[1];
+  const value = inline ?? (first.toLowerCase() === "--kind" ? second : undefined);
+  if (value === undefined) return { kind: "decision", rest: args };
+  const kind = value.toLowerCase();
+  if (kind !== "decision" && kind !== "impossible")
+    throw new Error("Use code blocked [kind:decision|impossible] <reason>.");
+  return { kind, rest: args.slice(inline !== undefined ? 1 : 2) };
+}
+
+/**
+ * A blocked attempt releases its claim without declaring success or changing other agents.
+ *
+ * On an owner-unattended attempt (`code do owner:unattended`, the headless `-p` path) nobody can
+ * answer, so a worker's block about a decision a person would make (ambiguity, conflicting
+ * requirements, an in-scope choice) is answered at once: proceed on the most defensible
+ * interpretation, recorded as an assumption. The answer carries no authority: no gate,
+ * permission, install or command policy changes. `kind:impossible`, or a block past
+ * {@link UNATTENDED_BLOCK_ANSWERS} answers, ends the attempt; work already produced stays.
+ */
 export function blockCodingRun(
   ctx: RoomContext,
   eid: EntityId,
@@ -467,11 +495,20 @@ export function blockCodingRun(
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
   const run = deps.db.listCodingRuns({ sessionId: session.id, status: "active", limit: 1 })[0];
-  const reason = args.join(" ").trim();
+  const { kind, rest } = blockKind(args);
+  const reason = rest.join(" ").trim();
   if (!run || !reason) throw new Error("Use code blocked <reason> on an active task.");
   const meta = codingRunMetadata(run);
-  if (![meta.ownerKey, meta.workerKey].includes(deps.db.durableEntityKey(eid)))
+  const callerKey = deps.db.durableEntityKey(eid);
+  if (![meta.ownerKey, meta.workerKey].includes(callerKey))
     throw new Error("Only this task's owner or worker may report it blocked.");
+  const answered = meta.blocksAnswered ?? 0;
+  const unattendedDecision =
+    meta.ownerMode === "unattended" && callerKey === meta.workerKey && kind === "decision";
+  if (unattendedDecision && answered < UNATTENDED_BLOCK_ANSWERS) {
+    answerUnattendedBlock(ctx, eid, entity, deps, session.id, run, reason, answered + 1);
+    return;
+  }
   const artifact = deps.db.createCodingArtifact({
     sessionId: session.id,
     kind: "handoff",
@@ -479,9 +516,10 @@ export function blockCodingRun(
     status: "complete",
     contentText: reason,
     createdBy: entity.name,
-    metadata: { runId: run.id, reason: "blocked" },
+    metadata: { runId: run.id, reason: "blocked", blockKind: kind },
   });
-  const ended = endCodingRun(deps.db, run.id, "interrupted", `Blocked: ${reason}`);
+  const suffix = unattendedDecision ? ` (after ${answered} automatic answers)` : "";
+  const ended = endCodingRun(deps.db, run.id, "interrupted", `Blocked: ${reason}${suffix}`);
   if (ended) publishCodingRun(deps, ended);
   sendCode(ctx, eid, `Task blocked; progress saved in ${artifact.id}. The claim is released.`, {
     event: "task_run_interrupted",
@@ -493,4 +531,129 @@ export function blockCodingRun(
     metadata: { runId: run.id, reason: "blocked", terminal: true, outcome: "interrupted" },
     commands: [`code review ${run.id}`],
   });
+}
+
+function answerUnattendedBlock(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+  sessionId: string,
+  run: CodingArtifactRow,
+  reason: string,
+  answer: number,
+): void {
+  const left = UNATTENDED_BLOCK_ANSWERS - answer;
+  const assumption = `Unanswered (no person attends this task): ${reason} — proceeding on the most defensible interpretation of the request.`;
+  const directive = [
+    "No person can answer during this unattended task, so this block is answered now.",
+    "Choose the most defensible interpretation of the request (what its stated goals most plausibly require), record it with code assume <interpretation>, and continue to delivery.",
+    "This answer grants no authority: gates, permissions, installs and the command policy are unchanged. Work without what is not allowed where possible, and record what you skipped with code assume.",
+    `Use code blocked kind:impossible <reason> only when required data, credentials or a working environment are missing. ${left > 0 ? `${left} more block${left === 1 ? "" : "s"} will be answered this way; the one after that` : "The next block"} ends the task. Work already produced stays in the workspace.`,
+  ].join(" ");
+  const artifact = deps.db.createCodingArtifact({
+    sessionId,
+    kind: "assumption",
+    title: "Block answered: proceeding on an assumption",
+    status: "complete",
+    contentText: `${assumption}\n\n${directive}`,
+    createdBy: entity.name,
+    metadata: { runId: run.id, source: "block", blockReason: reason, answer },
+  });
+  const meta = recordCodingAssumption(
+    deps.db,
+    run.id,
+    { text: assumption, source: "block", artifactId: artifact.id },
+    (next) => {
+      next.blocksAnswered = answer;
+    },
+  );
+  if (!meta) throw new Error("Use code blocked <reason> on an active task.");
+  const payload = {
+    runId: run.id,
+    taskId: meta.taskId,
+    answer,
+    answersLeft: left,
+    reason,
+    artifactId: artifact.id,
+  };
+  deps.db.createCodingEvent({
+    sessionId,
+    actor: entity.name,
+    kind: "task_run_block_answered",
+    payload,
+  });
+  const message = {
+    type: "lifecycle" as const,
+    event: "task_run_block_answered",
+    sessionId,
+    status: "active",
+    artifactId: artifact.id,
+    artifactKind: artifact.kind,
+    title: "Block answered automatically",
+    content: directive,
+    metadata: payload,
+    commands: ["code assume <interpretation>", "code status"],
+  };
+  sendCode(ctx, eid, directive, message);
+  const owner = deps.findEntityExact?.(meta.ownerName) ?? deps.getEntity(meta.ownerKey);
+  if (owner && owner.id !== eid && sameEntityName(owner.name, meta.ownerName))
+    deps.notify?.(owner.id, `Worker block answered automatically (unattended): ${reason}`, {
+      code: message,
+    });
+}
+
+/** `code assume <interpretation>` — record an assumption on the active attempt. */
+export function assumeCodingRun(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+  args: string[],
+): void {
+  const session = resolveSession(ctx, eid, entity, deps.db);
+  if (!session) return;
+  const run = deps.db.listCodingRuns({ sessionId: session.id, status: "active", limit: 1 })[0];
+  const text = args.join(" ").trim();
+  if (!run || !text) throw new Error("Use code assume <interpretation> on an active task.");
+  const meta = codingRunMetadata(run);
+  if (![meta.ownerKey, meta.workerKey].includes(deps.db.durableEntityKey(eid)))
+    throw new Error("Only this task's owner or worker may record its assumptions.");
+  const artifact = deps.db.createCodingArtifact({
+    sessionId: session.id,
+    kind: "assumption",
+    title: `Assumption: ${text.length > 64 ? `${text.slice(0, 61)}...` : text}`,
+    status: "complete",
+    contentText: text,
+    createdBy: entity.name,
+    metadata: { runId: run.id, source: "worker" },
+  });
+  const updated = recordCodingAssumption(deps.db, run.id, {
+    text,
+    source: "worker",
+    artifactId: artifact.id,
+  });
+  if (!updated) throw new Error("Use code assume <interpretation> on an active task.");
+  deps.db.createCodingEvent({
+    sessionId: session.id,
+    actor: entity.name,
+    kind: "assumption_recorded",
+    payload: { runId: run.id, artifactId: artifact.id, text },
+  });
+  sendCode(
+    ctx,
+    eid,
+    `Assumption recorded (${updated.assumptions?.length ?? 1}); it appears in the completion receipt.`,
+    {
+      type: "note",
+      event: "assumption_recorded",
+      sessionId: session.id,
+      status: "complete",
+      artifactId: artifact.id,
+      artifactKind: artifact.kind,
+      content: text,
+      metadata: { runId: run.id },
+      commands: [`code show ${artifact.id}`],
+    },
+  );
 }

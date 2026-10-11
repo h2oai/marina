@@ -410,7 +410,7 @@ A rejected or uncertain request must be inspected before retrying.
 
 Targeting currently supports session inspection (`status`, `history`, `artifacts`, `show`,
 `thread`, `patches`, `review`), owner dispatch (`do`, `assign`), evidence
-(`plan`, `decision`, `observe`, `summary`, `blocked`), and workspace
+(`plan`, `decision`, `observe`, `summary`, `blocked`, `assume`), and workspace
 operations (`files`, `read`, `search`, `diff`, `patch`, `propose`, `apply`, `reject`, `edit`,
 `write`, `checkpoint`, `revert`, `verify`, `run`, `test`, `lint`, `typecheck`, `build`,
 `dashboard:build`, `recipe`). Use explicit `code …` input. Conflicting session IDs, selection changes,
@@ -595,7 +595,7 @@ the session diff and the agent's summary. The exit code says what you can rely o
 |---|---|
 | `0` | completed, and the run's checks passed (verification `passed`) |
 | `3` | completed but **not verified**: no checks ran, they failed, or the source changed after them. The reason is printed on stderr. `--allow-unverified` makes this `0` (the notice still prints). |
-| `1` | failed: the agent died mid-task or the run was stopped |
+| `1` | failed: the agent died mid-task, the run was stopped, or it ended blocked (the reason is printed; edits it made stay in the folder and are listed) |
 | `2` | timed out after `MARINA_CODE_TASK_TIMEOUT_MS` (default 600000 ms); `code stop` was sent |
 
 `--verification <mode>` sets what a one-shot task must verify before it can submit: `checks`
@@ -605,7 +605,11 @@ manifest of output files and checks, run alone in a clean directory with
 requirement; agents still choose the implementation and the checks.
 
 `--json` prints one JSON object as the last line of stdout and sends everything else to stderr:
-`{"status":"verified|unverified|failed|timeout","exitCode":…,"verification":…,"verificationReason":…,"taskId":…,"runId":…,"files":[{"path":…,"added":…,"removed":…}],"durationMs":…}`.
+`{"status":"verified|unverified|failed|timeout","exitCode":…,"verification":…,"verificationReason":…,"reason":…,"assumptions":[{"text":…,"source":"worker|block"}],"taskId":…,"runId":…,"files":[{"path":…,"added":…,"removed":…}],"durationMs":…}`.
+`files` is what the run changed in the session, also when it failed or ended blocked; `reason` is
+the full reason a run failed (`null` otherwise); `assumptions` lists the interpretations made
+where no person could answer (below). The human-readable output prints the same assumptions
+after the summary.
 
 ```bash
 marina -p "fix the off-by-one in the tokenizer and add a regression test" ~/projects/acme
@@ -685,8 +689,8 @@ background completion reports the observed candidate state, and any later edit r
 checks. Coding note tools use single-line `text`; exact replacements use `edit` with
 `oldText`/`newText`, while a new file uses `write` with `content`.
 
-If work cannot proceed, `code blocked <reason>` saves a handoff, interrupts this attempt,
-and releases its claim. It preserves edits and evidence. Configured worker budgets still apply;
+If work cannot proceed, `code blocked [kind:decision|impossible] <reason>` saves a handoff,
+interrupts this attempt, and releases its claim (`kind` defaults to `decision`). It preserves edits and evidence. Configured worker budgets still apply;
 this requirement adds no retry scheduler or automatic dependency installation. An active task
 continues until it submits, reports a blocker, reaches its configured limits, or is stopped.
 An owner can deliberately accept a saved worker summary with
@@ -734,6 +738,21 @@ Opening a desk or its evidence does not execute checks. Chat and canvas show the
 file inventory and digests. Passing checks establishes their recorded scope; owner acceptance
 and the adequacy of test coverage remain separate. Whitespace-only checks cannot satisfy a
 required task verification contract, including candidate mode.
+
+**Unattended blocks become assumptions.** On an `owner:unattended` attempt nobody can answer a
+question, so a worker's `code blocked <reason>` about a decision a person would normally make
+(ambiguity, conflicting requirements, missing sign-off for an in-scope choice) does not end the
+task. It is answered at once: the reply tells the worker to take the most defensible
+interpretation, record it with `code assume <interpretation>`, and continue to delivery. The
+block itself is recorded as an assumption too. Assumptions are `assumption` artifacts on the
+attempt; they appear in the submitted receipt, the terminal lifecycle event and the `-p` result.
+An answer is never authority: gates, permissions, dependency installation and the command policy
+are unchanged, so the worker proceeds without anything it was not allowed and records what it
+skipped. At most two blocks per attempt are answered this way; the next one ends the attempt with
+`Blocked: <reason> (after 2 automatic answers)`. `code blocked kind:impossible <reason>` ends it
+at once, for what cannot be worked around (missing data or credentials, a broken environment).
+Either way the edits already made stay in the workspace. Only the attempt's worker gets automatic
+answers; attended tasks keep the behavior above.
 
 Marina's one-shot `-p` path selects `verification:checks owner:unattended` and exits successfully
 only after a matching attempt submits with current verification. Submission remains separate from

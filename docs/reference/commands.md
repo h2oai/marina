@@ -2045,11 +2045,19 @@ Effect: unknown.
 - Group `option-0`: `verification:candidate|checks|delivery`.
 - Group `option-1`: `owner:unattended`.
 
-### `code blocked <reason>`
+### `code assume <interpretation>`
 
 Effect: unknown.
 
-- `field-0` (`reason`): text, required.
+- `field-0` (`interpretation`): text, required.
+
+### `code blocked [kind:decision|impossible] <reason>`
+
+Effect: unknown.
+
+- `field-0` (`kind`): text, optional group `option-0`, choices `decision`, `impossible`.
+- `field-1` (`reason`): text, required.
+- Group `option-0`: `kind:decision|impossible`.
 
 ### `code branch [title]`
 
