@@ -14,6 +14,7 @@ import { resetReasoningControlForTests } from "../src/agent/reasoning-control";
 import type { DecisionProvider, DecisionRequest, DecisionResult } from "../src/decisions/types";
 import { Engine } from "../src/engine/engine";
 import { contextCacheStats } from "../src/memory/context-cache";
+import { queryExcerpt } from "../src/memory/query-excerpt";
 import {
   CALIBRATED_KEEP_AT,
   gateRelevance,
@@ -81,6 +82,32 @@ function fakeProvider(
 }
 
 describe("relevance gate policy (pure)", () => {
+  it("shows tail evidence and adjacent labels within a UTF-8 budget", () => {
+    const text = `${"navigation furniture\n".repeat(200)}cobalt renewal date:\n17 November 2031\n${"other furniture\n".repeat(100)}`;
+    const excerpt = queryExcerpt(text, "cobalt renewal date", 240);
+    expect(excerpt).toContain("cobalt renewal date:");
+    expect(excerpt).toContain("17 November 2031");
+    expect(Buffer.byteLength(excerpt)).toBeLessThanOrEqual(240);
+    for (const size of [0, 1, 2, 3, 20, 80, 400]) {
+      const result = queryExcerpt(
+        `${"界🪸".repeat(100)} cobalt renewal 2031`,
+        "cobalt renewal",
+        size,
+      );
+      expect(Buffer.byteLength(result)).toBeLessThanOrEqual(size);
+      expect(result).not.toContain("�");
+    }
+    const longLine = `${"furniture ".repeat(500)}cobalt renewal 17 November 2031 ${"more ".repeat(100)}`;
+    expect(queryExcerpt(longLine, "cobalt renewal", 400)).toContain("17 November 2031");
+  });
+
+  it("does not spend the positive-item cap on unanswered memories", () => {
+    const result = gateVerdicts([cand("a"), cand("b"), cand("c")], [undefined, undefined, 0.9], {
+      keepAt: 0.5,
+      maxItems: 1,
+    });
+    expect(result.keep).toEqual([true, true, true]);
+  });
   it("drops only below the threshold, keeps exempt and unscored items, never reorders", () => {
     const v = gateVerdicts(
       [cand("a"), cand("b"), cand("c", "c", true), cand("d")],
@@ -124,6 +151,39 @@ describe("relevance gate policy (pure)", () => {
 });
 
 describe("gateRelevance backends", () => {
+  it("does not infer that an entire record is irrelevant from a partial view", async () => {
+    const provider = fakeProvider(() => 0.1, { calibrated: false });
+    const content = `${"page navigation ".repeat(200)}cobalt renewal 17 November 2031`;
+    const result = await gateRelevance(
+      "cobalt renewal",
+      [cand("long", content), cand("short", "weather")],
+      { mode: "on", provider, maxItems: 1 },
+    );
+    expect([...result.keep]).toEqual(["long"]);
+    const memories = (
+      provider.requests[0]!.state as { memories: { text: string; complete: boolean }[] }
+    ).memories;
+    expect(memories[0]!.text).toContain("cobalt renewal");
+    expect(memories[0]!.complete).toBe(false);
+    expect(memories[1]!.complete).toBe(true);
+  });
+
+  it("returns promptly on cancellation even when a backend ignores the signal", async () => {
+    const controller = new AbortController();
+    const provider = fakeProvider(() => 0.9);
+    provider.ask = async () => {
+      controller.abort();
+      return new Promise(() => undefined);
+    };
+    const result = await gateRelevance("cobalt", [cand("a")], {
+      mode: "on",
+      provider,
+      signal: controller.signal,
+      timeoutMs: 60_000,
+    });
+    expect(result.report.reason).toBe("aborted");
+    expect([...result.keep]).toEqual(["a"]);
+  });
   const items = [
     cand("evidence:r1", "the red kettle was bought on 3 May at the corner shop"),
     cand("evidence:r2", "a weather report for Lisbon"),

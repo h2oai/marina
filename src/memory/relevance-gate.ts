@@ -31,7 +31,8 @@
  *     labelled in `relevance.outcome` / `reason`;
  *     an item the backend left unanswered is kept;
  *   - exempt: `core` and pinned items are never dropped and never judged;
- *   - at most `maxItems` judged items are kept (highest relevance first);
+ *   - at most `maxItems` positively judged items are kept (highest first);
+ *     unanswered items and negative judgments of incomplete excerpts stay;
  *   - a calibrated backend keeps p ≥ 0.3; an uncalibrated one gets one cut
  *     at 0.5 (`UNCALIBRATED_GATE_POLICY`'s convention).
  *
@@ -51,6 +52,7 @@ import type {
   UnifiedRelevanceReport,
   UnifiedTier,
 } from "../sdk/memory-context";
+import { queryExcerpt } from "./query-excerpt";
 import { queryTerms, termCoverage } from "./term-match";
 
 const logger = new Logger();
@@ -67,7 +69,7 @@ export const DEFAULT_RELEVANCE_GATE_MODEL = "marina/default";
 export const RELEVANCE_GATE_MAX_ITEMS = 8;
 /** Items per decision request. */
 export const RELEVANCE_GATE_BATCH = 12;
-/** Bytes of each item the judge sees (head of the content). */
+/** Bytes of each item the judge sees (query-matched passages). */
 export const RELEVANCE_GATE_ITEM_BYTES = 800;
 /** Bytes of the query the judge sees. */
 export const RELEVANCE_GATE_QUERY_BYTES = 1000;
@@ -180,7 +182,7 @@ export function gateVerdicts(
   });
   const ranked = why
     .map((w, i) => ({ i, w, s: scores[i] ?? Number.POSITIVE_INFINITY }))
-    .filter((x) => x.w === "kept" || x.w === "unscored")
+    .filter((x) => x.w === "kept")
     .sort((a, b) => b.s - a.s || a.i - b.i);
   const cap = Math.max(0, Math.floor(opts.maxItems));
   for (const extra of ranked.slice(cap)) why[extra.i] = "max";
@@ -238,7 +240,8 @@ export function relevanceRequest(
       query: headBytes(query, RELEVANCE_GATE_QUERY_BYTES),
       memories: batch.map((c, i) => ({
         id: label(i),
-        text: headBytes(c.content, RELEVANCE_GATE_ITEM_BYTES),
+        text: queryExcerpt(c.content, query, RELEVANCE_GATE_ITEM_BYTES),
+        complete: Buffer.byteLength(c.content) <= RELEVANCE_GATE_ITEM_BYTES,
       })),
     },
     questions,
@@ -326,6 +329,7 @@ export async function gateRelevance(
     );
 
   const judged = candidates.filter((c) => !c.exempt);
+  if (opts.signal?.aborted) return failOpen("aborted");
   if (judged.length === 0)
     return finish(
       { outcome: "no_candidates", scored: 0, dropped: [], kept: candidates.length, calls: 0 },
@@ -334,6 +338,7 @@ export async function gateRelevance(
 
   const scores: RelevanceScore[] = candidates.map(() => undefined);
   let calls = 0;
+  let incompleteKept = 0;
   let costUsd: number | undefined;
   let keepAt = MECHANICAL_COVERAGE_FLOOR;
   if (!opts.provider) {
@@ -358,11 +363,12 @@ export async function gateRelevance(
     );
     const signal = opts.signal ? AbortSignal.any([opts.signal, deadline.signal]) : deadline.signal;
     // A backend that ignores its signal still cannot hold the gate past the bound.
-    const expired = new Promise<never>((_, reject) =>
-      deadline.signal.addEventListener("abort", () => reject(deadline.signal.reason), {
-        once: true,
-      }),
-    );
+    let onAbort: () => void;
+    const expired = new Promise<never>((_, reject) => {
+      onAbort = () => reject(signal.reason);
+      if (signal.aborted) onAbort();
+      else signal.addEventListener("abort", onAbort, { once: true });
+    });
     expired.catch(() => undefined);
     try {
       const replies = await Promise.race([
@@ -398,17 +404,34 @@ export async function gateRelevance(
         ...(timedOut ? { timeoutMs } : {}),
         error: getErrorMessage(error).slice(0, 200),
       });
-      return failOpen(timedOut ? "timeout" : "backend_unavailable", calls);
+      return failOpen(
+        opts.signal?.aborted ? "aborted" : timedOut ? "timeout" : "backend_unavailable",
+        calls,
+      );
     } finally {
       clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort!);
     }
     if (scores.every((s) => s === undefined)) return failOpen("incomplete", calls, costUsd);
     keepAt = calibrated && !uncalibratedReply ? CALIBRATED_KEEP_AT : UNCALIBRATED_KEEP_AT;
+    base.calibrated = calibrated && !uncalibratedReply;
+    // An irrelevant excerpt is not evidence that the unseen rest is irrelevant.
+    // Keep these records for the reader rather than manufacturing an absence.
+    candidates.forEach((c, i) => {
+      if (
+        Buffer.byteLength(c.content) > RELEVANCE_GATE_ITEM_BYTES &&
+        scores[i] !== undefined &&
+        scores[i]! < keepAt
+      ) {
+        scores[i] = undefined;
+        incompleteKept++;
+      }
+    });
   }
 
   const verdicts = gateVerdicts(candidates, scores, { keepAt, maxItems });
   const dropped = candidates.filter((_, i) => !verdicts.keep[i]).map((c) => c.key);
-  const scored = scores.filter((s) => s !== undefined).length;
+  const scored = scores.filter((s) => s !== undefined).length + incompleteKept;
   const keep =
     opts.mode === "on"
       ? new Set(candidates.filter((_, i) => verdicts.keep[i]).map((c) => c.key))
@@ -420,6 +443,7 @@ export async function gateRelevance(
       dropped,
       kept: keep.size,
       calls,
+      ...(incompleteKept ? { incompleteKept } : {}),
       keepAt,
       ...(costUsd === undefined ? {} : { costUsd }),
     },
