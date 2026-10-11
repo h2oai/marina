@@ -93,4 +93,7 @@ test("generated authority and memory histories never return withdrawn cached evi
     }),
     propertyOptions(20),
   );
-});
+  // This property test seeds a fresh engine per run (20 runs × up to 20 actions
+  // × 2 reads); it is legitimately heavy and spikes past the 15s default under a
+  // loaded parallel shard, so give it explicit headroom.
+}, 60_000);

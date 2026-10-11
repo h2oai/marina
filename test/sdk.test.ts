@@ -9,8 +9,10 @@ import { MarinaAgent, MarinaClient } from "../src/sdk/client";
 import { roomId } from "../src/types";
 import { cleanupDb, makeTestRoom, until } from "./helpers";
 
-const TEST_PORT = 13399;
-const TEST_URL = `ws://localhost:${TEST_PORT}`;
+// Bind an ephemeral port (0) and read the assigned port back from `start()` so
+// parallel test shards never trip over a fixed port (see test/README.md: listen
+// ports must not collide across sibling processes).
+let testUrl = "";
 
 describe("MarinaClient SDK", () => {
   let db: MarinaDB;
@@ -38,8 +40,9 @@ describe("MarinaClient SDK", () => {
         exits: { south: roomId("test/start") },
       }),
     );
-    wsServer = new WebSocketServer(engine, TEST_PORT);
+    wsServer = new WebSocketServer(engine, 0);
     wsServer.start();
+    testUrl = `ws://localhost:${wsServer.getPort()}`;
     engine.start();
   });
 
@@ -51,7 +54,7 @@ describe("MarinaClient SDK", () => {
   });
 
   it("refreshes live capabilities and inspects context without polluting world perceptions", async () => {
-    const client = new MarinaClient(TEST_URL, { autoReconnect: false });
+    const client = new MarinaClient(testUrl, { autoReconnect: false });
     await client.connect("ManifestSDK");
     const observed: unknown[] = [];
     client.onPerception((p) => {
@@ -82,7 +85,7 @@ describe("MarinaClient SDK", () => {
   });
 
   it("should connect and login", async () => {
-    const client = new MarinaClient(TEST_URL, { autoReconnect: false });
+    const client = new MarinaClient(testUrl, { autoReconnect: false });
     const session = await client.connect("SDKUser");
     expect(session.entityId).toBeTruthy();
     expect(session.name).toBe("SDKUser");
@@ -91,8 +94,8 @@ describe("MarinaClient SDK", () => {
   });
 
   it("targets sessions through the wire and validates a queued run at execution", async () => {
-    const client = new MarinaClient(TEST_URL, { autoReconnect: false });
-    const other = new MarinaClient(TEST_URL, { autoReconnect: false });
+    const client = new MarinaClient(testUrl, { autoReconnect: false });
+    const other = new MarinaClient(testUrl, { autoReconnect: false });
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
     try {
@@ -161,7 +164,7 @@ describe("MarinaClient SDK", () => {
   });
 
   it("acknowledges an explicit quit before closing the session", async () => {
-    const client = new MarinaAgent(TEST_URL, { autoReconnect: false });
+    const client = new MarinaAgent(testUrl, { autoReconnect: false });
     const session = await client.connect("QuitSDK");
     await client.quit();
     expect(engine.entities.get(session.entityId)).toBeUndefined();
@@ -169,7 +172,7 @@ describe("MarinaClient SDK", () => {
   });
 
   it("should send commands and receive perceptions", async () => {
-    const client = new MarinaClient(TEST_URL, { autoReconnect: false });
+    const client = new MarinaClient(testUrl, { autoReconnect: false });
     await client.connect("CmdUser");
 
     const perceptions = await client.command("look");
@@ -185,8 +188,8 @@ describe("MarinaClient SDK", () => {
   });
 
   it("correlates concurrent commands, excludes ambient traffic, and awaits async completion", async () => {
-    const client = new MarinaClient(TEST_URL, { autoReconnect: false, commandDrainTimeout: 1 });
-    const peer = new MarinaClient(TEST_URL, { autoReconnect: false });
+    const client = new MarinaClient(testUrl, { autoReconnect: false, commandDrainTimeout: 1 });
+    const peer = new MarinaClient(testUrl, { autoReconnect: false });
     const session = await client.connect("CorrelatedSDK");
     await peer.connect("IndependentSDK");
     const release = Promise.withResolvers<void>();
@@ -231,7 +234,7 @@ describe("MarinaClient SDK", () => {
   });
 
   it("rejects command failures and awaits every command in an async batch", async () => {
-    const client = new MarinaClient(TEST_URL, { autoReconnect: false });
+    const client = new MarinaClient(testUrl, { autoReconnect: false });
     await client.connect("FailedSDK");
     engine.commands.registerBuiltin({
       name: "explode",
@@ -262,8 +265,8 @@ describe("MarinaClient SDK", () => {
   });
 
   it("returns delivery receipts only for successful sends", async () => {
-    const client = new MarinaClient(TEST_URL, { autoReconnect: false });
-    const peer = new MarinaClient(TEST_URL, { autoReconnect: false });
+    const client = new MarinaClient(testUrl, { autoReconnect: false });
+    const peer = new MarinaClient(testUrl, { autoReconnect: false });
     await client.connect("ReceiptSDK");
     await peer.connect("ReceiptPeer");
     const sent = await client.command("tell ReceiptPeer answer [re:abcdef]");
@@ -280,7 +283,7 @@ describe("MarinaClient SDK", () => {
   });
 
   it("should receive perceptions via handler", async () => {
-    const client = new MarinaClient(TEST_URL, { autoReconnect: false });
+    const client = new MarinaClient(testUrl, { autoReconnect: false });
     await client.connect("HandlerUser");
 
     const received: string[] = [];
@@ -296,7 +299,7 @@ describe("MarinaClient SDK", () => {
   });
 
   it("should reject invalid login", async () => {
-    const client = new MarinaClient(TEST_URL, { autoReconnect: false });
+    const client = new MarinaClient(testUrl, { autoReconnect: false });
     try {
       await client.connect("a"); // too short
       expect(true).toBe(false); // should not reach here
@@ -312,7 +315,7 @@ describe("MarinaClient SDK", () => {
     // capturing the rotated one, a SECOND reconnect would present a revoked
     // token and fail — which is how long-lived agents silently fell off the
     // connection registry and showed as "not connected".
-    const client = new MarinaClient(TEST_URL, { autoReconnect: false });
+    const client = new MarinaClient(testUrl, { autoReconnect: false });
     const first = await client.connect("RotateUser");
     const t1 = first.token;
 
@@ -367,8 +370,9 @@ describe("MarinaAgent SDK", () => {
         exits: { south: roomId("test/start") },
       }),
     );
-    wsServer = new WebSocketServer(engine, TEST_PORT);
+    wsServer = new WebSocketServer(engine, 0);
     wsServer.start();
+    testUrl = `ws://localhost:${wsServer.getPort()}`;
     engine.start();
   });
 
@@ -380,7 +384,7 @@ describe("MarinaAgent SDK", () => {
   });
 
   it("should look and get room view", async () => {
-    const agent = new MarinaAgent(TEST_URL, { autoReconnect: false });
+    const agent = new MarinaAgent(testUrl, { autoReconnect: false });
     await agent.connect("LookAgent");
 
     const view = await agent.look();
@@ -392,7 +396,7 @@ describe("MarinaAgent SDK", () => {
   });
 
   it("should move between rooms", async () => {
-    const agent = new MarinaAgent(TEST_URL, { autoReconnect: false });
+    const agent = new MarinaAgent(testUrl, { autoReconnect: false });
     await agent.connect("MoveAgent");
 
     await agent.move("north");
@@ -405,7 +409,7 @@ describe("MarinaAgent SDK", () => {
   });
 
   it("should say and get confirmation", async () => {
-    const agent = new MarinaAgent(TEST_URL, { autoReconnect: false });
+    const agent = new MarinaAgent(testUrl, { autoReconnect: false });
     await agent.connect("SayAgent");
 
     const received: string[] = [];
@@ -426,8 +430,8 @@ describe("MarinaAgent SDK", () => {
     // thin specialist) auto-replies on perception. This is the basic happy
     // path: round trip completes inside one tool call, no continuation
     // prompt cycle in the middle.
-    const alice = new MarinaClient(TEST_URL, { autoReconnect: false });
-    const bob = new MarinaClient(TEST_URL, { autoReconnect: false });
+    const alice = new MarinaClient(testUrl, { autoReconnect: false });
+    const bob = new MarinaClient(testUrl, { autoReconnect: false });
     await alice.connect("Alice");
     await bob.connect("Bob");
 
@@ -453,8 +457,8 @@ describe("MarinaAgent SDK", () => {
     // No responder online — Carol just listens. Alice's await must reject
     // with a clear message including the addressee name and the timeout
     // window so the agent can choose a recovery path on tool error.
-    const alice = new MarinaClient(TEST_URL, { autoReconnect: false });
-    const carol = new MarinaClient(TEST_URL, { autoReconnect: false });
+    const alice = new MarinaClient(testUrl, { autoReconnect: false });
+    const carol = new MarinaClient(testUrl, { autoReconnect: false });
     await alice.connect("Alice2");
     await carol.connect("Carol");
 
@@ -477,9 +481,9 @@ describe("MarinaAgent SDK", () => {
     // an unrelated tell. Alice's await must NOT resolve on Eve's message —
     // it must hold for Bob's reply specifically. Otherwise crew chatter
     // would corrupt the dispatch contract.
-    const alice = new MarinaClient(TEST_URL, { autoReconnect: false });
-    const bob = new MarinaClient(TEST_URL, { autoReconnect: false });
-    const eve = new MarinaClient(TEST_URL, { autoReconnect: false });
+    const alice = new MarinaClient(testUrl, { autoReconnect: false });
+    const bob = new MarinaClient(testUrl, { autoReconnect: false });
+    const eve = new MarinaClient(testUrl, { autoReconnect: false });
     await alice.connect("Alicex");
     await bob.connect("Bobx");
     await eve.connect("Evex");

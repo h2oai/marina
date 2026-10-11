@@ -2,25 +2,29 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import { classifyPrimitive } from "../src/telemetry/primitive-usage";
 import { roomId } from "../src/types";
-import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
-
-const DB_PATH = "/tmp/marina-primitive-usage.test.db";
+import { MockConnection, makeTestRoom } from "./helpers";
 
 describe("primitive usage evidence", () => {
   let db: MarinaDB;
+  let dir: string;
 
   beforeEach(() => {
-    cleanupDb(DB_PATH);
-    db = new MarinaDB(DB_PATH);
+    // Unique temp directory per run so parallel test shards never share (and
+    // corrupt) a fixed database path.
+    dir = mkdtempSync(join(tmpdir(), "marina-primitive-usage-"));
+    db = new MarinaDB(join(dir, "world.db"));
   });
 
   afterEach(() => {
     db.close();
-    cleanupDb(DB_PATH);
+    rmSync(dir, { recursive: true, force: true });
   });
 
   test("classifies useful activity without retaining command content", () => {
