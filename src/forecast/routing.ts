@@ -48,7 +48,8 @@ export const DEFAULT_ROUTE_MIN_N = 30;
 
 export function routeSettingsFromEnv(env: NodeJS.ProcessEnv = process.env): RouteSettings {
   const m = env.MARINA_FORECAST_ROUTE?.trim().toLowerCase();
-  const mode: RouteMode = m === "observe" || m === "on" ? m : "off";
+  // `observe` by default: the pick is recorded on every answer, the default formation answers.
+  const mode: RouteMode = m === "off" || m === "on" ? m : "observe";
   const listed = (env.MARINA_FORECAST_ROUTE_CANDIDATES ?? "")
     .split(",")
     .map((s) => typedFormation(s))

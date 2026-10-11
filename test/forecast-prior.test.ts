@@ -340,7 +340,12 @@ describe("defaults: unset settings change nothing", () => {
     expect(adjustActive(s)).toBe(false);
     expect(s.history).toBeUndefined();
     expect(typedOptionsFromEnv({}).pool).toBeUndefined();
-    expect(routeSettingsFromEnv({}).mode).toBe("off");
+    // Routing observes by default: the pick is recorded, the default formation still answers.
+    expect(routeSettingsFromEnv({}).mode).toBe("observe");
+    expect(routeSettingsFromEnv({ MARINA_FORECAST_ROUTE: "off" }).mode).toBe("off");
+    // The run checker is on by default; `off` turns it off.
+    expect(typedOptionsFromEnv({}).verify).toBe(true);
+    expect(typedOptionsFromEnv({ MARINA_FORECAST_VERIFY: "off" }).verify).toBeUndefined();
     expect(formationFromEnv({})).toBe("ensemble");
   });
 

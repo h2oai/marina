@@ -23,7 +23,7 @@
 
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { type AnswerOption, type AnswerSpec, type AnswerType, normalizeText } from "./answer-types";
 import type { Distribution } from "./distribution";
 
@@ -190,8 +190,23 @@ export function jsonlHistory(path: string): ForecastHistory {
 
 /** `MARINA_FORECAST_HISTORY`: a JSON-lines path, or undefined (no history). */
 export function historyFromEnv(env: NodeJS.ProcessEnv = process.env): ForecastHistory | undefined {
-  const path = env.MARINA_FORECAST_HISTORY?.trim();
+  const path = historyPath(env);
   return path ? jsonlHistory(path) : undefined;
+}
+
+/**
+ * Where resolved history is kept: MARINA_FORECAST_HISTORY, else next to the
+ * world database (`<dir of DB_PATH>/forecast/history.jsonl`) so every resolved
+ * forecast is routing and recalibration evidence by default; `off` (or no
+ * on-disk database) keeps none. Recording changes no forecast: the stages that
+ * read it stay off until enabled or earned.
+ */
+export function historyPath(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const set = env.MARINA_FORECAST_HISTORY?.trim();
+  if (set) return ["off", "none", "false", "0"].includes(set.toLowerCase()) ? undefined : set;
+  const db = env.DB_PATH?.trim();
+  if (!db || db === ":memory:" || db.startsWith("file::memory:")) return undefined;
+  return join(dirname(db), "forecast", "history.jsonl");
 }
 
 /**

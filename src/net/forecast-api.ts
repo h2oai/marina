@@ -8,7 +8,11 @@
  * — plan, research rounds, K runs, critique, combined by the operator's formation
  * (`MARINA_FORECAST_FORMATION`), with the lesson pool — through the same builder
  * as the `forecast` command (`src/forecast/surface.ts`) — and also takes `endTime`,
- * `asOf`, `context`, `runs`, `researchRounds` and `critique`. Models stay
+ * `asOf`, `context`, `runs`, `researchRounds` and `critique`. A plain question
+ * runs through that same pipeline (a yes/no choice or a typed number) and keeps
+ * the plain answer shape with the typed answer attached as `typed`
+ * (`MARINA_FORECAST_PLAIN=legacy` keeps the older single-round pipeline).
+ * `board` reads that board's earned configuration first. Models stay
  * operator-configured (env), never chosen by the caller. Behind the model
  * API's auth and per-IP limit like every /v1 route.
  *
@@ -27,7 +31,8 @@ import {
   type SuppliedPrior,
   type SuppliedPriorSource,
 } from "../forecast/prior";
-import type { ForecastKind } from "../forecast/question";
+import type { ForecastAnswer, ForecastKind } from "../forecast/question";
+import type { ForecastScale } from "../forecast/service";
 import { type EvalContext, evalOption } from "../learning/eval-context";
 import type { MarinaDB } from "../persistence/database";
 import { parseSampleId } from "../resolvers/calibration";
@@ -90,6 +95,7 @@ export async function handleForecast(
     kind?: unknown;
     resolveBy?: unknown;
     unit?: unknown;
+    board?: unknown;
     answer?: unknown;
     endTime?: unknown;
     asOf?: unknown;
@@ -119,24 +125,43 @@ export async function handleForecast(
       code: "invalid_request_error",
     });
   }
-  const [{ forecastQuestion }, { forecastDeps }] = await Promise.all([
-    import("../forecast/question"),
-    import("../forecast/service"),
-  ]);
+  const board = boardOf(body.board);
+  if (board && "error" in board) {
+    return errorJson(400, board.error, { code: "invalid_request_error" });
+  }
+  const plainReq = {
+    question,
+    ...(body.kind ? { kind: body.kind as ForecastKind } : {}),
+    ...(typeof body.resolveBy === "string" ? { resolveBy: body.resolveBy } : {}),
+    ...(typeof body.unit === "string" ? { unit: body.unit } : {}),
+  };
   const capped = dailyCapRefusal();
   if (capped) return errorJson(429, capped, { code: "spend_cap_reached" });
-  const made = forecastDeps();
+  const surface = await import("../forecast/surface");
+  let made: { answer: ForecastAnswer; scale: ForecastScale } | { error: string };
+  if (surface.plainUsesLegacy()) {
+    const [{ forecastQuestion }, { forecastDeps }] = await Promise.all([
+      import("../forecast/question"),
+      import("../forecast/service"),
+    ]);
+    const deps = forecastDeps();
+    if ("error" in deps) made = deps;
+    else {
+      const answer = await forecastQuestion(plainReq, deps.deps);
+      answer.costUsd = deps.costUsd();
+      made = { answer, scale: deps.scale };
+    }
+  } else {
+    // The full pipeline (lessons, formations, routing, prior/recalibration) for
+    // a plain question too; the answer keeps the plain shape plus `typed`.
+    made = await surface.plainForecastFor(plainReq, {
+      ...(db ? { db } : {}),
+      ...(board ? { board: board.board } : {}),
+      ...evalOption(req),
+    });
+  }
   if ("error" in made) return errorJson(503, made.error, { code: "forecast_unavailable" });
-  const answer = await forecastQuestion(
-    {
-      question,
-      ...(body.kind ? { kind: body.kind as ForecastKind } : {}),
-      ...(typeof body.resolveBy === "string" ? { resolveBy: body.resolveBy } : {}),
-      ...(typeof body.unit === "string" ? { unit: body.unit } : {}),
-    },
-    made.deps,
-  );
-  answer.costUsd = made.costUsd();
+  const { answer } = made;
   const answerId =
     save.target && db
       ? (await import("../engine/commands/forecast")).saveAnswer(
@@ -148,6 +173,15 @@ export async function handleForecast(
         )
       : undefined;
   return json({ ...answer, scale: made.scale, ...savedFields(save.target, answerId) });
+}
+
+/** `board`: the board whose earned forecast configuration is read first (optional). */
+function boardOf(raw: unknown): { board: string } | { error: string } | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/.test(raw.trim())) {
+    return { error: "board must be a name of at most 64 letters, digits, '.', '_', ':' or '-'" };
+  }
+  return { board: raw.trim() };
 }
 
 const isoOrUndefined = (v: unknown) =>
@@ -226,6 +260,7 @@ async function typed(
     critique?: unknown;
     priors?: unknown;
     category?: unknown;
+    board?: unknown;
   },
   question: string,
   db: MarinaDB | undefined,
@@ -273,6 +308,10 @@ async function typed(
   if (body.critique !== undefined && typeof body.critique !== "boolean") {
     return errorJson(400, "critique must be a boolean", { code: "invalid_request_error" });
   }
+  const board = boardOf(body.board);
+  if (board && "error" in board) {
+    return errorJson(400, board.error, { code: "invalid_request_error" });
+  }
   const { typedForecastFor } = await import("../forecast/surface");
   const capped = dailyCapRefusal();
   if (capped) return errorJson(429, capped, { code: "spend_cap_reached" });
@@ -295,6 +334,7 @@ async function typed(
       ...(body.runs !== undefined ? { runs } : {}),
       ...(body.researchRounds !== undefined ? { researchRounds: rounds } : {}),
       ...(typeof body.critique === "boolean" ? { critique: body.critique } : {}),
+      ...(board ? { board: board.board } : {}),
       // A caller measuring a board (`x-marina-eval`) never recalls that board's lessons.
       ...measurement,
     },

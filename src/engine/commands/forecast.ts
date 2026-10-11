@@ -145,14 +145,29 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
         );
       }
       return (async () => {
-        const [{ forecastQuestion }, { forecastDeps }] = await Promise.all([
-          import("../../forecast/question"),
-          import("../../forecast/service"),
-        ]);
-        const made = forecastDeps();
+        const surface = await import("../../forecast/surface");
+        let made: { answer: ForecastAnswer; scale: ForecastScale } | { error: string };
+        if (surface.plainUsesLegacy()) {
+          const [{ forecastQuestion }, { forecastDeps }] = await Promise.all([
+            import("../../forecast/question"),
+            import("../../forecast/service"),
+          ]);
+          const wired = forecastDeps();
+          if ("error" in wired) made = wired;
+          else {
+            const answer = await forecastQuestion({ question }, wired.deps);
+            answer.costUsd = wired.costUsd();
+            made = { answer, scale: wired.scale };
+          }
+        } else {
+          // The full pipeline (lessons, formations, routing) for a plain question too.
+          made = await surface.plainForecastFor(
+            { question },
+            deps.lessonsDb ? { db: deps.lessonsDb } : {},
+          );
+        }
         if ("error" in made) return ctx.send(input.entity, made.error);
-        const a = await forecastQuestion({ question }, made.deps);
-        a.costUsd = made.costUsd();
+        const a = made.answer;
         const saved = name && deps.db ? saveAnswer(deps.db, name, a, sampleId) : undefined;
         ctx.send(
           input.entity,
