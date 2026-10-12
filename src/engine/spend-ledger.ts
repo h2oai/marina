@@ -369,11 +369,12 @@ export function dailyCapRefusal(
 /**
  * True when an upstream error says money ran out — Marina's own cap
  * (`spend_cap_reached`, the `dailyCapRefusal` text), a reservation or budget
- * proxy refusing the call, or a provider out of credits/quota. Retrying such a
+ * proxy refusing the call, a provider out of credits/quota, or an account/workspace
+ * usage limit ("reached your specified workspace API usage limits"). Retrying such a
  * call cannot succeed until the budget changes, unlike a rate limit.
  */
 export function isSpendRefusal(message: string): boolean {
-  return /spend_cap_reached|spend cap reached|spend refused|budget (?:exhausted|exceeded|reached)|reservation (?:refused|exceeds)|insufficient[_ ](?:credits|quota|funds|balance)|payment required|\b402\b/i.test(
+  return /spend_cap_reached|spend cap reached|spend refused|budget (?:exhausted|exceeded|reached)|reservation (?:refused|exceeds)|insufficient[_ ](?:credits|quota|funds|balance)|payment required|\b402\b|reached your (?:specified )?(?:\w+ )*usage limits?|usage limits? (?:reached|exceeded)/i.test(
     message,
   );
 }
