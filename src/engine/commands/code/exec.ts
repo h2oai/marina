@@ -751,14 +751,16 @@ export async function runVerificationCommands(
   if (currentEntity && (!background || canAdoptCodingSession(currentSession, currentEntity)))
     updateCodeContext(currentEntity, deps.db, currentSession);
 
-  // A failure brings back what earlier verifications taught about this kind of
-  // work — the actor's own lessons (its owner's, for a spawned coder) with the
-  // shared pool — plus cross-board method lessons within a third of the budget
-  // (MARINA_LESSONS / MARINA_LESSONS_META; observe records the ids without showing them).
+  // A failure brings back what earlier verifications and tool work taught about
+  // this kind of work (`code` and `tools` lessons — lessons from work land in
+  // `tools`) — the actor's own lessons (its owner's, for a spawned coder) with
+  // the shared pool — plus cross-board method lessons within a third of the
+  // budget (MARINA_LESSONS / MARINA_LESSONS_META; observe records the ids
+  // without showing them).
   const lessons = failed
     ? await recallForWork(
         deps.db,
-        ["code"],
+        ["code", "tools"],
         `${results.map((item) => item.result.command.join(" ")).join(" ")} ${(failedRun?.stored?.result.output ?? "").slice(-300)}`,
         { limit: 3, maxBytes: 600, ...lessonOwner(deps.db, entity.name) },
       )
