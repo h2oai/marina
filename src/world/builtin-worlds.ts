@@ -1,28 +1,13 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-// Explicit imports let Bun include built-in worlds in the standalone CLI.
-// The parity test keeps this catalog aligned with worlds/ and its shared rooms.
+// Reuse the canonical builtin registry and embed its external shared rooms.
+// Parity tests compare the compiled room catalog with source world loading.
+import { BUILTIN_WORLDS } from "../../worlds";
 import type { RoomModule } from "../types";
 import type { WorldDefinition } from "./world-definition";
 
-export const BUILTIN_WORLDS: Record<string, () => Promise<{ default: WorldDefinition }>> = {
-  commons: () => import("../../worlds/commons"),
-  craft: () => import("../../worlds/craft"),
-  "data-investigation": () => import("../../worlds/data-investigation"),
-  "deep-research": () => import("../../worlds/deep-research"),
-  default: () => import("../../worlds/default"),
-  demos: () => import("../../worlds/demos"),
-  "due-diligence": () => import("../../worlds/due-diligence"),
-  empty: () => import("../../worlds/empty"),
-  evolve: () => import("../../worlds/evolve"),
-  markets: () => import("../../worlds/markets"),
-  personal: () => import("../../worlds/personal"),
-  "prediction-lab": () => import("../../worlds/prediction-lab"),
-  "red-team": () => import("../../worlds/red-team"),
-  research: () => import("../../worlds/research"),
-  showcase: () => import("../../worlds/showcase"),
-};
+export { BUILTIN_WORLDS };
 
 const SHARED_ROOMS: Record<string, () => Promise<{ default: RoomModule }>> = {
   "agent/modes": () => import("../../worlds/default/agent/modes"),
@@ -54,7 +39,7 @@ const SHARED_ROOMS: Record<string, () => Promise<{ default: RoomModule }>> = {
 
 export async function loadBuiltinWorld(slug: string): Promise<WorldDefinition> {
   if (!Object.hasOwn(BUILTIN_WORLDS, slug)) throw new Error(`World "${slug}" not found`);
-  const world = (await BUILTIN_WORLDS[slug]!()).default;
+  const world = BUILTIN_WORLDS[slug]!;
   if (!world.roomsDir) return world;
   // The built-ins currently share worlds/default. Fail explicitly if a new
   // directory is introduced without adding it to the compiled catalog.

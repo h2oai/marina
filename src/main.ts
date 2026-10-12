@@ -1,8 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
+import { BUILTIN_WORLD_SLUGS } from "../worlds";
 import { agentModelMapProblems } from "../worlds/seed";
 import { getInternalModelToken } from "./agent/agent-runtime";
 import { RateLimiter } from "./auth/rate-limiter";
@@ -47,7 +47,6 @@ import { MarinaDB } from "./persistence/database";
 import { acquireDatabaseLease } from "./persistence/database-lease";
 import { isKeyEncryptionEnabled } from "./persistence/key-crypto";
 import { ensureKeySecret, type KeySecretSource } from "./persistence/key-secret-file";
-import { IS_COMPILED } from "./runtime-paths";
 import { LocalStorageProvider } from "./storage/local-provider";
 import { loadOtlpExporterConfig, MarinaOtlpExporter } from "./telemetry/otlp-exporter";
 import { loadOtlpLogExporterConfig, MarinaOtlpLogExporter } from "./telemetry/otlp-log-exporter";
@@ -97,21 +96,9 @@ const logger = new Logger();
 
 const WORLD_NAME = process.env.MARINA_WORLD ?? "default";
 
-/** Loadable world slugs (`worlds/*.ts` minus the shared helper modules). */
-async function listAvailableWorlds(): Promise<string[]> {
-  if (IS_COMPILED) {
-    const { BUILTIN_WORLDS } = await import("./world/builtin-worlds");
-    return Object.keys(BUILTIN_WORLDS).sort();
-  }
-  const helpers = new Set(["seed.ts", "focused-example.ts", "index.ts", "helpers.ts"]);
-  try {
-    return readdirSync(resolve(import.meta.dir, "../worlds"))
-      .filter((f) => f.endsWith(".ts") && !helpers.has(f))
-      .map((f) => f.slice(0, -3))
-      .sort();
-  } catch {
-    return [];
-  }
+/** Loadable world slugs (the bundled builtin registry). */
+function listAvailableWorlds(): string[] {
+  return [...BUILTIN_WORLD_SLUGS].sort();
 }
 
 // A typo in MARINA_WORLD used to surface as a raw module-resolution stack trace.

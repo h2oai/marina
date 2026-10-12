@@ -50,11 +50,16 @@ try {
   const version = Bun.spawnSync([executable, "version"], { cwd: scratch, env });
   if (version.exitCode !== 0 || version.stdout.toString().trim() !== MARINA_VERSION)
     throw new Error("Standalone version did not match package version");
-  for (const world of ["empty", "default", "showcase"]) {
+  for (const [world, entry] of [
+    ["empty", "start"],
+    ["default", "start"],
+    ["showcase", "start"],
+    ["empty", "__marina_server"],
+  ] as const) {
     // The primary listener reports its chosen port through the ordinary banner.
-    const child = Bun.spawn([executable, "start"], {
+    const child = Bun.spawn([executable, entry], {
       cwd: scratch,
-      env: { ...env, MARINA_WORLD: world, DB_PATH: join(scratch, `${world}.db`) },
+      env: { ...env, MARINA_WORLD: world, DB_PATH: join(scratch, `${world}-${entry}.db`) },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -122,7 +127,7 @@ try {
       await until(() => child.exitCode !== null);
       if (await child.exited) throw new Error(`Native ${world} failed graceful shutdown`);
       console.log(
-        `Standalone ${world}: health, SDK room command, settings, graceful shutdown passed`,
+        `Standalone ${world} (${entry}): health, SDK room command, settings, graceful shutdown passed`,
       );
     } finally {
       agent?.disconnect();

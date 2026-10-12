@@ -561,7 +561,11 @@ async function readStdinTask(): Promise<string> {
 }
 
 if (import.meta.main) {
-  const dispatch = parseDispatch(process.argv.slice(2));
+  // Preserve the original compiled server entry as an alias for foreground
+  // start. Do not exit after import: active listeners keep the server alive.
+  const dispatch = parseDispatch(
+    process.argv[2] === "__marina_server" ? ["start"] : process.argv.slice(2),
+  );
   switch (dispatch.kind) {
     case "help":
       console.log(USAGE);

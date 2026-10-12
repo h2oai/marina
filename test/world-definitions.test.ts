@@ -152,7 +152,7 @@ describe.each(focusedWorlds)("%s example world", (slug, world, project) => {
 
 /** Every builtin world under worlds/ (helper modules export no WorldDefinition). */
 const WORLDS_DIR = join(import.meta.dir, "..", "worlds");
-const HELPER_MODULES = new Set(["seed", "focused-example"]);
+const HELPER_MODULES = new Set(["seed", "focused-example", "index"]);
 /** Single-quoted phrases in world text that are names or values, not commands. */
 const QUOTED_NON_COMMANDS = new Set([
   "anomaly investigation",

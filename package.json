@@ -83,7 +83,7 @@
     "dev": "bun run src/main.ts",
     "build": "bun build src/main.ts --outdir dist --target bun --external zod && bun build src/memory/import-process.ts --outfile dist/memory-import.js --target bun && bun run build:memory",
     "qualify:native": "bun run build:native && bun run scripts/qualify-native.ts",
-    "build:native": "bun build scripts/marina.ts --compile --define MARINA_COMPILED=true --outfile dist/marina",
+    "build:native": "bun run scripts/build-native.ts",
     "test": "bun run scripts/test-backend.ts",
     "test:ui": "cd dashboard && bun run test",
     "test:browser": "bun run dashboard:build && cd dashboard && bun run test:browser",
