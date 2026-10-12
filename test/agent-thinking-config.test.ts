@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { Api, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import {
+  codeThinkingDefault,
   defaultAgentThinkingLevel,
   parseAgentThinkingLevel,
   resolveAgentThinkingLevel,
@@ -71,6 +72,26 @@ describe("thinking level — parsing and defaults", () => {
       "low",
     );
     expect(resolveAgentThinkingLevel({ thinkingLevel: "off" }, env)).toBe("off");
+  });
+
+  it("a soft default (Code Mode coders) applies only where the model reasons and nothing else is set", () => {
+    const none = {} as NodeJS.ProcessEnv;
+    expect(resolveAgentThinkingLevel({ thinkingDefault: "low" }, none, true)).toBe("low");
+    expect(resolveAgentThinkingLevel({ thinkingDefault: "low" }, none, false)).toBe("off");
+    expect(
+      resolveAgentThinkingLevel(
+        { thinkingDefault: "low" },
+        { MARINA_AGENT_THINKING: "off" } as NodeJS.ProcessEnv,
+        true,
+      ),
+    ).toBe("off");
+    expect(
+      resolveAgentThinkingLevel({ thinkingDefault: "low", thinkingLevel: "high" }, none, true),
+    ).toBe("high");
+    expect(codeThinkingDefault(none)).toBe("high");
+    expect(codeThinkingDefault({ MARINA_CODE_THINKING: "medium" } as NodeJS.ProcessEnv)).toBe(
+      "medium",
+    );
   });
 });
 

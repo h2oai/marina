@@ -7,6 +7,7 @@ import {
   execApprovalRequest,
   PRINT_EXIT,
   printOutcome,
+  printVerification,
   projectSlug,
   pushTailLines,
   resolveExecMode,
@@ -157,6 +158,26 @@ describe("marina dispatcher routing", () => {
       kind: "usage-error",
       arg: "--allow-unverified",
     });
+  });
+
+  it("parses the coder's thinking level", () => {
+    expect(parseDispatch(["-p", "fix it", "--thinking", "high"])).toMatchObject({
+      kind: "code",
+      thinking: "high",
+    });
+    expect(parseDispatch(["-p", "fix it", "--thinking", "loud"])).toMatchObject({
+      kind: "usage-error",
+      arg: "--thinking",
+    });
+  });
+
+  it("defaults a one-shot to delivery verification unless told otherwise", () => {
+    expect(printVerification(undefined, {})).toBe("delivery");
+    expect(printVerification(undefined, { MARINA_CODE_VERIFICATION: "checks" })).toBe("checks");
+    expect(printVerification("candidate", { MARINA_CODE_VERIFICATION: "checks" })).toBe(
+      "candidate",
+    );
+    expect(printVerification(undefined, { MARINA_CODE_VERIFICATION: "junk" })).toBe("delivery");
   });
 
   it("parses the one-shot verification requirement, and only with -p", () => {

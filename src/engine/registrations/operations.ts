@@ -182,6 +182,7 @@ export function registerOperationCommands(engine: Engine): void {
         ? new VerificationRunner(engine.db, (pending) => engine.trackBackgroundCommand(pending))
         : undefined,
       logEvent: (event) => engine.logEvent(event),
+      trackBackground: (work) => engine.trackBackground(work),
       agentRuntime: engine.agentRuntime,
       answerPrompt: answerCodeViaLocalModel,
       channelManager: engine.channelManager,

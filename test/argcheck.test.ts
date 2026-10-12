@@ -152,7 +152,7 @@ describe("values and evidence (pure)", () => {
   });
 
   it("reads the modes and the judge model", () => {
-    expect(argcheckMode({})).toBe("off");
+    expect(argcheckMode({})).toBe("on");
     expect(argcheckMode({ MARINA_ARGCHECK: "observe" })).toBe("observe");
     expect(argcheckMode({ MARINA_ARGCHECK: "on" })).toBe("on");
     expect(argcheckModel({ MARINA_OBLIGATIONS_MODEL: "a" })).toBe("a");
@@ -458,6 +458,7 @@ const ENV = [
   "MARINA_OBLIGATIONS_MODEL",
   "MARINA_ARGCHECK_MODEL",
   "MARINA_ARGCHECK_TRIGGER",
+  "MARINA_OBLIGATIONS_REVIEW",
   "MARINA_DECISIONS",
   "MARINA_DECISION_ENGINE",
   "MARINA_ANTHROPIC_AUTO_CACHE",
@@ -503,6 +504,10 @@ const closeCall = (card: string) => ({
 beforeEach(() => {
   saved = new Map(ENV.map((k) => [k, process.env[k]]));
   for (const k of ENV) delete process.env[k];
+  // No decision backend: the judge runs on the request's own model.
+  process.env.MARINA_DECISIONS = "off";
+  // The pre-write review (default auto) has its own tests in obligations.test.ts.
+  process.env.MARINA_OBLIGATIONS_REVIEW = "off";
   process.env.MARINA_OPEN_API = "true";
   process.env.OPENROUTER_API_KEY = "test-openrouter-key";
   resetObligationsForTests();

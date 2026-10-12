@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { AgentHandle } from "../agent/agent-types";
+import type { AgentHandle, AgentThinkingLevel } from "../agent/agent-types";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../persistence/database";
 import type { Entity } from "../types";
 import type { WorkspaceDescriptor } from "./local-workspace";
@@ -38,6 +38,8 @@ export interface CodingAgentRuntime {
     name: string;
     role?: string;
     spawnedBy?: string;
+    /** Soft thinking default, applied only where the model reasons (`MARINA_CODE_THINKING`). */
+    thinkingDefault?: AgentThinkingLevel;
   }): Promise<AgentHandle>;
 }
 

@@ -507,8 +507,11 @@ describe("x-marina-eval self-exclusion", () => {
     expect(wantsLessons(req({ "x-marina-lessons": "0" }), "openrouter/a/b")).toBe(false);
   });
 
-  it("resident agents opt in; MARINA_LESSONS caps it", () => {
-    expect(residentLessonsMode({} as NodeJS.ProcessEnv)).toBe("off");
+  it("resident agents get lessons by default; MARINA_LESSONS caps it", () => {
+    expect(residentLessonsMode({} as NodeJS.ProcessEnv)).toBe("on");
+    expect(residentLessonsMode({ MARINA_LESSONS_RESIDENT: "off" } as NodeJS.ProcessEnv)).toBe(
+      "off",
+    );
     expect(residentLessonsMode({ MARINA_LESSONS_RESIDENT: "on" } as NodeJS.ProcessEnv)).toBe("on");
     expect(
       residentLessonsMode({

@@ -46,8 +46,8 @@ const call = { name: "close_card", args: { card_id: "4417" } };
 
 describe("pre-write review (pure)", () => {
   it("reads MARINA_OBLIGATIONS_REVIEW and its rule budget", () => {
-    expect(obligationsReviewMode({})).toBe("off");
-    expect(obligationsReviewMode({ MARINA_OBLIGATIONS_REVIEW: "junk" })).toBe("off");
+    expect(obligationsReviewMode({})).toBe("auto");
+    expect(obligationsReviewMode({ MARINA_OBLIGATIONS_REVIEW: "junk" })).toBe("auto");
     expect(obligationsReviewMode({ MARINA_OBLIGATIONS_REVIEW: "Observe" })).toBe("observe");
     expect(obligationsReviewMode({ MARINA_OBLIGATIONS_REVIEW: "on" })).toBe("on");
     expect(reviewRuleBytes({})).toBe(3000);

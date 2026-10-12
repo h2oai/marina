@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { codeThinkingDefault } from "../../../agent/agent-types";
 import type { CodeSessionDriver } from "../../../coding/code-session-driver";
 import { codingRunMetadata, endCodingRun } from "../../../coding/task-run";
 import { bold, dim, error as fmtError, separator, success } from "../../../net/ansi";
@@ -296,6 +297,18 @@ export async function doCode(
     workspaceForSession(deps, session).assertExecutionReady?.();
   const strategy = (session.driver ?? "single").toLowerCase();
   if (strategy === "crew") {
+    // The crew driver dispatches a plan, not a tracked task attempt, so it
+    // cannot carry an unattended owner (a verification requirement is refused
+    // by validateTaskContract above). Say so rather than dropping it.
+    if (ownerMode) {
+      ctx.send(
+        eid,
+        fmtError(
+          `The crew driver cannot carry this task's contract (owner:${ownerMode}). Use code driver single for an unattended task.`,
+        ),
+      );
+      return;
+    }
     await crewPlan(ctx, eid, entity, deps, task);
     return;
   }
@@ -415,6 +428,7 @@ async function ensureSessionAgent(
       name,
       role: "coding-agent",
       spawnedBy: entity.name,
+      thinkingDefault: codeThinkingDefault(),
     });
     bindSpawnedAgentEntity(handle, session, getCodeProfile(entity).name, deps);
     const spawnedId = handle.getStatus().entityId;

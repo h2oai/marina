@@ -157,7 +157,7 @@ export function decisionCommand(deps: {
               now,
               "No judged submissions recorded yet. Any backend works — Jev on OpenRouter, a local",
               "OpenJev (MARINA_DECISIONS=decisions-api + MARINA_DECISION_BASE_URL), TypeSafe, or a",
-              "chat model (chat-classifier). Set MARINA_DECISION_VERIFY=observe to score every",
+              "chat model (chat-classifier). MARINA_DECISION_VERIFY=observe (the default) scores every",
               "submission without acting on it; agreement appears as creators approve or reject.",
             ].join("\n"),
           );

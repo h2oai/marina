@@ -61,7 +61,7 @@ import { scopeProcessState } from "./process-state";
 
 const ON = { MARINA_LESSONS_FROM_WORK: "on" } as NodeJS.ProcessEnv;
 const OBSERVE = { MARINA_LESSONS_FROM_WORK: "observe" } as NodeJS.ProcessEnv;
-const OFF = {} as NodeJS.ProcessEnv;
+const OFF = { MARINA_LESSONS_FROM_WORK: "off" } as NodeJS.ProcessEnv;
 
 const dirs: string[] = [];
 function freshDb(): MarinaDB {
@@ -505,6 +505,9 @@ describe("aggregation and modes", () => {
 
   it("off collects nothing; observe flushes counts with no write; on writes", async () => {
     expect(lessonsFromWorkMode(OFF)).toBe("off");
+    // Unset: on when a model provider exists to write and judge lessons, else observe.
+    expect(lessonsFromWorkMode({} as NodeJS.ProcessEnv)).toBe("observe");
+    expect(lessonsFromWorkMode({ ANTHROPIC_API_KEY: "k" } as NodeJS.ProcessEnv)).toBe("on");
     expect(lessonsFromWorkMode({ ...ON, MARINA_LESSONS: "off" })).toBe("off");
     const db = freshDb();
     try {
@@ -614,8 +617,11 @@ describe("passthru: explicit opt-in, owner-scoped, never measurement", () => {
   it("notes each recovery once even when the conversation is re-sent every turn", async () => {
     const db = freshDb();
     try {
-      notePassthruRecoveries(db, "jeff", conversation);
-      expect(pendingWorkPatterns(db)).toBe(0); // off by default: nothing collected
+      {
+        using _off = scopeProcessState({ env: { MARINA_LESSONS_FROM_WORK: "off" } });
+        notePassthruRecoveries(db, "jeff", conversation);
+        expect(pendingWorkPatterns(db)).toBe(0); // off: nothing collected
+      }
       resetPassthruLearnForTests();
       using _env = scopeProcessState({ env: { MARINA_LESSONS_FROM_WORK: "observe" } });
       for (let i = 0; i < 3; i++) notePassthruRecoveries(db, "jeff", conversation);

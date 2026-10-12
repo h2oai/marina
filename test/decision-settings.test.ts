@@ -67,7 +67,8 @@ describe("changing a setting", () => {
   it("takes effect on the next decision, persists, and is audited", () => {
     process.env.OPENROUTER_API_KEY = "k";
     resetDecisionSettingsForTests();
-    expect(getDecisionProvider()).toBeUndefined();
+    // Unset is auto: a classifier on Marina's own /v1 with the world's default model.
+    expect(getDecisionProvider()?.kind).toBe("marina-self");
     const v = changeDecisionSetting(db, "backend", "jev", "Operator");
     expect(v).toMatchObject({
       env: "MARINA_DECISIONS",
@@ -79,7 +80,7 @@ describe("changing a setting", () => {
     changeDecisionSetting(db, "MARINA_DECISION_GATE", "ON", "Operator");
     expect(process.env.MARINA_DECISION_GATE).toBe("on");
     changeDecisionSetting(db, "backend", null, "Operator");
-    expect(getDecisionProvider()).toBeUndefined();
+    expect(getDecisionProvider()?.kind).toBe("marina-self"); // cleared: back to auto
     expect(decisionSettingsHistory(db).map((c) => [c.by, c.setting, c.from, c.to])).toEqual([
       ["Operator", "backend", "jev", null],
       ["Operator", "gate", null, "on"],

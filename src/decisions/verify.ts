@@ -195,10 +195,11 @@ export function decisionVerifyEnabled(env: NodeJS.ProcessEnv = process.env): boo
 }
 
 /**
- * `MARINA_DECISION_VERIFY`: `off` (default); `on` — the verifier may bounce a
- * weak submission once; `observe` — score every submission and record the
- * judge's opinion, never act on it, so its agreement with the creators'
- * verdicts can be measured (`decision agreement`) before anyone trusts it.
+ * `MARINA_DECISION_VERIFY`: `observe` (default) — score every submission and
+ * record the judge's opinion, never act on it, so its agreement with the
+ * creators' verdicts can be measured (`decision agreement`) before anyone
+ * trusts it (nothing is scored when no decision provider exists); `on` — the
+ * verifier may bounce a weak submission once; `off` — never scored.
  * Under autonomy posture `earned`/`open`, `on` behaves as `observe`: the
  * verdict is recorded beside the submission and the submission is never
  * bounced — decision tools inform, approval still decides.
@@ -206,7 +207,7 @@ export function decisionVerifyEnabled(env: NodeJS.ProcessEnv = process.env): boo
 export function decisionVerifyMode(env: NodeJS.ProcessEnv = process.env): "off" | "on" | "observe" {
   const v = env.MARINA_DECISION_VERIFY?.trim().toLowerCase();
   if (v === "on") return getAutonomyPosture(env) === "guarded" ? "on" : "observe";
-  return v === "observe" ? v : "off";
+  return v === "off" ? v : "observe";
 }
 
 /** The support questions a submission is judged on (grounded only when evidence was cited). */

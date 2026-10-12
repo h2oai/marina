@@ -3022,6 +3022,28 @@ describe("code mode — agentic dispatch (single-agent driver)", () => {
     expect(db.getCodingSession(sid)!.driver).toBe("crew");
     expect(stripAnsi(sent.join("\n")).toLowerCase()).toContain("driver set to crew");
   });
+
+  it("the crew driver refuses a task contract instead of dropping it", async () => {
+    const alice = makeAgentEntity("u_alice", "Alice");
+    db.saveEntity(alice);
+    grant(db, "u_alice" as EntityId, "code.exec");
+    const sent: string[] = [];
+    const command = codeCommand({
+      db,
+      getEntity: (id) => (id === "u_alice" ? alice : undefined),
+      workspace: new LocalWorkspace(),
+    });
+    const ctx = testRoomContext(sent);
+    await command.handler(ctx, inputFor(alice, "code start X"));
+    await command.handler(ctx, inputFor(alice, "code driver crew"));
+    sent.length = 0;
+    await command.handler(ctx, inputFor(alice, "code do owner:unattended -- build it"));
+    const out = stripAnsi(sent.join("\n"));
+    expect(out).toContain("crew driver cannot carry this task's contract");
+    expect(out).toContain("owner:unattended");
+    const sid = alice.properties.coding_session_id as string;
+    expect(db.listCodingArtifacts(sid, 20, "crew_plan")).toHaveLength(0);
+  });
 });
 
 describe("code host-exec workspace root policy (Finding 2)", () => {

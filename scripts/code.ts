@@ -61,10 +61,29 @@ export interface CodeSessionOptions {
   verbose?: boolean;
   /** `-p`: exit 0 for completed work that was not verified (it is still reported). */
   allowUnverified?: boolean;
-  /** `-p` only: the verification the task must pass (`code do verification:<mode>`). */
+  /**
+   * `-p` only: the verification the task must pass (`code do verification:<mode>`);
+   * default `MARINA_CODE_VERIFICATION`, else `delivery`.
+   */
   verification?: "checks" | "candidate" | "delivery";
+  /** The coder's thinking level, passed to the folder server as `MARINA_CODE_THINKING`. */
+  thinking?: string;
   /** `-p`: one JSON result object as the last stdout line; human output goes to stderr. */
   json?: boolean;
+}
+
+/**
+ * A one-shot's verification requirement: the flag, else `MARINA_CODE_VERIFICATION`
+ * (checks | candidate | delivery), else `delivery` — every stated requirement
+ * observed by a check or reported unverified.
+ */
+export function printVerification(
+  flag: CodeSessionOptions["verification"],
+  env: NodeJS.ProcessEnv = process.env,
+): "checks" | "candidate" | "delivery" {
+  if (flag) return flag;
+  const v = env.MARINA_CODE_VERIFICATION?.trim().toLowerCase();
+  return v === "checks" || v === "candidate" ? v : "delivery";
 }
 
 /** Interactive host-exec approval posture negotiated with the server. */
@@ -634,6 +653,7 @@ export async function runCodeSession(
       MARINA_ADMINS: process.env.MARINA_ADMINS ?? "coder",
       MARINA_OPEN_API: process.env.MARINA_OPEN_API ?? "true",
       ...(defaultModel ? { MARINA_DEFAULT_MODEL: defaultModel } : {}),
+      ...(opts.thinking ? { MARINA_CODE_THINKING: opts.thinking } : {}),
     },
     stdout: "ignore",
     stderr: "pipe",
@@ -924,7 +944,7 @@ export async function runCodeSession(
       /* handled below — avoid unhandled-rejection noise */
     });
     try {
-      await sessionConsole.task(task, false, timeoutMs, true, opts.verification);
+      await sessionConsole.task(task, false, timeoutMs, true, printVerification(opts.verification));
     } catch (error) {
       console.error(String(error));
       await finishPrint(printOutcome(undefined));

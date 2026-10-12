@@ -453,7 +453,9 @@ describe("opt-in parsing", () => {
     expect(stripOptInPrefixes("openai/x", "marina/lessons:")).toBe("openai/x");
     expect(parseObligationsMode("observe")).toBe("observe");
     expect(parseObligationsMode("junk")).toBeUndefined();
-    expect(obligationsMode({})).toBe("off");
+    expect(obligationsMode({})).toBe("observe");
+    expect(obligationsMode({}, { coder: true })).toBe("on");
+    expect(obligationsMode({ MARINA_OBLIGATIONS: "off" }, { coder: true })).toBe("off");
     expect(obligationsMode({ MARINA_OBLIGATIONS: "on" })).toBe("on");
   });
 
@@ -589,6 +591,8 @@ function systemText(body: Record<string, unknown>): string {
 beforeEach(() => {
   saved = new Map(ENV.map((k) => [k, process.env[k]]));
   for (const k of ENV) delete process.env[k];
+  // No decision backend: the ledger's calls run on the request's own model.
+  process.env.MARINA_DECISIONS = "off";
   process.env.MARINA_OPEN_API = "true";
   process.env.OPENROUTER_API_KEY = "test-openrouter-key";
   resetObligationsForTests();
@@ -873,8 +877,8 @@ describe("POST /v1/chat/completions with the obligations ledger", () => {
     ],
   };
 
-  it("leaves replies with calls untouched when the pre-write review is off (the default)", async () => {
-    using _state = scopeProcessState({ env: { MARINA_OBLIGATIONS_REVIEW: undefined } });
+  it("leaves replies with calls untouched when the pre-write review is off", async () => {
+    using _state = scopeProcessState({ env: { MARINA_OBLIGATIONS_REVIEW: "off" } });
     replies = [closeDraft];
     const resp = await post({
       model: `marina/obligations:${MODEL}`,
@@ -995,7 +999,7 @@ describe("POST /v1/chat/completions with the obligations ledger", () => {
   });
 
   it("never lets a client raise the review above the ceiling", async () => {
-    using _state = scopeProcessState({ env: { MARINA_OBLIGATIONS_REVIEW: undefined } });
+    using _state = scopeProcessState({ env: { MARINA_OBLIGATIONS_REVIEW: "off" } });
     replies = [closeDraft];
     const resp = await post(
       { model: `marina/obligations:${MODEL}`, messages: opening, tools: TOOLS },
@@ -1161,14 +1165,17 @@ describe("POST /v1/chat/completions with the obligations ledger", () => {
       const auth = { Authorization: "Bearer sk-bound" };
       const r = await post({ model: MODEL, messages: opening, tools: TOOLS }, auth);
       expect(r.status).toBe(200);
-      expect(r.headers.get("x-marina-stack")).toBe("lessons,obligations,argcheck; source=default");
+      // Lessons from work default on with a provider, so the stack also learns.
+      expect(r.headers.get("x-marina-stack")).toBe(
+        "lessons,obligations,argcheck,learn; source=default",
+      );
       expect(seen[0]!.kind).toBe("extract");
       seen = [];
       const off = await post(
         { model: MODEL, messages: opening, tools: TOOLS },
         { ...auth, "x-marina-obligations": "off" },
       );
-      expect(off.headers.get("x-marina-stack")).toBe("lessons,argcheck; source=default");
+      expect(off.headers.get("x-marina-stack")).toBe("lessons,argcheck,learn; source=default");
       expect(seen.map((s) => s.kind)).not.toContain("extract");
       // The operator can turn the default off.
       process.env.MARINA_PASSTHRU_STACK = "off";

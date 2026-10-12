@@ -258,11 +258,11 @@ describe("task submit verifier", () => {
   });
 
   it("agreement says plainly when there is no backend and no data", () => {
-    delete process.env.MARINA_DECISIONS;
+    process.env.MARINA_DECISIONS = "off";
     engine.processCommand(alice.entity!, "decision agreement");
     const text = stripAnsi(alice.lastText());
     expect(text).toContain("No decision backend is configured");
     expect(text).toContain("OpenJev");
-    expect(text).toContain("MARINA_DECISION_VERIFY=observe");
+    expect(text).toContain("MARINA_DECISION_VERIFY=observe (the default)");
   });
 });
