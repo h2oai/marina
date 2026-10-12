@@ -288,6 +288,7 @@ async function runVerifyStack(
           displayModel: ensemble.displayModel ?? String(body.model),
           ...(d.entityId ? { entityId: d.entityId } : {}),
           ...(d.signal ? { signal: d.signal } : {}),
+          ...(d.noteScope ? { noteScope: d.noteScope } : {}),
           repair: false,
         })
     : undefined;
@@ -733,6 +734,7 @@ export async function runOpenaiChat(
           displayModel: listed ? String(requestBody.model) : model,
           ...(prep.identity?.entityId ? { entityId: prep.identity.entityId } : {}),
           signal: req.signal,
+          noteScope: prep.noteScope,
         });
       };
       const upstream = (trace: Parameters<typeof proxyToUpstream>[3], note?: string) =>

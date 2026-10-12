@@ -43,6 +43,7 @@ import {
   promptTokensDetails,
   requestTrace,
 } from "./shared";
+import { noteScopeFor } from "./sticky-notes";
 import { withTrailingNote } from "./upstream";
 
 /**
@@ -130,6 +131,8 @@ export interface PassthruPrep {
   /** Protocol surface the request arrived on; rides every lifecycle event so
    *  receipts and trace spans can be grouped per surface. */
   surface: InjectionFormat;
+  /** The caller's scope for sticky trailing notes (`sticky-notes.ts`). */
+  noteScope: string;
   /** The caller is one of Marina's own runtime agents (internal model token).
    *  Such requests are ALWAYS proxied upstream regardless of the endpoint mode
    *  and carry `routeReason: "internal"` on their lifecycle events. */
@@ -146,7 +149,9 @@ export async function preparePassthru(
   const requestId = newRequestId();
   const internal = isInternalCaller(authResult);
   const identity = maybePassthruIdentity(engine, req, authResult);
-  if (!identity?.contextOptIn) return { identity, addendum: null, requestId, surface, internal };
+  const noteScope = noteScopeFor(req, authResult);
+  if (!identity?.contextOptIn)
+    return { identity, addendum: null, requestId, surface, internal, noteScope };
   const built = await buildInjectedContext(engine, identity.entityId, messages, {
     capabilities: req.headers.get("X-Marina-Capabilities") === "on",
   });
@@ -157,6 +162,7 @@ export async function preparePassthru(
     requestId,
     surface,
     internal,
+    noteScope,
   };
 }
 
@@ -208,7 +214,7 @@ export function passthruUpstreamHints(
 ) {
   const { extraNote, ...rest } = extra;
   const trailingNote = joinNotes(prep.addendum, extraNote);
-  return { ...rest, ...(trailingNote ? { trailingNote } : {}) };
+  return { ...rest, ...(trailingNote ? { trailingNote } : {}), noteScope: prep.noteScope };
 }
 
 /** The body the response cache keys on: the request as the upstream sees it

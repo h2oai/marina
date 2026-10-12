@@ -1859,7 +1859,7 @@ Fields read here: `all`, `expected_generation`, `field`, `record_ids`, `source_i
 
 ### `path.split(".")`
 
-[Source](../../src/net/model-api/verify.ts#L526)
+[Source](../../src/net/model-api/verify.ts#L548)
 
 ## src/net/model/model-api.ts
 
