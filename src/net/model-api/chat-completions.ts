@@ -29,6 +29,7 @@ import {
   completionAsSse,
   ENSEMBLE_MODEL_PREFIX,
   ensembleSize,
+  ensembleTurn,
   parseEnsembleModels,
   runEnsembleTurn,
 } from "./ensemble";
@@ -95,6 +96,7 @@ import {
   maybeVerifyChat,
   parseVerifyModel,
   VERIFY_MODEL_PREFIX,
+  type VerifyDraftInput,
   verifyPin,
   verifyProposer,
 } from "./verify";
@@ -247,9 +249,18 @@ async function runVerifyStack(
     obligationsMode?: ObligationsMode;
     argcheckMode?: ObligationsMode;
     surface: InjectionFormat;
+    /** The ensemble drafts verify's first draft: a listed panel, else the
+     *  proposer × `MARINA_ENSEMBLE_SIZE`. */
+    ensemble?: { listed?: string[]; displayModel?: string };
   },
 ): Promise<Response> {
   const { stack } = o;
+  const pin = verifyPin(engine);
+  // A listed panel obeys the same pin and reachability rules as on its own.
+  if (o.ensemble?.listed) {
+    const setup = ensembleSetup(engine, o.ensemble.listed[0]!, "", pin, o.ensemble.listed);
+    if ("error" in setup) return setup.error;
+  }
   const prep = await preparePassthru(engine, req, authResult, messages, o.surface);
   if (stack.members.has("context") && !prep.identity?.contextOptIn) {
     const error = withoutMember(stack, "context", NEEDS_IDENTITY);
@@ -260,18 +271,40 @@ async function runVerifyStack(
   if (learn.owner) notePassthruRecoveries(engine.db, learn.owner, messages, evalRef(req));
   const lessonOwner =
     authResult && !isInternalCaller(authResult) ? authResult.boundEntityName : undefined;
+  // Order: the ensemble drafts and picks (no repair of its own), verify
+  // reviews the pick (a revision is one call by the picked draft's proposer),
+  // output repair runs once on verify's final; the ledger and the check wrap
+  // the whole formation, and their nudge re-runs all of it.
+  const ensemble = o.ensemble;
+  const draft = ensemble
+    ? (d: VerifyDraftInput) =>
+        ensembleTurn(engine, {
+          body: { ...body, stream: false },
+          proposers: ensemble.listed ?? Array.from({ length: ensembleSize() }, () => d.proposer),
+          checker: d.checker,
+          ...(d.note ? { note: d.note } : {}),
+          ...(d.checkerNotes ? { checkerNotes: d.checkerNotes } : {}),
+          pin,
+          displayModel: ensemble.displayModel ?? String(body.model),
+          ...(d.entityId ? { entityId: d.entityId } : {}),
+          ...(d.signal ? { signal: d.signal } : {}),
+          repair: false,
+        })
+    : undefined;
   const run = async (note?: string): Promise<Response> =>
     (await maybeVerifyChat(engine, req, body, authResult, {
       ...(joinNotes(prep.addendum, note) ? { note: joinNotes(prep.addendum, note) } : {}),
       ...(lessonOwner ? { lessonOwner } : {}),
       // The checker reviews against the same memory context (distinct identity only).
       ...(prep.identity?.contextOptIn && prep.addendum ? { context: prep.addendum } : {}),
+      ...(draft ? { draft } : {}),
+      ...(ensemble?.displayModel ? { displayModel: ensemble.displayModel } : {}),
     })) ?? errorJson(400, "Not a marina/verify: model id");
   // The ledger and the check read the request as the proposer would answer it.
   const proposer = verifyProposer(engine, String(body.model));
   const ledgerBody =
     proposer && explicitUpstreamModel(engine, proposer) ? { ...body, model: proposer } : undefined;
-  const forceModel = verifyPin(engine);
+  const forceModel = pin;
   const scoped = {
     ...(prep.identity?.entityId ? { entityId: prep.identity.entityId } : {}),
     ...(authResult ? { auth: authResult } : {}),
@@ -312,6 +345,7 @@ async function runVerifyStack(
       verify: true,
       context: prep.identity?.contextOptIn,
       learn: learn.ran,
+      ensemble: !!ensemble,
     }),
   );
 }
@@ -495,20 +529,10 @@ export async function runOpenaiChat(
     const ensemble =
       listed || stack.members.has("ensemble") ? { listed: listed ?? undefined } : undefined;
     let model = typeof body.model === "string" ? body.model : "marina";
-    if (ensemble) {
-      if (model.startsWith(VERIFY_MODEL_PREFIX))
-        return unsupportedParam(
-          "model",
-          "marina/verify and the ensemble are alternative formations; ask for one of them.",
-        );
-      if (typeof body.n === "number" && body.n > 1)
-        return unsupportedParam("n", "The ensemble returns one picked completion per request.");
-      // `verify` and `ensemble` are alternatives: under `full` the ensemble
-      // the caller named runs and verify is reported skipped; an explicit list
-      // naming both is refused.
-      const error = withoutMember(stack, "verify", "the ensemble formation runs instead");
-      if (error) return unsupportedParam(STACK_HEADER, error);
-    }
+    // With `verify` too, the ensemble runs first and verify reviews its pick
+    // (`runVerifyStack`, `VerifyExtras.draft`).
+    if (ensemble && typeof body.n === "number" && body.n > 1)
+      return unsupportedParam("n", "The ensemble returns one picked completion per request.");
     const messages = Array.isArray(body.messages) ? (body.messages as OpenAIMessage[]) : [];
 
     // `verify` in the stack routes the model through the verification
@@ -540,6 +564,13 @@ export async function runOpenaiChat(
         ...(obligationsMode ? { obligationsMode } : {}),
         ...(argcheckMode ? { argcheckMode } : {}),
         surface: runOpts?.surface ?? "openai",
+        ...(ensemble
+          ? {
+              ensemble: {
+                ...(listed ? { listed, displayModel: String(requestBody.model) } : {}),
+              },
+            }
+          : {}),
       });
     }
 
