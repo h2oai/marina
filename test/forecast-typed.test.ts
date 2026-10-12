@@ -316,6 +316,8 @@ describe("forecastTyped", () => {
   });
 
   it("weights runs by the judge and records an outage as no opinion", async () => {
+    let disagreementCalls = 0;
+    const basePlanner = planner();
     const down: DecisionProvider = {
       kind: "fake",
       model: "fake-jev",
@@ -327,17 +329,30 @@ describe("forecastTyped", () => {
       { question: "Q?", answer: choice },
       {
         retriever: fakeRetriever([]),
-        analysts: [part("m", () => '{"answer":"A"}')],
-        planner: planner(),
+        analysts: [part("m", () => '{"answer":"A"}'), part("other", () => '{"answer":"B"}')],
+        planner: {
+          ...basePlanner,
+          complete: async (system, user) => {
+            if (system.startsWith("Independent forecasters disagree")) disagreementCalls++;
+            return basePlanner.complete(system, user);
+          },
+        },
         judge: down,
         pageText: async () => "On 2026-09-20 the reading was 42.5%.",
         now,
-        options: { runs: 1, researchRounds: 1, critique: false },
+        options: {
+          runs: 2,
+          researchRounds: 1,
+          critique: false,
+          followUp: false,
+          minEvidenceLines: 0,
+        },
       },
     );
     expect(a.runs[0]?.weight).toBe(0);
     expect(a.runs[0]?.judgeError).toBeDefined();
     expect(a.caveat).toContain("judge failed");
+    expect(disagreementCalls).toBe(0);
   });
 
   it("tells the runs they forecast AS OF the cutoff, so 'no result yet' is never the answer", async () => {
