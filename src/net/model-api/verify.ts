@@ -137,7 +137,7 @@ export function verifyRounds(env: Record<string, string | undefined> = process.e
   return Math.max(0, Math.min(3, Math.floor(n)));
 }
 
-type Msg = {
+export type Msg = {
   role?: string;
   content?: unknown;
   tool_calls?: Array<{ function?: { name?: string; arguments?: string } }>;
@@ -150,7 +150,7 @@ function isImagePart(p: unknown): boolean {
   return t === "image_url" || t === "input_image" || t === "image";
 }
 
-function textOf(content: unknown): string {
+export function textOf(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
     return content
@@ -703,13 +703,16 @@ async function callUpstream(
   };
 }
 
-function firstMessage(body: Record<string, unknown> | undefined): Msg | undefined {
+export function firstMessage(body: Record<string, unknown> | undefined): Msg | undefined {
   const choices = body?.choices as Array<{ message?: Msg }> | undefined;
   return choices?.[0]?.message;
 }
 
 /** `body` with its first choice's message replaced (finish_reason follows the tool calls). */
-function withFirstMessage(body: Record<string, unknown>, message: Msg): Record<string, unknown> {
+export function withFirstMessage(
+  body: Record<string, unknown>,
+  message: Msg,
+): Record<string, unknown> {
   const choices = Array.isArray(body.choices) ? [...(body.choices as unknown[])] : [];
   const first = (choices[0] ?? {}) as Record<string, unknown>;
   choices[0] = {
@@ -722,7 +725,7 @@ function withFirstMessage(body: Record<string, unknown>, message: Msg): Record<s
 
 /** The repair shot's model: `MARINA_REPAIR_MODEL` when it is reachable (and,
  *  under a passthru pin, is the pinned model), else the proposer. */
-function repairModelFor(engine: Engine, proposer: string, pin: string): string {
+export function repairModelFor(engine: Engine, proposer: string, pin: string): string {
   const configured = process.env.MARINA_REPAIR_MODEL?.trim();
   if (!configured || !explicitUpstreamModel(engine, configured)) return proposer;
   return pin && configured !== pin ? proposer : configured;
@@ -739,9 +742,9 @@ export function verifyPin(engine: Engine): string {
   return ec.mode === "passthru" ? ec.passthruModel.trim() : "";
 }
 
-type Usage = { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+export type Usage = { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
 
-function addUsage(a: Usage | undefined, b: unknown): Usage | undefined {
+export function addUsage(a: Usage | undefined, b: unknown): Usage | undefined {
   const u = b as Usage | undefined;
   if (!u) return a;
   return {
