@@ -560,7 +560,14 @@ export async function qualifyCoding(
     reuse_worker: options.reuseWorker ?? false,
     cli_controls: options.cliControls ?? false,
     transport,
-    revision: Bun.spawnSync(["git", "rev-parse", "HEAD"]).stdout.toString().trim(),
+    revision: Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: resolve(import.meta.dir, "..") })
+      .stdout.toString()
+      .trim(),
+    worktree_dirty: Boolean(
+      Bun.spawnSync(["git", "status", "--porcelain"], { cwd: resolve(import.meta.dir, "..") })
+        .stdout.toString()
+        .trim(),
+    ),
     policy: {
       autonomy: "guarded",
       trust: "shared",

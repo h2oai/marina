@@ -53,8 +53,21 @@ describe("plan tool profile (read-only)", () => {
     // The broad command tool (which can mutate) is absent from plan mode;
     // core read-only tools remain.
     expect(resident.some((t) => t.name === "marina_command")).toBe(false);
-    for (const name of ["marina_look", "marina_code_read_file", "marina_code_search"])
+    for (const name of [
+      "marina_look",
+      "marina_code_read_file",
+      "marina_code_search",
+      "marina_code_show",
+    ])
       expect(resident.some((t) => t.name === name)).toBe(true);
+  });
+  it("reads original task artifacts through canonical admission in plan mode", async () => {
+    const commands: string[] = [];
+    const { resident } = createProfileToolset(stubCtx(commands), memory, "plan");
+    const show = resident.find((tool) => tool.name === "marina_code_show")!;
+    await show.execute("original-task", { artifactId: "task_run_prior" });
+    expect(commands).toEqual(["code show task_run_prior"]);
+    expect(resident.some((tool) => tool.name === "marina_code")).toBe(false);
   });
 });
 

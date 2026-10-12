@@ -14,6 +14,8 @@ test("scripted provider drives real console, worker, candidate checks, review an
   const network = globalThis.fetch;
   let stage = 0;
   let nonce = "";
+  let originalTask = "";
+  let inspectedOriginal = false;
   const requested: string[] = [];
   const provider = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
@@ -41,13 +43,18 @@ test("scripted provider drives real console, worker, candidate checks, review an
       tool = { name, arguments: JSON.stringify(args) };
     };
     if (plan && stage === 0) {
+      originalTask = /task_run_[a-z0-9_-]+/.exec(text)?.[0] ?? "";
       call("marina_code_read_file", { path: "source.ts" });
       stage = 1;
     } else if (plan && stage === 1) {
       call("marina_code_summary", {
-        text: `Proposal: fix the exclusive slice endpoint and add boundary regression tests. No files changed or commands executed. Preserve ${nonce}.`,
+        text: `Proposal: fix the exclusive slice endpoint and add boundary regression tests. No files changed or commands executed. Preserve corrupted-summary-marker.`,
       });
       stage = 2;
+    } else if (plan && stage === 6 && !inspectedOriginal) {
+      expect(originalTask).not.toBe("");
+      call("marina_code_show", { artifactId: originalTask });
+      inspectedOriginal = true;
     } else if (plan && stage >= 6) {
       call("marina_code_summary", {
         text: `The unresolved continuity marker is ${nonce}. No files changed.`,
@@ -142,6 +149,7 @@ test("scripted provider drives real console, worker, candidate checks, review an
     expect(report.passed).toBe(true);
     expect(requested).toContain("marina_code");
     expect(stage).toBe(7);
+    expect(requested).toContain("marina_code_show");
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }

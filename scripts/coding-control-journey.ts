@@ -100,7 +100,11 @@ export class CodingControlJourney {
     assert.equal(this.snapshot(), before, "Read-only plan changed project files");
     const summary = db.getCodingArtifact(codingRunMetadata(current).summaryId!)?.content_text ?? "";
     assert.ok(summary.length > 0, "Plan has no saved proposal");
-    if (followup) assert.ok(summary.includes(this.nonce), "Compaction lost the continuity marker");
+    if (followup)
+      assert.ok(
+        summary.includes(this.nonce),
+        "Continuation did not preserve the exact original constraint",
+      );
     await this.console.submit(`/review approve ${run.id}`);
     assert.equal(db.getTask(codingRunMetadata(current).taskId)?.status, "completed");
     this.evidence[followup ? "followup" : "plan"] = {
@@ -153,7 +157,7 @@ export class CodingControlJourney {
       original_retrieved: true,
     };
     await this.plan(
-      "Recall the unresolved continuity marker from the earlier proposal. Submit that exact marker in a code summary, with no project changes or command execution.",
+      "Recover the unresolved continuity marker from the original earlier task request. Inspect its original task artifact as the source of truth, rather than trusting a paraphrased proposal. Submit that exact marker in a code summary, with no project changes or command execution.",
       true,
     );
     const costStart = this.output.length;

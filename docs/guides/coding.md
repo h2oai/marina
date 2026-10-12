@@ -1422,3 +1422,10 @@ For literal arguments, including nested quotes, use
 `code run --argv ["python", "-c", "print(1 + 2)"]`. Both forms use the same
 execution permissions, allowlist and approval audit as other workspace commands.
 Variables, pipes, substitutions and globs are not expanded.
+
+
+Plan mode can inspect original task and verification artifacts with `marina_code_show`,
+using IDs from its artifact list. For exact constraints and identifiers, reopen the
+original request: a saved proposal or context summary may paraphrase or miscopy it.
+This read path uses the same session permissions as `code show` and does not grant
+file writes or command execution.

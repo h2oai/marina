@@ -415,6 +415,15 @@ export function createTypedCodeTools(ctx: ToolContext): AgentTool[] {
       ctx,
     ),
     wrap(
+      "marina_code_show",
+      "Code Show",
+      "Read an original task, summary, candidate or verification artifact by ID in the active session. Use original task evidence to recover exact constraints and identifiers; summaries may paraphrase or miscopy them.",
+      codePatchRefSchema,
+      (p) =>
+        `code show ${requiredSingleLineCodeParam(p.artifactId as string | undefined, "artifactId", "artifactId is required")}`,
+      ctx,
+    ),
+    wrap(
       "marina_code_observe",
       "Code Observe",
       "Store an app or workspace observation artifact in the active coding session.",
