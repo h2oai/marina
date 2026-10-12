@@ -4,6 +4,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { BUILTIN_WORLDS } from "../../worlds";
 import { MARINA_ROOT } from "../runtime-paths";
 import type { WorldDefinition } from "./world-definition";
 
@@ -13,13 +14,22 @@ export async function loadWorld(
   cwd = process.cwd(),
   builtinDirectory = resolve(MARINA_ROOT, "worlds"),
 ): Promise<WorldDefinition> {
+  // Builtin slug → static registry (bundled into a compiled binary).
+  if (!specifier.startsWith("npm:") && !specifier.startsWith(".") && !isAbsolute(specifier)) {
+    if (!/^[a-z][a-z0-9-]*$/.test(specifier)) throw new Error("Invalid builtin world name");
+    const world = BUILTIN_WORLDS[specifier];
+    if (!world) throw new Error(`World "${specifier}" not found`);
+    return validateWorldDefinition(world, resolve(builtinDirectory, `${specifier}.ts`));
+  }
+
+  // External world (npm package or local path) → dynamic import.
   let entry: string;
   if (specifier.startsWith("npm:")) {
     const name = specifier.slice(4);
     if (!/^(?:@[a-z0-9_-]+\/)?[a-z0-9_-]+$/.test(name))
       throw new Error("Expected a preinstalled npm package name");
     entry = Bun.resolveSync(name, cwd);
-  } else if (specifier.startsWith(".") || isAbsolute(specifier)) {
+  } else {
     entry = resolve(cwd, specifier);
     if (statSync(entry).isDirectory()) {
       const manifest = resolve(entry, "package.json");
@@ -31,12 +41,12 @@ export async function loadWorld(
         entry = resolve(entry, pkg.marinaWorld ?? pkg.main ?? "index.ts");
       } else entry = resolve(entry, "index.ts");
     }
-  } else {
-    if (!/^[a-z][a-z0-9-]*$/.test(specifier)) throw new Error("Invalid builtin world name");
-    entry = resolve(builtinDirectory, `${specifier}.ts`);
   }
   const module = await import(pathToFileURL(entry).href);
-  const world = module.default as WorldDefinition;
+  return validateWorldDefinition(module.default as WorldDefinition, entry);
+}
+
+function validateWorldDefinition(world: WorldDefinition, entry: string): WorldDefinition {
   if (
     !world ||
     typeof world.name !== "string" ||
