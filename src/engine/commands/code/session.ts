@@ -427,6 +427,35 @@ export function continueSession(
   resumeSession(ctx, eid, entity, deps, target.id);
 }
 
+/** Compact the active coding session's live transcript now. */
+export async function compactSession(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+): Promise<void> {
+  const session = resolveSession(ctx, eid, entity, deps.db);
+  const handle = session?.agent ? getAgentHandle(deps, session.agent) : undefined;
+  if (!handle) {
+    ctx.send(eid, "No active coding agent to compact. Type a task first.");
+    return;
+  }
+  const result = await handle.compactNow?.();
+  if (!result) {
+    ctx.send(
+      eid,
+      "This agent compacts context automatically; on-demand compaction is unavailable.",
+    );
+    return;
+  }
+  ctx.send(
+    eid,
+    result.before === result.after
+      ? `Context already compact (${result.after} messages).`
+      : `Context compacted: ${result.before} → ${result.after} messages.`,
+  );
+}
+
 export function sessionTask(
   ctx: RoomContext,
   eid: EntityId,

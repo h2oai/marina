@@ -68,6 +68,7 @@ import { sandboxLifecycle } from "./code/sandbox";
 import { serviceLifecycle } from "./code/service";
 import {
   branchSession,
+  compactSession,
   completeSession,
   continueSession,
   enterCodeMode,
@@ -205,6 +206,9 @@ const resumeHandler: SubcommandHandler = (c) => {
 };
 const continueHandler: SubcommandHandler = (c) => {
   continueSession(c.ctx, c.eid, c.entity, c.deps);
+};
+const compactHandler: SubcommandHandler = async (c) => {
+  await compactSession(c.ctx, c.eid, c.entity, c.deps);
 };
 const costHandler: SubcommandHandler = (c) => {
   const today = spentTodayUsd();
@@ -355,6 +359,7 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
   sessions: listHandler,
   resume: resumeHandler,
   continue: continueHandler,
+  compact: compactHandler,
   cost: costHandler,
   usage: costHandler,
   use: resumeHandler,

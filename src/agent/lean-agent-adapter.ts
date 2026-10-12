@@ -1162,6 +1162,8 @@ export class LeanAgentAdapter implements AgentHandle {
 
   private agent: Agent;
   private baseTools: AgentTool[] = [];
+  private baseToolProfile: "full" | "crew" | "minimal" | "plan" = "full";
+  private activeToolProfile: "full" | "crew" | "minimal" | "plan" = "full";
   private evolutionTool: AgentTool | null = null;
   private loadedToolNames: string[] = [];
   /** Turns (model calls) taken by the current prompt(); see MAX_TURNS_PER_PROMPT. */
@@ -1575,6 +1577,8 @@ export class LeanAgentAdapter implements AgentHandle {
     // session (`loadDeferredTools`). MARINA_DEFERRED_TOOLS=off = all resident.
     const toolContext = { client: this.client, gameState: this.gameState };
     const toolProfile = config.toolProfile ?? "full";
+    this.baseToolProfile = toolProfile;
+    this.activeToolProfile = toolProfile;
     const toolset = createProfileToolset(
       toolContext,
       this.platformMemory,
@@ -5149,6 +5153,33 @@ The goal is a smaller, sharper memory — not more notes.`;
     const next = task?.trim() ? task.trim() : null;
     if (next && next !== this.activeCodingTask) this.obligations.noteRequest(next);
     this.activeCodingTask = next;
+  }
+
+  /** Restrict the live toolset to a profile; `"base"` restores the configured default. */
+  setToolProfile(profile: "full" | "crew" | "minimal" | "plan" | "base"): void {
+    const target = profile === "base" ? this.baseToolProfile : profile;
+    if (target === this.activeToolProfile) return;
+    this.activeToolProfile = target;
+    const toolContext = { client: this.client, gameState: this.gameState };
+    const toolset = createProfileToolset(
+      toolContext,
+      this.platformMemory,
+      target,
+      { text: true },
+      { onLoadTools: (loaded) => this.loadDeferredTools(loaded) },
+    );
+    this.agent.state.tools = toolset.resident;
+  }
+
+  /** Compact the live transcript now; returns before/after message counts. */
+  async compactNow(): Promise<{ before: number; after: number } | undefined> {
+    const transform = this.contextTransform;
+    if (!transform) return undefined;
+    const original = this.agent.state.messages;
+    if (original.length === 0) return { before: 0, after: 0 };
+    const compacted = await transform(original);
+    if (compacted !== original) this.agent.state.messages = compacted;
+    return { before: original.length, after: compacted.length };
   }
 
   /** One obligations-ledger completion on the agent's own model (spend recorded like a turn). */

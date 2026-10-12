@@ -316,6 +316,9 @@ export class CodeSessionDriver {
         ...(opts.planMode ? { planMode: true } : {}),
       },
     });
+    // Plan mode hard gate: restrict the coder's live tools to read-only for a
+    // plan, and restore its configured profile for every normal task.
+    agent.setToolProfile?.(opts.planMode ? "plan" : "base");
     try {
       await agent.sendAttention(attention);
     } catch (error) {

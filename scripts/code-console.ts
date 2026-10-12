@@ -612,6 +612,10 @@ export class CodeConsole {
       await this.command("code cost");
       return;
     }
+    if (verb === "/compact") {
+      await this.command("code compact");
+      return;
+    }
     if (verb === "/world") {
       if (!argument) throw new Error("Usage: /world <Marina command>");
       await this.command(`/${argument}`);
