@@ -7,6 +7,7 @@ import type { Model } from "@earendil-works/pi-ai";
 import { LeanAgentAdapter } from "../src/agent/lean-agent-adapter";
 import type { PlatformMemoryBackend } from "../src/agent/memory-platform";
 import { dailyBudget, recordSpend, resetSpendLedgerForTests } from "../src/engine/spend-ledger";
+import { resetSamplingParamsForTests } from "../src/net/sampling-params";
 import { scopeProcessState } from "./process-state";
 
 type Internals = {
@@ -16,9 +17,11 @@ type Internals = {
   platformMemory: PlatformMemoryBackend;
 };
 
-function setup(options: { fail?: boolean; unpriced?: boolean; proxy?: boolean } = {}) {
+function setup(
+  options: { fail?: boolean; unpriced?: boolean; proxy?: boolean; budgetCalls?: number } = {},
+) {
   const adapter = new LeanAgentAdapter(
-    { name: "Compactor", model: "openai/gpt-4o-mini", budgetCalls: 20 },
+    { name: "Compactor", model: "openai/gpt-4o-mini", budgetCalls: options.budgetCalls ?? 20 },
     "ws://127.0.0.1:39998",
     null,
     "fixture-key",
@@ -71,7 +74,10 @@ function setup(options: { fail?: boolean; unpriced?: boolean; proxy?: boolean } 
   return { adapter, internals, history: internals.agent.state.messages, requests, archives };
 }
 
-afterEach(() => resetSpendLedgerForTests());
+afterEach(() => {
+  resetSpendLedgerForTests();
+  resetSamplingParamsForTests();
+});
 
 describe("manual compaction through the real context manager and provider parser", () => {
   it("does not summarize a short history or grow it with a summary marker", async () => {
@@ -194,3 +200,26 @@ describe("manual compaction through the real context manager and provider parser
     expect(adapter.getOperatorStatus().totalCostUsd!).toBe(0.125);
   });
 });
+
+for (const budgetCalls of [1, 2]) {
+  it(`accounts for a sampling-capability retry within the call budget (${budgetCalls})`, async () => {
+    const { adapter, internals, archives } = setup({ budgetCalls });
+    internals.model = { ...internals.model, id: "compaction-sampling-fixture" };
+    const answer = internals.providerFetch;
+    const bodies: { temperature?: number }[] = [];
+    internals.providerFetch = (async (input, init) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      if (bodies.length === 1)
+        return Response.json({ error: { message: "unsupported temperature" } }, { status: 400 });
+      return answer(input, init);
+    }) as typeof fetch;
+    const compacted = await adapter.compactNow();
+    expect(compacted!.after).toBeLessThan(compacted!.before);
+    expect(archives).toHaveLength(1);
+    expect(bodies).toHaveLength(budgetCalls);
+    expect(bodies[0]?.temperature).toBe(0.3);
+    if (budgetCalls === 2) expect(bodies[1]?.temperature).toBeUndefined();
+    expect(adapter.getStatus().modelCalls).toBe(budgetCalls);
+    expect(adapter.getStatus().budgetExhausted).toBe(true);
+  });
+}
