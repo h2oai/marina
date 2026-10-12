@@ -8,7 +8,7 @@
 // not for the summary, not for the submission verifier (opinion `none`).
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentEvent, AgentHandle } from "../src/agent/agent-types";
@@ -193,7 +193,8 @@ describe("Code Mode spend stop", () => {
   it("counts a command's edits when the workspace diff shows them", async () => {
     gitInit(dir);
     writeFileSync(join(dir, "a.txt"), "one\n");
-    git(dir, "add", "a.txt");
+    writeFileSync(join(dir, ".gitignore"), "world.db*\n");
+    git(dir, "add", "a.txt", ".gitignore");
     git(dir, "commit", "--quiet", "-m", "base");
     const { run, stop, settle } = observed();
     writeFileSync(join(dir, "a.txt"), "two\n"); // e.g. a formatter run through code run
@@ -211,6 +212,49 @@ describe("Code Mode spend stop", () => {
     expect(db.getCodingArtifact(meta.summaryId!)!.content_text).toContain(
       "Changed in this attempt: a.txt",
     );
+  });
+
+  it("counts a new untracked file a command created, but not ignored ones", async () => {
+    gitInit(dir);
+    writeFileSync(join(dir, ".gitignore"), "world.db*\nbuild/\n");
+    git(dir, "add", ".gitignore");
+    git(dir, "commit", "--quiet", "-m", "base");
+    const { run, stop, settle } = observed();
+    mkdirSync(join(dir, "src"));
+    writeFileSync(join(dir, "src", "new.ts"), "export const x = 1;\n"); // e.g. a generator via code run
+    mkdirSync(join(dir, "build"));
+    writeFileSync(join(dir, "build", "out.js"), "ignored\n");
+    db.createCodingEvent({
+      sessionId: "s",
+      actor: worker.name,
+      kind: "command_ran",
+      payload: { id: "c1", command: ["gen"], exitCode: 0 },
+    });
+    stop();
+    await settle();
+    const ended = db.getCodingArtifact(run.id)!;
+    expect(ended.status).toBe("submitted");
+    const text = db.getCodingArtifact(codingRunMetadata(ended).summaryId!)!.content_text;
+    expect(text).toContain("Changed in this attempt: src/new.ts");
+    expect(text).not.toContain("build/out.js");
+    expect(text).not.toContain("world.db");
+  });
+
+  it("does not count a command as a change in a clean repository", async () => {
+    gitInit(dir);
+    writeFileSync(join(dir, ".gitignore"), "world.db*\n");
+    git(dir, "add", ".gitignore");
+    git(dir, "commit", "--quiet", "-m", "base");
+    const { run, stop, settle } = observed();
+    db.createCodingEvent({
+      sessionId: "s",
+      actor: worker.name,
+      kind: "command_ran",
+      payload: { id: "c1", command: ["ls"], exitCode: 0 },
+    });
+    stop();
+    await settle();
+    expect(db.getCodingArtifact(run.id)!.status).toBe("interrupted");
   });
 
   it("does not count a command as a change without a workspace diff", async () => {

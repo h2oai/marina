@@ -486,7 +486,9 @@ export function spendBudgetForced(): BudgetForced {
 /**
  * What this attempt changed in the workspace, from its own record: the paths
  * of its writes, edits and applied patches; else, when it ran commands, the
- * files in the workspace diff. Empty ⇒ nothing to submit. Never asks a model.
+ * paths changed against HEAD, untracked included (`.gitignore` respected;
+ * `git diff` where the workspace cannot list them). Empty ⇒ nothing to submit. Never
+ * asks a model.
  */
 export async function codingAttemptChanges(
   deps: CodeDeps & { db: MarinaDB },
@@ -520,7 +522,10 @@ export async function codingAttemptChanges(
   const session = deps.db.getCodingSession(run.session_id);
   if (!session) return [];
   try {
-    const diff = await workspaceForSession(deps, session).diff();
+    const workspace = workspaceForSession(deps, session);
+    // Changed against HEAD, untracked files included (`.gitignore` respected).
+    if (workspace.changedPaths) return await workspace.changedPaths();
+    const diff = await workspace.diff();
     if (diff.exitCode !== 0 || !diff.content.trim()) return [];
     const files = [...diff.content.matchAll(/^diff --git a\/(\S+) b\//gm)].map((m) => m[1]!);
     return files.length ? [...new Set(files)] : ["(workspace diff)"];
