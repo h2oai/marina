@@ -43,12 +43,13 @@ describe("sampling parameters follow the model", () => {
     expect(rejectsSamplingParams("acme/new-model")).toBe(false);
     noteSamplingRejected("acme/new-model");
     expect(rejectsSamplingParams("openrouter/acme/new-model")).toBe(true);
-    expect(
-      withoutRejectedSampling({ model: "acme/new-model", temperature: 0, top_p: 1, x: 1 }),
-    ).toEqual({
+    const body: Record<string, unknown> = {
       model: "acme/new-model",
+      temperature: 0,
+      top_p: 1,
       x: 1,
-    });
+    };
+    expect(withoutRejectedSampling(body)).toEqual({ model: "acme/new-model", x: 1 });
   });
 
   it("the passthru drops refused sampling fields upstream and keeps accepted ones", () => {
