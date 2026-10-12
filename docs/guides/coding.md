@@ -633,6 +633,13 @@ after that point is the forced best effort: it is submitted with whatever verifi
 labelled `budgetForced` (`{"reason":"deadline","used":…,"cap":…}` in `--json`, and in the task's
 evidence). It is never reported as verified unless its checks passed.
 
+**Spend stop.** When the model budget runs out mid-task (the daily or scope spend cap, or an
+upstream refusing for money), no model can be asked to finish. The attempt ends anyway: if the
+coder changed the workspace, Marina submits that work for review. It uses a summary assembled
+without a model, keeps the recorded verification and adds the label
+`budgetForced` (`{"reason":"spend",…}`). If nothing changed, the attempt ends blocked with the same
+label. The submission verifier is not asked.
+
 **Driver.** `--driver crew` runs the one-shot with the crew driver. A task with a contract
 (required verification, `owner:unattended`, a budget) stays ONE tracked attempt: a lead coder owns
 it, keeps the write lock and submits it under the contract, and a crew assembled around it reviews,

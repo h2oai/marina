@@ -122,6 +122,7 @@ import {
   budgetSteerAt,
   budgetSteerNote,
   deadlinePhase,
+  SPEND_STOP_EVENT_CONTEXT,
 } from "./budget-terminal";
 import {
   type ConversationTokenCap,
@@ -2826,6 +2827,9 @@ export class LeanAgentAdapter implements AgentHandle {
               `I've hit a ${spendBreach} and paused. I'll resume on my own once the last hour's spend drops below the cap; \`agent stop ${this.name}\` ends me sooner.`,
             );
           }
+          // The daily/scope cap lasts until 00:00 UTC: a coder's attempt ends
+          // now (a rolling-hour cap lifts on its own and keeps the attempt).
+          if (dailyCapRefusal()) this.endCodingTaskForSpend(spendBreach);
           await this.pauseSleep(SPEND_CAP_POLL_MS);
           continue;
         }
@@ -5534,10 +5538,9 @@ The goal is a smaller, sharper memory — not more notes.`;
    * counter reset. Returns the new consecutive-error count for the loop.
    */
   /**
-   * An upstream refused a call for money (`isSpendRefusal`). A coder ends its
-   * task attempt once — `code blocked kind:impossible`, labelled BudgetForced;
-   * the work already produced stays in the workspace — and every agent pauses
-   * (no model call) for the upstream-error pause before asking again.
+   * An upstream refused a call for money (`isSpendRefusal`). A coder's task
+   * attempt ends once, like every budget (`endCodingTaskForSpend`), and every
+   * agent pauses (no model call) for the upstream-error pause before asking again.
    */
   private async afterSpendRefusal(errorMessage: string, model: string): Promise<number> {
     const reason = `model budget exhausted [${model}]: ${errorMessage.slice(0, 200)}`;
@@ -5546,12 +5549,7 @@ The goal is a smaller, sharper memory — not more notes.`;
       agent: this.name,
     });
     this.emitEvent({ type: "error", error: reason, context: "spend-cap" });
-    const task = this.activeCodingTask;
-    if (task && this.spendEndedTask !== task) {
-      this.spendEndedTask = task;
-      const note = `BudgetForced: the model budget is exhausted (${errorMessage.slice(0, 120).replace(/\s+/g, " ")}); ending with the work in the workspace`;
-      await this.client.command(`code blocked kind:impossible ${note}`).catch(() => undefined);
-    }
+    this.endCodingTaskForSpend(errorMessage);
     const until = Date.now() + UPSTREAM_ERROR_PAUSE_MS;
     this.enterPause("spend-cap", reason, until);
     while (this.autonomousLoopRunning && this.autonomousMode) {
@@ -5561,6 +5559,25 @@ The goal is a smaller, sharper memory — not more notes.`;
     }
     this.clearPause("budget pause over — asking again");
     return 0;
+  }
+
+  /**
+   * Money ran out (an upstream spend refusal, or Marina's own daily/scope cap
+   * before a call): a coder's current task attempt ends once, like every other
+   * budget. The runtime emits `SPEND_STOP_EVENT_CONTEXT` — never a tool — and
+   * the Code Mode attempt observer ends the attempt mechanically: a forced
+   * submission labelled budgetForced (`spend`) when the workspace has changes,
+   * else `blocked kind:impossible`. No model call either way.
+   */
+  private endCodingTaskForSpend(detail: string): void {
+    const task = this.activeCodingTask;
+    if (!task || this.spendEndedTask === task) return;
+    this.spendEndedTask = task;
+    this.emitEvent({
+      type: "error",
+      error: detail.slice(0, 300),
+      context: SPEND_STOP_EVENT_CONTEXT,
+    });
   }
 
   private async afterUpstreamError(consecutiveErrors: number, backoffMs: number): Promise<number> {

@@ -67,7 +67,8 @@ export interface CodingRunMetadata {
   /** Wall-clock budget of this attempt (`code do budget:<duration>`): start and deadline, epoch ms. */
   startedAt?: number;
   deadlineAt?: number;
-  /** Set when the submission came after the budget's final-answer point (`deadlinePhase`). */
+  /** Set when the submission came after the budget's final-answer point (`deadlinePhase`),
+   * or when the model spend budget ran out (`reason: "spend"`: a mechanical submission or block). */
   budgetForced?: BudgetForced;
   /**
    * Crew driver: the crew assembled around this attempt's lead (`crewSupport`).
@@ -320,6 +321,8 @@ export async function submitCodingRun(
   summary: CodingArtifactRow,
   allowHostObservation = true,
   forCrew?: string,
+  /** A forced stop decided by the runtime (a spend stop), not by the attempt's own clock. */
+  stop?: BudgetForced,
 ): Promise<CodingArtifactRow | undefined> {
   const submitterKey = db.durableEntityKey(worker.id);
   const maySubmit = (meta: CodingRunMetadata) =>
@@ -351,7 +354,7 @@ export async function submitCodingRun(
     // Past the budget's final-answer point the submission is the forced best
     // effort: submitted with whatever verification it has, labelled, and never
     // reported as verified unless its checks passed.
-    const forced = budgetForcedAt(meta, Date.now());
+    const forced = stop ?? budgetForcedAt(meta, Date.now());
     if (forced) meta.budgetForced = forced;
     if (!forced && meta.verificationRequirement && meta.verification !== "passed") {
       db.updateCodingArtifact(run.id, { metadata: meta });
@@ -384,7 +387,7 @@ export async function submitCodingRun(
     const submittedFor = member
       ? `\nSubmitted by: ${worker.name}, member of crew ${member.name}, for the lead ${meta.workerName}`
       : "";
-    const evidence = `${summary.content_text}${requirements.length ? `\n\nRequirements:\n${requirements.map((line) => `- ${line}`).join("\n")}` : ""}\n\nCoding attempt: artifact:${run.id}\nSummary: artifact:${summary.id}\nRecorded verification: ${meta.verification}${verification ? ` (artifact:${verification.id})` : ""}${submittedFor}${forced ? `\nBudget-forced: submitted at the task's deadline (${Math.round(forced.used / 1000)}s of ${Math.round(forced.cap / 1000)}s), best effort.` : ""}${assumed.length ? `\nAssumptions (no person could answer):\n${assumed.join("\n")}` : ""}`;
+    const evidence = `${summary.content_text}${requirements.length ? `\n\nRequirements:\n${requirements.map((line) => `- ${line}`).join("\n")}` : ""}\n\nCoding attempt: artifact:${run.id}\nSummary: artifact:${summary.id}\nRecorded verification: ${meta.verification}${verification ? ` (artifact:${verification.id})` : ""}${submittedFor}${forced ? `\n${budgetForcedLine(forced)}` : ""}${assumed.length ? `\nAssumptions (no person could answer):\n${assumed.join("\n")}` : ""}`;
     const claim = codingRunClaim(db, run);
     if (!claim || !tasks.submit(meta.taskId, claim.entity_id, evidence)) {
       throw new Error(
@@ -670,12 +673,14 @@ export function endCodingRun(
   runId: string,
   status: "cancelled" | "failed" | "interrupted",
   reason: string,
+  budgetForced?: BudgetForced,
 ): CodingArtifactRow | undefined {
   return db.transaction(() => {
     const run = db.getCodingArtifact(runId);
     if (run?.kind !== "task_run" || run.status !== "active") return undefined;
     const meta = codingRunMetadata(run);
     meta.reason = reason;
+    if (budgetForced) meta.budgetForced = budgetForced;
     // Release only this attempt's live claim. A submitted/approved claim cannot
     // be undone by a delayed stop or a late event from an old worker.
     const claim = codingRunClaim(db, run);
@@ -767,6 +772,13 @@ export function canReclaimCodingWriter(
     claim?.status === "claimed" &&
     (claim.lease_expires_at === null || claim.lease_expires_at > Date.now())
   );
+}
+
+/** The reviewer-facing line for a budget-forced submission. */
+export function budgetForcedLine(forced: BudgetForced): string {
+  if (forced.reason === "spend")
+    return `Budget-forced: submitted mechanically when the model spend budget ran out${forced.cap > 0 ? ` ($${forced.used.toFixed(2)} of $${forced.cap.toFixed(2)} today)` : ""}; no model call was made for this submission, best effort.`;
+  return `Budget-forced: submitted at the task's deadline (${Math.round(forced.used / 1000)}s of ${Math.round(forced.cap / 1000)}s), best effort.`;
 }
 
 /**
