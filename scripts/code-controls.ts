@@ -53,6 +53,11 @@ export const TERMINAL_CONTROLS = [
     help: "Resume Marina's most recent session in this folder",
   },
   {
+    name: "/cost",
+    usage: "/cost (or /usage)",
+    help: "Show today's model spend against the daily cap",
+  },
+  {
     name: "/spawn",
     usage: "/spawn claude|codex|pi [name]",
     help: "Add a native agent in an isolated Git worktree",
@@ -118,6 +123,7 @@ export function terminalEssentials(connected = false, runtimes: string[] = []): 
     ],
     ["/model <id>", "switch model (or /fast for cheapest)"],
     ["/continue", "resume this folder's session"],
+    ["/cost", "today's spend vs the cap"],
     ["/quit", connected ? "detach; the world keeps running" : "exit"],
   ];
   return [

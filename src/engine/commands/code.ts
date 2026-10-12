@@ -25,6 +25,7 @@ import { failCommandResponse } from "../command-response";
 import { getErrorMessage } from "../errors";
 import { parseModifiers } from "../parse-input";
 import { checkGateForExecution, recordGateExecution } from "../safety-gates";
+import { dailySpendCapUsd, formatSpendUsd, spentTodayUsd } from "../spend-ledger";
 import {
   approval,
   approvals,
@@ -205,6 +206,18 @@ const resumeHandler: SubcommandHandler = (c) => {
 const continueHandler: SubcommandHandler = (c) => {
   continueSession(c.ctx, c.eid, c.entity, c.deps);
 };
+const costHandler: SubcommandHandler = (c) => {
+  const today = spentTodayUsd();
+  const cap = dailySpendCapUsd();
+  const lines = [`Today's model spend: ${formatSpendUsd(today)}`];
+  if (cap !== undefined) {
+    lines.push(`Daily cap: ${formatSpendUsd(cap)}`);
+    if (cap > 0) lines.push(`${Math.round((today / cap) * 100)}% of today's cap used`);
+  } else {
+    lines.push("Daily cap: none set");
+  }
+  c.ctx.send(c.eid, lines.join("\n"));
+};
 const filesHandler: SubcommandHandler = async (c) => {
   await files(c.ctx, c.eid, c.entity, c.deps, c.args.join(" ") || ".");
 };
@@ -342,6 +355,8 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
   sessions: listHandler,
   resume: resumeHandler,
   continue: continueHandler,
+  cost: costHandler,
+  usage: costHandler,
   use: resumeHandler,
   status: async (c) => {
     await status(c.ctx, c.eid, c.entity, c.deps, c.args[0]);
