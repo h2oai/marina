@@ -52,7 +52,7 @@ they are explained. All are optional — unset means the world's own default.
 | Variable | Read by | Effect | Default |
 |---|---|---|---|
 | `MARINA_CREW_MODEL` | `default`, `showcase`, `prediction-lab`, focused worlds | Shared model for every seeded crew. Per-crew overrides below win over it. | `marina/default` |
-| `MARINA_WORKBENCH_MODEL` | `default` | Model for the Workbench agent; wins over `MARINA_CREW_MODEL`. | falls back to `MARINA_CREW_MODEL`, then `openai/gpt-6-luna` when `OPENAI_API_KEY` is set, `openrouter/openai/gpt-6-luna` when `OPENROUTER_API_KEY` is set, `huggingface/zai-org/GLM-5.3-Flash` when `HUGGINGFACE_API_KEY`/`HF_TOKEN` is set, else `marina/default` |
+| `MARINA_WORKBENCH_MODEL` | `default` | Model for the Workbench agent; wins over `MARINA_CREW_MODEL`. | falls back to `MARINA_CREW_MODEL`, then `openai/gpt-6.1-sol` when `OPENAI_API_KEY` is set, `openrouter/anthropic/claude-opus-5.5` when `OPENROUTER_API_KEY` is set, `huggingface/zai-org/GLM-5.3-Flash` when `HUGGINGFACE_API_KEY`/`HF_TOKEN` is set, else `marina/default` |
 | `MARINA_ANSWERER_MODEL` | `showcase` | Model for the answerer crew. | `MARINA_CREW_MODEL` |
 | `MARINA_ANSWERER_COUNT` | `showcase` | Size of the answerer crew. | `4` |
 | `MARINA_MATH_MODEL` | `showcase` | Model for the mathematician specialist. | `MARINA_CREW_MODEL` |

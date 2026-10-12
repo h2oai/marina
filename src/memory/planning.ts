@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { samplingFor } from "../net/sampling-params";
 import type { MemoryActor } from "../persistence/db-principals";
 import { withMemoryAbort } from "../sdk/memory-abort";
 import type {
@@ -54,7 +55,7 @@ export function routerMemoryPlanner(url: string, model: string, token?: string):
         },
         body: JSON.stringify({
           model,
-          temperature: 0,
+          ...samplingFor(model, 0),
           max_tokens: 1200,
           messages: [
             {

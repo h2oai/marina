@@ -95,6 +95,13 @@ bun run swebench file --arm single --replicate 1 --db marina.db
   Each attempt in `attempts.jsonl` carries these counts (`verification`), and the filed ledger result
   sums them in `metadata.verification`. They describe the agent's process only: grading is the
   harness's alone, and a `not_run` is never counted as a failed or passed check.
+- **Budget-forced patches:** `marina -p` gives each attempt a time budget just inside
+  `MARINA_CODE_TASK_TIMEOUT_MS`. A summary submitted past the budget's final-answer point is the
+  forced best effort; `-p --json` reports it as `budgetForced`. The adapter reads the label from the
+  session database, and each attempt in `attempts.jsonl` carries `budgetForced`. The filed ledger
+  item carries `budget_forced` (true when any attempt in the session was forced, false when a
+  budgeted attempt ended without it), and `metadata.budgetForced` counts the forced items.
+  `benchmark result` reports the count. It is a label only: the harness grades the patch as usual.
 
 ## SWE-bench Pro
 

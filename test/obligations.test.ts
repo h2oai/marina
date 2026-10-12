@@ -18,6 +18,7 @@ import { appendTrailingNote, buildAnthropicRequest } from "../src/net/anthropic-
 import { handleModelApi } from "../src/net/model-api";
 import { ARGCHECK_MODEL_PREFIX } from "../src/net/model-api/argcheck";
 import { LESSONS_MODEL_PREFIX, stripOptInPrefixes } from "../src/net/model-api/chat-completions";
+import { ENSEMBLE_MODEL_PREFIX } from "../src/net/model-api/ensemble";
 import {
   conversationKey,
   conversationKeys,
@@ -1104,6 +1105,7 @@ describe("POST /v1/chat/completions with the obligations ledger", () => {
         ARGCHECK_MODEL_PREFIX,
         VERIFY_MODEL_PREFIX,
         FULL_MODEL_PREFIX,
+        ENSEMBLE_MODEL_PREFIX,
       ].sort(),
     );
   });

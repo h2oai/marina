@@ -323,6 +323,7 @@ export const CHAT_ONLY_MODEL_PREFIXES = [
   "marina/argcheck:",
   "marina/verify:",
   "marina/full:", // FULL_MODEL_PREFIX (stack.ts)
+  "marina/ensemble:", // ENSEMBLE_MODEL_PREFIX (ensemble.ts)
 ] as const;
 
 /**

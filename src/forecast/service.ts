@@ -16,7 +16,7 @@
  *                              (every planned query through a backend chain, pages read and
  *                              quoted), asof[:<providers>] (keyless and date-strict: gdelt,
  *                              wikipedia, hn, arxiv, wayback)
- *                              (default openrouter-web:openai/gpt-6-luna@exa,search; `search`
+ *                              (default openrouter-web:openai/gpt-6.1-sol@exa,search; `search`
  *                              alone without an OpenRouter key)
  *   MARINA_FORECAST_DOSSIER_CHARS  evidence characters given to each run (default: sized to
  *                              the analysts' context window, 12 000–60 000)
@@ -75,9 +75,9 @@ import type { ModelPart, TypedForecastDeps, TypedForecastOptions } from "./typed
 export { DEFAULT_RETRIEVER, defaultRetrieverSpec };
 
 export const DEFAULT_ANALYSTS = [
-  "openrouter/deepseek/deepseek-v4-pro",
-  "openrouter/anthropic/claude-sonnet-5",
-  "openrouter/openai/gpt-6-luna",
+  "openrouter/anthropic/claude-fable-5.1",
+  "openrouter/openai/gpt-6-astra",
+  "openrouter/google/gemini-3.1-pro-preview",
 ];
 
 /**

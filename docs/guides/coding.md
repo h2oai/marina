@@ -637,10 +637,25 @@ after that point is the forced best effort: it is submitted with whatever verifi
 labelled `budgetForced` (`{"reason":"deadline","used":…,"cap":…}` in `--json`, and in the task's
 evidence). It is never reported as verified unless its checks passed.
 
+**Spend stop.** When the model budget runs out mid-task (the daily or scope spend cap, or an
+upstream refusing for money), no model can be asked to finish. The attempt ends anyway: if the
+coder changed the workspace, Marina submits that work for review. It uses a summary assembled
+without a model, keeps the recorded verification and adds the label
+`budgetForced` (`{"reason":"spend",…}`). If nothing changed, the attempt ends blocked with the same
+label. The submission verifier is not asked.
+
 **Driver.** `--driver crew` runs the one-shot with the crew driver. A task with a contract
 (required verification, `owner:unattended`, a budget) stays ONE tracked attempt: a lead coder owns
-and submits it under the contract, and a crew assembled around it reviews, tests and reports to
-the lead. Without a contract, `code do` on a crew session still stores and dispatches a crew plan.
+it, keeps the write lock and submits it under the contract, and a crew assembled around it reviews,
+tests and reports to the lead. The crew's roster is recorded on the attempt, so when the lead
+cannot submit, a member may submit it for the crew with `code summary submit:crew -- <summary>`.
+That submission takes the same path as the lead's: the same required checks and budget-forced
+label, the lead's task claim, and still one attempt (a later summary from anyone does not submit
+again). It is attributed to the member (`submittedBy` on the attempt, a `Submitted by:` line in
+the task evidence, the member as actor of the submit event), and the lead is notified. Only a
+member on both the recorded roster and the live crew may do this: an outsider, a removed member
+or a dissolved crew is refused, and a member's plain `code summary` stays progress. Without a
+contract, `code do` on a crew session still stores and dispatches a crew plan.
 
 `--json` prints one JSON object as the last line of stdout and sends everything else to stderr:
 `{"status":"verified|unverified|failed|timeout","exitCode":…,"verification":…,"verificationReason":…,"requirements":…,"reason":…,"assumptions":[{"text":…,"source":"worker|block"}],"budgetForced":…,"taskId":…,"runId":…,"files":[{"path":…,"added":…,"removed":…}],"durationMs":…}`.
@@ -924,7 +939,15 @@ container runner):
 1. **Prepare** for the detected project type. A probe checks that the environment has what the
    checks need (`python -m pytest --version`, `go version`, `node_modules` for a package with
    dependencies or workspace links, and so on). A JavaScript installer never runs on a Python project, and the
-   reverse.
+   reverse. When the detected runner is pytest and the probe shows pytest is not importable (and
+   nothing could install it), the tests run instead with the project's own test script
+   (`tests/run_tests.py`, `tests/run_all.py`, `tests/run.py`, `test/run_tests.py`,
+   `test/run_all.py`, unless it imports pytest itself) or `python -m unittest` (discovery, or the
+   relevant test modules by dotted name). The report says so — `runner: unittest (pytest
+   unavailable)`, and `testRunner` in the artifact metadata — and such a run passes only when it
+   reports tests ran (`Ran N tests`, `N passed`); zero tests or silence is `not_run`. `code test`
+   follows the same switch. The fallback command runs through the same allowlist and approval as
+   any other check.
 2. **Type-check**, when the project configures it and the chain does not already run it:
    `tsc --noEmit` for a `tsconfig.json`, `mypy` or `pyright` on the changed Python files.
 3. **Checks and tests**: typecheck → lint → test → build for JavaScript, the project's test
@@ -1243,7 +1266,7 @@ Lockfiles name the dependency manager (`bun.lock`, `pnpm-lock.yaml`, `yarn.lock`
 | --- | --- |
 | Django's own repository (`tests/runtests.py`) | `python tests/runtests.py [labels]` |
 | Django project (`manage.py`) | `python manage.py test [labels]` |
-| Other Python | `python -m pytest [paths or node ids] [-q -x -v]` |
+| Other Python | `python -m pytest [paths or node ids] [-q -x -v]`; without pytest, the project's test script or `python -m unittest` (see step 1 above) |
 | Rust | `cargo test [filter]` |
 | Go | `go test ./... [-count=N -short -v]` |
 | Java (Maven / Gradle) | `mvn -B -q test [-Dtest=Class,…]` / `gradle test -q [--tests Class]` |

@@ -140,12 +140,12 @@ function preset(raw: string | undefined): Preset | undefined {
 }
 
 /**
- * A current, cheap chat model for a chat-classifier backend with no
+ * A current, strong chat model for a chat-classifier backend with no
  * MARINA_DECISION_MODEL, on the hosts whose model ids Marina knows; any other
  * base URL still needs the model named (undefined = decisions stay off).
  */
 export function defaultClassifierModel(baseUrl: string): string | undefined {
-  if (/^https:\/\/openrouter\.ai\//.test(baseUrl)) return "openai/gpt-6-luna";
+  if (/^https:\/\/openrouter\.ai\//.test(baseUrl)) return "openai/gpt-6.1-sol";
   if (/^https:\/\/router\.huggingface\.co(\/|$)/.test(baseUrl)) return "zai-org/GLM-5.3-Flash";
   return undefined;
 }

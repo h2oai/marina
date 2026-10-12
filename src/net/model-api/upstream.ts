@@ -32,6 +32,7 @@ import {
 } from "../model-discovery";
 import { openaiErrorBody, UnsupportedParameterError } from "../openai-errors";
 import type { InjectionFormat } from "../passthru-context";
+import { withoutRejectedSampling } from "../sampling-params";
 import {
   normalizeTextualToolCalls,
   type StreamEvent,
@@ -1069,6 +1070,10 @@ export function prepareUpstreamBody(
       ? body
       : stripCacheControl(body);
   let prepared = prepareLlamaBody(cacheBody, provider);
+  // Sampling fields the routed model refuses (OpenAI reasoning families, the
+  // Claude 5 family through OpenRouter) are dropped, like the Anthropic bridge
+  // does for Claude 5 (`rejectsSamplingParams`), instead of a 400 every call.
+  if (provider !== "anthropic") prepared = withoutRejectedSampling(prepared);
   // The Luna family (gpt-5.6-luna, gpt-6-luna, their -pro variants): accepts
   // reasoning_effort "none" and rejects legacy max_tokens (verified live
   // 2026-09-24 for gpt-6-luna on OpenAI and OpenRouter).

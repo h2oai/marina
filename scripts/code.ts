@@ -201,7 +201,8 @@ export interface CodeLifecycleEnd {
   detail?: string;
   /** Interpretations recorded where no person could answer (`code assume`, answered blocks). */
   assumptions?: CodeAssumption[];
-  /** Submitted at the budget's final-answer point: a labelled best effort, never a free answer. */
+  /** Submitted at the budget's final-answer point, or ended by a spend stop (`reason: "spend"`):
+   * a labelled best effort, never a free answer. */
   budgetForced?: { reason: string; used: number; cap: number };
   taskId?: number;
   runId?: string;
@@ -357,6 +358,9 @@ export function terminalCodeLifecycle(p: Perception): CodeLifecycleEnd | undefin
       ...(typeof metadata.taskId === "number" ? { taskId: metadata.taskId } : {}),
       ...(typeof metadata.runId === "string" ? { runId: metadata.runId } : {}),
       ...(assumptions ? { assumptions } : {}),
+      ...(lifecycleBudgetForced(metadata.budgetForced)
+        ? { budgetForced: lifecycleBudgetForced(metadata.budgetForced) }
+        : {}),
     };
   }
   return undefined;

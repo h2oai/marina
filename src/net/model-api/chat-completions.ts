@@ -25,6 +25,14 @@ import {
   prepareArgcheck,
   statedFromLedger,
 } from "./argcheck";
+import {
+  completionAsSse,
+  ENSEMBLE_MODEL_PREFIX,
+  ensembleSize,
+  ensembleTurn,
+  parseEnsembleModels,
+  runEnsembleTurn,
+} from "./ensemble";
 import { evalRef, notePassthruRecoveries, passthruLearnOwner } from "./learn";
 import {
   finishObligations,
@@ -84,7 +92,14 @@ import {
   withoutMember,
 } from "./stack";
 import { explicitUpstreamModel, passthruForceModel, proxyToUpstream } from "./upstream";
-import { maybeVerifyChat, VERIFY_MODEL_PREFIX, verifyPin, verifyProposer } from "./verify";
+import {
+  maybeVerifyChat,
+  parseVerifyModel,
+  VERIFY_MODEL_PREFIX,
+  type VerifyDraftInput,
+  verifyPin,
+  verifyProposer,
+} from "./verify";
 
 /**
  * `marina/lessons:<model>` — the plain request to <model>, with judged lessons
@@ -157,6 +172,24 @@ function learnFor(
   };
 }
 
+/**
+ * The ensemble's checker: the passthru pin when one applies, else the verify
+ * checker resolution for the first proposer (`MARINA_VERIFY_CHECKER_MODEL`,
+ * the earned `verify:checker` slot, else the proposer itself).
+ */
+function ensembleChecker(engine: Engine, first: string, pin: string): string {
+  if (pin) return pin;
+  return (
+    parseVerifyModel(
+      `${VERIFY_MODEL_PREFIX}${first}`,
+      process.env,
+      undefined,
+      engine.db,
+      (id) => !!explicitUpstreamModel(engine, id),
+    )?.checker ?? first
+  );
+}
+
 /** The members that ran, in declaration order. */
 function ranMembers(ran: Partial<Record<StackMember, unknown>>): StackMember[] {
   return STACK_MEMBERS.filter((m) => !!ran[m]);
@@ -216,9 +249,18 @@ async function runVerifyStack(
     obligationsMode?: ObligationsMode;
     argcheckMode?: ObligationsMode;
     surface: InjectionFormat;
+    /** The ensemble drafts verify's first draft: a listed panel, else the
+     *  proposer × `MARINA_ENSEMBLE_SIZE`. */
+    ensemble?: { listed?: string[]; displayModel?: string };
   },
 ): Promise<Response> {
   const { stack } = o;
+  const pin = verifyPin(engine);
+  // A listed panel obeys the same pin and reachability rules as on its own.
+  if (o.ensemble?.listed) {
+    const setup = ensembleSetup(engine, o.ensemble.listed[0]!, "", pin, o.ensemble.listed);
+    if ("error" in setup) return setup.error;
+  }
   const prep = await preparePassthru(engine, req, authResult, messages, o.surface);
   if (stack.members.has("context") && !prep.identity?.contextOptIn) {
     const error = withoutMember(stack, "context", NEEDS_IDENTITY);
@@ -229,18 +271,40 @@ async function runVerifyStack(
   if (learn.owner) notePassthruRecoveries(engine.db, learn.owner, messages, evalRef(req));
   const lessonOwner =
     authResult && !isInternalCaller(authResult) ? authResult.boundEntityName : undefined;
+  // Order: the ensemble drafts and picks (no repair of its own), verify
+  // reviews the pick (a revision is one call by the picked draft's proposer),
+  // output repair runs once on verify's final; the ledger and the check wrap
+  // the whole formation, and their nudge re-runs all of it.
+  const ensemble = o.ensemble;
+  const draft = ensemble
+    ? (d: VerifyDraftInput) =>
+        ensembleTurn(engine, {
+          body: { ...body, stream: false },
+          proposers: ensemble.listed ?? Array.from({ length: ensembleSize() }, () => d.proposer),
+          checker: d.checker,
+          ...(d.note ? { note: d.note } : {}),
+          ...(d.checkerNotes ? { checkerNotes: d.checkerNotes } : {}),
+          pin,
+          displayModel: ensemble.displayModel ?? String(body.model),
+          ...(d.entityId ? { entityId: d.entityId } : {}),
+          ...(d.signal ? { signal: d.signal } : {}),
+          repair: false,
+        })
+    : undefined;
   const run = async (note?: string): Promise<Response> =>
     (await maybeVerifyChat(engine, req, body, authResult, {
       ...(joinNotes(prep.addendum, note) ? { note: joinNotes(prep.addendum, note) } : {}),
       ...(lessonOwner ? { lessonOwner } : {}),
       // The checker reviews against the same memory context (distinct identity only).
       ...(prep.identity?.contextOptIn && prep.addendum ? { context: prep.addendum } : {}),
+      ...(draft ? { draft } : {}),
+      ...(ensemble?.displayModel ? { displayModel: ensemble.displayModel } : {}),
     })) ?? errorJson(400, "Not a marina/verify: model id");
   // The ledger and the check read the request as the proposer would answer it.
   const proposer = verifyProposer(engine, String(body.model));
   const ledgerBody =
     proposer && explicitUpstreamModel(engine, proposer) ? { ...body, model: proposer } : undefined;
-  const forceModel = verifyPin(engine);
+  const forceModel = pin;
   const scoped = {
     ...(prep.identity?.entityId ? { entityId: prep.identity.entityId } : {}),
     ...(authResult ? { auth: authResult } : {}),
@@ -281,6 +345,7 @@ async function runVerifyStack(
       verify: true,
       context: prep.identity?.contextOptIn,
       learn: learn.ran,
+      ensemble: !!ensemble,
     }),
   );
 }
@@ -328,6 +393,56 @@ export function tryVerifiedArithmetic(input: unknown): string | undefined {
     ? String(result)
     : String(Number(result.toPrecision(12)));
   return `${rendered}. Verified directly: ${left} ${symbol} ${right} = ${rendered}.`;
+}
+
+interface EnsembleSetup {
+  proposers: string[];
+  checker: string;
+  forceModel?: string;
+}
+
+/**
+ * The ensemble's proposers, checker and force model for one request: a listed
+ * panel (each id an explicit upstream id; under a passthru pin, the pin only),
+ * or the request's model × `MARINA_ENSEMBLE_SIZE` under the request's own
+ * force model.
+ */
+function ensembleSetup(
+  engine: Engine,
+  model: string,
+  forceModel: string,
+  pin: string,
+  listed: string[] | undefined,
+): EnsembleSetup | { error: Response } {
+  if (!listed) {
+    return {
+      proposers: Array.from({ length: ensembleSize() }, () => model),
+      checker: ensembleChecker(engine, forceModel || model, pin),
+      ...(forceModel ? { forceModel } : {}),
+    };
+  }
+  if (pin) {
+    const other = listed.find((id) => id !== pin);
+    if (other)
+      return {
+        error: errorJson(
+          403,
+          `This endpoint is pinned to "${pin}"; ${ENSEMBLE_MODEL_PREFIX} cannot use "${other}"`,
+          { code: "model_not_allowed" },
+        ),
+      };
+    return { proposers: listed, checker: pin, forceModel: pin };
+  }
+  const unreachable = listed.find((id) => !explicitUpstreamModel(engine, id));
+  if (unreachable)
+    return {
+      error: errorJson(
+        400,
+        `${ENSEMBLE_MODEL_PREFIX} needs reachable upstream ids; "${unreachable}" is not one`,
+        { code: "model_not_found" },
+      ),
+    };
+  return { proposers: listed, checker: ensembleChecker(engine, listed[0]!, pin) };
 }
 
 export async function handleOpenaiChat(
@@ -406,7 +521,18 @@ export async function runOpenaiChat(
       (stack.members.has("argcheck") && !headerSaysOff(req, ARGCHECK_HEADER) ? "on" : undefined);
     const bare = stripOptInPrefixes(body.model);
     if (bare !== body.model) body = { ...body, model: bare };
+    // `marina/ensemble:<a>,<b>[,…]` (the innermost prefix) or the `ensemble`
+    // stack member: N drafts and one checker pick per turn (`ensemble.ts`).
+    const listed = parseEnsembleModels(body.model);
+    if (listed && "error" in listed) return unsupportedParam("model", listed.error);
+    if (listed) body = { ...body, model: listed[0] };
+    const ensemble =
+      listed || stack.members.has("ensemble") ? { listed: listed ?? undefined } : undefined;
     let model = typeof body.model === "string" ? body.model : "marina";
+    // With `verify` too, the ensemble runs first and verify reviews its pick
+    // (`runVerifyStack`, `VerifyExtras.draft`).
+    if (ensemble && typeof body.n === "number" && body.n > 1)
+      return unsupportedParam("n", "The ensemble returns one picked completion per request.");
     const messages = Array.isArray(body.messages) ? (body.messages as OpenAIMessage[]) : [];
 
     // `verify` in the stack routes the model through the verification
@@ -438,6 +564,13 @@ export async function runOpenaiChat(
         ...(obligationsMode ? { obligationsMode } : {}),
         ...(argcheckMode ? { argcheckMode } : {}),
         surface: runOpts?.surface ?? "openai",
+        ...(ensemble
+          ? {
+              ensemble: {
+                ...(listed ? { listed, displayModel: String(requestBody.model) } : {}),
+              },
+            }
+          : {}),
       });
     }
 
@@ -563,7 +696,8 @@ export async function runOpenaiChat(
       // state, so the response cache is not consulted (without tools both are
       // no-ops).
       const instrumented =
-        !!(obligations || argcheck) && Array.isArray(body.tools) && body.tools.length > 0;
+        !!ensemble ||
+        (!!(obligations || argcheck) && Array.isArray(body.tools) && body.tools.length > 0);
       const cached = instrumented
         ? undefined
         : await passthruCacheLookup(engine, prep, body, forceModel);
@@ -577,38 +711,57 @@ export async function runOpenaiChat(
         }),
         clientSignal: req.signal,
       });
-      let resp = await proxyToUpstream(
-        engine,
-        body,
-        forceModel || undefined,
-        passthruTraceOptions(prep),
-        hintsWith(obligations?.note),
-      );
+      // The ensemble replaces the single upstream call (every proposer gets
+      // the same trailing note); the ledger and the check wrap it the same
+      // way, and their nudge re-runs the whole ensemble.
+      const pin = verifyPin(engine);
+      const ensembleRun = ensemble
+        ? ensembleSetup(engine, model, forceModel, pin, ensemble.listed)
+        : undefined;
+      if (ensembleRun && "error" in ensembleRun) return ensembleRun.error;
+      const turnBody = ensembleRun ? { ...body, stream: false } : body;
+      const ensembleTurn = (run: EnsembleSetup, note?: string): Promise<Response> => {
+        const trailing = joinNotes(prep.addendum, note);
+        return runEnsembleTurn(engine, {
+          body: turnBody,
+          proposers: run.proposers,
+          checker: run.checker,
+          ...(run.forceModel ? { forceModel: run.forceModel } : {}),
+          ...(trailing ? { note: trailing } : {}),
+          ...(prep.addendum ? { checkerNotes: prep.addendum } : {}),
+          pin,
+          displayModel: listed ? String(requestBody.model) : model,
+          ...(prep.identity?.entityId ? { entityId: prep.identity.entityId } : {}),
+          signal: req.signal,
+        });
+      };
+      const upstream = (trace: Parameters<typeof proxyToUpstream>[3], note?: string) =>
+        ensembleRun
+          ? ensembleTurn(ensembleRun, note)
+          : proxyToUpstream(engine, body, forceModel || undefined, trace, hintsWith(note));
+      let resp = await upstream(passthruTraceOptions(prep), obligations?.note);
       if (obligations) {
         const { requestId: _first, ...retryTrace } = passthruTraceOptions(prep);
-        resp = await finishObligations(engine, obligations, body, resp, (note) =>
-          proxyToUpstream(
-            engine,
-            body,
-            forceModel || undefined,
-            { ...retryTrace, routeReason: "obligations:nudge" },
-            hintsWith(note),
-          ),
+        resp = await finishObligations(engine, obligations, turnBody, resp, (note) =>
+          upstream({ ...retryTrace, routeReason: "obligations:nudge" }, note),
         );
       }
       if (argcheck) {
         const { requestId: _first, ...retryTrace } = passthruTraceOptions(prep);
-        resp = await finishArgcheck(argcheck, body, resp, (note) =>
-          proxyToUpstream(
-            engine,
-            body,
-            forceModel || undefined,
+        resp = await finishArgcheck(argcheck, turnBody, resp, (note) =>
+          upstream(
             { ...retryTrace, routeReason: "argcheck:nudge" },
             // The open obligations stay in view next to the check's note.
-            hintsWith(joinNotes(obligations?.note, note)),
+            joinNotes(obligations?.note, note),
           ),
         );
       }
+      // A streaming request gets the picked reply re-emitted as SSE.
+      if (ensembleRun && body.stream === true)
+        resp = await completionAsSse(
+          resp,
+          (body.stream_options as { include_usage?: unknown } | undefined)?.include_usage === true,
+        );
       if (prep.identity?.contextOptIn) {
         void capturePassthruResponse(engine, prep.identity.entityId, messages, resp);
         if (!instrumented) passthruCacheStore(engine, prep, body, forceModel, resp);
@@ -619,6 +772,7 @@ export async function runOpenaiChat(
         argcheck,
         context: prep.identity?.contextOptIn,
         learn: learn.ran,
+        ensemble: !!ensembleRun,
       });
       const withLessons = lessons
         ? withResponseHeader(resp, LESSONS_HEADER, lessonsHeaderValue(lessons))
@@ -647,6 +801,12 @@ export async function runOpenaiChat(
     // refusal here: the agent route recalls them already.) A default stack
     // does not apply here — the agents' own loops carry the instruments — but
     // an explicit one that asks for more than lessons is refused.
+    if (listed) {
+      return unsupportedParam(
+        "model",
+        `${ENSEMBLE_MODEL_PREFIX} runs on passthru requests with explicit upstream ids (such as anthropic/<model>); this request routes to Marina's agents.`,
+      );
+    }
     if (obligationsAsked || argcheckAsked) {
       return unsupportedParam(
         obligationsAsked ? OBLIGATIONS_HEADER : ARGCHECK_HEADER,

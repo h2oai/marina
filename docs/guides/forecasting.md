@@ -30,7 +30,7 @@ answer is kept under the entity your API key is bound to (a `secret:name` entry 
 2. **Citation check** — each fact's figures are looked up in the page it cites; lines are tagged
    `[verified]`, `[unverified]` or `[unreachable]`. Publishers whose terms bar bots are never
    fetched.
-3. **Analysts** — one model per vendor (by default DeepSeek V4 Pro, Claude Sonnet 5, GPT-6 Luna)
+3. **Analysts** — one model per vendor (by default Claude Fable 5.1, GPT-6 Astra, Gemini 3.1 Pro)
    answers from the tagged dossier.
 4. **Judge** — Jev scores how well each analyst's reasoning is supported by the *verified* facts;
    weakly supported answers count for little. If the judge fails on an answer, that answer gets
@@ -339,7 +339,7 @@ are saved with their answer as one string (`prediction`).
 |---|---|---|
 | `OPENROUTER_API_KEY` | optional | retrieval and the Jev judge run through OpenRouter; without it the forecast runs degraded on whatever models are configured ([Single model](single-model.md)) |
 | `MARINA_FORECAST_ANALYSTS` | three vendors via OpenRouter; else up to three configured models (a local runtime first) | comma-separated `provider/model` ids |
-| `MARINA_FORECAST_RETRIEVER` | `openrouter-web:openai/gpt-6-luna@exa,search` with an OpenRouter key; else `search` (the search backend chain, keyless DuckDuckGo at the end) | the research engine(s) |
+| `MARINA_FORECAST_RETRIEVER` | `openrouter-web:openai/gpt-6.1-sol@exa,search` with an OpenRouter key; else `search` (the search backend chain, keyless DuckDuckGo at the end) | the research engine(s) |
 | `MARINA_FORECAST_DOSSIER_CHARS` | sized to the analysts' context window (12 000–60 000) | typed answers: research characters each run reads; verified lines are kept first |
 | `MARINA_FORECAST_FOLLOWUP` | `on` | typed answers: one extra research round — before the runs when fewer than `MARINA_FORECAST_MIN_EVIDENCE` (5) lines verify, else after them when no run is grounded |
 | `MARINA_FORECAST_DISAGREEMENT` | `on` | typed answers: when the runs disagree, search the crux and pool one more run |

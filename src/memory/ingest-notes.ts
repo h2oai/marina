@@ -49,6 +49,7 @@
 
 import { createHash } from "node:crypto";
 import { dailyCapRefusal } from "../engine/spend-ledger";
+import { samplingFor } from "../net/sampling-params";
 import type { MemoryRepository } from "../persistence/db-memory-service";
 import type { MemoryActor } from "../persistence/db-principals";
 import type { MemoryRecord } from "../sdk/memory-types";
@@ -145,7 +146,7 @@ export function chatNoteWriter(opts: ChatNoteWriterOptions): NoteWriter {
         },
         body: JSON.stringify({
           model: opts.model,
-          temperature: 0,
+          ...samplingFor(opts.model, 0),
           max_tokens: opts.maxTokens ?? 1200,
           messages: [
             { role: "system", content: prompt.system },

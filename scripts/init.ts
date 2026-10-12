@@ -88,21 +88,21 @@ const PROVIDERS: { name: string; env: string; url: string; model: string; authHe
     name: "anthropic",
     env: "ANTHROPIC_API_KEY",
     url: "https://api.anthropic.com/v1/messages",
-    model: "claude-sonnet-5",
+    model: "claude-opus-5-5",
     authHeader: "x-api-key",
   },
   {
     name: "openai",
     env: "OPENAI_API_KEY",
     url: "https://api.openai.com/v1/chat/completions",
-    model: "gpt-6-luna",
+    model: "gpt-6.1-sol",
     authHeader: "Bearer",
   },
   {
     name: "google",
     env: "GEMINI_API_KEY",
     url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-    model: "gemini-3.1-flash-lite",
+    model: "gemini-3.1-pro-preview",
     authHeader: "Bearer",
   },
   {
@@ -116,7 +116,7 @@ const PROVIDERS: { name: string; env: string; url: string; model: string; authHe
     name: "openrouter",
     env: "OPENROUTER_API_KEY",
     url: "https://openrouter.ai/api/v1/chat/completions",
-    model: "openai/gpt-6-luna",
+    model: "anthropic/claude-opus-5.5",
     authHeader: "Bearer",
   },
 ];

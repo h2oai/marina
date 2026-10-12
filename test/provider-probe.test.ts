@@ -84,6 +84,9 @@ function promptTextOf(init: RequestInit | undefined): string {
   const body = JSON.parse(String(init?.body ?? "{}")) as {
     system?: string | { text?: string }[];
     messages?: { role: string; content: unknown }[];
+    /** OpenAI Responses (reasoning models such as gpt-6.1-sol). */
+    instructions?: string;
+    input?: unknown;
   };
   const system = Array.isArray(body.system)
     ? body.system.map((b) => b.text ?? "").join("\n")
@@ -91,7 +94,8 @@ function promptTextOf(init: RequestInit | undefined): string {
   const messages = (body.messages ?? [])
     .map((m) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content)))
     .join("\n");
-  return `${system}\n${messages}`;
+  const responses = `${body.instructions ?? ""}\n${body.input === undefined ? "" : JSON.stringify(body.input)}`;
+  return `${system}\n${messages}\n${responses}`;
 }
 
 /** Extract the nonce the probe put in its second system message. */
@@ -109,6 +113,31 @@ const anthropicReply = (blocks: unknown[], stopReason = "end_turn") =>
     status: 200,
     headers: { "Content-Type": "application/json" },
   });
+/** A completed OpenAI Responses object (the upstream of reasoning models such as gpt-6.1-sol). */
+const responsesReply = (output: unknown[]) =>
+  new Response(
+    JSON.stringify({
+      id: "resp_p",
+      status: "completed",
+      output,
+      usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+    }),
+    { status: 200, headers: { "Content-Type": "application/json" } },
+  );
+const responsesText = (text: string) =>
+  responsesReply([
+    { type: "message", role: "assistant", content: [{ type: "output_text", text }] },
+  ]);
+const responsesToolCall = (nonce: string) =>
+  responsesReply([
+    {
+      type: "function_call",
+      call_id: "call_p",
+      name: PROVIDER_TOOL_PROBE_NAME,
+      arguments: JSON.stringify({ word: nonce }),
+      status: "completed",
+    },
+  ]);
 const openaiReply = (content: string) =>
   new Response(
     JSON.stringify({ id: "c1", choices: [{ index: 0, message: { role: "assistant", content } }] }),
@@ -190,6 +219,7 @@ describe("probeConfiguredProviders", () => {
       if (toolNonce) {
         toolBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
         if (url.includes("anthropic.com")) return anthropicToolReply(toolNonce);
+        if (url.includes("openai.com/v1/responses")) return responsesToolCall(toolNonce);
         if (url.includes("openai.com")) return openaiToolReply(toolNonce);
       }
       const nonce = nonceOf(init);
@@ -198,6 +228,7 @@ describe("probeConfiguredProviders", () => {
           { type: "thinking", thinking: "…" },
           { type: "text", text: nonce },
         ]);
+      if (url.includes("openai.com/v1/responses")) return responsesText(nonce);
       if (url.includes("openai.com")) return openaiReply(nonce);
       throw new Error(`unexpected ${url}`);
     }) as typeof fetch;
@@ -213,8 +244,15 @@ describe("probeConfiguredProviders", () => {
     const anthropicTools = toolBodies[0]!.tools as { name: string; input_schema: unknown }[];
     expect(anthropicTools[0]!.name).toBe(PROVIDER_TOOL_PROBE_NAME);
     expect(anthropicTools[0]!.input_schema).toBeDefined();
-    const openaiTools = toolBodies[1]!.tools as { function: { name: string } }[];
-    expect(openaiTools[0]!.function.name).toBe(PROVIDER_TOOL_PROBE_NAME);
+    // The OpenAI default (gpt-6.1-sol) goes through the Responses API, whose
+    // function tools are flat ({ type, name, parameters }).
+    const openaiTools = toolBodies[1]!.tools as {
+      type: string;
+      name: string;
+      parameters: unknown;
+    }[];
+    expect(openaiTools[0]!).toMatchObject({ type: "function", name: PROVIDER_TOOL_PROBE_NAME });
+    expect(openaiTools[0]!.parameters).toBeDefined();
     expect(getLastProviderProbe()).toBe(results);
   });
 
@@ -298,6 +336,7 @@ describe("probeConfiguredProviders", () => {
       // The pre-fix Claude 5 shape: thinking only — no text block at all.
       if (url.includes("anthropic.com"))
         return anthropicReply([{ type: "thinking", thinking: "…" }]);
+      if (url.includes("openai.com/v1/responses")) return responsesText("I have no check word.");
       if (url.includes("openai.com")) return openaiReply("I have no check word.");
       throw new Error(`unexpected ${url}`);
     }) as typeof fetch;

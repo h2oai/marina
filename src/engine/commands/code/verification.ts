@@ -107,7 +107,8 @@ export async function startVerification(
     : await planVerification(deps, session, workspace, options, candidate);
   const commands = livePlan.commands.map(forCandidate);
   assertBoundedVerification(commands);
-  for (const command of commands)
+  // A planned pytest fallback is admitted on the same allowlist before anything runs.
+  for (const command of [...commands, ...(livePlan.fallback?.commands ?? [])])
     normalizeAllowedCodeCommand(root, normalizeCodeRunArgs(parseCommandArgv(command)));
   beforeSpawn();
   // Background results are durable even if the caller disconnects or loses access. Never
@@ -195,7 +196,15 @@ export async function startVerification(
                 };
               },
             },
-            { ...livePlan, preparation: snapshotPlan.preparation, workspace: prepared },
+            {
+              ...livePlan,
+              // The manifest's checks run as written: no runner switch.
+              preparation: snapshotPlan.preparation && {
+                ...snapshotPlan.preparation,
+                fallback: undefined,
+              },
+              workspace: prepared,
+            },
           );
         } finally {
           await snapshot.dispose();

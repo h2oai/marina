@@ -42,6 +42,8 @@ const DEFAULT_MODEL_PRICES: Record<string, TokenPrice> = {
   "claude-sonnet-5.5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
   "claude-opus-5.5": { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
   "claude-fable-5.1": { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
+  // OpenRouter list price, checked 2026-10-11.
+  "gemini-3.1-pro-preview": { input: 2, output: 12, cacheRead: 0.2, cacheWrite: 0.375 },
   "deepseek-v4-pro-0813": { input: 0.3942, output: 4.2, cacheRead: 0.3153, cacheWrite: 0 },
   "deepseek-v4.1-flash": { input: 0.3, output: 1.2, cacheRead: 0.006, cacheWrite: 0 },
 };

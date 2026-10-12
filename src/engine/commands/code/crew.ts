@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { canReclaimCodingWriter } from "../../../coding/task-run";
+import { bindCodingRunCrew, canReclaimCodingWriter } from "../../../coding/task-run";
 import { CrewError } from "../../../coordination/crew-manager";
 import { dim, error as fmtError, header, separator, success } from "../../../net/ansi";
 import type { CodingSessionRow, MarinaDB } from "../../../persistence/database";
@@ -197,10 +197,13 @@ export async function crewPlan(
 
 /**
  * The crew driver with a task contract: `lead` already owns the tracked
- * attempt (required verification, unattended owner, budget) and is the only
- * one who submits it. Assemble a crew around it to review, test and report to
- * the lead. The goal is never parsed for `with <members>` (task prose stays
- * literal). Best-effort: no crew ⇒ the lead works alone, said once.
+ * attempt (required verification, unattended owner, budget) and keeps the
+ * write lock. Assemble a crew around it to review, test and report to the
+ * lead; the crew's roster is recorded on the attempt so a member may submit it
+ * for the crew (`code summary submit:crew`) under the same contract — one
+ * attempt, the lead's claim, the same checks. The goal is never parsed for
+ * `with <members>` (task prose stays literal). Best-effort: no crew ⇒ the lead
+ * works alone, said once.
  */
 export async function crewSupport(
   ctx: RoomContext,
@@ -216,8 +219,8 @@ export async function crewSupport(
     return;
   }
   const goal = [
-    `Support ${lead}, who owns this tracked task and alone submits it under its contract.`,
-    "Review the lead's changes, run and extend the checks, and report findings to the lead in the crew channel. Do not submit the task yourself.",
+    `Support ${lead}, who owns this tracked task and submits it under its contract.`,
+    "Review the lead's changes, run and extend the checks, and report findings to the lead in the crew channel. Leave submission to the lead; only if the lead cannot submit, submit for the crew with code summary submit:crew -- <summary> (the same checks apply).",
     `Task: ${task}`,
   ].join("\n");
   const plan = deps.db.createCodingArtifact({
@@ -242,7 +245,11 @@ export async function crewSupport(
     ctx.send(eid, dim(`Could not assemble a crew; ${lead} works the task alone.`));
     return;
   }
-  await dispatchCodingCrew(ctx, eid, entity, deps, session, goal, assembled, plan.id);
+  const crew = await dispatchCodingCrew(ctx, eid, entity, deps, session, goal, assembled, plan.id, {
+    writer: lead,
+  });
+  const run = deps.db.listCodingRuns({ sessionId: session.id, status: "active", limit: 1 })[0];
+  if (crew && run) bindCodingRunCrew(deps.db, run.id, crew, entity.name);
 }
 
 /**
@@ -491,12 +498,13 @@ export function recruitCodingAgent(
 
 /**
  * Create + dispatch a real ephemeral crew from already-resolved members.
- * Returns true on success (a `crew_dispatched` artifact was emitted), false to
- * fall back to the crew_plan-only path. Never throws — CrewError and
- * missing-manager cases degrade gracefully.
+ * Returns the dispatched crew on success (a `crew_dispatched` artifact was
+ * emitted), undefined to fall back to the crew_plan-only path. Never throws —
+ * CrewError and missing-manager cases degrade gracefully.
  *
- * On success the session write lock is set to `writer` (the implementer, else
- * the first member) so concurrent crew members can't race on workspace writes.
+ * On success the session write lock is set to `opts.writer` when given (the
+ * contracted lead keeps it), else the implementer, else the first member, so
+ * concurrent crew members can't race on workspace writes.
  */
 async function dispatchCodingCrew(
   ctx: RoomContext,
@@ -507,11 +515,14 @@ async function dispatchCodingCrew(
   goal: string,
   resolved: AssembledMember[],
   planArtifactId: string,
-): Promise<boolean> {
+  opts: { writer?: string } = {},
+): Promise<
+  { id: string; name: string; members: Array<{ name: string; id: EntityId }> } | undefined
+> {
   const crewManager = deps.crewManager;
   const channelManager = deps.channelManager;
-  if (!crewManager || !channelManager) return false;
-  if (resolved.length === 0) return false;
+  if (!crewManager || !channelManager) return undefined;
+  if (resolved.length === 0) return undefined;
 
   // Map agentName -> source so we can annotate the dispatched-artifact members
   // with how each one joined (recruited vs spawned).
@@ -520,7 +531,9 @@ async function dispatchCodingCrew(
   // Stored in entity-name form (login-sanitized) so the guards match the
   // member's actual entity at apply time.
   const writerSource =
-    resolved.find((m) => m.role === "implementer")?.agentName ?? resolved[0]?.agentName;
+    opts.writer ??
+    resolved.find((m) => m.role === "implementer")?.agentName ??
+    resolved[0]?.agentName;
   const writer = writerSource ? entityNameForm(writerSource) : writerSource;
 
   const formation: CrewFormation = "swarm";
@@ -643,7 +656,11 @@ async function dispatchCodingCrew(
         workspace: session.workspace_root,
       },
     );
-    return true;
+    return {
+      id: crew.id,
+      name: crew.name,
+      members: resolved.map((m) => ({ name: m.agentName, id: m.id })),
+    };
   } catch (err) {
     const message =
       err instanceof CrewError ? err.message : err instanceof Error ? err.message : String(err);
@@ -653,7 +670,7 @@ async function dispatchCodingCrew(
         "Stored the crew plan instead. Re-run with distinct, online agent names.",
       )}`,
     );
-    return false;
+    return undefined;
   }
 }
 

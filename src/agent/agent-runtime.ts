@@ -739,7 +739,7 @@ export class AgentRuntime {
         // Differentiate the missing-slash case from the typoed-provider case.
         const hint = modelStr.includes("/")
           ? `Unknown provider "${provider}". Known providers: ${[...KNOWN_PROVIDERS].join(", ")}.`
-          : `Model "${modelStr}" is missing the provider prefix. Use "<provider>/<model-id>" (e.g. "anthropic/claude-sonnet-5"). Known providers: ${[...KNOWN_PROVIDERS].join(", ")}.`;
+          : `Model "${modelStr}" is missing the provider prefix. Use "<provider>/<model-id>" (e.g. "anthropic/claude-opus-5-5"). Known providers: ${[...KNOWN_PROVIDERS].join(", ")}.`;
         throw new Error(hint);
       }
       // Local runtimes (llama.cpp / Ollama) are key-optional — a self-hosted

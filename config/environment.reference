@@ -215,9 +215,9 @@
 # `false` suppresses every room-agent auto-spawn (the LLM agents rooms start on first entry). Any other value leaves it on. Room agents need a provider key.
 # MARINA_ROOM_AGENTS=true
 
-# Model for the default Workbench's Host, Builder, Critic and Chronicler. Unset tries MARINA_CREW_MODEL, then openai/gpt-6-luna (OPENAI_API_KEY), openrouter/openai/gpt-6-luna (OPENROUTER_API_KEY), huggingface/zai-org/GLM-5.3-Flash (HUGGINGFACE_API_KEY or HF_TOKEN), then marina/default.
+# Model for the default Workbench's Host, Builder, Critic and Chronicler. Unset tries MARINA_CREW_MODEL, then openai/gpt-6.1-sol (OPENAI_API_KEY), openrouter/anthropic/claude-opus-5.5 (OPENROUTER_API_KEY), huggingface/zai-org/GLM-5.3-Flash (HUGGINGFACE_API_KEY or HF_TOKEN), then marina/default.
 # @restart
-# MARINA_WORKBENCH_MODEL=openai/gpt-6-luna
+# MARINA_WORKBENCH_MODEL=openai/gpt-6.1-sol
 
 # Shared crew-model override for the Workbench, Showcase and focused single-outcome worlds.
 # @restart
@@ -340,10 +340,10 @@
 # MARINA_DEFAULT_MODEL=marina/default
 
 # Model /v1 uses on each provider when it proxies directly upstream (no model agent is online for the requested channel). The variable name is MARINA_DEFAULT_<PROVIDER>_MODEL.
-# MARINA_DEFAULT_ANTHROPIC_MODEL=claude-sonnet-5
-# MARINA_DEFAULT_OPENAI_MODEL=gpt-6-luna
-# MARINA_DEFAULT_GEMINI_MODEL=gemini-3.1-flash-lite
-# MARINA_DEFAULT_OPENROUTER_MODEL=openai/gpt-6-luna
+# MARINA_DEFAULT_ANTHROPIC_MODEL=claude-opus-5-5
+# MARINA_DEFAULT_OPENAI_MODEL=gpt-6.1-sol
+# MARINA_DEFAULT_GEMINI_MODEL=gemini-3.1-pro-preview
+# MARINA_DEFAULT_OPENROUTER_MODEL=anthropic/claude-opus-5.5
 # MARINA_DEFAULT_GROQ_MODEL=openai/gpt-oss-120b
 # MARINA_DEFAULT_HUGGINGFACE_MODEL=zai-org/GLM-5.3-Flash
 # MARINA_DEFAULT_LLAMA_MODEL=local-model
@@ -356,7 +356,7 @@
 # `0` stops re-posting an unanswered routed model_request as a reminder at 25% and 60% of the timeout.
 # MODEL_REQUEST_REMINDERS=1
 
-# Output-token cap marina/default sends upstream per completion (also the compactor's output reservation). Extended thinking on this path is clamped to this value minus 1024.
+# Output-token cap marina/default sends upstream per completion (also the compactor's output reservation). Extended thinking on this path is clamped to this value minus 1024. When set explicitly it also caps a full-profile agent on a registry model, which otherwise asks for the model's whole output maximum; an explicit cap never grows.
 # MARINA_DEFAULT_MAX_TOKENS=16384
 
 # ── Agent runtime ────────────────────────────────────────────────────────────
@@ -432,7 +432,7 @@
 # MARINA_OUTPUT_REPAIR=on
 
 # Model for server-side repair shots (`marina/verify` final output); must be a reachable upstream id. Default: the model whose output is repaired. Agents and forecast runs repair with their own model.
-# MARINA_REPAIR_MODEL=openrouter/google/gemini-3.5-flash-lite
+# MARINA_REPAIR_MODEL=openrouter/openai/gpt-6.1-sol
 
 # `off` omits the tools prose section from the lean agent system prompt.
 # MARINA_SYSTEM_TOOLS_PROSE=on
@@ -488,7 +488,10 @@
 # MARINA_MAX_COST_USD_PER_HOUR=5
 # MARINA_MAX_AGENT_COST_USD_PER_HOUR=1
 
-# Consecutive upstream or loop errors (429, 5xx, timeouts) before an agent pauses for MARINA_UPSTREAM_ERROR_PAUSE_MS milliseconds and tells its spawner once.
+# Wall-clock bound on one agent prompt (all its turns), in milliseconds. Unset: it starts by thinking level (off 120000, low 180000, medium 300000, high and above 600000) and an automatic bound doubles after a timeout up to 600000; a set value never grows.
+# MARINA_AGENT_PROMPT_TIMEOUT_MS=
+
+# Consecutive upstream or loop errors (429, 5xx, timeouts) before an agent pauses for MARINA_UPSTREAM_ERROR_PAUSE_MS milliseconds and tells its spawner once. A spend refusal (a spend cap, a budget proxy, a provider out of credits) is not retried: the agent pauses for MARINA_UPSTREAM_ERROR_PAUSE_MS at once, and a Code Mode coder ends its task attempt (`code blocked kind:impossible`, labelled BudgetForced) with the work kept in the workspace.
 # MARINA_MAX_CONSECUTIVE_UPSTREAM_ERRORS=20
 # MARINA_UPSTREAM_ERROR_PAUSE_MS=600000
 
@@ -594,7 +597,7 @@
 
 # The `search` research retriever (forecasts, typed answers, `MARINA_ARENA_RESEARCH_RETRIEVER=search`): every planned query goes through a backend chain, the pages are read (SSRF-guarded, never a no-fetch publisher) and the passages most relevant to the question are quoted verbatim, dated, so the citation check verifies them. BACKENDS is the chain in fallback order (tavily, exa, searxng, duckduckgo, openrouter; default: every configured one, then keyless duckduckgo, then — with OPENROUTER_API_KEY — OpenRouter's Exa web plugin as the paid fallback when DuckDuckGo throttles; SEARCH_MODEL is the model that carries that call); a backend that fails is skipped for the rest of the brief and reported. The question's named resolution page is read before any search. MAX_PASSAGES is the relevance top-k cut per brief (default 15; passages far below the best are dropped too). RESULTS_PER_QUERY (default 8), DOMAIN_CAP (pages per site, default 3, for source diversity) and MAX_PAGES (pages read per brief, default 14) set breadth; PASSAGE_CHARS fixes the passage budget per brief (default: the forecast's own evidence budget, sized to the model's context window). Paid backends check the daily spend cap and record their cost (source `search`).
 # MARINA_RESEARCH_SEARCH_BACKENDS=tavily,exa,searxng,duckduckgo,openrouter
-# MARINA_RESEARCH_SEARCH_MODEL=openai/gpt-6-luna
+# MARINA_RESEARCH_SEARCH_MODEL=openai/gpt-6.1-sol
 # MARINA_RESEARCH_MAX_PASSAGES=15
 # MARINA_RESEARCH_RESULTS_PER_QUERY=8
 # MARINA_RESEARCH_DOMAIN_CAP=3
@@ -670,7 +673,7 @@
 # Decision backend for cheap per-step judgements (it receives tool names and redacted arguments). `auto` (default; alias `on`): a chat classifier answering through this Marina's own /v1 with the world's default model (`marina-self`; MARINA_DECISION_MODEL overrides) — the strongest model the operator configured, on providers the world already uses, never a cheaper stand-in; with no provider at all decisions are off. `off` turns them off. `decisions-api` (alias `jev`): a Jev-family model over the Decisions API on OpenRouter, or a self-hosted OpenJev. `typesafe`: TypeSafe's API. `chat-classifier` (aliases `classifier`, `llm`): any chat model (see MARINA_DECISION_MODEL). Every MARINA_DECISION* setting except base URLs, paths and API keys can also be changed at runtime (`admin decisions set …`, Admin → Ops → Decisions); a value set here wins and locks it.
 # MARINA_DECISIONS=auto
 
-# Backend model. Defaults: typesafe/jev-1.13 for decisions-api, jev-latest for typesafe; chat-classifier uses openai/gpt-6-luna on OpenRouter, zai-org/GLM-5.3-Flash on the Hugging Face router, or the local runtime's default model on a configured llama.cpp / Ollama / vLLM server, and any other base URL must name a model.
+# Backend model. Defaults: typesafe/jev-1.13 for decisions-api, jev-latest for typesafe; chat-classifier uses openai/gpt-6.1-sol on OpenRouter, zai-org/GLM-5.3-Flash on the Hugging Face router, or the local runtime's default model on a configured llama.cpp / Ollama / vLLM server, and any other base URL must name a model.
 # MARINA_DECISION_MODEL=typesafe/jev-1.13
 
 # Backend endpoint. Defaults: https://openrouter.ai/api/alpha (decisions-api), https://api.typesafe.ai (typesafe); chat-classifier: OpenRouter with OPENROUTER_API_KEY, else the Hugging Face router with its key, else a configured local runtime (LLAMA_BASE_URL / OLLAMA_BASE_URL / VIBETHINKER_BASE_URL or its key), else https://openrouter.ai/api/v1.
@@ -764,9 +767,9 @@
 
 # ── Forecasting ──────────────────────────────────────────────────────────────
 
-# `forecast`, `bun run forecast` and POST /v1/forecast (docs/guides/forecasting.md). No vendor key is required: unset, every part sizes to what is configured (docs/guides/single-model.md). Analysts are a comma list of models (defaults: DeepSeek V4 Pro, Claude Sonnet 5 and GPT-6 Luna via OpenRouter; without OPENROUTER_API_KEY, the configured providers or a single local model, which then answers as the one analyst × K runs); the retriever defaults to OpenRouter web search on GPT-6 Luna over Exa plus the `search` retriever (every planned query through the search backend chain, pages read and quoted), else `search` alone (keyless DuckDuckGo when no search key is set); the judge is jev (without OPENROUTER_API_KEY: the MARINA_DECISIONS backend, else no judge), decisions (the MARINA_DECISIONS backend, falling back to jev) or none. Substitutions are reported as the answer's `scale` (tier `degraded`); only having no model at all is an error.
-# MARINA_FORECAST_ANALYSTS=openrouter/deepseek/deepseek-v4-pro,openrouter/anthropic/claude-sonnet-5,openrouter/openai/gpt-6-luna
-# MARINA_FORECAST_RETRIEVER=openrouter-web:openai/gpt-6-luna@exa,search
+# `forecast`, `bun run forecast` and POST /v1/forecast (docs/guides/forecasting.md). No vendor key is required: unset, every part sizes to what is configured (docs/guides/single-model.md). Analysts are a comma list of models (defaults: Claude Fable 5.1, GPT-6 Astra and Gemini 3.1 Pro via OpenRouter; without OPENROUTER_API_KEY, the configured providers or a single local model, which then answers as the one analyst × K runs); the retriever defaults to OpenRouter web search on GPT-6 Luna over Exa plus the `search` retriever (every planned query through the search backend chain, pages read and quoted), else `search` alone (keyless DuckDuckGo when no search key is set); the judge is jev (without OPENROUTER_API_KEY: the MARINA_DECISIONS backend, else no judge), decisions (the MARINA_DECISIONS backend, falling back to jev) or none. Substitutions are reported as the answer's `scale` (tier `degraded`); only having no model at all is an error.
+# MARINA_FORECAST_ANALYSTS=openrouter/anthropic/claude-fable-5.1,openrouter/openai/gpt-6-astra,openrouter/google/gemini-3.1-pro-preview
+# MARINA_FORECAST_RETRIEVER=openrouter-web:openai/gpt-6.1-sol@exa,search
 # MARINA_FORECAST_JUDGE=jev
 
 # Evidence depth for typed forecasts. DOSSIER_CHARS is the research dossier each run reads (default: sized to the analysts' context window, 12 000–60 000 characters; 24 000 when unknown); when the dossier is longer, verified lines are kept first. MIN_EVIDENCE is the number of verified lines wanted before the runs (default 5; 0 = off): fewer triggers one more research round first. Otherwise FOLLOWUP=on (default) runs that one extra round after the runs when none is grounded in verified evidence, and redoes the runs only if it verified something new; off disables both. DISAGREEMENT=on (default): when the runs disagree (agreement below 0.7), one round searches the point they disagree on and one more run reads it, pooled with the others.
@@ -901,8 +904,8 @@
 # Optional comma-separated Civiqs series ids to receive horizon correction (for example civiqs_net_econ_now). Unset applies the selected mode to all series; an empty list applies to none. Scope experimental corrections before extending them to other series or profile cells.
 # MARINA_ARENA_NOWCAST_SERIES=civiqs_net_econ_now
 
-# Research forecaster: retriever (default openrouter-web:openai/gpt-6-luna with OPENROUTER_API_KEY, else tavily:basic with TAVILY_API_KEY, else keyless asof), judge (jev, decisions or none; default jev, which without OPENROUTER_API_KEY uses the MARINA_DECISIONS backend or no judge) and the trust given to verified research lines. Retrievers: openrouter-web:<model> (any model with OpenRouter's web search) or sonar:<Perplexity model> (sonar, sonar-pro, sonar-pro-search, sonar-reasoning-pro, sonar-deep-research); tavily:basic or tavily:advanced calls Tavily's search API directly (needs TAVILY_API_KEY; its page text is used for citation checks); search[:<backends>] searches every brief query through a backend chain and quotes the pages it reads (see MARINA_RESEARCH_SEARCH_BACKENDS; not date-strict); asof[:<providers>] uses keyless date-strict engines (gdelt, wikipedia, hn, arxiv, wayback) bounded to the brief's cutoff; list several, comma-separated, to merge their reports.
-# MARINA_ARENA_RESEARCH_RETRIEVER=openrouter-web:openai/gpt-6-luna
+# Research forecaster: retriever (default openrouter-web:openai/gpt-6.1-sol with OPENROUTER_API_KEY, else tavily:basic with TAVILY_API_KEY, else keyless asof), judge (jev, decisions or none; default jev, which without OPENROUTER_API_KEY uses the MARINA_DECISIONS backend or no judge) and the trust given to verified research lines. Retrievers: openrouter-web:<model> (any model with OpenRouter's web search) or sonar:<Perplexity model> (sonar, sonar-pro, sonar-pro-search, sonar-reasoning-pro, sonar-deep-research); tavily:basic or tavily:advanced calls Tavily's search API directly (needs TAVILY_API_KEY; its page text is used for citation checks); search[:<backends>] searches every brief query through a backend chain and quotes the pages it reads (see MARINA_RESEARCH_SEARCH_BACKENDS; not date-strict); asof[:<providers>] uses keyless date-strict engines (gdelt, wikipedia, hn, arxiv, wayback) bounded to the brief's cutoff; list several, comma-separated, to merge their reports.
+# MARINA_ARENA_RESEARCH_RETRIEVER=openrouter-web:openai/gpt-6.1-sol
 # MARINA_ARENA_RESEARCH_JUDGE=jev
 # MARINA_ARENA_RESEARCH_TRUST=0.5
 
@@ -1045,8 +1048,11 @@
 # UTF-8 bytes of rule passages the argument check's judge sees per call, for agent loops and opted-in passthru requests alike: the sections of the instructions and of the documents the conversation read (tool results) that name the tool (for a generic dispatcher call, the tool it runs), its action words or its argument names, prose only, framed as untrusted reference data. 0 (default) shows none; a held-out replay at 3000 found no gain in recall net of false alarms, so it is opt-in. Capped at 16000.
 # MARINA_ARGCHECK_RULE_BYTES=0
 
-# The /v1 passthru instrument stack (src/net/model-api/stack.ts) on `/v1/chat/completions` and `/v1/messages`. `identified` (default): a caller with its own identity — a key bound to an entity (`secret:entity`), an authorized name-map, or any non-internal caller under the local trust profile — gets lessons recall, the obligations ledger (`on`), the argument check (`on`, MARINA_ARGCHECK_TRIGGER) and lessons from its work (bound keys; needs MARINA_LESSONS_FROM_WORK) without asking. Anonymous and shared callers (a plain key, the open-API sentinel outside the local profile) get nothing and stay byte-identical. `all`: every non-internal caller gets the default stack. `off`: nothing by default; requests still opt in. A request may name its own set with `x-marina-stack: full|none|<lessons,obligations,argcheck,verify,context,learn>` or the model prefix `marina/full:<model>`; a listed member that cannot run is refused (400 `unsupported_parameter`), `full` runs what it can and reports the rest, and the response's `x-marina-stack` header records what ran. A per-instrument header (`x-marina-obligations: off`, `x-marina-lessons: off`, `x-marina-argcheck: off`, `x-marina-learn: off`) opts out of a default. Marina's own agents (internal token) never get the passthru stack: their loops use MARINA_OBLIGATIONS / MARINA_ARGCHECK. Without tools the ledger and the check make no call. Spend counts against the daily cap.
+# The /v1 passthru instrument stack (src/net/model-api/stack.ts) on `/v1/chat/completions` and `/v1/messages`. `identified` (default): a caller with its own identity — a key bound to an entity (`secret:entity`), an authorized name-map, or any non-internal caller under the local trust profile — gets lessons recall, the obligations ledger (`on`), the argument check (`on`, MARINA_ARGCHECK_TRIGGER) and lessons from its work (bound keys; needs MARINA_LESSONS_FROM_WORK) without asking. Anonymous and shared callers (a plain key, the open-API sentinel outside the local profile) get nothing and stay byte-identical. `all`: every non-internal caller gets the default stack. `off`: nothing by default; requests still opt in. A request may name its own set with `x-marina-stack: full|none|<lessons,obligations,argcheck,verify,context,learn,ensemble>` or the model prefix `marina/full:<model>` (`full` never includes `ensemble`, which multiplies upstream calls; see MARINA_ENSEMBLE_SIZE); a listed member that cannot run is refused (400 `unsupported_parameter`), `full` runs what it can and reports the rest, and the response's `x-marina-stack` header records what ran. A per-instrument header (`x-marina-obligations: off`, `x-marina-lessons: off`, `x-marina-argcheck: off`, `x-marina-learn: off`) opts out of a default. Marina's own agents (internal token) never get the passthru stack: their loops use MARINA_OBLIGATIONS / MARINA_ARGCHECK. Without tools the ledger and the check make no call. Spend counts against the daily cap.
 # MARINA_PASSTHRU_STACK=identified
+
+# Proposers for the passthru `ensemble` stack member (src/net/model-api/ensemble.ts): `x-marina-stack: ensemble` drafts the turn this many times on the request's model (tools included), a checker (MARINA_VERIFY_CHECKER_MODEL, else the earned `verify:checker` slot, else the model itself) picks ONE whole draft by number, and only that draft is returned — drafts are never merged, unanimous drafts skip the checker, and a checker outage returns the first draft of the strict-majority group that shares its state-changing calls (else the first draft), labelled in `x-marina-ensemble`. `marina/ensemble:<a>,<b>[,…]` names a 2–5 model panel instead. Opt-in only (never in the default stack or `full`); usage and cost are summed across every call. Clamped to 2–5; default 3.
+# MARINA_ENSEMBLE_SIZE=3
 
 # Memory admission ranking (src/memory/admission.ts): each curated write (lessons and their cross-board mirrors) is compared with its 8 nearest existing records — lexical search, hybrid when MARINA_MEMORY_EMBEDDINGS is configured — and ranked by ONE numbers-only decision call (relation, novelty, generality, evidence_fit, value; evidence strength is mechanical). `off` (default): today's behaviour. `observe`: the rank and the proposed action are stored on the record; writes and serving are unchanged. `on`: duplicates merge into the existing record (support, refs), refinements supersede it, a contradiction of a trusted record opens a resolve case and holds the new record unserved, and recall orders by trust, then rank, then recency. Needs a configured decision backend (MARINA_DECISIONS / MARINA_DECISION_ENGINE); without one it behaves as off. An uncalibrated backend gets one cut at 0.5, merges also need mechanical similarity, and contradictions are never auto-resolved. Spend counts against the daily cap; at the cap writes proceed as off.
 # MARINA_MEMORY_RANKING=off

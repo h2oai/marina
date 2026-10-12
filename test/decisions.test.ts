@@ -346,11 +346,11 @@ describe("config", () => {
       apiKey: "or",
       timeoutMs: 2000,
     });
-    // chat-classifier defaults to a current cheap model on the hosts Marina
+    // chat-classifier defaults to a current strong model on the hosts Marina
     // knows (OpenRouter, the HF router); any other base URL must name one.
     expect(
       decisionConfigFromEnv({ MARINA_DECISIONS: "llm", OPENROUTER_API_KEY: "or" })?.model,
-    ).toBe("openai/gpt-6-luna");
+    ).toBe("openai/gpt-6.1-sol");
     expect(
       decisionConfigFromEnv({
         MARINA_DECISIONS: "llm",

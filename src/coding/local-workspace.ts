@@ -830,6 +830,8 @@ export function codeRunPolicy(): CodeRunPolicy {
       ...bunScripts.map((script) => `bun run ${script}`),
       "bun test [relative-test-path...]",
       "python -m pytest [relative-path|node-id...] [-q|-x|-v]",
+      "python -m unittest [discover [-s dir] [-p pattern] | dotted.test.names] [-q|-v]",
+      "python <tests/…|test_*|*_test>.py [relative-path...]",
       "python manage.py test [labels...]",
       "python tests/runtests.py [labels...]",
       "bun|npm|pnpm|yarn run test [--] [relative-test-path...]",
@@ -975,6 +977,12 @@ const DJANGO_FLAG = /^--(verbosity|parallel)=[0-9]{1,2}$/;
 const CARGO_FILTER = /^[A-Za-z0-9_:]+$/;
 const GO_PACKAGE = /^\.\/([A-Za-z0-9_.-]+\/)*(\.\.\.|[A-Za-z0-9_.-]*)$/;
 const GO_FLAG = /^-(count=[0-9]{1,3}|short|v)$/;
+/** A relative Python test script: under a tests/ directory, or named test_*.py / *_test.py. */
+const TEST_SCRIPT =
+  /^(?:[A-Za-z0-9_.-]+\/)*(?:tests?\/(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_-]+|test_[A-Za-z0-9_]+|[A-Za-z0-9_]+_test)\.py$/;
+const UNITTEST_FLAGS = new Set(["-q", "-v", "-f", "-b"]);
+const UNITTEST_MODULE = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/;
+const UNITTEST_PATTERN = /^[A-Za-z0-9_*?.[\]-]+$/;
 
 function normalizeTestRunnerCommand(root: string, binary: string, args: string[]): string[] | null {
   if (binary === "python" || binary === "python3") {
@@ -993,8 +1001,19 @@ function normalizeTestRunnerCommand(root: string, binary: string, args: string[]
     if (args[0] === "-m" && args[1] === "mypy") {
       return [binary, "-m", "mypy", ...relativePathArgs(root, args.slice(2), "mypy")];
     }
+    // The standard library's runner, for environments without pytest.
+    if (args[0] === "-m" && args[1] === "unittest") {
+      return [binary, "-m", "unittest", ...unittestArgs(root, args.slice(2))];
+    }
+    // A test script in the workspace (`tests/check_output.py`, `test_api.py`):
+    // the same trust as a pytest file, which also runs workspace code.
+    if (args[0] && TEST_SCRIPT.test(args[0])) {
+      validateRelativeRunPath(root, args[0]);
+      if (!existsSync(resolve(root, args[0]))) throw new Error(`No such test script: ${args[0]}`);
+      return [binary, args[0], ...relativePathArgs(root, args.slice(1), "a test script")];
+    }
     throw new Error(
-      'Allowed python commands: "python -m pytest [paths]", "python manage.py test [labels]", "python tests/runtests.py [labels]", "python -m mypy [paths]".',
+      'Allowed python commands: "python -m pytest [paths]", "python -m unittest [discover|modules]", "python tests/<test script>.py", "python manage.py test [labels]", "python tests/runtests.py [labels]", "python -m mypy [paths]".',
     );
   }
   if (binary === "pyright") {
@@ -1103,6 +1122,36 @@ function scopedTestPaths(root: string, script: string, rest: string[]): string[]
     validateRelativeRunPath(root, path);
   }
   return rest[0] === "--" ? ["--", ...paths] : paths;
+}
+
+/** `python -m unittest` arguments: `discover [-s dir] [-p pattern] [-t dir]`, dotted modules, inert flags. */
+function unittestArgs(root: string, args: string[]): string[] {
+  const out: string[] = [];
+  const rest = [...args];
+  if (rest[0] === "discover") {
+    out.push(rest.shift()!);
+    while (rest.length) {
+      const flag = rest.shift()!;
+      if (UNITTEST_FLAGS.has(flag)) out.push(flag);
+      else if (flag === "-s" || flag === "-t") {
+        const dir = rest.shift() ?? "";
+        relativePathArgs(root, [dir], "unittest discover");
+        out.push(flag, dir);
+      } else if (flag === "-p") {
+        const pattern = rest.shift() ?? "";
+        if (!UNITTEST_PATTERN.test(pattern))
+          throw new Error(`unittest discover patterns are file globs: ${pattern}`);
+        out.push(flag, pattern);
+      } else throw new Error(`unittest discover accepts -s, -p, -t, -q, -v, -f, -b: ${flag}`);
+    }
+    return out;
+  }
+  for (const arg of rest) {
+    if (!UNITTEST_FLAGS.has(arg) && !UNITTEST_MODULE.test(arg))
+      throw new Error(`unittest accepts dotted test names and -q/-v/-f/-b: ${arg}`);
+    out.push(arg);
+  }
+  return out;
 }
 
 function djangoArgs(args: string[]): string[] {

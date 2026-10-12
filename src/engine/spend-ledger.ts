@@ -366,6 +366,18 @@ export function dailyCapRefusal(
   return undefined;
 }
 
+/**
+ * True when an upstream error says money ran out — Marina's own cap
+ * (`spend_cap_reached`, the `dailyCapRefusal` text), a reservation or budget
+ * proxy refusing the call, or a provider out of credits/quota. Retrying such a
+ * call cannot succeed until the budget changes, unlike a rate limit.
+ */
+export function isSpendRefusal(message: string): boolean {
+  return /spend_cap_reached|spend cap reached|spend refused|budget (?:exhausted|exceeded|reached)|reservation (?:refused|exceeds)|insufficient[_ ](?:credits|quota|funds|balance)|payment required|\b402\b/i.test(
+    message,
+  );
+}
+
 /** Dollars with enough digits to see sub-cent spend ($0.00007, not $0.00). */
 export function formatSpendUsd(usd: number): string {
   return usd >= 1 || usd === 0 ? `$${usd.toFixed(2)}` : `$${usd.toPrecision(2)}`;
