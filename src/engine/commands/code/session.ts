@@ -43,7 +43,7 @@ import {
   updateCodeContext,
 } from "./shared";
 import { stopCodeStreamsFor, streamSessionAgent } from "./stream";
-import { submitSessionRun } from "./task-run";
+import { crewSubmitAuthority, submitSessionRun } from "./task-run";
 import {
   cleanupSessionWorktree,
   getSelectedWorkspace,
@@ -1048,6 +1048,8 @@ function resolveHandoffRecipient(
   };
 }
 
+const CREW_SUBMIT_USAGE = "code summary submit:crew -- <summary>";
+
 export async function recordCodingNote(
   ctx: RoomContext,
   eid: EntityId,
@@ -1078,6 +1080,28 @@ export async function recordCodingNote(
     ({ text, to: handoffTo, notice: handoffNotice } = resolved);
   } else {
     text = args.join(" ").trim();
+  }
+  // `code summary submit:crew -- <text>`: a crew member submits the tracked
+  // attempt for the crew (members-only; same checks and claim as the lead's).
+  // Only a LEADING `submit` modifier is read, so summary prose stays literal.
+  let forCrew: string | undefined;
+  if (noteKind === "summary" && /^(--)?submit([:=]|$)/i.test(args[0] ?? "")) {
+    const parsed = parseModifiers(args, { submit: { type: "string" } }, { leading: true });
+    if (parsed.errors.length || String(parsed.values.submit).toLowerCase() !== "crew") {
+      ctx.send(eid, fmtError(`Usage: ${CREW_SUBMIT_USAGE}`));
+      return;
+    }
+    text = parsed.rest.join(" ").trim();
+    if (!text) {
+      ctx.send(eid, `Usage: ${CREW_SUBMIT_USAGE}`);
+      return;
+    }
+    const authority = crewSubmitAuthority(deps, session.id, entity);
+    if ("refusal" in authority) {
+      ctx.send(eid, fmtError(authority.refusal));
+      return;
+    }
+    forCrew = authority.forCrew;
   }
   if (!text) {
     ctx.send(eid, `Usage: code ${noteKind} <text>${noteKind === "handoff" ? " [to:<agent>]" : ""}`);
@@ -1118,7 +1142,7 @@ export async function recordCodingNote(
   // project pool (when present) and a personal note. Degrades silently.
   if (noteKind === "summary") {
     // The artifact is durable before this can produce a terminal event.
-    const run = await submitSessionRun(deps, session.id, entity, artifact);
+    const run = await submitSessionRun(deps, session.id, entity, artifact, forCrew);
     if (run?.status === "active") {
       const meta = codingRunMetadata(run);
       const unobserved =
