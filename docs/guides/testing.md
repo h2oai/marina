@@ -277,6 +277,30 @@ bun run scripts/check-coverage.ts other/lcov.info --min 70 --strict
 The nightly workflow runs `test:coverage` + `check:coverage` in a
 `continue-on-error: true` job and uploads `coverage/lcov.info` as an artifact.
 
+## Concepts test
+
+`test/marina-concepts.test.ts` checks that Marina's mechanisms run under their
+shipped defaults. It clears every mechanism switch (`MARINA_DECISIONS`,
+`MARINA_OBLIGATIONS`, `MARINA_ARGCHECK`, `MARINA_LESSONS*`,
+`MARINA_ROUTE_EVIDENCE`, `MARINA_PASSTHRU_STACK`, `MARINA_FORECAST_*`, …), sets
+only a provider key, scripts every model call, and asserts observable behaviour:
+
+1. A coder's obligations ledger lists the task and settles it on the matching
+   write. A read never reaches the argument check. A write carrying an
+   unstated value is checked, with the judge asked on Marina's own `/v1`.
+2. Autonomous and request-driven tool recoveries become one judged lesson
+   each. The lesson appears in the next coding task's `[Lessons]` section and in
+   a failed `code verify`.
+3. A board-tagged measurement teaches other boards, never its own measurements.
+4. An identified `/v1` caller gets the default stack; an anonymous one is
+   forwarded byte-identical.
+5. A plain forecast takes the typed pipeline, and its runs are verified.
+6. Forecast defaults resolve through the traced default path; route evidence
+   observes.
+
+When a default is turned off or a wire is cut, the matching concept fails. Fix
+the wiring or the default; never relax the assertion.
+
 ## Documentation contract tests
 
 `test/docs-contract.test.ts` has two halves. The first is a stale-string
