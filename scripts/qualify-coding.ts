@@ -388,7 +388,8 @@ export async function qualifyCoding(
     ? { ...knownPrice! }
     : { input: 0.4, output: 1.6, cacheRead: 0.1, cacheWrite: 0.4 };
   const requestSizes: EvaluationRequestSize[] = [];
-  const totalAttemptLimit = 40 * (options.scenarios?.length ?? 1);
+  const callsPerScenario = options.cliControls ? 120 : 40;
+  const totalAttemptLimit = callsPerScenario * (options.scenarios?.length ?? 1);
   const spending = new Proxy(
     {
       ceiling: options.budgetUsd,
@@ -560,6 +561,7 @@ export async function qualifyCoding(
     reuse_worker: options.reuseWorker ?? false,
     cli_controls: options.cliControls ?? false,
     transport,
+    calls_per_scenario: callsPerScenario,
     revision: Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: resolve(import.meta.dir, "..") })
       .stdout.toString()
       .trim(),
@@ -590,7 +592,7 @@ export async function qualifyCoding(
     grant(db, ownerId, "code.exec");
     for (const scenario of options.scenarios ?? ["bugfix"]) {
       tracingScenario = scenario;
-      spending.maxAttempts = Math.min(totalAttemptLimit, spending.attempts + 40);
+      spending.maxAttempts = Math.min(totalAttemptLimit, spending.attempts + callsPerScenario);
       // Qualify against an explicit operator-approved environment, rather than
       // asking the model to remember infrastructure policy on every retry.
       // The repository recipe imports only local/Bun builtins; the workspace
@@ -720,7 +722,7 @@ export async function qualifyCoding(
           toolProfile: "full",
           thinkingLevel: "off",
           maxTokens: spending.outputLimit,
-          budgetCalls: options.reuseWorker ? 40 * (options.scenarios?.length ?? 1) : 40,
+          budgetCalls: options.reuseWorker ? totalAttemptLimit : callsPerScenario,
           promptTimeoutMs: 60_000,
           maxRetryDelayMs: 0,
           loopCycleDelay: 200,
@@ -748,6 +750,7 @@ export async function qualifyCoding(
             db,
             worker: handle,
             timeoutMs: options.timeoutMs ?? 240_000,
+            failure: () => networkFailure,
           })
         : undefined;
       if (controls) {
@@ -760,8 +763,10 @@ export async function qualifyCoding(
           await controls.close();
         });
         await controls.beforeTask(task);
-        await controls.console.submit(`/task ${task}`);
-      } else await owner.command(`code do verification:candidate -- ${task}`);
+      }
+      const taskStarted = Date.now();
+      if (controls) await controls.console.submit(`/task ${task}`);
+      else await owner.command(`code do verification:candidate -- ${task}`);
       const run = db.listCodingRuns({ sessionId, status: "active" })[0];
       assert.ok(run, "Task dispatch did not create a canonical attempt");
       assert.equal(
@@ -846,14 +851,14 @@ export async function qualifyCoding(
       const marker = `world-responsive-${scenario}`;
       const sent = performance.now();
       await peer.command(`tell CodingOwner ${marker}`);
-      const deadline = scenarioStarted + (options.timeoutMs ?? 240_000);
+      const deadline = taskStarted + (options.timeoutMs ?? 240_000);
       let worldLatency: number | undefined;
       while (Date.now() < deadline && db.getCodingArtifact(run.id)?.status === "active") {
         if (worldLatency === undefined && messages.some((m) => m.includes(marker)))
           worldLatency = performance.now() - sent;
         if (
           handle.getStatus().budgetExhausted ||
-          (handle.getStatus().modelCalls ?? 0) - initialCalls >= 40 ||
+          (handle.getStatus().modelCalls ?? 0) - initialCalls >= callsPerScenario ||
           networkFailure
         )
           break;

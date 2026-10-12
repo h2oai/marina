@@ -33,6 +33,7 @@ export class CodingControlJourney {
       db: MarinaDB;
       worker: AgentHandle;
       timeoutMs: number;
+      failure?: () => string | undefined;
     },
   ) {
     this.console = new CodeConsole({
@@ -81,6 +82,8 @@ export class CodingControlJourney {
   private async wait(check: () => boolean, label: string) {
     const deadline = Date.now() + this.options.timeoutMs;
     while (!check()) {
+      const failure = this.options.failure?.();
+      assert.ok(!failure, failure);
       assert.ok(Date.now() < deadline, `${label}: deadline reached`);
       assert.ok(!this.options.worker.getStatus().budgetExhausted, `${label}: budget exhausted`);
       await Bun.sleep(25);

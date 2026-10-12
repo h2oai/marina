@@ -109,7 +109,9 @@ command controller, WebSocket server and native agent loop. Supply `OPENAI_API_K
 missing credentials fail before any world starts. The output directory must be new
 and outside the source checkout. Each invocation retains its own report, including
 failures. An explicit finite allowance up to $1,000 is supported; reservation and
-attempt limits still apply to every upstream call. Raising an allowance does not
+attempt limits still apply to every upstream call: 40 attempts per coding scenario,
+or 120 for the three-phase plan/implement/continue control journey. Each phase has
+the selected deadline. Raising an allowance does not
 change a previously recorded result.
 
 The journey checks a read-only proposal, model-authored regression tests, immutable
