@@ -16,8 +16,8 @@
  */
 
 import { describe, expect, expectTypeOf, it } from "vitest";
-import type * as Backend from "../../../src/net/memory-observability-types";
-import type { MemoryReceipt } from "../../../src/net/memory-receipt";
+import type * as Backend from "../../../src/net/memory/memory-observability-types";
+import type { MemoryReceipt } from "../../../src/net/memory/memory-receipt";
 import type * as Lib from "../lib/memory-observability-types";
 import * as Unified from "../unified/lib/memory-map-types";
 

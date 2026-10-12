@@ -6,7 +6,7 @@ import {
   correlateCommandPerception,
 } from "../../../src/engine/command-response";
 import { testKeyConnectivity } from "../../../src/engine/commands/key";
-import { discoverModels } from "../../../src/net/model-discovery";
+import { discoverModels } from "../../../src/net/model/model-discovery";
 import {
   handleParticipantMessage,
   type ParticipantMessage,

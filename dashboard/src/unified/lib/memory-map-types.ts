@@ -29,7 +29,7 @@ import type {
   MemoryGraphEdge,
   MemoryGraphNode,
   MemoryJobView,
-} from "../../../../src/net/memory-observability-types";
+} from "../../../../src/net/memory/memory-observability-types";
 
 // ── Wire contract (single-sourced from the backend) ─────────────────────────
 
@@ -37,7 +37,7 @@ export type {
   MemoryGraph,
   MemoryGraphEdge,
   MemoryGraphNode,
-} from "../../../../src/net/memory-observability-types";
+} from "../../../../src/net/memory/memory-observability-types";
 
 export type MemoryGraphNodeKind = MemoryGraphNode["kind"];
 
