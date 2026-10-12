@@ -240,4 +240,18 @@ describe.skipIf(process.platform === "win32")("terminal journeys", () => {
     expect(firstScreen).toContain("WS · ws://localhost:");
     expect(firstScreen).toContain("DB · ephemeral");
   }, 60_000);
+
+  test("fake-model E2E: /cost, /compact and /plan plumbing without a provider key", async () => {
+    const { text } = await journey(
+      "fake-model",
+      [
+        { keys: "/cost\r", until: (t) => t.includes("Today's model spend") },
+        { keys: "/compact\r", until: (t) => /compact/i.test(t) },
+        { keys: "/plan design a thing\r", until: (t) => /on it|Task received/i.test(t) },
+      ],
+      { env: { OPENAI_API_KEY: "test", MARINA_FAKE_MODEL: "1" } },
+    );
+    expect(text).toContain("Today's model spend");
+    expect(text).toMatch(/compact/i);
+  }, 60_000);
 });
