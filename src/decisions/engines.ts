@@ -31,7 +31,7 @@
 
 import { Logger } from "../engine/logger";
 import { dailyCapRefusal } from "../engine/spend-ledger";
-import { selfModelToken } from "../net/self-model-token";
+import { selfModelToken } from "../net/model/self-model-token";
 import type { ClassifierMethod } from "./classifier-methods";
 import { combineAnswers, unsureAnswers } from "./combine";
 import { classifierTuning, getDecisionProvider } from "./config";

@@ -7,7 +7,7 @@ import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryService } from "../src/memory/service";
-import { handleMemoryServiceApi } from "../src/net/memory-service-api";
+import { handleMemoryServiceApi } from "../src/net/memory/memory-service-api";
 import { MarinaDB } from "../src/persistence/database";
 import { rotateMemoryBackups } from "../src/persistence/db-memory-backups";
 import { translateMemoryExport } from "../src/sdk/memory-adapters";

@@ -9,7 +9,6 @@ import { defaultPromptTimeoutMs } from "../src/agent/lean-agent-adapter";
 import { normalizeAllowedCodeCommand } from "../src/coding/local-workspace";
 import { isTestCommand } from "../src/coding/project-detection";
 import { isSpendRefusal } from "../src/engine/spend-ledger";
-import { prepareUpstreamBody } from "../src/net/model-api/upstream";
 import {
   isSamplingRejection,
   noteSamplingRejected,
@@ -17,7 +16,8 @@ import {
   resetSamplingParamsForTests,
   samplingFor,
   withoutRejectedSampling,
-} from "../src/net/sampling-params";
+} from "../src/net/model/sampling-params";
+import { prepareUpstreamBody } from "../src/net/model-api/upstream";
 
 afterEach(() => resetSamplingParamsForTests());
 

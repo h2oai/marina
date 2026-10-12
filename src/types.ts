@@ -933,7 +933,7 @@ export type EngineEvent =
   | {
       type: "memory_job";
       job: Omit<
-        import("./net/memory-observability-types").MemoryJobView,
+        import("./net/memory/memory-observability-types").MemoryJobView,
         "task" | "answer" | "citations"
       >;
       timestamp: number;

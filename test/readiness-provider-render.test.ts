@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from "bun:test";
 import { renderProviderProbe, renderToolCallCheck } from "../src/engine/commands/readiness";
-import type { ProviderProbeResult } from "../src/net/model-api";
+import type { ProviderProbeResult } from "../src/net/model/model-api";
 
 function result(overrides: Partial<ProviderProbeResult>): ProviderProbeResult {
   return {

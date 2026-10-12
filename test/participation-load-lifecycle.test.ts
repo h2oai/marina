@@ -8,7 +8,7 @@ import { qualifyParticipationLoad } from "../scripts/qualify-participation-load"
 import { RateLimiter } from "../src/auth/rate-limiter";
 import { Engine } from "../src/engine/engine";
 import { getTrustProfile } from "../src/engine/trust-profile";
-import { McpServerAdapter } from "../src/net/mcp-server";
+import { McpServerAdapter } from "../src/net/mcp/mcp-server";
 import { MarinaDB } from "../src/persistence/database";
 import { scopeProcessState } from "./process-state";
 

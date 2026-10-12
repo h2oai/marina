@@ -31,10 +31,10 @@ import {
   loadVisualSource,
   resetVisionRateLimits,
 } from "../src/engine/media/vision";
-import { handleAssetApi, handleAssetServing } from "../src/net/asset-api";
-import { handleCanvasApi } from "../src/net/canvas-api";
+import { handleAssetApi, handleAssetServing } from "../src/net/api/asset-api";
+import { handleCanvasApi } from "../src/net/canvas/canvas-api";
 import { resetHttpRateLimitersForTests } from "../src/net/http-utils";
-import { handleModelApi } from "../src/net/model-api";
+import { handleModelApi } from "../src/net/model/model-api";
 import { REQUEST_IMAGE_GRANT_MARGIN_MS, requestImageGrant } from "../src/net/model-api/routing";
 import { LocalStorageProvider } from "../src/storage/local-provider";
 import type { EntityId } from "../src/types";

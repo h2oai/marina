@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Perception } from "../types";
-import type { Medium } from "./adapter";
+import type { Medium } from "./adapters/adapter";
 import { A, stripAnsi } from "./ansi";
 
 // ─── Unified Perception Formatter ────────────────────────────────────────────

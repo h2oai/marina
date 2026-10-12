@@ -15,8 +15,8 @@
 // "resolving" reads cleanly via TTS. Args are key:value pairs, no hyphens
 // in the values the user types.
 
-import * as kalshi from "../net/kalshi-client";
-import * as polymarket from "../net/polymarket-client";
+import * as kalshi from "../net/clients/kalshi-client";
+import * as polymarket from "../net/clients/polymarket-client";
 import type { ArgParseResult, Resolver, ResolverOutput } from "./types";
 
 // ─── Args ───────────────────────────────────────────────────────────────────

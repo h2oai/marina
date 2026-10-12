@@ -13,9 +13,9 @@ import {
   correctDataUrlImageType,
   openaiMessagesToAnthropic,
   sniffBase64ImageType,
-} from "../src/net/anthropic-tools";
-import { UnsupportedParameterError } from "../src/net/openai-errors";
-import { responsesInputToMessages } from "../src/net/responses-tools";
+} from "../src/net/adapters/anthropic-tools";
+import { UnsupportedParameterError } from "../src/net/model/openai-errors";
+import { responsesInputToMessages } from "../src/net/model/responses-tools";
 
 const PNG = "data:image/png;base64,iVBORw0KGgo=";
 

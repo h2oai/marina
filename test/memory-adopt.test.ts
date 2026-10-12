@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { computeFromLedger, ledgerFor, STANDING_AMOUNTS } from "../src/agent/standing";
 import { parseMemoryServiceCommand } from "../src/memory/human-interface";
 import { MemoryService } from "../src/memory/service";
-import { handleMemoryServiceApi } from "../src/net/memory-service-api";
+import { handleMemoryServiceApi } from "../src/net/memory/memory-service-api";
 import { MarinaDB } from "../src/persistence/database";
 import type { MemoryCitation } from "../src/sdk/memory-answer";
 import { MarinaMemoryAssistance } from "../src/sdk/memory-assistance-client";

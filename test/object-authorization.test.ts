@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { rmSync } from "node:fs";
 import { resetChallengesForTests } from "../src/engine/challenges";
 import { resetGateContextForTests } from "../src/engine/gate-context";
-import { handleAssetApi } from "../src/net/asset-api";
+import { handleAssetApi } from "../src/net/api/asset-api";
 import type { DashboardRouteContext } from "../src/net/dashboard-api/shared";
 import { handleCoordinationRoutes, handleWorldCatalogRoutes } from "../src/net/dashboard-api/world";
 import { resetHttpRateLimitersForTests } from "../src/net/http-utils";

@@ -14,7 +14,7 @@ import { getInternalModelToken } from "../../src/agent/agent-runtime";
 import { Engine } from "../../src/engine/engine";
 import { localEmbeddings } from "../../src/memory/local-embeddings";
 import { serveMemory } from "../../src/memory/server";
-import { setEndpointConfig } from "../../src/net/model-endpoint";
+import { setEndpointConfig } from "../../src/net/model/model-endpoint";
 import { WebSocketServer } from "../../src/net/websocket-server";
 import { MarinaDB } from "../../src/persistence/database";
 import { MarinaMemoryClient } from "../../src/sdk/memory-client";

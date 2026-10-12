@@ -10,7 +10,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Engine } from "../src/engine/engine";
 import { serveMemory } from "../src/memory/server";
-import { McpServerAdapter } from "../src/net/mcp-server";
+import { McpServerAdapter } from "../src/net/mcp/mcp-server";
 import { WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
 import { MarinaClient } from "../src/sdk/client";

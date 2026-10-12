@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { bold, dim, status as fmtStatus, header, separator } from "../../net/ansi";
-import * as kalshi from "../../net/kalshi-client";
-import * as polymarket from "../../net/polymarket-client";
+import * as kalshi from "../../net/clients/kalshi-client";
+import * as polymarket from "../../net/clients/polymarket-client";
 import type { MarinaDB } from "../../persistence/database";
 import { createWatchNote, listActiveWatches } from "../../resolvers/watch-spec";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";

@@ -32,7 +32,7 @@ import {
 } from "../learning/work";
 import { memoryAccess } from "../memory/access";
 import { residentMemoryAPI } from "../memory/resident-service";
-import type { AdapterManager } from "../net/adapter-manager";
+import type { AdapterManager } from "../net/adapters/adapter-manager";
 import { connects } from "../net/ansi";
 import { guardedFetch, validateFetchUrl } from "../net/url-guard";
 import { observeOutcomeEvent } from "../outcomes/live";

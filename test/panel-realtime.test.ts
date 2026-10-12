@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 import { expect, it } from "bun:test";
-import { memoryObserver } from "../src/net/memory-visibility";
+import { memoryObserver } from "../src/net/memory/memory-visibility";
 import { MarinaDB } from "../src/persistence/database";
 import type { ResourceChange } from "../src/persistence/db-resource-changes";
 import { RoutingService } from "../src/routing/service";

@@ -16,16 +16,16 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Engine } from "../src/engine/engine";
-import { handleModelApi } from "../src/net/model-api";
-import { setEndpointConfig } from "../src/net/model-endpoint";
-import { UnsupportedParameterError } from "../src/net/openai-errors";
+import { handleModelApi } from "../src/net/model/model-api";
+import { setEndpointConfig } from "../src/net/model/model-endpoint";
+import { UnsupportedParameterError } from "../src/net/model/openai-errors";
 import {
   chatToolCallsToResponses,
   ResponsesRequestError,
   responsesInputToMessages,
   restorePriorToolCalls,
   translateResponsesTools,
-} from "../src/net/responses-tools";
+} from "../src/net/model/responses-tools";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { MockConnection, makeTestRoom } from "./helpers";

@@ -36,7 +36,7 @@ import {
   renderUnifiedContext,
   type UnifiedContextResult,
 } from "../src/memory/unified-context";
-import { buildInjectedContext, resolvePassthruIdentity } from "../src/net/passthru-context";
+import { buildInjectedContext, resolvePassthruIdentity } from "../src/net/model/passthru-context";
 import { MarinaDB } from "../src/persistence/database";
 import { type Perception, roomId } from "../src/types";
 import { FIXTURE_QUERY, seedUnifiedFixture, tierIds } from "./fixtures/unified-memory-fixture";

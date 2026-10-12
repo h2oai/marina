@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { modelSourceEnvKeys } from "../src/agent/available-models";
 import { Engine } from "../src/engine/engine";
-import { handleModelApi } from "../src/net/model-api";
+import { handleModelApi } from "../src/net/model/model-api";
 import {
   ensembleSize,
   majorityWriteGroup,

@@ -9,7 +9,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { handleMemApi } from "../../src/net/mem-api";
+import { handleMemApi } from "../../src/net/api/mem-api";
 import { MarinaDB } from "../../src/persistence/database";
 
 // This process exits after the probe. Never use the caller's configured API keys.

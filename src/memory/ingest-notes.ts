@@ -49,7 +49,7 @@
 
 import { createHash } from "node:crypto";
 import { dailyCapRefusal } from "../engine/spend-ledger";
-import { samplingFor } from "../net/sampling-params";
+import { samplingFor } from "../net/model/sampling-params";
 import type { MemoryRepository } from "../persistence/db-memory-service";
 import type { MemoryActor } from "../persistence/db-principals";
 import type { MemoryRecord } from "../sdk/memory-types";

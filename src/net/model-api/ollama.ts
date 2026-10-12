@@ -8,9 +8,9 @@
 import { createHash } from "node:crypto";
 import { version as MARINA_VERSION } from "../../../package.json";
 import type { Engine } from "../../engine/engine";
-import { getEnabledProfiles } from "../compat-profiles";
-import { getEndpointConfig } from "../model-endpoint";
-import type { OpenAIMessage } from "../passthru-context";
+import { getEnabledProfiles } from "../adapters/compat-profiles";
+import { getEndpointConfig } from "../model/model-endpoint";
+import type { OpenAIMessage } from "../model/passthru-context";
 import type { ModelInfo } from "./models";
 import {
   capturePassthruResponse,

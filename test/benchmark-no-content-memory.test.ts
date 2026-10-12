@@ -37,7 +37,7 @@ import {
   enableOutcomeLearning,
   settleOutcomes,
 } from "../src/learning/service";
-import { handleBenchmarkFile } from "../src/net/benchmarks-api";
+import { handleBenchmarkFile } from "../src/net/api/benchmarks-api";
 import type { PassthruAuthResult } from "../src/net/model-api/shared";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
@@ -312,7 +312,7 @@ describe("static guard: benchmark code paths call no memory write", () => {
   function guardedFiles(): string[] {
     const files = [
       "src/engine/commands/benchmark.ts",
-      "src/net/benchmarks-api.ts",
+      "src/net/api/benchmarks-api.ts",
       "src/learning/intake.ts",
       "scripts/benchmark-import.ts",
       "benchmarks/harness.ts",

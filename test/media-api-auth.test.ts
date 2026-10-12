@@ -3,8 +3,8 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
-import { handleMediaApi } from "../src/net/media-api";
-import { handleModelApi } from "../src/net/model-api";
+import { handleMediaApi } from "../src/net/api/media-api";
+import { handleModelApi } from "../src/net/model/model-api";
 import type { MediaJobRow } from "../src/persistence/database";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";

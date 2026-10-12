@@ -3,7 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
-import { McpServerAdapter } from "../src/net/mcp-server";
+import { McpServerAdapter } from "../src/net/mcp/mcp-server";
 import { WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";

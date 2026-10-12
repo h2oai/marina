@@ -9,7 +9,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { Engine } from "../src/engine/engine";
-import { memoryObserver } from "../src/net/memory-visibility";
+import { memoryObserver } from "../src/net/memory/memory-visibility";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";

@@ -5,7 +5,7 @@ import { describe, expect, it } from "bun:test";
 import { type Model, normalizeContext } from "@earendil-works/pi-ai";
 import { stream as streamCompletions } from "@earendil-works/pi-ai/api/openai-completions";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
-import { handleModelApi } from "../src/net/model-api";
+import { handleModelApi } from "../src/net/model/model-api";
 import {
   buildOpenAIResponsesRequest,
   openAIResponsesStream,

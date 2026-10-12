@@ -11,10 +11,11 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { getInternalModelToken } from "../src/agent/agent-runtime";
 import { RateLimiter } from "../src/auth/rate-limiter";
-import { handleConnectRoutes, healthResponse } from "../src/net/connect-api";
+import { handleConnectRoutes, healthResponse } from "../src/net/api/connect-api";
+import { handleEntityApi } from "../src/net/api/entity-api";
+import { handleMemApi } from "../src/net/api/mem-api";
 import { handleDashboardApi } from "../src/net/dashboard-api";
 import { ensureErrorCode } from "../src/net/dashboard-api/shared";
-import { handleEntityApi } from "../src/net/entity-api";
 import {
   errorBody,
   inferHttpErrorCode,
@@ -24,8 +25,7 @@ import {
   SMALL_JSON_BODY_BYTES,
   withErrorCode,
 } from "../src/net/http-utils";
-import { handleMemApi } from "../src/net/mem-api";
-import { handleModelApi } from "../src/net/model-api";
+import { handleModelApi } from "../src/net/model/model-api";
 import { proxyToAnthropic } from "../src/net/model-api/anthropic-bridge";
 import { validateOllamaRequest } from "../src/net/model-api/ollama";
 import { hasInternalBearer, upstreamAbort } from "../src/net/model-api/shared";

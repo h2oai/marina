@@ -4,7 +4,7 @@
 // Split from memory-transfer.test.ts (staging, discovery, tenancy and staleness lifecycle). Assertions unchanged.
 
 import { afterEach, expect, it } from "bun:test";
-import { handleMemoryServiceApi } from "../src/net/memory-service-api";
+import { handleMemoryServiceApi } from "../src/net/memory/memory-service-api";
 import { MarinaMemoryClient } from "../src/sdk/memory-client";
 import { memoryPortableDigest } from "../src/sdk/memory-portable";
 import { resumeMemoryTransfer } from "../src/sdk/memory-transfer-client";

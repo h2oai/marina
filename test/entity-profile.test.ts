@@ -3,7 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
-import { buildEntityProfile, handleEntityApi } from "../src/net/entity-api";
+import { buildEntityProfile, handleEntityApi } from "../src/net/api/entity-api";
 import { MarinaDB } from "../src/persistence/database";
 import type { EntityId, RoomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";

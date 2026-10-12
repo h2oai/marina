@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ProviderProbeResult } from "../../net/model-api";
+import type { ProviderProbeResult } from "../../net/model/model-api";
 import type { AutonomyPulseRow } from "../../persistence/db-telemetry";
 import type { CommandContext, CommandDef } from "../../types";
 import {

@@ -28,7 +28,7 @@ import { grant } from "../src/engine/safety-gates";
 import { spentTodayUsd } from "../src/engine/spend-ledger";
 import { closeWorldMemoryService } from "../src/memory/world-service";
 import { DashboardBroadcaster } from "../src/net/dashboard-ws";
-import { setEndpointConfig } from "../src/net/model-endpoint";
+import { setEndpointConfig } from "../src/net/model/model-endpoint";
 import { WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
 import type { CodingEventRow } from "../src/persistence/db-coding";

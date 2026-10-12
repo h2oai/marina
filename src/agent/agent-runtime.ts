@@ -31,7 +31,7 @@ import {
   isLocalProvider,
   LOCAL_PROVIDERS,
   MODEL_DISCOVERY_PROVIDERS,
-} from "../net/model-discovery";
+} from "../net/model/model-discovery";
 import type { MarinaDB } from "../persistence/database";
 import type { AgentConfigRow } from "../persistence/db-agents";
 import type { EngineEvent } from "../types";

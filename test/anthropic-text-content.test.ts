@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, test } from "bun:test";
-import { anthropicSystemPrompt, anthropicTextContent } from "../src/net/model-api";
+import { anthropicSystemPrompt, anthropicTextContent } from "../src/net/model/model-api";
 
 describe("anthropicTextContent", () => {
   test("joins every text block and skips thinking / tool blocks (Claude 5 shape)", () => {

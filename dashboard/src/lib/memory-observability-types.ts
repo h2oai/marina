@@ -34,9 +34,12 @@ export type {
   MemoryResolutionView,
   MemorySpaceHealth,
   MemoryStorageBudgetView,
-} from "../../../src/net/memory-observability-types";
+} from "../../../src/net/memory/memory-observability-types";
 
-import type { MemoryJobView, MemoryReceiptView } from "../../../src/net/memory-observability-types";
+import type {
+  MemoryJobView,
+  MemoryReceiptView,
+} from "../../../src/net/memory/memory-observability-types";
 
 // ── Named aliases (derived — never restate the union) ───────────────────────
 
@@ -81,4 +84,4 @@ export type MemoryServiceEvent = {
  * Sibling string attributes on the same span: `memoryCacheHit` ("true" | "false")
  * and `memorySurface` (a `MemoryReceiptSurface`).
  */
-export type { MemoryReceipt as MemoryReceiptAttribute } from "../../../src/net/memory-receipt";
+export type { MemoryReceipt as MemoryReceiptAttribute } from "../../../src/net/memory/memory-receipt";

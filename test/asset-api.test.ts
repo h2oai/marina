@@ -11,7 +11,7 @@ import {
   isInlineMime,
   normalizeAssetMime,
   OCTET_STREAM,
-} from "../src/net/asset-api";
+} from "../src/net/api/asset-api";
 import { resetHttpRateLimitersForTests } from "../src/net/http-utils";
 import { MarinaDB } from "../src/persistence/database";
 import { LocalStorageProvider } from "../src/storage/local-provider";

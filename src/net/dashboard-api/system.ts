@@ -19,7 +19,7 @@ import {
   signFederationDocument,
   verifyFederationDocument,
 } from "../federation-crypto";
-import type { memoryObserver } from "../memory-visibility";
+import type { memoryObserver } from "../memory/memory-visibility";
 import { authorizePrivileged, type DashboardRouteContext, json, readJsonBody } from "./shared";
 import { getLogs, getTraces } from "./traces";
 

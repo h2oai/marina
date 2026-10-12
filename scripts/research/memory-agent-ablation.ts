@@ -17,7 +17,7 @@ import {
 } from "../../src/memory/planning";
 import { serveMemory } from "../../src/memory/server";
 import { MemoryService } from "../../src/memory/service";
-import { setEndpointConfig } from "../../src/net/model-endpoint";
+import { setEndpointConfig } from "../../src/net/model/model-endpoint";
 import { WebSocketServer } from "../../src/net/websocket-server";
 import { MarinaDB } from "../../src/persistence/database";
 import { MarinaMemoryClient } from "../../src/sdk/memory-client";

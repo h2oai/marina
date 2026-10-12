@@ -5,10 +5,10 @@ import { RateLimiter } from "../../../src/auth/rate-limiter";
 import { Engine } from "../../../src/engine/engine";
 import { Logger } from "../../../src/engine/logger";
 import { closeWorldMemoryService } from "../../../src/memory/world-service";
-import type { Adapter } from "../../../src/net/adapter";
+import type { Adapter } from "../../../src/net/adapters/adapter";
 import { DashboardBroadcaster } from "../../../src/net/dashboard-ws";
 import { formatPerception } from "../../../src/net/formatter";
-import { McpServerAdapter } from "../../../src/net/mcp-server";
+import { McpServerAdapter } from "../../../src/net/mcp/mcp-server";
 import { TelnetServer } from "../../../src/net/telnet-server";
 import { WebSocketServer } from "../../../src/net/websocket-server";
 import { MarinaDB } from "../../../src/persistence/database";
@@ -362,7 +362,7 @@ export class EngineHost {
     // Telegram
     if (process.env.TELEGRAM_TOKEN) {
       try {
-        const { TelegramAdapter } = await import("../../../src/net/telegram-adapter");
+        const { TelegramAdapter } = await import("../../../src/net/adapters/telegram-adapter");
         const ctx = {
           engine: this.engine,
           rateLimiter: this.rateLimiter,

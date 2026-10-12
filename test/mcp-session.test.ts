@@ -4,9 +4,9 @@ import { expect, spyOn, test } from "bun:test";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { Engine } from "../src/engine/engine";
-import { MCP_MAX_SESSION_PENDING, McpAdmission, mcpAdmission } from "../src/net/mcp-admission";
-import { cmdTool } from "../src/net/mcp-session";
-import type { McpSession } from "../src/net/mcp-types";
+import { MCP_MAX_SESSION_PENDING, McpAdmission, mcpAdmission } from "../src/net/mcp/mcp-admission";
+import { cmdTool } from "../src/net/mcp/mcp-session";
+import type { McpSession } from "../src/net/mcp/mcp-types";
 import { roomId } from "../src/types";
 import { MockConnection, makeTestRoom } from "./helpers";
 

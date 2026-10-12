@@ -10,7 +10,7 @@ import {
   type MarinaAuthProvider,
 } from "../src/auth/better-auth-provider";
 import { Engine } from "../src/engine/engine";
-import { handleAuthApi } from "../src/net/auth-api";
+import { handleAuthApi } from "../src/net/api/auth-api";
 import { MarinaDB } from "../src/persistence/database";
 import { type EntityId, roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";

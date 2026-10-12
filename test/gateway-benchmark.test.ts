@@ -32,11 +32,11 @@ import {
   splitParaphrases,
 } from "../benchmarks/memory/genbench";
 import { Engine } from "../src/engine/engine";
-import { handleMemApi } from "../src/net/mem-api";
-import { MEMORY_RECEIPT_HEADER } from "../src/net/memory-receipt";
-import { handleModelApi } from "../src/net/model-api";
-import { setEndpointConfig } from "../src/net/model-endpoint";
-import { resetPassthruCaptureDedupForTests } from "../src/net/passthru-context";
+import { handleMemApi } from "../src/net/api/mem-api";
+import { MEMORY_RECEIPT_HEADER } from "../src/net/memory/memory-receipt";
+import { handleModelApi } from "../src/net/model/model-api";
+import { setEndpointConfig } from "../src/net/model/model-endpoint";
+import { resetPassthruCaptureDedupForTests } from "../src/net/model/passthru-context";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { makeTestRoom } from "./helpers";

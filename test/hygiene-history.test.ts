@@ -29,11 +29,11 @@ import {
   memoryHygieneHistory,
   resetMemoryHygieneRatiosMemoForTests,
   snapshotMemoryHygiene,
-} from "../src/net/memory-observability";
+} from "../src/net/memory/memory-observability";
 import type {
   MemoryHygieneHistory,
   MemoryHygieneSample,
-} from "../src/net/memory-observability-types";
+} from "../src/net/memory/memory-observability-types";
 import { MarinaDB } from "../src/persistence/database";
 import { EXPORT_TABLES } from "../src/persistence/export-import";
 import { roomId } from "../src/types";

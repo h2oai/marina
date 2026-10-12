@@ -8,7 +8,7 @@ import { resolveTier0Target, tier0Filing, tier0HarnessArgs } from "../benchmarks
 import type { BenchmarkConfig, BenchmarkResult } from "../benchmarks/types";
 import { attributeRequest, resolveParticipants } from "../src/engine/benchmark-participants";
 import { Engine } from "../src/engine/engine";
-import { handleBenchmarkFile } from "../src/net/benchmarks-api";
+import { handleBenchmarkFile } from "../src/net/api/benchmarks-api";
 import type { PassthruAuthResult } from "../src/net/model-api/shared";
 import { MarinaDB } from "../src/persistence/database";
 import type { EngineEvent } from "../src/types";

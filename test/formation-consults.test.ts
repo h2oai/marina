@@ -10,7 +10,7 @@ import {
   requestProtocolLine,
 } from "../src/coordination/crew-formations";
 import { Engine } from "../src/engine/engine";
-import { handleModelApi, pendingRequests, roundRobinCounters } from "../src/net/model-api";
+import { handleModelApi, pendingRequests, roundRobinCounters } from "../src/net/model/model-api";
 import { MarinaDB } from "../src/persistence/database";
 import { type EntityId, roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";

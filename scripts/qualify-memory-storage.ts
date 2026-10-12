@@ -19,7 +19,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { MemoryService } from "../src/memory/service";
-import { handleMemoryServiceApi } from "../src/net/memory-service-api";
+import { handleMemoryServiceApi } from "../src/net/memory/memory-service-api";
 import { MarinaDB } from "../src/persistence/database";
 import { memoryStorageFailure } from "../src/persistence/db-memory-failures";
 import { MarinaMemoryClient, MemoryClientError } from "../src/sdk/memory-client";

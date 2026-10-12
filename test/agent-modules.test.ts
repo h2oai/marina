@@ -49,7 +49,7 @@ import {
   createScopedTools,
   TOOL_PROFILE_NAMES,
 } from "../src/agent/tools";
-import { LOCAL_PROVIDERS } from "../src/net/model-discovery";
+import { LOCAL_PROVIDERS } from "../src/net/model/model-discovery";
 import type { MarinaDB } from "../src/persistence/database";
 import type { EntityId, EntityRank, KnownProperties, Perception, RoomId } from "../src/types";
 import { scopeProcessState } from "./process-state";

@@ -53,7 +53,7 @@ import {
   recallForWork,
 } from "../src/learning/service";
 import { flushWorkLessons, lessonsFromWorkMode, resetWorkLearner } from "../src/learning/work";
-import { handleModelApi } from "../src/net/model-api";
+import { handleModelApi } from "../src/net/model/model-api";
 import { resetObligationsForTests } from "../src/net/model-api/obligations";
 import { passthruStackPolicy } from "../src/net/model-api/stack";
 import { argcheckMode, argcheckTrigger, obligationsMode } from "../src/obligations/mode";

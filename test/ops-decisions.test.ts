@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
-import { DECISIONS_WINDOW_MS, decisionsOverview } from "../src/net/ops-api";
+import { DECISIONS_WINDOW_MS, decisionsOverview } from "../src/net/api/ops-api";
 import type { EngineEvent } from "../src/types";
 import { roomId } from "../src/types";
 

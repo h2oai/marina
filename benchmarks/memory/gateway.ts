@@ -51,7 +51,7 @@ import {
   MEMORY_RECEIPT_SCHEMA,
   type MemoryReceipt,
   parseMemoryReceipt,
-} from "../../src/net/memory-receipt";
+} from "../../src/net/memory/memory-receipt";
 import type { DatasetItem, Message } from "../types";
 import {
   estimateTokens,

@@ -38,15 +38,15 @@ import {
   receiptSurfaceOf,
   resetMemoryHygieneRatiosMemoForTests,
   resetMemoryLeakageCountersForTests,
-} from "../src/net/memory-observability";
+} from "../src/net/memory/memory-observability";
 import type {
   MemoryGraph,
   MemoryHygieneRatios,
   MemoryJobView,
   MemoryOverview,
   MemorySpaceHealth,
-} from "../src/net/memory-observability-types";
-import { encodeMemoryReceiptHeader, finalizeMemoryReceipt } from "../src/net/memory-receipt";
+} from "../src/net/memory/memory-observability-types";
+import { encodeMemoryReceiptHeader, finalizeMemoryReceipt } from "../src/net/memory/memory-receipt";
 import { MarinaDB } from "../src/persistence/database";
 import type { MemoryAssistanceJob } from "../src/sdk/memory-assistance";
 import type { MemoryOperationRequest } from "../src/sdk/memory-operations";

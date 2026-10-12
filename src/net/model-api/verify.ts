@@ -32,7 +32,7 @@ import { isReadOnlyTool } from "../../obligations/tool-effect";
 import type { RepairLabel } from "../../repair/output-repair";
 import { repairToolCallMessage } from "../../repair/tool-call-repair";
 import type { EntityId } from "../../types";
-import { getEndpointConfig } from "../model-endpoint";
+import { getEndpointConfig } from "../model/model-endpoint";
 import { anthropicAutoCacheEnabled } from "./anthropic-bridge";
 import { joinNotes, lessonQuery, passthruEntityId } from "./passthru";
 import {

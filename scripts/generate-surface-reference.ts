@@ -9,7 +9,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { RateLimiter } from "../src/auth/rate-limiter";
 import { commandManifest } from "../src/engine/command-manifest";
 import type { Engine } from "../src/engine/engine";
-import { createWorldMcpServer } from "../src/net/mcp-world-tools";
+import { createWorldMcpServer } from "../src/net/mcp/mcp-world-tools";
 
 const root = resolve(import.meta.dir, "..");
 const inline = (text: string) =>

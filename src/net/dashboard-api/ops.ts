@@ -17,7 +17,7 @@ import {
 } from "../../decisions/settings";
 import { getErrorMessage } from "../../engine/errors";
 import { checkGateForExecution, recordGateExecution } from "../../engine/safety-gates";
-import { buildOpsOverview, opsObserverScope, stopAgentCascade } from "../ops-api";
+import { buildOpsOverview, opsObserverScope, stopAgentCascade } from "../api/ops-api";
 import { authorizePrivileged, type DashboardRouteContext, json, readSmallJsonBody } from "./shared";
 
 /** Ops overview (observer-scoped read) + the privileged agent cascade stop. */

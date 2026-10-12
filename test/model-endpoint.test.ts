@@ -6,7 +6,7 @@ import {
   DEFAULT_ENDPOINT_CONFIG,
   getEndpointConfig,
   setEndpointConfig,
-} from "../src/net/model-endpoint";
+} from "../src/net/model/model-endpoint";
 import { MarinaDB } from "../src/persistence/database";
 import { cleanupDb } from "./helpers";
 

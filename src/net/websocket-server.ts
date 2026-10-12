@@ -33,22 +33,29 @@ import type {
 } from "../sdk/extensions";
 import type { StorageProvider } from "../storage/provider";
 import type { Connection, Perception } from "../types";
-import { handleAssetApi, handleAssetServing } from "./asset-api";
-import { handleAuthApi } from "./auth-api";
+import { handleAssetApi, handleAssetServing } from "./api/asset-api";
+import { handleAuthApi } from "./api/auth-api";
+import { handleConnectRoutes, healthResponse, registerConnectEndpoint } from "./api/connect-api";
+import { handleEntityApi } from "./api/entity-api";
+import { handleMemApi } from "./api/mem-api";
+import { handleOrchestrationApi } from "./api/orchestration-api";
+import { handleProbeApi } from "./api/probe-api";
 import {
   authenticateRequest,
   DESKTOP_OPERATOR_ENTITY_ID,
   isSentinelPrincipal,
   OPEN_API_ENTITY_ID,
 } from "./auth-middleware";
-import { type CanvasNodeCreatedEvent, handleCanvasApi } from "./canvas-api";
-import { buildCanvasPrincipal, isLoopbackPeer, LOOPBACK_PRINCIPAL } from "./canvas-principal";
-import { CanvasBroadcaster, type CanvasSubscriptionPrincipal } from "./canvas-ws";
-import { handleConnectRoutes, healthResponse, registerConnectEndpoint } from "./connect-api";
+import { type CanvasNodeCreatedEvent, handleCanvasApi } from "./canvas/canvas-api";
+import {
+  buildCanvasPrincipal,
+  isLoopbackPeer,
+  LOOPBACK_PRINCIPAL,
+} from "./canvas/canvas-principal";
+import { CanvasBroadcaster, type CanvasSubscriptionPrincipal } from "./canvas/canvas-ws";
 import { corsHeaders, isTrustedBrowserOrigin } from "./cors";
 import { handleDashboardApi } from "./dashboard-api";
 import type { DashboardBroadcaster, DashboardWSData } from "./dashboard-ws";
-import { handleEntityApi } from "./entity-api";
 import {
   badPathEncodingResponse,
   clientIp,
@@ -62,14 +69,11 @@ import {
   withSecurityHeaders,
 } from "./http-utils";
 import { recordListenPort } from "./listen-ports";
-import { handleMemApi } from "./mem-api";
-import { handleMemoryServiceApi } from "./memory-service-api";
-import { handleModelApi, isModelApiPath } from "./model-api";
+import { handleMemoryServiceApi } from "./memory/memory-service-api";
+import { handleModelApi, isModelApiPath } from "./model/model-api";
 import { modelRequestIdleSeconds } from "./model-api/routing";
 import { hasInternalBearer } from "./model-api/shared";
-import { handleOrchestrationApi } from "./orchestration-api";
 import { handleParticipantMessage } from "./participant-messages";
-import { handleProbeApi } from "./probe-api";
 import { RequestDrain } from "./request-drain";
 
 /** Module logger: network-surface lifecycle and request-path failures. */

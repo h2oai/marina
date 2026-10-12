@@ -13,7 +13,7 @@ import {
   buildAnthropicRequest,
   type OpenAIUsage,
   translateAnthropicStream,
-} from "../anthropic-tools";
+} from "../adapters/anthropic-tools";
 import { errorJson, isMarinaModel, MODEL_CORS, upstreamAbort, upstreamTimeoutMs } from "./shared";
 
 /**

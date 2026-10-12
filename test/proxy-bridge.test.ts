@@ -8,8 +8,8 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
-import { handleModelApi } from "../src/net/model-api";
-import { setEndpointConfig } from "../src/net/model-endpoint";
+import { handleModelApi } from "../src/net/model/model-api";
+import { setEndpointConfig } from "../src/net/model/model-endpoint";
 import { MarinaDB } from "../src/persistence/database";
 import { type EngineEvent, roomId } from "../src/types";
 import { cleanupDb, makeTestRoom } from "./helpers";

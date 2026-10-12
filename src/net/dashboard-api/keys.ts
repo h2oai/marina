@@ -22,8 +22,8 @@ import type { Engine } from "../../engine/engine";
 import type { MarinaDB } from "../../persistence/database";
 import type { EntityId } from "../../types";
 import { localMcpPort } from "../listen-ports";
-import { discoverModels } from "../model-discovery";
-import { type EndpointConfig, getEndpointConfig, setEndpointConfig } from "../model-endpoint";
+import { discoverModels } from "../model/model-discovery";
+import { type EndpointConfig, getEndpointConfig, setEndpointConfig } from "../model/model-endpoint";
 import {
   authorizePrivileged,
   type DashboardRouteContext,

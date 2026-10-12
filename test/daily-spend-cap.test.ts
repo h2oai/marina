@@ -29,8 +29,8 @@ import {
   utcDay,
 } from "../src/engine/spend-ledger";
 import { resetTrustProfileForTests } from "../src/engine/trust-profile";
-import { handleModelApi } from "../src/net/model-api";
-import { setEndpointConfig } from "../src/net/model-endpoint";
+import { handleModelApi } from "../src/net/model/model-api";
+import { setEndpointConfig } from "../src/net/model/model-endpoint";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { makeTestRoom } from "./helpers";

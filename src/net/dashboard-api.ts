@@ -40,7 +40,7 @@ import {
   rateLimitedResponse,
   safeDecodeURIComponent,
 } from "./http-utils";
-import { memoryObserver } from "./memory-visibility";
+import { memoryObserver } from "./memory/memory-visibility";
 
 // Public surface consumed by other modules, scripts and tests
 // (websocket-server.ts, scripts/research/memory-surface-audit.ts, test/*) —

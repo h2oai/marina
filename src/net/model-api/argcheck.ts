@@ -40,7 +40,7 @@ import {
 import { readOnlyCall } from "../../obligations/tool-call";
 import type { MarinaDB } from "../../persistence/database";
 import type { EntityId } from "../../types";
-import { messageText, type OpenAIMessage } from "../passthru-context";
+import { messageText, type OpenAIMessage } from "../model/passthru-context";
 import { noteArgcheckCorrection } from "./learn";
 import { conversationKeys, ledgerCompletion } from "./obligations";
 import { COST_USD_HEADER, type PassthruAuthResult } from "./shared";

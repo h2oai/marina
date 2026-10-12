@@ -39,8 +39,8 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { computeHygieneRatios } from "../../src/memory/hygiene-ratios";
 import { worldMemoryService } from "../../src/memory/world-service";
-import type { MemoryRatio } from "../../src/net/memory-observability-types";
-import { handleMemoryServiceApi } from "../../src/net/memory-service-api";
+import type { MemoryRatio } from "../../src/net/memory/memory-observability-types";
+import { handleMemoryServiceApi } from "../../src/net/memory/memory-service-api";
 import { MarinaDB } from "../../src/persistence/database";
 import {
   RELIABILITY_FLOOR,

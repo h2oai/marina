@@ -22,14 +22,14 @@ import {
   buildAnthropicRequest,
   minCacheableTokens,
   placeCacheBreakpoints,
-} from "../src/net/anthropic-tools";
-import { handleModelApi } from "../src/net/model-api";
+} from "../src/net/adapters/anthropic-tools";
+import { handleModelApi } from "../src/net/model/model-api";
+import { setEndpointConfig } from "../src/net/model/model-endpoint";
 import {
   honorsCacheControl,
   placeOpenAICacheBreakpoints,
   prepareUpstreamBody,
 } from "../src/net/model-api/upstream";
-import { setEndpointConfig } from "../src/net/model-endpoint";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { makeTestRoom } from "./helpers";

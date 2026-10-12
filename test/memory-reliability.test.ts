@@ -14,7 +14,7 @@ import { LeanAgentAdapter } from "../src/agent/lean-agent-adapter";
 import { PlatformMemoryBackend } from "../src/agent/memory-platform";
 import { residentMemoryOperation } from "../src/memory/resident-service";
 import { MemoryService } from "../src/memory/service";
-import { handleMemoryServiceApi } from "../src/net/memory-service-api";
+import { handleMemoryServiceApi } from "../src/net/memory/memory-service-api";
 import { MarinaDB } from "../src/persistence/database";
 import { snapshotMemoryDatabase } from "../src/persistence/db-memory-maintenance";
 import { BASE_SCHEMA, MIGRATIONS } from "../src/persistence/schema";

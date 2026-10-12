@@ -9,7 +9,7 @@ export function codingRepositoryFixture() {
     regressionPaths: ["test/code-view-latest.test.ts"],
     files: {
       ".qualification/acceptance.test.ts": `import { expect, test } from "bun:test";
-import { TerminalViews, TERMINAL_HISTORY_LIMITS } from "../scripts/code-views";
+import { TerminalViews, TERMINAL_HISTORY_LIMITS } from "./code-views";
 test("return from paged history directly to the newest retained output", () => {
   const views = new TerminalViews({ ...TERMINAL_HISTORY_LIMITS, pageEntries: 2 });
   for (let i = 0; i < 10; i++) views.append("coding", "entry-" + i);

@@ -76,7 +76,7 @@ import {
 import { readOnlyCall } from "../../obligations/tool-call";
 import { isReadOnlyTool } from "../../obligations/tool-effect";
 import type { EntityId } from "../../types";
-import { messageText, type OpenAIMessage } from "../passthru-context";
+import { messageText, type OpenAIMessage } from "../model/passthru-context";
 import { COST_USD_HEADER, type PassthruAuthResult } from "./shared";
 import { proxyToUpstream } from "./upstream";
 

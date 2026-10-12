@@ -25,7 +25,7 @@ import {
   type TabH2OPredictRequest,
   type TabH2OResult,
   toWireRequest,
-} from "../src/net/tabh2o-client";
+} from "../src/net/clients/tabh2o-client";
 
 const weekly = (values: number[], start = "2026-01-02"): ArenaPoint[] =>
   values.map((value, i) => ({

@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "bun:test";
-import { handleOrchestrationApi, listOrchestrationPatterns } from "../src/net/orchestration-api";
+import {
+  handleOrchestrationApi,
+  listOrchestrationPatterns,
+} from "../src/net/api/orchestration-api";
 import { ORCHESTRATION_PATTERNS, PATTERN_FIT } from "../src/world/templates/orchestration";
 
 function call(path: string, method = "GET"): Response | null {

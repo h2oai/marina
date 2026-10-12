@@ -15,7 +15,7 @@ import {
   configuredUpstreamProviders,
   evaluateProviderProbe,
   probeConfiguredProviders,
-} from "../src/net/model-api";
+} from "../src/net/model/model-api";
 import { MarinaDB } from "../src/persistence/database";
 import { auditEncryptedKeys, getAllApiKeys, getDefaultModel } from "../src/persistence/db-agents";
 import { roomId } from "../src/types";

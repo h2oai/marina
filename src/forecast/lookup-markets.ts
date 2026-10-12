@@ -19,13 +19,13 @@ import {
   type KalshiEvent,
   type KalshiMarket,
   getEvents as kalshiEvents,
-} from "../net/kalshi-client";
+} from "../net/clients/kalshi-client";
 import {
   type PolymarketEvent,
   type PolymarketMarket,
   type pricesHistory,
   searchEvents,
-} from "../net/polymarket-client";
+} from "../net/clients/polymarket-client";
 import { bestMatches, isMatch, nearDate, overlap, tokens } from "./lookup-match";
 import {
   type ForecastLookup,

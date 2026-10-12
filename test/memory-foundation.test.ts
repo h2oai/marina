@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { PlatformMemoryBackend } from "../src/agent/memory-platform";
 import { Engine } from "../src/engine/engine";
 import { residentMemoryOperation } from "../src/memory/resident-service";
-import { handleMemApi } from "../src/net/mem-api";
+import { handleMemApi } from "../src/net/api/mem-api";
 import { MarinaDB } from "../src/persistence/database";
 import { createStoredNote as createNote } from "../src/persistence/db-note-storage";
 

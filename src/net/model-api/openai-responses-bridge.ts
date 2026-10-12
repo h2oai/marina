@@ -4,7 +4,7 @@
 // Shared outbound bridge. All callers (including vision and judges) retain the
 // normal routing, spend settlement and trace path in upstream.ts.
 import { getErrorMessage } from "../../engine/errors";
-import { UnsupportedParameterError } from "../openai-errors";
+import { UnsupportedParameterError } from "../model/openai-errors";
 import { streamUsageSidecar } from "./anthropic-bridge";
 import { errorJson, json, SSE_HEADERS, upstreamAbort } from "./shared";
 

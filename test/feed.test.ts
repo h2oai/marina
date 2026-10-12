@@ -4,7 +4,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
-import { CanvasBroadcaster } from "../src/net/canvas-ws";
+import { CanvasBroadcaster } from "../src/net/canvas/canvas-ws";
 import { FeedPublisher } from "../src/net/feed-publisher";
 import { MarinaDB } from "../src/persistence/database";
 import type { StorageProvider } from "../src/storage/provider";

@@ -13,7 +13,7 @@ import { DurableResidentMemory } from "../src/agent/durable-memory";
 import { createMemoryPlan, executeMemoryPlan } from "../src/memory/planning";
 import { residentMemoryOperation } from "../src/memory/resident-service";
 import { MemoryService } from "../src/memory/service";
-import { handleMemoryServiceApi } from "../src/net/memory-service-api";
+import { handleMemoryServiceApi } from "../src/net/memory/memory-service-api";
 import { MarinaDB } from "../src/persistence/database";
 import { exportState, importState } from "../src/persistence/export-import";
 import { MarinaMemoryClient } from "../src/sdk/memory-client";

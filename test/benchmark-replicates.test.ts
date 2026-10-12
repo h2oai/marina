@@ -29,7 +29,7 @@ import {
 } from "../src/engine/benchmark-replicates";
 import { pooledCompareLines } from "../src/engine/commands/benchmark";
 import { Engine } from "../src/engine/engine";
-import { handleBenchmarkFile } from "../src/net/benchmarks-api";
+import { handleBenchmarkFile } from "../src/net/api/benchmarks-api";
 import type { PassthruAuthResult } from "../src/net/model-api/shared";
 import type { BenchmarkRunRow } from "../src/persistence/database";
 import { MarinaDB } from "../src/persistence/database";

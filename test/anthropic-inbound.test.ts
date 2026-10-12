@@ -11,7 +11,7 @@ import {
   translateMessages,
   translateStreamToAnthropic,
   translateTools,
-} from "../src/net/anthropic-inbound";
+} from "../src/net/adapters/anthropic-inbound";
 
 type AnthropicResult = {
   type?: string;

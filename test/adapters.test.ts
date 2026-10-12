@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import type { Adapter, Medium } from "../src/net/adapter";
+import type { Adapter, Medium } from "../src/net/adapters/adapter";
 import { formatPerception } from "../src/net/formatter";
 import { MarinaDB } from "../src/persistence/database";
 import type { Perception, RoomId } from "../src/types";

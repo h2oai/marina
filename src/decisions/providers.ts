@@ -20,7 +20,7 @@
  */
 
 import { isReasoningMandatory, noteUpstreamRejection } from "../agent/reasoning-control";
-import { withoutRejectedSampling } from "../net/sampling-params";
+import { withoutRejectedSampling } from "../net/model/sampling-params";
 import { normalizeAnswers } from "./answers";
 import {
   answerFromDistribution,

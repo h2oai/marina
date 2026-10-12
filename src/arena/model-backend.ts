@@ -20,7 +20,7 @@ import {
 } from "../agent/provider-cost";
 import { grownOutputCap, reasoningHeadroomCap } from "../agent/reasoning-control";
 import { dailyCapRefusal, recordSpend } from "../engine/spend-ledger";
-import { HUGGINGFACE_ENV_KEYS, LOCAL_PROVIDERS } from "../net/model-discovery";
+import { HUGGINGFACE_ENV_KEYS, LOCAL_PROVIDERS } from "../net/model/model-discovery";
 import type { Complete } from "./model-forecaster";
 
 const PROVIDER_KEYS: Record<string, readonly string[]> = {

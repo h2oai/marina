@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMemoryPlan, executeMemoryPlan } from "../src/memory/planning";
 import { MemoryService } from "../src/memory/service";
-import { handleMemoryServiceApi } from "../src/net/memory-service-api";
+import { handleMemoryServiceApi } from "../src/net/memory/memory-service-api";
 import { MarinaDB } from "../src/persistence/database";
 import { MarinaMemoryClient } from "../src/sdk/memory-client";
 import type { MemoryRule, MemoryVariable } from "../src/sdk/memory-symbolic";

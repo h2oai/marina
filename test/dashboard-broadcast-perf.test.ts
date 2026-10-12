@@ -20,7 +20,7 @@ import {
   OBSERVER_INVALIDATING_EVENTS,
   type WorldSnapshot,
 } from "../src/net/dashboard-ws";
-import { memoryObserver } from "../src/net/memory-visibility";
+import { memoryObserver } from "../src/net/memory/memory-visibility";
 import { MarinaDB } from "../src/persistence/database";
 import { type EngineEvent, type EntityId, roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";

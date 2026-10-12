@@ -13,7 +13,7 @@ import {
   markServingProcess,
   resetServingProcessForTests,
   selfModelToken,
-} from "../src/net/self-model-token";
+} from "../src/net/model/self-model-token";
 
 describe("selfModelToken", () => {
   const dir = mkdtempSync(join(tmpdir(), "self-token-"));

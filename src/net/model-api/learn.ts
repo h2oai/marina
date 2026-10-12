@@ -16,7 +16,7 @@
 import { evalOption } from "../../learning/eval-context";
 import { noteWork, softFailureClass } from "../../learning/work";
 import type { MarinaDB } from "../../persistence/database";
-import { messageText, type OpenAIMessage } from "../passthru-context";
+import { messageText, type OpenAIMessage } from "../model/passthru-context";
 import type { PassthruAuthResult } from "./shared";
 
 /** Request: `on` opts this conversation into lessons from work (owner-scoped); `off` opts out. */

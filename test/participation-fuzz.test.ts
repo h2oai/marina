@@ -6,7 +6,7 @@ import { commandManifest } from "../src/engine/command-manifest";
 import { CommandRouter } from "../src/engine/command-router";
 import { Engine } from "../src/engine/engine";
 import { parseModifiers } from "../src/engine/parse-input";
-import { commandFormFingerprint, mcpCommandSchema } from "../src/net/mcp-command-schema";
+import { commandFormFingerprint, mcpCommandSchema } from "../src/net/mcp/mcp-command-schema";
 import { MarinaDB } from "../src/persistence/database";
 import { compileCommandForms, composeCommand } from "../src/sdk/command-forms";
 import { entityId, roomId } from "../src/types";

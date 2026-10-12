@@ -64,7 +64,7 @@ function waitForMessage(agent: MarinaAgent, fromName: string, timeoutMs = 30_000
 function mindRoomSource(agentName: string, generation: number, goal: string): string {
   // This is a room that IS the agent's mind — inspectable by anyone.
   // Items show the agent's state. The room description shows identity.
-  return `import type { RoomModule } from "../../../src/types";
+  return `import type { RoomModule } from "../../types";
 
 const room: RoomModule = {
   short: "${agentName}'s Workshop",

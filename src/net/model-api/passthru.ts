@@ -17,7 +17,7 @@ import {
   finalizeMemoryReceipt,
   MEMORY_RECEIPT_HEADER,
   type MemoryReceipt,
-} from "../memory-receipt";
+} from "../memory/memory-receipt";
 import {
   buildInjectedContext,
   capturePassthruTranscript,
@@ -26,14 +26,14 @@ import {
   type OpenAIMessage,
   type PassthruIdentity,
   resolvePassthruIdentity,
-} from "../passthru-context";
+} from "../model/passthru-context";
+import { chatToolCallsToResponses, type ResponsesFunctionCall } from "../model/responses-tools";
 import {
   lookupResponseCache,
   RESPONSE_CACHE_HEADER,
   responseCacheEnabled,
   storeResponseCache,
 } from "../response-cache";
-import { chatToolCallsToResponses, type ResponsesFunctionCall } from "../responses-tools";
 import {
   type CompletionUsage,
   isInternalCaller,

@@ -30,7 +30,7 @@ import { residentMemoryOperation } from "../memory/resident-service";
 import type { MarinaDB } from "../persistence/database";
 import type { MemoryCacheResult } from "../sdk/memory-types";
 import type { Entity } from "../types";
-import { type MemoryReceipt, memoryReceiptPins, parseMemoryReceipt } from "./memory-receipt";
+import { type MemoryReceipt, memoryReceiptPins, parseMemoryReceipt } from "./memory/memory-receipt";
 
 export const RESPONSE_CACHE_POLICY = "marina.passthru.response-cache.v1";
 export const RESPONSE_CACHE_HEADER = "x-marina-cache";
