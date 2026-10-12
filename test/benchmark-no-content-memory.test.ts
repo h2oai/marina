@@ -312,7 +312,7 @@ describe("static guard: benchmark code paths call no memory write", () => {
   function guardedFiles(): string[] {
     const files = [
       "src/engine/commands/benchmark.ts",
-      "src/net/benchmarks-api.ts",
+      "src/net/api/benchmarks-api.ts",
       "src/learning/intake.ts",
       "scripts/benchmark-import.ts",
       "benchmarks/harness.ts",

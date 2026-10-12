@@ -143,8 +143,8 @@ describe("engine.dispatchCommand — the one command ingress", () => {
     for (const file of [
       "src/net/telnet-server.ts",
       "src/net/discord-adapter.ts",
-      "src/net/telegram-adapter.ts",
-      "src/net/mcp-session.ts",
+      "src/net/adapters/telegram-adapter.ts",
+      "src/net/mcp/mcp-session.ts",
       "src/engine/auth-coordinator.ts",
       "src/engine/registrations/coordination.ts",
     ]) {
