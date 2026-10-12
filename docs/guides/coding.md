@@ -635,8 +635,16 @@ evidence). It is never reported as verified unless its checks passed.
 
 **Driver.** `--driver crew` runs the one-shot with the crew driver. A task with a contract
 (required verification, `owner:unattended`, a budget) stays ONE tracked attempt: a lead coder owns
-and submits it under the contract, and a crew assembled around it reviews, tests and reports to
-the lead. Without a contract, `code do` on a crew session still stores and dispatches a crew plan.
+it, keeps the write lock and submits it under the contract, and a crew assembled around it reviews,
+tests and reports to the lead. The crew's roster is recorded on the attempt, so when the lead
+cannot submit, a member may submit it for the crew with `code summary submit:crew -- <summary>`.
+That submission takes the same path as the lead's: the same required checks and budget-forced
+label, the lead's task claim, and still one attempt (a later summary from anyone does not submit
+again). It is attributed to the member (`submittedBy` on the attempt, a `Submitted by:` line in
+the task evidence, the member as actor of the submit event), and the lead is notified. Only a
+member on both the recorded roster and the live crew may do this: an outsider, a removed member
+or a dissolved crew is refused, and a member's plain `code summary` stays progress. Without a
+contract, `code do` on a crew session still stores and dispatches a crew plan.
 
 `--json` prints one JSON object as the last line of stdout and sends everything else to stderr:
 `{"status":"verified|unverified|failed|timeout","exitCode":…,"verification":…,"verificationReason":…,"requirements":…,"reason":…,"assumptions":[{"text":…,"source":"worker|block"}],"budgetForced":…,"taskId":…,"runId":…,"files":[{"path":…,"added":…,"removed":…}],"durationMs":…}`.

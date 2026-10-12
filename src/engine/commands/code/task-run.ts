@@ -5,6 +5,7 @@ import type { AgentHandle } from "../../../agent/agent-types";
 import {
   assessCodingVerification,
   codingRunClaim,
+  codingRunCrewMember,
   codingRunMetadata,
   codingVerificationReadiness,
   codingVerificationUnchanged,
@@ -21,7 +22,7 @@ import { judgeOpinion } from "../../../decisions/policy";
 import { decisionVerifyMode, verifySubmission } from "../../../decisions/verify";
 import { recordTaskOpinion, recordTaskVerdict } from "../../../outcomes/live";
 import type { CodingArtifactRow, MarinaDB } from "../../../persistence/database";
-import type { Entity, EntityId, RoomContext } from "../../../types";
+import type { CrewId, Entity, EntityId, RoomContext } from "../../../types";
 import { getErrorMessage } from "../../errors";
 import { Logger } from "../../logger";
 import {
@@ -264,6 +265,7 @@ export async function submitSessionRun(
   sessionId: string,
   worker: Entity,
   summary: CodingArtifactRow,
+  forCrew?: string,
 ): Promise<CodingArtifactRow | undefined> {
   const run = await submitCodingRun(
     deps.db,
@@ -271,6 +273,7 @@ export async function submitSessionRun(
     worker,
     summary,
     deps.getConnectionProtocol?.(worker.id) !== "telnet",
+    forCrew,
   );
   if (run?.status === "submitted") {
     deps.logEvent?.({
@@ -282,7 +285,79 @@ export async function submitSessionRun(
     publishCodingRun(deps, run);
     observeCodingSubmission(deps, run, worker, summary.content_text ?? "");
   }
+  if (
+    run &&
+    forCrew !== undefined &&
+    codingRunMetadata(run).workerKey !== deps.db.durableEntityKey(worker.id)
+  )
+    notifyCrewLead(deps, run, worker);
   return run;
+}
+
+/**
+ * May `member` submit the session's active attempt for its crew? Members only:
+ * the attempt must record a crew (crew driver with a contract), the member must
+ * be on that recorded roster by durable key, AND still be on the live crew's
+ * roster (a dissolved crew or a removed member is refused). No crew manager in
+ * this process ⇒ refused. The lead submits normally and never needs this.
+ */
+export function crewSubmitAuthority(
+  deps: CodeDeps & { db: MarinaDB },
+  sessionId: string,
+  member: Entity,
+): { forCrew?: string } | { refusal: string } {
+  const run = deps.db.listCodingRuns({ sessionId, status: "active", limit: 1 })[0];
+  if (!run) return { refusal: "No active task attempt in this session to submit." };
+  const meta = codingRunMetadata(run);
+  const key = deps.db.durableEntityKey(member.id);
+  if (meta.workerKey === key) return {};
+  if (!meta.crew) return { refusal: `Task #${meta.taskId} has no crew; only its coder submits.` };
+  const live = deps.crewManager?.get(meta.crew.id as CrewId);
+  if (
+    !codingRunCrewMember(meta, key) ||
+    !live ||
+    live.state === "dissolved" ||
+    !live.members.some((m) => sameEntityName(m.agentName, member.name))
+  )
+    return {
+      refusal: `Only a member of crew ${meta.crew.name} may submit task #${meta.taskId} for the crew.`,
+    };
+  return { forCrew: meta.crew.id };
+}
+
+/** Tell the lead that a crew member submitted (or tried to submit) its attempt. */
+function notifyCrewLead(
+  deps: CodeDeps & { db: MarinaDB },
+  run: CodingArtifactRow,
+  member: Entity,
+): void {
+  const meta = codingRunMetadata(run);
+  const lead = deps.findEntityExact?.(meta.workerName) ?? deps.getEntity(meta.workerKey);
+  if (!lead || !sameEntityName(lead.name, meta.workerName) || lead.id === member.id) return;
+  const text =
+    run.status === "submitted"
+      ? `${member.name} submitted task #${meta.taskId} for crew ${meta.crew?.name ?? "?"}${meta.budgetForced ? " at its deadline (budget-forced best effort)" : ""}. Recorded verification: ${meta.verification}. The attempt is closed; stop working on it.`
+      : `${member.name} tried to submit task #${meta.taskId} for the crew; it remains active. Recorded verification: ${meta.verification}.`;
+  deps.notify?.(lead.id, text, {
+    code: {
+      event: "crew_member_submitted",
+      type: "lifecycle",
+      artifactId: run.id,
+      artifactKind: "task_run",
+      sessionId: run.session_id,
+      status: run.status,
+      title: text,
+      metadata: {
+        runId: run.id,
+        taskId: meta.taskId,
+        submittedBy: member.name,
+        crew: meta.crew?.name,
+        verification: meta.verification,
+        ...(meta.budgetForced ? { budgetForced: meta.budgetForced } : {}),
+      },
+      commands: ["code status", `code show ${run.id}`],
+    },
+  });
 }
 
 /**

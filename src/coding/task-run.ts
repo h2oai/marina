@@ -69,7 +69,20 @@ export interface CodingRunMetadata {
   deadlineAt?: number;
   /** Set when the submission came after the budget's final-answer point (`deadlinePhase`). */
   budgetForced?: BudgetForced;
+  /**
+   * Crew driver: the crew assembled around this attempt's lead (`crewSupport`).
+   * Members are recorded by durable key; only they may submit for the crew.
+   */
+  crew?: CodingRunCrew;
+  /** Set when a crew member, not the lead, submitted: the claim stays the lead's. */
+  submittedBy?: { name: string; key: string; crewId: string };
   reason?: string;
+}
+
+export interface CodingRunCrew {
+  id: string;
+  name: string;
+  members: Array<{ name: string; key: string }>;
 }
 
 /** A recorded interpretation; it never carries authority (no gate, permission or install). */
@@ -257,17 +270,65 @@ export function beginCodingRun(
   });
 }
 
-/** Required checks gate submission. An early summary remains durable progress on the same attempt. */
+/**
+ * Record the crew supporting an active attempt's lead. The roster is the
+ * crew's members at dispatch, by durable key; the lead is never in it. Returns
+ * false when the attempt is no longer active.
+ */
+export function bindCodingRunCrew(
+  db: MarinaDB,
+  runId: string,
+  crew: { id: string; name: string; members: Array<{ name: string; id: EntityId }> },
+  actor: string,
+): boolean {
+  return db.transaction(() => {
+    const run = db.getCodingArtifact(runId);
+    if (run?.kind !== "task_run" || run.status !== "active") return false;
+    const meta = codingRunMetadata(run);
+    const members = crew.members
+      .map((m) => ({ name: m.name, key: db.durableEntityKey(m.id) }))
+      .filter((m) => m.key !== meta.workerKey);
+    meta.crew = { id: crew.id, name: crew.name, members };
+    db.updateCodingArtifact(run.id, { metadata: meta });
+    db.createCodingEvent({
+      sessionId: run.session_id,
+      actor,
+      kind: "task_run_crew_bound",
+      payload: { runId: run.id, taskId: meta.taskId, lead: meta.workerName, crew: meta.crew },
+    });
+    return true;
+  });
+}
+
+/** The recorded crew member with this durable key, when the attempt has a crew. */
+export function codingRunCrewMember(
+  meta: Pick<CodingRunMetadata, "crew">,
+  key: string,
+): { name: string; key: string } | undefined {
+  return meta.crew?.members.find((m) => m.key === key);
+}
+
+/**
+ * Required checks gate submission. An early summary remains durable progress on the same attempt.
+ * `forCrew` (a crew id) lets a member of the attempt's recorded crew submit for the crew: same
+ * checks, same claim (the lead's), attributed to the member in `submittedBy` and the evidence.
+ */
 export async function submitCodingRun(
   db: MarinaDB,
   sessionId: string,
   worker: Entity,
   summary: CodingArtifactRow,
   allowHostObservation = true,
+  forCrew?: string,
 ): Promise<CodingArtifactRow | undefined> {
+  const submitterKey = db.durableEntityKey(worker.id);
+  const maySubmit = (meta: CodingRunMetadata) =>
+    meta.workerKey === submitterKey ||
+    (forCrew !== undefined &&
+      meta.crew?.id === forCrew &&
+      codingRunCrewMember(meta, submitterKey) !== undefined);
   const initial = db.listCodingRuns({ sessionId, status: "active", limit: 1 })[0];
-  if (!initial || codingRunMetadata(initial).workerKey !== db.durableEntityKey(worker.id))
-    return undefined;
+  if (!initial || !maySubmit(codingRunMetadata(initial))) return undefined;
   if (summary.session_id !== sessionId || JSON.parse(summary.metadata_json).runId !== initial.id)
     return undefined;
   const assessed = await assessCodingVerification(db, initial, allowHostObservation);
@@ -277,7 +338,8 @@ export async function submitCodingRun(
     const meta = codingRunMetadata(run);
     const origin = JSON.parse(summary.metadata_json) as { runId?: string };
     if (summary.session_id !== sessionId || origin.runId !== run.id) return undefined;
-    if (meta.workerKey !== db.durableEntityKey(worker.id)) return undefined;
+    if (!maySubmit(meta)) return undefined;
+    const member = meta.workerKey === submitterKey ? undefined : meta.crew;
     const tasks = new TaskManager(db);
     const verification = latestVerification(db, run.id);
     if (!codingVerificationUnchanged(db, initial, assessed.verificationId))
@@ -319,13 +381,17 @@ export async function submitCodingRun(
     }
     const requirements = meta.requirements ? requirementLines(meta.requirements) : [];
     const assumed = assumptionLines(meta);
-    const evidence = `${summary.content_text}${requirements.length ? `\n\nRequirements:\n${requirements.map((line) => `- ${line}`).join("\n")}` : ""}\n\nCoding attempt: artifact:${run.id}\nSummary: artifact:${summary.id}\nRecorded verification: ${meta.verification}${verification ? ` (artifact:${verification.id})` : ""}${forced ? `\nBudget-forced: submitted at the task's deadline (${Math.round(forced.used / 1000)}s of ${Math.round(forced.cap / 1000)}s), best effort.` : ""}${assumed.length ? `\nAssumptions (no person could answer):\n${assumed.join("\n")}` : ""}`;
+    const submittedFor = member
+      ? `\nSubmitted by: ${worker.name}, member of crew ${member.name}, for the lead ${meta.workerName}`
+      : "";
+    const evidence = `${summary.content_text}${requirements.length ? `\n\nRequirements:\n${requirements.map((line) => `- ${line}`).join("\n")}` : ""}\n\nCoding attempt: artifact:${run.id}\nSummary: artifact:${summary.id}\nRecorded verification: ${meta.verification}${verification ? ` (artifact:${verification.id})` : ""}${submittedFor}${forced ? `\nBudget-forced: submitted at the task's deadline (${Math.round(forced.used / 1000)}s of ${Math.round(forced.cap / 1000)}s), best effort.` : ""}${assumed.length ? `\nAssumptions (no person could answer):\n${assumed.join("\n")}` : ""}`;
     const claim = codingRunClaim(db, run);
     if (!claim || !tasks.submit(meta.taskId, claim.entity_id, evidence)) {
       throw new Error(
         "The coding task claim expired or changed; its summary was saved but could not be submitted.",
       );
     }
+    if (member) meta.submittedBy = { name: worker.name, key: submitterKey, crewId: member.id };
     db.updateCodingArtifact(run.id, { status: "submitted", metadata: meta });
     db.createCodingEvent({
       sessionId,
