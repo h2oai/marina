@@ -85,6 +85,7 @@ export const READ_TOOL_NAMES: ReadonlySet<string> = new Set([
   "marina_code_search",
   "marina_code_diff",
   "marina_code_history",
+  "marina_code_show",
   "marina_code_summary",
   "marina_code_session_status",
   "marina_code_observe",

@@ -83,7 +83,7 @@ export class CodingControlJourney {
     const deadline = Date.now() + this.options.timeoutMs;
     while (!check()) {
       const failure = this.options.failure?.();
-      assert.ok(!failure, failure);
+      if (failure) throw new Error(failure);
       assert.ok(Date.now() < deadline, `${label}: deadline reached`);
       assert.ok(!this.options.worker.getStatus().budgetExhausted, `${label}: budget exhausted`);
       await Bun.sleep(25);
