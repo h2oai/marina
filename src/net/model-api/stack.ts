@@ -7,7 +7,9 @@
 //   x-marina-stack: full | none | <members, comma-separated>
 //   marina/full:<model>                     (the model-id form of `full`)
 //
-// Members: lessons, obligations, argcheck, verify, context, learn.
+// Members: lessons, obligations, argcheck, verify, context, learn, ensemble.
+// `ensemble` (`ensemble.ts`) is opt-in by name only: never in the default
+// stack nor in `full`, since it multiplies upstream calls per turn.
 //
 // Default (`MARINA_PASSTHRU_STACK`, default `identified`): an IDENTIFIED
 // caller — a key bound to an entity, an authorized name-map, or any
@@ -39,8 +41,12 @@ export const STACK_MEMBERS = [
   "verify",
   "context",
   "learn",
+  "ensemble",
 ] as const;
 export type StackMember = (typeof STACK_MEMBERS)[number];
+
+/** What `full` expands to: every member except `ensemble` (named explicitly when wanted). */
+export const FULL_MEMBERS: readonly StackMember[] = STACK_MEMBERS.filter((m) => m !== "ensemble");
 
 /**
  * What an identified caller gets without asking. `verify` is left out (it
@@ -133,11 +139,11 @@ export function resolvePassthruStack(
   if (asked?.kind === "none")
     return { members: new Set(), source: "header", full: false, skipped: [] };
   if (asked?.kind === "full")
-    return { members: new Set(STACK_MEMBERS), source: "header", full: true, skipped: [] };
+    return { members: new Set(FULL_MEMBERS), source: "header", full: true, skipped: [] };
   if (asked?.kind === "list")
     return { members: asked.members, source: "header", full: false, skipped: [] };
   if (fullPrefix)
-    return { members: new Set(STACK_MEMBERS), source: "prefix", full: true, skipped: [] };
+    return { members: new Set(FULL_MEMBERS), source: "prefix", full: true, skipped: [] };
   const policy = passthruStackPolicy(env);
   if (policy === "off" || !auth || isInternalCaller(auth))
     return { members: new Set(), source: "none", full: false, skipped: [] };

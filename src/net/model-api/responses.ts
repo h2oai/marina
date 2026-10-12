@@ -20,6 +20,7 @@ import {
   translateResponsesTools,
 } from "../responses-tools";
 import { runOpenaiChat, stripOptInPrefixes } from "./chat-completions";
+import { ENSEMBLE_MODEL_PREFIX } from "./ensemble";
 import {
   capturePassthruResponse,
   extractResponseTextAndUsage,
@@ -70,6 +71,15 @@ import {
 } from "./stack";
 import { explicitUpstreamModel, passthruForceModel, proxyToUpstream } from "./upstream";
 import { VERIFY_MODEL_PREFIX } from "./verify";
+
+/** A formation id (`marina/verify:`, `marina/ensemble:`) under any instrument prefixes. */
+function formationModel(model: unknown): boolean {
+  const bare = stripOptInPrefixes(model);
+  return (
+    typeof bare === "string" &&
+    (bare.startsWith(VERIFY_MODEL_PREFIX) || bare.startsWith(ENSEMBLE_MODEL_PREFIX))
+  );
+}
 
 /** Stable per-credential owner key for Responses records. Hashes the matched
  *  API key so the raw secret is never stored; internal/open/anon get sentinels. */
@@ -201,13 +211,13 @@ export async function handleResponsesCreate(
     // Marina's own agents always proxy upstream (see `isInternalCaller`), and an
     // explicit upstream id reaches that upstream in every mode.
     // The instrument prefixes (`marina/full:`, `marina/lessons:`, …,
-    // `marina/verify:`) name an upstream model underneath; the request takes the
-    // passthru route when that model would.
+    // `marina/verify:`, `marina/ensemble:`) name upstream models underneath; the
+    // request takes the passthru route when that model would.
     if (
       ec.mode === "passthru" ||
       isInternalCaller(auth) ||
       explicitUpstreamModel(engine, stripOptInPrefixes(body.model)) ||
-      (typeof body.model === "string" && body.model.startsWith(VERIFY_MODEL_PREFIX))
+      formationModel(body.model)
     ) {
       // Responses tools → chat tools before any upstream call; a hosted tool
       // type (web_search, file_search, …) is a 400 the client must see, never
@@ -358,8 +368,7 @@ function responsesInstruments(
   auth: PassthruAuthResult | undefined,
   model: string,
 ): { on: boolean } | { error: string } {
-  if (stripOptInPrefixes(model) !== model || model.startsWith(VERIFY_MODEL_PREFIX))
-    return { on: true };
+  if (stripOptInPrefixes(model) !== model || formationModel(model)) return { on: true };
   if (asksInstrumentByHeader(req)) return { on: true };
   const stack = resolvePassthruStack(
     req,
