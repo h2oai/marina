@@ -15,6 +15,7 @@ import { codingWorkerState } from "../../../coding/worker-state";
 import { bold, dim, error as fmtError, header, separator, success } from "../../../net/ansi";
 import type { CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
+import { getErrorMessage } from "../../errors";
 import { parseModifiers } from "../../parse-input";
 import { reassignWriter } from "./crew";
 import { formatProfileTry } from "./profiles";
@@ -440,7 +441,13 @@ export async function compactSession(
     ctx.send(eid, "No active coding agent to compact. Type a task first.");
     return;
   }
-  const result = await handle.compactNow?.();
+  let result: { before: number; after: number } | undefined;
+  try {
+    result = await handle.compactNow?.();
+  } catch (error) {
+    ctx.send(eid, `Context not compacted: ${getErrorMessage(error)}`);
+    return;
+  }
   if (!result) {
     ctx.send(
       eid,

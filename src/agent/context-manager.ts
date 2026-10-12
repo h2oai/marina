@@ -303,6 +303,7 @@ export function createContextManager(options: ContextManagerOptions) {
   const transformConversation = async (
     messages: AgentMessage[],
     signal?: AbortSignal,
+    force = false,
   ): Promise<AgentMessage[]> => {
     signal?.throwIfAborted();
     const original = messages;
@@ -367,7 +368,7 @@ export function createContextManager(options: ContextManagerOptions) {
 
       const tokenCap = usageRatio < pruneThreshold ? getTokenCap?.(messages) : undefined;
       const capped = tokenCap !== undefined && gauge.messageTokens >= tokenCap.capTokens;
-      if (usageRatio < pruneThreshold && !capped) {
+      if (usageRatio < pruneThreshold && !capped && !force) {
         return await finish(truncateOversizedToolResults(messages, maxToolResultTokens));
       }
 
@@ -426,6 +427,10 @@ export function createContextManager(options: ContextManagerOptions) {
       const middleEnd = messages.length - recentCount;
       const middleMessages = middleEnd > 1 ? messages.slice(1, middleEnd) : [];
 
+      // An explicit request may run well below the automatic threshold. Do
+      // not manufacture a summary that adds a message to an already short history.
+      if (force && middleMessages.length < 2) return await finish(messages);
+
       const result: AgentMessage[] = [first];
 
       if (middleMessages.length > 0 && maxSummaryRatio > 0) {
@@ -445,7 +450,14 @@ export function createContextManager(options: ContextManagerOptions) {
           summary = ruleBasedSummary;
         }
 
-        const maxSummaryTokens = Math.floor(contextWindow * maxSummaryRatio);
+        const maxSummaryTokens = Math.floor(
+          Math.min(
+            contextWindow * maxSummaryRatio,
+            force
+              ? middleMessages.reduce((sum, msg) => sum + estimateMessageTokens(msg), 0) / 2
+              : Number.POSITIVE_INFINITY,
+          ),
+        );
         const summaryText = summary.length > 0 ? truncateText(summary, maxSummaryTokens) : "";
 
         if (summaryText.length > 0) {
@@ -506,11 +518,16 @@ export function createContextManager(options: ContextManagerOptions) {
   // the system messages lead the result. When nothing changed the original
   // array (and message order) is returned untouched, so the request prefix stays
   // byte-stable for the provider's prompt cache.
-  return async (messages: AgentMessage[], signal?: AbortSignal): Promise<AgentMessage[]> => {
-    if (!messages.some((m) => m.role === "system")) return transformConversation(messages, signal);
+  return async (
+    messages: AgentMessage[],
+    signal?: AbortSignal,
+    request?: { force?: boolean },
+  ): Promise<AgentMessage[]> => {
+    if (!messages.some((m) => m.role === "system"))
+      return transformConversation(messages, signal, request?.force);
     const system = messages.filter((m) => m.role === "system");
     const conversation = messages.filter((m) => m.role !== "system");
-    const result = await transformConversation(conversation, signal);
+    const result = await transformConversation(conversation, signal, request?.force);
     const unchanged =
       result.length === conversation.length && result.every((m, i) => m === conversation[i]);
     return unchanged ? messages : [...system, ...result];
