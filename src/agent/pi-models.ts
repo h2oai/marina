@@ -1,7 +1,11 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createProvider } from "@earendil-works/pi-ai";
+import {
+  type AssistantMessage,
+  createAssistantMessageEventStream,
+  createProvider,
+} from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
@@ -11,6 +15,37 @@ import { defaultModelPrice } from "./provider-cost";
 // Do not refresh catalogs or persist credentials here. Per-request keys (including
 // rotated resident/internal tokens) take precedence over provider environment keys.
 export const piModels = builtinModels();
+
+// Deterministic fake model for E2E plumbing tests: no provider key, no network.
+// Enabled with MARINA_FAKE_MODEL=1; every model call returns a fixed text reply so
+// the agent loop, tool gate, compaction and spend ledger can be exercised in CI.
+if (process.env.MARINA_FAKE_MODEL === "1") {
+  const fakeMessage = (): AssistantMessage => ({
+    role: "assistant",
+    content: [{ type: "text", text: "Done." }],
+    api: "openai-completions",
+    provider: "openai",
+    model: "fake",
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: "stop",
+    timestamp: Date.now(),
+  });
+  piModels.completeSimple = async () => fakeMessage();
+  piModels.streamSimple = () => {
+    const stream = createAssistantMessageEventStream();
+    const msg = fakeMessage();
+    stream.push({ type: "start", partial: msg });
+    stream.end(msg);
+    return stream;
+  };
+}
 
 // Pi's OpenAI catalog now uses Responses. Marina and local runtimes also use
 // OpenAI-compatible Chat Completions, with their own model.baseUrl and literal ID.

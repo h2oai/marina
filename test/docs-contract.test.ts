@@ -189,6 +189,8 @@ const ENV_VARS_COMPOSED_AT_RUNTIME = new Set([
  * documented (or a statement that nobody should set it).
  */
 const ENV_VARS_OUTSIDE_SERVER_CATALOG = new Map<string, string>([
+  // Test-only: deterministic fake model for key-free E2E plumbing tests.
+  ["MARINA_FAKE_MODEL", "test: fake model for E2E plumbing (test/cli-journeys.test.ts)"],
   // Set per run by src/engine/benchmark-runner.ts for the harness child process.
   ["MARINA_BENCH_API_KEY", "internal: benchmark runner → harness child"],
   ["MARINA_BENCH_RESULT_FILE", "internal: benchmark runner → harness child"],
