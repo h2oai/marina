@@ -260,16 +260,34 @@ function lifecycleRequirements(value: unknown): CodeRequirementCoverage | undefi
   };
 }
 
-/** Stated requirements no passing check observed (a missing checklist counts as one). */
+/**
+ * Stated requirements that keep a delivery from counting as verified: no checklist at all,
+ * a requirement no passing check observed, or a checklist where nothing was observed
+ * (every requirement declared not machine-checkable).
+ *
+ * A requirement declared `notCheckable` with a reason (a prohibition such as "do not read
+ * /tests", or which paths an external collector reads) is not counted against an otherwise
+ * observed delivery: no finite check over delivered files can observe it, so counting it
+ * would only reward leaving it out of the checklist. The server's submission gate applies the
+ * same rule (`requirementsComplete`). It is still listed apart, never as verified
+ * (`notCheckableRequirements`).
+ */
 export function unverifiedRequirements(coverage: CodeRequirementCoverage | undefined): string[] {
   if (!coverage) return [];
-  return [
-    ...(coverage.listed ? [] : ["no acceptance checklist was recorded"]),
-    ...coverage.unverified,
-    ...coverage.notCheckable.map(
-      ({ text, reason }) => `${text} (not machine-checkable: ${reason})`,
-    ),
-  ];
+  if (!coverage.listed) return ["no acceptance checklist was recorded"];
+  if (!coverage.verified.length && !coverage.unverified.length)
+    return [
+      "no stated requirement is observed by a passing check",
+      ...notCheckableRequirements(coverage),
+    ];
+  return coverage.unverified;
+}
+
+/** Requirements declared not machine-checkable, with their reasons (recorded, never verified). */
+export function notCheckableRequirements(coverage: CodeRequirementCoverage | undefined): string[] {
+  return (coverage?.notCheckable ?? []).map(
+    ({ text, reason }) => `${text} (not machine-checkable: ${reason})`,
+  );
 }
 
 /** `marina -p` exit codes. */
@@ -284,7 +302,8 @@ export const PRINT_EXIT = {
  * The one-shot outcome: completed AND verified is success (0); completed
  * without passing verification is 3, unless the caller accepts unverified
  * work (`--allow-unverified`, then 0 with the same notice); failed is 1,
- * timed out 2.
+ * timed out 2. A budget-forced submission follows the same rule: verified
+ * only when its checks passed.
  */
 export function printOutcome(
   end: CodeLifecycleEnd | "timeout" | undefined,
@@ -297,8 +316,16 @@ export function printOutcome(
   if (end === "timeout") return { status: "timeout", exitCode: PRINT_EXIT.timeout };
   if (!end || end.phase === "failed") return { status: "failed", exitCode: PRINT_EXIT.failed };
   const unobserved = unverifiedRequirements(end.requirements);
-  if (end.verification === "passed" && !unobserved.length)
-    return { status: "verified", exitCode: PRINT_EXIT.verified };
+  if (end.verification === "passed" && !unobserved.length) {
+    const declared = notCheckableRequirements(end.requirements);
+    return declared.length
+      ? {
+          status: "verified",
+          exitCode: PRINT_EXIT.verified,
+          notice: `Verified. Declared not machine-checkable (recorded, not observed by a check): ${declared.join("; ")}`,
+        }
+      : { status: "verified", exitCode: PRINT_EXIT.verified };
+  }
   const notice =
     end.verification === "passed"
       ? `Completed but not verified: checks passed, but no passing check observed ${unobserved.length === 1 ? "this stated requirement" : "these stated requirements"}: ${unobserved.join("; ")}`
@@ -307,6 +334,29 @@ export function printOutcome(
     status: "unverified",
     exitCode: allowUnverified ? PRINT_EXIT.verified : PRINT_EXIT.unverified,
     notice,
+  };
+}
+
+/** The one JSON object `marina -p --json` prints last on stdout; `exitCode` is the process's. */
+export function printResultJson(
+  outcome: ReturnType<typeof printOutcome>,
+  end: CodeLifecycleEnd | undefined,
+  files: Array<{ path: string; added: number; removed: number }>,
+  durationMs: number,
+) {
+  return {
+    status: outcome.status,
+    exitCode: outcome.exitCode,
+    verification: end?.verification ?? null,
+    verificationReason: end?.verificationReason ?? null,
+    reason: end?.detail ?? end?.reason ?? null,
+    assumptions: end?.assumptions ?? [],
+    budgetForced: end?.budgetForced ?? null,
+    requirements: end?.requirements ?? null,
+    taskId: end?.taskId ?? null,
+    runId: end?.runId ?? null,
+    files,
+    durationMs,
   };
 }
 
@@ -904,20 +954,9 @@ export async function runCodeSession(
     if (assumed) (opts.json ? process.stderr : process.stdout).write(`${assumed}\n`);
     if (opts.json) {
       process.stdout.write(
-        `${JSON.stringify({
-          status: outcome.status,
-          exitCode: outcome.exitCode,
-          verification: end?.verification ?? null,
-          verificationReason: end?.verificationReason ?? null,
-          reason: end?.detail ?? end?.reason ?? null,
-          assumptions: end?.assumptions ?? [],
-          budgetForced: end?.budgetForced ?? null,
-          requirements: end?.requirements ?? null,
-          taskId: end?.taskId ?? null,
-          runId: end?.runId ?? null,
-          files: diff ? diffFileStats(diff) : [],
-          durationMs: Date.now() - started,
-        })}\n`,
+        `${JSON.stringify(
+          printResultJson(outcome, end, diff ? diffFileStats(diff) : [], Date.now() - started),
+        )}\n`,
       );
     }
     await sessionConsole?.close(outcome.exitCode);

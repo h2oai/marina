@@ -201,8 +201,24 @@ it("records a requirement marked not machine-checkable and proceeds, visibly", a
     { text: "the wording reads naturally", reason: "a matter of judgement, not a property" },
   ]);
   expect(claim().submission_text).toContain("not machine-checkable: the wording reads naturally");
+  // The server accepted the checklist; the one-shot exit agrees with it (and still names it).
+  expect(meta().verification).toBe("passed");
+  expect(meta().requirements?.verified).toEqual(["the report's amount is 11"]);
+  expect(outcome()).toMatchObject({ status: "verified", exitCode: 0 });
+  expect(outcome().notice).toContain("the wording reads naturally (not machine-checkable");
+});
+
+it("keeps a checklist with nothing observed unverified, even when every entry is declared", async () => {
+  begin();
+  manifest([
+    { text: "the wording reads naturally", notCheckable: "a matter of judgement, not a property" },
+  ]);
+  await verify();
+  await send("code summary Done");
+  expect(current().status).toBe("submitted");
+  expect(meta().verification).toBe("passed");
   expect(outcome()).toMatchObject({ status: "unverified", exitCode: 3 });
-  expect(outcome().notice).toContain("the wording reads naturally");
+  expect(outcome().notice).toContain("no stated requirement is observed by a passing check");
 });
 
 it("bounds the refusal: a second submission proceeds and reports what is still unverified", async () => {
