@@ -13,6 +13,8 @@ import { handleAnthropicMessages } from "../adapters/anthropic-inbound";
 import { handleBenchmarkFile } from "../api/benchmarks-api";
 import { handleDecisionModels, handleDecisions } from "../api/decisions-api";
 import { handleForecast } from "../api/forecast-api";
+import { handleMediaApi } from "../api/media-api";
+import { handleOutcomeReport } from "../api/outcomes-api";
 import {
   authFailuresExhausted,
   clientIp,
@@ -20,7 +22,6 @@ import {
   recordAuthFailure,
   SMALL_JSON_BODY_BYTES,
 } from "../http-utils";
-import { handleMediaApi } from "../api/media-api";
 import { handleOpenaiChat, runOpenaiChat } from "../model-api/chat-completions";
 import { listModels, openaiModelList } from "../model-api/models";
 import {
@@ -47,7 +48,6 @@ import {
   type PeerAddr,
   readModelJsonBody,
 } from "../model-api/shared";
-import { handleOutcomeReport } from "../api/outcomes-api";
 
 // Public surface consumed by other modules, scripts and tests (main.ts,
 // engine.ts, command-registry.ts, readiness.ts, ops-api.ts, websocket-server.ts,

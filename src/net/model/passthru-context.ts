@@ -17,7 +17,11 @@ import {
 } from "../../memory/unified-context";
 import { renderCapabilityRoster } from "../../sdk/capabilities";
 import type { Entity, EntityId } from "../../types";
-import type { MemoryReceiptDraft, MemoryReceiptRef, MemoryReceiptTier } from "../memory/memory-receipt";
+import type {
+  MemoryReceiptDraft,
+  MemoryReceiptRef,
+  MemoryReceiptTier,
+} from "../memory/memory-receipt";
 import type { PassthruAuthResult } from "./model-api";
 
 export const DEFAULT_PASSTHRU_ENTITY = "passthru";

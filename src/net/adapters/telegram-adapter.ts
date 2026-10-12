@@ -5,8 +5,8 @@ import { Bot } from "grammy";
 import { redeemLinkCode } from "../../engine/commands/link";
 import { Logger } from "../../engine/logger";
 import type { Connection, Perception } from "../../types";
-import type { Adapter, AdapterContext } from "./adapter";
 import { formatPerception } from "../formatter";
+import type { Adapter, AdapterContext } from "./adapter";
 
 /** Module logger: Telegram adapter lifecycle and handler failures. */
 const logger = new Logger();

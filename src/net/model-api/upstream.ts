@@ -17,13 +17,13 @@ import { settleProxyCall } from "../../engine/proxy-settlement";
 import { dailyCapRefusal, recordSpend } from "../../engine/spend-ledger";
 import type { EngineEvent, EntityId } from "../../types";
 import { estimatePrefixTokens, minCacheableTokens } from "../adapters/anthropic-tools";
-import { getDefaultUpstreamModel } from "../model/default-models";
 import {
   encodeMemoryReceiptAttribute,
   encodeMemoryReceiptHeader,
   MEMORY_RECEIPT_HEADER,
   type MemoryReceipt,
 } from "../memory/memory-receipt";
+import { getDefaultUpstreamModel } from "../model/default-models";
 import {
   isLocalProvider,
   LOCAL_PROVIDERS,

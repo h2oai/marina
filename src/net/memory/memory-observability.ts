@@ -47,6 +47,7 @@ import { residentMemoryOperation } from "../../memory/resident-service";
 import type { MarinaDB, NoteRow } from "../../persistence/database";
 import type { MemoryAnswer } from "../../sdk/memory-answer";
 import type { EngineEvent } from "../../types";
+import { responseCacheCounters } from "../response-cache";
 import type {
   MemoryCreditView,
   MemoryGraph,
@@ -62,7 +63,6 @@ import type {
   MemoryResolutionView,
 } from "./memory-observability-types";
 import { memoryObserver } from "./memory-visibility";
-import { responseCacheCounters } from "../response-cache";
 
 // ─── Scope ──────────────────────────────────────────────────────────────────
 

@@ -27,13 +27,13 @@ import {
   type PassthruIdentity,
   resolvePassthruIdentity,
 } from "../model/passthru-context";
+import { chatToolCallsToResponses, type ResponsesFunctionCall } from "../model/responses-tools";
 import {
   lookupResponseCache,
   RESPONSE_CACHE_HEADER,
   responseCacheEnabled,
   storeResponseCache,
 } from "../response-cache";
-import { chatToolCallsToResponses, type ResponsesFunctionCall } from "../model/responses-tools";
 import {
   type CompletionUsage,
   isInternalCaller,

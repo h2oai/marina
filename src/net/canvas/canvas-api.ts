@@ -10,11 +10,11 @@ import { validatePanelDocument } from "../../sdk/panel-document";
 import type { StorageProvider } from "../../storage/provider";
 import type { EntityId } from "../../types";
 import { authenticateRequest, refuseOpenApiWrite } from "../auth-middleware";
+import { corsHeaders } from "../cors";
+import { consumeHttpRate, rateLimitedResponse, readJsonBody } from "../http-utils";
 import { handlePanelInteraction } from "./canvas-panel-api";
 import { buildCanvasPrincipal, resolveCanvasHttpPrincipal } from "./canvas-principal";
 import { authorizeCanvasSubscription, type CanvasBroadcaster } from "./canvas-ws";
-import { corsHeaders } from "../cors";
-import { consumeHttpRate, rateLimitedResponse, readJsonBody } from "../http-utils";
 
 const CANVAS_NODE_TYPES = new Set([
   "image",

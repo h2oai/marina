@@ -10,11 +10,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { resolveModel } from "../src/agent/lean-agent-adapter";
 import { Engine } from "../src/engine/engine";
+import { HUGGINGFACE_ENV_KEYS } from "../src/net/model/model-discovery";
 import {
   configuredUpstreamProviders,
   describeDefaultUpstream,
 } from "../src/net/model-api/upstream";
-import { HUGGINGFACE_ENV_KEYS } from "../src/net/model/model-discovery";
 import { roomId } from "../src/types";
 
 const KEYS = [

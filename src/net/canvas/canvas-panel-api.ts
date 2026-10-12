@@ -14,9 +14,9 @@ import { panelRecord, validatePanelDocument } from "../../sdk/panel-document";
 import type { StorageProvider } from "../../storage/provider";
 import type { EntityId } from "../../types";
 import { authenticateRequest } from "../auth-middleware";
-import type { CanvasBroadcaster } from "./canvas-ws";
 import { authorizePrivileged } from "../dashboard-api/shared";
 import { readJsonBody } from "../http-utils";
+import type { CanvasBroadcaster } from "./canvas-ws";
 
 interface InteractionContext {
   req: Request;

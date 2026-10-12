@@ -21,12 +21,7 @@ import { inferCrewResponder } from "../../agent/agent-runtime";
 import { operatorStatusOf } from "../../agent/lean-agent-adapter";
 import type { PlatformMemoryBackend } from "../../agent/memory-platform";
 import { getLeanSystemPrompt, LEAN_SYSTEM_PROMPT_BYTE_CAP } from "../../agent/prompts/lean-system";
-import {
-  createProfileToolset,
-  deferredToolsEnabled,
-  type ToolContext,
-  type ToolProfile,
-} from "../../agent/tools";
+import { createProfileToolset, deferredToolsEnabled, type ToolContext } from "../../agent/tools";
 import { RateLimiter } from "../../auth/rate-limiter";
 import { decisionConfigFromEnv } from "../../decisions/config";
 import { harnessGateEnabled } from "../../decisions/engines";

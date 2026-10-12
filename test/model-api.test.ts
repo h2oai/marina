@@ -7,8 +7,8 @@ import type { ChannelManager } from "../src/coordination/channel-manager";
 import { Engine } from "../src/engine/engine";
 import { projectTraces } from "../src/engine/trace-projection";
 import { getActiveAliases } from "../src/net/adapters/compat-profiles";
-import { getDefaultUpstreamModel } from "../src/net/model/default-models";
 import { MEMORY_RECEIPT_HEADER, parseMemoryReceipt } from "../src/net/memory/memory-receipt";
+import { getDefaultUpstreamModel } from "../src/net/model/default-models";
 import {
   extractStrategy,
   handleModelApi,
@@ -22,7 +22,10 @@ import {
   tryVerifiedArithmetic,
 } from "../src/net/model/model-api";
 import { setEndpointConfig } from "../src/net/model/model-endpoint";
-import { INJECTION_MARKER, resetPassthruCaptureDedupForTests } from "../src/net/model/passthru-context";
+import {
+  INJECTION_MARKER,
+  resetPassthruCaptureDedupForTests,
+} from "../src/net/model/passthru-context";
 import { MarinaDB } from "../src/persistence/database";
 import { type EngineEvent, roomId } from "../src/types";
 import { FIXTURE_QUERY, seedUnifiedFixture } from "./fixtures/unified-memory-fixture";

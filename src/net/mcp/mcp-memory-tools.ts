@@ -14,9 +14,9 @@ import {
   memoryOperationError,
   runMemoryOperation,
 } from "../../sdk/memory-operations";
+import { registerMemoryResources } from "../memory/memory-mcp-resources";
 import { mcpJsonSchema } from "./mcp-json-schema";
 import type { McpResult } from "./mcp-types";
-import { registerMemoryResources } from "../memory/memory-mcp-resources";
 
 export function memoryMcpResult(result: MemoryOperationResult): McpResult {
   return {

@@ -6,12 +6,12 @@ import { AgentRuntime } from "../src/agent/agent-runtime";
 import { resolveModel } from "../src/agent/lean-agent-adapter";
 import { decisionConfigFromEnv } from "../src/decisions/config";
 import { Engine } from "../src/engine/engine";
-import { describeDefaultUpstream } from "../src/net/model-api/upstream";
 import {
   HUGGINGFACE_ENV_KEYS,
   MODEL_DISCOVERY_PROVIDERS,
   parseProviderResponse,
 } from "../src/net/model/model-discovery";
+import { describeDefaultUpstream } from "../src/net/model-api/upstream";
 import { roomId } from "../src/types";
 
 /** Every cloud key the fallback order consults — hidden so a local .env can't win. */

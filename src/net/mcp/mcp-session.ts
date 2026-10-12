@@ -11,10 +11,10 @@ import { buildUnifiedContext, renderUnifiedContext } from "../../memory/unified-
 import type { MemoryOperationResult } from "../../sdk/memory-operations";
 import type { EntityId } from "../../types";
 import { formatPerception } from "../formatter";
+import { receiptForUnifiedContext } from "../memory/memory-receipt";
 import { mcpAdmission } from "./mcp-admission";
 import { memoryMcpResult } from "./mcp-memory-tools";
 import { errorText, type McpResult, type McpSession, text } from "./mcp-types";
-import { receiptForUnifiedContext } from "../memory/memory-receipt";
 
 const logger = new Logger();
 
