@@ -113,11 +113,13 @@ let originalFetch: typeof fetch;
 let dir: string;
 let db: MarinaDB;
 let engine: Engine;
-let calls: { model: unknown; checker: boolean; user: string }[];
+let calls: { model: unknown; checker: boolean; reviewer: boolean; user: string }[];
 /** The k-th proposer draft (0-based, in call order). */
 let drafts: Array<Record<string, unknown>>;
 let checkerReply: string;
 let checkerStatus: number | undefined;
+/** The verify checker's reply (`marina/verify`'s review of the picked draft). */
+let reviewReply: string;
 
 beforeEach(() => {
   saved = new Map(ENV.map((k) => [k, process.env[k]]));
@@ -129,6 +131,7 @@ beforeEach(() => {
   drafts = [];
   checkerReply = '{"pick":1,"reason":"first"}';
   checkerStatus = undefined;
+  reviewReply = '{"verdict":"approve","issues":""}';
   let proposer = 0;
   originalFetch = globalThis.fetch;
   globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
@@ -143,12 +146,15 @@ beforeEach(() => {
       .map((m) => String(m.content))
       .join("\n");
     const checker = system.includes("You choose the best of several DRAFT");
-    calls.push({ model: body.model, checker, user });
+    const reviewer = system.includes("You review an assistant's DRAFT");
+    calls.push({ model: body.model, checker, reviewer, user });
     if (checker && checkerStatus)
       return Response.json({ error: { message: "down" } }, { status: checkerStatus });
     const message = checker
       ? { role: "assistant", content: checkerReply }
-      : (drafts[proposer++] ?? call("cancel_order", '{"id":7}'));
+      : reviewer
+        ? { role: "assistant", content: reviewReply }
+        : (drafts[proposer++] ?? call("cancel_order", '{"id":7}'));
     return Response.json({
       id: "chatcmpl-1",
       object: "chat.completion",
@@ -287,10 +293,6 @@ describe("POST /v1/chat/completions with the ensemble", () => {
   });
 
   it("refuses what it cannot honour", async () => {
-    const both = await post("/v1/chat/completions", request(MODEL), {
-      "x-marina-stack": "ensemble,verify",
-    });
-    expect(both?.status).toBe(400);
     const n = await post("/v1/chat/completions", request(MODEL, { n: 2 }), STACK);
     expect(n?.status).toBe(400);
     const one = await post("/v1/chat/completions", request(`marina/ensemble:${MODEL}`));
@@ -300,6 +302,123 @@ describe("POST /v1/chat/completions with the ensemble", () => {
       request(`marina/ensemble:${MODEL},not-a-provider-model`),
     );
     expect(unknown?.status).toBe(400);
+    expect(calls).toHaveLength(0);
+  });
+});
+
+const say = (content: string) => ({ role: "assistant", content });
+
+describe("the ensemble with verify", () => {
+  it("verify reviews the picked draft; both headers and both members are reported", async () => {
+    drafts = [
+      call("cancel_order", '{"id":8}'),
+      call("cancel_order", '{"id":9}'),
+      call("cancel_order", '{"id":7,"note":"the named order"}'),
+    ];
+    checkerReply = '{"pick":3,"reason":"id 7 is the one the user named"}';
+    const resp = await post("/v1/chat/completions", request(MODEL), {
+      "x-marina-stack": "ensemble,verify",
+    });
+    expect(resp?.status).toBe(200);
+    expect(resp?.headers.get("x-marina-stack")).toBe("lessons,verify,ensemble; source=header");
+    expect(resp?.headers.get("x-marina-ensemble")).toBe("picked=3/3; drafts=3/3; picked");
+    expect(resp?.headers.get("x-marina-verify")).toBe("approved");
+    const j = (await resp!.json()) as Completion;
+    expect(j.choices[0]!.message.tool_calls?.[0]?.function.arguments).toContain("the named order");
+    expect(j.usage.total_tokens).toBe(60); // 3 drafts + the pick + the review
+    // Order: drafts, then the pick, then verify's review of the PICKED draft only.
+    expect(calls.map((c) => (c.checker ? "pick" : c.reviewer ? "review" : "draft"))).toEqual([
+      "draft",
+      "draft",
+      "draft",
+      "pick",
+      "review",
+    ]);
+    const review = calls.find((c) => c.reviewer)!;
+    expect(review.user).toContain("the named order");
+    expect(review.user).not.toContain('"id":8');
+    expect(review.user).not.toContain('"id":9');
+  });
+
+  it("a flagged pick is revised by ITS proposer in one call, not a second ensemble", async () => {
+    drafts = [say("Order 8 is cancelled."), say("I will cancel order 7."), say("Cancelling 7.")];
+    checkerReply = '{"pick":2,"reason":"names the right order"}';
+    reviewReply = '{"verdict":"revise","issues":"Call cancel_order for order 7 instead."}';
+    const model = `marina/ensemble:${MODEL},openrouter/anthropic/claude-opus-5.5`;
+    const resp = await post("/v1/chat/completions", request(model), { "x-marina-stack": "verify" });
+    expect(resp?.status).toBe(200);
+    expect(resp?.headers.get("x-marina-verify")).toBe("revised");
+    expect(resp?.headers.get("x-marina-ensemble")).toBe("picked=2/2; drafts=2/2; picked");
+    expect(resp?.headers.get("x-marina-stack")).toBe("lessons,verify,ensemble; source=header");
+    const j = (await resp!.json()) as {
+      model: string;
+      choices: { message: { content?: string } }[];
+    };
+    expect(j.model).toBe(model);
+    expect(j.choices[0]!.message.content).toBe("Cancelling 7.");
+    // Two drafts, then ONE revision by the picked draft's proposer.
+    expect(calls.filter((c) => !c.checker && !c.reviewer).map((c) => c.model)).toEqual([
+      "openai/gpt-6.1-sol",
+      "anthropic/claude-opus-5.5",
+      "anthropic/claude-opus-5.5",
+    ]);
+    expect(calls.filter((c) => c.checker)).toHaveLength(1);
+  });
+
+  it("a pick outage is still labelled checker-unavailable, and verify still reviews", async () => {
+    drafts = [
+      call("cancel_order", '{"id":8}'),
+      call("cancel_order", '{"id":7}'),
+      call("cancel_order", '{"id":7}'),
+    ];
+    checkerStatus = 500;
+    const resp = await post("/v1/chat/completions", request(`marina/verify:${MODEL}`), STACK);
+    expect(resp?.status).toBe(200);
+    expect(resp?.headers.get("x-marina-ensemble")).toBe(
+      "picked=2/3; drafts=3/3; checker-unavailable",
+    );
+    expect(resp?.headers.get("x-marina-verify")).toBe("approved");
+    const review = calls.find((c) => c.reviewer)!;
+    expect(review.user).not.toContain('"id":8');
+  });
+
+  it("the obligations ledger and the argument check still wrap the formation", async () => {
+    const resp = await post("/v1/chat/completions", request(MODEL), {
+      "x-marina-stack": "ensemble,verify,obligations,argcheck",
+    });
+    expect(resp?.status).toBe(200);
+    expect(resp?.headers.get("x-marina-stack")).toBe(
+      "lessons,obligations,argcheck,verify,ensemble; source=header",
+    );
+    expect(resp?.headers.get("x-marina-argcheck")).toBeTruthy();
+    expect(resp?.headers.get("x-marina-verify")).toBeTruthy();
+    expect(resp?.headers.get("x-marina-ensemble")).toContain("unanimous");
+  });
+
+  it("streaming keeps verify's refusal; under `full` verify is skipped and the pick streams", async () => {
+    const listed = await post("/v1/chat/completions", request(MODEL, { stream: true }), {
+      "x-marina-stack": "ensemble,verify",
+    });
+    expect(listed?.status).toBe(400);
+    expect(calls).toHaveLength(0);
+    const full = await post(
+      "/v1/chat/completions",
+      request(`marina/ensemble:${MODEL},${MODEL}`, { stream: true }),
+      { "x-marina-stack": "full" },
+    );
+    expect(full?.headers.get("content-type")).toContain("text/event-stream");
+    expect(full?.headers.get("x-marina-stack")).toContain("ensemble");
+    expect(full?.headers.get("x-marina-stack")).toContain("skipped=verify(");
+    expect(full?.headers.get("x-marina-verify")).toBeNull();
+  });
+
+  it("a listed panel keeps its reachability rule under verify", async () => {
+    const resp = await post(
+      "/v1/chat/completions",
+      request(`marina/ensemble:${MODEL},not-a-provider-model`),
+      { "x-marina-stack": "verify" },
+    );
+    expect(resp?.status).toBe(400);
     expect(calls).toHaveLength(0);
   });
 });

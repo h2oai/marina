@@ -15,6 +15,10 @@
 // Fails open: a checker outage, an unparseable verdict or a failed revision
 // returns the proposer's draft unchanged (the verifier accepts on outage, as
 // in `src/decisions/policy.ts`).
+//
+// With the `ensemble` stack member (or a `marina/ensemble:` panel) the first
+// draft is the ensemble's pick (`VerifyExtras.draft`): ensemble first, then
+// this review; a revision is one call by the picked draft's proposer.
 
 import { availableModels } from "../../agent/available-models";
 import { type DefaultSlotReader, resolveDefault } from "../../engine/default-resolution";
@@ -686,21 +690,7 @@ async function callUpstream(
     { routeKind: "passthru", routeReason: reason, ...(entityId ? { entityId } : {}) },
     { clientSignal: signal, providerFallback: false, ...(trailingNote ? { trailingNote } : {}) },
   );
-  const raw = await resp.text();
-  const cost = Number(resp.headers.get(COST_USD_HEADER));
-  let parsed: Record<string, unknown> | undefined;
-  try {
-    parsed = JSON.parse(raw) as Record<string, unknown>;
-  } catch {
-    // allow-empty-catch: a non-JSON body is reported through `text`
-  }
-  return {
-    ok: resp.ok,
-    status: resp.status,
-    ...(parsed ? { body: parsed } : {}),
-    text: raw,
-    ...(Number.isFinite(cost) ? { costUsd: cost } : {}),
-  };
+  return callResult(resp);
 }
 
 export function firstMessage(body: Record<string, unknown> | undefined): Msg | undefined {
@@ -780,6 +770,51 @@ export interface VerifyExtras {
    * shared or anonymous caller).
    */
   context?: string;
+  /**
+   * Where the FIRST draft comes from instead of one proposer call: the
+   * ensemble (`ensemble.ts`, injected by the caller so `verify.ts` stays below
+   * it). It gets the proposer note and what the checker sees, and returns its
+   * picked completion and the proposer that wrote it. Verify then reviews that
+   * draft exactly like a single proposer's; a revision is ONE call by the
+   * named proposer (the ensemble is not re-run), and output repair runs once,
+   * on the final message.
+   */
+  draft?: (input: VerifyDraftInput) => Promise<{ response: Response; proposer?: string }>;
+  /** The model id reported back (default: the `marina/verify:` id). */
+  displayModel?: string;
+}
+
+/** What a draft source (`VerifyExtras.draft`) is given. */
+export interface VerifyDraftInput {
+  /** The resolved proposer (the ensemble's sampled model when it has no panel). */
+  proposer: string;
+  /** The resolved checker (the ensemble's picker too). */
+  checker: string;
+  /** The proposer's trailing note: lessons, then `VerifyExtras.note`. */
+  note?: string;
+  /** What the checker sees beside the conversation: lessons and the caller's context. */
+  checkerNotes?: string;
+  entityId?: EntityId;
+  signal?: AbortSignal;
+}
+
+/** An upstream (or draft source's) reply as one inner call's result. */
+async function callResult(resp: Response): Promise<CallResult> {
+  const raw = await resp.text();
+  const cost = Number(resp.headers.get(COST_USD_HEADER));
+  let parsed: Record<string, unknown> | undefined;
+  try {
+    parsed = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    // allow-empty-catch: a non-JSON body is reported through `text`
+  }
+  return {
+    ok: resp.ok,
+    status: resp.status,
+    ...(parsed ? { body: parsed } : {}),
+    text: raw,
+    ...(Number.isFinite(cost) ? { costUsd: cost } : {}),
+  };
 }
 
 /**
@@ -863,20 +898,43 @@ export async function maybeVerifyChat(
   const messages = callerMessages;
   const lessonsHeader = lessonsHeaderValue(lessons);
 
-  // 1. Proposer draft.
-  const first = await callUpstream(
-    engine,
-    body,
-    spec.proposer,
-    signal,
-    "verify:proposer",
-    entityId,
-    proposerNote,
-  );
+  // 1. Proposer draft (or the draft source's pick, e.g. the ensemble).
+  let proposer = spec.proposer;
+  let sourceHeaders: Record<string, string> = {};
+  let first: CallResult;
+  if (extras.draft) {
+    const checkerNotes = joinNotes(block, extras.context);
+    const source = await extras.draft({
+      proposer: spec.proposer,
+      checker: spec.checker,
+      ...(proposerNote ? { note: proposerNote } : {}),
+      ...(checkerNotes ? { checkerNotes } : {}),
+      ...(entityId ? { entityId } : {}),
+      ...(signal ? { signal } : {}),
+    });
+    const ensembleHeader = source.response.headers.get("x-marina-ensemble");
+    if (ensembleHeader) sourceHeaders = { "x-marina-ensemble": ensembleHeader };
+    if (source.proposer) proposer = source.proposer;
+    first = await callResult(source.response);
+  } else {
+    first = await callUpstream(
+      engine,
+      body,
+      spec.proposer,
+      signal,
+      "verify:proposer",
+      entityId,
+      proposerNote,
+    );
+  }
   if (!first.ok || !first.body) {
     return new Response(first.text ?? "", {
       status: first.status,
-      headers: { "content-type": "application/json", "x-request-id": requestId },
+      headers: {
+        "content-type": "application/json",
+        "x-request-id": requestId,
+        ...sourceHeaders,
+      },
     });
   }
   let final = first.body;
@@ -930,7 +988,7 @@ export async function maybeVerifyChat(
     const revised = await callUpstream(
       engine,
       body,
-      spec.proposer,
+      proposer,
       signal,
       "verify:revision",
       entityId,
@@ -962,7 +1020,7 @@ export async function maybeVerifyChat(
   let repairLabel: RepairLabel | undefined;
   const finalMessage = firstMessage(final);
   if (tools?.length && finalMessage) {
-    const repairModel = repairModelFor(engine, spec.proposer, pin);
+    const repairModel = repairModelFor(engine, proposer, pin);
     const repaired = await repairToolCallMessage({
       message: finalMessage,
       tools,
@@ -998,15 +1056,16 @@ export async function maybeVerifyChat(
     phase: "completed",
     requestId,
     ...requestTrace(requestId),
-    model,
-    target: spec.proposer,
+    model: extras.displayModel ?? model,
+    target: proposer,
     routeKind: "passthru",
     ...(entityId ? { entityId } : {}),
     routeReason: `verify:${verdictLabel}${repairLabel ? `+${repairLabel}` : ""}`,
     timestamp: Date.now(),
   });
-  return json({ ...final, model, ...(usage ? { usage } : {}) }, 200, {
+  return json({ ...final, model: extras.displayModel ?? model, ...(usage ? { usage } : {}) }, 200, {
     "x-request-id": requestId,
+    ...sourceHeaders,
     "x-marina-verify": verdictLabel,
     "x-marina-lessons": lessonsHeader,
     ...(repairLabel ? { "x-marina-repair": repairLabel } : {}),

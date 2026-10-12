@@ -15,6 +15,9 @@
 // `full` (it multiplies upstream calls). The obligations ledger and the
 // argument check wrap it like a single upstream call (a nudge re-runs the
 // ensemble); output repair applies to the picked draft as in `verify`.
+// With `verify` it is verify's draft source (`VerifyExtras.draft`): the pick
+// is reviewed exactly like a single proposer's draft, a revision is ONE call
+// by the picked draft's proposer, and repair runs once, on verify's final.
 // A checker outage fails open to the first draft of the largest group that
 // shares its state-changing calls (else the first valid draft), labelled.
 
@@ -258,6 +261,15 @@ export interface EnsembleTurn {
   displayModel: string;
   entityId?: EntityId;
   signal?: AbortSignal;
+  /** Output repair on the pick (default true). Off when `verify` reviews the pick:
+   *  verify repairs its final message once. */
+  repair?: boolean;
+}
+
+/** An ensemble turn's reply and the proposer whose draft it carries (none on failure). */
+export interface EnsembleResult {
+  response: Response;
+  proposer?: string;
 }
 
 /**
@@ -266,6 +278,11 @@ export interface EnsembleTurn {
  * when no draft came back.
  */
 export async function runEnsembleTurn(engine: Engine, t: EnsembleTurn): Promise<Response> {
+  return (await ensembleTurn(engine, t)).response;
+}
+
+/** `runEnsembleTurn`, also naming the picked draft's proposer (verify's reviser). */
+export async function ensembleTurn(engine: Engine, t: EnsembleTurn): Promise<EnsembleResult> {
   const requestId = generateRequestId();
   const o = {
     ...(t.signal ? { signal: t.signal } : {}),
@@ -291,14 +308,16 @@ export async function runEnsembleTurn(engine: Engine, t: EnsembleTurn): Promise<
   const valid = drafts.flatMap((d, i) => (d.ok && d.message ? [i] : []));
   if (valid.length === 0) {
     const first = drafts[0]!;
-    return new Response(first.text, {
-      status: first.ok ? 502 : first.status,
-      headers: {
-        "content-type": "application/json",
-        "x-request-id": requestId,
-        [ENSEMBLE_HEADER]: `picked=0/${n}; drafts=0/${n}; no-draft`,
-      },
-    });
+    return {
+      response: new Response(first.text, {
+        status: first.ok ? 502 : first.status,
+        headers: {
+          "content-type": "application/json",
+          "x-request-id": requestId,
+          [ENSEMBLE_HEADER]: `picked=0/${n}; drafts=0/${n}; no-draft`,
+        },
+      }),
+    };
   }
   const validMessages = valid.map((i) => drafts[i]!.message!);
   let picked = valid[0]!;
@@ -337,7 +356,7 @@ export async function runEnsembleTurn(engine: Engine, t: EnsembleTurn): Promise<
   // the write-guard rules), as `verify` does. Off with MARINA_OUTPUT_REPAIR=off.
   let repairLabel: RepairLabel | undefined;
   const pickedMessage = firstMessage(final);
-  if (tools?.length && pickedMessage) {
+  if (t.repair !== false && tools?.length && pickedMessage) {
     const repairModel = repairModelFor(engine, t.proposers[picked]!, t.pin);
     const repaired = await repairToolCallMessage({
       message: pickedMessage,
@@ -382,12 +401,13 @@ export async function runEnsembleTurn(engine: Engine, t: EnsembleTurn): Promise<
     routeReason: `ensemble:${label}:${picked + 1}/${n}:drafts=${valid.length}${repairLabel ? `+${repairLabel}` : ""}`,
     timestamp: Date.now(),
   });
-  return json({ ...final, model: t.displayModel, ...(usage ? { usage } : {}) }, 200, {
+  const response = json({ ...final, model: t.displayModel, ...(usage ? { usage } : {}) }, 200, {
     "x-request-id": requestId,
     [ENSEMBLE_HEADER]: `picked=${picked + 1}/${n}; drafts=${valid.length}/${n}; ${label}`,
     ...(repairLabel ? { "x-marina-repair": repairLabel } : {}),
     [COST_USD_HEADER]: cost.toFixed(8),
   });
+  return { response, proposer: t.proposers[picked]! };
 }
 
 type ToolCallOut = { id?: string; type?: string; function?: { name?: string; arguments?: string } };
