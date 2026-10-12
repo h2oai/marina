@@ -121,6 +121,16 @@ export interface JudgeOutcome {
   error?: string;
 }
 
+/**
+ * The grader's request headers: `x-marina-stack: none`. Under the identified
+ * default (a bound key, or any caller under the local profile) a Marina /v1
+ * gives a request the passthru instrument stack (lessons, obligations, argument
+ * check, learn) without asking. The official grader must stay the same prompt
+ * in every arm, so it opts out explicitly; the endpoint's own opt-in headers
+ * (`x-marina-eval`, `x-marina-lessons`) are for the agent, never the grader.
+ */
+export const GRADER_HEADERS: Readonly<Record<string, string>> = { "x-marina-stack": "none" };
+
 /** The official grader with the official sampling (thinking off), through Marina. */
 export async function judgeAnswer(
   cfg: JudgeConfig,
@@ -130,7 +140,7 @@ export async function judgeAnswer(
 ): Promise<JudgeOutcome> {
   const prompt = graderPrompt(question, response, correctAnswer);
   const doFetch = cfg.endpoint.fetch ?? fetch;
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const headers: Record<string, string> = { "Content-Type": "application/json", ...GRADER_HEADERS };
   if (cfg.endpoint.apiKey) headers.Authorization = `Bearer ${cfg.endpoint.apiKey}`;
   try {
     cfg.endpoint.guard?.check();

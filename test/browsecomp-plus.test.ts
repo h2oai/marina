@@ -45,6 +45,7 @@ import {
 } from "../benchmarks/browsecomp-plus/official";
 import {
   type ArmConfig,
+  judgeAnswer,
   prepareReplicateDir,
   readFiled,
   resolveArmGroup,
@@ -810,5 +811,42 @@ describe("Marina opt-in headers", () => {
     );
     expect(seen?.get("x-marina-eval")).toBe("benchmark=Tevatron/browsecomp-plus; mode=measure");
     expect(seen?.get("x-marina-lessons")).toBe("on");
+  });
+
+  it("the official grader opts out of the instrument stack and never carries the agent's opt-ins", async () => {
+    let seen: Headers | undefined;
+    const fetchStub = (async (_url: string | URL | Request, init?: RequestInit) => {
+      seen = new Headers(init?.headers);
+      return Response.json({
+        choices: [
+          {
+            message: {
+              role: "assistant",
+              content: "extracted_final_answer: a\ncorrect: yes\nconfidence: 90%",
+            },
+          },
+        ],
+      });
+    }) as typeof fetch;
+    const out = await judgeAnswer(
+      {
+        model: "judge",
+        timeoutMs: 5000,
+        endpoint: {
+          baseUrl: "http://localhost:3300",
+          apiKey: "k",
+          fetch: fetchStub,
+          headers: { "x-marina-eval": "benchmark=x; mode=measure", "x-marina-lessons": "on" },
+        },
+      },
+      "q",
+      "r",
+      "a",
+    );
+    expect(out.result.correct).toBe(true);
+    expect(seen?.get("x-marina-stack")).toBe("none");
+    expect(seen?.get("x-marina-lessons")).toBeNull();
+    expect(seen?.get("x-marina-eval")).toBeNull();
+    expect(seen?.get("authorization")).toBe("Bearer k");
   });
 });

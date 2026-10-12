@@ -148,7 +148,7 @@ is recorded in the run's metadata; report such a run as a Marina harness, not th
   `bun run corpus vectors import` instead of embedding the corpus; queries are then embedded by the
   configured endpoint with the official query instruction (`--query-prefix`).
 
-**The judge.** It is the official grader prompt, with the official sampling: temperature 0.7, top-p 0.8, top-k 20, 4,096 tokens, thinking off. It runs through the same Marina server under `--judge-model` (default `openrouter/qwen/qwen3-32b`, the official Qwen3-32B). As in the official evaluator, an incomplete run is never judged.
+**The judge.** It is the official grader prompt, with the official sampling: temperature 0.7, top-p 0.8, top-k 20, 4,096 tokens, thinking off. It runs through the same Marina server under `--judge-model` (default `openrouter/qwen/qwen3-32b`, the official Qwen3-32B). Every grader call sends `x-marina-stack: none` and none of the agent's opt-in headers, so the passthru instrument stack (which an identified caller gets by default) never changes the grader prompt in any arm. As in the official evaluator, an incomplete run is never judged.
 
 **Metrics.** These match `evaluate_run.py`:
 
