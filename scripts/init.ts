@@ -116,7 +116,7 @@ const PROVIDERS: { name: string; env: string; url: string; model: string; authHe
     name: "openrouter",
     env: "OPENROUTER_API_KEY",
     url: "https://openrouter.ai/api/v1/chat/completions",
-    model: "anthropic/claude-opus-5.5",
+    model: "google/gemini-3.1-pro-preview",
     authHeader: "Bearer",
   },
 ];

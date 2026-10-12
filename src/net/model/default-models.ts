@@ -16,7 +16,9 @@ export const BUILTIN_DEFAULT_MODELS: Record<string, string> = {
   ANTHROPIC_API_KEY: "claude-opus-5-5",
   OPENAI_API_KEY: "gpt-6.1-sol",
   GEMINI_API_KEY: "gemini-3.1-pro-preview",
-  OPENROUTER_API_KEY: "anthropic/claude-opus-5.5",
+  // OpenRouter carries models from vendors OTHER than Anthropic and OpenAI,
+  // whose models go through their own keys (`vendorModelSpec`).
+  OPENROUTER_API_KEY: "google/gemini-3.1-pro-preview",
   GROQ_API_KEY: "openai/gpt-oss-120b",
   HUGGINGFACE_API_KEY: "zai-org/GLM-5.3-Flash",
   // Ids from pi-ai's bundled catalog (native ids, priced there).
@@ -45,4 +47,27 @@ export function getDefaultUpstreamModel(
   const local = LOCAL_DEFAULT_MODEL_KEYS[envKey];
   if (local) return localProviderDefaultModel(local) ?? "default";
   return BUILTIN_DEFAULT_MODELS[envKey] ?? "gpt-6.1-sol";
+}
+
+/** First-party vendors reached through their own key; OpenRouter is only their fallback. */
+const DIRECT_VENDOR_KEYS: Record<string, readonly string[]> = {
+  anthropic: ["ANTHROPIC_API_KEY"],
+  openai: ["OPENAI_API_KEY"],
+};
+
+/**
+ * The model spec for a built-in default that names an Anthropic or OpenAI
+ * model: the vendor's own API when its key is set (`anthropic/claude-opus-5-5`),
+ * else OpenRouter's id for the same model when OpenRouter is configured
+ * (`openrouter/anthropic/claude-opus-5.5`), else undefined. `direct` is the
+ * vendor's native id, `openrouter` OpenRouter's (`<vendor>/<id>`).
+ */
+export function vendorModelSpec(
+  vendor: "anthropic" | "openai",
+  ids: { direct: string; openrouter: string },
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  if (DIRECT_VENDOR_KEYS[vendor]!.some((k) => env[k]?.trim())) return `${vendor}/${ids.direct}`;
+  if (env.OPENROUTER_API_KEY?.trim()) return `openrouter/${ids.openrouter}`;
+  return undefined;
 }

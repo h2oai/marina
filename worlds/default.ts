@@ -22,7 +22,9 @@ function workbenchModel(): string {
   if (process.env.MARINA_WORKBENCH_MODEL) return process.env.MARINA_WORKBENCH_MODEL;
   if (process.env.MARINA_CREW_MODEL) return process.env.MARINA_CREW_MODEL;
   if (process.env.OPENAI_API_KEY) return "openai/gpt-6.1-sol";
-  if (process.env.OPENROUTER_API_KEY) return "openrouter/anthropic/claude-opus-5.5";
+  if (process.env.ANTHROPIC_API_KEY) return "anthropic/claude-opus-5-5";
+  // OpenRouter carries non-Anthropic, non-OpenAI models.
+  if (process.env.OPENROUTER_API_KEY) return "openrouter/google/gemini-3.1-pro-preview";
   if (process.env.HUGGINGFACE_API_KEY || process.env.HF_TOKEN)
     return "huggingface/zai-org/GLM-5.3-Flash";
   return "marina/default";

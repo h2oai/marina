@@ -11,6 +11,7 @@ import { maxRequestBodyBytes } from "../http-utils";
 import { getEndpointConfig } from "../model/model-endpoint";
 import { UnsupportedParameterError } from "../model/openai-errors";
 import { capturePassthruTranscript, type OpenAIMessage } from "../model/passthru-context";
+import { REASONING_EXHAUSTED_CODE } from "../model/reasoning-effort";
 import {
   type ChatToolFields,
   type ResponsesFunctionCall,
@@ -512,13 +513,21 @@ async function runResponsesPassthru(
       })));
   if (!resp.ok) {
     let message = resp.statusText || "Upstream request failed";
+    let exhausted = false;
     try {
-      const data = (await resp.json()) as { error?: { message?: unknown } };
+      const data = (await resp.json()) as { error?: { message?: unknown; code?: unknown } };
       if (typeof data.error?.message === "string") message = data.error.message;
+      exhausted = data.error?.code === REASONING_EXHAUSTED_CODE;
     } catch {
       // Keep the status-derived message.
     }
-    return errorJson(resp.status, message);
+    // A cap spent on reasoning keeps its code, named by this surface's cap field.
+    return exhausted
+      ? errorJson(resp.status, message.replace(/\bmax_tokens\b/g, "max_output_tokens"), {
+          code: REASONING_EXHAUSTED_CODE,
+          ...(resp.status === 400 ? { param: "max_output_tokens" } : {}),
+        })
+      : errorJson(resp.status, message);
   }
   const headers = forwardPassthruHeaders(resp.headers, {
     "X-Conversation-Id": input.conversationId,

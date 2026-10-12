@@ -37,7 +37,9 @@ export type OpenAIErrorCode =
   // A ledger write (POST /v1/benchmarks/runs) by the read-only open-API sentinel.
   | "open_api_read_only"
   // A model id the operator's passthru pin does not allow (marina/verify).
-  | "model_not_allowed";
+  | "model_not_allowed"
+  // The output cap was spent on reasoning before any answer (model/reasoning-effort.ts).
+  | "reasoning_exhausted_output";
 
 export type OpenAIErrorType =
   | "invalid_request_error"

@@ -508,6 +508,17 @@ function usageFromChunk(chunk: Record<string, unknown>): CompletionUsage | undef
   };
 }
 
+/** An `error` frame inside the upstream chat-completions stream, with its code. */
+class UpstreamFrameError extends Error {
+  constructor(
+    message: string,
+    readonly code: string | undefined,
+  ) {
+    super(message);
+    this.name = "UpstreamFrameError";
+  }
+}
+
 /**
  * Stream an upstream chat-completions SSE reply as incremental Responses SSE.
  * `delta.content` → `response.output_text.delta`; `delta.tool_calls` →
@@ -542,10 +553,13 @@ export function responsesPassthruStream(
                 | undefined
             )?.[0];
             incomplete ||= choice?.finish_reason === "length";
-            if (chunk.error)
-              throw new Error(
-                String((chunk.error as { message?: string }).message ?? "Upstream stream failed"),
+            if (chunk.error) {
+              const error = chunk.error as { message?: unknown; code?: unknown };
+              throw new UpstreamFrameError(
+                String(error.message ?? "Upstream stream failed"),
+                typeof error.code === "string" ? error.code : undefined,
               );
+            }
             const delta = choice?.delta ?? {};
             if (typeof delta.content === "string") emitter.textDelta(delta.content);
             if (Array.isArray(delta.marina_reasoning))
@@ -561,7 +575,12 @@ export function responsesPassthruStream(
           abort.signal,
         );
       } catch (e) {
-        if (!cancelled) emitter.fail(`Upstream stream failed: ${getErrorMessage(e)}`);
+        // An upstream error frame keeps its code (e.g. `reasoning_exhausted_output`).
+        if (!cancelled)
+          emitter.fail(
+            `Upstream stream failed: ${getErrorMessage(e)}`,
+            e instanceof UpstreamFrameError ? e.code : undefined,
+          );
         safeClose(controller);
         return;
       }

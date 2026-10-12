@@ -23,6 +23,7 @@
  */
 
 import { promotionMargin } from "../../engine/fishing-margin";
+import { vendorModelSpec } from "../../net/model/default-models";
 import type { NotesStore } from "../../persistence/interfaces/notes-store";
 import type { ArenaData } from "../data";
 import { outcomePublicBeforeLock } from "../evaluate";
@@ -43,9 +44,21 @@ export const SIGNAL_TRACKERS = [
   "wikipedia",
 ];
 
-/** The proposer model: `MARINA_ARENA_PROPOSER`, else Claude Sonnet 5 via OpenRouter. */
+/**
+ * The proposer model: `MARINA_ARENA_PROPOSER`, else Claude Opus 5.5 through
+ * ANTHROPIC_API_KEY, with OpenRouter only as the fallback (`vendorModelSpec`).
+ */
 export function proposerModel(env: NodeJS.ProcessEnv = process.env): string {
-  return env.MARINA_ARENA_PROPOSER?.trim() || "openrouter/anthropic/claude-opus-5.5";
+  return (
+    env.MARINA_ARENA_PROPOSER?.trim() ||
+    vendorModelSpec(
+      "anthropic",
+      { direct: "claude-opus-5-5", openrouter: "anthropic/claude-opus-5.5" },
+      env,
+    ) ||
+    // No key at all: name the direct model, so the missing-key error names its key.
+    "anthropic/claude-opus-5-5"
+  );
 }
 
 export const PROPOSER_SYSTEM = "You design forecasting signals. Reply with one JSON object only.";

@@ -5,7 +5,7 @@ const PROVIDER_DEFAULTS = [
   ["ANTHROPIC_API_KEY", "anthropic", "claude-opus-5-5"],
   ["OPENAI_API_KEY", "openai", "gpt-6.1-sol"],
   ["GEMINI_API_KEY", "google", "gemini-3.1-pro-preview"],
-  ["OPENROUTER_API_KEY", "openrouter", "anthropic/claude-opus-5.5"],
+  ["OPENROUTER_API_KEY", "openrouter", "google/gemini-3.1-pro-preview"],
   ["GROQ_API_KEY", "groq", "openai/gpt-oss-120b"],
   ["HUGGINGFACE_API_KEY", "huggingface", "zai-org/GLM-5.3-Flash"],
 ] as const;
@@ -32,7 +32,7 @@ const FAST_MODELS = [
   ["GROQ_API_KEY", "groq/openai/gpt-oss-120b"],
   ["OPENAI_API_KEY", "openai/gpt-6-luna"],
   ["HUGGINGFACE_API_KEY", "huggingface/zai-org/GLM-5.3-Flash"],
-  ["OPENROUTER_API_KEY", "openrouter/openai/gpt-6-luna"],
+  ["OPENROUTER_API_KEY", "openrouter/google/gemini-3.1-flash-lite"],
   ["ANTHROPIC_API_KEY", "anthropic/claude-sonnet-5"],
 ] as const;
 

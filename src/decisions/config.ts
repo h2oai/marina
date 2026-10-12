@@ -145,7 +145,9 @@ function preset(raw: string | undefined): Preset | undefined {
  * base URL still needs the model named (undefined = decisions stay off).
  */
 export function defaultClassifierModel(baseUrl: string): string | undefined {
-  if (/^https:\/\/openrouter\.ai\//.test(baseUrl)) return "openai/gpt-6.1-sol";
+  // OpenRouter carries non-Anthropic, non-OpenAI models; reasoning is mandatory
+  // for Gemini Pro, so the classifier sends its low-effort directive.
+  if (/^https:\/\/openrouter\.ai\//.test(baseUrl)) return "google/gemini-3.1-pro-preview";
   if (/^https:\/\/router\.huggingface\.co(\/|$)/.test(baseUrl)) return "zai-org/GLM-5.3-Flash";
   return undefined;
 }

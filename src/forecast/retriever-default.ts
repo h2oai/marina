@@ -12,7 +12,7 @@
  * through the configured backend chain and quotes the most relevant passages
  * of the pages it reads.
  */
-export const DEFAULT_RETRIEVER = "openrouter-web:openai/gpt-6.1-sol@exa,search";
+export const DEFAULT_RETRIEVER = "openrouter-web:google/gemini-3.1-pro-preview@exa,search";
 
 /**
  * The retriever spec when MARINA_FORECAST_RETRIEVER is unset: OpenRouter web
