@@ -618,15 +618,15 @@ the session diff and the agent's summary. The exit code says what you can rely o
 
 | Code | Meaning |
 |---|---|
-| `0` | completed, and the run's checks passed (verification `passed`) |
-| `3` | completed but **not verified**: no checks ran, they failed, or the source changed after them. The reason is printed on stderr. `--allow-unverified` makes this `0` (the notice still prints). |
+| `0` | completed, and the run's checks passed (verification `passed`; under `delivery`, every stated requirement observed by a passing check or declared not machine-checkable) |
+| `3` | completed but **not verified**: no checks ran, they failed, the source changed after them, or (under `delivery`) a stated requirement was left unobserved. The reason is printed on stderr. `--allow-unverified` makes this `0` (the notice still prints). |
 | `1` | failed: the agent died mid-task, the run was stopped, or it ended blocked (the reason is printed; edits it made stay in the folder and are listed) |
 | `2` | timed out after `MARINA_CODE_TASK_TIMEOUT_MS` (default 600000 ms); `code stop` was sent |
 
 `--verification <mode>` sets what a one-shot task must verify before it can submit: `checks`
-(default — the project's own checks), `candidate` (a captured Git snapshot), or `delivery` (a JSON
-manifest of output files and checks, run alone in a clean directory with
-`code verify delivery manifest:<path>`). The mode is the task's `code do verification:<mode>`
+(the project's own checks), `candidate` (a captured Git snapshot), or `delivery` (default, or
+`MARINA_CODE_VERIFICATION` — a JSON manifest of output files and checks, run alone in a clean
+directory with `code verify delivery manifest:<path>`). The mode is the task's `code do verification:<mode>`
 requirement; agents still choose the implementation and the checks.
 
 **Time budget.** A one-shot hands its coder a budget slightly inside `MARINA_CODE_TASK_TIMEOUT_MS`
@@ -664,8 +664,12 @@ the full reason a run failed (`null` otherwise); `assumptions` lists the interpr
 where no person could answer (below). The human-readable output prints the same assumptions
 after the summary.
 With `--verification delivery`, `requirements` is `{"listed":…,"verified":[…],"unverified":[…],"notCheckable":[{"text":…,"reason":…}]}`
-(otherwise `null`). A run whose checks passed but left a stated requirement unverified, or
-recorded no checklist, is `unverified` (exit `3`) and the notice names those requirements.
+(otherwise `null`). A run whose checks passed but left a stated requirement unverified, recorded
+no checklist, or declared every requirement not machine-checkable is `unverified` (exit `3`) and
+the notice names those requirements. A requirement declared not machine-checkable beside observed
+ones does not change the status: the run is `verified` (exit `0`), the requirement stays under
+`notCheckable` (never `verified`) and stderr names it. `status` and `exitCode` in the object are
+always the process's own.
 
 ```bash
 marina -p "fix the off-by-one in the tokenizer and add a regression test" ~/projects/acme
@@ -795,10 +799,14 @@ progress, and the reply lists exactly which requirements lack an observing check
 add and map checks, or mark a requirement `notCheckable` with a reason; that marking is recorded
 and shown, never counted as verified. The next submission proceeds (bounded, never a loop). Any
 requirement still unverified is written into the submitted evidence and the terminal lifecycle
-`requirements` field. `marina -p` reports such a run as `unverified`, including when a requirement
-is explicitly not machine-checkable. That still permits submission for owner review;
-`--allow-unverified` permits exit 0 while retaining the unverified status. Other verification modes
-are unchanged.
+`requirements` field. `marina -p` reports such a run as `unverified` (exit `3`). That still
+permits submission for owner review; `--allow-unverified` permits exit 0 while retaining the
+unverified status. A requirement explicitly marked not machine-checkable (a prohibition such as
+"do not read /tests", which no check over delivered files can observe) is accepted by the same
+gate and does not by itself make a run unverified: when the checks passed and every other
+requirement was observed, `marina -p` exits `0` and names the not-machine-checkable ones on
+stderr. A checklist with no observed requirement at all stays `unverified`. Other verification
+modes are unchanged.
 
 Run `code verify delivery manifest:delivery.json`, then inspect the returned receipt with
 `code show <id>`. Marina copies only the listed regular files into a clean directory and

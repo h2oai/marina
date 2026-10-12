@@ -8,7 +8,7 @@
 // A label only: the harness grades the patch, the score never moves.
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -175,6 +175,29 @@ describe("budget-forced Code Mode submissions in the benchmark ledger", () => {
     await f.engine.dispatchCommand(owner.entityId, "benchmark result br_swe_forced");
     await f.engine.drainCommands();
     expect(stripAnsi(owner.connection.allTextJoined())).toContain("1/3 answers forced at a budget");
+  });
+
+  it("reports a forced submit whose checks passed as verified (exit 0), still labelled", async () => {
+    writeFileSync(
+      join(root, "ok.test.ts"),
+      'import {expect,test} from "bun:test"; test("ok",()=>expect(1).toBe(1));',
+    );
+    const run = begin();
+    await send(run, "code recipe save default bun test ok.test.ts");
+    await send(run, "code verify");
+    const now = Date.now();
+    f.db.updateCodingArtifact(run.id, {
+      metadata: {
+        ...codingRunMetadata(f.db.getCodingArtifact(run.id)!),
+        startedAt: now - 590_000,
+        deadlineAt: now + 10_000,
+      },
+    });
+    await send(run, "code summary Best effort at the deadline, checks passed");
+    expect(f.db.getCodingArtifact(run.id)!.status).toBe("submitted");
+    const end = terminal();
+    expect(end).toMatchObject({ verification: "passed", budgetForced: { reason: "deadline" } });
+    expect(printOutcome(end)).toEqual({ status: "verified", exitCode: 0 });
   });
 
   it("labels a budgeted attempt that ended freely false, an unbudgeted or cut-off one unknown", () => {

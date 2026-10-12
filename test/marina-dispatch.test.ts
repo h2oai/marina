@@ -8,6 +8,7 @@ import {
   oneShotBudgetMs,
   PRINT_EXIT,
   printOutcome,
+  printResultJson,
   printVerification,
   projectSlug,
   pushTailLines,
@@ -507,6 +508,111 @@ describe("one-shot exits say whether the work was verified", () => {
     expect(printOutcome({ phase: "failed" })).toEqual({ status: "failed", exitCode: 1 });
     expect(printOutcome(undefined)).toEqual({ status: "failed", exitCode: 1 });
     expect(printOutcome("timeout")).toEqual({ status: "timeout", exitCode: 2 });
+  });
+
+  /** The completion signal exactly as `marina -p` receives it from the server. */
+  const signal = (metadata: Record<string, unknown>) =>
+    terminalCodeLifecycle({
+      kind: "message",
+      text: "",
+      data: { code: { event: "code_lifecycle", phase: "completed", sessionId: "s", metadata } },
+    } as unknown as Perception);
+  const forced = { reason: "deadline", used: 590_000, cap: 600_000 };
+  const coverage = (over: Record<string, unknown> = {}) => ({
+    listed: true,
+    verified: ["writes results.json"],
+    unverified: [],
+    notCheckable: [],
+    ...over,
+  });
+
+  it("maps the recorded verification to the documented exit codes, --json agreeing", () => {
+    const cases: Array<[Record<string, unknown>, string, number]> = [
+      [{ verification: "passed" }, "verified", 0],
+      [{ verification: "passed", requirements: coverage() }, "verified", 0],
+      // A prohibition no check can observe does not unverify an observed delivery.
+      [
+        {
+          verification: "passed",
+          requirements: coverage({
+            notCheckable: [{ text: "do not read /tests", reason: "not a file property" }],
+          }),
+        },
+        "verified",
+        0,
+      ],
+      [{ verification: "passed", budgetForced: forced }, "verified", 0],
+      [{ verification: "missing", verificationReason: "no checks" }, "unverified", 3],
+      [{ verification: "failed", verificationReason: "test failed" }, "unverified", 3],
+      [{ verification: "failed", budgetForced: forced }, "unverified", 3],
+      [{ verification: "stale", budgetForced: forced }, "unverified", 3],
+      [
+        { verification: "passed", requirements: coverage({ unverified: ["keeps order"] }) },
+        "unverified",
+        3,
+      ],
+      [
+        { verification: "passed", requirements: coverage({ listed: false, verified: [] }) },
+        "unverified",
+        3,
+      ],
+      [
+        {
+          verification: "passed",
+          requirements: coverage({
+            verified: [],
+            notCheckable: [{ text: "reads well", reason: "judgement" }],
+          }),
+        },
+        "unverified",
+        3,
+      ],
+    ];
+    for (const [metadata, status, exitCode] of cases) {
+      const end = signal(metadata);
+      const outcome = printOutcome(end);
+      expect({ metadata, status: outcome.status, exitCode: outcome.exitCode }).toEqual({
+        metadata,
+        status: status as typeof outcome.status,
+        exitCode,
+      });
+      const json = JSON.parse(JSON.stringify(printResultJson(outcome, end, [], 1)));
+      expect(json).toMatchObject({
+        status,
+        exitCode,
+        verification: metadata.verification,
+        budgetForced: metadata.budgetForced ?? null,
+        requirements: metadata.requirements ?? null,
+      });
+    }
+  });
+
+  it("names declared not-machine-checkable requirements on a verified run, never as verified", () => {
+    const end = signal({
+      verification: "passed",
+      requirements: coverage({
+        notCheckable: [{ text: "do not read /tests", reason: "not a file property" }],
+      }),
+    });
+    const outcome = printOutcome(end);
+    expect(outcome.notice).toBe(
+      "Verified. Declared not machine-checkable (recorded, not observed by a check): do not read /tests (not machine-checkable: not a file property)",
+    );
+    expect(end?.requirements?.verified).toEqual(["writes results.json"]);
+  });
+
+  it("reports failed and timed-out runs in --json with the process exit code", () => {
+    const failed = { phase: "failed" as const, reason: "blocked", detail: "Blocked: no input" };
+    expect(printResultJson(printOutcome(failed), failed, [], 1)).toMatchObject({
+      status: "failed",
+      exitCode: 1,
+      reason: "Blocked: no input",
+    });
+    expect(printResultJson(printOutcome("timeout"), undefined, [], 1)).toMatchObject({
+      status: "timeout",
+      exitCode: 2,
+      verification: null,
+    });
   });
 
   it("--allow-unverified turns 3 into 0 and still reports it", () => {
