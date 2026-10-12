@@ -920,7 +920,15 @@ container runner):
 1. **Prepare** for the detected project type. A probe checks that the environment has what the
    checks need (`python -m pytest --version`, `go version`, `node_modules` for a package with
    dependencies or workspace links, and so on). A JavaScript installer never runs on a Python project, and the
-   reverse.
+   reverse. When the detected runner is pytest and the probe shows pytest is not importable (and
+   nothing could install it), the tests run instead with the project's own test script
+   (`tests/run_tests.py`, `tests/run_all.py`, `tests/run.py`, `test/run_tests.py`,
+   `test/run_all.py`, unless it imports pytest itself) or `python -m unittest` (discovery, or the
+   relevant test modules by dotted name). The report says so — `runner: unittest (pytest
+   unavailable)`, and `testRunner` in the artifact metadata — and such a run passes only when it
+   reports tests ran (`Ran N tests`, `N passed`); zero tests or silence is `not_run`. `code test`
+   follows the same switch. The fallback command runs through the same allowlist and approval as
+   any other check.
 2. **Type-check**, when the project configures it and the chain does not already run it:
    `tsc --noEmit` for a `tsconfig.json`, `mypy` or `pyright` on the changed Python files.
 3. **Checks and tests**: typecheck → lint → test → build for JavaScript, the project's test
@@ -1239,7 +1247,7 @@ Lockfiles name the dependency manager (`bun.lock`, `pnpm-lock.yaml`, `yarn.lock`
 | --- | --- |
 | Django's own repository (`tests/runtests.py`) | `python tests/runtests.py [labels]` |
 | Django project (`manage.py`) | `python manage.py test [labels]` |
-| Other Python | `python -m pytest [paths or node ids] [-q -x -v]` |
+| Other Python | `python -m pytest [paths or node ids] [-q -x -v]`; without pytest, the project's test script or `python -m unittest` (see step 1 above) |
 | Rust | `cargo test [filter]` |
 | Go | `go test ./... [-count=N -short -v]` |
 | Java (Maven / Gradle) | `mvn -B -q test [-Dtest=Class,…]` / `gradle test -q [--tests Class]` |

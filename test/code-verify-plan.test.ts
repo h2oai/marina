@@ -23,9 +23,11 @@ import {
   findRelevantTests,
   planPreparation,
   preparationStepKind,
+  pythonTestFallback,
   resolveVerificationOptions,
   scopedTestCommand,
   type VerificationStep,
+  withFallbackRunner,
 } from "../src/coding/verification-plan";
 import { codeCommand } from "../src/engine/commands/code";
 import { grant } from "../src/engine/safety-gates";
@@ -320,6 +322,104 @@ describe("preparation by project type", () => {
   });
 });
 
+describe("pytest unavailable: fallback runner", () => {
+  const python = detectProjectRunner({ markers: markers("pyproject.toml") });
+  const host = { installsPermitted: false, hostCandidate: false };
+  let root: string;
+  beforeEach(() => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), "marina-fallback-")));
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  it("switches only when the probe shows pytest is not importable", async () => {
+    const plan = { ...planPreparation(python, "check", host), fallback: "unittest" };
+    const missing = await executePreparation(plan, {
+      runPreparationStep: async (argv) => run(argv, 1, "/usr/bin/python: No module named pytest"),
+    });
+    expect(missing).toMatchObject({ status: "ready", fallback: "unittest" });
+    expect(missing.reason).toContain("tests run with unittest instead");
+    // No interpreter at all is not a pytest problem: still not_run.
+    const noPython = await executePreparation(plan, {
+      runPreparationStep: async (argv) => run(argv, 127, "python: command not found"),
+    });
+    expect(noPython.status).toBe("not_run");
+    expect(noPython.fallback).toBeUndefined();
+    // pytest present: unchanged.
+    const ready = await executePreparation(plan, {
+      runPreparationStep: async (argv) => run(argv, 0, "pytest 8.0.0"),
+    });
+    expect(ready).toMatchObject({ status: "ready", runs: [] });
+    expect(ready.fallback).toBeUndefined();
+    // Without a planned fallback the old contract holds.
+    const plain = await executePreparation(planPreparation(python, "check", host), {
+      runPreparationStep: async (argv) => run(argv, 1, "No module named pytest"),
+    });
+    expect(plain.status).toBe("not_run");
+  });
+
+  it("prefers the project's test script, else unittest discovery", () => {
+    expect(pythonTestFallback(root)).toEqual({
+      command: "python -m unittest discover",
+      runner: "unittest",
+    });
+    write(root, { "tests/test_a.py": "" });
+    expect(pythonTestFallback(root).command).toBe("python -m unittest discover -s tests");
+    write(root, { "tests/__init__.py": "" });
+    expect(pythonTestFallback(root).command).toBe("python -m unittest discover");
+    // A script that itself needs pytest is no fallback.
+    write(root, { "tests/run_tests.py": "import pytest\npytest.main()\n" });
+    expect(pythonTestFallback(root).runner).toBe("unittest");
+    write(root, { "tests/run_all.py": "import unittest\nunittest.main()\n" });
+    expect(pythonTestFallback(root)).toEqual({
+      command: "python tests/run_all.py",
+      runner: "tests/run_all.py",
+    });
+  });
+
+  it("scopes unittest by dotted module and never scopes a script", () => {
+    const relevant = { files: ["tests/test_mod.py"], reasons: ["touched test"], packages: [] };
+    const unittest = withFallbackRunner(python, {
+      command: "python -m unittest discover -s tests",
+      runner: "unittest",
+    });
+    expect(unittest.verify).toEqual(["python -m unittest discover -s tests"]);
+    expect(scopedTestCommand(unittest, relevant)).toBe("python -m unittest tests.test_mod");
+    expect(scopedTestCommand(unittest, { ...relevant, files: ["tests/test-dash.py"] })).toBeNull();
+    const script = withFallbackRunner(python, {
+      command: "python tests/run_all.py",
+      runner: "tests/run_all.py",
+    });
+    expect(scopedTestCommand(script, relevant)).toBeNull();
+    // Every fallback shape is on the ordinary allowlist (no new exec path).
+    write(root, { "tests/run_all.py": "", "tests/test_mod.py": "" });
+    for (const argv of [
+      ["python", "-m", "unittest", "discover", "-s", "tests"],
+      ["python", "-m", "unittest", "discover"],
+      ["python", "-m", "unittest", "tests.test_mod"],
+      ["python", "tests/run_all.py"],
+    ])
+      expect(normalizeAllowedCodeCommand(root, argv)).toEqual(argv);
+  });
+
+  it("a fallback run passes only when it reports tests ran", () => {
+    const step: VerificationStep = {
+      command: "python -m unittest discover",
+      role: "tests",
+      requireTestCount: true,
+    };
+    const argv = ["python", "-m", "unittest", "discover"];
+    expect(classifyStep(step, run(argv, 0, "Ran 3 tests in 0.01s\n\nOK")).outcome).toBe("passed");
+    expect(classifyStep(step, run(argv, 0, "Ran 0 tests in 0.000s\n\nOK")).outcome).toBe("not_run");
+    expect(classifyStep(step, run(argv, 5, "Ran 0 tests\n\nNO TESTS RAN")).outcome).toBe("not_run");
+    expect(classifyStep(step, run(["python", "tests/run_all.py"], 0, "done")).outcome).toBe(
+      "not_run",
+    );
+    expect(classifyStep(step, run(argv, 1, "Ran 2 tests\n\nFAILED (failures=1)")).outcome).toBe(
+      "failed",
+    );
+  });
+});
+
 describe("tests relevant to a change", () => {
   let root: string;
   beforeEach(() => {
@@ -559,11 +659,18 @@ describe("result states", () => {
 
 /** A stand-in `python` that answers like pytest, steered by files in the workspace. */
 const FAKE_PYTHON = `#!/bin/sh
+if [ "$2" = "pytest" ] && [ -f .no-pytest ]; then
+  echo "/usr/bin/python: No module named pytest" >&2; exit 1
+fi
 echo "FAKEPY $*"
 if [ -n "$MARINA_FAKE_CONTAINER" ]; then echo "INSIDE_CONTAINER"; fi
 if [ "$3" = "--version" ]; then
-  if [ -f .no-pytest ]; then echo "No module named pytest" >&2; exit 1; fi
   echo "pytest 8.0.0"; exit 0
+fi
+if [ "$2" = "unittest" ]; then
+  if [ -f .unittest-out ]; then cat .unittest-out >&2; fi
+  if [ -f .unittest-exit ]; then exit "$(cat .unittest-exit)"; fi
+  exit 0
 fi
 if [ -f .pytest-exit ]; then exit "$(cat .pytest-exit)"; fi
 exit 0
@@ -616,7 +723,7 @@ describe("code verify (command level)", () => {
       "pkg/mod.py": "x = 1\n",
       "tests/test_mod.py": "from pkg.mod import x\n",
       "tests/test_other.py": "",
-      ".gitignore": ".no-pytest\n.pytest-exit\n",
+      ".gitignore": ".no-pytest\n.pytest-exit\n.unittest-out\n.unittest-exit\n",
     });
     git(root, "add", ".");
     git(root, "commit", "-qm", "init");
@@ -696,6 +803,8 @@ describe("code verify (command level)", () => {
     expect(meta.preparation.reason).toContain("this is a python project");
     expect(commandsRan()).toEqual(["python -m pytest tests/test_mod.py"]);
     expect(commandsRan().some((c) => c.includes("bun"))).toBe(false);
+    // pytest present: no runner switch.
+    expect(meta.testRunner).toBeUndefined();
   });
 
   it("failed: the relevant tests ran and failed", async () => {
@@ -716,13 +825,93 @@ describe("code verify (command level)", () => {
       "no tests were collected",
     );
     rmSync(join(root, ".pytest-exit"));
+    // dependencies:none skips the probe, so nothing switches runners; pytest is unavailable.
     writeFileSync(join(root, ".no-pytest"), "");
-    await send("code verify");
+    await send("code verify dependencies:none");
     verification = latest("verification");
     expect(verification.status).toBe("not_run");
-    expect(JSON.parse(verification.metadata_json).preparation.outcome).toBe("not_run");
+    expect(JSON.parse(verification.metadata_json).outcomeReason).toContain("runner unavailable");
     expect(sent.join("\n")).toContain("Verification not run");
-    expect(sent.join("\n")).toContain("Checks were not run");
+  });
+
+  it("pytest unavailable: verify runs the relevant tests with unittest and says so", async () => {
+    writeFileSync(join(root, ".no-pytest"), "");
+    writeFileSync(join(root, ".unittest-out"), "..\n------\nRan 2 tests in 0.001s\n\nOK\n");
+    const { send, sent } = await setup();
+    await send("code verify");
+    const verification = latest("verification");
+    const meta = JSON.parse(verification.metadata_json);
+    expect(meta.outcome).toBe("passed");
+    expect(meta.testRunner).toEqual({
+      runner: "unittest",
+      fallbackFrom: "pytest",
+      reason: "pytest unavailable",
+    });
+    expect(meta.preparation.reason).toContain("pytest is not importable");
+    expect(commandsRan()).toEqual(["python -m unittest tests.test_mod"]);
+    expect(sent.join("\n")).toContain("runner: unittest (pytest unavailable)");
+    // A failing unittest run is a real failure.
+    writeFileSync(join(root, ".unittest-exit"), "1");
+    await send("code verify");
+    expect(JSON.parse(latest("verification").metadata_json).outcome).toBe("failed");
+  });
+
+  it("pytest unavailable: zero tests from the fallback is never a pass", async () => {
+    writeFileSync(join(root, ".no-pytest"), "");
+    writeFileSync(join(root, ".unittest-out"), "\n------\nRan 0 tests in 0.000s\n\nOK\n");
+    const { send, sent } = await setup();
+    await send("code verify scope:full");
+    let verification = latest("verification");
+    expect(verification.status).toBe("not_run");
+    expect(commandsRan()).toEqual(["python -m unittest discover -s tests"]);
+    expect(JSON.parse(verification.metadata_json).outcomeReason).toContain("no tests were found");
+    // Silence (no count at all) is not a pass either.
+    rmSync(join(root, ".unittest-out"));
+    await send("code verify scope:full");
+    verification = latest("verification");
+    expect(verification.status).toBe("not_run");
+    expect(JSON.parse(verification.metadata_json).outcomeReason).toContain(
+      "did not report any tests ran",
+    );
+    // code test: same switch, same refusal to call silence a pass.
+    await send("code test");
+    const out = sent.at(-1)!;
+    expect(out).toContain("runner: unittest (pytest unavailable)");
+    expect(out).toContain("Tests not run");
+    expect(latest("command_output").title).toBe("$ python -m unittest discover -s tests");
+  });
+
+  it("pytest unavailable: code test runs the fallback through the approver-attached run path", async () => {
+    writeFileSync(join(root, ".no-pytest"), "");
+    writeFileSync(join(root, ".unittest-out"), "Ran 2 tests in 0.001s\n\nOK\n");
+    // The registry builds a fresh LocalWorkspace per call: observe the prototype.
+    const proto = LocalWorkspace.prototype;
+    const { attachExecApprover, run } = proto;
+    const calls: string[] = [];
+    proto.attachExecApprover = function (this: LocalWorkspace, ...args) {
+      calls.push(`attach ${args[0] ? "approver" : "none"}`);
+      return attachExecApprover.apply(this, args);
+    };
+    proto.run = function (this: LocalWorkspace, ...args) {
+      calls.push(`run ${args[0].join(" ")}`);
+      return run.apply(this, args);
+    };
+    try {
+      const { send, sent } = await setup();
+      await send("code test");
+      expect(sent.at(-1)).toContain("runner: unittest (pytest unavailable)");
+      expect(sent.at(-1)).not.toContain("Tests not run");
+      // The fallback command reaches the same chokepoint as any `code run`:
+      // the approver is attached for the call, then `run` normalizes against
+      // the allowlist (and consults the approver only off it).
+      const ran = calls.indexOf("run python -m unittest discover -s tests");
+      expect(ran).toBeGreaterThan(0);
+      expect(calls[ran - 1]).toMatch(/^attach /);
+      expect(calls.some((call) => call.startsWith("run python -m pytest"))).toBe(false);
+    } finally {
+      proto.attachExecApprover = attachExecApprover;
+      proto.run = run;
+    }
   });
 
   it("error: a container runner that cannot start never falls back to the host", async () => {
