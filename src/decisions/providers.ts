@@ -20,6 +20,7 @@
  */
 
 import { isReasoningMandatory, noteUpstreamRejection } from "../agent/reasoning-control";
+import { withoutRejectedSampling } from "../net/sampling-params";
 import { normalizeAnswers } from "./answers";
 import {
   answerFromDistribution,
@@ -368,11 +369,12 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
       ],
       ...extra,
     };
+    const shaped = withoutRejectedSampling(base, String(opts.model ?? ""));
     const useSchema = !!responseFormat && opts.structured === true && !caps().schema;
     let body: unknown;
     try {
       body = await postReasoning(
-        useSchema ? { ...base, response_format: responseFormat } : base,
+        useSchema ? { ...shaped, response_format: responseFormat } : shaped,
         signal,
       );
     } catch (err) {
@@ -386,7 +388,7 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
       ) {
         throw err;
       }
-      body = await postReasoning(base, signal);
+      body = await postReasoning(shaped, signal);
       learn({ schema: true });
     }
     const b = body as {

@@ -21,7 +21,11 @@ import {
   settleExecApproval,
 } from "../../../coding/exec-approver";
 import type { WorkspaceRunResult, WorkspaceRuntime } from "../../../coding/local-workspace";
-import { detectWorkspaceRunner, workspaceTouchedPaths } from "../../../coding/project-detection";
+import {
+  detectWorkspaceRunner,
+  isTestCommand,
+  workspaceTouchedPaths,
+} from "../../../coding/project-detection";
 import {
   aggregateVerification,
   classifyStep,
@@ -482,7 +486,13 @@ export async function planVerification(
   const touched = knownTouched
     ? [...knownTouched]
     : await workspaceTouchedPaths(workspace).catch(() => [] as string[]);
-  const profile = await detectWorkspaceRunner(workspace, touched).catch(() => null);
+  const detected = await detectWorkspaceRunner(workspace, touched).catch(() => null);
+  // A stored recipe decides what runs, so preparation probes for what IT needs:
+  // a Python recipe without pytest (unittest, a test script) needs Python only.
+  const profile =
+    detected && recipe && detected.language === "python"
+      ? { ...detected, testCommand: recipe.find(isTestCommand) }
+      : detected;
   const runner = workspace.describe?.().runner;
   const preparation = profile
     ? planPreparation(profile, options.dependencies, {

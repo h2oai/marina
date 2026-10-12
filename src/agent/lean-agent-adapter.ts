@@ -3,6 +3,12 @@
 
 import { localWsPort } from "../net/listen-ports";
 import { receiptForUnifiedContext } from "../net/memory-receipt";
+import {
+  isSamplingRejection,
+  noteSamplingRejected,
+  rejectsSamplingParams,
+  samplingFor,
+} from "../net/sampling-params";
 import type { CommandCatalogEntry } from "../sdk/capabilities";
 import type { UnifiedContextResult as ParticipantContext } from "../sdk/memory-context";
 
@@ -63,7 +69,13 @@ import {
 import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import { takeSettledProxyCall } from "../engine/proxy-settlement";
-import { dailyBudget, dailyCapRefusal, formatSpendUsd, recordSpend } from "../engine/spend-ledger";
+import {
+  dailyBudget,
+  dailyCapRefusal,
+  formatSpendUsd,
+  isSpendRefusal,
+  recordSpend,
+} from "../engine/spend-ledger";
 import { isLocalProfile } from "../engine/trust-profile";
 import { lessonsMode, residentLessonsMode } from "../learning/modes";
 import {
@@ -576,6 +588,27 @@ const MIN_EFFECTIVE_CONTEXT = 4096;
 /** Default wall-clock bound on one prompt (all its turns), and how far an automatic bound grows. */
 const DEFAULT_PROMPT_TIMEOUT_MS = 120_000;
 const MAX_PROMPT_TIMEOUT_MS = 600_000;
+
+/**
+ * The starting prompt bound for a thinking level: a model asked to reason at
+ * length needs longer than one quick turn, so the automatic bound starts where
+ * that reasoning fits instead of aborting the first long turn and growing
+ * after. `MARINA_AGENT_PROMPT_TIMEOUT_MS` sets it explicitly (never grown).
+ */
+export function defaultPromptTimeoutMs(thinkingLevel: string | undefined): number {
+  switch (thinkingLevel) {
+    case "low":
+      return 180_000;
+    case "medium":
+      return 300_000;
+    case "high":
+    case "xhigh":
+    case "max":
+      return MAX_PROMPT_TIMEOUT_MS;
+    default:
+      return DEFAULT_PROMPT_TIMEOUT_MS;
+  }
+}
 
 /** The prompt bound after a timeout: doubled toward the ceiling; never for an explicit bound. */
 export function grownPromptTimeoutMs(current: number, explicit: boolean): number | undefined {
@@ -1488,6 +1521,8 @@ export class LeanAgentAdapter implements AgentHandle {
   // and restates the task every cycle. NOT crewResponder: the loop must
   // keep cycling without fresh perceptions so mid-task work continues.
   private activeCodingTask: string | null = null;
+  // The coding task a spend refusal already ended (`afterSpendRefusal`), so it is ended once.
+  private spendEndedTask: string | null = null;
   // Lessons recalled once for the current coding task (MARINA_LESSONS):
   // `null` text = not asked yet; shown with the task until the task changes.
   private codingTaskLessons: { task: string; text: string | null } | null = null;
@@ -1539,8 +1574,10 @@ export class LeanAgentAdapter implements AgentHandle {
     this.perceptionBufferCap = config.perceptionBufferCap ?? 20;
     this.attentionMode = config.attentionMode ?? "balanced";
     this.attentionThreshold = Math.max(10, Math.min(90, config.attentionThreshold ?? 50));
-    this.promptTimeoutMs = config.promptTimeoutMs ?? DEFAULT_PROMPT_TIMEOUT_MS;
-    this.promptTimeoutExplicit = config.promptTimeoutMs !== undefined;
+    const envPromptTimeout = positiveNumberFromEnv("MARINA_AGENT_PROMPT_TIMEOUT_MS");
+    this.promptTimeoutMs = config.promptTimeoutMs ?? envPromptTimeout ?? DEFAULT_PROMPT_TIMEOUT_MS;
+    this.promptTimeoutExplicit =
+      config.promptTimeoutMs !== undefined || envPromptTimeout !== undefined;
 
     // Initialize components
     this.gameState = new GameStateManager();
@@ -1578,6 +1615,10 @@ export class LeanAgentAdapter implements AgentHandle {
     const resolvedModel = resolveModel(modelStr, this.wsPort);
     this.thinkingLevel = resolveAgentThinkingLevel(config, process.env, !!resolvedModel.reasoning);
     this.model = applyThinkingLevel(resolvedModel, this.thinkingLevel);
+    if (!this.promptTimeoutExplicit)
+      this.promptTimeoutMs = defaultPromptTimeoutMs(
+        this.thinkingLevel !== "off" && resolvedModel.reasoning ? this.thinkingLevel : "off",
+      );
     this.applyModelLimits(modelStr);
 
     // Create tools — profile controls how much schema goes to the LLM.
@@ -1635,11 +1676,23 @@ export class LeanAgentAdapter implements AgentHandle {
             },
           ] as Message[],
         };
-        const result = await piModels.completeSimple(this.model, llmContext, {
-          apiKey: keyNow,
-          temperature: 0.3,
-          maxTokens: 500,
-        });
+        // Sampling follows the model's capabilities (`rejectsSamplingParams`);
+        // a refusal is learned once and the summary is asked again without it.
+        const ask = () =>
+          piModels.completeSimple(this.model, llmContext, {
+            apiKey: keyNow,
+            ...samplingFor(this.model.id, 0.3),
+            maxTokens: 500,
+          });
+        let result = await ask();
+        if (
+          result.stopReason === "error" &&
+          isSamplingRejection(String(result.errorMessage ?? "")) &&
+          !rejectsSamplingParams(this.model.id)
+        ) {
+          noteSamplingRejected(this.model.id);
+          result = await ask();
+        }
         const text = Array.isArray(result.content)
           ? result.content
               .filter((b): b is TextContent => b.type === "text")
@@ -2943,6 +2996,13 @@ export class LeanAgentAdapter implements AgentHandle {
             continue;
           }
 
+          // Money ran out upstream (a spend cap, a budget proxy, no credits):
+          // retrying cannot succeed, so stop asking instead of hammering it.
+          if (isSpendRefusal(errorMessage)) {
+            consecutiveErrors = await this.afterSpendRefusal(errorMessage, model);
+            continue;
+          }
+
           consecutiveErrors++;
           this.consecutiveLoopErrors = consecutiveErrors;
           // Include the model so the dashboard error line names the failing
@@ -3057,6 +3117,9 @@ export class LeanAgentAdapter implements AgentHandle {
     // provider and compactor reserve the same reasoning + answer allowance.
     const crewOverride = positiveNumberFromEnv("AGENT_CREW_MAX_TOKENS");
     const compactOverride = positiveNumberFromEnv("AGENT_COMPACT_MAX_TOKENS");
+    // The operator's cloud output cap also bounds a full-profile agent on a
+    // registry model, which otherwise asks for the model's whole maximum.
+    const defaultOverride = positiveNumberFromEnv("MARINA_DEFAULT_MAX_TOKENS");
     const thinkingBudget =
       this.thinkingLevel !== "off" && this.model.reasoning
         ? thinkingBudgetForLevel(this.thinkingLevel, this.config.thinkingBudgets)
@@ -3088,7 +3151,7 @@ export class LeanAgentAdapter implements AgentHandle {
         ? crewOverride
         : this.config.toolProfile === "crew"
           ? compactOverride
-          : undefined;
+          : defaultOverride;
     this.outputMaxTokens =
       configCap ??
       (isLocal
@@ -3097,7 +3160,7 @@ export class LeanAgentAdapter implements AgentHandle {
           ? (crewOverride ?? cloudDefault(2048))
           : this.config.toolProfile === "crew"
             ? (compactOverride ?? cloudDefault(4096))
-            : undefined);
+            : defaultOverride);
     // Only an automatic cap may grow after a length-limited silent turn; an
     // operator's explicit cap (config or env) is never overridden.
     this.outputCapCeiling =
@@ -5470,6 +5533,36 @@ The goal is a smaller, sharper memory — not more notes.`;
    * pause for UPSTREAM_ERROR_PAUSE_MS, tell the spawner once, then resume with the
    * counter reset. Returns the new consecutive-error count for the loop.
    */
+  /**
+   * An upstream refused a call for money (`isSpendRefusal`). A coder ends its
+   * task attempt once — `code blocked kind:impossible`, labelled BudgetForced;
+   * the work already produced stays in the workspace — and every agent pauses
+   * (no model call) for the upstream-error pause before asking again.
+   */
+  private async afterSpendRefusal(errorMessage: string, model: string): Promise<number> {
+    const reason = `model budget exhausted [${model}]: ${errorMessage.slice(0, 200)}`;
+    this.noteError(reason);
+    this.log.warn(LEAN_AGENT_LOG_CATEGORY, `${reason} — no retries until the budget changes`, {
+      agent: this.name,
+    });
+    this.emitEvent({ type: "error", error: reason, context: "spend-cap" });
+    const task = this.activeCodingTask;
+    if (task && this.spendEndedTask !== task) {
+      this.spendEndedTask = task;
+      const note = `BudgetForced: the model budget is exhausted (${errorMessage.slice(0, 120).replace(/\s+/g, " ")}); ending with the work in the workspace`;
+      await this.client.command(`code blocked kind:impossible ${note}`).catch(() => undefined);
+    }
+    const until = Date.now() + UPSTREAM_ERROR_PAUSE_MS;
+    this.enterPause("spend-cap", reason, until);
+    while (this.autonomousLoopRunning && this.autonomousMode) {
+      const remaining = until - Date.now();
+      if (remaining <= 0) break;
+      await this.pauseSleep(Math.min(SPEND_CAP_POLL_MS, remaining));
+    }
+    this.clearPause("budget pause over — asking again");
+    return 0;
+  }
+
   private async afterUpstreamError(consecutiveErrors: number, backoffMs: number): Promise<number> {
     if (consecutiveErrors < MAX_CONSECUTIVE_UPSTREAM_ERRORS) {
       // Rate-limit backoffs deliberately stay on the non-wakeable sleep.

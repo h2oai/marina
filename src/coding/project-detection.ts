@@ -299,8 +299,9 @@ export function isTestCommand(command: string): boolean {
   if (rest.length === 0) return binary === "test";
   if (binary === "python" || binary === "python3")
     return (
-      (rest[0] === "-m" && rest[1] === "pytest") ||
+      (rest[0] === "-m" && (rest[1] === "pytest" || rest[1] === "unittest")) ||
       (rest[0] === "manage.py" && rest[1] === "test") ||
+      /(^|\/)(tests?\/.+|test_[^/]+|[^/]+_test)\.py$/.test(rest[0] ?? "") ||
       /(^|\/)runtests\.py$/.test(rest[0] ?? "")
     );
   if (binary === "cargo" || binary === "go" || binary === "gradle") return rest[0] === "test";
