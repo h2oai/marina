@@ -96,6 +96,14 @@ export interface SweAttempt {
    * infrastructure, not a failing change. Absent when the agent never verified.
    */
   lastVerification?: "passed" | "failed" | "not_run";
+  /**
+   * The item's `budget_forced` label (migration 157): true when a coding attempt
+   * in the session was submitted past its time budget's final-answer point
+   * (`code do budget:`, which `marina -p` always sets) — a labelled best effort,
+   * never a free answer. False when a budgeted attempt ended without it; absent
+   * when no budgeted attempt ended (no budget, or the run was cut off).
+   */
+  budgetForced?: boolean;
 }
 
 /** Code Mode verification outcomes recorded in one session. */
@@ -525,6 +533,49 @@ export function sessionLastVerification(dbPath: string): SweAttempt["lastVerific
   }
 }
 
+/**
+ * The `budget_forced` label from a session's coding attempts (`task_run`
+ * artifacts): any attempt labelled `budgetForced` makes the session forced —
+ * with a reviewer pass, the final patch carries the forced work either way.
+ * Otherwise false when an attempt with a time budget ended, undefined when
+ * none did.
+ */
+export function budgetForcedFromRuns(
+  runs: { status: string; metadata_json: string }[],
+): boolean | undefined {
+  let budgeted = false;
+  for (const run of runs) {
+    let meta: { budgetForced?: unknown; deadlineAt?: unknown } = {};
+    try {
+      meta = JSON.parse(run.metadata_json) as typeof meta;
+    } catch {
+      // allow-empty-catch: unreadable metadata carries no budget label
+    }
+    if (meta.budgetForced && typeof meta.budgetForced === "object") return true;
+    if (typeof meta.deadlineAt === "number" && run.status !== "active") budgeted = true;
+  }
+  return budgeted ? false : undefined;
+}
+
+/** {@link budgetForcedFromRuns} over a session database's coding attempts. */
+export function sessionBudgetForced(dbPath: string): boolean | undefined {
+  if (!existsSync(dbPath)) return undefined;
+  const { Database } = require("bun:sqlite") as typeof import("bun:sqlite");
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    return budgetForcedFromRuns(
+      db
+        .query("SELECT status, metadata_json FROM coding_artifacts WHERE kind = 'task_run'")
+        .all() as { status: string; metadata_json: string }[],
+    );
+  } catch {
+    // allow-empty-catch: an older or partial session DB has no coding attempts
+    return undefined;
+  } finally {
+    db.close();
+  }
+}
+
 export interface AttemptOptions {
   repoRoot: string;
   dataDir: string;
@@ -582,6 +633,7 @@ export async function attemptInstance(
   const costUsd = sessionSpend(dbPath);
   const verification = sessionVerification(dbPath);
   const lastVerification = sessionLastVerification(dbPath);
+  const budgetForced = sessionBudgetForced(dbPath);
   const trajectory = join(trajDir, `${inst.instance_id}.md`);
   writeFileSync(
     trajectory,
@@ -621,6 +673,7 @@ export async function attemptInstance(
       trajectory,
       verification,
       ...(lastVerification ? { lastVerification } : {}),
+      ...(budgetForced !== undefined ? { budgetForced } : {}),
     },
     prediction: {
       instance_id: inst.instance_id,
@@ -686,6 +739,8 @@ export function ledgerResult(
     usage: { costUsd: a.costUsd },
     // The item's ledger label: the session's last verification state.
     ...(a.lastVerification ? { verification: a.lastVerification } : {}),
+    // A label, never a score change: the harness grades the patch either way.
+    ...(a.budgetForced !== undefined ? { budgetForced: a.budgetForced } : {}),
   }));
   const correct = items.filter((i) => i.correct).length;
   // In-loop verification outcomes, summed over graded attempts. Descriptive: a
@@ -721,6 +776,8 @@ export function ledgerResult(
         not_run: checks.notRun,
         never_requested: checks.unreported,
       },
+      // Graded items whose patch was submitted at the time budget (labelled, not free answers).
+      budgetForced: items.filter((i) => i.budgetForced === true).length,
     },
     items,
   };
