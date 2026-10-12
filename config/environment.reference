@@ -356,7 +356,7 @@
 # `0` stops re-posting an unanswered routed model_request as a reminder at 25% and 60% of the timeout.
 # MODEL_REQUEST_REMINDERS=1
 
-# Output-token cap marina/default sends upstream per completion (also the compactor's output reservation). Extended thinking on this path is clamped to this value minus 1024.
+# Output-token cap marina/default sends upstream per completion (also the compactor's output reservation). Extended thinking on this path is clamped to this value minus 1024. When set explicitly it also caps a full-profile agent on a registry model, which otherwise asks for the model's whole output maximum; an explicit cap never grows.
 # MARINA_DEFAULT_MAX_TOKENS=16384
 
 # ── Agent runtime ────────────────────────────────────────────────────────────
@@ -488,7 +488,10 @@
 # MARINA_MAX_COST_USD_PER_HOUR=5
 # MARINA_MAX_AGENT_COST_USD_PER_HOUR=1
 
-# Consecutive upstream or loop errors (429, 5xx, timeouts) before an agent pauses for MARINA_UPSTREAM_ERROR_PAUSE_MS milliseconds and tells its spawner once.
+# Wall-clock bound on one agent prompt (all its turns), in milliseconds. Unset: it starts by thinking level (off 120000, low 180000, medium 300000, high and above 600000) and an automatic bound doubles after a timeout up to 600000; a set value never grows.
+# MARINA_AGENT_PROMPT_TIMEOUT_MS=
+
+# Consecutive upstream or loop errors (429, 5xx, timeouts) before an agent pauses for MARINA_UPSTREAM_ERROR_PAUSE_MS milliseconds and tells its spawner once. A spend refusal (a spend cap, a budget proxy, a provider out of credits) is not retried: the agent pauses for MARINA_UPSTREAM_ERROR_PAUSE_MS at once, and a Code Mode coder ends its task attempt (`code blocked kind:impossible`, labelled BudgetForced) with the work kept in the workspace.
 # MARINA_MAX_CONSECUTIVE_UPSTREAM_ERRORS=20
 # MARINA_UPSTREAM_ERROR_PAUSE_MS=600000
 

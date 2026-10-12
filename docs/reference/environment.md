@@ -143,7 +143,7 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 | `MARINA_DEFAULT_OLLAMA_MODEL=qwen3:4b` | Ollama default: the first model in Ollama's /api/tags (read at boot), else qwen3:4b. |  |
 | `MODEL_REQUEST_TIMEOUT_MS=600000` | Upstream timeout for /v1 requests in milliseconds. Non-streaming client connections also close at Bun's 255-second idle limit. |  |
 | `MODEL_REQUEST_REMINDERS=1` | `0` stops re-posting an unanswered routed model_request as a reminder at 25% and 60% of the timeout. |  |
-| `MARINA_DEFAULT_MAX_TOKENS=16384` | Output-token cap marina/default sends upstream per completion (also the compactor's output reservation). Extended thinking on this path is clamped to this value minus 1024. |  |
+| `MARINA_DEFAULT_MAX_TOKENS=16384` | Output-token cap marina/default sends upstream per completion (also the compactor's output reservation). Extended thinking on this path is clamped to this value minus 1024. When set explicitly it also caps a full-profile agent on a registry model, which otherwise asks for the model's whole output maximum; an explicit cap never grows. |  |
 
 ## Agent runtime
 
@@ -192,7 +192,8 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 | `MARINA_SPEND_SCOPE_CAP_USD=50` | The daily USD cap for MARINA_SPEND_SCOPE (UTC day, persisted). Default 50; 0 or off = no scope cap (the world cap still applies); an invalid value keeps the default. | protected |
 | `MARINA_CHILD_DAILY_SPEND_CAP_USD=50` | Daily cap a World Collective child world starts with (default 50, never above the parent's cap; 0 or off = the parent's cap). | protected |
 | `MARINA_MAX_COST_USD_PER_HOUR=5`<br>`MARINA_MAX_AGENT_COST_USD_PER_HOUR=1` | Rolling one-hour USD caps on agent model spend, across all agents and per agent. Unset or 0 is unlimited. At a cap the agent pauses, tells its spawner, and resumes once last-hour spend drops. Local models count as $0. | protected |
-| `MARINA_MAX_CONSECUTIVE_UPSTREAM_ERRORS=20`<br>`MARINA_UPSTREAM_ERROR_PAUSE_MS=600000` | Consecutive upstream or loop errors (429, 5xx, timeouts) before an agent pauses for MARINA_UPSTREAM_ERROR_PAUSE_MS milliseconds and tells its spawner once. |  |
+| `MARINA_AGENT_PROMPT_TIMEOUT_MS=` | Wall-clock bound on one agent prompt (all its turns), in milliseconds. Unset: it starts by thinking level (off 120000, low 180000, medium 300000, high and above 600000) and an automatic bound doubles after a timeout up to 600000; a set value never grows. |  |
+| `MARINA_MAX_CONSECUTIVE_UPSTREAM_ERRORS=20`<br>`MARINA_UPSTREAM_ERROR_PAUSE_MS=600000` | Consecutive upstream or loop errors (429, 5xx, timeouts) before an agent pauses for MARINA_UPSTREAM_ERROR_PAUSE_MS milliseconds and tells its spawner once. A spend refusal (a spend cap, a budget proxy, a provider out of credits) is not retried: the agent pauses for MARINA_UPSTREAM_ERROR_PAUSE_MS at once, and a Code Mode coder ends its task attempt (`code blocked kind:impossible`, labelled BudgetForced) with the work kept in the workspace. |  |
 
 ## Code Mode
 
