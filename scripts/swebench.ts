@@ -421,6 +421,12 @@ async function fileCmd(): Promise<number> {
       `  verification: ${checks.passed} passed · ${checks.failed} failed · ${checks.not_run} not run · ${checks.never_requested} never requested`,
     );
   }
+  if (result.metadata.budgetForced > 0) {
+    // Submitted at the time budget's final-answer point: labelled, graded like any patch.
+    console.log(
+      `  budget-forced: ${result.metadata.budgetForced}/${result.items.length} patches submitted at the time budget`,
+    );
+  }
   // Every replicate of one arm records the SAME target, so they pool (and promote) together.
   const target = JSON.stringify(ledgerTarget(arm));
   const proc = Bun.spawn(
