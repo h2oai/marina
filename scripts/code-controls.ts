@@ -31,6 +31,11 @@ export const TERMINAL_CONTROLS = [
     help: "Work toward candidate verification before review",
   },
   {
+    name: "/plan",
+    usage: "/plan <request>",
+    help: "Research and propose first; write nothing",
+  },
+  {
     name: "/panel",
     usage: "/panel desk|publish|list|open|views|use|resources|refresh|field|act|confirm|close",
     help: "Inspect and use published panels beside coding and world conversations",
@@ -41,6 +46,21 @@ export const TERMINAL_CONTROLS = [
     name: "/resume",
     usage: "/resume <name-or-id>",
     help: "Reconnect a recorded native session without replaying its last task",
+  },
+  {
+    name: "/continue",
+    usage: "/continue",
+    help: "Resume Marina's most recent session in this folder",
+  },
+  {
+    name: "/cost",
+    usage: "/cost (or /usage)",
+    help: "Show today's model spend against the daily cap",
+  },
+  {
+    name: "/compact",
+    usage: "/compact",
+    help: "Compact the session's context now",
   },
   {
     name: "/spawn",
@@ -90,6 +110,8 @@ export const QUIT_INPUTS = ["/quit", "/exit", "exit", "quit"];
  */
 export function terminalEssentials(connected = false, runtimes: string[] = []): string {
   const rows: Array<[string, string]> = [
+    ["/task", "work toward candidate verification"],
+    ["/plan <request>", "propose first, write nothing"],
     ["/diff", "see what changed"],
     ["/checks", "run the project's checks"],
     ["/review", "review the result"],
@@ -105,6 +127,9 @@ export function terminalEssentials(connected = false, runtimes: string[] = []): 
         : `switch agent (available: ${["marina", ...runtimes].join(", ")})`,
     ],
     ["/model <id>", "switch model (or /fast for cheapest)"],
+    ["/continue", "resume this folder's session"],
+    ["/cost", "today's spend vs the cap"],
+    ["/compact", "compact context now"],
     ["/quit", connected ? "detach; the world keeps running" : "exit"],
   ];
   return [

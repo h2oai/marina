@@ -16,6 +16,8 @@ import {
   createScopedTools,
   deferredToolsEnabled,
   FULL_RESIDENT_TOOL_NAMES,
+  isMutatingToolName,
+  READ_ONLY_TOOL_NAMES,
   TOOL_PROFILE_NAMES,
   TOOL_SEARCH_NAME,
 } from "../src/agent/tools";
@@ -38,6 +40,23 @@ function stubCtx(commands: string[]) {
   } as never;
 }
 const memory = {} as never;
+
+describe("plan tool profile (read-only)", () => {
+  it("exposes only read-only tools, nothing mutating", () => {
+    const { resident, deferred } = createProfileToolset(stubCtx([]), memory, "plan");
+    expect(deferred).toEqual([]);
+    expect(resident.length).toBeGreaterThan(0);
+    for (const t of resident) {
+      expect(READ_ONLY_TOOL_NAMES.has(t.name)).toBe(true);
+      expect(isMutatingToolName(t.name)).toBe(false);
+    }
+    // The broad command tool (which can mutate) is absent from plan mode;
+    // core read-only tools remain.
+    expect(resident.some((t) => t.name === "marina_command")).toBe(false);
+    for (const name of ["marina_look", "marina_code_read_file", "marina_code_search"])
+      expect(resident.some((t) => t.name === name)).toBe(true);
+  });
+});
 
 describe("deferred tool schemas (full profile)", () => {
   afterEach(() => {

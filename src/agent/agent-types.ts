@@ -140,7 +140,7 @@ export interface AgentConfig {
    *               which runs any world command as an escape hatch.
    * Unset = "full" (backward compatible).
    */
-  toolProfile?: "full" | "crew" | "minimal";
+  toolProfile?: "full" | "crew" | "minimal" | "plan";
   /**
    * Crew-responder mode — when true, the agent runs as a thin specialist
    * that only wakes on perceptions, not on its own cognitive cycle:
@@ -254,6 +254,10 @@ export interface AgentHandle {
    * Unlike crewResponder, the loop keeps cycling without fresh perceptions.
    */
   setActiveCodingTask?(task: string | null): void;
+  /** Restrict the live toolset (plan-mode hard gate); "base" restores the configured default. */
+  setToolProfile?(profile: "full" | "crew" | "minimal" | "plan" | "base"): void;
+  /** Compact the live transcript now; returns before/after message counts. */
+  compactNow?(): Promise<{ before: number; after: number } | undefined>;
   stop(): Promise<void>;
   subscribe(handler: (event: AgentEvent) => void): () => void;
   /** Reconfigure the agent (restarts LLM loop, preserves entity state). */

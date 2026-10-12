@@ -600,6 +600,22 @@ export class CodeConsole {
       );
       return;
     }
+    if (verb === "/continue") {
+      if (this.harness.agent !== "marina")
+        throw new Error(
+          "/continue resumes Marina's session in this folder. /use marina selects it; native agents use /resume.",
+        );
+      await this.command("code continue");
+      return;
+    }
+    if (verb === "/cost" || verb === "/usage") {
+      await this.command("code cost");
+      return;
+    }
+    if (verb === "/compact") {
+      await this.command("code compact");
+      return;
+    }
     if (verb === "/world") {
       if (!argument) throw new Error("Usage: /world <Marina command>");
       await this.command(`/${argument}`);
@@ -634,6 +650,19 @@ export class CodeConsole {
       this.interrupted = false;
       await this.command(
         `code do verification:candidate -- ${argument}`,
+        destination.sessionId ? { codingTarget: { sessionId: destination.sessionId } } : undefined,
+      );
+      return;
+    }
+    if (verb === "/plan") {
+      if (destination.nativeId || this.selected || this.harness.agent !== "marina")
+        throw new Error(
+          "/plan uses Marina's plan mode. /use marina selects it; native agents keep their own tools.",
+        );
+      if (!argument) throw new Error("Usage: /plan <request>");
+      this.interrupted = false;
+      await this.command(
+        `code do mode:plan -- ${argument}`,
         destination.sessionId ? { codingTarget: { sessionId: destination.sessionId } } : undefined,
       );
       return;

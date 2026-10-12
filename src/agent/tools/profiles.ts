@@ -56,7 +56,7 @@ export function createAllTools(
  *
  * An agent config's `toolProfile` field selects; defaults to `"full"`.
  */
-export type ToolProfile = "full" | "crew" | "minimal";
+export type ToolProfile = "full" | "crew" | "minimal" | "plan";
 
 /**
  * Tool-name sets for each profile. Kept here so `worlds/seed.ts` and
@@ -76,6 +76,7 @@ export const TOOL_PROFILE_NAMES: Record<ToolProfile, string[]> = {
     "marina_memory_service",
   ],
   minimal: ["marina_command", "think", "memory", "marina_memory_service"],
+  plan: [], // read-only — built from READ_ONLY_TOOL_NAMES in createProfileToolset
 };
 
 /** Resident (always-sent) tools of the `full` profile when deferral is on —
@@ -379,6 +380,10 @@ export function createProfileToolset(
       ),
     ),
   );
+  if (profile === "plan") {
+    // Read-only plan mode: only observation tools, no mutating tools.
+    return { resident: all.filter((t) => READ_ONLY_TOOL_NAMES.has(t.name)), deferred: [] };
+  }
   if (profile !== "full") {
     const want = new Set(TOOL_PROFILE_NAMES[profile]);
     return { resident: all.filter((t) => want.has(t.name)), deferred: [] };

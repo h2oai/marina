@@ -150,6 +150,7 @@ export class CodeSessionDriver {
     modelTarget?: string;
     verificationRequirement?: "candidate" | "checks" | "delivery";
     ownerMode?: "unattended";
+    planMode?: boolean;
     profile: string;
     prompt: string;
     session: CodingSessionRow;
@@ -263,6 +264,9 @@ export class CodeSessionDriver {
     const attention = [
       `You have been assigned to Marina coding session ${opts.session.id}.`,
       `Requester: ${opts.actor}`,
+      opts.planMode
+        ? "Plan mode: research and propose only. Do not edit, write, patch, or run mutagenic commands. Emit a concrete proposal — the files to change, why, and the checks that will verify the result."
+        : undefined,
       requirement,
       ownership,
       run
@@ -309,8 +313,12 @@ export class CodeSessionDriver {
         profile: opts.profile,
         prompt,
         projectInstructions: instructionMetadata,
+        ...(opts.planMode ? { planMode: true } : {}),
       },
     });
+    // Plan mode hard gate: restrict the coder's live tools to read-only for a
+    // plan, and restore its configured profile for every normal task.
+    agent.setToolProfile?.(opts.planMode ? "plan" : "base");
     try {
       await agent.sendAttention(attention);
     } catch (error) {
@@ -340,6 +348,7 @@ export class CodeSessionDriver {
         profile: opts.profile,
         prompt,
         projectInstructions: instructionMetadata,
+        ...(opts.planMode ? { planMode: true } : {}),
       },
       createdBy: opts.actor,
     });
