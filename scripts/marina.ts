@@ -23,6 +23,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { AGENT_THINKING_LEVELS, parseAgentThinkingLevel } from "../src/agent/agent-types";
+import { MARINA_VERSION } from "../src/version";
 import { ATTACH_USAGE } from "./code-attach";
 
 /** Verification a one-shot `-p` task must pass before it can submit. */
@@ -378,7 +379,8 @@ Environment:
 
 // ── version ──────────────────────────────────────────────────────────────────
 
-export function readPackageVersion(root = join(import.meta.dir, "..")): string {
+export function readPackageVersion(root?: string): string {
+  if (root === undefined) return MARINA_VERSION;
   try {
     const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
       version?: string;

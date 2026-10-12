@@ -47,6 +47,7 @@ import { MarinaDB } from "./persistence/database";
 import { acquireDatabaseLease } from "./persistence/database-lease";
 import { isKeyEncryptionEnabled } from "./persistence/key-crypto";
 import { ensureKeySecret, type KeySecretSource } from "./persistence/key-secret-file";
+import { IS_COMPILED } from "./runtime-paths";
 import { LocalStorageProvider } from "./storage/local-provider";
 import { loadOtlpExporterConfig, MarinaOtlpExporter } from "./telemetry/otlp-exporter";
 import { loadOtlpLogExporterConfig, MarinaOtlpLogExporter } from "./telemetry/otlp-log-exporter";
@@ -97,7 +98,11 @@ const logger = new Logger();
 const WORLD_NAME = process.env.MARINA_WORLD ?? "default";
 
 /** Loadable world slugs (`worlds/*.ts` minus the shared helper modules). */
-function listAvailableWorlds(): string[] {
+async function listAvailableWorlds(): Promise<string[]> {
+  if (IS_COMPILED) {
+    const { BUILTIN_WORLDS } = await import("./world/builtin-worlds");
+    return Object.keys(BUILTIN_WORLDS).sort();
+  }
   const helpers = new Set(["seed.ts", "focused-example.ts", "index.ts", "helpers.ts"]);
   try {
     return readdirSync(resolve(import.meta.dir, "../worlds"))
@@ -123,8 +128,8 @@ try {
   logger.error(
     "main",
     isMissing
-      ? `World "${WORLD_NAME}" not found. Available worlds: ${listAvailableWorlds().join(", ")}`
-      : `World "${WORLD_NAME}" failed to load: ${message}\nAvailable worlds: ${listAvailableWorlds().join(", ")}`,
+      ? `World "${WORLD_NAME}" not found. Available worlds: ${(await listAvailableWorlds()).join(", ")}`
+      : `World "${WORLD_NAME}" failed to load: ${message}\nAvailable worlds: ${(await listAvailableWorlds()).join(", ")}`,
     { world: WORLD_NAME },
   );
   logger.error("main", "Set MARINA_WORLD to one of them (or unset it for `default`).");

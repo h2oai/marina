@@ -32,7 +32,9 @@ import { basename, join, resolve } from "node:path";
 import { diffStat } from "../src/coding/unified-diff";
 import { formatAge } from "../src/engine/commands/format-duration";
 import { waitForDatabaseLease } from "../src/persistence/database-lease";
+import { IS_COMPILED } from "../src/runtime-paths";
 import { MarinaAgent, type Perception } from "../src/sdk/client";
+import { MARINA_VERSION } from "../src/version";
 import { CodeConsole } from "./code-console";
 import { HarnessStore, validateHarness } from "./code-harness";
 import { inferCodeDefaultModel } from "./code-model";
@@ -442,18 +444,6 @@ export async function runningFolderServer(
   return undefined;
 }
 
-/** Marina's own version (package.json), or "" when it cannot be read. */
-function packageVersion(): string {
-  try {
-    const pkg = JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf8")) as {
-      version?: unknown;
-    };
-    return typeof pkg.version === "string" ? pkg.version : "";
-  } catch {
-    return "";
-  }
-}
-
 /**
  * Whether the folder server can reach a model provider — asked of the server,
  * which loads its own environment, rather than guessed from the launcher's.
@@ -635,32 +625,35 @@ export async function runCodeSession(
   // + no room agents keep it light; the DB is per-folder (or a throwaway with
   // --fresh). MARINA_NAME is pinned to the folder basename so instance-scoped
   // flags (tour dismissal, seen markers) stay stable across launches.
-  const server = Bun.spawn(["bun", "run", "src/main.ts"], {
-    cwd: REPO_ROOT,
-    env: {
-      ...process.env,
-      WS_PORT: String(port),
-      WS_HOST: "127.0.0.1",
-      // Port 0 disables the listener (src/main.ts) — otherwise a second Marina
-      // on the machine dies EADDRINUSE on telnet 4000 / MCP 3301 / log 3302.
-      TELNET_PORT: "0",
-      MCP_PORT: "0",
-      LOG_PORT: "0",
-      DB_PATH: dbPath,
-      MARINA_NAME: process.env.MARINA_NAME ?? (basename(dir) || "marina"),
-      MARINA_WORLD: process.env.MARINA_WORLD ?? "empty",
-      MARINA_ROOM_AGENTS: process.env.MARINA_ROOM_AGENTS ?? "false",
-      AGENT_AUTORESPAWN: process.env.AGENT_AUTORESPAWN ?? "false",
-      MARINA_CODE_DEFAULT_ROOT: dir,
-      MARINA_CODE_ROOTS: dir,
-      MARINA_ADMINS: process.env.MARINA_ADMINS ?? "coder",
-      MARINA_OPEN_API: process.env.MARINA_OPEN_API ?? "true",
-      ...(defaultModel ? { MARINA_DEFAULT_MODEL: defaultModel } : {}),
-      ...(opts.thinking ? { MARINA_CODE_THINKING: opts.thinking } : {}),
+  const server = Bun.spawn(
+    IS_COMPILED ? [process.execPath, "start"] : [process.execPath, "run", "src/main.ts"],
+    {
+      cwd: IS_COMPILED ? dir : REPO_ROOT,
+      env: {
+        ...process.env,
+        WS_PORT: String(port),
+        WS_HOST: "127.0.0.1",
+        // Port 0 disables the listener (src/main.ts) — otherwise a second Marina
+        // on the machine dies EADDRINUSE on telnet 4000 / MCP 3301 / log 3302.
+        TELNET_PORT: "0",
+        MCP_PORT: "0",
+        LOG_PORT: "0",
+        DB_PATH: dbPath,
+        MARINA_NAME: process.env.MARINA_NAME ?? (basename(dir) || "marina"),
+        MARINA_WORLD: process.env.MARINA_WORLD ?? "empty",
+        MARINA_ROOM_AGENTS: process.env.MARINA_ROOM_AGENTS ?? "false",
+        AGENT_AUTORESPAWN: process.env.AGENT_AUTORESPAWN ?? "false",
+        MARINA_CODE_DEFAULT_ROOT: dir,
+        MARINA_CODE_ROOTS: dir,
+        MARINA_ADMINS: process.env.MARINA_ADMINS ?? "coder",
+        MARINA_OPEN_API: process.env.MARINA_OPEN_API ?? "true",
+        ...(defaultModel ? { MARINA_DEFAULT_MODEL: defaultModel } : {}),
+        ...(opts.thinking ? { MARINA_CODE_THINKING: opts.thinking } : {}),
+      },
+      stdout: "ignore",
+      stderr: "pipe",
     },
-    stdout: "ignore",
-    stderr: "pipe",
-  });
+  );
 
   // Rolling stderr tail so a boot failure can say why.
   const stderrTail: string[] = [];
@@ -782,13 +775,13 @@ export async function runCodeSession(
     await cleanup(1);
   }
 
-  say(`Marina ${packageVersion()} · ${folderName} · ${agentLabel}`);
+  say(`Marina ${MARINA_VERSION} · ${folderName} · ${agentLabel}`);
   // The provider check asks the SERVER, which loads its own environment (the
   // repo .env): the launcher's environment says nothing about what it can use.
   // The zero-config line above already named the missing key: say it once.
   if (harness.agent === "marina" && !noProviderKey && !(await serverHasModel(port))) {
     console.error(
-      `No model provider is configured for the agent. Set a key in ${join(REPO_ROOT, ".env")} or run marina init; or use /use claude, /use codex or /use pi.`,
+      `No model provider is configured for the agent. Set a key in ${join(IS_COMPILED ? dir : REPO_ROOT, ".env")} or run marina init; or use /use claude, /use codex or /use pi.`,
     );
   }
   if (verbose) {

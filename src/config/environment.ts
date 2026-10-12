@@ -10,6 +10,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import packagedReference from "../../config/environment.reference" with { type: "text" };
+import { IS_COMPILED, MARINA_ROOT } from "../runtime-paths";
 
 const SECRET_KEY_PARTS = [
   "API_KEY",
@@ -103,6 +105,7 @@ export const ENVIRONMENT_REFERENCE_PATH = "config/environment.reference";
 
 /** Read the packaged environment reference, or "" when it is not shipped. */
 export function readEnvironmentReference(root: string): string {
+  if (IS_COMPILED && root === MARINA_ROOT) return packagedReference;
   try {
     return readFileSync(join(root, ENVIRONMENT_REFERENCE_PATH), "utf8");
   } catch {

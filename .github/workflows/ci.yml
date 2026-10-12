@@ -41,6 +41,8 @@ jobs:
         run: bun run test:fast --check
       - name: Check generated API references
         run: bun run docs:api --check
+      - name: Qualify standalone CLI without Bun or checkout on PATH
+        run: bun run qualify:native
       - name: Qualify concurrent MCP participation and admission recovery
         run: bun run qualify:participation:load --directory "$RUNNER_TEMP/participation-load" --participants 4 --records 8 --operations 4
       - name: Preserve participation qualification report

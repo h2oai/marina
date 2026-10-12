@@ -32,6 +32,29 @@ candidate variant IDs and retain the promotion rationale and evidence references
 
 ## Bundled server
 
+### Standalone terminal executable
+
+`bun run qualify:native` compiles `dist/marina`, copies it into a temporary directory,
+and runs with only Git on `PATH`. It checks the package version; server startup, SDK
+room access and graceful shutdown in the empty, default and showcase worlds; and a
+real terminal folder session with `/cost`, idle `/compact` and `/quit`. This gate runs
+in pull-request CI without provider credentials. The compiled catalog is also checked
+against all shipped world and shared-room definitions.
+
+The executable includes the server, built-in worlds and settings catalog. Launch it with
+`marina start` or `marina <project-directory>`; a separate Bun installation and Marina
+checkout are not required. Git, project build tools, container runtimes, provider keys,
+external coding agents and optional extensions remain prerequisites for their respective
+features. Browser assets are separate: place the built `dist/dashboard` directory beside
+the executable when serving the dashboard. Custom worlds are explicit local paths or
+already-installed packages. The standalone gate currently qualifies Linux; other operating
+systems need the same acceptance run before shipping their executable.
+
+These checks prove startup and transport behavior, not model task quality. Run the
+provider-backed coding qualification for model-dependent claims.
+
+### Bun server bundle
+
 `bun run build` keeps Zod as an external runtime dependency. Bun 1.4.2 can emit MCP's static
 schema construction before Zod's constructors initialize when Zod is bundled alongside dynamic
 imports. Loading the installed package preserves its module initialization order. Keep the

@@ -4,7 +4,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { MARINA_ROOT } from "../runtime-paths";
+import { IS_COMPILED, MARINA_ROOT } from "../runtime-paths";
 import type { WorldDefinition } from "./world-definition";
 
 /** Builtin slug, explicit local path or already-installed npm package; never downloads code. */
@@ -33,6 +33,10 @@ export async function loadWorld(
     }
   } else {
     if (!/^[a-z][a-z0-9-]*$/.test(specifier)) throw new Error("Invalid builtin world name");
+    if (IS_COMPILED && builtinDirectory === resolve(MARINA_ROOT, "worlds")) {
+      const { loadBuiltinWorld } = await import("./builtin-worlds");
+      return loadBuiltinWorld(specifier);
+    }
     entry = resolve(builtinDirectory, `${specifier}.ts`);
   }
   const module = await import(pathToFileURL(entry).href);

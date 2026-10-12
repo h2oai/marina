@@ -8,6 +8,7 @@ import { Glob } from "bun";
 import { auditKnowledgeNotes } from "../src/engine/commands/knowledge-hygiene";
 import { MarinaDB, type NoteRow } from "../src/persistence/database";
 import type { RoomModule } from "../src/types";
+import { BUILTIN_WORLDS, loadBuiltinWorld } from "../src/world/builtin-worlds";
 import { PLATFORM_GUIDE_NOTES } from "../src/world/seed-guide";
 import type { WorldDefinition } from "../src/world/world-definition";
 import { loadWorld } from "../src/world/world-loader";
@@ -164,6 +165,31 @@ const builtinWorldSlugs = readdirSync(WORLDS_DIR)
   .map((file) => file.replace(/\.ts$/, ""))
   .filter((slug) => !HELPER_MODULES.has(slug))
   .sort();
+
+describe("standalone world catalog", () => {
+  it("includes every shipped world", () => {
+    expect(Object.keys(BUILTIN_WORLDS).sort()).toEqual(builtinWorldSlugs);
+  });
+
+  it.each(builtinWorldSlugs)("embeds the same rooms and exits for %s", async (slug) => {
+    const disk = await loadWorld(slug);
+    const bundled = await loadBuiltinWorld(slug);
+    const rooms = await loadWorldRooms(disk);
+    expect(bundled.roomsDir).toBeUndefined();
+    expect(Object.keys(bundled.rooms).sort()).toEqual([...rooms.keys()].sort());
+    for (const [id, room] of rooms) {
+      expect(bundled.rooms[id]?.short).toEqual(room.short);
+      expect(bundled.rooms[id]?.exits).toEqual(room.exits);
+    }
+    expect(bundled.startRoom).toBe(disk.startRoom);
+    expect(bundled.seed).toBe(disk.seed);
+  });
+
+  it("rejects unknown worlds and inherited object properties", async () => {
+    await expect(loadBuiltinWorld("unknown-world")).rejects.toThrow("not found");
+    await expect(loadBuiltinWorld("constructor")).rejects.toThrow("not found");
+  });
+});
 
 describe("every builtin world", () => {
   let fixture: ReturnType<typeof createTestEngine>;
