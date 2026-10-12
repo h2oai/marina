@@ -19,11 +19,13 @@ import {
   restorePriorToolCalls,
   translateResponsesTools,
 } from "../responses-tools";
+import { runOpenaiChat, stripOptInPrefixes } from "./chat-completions";
 import {
   capturePassthruResponse,
   extractResponseTextAndUsage,
   passthruCacheLookup,
   passthruCacheStore,
+  passthruEntityId,
   passthruTraceOptions,
   passthruUpstreamHints,
   preparePassthru,
@@ -58,9 +60,16 @@ import {
   readModelJsonBody,
   rejectChatOnlyPrefix,
   SSE_HEADERS,
+  unsupportedParam,
 } from "./shared";
-import { rejectStackHeaders } from "./stack";
+import {
+  asksInstrumentByHeader,
+  rejectStackHeaders,
+  resolvePassthruStack,
+  STACK_HEADER,
+} from "./stack";
 import { explicitUpstreamModel, passthruForceModel, proxyToUpstream } from "./upstream";
+import { VERIFY_MODEL_PREFIX } from "./verify";
 
 /** Stable per-credential owner key for Responses records. Hashes the matched
  *  API key so the raw secret is never stored; internal/open/anon get sentinels. */
@@ -144,9 +153,6 @@ export async function handleResponsesCreate(
       parallel_tool_calls?: unknown;
     };
 
-    const refusedPrefix =
-      rejectChatOnlyPrefix(body.model, "/v1/responses") ?? rejectStackHeaders(req, "/v1/responses");
-    if (refusedPrefix) return refusedPrefix;
     const model = body.model ?? "marina";
     // Typed input items (message / function_call / function_call_output) →
     // chat messages for passthru, plus a text rendering for the conversation
@@ -194,10 +200,14 @@ export async function handleResponsesCreate(
     const ec = getEndpointConfig(engine.db);
     // Marina's own agents always proxy upstream (see `isInternalCaller`), and an
     // explicit upstream id reaches that upstream in every mode.
+    // The instrument prefixes (`marina/full:`, `marina/lessons:`, …,
+    // `marina/verify:`) name an upstream model underneath; the request takes the
+    // passthru route when that model would.
     if (
       ec.mode === "passthru" ||
       isInternalCaller(auth) ||
-      explicitUpstreamModel(engine, body.model)
+      explicitUpstreamModel(engine, stripOptInPrefixes(body.model)) ||
+      (typeof body.model === "string" && body.model.startsWith(VERIFY_MODEL_PREFIX))
     ) {
       // Responses tools → chat tools before any upstream call; a hosted tool
       // type (web_search, file_search, …) is a 400 the client must see, never
@@ -233,6 +243,13 @@ export async function handleResponsesCreate(
       });
     }
 
+    // The instrument stack runs on the passthru route only; Marina's agents
+    // carry their own instruments, so an explicit ask here is refused, never
+    // silently dropped.
+    const refusedPrefix =
+      rejectChatOnlyPrefix(body.model, "/v1/responses (agents route)") ??
+      rejectStackHeaders(req, "/v1/responses (agents route)");
+    if (refusedPrefix) return refusedPrefix;
     // In-world agents answer with text: a Responses tool schema or output
     // format cannot be honored on this route, so say so instead of dropping it.
     const rejected = rejectUnsupportedForAgents(body as Record<string, unknown>);
@@ -330,6 +347,31 @@ export async function handleResponsesCreate(
 }
 
 /**
+ * Does this passthru turn run the instrument stack? A `marina/…:` instrument
+ * prefix, an instrument header, an explicit `x-marina-stack`, or the operator
+ * default for an identified caller (`resolvePassthruStack`) — the same rules
+ * as chat completions, which then decide every member.
+ */
+function responsesInstruments(
+  engine: Engine,
+  req: Request,
+  auth: PassthruAuthResult | undefined,
+  model: string,
+): { on: boolean } | { error: string } {
+  if (stripOptInPrefixes(model) !== model || model.startsWith(VERIFY_MODEL_PREFIX))
+    return { on: true };
+  if (asksInstrumentByHeader(req)) return { on: true };
+  const stack = resolvePassthruStack(
+    req,
+    auth,
+    false,
+    () => passthruEntityId(engine, req, auth) !== undefined,
+  );
+  if ("error" in stack) return stack;
+  return { on: stack.members.size > 0 };
+}
+
+/**
  * Responses-API passthru: memory lands in the native `instructions` slot, the
  * conversation channel supplies prior turns (same server-side state contract
  * as agent routing), and the completion is stored as a response record so
@@ -391,20 +433,31 @@ async function runResponsesPassthru(
       : restorePriorToolCalls(history, input.priorToolCalls, input.turn)),
     ...input.turn,
   ];
-  const prep = await preparePassthru(engine, req, auth, turns, "responses");
+  // The instrument stack (`stack.ts`): an instrumented turn runs through the
+  // chat core (`runOpenaiChat`: lessons, obligations, argcheck, verify,
+  // context, learn) with this turn's chat body, un-streamed so every
+  // instrument sees the complete reply; its completion becomes the Responses
+  // record (re-emitted as SSE when a stream was asked for). A turn with no
+  // stack takes the plain path, byte-identical to before.
+  const instruments = responsesInstruments(engine, req, auth, input.model);
+  if ("error" in instruments) return unsupportedParam(STACK_HEADER, instruments.error);
+  const prep = instruments.on
+    ? undefined
+    : await preparePassthru(engine, req, auth, turns, "responses");
   const instructions = typeof input.body.instructions === "string" ? input.body.instructions : "";
   // Streaming asks the upstream for chat-completions SSE and re-encodes it
   // incrementally as Responses SSE (see `responsesPassthruStream`); the
   // response cache is bypassed for streams by construction.
   const wantStream = input.wantStream === true;
+  const streamUpstream = wantStream && !instruments.on;
   // `instructions` is the caller's stable system prompt; the memory addendum
   // rides the trailing note after the cache breakpoints
   // (`passthruUpstreamHints`), so the cached prefix never depends on it.
   const body: Record<string, unknown> = {
     model: input.model,
     messages: [...(instructions ? [{ role: "system", content: instructions }] : []), ...turns],
-    stream: wantStream,
-    ...(wantStream ? { stream_options: { include_usage: true } } : {}),
+    stream: streamUpstream,
+    ...(streamUpstream ? { stream_options: { include_usage: true } } : {}),
     ...(typeof input.body.temperature === "number" ? { temperature: input.body.temperature } : {}),
     ...(typeof input.body.top_p === "number" ? { top_p: input.body.top_p } : {}),
     ...(typeof input.body.max_output_tokens === "number"
@@ -430,13 +483,14 @@ async function runResponsesPassthru(
       "Structured conversation exceeds the request size limit. Start a new conversation with the needed context.",
     );
   const forceModel = passthruForceModel(engine, ec, body.model);
-  const cached = await passthruCacheLookup(engine, prep, body, forceModel);
-  const resp =
-    cached ??
-    (await proxyToUpstream(engine, body, forceModel || undefined, passthruTraceOptions(prep), {
-      ...passthruUpstreamHints(prep),
-      clientSignal: req.signal,
-    }));
+  const cached = prep ? await passthruCacheLookup(engine, prep, body, forceModel) : undefined;
+  const resp = !prep
+    ? await runOpenaiChat(engine, req, body, auth, { stream: false, surface: "responses" })
+    : (cached ??
+      (await proxyToUpstream(engine, body, forceModel || undefined, passthruTraceOptions(prep), {
+        ...passthruUpstreamHints(prep),
+        clientSignal: req.signal,
+      })));
   if (!resp.ok) {
     let message = resp.statusText || "Upstream request failed";
     try {
@@ -449,8 +503,12 @@ async function runResponsesPassthru(
   }
   const headers = forwardPassthruHeaders(resp.headers, {
     "X-Conversation-Id": input.conversationId,
-    "x-request-id": prep.requestId,
+    "x-request-id": prep?.requestId ?? resp.headers.get("x-request-id") ?? "",
   });
+  // An instrumented turn reports what ran (`x-marina-stack`, lessons, verify, …).
+  if (!prep)
+    for (const [name, value] of resp.headers)
+      if (name.startsWith("x-marina-")) headers[name] = value;
   // Runs once the answer is known — after the stream's `response.completed`
   // for a streamed reply, immediately for a buffered one.
   const finalize = (rec: ResponseRecord): void => {
@@ -494,10 +552,12 @@ async function runResponsesPassthru(
   };
 
   const streamedUpstream =
-    wantStream && !cached && (resp.headers.get("content-type") ?? "").includes("text/event-stream");
+    streamUpstream &&
+    !cached &&
+    (resp.headers.get("content-type") ?? "").includes("text/event-stream");
   if (streamedUpstream) {
     if (!resp.body) return errorJson(502, "Upstream returned an empty streaming body");
-    const identity = prep.identity?.contextOptIn ? prep.identity.entityId : undefined;
+    const identity = prep?.identity?.contextOptIn ? prep.identity.entityId : undefined;
     const stream = responsesPassthruStream(resp.body, new ResponsesSseEmitter(base), (rec) => {
       finalize(rec);
       if (identity && rec.content) capturePassthruTranscript(engine, identity, turns, rec.content);
@@ -505,7 +565,8 @@ async function runResponsesPassthru(
     return new Response(stream, { headers: { ...SSE_HEADERS, ...headers } });
   }
 
-  if (!cached && prep.identity?.contextOptIn) {
+  // (An instrumented turn's capture already ran in the chat core.)
+  if (prep && !cached && prep.identity?.contextOptIn) {
     void capturePassthruResponse(engine, prep.identity.entityId, turns, resp);
     passthruCacheStore(engine, prep, body, forceModel, resp);
   }
@@ -520,8 +581,9 @@ async function runResponsesPassthru(
     ...(toolCalls && toolCalls.length > 0 ? { toolCalls } : {}),
   };
   finalize(rec);
-  // A stream was requested but the upstream answered whole (a cache hit, or a
-  // provider that ignored `stream`): emit the same sequence with one delta.
+  // A stream was requested but the upstream answered whole (a cache hit, a
+  // provider that ignored `stream`, or an instrumented turn): emit the same
+  // sequence with one delta.
   if (wantStream) return responsesSseStream(rec, headers);
   return json(formatResponseRecord(rec), 200, headers);
 }

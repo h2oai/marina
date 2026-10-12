@@ -187,20 +187,37 @@ const INSTRUMENT_HEADERS = [
   "x-marina-learn",
 ] as const;
 
-/**
- * A 400 `unsupported_parameter` when a request on a surface without the
- * instrument stack (`/v1/responses`, the Ollama routes) asks for any part of
- * it by header — never a silent drop. `off`/`none` values are accepted.
- */
-export function rejectStackHeaders(req: { headers: Headers }, route: string): Response | undefined {
-  const off = (v: string) => ["off", "none", "false", "0"].includes(v);
+const saysOff = (v: string) => ["off", "none", "false", "0"].includes(v);
+
+/** The first instrument header (`x-marina-stack` included) asking for anything but off. */
+function askingHeader(req: { headers: Headers }): string | undefined {
   for (const name of [STACK_HEADER, ...INSTRUMENT_HEADERS]) {
     const v = req.headers.get(name)?.trim().toLowerCase();
-    if (v && !off(v))
-      return unsupportedParam(
-        name,
-        `The ${name} header is honored only on /v1/chat/completions and /v1/messages; ${route} would ignore it.`,
-      );
+    if (v && !saysOff(v)) return name;
   }
   return undefined;
+}
+
+/** Does the request ask for an instrument by its own header (not `x-marina-stack`)? */
+export function asksInstrumentByHeader(req: { headers: Headers }): boolean {
+  return INSTRUMENT_HEADERS.some((name) => {
+    const v = req.headers.get(name)?.trim().toLowerCase();
+    return !!v && !saysOff(v);
+  });
+}
+
+/**
+ * A 400 `unsupported_parameter` when a request on a surface without the
+ * instrument stack (the Ollama routes, the `/v1/responses` agents route) asks
+ * for any part of it by header — never a silent drop. `off`/`none` values are
+ * accepted.
+ */
+export function rejectStackHeaders(req: { headers: Headers }, route: string): Response | undefined {
+  const name = askingHeader(req);
+  return name
+    ? unsupportedParam(
+        name,
+        `The ${name} header is honored on passthru requests to /v1/chat/completions, /v1/messages and /v1/responses; ${route} would ignore it.`,
+      )
+    : undefined;
 }

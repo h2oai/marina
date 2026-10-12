@@ -770,6 +770,13 @@ export interface VerifyExtras {
   note?: string;
   /** The caller's own lessons ride with the shared pool (`recallForWork` owner). */
   lessonOwner?: string;
+  /**
+   * The caller's memory context (the passthru addendum), shown to the CHECKER
+   * beside the lessons so it reviews the draft against what the proposer saw.
+   * Set only for a distinct identity that opted into context (never for a
+   * shared or anonymous caller).
+   */
+  context?: string;
 }
 
 /**
@@ -890,7 +897,7 @@ export async function maybeVerifyChat(
             messages: callerMessages,
             tools,
             draft,
-            lessons: block,
+            lessons: joinNotes(block, extras.context),
             cache: checkerCache,
           }),
         },
