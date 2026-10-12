@@ -9,6 +9,9 @@
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { pairedDifference } from "../benchmarks/deepresearch/compare";
 import {
   BENCHMARK_SELF_EXCLUSIONS,
@@ -18,12 +21,109 @@ import {
 } from "../benchmarks/deepresearch/dataset";
 import { recordScoredRun, reportOutcome } from "../benchmarks/deepresearch/ledger";
 import { drb2TaskScores } from "../benchmarks/deepresearch/official";
-import type { TaskRecord } from "../benchmarks/deepresearch/run";
+import {
+  generateReports,
+  generationSpend,
+  loadRecords,
+  type TaskRecord,
+} from "../benchmarks/deepresearch/run";
 import { startJudgeProxy } from "../benchmarks/judge-proxy";
+import { SpendGuard } from "../src/engine/spend-guard";
 import { resetSpendLedgerForTests, spentTodayUsd } from "../src/engine/spend-ledger";
 import { MarinaDB } from "../src/persistence/database";
+import { ResearchInterrupted } from "../src/research/checkpoint";
 
 afterEach(() => resetSpendLedgerForTests());
+
+describe("resumable report generation", () => {
+  it("preserves interrupted costs and evidence, and charges only new work on resume", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "marina-generation-"));
+    try {
+      let interrupt = true;
+      let searches = 0;
+      const makeLead = () => {
+        const usage = { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
+        return {
+          usage,
+          complete: async (system: string, user: string) => {
+            usage.calls++;
+            usage.costUsd += 0.01;
+            if (system.includes("You plan"))
+              return JSON.stringify({
+                sections: [
+                  { heading: "Coverage", goal: "coverage", queries: ["coverage"] },
+                  { heading: "Causes", goal: "causes", queries: ["causes"] },
+                ],
+              });
+            if (system.includes("You write one section")) {
+              if (interrupt && user.includes("WRITE SECTION 2:"))
+                throw new ResearchInterrupted("test stop");
+              return "Coverage was 21% [1].";
+            }
+            return JSON.stringify({
+              title: "Report",
+              summary: "Summary",
+              conclusion: "Conclusion",
+            });
+          },
+        };
+      };
+      const guard = (spentUsd = 0) =>
+        new SpendGuard({ label: "test", budgetUsd: 2, spentUsd, daily: false, reserveFactor: 0 });
+      const input = {
+        tasks: parseDrb1('{"id": 1, "language": "en", "prompt": "Coverage and causes"}\n'),
+        config: {
+          label: "recovery",
+          lead: "test/model",
+          gapRound: false,
+          retrievalIdentity: "fixed",
+        },
+        retriever: () => async () => {
+          searches++;
+          return {
+            report: '- 2026-01-01 — "Coverage was 21%." [Survey](https://example.org/survey)',
+            sources: [
+              { url: "https://example.org/survey", title: "Survey", text: "Coverage was 21%." },
+            ],
+            searches: 1,
+            costUsd: 0.1,
+            retriever: "fake",
+          };
+        },
+        outDir: dir,
+        concurrency: 1,
+        makeLead,
+        log: () => undefined,
+      };
+      const firstGuard = guard();
+      const first = await generateReports({ ...input, guard: firstGuard });
+      expect(first.failed).toBe(1);
+      expect(first.stopped).toBe("test stop");
+      expect(searches).toBe(2);
+      const prior = generationSpend(dir, "recovery");
+      expect(prior).toBeCloseTo(0.23);
+      expect(firstGuard.spentUsd).toBeCloseTo(prior);
+      expect(loadRecords(dir, "recovery")[0]!.report).toBeUndefined();
+      interrupt = false;
+      const secondGuard = guard(prior);
+      expect((await generateReports({ ...input, guard: secondGuard })).done).toBe(1);
+      expect(searches).toBe(2);
+      expect(generationSpend(dir, "recovery")).toBeCloseTo(0.25);
+      expect(secondGuard.spentUsd).toBeCloseTo(0.25);
+      expect(loadRecords(dir, "recovery")[0]!.report?.status).toBe("complete");
+      expect((await generateReports({ ...input, guard: guard(0.25) })).skipped).toBe(1);
+      await expect(
+        generateReports({
+          ...input,
+          config: { ...input.config, retrievalIdentity: "changed" },
+          guard: guard(),
+        }),
+      ).rejects.toThrow("configuration changed");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 const DRB2_ROW = {
   id: "task7",

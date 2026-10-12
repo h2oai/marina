@@ -246,6 +246,25 @@ describe("unified memory context", () => {
     expect(result.truncated).toBe(true);
   });
 
+  it("serves matching evidence near the end of a record under a small item cap", async () => {
+    db.createNote(
+      "TailReader",
+      `${"navigation furniture\n".repeat(150)}Amber deployment port is 4317.`,
+      undefined,
+      { importance: 5 },
+    );
+    const result = await buildUnifiedContext(db, "TailReader", FIXTURE_QUERY, {
+      itemMaxBytes: 180,
+      budgetBytes: 300,
+      scope: "legacy",
+    });
+    const item = result.tiers.find((t) => t.tier === "unverified")!.items[0]!;
+    expect(item.content).toContain("4317");
+    expect(item.content).toContain("Amber deployment port");
+    expect(item.truncated).toBe(true);
+    expect(item.bytes).toBeLessThanOrEqual(180);
+  });
+
   it("orders deterministically within a tier: score desc, then id asc; stable across runs", async () => {
     // Same importance and near-identical content → identical scores → id tiebreak.
     const ids = [

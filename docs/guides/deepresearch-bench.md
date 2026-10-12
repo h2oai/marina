@@ -22,12 +22,20 @@ Any research task, not only these benchmarks, goes through these steps:
    quotes passages verbatim. Paid calls are recorded in the spend ledger. Then the lead names
    what is still missing, and one gap round searches for it.
 3. **Verify.** Every evidence line goes through the mechanical citation check. Only verified
-   passages become numbered evidence.
+   passages become numbered evidence. A passage can support multiple sections while appearing
+   once in the global source list. Citation numbering follows section order, regardless of
+   retrieval completion order.
 4. **Write.** The lead writes each section from its numbered evidence, citing with `[n]`, then
    writes the summary and conclusion. Markers are renumbered by first use, and a reference list
    is appended in the form `[n] url - title`.
 5. **Audit.** Every figure in a cited sentence must appear in the evidence of a source the
    sentence cites. `figurePrecision` is the share of figure-bearing cited sentences that pass.
+
+A report with no verified evidence fails explicitly. Empty or heading-only drafts fail the
+section; partial reports retain completed sections, identify gaps and carry `status: "partial"`.
+Cancellation, spend stops and checkpoint-write failures propagate without being disguised as a
+completed report. The general `writeResearchReport` API accepts an optional `checkpoint` and
+`stopReason`; the benchmark adapter supplies both.
 
 **Optional cross-model fact pass (`factCheckReport`).** A second model checks each section
 against the evidence it cites and proposes minimal edits. An edit applies only when its text
@@ -68,8 +76,16 @@ bun run deepresearch export --board drb1 --label A               # submission la
 ### Running a batch
 
 - **Saved as it goes.** Each finished task is written to `<out>/<label>/tasks/<id>.json` as soon
-  as it lands. A run stopped by `--max-usd` or by the daily cap keeps what was paid for, and a
-  rerun skips finished tasks.
+  as it lands. Completed model and verified retrieval stages are also atomically saved in
+  `<out>/<label>/checkpoints/<id>.json`. Rerunning the same command reuses matching stages,
+  skips complete reports and retries failed or partial reports. The cap counts earlier saved
+  spend under the same label, including interrupted tasks; raise `--max-usd` explicitly to
+  permit more work. In-flight provider calls can finish after a cap is reached.
+- **Frozen configuration.** The label records the model, retrieval settings and configuration
+  digest; each task also records its prompt, exclusions and lessons digest. Changed inputs or
+  settings require a new label. Labels created before configuration checkpoints remain readable
+  for scoring/export, but generation with this version requires a new label. Checkpoints contain
+  research content and belong with private run data, not shared memory or a public commit.
 - **Search backends.** `--search` sets the backend order for the run (the same names as
   `MARINA_RESEARCH_SEARCH_BACKENDS`).
 - **Lessons.** `--lessons on` shows the planner lessons recalled from the `research` domain. It is

@@ -16,7 +16,7 @@
  * sees trajectories (insert) and question text (query), as the benchmark requires.
  */
 
-import { queryTerms } from "../../src/memory/unified-context";
+import { queryExcerpt } from "../../src/memory/query-excerpt";
 
 /** The canonical record content limit is 65,536 bytes; stay below it with margin. */
 export const MAX_RECORD_BYTES = 60_000;
@@ -204,45 +204,15 @@ export function trajectoryNoteViews(t: LmeTrajectory): Map<string, string> {
 export function excerpt(content: string, query: string, maxBytes: number, headerLines = 6): string {
   if (Buffer.byteLength(content) <= maxBytes) return content;
   const lines = content.split("\n");
-  const head = lines.slice(0, headerLines).join("\n");
-  const terms = queryTerms(query).filter((t) => t.length > 2);
-  const body = lines.slice(headerLines);
-  const scored = body.map((line, i) => {
-    const lower = line.toLowerCase();
-    let hits = 0;
-    for (const t of terms) if (lower.includes(t)) hits++;
-    return { i, hits };
-  });
-  let budget = maxBytes - Buffer.byteLength(head) - 1;
-  const keep = new Set<number>();
-  for (const { i, hits } of [...scored].sort((a, b) => b.hits - a.hits || a.i - b.i)) {
-    if (hits === 0 || budget <= 0) break;
-    // A matching line brings its immediate neighbours (labels sit next to values).
-    for (const j of [i - 1, i, i + 1]) {
-      if (j < 0 || j >= body.length || keep.has(j)) continue;
-      const cost = Buffer.byteLength(body[j]!) + 1;
-      if (cost > budget) continue;
-      keep.add(j);
-      budget -= cost;
-    }
-  }
-  // Fill what is left with the top of the page (navigation and title context).
-  for (let j = 0; j < body.length && budget > 0; j++) {
-    if (keep.has(j)) continue;
-    const cost = Buffer.byteLength(body[j]!) + 1;
-    if (cost > budget) break;
-    keep.add(j);
-    budget -= cost;
-  }
-  const parts: string[] = [head];
-  let last = -1;
-  for (const j of [...keep].sort((a, b) => a - b)) {
-    if (j !== last + 1) parts.push("…");
-    parts.push(body[j]!);
-    last = j;
-  }
-  if (last !== body.length - 1) parts.push("…");
-  return truncateBytes(parts.join("\n"), maxBytes);
+  // A long header must not consume the space reserved for the matching page.
+  const head = queryExcerpt(
+    lines.slice(0, headerLines).join("\n"),
+    query,
+    Math.floor(maxBytes / 3),
+  );
+  const body = lines.slice(headerLines).join("\n");
+  const tail = queryExcerpt(body, query, Math.max(0, maxBytes - Buffer.byteLength(head) - 1));
+  return `${head}\n${tail}`;
 }
 
 export interface ContextOptions {

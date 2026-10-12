@@ -78,6 +78,7 @@ import {
   findLegacyNotesForRecord,
   LEGACY_SOURCE_SESSION,
 } from "./legacy-projection";
+import { queryExcerpt } from "./query-excerpt";
 import {
   gateRelevance,
   RELEVANCE_GATE_MAX_ITEMS,
@@ -708,6 +709,7 @@ function applyBudget(
   budgetBytes: number,
   itemMaxBytes: number,
   values?: ReadonlyMap<string, number>,
+  query = "",
 ): { tiers: UnifiedTierResult[]; usedBytes: number; truncated: boolean } {
   let used = 0;
   let truncated = false;
@@ -735,7 +737,10 @@ function applyBudget(
       let content = item.content;
       let cut = false;
       if (byteLength(content) > itemMaxBytes) {
-        content = truncateToBytes(content, itemMaxBytes);
+        content =
+          query && !exemptFromGate(item)
+            ? queryExcerpt(content, query, itemMaxBytes)
+            : truncateToBytes(content, itemMaxBytes);
         cut = true;
       }
       const remaining = budgetBytes - used;
@@ -746,7 +751,10 @@ function applyBudget(
           truncated = true;
           continue;
         }
-        content = truncateToBytes(content, remaining);
+        content =
+          query && !exemptFromGate(item)
+            ? queryExcerpt(item.content, query, remaining)
+            : truncateToBytes(content, remaining);
         cut = true;
       }
       const bytes = byteLength(content);
@@ -1081,7 +1089,7 @@ async function retrieveUnifiedContext(
     values = judged.values;
     valueDecision = judged.receipt;
   }
-  const budgeted = applyBudget(served, perTier, budgetBytes, itemMaxBytes, values);
+  const budgeted = applyBudget(served, perTier, budgetBytes, itemMaxBytes, values, trimmed);
   if (trimmed && opts.derivedSources !== false)
     await expandDerivedNotes(db, entityName, trimmed, budgeted, budgetBytes, itemMaxBytes);
   if (relevance && relevance.mode === "on" && relevance.outcome !== "fail_open")

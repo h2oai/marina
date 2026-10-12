@@ -75,8 +75,11 @@ export interface UnifiedRelevanceReport {
   exempt: number;
   /** Items the backend scored. */
   scored: number;
+  /** Negative judgments on partial views that could not rule out unseen evidence. */
+  incompleteKept?: number;
   dropped: string[];
   kept: number;
+  /** Positive judgments kept at most; unanswered/partial items remain within tier budgets. */
   maxItems: number;
   /** The keep threshold used (relevance probability, or term coverage for `mechanical`). */
   keepAt?: number;

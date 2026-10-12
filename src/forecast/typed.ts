@@ -370,6 +370,8 @@ export interface TypedForecastAnswer {
     researched: boolean;
     rerun: number;
     replaced?: number;
+    /** Failed follow-up attempts; the earlier usable runs remain in the pool. */
+    failedRuns?: TypedRun[];
   };
   /** How much evidence the runs read: the budget, the dossier, the verified part. */
   evidence?: {
@@ -851,8 +853,17 @@ export async function forecastTyped(
         out.initialRuns = out.runs;
         assembled = again;
         if (groundingMode === "all") {
-          out.runs = await runAll(assembled);
-          record.rerun = out.runs.length;
+          const fresh = await runAll(assembled);
+          record.rerun = fresh.length;
+          // Keep one cohort's weighting policy: do not mix old unjudged
+          // weight-1 runs with newly judged runs that use a different scale.
+          if (
+            !fresh.some((r) => r.value !== undefined && r.weight > 0) &&
+            out.initialRuns.some((r) => r.value !== undefined && r.weight > 0)
+          ) {
+            record.failedRuns = fresh;
+            out.runs = out.initialRuns;
+          } else out.runs = fresh;
         } else {
           // `one`: a single fresh run reads the fuller dossier and takes the
           // place of the least-grounded run (an unanswered run first).
@@ -871,13 +882,24 @@ export async function forecastTyped(
           );
           if (fresh) {
             const slot = leastGrounded(out.runs);
-            record.replaced = out.runs[slot]!.run;
-            out.runs = out.runs.map((r, i) => (i === slot ? fresh : r));
             record.rerun = 1;
+            const previous = out.runs[slot]!;
+            if (
+              previous.value !== undefined &&
+              previous.weight > 0 &&
+              (fresh.value === undefined || fresh.weight <= 0)
+            ) {
+              (record.failedRuns ??= []).push(fresh);
+            } else {
+              record.replaced = previous.run;
+              out.runs = out.runs.map((r, i) => (i === slot ? fresh : r));
+            }
           }
         }
       }
     }
+    if (record.failedRuns?.length)
+      earlier.push("follow-up attempts failed; retained earlier answers from the original dossier");
   }
 
   // ── Disagreement: search the crux, and one more run on it ─────────────────
@@ -885,7 +907,7 @@ export async function forecastTyped(
     req.answer,
     out.runs
       .filter((r) => r.value !== undefined)
-      .map((r) => ({ value: r.value!, weight: r.weight || 1 })),
+      .map((r) => ({ value: r.value!, weight: r.weight })),
   );
   const answered = out.runs.filter((r) => r.formatted !== undefined);
   if (
