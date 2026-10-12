@@ -19,6 +19,9 @@ export const TEST_GIT_CONFIG: readonly string[] = [
   "init.defaultBranch=main",
 ];
 
+/** Upper bound for one synchronous test git call. */
+export const GIT_SYNC_TIMEOUT_MS = 60_000;
+
 /** The process environment with git isolated from host configuration. */
 export function testGitEnv(): Record<string, string> {
   const env: Record<string, string> = {};
@@ -48,7 +51,13 @@ export function git(cwd: string, ...args: string[]): string {
     env: testGitEnv(),
     stdout: "pipe",
     stderr: "pipe",
+    // A synchronous spawn blocks the event loop, so no test timeout can fire:
+    // bound it, or one stuck git (or a descendant holding its pipe) stalls a
+    // whole CI shard until the runner deadline.
+    timeout: GIT_SYNC_TIMEOUT_MS,
   });
+  if (result.exitedDueToTimeout)
+    throw new Error(`git ${args.join(" ")} timed out after ${GIT_SYNC_TIMEOUT_MS}ms`);
   if (result.exitCode !== 0) {
     throw new Error(`git ${args.join(" ")} failed: ${result.stderr.toString()}`);
   }

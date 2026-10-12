@@ -70,8 +70,19 @@ export interface CodeSessionOptions {
   verification?: "checks" | "candidate" | "delivery";
   /** The coder's thinking level, passed to the folder server as `MARINA_CODE_THINKING`. */
   thinking?: string;
+  /** Code Mode driver for the session before the task (`code driver <name>`). */
+  driver?: "single" | "crew";
   /** `-p`: one JSON result object as the last stdout line; human output goes to stderr. */
   json?: boolean;
+}
+
+/**
+ * The budget a one-shot hands its coder: the task timeout less a margin for
+ * the result to travel back, so the budget-forced submission lands before the
+ * CLI gives up.
+ */
+export function oneShotBudgetMs(timeoutMs: number): number {
+  return Math.max(1_000, timeoutMs - Math.min(10_000, Math.round(timeoutMs * 0.02)));
 }
 
 /**
@@ -190,6 +201,8 @@ export interface CodeLifecycleEnd {
   detail?: string;
   /** Interpretations recorded where no person could answer (`code assume`, answered blocks). */
   assumptions?: CodeAssumption[];
+  /** Submitted at the budget's final-answer point: a labelled best effort, never a free answer. */
+  budgetForced?: { reason: string; used: number; cap: number };
   taskId?: number;
   runId?: string;
 }
@@ -296,6 +309,16 @@ export function printOutcome(
   };
 }
 
+function lifecycleBudgetForced(value: unknown): CodeLifecycleEnd["budgetForced"] {
+  const v = value as { reason?: unknown; used?: unknown; cap?: unknown } | undefined;
+  return v &&
+    typeof v.reason === "string" &&
+    typeof v.used === "number" &&
+    typeof v.cap === "number"
+    ? { reason: v.reason, used: v.used, cap: v.cap }
+    : undefined;
+}
+
 export function terminalCodeLifecycle(p: Perception): CodeLifecycleEnd | undefined {
   if (p.kind !== "message") return undefined;
   const code = (p.data as Record<string, unknown> | undefined)?.code as
@@ -320,6 +343,9 @@ export function terminalCodeLifecycle(p: Perception): CodeLifecycleEnd | undefin
       ...(typeof metadata.taskId === "number" ? { taskId: metadata.taskId } : {}),
       ...(typeof metadata.runId === "string" ? { runId: metadata.runId } : {}),
       ...(assumptions ? { assumptions } : {}),
+      ...(lifecycleBudgetForced(metadata.budgetForced)
+        ? { budgetForced: lifecycleBudgetForced(metadata.budgetForced) }
+        : {}),
     };
   }
   if (code.phase === "failed" && metadata.terminal === true) {
@@ -881,6 +907,7 @@ export async function runCodeSession(
           verificationReason: end?.verificationReason ?? null,
           reason: end?.detail ?? end?.reason ?? null,
           assumptions: end?.assumptions ?? [],
+          budgetForced: end?.budgetForced ?? null,
           requirements: end?.requirements ?? null,
           taskId: end?.taskId ?? null,
           runId: end?.runId ?? null,
@@ -940,7 +967,15 @@ export async function runCodeSession(
       /* handled below — avoid unhandled-rejection noise */
     });
     try {
-      await sessionConsole.task(task, false, timeoutMs, true, printVerification(opts.verification));
+      if (opts.driver) await agent.command(`code driver ${opts.driver}`);
+      await sessionConsole.task(
+        task,
+        false,
+        timeoutMs,
+        true,
+        printVerification(opts.verification),
+        oneShotBudgetMs(timeoutMs),
+      );
     } catch (error) {
       console.error(String(error));
       await finishPrint(printOutcome(undefined));

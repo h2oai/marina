@@ -24,7 +24,7 @@ import { join } from "node:path";
 import { ContainerWorkspace, resolveContainerRunner } from "../src/coding/container-workspace";
 import { HOST_GIT_CONFIG_ARGS, hostGitArgv, hostGitEnv } from "../src/coding/host-git";
 import { LocalWorkspace, runCapture } from "../src/coding/local-workspace";
-import { git, gitInit, testGitEnv } from "./git-helpers";
+import { GIT_SYNC_TIMEOUT_MS, git, gitInit, testGitEnv } from "./git-helpers";
 
 let root: string;
 let marker: string;
@@ -75,7 +75,12 @@ const planted = () => existsSync(marker);
 
 describe("host git hardening", () => {
   it("the planted config is live for an unhardened git (the test is meaningful)", () => {
-    Bun.spawnSync(["git", "diff"], { cwd: root, env: testGitEnv(), stdout: "pipe" });
+    Bun.spawnSync(["git", "diff"], {
+      cwd: root,
+      env: testGitEnv(),
+      stdout: "pipe",
+      timeout: GIT_SYNC_TIMEOUT_MS,
+    });
     expect(planted()).toBe(true);
   });
 

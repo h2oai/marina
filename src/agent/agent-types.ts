@@ -272,8 +272,13 @@ export interface AgentHandle {
    * learning signal, reflection, idle consolidation) and restates the task
    * every cycle. Pass null to clear (on `code stop` or task completion).
    * Unlike crewResponder, the loop keeps cycling without fresh perceptions.
+   * `budget` (epoch ms) is the task's wall-clock budget: the loop steers at
+   * 75 % and, at the final-answer point, allows only submitting or reporting.
    */
-  setActiveCodingTask?(task: string | null): void;
+  setActiveCodingTask?(
+    task: string | null,
+    budget?: { startedAt: number; deadlineAt: number },
+  ): void;
   /** Restrict the live toolset (plan-mode hard gate); "base" restores the configured default. */
   setToolProfile?(profile: "full" | "crew" | "minimal" | "plan" | "base"): void;
   /** Compact the live transcript now; returns before/after message counts. */

@@ -629,8 +629,21 @@ manifest of output files and checks, run alone in a clean directory with
 `code verify delivery manifest:<path>`). The mode is the task's `code do verification:<mode>`
 requirement; agents still choose the implementation and the checks.
 
+**Time budget.** A one-shot hands its coder a budget slightly inside `MARINA_CODE_TASK_TIMEOUT_MS`
+(`code do budget:<duration>`, the shared duration grammar). The coder sees its deadline, is told to
+converge at 75 % of the time, and, a reserve before the deadline (a tenth of the budget, 15 s to
+2 min), may only submit (`marina_code summary`) or report (`blocked` / `assume`). A submission
+after that point is the forced best effort: it is submitted with whatever verification it has and
+labelled `budgetForced` (`{"reason":"deadline","used":…,"cap":…}` in `--json`, and in the task's
+evidence). It is never reported as verified unless its checks passed.
+
+**Driver.** `--driver crew` runs the one-shot with the crew driver. A task with a contract
+(required verification, `owner:unattended`, a budget) stays ONE tracked attempt: a lead coder owns
+and submits it under the contract, and a crew assembled around it reviews, tests and reports to
+the lead. Without a contract, `code do` on a crew session still stores and dispatches a crew plan.
+
 `--json` prints one JSON object as the last line of stdout and sends everything else to stderr:
-`{"status":"verified|unverified|failed|timeout","exitCode":…,"verification":…,"verificationReason":…,"requirements":…,"reason":…,"assumptions":[{"text":…,"source":"worker|block"}],"taskId":…,"runId":…,"files":[{"path":…,"added":…,"removed":…}],"durationMs":…}`.
+`{"status":"verified|unverified|failed|timeout","exitCode":…,"verification":…,"verificationReason":…,"requirements":…,"reason":…,"assumptions":[{"text":…,"source":"worker|block"}],"budgetForced":…,"taskId":…,"runId":…,"files":[{"path":…,"added":…,"removed":…}],"durationMs":…}`.
 `files` is what the run changed in the session, also when it failed or ended blocked; `reason` is
 the full reason a run failed (`null` otherwise); `assumptions` lists the interpretations made
 where no person could answer (below). The human-readable output prints the same assumptions

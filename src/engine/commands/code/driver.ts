@@ -11,7 +11,8 @@ import { failCommandResponse } from "../../command-response";
 import { getErrorMessage } from "../../errors";
 import { parseModifiers } from "../../parse-input";
 import { checkGateForExecution, grant, recordGateExecution } from "../../safety-gates";
-import { bindSessionWriter, crewPlan, recruitCodingAgent } from "./crew";
+import { parseDuration } from "../format-duration";
+import { bindSessionWriter, crewPlan, crewSupport, recruitCodingAgent } from "./crew";
 import { startSession } from "./session";
 import {
   bindSpawnedAgentEntity,
@@ -45,18 +46,22 @@ export function parseCodingTask(raw: string) {
       verification: { type: "string" },
       owner: { type: "string" },
       mode: { type: "string" },
+      budget: { type: "string" },
     },
     { leading: true },
   );
+  const budgetMs =
+    parsed.values.budget !== undefined ? parseDuration(String(parsed.values.budget)) : undefined;
   if (
     parsed.errors.length ||
+    (parsed.values.budget !== undefined && !(budgetMs && budgetMs > 0)) ||
     (parsed.values.verification !== undefined &&
       !["candidate", "checks", "delivery"].includes(String(parsed.values.verification))) ||
     (parsed.values.owner !== undefined && parsed.values.owner !== "unattended") ||
     (parsed.values.mode !== undefined && parsed.values.mode !== "plan")
   )
     throw new Error(
-      "Usage: code do [verification:candidate|checks|delivery] [owner:unattended] [mode:plan] -- <task>",
+      "Usage: code do [verification:candidate|checks|delivery] [owner:unattended] [mode:plan] [budget:<duration>] -- <task>",
     );
   return {
     prompt: parsed.rest.join(" ").trim(),
@@ -67,20 +72,19 @@ export function parseCodingTask(raw: string) {
       | undefined,
     ownerMode: parsed.values.owner as "unattended" | undefined,
     ...(parsed.values.mode === "plan" ? { planMode: true } : {}),
+    ...(budgetMs ? { budgetMs } : {}),
   };
 }
 function validateTaskContract(
   session: CodingSessionRow,
   requirement?: "candidate" | "checks" | "delivery",
 ) {
-  if (requirement && session.driver === "crew")
-    throw new Error("Required verification currently needs the single-agent driver.");
   if (
     (requirement === "candidate" || requirement === "delivery") &&
     session.execution_target !== "local"
   )
     throw new Error(
-      "Snapshot or delivery verification requires a local workspace and the single-agent driver. Candidate mode also requires Git.",
+      "Snapshot or delivery verification requires a local workspace. Candidate mode also requires Git.",
     );
 }
 
@@ -142,7 +146,7 @@ export async function assignCode(
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
   const agentName = args[0];
-  const { prompt, verificationRequirement, ownerMode, planMode } = parseCodingTask(
+  const { prompt, verificationRequirement, ownerMode, planMode, budgetMs } = parseCodingTask(
     args.slice(1).join(" "),
   );
   if (!sameEntityName(session.created_by, entity.name))
@@ -164,6 +168,7 @@ export async function assignCode(
     verificationRequirement,
     ownerMode,
     planMode,
+    budgetMs,
     session,
   });
   updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
@@ -229,7 +234,13 @@ export async function doCode(
   driver: CodeSessionDriver,
   rawTask: string,
 ): Promise<void> {
-  const { prompt: task, verificationRequirement, ownerMode, planMode } = parseCodingTask(rawTask);
+  const {
+    prompt: task,
+    verificationRequirement,
+    ownerMode,
+    planMode,
+    budgetMs,
+  } = parseCodingTask(rawTask);
   if (!task) {
     ctx.send(eid, 'Describe what you want done, e.g. "fix the off-by-one in the tokenizer".');
     return;
@@ -296,19 +307,12 @@ export async function doCode(
   if (session.execution_target === "local")
     workspaceForSession(deps, session).assertExecutionReady?.();
   const strategy = (session.driver ?? "single").toLowerCase();
-  if (strategy === "crew") {
-    // The crew driver dispatches a plan, not a tracked task attempt, so it
-    // cannot carry an unattended owner (a verification requirement is refused
-    // by validateTaskContract above). Say so rather than dropping it.
-    if (ownerMode) {
-      ctx.send(
-        eid,
-        fmtError(
-          `The crew driver cannot carry this task's contract (owner:${ownerMode}). Use code driver single for an unattended task.`,
-        ),
-      );
-      return;
-    }
+  // A crew task with a contract (required verification, an unattended owner or
+  // a budget) is ONE tracked attempt: a lead coder owns and submits it under the
+  // contract, and the crew supports the lead. Without a contract the crew
+  // driver keeps dispatching a plan.
+  const contracted = Boolean(verificationRequirement || ownerMode || budgetMs);
+  if (strategy === "crew" && !contracted) {
     await crewPlan(ctx, eid, entity, deps, task);
     return;
   }
@@ -342,8 +346,10 @@ export async function doCode(
       verificationRequirement,
       ownerMode,
       planMode,
+      budgetMs,
       session,
     });
+    if (strategy === "crew") await crewSupport(ctx, eid, entity, deps, session, task, agentName);
     ctx.send(
       eid,
       [

@@ -29,6 +29,8 @@ import { ATTACH_USAGE } from "./code-attach";
 /** Verification a one-shot `-p` task must pass before it can submit. */
 export const PRINT_VERIFICATION_MODES = ["checks", "candidate", "delivery"] as const;
 export type PrintVerification = (typeof PRINT_VERIFICATION_MODES)[number];
+export const CODE_DRIVER_NAMES = ["single", "crew"] as const;
+export type CodeDriverName = (typeof CODE_DRIVER_NAMES)[number];
 
 export type Dispatch =
   | { kind: "help" }
@@ -59,6 +61,8 @@ export type Dispatch =
       verification?: PrintVerification;
       /** The coder's thinking level (`MARINA_CODE_THINKING` for the folder server). */
       thinking?: string;
+      /** Code Mode driver for the session (`code driver <name>`): single (default) or crew. */
+      driver?: CodeDriverName;
       json?: boolean;
     }
   | { kind: "connect"; rest: string[] }
@@ -155,6 +159,7 @@ export function parseDispatch(
   let allowUnverified: boolean | undefined;
   let verification: PrintVerification | undefined;
   let thinking: string | undefined;
+  let driver: CodeDriverName | undefined;
   let json: boolean | undefined;
   let print: string | undefined;
   let taskFromStdin: boolean | undefined;
@@ -218,6 +223,17 @@ export function parseDispatch(
       thinking = parseAgentThinkingLevel(value);
       continue;
     }
+    if (arg === "--driver") {
+      const value = argv[++i];
+      if (!CODE_DRIVER_NAMES.includes(value as CodeDriverName))
+        return {
+          kind: "usage-error",
+          arg,
+          message: `--driver takes one of: ${CODE_DRIVER_NAMES.join(", ")}`,
+        };
+      driver = value as CodeDriverName;
+      continue;
+    }
     if (arg === "--allow-exec") {
       allowExec = true;
       continue;
@@ -244,10 +260,16 @@ export function parseDispatch(
     dir = arg;
   }
   // The one-shot result flags shape a -p run only.
-  if ((allowUnverified || json || verification) && print === undefined && !taskFromStdin)
+  if ((allowUnverified || json || verification || driver) && print === undefined && !taskFromStdin)
     return {
       kind: "usage-error",
-      arg: allowUnverified ? "--allow-unverified" : json ? "--json" : "--verification",
+      arg: allowUnverified
+        ? "--allow-unverified"
+        : json
+          ? "--json"
+          : verification
+            ? "--verification"
+            : "--driver",
     };
   if (Object.keys(connected).length) {
     if (
@@ -287,6 +309,7 @@ export function parseDispatch(
     ...(json ? { json } : {}),
     ...(verification ? { verification } : {}),
     ...(thinking ? { thinking } : {}),
+    ...(driver ? { driver } : {}),
     ...(fresh !== undefined ? { fresh } : {}),
     ...(print !== undefined ? { print } : {}),
     ...(taskFromStdin ? { taskFromStdin } : {}),
@@ -326,6 +349,9 @@ Options:
   --thinking <level>          the coder's reasoning depth (off, minimal, low, medium,
                               high, xhigh); default MARINA_CODE_THINKING (high), used
                               only where the model declares reasoning support
+  --driver <name>             Code Mode driver: single (default, one bound coder) or
+                              crew (a lead owns the task and its contract; a crew
+                              reviews and tests alongside it)
   --profile <dialect>         Marina command dialect: marina, claude, codex, pi
   --harness <name-or-path>    saved harness or explicit portable JSON file
                               /harness save <name> remembers a folder's default
@@ -635,6 +661,7 @@ if (import.meta.main) {
         allowUnverified: dispatch.allowUnverified,
         verification: dispatch.verification,
         thinking: dispatch.thinking,
+        driver: dispatch.driver,
         json: dispatch.json,
       }).catch((error: unknown) => {
         console.error(error instanceof Error ? error.message : String(error));

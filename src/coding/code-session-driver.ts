@@ -153,6 +153,8 @@ export class CodeSessionDriver {
     verificationRequirement?: "candidate" | "checks" | "delivery";
     ownerMode?: "unattended";
     planMode?: boolean;
+    /** Wall-clock budget for a new tracked attempt (ms). */
+    budgetMs?: number;
     profile: string;
     prompt: string;
     session: CodingSessionRow;
@@ -212,7 +214,10 @@ export class CodeSessionDriver {
     const workspaceDescriptor = this.deps.describeWorkspace?.(opts.session);
     const instructionMetadata = projectInstructionMetadata(instructions);
     const worker = workerId ? this.deps.getEntity?.(workerId) : undefined;
-    if ((opts.verificationRequirement || opts.ownerMode) && (!opts.actorEntity || !worker))
+    if (
+      (opts.verificationRequirement || opts.ownerMode || opts.budgetMs) &&
+      (!opts.actorEntity || !worker)
+    )
       throw new Error("Task contracts need a bound Marina worker.");
     const run =
       opts.actorEntity && worker
@@ -226,8 +231,17 @@ export class CodeSessionDriver {
             runtimeName: agent.name,
             verificationRequirement: opts.verificationRequirement,
             ownerMode: opts.ownerMode,
+            budgetMs: opts.budgetMs,
           })
         : undefined;
+    const runMeta = run ? codingRunMetadata(run) : undefined;
+    const budget =
+      runMeta?.startedAt !== undefined && runMeta.deadlineAt !== undefined
+        ? { startedAt: runMeta.startedAt, deadlineAt: runMeta.deadlineAt }
+        : undefined;
+    const deadline = budget
+      ? `Time budget: ${Math.round((budget.deadlineAt - budget.startedAt) / 1000)}s for this task (deadline ${new Date(budget.deadlineAt).toISOString()}). You will be told when to converge; near the deadline only submitting (marina_code summary) or reporting (blocked/assume) is possible, and that submission is recorded as budget-forced.`
+      : undefined;
     if (run) this.deps.onRun?.(run, agent);
     const requirement =
       run && codingRunMetadata(run).verificationRequirement === "candidate"
@@ -248,6 +262,7 @@ export class CodeSessionDriver {
           `Task #${codingRunMetadata(run).taskId}; full request: code show ${run.id} (marina_code action=show, artifactId=${run.id}). Read the full request before editing; this reminder may be abbreviated.`,
           requirement,
           ownership,
+          deadline,
           prompt,
         ]
           .filter(Boolean)
@@ -256,7 +271,7 @@ export class CodeSessionDriver {
     const boundEntity = this.bindAgentEntity(agent, opts.session, opts.profile, activeTask);
     // Task mode: the adapter suppresses its low-value cognitive sections and
     // restates this task every cycle until code.ts clears it (stop/summary).
-    agent.setActiveCodingTask?.(activeTask);
+    agent.setActiveCodingTask?.(activeTask, budget);
 
     const fileRoots =
       workspaceDescriptor?.fileGrants?.map(

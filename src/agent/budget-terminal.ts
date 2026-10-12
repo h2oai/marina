@@ -94,6 +94,25 @@ export function budgetFinalRequest(cap: number, unit: BudgetUnit, format?: strin
 }
 
 /**
+ * A wall-clock task budget (a Code Mode one-shot deadline): steer at 75 % of
+ * the time, and ask for the final answer a reserve BEFORE the deadline so the
+ * answer lands while the caller still listens — never earlier than that.
+ * The reserve is a tenth of the budget, bounded to 15 s – 2 min.
+ */
+export function deadlineReserveMs(capMs: number): number {
+  return Math.min(120_000, Math.max(15_000, Math.round(capMs * 0.1)));
+}
+
+/** The phase of a wall-clock budget from `startedAt` to `deadlineAt`, at `now`. */
+export function deadlinePhase(startedAt: number, deadlineAt: number, now: number): BudgetPhase {
+  const cap = deadlineAt - startedAt;
+  if (!(cap > 0)) return "final";
+  const used = now - startedAt;
+  if (used >= cap - Math.min(deadlineReserveMs(cap), cap / 2)) return "final";
+  return used >= budgetSteerAt(cap) ? "steer" : "work";
+}
+
+/**
  * What makes two drafts the same answer: the labelled final answer line when
  * there is one (`Exact Answer:`, `Final Answer:`, `Answer:`), else the whole
  * text — lower-cased, whitespace collapsed, surrounding punctuation trimmed.

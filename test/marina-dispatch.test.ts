@@ -5,6 +5,7 @@ import { describe, expect, it } from "bun:test";
 import {
   diffFileStats,
   execApprovalRequest,
+  oneShotBudgetMs,
   PRINT_EXIT,
   printOutcome,
   printVerification,
@@ -169,6 +170,23 @@ describe("marina dispatcher routing", () => {
       kind: "usage-error",
       arg: "--thinking",
     });
+  });
+
+  it("parses a one-shot driver and gives the coder a budget inside the timeout", () => {
+    expect(parseDispatch(["-p", "fix it", "--driver", "crew"])).toMatchObject({
+      kind: "code",
+      driver: "crew",
+    });
+    expect(parseDispatch(["-p", "fix it", "--driver", "swarm"])).toMatchObject({
+      kind: "usage-error",
+      arg: "--driver",
+    });
+    expect(parseDispatch(["--driver", "crew"])).toMatchObject({
+      kind: "usage-error",
+      arg: "--driver",
+    });
+    expect(oneShotBudgetMs(600_000)).toBe(590_000);
+    expect(oneShotBudgetMs(60_000)).toBe(58_800);
   });
 
   it("defaults a one-shot to delivery verification unless told otherwise", () => {

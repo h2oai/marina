@@ -307,7 +307,10 @@ passthru translates Responses `tools`/`tool_choice` and `function_call`/`functio
 to chat tools upstream and renders upstream `tool_calls` as `function_call` output items (see
 [Responses API tools](#responses-api-tools)), streams incrementally when asked (see
 [Responses API streaming](#responses-api-streaming)), and keeps `previous_response_id` threading
-through the conversation channel.
+through the conversation channel. Passthru `/v1/responses` also runs Marina's instrument stack
+(`x-marina-stack`, the `marina/…:` prefixes, and the default for an identified caller) exactly as
+chat completions does; an instrumented turn is answered complete and, when `stream: true` was
+asked, delivered as Responses SSE in one delta. The Ollama routes refuse the stack with `400`.
 
 ### Identity — who gets memory
 

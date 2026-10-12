@@ -3023,7 +3023,7 @@ describe("code mode — agentic dispatch (single-agent driver)", () => {
     expect(stripAnsi(sent.join("\n")).toLowerCase()).toContain("driver set to crew");
   });
 
-  it("the crew driver refuses a task contract instead of dropping it", async () => {
+  it("the crew driver keeps a task contract: a lead takes the tracked attempt, no bare plan", async () => {
     const alice = makeAgentEntity("u_alice", "Alice");
     db.saveEntity(alice);
     grant(db, "u_alice" as EntityId, "code.exec");
@@ -3039,10 +3039,12 @@ describe("code mode — agentic dispatch (single-agent driver)", () => {
     sent.length = 0;
     await command.handler(ctx, inputFor(alice, "code do owner:unattended -- build it"));
     const out = stripAnsi(sent.join("\n"));
-    expect(out).toContain("crew driver cannot carry this task's contract");
-    expect(out).toContain("owner:unattended");
+    // The contract is never dropped into a plan: the task goes to the
+    // single-agent lead path (no runtime here, so no lead can be bound).
+    expect(out).not.toContain("cannot carry");
     const sid = alice.properties.coding_session_id as string;
     expect(db.listCodingArtifacts(sid, 20, "crew_plan")).toHaveLength(0);
+    expect(db.listCodingRuns({ sessionId: sid, limit: 5 })).toHaveLength(0);
   });
 });
 
