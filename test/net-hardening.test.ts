@@ -526,28 +526,29 @@ describe("upstream deadlines", () => {
     expect(resp.status).toBe(504);
   });
 
-  it("a non-streaming client disconnect aborts the in-flight upstream call", async () => {
-    let upstreamSignal: AbortSignal | undefined;
-    globalThis.fetch = ((_url: string, init?: RequestInit) =>
-      new Promise<Response>((_resolve, reject) => {
-        upstreamSignal = init?.signal ?? undefined;
-        init?.signal?.addEventListener("abort", () => reject(init.signal!.reason));
-      })) as unknown as typeof fetch;
-    const client = new AbortController();
-    const pending = proxyToAnthropic(
-      { model: "claude-x", messages: [{ role: "user", content: "hi" }] },
-      "test-key",
-      "claude-x",
-      false,
-      undefined,
-      { clientSignal: client.signal },
-    );
-    await until(() => upstreamSignal !== undefined);
-    client.abort();
-    const resp = await pending;
-    expect(upstreamSignal!.aborted).toBe(true);
-    expect(resp.status).toBe(502);
-  });
+  for (const stream of [false, true])
+    it(`client disconnect aborts the upstream before headers (stream=${stream})`, async () => {
+      let upstreamSignal: AbortSignal | undefined;
+      globalThis.fetch = ((_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          upstreamSignal = init?.signal ?? undefined;
+          init?.signal?.addEventListener("abort", () => reject(init.signal!.reason));
+        })) as unknown as typeof fetch;
+      const client = new AbortController();
+      const pending = proxyToAnthropic(
+        { model: "claude-x", stream, messages: [{ role: "user", content: "hi" }] },
+        "test-key",
+        "claude-x",
+        false,
+        undefined,
+        { clientSignal: client.signal },
+      );
+      await until(() => upstreamSignal !== undefined);
+      client.abort();
+      const resp = await pending;
+      expect(upstreamSignal!.aborted).toBe(true);
+      expect(resp.status).toBe(502);
+    });
 });
 
 describe("drain bypass and shared discovery handlers", () => {

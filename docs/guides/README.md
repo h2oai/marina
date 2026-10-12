@@ -31,6 +31,7 @@ and operate the environment. Start with one path below; the full catalog follows
 | Keep coding, messages and world activity together | [Coding terminal](coding.md#start-in-your-project-folder) | [Coding desks](published-panels.md#create-a-coding-desk) |
 | Deploy a shared instance | [Deployment](deployment.md) | [Authentication](../authentication.md) |
 | [Backup and recovery](recovery.md) | Snapshots, restore, and recovering a damaged database |
+| [Contributor workflows](contributor-workflows.md) | Trace terminal/API input through admission, execution, memory and verification |
 | [Compatibility and upgrades](compatibility.md) | Supported contract per surface, how each is qualified, and upgrades |
 | Review human and agent identity controls | [Identity and workload security](identity.md) | [Authentication](../authentication.md) |
 | Run isolated A/B Marina variants | [World Collective](world-collective.md) | [Execution Traces](observability.md) |

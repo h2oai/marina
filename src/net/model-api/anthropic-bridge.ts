@@ -118,8 +118,8 @@ export async function proxyToAnthropic(
     (body.stream_options as { include_usage?: unknown }).include_usage === true;
 
   // Deadline for the call (headers for a stream, the whole reply otherwise);
-  // a non-streaming caller that disconnects aborts it too.
-  const abort = upstreamAbort(wantStream ? undefined : opts.clientSignal);
+  // a caller that disconnects before headers aborts it too.
+  const abort = upstreamAbort(opts.clientSignal);
   try {
     const resp = await fetch(ANTHROPIC_MESSAGES_URL, {
       method: "POST",

@@ -32,13 +32,14 @@ import { setEndpointConfig } from "../src/net/model-endpoint";
 import { WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
 import type { CodingEventRow } from "../src/persistence/db-coding";
-import { MarinaClient } from "../src/sdk/client";
+import { MarinaAgent, MarinaClient } from "../src/sdk/client";
 import { codingDesk } from "../src/sdk/coding-desk";
 import { MarinaPanelClient } from "../src/sdk/panel-client";
 import { type EngineEvent, type EntityId, roomId } from "../src/types";
 import { scopeProcessState, scopeProperty } from "../test/process-state";
 import type { TerminalPanelState } from "./code-panel-form";
 import { CodePanels } from "./code-panels";
+import { CodingControlJourney } from "./coding-control-journey";
 import {
   codingRepositoryFixture,
   codingRepositoryHoldout,
@@ -62,6 +63,8 @@ export interface CodingQualificationOptions {
   model?: (typeof MODELS)[number];
   /** Retain one resident's history across tasks; no extra calls or spend are granted. */
   reuseWorker?: boolean;
+  /** Exercise the real terminal command controller through the same server. */
+  cliControls?: boolean;
 }
 
 export function validateCodingQualification(options: CodingQualificationOptions): void {
@@ -71,8 +74,8 @@ export function validateCodingQualification(options: CodingQualificationOptions)
     throw new Error(`Choose an approved qualification model: ${MODELS.join(", ")}`);
   if (options.repositoryRevision && !/^[a-f0-9]{40}$/.test(options.repositoryRevision))
     throw new Error("repository-revision must be a full local Git commit ID");
-  if (!Number.isFinite(options.budgetUsd) || options.budgetUsd <= 0 || options.budgetUsd > 2)
-    throw new Error("Use an explicit --budget-usd greater than 0 and at most 2");
+  if (!Number.isFinite(options.budgetUsd) || options.budgetUsd <= 0 || options.budgetUsd > 1000)
+    throw new Error("Use an explicit --budget-usd greater than 0 and at most 1000");
   if (!options.directory) throw new Error("Use --directory PRIVATE_PATH outside the repository");
   const timeout = options.timeoutMs ?? 240_000;
   if (!Number.isInteger(timeout) || timeout < 1000 || timeout > 600_000)
@@ -362,8 +365,12 @@ export function codingQualificationFailure(input: {
  * harness supplies the task and later performs an independent owner review;
  * it never makes the worker's edits, checks or summary for it. Run standalone:
  * process-wide policy/fetch scopes must not overlap another running world. */
-export async function qualifyCoding(options: CodingQualificationOptions) {
+export async function qualifyCoding(
+  options: CodingQualificationOptions,
+  network: typeof fetch = globalThis.fetch,
+) {
   validateCodingQualification(options);
+  const transport = network === globalThis.fetch ? "live" : "injected";
   if (!process.env.OPENAI_API_KEY)
     throw new Error("OPENAI_API_KEY is unavailable; no live qualification was run");
   const directory = resolve(options.directory);
@@ -431,12 +438,19 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
       // an operator's optional external judge: the fixture's network policy permits
       // only its bounded coding provider. This does not test decision-gate policy.
       MARINA_DECISION_GATE: "off",
+      MARINA_DECISIONS: "off",
+      MARINA_DECISION_ENGINE: undefined,
+      // Never inherit another provider credential or an operator's paid judge.
+      OPENROUTER_API_KEY: undefined,
+      ANTHROPIC_API_KEY: undefined,
+      MARINA_MEMORY_EMBEDDINGS: "none",
+      MARINA_CORPUS_EMBEDDINGS: "none",
       MARINA_ROOM_AGENTS: "false",
       MARINA_DAILY_SPEND_CAP_USD: String(options.budgetUsd),
     },
   });
   let networkFailure: string | undefined;
-  const budgetedFetch = evaluationBudgetFetch(globalThis.fetch, spending);
+  const budgetedFetch = evaluationBudgetFetch(network, spending);
   using _network = scopeProperty(
     globalThis,
     "fetch",
@@ -448,6 +462,19 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
           const message = getErrorMessage(error);
           if (/^Evaluation (refused|input budget|spending limit)/.test(message))
             networkFailure ??= message;
+          if (message.startsWith("Evaluation refused an unapproved upstream endpoint")) {
+            const request = new Request(args[0], args[1]);
+            const endpoint = new URL(request.url);
+            writeFileSync(
+              join(directory, "refused-endpoint.json"),
+              JSON.stringify({
+                origin: endpoint.origin,
+                path: endpoint.pathname,
+                method: request.method,
+              }),
+              { mode: 0o600 },
+            );
+          }
           throw error;
         }
       },
@@ -493,7 +520,7 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
   engine.agentRuntime.setWsPort(server.getPort());
   engine.start();
   const url = `ws://127.0.0.1:${server.getPort()}`;
-  const owner = new MarinaClient(url, { autoReconnect: false, pingInterval: 0 });
+  const owner = new MarinaAgent(url, { autoReconnect: false, pingInterval: 0 });
   const peer = new MarinaClient(url, { autoReconnect: false, pingInterval: 0 });
   cleanup.defer(() => {
     owner.disconnect();
@@ -531,10 +558,15 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
     pricing: { standard: price, long_context_threshold: luna ? 272000 : null },
     model_loop: "native Marina worker",
     reuse_worker: options.reuseWorker ?? false,
+    cli_controls: options.cliControls ?? false,
+    transport,
+    revision: Bun.spawnSync(["git", "rev-parse", "HEAD"]).stdout.toString().trim(),
     policy: {
       autonomy: "guarded",
       trust: "shared",
       decision_gate: "off (optional judge excluded from this fixture)",
+      decisions: "off",
+      embeddings: "none",
       command_gates: "enforced",
     },
     scenarios: [],
@@ -698,9 +730,31 @@ export async function qualifyCoding(options: CodingQualificationOptions) {
       assert.ok(workerId, "Native worker failed to join the world");
       grant(db, workerId, "code.exec");
       const scenarioStarted = Date.now();
-      await owner.command(
-        `code do verification:candidate -- ${repositoryFixture?.task ?? workspaceFixture?.task ?? fixture!.task}`,
-      );
+      const task = repositoryFixture?.task ?? workspaceFixture?.task ?? fixture!.task;
+      const controls = options.cliControls
+        ? new CodingControlJourney({
+            owner,
+            url,
+            root,
+            directory,
+            sessionId,
+            db,
+            worker: handle,
+            timeoutMs: options.timeoutMs ?? 240_000,
+          })
+        : undefined;
+      if (controls) {
+        report.control_journeys ??= {} as Record<string, unknown>;
+        (report.control_journeys as Record<string, unknown>)[scenario] = controls.evidence;
+        cleanup.defer(async () => {
+          writeFileSync(join(directory, `controls-${scenario}.txt`), controls.output.join(""), {
+            mode: 0o600,
+          });
+          await controls.close();
+        });
+        await controls.beforeTask(task);
+        await controls.console.submit(`/task ${task}`);
+      } else await owner.command(`code do verification:candidate -- ${task}`);
       const run = db.listCodingRuns({ sessionId, status: "active" })[0];
       assert.ok(run, "Task dispatch did not create a canonical attempt");
       assert.equal(
@@ -984,9 +1038,20 @@ console.log("Independent pagination contract passed");
         0,
         `${scenario}: independent contract failed: ${heldoutResult.stderr}`,
       );
-      await owner.command(`code review approve ${run.id}`, { codingTarget: { sessionId } });
+      if (controls) {
+        await controls.console.submit(`/review ${run.id}`);
+        await controls.console.submit(`/review approve ${run.id}`);
+      } else await owner.command(`code review approve ${run.id}`, { codingTarget: { sessionId } });
       assert.equal(db.getTask(codingRunMetadata(submitted).taskId)?.status, "completed");
       result.review = "Canonical owner approval after independent deterministic contract checks";
+      if (controls) {
+        result.controls = controls.evidence;
+        await controls.afterReview();
+        writeFileSync(join(directory, `controls-${scenario}.txt`), controls.output.join(""), {
+          mode: 0o600,
+        });
+        await controls.close();
+      }
       result.passed = true;
       workers.push({ name, recordedCostUsd: operatorStatusOf(handle)?.totalCostUsd ?? 0 });
       if (!options.reuseWorker) await engine.agentRuntime.stop(name);
@@ -1072,6 +1137,7 @@ if (import.meta.main) {
       "repository-revision": { type: "string" },
       model: { type: "string" },
       "reuse-worker": { type: "boolean", default: false },
+      "cli-controls": { type: "boolean", default: false },
     },
   });
   const timeoutMs = values["timeout-ms"] ? Number(values["timeout-ms"]) : 240_000;
@@ -1082,7 +1148,10 @@ if (import.meta.main) {
       );
       process.exit(1);
     },
-    Math.min(1_860_000, timeoutMs * values.scenarios!.split(",").length + 60_000),
+    Math.min(
+      1_860_000,
+      timeoutMs * values.scenarios!.split(",").length * (values["cli-controls"] ? 3 : 1) + 60_000,
+    ),
   );
   const report = await qualifyCoding({
     directory: values.directory ?? "",
@@ -1092,6 +1161,7 @@ if (import.meta.main) {
     repositoryRevision: values["repository-revision"],
     model: values.model as CodingQualificationOptions["model"],
     reuseWorker: values["reuse-worker"],
+    cliControls: values["cli-controls"],
   });
   clearTimeout(watchdog);
   console.log(

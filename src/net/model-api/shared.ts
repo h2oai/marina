@@ -271,8 +271,8 @@ export function upstreamTimeoutMs(): number {
 
 /**
  * Abort handle for one upstream call: fires on the deadline or when the
- * client's own request signal aborts (a non-streaming caller that
- * disconnected). `settle()` disarms both — call it once the response headers
+ * client's own request signal aborts (including a streaming caller waiting
+ * for headers). `settle()` disarms both — call it once the response headers
  * arrived for a stream (the stream's own cancel then owns its lifetime) or
  * once a non-streaming body has been read.
  */

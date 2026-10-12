@@ -37,7 +37,8 @@ candidate variant IDs and retain the promotion rationale and evidence references
 `bun run qualify:native` compiles `dist/marina`, copies it into a temporary directory,
 and runs with only Git on `PATH`. It checks the package version; server startup, SDK
 room access and graceful shutdown in the empty, default and showcase worlds; and a
-real terminal folder session with `/cost`, idle `/compact` and `/quit`. This gate runs
+real terminal folder session with `/cost`, idle `/compact` and `/quit`, initialization,
+standalone `connect`, and durable memory across a folder-session restart. This gate runs
 in pull-request CI without provider credentials. The compiled catalog is also checked
 against all shipped world and shared-room definitions.
 
@@ -98,3 +99,41 @@ per-arm Wilson 95% intervals, token-F1 next to judge accuracy, tokens injected, 
 the judge prompt version, split salt, harness git sha, and `residentContextVersion` from the
 result JSON in `benchmarks/results/memory/`. Do not cite historical pilot figures as a
 result; the reporting standard and its rationale are in `benchmarks/memory/README.md`.
+
+
+## Live model command acceptance
+
+`bun run scripts/qualify-coding.ts --directory /private/run-001 --budget-usd 25
+--scenarios bugfix --timeout-ms 180000 --cli-controls` exercises the real terminal
+command controller, WebSocket server and native agent loop. Supply `OPENAI_API_KEY`;
+missing credentials fail before any world starts. The output directory must be new
+and outside the source checkout. Each invocation retains its own report, including
+failures. An explicit finite allowance up to $1,000 is supported; reservation and
+attempt limits still apply to every upstream call. Raising an allowance does not
+change a previously recorded result.
+
+The journey checks a read-only proposal, model-authored regression tests, immutable
+candidate verification, hidden acceptance outside the worker workspace, explicit owner
+review, forced compaction, continuity of an earlier marker, and `/cost`. It uses the
+existing coding qualification fixtures and grading. The actual PTY/bootstrap and
+restart contracts run separately in ordinary CI. The scripted-provider version proves
+routing and persistence without credentials; only provider-backed results test the
+model's behavior. The core fixture excludes optional external judges and embeddings;
+JEV/fallback mechanisms have their own tests and qualification.
+
+The **Live model acceptance** workflow is manual and runs only a committed `main`
+revision. Configure environment `live-model` with a main-only deployment branch rule
+and any required reviewers, an environment secret `OPENAI_API_KEY`, and repository
+variable `LIVE_EVIDENCE_PUBLIC_KEY` containing the evidence custodian's GPG public key.
+The workflow never runs fork code or accepts an arbitrary checkout revision. Missing
+credentials or the encryption recipient fail the lane rather than skip it. It does
+not run on every PR or on a schedule.
+
+Only allowlisted scalar result metadata appears in the public summary. Detailed
+reports, transcripts, attempts, workspace and logs are encrypted to that public key
+before artifact upload; the holder of the private key can decrypt them with
+`gpg --decrypt live-evidence.tar.gz.gpg > live-evidence.tar.gz`. Archive the evidence
+in the private release record before its 14-day artifact retention expires. No raw
+qualification artifact is uploaded. Preserve earlier failures when a later revision
+passes. Repeated fresh tasks and multiple supported providers are required before a
+release reliability claim; these smoke fixtures are not leaderboard measurements.

@@ -28,7 +28,7 @@ const env = {
   TERM: "xterm-256color",
   MARINA_ROOM_AGENTS: "false",
   AGENT_AUTORESPAWN: "false",
-  MARINA_TRUST_PROFILE: "local",
+  MARINA_PROFILE: "local",
   WS_HOST: "127.0.0.1",
   WS_PORT: "0",
   MCP_PORT: "0",
@@ -97,6 +97,26 @@ try {
       });
       if (!catalog.ok || ((await catalog.json()) as unknown[]).length < 50)
         throw new Error(`Native ${world} is missing the settings catalog`);
+      const connected = Bun.spawn(
+        [
+          executable,
+          "connect",
+          "NativeConnect",
+          "--url",
+          `ws://127.0.0.1:${port}/ws`,
+          "-c",
+          "look",
+          "--wait",
+          "5",
+        ],
+        { cwd: scratch, env, stdout: "pipe", stderr: "pipe" },
+      );
+      const connectOutput = await new Response(connected.stdout).text();
+      if (
+        (await connected.exited) ||
+        !connectOutput.includes(expected.rooms[expected.startRoom]!.short)
+      )
+        throw new Error(`Standalone connect failed for ${world}`);
       agent.disconnect();
       child.kill("SIGTERM");
       await until(() => child.exitCode !== null);
@@ -112,41 +132,69 @@ try {
       await Promise.all([output, errors]);
     }
   }
+  const initialized = Bun.spawnSync([executable, "init", "--yes", "--directory", project], {
+    cwd: scratch,
+    env,
+  });
+  if (initialized.exitCode) throw new Error("Standalone init failed");
+  const checked = Bun.spawnSync([executable, "init", "--check", "--directory", project], {
+    cwd: scratch,
+    env,
+  });
+  if (checked.exitCode || !checked.stdout.toString().includes('"valid": true'))
+    throw new Error("Standalone init validation failed");
   writeFileSync(join(project, "README.md"), "# Native CLI fixture\n");
   const init = Bun.spawnSync([git, "init", "-q"], { cwd: project, env });
   if (init.exitCode) throw new Error("Cannot initialize native coding fixture");
-  let raw = "";
-  await using terminal = new Bun.Terminal({
-    cols: 120,
-    rows: 40,
-    data(_terminal, bytes) {
-      raw = (raw + new TextDecoder().decode(bytes)).slice(-128_000);
-    },
-  });
-  const child = Bun.spawn([executable, "--fresh", project], { cwd: project, env, terminal });
-  const deadline = setTimeout(() => child.kill("SIGKILL"), 60_000);
-  const screen = () => terminalText(raw);
-  try {
-    await until(() => {
-      if (child.exitCode !== null) throw new Error(`Native folder session failed: ${screen()}`);
-      return /›\s*$/.test(screen());
+  for (const resumed of [false, true]) {
+    let raw = "";
+    await using terminal = new Bun.Terminal({
+      cols: 120,
+      rows: 40,
+      data(_terminal, bytes) {
+        raw = (raw + new TextDecoder().decode(bytes)).slice(-128_000);
+      },
     });
-    if (!screen().includes(`Marina ${MARINA_VERSION}`))
-      throw new Error("Native session has no version");
-    terminal.write("/cost\r");
-    await until(() => /spent|spend|today/i.test(screen()) && /›\s*$/.test(screen()));
-    terminal.write("/compact\r");
-    await until(() => screen().includes("No active coding agent to compact"));
-    terminal.write("/quit\r");
-    await until(() => child.exitCode !== null, 35_000);
-    if (await child.exited) throw new Error("Native folder session failed to exit cleanly");
-    console.log(
-      "Standalone folder session: prompt, /cost, idle /compact, /quit passed without Bun on PATH",
-    );
-  } finally {
-    clearTimeout(deadline);
-    if (child.exitCode === null) child.kill("SIGKILL");
-    await child.exited;
+    const child = Bun.spawn([executable, project], { cwd: project, env, terminal });
+    const deadline = setTimeout(() => child.kill("SIGKILL"), 60_000);
+    const screen = () => terminalText(raw);
+    try {
+      await until(() => {
+        if (child.exitCode !== null) throw new Error(`Native folder session failed: ${screen()}`);
+        return /›\s*$/.test(screen());
+      });
+      if (!screen().includes(`Marina ${MARINA_VERSION}`))
+        throw new Error("Native session has no version");
+      if (resumed) {
+        terminal.write("/continue\r");
+        await until(() => /Active coding session:/.test(screen()));
+        terminal.write("/memory recall native-persisted-marker\r");
+        await until(() => screen().split("native-persisted-marker").length >= 3);
+      } else {
+        terminal.write("/world code start native-qualification\r");
+        await until(() =>
+          /[Ss]ession started|Started coding session|Active coding session/.test(screen()),
+        );
+        terminal.write("/memory save native-persisted-marker\r");
+        await until(() => /[Ss]aved|[Nn]ote #|[Rr]emembered/.test(screen()));
+      }
+      terminal.write("/cost\r");
+      await until(() => /spent|spend|today/i.test(screen()) && /›\s*$/.test(screen()));
+      terminal.write("/compact\r");
+      await until(() => screen().includes("No active coding agent to compact"));
+      terminal.write("/quit\r");
+      await until(() => child.exitCode !== null, 35_000);
+      if (await child.exited) throw new Error("Native folder session failed to exit cleanly");
+      console.log(
+        "Standalone folder session: init, persistence/resume, /cost, idle /compact, /quit passed without Bun on PATH",
+      );
+    } catch (error) {
+      throw new Error(`Native folder resume=${resumed}: ${screen()}`, { cause: error });
+    } finally {
+      clearTimeout(deadline);
+      if (child.exitCode === null) child.kill("SIGKILL");
+      await child.exited;
+    }
   }
 } finally {
   rmSync(scratch, { recursive: true, force: true });

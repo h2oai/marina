@@ -7,9 +7,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MarinaDB } from "../src/persistence/database";
+import { snapshotMemoryDatabase } from "../src/persistence/db-memory-maintenance";
 import { BASE_SCHEMA, MIGRATIONS } from "../src/persistence/schema";
 
-test("a schema-131 database upgrades with stable note IDs; newer schemas fail closed", () => {
+test("a schema-131 database upgrades with stable note IDs; newer schemas fail closed", async () => {
   const dir = mkdtempSync(join(tmpdir(), "marina-upgrade-"));
   const path = join(dir, "world.db");
   try {
@@ -29,6 +30,10 @@ test("a schema-131 database upgrades with stable note IDs; newer schemas fail cl
       "INSERT INTO notes(id, entity_name, content, created_at) VALUES (7419, 'Alice', 'pre-upgrade evidence', 1)",
     );
     old.close();
+    const backup = join(dir, "pre-upgrade.db");
+    const manifest = await snapshotMemoryDatabase(path, backup);
+    expect(manifest.verified).toBe(true);
+    expect(manifest.schema_version).toBe(131);
     const upgraded = new MarinaDB(path);
     try {
       expect(upgraded.getNote(7419)?.content).toBe("pre-upgrade evidence");
@@ -45,6 +50,29 @@ test("a schema-131 database upgrades with stable note IDs; newer schemas fail cl
     future.run("INSERT INTO schema_version(version) VALUES (?)", [MIGRATIONS.at(-1)!.version + 1]);
     future.close();
     expect(() => new MarinaDB(path)).toThrow("newer than this binary supports");
+    // Rollback restores into a new path, preserving both the failed deployment
+    // and its verified pre-upgrade snapshot. It never downgrades in place.
+    const restoredPath = join(dir, "restored.db");
+    await snapshotMemoryDatabase(backup, restoredPath);
+    const restored = new Database(restoredPath, { readonly: true });
+    try {
+      expect(restored.query("SELECT MAX(version) AS version FROM schema_version").get()).toEqual({
+        version: 131,
+      });
+      expect(restored.query("SELECT content FROM notes WHERE id=7419").get()).toEqual({
+        content: "pre-upgrade evidence",
+      });
+      expect(restored.query("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
+    } finally {
+      restored.close();
+    }
+    const retried = new MarinaDB(restoredPath);
+    try {
+      expect(retried.getNote(7419)?.content).toBe("pre-upgrade evidence");
+    } finally {
+      retried.close();
+    }
+    await expect(snapshotMemoryDatabase(backup, restoredPath)).rejects.toThrow("new database path");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

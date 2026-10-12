@@ -8,6 +8,8 @@ Thanks for thinking about contributing. This guide is the fastest path from "fre
 2. Skim [CLAUDE.md](CLAUDE.md) for architectural rules and conventions — most "why is the code shaped this way" questions are answered there.
 3. Search [issues](../../issues) and [PRs](../../pulls) for prior art before opening a new one.
 
+For a concrete input-to-result map, see [tracing a Marina workflow](docs/guides/contributor-workflows.md). It links execution boundaries to their regression tests.
+
 ## Development setup
 
 You need [Bun](https://bun.sh) ≥ 1.4.2 (`engines.bun` in `package.json`).

@@ -8,7 +8,11 @@ import { NAMED_COMMAND_FORMS } from "../src/sdk/named-command-forms";
 import baseline from "./fixtures/mcp-named-contracts.json";
 
 it("preserves every published named-tool schema while generating it from CommandForm", () => {
-  for (const [name, form] of Object.entries(NAMED_COMMAND_FORMS)) {
+  // Iterate the frozen release contract: iterating current exports alone would
+  // silently pass after deleting a published tool.
+  for (const name of Object.keys(baseline)) {
+    const form = NAMED_COMMAND_FORMS[name as keyof typeof NAMED_COMMAND_FORMS];
+    expect(form).toBeDefined();
     const actual = z.toJSONSchema(z.object(mcpNamedCommandSchema(form)));
     expect<unknown>(actual).toEqual(baseline[name as keyof typeof baseline]);
     expect(composeCommand(form, {}, {}).errors.form).toBeDefined();

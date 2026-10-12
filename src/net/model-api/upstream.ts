@@ -612,7 +612,7 @@ async function dispatchOpenAICompatible(
     }
   }
   // Deadline for the call (headers for a stream, the whole reply otherwise);
-  // a non-streaming caller that disconnects aborts it too.
+  // a caller that disconnects before headers aborts it too.
   const abort = upstreamAbort(clientSignal);
   try {
     // Omit the Authorization header entirely when keyless (local servers) — an
@@ -1161,7 +1161,10 @@ export async function proxyToUpstream(
     );
   }
   const wantStream = body.stream === true;
-  const clientSignal = wantStream ? undefined : hints?.clientSignal;
+  // Before response headers exist there is no response body to cancel. Honor
+  // client cancellation for streaming requests here too; after headers arrive,
+  // dispatch settles this listener and the stream owns its own cancellation.
+  const clientSignal = hints?.clientSignal;
   let attemptedUpstream = false;
   let anyTimedOut = false;
   let lastTarget: string | undefined;
