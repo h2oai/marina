@@ -36,7 +36,10 @@ export type {
   MemoryStorageBudgetView,
 } from "../../../src/net/memory/memory-observability-types";
 
-import type { MemoryJobView, MemoryReceiptView } from "../../../src/net/memory/memory-observability-types";
+import type {
+  MemoryJobView,
+  MemoryReceiptView,
+} from "../../../src/net/memory/memory-observability-types";
 
 // ── Named aliases (derived — never restate the union) ───────────────────────
 
