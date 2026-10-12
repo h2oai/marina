@@ -71,12 +71,15 @@ describe("spend refusals are not retried like outages", () => {
       "402 Payment Required",
       "insufficient_quota: You exceeded your current quota",
       "reservation exceeds the remaining attempt budget",
+      '400 {"type":"error","error":{"type":"invalid_request_error","message":"You have reached your specified workspace API usage limits. You will regain access on 2026-11-01 at 00:00 UTC."}}',
+      "monthly usage limit exceeded",
     ])
       expect(isSpendRefusal(m)).toBe(true);
     for (const m of [
       "429 Too Many Requests: rate limited",
       "500 internal error",
       "port 4020 closed",
+      "429 rate_limit_error: usage of 50 requests per minute",
     ])
       expect(isSpendRefusal(m)).toBe(false);
   });
