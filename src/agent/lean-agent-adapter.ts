@@ -104,7 +104,13 @@ import {
   type AgentThinkingLevel,
   resolveAgentThinkingLevel,
 } from "./agent-types";
-import { budgetSteerAt } from "./budget-terminal";
+import {
+  type BudgetPhase,
+  budgetFinalRequest,
+  budgetSteerAt,
+  budgetSteerNote,
+  deadlinePhase,
+} from "./budget-terminal";
 import {
   type ConversationTokenCap,
   computeContextBudget,
@@ -1485,6 +1491,8 @@ export class LeanAgentAdapter implements AgentHandle {
   // Lessons recalled once for the current coding task (MARINA_LESSONS):
   // `null` text = not asked yet; shown with the task until the task changes.
   private codingTaskLessons: { task: string; text: string | null } | null = null;
+  // The current coding task's wall-clock budget (epoch ms), if it has one.
+  private codingTaskBudget: { startedAt: number; deadlineAt: number } | null = null;
 
   // ─── Perception Dedup ──────────────────────────────────────────────
   private recentPerceptionHashes = new Set<string>();
@@ -1778,6 +1786,17 @@ export class LeanAgentAdapter implements AgentHandle {
             block: true,
             reason:
               "The model output limit interrupted this tool request; it did not execute. Retry with a smaller, complete call and a surgical edit.",
+          };
+        }
+        // A coding task at its budget's final-answer point: only submit or report.
+        if (
+          this.codingBudgetPhase() === "final" &&
+          !finalCodingCall(context.toolCall.name, context.args)
+        ) {
+          return {
+            block: true,
+            reason:
+              "The task's time budget is spent: submit now with marina_code action=summary, or report with action=blocked. Other tools are refused.",
           };
         }
         // Reserve before any await: parallel preparation must share the same limit.
@@ -3684,6 +3703,24 @@ export class LeanAgentAdapter implements AgentHandle {
       // lessons with the shared pool), asked once per task and kept beside it.
       const taskLessons = await this.lessonsForCodingTask(this.activeCodingTask);
       if (taskLessons) parts.push(`[Lessons]\n${taskLessons}`);
+      // The task's wall-clock budget (budget-terminal): steer at 75 %, then
+      // the final request — only submitting or reporting remains.
+      const budget = this.codingTaskBudget;
+      const phase = this.codingBudgetPhase();
+      if (budget && phase !== "work") {
+        const cap = budget.deadlineAt - budget.startedAt;
+        parts.push(
+          phase === "steer"
+            ? `${budgetSteerNote(Date.now() - budget.startedAt, cap, "ms")} For this task: finish the current change, run the required checks, then submit with marina_code action=summary.`
+            : budgetFinalRequest(
+                cap,
+                "ms",
+                "Submit now with marina_code action=summary (what is done, what is not, what was verified), or report with action=blocked. Other tools are refused; this submission is recorded as budget-forced.",
+              ),
+          MANDATORY_SECTION_PRIORITY,
+          "coding_budget",
+        );
+      }
     }
 
     // ── 1c. Obligations ledger (MARINA_OBLIGATIONS, default off) ──
@@ -5153,10 +5190,22 @@ The goal is a smaller, sharper memory — not more notes.`;
   }
 
   /** See AgentHandle.setActiveCodingTask — task-mode toggle for a bound coder. */
-  setActiveCodingTask(task: string | null): void {
+  setActiveCodingTask(
+    task: string | null,
+    budget?: { startedAt: number; deadlineAt: number },
+  ): void {
     const next = task?.trim() ? task.trim() : null;
     if (next && next !== this.activeCodingTask) this.obligations.noteRequest(next);
     this.activeCodingTask = next;
+    // A steer of the same attempt keeps its budget; clearing the task clears it.
+    if (!next) this.codingTaskBudget = null;
+    else if (budget) this.codingTaskBudget = budget;
+  }
+
+  /** The current coding task's budget phase (`work` when it has none). */
+  private codingBudgetPhase(now = Date.now()): BudgetPhase {
+    const b = this.activeCodingTask ? this.codingTaskBudget : null;
+    return b ? deadlinePhase(b.startedAt, b.deadlineAt, now) : "work";
   }
 
   /** Restrict the live toolset to a profile; `"base"` restores the configured default. */
@@ -5465,4 +5514,30 @@ The goal is a smaller, sharper memory — not more notes.`;
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
+}
+
+const FINAL_CODE_ACTIONS: ReadonlySet<string> = new Set([
+  "summary",
+  "blocked",
+  "assume",
+  "status",
+  "diff",
+  "show",
+]);
+const FINAL_CODE_TOOLS: ReadonlySet<string> = new Set([
+  "think",
+  "marina_code_summary",
+  "marina_code_session_status",
+  "marina_code_diff",
+]);
+
+/**
+ * The calls a coding task may still make at its budget's final-answer point:
+ * submit (`summary`), report (`blocked` / `assume`), or look at what it has.
+ */
+export function finalCodingCall(name: string, args: unknown): boolean {
+  if (FINAL_CODE_TOOLS.has(name)) return true;
+  if (name !== "marina_code") return false;
+  const action = (args as { action?: unknown } | null)?.action;
+  return typeof action === "string" && FINAL_CODE_ACTIONS.has(action);
 }

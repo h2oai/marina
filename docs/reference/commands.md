@@ -2040,15 +2040,17 @@ Effect: unknown.
 - `field-0` (`agent`): text, required.
 - `field-1` (`req`): text, required.
 
-### `code do [verification:candidate|checks|delivery] [owner:unattended] -- <task>`
+### `code do [verification:candidate|checks|delivery] [owner:unattended] [budget:<duration>] -- <task>`
 
 Effect: unknown.
 
 - `field-0` (`verification`): text, optional group `option-0`, choices `candidate`, `checks`, `delivery`.
 - `field-1` (`owner`): text, optional group `option-1`.
-- `field-2` (`task`): text, required.
+- `field-2` (`budget`): text, optional group `option-2`.
+- `field-3` (`task`): text, required.
 - Group `option-0`: `verification:candidate|checks|delivery`.
 - Group `option-1`: `owner:unattended`.
+- Group `option-2`: `budget:duration`.
 
 ### `code assume <interpretation>`
 

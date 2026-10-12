@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { realpath } from "node:fs/promises";
+import { type BudgetForced, deadlinePhase } from "../agent/budget-terminal";
 import { TaskManager } from "../coordination/task-manager";
 import { sanitizeEntityName } from "../engine/entity-name";
 import { getErrorMessage } from "../engine/errors";
@@ -63,6 +64,11 @@ export interface CodingRunMetadata {
   requirements?: RequirementCoverage;
   /** Submissions refused for unverified requirements (bounded by REQUIREMENT_REFUSALS). */
   requirementRefusals?: number;
+  /** Wall-clock budget of this attempt (`code do budget:<duration>`): start and deadline, epoch ms. */
+  startedAt?: number;
+  deadlineAt?: number;
+  /** Set when the submission came after the budget's final-answer point (`deadlinePhase`). */
+  budgetForced?: BudgetForced;
   reason?: string;
 }
 
@@ -146,6 +152,8 @@ export function beginCodingRun(
     verificationRequirement?: "candidate" | "checks" | "delivery";
     /** Owner preauthorizes only its active worker to reclaim an owner-held lock. */
     ownerMode?: "unattended";
+    /** Wall-clock budget for a new attempt (ms); a steered active attempt keeps its own. */
+    budgetMs?: number;
   },
 ): CodingArtifactRow {
   return db.transaction(() => {
@@ -225,6 +233,9 @@ export function beginCodingRun(
       executionTarget: input.session.execution_target,
       verificationRequirement: input.verificationRequirement,
       ownerMode: input.ownerMode,
+      ...(input.budgetMs && input.budgetMs > 0
+        ? { startedAt: Date.now(), deadlineAt: Date.now() + input.budgetMs }
+        : {}),
     };
     const run = db.createCodingArtifact({
       sessionId: input.session.id,
@@ -275,7 +286,12 @@ export async function submitCodingRun(
       );
     meta.summaryId = summary.id;
     Object.assign(meta, assessed);
-    if (meta.verificationRequirement && meta.verification !== "passed") {
+    // Past the budget's final-answer point the submission is the forced best
+    // effort: submitted with whatever verification it has, labelled, and never
+    // reported as verified unless its checks passed.
+    const forced = budgetForcedAt(meta, Date.now());
+    if (forced) meta.budgetForced = forced;
+    if (!forced && meta.verificationRequirement && meta.verification !== "passed") {
       db.updateCodingArtifact(run.id, { metadata: meta });
       db.createCodingEvent({
         sessionId,
@@ -286,6 +302,7 @@ export async function submitCodingRun(
       return db.getCodingArtifact(run.id)!;
     }
     if (
+      !forced &&
       meta.verificationRequirement === "delivery" &&
       !requirementsComplete(meta.requirements) &&
       (meta.requirementRefusals ?? 0) < REQUIREMENT_REFUSALS
@@ -302,7 +319,7 @@ export async function submitCodingRun(
     }
     const requirements = meta.requirements ? requirementLines(meta.requirements) : [];
     const assumed = assumptionLines(meta);
-    const evidence = `${summary.content_text}${requirements.length ? `\n\nRequirements:\n${requirements.map((line) => `- ${line}`).join("\n")}` : ""}\n\nCoding attempt: artifact:${run.id}\nSummary: artifact:${summary.id}\nRecorded verification: ${meta.verification}${verification ? ` (artifact:${verification.id})` : ""}${assumed.length ? `\nAssumptions (no person could answer):\n${assumed.join("\n")}` : ""}`;
+    const evidence = `${summary.content_text}${requirements.length ? `\n\nRequirements:\n${requirements.map((line) => `- ${line}`).join("\n")}` : ""}\n\nCoding attempt: artifact:${run.id}\nSummary: artifact:${summary.id}\nRecorded verification: ${meta.verification}${verification ? ` (artifact:${verification.id})` : ""}${forced ? `\nBudget-forced: submitted at the task's deadline (${Math.round(forced.used / 1000)}s of ${Math.round(forced.cap / 1000)}s), best effort.` : ""}${assumed.length ? `\nAssumptions (no person could answer):\n${assumed.join("\n")}` : ""}`;
     const claim = codingRunClaim(db, run);
     if (!claim || !tasks.submit(meta.taskId, claim.entity_id, evidence)) {
       throw new Error(
@@ -684,4 +701,22 @@ export function canReclaimCodingWriter(
     claim?.status === "claimed" &&
     (claim.lease_expires_at === null || claim.lease_expires_at > Date.now())
   );
+}
+
+/**
+ * The `BudgetForced` label for a submission at `now`: the attempt has a
+ * wall-clock budget and `now` is past its final-answer point. Else undefined.
+ */
+export function budgetForcedAt(
+  meta: Pick<CodingRunMetadata, "startedAt" | "deadlineAt">,
+  now: number,
+): BudgetForced | undefined {
+  if (meta.startedAt === undefined || meta.deadlineAt === undefined) return undefined;
+  if (deadlinePhase(meta.startedAt, meta.deadlineAt, now) !== "final") return undefined;
+  return {
+    reason: "deadline",
+    used: now - meta.startedAt,
+    cap: meta.deadlineAt - meta.startedAt,
+    source: "final-request",
+  };
 }
