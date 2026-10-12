@@ -202,7 +202,7 @@ async function call(
   model: string,
   forceModel: string | undefined,
   reason: string,
-  o: { signal?: AbortSignal; entityId?: EntityId; trailingNote?: string },
+  o: { signal?: AbortSignal; entityId?: EntityId; trailingNote?: string; noteScope?: string },
 ): Promise<Draft> {
   try {
     const resp = await proxyToUpstream(
@@ -218,6 +218,7 @@ async function call(
         ...(o.signal ? { clientSignal: o.signal } : {}),
         providerFallback: false,
         ...(o.trailingNote ? { trailingNote: o.trailingNote } : {}),
+        ...(o.noteScope ? { noteScope: o.noteScope } : {}),
       },
     );
     const text = await resp.text();
@@ -261,6 +262,8 @@ export interface EnsembleTurn {
   displayModel: string;
   entityId?: EntityId;
   signal?: AbortSignal;
+  /** The caller's sticky-note scope for the proposers' calls (`sticky-notes.ts`). */
+  noteScope?: string;
   /** Output repair on the pick (default true). Off when `verify` reviews the pick:
    *  verify repairs its final message once. */
   repair?: boolean;
@@ -296,6 +299,7 @@ export async function ensembleTurn(engine: Engine, t: EnsembleTurn): Promise<Ens
       call(engine, t.body, id, t.forceModel, `ensemble:proposer:${i + 1}`, {
         ...o,
         ...(t.note ? { trailingNote: t.note } : {}),
+        ...(t.noteScope ? { noteScope: t.noteScope } : {}),
       }),
     ),
   );

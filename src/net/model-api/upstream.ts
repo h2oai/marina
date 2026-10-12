@@ -65,6 +65,7 @@ import {
   upstreamAbort,
   upstreamTimeoutMs,
 } from "./shared";
+import { placeTrailingNote, planStickyNotes, stickyNotesEnabled } from "./sticky-notes";
 
 /** Module logger: upstream proxy — provider transport and HTTP-status failures. */
 const logger = new Logger();
@@ -1032,25 +1033,7 @@ export function withTrailingNote(
   note: string | undefined,
 ): Record<string, unknown> {
   if (!note || !Array.isArray(body.messages)) return body;
-  const messages = [...body.messages];
-  const last = messages[messages.length - 1] as Record<string, unknown> | undefined;
-  if (last && last.role === "user") {
-    const content = last.content;
-    messages[messages.length - 1] = {
-      ...last,
-      content:
-        typeof content === "string"
-          ? content
-            ? `${content}\n\n${note}`
-            : note
-          : Array.isArray(content)
-            ? [...content, { type: "text", text: note }]
-            : note,
-    };
-  } else {
-    messages.push({ role: "user", content: note });
-  }
-  return { ...body, messages };
+  return { ...body, messages: placeTrailingNote(body.messages, note) };
 }
 
 export function prepareUpstreamBody(
@@ -1152,6 +1135,10 @@ export async function proxyToUpstream(
     /** A volatile note for this request only, appended at the very end AFTER
      *  the cache breakpoints (the obligations ledger's reminder or nudge). */
     trailingNote?: string;
+    /** The caller's scope for sticky trailing notes (`sticky-notes.ts`): set on
+     *  passthru conversation calls, so an OpenAI-compatible upstream sees an
+     *  append-only prompt. Unset ⇒ the note is placed fresh every time. */
+    noteScope?: string;
   },
 ): Promise<Response> {
   // The world's daily budget is checked before any upstream call is made.
@@ -1187,6 +1174,28 @@ export async function proxyToUpstream(
   // `x-request-id`; `prompt_cache_key` in the body passes through untouched).
   const upstreamHeaders: Record<string, string> = requestId ? { "x-request-id": requestId } : {};
   const cacheHints = { injectedSystemTail: hints?.injectedSystemTail };
+  // An OpenAI-compatible upstream's prompt cache reuses a whole earlier prompt
+  // only, so a conversation's earlier trailing notes are re-inserted where they
+  // were sent (`sticky-notes.ts`). Claude models (direct, or through
+  // OpenRouter) cache at breakpoints placed before the note, so they keep the
+  // plain trailing note.
+  const plan =
+    hints?.noteScope && stickyNotesEnabled() && Array.isArray(body.messages)
+      ? planStickyNotes(body.messages, hints.trailingNote, hints.noteScope)
+      : undefined;
+  const openAIBody = (model: string, provider: string): Record<string, unknown> => {
+    const sticky = honorsCacheControl(provider, model) ? undefined : plan;
+    sticky?.commit();
+    return withTrailingNote(
+      prepareUpstreamBody(
+        { ...body, ...(sticky ? { messages: sticky.messages } : {}), model },
+        provider,
+        isDefault,
+        cacheHints,
+      ),
+      sticky ? sticky.note : hints?.trailingNote,
+    );
+  };
   const anthropic = async (key: string, model: string): Promise<Response> => {
     try {
       // `model` is the resolved Anthropic id (`anthropic/claude-x` → `claude-x`);
@@ -1288,10 +1297,7 @@ export async function proxyToUpstream(
       const r = await dispatchOpenAICompatible(
         cfg.url,
         key ?? "",
-        withTrailingNote(
-          prepareUpstreamBody({ ...body, model: upstreamModel }, provider, isDefault, cacheHints),
-          hints?.trailingNote,
-        ),
+        openAIBody(upstreamModel, provider),
         wantStream,
         upstreamHeaders,
         clientSignal,
@@ -1342,10 +1348,7 @@ export async function proxyToUpstream(
       const r = await dispatchOpenAICompatible(
         cfg.url,
         key ?? "",
-        withTrailingNote(
-          prepareUpstreamBody({ ...body, model: upstreamModel }, provider, isDefault, cacheHints),
-          hints?.trailingNote,
-        ),
+        openAIBody(upstreamModel, provider),
         wantStream,
         upstreamHeaders,
         clientSignal,
@@ -1416,10 +1419,7 @@ export async function proxyToUpstream(
     const r = await dispatchOpenAICompatible(
       cfg.url,
       key ?? "",
-      withTrailingNote(
-        prepareUpstreamBody({ ...body, model: requestModel }, provider, isDefault, cacheHints),
-        hints?.trailingNote,
-      ),
+      openAIBody(requestModel, provider),
       wantStream,
       upstreamHeaders,
       clientSignal,

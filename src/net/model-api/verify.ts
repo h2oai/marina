@@ -44,6 +44,7 @@ import {
   requestTrace,
   unsupportedParam,
 } from "./shared";
+import { noteScopeFor } from "./sticky-notes";
 import { explicitUpstreamModel, proxyToUpstream } from "./upstream";
 
 const log = new Logger();
@@ -139,6 +140,27 @@ export function verifyRounds(env: Record<string, string | undefined> = process.e
   const n = Number(env.MARINA_VERIFY_ROUNDS);
   if (!Number.isFinite(n) || env.MARINA_VERIFY_ROUNDS === undefined) return 1;
   return Math.max(0, Math.min(3, Math.floor(n)));
+}
+
+/**
+ * Which drafts the checker reviews (`MARINA_VERIFY_REVIEW`): `all`, or
+ * `consequential` (default) — every draft except one whose tool calls are all
+ * read-only lookups (the shared classifier's `guard` role: anything unplaced
+ * counts as a write). A lookup changes nothing and its result is in front of
+ * the proposer next turn, so reviewing it costs a full-transcript call and
+ * protects nothing; a final reply and any state-changing call are reviewed.
+ */
+export type VerifyReviewMode = "all" | "consequential";
+
+export function verifyReviewMode(
+  env: Record<string, string | undefined> = process.env,
+): VerifyReviewMode {
+  return env.MARINA_VERIFY_REVIEW?.trim().toLowerCase() === "all" ? "all" : "consequential";
+}
+
+/** A draft the checker can pass unreviewed under `consequential`: only read-only calls. */
+export function readOnlyDraft(draft: Msg, tools: unknown[] | undefined): boolean {
+  return (draft.tool_calls?.length ?? 0) > 0 && writeCalls(draft, tools).length === 0;
 }
 
 export type Msg = {
@@ -682,13 +704,19 @@ async function callUpstream(
   reason: string,
   entityId?: EntityId,
   trailingNote?: string,
+  noteScope?: string,
 ): Promise<CallResult> {
   const resp = await proxyToUpstream(
     engine,
     { ...body, model, stream: false },
     undefined,
     { routeKind: "passthru", routeReason: reason, ...(entityId ? { entityId } : {}) },
-    { clientSignal: signal, providerFallback: false, ...(trailingNote ? { trailingNote } : {}) },
+    {
+      clientSignal: signal,
+      providerFallback: false,
+      ...(trailingNote ? { trailingNote } : {}),
+      ...(noteScope ? { noteScope } : {}),
+    },
   );
   return callResult(resp);
 }
@@ -796,6 +824,8 @@ export interface VerifyDraftInput {
   checkerNotes?: string;
   entityId?: EntityId;
   signal?: AbortSignal;
+  /** The caller's sticky-note scope for the proposers' calls. */
+  noteScope?: string;
 }
 
 /** An upstream (or draft source's) reply as one inner call's result. */
@@ -879,6 +909,9 @@ export async function maybeVerifyChat(
   // The caller's distinct passthru identity (bound key / named agent), when it
   // has one, rides every inner call's lifecycle events.
   const entityId = passthruEntityId(engine, req, authResult);
+  // The proposer's conversation keeps its earlier trailing notes in place
+  // (`sticky-notes.ts`), so each turn's prompt extends the last one.
+  const noteScope = noteScopeFor(req, authResult);
 
   // 0. Lessons from past outcomes: the proposer (the lead) and the checker see
   // the relevant ones (MARINA_LESSONS=observe recalls without injecting).
@@ -911,6 +944,7 @@ export async function maybeVerifyChat(
       ...(checkerNotes ? { checkerNotes } : {}),
       ...(entityId ? { entityId } : {}),
       ...(signal ? { signal } : {}),
+      noteScope,
     });
     const ensembleHeader = source.response.headers.get("x-marina-ensemble");
     if (ensembleHeader) sourceHeaders = { "x-marina-ensemble": ensembleHeader };
@@ -925,6 +959,7 @@ export async function maybeVerifyChat(
       "verify:proposer",
       entityId,
       proposerNote,
+      noteScope,
     );
   }
   if (!first.ok || !first.body) {
@@ -946,8 +981,12 @@ export async function maybeVerifyChat(
   const effort = checkerEffort(body);
   const checkerCache = checkerCaches(spec.checker);
 
+  // A draft of read-only lookups goes out unreviewed (`MARINA_VERIFY_REVIEW`).
+  const skipReview = verifyReviewMode() === "consequential" && readOnlyDraft(draft, tools);
+  if (skipReview) verdictLabel = "skipped-read-only";
+
   // 2. Review (and up to `rounds` revisions).
-  for (let round = 0; round < Math.max(1, rounds); round++) {
+  for (let round = 0; !skipReview && round < Math.max(1, rounds); round++) {
     let verdict: Verdict;
     try {
       const review = await callUpstream(
@@ -993,6 +1032,7 @@ export async function maybeVerifyChat(
       "verify:revision",
       entityId,
       joinNotes(proposerNote, revisionNote(draft, verdict.issues, verdict.conflict)),
+      noteScope,
     ).catch(() => undefined);
     if (!revised?.ok || !revised.body || !firstMessage(revised.body)) {
       verdictLabel = "revision-failed";

@@ -407,6 +407,8 @@ async function runResponsesPassthru(
       reasoning?: unknown;
       text?: { format?: Record<string, unknown>; verbosity?: unknown };
       service_tier?: unknown;
+      prompt_cache_key?: unknown;
+      prompt_cache_retention?: unknown;
     };
     userInput: string;
     turn: OpenAIMessage[];
@@ -475,6 +477,14 @@ async function runResponsesPassthru(
     ...(input.chatTools ?? {}),
     ...(input.body.reasoning !== undefined ? { reasoning: input.body.reasoning } : {}),
     ...(input.body.service_tier !== undefined ? { service_tier: input.body.service_tier } : {}),
+    // The caller's cache routing hint reaches the upstream (the Responses
+    // bridge forwards it; chat-completions upstreams take it as is).
+    ...(typeof input.body.prompt_cache_key === "string"
+      ? { prompt_cache_key: input.body.prompt_cache_key }
+      : {}),
+    ...(typeof input.body.prompt_cache_retention === "string"
+      ? { prompt_cache_retention: input.body.prompt_cache_retention }
+      : {}),
     ...(input.body.text?.verbosity !== undefined ? { verbosity: input.body.text.verbosity } : {}),
     ...(input.body.text?.format
       ? {
