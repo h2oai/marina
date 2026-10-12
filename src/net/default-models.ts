@@ -5,17 +5,18 @@
  * Built-in default model per provider key — one table for the passthru proxy
  * (`model-api/upstream.ts`) and for code that must find *a* model without a
  * server (`src/agent/available-models.ts`). Production ids that were confirmed
- * against each provider's live API. Override per provider with
+ * against each provider's live API: each hosted vendor's strong tier (2026-10-11),
+ * not its cheapest model. Override per provider with
  * `MARINA_DEFAULT_<PROVIDER>_MODEL` (see `config/environment.reference`).
  */
 
 import { localProviderDefaultModel } from "./model-discovery";
 
 export const BUILTIN_DEFAULT_MODELS: Record<string, string> = {
-  ANTHROPIC_API_KEY: "claude-sonnet-5",
-  OPENAI_API_KEY: "gpt-6-luna",
-  GEMINI_API_KEY: "gemini-3.1-flash-lite",
-  OPENROUTER_API_KEY: "openai/gpt-6-luna",
+  ANTHROPIC_API_KEY: "claude-opus-5-5",
+  OPENAI_API_KEY: "gpt-6.1-sol",
+  GEMINI_API_KEY: "gemini-3.1-pro-preview",
+  OPENROUTER_API_KEY: "anthropic/claude-opus-5.5",
   GROQ_API_KEY: "openai/gpt-oss-120b",
   HUGGINGFACE_API_KEY: "zai-org/GLM-5.3-Flash",
   // Ids from pi-ai's bundled catalog (native ids, priced there).
@@ -43,5 +44,5 @@ export function getDefaultUpstreamModel(
   if (override && override.trim().length > 0) return override.trim();
   const local = LOCAL_DEFAULT_MODEL_KEYS[envKey];
   if (local) return localProviderDefaultModel(local) ?? "default";
-  return BUILTIN_DEFAULT_MODELS[envKey] ?? "gpt-6-luna";
+  return BUILTIN_DEFAULT_MODELS[envKey] ?? "gpt-6.1-sol";
 }

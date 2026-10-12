@@ -5,7 +5,8 @@ Use Marina as an OpenAI-compatible LLM endpoint. When your tools send requests, 
 ## Direct upstream defaults
 
 Marina can also proxy directly to a configured provider when no model agent serves the route.
-The built-in OpenAI default is `gpt-6-luna`; OpenRouter uses `openai/gpt-6-luna`. Existing
+Built-in defaults are each vendor's strong tier: OpenAI `gpt-6.1-sol`, Anthropic `claude-opus-5-5`,
+Gemini `gemini-3.1-pro-preview`, OpenRouter `anthropic/claude-opus-5.5`. Existing
 provider priority and operator-selected models still apply. Override a provider with
 `MARINA_DEFAULT_OPENAI_MODEL` or `MARINA_DEFAULT_OPENROUTER_MODEL`; a configured database
 `default_model` selects the provider/model before fallback. Keys authorize upstream calls;

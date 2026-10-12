@@ -912,7 +912,7 @@ export async function learnFromResolutions(
 /**
  * `research:<analyst>[,<analyst>…][@<retriever>[,<retriever>…]]` (up to eight
  * analysts, one vendor each). Retrieval is the spec's `@` list, else
- * `MARINA_ARENA_RESEARCH_RETRIEVER` (default `openrouter-web:openai/gpt-6-luna`;
+ * `MARINA_ARENA_RESEARCH_RETRIEVER` (default `openrouter-web:openai/gpt-6.1-sol`;
  * `sonar:<perplexity model>` and `tavily:<basic|advanced>` too, several
  * comma-separated and merged; page text a retriever fetched is used for the
  * citation check instead of re-fetching),
@@ -944,7 +944,7 @@ async function researchForecasterFor(
     specRetrievers?.trim() ||
     env.MARINA_ARENA_RESEARCH_RETRIEVER?.trim() ||
     (orKey
-      ? "openrouter-web:openai/gpt-6-luna"
+      ? "openrouter-web:openai/gpt-6.1-sol"
       : env.TAVILY_API_KEY?.trim()
         ? "tavily:basic"
         : "asof");
