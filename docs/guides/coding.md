@@ -57,12 +57,13 @@ jumps back to recent output and follows new updates in the focused conversation.
 an empty composer. Each conversation retains its editor, cursor and history; cancelled
 requests discard their partial answers. The workspace restores the shell on exit without
 copying unsent drafts into scrollback. It requires interactive input and output; one-shot
-`-p` and redirected output keep their existing stream behavior. `NO_COLOR=1` disables accents.
+`-p` and redirected output keep their existing stream behavior. `printf "…" | marina -p` reads
+the one-shot task from stdin for shell composition. `NO_COLOR=1` disables accents.
 
 The first screen is short: the Marina version, the folder, the agent and its model, whether the
-session is new or resumed, and a one-line hint. A missing model provider is reported only when the
-server itself has none. `--verbose` adds the database, the server endpoints and the federation
-address; `/status` and `/project` show the rest whenever you want them.
+session is new or resumed, and a one-line hint. With no provider key, one line names the
+missing key and offers `marina init`. `--verbose` adds the database, the server endpoints and
+the federation address; `/status` and `/project` show the rest whenever you want them.
 
 Inside the terminal, `/help` shows one screen of essentials and `/help all` lists every control;
 Tab completes their names and the `/verify` and `/review` actions. `/quit`, `/exit` and Ctrl+D
@@ -104,6 +105,26 @@ For the selected Marina session, `/status` shows the task, `/diff` shows working
 `/checks` lists recorded verification results; `/status` shows checks still in progress.
 `/history` lists recent task attempts, and `/show <artifact-id>` opens a recorded artifact.
 These are bounded server listings; local transcript pages are available through `/view older`.
+
+The session's day-to-day controls are one word away:
+
+```text
+/model <id>                              switch Marina's model for this session
+/fast                                    cheapest reachable model across vendors
+/plan <request>                          research and propose, write nothing
+/compact                                 compact the conversation now
+/cost  (or /usage)                       today's model spend against the daily cap
+/continue                                resume the most recent session in this folder
+/memory [save <line> | recall <query>]   remember and recall the folder
+```
+
+`/model` switches the active session model (list every model you hold a provider key for with no
+argument); `/fast` picks the cheapest reachable one. `/plan` runs the worker read-only — it
+researches and emits a proposal without editing files. `/compact` runs the automatic conversation
+compactor on demand. `/cost` and `/usage` report today's model spend against the daily cap.
+`/continue` resumes the most recent session whose workspace is this folder. `/memory save <line>`
+teaches the world about this folder (a note) and `/memory` recalls it; `/memory recall <query>`
+retrieves scored notes.
 
 Diffs are rendered by the terminal from the structured result, not from the server's text. A
 per-file stat comes first (`3 files · +42 −7`, then one line per file), followed by the hunks:

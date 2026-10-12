@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The coding-loop on-ramp (#391, #393): zero-config start (one line names the missing provider
+  key and offers `marina init`), `/memory` (remember and recall a folder via the world's
+  `note`/`recall`), `/model` and `/fast` (switch the session model, or pick the cheapest reachable
+  model across vendors), piped stdin (`printf "…" | marina -p`), `/plan` (read-only plan mode with
+  a hard observation-only tool gate), `/compact` (compact the conversation on demand), `/cost` /
+  `/usage` (today's model spend against the daily cap), `/continue` (resume the most recent
+  session in the folder), and `bun run build:native` (compile a standalone `marina` dispatcher).
 - `marina attach [url] [--name N] [--session S] [--tui]` (#368) attaches a coding terminal to an
   existing session, resolving server, account and session from arguments, `MARINA_URL` or the
   cached identity. `bun run setup:cli` links `marina` onto the PATH so it runs from any folder, and

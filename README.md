@@ -198,6 +198,8 @@ Wide terminals show Coding and World side by side; F2 changes the layout, and na
 keep a focused view. Drafts and scroll positions survive switching and resizing.
 F6 switches Coding/World, F7 opens pending requests, and F8 opens your panel views. `/panel desk` opens a personal coding desk; `/panel publish <canvas-id>` shares one. One coding
 session is enough; other conversations and autonomous agents continue alongside your work.
+`/model`, `/fast`, `/plan`, `/compact`, `/cost`, `/continue`, and `/memory` cover the session's
+day-to-day controls — see the [coding guide](docs/guides/coding.md#session-controls-at-hand).
 
 In the dashboard, select a session in **Work** to open a personal desk for Marina itself or an external repository. **Workspace → Canvas → Published panels → Create coding desk** publishes an
 existing coding session, recorded checks, optional task evidence and participant messages, and
