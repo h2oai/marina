@@ -191,6 +191,9 @@ describe("preparation by project type", () => {
     });
     expect(planPreparation(js, "check", host).install).toBeUndefined();
     expect(planPreparation(js, "auto", host).install).toBeUndefined();
+    expect(planPreparation(js, "auto", host).hostNpm).toBeUndefined();
+    expect(planPreparation(js, "auto", { ...host, hostCandidate: true }).hostNpm).toBe(true);
+    expect(planPreparation(js, "check", { ...host, hostCandidate: true }).hostNpm).toBeUndefined();
     expect(
       planPreparation(js, "auto", { installsPermitted: true, hostCandidate: false }).install,
     ).toEqual(["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"]);

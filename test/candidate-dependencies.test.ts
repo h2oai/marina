@@ -13,6 +13,10 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { prepareCandidateBunDependencies } from "../src/coding/candidate-dependencies";
+import {
+  NPM_PREPARATION_POLICY,
+  prepareCandidateNpmDependencies,
+} from "../src/coding/candidate-npm-dependencies";
 import { HostExecForbiddenError, LocalWorkspace } from "../src/coding/local-workspace";
 
 let root: string;
@@ -168,4 +172,93 @@ it("times out the check process group instead of waiting forever on a child's pi
   expect(result.timedOut).toBe(true);
   expect(result.durationMs).toBeLessThan(4500);
   expect(result.output).toContain("waiting");
+});
+
+function npmLock(packages: Record<string, unknown> = {}) {
+  writeFileSync(
+    join(root, "package-lock.json"),
+    JSON.stringify({
+      name: "fixture",
+      lockfileVersion: 3,
+      packages: { "": { name: "fixture" }, ...packages },
+    }),
+  );
+}
+
+it("prepares npm only from an intact public frozen lock with private config and no install scripts", async () => {
+  npmLock({
+    "node_modules/example": {
+      version: "1.0.0",
+      resolved: "https://registry.npmjs.org/example/-/example-1.0.0.tgz",
+      integrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
+    },
+  });
+  let privateHome = "";
+  const result = await prepareCandidateNpmDependencies(root, async (command, environment) => {
+    expect(command.slice(0, 5)).toEqual([
+      "npm",
+      "ci",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+    ]);
+    expect(command).toContain("--include=dev");
+    expect(command).toContain("--registry=https://registry.npmjs.org");
+    expect(Object.keys(environment).sort()).toEqual(["HOME", "XDG_CONFIG_HOME"]);
+    privateHome = environment.HOME!;
+    return {
+      command,
+      exitCode: 0,
+      timedOut: false,
+      truncated: false,
+      durationMs: 1,
+      output: "installed",
+    };
+  });
+  expect(result.result.exitCode).toBe(0);
+  expect(result.policy).toBe(NPM_PREPARATION_POLICY);
+  expect(result.lockfileSha256).toHaveLength(64);
+  expect(existsSync(privateHome)).toBe(false);
+});
+
+it("refuses unsafe npm snapshots before installation, and notices a changed lockfile", async () => {
+  const valid = {
+    version: "1.0.0",
+    resolved: "https://registry.npmjs.org/example/-/example-1.0.0.tgz",
+    integrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
+  };
+  for (const pkg of [
+    { ...valid, resolved: "https://private.invalid/package.tgz" },
+    { ...valid, resolved: "file:/etc" },
+    { ...valid, resolved: "https://user:secret@registry.npmjs.org/package.tgz" },
+    { ...valid, integrity: undefined },
+    { ...valid, link: true },
+    { ...valid, dependencies: { other: "file:../../outside" } },
+  ]) {
+    npmLock({ "node_modules/example": pkg });
+    let calls = 0;
+    const result = await prepareCandidateNpmDependencies(root, async () => {
+      calls++;
+      throw new Error("unexpected spawn");
+    });
+    expect(calls).toBe(0);
+    expect(result.result.exitCode).toBe(1);
+  }
+  npmLock();
+  writeFileSync(join(root, ".npmrc"), "registry=https://private.invalid");
+  const denied = await prepareCandidateNpmDependencies(root, async () => {
+    throw new Error("unexpected spawn");
+  });
+  expect(denied.result.output).toContain("project npm config");
+  rmSync(join(root, ".npmrc"));
+  const changed = await prepareCandidateNpmDependencies(root, async (command) => {
+    writeFileSync(join(root, "package-lock.json"), "{}");
+    return { command, exitCode: 0, timedOut: false, truncated: false, durationMs: 1, output: "" };
+  });
+  expect(changed.result.output).toContain("changed the captured");
+  const workspace = new LocalWorkspace(root);
+  workspace.setHostExecForbidden(true);
+  expect(() => workspace.prepareCandidateDependencies(() => {}, "npm")).toThrow(
+    HostExecForbiddenError,
+  );
 });

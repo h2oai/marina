@@ -174,7 +174,7 @@ export const PREPARATION_PROBES = {
  * Lockfile-frozen installs, without lifecycle scripts where the manager
  * supports it. Run only inside a container runner that persists them
  * (`sync:mount`) with network; never on the host (the host has the separate,
- * hardened Bun candidate path).
+ * hardened Bun/npm snapshot path).
  */
 export const PREPARATION_INSTALLS: Readonly<Partial<Record<PackageManager, readonly string[]>>> = {
   bun: ["bun", "install", "--frozen-lockfile", "--ignore-scripts"],
@@ -223,7 +223,7 @@ export function preparationStepKind(argv: readonly string[]): "probe" | "install
 export interface PreparationTarget {
   /** The workspace may install (container runner with mount sync and network). */
   installsPermitted: boolean;
-  /** A disposable candidate snapshot on the host (the hardened Bun path applies). */
+  /** A disposable source or delivery snapshot on the host (hardened Bun/npm preparation). */
   hostCandidate: boolean;
   /** Patch-sync container: every command starts from the image again. */
   ephemeral?: boolean;
@@ -239,6 +239,8 @@ export interface PreparationPlan {
   install?: readonly string[];
   /** Use the hardened host Bun candidate installer when the probe fails. */
   hostBun?: boolean;
+  /** Use the hardened public-registry npm installer in a disposable host snapshot. */
+  hostNpm?: boolean;
   /** Why checks cannot run when the probe fails and nothing can be installed. */
   missingReason: string;
   /** Explanation recorded with the result (e.g. a requested installer that does not apply). */
@@ -280,7 +282,7 @@ function missingReasonFor(profile: ProjectRunnerProfile, target: PreparationTarg
     case "python":
       return `The Python test environment is unavailable (${profile.testCommand?.includes("manage.py") ? "django is not importable" : profile.testCommand?.includes("pytest") ? "pytest is not importable" : "python is unavailable"}).${where}`;
     case "javascript":
-      return `Dependencies are not installed (no node_modules).${target.hostCandidate ? " Request dependencies:auto for a Bun text lockfile." : ""}${where}`;
+      return `Dependencies are not installed (no node_modules).${target.hostCandidate ? " Request dependencies:auto with a Bun text lockfile or npm v3 package-lock.json included in the snapshot." : ""}${where}`;
     case "go":
       return `The Go toolchain is unavailable in the execution environment.${where}`;
     case "rust":
@@ -338,6 +340,8 @@ export function planPreparation(
   if (mode === "check") return plan;
   if (profile.language === "javascript" && manager === "bun" && target.hostCandidate) {
     plan.hostBun = true;
+  } else if (profile.language === "javascript" && manager === "npm" && target.hostCandidate) {
+    plan.hostNpm = true;
   } else if (
     target.installsPermitted &&
     manager &&
@@ -364,7 +368,10 @@ export interface PreparationResult {
 
 export interface PreparationWorkspace {
   runPreparationStep?(argv: string[], beforeSpawn?: () => void): Promise<WorkspaceRunResult>;
-  prepareCandidateDependencies?(beforeSpawn: () => void): Promise<CandidatePreparation>;
+  prepareCandidateDependencies?(
+    beforeSpawn: () => void,
+    manager?: "bun" | "npm",
+  ): Promise<CandidatePreparation>;
 }
 
 const ok = (result: WorkspaceRunResult) => result.exitCode === 0 && !result.timedOut;
@@ -433,7 +440,7 @@ export async function executePreparation(
     return { status: "error", reason: errorText(error), runs: [] };
   }
   // An available test runner does not prove all locked dependencies are present.
-  if (ok(probe) && !plan.install && !plan.hostBun)
+  if (ok(probe) && !plan.install && !plan.hostBun && !plan.hostNpm)
     return {
       status: "ready",
       reason: `Environment ready (${plan.probe.join(" ")}).${note}`,
@@ -442,10 +449,13 @@ export async function executePreparation(
     };
   if (probe.exitCode === 125)
     return { status: "error", reason: firstLine(probe.output) || "runner error", runs: [probe] };
-  if (plan.hostBun && workspace.prepareCandidateDependencies) {
+  if ((plan.hostBun || plan.hostNpm) && workspace.prepareCandidateDependencies) {
     let prepared: CandidatePreparation;
     try {
-      prepared = await workspace.prepareCandidateDependencies(beforeSpawn);
+      prepared = await workspace.prepareCandidateDependencies(
+        beforeSpawn,
+        plan.hostNpm ? "npm" : "bun",
+      );
     } catch (error) {
       if (isVerificationStop(error)) throw error;
       return { status: "error", reason: errorText(error), runs: [probe] };
@@ -454,8 +464,8 @@ export async function executePreparation(
     return {
       status: installed ? "installed" : "not_run",
       reason: installed
-        ? `Installed locked Bun dependencies; install scripts disabled.${note}`
-        : `Dependency preparation failed: ${lastLine(prepared.result.output)}${note}`,
+        ? `Installed locked ${plan.hostNpm ? "npm" : "Bun"} dependencies; install scripts disabled.${note}`
+        : `Dependency preparation failed: ${prepared.result.timedOut ? "installation timed out" : lastLine(prepared.result.output) || `installer exited ${prepared.result.exitCode}`}${note}`,
       runs: [prepared.result],
       policy: prepared.policy,
       ...(prepared.lockfileSha256 ? { lockfileSha256: prepared.lockfileSha256 } : {}),

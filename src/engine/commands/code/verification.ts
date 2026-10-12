@@ -158,6 +158,16 @@ export async function startVerification(
             session,
           );
           prepared.setHostExecForbidden?.(deps.hostExecForbidden === true);
+          // Detect dependencies from the captured files under the configured runner. Keep
+          // the manifest's commands and indexes intact for requirement coverage.
+          const snapshotPlan = await planVerification(
+            deps,
+            session,
+            prepared,
+            options,
+            true,
+            snapshot.manifest.files,
+          );
           return await runVerificationCommands(
             backgroundContext,
             eid,
@@ -185,7 +195,7 @@ export async function startVerification(
                 };
               },
             },
-            { ...livePlan, workspace: prepared },
+            { ...livePlan, preparation: snapshotPlan.preparation, workspace: prepared },
           );
         } finally {
           await snapshot.dispose();

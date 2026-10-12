@@ -763,21 +763,32 @@ progress, and the reply lists exactly which requirements lack an observing check
 add and map checks, or mark a requirement `notCheckable` with a reason; that marking is recorded
 and shown, never counted as verified. The next submission proceeds (bounded, never a loop). Any
 requirement still unverified is written into the submitted evidence and the terminal lifecycle
-`requirements` field. `marina -p` reports such a run as `unverified`. Other verification modes
+`requirements` field. `marina -p` reports such a run as `unverified`, including when a requirement
+is explicitly not machine-checkable. That still permits submission for owner review;
+`--allow-unverified` permits exit 0 while retaining the unverified status. Other verification modes
 are unchanged.
 
 Run `code verify delivery manifest:delivery.json`, then inspect the returned receipt with
 `code show <id>`. Marina copies only the listed regular files into a clean directory and
 runs those finite commands using the session's configured host or mount-sync container runner. Missing
 companion files therefore cannot be supplied accidentally by the active workspace. Checks use
-the runner's existing environment; this is file isolation, not a new security sandbox or a
+the runner's environment and the selected dependency preparation; this is file isolation, not a new security sandbox or a
 guarantee that every recipient has the same dependencies. Files changed by the checks or after
 verification require fresh evidence before submission. The manifest itself is also hashed.
 
 Delivery mode supports local file workspaces, requires explicit relative file paths (no globs,
-directories, symlinks or `.git`), and does not install dependencies. Include the files needed
-by both the deliverable and its checks. A manifest may contain up to 128 files, with a 16 MiB
-per-file and 64 MiB total capture limit. Background checks retain the normal execution gates
+directories, symlinks or `.git`). Include the files needed by both the deliverable and its checks,
+including dependency manifests and lockfiles. `dependencies:check` (the default) diagnoses a
+missing environment without installing; `dependencies:auto` prepares locked dependencies in
+the disposable snapshot. On the host, supported locks are Bun text locks and npm version 3
+`package-lock.json`, using public-registry packages without install scripts or inherited registry
+credentials. Npm workspaces, local links, project `.npmrc` and shrinkwrap overrides are refused.
+Container preparation follows the existing mount-sync and network policy; no host fallback occurs.
+
+A manifest may contain up to 128 files. Capture and freshness checks stream files in 64 KiB
+chunks, with default limits of 1 GiB per file and 4 GiB total. Operators can set positive byte
+limits with `MARINA_CODE_DELIVERY_MAX_FILE_BYTES` and `MARINA_CODE_DELIVERY_MAX_TOTAL_BYTES`.
+Background checks retain the normal execution gates
 and finite-command allowlist. Patch-sync and unsupported targets are refused without host fallback.
 
 Personal and published coding desks offer **Review delivery check** for an existing manifest.
@@ -951,7 +962,8 @@ test targets are selected.
 
 **Installing dependencies.** `dependencies:auto`, or the project's own manager
 (`dependencies:npm`, `uv`, …), installs locked dependencies only where the install is isolated
-and persists: a candidate snapshot's Bun text lockfile on the host (below), or a container runner
+and persists: a candidate or delivery snapshot with a Bun text lockfile or npm v3 lockfile on
+the host (below), or a container runner
 with `sync:mount` and `network:on` (`npm ci --ignore-scripts`, `pnpm`/`yarn`/`bun install
 --frozen-lockfile --ignore-scripts`, `uv sync --frozen`). Elsewhere, a missing environment is
 reported as `not_run` with the reason. A `sync:patch` runner starts every command from its image,
@@ -1032,6 +1044,13 @@ checks. Preparation has a 120-second deadline and the existing background admiss
 A preparation failure stops the check chain and produces `not_run` evidence, with an
 inspectable output artifact. Successful evidence records the preparation policy and lockfile SHA-256;
 generated dependencies are excluded from source freshness only inside the private copy.
+
+Npm projects can use `dependencies:npm` or `dependencies:auto` with a captured version 3
+`package-lock.json`. The snapshot runs `npm ci --ignore-scripts --no-audit --no-fund`, including
+development dependencies, with private user/global config and a disposable cache. Only
+integrity-locked public npm packages are supported. Workspace links, project `.npmrc`,
+shrinkwrap overrides and captured `node_modules` are refused. The same preparation and
+failure reporting apply to `code verify delivery manifest:<path> dependencies:auto`.
 
 The source tree does not certify the external environment, services or dependencies, and the
 temporary directory is **not a security sandbox**. Host-local checks retain their existing trust
