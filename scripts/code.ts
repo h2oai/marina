@@ -32,7 +32,9 @@ import { basename, join, resolve } from "node:path";
 import { diffStat } from "../src/coding/unified-diff";
 import { formatAge } from "../src/engine/commands/format-duration";
 import { waitForDatabaseLease } from "../src/persistence/database-lease";
+import { IS_COMPILED } from "../src/runtime-paths";
 import { MarinaAgent, type Perception } from "../src/sdk/client";
+import { MARINA_VERSION } from "../src/version";
 import { CodeConsole } from "./code-console";
 import { HarnessStore, validateHarness } from "./code-harness";
 import { inferCodeDefaultModel } from "./code-model";
@@ -472,18 +474,6 @@ export async function runningFolderServer(
   return undefined;
 }
 
-/** Marina's own version (package.json), or "" when it cannot be read. */
-function packageVersion(): string {
-  try {
-    const pkg = JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf8")) as {
-      version?: unknown;
-    };
-    return typeof pkg.version === "string" ? pkg.version : "";
-  } catch {
-    return "";
-  }
-}
-
 /**
  * Whether the folder server can reach a model provider — asked of the server,
  * which loads its own environment, rather than guessed from the launcher's.
@@ -665,13 +655,10 @@ export async function runCodeSession(
   // + no room agents keep it light; the DB is per-folder (or a throwaway with
   // --fresh). MARINA_NAME is pinned to the folder basename so instance-scoped
   // flags (tour dismissal, seen markers) stay stable across launches.
-  // A compiled binary re-spawns itself in server mode; dev runs the server
-  // entry directly. Either way the folder-scoped server is a child process.
-  const compiled = !Bun.main.endsWith(".ts");
   const server = Bun.spawn(
-    compiled ? [process.execPath, "__marina_server"] : ["bun", "run", "src/main.ts"],
+    IS_COMPILED ? [process.execPath, "start"] : [process.execPath, "run", "src/main.ts"],
     {
-      cwd: compiled ? process.cwd() : REPO_ROOT,
+      cwd: IS_COMPILED ? dir : REPO_ROOT,
       env: {
         ...process.env,
         WS_PORT: String(port),
@@ -818,13 +805,13 @@ export async function runCodeSession(
     await cleanup(1);
   }
 
-  say(`Marina ${packageVersion()} · ${folderName} · ${agentLabel}`);
+  say(`Marina ${MARINA_VERSION} · ${folderName} · ${agentLabel}`);
   // The provider check asks the SERVER, which loads its own environment (the
   // repo .env): the launcher's environment says nothing about what it can use.
   // The zero-config line above already named the missing key: say it once.
   if (harness.agent === "marina" && !noProviderKey && !(await serverHasModel(port))) {
     console.error(
-      `No model provider is configured for the agent. Set a key in ${join(REPO_ROOT, ".env")} or run marina init; or use /use claude, /use codex or /use pi.`,
+      `No model provider is configured for the agent. Set a key in ${join(IS_COMPILED ? dir : REPO_ROOT, ".env")} or run marina init; or use /use claude, /use codex or /use pi.`,
     );
   }
   if (verbose) {

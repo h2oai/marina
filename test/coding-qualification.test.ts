@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { publicCodingQualificationSummary } from "../scripts/coding-qualification-summary";
 import {
   codingQualificationFailure,
   codingQualificationFixture,
@@ -45,7 +46,8 @@ test("live coding qualification refuses unbounded spending and output in the sou
       scenarios: ["bugfix", "feature", "refactor", "workspace", "marina"],
     }),
   ).not.toThrow();
-  for (const budgetUsd of [0, -1, 2.001, Number.NaN, Number.POSITIVE_INFINITY])
+  expect(() => validateCodingQualification({ ...options, budgetUsd: 25 })).not.toThrow();
+  for (const budgetUsd of [0, -1, 1000.001, Number.NaN, Number.POSITIVE_INFINITY])
     expect(() => validateCodingQualification({ ...options, budgetUsd })).toThrow("budget-usd");
   expect(() => validateCodingQualification({ ...options, directory: resolve("reports") })).toThrow(
     "outside",
@@ -447,4 +449,25 @@ test("qualification baseline executes explicit hidden tests without polluting th
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("public qualification metadata never copies provider errors, paths or transcripts", () => {
+  const result = publicCodingQualificationSummary({
+    passed: false,
+    revision: "secret",
+    error: "Bearer secret",
+    transcript: "private task",
+    spending: { attempts: 3, recorded_usd: 0.12, reserved: Infinity, token: "secret" },
+    scenarios: [{ passed: true }, { error: "private path" }],
+  });
+  expect(result).toMatchObject({
+    passed: false,
+    revision: null,
+    attempted_requests: 3,
+    recorded_usd: 0.12,
+    reserved_usd: null,
+    completed_scenarios: 1,
+    failed: true,
+  });
+  expect(JSON.stringify(result)).not.toMatch(/secret|Bearer|private/);
 });

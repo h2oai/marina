@@ -20,9 +20,12 @@ that binary supports; restore the corresponding backup when necessary. Never edi
 migrations or point an older binary at a newer schema. `bun run qualify:release` checks
 the source revision and SDK artifact; `bun run qualify:image IMAGE` checks the packaged
 server. The release qualifier also boots `dist/main.js` from a fresh instance directory,
-checks its web assets and settings catalog, and connects a Node SDK agent. Compiled
-entry points retain the shipped `worlds/`, `rooms/`, and `src/` assets beside `dist/`;
-they are not standalone executables. Deployment qualifies its selected revision
+checks its web assets and settings catalog, and connects a Node SDK agent.
+`bun run build:native` produces the separate standalone `dist/marina` executable,
+with its server, built-in worlds and settings embedded. `qualify:native` tests it
+outside the checkout with no Bun on PATH; browser assets remain a sidecar. See
+[artifact scope](release-qualification.md#standalone-terminal-executable).
+Deployment qualifies its selected revision
 before obtaining cloud credentials.
 Promotion transfers that qualified image between jobs, verifies its image ID and pushes
 it without rebuilding. Production selects the registry digest. Rollback also qualifies
@@ -58,3 +61,56 @@ Core beliefs continue to use `memory kv`; shared pools retain their membership r
 
 Fresh databases use the schema-137 baseline. Existing databases follow their pending
 upgrade history unchanged. See [persistence](../architecture/persistence.md#fresh-schema-and-existing-database-upgrades).
+
+
+## Public contract and version policy
+
+Marina remains 0.x. The supported pairing is a server and SDK from the same minor
+release; use the latest patch in that minor. Cross-minor operation requires the
+specific compatibility tests below and is not a blanket support promise.
+
+| Surface | Contract retained within a minor release | Executable checks |
+| --- | --- | --- |
+| SDK root, `/memory`, `/routing` exports | Documented exports, request parameters, errors and authorization; additive optional fields are allowed | SDK packaging/declaration checks; `sdk-legacy-compatibility.test.ts`, memory and routing client suites |
+| WebSocket participation | Legacy uncorrelated commands remain readable; correlated-v1 request IDs and confirmed completion remain attributable; strict clients refuse unsupported mutation rather than replay it | `sdk-legacy-compatibility.test.ts`, WebSocket and command-outcome suites |
+| Named MCP tools | Published parameter names, bounds, enums and defaults; new world commands use command discovery | Frozen `test/fixtures/mcp-named-contracts.json` and `mcp-named-contracts.test.ts` |
+| Durable memory HTTP and numeric compatibility | Record identity, ownership, explicit erasure, version conflicts and numeric-ID projection | Memory cross-interface, canonical-upgrade and portable suites |
+| CLI | Documented dispatch, version, successful exit zero, failure nonzero, explicit verification/approval | Dispatcher, one-shot, terminal journeys and standalone qualification |
+| Persistence | Append-only forward migrations; reject unsupported future schemas; verified restore into a new path | `upgrade-compatibility.test.ts`, schema baseline and memory recovery suites |
+| Experimental behavior | Advisory policy, learned promotions, model-specific judgments, opt-in providers and internal dashboard APIs may evolve; observe/on is an operator choice, not an API version | Mechanism-specific tests and held-out qualification before default promotion |
+
+A patch release must not remove or rename a documented stable operation, reinterpret
+its arguments, weaken its authorization, or silently change a documented default.
+Deprecation requires a replacement, changelog notice and migration example before
+removal. During 0.x, removal requires a new minor version; after 1.0, removal requires
+a major version and at least two minor releases and 90 days of notice. Security fixes
+may shorten the window, with an explicit upgrade advisory. Consumers should tolerate
+unknown additive response fields and must not derive authority from display text.
+Internal modules under `src/` are not SDK import paths.
+
+A stability declaration does not enable experimental mechanisms. Promote defaults
+only with paired held-out evidence, including missing-provider/JEV behavior, false
+positives, cost and latency. Deterministic tests and a single live success cannot
+establish that evidence.
+
+## Verified upgrade and rollback
+
+1. Stop writers, record the deployed revision and schema, and create a snapshot:
+   `bun run memory backup --db /instance/world.db --output /backups/pre-upgrade.db`.
+   Retain its verified manifest/hash and test restoration before changing the service.
+2. Upgrade a restored copy first. Fresh databases start at the schema-137 baseline;
+   existing databases replay their pending historical and forward migrations. The
+   populated schema-131/132 fixtures explicitly qualify older memory identities.
+   Other starting versions use the migration chain; qualify an actual backup before
+   treating an untested starting version as supported for your deployment.
+3. Start the new binary, check readiness, authenticate an existing client and check
+   durable records and task state. A failed migration halts startup; it does not skip
+   the migration. Earlier successful migrations may already have committed.
+4. To roll back, stop the service and restore the pre-upgrade snapshot into a **new**
+   database path using `bun run memory restore --backup /backups/pre-upgrade.db --db
+   /instance/restored.db`. Select that path with the matching older binary. Preserve
+   the failed database for diagnosis; never downgrade its schema number manually.
+
+The upgrade test verifies stable IDs, backup integrity, refusal of a future schema,
+restoration of the original schema and content, and a subsequent successful upgrade.
+Snapshots refuse to overwrite an existing database.

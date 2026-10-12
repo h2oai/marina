@@ -9,23 +9,21 @@
  * coding flow, and loads worlds from the bundled registry — no `bun` or repo
  * required at runtime.
  */
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const root = join(import.meta.dir, "..");
-const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version?: string };
-const version = pkg.version ?? "unknown";
-
+// Version comes from src/version.ts's static package import. One compile flag
+// selects executable-relative paths and child-process dispatch throughout.
 const proc = Bun.spawn(
   [
-    "bun",
+    process.execPath,
     "build",
     "scripts/marina.ts",
     "--compile",
     "--outfile",
     "dist/marina",
     "--define",
-    `MARINA_VERSION=${JSON.stringify(version)}`,
+    "MARINA_COMPILED=true",
   ],
   { cwd: root, stdio: ["inherit", "inherit", "inherit"] },
 );

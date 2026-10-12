@@ -1342,7 +1342,9 @@ export class LeanAgentAdapter implements AgentHandle {
   private contextTransform?: (
     messages: AgentMessage[],
     signal?: AbortSignal,
+    request?: { force?: boolean },
   ) => Promise<AgentMessage[]>;
+  private manualCompaction?: Promise<{ before: number; after: number }>;
   private loopIterationCount = 0;
   private stuckCycles = 0;
   private silentTurns = 0;
@@ -1662,9 +1664,14 @@ export class LeanAgentAdapter implements AgentHandle {
     const summarizeWithLLM = async (
       messages: AgentMessage[],
       fallback: string,
+      signal?: AbortSignal,
     ): Promise<string> => {
       try {
+        // Summaries are model calls too. A capped agent can still compact
+        // deterministically, using the same durable archive path below.
+        if (this.checkSpendCaps() || this.budgetExhausted) return fallback;
         const keyNow = await resolveKeyNow();
+        signal?.throwIfAborted();
         const llmContext = {
           systemPrompt: COMPACTION_SYSTEM_PROMPT,
           messages: [
@@ -1677,23 +1684,62 @@ export class LeanAgentAdapter implements AgentHandle {
             },
           ] as Message[],
         };
-        // Sampling follows the model's capabilities (`rejectsSamplingParams`);
-        // a refusal is learned once and the summary is asked again without it.
-        const ask = () =>
-          piModels.completeSimple(this.model, llmContext, {
+        const model = this.model;
+        const proxied = isMarinaProxyModel(model);
+        const ask = async () => {
+          const accounting: {
+            providerCost?: number;
+            proxy: ReturnType<typeof readProxyResponseHeaders>;
+          } = { proxy: null };
+          const upstream = this.providerFetch ?? globalThis.fetch;
+          const result = await piModels.completeSimple(model, llmContext, {
             apiKey: keyNow,
-            ...samplingFor(this.model.id, 0.3),
+            ...samplingFor(model.id, 0.3),
             maxTokens: 500,
+            signal,
+            maxRetries: PROVIDER_MAX_RETRIES,
+            // Keep auxiliary accounting separate from a concurrent agent turn.
+            fetch: (async (input, init) => {
+              const response = await upstream(input, init);
+              accounting.proxy = readProxyResponseHeaders(response.headers);
+              return !proxied && isUnpricedModel(model)
+                ? sniffProviderCost(response, (usd) => {
+                    accounting.providerCost = usd;
+                  })
+                : response;
+            }) as typeof fetch,
           });
+          const usage = extractTurnUsage(result);
+          const ownCost = proxied ? 0 : usage.costUsd || accounting.providerCost || 0;
+          recordSpend("agent", ownCost);
+          const proxyMeta = accounting.proxy;
+          const settled = proxyMeta?.requestId
+            ? takeSettledProxyCall(proxyMeta.requestId)
+            : undefined;
+          const cost = ownCost || proxyMeta?.costUsd || settled?.costUsd || 0;
+          this.metrics.modelCalls++;
+          this.metrics.totalInputTokens += (usage.inputTokens ?? 0) + (usage.cacheReadTokens ?? 0);
+          this.metrics.totalOutputTokens += usage.outputTokens ?? 0;
+          this.metrics.totalCacheReadTokens += usage.cacheReadTokens ?? 0;
+          this.metrics.totalCacheWriteTokens += usage.cacheWriteTokens ?? 0;
+          this.metrics.totalCostUsd += cost;
+          if (cost) this.spend.record(cost, Date.now());
+          if (this.config.budgetCalls && this.metrics.modelCalls >= this.config.budgetCalls)
+            this.budgetExhausted = true;
+          return result;
+        };
         let result = await ask();
         if (
           result.stopReason === "error" &&
           isSamplingRejection(String(result.errorMessage ?? "")) &&
-          !rejectsSamplingParams(this.model.id)
+          !rejectsSamplingParams(model.id)
         ) {
-          noteSamplingRejected(this.model.id);
-          result = await ask();
+          noteSamplingRejected(model.id);
+          // A learned capability retry is a separately accounted model call.
+          if (!this.checkSpendCaps() && !this.budgetExhausted) result = await ask();
         }
+        if (result.stopReason === "error" || result.stopReason === "aborted") return fallback;
+
         const text = Array.isArray(result.content)
           ? result.content
               .filter((b): b is TextContent => b.type === "text")
@@ -1703,6 +1749,7 @@ export class LeanAgentAdapter implements AgentHandle {
           : "";
         return text.length > 0 ? text : fallback;
       } catch {
+        signal?.throwIfAborted();
         return fallback;
       }
     };
@@ -5293,13 +5340,32 @@ The goal is a smaller, sharper memory — not more notes.`;
 
   /** Compact the live transcript now; returns before/after message counts. */
   async compactNow(): Promise<{ before: number; after: number } | undefined> {
+    if (this.manualCompaction) return this.manualCompaction;
     const transform = this.contextTransform;
     if (!transform) return undefined;
+    if (this.agent.state.isStreaming)
+      throw new Error("The agent is working. Wait for the turn to finish before compacting.");
+    // Archive/summarization awaits I/O. Compare the captured transcript before
+    // committing so a new turn, steering or a system-prompt change is never lost.
     const original = this.agent.state.messages;
-    if (original.length === 0) return { before: 0, after: 0 };
-    const compacted = await transform(original);
-    if (compacted !== original) this.agent.state.messages = compacted;
-    return { before: original.length, after: compacted.length };
+    const snapshot = original.slice();
+    this.manualCompaction = (async () => {
+      const compacted = await transform(snapshot, AbortSignal.timeout(30_000), { force: true });
+      if (
+        this.agent.state.isStreaming ||
+        this.agent.state.messages !== original ||
+        original.length !== snapshot.length ||
+        original.some((message, i) => message !== snapshot[i])
+      )
+        throw new Error("The conversation changed during compaction. History was kept; try again.");
+      this.agent.state.messages = compacted;
+      return { before: snapshot.length, after: compacted.length };
+    })();
+    try {
+      return await this.manualCompaction;
+    } finally {
+      this.manualCompaction = undefined;
+    }
   }
 
   /** One obligations-ledger completion on the agent's own model (spend recorded like a turn). */

@@ -18,6 +18,7 @@ import { READ_ONLY_TOOL_NAMES } from "../src/agent/tools/profiles";
 describe("agent tool reference monitor", () => {
   it("classifies narrow reads, communication, mutation, and consequential commands", () => {
     expect(classifyToolRisk("marina_command", { command: "look" })).toBe("read");
+    expect(classifyToolRisk("marina_code_show", { artifactId: "task_run_prior" })).toBe("read");
     expect(classifyToolRisk("marina_tell", { target: "Ada", message: "hi" })).toBe("communicate");
     expect(classifyToolRisk("marina_memory", { action: "set" })).toBe("mutate");
     expect(classifyToolRisk("marina_command", { command: "build destroy room" })).toBe(

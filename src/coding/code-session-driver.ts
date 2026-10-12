@@ -282,7 +282,7 @@ export class CodeSessionDriver {
       `You have been assigned to Marina coding session ${opts.session.id}.`,
       `Requester: ${opts.actor}`,
       opts.planMode
-        ? "Plan mode: research and propose only. Do not edit, write, patch, or run mutagenic commands. Emit a concrete proposal — the files to change, why, and the checks that will verify the result."
+        ? "Plan mode: research and propose only. Do not edit, write, patch, or run mutagenic commands. Emit a concrete proposal — the files to change, why, and the checks that will verify the result. When exact earlier constraints or identifiers matter, use marina_code_artifacts and marina_code_show to inspect the original task request; do not treat a paraphrased summary as the source of truth."
         : undefined,
       requirement,
       ownership,

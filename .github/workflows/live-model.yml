@@ -1,0 +1,77 @@
+# Copyright 2025-2026 H2O.ai, Inc.
+# SPDX-License-Identifier: Apache-2.0
+name: Live model acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      budget_usd:
+        description: Total reservation ceiling in USD (all attempts included)
+        required: true
+        default: '25'
+      model:
+        description: Qualification model
+        type: choice
+        options: [gpt-6-luna, gpt-4.1-mini-2025-04-14]
+        default: gpt-6-luna
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-model-acceptance
+  cancel-in-progress: false
+
+jobs:
+  live:
+    # No pull_request_target, arbitrary checkout input, or fork credentials.
+    if: github.ref == 'refs/heads/main'
+    environment: live-model
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version-file: .bun-version
+      - run: bun install --frozen-lockfile
+      - name: Require credentials and private evidence recipient
+        id: config
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          EVIDENCE_PUBLIC_KEY: ${{ vars.LIVE_EVIDENCE_PUBLIC_KEY }}
+        run: |
+          test -n "$OPENAI_API_KEY" || { echo 'Live model key unavailable; acceptance did not run.'; exit 1; }
+          test -n "$EVIDENCE_PUBLIC_KEY" || { echo 'Private evidence recipient unavailable; acceptance did not run.'; exit 1; }
+          mkdir -m 700 "$RUNNER_TEMP/evidence-keys"
+          printf '%s' "$EVIDENCE_PUBLIC_KEY" | gpg --homedir "$RUNNER_TEMP/evidence-keys" --batch --import
+          gpg --homedir "$RUNNER_TEMP/evidence-keys" --with-colons --list-keys | awk -F: '$1 == "fpr" {print $10; exit}' > "$RUNNER_TEMP/evidence-recipient"
+          test -s "$RUNNER_TEMP/evidence-recipient"
+          printf 'evidence preflight' | gpg --homedir "$RUNNER_TEMP/evidence-keys" --batch --yes --trust-model always --recipient "$(cat "$RUNNER_TEMP/evidence-recipient")" --output "$RUNNER_TEMP/evidence-preflight.gpg" --encrypt
+      - name: Live terminal controls and independently graded coding
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          QUALIFICATION_BUDGET: ${{ inputs.budget_usd }}
+          QUALIFICATION_MODEL: ${{ inputs.model }}
+        run: |
+          bun run scripts/qualify-coding.ts --directory "$RUNNER_TEMP/live-coding" --budget-usd "$QUALIFICATION_BUDGET" --model "$QUALIFICATION_MODEL" --scenarios bugfix --timeout-ms 180000 --cli-controls > "$RUNNER_TEMP/live-coding.log" 2>&1
+      - name: Redacted result
+        if: always()
+        run: bun run scripts/coding-qualification-summary.ts "$RUNNER_TEMP/live-coding/report.json" >> "$GITHUB_STEP_SUMMARY"
+      - name: Encrypt all evidence, including failures
+        if: always() && steps.config.outcome == 'success'
+        run: |
+          mkdir -p "$RUNNER_TEMP/live-coding"
+          if [ -f "$RUNNER_TEMP/live-coding.log" ]; then mv "$RUNNER_TEMP/live-coding.log" "$RUNNER_TEMP/live-coding/runner.log"; fi
+          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/live-evidence.tar.gz" live-coding
+          gpg --homedir "$RUNNER_TEMP/evidence-keys" --batch --yes --trust-model always --recipient "$(cat "$RUNNER_TEMP/evidence-recipient")" --output "$RUNNER_TEMP/live-evidence.tar.gz.gpg" --encrypt "$RUNNER_TEMP/live-evidence.tar.gz"
+      - uses: actions/upload-artifact@v7.0.1
+        if: always() && steps.config.outcome == 'success'
+        with:
+          name: encrypted-live-evidence-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/live-evidence.tar.gz.gpg
+          if-no-files-found: error
+          retention-days: 14

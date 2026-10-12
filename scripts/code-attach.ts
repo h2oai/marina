@@ -11,6 +11,7 @@
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
+import { IS_COMPILED } from "../src/runtime-paths";
 import type { ActiveCodingSession, ConnectedCodeOptions } from "./code-connected";
 import {
   type CachedParticipant,
@@ -139,7 +140,16 @@ export const NO_TOKEN_MESSAGE =
 export async function loginWithConnect(name: string, url: string): Promise<void> {
   const child = spawn(
     process.execPath,
-    [join(import.meta.dir, "connect.ts"), name, "--url", url, "-c", "look", "--wait", "0"],
+    [
+      IS_COMPILED ? "connect" : join(import.meta.dir, "connect.ts"),
+      name,
+      "--url",
+      url,
+      "-c",
+      "look",
+      "--wait",
+      "0",
+    ],
     { stdio: ["ignore", "ignore", "inherit"] },
   );
   const code = await new Promise<number | null>((resolve, reject) => {

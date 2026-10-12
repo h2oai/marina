@@ -10,6 +10,8 @@ import { parseArgs } from "node:util";
 import { isSecretKey, parseEnvironment, writeEnvironment } from "../src/config/environment";
 import { configurationPreset, validateConfiguration } from "../src/config/presets";
 import { dailySpendCapUsd } from "../src/engine/spend-ledger";
+import { IS_COMPILED } from "../src/runtime-paths";
+import { BUILTIN_WORLDS } from "../src/world/builtin-worlds";
 
 const ROOT = `${import.meta.dirname}/..`;
 const WORLDS_DIR = `${ROOT}/worlds`;
@@ -41,6 +43,13 @@ const WORLD_BLURBS: Record<string, string> = {
  * first, then alphabetical. Excludes the shared helper modules.
  */
 export function listWorldSlugs(dir = WORLDS_DIR): string[] {
+  if (IS_COMPILED && dir === WORLDS_DIR)
+    return [
+      "default",
+      ...Object.keys(BUILTIN_WORLDS)
+        .filter((slug) => slug !== "default")
+        .sort(),
+    ];
   let files: string[];
   try {
     files = fs.readdirSync(dir);
@@ -395,19 +404,24 @@ export async function runInit(args: string[] = []): Promise<void> {
   if (start.toLowerCase() !== "n") {
     console.log("\nStarting Marina...\n");
     try {
-      const proc = Bun.spawn(["bun", "run", `${ROOT}/src/main.ts`], {
-        cwd: directory,
-        stdio: ["inherit", "inherit", "inherit"],
-      });
+      const proc = Bun.spawn(
+        IS_COMPILED
+          ? [process.execPath, "start"]
+          : [process.execPath, "run", `${ROOT}/src/main.ts`],
+        {
+          cwd: directory,
+          stdio: ["inherit", "inherit", "inherit"],
+        },
+      );
       process.exitCode = await proc.exited;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`\nFailed to spawn Marina: ${message}`);
-      console.error('Run "bun run start" manually to see the underlying error.');
+      console.error('Run "marina start" manually to see the underlying error.');
       process.exitCode = 1;
     }
   } else {
-    console.log('\nRun "bun run start" when ready.');
+    console.log('\nRun "marina start" when ready.');
   }
 }
 

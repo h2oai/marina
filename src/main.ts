@@ -115,8 +115,8 @@ try {
   logger.error(
     "main",
     isMissing
-      ? `World "${WORLD_NAME}" not found. Available worlds: ${listAvailableWorlds().join(", ")}`
-      : `World "${WORLD_NAME}" failed to load: ${message}\nAvailable worlds: ${listAvailableWorlds().join(", ")}`,
+      ? `World "${WORLD_NAME}" not found. Available worlds: ${(await listAvailableWorlds()).join(", ")}`
+      : `World "${WORLD_NAME}" failed to load: ${message}\nAvailable worlds: ${(await listAvailableWorlds()).join(", ")}`,
     { world: WORLD_NAME },
   );
   logger.error("main", "Set MARINA_WORLD to one of them (or unset it for `default`).");

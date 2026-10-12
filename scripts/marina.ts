@@ -23,6 +23,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { AGENT_THINKING_LEVELS, parseAgentThinkingLevel } from "../src/agent/agent-types";
+import { MARINA_VERSION } from "../src/version";
 import { ATTACH_USAGE } from "./code-attach";
 
 /** Verification a one-shot `-p` task must pass before it can submit. */
@@ -404,11 +405,8 @@ Environment:
 
 // ── version ──────────────────────────────────────────────────────────────────
 
-/** Injected at compile time by `scripts/build-native.ts`; undefined in dev. */
-declare const MARINA_VERSION: string | undefined;
-
-export function readPackageVersion(root = join(import.meta.dir, "..")): string {
-  if (typeof MARINA_VERSION === "string" && MARINA_VERSION) return MARINA_VERSION;
+export function readPackageVersion(root?: string): string {
+  if (root === undefined) return MARINA_VERSION;
   try {
     const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
       version?: string;
@@ -563,13 +561,11 @@ async function readStdinTask(): Promise<string> {
 }
 
 if (import.meta.main) {
-  // Hidden server mode: a compiled binary re-spawns itself with this flag to
-  // run the folder-scoped server in-process (no `bun` or repo on disk).
-  if (process.argv[2] === "__marina_server") {
-    await import("../src/main");
-    process.exit(0);
-  }
-  const dispatch = parseDispatch(process.argv.slice(2));
+  // Preserve the original compiled server entry as an alias for foreground
+  // start. Do not exit after import: active listeners keep the server alive.
+  const dispatch = parseDispatch(
+    process.argv[2] === "__marina_server" ? ["start"] : process.argv.slice(2),
+  );
   switch (dispatch.kind) {
     case "help":
       console.log(USAGE);

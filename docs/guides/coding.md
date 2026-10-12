@@ -120,8 +120,12 @@ The session's day-to-day controls are one word away:
 
 `/model` switches the active session model (list every model you hold a provider key for with no
 argument); `/fast` picks the cheapest reachable one. `/plan` runs the worker read-only — it
-researches and emits a proposal without editing files. `/compact` runs the automatic conversation
-compactor on demand. `/cost` and `/usage` report today's model spend against the daily cap.
+researches and emits a proposal without editing files. `/compact` compacts older conversation
+messages even below the automatic threshold, retaining the initial request and recent turns.
+It waits for durable archival before replacing history; if the agent is working or the conversation
+changes during compaction, it keeps the live history and asks you to retry. Short histories stay
+unchanged. Summary calls count toward agent usage and spend limits; a provider failure or reached
+cap uses the deterministic summary. `/cost` and `/usage` report today's model spend against the daily cap.
 `/continue` resumes the most recent session whose workspace is this folder. `/memory save <line>`
 teaches the world about this folder (a note) and `/memory` recalls it; `/memory recall <query>`
 retrieves scored notes.
@@ -1418,3 +1422,10 @@ For literal arguments, including nested quotes, use
 `code run --argv ["python", "-c", "print(1 + 2)"]`. Both forms use the same
 execution permissions, allowlist and approval audit as other workspace commands.
 Variables, pipes, substitutions and globs are not expanded.
+
+
+Plan mode can inspect original task and verification artifacts with `marina_code_show`,
+using IDs from its artifact list. For exact constraints and identifiers, reopen the
+original request: a saved proposal or context summary may paraphrase or miscopy it.
+This read path uses the same session permissions as `code show` and does not grant
+file writes or command execution.

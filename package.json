@@ -82,6 +82,7 @@
     "setup:cli": "bun install && bun run scripts/setup-cli.ts",
     "dev": "bun run src/main.ts",
     "build": "bun build src/main.ts --outdir dist --target bun --external zod && bun build src/memory/import-process.ts --outfile dist/memory-import.js --target bun && bun run build:memory",
+    "qualify:native": "bun run build:native && bun run scripts/qualify-native.ts",
     "build:native": "bun run scripts/build-native.ts",
     "test": "bun run scripts/test-backend.ts",
     "test:ui": "cd dashboard && bun run test",
