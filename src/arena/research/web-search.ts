@@ -216,7 +216,7 @@ export function exaSearchProvider(
 
 const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
 /** The model that carries an `openrouter` search (it writes nothing; the plugin searches). */
-export const DEFAULT_OPENROUTER_SEARCH_MODEL = "openai/gpt-6-luna";
+export const DEFAULT_OPENROUTER_SEARCH_MODEL = "openai/gpt-6.1-sol";
 
 /**
  * OpenRouter's web plugin on Exa as a plain search backend: one minimal chat

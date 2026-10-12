@@ -7,6 +7,7 @@ import type { ChannelManager } from "../src/coordination/channel-manager";
 import { Engine } from "../src/engine/engine";
 import { projectTraces } from "../src/engine/trace-projection";
 import { getActiveAliases } from "../src/net/compat-profiles";
+import { getDefaultUpstreamModel } from "../src/net/default-models";
 import { MEMORY_RECEIPT_HEADER, parseMemoryReceipt } from "../src/net/memory-receipt";
 import {
   extractStrategy,
@@ -1201,9 +1202,18 @@ describe("Model API", () => {
       }
     }
 
-    it("uses Luna for the default OpenAI route while preserving explicit model overrides", async () => {
+    it("defaults the OpenAI route to the strong tier", () => {
+      expect(getDefaultUpstreamModel("OPENAI_API_KEY", {})).toBe("gpt-6.1-sol");
+      expect(getDefaultUpstreamModel("ANTHROPIC_API_KEY", {})).toBe("claude-opus-5-5");
+      expect(getDefaultUpstreamModel("OPENROUTER_API_KEY", {})).toBe("anthropic/claude-opus-5.5");
+      expect(
+        getDefaultUpstreamModel("OPENAI_API_KEY", { MARINA_DEFAULT_OPENAI_MODEL: "gpt-6-luna" }),
+      ).toBe("gpt-6-luna");
+    });
+
+    it("shapes a Luna default OpenAI route while preserving explicit model overrides", async () => {
       const previous = process.env.MARINA_DEFAULT_OPENAI_MODEL;
-      delete process.env.MARINA_DEFAULT_OPENAI_MODEL;
+      process.env.MARINA_DEFAULT_OPENAI_MODEL = "gpt-6-luna";
       setEndpointConfig(db, { mode: "passthru" });
       const forwarded: Record<string, unknown>[] = [];
       try {
