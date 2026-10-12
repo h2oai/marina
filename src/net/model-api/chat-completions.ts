@@ -233,6 +233,8 @@ async function runVerifyStack(
     (await maybeVerifyChat(engine, req, body, authResult, {
       ...(joinNotes(prep.addendum, note) ? { note: joinNotes(prep.addendum, note) } : {}),
       ...(lessonOwner ? { lessonOwner } : {}),
+      // The checker reviews against the same memory context (distinct identity only).
+      ...(prep.identity?.contextOptIn && prep.addendum ? { context: prep.addendum } : {}),
     })) ?? errorJson(400, "Not a marina/verify: model id");
   // The ledger and the check read the request as the proposer would answer it.
   const proposer = verifyProposer(engine, String(body.model));

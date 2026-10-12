@@ -1080,13 +1080,13 @@ describe("POST /v1/chat/completions with the obligations ledger", () => {
     expect(e?.param).toBe("x-marina-obligations");
   });
 
-  it("refuses chat-only prefixes on /v1/responses and the Ollama routes", async () => {
+  it("serves instrument prefixes on /v1/responses and refuses them on the Ollama routes", async () => {
     const responses = await postTo("/v1/responses", {
       model: `marina/argcheck:${MODEL}`,
       input: "hello",
     });
-    expect(responses.status).toBe(400);
-    expect((await code(responses))?.code).toBe("unsupported_parameter");
+    expect(responses.status).toBe(200);
+    expect(((await responses.json()) as { object?: string }).object).toBe("response");
     const chat = await postTo("/api/chat", {
       model: `marina/lessons:${MODEL}`,
       messages: [{ role: "user", content: "hello" }],
@@ -1183,12 +1183,49 @@ describe("POST /v1/chat/completions with the obligations ledger", () => {
       expect(plain.headers.get("x-marina-stack")).toBeNull();
     });
 
-    it("refuses stack headers on /v1/responses", async () => {
-      const r = await postTo(
-        "/v1/responses",
-        { model: MODEL, input: "hello" },
-        { "x-marina-stack": "obligations" },
-      );
+    const responsesTurn = (extra: Record<string, unknown> = {}) => ({
+      model: MODEL,
+      instructions: "You are a bank agent. Confirm before closing cards.",
+      input: "Please close my card 4417.",
+      tools: [
+        { type: "function", name: "get_card", parameters: { type: "object" } },
+        { type: "function", name: "close_card", parameters: { type: "object" } },
+      ],
+      ...extra,
+    });
+
+    it("runs the stack on /v1/responses through the chat core", async () => {
+      const r = await postTo("/v1/responses", responsesTurn(), {
+        "x-marina-stack": "obligations,argcheck",
+      });
+      expect(r.status).toBe(200);
+      expect(seen[0]!.kind).toBe("extract");
+      expect(r.headers.get("x-marina-stack")).toBe("obligations,argcheck; source=header");
+      expect(r.headers.get("x-marina-obligations")).toContain("open=1");
+      expect(((await r.json()) as { object?: string }).object).toBe("response");
+    });
+
+    it("re-emits an instrumented /v1/responses turn as SSE when a stream is asked for", async () => {
+      const r = await postTo("/v1/responses", responsesTurn({ stream: true }), {
+        "x-marina-stack": "obligations",
+      });
+      expect(r.status).toBe(200);
+      expect(r.headers.get("content-type")).toContain("text/event-stream");
+      expect(r.headers.get("x-marina-stack")).toBe("obligations; source=header");
+      expect(await r.text()).toContain("response.completed");
+      // The instruments read the complete reply: the upstream was asked un-streamed.
+      expect(seen.every((call) => call.body.stream !== true)).toBe(true);
+    });
+
+    it("leaves an anonymous /v1/responses turn byte-identical", async () => {
+      const r = await postTo("/v1/responses", responsesTurn());
+      expect(r.status).toBe(200);
+      expect(r.headers.get("x-marina-stack")).toBeNull();
+      expect(seen.map((call) => call.kind)).not.toContain("extract");
+    });
+
+    it("refuses an unknown stack member on /v1/responses", async () => {
+      const r = await postTo("/v1/responses", responsesTurn(), { "x-marina-stack": "teleport" });
       expect(r.status).toBe(400);
       expect((await code(r))?.param).toBe("x-marina-stack");
     });

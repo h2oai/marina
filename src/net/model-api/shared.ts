@@ -336,7 +336,7 @@ export function rejectChatOnlyPrefix(model: unknown, route: string): Response | 
   return p
     ? unsupportedParam(
         "model",
-        `The '${p}' prefix is honored only on /v1/chat/completions and /v1/messages; ${route} would ignore it.`,
+        `The '${p}' prefix is honored on passthru requests to /v1/chat/completions, /v1/messages and /v1/responses; ${route} would ignore it.`,
       )
     : undefined;
 }

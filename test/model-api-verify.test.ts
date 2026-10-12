@@ -22,6 +22,7 @@ import {
   checkerMessages,
   guardRevision,
   isReadOnlyToolCall,
+  maybeVerifyChat,
   parseVerdict,
   parseVerifyModel,
   renderReview,
@@ -647,5 +648,29 @@ describe("the checker call", () => {
     const msgs = body.messages as { content: unknown }[];
     expect(JSON.stringify(msgs)).toContain('"cache_control":{"type":"ephemeral"}');
     expect(JSON.stringify(msgs).match(/cache_control/g)?.length).toBe(3);
+  });
+});
+
+describe("marina/verify with the caller's memory context", () => {
+  const ask = (extras: { context?: string }) =>
+    maybeVerifyChat(
+      engine,
+      new Request("http://localhost:3300/v1/chat/completions", { method: "POST" }),
+      request("marina/verify:openrouter/openai/gpt-6.1-sol"),
+      undefined,
+      extras,
+    );
+  const checkerTail = () =>
+    calls.find((c) => c.system.includes("You review an assistant's DRAFT"))?.tail ?? "";
+
+  it("shows the checker the context the proposer saw", async () => {
+    const resp = await ask({ context: "[memory] Order 7 belongs to a confirmed VIP account." });
+    expect(resp?.status).toBe(200);
+    expect(checkerTail()).toContain("Order 7 belongs to a confirmed VIP account.");
+  });
+
+  it("adds nothing to the checker without context", async () => {
+    await ask({});
+    expect(checkerTail()).not.toContain("[memory]");
   });
 });
