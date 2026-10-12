@@ -8,7 +8,7 @@ import {
   type RouteEvidenceSettings,
   routeEvidenceSettingsFromEnv,
 } from "../src/engine/benchmark-evidence";
-import { handleOutcomeReport } from "../src/net/outcomes-api";
+import { handleOutcomeReport } from "../src/net/api/outcomes-api";
 import { recordTaskVerdict } from "../src/outcomes/live";
 import { settleDelivery } from "../src/outcomes/record";
 import { MarinaDB } from "../src/persistence/database";

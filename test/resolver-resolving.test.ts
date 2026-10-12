@@ -6,14 +6,14 @@ import type {
   KalshiMarket,
   KalshiResult,
   getMarket as kalshiGetMarketFn,
-} from "../src/net/kalshi-client";
+} from "../src/net/clients/kalshi-client";
 import {
   type PolymarketEvent,
   type PolymarketMarket,
   type PolymarketResult,
   parseResolution,
   type getEvent as polymarketGetEventFn,
-} from "../src/net/polymarket-client";
+} from "../src/net/clients/polymarket-client";
 import { MarinaDB } from "../src/persistence/database";
 import { createResolvingResolver } from "../src/resolvers/resolving";
 import type { ResolverContext } from "../src/resolvers/types";

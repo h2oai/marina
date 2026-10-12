@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { ChannelManager } from "../src/coordination/channel-manager";
 import { Engine } from "../src/engine/engine";
-import { handleModelApi, pendingRequests, roundRobinCounters } from "../src/net/model-api";
+import { handleModelApi, pendingRequests, roundRobinCounters } from "../src/net/model/model-api";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";

@@ -4,7 +4,7 @@
 import { parseExecUnrestricted } from "../../coding/exec-approver";
 import { recoverCodingRuns } from "../../coding/task-run";
 import { VerificationRunner } from "../../coding/verification-runner";
-import { probeConfiguredProviders } from "../../net/model-api";
+import { probeConfiguredProviders } from "../../net/model/model-api";
 import type { EntityId } from "../../types";
 import { adapterCommand } from "../commands/adapter";
 import { adminCommand } from "../commands/admin";

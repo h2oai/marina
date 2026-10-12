@@ -20,7 +20,7 @@
  */
 import type { Api, AssistantMessage, Context, Message, Model } from "@earendil-works/pi-ai";
 import { dailyCapRefusal, recordSpend } from "../engine/spend-ledger";
-import { isLocalProvider } from "../net/model-discovery";
+import { isLocalProvider } from "../net/model/model-discovery";
 import { piModels } from "./pi-models";
 import {
   isOpenRouterModel,

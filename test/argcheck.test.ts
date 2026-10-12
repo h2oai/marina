@@ -18,7 +18,7 @@ import { modelSourceEnvKeys } from "../src/agent/available-models";
 import { ARGCHECK_SUPPORTED_MIN, decideArgcheck } from "../src/decisions/policy";
 import type { DecisionProvider } from "../src/decisions/types";
 import { Engine } from "../src/engine/engine";
-import { handleModelApi } from "../src/net/model-api";
+import { handleModelApi } from "../src/net/model/model-api";
 import {
   argcheckRequestMode,
   conversationEvidence,

@@ -23,7 +23,7 @@ import { resetRetentionReportForTests } from "../src/engine/retention";
 import { resetTrustProfileForTests } from "../src/engine/trust-profile";
 import { handleDashboardApi } from "../src/net/dashboard-api";
 import { resetHttpRateLimitersForTests } from "../src/net/http-utils";
-import { resetLastProviderProbeForTests } from "../src/net/model-api";
+import { resetLastProviderProbeForTests } from "../src/net/model/model-api";
 import {
   buildOpsOverview,
   descendantAgents,
@@ -33,7 +33,7 @@ import {
   opsObserverScope,
   promptBudget,
   resetPromptBudgetMemoForTests,
-} from "../src/net/ops-api";
+} from "../src/net/api/ops-api";
 import type { OpsAgentStopResponse, OpsOverview } from "../src/net/ops-types";
 import { MarinaDB } from "../src/persistence/database";
 import { type EngineEvent, type EntityId, roomId } from "../src/types";

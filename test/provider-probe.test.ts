@@ -28,7 +28,7 @@ import {
   PROVIDER_TOOL_PROBE_NAME,
   type ProviderProbeResult,
   probeConfiguredProviders,
-} from "../src/net/model-api";
+} from "../src/net/model/model-api";
 import { MarinaDB } from "../src/persistence/database";
 import { type EntityId, roomId } from "../src/types";
 import { makeTestRoom } from "./helpers";

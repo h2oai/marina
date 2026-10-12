@@ -6,7 +6,7 @@ import {
   isTabH2OConfigured,
   type TabH2OPredictResponse,
   tabh2oPredict,
-} from "../src/net/tabh2o-client";
+} from "../src/net/clients/tabh2o-client";
 import { MarinaDB } from "../src/persistence/database";
 import { seedTabH2OForecasting } from "../worlds/seed";
 import { cleanupDb } from "./helpers";

@@ -21,10 +21,10 @@ import {
   ANTHROPIC_CACHE_BREAKPOINT_LIMIT,
   buildAnthropicRequest,
   placeCacheBreakpoints,
-} from "../src/net/anthropic-tools";
-import { handleModelApi } from "../src/net/model-api";
-import { setEndpointConfig } from "../src/net/model-endpoint";
-import { INJECTION_MARKER } from "../src/net/passthru-context";
+} from "../src/net/adapters/anthropic-tools";
+import { handleModelApi } from "../src/net/model/model-api";
+import { setEndpointConfig } from "../src/net/model/model-endpoint";
+import { INJECTION_MARKER } from "../src/net/model/passthru-context";
 import { MarinaDB } from "../src/persistence/database";
 import { type EngineEvent, roomId } from "../src/types";
 import { FIXTURE_QUERY, seedUnifiedFixture } from "./fixtures/unified-memory-fixture";

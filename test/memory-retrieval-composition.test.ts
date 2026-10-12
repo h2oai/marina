@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryFederation } from "../src/memory/federation";
 import { MemoryService } from "../src/memory/service";
-import { handleMemoryServiceApi } from "../src/net/memory-service-api";
+import { handleMemoryServiceApi } from "../src/net/memory/memory-service-api";
 import { MarinaDB } from "../src/persistence/database";
 import { MarinaMemoryAssistance } from "../src/sdk/memory-assistance-client";
 import { MarinaMemoryClient } from "../src/sdk/memory-client";

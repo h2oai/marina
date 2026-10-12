@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { handleMemoryServiceApi } from "../net/memory-service-api";
+import { handleMemoryServiceApi } from "../net/memory/memory-service-api";
 import type { MarinaDB } from "../persistence/database";
 import { MarinaMemoryClient, MemoryClientError } from "../sdk/memory-client";
 import {

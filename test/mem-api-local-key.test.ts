@@ -12,7 +12,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTrustProfile } from "../src/engine/trust-profile";
-import { handleMemApi } from "../src/net/mem-api";
+import { handleMemApi } from "../src/net/api/mem-api";
 import { MarinaDB } from "../src/persistence/database";
 import { scopeProcessState } from "./process-state";
 

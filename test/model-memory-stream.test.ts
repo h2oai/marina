@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, it } from "bun:test";
-import { normalizeToolCallSSE } from "../src/net/model-api";
+import { normalizeToolCallSSE } from "../src/net/model/model-api";
 
 async function collect(parts: string[], openAfterDone = false) {
   let cancelled = false;

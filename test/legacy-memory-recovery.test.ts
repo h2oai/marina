@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { findDurableTwin } from "../src/memory/legacy-projection";
 import { residentMemoryOperation } from "../src/memory/resident-service";
 import { closeWorldMemoryService } from "../src/memory/world-service";
-import { handleMemApi } from "../src/net/mem-api";
+import { handleMemApi } from "../src/net/api/mem-api";
 import { MarinaDB } from "../src/persistence/database";
 import type { MemoryRecord } from "../src/sdk/memory-types";
 

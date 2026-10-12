@@ -36,7 +36,7 @@ import {
   type TabH2OResult,
   type TabH2ORow,
   tabh2oPredict,
-} from "../net/tabh2o-client";
+} from "../net/clients/tabh2o-client";
 import { availableInstant } from "../research/measurement";
 import type { RoundForecast } from "./forecast";
 import { horizonSteps } from "./forecast";

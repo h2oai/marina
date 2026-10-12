@@ -32,8 +32,8 @@ import type {
   MemoryRatio,
   MemorySpaceHealth,
   MemoryStorageBudgetView,
-} from "../net/memory-observability-types";
-import { type MemoryReceipt, parseMemoryReceipt } from "../net/memory-receipt";
+} from "../net/memory/memory-observability-types";
+import { type MemoryReceipt, parseMemoryReceipt } from "../net/memory/memory-receipt";
 import { responseCacheCounters } from "../net/response-cache";
 import { SYBIL_STANDING_FLOOR } from "../persistence/db-memory-resolve";
 import { COMPETING_RECORD_PREDICATE } from "../persistence/db-memory-review";

@@ -6,7 +6,7 @@ import { modelSourceEnvKeys } from "../src/agent/available-models";
 import type { Retriever } from "../src/arena/research/retrieve";
 import type { DecisionProvider } from "../src/decisions/types";
 import { forecastQuestion, inferKind } from "../src/forecast/question";
-import { handleForecast, saveTarget } from "../src/net/forecast-api";
+import { handleForecast, saveTarget } from "../src/net/api/forecast-api";
 import type { MarinaDB } from "../src/persistence/database";
 import { scopeProcessState } from "./process-state";
 

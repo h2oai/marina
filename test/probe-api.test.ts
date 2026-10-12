@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { handleProbeApi } from "../src/net/probe-api";
+import { handleProbeApi } from "../src/net/api/probe-api";
 import { MarinaDB } from "../src/persistence/database";
 import {
   createResolvingResolver,

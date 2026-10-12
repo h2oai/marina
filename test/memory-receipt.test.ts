@@ -12,7 +12,7 @@ import {
   memoryReceiptPins,
   parseMemoryReceipt,
   renderMemoryReceiptLines,
-} from "../src/net/memory-receipt";
+} from "../src/net/memory/memory-receipt";
 
 function draft(over: Partial<MemoryReceiptDraft> = {}): MemoryReceiptDraft {
   return {

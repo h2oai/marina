@@ -7,7 +7,7 @@ import { DASHBOARD_OBSERVER_TTL_MS } from "../engine/constants";
 import type { Engine } from "../engine/engine";
 import { Logger } from "../engine/logger";
 import type { EngineEvent } from "../types";
-import { memoryObserver } from "./memory-visibility";
+import { memoryObserver } from "./memory/memory-visibility";
 
 /** Module logger: dashboard broadcast failures. */
 const logger = new Logger();

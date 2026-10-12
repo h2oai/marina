@@ -33,7 +33,7 @@ import {
   seriesHistory,
 } from "../src/forecast/series-history";
 import { chooseMethod, comparisonPrior, replayMethods } from "../src/forecast/series-prior";
-import { parsePriors } from "../src/net/forecast-api";
+import { parsePriors } from "../src/net/api/forecast-api";
 
 const DAY = 86_400_000;
 const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);

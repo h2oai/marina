@@ -42,7 +42,7 @@ import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import { rankedServing } from "../memory/admission";
 import { residentMemoryOperation } from "../memory/resident-service";
-import { selfModelToken } from "../net/self-model-token";
+import { selfModelToken } from "../net/model/self-model-token";
 import type { MarinaDB } from "../persistence/database";
 import type { MemoryOperationRequest } from "../sdk/memory-operations";
 import { lessonAdmission } from "./admission";

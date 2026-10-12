@@ -29,7 +29,7 @@ import {
   visionModelCandidates,
   visionRequest,
 } from "../src/engine/media/vision";
-import { handleModelApi } from "../src/net/model-api";
+import { handleModelApi } from "../src/net/model/model-api";
 import { reviewContent } from "../src/net/model-api/verify";
 import { LocalStorageProvider } from "../src/storage/local-provider";
 import type { EntityId } from "../src/types";

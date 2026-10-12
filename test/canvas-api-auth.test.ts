@@ -3,7 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
-import { handleCanvasApi } from "../src/net/canvas-api";
+import { handleCanvasApi } from "../src/net/canvas/canvas-api";
 import { resetHttpRateLimitersForTests } from "../src/net/http-utils";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";

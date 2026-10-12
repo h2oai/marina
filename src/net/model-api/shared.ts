@@ -10,15 +10,15 @@ import { getInternalModelToken } from "../../agent/agent-runtime";
 import { secretsEqual } from "../../auth/secret-compare";
 import type { Engine } from "../../engine/engine";
 import { isLocalProfile, isOpenApiMode } from "../../engine/trust-profile";
-import { buildAliasMap } from "../compat-profiles";
+import { buildAliasMap } from "../adapters/compat-profiles";
 import { corsHeaders } from "../cors";
 import { type JsonBodyResult, type PeerAddressSource, readJsonBody } from "../http-utils";
-import { MEMORY_RECEIPT_HEADER } from "../memory-receipt";
+import { MEMORY_RECEIPT_HEADER } from "../memory/memory-receipt";
 import {
   type OpenAIErrorOptions,
   openaiErrorBody,
   unsupportedParameterBody,
-} from "../openai-errors";
+} from "../model/openai-errors";
 import { RESPONSE_CACHE_HEADER } from "../response-cache";
 
 /**

@@ -15,7 +15,7 @@ import { modelSourceEnvKeys } from "../src/agent/available-models";
 import { Engine } from "../src/engine/engine";
 import { memoryLessonSink } from "../src/learning/outcomes";
 import { disableOutcomeLearning, enableOutcomeLearning } from "../src/learning/service";
-import { handleModelApi } from "../src/net/model-api";
+import { handleModelApi } from "../src/net/model/model-api";
 import {
   checkerEffort,
   checkerEffortMode,
@@ -30,7 +30,7 @@ import {
   type Verdict,
   verifyRounds,
 } from "../src/net/model-api/verify";
-import { setEndpointConfig } from "../src/net/model-endpoint";
+import { setEndpointConfig } from "../src/net/model/model-endpoint";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { MockConnection, makeTestRoom } from "./helpers";

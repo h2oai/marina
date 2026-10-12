@@ -14,13 +14,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { version as MARINA_VERSION } from "../package.json";
 import { Engine } from "../src/engine/engine";
-import { handleModelApi, isModelApiPath, OLLAMA_API_PATHS } from "../src/net/model-api";
-import { setEndpointConfig } from "../src/net/model-endpoint";
+import { handleModelApi, isModelApiPath, OLLAMA_API_PATHS } from "../src/net/model/model-api";
+import { setEndpointConfig } from "../src/net/model/model-endpoint";
 import {
   inferOpenAIErrorCode,
   openaiErrorBody,
   unsupportedParameterBody,
-} from "../src/net/openai-errors";
+} from "../src/net/model/openai-errors";
 import { MarinaDB } from "../src/persistence/database";
 import { type EngineEvent, roomId } from "../src/types";
 import { MockConnection, makeTestRoom } from "./helpers";

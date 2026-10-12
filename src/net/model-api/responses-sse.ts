@@ -7,7 +7,7 @@
 // SSE). Below `routing.ts`, which streams into the emitter.
 
 import { getErrorMessage } from "../../engine/errors";
-import type { ResponsesFunctionCall } from "../responses-tools";
+import type { ResponsesFunctionCall } from "../model/responses-tools";
 import { type CompletionUsage, promptTokensDetails, SSE_HEADERS, safeClose } from "./shared";
 
 // --- OpenAI Responses API (server-side conversation state) ---
@@ -20,7 +20,7 @@ import { type CompletionUsage, promptTokensDetails, SSE_HEADERS, safeClose } fro
 /** Shared immutable prefix avoids quadratic copies for long tool conversations. */
 export interface ResponseHistory {
   previous?: ResponseHistory;
-  turn: import("../passthru-context").OpenAIMessage[];
+  turn: import("../model/passthru-context").OpenAIMessage[];
   bytes: number;
 }
 

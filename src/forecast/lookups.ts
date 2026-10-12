@@ -27,7 +27,7 @@
  * through the URL guard.
  */
 
-import { pricesHistory, searchEvents } from "../net/polymarket-client";
+import { pricesHistory, searchEvents } from "../net/clients/polymarket-client";
 import { kalshiLookup, polymarketLookup } from "./lookup-markets";
 import { oddsLookup } from "./lookup-odds";
 import { blsLookup, fredLookup } from "./lookup-series";

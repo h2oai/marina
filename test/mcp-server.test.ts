@@ -16,7 +16,7 @@ import {
   mcpTransportAuthRequired,
   quoteArg,
   textArg,
-} from "../src/net/mcp-server";
+} from "../src/net/mcp/mcp-server";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { FIXTURE_QUERY, seedUnifiedFixture, tierIds } from "./fixtures/unified-memory-fixture";

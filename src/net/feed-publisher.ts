@@ -7,9 +7,9 @@ import { Logger } from "../engine/logger";
 import type { CanvasNodeRow, MarinaDB } from "../persistence/database";
 import type { StorageProvider } from "../storage/provider";
 import type { EngineEvent, EntityId } from "../types";
-import { enrichNodeData } from "./canvas-api";
-import type { CanvasBroadcaster } from "./canvas-ws";
-import { isPublicMemory } from "./memory-visibility";
+import { enrichNodeData } from "./canvas/canvas-api";
+import type { CanvasBroadcaster } from "./canvas/canvas-ws";
+import { isPublicMemory } from "./memory/memory-visibility";
 
 const FEED_CANVAS_NAME = "feed";
 /** Max nodes kept on the feed canvas. Older nodes are trimmed on insert. */

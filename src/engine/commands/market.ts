@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { bold, dim, status as fmtStatus, header, separator } from "../../net/ansi";
-import * as kalshi from "../../net/kalshi-client";
-import * as polymarket from "../../net/polymarket-client";
-import { isTabH2OConfigured, type TabH2ORow, tabh2oPredict } from "../../net/tabh2o-client";
+import * as kalshi from "../../net/clients/kalshi-client";
+import * as polymarket from "../../net/clients/polymarket-client";
+import { isTabH2OConfigured, type TabH2ORow, tabh2oPredict } from "../../net/clients/tabh2o-client";
 import type { MarinaDB, MarketRow } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
 import { canonicalSub, unknownSubcommand } from "../parse-input";

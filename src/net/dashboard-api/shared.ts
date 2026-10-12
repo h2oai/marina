@@ -25,7 +25,7 @@ import {
   SMALL_JSON_BODY_BYTES,
   withErrorCode,
 } from "../http-utils";
-import type { memoryObserver } from "../memory-visibility";
+import type { memoryObserver } from "../memory/memory-visibility";
 
 /** Module logger: dashboard HTTP routes — rejected-origin and request failures. */
 const logger = new Logger();

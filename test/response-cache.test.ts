@@ -4,10 +4,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
 import { residentMemoryOperation } from "../src/memory/resident-service";
-import { finalizeMemoryReceipt, type MemoryReceipt } from "../src/net/memory-receipt";
-import { handleModelApi } from "../src/net/model-api";
-import { setEndpointConfig } from "../src/net/model-endpoint";
-import { resetPassthruCaptureDedupForTests } from "../src/net/passthru-context";
+import { finalizeMemoryReceipt, type MemoryReceipt } from "../src/net/memory/memory-receipt";
+import { handleModelApi } from "../src/net/model/model-api";
+import { setEndpointConfig } from "../src/net/model/model-endpoint";
+import { resetPassthruCaptureDedupForTests } from "../src/net/model/passthru-context";
 import {
   cacheableCompletion,
   canonicalJson,

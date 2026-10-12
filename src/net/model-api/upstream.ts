@@ -16,23 +16,23 @@ import { Logger } from "../../engine/logger";
 import { settleProxyCall } from "../../engine/proxy-settlement";
 import { dailyCapRefusal, recordSpend } from "../../engine/spend-ledger";
 import type { EngineEvent, EntityId } from "../../types";
-import { estimatePrefixTokens, minCacheableTokens } from "../anthropic-tools";
-import { getDefaultUpstreamModel } from "../default-models";
+import { estimatePrefixTokens, minCacheableTokens } from "../adapters/anthropic-tools";
+import { getDefaultUpstreamModel } from "../model/default-models";
 import {
   encodeMemoryReceiptAttribute,
   encodeMemoryReceiptHeader,
   MEMORY_RECEIPT_HEADER,
   type MemoryReceipt,
-} from "../memory-receipt";
+} from "../memory/memory-receipt";
 import {
   isLocalProvider,
   LOCAL_PROVIDERS,
   localProviderBaseUrl,
   localProviderContextWindow,
-} from "../model-discovery";
-import { openaiErrorBody, UnsupportedParameterError } from "../openai-errors";
-import type { InjectionFormat } from "../passthru-context";
-import { withoutRejectedSampling } from "../sampling-params";
+} from "../model/model-discovery";
+import { openaiErrorBody, UnsupportedParameterError } from "../model/openai-errors";
+import type { InjectionFormat } from "../model/passthru-context";
+import { withoutRejectedSampling } from "../model/sampling-params";
 import {
   normalizeTextualToolCalls,
   type StreamEvent,

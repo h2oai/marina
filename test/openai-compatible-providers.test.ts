@@ -14,7 +14,7 @@ import {
   configuredUpstreamProviders,
   describeDefaultUpstream,
 } from "../src/net/model-api/upstream";
-import { HUGGINGFACE_ENV_KEYS } from "../src/net/model-discovery";
+import { HUGGINGFACE_ENV_KEYS } from "../src/net/model/model-discovery";
 import { roomId } from "../src/types";
 
 const KEYS = [

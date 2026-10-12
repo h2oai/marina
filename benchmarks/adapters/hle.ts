@@ -14,7 +14,7 @@
  *     the item wrong and is recorded as `judge: "error"`.
  */
 
-import { correctDataUrlImageType } from "../../src/net/anthropic-tools";
+import { correctDataUrlImageType } from "../../src/net/adapters/anthropic-tools";
 import { queryWithUsage, replyLabels } from "../modes/passthrough";
 import { judgeEquivalence } from "../scoring/judge";
 import type { BenchmarkConfig, DatasetItem, ItemUsage, Message, ResultItem } from "../types";

@@ -19,8 +19,8 @@ import {
   openaiMessagesToAnthropic,
   openaiToolChoiceToAnthropic,
   openaiToolsToAnthropic,
-} from "../src/net/anthropic-tools";
-import { UnsupportedParameterError } from "../src/net/openai-errors";
+} from "../src/net/adapters/anthropic-tools";
+import { UnsupportedParameterError } from "../src/net/model/openai-errors";
 
 const WEATHER_TOOL = {
   type: "function",

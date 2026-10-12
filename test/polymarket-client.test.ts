@@ -7,7 +7,7 @@ import {
   isPaperMode,
   isPolymarketConfigured,
   placeOrder,
-} from "../src/net/polymarket-client";
+} from "../src/net/clients/polymarket-client";
 
 const KEYS = [
   "MARINA_TRADING_ENABLED",

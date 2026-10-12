@@ -16,7 +16,7 @@ import { decisionConfigFromEnv } from "../src/decisions/config";
 import { redactToolCall } from "../src/decisions/gate";
 import { GATE_QUESTIONS } from "../src/decisions/policy";
 import { choice, noul, score } from "../src/decisions/questions";
-import { acceptsRequestedModel, handleDecisions } from "../src/net/decisions-api";
+import { acceptsRequestedModel, handleDecisions } from "../src/net/api/decisions-api";
 
 const answerSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("noul"), noul: z.number() }),

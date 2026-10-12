@@ -10,7 +10,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { inferCrewResponder } from "../src/agent/agent-runtime";
 import { SocialAwareness } from "../src/agent/social";
 import { Engine } from "../src/engine/engine";
-import { McpServerAdapter } from "../src/net/mcp-server";
+import { McpServerAdapter } from "../src/net/mcp/mcp-server";
 import { WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
 import { MarinaClient } from "../src/sdk/client";

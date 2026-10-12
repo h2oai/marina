@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { commandManifest } from "../src/engine/command-manifest";
-import { handleCanvasApi } from "../src/net/canvas-api";
+import { handleCanvasApi } from "../src/net/canvas/canvas-api";
 import { RoutingService } from "../src/routing/service";
 import { compileCommandForms } from "../src/sdk/command-forms";
 import type { StorageProvider } from "../src/storage/provider";

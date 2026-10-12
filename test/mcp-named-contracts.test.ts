@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { expect, it } from "bun:test";
 import { z } from "zod";
-import { mcpNamedCommandSchema } from "../src/net/mcp-command-schema";
+import { mcpNamedCommandSchema } from "../src/net/mcp/mcp-command-schema";
 import { composeCommand } from "../src/sdk/command-forms";
 import { NAMED_COMMAND_FORMS } from "../src/sdk/named-command-forms";
 import baseline from "./fixtures/mcp-named-contracts.json";

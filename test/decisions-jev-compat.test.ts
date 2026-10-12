@@ -20,7 +20,7 @@ import {
   noul,
   parseQuestions,
 } from "../src/decisions/questions";
-import { handleDecisions } from "../src/net/decisions-api";
+import { handleDecisions } from "../src/net/api/decisions-api";
 
 type Reply = { status: number; body: unknown; headers?: Record<string, string> };
 

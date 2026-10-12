@@ -25,7 +25,7 @@ import {
 } from "../src/decisions/providers";
 import { choice, noul, parseQuestions, score } from "../src/decisions/questions";
 import type { DecisionAnswer, DecisionProvider } from "../src/decisions/types";
-import { handleDecisions } from "../src/net/decisions-api";
+import { handleDecisions } from "../src/net/api/decisions-api";
 import type { EngineEvent } from "../src/types";
 import { scopeProcessState } from "./process-state";
 

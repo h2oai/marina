@@ -6,8 +6,8 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import { MEMORY_TOOL_INPUTS } from "../src/memory/tool-contracts";
-import { mcpJsonSchema } from "../src/net/mcp-json-schema";
-import { createMemoryMcpServer } from "../src/net/mcp-memory-tools";
+import { mcpJsonSchema } from "../src/net/mcp/mcp-json-schema";
+import { createMemoryMcpServer } from "../src/net/mcp/mcp-memory-tools";
 import type { MarinaMemoryClient } from "../src/sdk/memory-client";
 import previous from "./fixtures/memory-mcp-contracts.json";
 

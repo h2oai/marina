@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { localWsPort } from "../net/listen-ports";
-import { receiptForUnifiedContext } from "../net/memory-receipt";
+import { receiptForUnifiedContext } from "../net/memory/memory-receipt";
 import {
   isSamplingRejection,
   noteSamplingRejected,
   rejectsSamplingParams,
   samplingFor,
-} from "../net/sampling-params";
+} from "../net/model/sampling-params";
 import type { CommandCatalogEntry } from "../sdk/capabilities";
 import type { UnifiedContextResult as ParticipantContext } from "../sdk/memory-context";
 
@@ -89,7 +89,7 @@ import {
   isLocalProvider,
   localProviderBaseUrl,
   localProviderContextWindow,
-} from "../net/model-discovery";
+} from "../net/model/model-discovery";
 import { AgentObligations } from "../obligations/agent";
 import { AgentArgcheck } from "../obligations/argcheck-agent";
 import { readOnlyByName } from "../obligations/ledger";

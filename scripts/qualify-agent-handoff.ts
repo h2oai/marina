@@ -12,7 +12,7 @@ import { Engine } from "../src/engine/engine";
 import { getErrorMessage } from "../src/engine/errors";
 import { Logger } from "../src/engine/logger";
 import { closeWorldMemoryService } from "../src/memory/world-service";
-import { setEndpointConfig } from "../src/net/model-endpoint";
+import { setEndpointConfig } from "../src/net/model/model-endpoint";
 import { WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
 import { MarinaClient } from "../src/sdk/client";

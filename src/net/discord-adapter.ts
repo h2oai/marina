@@ -5,7 +5,7 @@ import { Client, Events, GatewayIntentBits, type Message } from "discord.js";
 import { redeemLinkCode } from "../engine/commands/link";
 import { Logger } from "../engine/logger";
 import type { Connection, Perception } from "../types";
-import type { Adapter, AdapterContext } from "./adapter";
+import type { Adapter, AdapterContext } from "./adapters/adapter";
 import { formatPerception } from "./formatter";
 
 /** Module logger: Discord adapter lifecycle and handler failures. */

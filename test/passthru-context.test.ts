@@ -15,7 +15,7 @@ import {
   resetPassthruCaptureDedupForTests,
   resolveInjectBudget,
   resolvePassthruIdentity,
-} from "../src/net/passthru-context";
+} from "../src/net/model/passthru-context";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { FIXTURE_QUERY, seedUnifiedFixture, tierIds } from "./fixtures/unified-memory-fixture";

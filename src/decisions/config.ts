@@ -55,8 +55,8 @@
 import { availableModels } from "../agent/available-models";
 import { positiveNumberFromEnv } from "../engine/constants";
 import { dailyCapRefusal, recordSpend } from "../engine/spend-ledger";
-import { LOCAL_PROVIDERS, localProviderBaseUrl } from "../net/model-discovery";
-import { selfModelToken } from "../net/self-model-token";
+import { LOCAL_PROVIDERS, localProviderBaseUrl } from "../net/model/model-discovery";
+import { selfModelToken } from "../net/model/self-model-token";
 import { type ClassifierMethod, parseClassifierMethod } from "./classifier-methods";
 import { chatClassifierProvider, decisionsApiProvider } from "./providers";
 import { DecisionError, type DecisionProvider } from "./types";

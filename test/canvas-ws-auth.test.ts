@@ -6,7 +6,7 @@ import {
   authorizeCanvasSubscription,
   CanvasBroadcaster,
   type CanvasScopeLookup,
-} from "../src/net/canvas-ws";
+} from "../src/net/canvas/canvas-ws";
 
 function lookup(
   canvases: Record<string, { scope: string; scope_id: string | null }>,

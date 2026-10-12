@@ -3,7 +3,7 @@
 
 import { routeTableFromEnv, routeTiersFromEnv } from "../../decisions/route";
 import { header, separator } from "../../net/ansi";
-import { parseMemoryReceipt, renderMemoryReceiptLines } from "../../net/memory-receipt";
+import { parseMemoryReceipt, renderMemoryReceiptLines } from "../../net/memory/memory-receipt";
 import type { MarinaDB } from "../../persistence/database";
 import type { OtlpExporterStatus } from "../../telemetry/otlp-exporter";
 import type { CommandDef, EngineEvent, RoomContext } from "../../types";

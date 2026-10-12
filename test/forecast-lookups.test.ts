@@ -17,8 +17,8 @@ import {
   polymarketLookup,
 } from "../src/forecast/lookups";
 import { forecastTyped, type ModelPart } from "../src/forecast/typed";
-import type { KalshiCandle, KalshiEvent } from "../src/net/kalshi-client";
-import type { PolymarketEvent, PolymarketPricePoint } from "../src/net/polymarket-client";
+import type { KalshiCandle, KalshiEvent } from "../src/net/clients/kalshi-client";
+import type { PolymarketEvent, PolymarketPricePoint } from "../src/net/clients/polymarket-client";
 
 const NOW = new Date("2026-10-05T00:00:00Z");
 const PAST = new Date("2026-09-01T12:00:00Z");

@@ -17,7 +17,7 @@ import {
   resetSamplingParamsForTests,
   samplingFor,
   withoutRejectedSampling,
-} from "../src/net/sampling-params";
+} from "../src/net/model/sampling-params";
 
 afterEach(() => resetSamplingParamsForTests());
 

@@ -5,7 +5,7 @@
 import {
   anthropicRequestToOpenai,
   translateStreamToAnthropic,
-} from "../../src/net/anthropic-inbound";
+} from "../../src/net/adapters/anthropic-inbound";
 
 const translated = anthropicRequestToOpenai({
   model: "audit-model",

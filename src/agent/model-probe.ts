@@ -15,7 +15,7 @@
  */
 
 import { isLocalProfile } from "../engine/trust-profile";
-import { isLocalProvider, LOCAL_PROVIDERS, localProviderBaseUrl } from "../net/model-discovery";
+import { isLocalProvider, LOCAL_PROVIDERS, localProviderBaseUrl } from "../net/model/model-discovery";
 import { validateFetchUrl, validateOperatorLanUrl } from "../net/url-guard";
 
 export interface ModelLimits {

@@ -17,7 +17,7 @@ import {
   MIN_ANSWER_TOKENS,
   THINKING_BUDGET_TOKENS,
   usesAdaptiveThinking,
-} from "../src/net/anthropic-tools";
+} from "../src/net/adapters/anthropic-tools";
 
 const base = {
   model: "marina",

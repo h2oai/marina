@@ -11,7 +11,7 @@ import {
   HUGGINGFACE_ENV_KEYS,
   MODEL_DISCOVERY_PROVIDERS,
   parseProviderResponse,
-} from "../src/net/model-discovery";
+} from "../src/net/model/model-discovery";
 import { roomId } from "../src/types";
 
 /** Every cloud key the fallback order consults — hidden so a local .env can't win. */

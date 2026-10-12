@@ -3,7 +3,7 @@
 
 import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { handleMemoryServiceApi } from "../net/memory-service-api";
+import { handleMemoryServiceApi } from "../net/memory/memory-service-api";
 import { RequestDrain } from "../net/request-drain";
 import { MarinaDB } from "../persistence/database";
 import { acquireDatabaseLease } from "../persistence/database-lease";

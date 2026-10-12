@@ -15,8 +15,8 @@
  * overrides it).
  */
 
-import { getDefaultUpstreamModel } from "../net/default-models";
-import { LOCAL_PROVIDERS, localProviderDefaultModel } from "../net/model-discovery";
+import { getDefaultUpstreamModel } from "../net/model/default-models";
+import { LOCAL_PROVIDERS, localProviderDefaultModel } from "../net/model/model-discovery";
 
 export interface AvailableModel {
   /** `provider/model`, runnable by `modelComplete` / `resolveModel`. */

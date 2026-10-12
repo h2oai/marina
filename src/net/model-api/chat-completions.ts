@@ -15,8 +15,8 @@ import type { OutcomeDomain } from "../../learning/outcomes";
 import { lessonsBlock, lessonsHeaderValue, recallForWork } from "../../learning/service";
 import { lessonsFromWorkMode } from "../../learning/work";
 import type { ObligationsMode } from "../../obligations/mode";
-import { getEndpointConfig } from "../model-endpoint";
-import { type InjectionFormat, messageText, type OpenAIMessage } from "../passthru-context";
+import { getEndpointConfig } from "../model/model-endpoint";
+import { type InjectionFormat, messageText, type OpenAIMessage } from "../model/passthru-context";
 import {
   ARGCHECK_HEADER,
   ARGCHECK_MODEL_PREFIX,

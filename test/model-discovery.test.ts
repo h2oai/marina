@@ -9,7 +9,7 @@ import {
   localProviderContextWindow,
   MODEL_DISCOVERY_PROVIDERS,
   parseProviderResponse,
-} from "../src/net/model-discovery";
+} from "../src/net/model/model-discovery";
 
 describe("vibethinker local provider", () => {
   const prevBase = process.env.VIBETHINKER_BASE_URL;
@@ -186,7 +186,7 @@ import {
   detectOllamaDefaultModel,
   localProviderDefaultModel,
   resetDetectedDefaultModelsForTests,
-} from "../src/net/model-discovery";
+} from "../src/net/model/model-discovery";
 
 describe("detectOllamaDefaultModel", () => {
   const realFetch = globalThis.fetch;

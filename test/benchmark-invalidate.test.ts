@@ -25,7 +25,7 @@ import { RETENTION_POLICIES } from "../src/engine/retention";
 import { grant } from "../src/engine/safety-gates";
 import { memoryLessonSink } from "../src/learning/outcomes";
 import { disableOutcomeLearning, enableOutcomeLearning } from "../src/learning/service";
-import { handleBenchmarkFile } from "../src/net/benchmarks-api";
+import { handleBenchmarkFile } from "../src/net/api/benchmarks-api";
 import type { PassthruAuthResult } from "../src/net/model-api/shared";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";

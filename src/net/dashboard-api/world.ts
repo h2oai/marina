@@ -19,9 +19,9 @@ import type { MarinaDB, MediaJobRow } from "../../persistence/database";
 import type { EntityId, RoomId } from "../../types";
 import { ORCHESTRATION_PATTERNS } from "../../world/templates/orchestration";
 import { isSentinelPrincipal, refuseOpenApiWrite } from "../auth-middleware";
-import { buildCanvasPrincipal, resolveCanvasHttpPrincipal } from "../canvas-principal";
-import { authorizeCanvasSubscription } from "../canvas-ws";
-import type { memoryObserver } from "../memory-visibility";
+import { buildCanvasPrincipal, resolveCanvasHttpPrincipal } from "../canvas/canvas-principal";
+import { authorizeCanvasSubscription } from "../canvas/canvas-ws";
+import type { memoryObserver } from "../memory/memory-visibility";
 import { authorizeOwnerOrPrivileged } from "../owner-authorization";
 import {
   authorizeEntityRead,

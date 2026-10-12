@@ -25,7 +25,7 @@ import {
   UNIFIED_CONTEXT_SCHEMA,
   type UnifiedContextResult,
 } from "../src/memory/unified-context";
-import { handleMemoryServiceApi } from "../src/net/memory-service-api";
+import { handleMemoryServiceApi } from "../src/net/memory/memory-service-api";
 import { MarinaDB } from "../src/persistence/database";
 import {
   applyReputationRerank,

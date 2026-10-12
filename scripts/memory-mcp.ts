@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { getErrorMessage } from "../src/engine/errors";
-import { createMemoryMcpServer } from "../src/net/mcp-server";
+import { createMemoryMcpServer } from "../src/net/mcp/mcp-server";
 import { MarinaMemoryClient } from "../src/sdk/memory-client";
 
 try {

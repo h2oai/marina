@@ -8,9 +8,9 @@ import { createHash } from "node:crypto";
 import type { Engine } from "../../engine/engine";
 import { stageRequestImages } from "../../engine/media/vision";
 import { maxRequestBodyBytes } from "../http-utils";
-import { getEndpointConfig } from "../model-endpoint";
-import { UnsupportedParameterError } from "../openai-errors";
-import { capturePassthruTranscript, type OpenAIMessage } from "../passthru-context";
+import { getEndpointConfig } from "../model/model-endpoint";
+import { UnsupportedParameterError } from "../model/openai-errors";
+import { capturePassthruTranscript, type OpenAIMessage } from "../model/passthru-context";
 import {
   type ChatToolFields,
   type ResponsesFunctionCall,
@@ -18,7 +18,7 @@ import {
   responsesInputToMessages,
   restorePriorToolCalls,
   translateResponsesTools,
-} from "../responses-tools";
+} from "../model/responses-tools";
 import { runOpenaiChat, stripOptInPrefixes } from "./chat-completions";
 import { ENSEMBLE_MODEL_PREFIX } from "./ensemble";
 import {

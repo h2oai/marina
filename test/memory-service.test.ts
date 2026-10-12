@@ -10,7 +10,7 @@ import { cosine, type EmbeddingProvider } from "../src/memory/embeddings";
 import { residentMemoryOperation } from "../src/memory/resident-service";
 import { MemoryService } from "../src/memory/service";
 import { worldMemoryService } from "../src/memory/world-service";
-import { handleMemoryServiceApi } from "../src/net/memory-service-api";
+import { handleMemoryServiceApi } from "../src/net/memory/memory-service-api";
 import { MarinaDB } from "../src/persistence/database";
 
 let directory: string;

@@ -21,7 +21,7 @@ import {
   memoryHygieneRatios,
   memoryObserverScope,
   snapshotMemoryHygiene,
-} from "../memory-observability";
+} from "../memory/memory-observability";
 import { authorizeEntityRead, type DashboardRouteContext, json, readJsonBody } from "./shared";
 
 function getMemoryCore(db: MarinaDB, entityName: string): Response {

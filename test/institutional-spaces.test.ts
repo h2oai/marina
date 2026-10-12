@@ -17,7 +17,7 @@ import {
 } from "../src/memory/institutional";
 import { findDurableTwin } from "../src/memory/legacy-projection";
 import { MemoryService } from "../src/memory/service";
-import { handleMemoryServiceApi } from "../src/net/memory-service-api";
+import { handleMemoryServiceApi } from "../src/net/memory/memory-service-api";
 import { MarinaDB } from "../src/persistence/database";
 import type { MemoryCitation } from "../src/sdk/memory-answer";
 import { MarinaMemoryAssistance } from "../src/sdk/memory-assistance-client";

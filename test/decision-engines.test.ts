@@ -22,7 +22,7 @@ import {
 } from "../src/decisions/providers";
 import { parseQuestions } from "../src/decisions/questions";
 import { resetSpendLedgerForTests, spentTodayUsd } from "../src/engine/spend-ledger";
-import { handleDecisionModels, handleDecisions } from "../src/net/decisions-api";
+import { handleDecisionModels, handleDecisions } from "../src/net/api/decisions-api";
 
 // ─── A fake OpenAI-compatible upstream ───────────────────────────────────────
 
