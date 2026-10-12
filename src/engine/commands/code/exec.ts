@@ -32,11 +32,16 @@ import {
   detectedSteps,
   executePreparation,
   findRelevantTests,
+  isPytestCommand,
   isVerificationStop,
   OUTCOME_STATUS,
+  PREPARATION_PROBES,
   type PreparationPlan,
   type PreparationResult,
+  type PythonTestFallback,
   planPreparation,
+  pytestUnavailable,
+  pythonTestFallback,
   recipeSteps,
   resolveVerificationOptions,
   type StepOutcome,
@@ -47,6 +52,7 @@ import {
   type VerificationOutcome,
   type VerificationStep,
   type VerificationVerdict,
+  withFallbackRunner,
 } from "../../../coding/verification-plan";
 import { summarizeFlywheelEvents, WorkspaceGateway } from "../../../coding/workspace-gateway";
 import { lessonsBlock, recallForWork } from "../../../learning/service";
@@ -100,11 +106,25 @@ export async function runWorkspaceCommand(
     return;
   }
 
-  const command = await resolveTestShorthand(deps, session, args);
+  const { command, fallback } = await resolveTestShorthand(deps, session, args);
+  // The fallback runs like any command: same allowlist, approver and gates.
   const { artifact, result } = await executeWorkspaceCommand(entity, deps, session, command);
   updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
+  // A fallback runner's zero exit is a pass only when it reports tests ran.
+  const outcome = fallback
+    ? classifyStep({ command: fallback.command, role: "tests", requireTestCount: true }, result)
+    : undefined;
+  const text = fallback
+    ? [
+        dim(`runner: ${fallback.runner} (pytest unavailable)`),
+        formatRunOutput(artifact.id, result),
+        ...(outcome && outcome.outcome !== "passed"
+          ? [`Tests ${OUTCOME_LABEL[outcome.outcome]}: ${outcome.reason}.`]
+          : []),
+      ].join("\n")
+    : formatRunOutput(artifact.id, result);
 
-  sendCode(ctx, eid, formatRunOutput(artifact.id, result), {
+  sendCode(ctx, eid, text, {
     artifactId: artifact.id,
     artifactKind: artifact.kind,
     command: result.command,
@@ -113,8 +133,24 @@ export async function runWorkspaceCommand(
     durationMs: result.durationMs,
     event: "command_ran",
     exitCode: result.exitCode,
+    ...(fallback && outcome
+      ? {
+          metadata: {
+            testRunner: {
+              runner: fallback.runner,
+              fallbackFrom: "pytest",
+              reason: "pytest unavailable",
+            },
+            outcome: outcome.outcome,
+            outcomeReason: outcome.reason,
+          },
+        }
+      : {}),
     sessionId: session.id,
-    status: artifact.status,
+    status:
+      outcome && outcome.outcome !== "passed" && outcome.outcome !== "failed"
+        ? outcome.outcome
+        : artifact.status,
     timedOut: result.timedOut,
     truncated: result.truncated,
     type: "command",
@@ -125,22 +161,39 @@ export async function runWorkspaceCommand(
  * `code test` / `code run test` follows the project's detected runner when the
  * project (or the touched files) is not JavaScript — `python -m pytest`,
  * `python tests/runtests.py`, `cargo test`, `go test ./...` — instead of
- * always meaning `bun run test`. Other shorthands are unchanged.
+ * always meaning `bun run test`. Other shorthands are unchanged. A detected
+ * pytest that the fixed probe shows is not importable switches to the
+ * project's test script or `python -m unittest` (`pythonTestFallback`).
  */
 async function resolveTestShorthand(
   deps: CodeDeps & { db: MarinaDB },
   session: CodingSessionRow,
   args: string[],
-): Promise<string[]> {
+): Promise<{ command: string[]; fallback?: PythonTestFallback }> {
   if (args.length === 1 && args[0]?.toLowerCase() === "test") {
-    const runner = await detectWorkspaceRunner(workspaceForSession(deps, session)).catch(
-      () => null,
-    );
+    const workspace = workspaceForSession(deps, session);
+    const runner = await detectWorkspaceRunner(workspace).catch(() => null);
     // The detected test command (a bare `test` for Bun still means `bun run test`).
     const test = runner?.testCommand;
-    if (test) return normalizeCodeRunArgs(parseCommandArgv(test));
+    if (test) {
+      if (
+        runner.language === "python" &&
+        isPytestCommand(test) &&
+        session.execution_target === "local" &&
+        workspace.runPreparationStep
+      ) {
+        const probe = await workspace
+          .runPreparationStep([...PREPARATION_PROBES.pytest])
+          .catch(() => null);
+        if (probe && pytestUnavailable(probe)) {
+          const fallback = pythonTestFallback(workspace.displayRoot());
+          return { command: normalizeCodeRunArgs(parseCommandArgv(fallback.command)), fallback };
+        }
+      }
+      return { command: normalizeCodeRunArgs(parseCommandArgv(test)) };
+    }
   }
-  return normalizeCodeRunArgs(args);
+  return { command: normalizeCodeRunArgs(args) };
 }
 
 async function showRunAllowlist(
@@ -462,6 +515,11 @@ export interface VerificationRun {
   workspace?: WorkspaceRuntime;
   /** Paths the change touches (reused for a candidate snapshot of the same bytes). */
   touched?: string[];
+  /**
+   * Steps to run instead when preparation finds pytest is not importable
+   * (`PreparationPlan.fallback`): the same plan with the fallback runner.
+   */
+  fallback?: { runner: string; commands: string[]; steps: StepPlan };
 }
 
 /**
@@ -519,13 +577,35 @@ export async function planVerification(
     options.scope === "full"
       ? { files: [], reasons: [], packages: [] }
       : findRelevantTests(root, profile, touched);
-  const steps = detectedSteps({
-    profile,
-    options,
-    touched,
-    relevant,
-    exists: (path) => existsSync(join(root, path)),
-  });
+  const exists = (path: string) => existsSync(join(root, path));
+  const steps = detectedSteps({ profile, options, touched, relevant, exists });
+  // pytest may be missing where the checks run: plan the switch now, so the
+  // fallback commands are known (and admitted) before anything spawns.
+  let fallback: VerificationRun["fallback"];
+  if (profile.language === "python" && isPytestCommand(profile.testCommand) && preparation?.probe) {
+    const runner = pythonTestFallback(root);
+    const planned = detectedSteps({
+      profile: withFallbackRunner(profile, runner),
+      options,
+      touched,
+      relevant,
+      exists,
+    });
+    const fallbackSteps: StepPlan = {
+      ...planned,
+      steps: planned.steps.map((step) =>
+        step.role === "tests" || step.role === "full-tests"
+          ? { ...step, requireTestCount: true }
+          : step,
+      ),
+    };
+    fallback = {
+      runner: runner.runner,
+      commands: fallbackSteps.steps.map((step) => step.command),
+      steps: fallbackSteps,
+    };
+    preparation.fallback = runner.runner;
+  }
   return {
     commands: steps.steps.map((step) => step.command),
     steps,
@@ -534,6 +614,7 @@ export async function planVerification(
     preparation,
     workspace,
     touched,
+    ...(fallback ? { fallback } : {}),
   };
 }
 
@@ -561,7 +642,7 @@ export async function runVerificationCommands(
   },
   plan?: VerificationRun,
 ): Promise<CodingArtifactRow> {
-  const stepPlan = plan?.steps ?? recipeSteps(commands);
+  let stepPlan = plan?.steps ?? recipeSteps(commands);
   const preparationWorkspace = background?.workspace ?? plan?.workspace;
   // An authority refusal before a spawn aborts the run (never a check outcome).
   const guarded = background
@@ -576,6 +657,16 @@ export async function runVerificationCommands(
   } catch (error) {
     throw stopCause(error);
   }
+  // pytest is not importable here: run the planned fallback runner instead.
+  const fallback = preparation?.fallback ? plan?.fallback : undefined;
+  if (fallback) stepPlan = fallback.steps;
+  else if (preparation?.fallback && plan?.preparation)
+    preparation = {
+      ...preparation,
+      status: "not_run",
+      reason: plan.preparation.missingReason,
+      fallback: undefined,
+    };
   const lastRun = preparation?.runs.at(-1);
   const preparationArtifact =
     preparation && lastRun
@@ -583,7 +674,10 @@ export async function runVerificationCommands(
           sessionId: session.id,
           kind: "command_output",
           title: preparation.policy ? "Candidate dependency preparation" : "Dependency preparation",
-          status: preparation.status === "installed" ? "complete" : "failed",
+          status:
+            preparation.status === "installed" || preparation.status === "ready"
+              ? "complete"
+              : "failed",
           contentText: preparation.runs
             .map((run) => `$ ${run.command.join(" ")}\n${run.output}`)
             .join("\n\n"),
@@ -655,6 +749,7 @@ export async function runVerificationCommands(
     (preparationArtifact
       ? `Dependency preparation: ${preparationArtifact.status} (${preparationArtifact.id}).${blocked ? " Checks were not run." : preparation?.policy ? " Install scripts disabled." : ""}\n`
       : "") +
+    (fallback ? `${dim(`runner: ${fallback.runner} (pytest unavailable)`)}\n` : "") +
     formatVerificationSummary(verdict, ran, preparation) +
     (!passed && failedRun?.stored
       ? `\nCheck output (untrusted command output):\n${failedRun.stored.result.output.slice(-4096)}\nFull output: code show ${failedRun.stored.artifact.id}`
@@ -689,6 +784,15 @@ export async function runVerificationCommands(
       outcome: verdict.outcome,
       outcomeReason: verdict.reason,
       ...(plan?.language ? { language: plan.language } : {}),
+      ...(fallback
+        ? {
+            testRunner: {
+              runner: fallback.runner,
+              fallbackFrom: "pytest",
+              reason: "pytest unavailable",
+            },
+          }
+        : {}),
       ...(plan
         ? {
             verificationOptions: plan.options,

@@ -23,6 +23,11 @@
  *    runner, or preparation that could not make the environment ready) or
  *    `error` (the infrastructure failed). `not_run` and `error` are never a
  *    pass or a failure.
+ * 4. Fallback. When the detected runner is pytest and the probe shows pytest
+ *    is not importable, the tests run with the project's own test script
+ *    (`tests/run_tests.py`, …) or `python -m unittest` instead, through the
+ *    same allowlist and approval as any check, and the report names the
+ *    runner used and why. Such a run passes only when it reports tests ran.
  */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -247,6 +252,11 @@ export interface PreparationPlan {
   note?: string;
   /** Prefix for Python test commands after an install into a project environment. */
   wrapTests?: string;
+  /**
+   * The runner to switch to when the pytest probe shows pytest is not importable
+   * (`unittest` or a workspace test script). Set only alongside fallback steps.
+   */
+  fallback?: string;
 }
 
 function probeFor(profile: ProjectRunnerProfile): readonly string[] | undefined {
@@ -364,6 +374,8 @@ export interface PreparationResult {
   policy?: string;
   lockfileSha256?: string;
   wrapTests?: string;
+  /** Tests run with this runner instead of pytest (`PreparationPlan.fallback`). */
+  fallback?: string;
 }
 
 export interface PreparationWorkspace {
@@ -492,7 +504,105 @@ export async function executePreparation(
           runs: [probe, install],
         };
   }
+  // Nothing could install pytest: switch runners rather than report no checks.
+  if (plan.fallback && pytestUnavailable(probe))
+    return {
+      status: "ready",
+      reason: `pytest is not importable; tests run with ${plan.fallback} instead.${note}`,
+      runs: [probe],
+      fallback: plan.fallback,
+      ...(plan.wrapTests ? { wrapTests: plan.wrapTests } : {}),
+    };
   return { status: "not_run", reason: `${plan.missingReason}${note}`, runs: [probe] };
+}
+
+/** Whether a probe ran Python and found pytest missing (not a missing interpreter or wrapper). */
+export function pytestUnavailable(result: WorkspaceRunResult): boolean {
+  return (
+    !ok(result) &&
+    result.exitCode !== 125 &&
+    result.exitCode !== 127 &&
+    /No module named '?pytest'?/i.test(result.output ?? "")
+  );
+}
+
+/** Whether a test command runs pytest (`python -m pytest …`, possibly wrapped). */
+export function isPytestCommand(command: string | undefined): boolean {
+  return !!command && /(^|\s)python3?\s+-m\s+pytest(\s|$)/.test(command);
+}
+
+// ─── Fallback when pytest is unavailable ─────────────────────────────────────
+
+/** A Python test runner to use when the project's pytest is not importable. */
+export interface PythonTestFallback {
+  /** The test command, a `code run` command line in an allowlisted shape. */
+  command: string;
+  /** How reports name it: `unittest`, or the script's relative path. */
+  runner: string;
+}
+
+/** Workspace test scripts tried before `python -m unittest`, in order. */
+export const PYTHON_TEST_SCRIPTS = [
+  "tests/run_tests.py",
+  "tests/run_all.py",
+  "tests/run.py",
+  "test/run_tests.py",
+  "test/run_all.py",
+] as const;
+
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function isFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The runner for a Python project whose pytest is unavailable: the project's
+ * own test script when it has one that does not itself need pytest, else the
+ * standard library's `unittest` discovery (from `tests/` or `test/` when that
+ * directory is not a package, so its modules import as top-level names).
+ */
+export function pythonTestFallback(root: string): PythonTestFallback {
+  for (const script of PYTHON_TEST_SCRIPTS) {
+    let content: string;
+    try {
+      content = readFileSync(`${root}/${script}`)
+        .subarray(0, 64 * 1024)
+        .toString("utf8");
+    } catch {
+      continue;
+    }
+    if (/\bpytest\b/.test(content)) continue;
+    return { command: `python ${script}`, runner: script };
+  }
+  for (const dir of ["tests", "test"])
+    if (isDirectory(`${root}/${dir}`) && !isFile(`${root}/${dir}/__init__.py`))
+      return { command: `python -m unittest discover -s ${dir}`, runner: "unittest" };
+  return { command: "python -m unittest discover", runner: "unittest" };
+}
+
+/** The profile with its pytest command replaced by the fallback runner. */
+export function withFallbackRunner(
+  profile: ProjectRunnerProfile,
+  fallback: PythonTestFallback,
+): ProjectRunnerProfile {
+  return {
+    ...profile,
+    verify: profile.verify.map((command) =>
+      command === profile.testCommand ? fallback.command : command,
+    ),
+    testCommand: fallback.command,
+  };
 }
 
 // ─── Scope: tests relevant to a change ───────────────────────────────────────
@@ -705,6 +815,8 @@ export function findRelevantTests(
   return { files: [...chosen.keys()], reasons: [...chosen.values()], packages: [] };
 }
 
+const UNITTEST_MODULE = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/;
+
 /** JavaScript test runners whose CLI takes test file paths. */
 const PATH_AWARE_JS_RUNNER = /(^|\s|\/)(jest|vitest|mocha|ava|tap)(\s|$)|bun\s+test|node\s+--test/;
 
@@ -728,6 +840,14 @@ export function scopedTestCommand(
       }
       if (command.includes("manage.py"))
         return `${command} ${files.map((path) => path.replace(/\.py$/, "").replaceAll("/", ".")).join(" ")}`;
+      if (/(^|\s)-m\s+unittest(\s|$)/.test(command)) {
+        // unittest takes dotted module names; a path that is not one runs the full discovery.
+        const modules = files.map((path) => path.replace(/\.py$/, "").replaceAll("/", "."));
+        if (!modules.every((name) => UNITTEST_MODULE.test(name))) return null;
+        return `${command.replace(/\s+discover(\s.*)?$/, "")} ${modules.join(" ")}`;
+      }
+      // A workspace test script decides its own selection.
+      if (!isPytestCommand(command)) return null;
       return `${command} ${files.join(" ")}`;
     }
     case "javascript": {
@@ -762,6 +882,11 @@ export interface VerificationStep {
   role: StepRole;
   /** Per-step timeout (the full-suite budget). */
   timeoutMs?: number;
+  /**
+   * A fallback runner: a zero exit passes only when the output reports tests
+   * ran (`Ran N tests`, `N passed`). Silence is never a pass.
+   */
+  requireTestCount?: boolean;
 }
 
 export interface StepPlan {
@@ -851,6 +976,7 @@ export interface StepOutcome {
 
 const UNAVAILABLE =
   /command not found|executable file not found|No module named '?(pytest|mypy|django)'?$|not found in \$PATH|Executable not found|ENOENT/i;
+const TESTS_REPORTED = /^Ran [1-9]\d* tests?\b|\b[1-9]\d* (?:tests? )?passed\b/im;
 const NO_TESTS =
   /No tests? found|No test files found|0 test files matching|No tests to run|No tests found for given includes|^Ran 0 tests/im;
 
@@ -931,6 +1057,8 @@ export function classifyStep(
       return { outcome: "not_run", reason: "no test files in the selected packages" };
     if (result.exitCode === 0 && binary === "cargo" && cargoRanNoTests(output))
       return { outcome: "not_run", reason: "no tests were found" };
+    if (result.exitCode === 0 && step.requireTestCount && !TESTS_REPORTED.test(output))
+      return { outcome: "not_run", reason: "the runner did not report any tests ran" };
   }
   if (result.exitCode === 0) return { outcome: "passed", reason: "passed" };
   return { outcome: "failed", reason: `exit ${result.exitCode}` };
