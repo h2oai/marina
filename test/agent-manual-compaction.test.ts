@@ -7,7 +7,7 @@ import type { Model } from "@earendil-works/pi-ai";
 import { LeanAgentAdapter } from "../src/agent/lean-agent-adapter";
 import type { PlatformMemoryBackend } from "../src/agent/memory-platform";
 import { dailyBudget, recordSpend, resetSpendLedgerForTests } from "../src/engine/spend-ledger";
-import { resetSamplingParamsForTests } from "../src/net/sampling-params";
+import { resetSamplingParamsForTests } from "../src/net/model/sampling-params";
 import { scopeProcessState } from "./process-state";
 
 type Internals = {
