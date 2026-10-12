@@ -36,7 +36,8 @@ export type BudgetForcedReason =
   | "tool calls"
   | "time"
   | "deadline"
-  | "upstream_error";
+  | "upstream_error"
+  | "spend";
 
 /** The label a forced answer carries in traces and results. */
 export interface BudgetForced {
@@ -48,6 +49,15 @@ export interface BudgetForced {
   /** Where the answer came from, e.g. `final-request`, `lead-draft`, `member-plurality`, `runs-so-far`. */
   source?: string;
 }
+
+/**
+ * The agent-event context a coder emits when money ran out (a spend cap or an
+ * upstream spend refusal). It comes only from the agent runtime, never from a
+ * tool: the Code Mode attempt observer ends the attempt on it mechanically —
+ * a forced submission of the work in the workspace, or a block when there is
+ * nothing to submit — with no further model call.
+ */
+export const SPEND_STOP_EVENT_CONTEXT = "spend-stop";
 
 /** The first use count at which a loop with `cap` is steered (≥ 1, < cap when cap > 1). */
 export function budgetSteerAt(cap: number, fraction = BUDGET_STEER_FRACTION): number {

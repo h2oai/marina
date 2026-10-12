@@ -8,6 +8,8 @@
 
 import { describe, expect, it } from "bun:test";
 import { spendLimitsFromEnv } from "../src/agent/agent-runtime";
+import type { AgentEvent } from "../src/agent/agent-types";
+import { SPEND_STOP_EVENT_CONTEXT } from "../src/agent/budget-terminal";
 import {
   formatUsd,
   LeanAgentAdapter,
@@ -578,5 +580,39 @@ describe("Marina's default models are priced before pi-ai lists them", () => {
     const { internals } = makeAdapter(undefined, "openai/gpt-6-luna");
     const model = (internals as unknown as { model: { cost: { input: number } } }).model;
     expect(model.cost.input).toBeCloseTo(0.1);
+  });
+});
+
+describe("LeanAgentAdapter spend stop on a coding task", () => {
+  type SpendStopInternals = {
+    afterSpendRefusal(errorMessage: string, model: string): Promise<number>;
+    autonomousLoopRunning: boolean;
+  };
+
+  it("signals the attempt's end once per task through the runtime, never a tool command", async () => {
+    const { adapter, internals, sent } = makeAdapter();
+    const stops: AgentEvent[] = [];
+    adapter.subscribe((event) => {
+      if (event.type === "error" && event.context === SPEND_STOP_EVENT_CONTEXT) stops.push(event);
+    });
+    const spend = internals as unknown as SpendStopInternals;
+    spend.autonomousLoopRunning = false; // no pause wait
+
+    // No coding task: nothing to end.
+    await spend.afterSpendRefusal("402 insufficient credits", "m");
+    expect(stops).toHaveLength(0);
+
+    adapter.setActiveCodingTask("Fix the bug");
+    await spend.afterSpendRefusal("spend_cap_reached: daily spend cap reached", "m");
+    await spend.afterSpendRefusal("spend_cap_reached: daily spend cap reached", "m");
+    expect(stops).toHaveLength(1);
+    expect((stops[0] as { error: string }).error).toContain("spend_cap_reached");
+    // The end is mechanical (the attempt observer), not a command the agent sends.
+    expect(sent.filter((c) => c.startsWith("code "))).toEqual([]);
+
+    // A new task gets its own stop.
+    adapter.setActiveCodingTask("Another task");
+    await spend.afterSpendRefusal("402 payment required", "m");
+    expect(stops).toHaveLength(2);
   });
 });
