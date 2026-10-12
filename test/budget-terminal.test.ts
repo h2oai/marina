@@ -17,10 +17,12 @@ import {
   budgetPhase,
   budgetSteerAt,
   budgetSteerNote,
+  deadlinePhase,
+  deadlineReserveMs,
   draftAnswerKey,
   mostAgreedDraft,
 } from "../src/agent/budget-terminal";
-import { runCapWarningAt } from "../src/agent/lean-agent-adapter";
+import { finalCodingCall, runCapWarningAt } from "../src/agent/lean-agent-adapter";
 import type { ChannelManager } from "../src/coordination/channel-manager";
 import {
   parseDeadlineHeader,
@@ -383,5 +385,30 @@ describe("typed forecasts: a time budget ends in an answer", () => {
       { ...deps, options: { ...deps.options, budgetMs: undefined } },
     );
     expect(none.budget).toBeUndefined();
+  });
+});
+
+describe("wall-clock task budgets (Code Mode one-shots)", () => {
+  it("steers at 75 % and asks for the final answer a bounded reserve before the deadline", () => {
+    expect(deadlineReserveMs(600_000)).toBe(60_000);
+    expect(deadlineReserveMs(60_000)).toBe(15_000);
+    expect(deadlineReserveMs(7_200_000)).toBe(120_000);
+    const start = 1_000_000;
+    const deadline = start + 600_000;
+    expect(deadlinePhase(start, deadline, start + 100_000)).toBe("work");
+    expect(deadlinePhase(start, deadline, start + 450_000)).toBe("steer");
+    expect(deadlinePhase(start, deadline, start + 539_999)).toBe("steer");
+    expect(deadlinePhase(start, deadline, start + 540_000)).toBe("final");
+    expect(deadlinePhase(start, start, start)).toBe("final");
+  });
+
+  it("at the final point a coder may only submit, report or look", () => {
+    expect(finalCodingCall("marina_code", { action: "summary" })).toBe(true);
+    expect(finalCodingCall("marina_code", { action: "blocked" })).toBe(true);
+    expect(finalCodingCall("marina_code_summary", {})).toBe(true);
+    expect(finalCodingCall("marina_code", { action: "edit" })).toBe(false);
+    expect(finalCodingCall("marina_code", { action: "run" })).toBe(false);
+    expect(finalCodingCall("marina_code_write", {})).toBe(false);
+    expect(finalCodingCall("marina_web", { action: "search" })).toBe(false);
   });
 });

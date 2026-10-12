@@ -205,7 +205,7 @@ export function publishCodingRun(deps: CodeDeps & { db: MarinaDB }, run: CodingA
   const detail = submitted
     ? meta.unverifiedAcceptance
       ? `Task #${meta.taskId} accepted by its owner without verified evidence: ${meta.unverifiedAcceptance.reason}. Recorded verification: ${meta.verification}.`
-      : `Task #${meta.taskId} submitted for review. Recorded verification: ${meta.verification}.`
+      : `Task #${meta.taskId} submitted for review${meta.budgetForced ? " at its deadline (budget-forced best effort)" : ""}. Recorded verification: ${meta.verification}.`
     : `Task #${meta.taskId} ${run.status}: ${meta.reason === "agent_died" ? "Worker stopped before submitting." : meta.reason}`;
   const assumptions = (meta.assumptions ?? []).map(({ text, source }) => ({ text, source }));
   const payload = {
@@ -229,6 +229,7 @@ export function publishCodingRun(deps: CodeDeps & { db: MarinaDB }, run: CodingA
     verificationRequirement: meta.verificationRequirement,
     verificationReadiness: codingVerificationReadiness(deps.db, run),
     ...(meta.requirements ? { requirements: meta.requirements } : {}),
+    ...(meta.budgetForced ? { budgetForced: meta.budgetForced } : {}),
   };
   deps.db.createCodingEvent({
     sessionId: run.session_id,

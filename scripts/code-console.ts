@@ -519,6 +519,8 @@ export class CodeConsole {
     timeoutMs = 600_000,
     unattended = false,
     verification: "checks" | "candidate" | "delivery" = "checks",
+    /** An unattended task's wall-clock budget (ms), sent as `budget:<seconds>s`. */
+    budgetMs?: number,
   ) {
     this.interrupted = false;
     if (this.selected) {
@@ -530,7 +532,7 @@ export class CodeConsole {
       this.marinaPhase = "working";
       this.updatePrompt();
       await this.command(
-        `code do ${unattended ? `verification:${verification} owner:unattended ` : ""}-- ${text}`,
+        `code do ${unattended ? `verification:${verification} owner:unattended ` : ""}${unattended && budgetMs ? `budget:${Math.max(1, Math.floor(budgetMs / 1000))}s ` : ""}-- ${text}`,
       );
     }
   }

@@ -196,6 +196,56 @@ export async function crewPlan(
 }
 
 /**
+ * The crew driver with a task contract: `lead` already owns the tracked
+ * attempt (required verification, unattended owner, budget) and is the only
+ * one who submits it. Assemble a crew around it to review, test and report to
+ * the lead. The goal is never parsed for `with <members>` (task prose stays
+ * literal). Best-effort: no crew ⇒ the lead works alone, said once.
+ */
+export async function crewSupport(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+  session: CodingSessionRow,
+  task: string,
+  lead: string,
+): Promise<void> {
+  if (!deps.crewManager || !deps.channelManager) {
+    ctx.send(eid, dim(`No live crew in this Marina process; ${lead} works the task alone.`));
+    return;
+  }
+  const goal = [
+    `Support ${lead}, who owns this tracked task and alone submits it under its contract.`,
+    "Review the lead's changes, run and extend the checks, and report findings to the lead in the crew channel. Do not submit the task yourself.",
+    `Task: ${task}`,
+  ].join("\n");
+  const plan = deps.db.createCodingArtifact({
+    sessionId: session.id,
+    kind: "crew_plan",
+    title: formatCodingNoteTitle("plan", task).replace("Plan:", "Crew plan:"),
+    status: "planned",
+    contentText: goal,
+    metadata: { goal: task, roles: CODING_ROLES.map(([role]) => role), members: [], lead },
+    createdBy: entity.name,
+  });
+  deps.db.createCodingEvent({
+    sessionId: session.id,
+    actor: entity.name,
+    kind: "coding_crew_planned",
+    payload: { id: plan.id, goal: task, members: [], lead },
+  });
+  const assembled = (await assembleCodingCrew(ctx, eid, entity, deps, session, goal)).filter(
+    (m) => !sameEntityName(m.agentName, lead),
+  );
+  if (assembled.length === 0) {
+    ctx.send(eid, dim(`Could not assemble a crew; ${lead} works the task alone.`));
+    return;
+  }
+  await dispatchCodingCrew(ctx, eid, entity, deps, session, goal, assembled, plan.id);
+}
+
+/**
  * A crew member ready to dispatch. `source` records how the member joined:
  * `recruited` for an existing live agent named (or auto-picked), `spawned` for
  * an agent launched through the `agent.spawn` gate during autonomous assembly.

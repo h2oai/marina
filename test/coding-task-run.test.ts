@@ -10,6 +10,7 @@ import type { AgentOperatorStatus } from "../src/agent/lean-agent-adapter";
 import { LocalWorkspace } from "../src/coding/local-workspace";
 import {
   beginCodingRun,
+  budgetForcedAt,
   canReclaimCodingWriter,
   codingRunMetadata,
   endCodingRun,
@@ -209,6 +210,45 @@ describe("durable coding task attempts", () => {
     begin();
     expect(() => begin("s", "candidate")).toThrow("already set");
     expect(db.listCodingRuns()).toHaveLength(2);
+  });
+
+  it("a submission past the budget's final-answer point is submitted, labelled and not verified", async () => {
+    const run = beginCodingRun(db, {
+      session: db.getCodingSession("s")!,
+      owner,
+      worker,
+      prompt: "Fix the bug",
+      profile: "marina",
+      verificationRequirement: "checks",
+      budgetMs: 600_000,
+    });
+    const meta = codingRunMetadata(run);
+    expect(meta.deadlineAt! - meta.startedAt!).toBe(600_000);
+    // Inside the budget an unverified summary keeps the task active.
+    const early = (await submitCodingRun(db, "s", worker, artifact("summary")))!;
+    expect(early.status).toBe("active");
+    expect(codingRunMetadata(early).budgetForced).toBeUndefined();
+    // Past the final-answer point (deadline − reserve) it is the forced best effort.
+    const now = Date.now();
+    db.updateCodingArtifact(run.id, {
+      metadata: { ...codingRunMetadata(early), startedAt: now - 590_000, deadlineAt: now + 10_000 },
+    });
+    const forced = (await submitCodingRun(db, "s", worker, artifact("summary")))!;
+    expect(forced.status).toBe("submitted");
+    const label = codingRunMetadata(forced).budgetForced!;
+    expect(label.reason).toBe("deadline");
+    expect(label.cap).toBe(600_000);
+    expect(codingRunMetadata(forced).verification).not.toBe("passed");
+    expect(budgetForcedAt({ startedAt: now, deadlineAt: now + 600_000 }, now + 1_000)).toBe(
+      undefined,
+    );
+  });
+
+  it("parses a task budget with the shared duration grammar", () => {
+    expect(parseCodingTask("owner:unattended budget:90s -- fix it").budgetMs).toBe(90_000);
+    expect(parseCodingTask("budget:2h fix it").budgetMs).toBe(7_200_000);
+    expect(parseCodingTask("fix it").budgetMs).toBeUndefined();
+    expect(() => parseCodingTask("budget:soon -- fix it")).toThrow("Usage");
   });
 
   it("parses explicit leading requirements without interpreting task prose", () => {

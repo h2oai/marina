@@ -513,7 +513,7 @@ export function codeCommand(deps: CodeDeps): CommandDef {
       "code ask <request>",
       "code assign <agent> <req>",
       "code assign <agent> verification:candidate -- <req>",
-      "code do [verification:candidate|checks|delivery] [owner:unattended] -- <task>",
+      "code do [verification:candidate|checks|delivery] [owner:unattended] [budget:<duration>] -- <task>",
       "code assume <interpretation>",
       "code blocked [kind:decision|impossible] <reason>",
       "code branch [title]",
