@@ -268,12 +268,14 @@ export function useEntityDetail(name: string | null) {
   });
 }
 
-export function useEntityWork(name: string | null) {
+export function useEntityWork(name: string | null, active = true) {
   return useQuery({
     queryKey: ["entityWork", name],
     queryFn: () => fetchApi<EntityWorkResponse>(`/api/entities/${encodeURIComponent(name!)}/work`),
-    enabled: !!name,
-    staleTime: 10_000,
+    enabled: !!name && active,
+    // Hidden panes skip live invalidation: reconcile immediately when reopened.
+    staleTime: 0,
+    refetchInterval: active ? 15_000 : false,
   });
 }
 

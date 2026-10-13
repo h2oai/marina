@@ -11,6 +11,7 @@ import { authFetch } from "../../lib/api";
 import { apiOrigin } from "../../lib/api-origin";
 import { resolveAuthor, resolveTitle } from "../lib/node-fields";
 import type { CanvasEdgeData } from "../lib/types";
+import { IntentHistory } from "./IntentHistory";
 
 const API_BASE = apiOrigin();
 
@@ -46,6 +47,7 @@ interface IntentData {
   result?: string;
   resultNodeId?: string;
   failReason?: string;
+  history?: unknown;
 }
 
 const STATUS_STYLES: Record<string, { bg: string; text: string; label: string }> = {
@@ -106,6 +108,10 @@ function NodeDetailPanelInner({
 
   const d = node.data as Record<string, unknown>;
   const intent = d.intent as IntentData | undefined;
+  const expiredClaim =
+    intent?.status === "active" &&
+    typeof intent.claimedAt === "number" &&
+    Date.now() - intent.claimedAt > 5 * 60 * 1000;
 
   const handleSubmitIntent = useCallback(async () => {
     if (!node || !promptText.trim() || !canvasId) return;
@@ -391,7 +397,7 @@ function NodeDetailPanelInner({
                 </div>
               )}
 
-              {intent.status === "pending" && (
+              {(intent.status === "pending" || expiredClaim) && (
                 <button
                   type="button"
                   onClick={() => handleIntentAction("claim")}
@@ -399,7 +405,11 @@ function NodeDetailPanelInner({
                   className="flex w-full items-center justify-center gap-1.5 rounded bg-blue-900/30 px-3 py-1.5 text-xs font-medium text-blue-300 transition-colors hover:bg-blue-900/45 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <Hand size={13} />
-                  {submitting ? "Claiming..." : "Claim Intent"}
+                  {submitting
+                    ? "Claiming..."
+                    : expiredClaim
+                      ? "Reclaim expired intent"
+                      : "Claim Intent"}
                 </button>
               )}
 
@@ -477,6 +487,14 @@ function NodeDetailPanelInner({
                   </div>
                 </div>
               )}
+
+              <IntentHistory
+                history={intent.history}
+                author={resolveAuthor(d)}
+                canvasId={canvasId}
+                resultNodeId={intent.resultNodeId}
+                completed={intent.status === "done"}
+              />
 
               {/* Clear intent button */}
               <button

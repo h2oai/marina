@@ -133,6 +133,16 @@ lifecycle. The [published-panel guide](../guides/published-panels.md) is the can
 limits, authoring and user workflow reference.
 
 ## Canvas intent system
+- **Shared lifecycle**: `src/coordination/canvas-intents.ts` serves both the command adapter
+  (`src/engine/commands/canvas-intent.ts`) and HTTP Canvas actions. Ingress keeps its existing
+  authentication and canvas authorization; atomic DB helpers change state, then the service
+  emits one lifecycle event and records completion memory/standing for resident actors.
+  Transition history is stored with the node's intent in the same write, without a migration.
+  This history describes coordination, not candidate verification or task approval.
+- **Work presentation**: `work-loop.ts` supplies the main Work inbox and agent inboxes.
+  Canvas visibility is applied before limiting requests; HTTP reads use the viewer's authority.
+  Typed targets open the canonical request, and claim drafts carry full node IDs. Ongoing
+  requests and the resident's recent (24-hour) outcomes participate in the bounded suggestions.
 - **Intents**: work requests attached to canvas nodes — humans set them (double-click node in dashboard), agents discover and fulfill
 - **Lifecycle**: pending → active (claimed) → done/failed. An active claim older than 5 min (`CANVAS_INTENT_CLAIM_TIMEOUT_MS`) is listed as pending and may be claimed by another worker; `listCanvasIntents` is a pure read (status filter + limit in SQL), and the takeover is written by `claimCanvasIntent`
 - **Agent commands**: `canvas intent list [canvas]`, `canvas intent claim <node_id>`, `canvas intent complete <node_id> [--type <type>] <result>`, `canvas intent complete-rich <node_id> <a2ui_json>`, `canvas intent fail <node_id> [reason]`

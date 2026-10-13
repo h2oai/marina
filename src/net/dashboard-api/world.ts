@@ -12,6 +12,7 @@
 import { join, resolve } from "node:path";
 import { getStanding } from "../../agent/standing";
 import { listWorkItems } from "../../coordination/work-loop";
+import { canvasReaderFor } from "../../engine/canvas-access";
 import { allRecipeNames, getRecipe } from "../../engine/commands/usecase";
 import type { Engine } from "../../engine/engine";
 import { evolutionSessionsWithEvidence } from "../../engine/evolution-qualification";
@@ -709,6 +710,7 @@ export async function handleEntityRoutes(
     return json({
       items: listWorkItems(entity, {
         db,
+        canvasReader: callerId ? canvasReaderFor(engine, callerId) : {},
         taskManager: engine.taskManager,
         crewManager: engine.crewManager,
         quests: engine.world?.quests ?? [],

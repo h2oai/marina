@@ -610,7 +610,8 @@ function AgentWorkInbox({ name }: { name: string }) {
       </div>
       <div className="flex flex-col gap-1">
         {visible.map((item) => {
-          const runnable = isRunnableWorkAction(item.action);
+          const action = item.command ?? item.action;
+          const runnable = isRunnableWorkAction(action);
           const canSend = canSendAsSelectedAgent && runnable;
           const tone = WORK_KIND_TONE[item.kind] ?? "text-text-dim bg-bg-hover";
           return (
@@ -638,7 +639,7 @@ function AgentWorkInbox({ name }: { name: string }) {
                   <button
                     type="button"
                     title={`Send command as ${name}`}
-                    onClick={() => sendCommand(item.action)}
+                    onClick={() => sendCommand(action)}
                     className="shrink-0 text-text-dim transition-colors hover:text-primary"
                   >
                     <Send size={10} />
@@ -648,17 +649,17 @@ function AgentWorkInbox({ name }: { name: string }) {
                   type="button"
                   title="Copy suggested command"
                   onClick={async () => {
-                    await navigator.clipboard.writeText(item.action);
-                    setCopiedAction(item.action);
+                    await navigator.clipboard.writeText(action);
+                    setCopiedAction(action);
                     window.setTimeout(() => setCopiedAction(null), 1200);
                   }}
                   className="shrink-0 text-text-dim transition-colors hover:text-text-bright"
                 >
-                  {copiedAction === item.action ? <Check size={10} /> : <Clipboard size={10} />}
+                  {copiedAction === action ? <Check size={10} /> : <Clipboard size={10} />}
                 </button>
               </div>
               <code className="mt-1 block truncate rounded bg-bg-hover px-1 py-0.5 text-[9px] text-accent">
-                {item.action}
+                {action}
               </code>
             </div>
           );

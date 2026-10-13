@@ -119,7 +119,7 @@ export function WorkspacePanel({
             {id === "work" && (
               <div className="flex h-full flex-col">
                 <div className="min-h-0 flex-1">
-                  <WorkOverview embedded active={view === "work"} />
+                  <WorkOverview embedded active={active && view === "work"} />
                 </div>
                 <details className="max-h-[50%] shrink-0 overflow-auto border-t border-border p-2 text-sm">
                   <summary className="cursor-pointer text-primary">

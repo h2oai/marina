@@ -1010,6 +1010,10 @@ export interface WorkItem {
   action: string;
   priority: number;
   ref?: string;
+  command?: string;
+  target?: { kind: "canvas"; canvasId: string; nodeId: string };
+  status?: "pending" | "active" | "done" | "failed";
+  owner?: string;
 }
 
 export interface EntityWorkResponse {
