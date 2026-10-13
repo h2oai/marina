@@ -739,6 +739,49 @@ CREATE INDEX idx_arena_attempts_round ON arena_attempts(entrant, round_id, id);
 CREATE TRIGGER arena_attempts_no_update BEFORE UPDATE ON arena_attempts
 BEGIN SELECT RAISE(ABORT, 'arena_attempts is append-only'); END;
 `,
+  }, // Migration 165: durable schedules (a command an owner arranged to run later or
+  // repeatedly) and their append-only run history.
+  {
+    version: 165,
+    sql: `
+CREATE TABLE schedules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  owner_key TEXT NOT NULL,
+  owner_name TEXT NOT NULL,
+  name TEXT NOT NULL,
+  command TEXT NOT NULL,
+  trigger_json TEXT NOT NULL,
+  catch_up TEXT NOT NULL DEFAULT 'once' CHECK (catch_up IN ('none', 'once')),
+  max_runs INTEGER,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  next_run_at INTEGER,
+  runs INTEGER NOT NULL DEFAULT 0,
+  consecutive_failures INTEGER NOT NULL DEFAULT 0,
+  last_status TEXT,
+  last_run_at INTEGER,
+  created_rank INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  UNIQUE(owner_key, name)
+);
+CREATE INDEX idx_schedules_due ON schedules(enabled, next_run_at);
+CREATE TABLE schedule_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  schedule_id INTEGER NOT NULL,
+  owner_key TEXT NOT NULL,
+  due_at INTEGER NOT NULL,
+  started_at INTEGER NOT NULL,
+  finished_at INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  error_class TEXT,
+  error TEXT,
+  duration_ms INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX idx_schedule_runs_schedule ON schedule_runs(schedule_id, id);
+CREATE INDEX idx_schedule_runs_started ON schedule_runs(started_at);
+CREATE TRIGGER schedule_runs_no_update BEFORE UPDATE ON schedule_runs
+BEGIN SELECT RAISE(ABORT, 'schedule_runs is append-only'); END;
+`,
   },
 ];
 

@@ -1158,6 +1158,17 @@
 # @protected
 # MARINA_URL_GUARD_DNS_FAIL_OPEN=false
 
+# ── Schedules ────────────────────────────────────────────────────────────────
+
+# Run due schedules (`schedule add …`: an owner's own command later or on a repeat,
+# as that owner with its rank, gates and spend caps). `off` keeps schedules stored
+# but never runs them. Default on.
+# MARINA_SCHEDULES=on
+# Most schedules one account may hold (0 = unlimited).
+# MARINA_SCHEDULES_PER_ENTITY=20
+# Shortest repeat a schedule may use (`every:` / `daily:`), as a duration.
+# MARINA_SCHEDULE_MIN_INTERVAL=1m
+
 # ── Retention ────────────────────────────────────────────────────────────────
 
 # Override row-retention windows: comma-separated table=<duration|rows|0>, durations in s/m/h/d/w, a bare integer is a row count, 0 never prunes. Per-class defaults and the table list live in src/engine/retention.ts (Admin → Ops shows them); append-only tables can never be pruned.

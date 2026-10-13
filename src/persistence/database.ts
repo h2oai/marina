@@ -68,6 +68,7 @@ import * as reproductionDb from "./db-reproduction";
 import { type ResourceChange, subscribeResourceChanges } from "./db-resource-changes";
 import * as roomsDb from "./db-rooms";
 import * as routingDb from "./db-routing";
+import * as schedulesDb from "./db-schedules";
 import * as shellDb from "./db-shell";
 import * as simulationsDb from "./db-simulations";
 import * as standingDb from "./db-standing";
@@ -1927,6 +1928,43 @@ export class MarinaDB implements MarinaStores {
   }
   resolveOperationalAlertsExcept(category: string, activeKeys: string[]): number {
     return alertsDb.resolveOperationalAlertsExcept(this.db, category, activeKeys);
+  }
+
+  createSchedule(s: schedulesDb.NewSchedule): schedulesDb.ScheduleRow {
+    return schedulesDb.createSchedule(this.db, s);
+  }
+  getSchedule(id: number): schedulesDb.ScheduleRow | undefined {
+    return schedulesDb.getSchedule(this.db, id);
+  }
+  getScheduleByName(ownerKey: string, name: string): schedulesDb.ScheduleRow | undefined {
+    return schedulesDb.getScheduleByName(this.db, ownerKey, name);
+  }
+  listSchedules(ownerKey?: string, limit?: number): schedulesDb.ScheduleRow[] {
+    return schedulesDb.listSchedules(this.db, ownerKey, limit);
+  }
+  countSchedules(ownerKey: string): number {
+    return schedulesDb.countSchedules(this.db, ownerKey);
+  }
+  dueSchedules(now: number, limit?: number): schedulesDb.ScheduleRow[] {
+    return schedulesDb.dueSchedules(this.db, now, limit);
+  }
+  updateScheduleState(
+    id: number,
+    state: Parameters<typeof schedulesDb.updateScheduleState>[2],
+  ): void {
+    schedulesDb.updateScheduleState(this.db, id, state);
+  }
+  setScheduleEnabled(id: number, enabled: boolean, nextRunAt: number | null): void {
+    schedulesDb.setScheduleEnabled(this.db, id, enabled, nextRunAt);
+  }
+  deleteSchedule(id: number): boolean {
+    return schedulesDb.deleteSchedule(this.db, id);
+  }
+  recordScheduleRun(run: Omit<schedulesDb.ScheduleRunRow, "id">): schedulesDb.ScheduleRunRow {
+    return schedulesDb.recordScheduleRun(this.db, run);
+  }
+  listScheduleRuns(scheduleId: number, limit?: number): schedulesDb.ScheduleRunRow[] {
+    return schedulesDb.listScheduleRuns(this.db, scheduleId, limit);
   }
 
   startProductivitySession(

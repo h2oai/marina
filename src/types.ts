@@ -309,6 +309,8 @@ export interface Connection {
   peerIp?: string;
   /** True for internal room/crew agent connections (exempt from instance login limits). */
   internal?: boolean;
+  /** An in-process connection whose arrival and departure are not announced to the room (a scheduled run). */
+  quiet?: boolean;
   send(perception: Perception): void;
   close(): void;
 }

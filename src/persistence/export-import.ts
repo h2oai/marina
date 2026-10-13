@@ -100,6 +100,8 @@ export const EXPORT_TABLES = [
   "productivity_sessions",
   "primitive_usage",
   "operational_alerts",
+  "schedules",
+  "schedule_runs",
   "note_links",
   "core_memory",
   "core_memory_history",

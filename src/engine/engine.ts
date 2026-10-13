@@ -478,6 +478,11 @@ export class Engine {
     });
   }
 
+  /** Attach an in-process connection to an account for a scheduled run (`AuthCoordinator.attachScheduled`). */
+  attachScheduled(connId: string, name: string): { entityId: EntityId } | { error: string } {
+    return this.authCoordinator.attachScheduled(connId, name);
+  }
+
   removeConnection(connId: string, intent: "transient" | "explicit" = "transient"): void {
     const entityId = this._connections.get(connId)?.entity;
     if (entityId) stopCodeStreamsFor(entityId);
@@ -508,9 +513,9 @@ export class Engine {
 
     this._connections.bindEntity(connId, entity.id);
 
-    // Broadcast arrival
+    // Broadcast arrival (a quiet in-process connection is not announced)
     const ctx = this.buildContext(entity.room);
-    if (ctx) {
+    if (ctx && !conn.quiet) {
       ctx.broadcastExcept(entity.id, connects(cleanName), "connect");
     }
 

@@ -39,6 +39,7 @@ import { questCommand } from "../commands/quest";
 import { rankCommand } from "../commands/rank";
 import { reproduceCommand } from "../commands/reproduce";
 import { sayCommand } from "../commands/say";
+import { scheduleCommand } from "../commands/schedule";
 import { scoreCommand } from "../commands/score";
 import { searchCommand } from "../commands/search";
 import { shoutCommand } from "../commands/shout";
@@ -390,6 +391,13 @@ export function registerGeneralCommands(engine: Engine): void {
       }),
     );
   }
+  // Schedules — an owner's own commands, later or on a repeat (src/schedules).
+  engine.commands.registerBuiltin(
+    scheduleCommand({
+      getEntity: (id) => engine.entities.get(id as EntityId),
+      db: engine.db,
+    }),
+  );
   engine.commands.registerBuiltin(
     searchCommand({
       getEntity: (id) => engine.entities.get(id as EntityId),
