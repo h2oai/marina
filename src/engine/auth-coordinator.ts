@@ -96,7 +96,7 @@ export class AuthCoordinator {
       const entity = this.host.entities.get(conn.entity);
       if (entity) {
         const ctx = this.host.buildContext(entity.room);
-        if (ctx) {
+        if (ctx && !conn.quiet) {
           ctx.broadcastExcept(conn.entity, disconnects(entity.name), "disconnect");
         }
         const entityId = conn.entity;
@@ -364,6 +364,39 @@ export class AuthCoordinator {
     }
 
     return { entityId: entity.id, name: entity.name, token: "" };
+  }
+
+  /**
+   * Bind an in-process connection to an account for a scheduled run
+   * (`src/schedules/runner.ts`); no network surface reaches it. `schedule add`
+   * refuses a session that does not hold the account's full stored rank, so the
+   * run restores the account's CURRENT stored rank (a later demotion applies).
+   * Ban and principal status are checked as for a login. No session token is
+   * minted, and no first-login side effects (quest, bootstrap, brief) run. An
+   * account whose entity is connected is refused: the caller runs the command
+   * on that live entity instead.
+   */
+  attachScheduled(connId: string, name: string): { entityId: EntityId } | { error: string } {
+    const cleanName = sanitizeEntityName(name);
+    const user = this.host.db?.getUserByName(cleanName);
+    if (!user) return { error: "account not found" };
+    if (this.host.db?.isBanned(cleanName)) return { error: "account is banned" };
+    const principal = this.host.db?.getPrincipal("human", cleanName);
+    if (principal && principal.status !== "active")
+      return { error: `account is ${principal.status}` };
+    const existing = this.host.entities.findAgentByName(cleanName);
+    if (existing && this.host.connections.isEntityConnected(existing.id))
+      return { error: "account is connected" };
+    if (existing) {
+      this.cancelEviction(existing.id);
+      this.host.connections.bindEntity(connId, existing.id);
+      existing.properties.rank = user.rank as EntityRank;
+      return { entityId: existing.id };
+    }
+    const entity = this.host.spawnEntity(connId, cleanName);
+    if (!entity) return { error: "could not attach the account" };
+    entity.properties.rank = user.rank as EntityRank;
+    return { entityId: entity.id };
   }
 
   /** Reconnect with a session token. Returns entity ID or error. */

@@ -91,6 +91,13 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     note: "7-day ephemeral timeline (was trimmed only at startup)",
   },
   {
+    table: "schedule_runs",
+    timeColumn: "started_at",
+    kind: "telemetry",
+    keepMs: 30 * DAY_MS,
+    note: "schedule run history (src/schedules); the schedules themselves are never pruned",
+  },
+  {
     table: "memory_service_events",
     timeColumn: "created_at",
     kind: "telemetry",

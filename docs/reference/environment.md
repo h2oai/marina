@@ -446,6 +446,14 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 | `MARINA_MCP_ALLOWED_HOSTS=mcp.example.com` | Extra Host header values /mcp accepts (DNS-rebinding protection; validation is never off). Unset on a non-loopback bind: only loopback names, a specific bind address, the machine hostname and the BETTER_AUTH_URL / ALLOWED_ORIGINS hosts. List LAN IPs or other names clients use here. | protected |
 | `MARINA_URL_GUARD_DNS_FAIL_OPEN=false` | `true` lets outbound fetches proceed when DNS resolution fails, instead of refusing them (fail open). Only for restricted-DNS environments. | protected |
 
+## Schedules
+
+| Variable | Description | Flags |
+|---|---|---|
+| `MARINA_SCHEDULES=on` | Run due schedules (`schedule add …`: an owner's own command later or on a repeat, as that owner with its rank, gates and spend caps). `off` keeps schedules stored but never runs them. Default on. |  |
+| `MARINA_SCHEDULES_PER_ENTITY=20` | Most schedules one account may hold (0 = unlimited). |  |
+| `MARINA_SCHEDULE_MIN_INTERVAL=1m` | Shortest repeat a schedule may use (`every:` / `daily:`), as a duration. |  |
+
 ## Retention
 
 | Variable | Description | Flags |

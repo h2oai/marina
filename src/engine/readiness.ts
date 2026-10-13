@@ -18,6 +18,7 @@ import { decisionHealth } from "../decisions/health";
 import { describeDecisionSettings } from "../decisions/settings";
 import { localModelApiKey } from "../net/model-api/shared";
 import { describeDefaultUpstream } from "../net/model-api/upstream";
+import { ALERT_AFTER_FAILURES, schedulesMode } from "../schedules/runner";
 import { autoRespawnEnabled } from "./auto-respawn";
 import { type AutonomyPosture, getAutonomyPosture } from "./autonomy";
 import type { Engine } from "./engine";
@@ -400,6 +401,12 @@ export function computeReadiness(engine: Engine): ReadinessReport {
     });
   }
 
+  // ── Schedules — owners' commands run later or on a repeat ─────────────────
+  checks.push(schedulesCheck(engine));
+
+  // ── Periodic jobs — a failing tick job is otherwise visible only in logs ───
+  checks.push(tickJobsCheck(engine));
+
   // ── Budget scopes — command-line jobs sharing this world's spend ledger ────
   let scopes: { scope: string; spentUsd: number }[] = [];
   try {
@@ -747,5 +754,69 @@ export function computeReadiness(engine: Engine): ReadinessReport {
     trustProfile: computeTrustProfile(env),
     checks,
     demo,
+  };
+}
+
+/** Schedules: off, or how many are failing or waiting on an absent owner. */
+export function schedulesCheck(engine: Engine): ReadinessCheck {
+  const label = "Schedules";
+  if (schedulesMode() === "off")
+    return {
+      id: "schedules",
+      label,
+      status: "off",
+      detail: "MARINA_SCHEDULES=off — schedules are stored but never run",
+      remediation: "Unset MARINA_SCHEDULES (or set it to on) and restart.",
+    };
+  let rows: ReturnType<NonNullable<Engine["db"]>["listSchedules"]> = [];
+  try {
+    rows = engine.db ? engine.db.listSchedules(undefined, 1000) : [];
+  } catch {
+    // allow-empty-catch: a database before migration 165 has no schedules
+  }
+  const active = rows.filter((r) => r.enabled && r.next_run_at !== null);
+  const failing = active.filter(
+    (r) => r.consecutive_failures >= ALERT_AFTER_FAILURES || r.last_status === "owner-absent",
+  );
+  if (!failing.length)
+    return {
+      id: "schedules",
+      label,
+      status: "ok",
+      detail: `${active.length} active schedule(s)${rows.length > active.length ? `, ${rows.length - active.length} paused or done` : ""}`,
+    };
+  return {
+    id: "schedules",
+    label,
+    status: "degraded",
+    detail: `${failing.length} of ${active.length} active schedule(s) failing: ${failing
+      .slice(0, 5)
+      .map((r) => `${r.owner_name}/${r.name} (${r.last_status})`)
+      .join(", ")}${failing.length > 5 ? ", …" : ""}`,
+    remediation:
+      "The owner runs `schedule show <name>` to see the errors, then fixes or pauses it.",
+  };
+}
+
+/** Periodic tick jobs whose last run failed. */
+export function tickJobsCheck(engine: Engine): ReadinessCheck {
+  const failing = engine.describeTickSchedule().filter((j) => j.lastError);
+  if (!failing.length)
+    return {
+      id: "tick-jobs",
+      label: "Periodic jobs",
+      status: "ok",
+      detail: `${engine.describeTickSchedule().length} periodic job(s), none failing`,
+    };
+  return {
+    id: "tick-jobs",
+    label: "Periodic jobs",
+    status: "degraded",
+    detail: `last run failed: ${failing
+      .slice(0, 5)
+      .map((j) => `${j.name} (${(j.lastError ?? "").slice(0, 120)})`)
+      .join("; ")}`,
+    remediation:
+      "Check the server log for the job's error; a job clears this on its next good run.",
   };
 }

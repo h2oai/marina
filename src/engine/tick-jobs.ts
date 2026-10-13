@@ -16,6 +16,7 @@ import { deliverOutcomes } from "../outcomes/deliver";
 import { judgeWaitingWork } from "../outcomes/judge-quality";
 import { judgeOpenResolutions } from "../outcomes/judge-resolution";
 import type { MarinaDB } from "../persistence/database";
+import { runDueSchedules } from "../schedules/runner";
 import { syncOperationalAlerts } from "./commands/ops";
 import {
   AGENT_CLEANUP_INTERVAL,
@@ -340,6 +341,19 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
     },
   });
 
+  // Every ~10 s: run due schedules (src/schedules/runner.ts). Next-run times
+  // are wall-clock and durable, so a restart or a slow tick never shifts them;
+  // each run is detached, so a slow command never delays the others.
+  s.register({
+    name: "schedules",
+    every: SCHEDULES_INTERVAL,
+    phase: SCHEDULES_PHASE,
+    failureMessage: "Schedule pass failed",
+    run: () => {
+      runDueSchedules(host.engine);
+    },
+  });
+
   // Hourly: check the markets that open answers are linked to; a resolved one
   // settles them through the calibration finder (MARINA_OUTCOME_AUTORESOLVE).
   s.register({
@@ -374,6 +388,11 @@ export const OUTCOME_JUDGE_PHASE = 3150;
 
 /** The hourly phase of automatic resolution of market-linked answers (src/outcomes/autoresolve.ts). */
 export const OUTCOME_AUTORESOLVE_PHASE = 3450;
+
+/** Ticks between schedule passes (src/schedules/runner.ts). */
+export const SCHEDULES_INTERVAL = 10;
+/** Its phase within that interval. */
+export const SCHEDULES_PHASE = 3;
 
 /** Ticks between outcome-delivery passes (src/outcomes/deliver.ts). */
 export const OUTCOME_DELIVERY_INTERVAL = 300;

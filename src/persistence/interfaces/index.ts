@@ -51,6 +51,7 @@ export type { PrincipalsStore } from "./principals-store";
 export type { ReproductionStore } from "./reproduction-store";
 export type { RoomsStore } from "./rooms-store";
 export type { RoutingStore } from "./routing-store";
+export type { SchedulesStore } from "./schedules-store";
 export type { SettingsStore } from "./settings-store";
 export type { ShellStore } from "./shell-store";
 export type { SimulationsStore } from "./simulations-store";
@@ -148,6 +149,7 @@ import { REPRODUCTION_STORE_METHODS } from "./reproduction-store";
 import type { RoomsStore } from "./rooms-store";
 import { ROOMS_STORE_METHODS } from "./rooms-store";
 import { ROUTING_STORE_METHODS, type RoutingStore } from "./routing-store";
+import { SCHEDULES_STORE_METHODS, type SchedulesStore } from "./schedules-store";
 import type { SettingsStore } from "./settings-store";
 import { SETTINGS_STORE_METHODS } from "./settings-store";
 import type { ShellStore } from "./shell-store";
@@ -213,6 +215,7 @@ export interface MarinaStores
     ReproductionStore,
     RoomsStore,
     RoutingStore,
+    SchedulesStore,
     SettingsStore,
     ShellStore,
     SimulationsStore,
@@ -269,6 +272,7 @@ export const STORE_METHOD_MANIFEST: Readonly<Record<string, readonly string[]>> 
   ReproductionStore: REPRODUCTION_STORE_METHODS,
   RoomsStore: ROOMS_STORE_METHODS,
   RoutingStore: ROUTING_STORE_METHODS,
+  SchedulesStore: SCHEDULES_STORE_METHODS,
   SettingsStore: SETTINGS_STORE_METHODS,
   ShellStore: SHELL_STORE_METHODS,
   SimulationsStore: SIMULATIONS_STORE_METHODS,
