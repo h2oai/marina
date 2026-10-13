@@ -32,6 +32,8 @@ export interface Probe {
   /** Free bytes and filesystem type at a path. */
   disk(path: string): { freeBytes: number; fsType: string } | undefined;
   exists(path: string): boolean;
+  /** True when a path exists and is executable (falls back to `exists` when absent). */
+  executable?(path: string): boolean;
   home: string;
   user: string;
 }
@@ -325,6 +327,68 @@ function tau2KnowledgeCheck(p: Probe): Check {
   };
 }
 
+/** AutomationBench's `auto-bench` entry point, named by AUTOMATIONBENCH_BIN. */
+function automationbenchCheck(p: Probe): Check {
+  const bin = p.env.AUTOMATIONBENCH_BIN;
+  const runnable = !!bin && (p.executable ? p.executable(bin) : p.exists(bin));
+  return {
+    id: "automationbench",
+    title: "AutomationBench",
+    status: runnable ? "ok" : "missing",
+    detail: runnable
+      ? `AUTOMATIONBENCH_BIN=${bin}`
+      : bin
+        ? `AUTOMATIONBENCH_BIN=${bin} does not exist or is not executable`
+        : "AUTOMATIONBENCH_BIN not set",
+    ...(runnable
+      ? {}
+      : {
+          fix: "python3 -m venv ~/.cache/automationbench && ~/.cache/automationbench/bin/pip install -e <your AutomationBench checkout> && export AUTOMATIONBENCH_BIN=~/.cache/automationbench/bin/auto-bench",
+        }),
+  };
+}
+
+/** An IFBench checkout (the official grader, `run_eval.py`), named by IFBENCH_HOME. */
+function ifbenchCheck(p: Probe): Check {
+  const home = p.env.IFBENCH_HOME;
+  const ok = !!home && p.exists(`${home}/run_eval.py`);
+  const venv = ok && p.exists(`${home}/.venv/bin/python`);
+  return {
+    id: "ifbench",
+    title: "IFBench grader",
+    status: ok ? "ok" : "missing",
+    detail: ok
+      ? `IFBENCH_HOME=${home} (grading with ${venv ? "its .venv/bin/python" : "python3"})`
+      : "IFBENCH_HOME not set or has no run_eval.py",
+    ...(ok
+      ? {}
+      : {
+          fix: "git clone https://github.com/allenai/IFBench ~/.cache/ifbench && cd ~/.cache/ifbench && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && export IFBENCH_HOME=~/.cache/ifbench",
+        }),
+  };
+}
+
+/** The IFBench prompts (JSONL with key, prompt, instruction_id_list, kwargs), named by IFBENCH_INPUT. */
+function ifbenchInputCheck(p: Probe): Check {
+  const input = p.env.IFBENCH_INPUT;
+  const ok = !!input && p.exists(input);
+  return {
+    id: "ifbench-input",
+    title: "IFBench prompts",
+    status: ok ? "ok" : "missing",
+    detail: ok
+      ? `IFBENCH_INPUT=${input}`
+      : input
+        ? `IFBENCH_INPUT=${input} does not exist`
+        : "IFBENCH_INPUT not set",
+    ...(ok
+      ? {}
+      : {
+          fix: "export IFBENCH_INPUT=$IFBENCH_HOME/data/IFBench_test.jsonl (or any JSONL of IFBench prompts; the kit answers the first --limit lines)",
+        }),
+  };
+}
+
 export interface DoctorOptions {
   runDir: string;
   /** Free disk (GB) wanted for the chosen setup. */
@@ -347,6 +411,9 @@ export function doctor(p: Probe, opts: DoctorOptions): { tier: ModelTier; checks
     "tau2-evaluator": () => tau2EvaluatorCheck(p),
     "tau2-knowledge": () => tau2KnowledgeCheck(p),
     "tau2-knowledge-shell": () => tau2KnowledgeShellCheck(p),
+    automationbench: () => automationbenchCheck(p),
+    ifbench: () => ifbenchCheck(p),
+    "ifbench-input": () => ifbenchInputCheck(p),
   };
   const ids = opts.only?.length
     ? [

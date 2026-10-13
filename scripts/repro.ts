@@ -14,15 +14,17 @@
  *                         [--split test] [--effort high] [--user-effort low]   (τ²)
  *                         [--retrieval-config alltools]   (τ³ banking_knowledge)
  *                         [--task-ids a,b,c]   (τ²: a fixed task subset, ids only)
+ *                         [--effort medium]   (automation: auto-bench --reasoning-effort)
  *
- * Setups: hle-verified, swebench-verified, tau2, futurex-backtest, arena-backtest.
+ * Setups: hle-verified, swebench-verified, tau2, futurex-backtest, arena-backtest,
+ * automation (AUTOMATIONBENCH_BIN), ifbench (IFBENCH_HOME, IFBENCH_INPUT).
  * Runs live under --run-dir (default ~/.local/share/marina-repro/<setup>-<time>), on
  * disk; every run files into --ledger (default <run-dir>/ledger.db) and the
  * comparison is printed from it. Keys are read from .env and never printed.
  * Nothing is submitted to any leaderboard.
  */
 
-import { existsSync, readFileSync, statfsSync } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync, statfsSync, statSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
@@ -70,6 +72,14 @@ export function nodeProbe(env: Record<string, string | undefined>): Probe {
       }
     },
     exists: existsSync,
+    executable(path) {
+      try {
+        accessSync(path, constants.X_OK);
+        return statSync(path).isFile();
+      } catch {
+        return false;
+      }
+    },
     home: homedir(),
     user: userInfo().username,
   };

@@ -21,6 +21,8 @@ bun run repro hle-verified              # smoke size, 2 replicates per arm, $10 
 | `tau2` | `single` (one model as the agent), `verify` (`marina/verify:<model>[+<checker>]`); `obligations` (`marina/obligations:<model>`), `argcheck` (`marina/argcheck:<model>`) and `obligations+argcheck` (both), each only when named with `--arm` | the unmodified τ²-bench CLI, user simulator and evaluator | models, a τ²-bench checkout |
 | `futurex-backtest` | `cheap`, `verify` forecast variants | resolved FutureX questions, forecast with **date-bounded** research only | models |
 | `arena-backtest` | `baseline`, `nowcast` | MIT Social Simulation Arena rounds, scored in lock order | none (keyless) |
+| `automation` | `bare` (`x-marina-stack: none`), `on` (the identified-caller default stack, `x-marina-stack: lessons,obligations,argcheck,learn`); `full` (`x-marina-stack: full`) only when named with `--arm` | the unmodified AutomationBench `auto-bench` agent and its assertions; a fixed list of 24 tasks over six domains (smoke 6, one per domain) | models, `AUTOMATIONBENCH_BIN` |
+| `ifbench` | same arms as `automation` | one chat completion per prompt, graded **strict** by IFBench's own `run_eval` (smoke 20, full 150) | models, `IFBENCH_HOME`, `IFBENCH_INPUT` |
 
 Each arm is compared with the first arm on the same items, pooled over replicates (a two-stage
 bootstrap over runs, then items). A single run is labelled "not replicated".
@@ -36,7 +38,7 @@ bootstrap over runs, then items). A single run is labelled "not replicated".
 | `--model`, `--checker`, `--judge` | the answer model, the reviewer or checker, and the judge or user simulator |
 | `--domain` | τ²-bench domain (default `airline`) |
 | `--split` | τ²-bench task split (`test` or `base`); runs the whole split unless `--limit` is given. `base` is the leaderboard split: every task, so `--limit` is refused with it. A re-run with the same `--run-dir` resumes an interrupted τ² run (`--auto-resume`) |
-| `--effort`, `--user-effort` | τ²-bench agent and user-simulator reasoning effort (default `high` and `low`), sent in `extra_body` |
+| `--effort`, `--user-effort` | τ²-bench agent and user-simulator reasoning effort (default `high` and `low`), sent in `extra_body`. `automation`: `auto-bench --reasoning-effort` (default `medium`) |
 | `--retrieval-config` | τ³ `banking_knowledge` only: τ²'s knowledge-base retrieval configuration (default `alltools`, the board's reference configuration; it is shown on the board and is part of the run's configuration tag). Refused for other domains |
 | `--task-ids a,b,c` | τ² only: run exactly these task ids (τ²'s `--task-ids`), for a pre-registered subset. Not with `--limit` or the board split `base`; the ids are part of the configuration tag |
 | `--env-image` | SWE-bench: run the agent's tests inside each instance's environment image (full agent rather than agentless) |
@@ -70,6 +72,8 @@ changed, so a single small model can still run everything:
 - **SWE-bench harness:** a Python with the `swebench` package, named by `SWEBENCH_PYTHON`.
 - **τ²-bench:** a checkout with its virtualenv, named by `TAU2_HOME`.
 - **τ²-bench evaluator:** `OPENAI_API_KEY` in `.env`. τ²'s NL-assertion judge calls OpenAI's `gpt-4.1` with keys from the environment; without one, those simulations end as infrastructure errors.
+- **AutomationBench:** `AUTOMATIONBENCH_BIN` names an executable `auto-bench` (from a virtualenv with AutomationBench installed).
+- **IFBench:** `IFBENCH_HOME` names an IFBench checkout (with `run_eval.py`; its `.venv/bin/python` is used when present, else `python3`), and `IFBENCH_INPUT` a prompt JSONL (`key`, `prompt`, `instruction_id_list`, `kwargs`), for example `$IFBENCH_HOME/data/IFBench_test.jsonl`. The kit answers its first `--limit` lines.
 - **τ³ knowledge shell** (`--domain banking_knowledge` with `alltools` or `terminal_use`): τ² runs the agent's knowledge-base shell under Anthropic's sandbox-runtime, so `srt` (`@anthropic-ai/sandbox-runtime@0.0.23`, the version τ² pins), `rg`, `bwrap` and `socat` must be on `PATH`, and the τ² virtualenv needs τ²'s `knowledge` extra (`pip install -e ".[knowledge]"`). `alltools` also embeds with OpenAI (`OPENAI_API_KEY`); those embedding calls are τ²'s own and are not in Marina's spend ledger.
 
 ## What the kit does for you
@@ -80,6 +84,7 @@ These are the mechanics that otherwise trip a reproduction:
 - **Judging through Marina:** graded answers are judged through a Marina server, not by calling a vendor directly.
 - **Time limits:** crews get a long per-item limit, and the server's request timeout is set above it.
 - **τ²-bench:** the agent and user simulator go through Marina, and τ²'s own evaluator runs as shipped. The τ² process gets the provider keys from `.env` (never printed) and no `OPENAI_BASE_URL` override. Reasoning effort travels in `extra_body`, because τ² sets LiteLLM's `drop_params`, which strips a top-level `reasoning_effort` for Marina-routed ids. The agent effort, user simulator and its effort appear in the plan's labels. A run with any infrastructure error is **invalid**: `tau2 convert --require-clean` reports the count, writes no scores, and the run never reaches the ledger.
+- **Instrument-stack arms** (`automation`, `ifbench`): each arm gets its own server, whose key is bound to an entity (`MODEL_API_KEYS=<key>:BenchArm`), so the harness is an identified caller that every stack member can serve. The arms differ only in the `x-marina-stack` header each request carries; `on` lists the default members explicitly, so a member that cannot run is refused rather than silently skipped. Every request also carries `x-marina-eval: benchmark=<automationbench|ifbench>; mode=measure`. AutomationBench sends both through `auto-bench --headers`, and the IFBench runner (`scripts/ifbench.ts answer`) sets them itself, with its key taken from the environment and never from argv. Each AutomationBench task runs in its own `auto-bench` process. `scripts/automationbench.ts convert` and `scripts/ifbench.ts convert` file only task names or input keys, with pass/fail (`passed`, or strict `follow_all_instructions`) and the fraction of assertions or instructions met. They never file transcripts, prompts or responses. With `--require-clean`, any item without a result (missing export, aborted task, failed request, ungraded prompt) refuses the whole run.
 - **Spend:** the budget is a true total. Each server's daily spend cap, and each SWE-bench run's `--max-usd`, is an even share of `--budget-usd`, rounded down, with no per-server minimum, so together they never exceed it.
 - **The ledger:** results are imported into one ledger, grouped by arm, so `benchmark compare`, `leaderboard` and `replicates` work on them afterwards.
 
