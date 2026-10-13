@@ -2,9 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Outside monitor: is this Marina server up? Run from OUTSIDE the server
- * process — a systemd timer, cron, another host — so it still reports when the
- * server is down, crash-looping, or hung. It never imports the engine.
+ * Outside monitor: is this Marina server up? It runs as its own process,
+ * outside the server's, so it still reports when the server is down,
+ * crash-looping, or hung. It never imports the engine, and it installs
+ * nothing on the host: no service, no scheduler entry, no OS setting. Run it
+ * yourself (`--every 1m` keeps it running), from another machine, or from
+ * whatever scheduler you already use.
  *
  *   bun run monitor                       # one check of the local server
  *   bun run monitor --url https://marina.example/health --desktop
@@ -19,7 +22,8 @@
  * - the first healthy check after an alert sends "recovered".
  *
  * Where alerts go (any combination):
- * - `--desktop`: a desktop notification (`notify-send`);
+ * - `--desktop`: a desktop notification (`notify-send` on Linux, `osascript`
+ *   on macOS; elsewhere, or when the tool is missing, it says so and skips);
  * - `MARINA_MONITOR_WEBHOOK`: a JSON POST with `text` and `content`, so a Slack
  *   or Discord incoming webhook takes it as is;
  * - `MARINA_MONITOR_HEARTBEAT_URL`: pinged on every healthy check — a
@@ -166,19 +170,49 @@ function writeState(path: string, state: MonitorState): void {
   writeFileSync(path, `${JSON.stringify(state)}\n`, { mode: 0o600 });
 }
 
+/**
+ * The command that shows a desktop notification on this platform, or null.
+ * Read-only use of tools the desktop already has; nothing is installed.
+ */
+export function desktopNotification(
+  alert: MonitorAlert,
+  platform: NodeJS.Platform = process.platform,
+  which: (bin: string) => string | null = Bun.which,
+): string[] | null {
+  if (platform === "linux" && which("notify-send"))
+    return [
+      "notify-send",
+      "--app-name=Marina",
+      `--urgency=${alert.kind === "recovered" ? "normal" : "critical"}`,
+      "Marina monitor",
+      alert.message,
+    ];
+  if (platform === "darwin" && which("osascript"))
+    // The message is passed as an argument, never spliced into the script.
+    return [
+      "osascript",
+      "-e",
+      "on run argv",
+      "-e",
+      'display notification (item 1 of argv) with title "Marina monitor"',
+      "-e",
+      "end run",
+      alert.message,
+    ];
+  return null;
+}
+
 async function deliver(alert: MonitorAlert, desktop: boolean): Promise<void> {
   console.log(`[monitor] ${alert.message}`);
   if (desktop) {
-    try {
-      Bun.spawnSync([
-        "notify-send",
-        "--app-name=Marina",
-        `--urgency=${alert.kind === "recovered" ? "normal" : "critical"}`,
-        "Marina monitor",
-        alert.message,
-      ]);
-    } catch (err) {
-      console.error(`[monitor] desktop notification failed: ${(err as Error).message}`);
+    const argv = desktopNotification(alert);
+    if (!argv) console.error("[monitor] --desktop: no notifier on this platform; skipped");
+    else {
+      try {
+        Bun.spawnSync(argv);
+      } catch (err) {
+        console.error(`[monitor] desktop notification failed: ${(err as Error).message}`);
+      }
     }
   }
   const hook = process.env.MARINA_MONITOR_WEBHOOK?.trim();

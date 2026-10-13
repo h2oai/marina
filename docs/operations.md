@@ -224,7 +224,7 @@ It reads `/health`. The server is **down** when there is no answer within the ti
 | `--timeout` | `10s` | A slower answer counts as down (a hung process) |
 | `--every` | (one check) | Keep checking at this interval instead of exiting |
 | `--state` | `$XDG_STATE_HOME/marina-monitor.json` | Outage state between one-shot runs |
-| `--desktop` | off | Desktop notification (`notify-send`) |
+| `--desktop` | off | Desktop notification (`notify-send` on Linux, `osascript` on macOS) |
 
 Alerts go out once per outage (`down`), then as reminders (`still-down`), then `recovered`. Besides `--desktop`:
 
@@ -233,23 +233,13 @@ Alerts go out once per outage (`down`), then as reminders (`still-down`), then `
 
 Both come from the environment and are never printed. The exit code is 0 when healthy and 1 when down.
 
-A systemd user timer that checks every minute:
+The monitor installs nothing on the host: no service, no scheduler entry, no OS setting. It is the same on Linux, macOS and Windows, and in the desktop app's environment. Keep it running with `--every`:
 
-```ini
-# ~/.config/systemd/user/marina-monitor.service
-[Service]
-Type=oneshot
-EnvironmentFile=-%h/.config/marina-monitor.env
-ExecStart=%h/.local/bin/bun run /path/to/marina/scripts/monitor.ts --desktop
-
-# ~/.config/systemd/user/marina-monitor.timer
-[Timer]
-OnBootSec=2min
-OnUnitActiveSec=1min
-
-[Install]
-WantedBy=timers.target
+```sh
+bun run monitor --every 1m --desktop
 ```
+
+Or run one check (no `--every`) from a scheduler you already use, or from another machine with `--url`. `--desktop` uses `notify-send` on Linux and `osascript` on macOS; where neither exists it says so and skips.
 
 ## Row retention
 

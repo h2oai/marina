@@ -2,7 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "bun:test";
-import { INITIAL_STATE, type MonitorState, parseDurationMs, probe, step } from "../scripts/monitor";
+import {
+  desktopNotification,
+  INITIAL_STATE,
+  type MonitorState,
+  parseDurationMs,
+  probe,
+  step,
+} from "../scripts/monitor";
 import { healthResponse } from "../src/net/api/connect-api";
 import { createTestEngine } from "./engine-fixture";
 
@@ -45,6 +52,24 @@ describe("outside monitor state", () => {
     expect(parseDurationMs("1h")).toBe(3_600_000);
     expect(parseDurationMs("0")).toBeUndefined();
     expect(parseDurationMs("soon")).toBeUndefined();
+  });
+});
+
+describe("outside monitor desktop notification", () => {
+  const alert = { kind: "down" as const, message: 'Marina is DOWN: "x" \\ end' };
+  it("uses the platform's own notifier and passes the message as an argument", () => {
+    const linux = desktopNotification(alert, "linux", () => "/usr/bin/notify-send");
+    expect(linux?.[0]).toBe("notify-send");
+    expect(linux?.at(-1)).toBe(alert.message);
+    const mac = desktopNotification(alert, "darwin", () => "/usr/bin/osascript");
+    expect(mac?.[0]).toBe("osascript");
+    expect(mac?.at(-1)).toBe(alert.message);
+    expect(mac?.slice(0, -1).join(" ")).not.toContain("DOWN");
+  });
+
+  it("skips where there is no notifier", () => {
+    expect(desktopNotification(alert, "linux", () => null)).toBeNull();
+    expect(desktopNotification(alert, "win32", () => "x")).toBeNull();
   });
 });
 
