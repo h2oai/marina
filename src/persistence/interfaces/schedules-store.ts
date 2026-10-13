@@ -24,6 +24,7 @@ export interface SchedulesStore {
     },
   ): void;
   setScheduleEnabled(id: number, enabled: boolean, nextRunAt: number | null): void;
+  updateScheduleTrigger(id: number, triggerJson: string, nextRunAt: number | null): void;
   deleteSchedule(id: number): boolean;
   recordScheduleRun(run: Omit<ScheduleRunRow, "id">): ScheduleRunRow;
   listScheduleRuns(scheduleId: number, limit?: number): ScheduleRunRow[];
@@ -39,6 +40,7 @@ export const SCHEDULES_STORE_METHODS = [
   "dueSchedules",
   "updateScheduleState",
   "setScheduleEnabled",
+  "updateScheduleTrigger",
   "deleteSchedule",
   "recordScheduleRun",
   "listScheduleRuns",

@@ -3,8 +3,10 @@
 
 import { seedMemoryHelperRoles } from "../../agent/memory-helper-roles";
 import { formatUntrustedContext } from "../../agent/prompts/support-prompts";
+import { arenaRoundLockAt } from "../../arena/service";
 import { worldMemoryService } from "../../memory/world-service";
 import { registerBuiltinResolvers } from "../../resolvers";
+import { registerDeadlineSource } from "../../schedules/deadlines";
 import type { EntityId, RoomId } from "../../types";
 import { collectiveManager } from "../../world/world-collective-manager";
 import { commandManifest } from "../command-manifest";
@@ -392,6 +394,8 @@ export function registerGeneralCommands(engine: Engine): void {
     );
   }
   // Schedules — an owner's own commands, later or on a repeat (src/schedules).
+  // `before:arena:<round>` follows the round's lock time.
+  registerDeadlineSource("arena", (id) => arenaRoundLockAt(id));
   engine.commands.registerBuiltin(
     scheduleCommand({
       getEntity: (id) => engine.entities.get(id as EntityId),

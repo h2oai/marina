@@ -3,6 +3,7 @@
 
 import type { MarinaDB } from "../../persistence/database";
 import type { ScheduleRow } from "../../persistence/db-schedules";
+import { deadlineKinds, resolveDeadline } from "../../schedules/deadlines";
 import { ALERT_AFTER_FAILURES, schedulesMode } from "../../schedules/runner";
 import {
   firstRun,
@@ -24,7 +25,8 @@ stopped agent's schedules wait), and repeated failures raise an alert.
 
 Usage:
   schedule add <name> <when> [catch-up:once|none] [max-runs:N] -- <command>
-      <when>: every:<dur> | daily:HH:MM (UTC) | at:<time> | before:<time> lead:<dur>
+      <when>: every:<dur> | daily:HH:MM (UTC) | at:<time> | before:<time|ref> lead:<dur>
+      ref: a deadline reference such as arena:<round> (follows the round's lock)
   schedule [list]                  your schedules
   schedule show <name>             details and recent runs
   schedule history <name> [limit:N]
@@ -38,7 +40,7 @@ once late by default (catch-up:once); catch-up:none skips to the next slot.
 Examples:
   schedule add digest daily:08:00 -- brief full
   schedule add check-arena every:1h -- arena rounds
-  schedule add file-w42 before:2026-10-14T14:00Z lead:1h -- forecast "Will …?"`;
+  schedule add check-w42 before:arena:civiqs-2026-w42-approval lead:2h -- arena show civiqs-2026-w42-approval`;
 
 const SUBS = ["add", "list", "show", "history", "pause", "resume", "run", "delete"];
 const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,39}$/i;
@@ -77,7 +79,7 @@ export function scheduleCommand(deps: {
       "schedule run <name>",
       "schedule delete <name>",
     ],
-    handler: (ctx: RoomContext, input) => {
+    handler: async (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       const say = (text: string) => ctx.send(input.entity, text);
@@ -155,6 +157,17 @@ export function scheduleCommand(deps: {
           if ("error" in trigger) {
             say(`schedule add: ${trigger.error}`);
             return;
+          }
+          if (trigger.kind === "before" && trigger.ref) {
+            const at = await resolveDeadline(trigger.ref);
+            if (at === undefined) {
+              const kinds = deadlineKinds();
+              say(
+                `schedule add: could not find the deadline of ${trigger.ref}${kinds.length ? ` (known references: ${kinds.map((k) => `${k}:<id>`).join(", ")})` : " (no deadline references are available here)"}.`,
+              );
+              return;
+            }
+            trigger.deadline = at;
           }
           const catchUp = (values["catch-up"] as string | undefined)?.toLowerCase() ?? "once";
           if (catchUp !== "once" && catchUp !== "none") {

@@ -18,12 +18,19 @@
  */
 
 import { parseDuration } from "../engine/commands/format-duration";
+import { parseDeadlineRef } from "./deadlines";
 
 export type Trigger =
   | { kind: "every"; everyMs: number }
   | { kind: "daily"; minuteOfDay: number }
   | { kind: "at"; at: number }
-  | { kind: "before"; deadline: number; leadMs: number };
+  | {
+      kind: "before";
+      deadline: number;
+      leadMs: number;
+      /** A deadline reference (`arena:<round>`); `deadline` is its last resolved value. */
+      ref?: string;
+    };
 
 export type CatchUp = "none" | "once";
 
@@ -66,12 +73,18 @@ export function parseTrigger(mods: {
       return { kind: "at", at };
     }
     case "before": {
-      const deadline = parseTime(mods.before);
-      if (deadline === undefined)
-        return { error: `before:${mods.before} is not an ISO time (e.g. 2026-10-14T14:00Z)` };
       const leadMs = mods.lead === undefined ? 0 : parseDuration(mods.lead);
       if (leadMs === undefined || leadMs < 0)
         return { error: `lead:${mods.lead} is not a duration` };
+      // A reference (`arena:<round>`) is resolved by the caller (`resolveDeadline`).
+      const ref = parseDeadlineRef(mods.before ?? "");
+      if (ref)
+        return { kind: "before", deadline: Number.NaN, leadMs, ref: `${ref.kind}:${ref.id}` };
+      const deadline = parseTime(mods.before);
+      if (deadline === undefined)
+        return {
+          error: `before:${mods.before} is not an ISO time (e.g. 2026-10-14T14:00Z) or a reference (<kind>:<id>)`,
+        };
       return { kind: "before", deadline, leadMs };
     }
   }
@@ -99,8 +112,10 @@ export function renderTrigger(t: Trigger): string {
     }
     case "at":
       return `at ${new Date(t.at).toISOString()}`;
-    case "before":
-      return `${renderDuration(t.leadMs)} before ${new Date(t.deadline).toISOString()}`;
+    case "before": {
+      const at = Number.isFinite(t.deadline) ? new Date(t.deadline).toISOString() : "unresolved";
+      return `${renderDuration(t.leadMs)} before ${t.ref ? `${t.ref} (${at})` : at}`;
+    }
   }
 }
 
