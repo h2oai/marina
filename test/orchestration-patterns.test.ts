@@ -12,7 +12,6 @@ import {
   detectTaskShapes,
   ORCHESTRATION_PATTERNS,
   PATTERN_FIT,
-  PATTERN_VALIDATION,
   suggestPatterns,
 } from "../src/world/templates/orchestration";
 
@@ -84,14 +83,13 @@ describe("emergent orchestration — recognition loop", () => {
       "sharding",
     ] as const;
 
-    it("are listed before custom, with fit and unvalidated status", () => {
+    it("are listed before custom, with a fit", () => {
       const names: readonly string[] = ORCHESTRATION_PATTERNS;
       expect(names[names.length - 1]).toBe("custom");
       for (const pattern of ADDED) {
         expect(names).toContain(pattern);
         expect(PATTERN_FIT[pattern].shapes.length).toBeGreaterThan(0);
         expect(PATTERN_FIT[pattern].why.length).toBeGreaterThan(0);
-        expect(PATTERN_VALIDATION[pattern].status).toBe("unvalidated");
       }
     });
 
@@ -126,18 +124,6 @@ describe("emergent orchestration — recognition loop", () => {
       ["verification", "verify the shared document and check it against the spec"],
     ])("suggestPatterns ranks %s first when its shape combination is distinctive", (p, goal) => {
       expect(suggestPatterns(goal)[0]?.pattern).toBe(p);
-    });
-  });
-
-  describe("PATTERN_VALIDATION (2026-09 sweep evidence)", () => {
-    it("covers every non-custom pattern with a status and evidence line", () => {
-      for (const pattern of ORCHESTRATION_PATTERNS) {
-        if (pattern === "custom") continue;
-        const v = PATTERN_VALIDATION[pattern];
-        expect(v).toBeDefined();
-        expect(["validated", "partial", "unvalidated"]).toContain(v.status);
-        expect(v.evidence.length).toBeGreaterThan(0);
-      }
     });
   });
 

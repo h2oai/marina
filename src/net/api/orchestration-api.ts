@@ -22,7 +22,6 @@ import {
   ORCHESTRATION_PATTERNS,
   type OrchestrationPattern,
   PATTERN_FIT,
-  PATTERN_VALIDATION,
 } from "../../world/templates/orchestration";
 import { corsHeaders } from "../cors";
 
@@ -51,10 +50,7 @@ function describe(id: OrchestrationPattern): OrchestrationPatternView {
     };
   }
   const fit = PATTERN_FIT[id];
-  const validation = PATTERN_VALIDATION[id];
-  const description =
-    validation.status === "validated" ? fit.why : `${fit.why} (${validation.status})`;
-  return { id, name: displayName(id), description, fit: fit.shapes.join(", ") };
+  return { id, name: displayName(id), description: fit.why, fit: fit.shapes.join(", ") };
 }
 
 /** The pattern catalogue as served by the route — exported for tests and other servers. */

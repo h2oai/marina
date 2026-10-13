@@ -575,9 +575,8 @@ a different model from the responder where possible) to consult by awaited `mari
 bounded to 30 s. A consult that times out is skipped, never waited on. The consulted
 specialists appear in `benchmark participants`.
 
-Formations carry empirical validation status (`validated` / `partial` / `unvalidated`) from
-benchmark sweeps — `project <name> recommend` shows the tags, and `unvalidated` means "no passing
-evidence yet," not proven bad.
+`project <name> recommend` ranks the formations that fit the project's goal, then orders them by
+this world's own recorded outcomes for each pattern; with no outcomes yet it says so.
 
 **Crew pools are members-only.** A persisted crew (`crew create … persist` or `crew persist <name>`)
 gets a `crew:<name>` memory pool, scoped by a group object of the same id whose roster mirrors the

@@ -18,7 +18,6 @@ import {
   MAPREDUCE_TEMPLATE,
   ORCHESTRATION_PATTERNS,
   PATTERN_FIT,
-  PATTERN_VALIDATION,
   PIPELINE_TEMPLATE,
   RESEARCH_TEMPLATE,
   SHARDING_TEMPLATE,
@@ -56,12 +55,22 @@ const BUILTIN = ORCHESTRATION_PATTERNS.filter((p) => p !== "custom");
 const LEGACY_BARE_FORMS = new Set(["memory set"]);
 
 describe("orchestration pattern templates", () => {
-  it("every built-in pattern has a template, a fit entry and a validation entry", () => {
+  it("every built-in pattern has a template and a fit entry", () => {
     expect(Object.keys(TEMPLATES).sort()).toEqual([...BUILTIN].sort());
-    for (const pattern of BUILTIN) {
-      expect(PATTERN_FIT[pattern], pattern).toBeDefined();
-      expect(PATTERN_VALIDATION[pattern], pattern).toBeDefined();
-    }
+    for (const pattern of BUILTIN) expect(PATTERN_FIT[pattern], pattern).toBeDefined();
+  });
+
+  it("agent-facing pattern text carries no static benchmark scores", () => {
+    // Evidence an agent sees comes from the world's own recorded outcomes
+    // (`project recommend`), never a dated sweep frozen into the seed.
+    // (A threshold such as "failure rate >60%" is guidance, not a score.)
+    const score =
+      /\b\d+\/\d+ (answered|tasks|correct)|\b(gsm8k|mmlu|humaneval|aime|gpqa)\b|\bsweep\b/i;
+    const texts = [
+      ...Object.values(TEMPLATES).flatMap((notes) => notes.map((n) => n.content)),
+      ...Object.values(PATTERN_FIT).map((f) => f.why),
+    ];
+    expect(texts.filter((t) => score.test(t))).toEqual([]);
   });
 
   it.each(BUILTIN)("%s has 5 skill notes, opening at importance 9, closing at 7", (pattern) => {
