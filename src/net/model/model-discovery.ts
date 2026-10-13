@@ -7,7 +7,11 @@
 // endpoint, normalizes the heterogeneous responses, and caches for 1 hour.
 // Stored DB keys (api_keys) take precedence; env vars are a fallback.
 
+import { createHash } from "node:crypto";
+import type { TokenPrice } from "../../agent/provider-cost";
 import type { MarinaDB } from "../../persistence/database";
+import { fetchHostedModels, parseHostedModels } from "./hosted-catalog";
+import { HOSTED_PROVIDERS, hostedModelsUrl, isHostedProvider } from "./hosted-providers";
 
 export interface ModelCapabilities {
   text?: boolean;
@@ -23,6 +27,8 @@ export interface ModelEntry {
   label: string;
   /** Context window if the provider reports one */
   contextLength?: number;
+  /** Advertised USD per million tokens; absent means unknown, not free. */
+  pricing?: TokenPrice;
   /** Short description if the provider reports one */
   description?: string;
   /** Modality support advertised by this model */
@@ -252,6 +258,14 @@ export function resetDetectedDefaultModelsForTests(): void {
 }
 
 const PROVIDERS: ProviderSpec[] = [
+  ...Object.entries(HOSTED_PROVIDERS).map(
+    ([provider, spec]): ProviderSpec => ({
+      provider,
+      url: `${spec.baseUrl}/models`,
+      envKey: spec.envKey,
+      authStyle: "bearer",
+    }),
+  ),
   {
     provider: "anthropic",
     url: "https://api.anthropic.com/v1/models",
@@ -348,6 +362,7 @@ const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 const FETCH_TIMEOUT_MS = 8_000;
 
 let cache: ModelDiscoveryResult | null = null;
+let cacheScope = "";
 
 interface CapabilityRule {
   test: (entry: ModelEntry) => boolean;
@@ -487,6 +502,7 @@ async function fetchProvider(spec: ProviderSpec, key: string | null): Promise<Mo
 }
 
 export function parseProviderResponse(provider: string, body: unknown): ModelEntry[] {
+  if (isHostedProvider(provider)) return parseHostedModels(provider, body);
   if (!body || typeof body !== "object") return [];
 
   // Google (Gemini): { models: [{ name, displayName, description }] }
@@ -575,7 +591,19 @@ export async function discoverModels(
   opts?: { refresh?: boolean },
 ): Promise<ModelDiscoveryResult> {
   const now = Date.now();
-  if (!opts?.refresh && cache && now - cache.fetchedAt < CACHE_TTL_MS) {
+  // Added/rotated keys and endpoint changes must be visible immediately.
+  const scope = createHash("sha256")
+    .update(
+      JSON.stringify(
+        PROVIDERS.map((spec) => [
+          spec.provider,
+          resolveKey(spec, db),
+          isHostedProvider(spec.provider) ? hostedModelsUrl(spec.provider) : spec.url,
+        ]),
+      ),
+    )
+    .digest("hex");
+  if (!opts?.refresh && cache && cacheScope === scope && now - cache.fetchedAt < CACHE_TTL_MS) {
     return { ...cache, cached: true };
   }
 
@@ -587,7 +615,9 @@ export async function discoverModels(
         return { provider: spec.provider, error: "no-key", keySource: null, models: [] };
       }
       try {
-        const models = await fetchProvider(spec, key);
+        const models = isHostedProvider(spec.provider)
+          ? await fetchHostedModels(spec.provider, key!, { refresh: opts?.refresh })
+          : await fetchProvider(spec, key);
         // Sort alphabetically by label for stable UI
         models.sort((a, b) => a.label.localeCompare(b.label));
         return { provider: spec.provider, error: null, keySource: source, models };
@@ -603,6 +633,7 @@ export async function discoverModels(
     }),
   );
 
+  cacheScope = scope;
   cache = { groups, fetchedAt: now, cached: false };
   return cache;
 }

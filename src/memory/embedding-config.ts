@@ -154,6 +154,8 @@ export function parseEmbeddingEnv(
 function vendorEmbeddingKey(url: string, env: Env): string | undefined {
   if (/^https:\/\/openrouter\.ai\//.test(url)) return read(env, "OPENROUTER_API_KEY");
   if (/^https:\/\/api\.openai\.com\//.test(url)) return read(env, "OPENAI_API_KEY");
+  if (/^https:\/\/api\.together\.ai\//.test(url)) return read(env, "TOGETHER_API_KEY");
+  if (/^https:\/\/api\.tokenfactory\.nebius\.com\//.test(url)) return read(env, "NEBIUS_API_KEY");
   return undefined;
 }
 

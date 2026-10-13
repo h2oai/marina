@@ -92,3 +92,56 @@ describe("AdminPanel · Keys tab", () => {
     expect(screen.getByPlaceholderText("API key value")).toBeInTheDocument();
   });
 });
+
+it.each(["together", "nebius"])(
+  "adding %s exposes its priced models immediately",
+  async (provider) => {
+    let saved = false;
+    const model = `${provider}/vendor/chat-model`;
+    fetchApi.mockImplementation((path: string) => {
+      if (path === "/api/models" || path === "/api/models?refresh=1")
+        return Promise.resolve({
+          groups: saved
+            ? [
+                {
+                  provider,
+                  keySource: "db",
+                  error: null,
+                  models: [
+                    {
+                      value: model,
+                      label: "Hosted chat",
+                      pricing: { input: 1, output: 4, cacheRead: 0.2, cacheWrite: 1 },
+                    },
+                  ],
+                },
+              ]
+            : [],
+          fetchedAt: 1,
+          cached: false,
+        });
+      return Promise.resolve([]);
+    });
+    postApi.mockImplementation(async () => {
+      saved = true;
+      return { ok: true };
+    });
+    renderWithProviders(<AdminPanel />);
+    await waitFor(() => expect(screen.getByText(EMPTY_KEYS)).toBeInTheDocument());
+    openForm();
+    fillForm("hosted", "fixture-secret");
+    fireEvent.change(screen.getByDisplayValue("Anthropic"), { target: { value: provider } });
+    fireEvent.click(screen.getByRole("button", { name: /^Save Key$/i }));
+    const option = await screen.findByRole("option", {
+      name: /Hosted chat · \$1\/\$4 per 1M in\/out/,
+    });
+    expect(option).toHaveAttribute("value", model);
+    expect(postApi).toHaveBeenCalledWith("/api/keys", {
+      name: "hosted",
+      provider,
+      value: "fixture-secret",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh model catalog" }));
+    await waitFor(() => expect(fetchApi).toHaveBeenCalledWith("/api/models?refresh=1"));
+  },
+);

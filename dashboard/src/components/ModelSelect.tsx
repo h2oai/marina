@@ -1,10 +1,12 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useMemo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
 import { useModels } from "../hooks/use-api";
+import { describeApiError, fetchApi } from "../lib/api";
 import { mergeGroups, providerLabel, totalModelCount } from "../lib/model-catalog";
-import type { ModelEntry } from "../lib/types";
+import type { ModelEntry, ModelsResponse } from "../lib/types";
 
 /**
  * Shared model picker — the single source of truth for how a model is chosen
@@ -31,6 +33,24 @@ export function ModelSelect({
   placeholderOption?: { value: string; label: string };
 }) {
   const { data: modelsData, isLoading } = useModels();
+  const queryClient = useQueryClient();
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const refresh = async () => {
+    setRefreshing(true);
+    setRefreshError(null);
+    try {
+      await queryClient.fetchQuery({
+        queryKey: ["models"],
+        queryFn: () => fetchApi<ModelsResponse>("/api/models?refresh=1"),
+        staleTime: 0,
+      });
+    } catch (error) {
+      setRefreshError(describeApiError(error));
+    } finally {
+      setRefreshing(false);
+    }
+  };
   const groups = useMemo(() => mergeGroups(modelsData?.groups), [modelsData]);
   // Only providers we hold a key for are callable — same filter the launch
   // picker uses, so the two surfaces always show the identical set.
@@ -78,8 +98,9 @@ export function ModelSelect({
             <optgroup key={g.provider} label={providerLabel(g.provider)}>
               {g.models.map((m) => (
                 <option key={m.value} value={m.value} title={buildOptionTitle(m)}>
-                  {m.label}
+                  {`${providerLabel(g.provider)} · ${m.label}`}
                   {formatCapabilitySuffix(m)}
+                  {m.pricing ? ` · $${m.pricing.input}/$${m.pricing.output} per 1M in/out` : ""}
                 </option>
               ))}
             </optgroup>
@@ -87,6 +108,20 @@ export function ModelSelect({
           <option value="__custom">Custom…</option>
         </select>
       </label>
+      <button
+        type="button"
+        aria-label="Refresh model catalog"
+        onClick={() => void refresh()}
+        disabled={refreshing}
+        className="text-[9px] text-text-dim hover:text-primary disabled:opacity-50"
+      >
+        {refreshing ? "Refreshing…" : "Refresh models"}
+      </button>
+      {refreshError && (
+        <p role="alert" className="text-[9px] text-danger">
+          {refreshError}
+        </p>
+      )}
       {!isLoading && !hasLive && (
         <div className="text-text-dim text-[9px]">
           No keyed providers — add an API key in Admin → Keys, or enter a custom provider/model.
@@ -108,6 +143,11 @@ export function ModelSelect({
 function buildOptionTitle(model: ModelEntry): string {
   const parts: string[] = [];
   if (model.description) parts.push(model.description);
+  if (model.contextLength) parts.push(`Context: ${model.contextLength.toLocaleString()} tokens`);
+  if (model.pricing)
+    parts.push(
+      `USD / 1M tokens: input ${model.pricing.input}, output ${model.pricing.output}, cached input ${model.pricing.cacheRead}`,
+    );
   const cap = describeCapabilities(model.capabilities);
   if (cap) parts.push(`Capabilities: ${cap}`);
   return parts.join(" • ");

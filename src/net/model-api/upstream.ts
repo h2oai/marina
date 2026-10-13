@@ -8,7 +8,7 @@
 
 import { calculateCost, type Usage as PiUsage } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
-import { defaultModelPrice } from "../../agent/provider-cost";
+import { costFromTokens, defaultModelPrice, type TokenPrice } from "../../agent/provider-cost";
 import { localOutputBudget } from "../../engine/constants";
 import type { Engine } from "../../engine/engine";
 import { getErrorMessage } from "../../engine/errors";
@@ -24,6 +24,8 @@ import {
   type MemoryReceipt,
 } from "../memory/memory-receipt";
 import { getDefaultUpstreamModel } from "../model/default-models";
+import { hostedModelInfo } from "../model/hosted-catalog";
+import { HOSTED_PROVIDERS, hostedBaseUrl, isHostedProvider } from "../model/hosted-providers";
 import {
   isLocalProvider,
   LOCAL_PROVIDERS,
@@ -86,6 +88,17 @@ const logger = new Logger();
 
 /** provider → upstream endpoint. `anthropic` uses a non-OpenAI request format. */
 const PROVIDER_UPSTREAM: Record<string, { url: string; envKeys: string[]; anthropic?: boolean }> = {
+  ...Object.fromEntries(
+    Object.entries(HOSTED_PROVIDERS).map(([provider, spec]) => [
+      provider,
+      {
+        get url() {
+          return `${hostedBaseUrl(provider as keyof typeof HOSTED_PROVIDERS)}/chat/completions`;
+        },
+        envKeys: [spec.envKey],
+      },
+    ]),
+  ),
   anthropic: {
     url: "https://api.anthropic.com/v1/messages",
     envKeys: ["ANTHROPIC_API_KEY"],
@@ -136,7 +149,7 @@ const PROVIDER_UPSTREAM: Record<string, { url: string; envKeys: string[]; anthro
 };
 
 /** Providers that serve other vendors' models under `<vendor>/<model>` ids. */
-const AGGREGATORS = new Set(["openrouter", "huggingface"]);
+const AGGREGATORS = new Set(["openrouter", "huggingface", "together", "nebius"]);
 
 // First-party providers preferred over OpenRouter on the fallback path, since
 // OpenRouter is an aggregator that re-routes (and adds markup). An explicitly
@@ -155,6 +168,8 @@ const FALLBACK_PRIORITY = [
   "mistral",
   "xai",
   "huggingface",
+  "together",
+  "nebius",
   "openrouter",
 ];
 
@@ -1677,7 +1692,7 @@ export function upstreamCostUsd(
 ): number | undefined {
   if (!target) return undefined;
   const slash = target.indexOf("/");
-  if (slash <= 0) return undefined;
+  if (slash <= 0 || isHostedProvider(target.slice(0, slash))) return undefined;
   if (metrics.inputTokens === undefined && metrics.outputTokens === undefined) return undefined;
   try {
     costCatalog ??= builtinModels();
@@ -1712,9 +1727,26 @@ export function upstreamCostUsd(
 }
 
 /** Fill `costUsd` from the catalog when the upstream did not report a cost. */
-function priceProxyMetrics(metrics: ProxyTraceMetrics, target?: string): ProxyTraceMetrics {
+function priceProxyMetrics(
+  metrics: ProxyTraceMetrics,
+  target?: string,
+  price?: TokenPrice,
+): ProxyTraceMetrics {
   if (metrics.costUsd !== undefined) return metrics;
-  const costUsd = upstreamCostUsd(target, metrics);
+  const costUsd =
+    price && (metrics.inputTokens !== undefined || metrics.outputTokens !== undefined)
+      ? costFromTokens(price, {
+          input: Math.max(
+            0,
+            (metrics.inputTokens ?? 0) -
+              (metrics.cacheReadTokens ?? 0) -
+              (metrics.cacheWriteTokens ?? 0),
+          ),
+          output: metrics.outputTokens,
+          cacheRead: metrics.cacheReadTokens,
+          cacheWrite: metrics.cacheWriteTokens,
+        })
+      : upstreamCostUsd(target, metrics);
   return costUsd === undefined ? metrics : { ...metrics, costUsd };
 }
 
@@ -1743,6 +1775,17 @@ async function traceProxyResponse(
     errorKind?: ProxyTraceMetrics["errorKind"];
   },
 ): Promise<Response> {
+  const provider = trace.target?.split("/")[0] ?? "";
+  const price =
+    response.ok && isHostedProvider(provider)
+      ? (
+          await hostedModelInfo(
+            provider,
+            trace.target!.slice(provider.length + 1),
+            resolveProviderKey(engine, provider) ?? "",
+          )
+        )?.pricing
+      : undefined;
   const headers = new Headers(response.headers);
   headers.set("x-request-id", trace.requestId);
   // The served upstream `provider/model` — known before the body, so it rides
@@ -1810,7 +1853,7 @@ async function traceProxyResponse(
     });
   }
   if (!response.body || !response.headers.get("content-type")?.includes("text/event-stream")) {
-    const metrics = priceProxyMetrics(await extractProxyUsage(response), trace.target);
+    const metrics = priceProxyMetrics(await extractProxyUsage(response), trace.target, price);
     setProxyMetricHeaders(headers, metrics);
     finish("completed", undefined, metrics);
     return new Response(response.body, {
@@ -1855,7 +1898,7 @@ async function traceProxyResponse(
     const usage: Record<string, unknown> | undefined =
       streamedUsage ??
       (streamUsageSidecar.get(response)?.() as Record<string, unknown> | undefined);
-    return priceProxyMetrics(usage ? metricsFromUsage(usage) : {}, trace.target);
+    return priceProxyMetrics(usage ? metricsFromUsage(usage) : {}, trace.target, price);
   };
   let firstChunkAt = 0;
   const stream = new ReadableStream<Uint8Array>({
@@ -1933,6 +1976,8 @@ function metricsFromUsage(usage: Record<string, unknown>): ProxyTraceMetrics {
     const cacheReadTokens = finite(
       usage.cache_read_input_tokens ??
         promptDetails?.cached_tokens ??
+        usage.cached_tokens ??
+        usage.prompt_cache_hit_tokens ??
         usage.cache_read_tokens ??
         usage.cacheRead,
     );

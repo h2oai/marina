@@ -9,12 +9,36 @@ import {
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import { HOSTED_PROVIDERS } from "../net/model/hosted-providers";
 import { defaultModelPrice } from "./provider-cost";
 
 // In-memory provider runtime: Marina owns credentials and durable agent state.
 // Do not refresh catalogs or persist credentials here. Per-request keys (including
 // rotated resident/internal tokens) take precedence over provider environment keys.
 export const piModels = builtinModels();
+// Nebius is not in pi's bundled registry. Marina keeps its literal provider ID
+// and uses the same Chat Completions transport; credentials remain per request.
+for (const [id, spec] of Object.entries(HOSTED_PROVIDERS)) {
+  if (piModels.getProvider(id)) continue;
+  piModels.setProvider(
+    createProvider({
+      id,
+      name: spec.name,
+      models: [],
+      api: openAICompletionsApi(),
+      auth: {
+        apiKey: {
+          name: `${spec.name} API key`,
+          resolve: async ({ ctx, credential, signal }) => {
+            signal.throwIfAborted();
+            const key = credential?.key || (await ctx.env(spec.envKey));
+            return key ? { auth: { apiKey: key }, source: spec.envKey } : undefined;
+          },
+        },
+      },
+    }),
+  );
+}
 
 // Deterministic fake model for E2E plumbing tests: no provider key, no network.
 // Enabled with MARINA_FAKE_MODEL=1; every model call returns a fixed text reply so

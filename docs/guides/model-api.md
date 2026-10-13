@@ -38,6 +38,79 @@ for current capabilities and pricing.
 
 ---
 
+## Together AI and Nebius Token Factory
+
+Run `marina init` and choose **together** or **nebius**, or add a key through
+**Admin → Keys → Add**. Environment configuration works too:
+
+```dotenv
+TOGETHER_API_KEY=your-together-key
+NEBIUS_API_KEY=your-nebius-key
+```
+
+Only one key is required. The model picker discovers the account's chat models and
+shows input/output prices in USD per million tokens. Select one as the default, or
+use its complete ID wherever Marina accepts a model:
+
+```text
+/model together/MiniMaxAI/MiniMax-M3
+/model nebius/MiniMaxAI/MiniMax-M3
+```
+
+The same IDs work for agents, coding, research, forecasts, and Marina's model API:
+
+```bash
+curl http://localhost:3300/v1/chat/completions \
+  -H "Authorization: Bearer $MARINA_MODEL_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"nebius/MiniMaxAI/MiniMax-M3","messages":[{"role":"user","content":"Hello"}],"stream":true}'
+```
+
+Marina retains the full provider model ID, including organizations and flavor
+suffixes. A named provider's rejection is returned to the caller; selecting a model
+does not authorize switching services. Tool calls, streaming and structured-output
+requests use the existing chat-completions path; individual models determine which
+features they support. Models absent from discovery can be entered using **Custom**.
+Image and embedding models are excluded from the chat picker.
+
+![Provider model picker with example token prices](../assets/model-provider-picker.png)
+
+The screenshot uses illustrative catalog values; the picker reads current prices
+from your configured provider.
+
+| Setting | Together AI | Nebius Token Factory |
+| --- | --- | --- |
+| Provider ID | `together` | `nebius` |
+| Key | `TOGETHER_API_KEY` | `NEBIUS_API_KEY` |
+| Default API root | `https://api.together.ai/v1` | `https://api.tokenfactory.nebius.com/v1` |
+| Optional API-root override | `TOGETHER_BASE_URL` | `NEBIUS_BASE_URL` |
+| Default model override | `MARINA_DEFAULT_TOGETHER_MODEL` | `MARINA_DEFAULT_NEBIUS_MODEL` |
+
+Both built-in defaults use `MiniMaxAI/MiniMax-M3`. Account availability can change;
+choose a currently available model from the picker or set the override to its
+provider-native ID. API-root overrides include `/v1` and apply to discovery and
+inference together. Keep credentials in the key setting, never in the URL.
+For a dedicated endpoint, select its deployed model ID explicitly.
+
+Prices come from [Together's model catalog](https://docs.together.ai/reference/models)
+and [Nebius's verbose catalog](https://docs.tokenfactory.nebius.com/api-reference/examples/list-of-models),
+normalized to USD per million tokens. Discovery and usage accounting share a
+credential- and endpoint-scoped cache, refreshed hourly or by the picker's refresh
+button. Token usage, cached input and advertised rates feed `/cost`, model-request
+traces and the daily spend ledger. A provider-reported charge takes precedence in
+proxy accounting. Catalog prices are estimates, not an invoice: dedicated capacity,
+taxes and other non-token charges are outside this estimate. A missing price is
+unknown, not evidence of free inference; a catalog outage still allows an explicit
+model request and does not borrow another vendor's price.
+
+Run `readiness providers` to verify actual inference after setup. Admin's key test
+checks model-list access without a paid completion. These services also work with
+Marina's existing OpenAI-compatible embedding adapter: set the appropriate
+`MARINA_MEMORY_EMBEDDING_URL`, model and immutable revision; the standard provider
+key is recognized only on its official host. See [memory](memory.md) for embedding
+configuration. For image generation, configure the existing
+`TOGETHER_IMAGE_BASE_URL` or `NEBIUS_IMAGE_BASE_URL` adapter explicitly.
+
 ## Quick Start
 
 ### 1. Start the Server

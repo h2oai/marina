@@ -154,6 +154,8 @@ const PROVIDER_LABELS: Record<string, string> = {
   openai: "OpenAI",
   google: "Google",
   openrouter: "OpenRouter",
+  together: "Together AI",
+  nebius: "Nebius Token Factory",
   huggingface: "Hugging Face",
   groq: "Groq",
   mistral: "Mistral",

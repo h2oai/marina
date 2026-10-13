@@ -880,6 +880,8 @@ export interface KeyStatus {
 }
 
 export interface ModelEntry {
+  /** Advertised USD per million tokens; absence is unknown. */
+  pricing?: { input: number; output: number; cacheRead: number; cacheWrite: number };
   value: string;
   label: string;
   contextLength?: number;

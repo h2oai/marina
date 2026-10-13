@@ -21,6 +21,7 @@
 import type { Api, AssistantMessage, Context, Message, Model } from "@earendil-works/pi-ai";
 import { dailyCapRefusal, recordSpend } from "../engine/spend-ledger";
 import { isLocalProvider } from "../net/model/model-discovery";
+import { prepareHostedModel } from "./hosted-model";
 import { piModels } from "./pi-models";
 import {
   isOpenRouterModel,
@@ -135,13 +136,15 @@ export type ProbeComplete = (
   },
 ) => Promise<AssistantMessage>;
 
-const defaultComplete: ProbeComplete = (model, context, options) =>
-  piModels.completeSimple(model, context, {
+const defaultComplete: ProbeComplete = async (model, context, options) => {
+  await prepareHostedModel(model, options.apiKey, undefined, options.signal);
+  return piModels.completeSimple(model, context, {
     apiKey: options.apiKey,
     maxTokens: options.maxTokens,
     signal: options.signal,
     onPayload: (payload) => options.onPayload(payload),
   });
+};
 
 function classify(message: AssistantMessage): { outcome: ToolProbeOutcome; detail: string } {
   const calls = (message.content ?? []).filter((block) => block.type === "toolCall").length;

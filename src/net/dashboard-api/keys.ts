@@ -439,6 +439,8 @@ export const HOT_RELOADABLE_VARS: ReadonlySet<string> = new Set([
   "GOOGLE_API_KEY",
   "GROQ_API_KEY",
   "OPENROUTER_API_KEY",
+  "TOGETHER_API_KEY",
+  "NEBIUS_API_KEY",
   "CEREBRAS_API_KEY",
   "XAI_API_KEY",
   "MISTRAL_API_KEY",
