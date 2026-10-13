@@ -148,6 +148,7 @@ Marina can be a signed participant in the MIT Social Simulation Arena (`src/aren
 - `protocol.ts` is a byte-exact port of the arena's `signed_forecasts.py` (golden vector in `test/arena.test.ts` — never change it without re-deriving it from the arena's code); `score-shapes.ts` must keep matching `test/arena-score-shapes.test.ts`.
 - `arena_submissions` (migration 127) is append-only; the autopilot files each round once; an operator may replace it before lock with `--replace`; a transport failure re-sends the SAME signed request within 240 s. Filing traces (migration 154) live in `detail`, separate from the signed request; sign at completion and recheck the lock margin after forecasting.
 - No outcome before its release: evaluation runs in lock order, and inputs are only data fetched or published before the lock. A forecaster change is judged on the leaderboard's metric (mean of per-round skill), never total CRPS.
+- `arena-filing-watch` (tick job, ~10 min, `src/arena/filing-watch.ts`) only READS `arena_submissions`/`arena_attempts` for rounds locking within 24 h and keeps one `arena-filing:<round>` alert per round in trouble (unfiled, failed or stuck refresh, no near-lock refresh); readiness `arena-filing`. It never files.
 - Web research and experiments are shadow-only (`arena_shadow`, migration 128), never backtested against revealed outcomes; plans and selector advice never promote themselves into live routes; budget exhaustion is never a successful fallback.
 → docs/architecture/forecasting.md
 

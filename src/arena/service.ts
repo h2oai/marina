@@ -15,6 +15,12 @@ import type { NotesStore } from "../persistence/interfaces/notes-store";
 import { type ArenaConfig, arenaConfigFromEnv, loadArenaKey } from "./config";
 import { ArenaData, DEFAULT_ARENA_DATA_URL } from "./data";
 import type { Forecaster, Learner } from "./evaluate";
+import {
+  type FilingWatchResult,
+  filingFindings,
+  recordFilingWatch,
+  WATCH_WINDOW_HOURS,
+} from "./filing-watch";
 import { forecastRound } from "./forecast";
 import { forecastSettings } from "./forecast-config";
 import { requireFreshForecast } from "./freshness";
@@ -745,6 +751,82 @@ let running = false;
  * Hourly: file every round inside the window that has no accepted forecast.
  * Serial and non-reentrant; a failure on one round never stops the others.
  */
+/** The alert surface the filing watch writes to (a slice of the world DB). */
+export interface FilingWatchAlerts {
+  upsertOperationalAlert: MarinaDB["upsertOperationalAlert"];
+  resolveOperationalAlertsExcept: MarinaDB["resolveOperationalAlertsExcept"];
+}
+
+/**
+ * One pass of the arena filing watch (`arena-filing-watch` tick job): read the
+ * open rounds, check the filings of those locking within 24 h
+ * (`filingFindings`), and keep one operational alert per round in trouble
+ * (category `arena-filing`; the rest are resolved). Read-only toward the
+ * arena: it never files. Off when no entrant is configured.
+ */
+export async function runArenaFilingWatch(
+  store: ArenaStore & FilingWatchAlerts,
+  env: NodeJS.ProcessEnv = process.env,
+  now = Date.now(),
+): Promise<FilingWatchResult | undefined> {
+  const status = arenaStatus(env);
+  let config: ArenaConfig | undefined;
+  try {
+    config = arenaConfigFromEnv(env);
+  } catch {
+    config = undefined;
+  }
+  if (!status.configured || !status.entrant || !config) {
+    store.resolveOperationalAlertsExcept(FILING_ALERT_CATEGORY, []);
+    return undefined;
+  }
+  const entrant = status.entrant;
+  let result: FilingWatchResult;
+  try {
+    const rounds = await dataFor(config).openRounds(now);
+    const watched = rounds.filter((r) => {
+      const h = (Date.parse(r.lock_at) - now) / 3_600_000;
+      return h > 0 && h <= WATCH_WINDOW_HOURS;
+    }).length;
+    result = { checkedAt: now, watched, findings: filingFindings(rounds, store, entrant, now) };
+  } catch (err) {
+    result = { checkedAt: now, watched: 0, findings: [], error: getErrorMessage(err) };
+  }
+  recordFilingWatch(result);
+  const keys: string[] = [];
+  for (const f of result.findings) {
+    const key = `${FILING_ALERT_CATEGORY}:${f.roundId}`;
+    keys.push(key);
+    store.upsertOperationalAlert({
+      key,
+      severity: f.severity,
+      category: FILING_ALERT_CATEGORY,
+      title: `Arena round ${f.roundId}: ${f.problem.replace(/-/g, " ")}`,
+      detail: f.detail,
+      remedy: `Check the operator's arena runner, then refile: bun run arena submit ${f.roundId} --replace`,
+      deadlineAt: Date.parse(f.lockAt),
+      metadata: { roundId: f.roundId, problem: f.problem, entrant },
+    });
+  }
+  if (result.error) {
+    const key = `${FILING_ALERT_CATEGORY}:rounds-unreadable`;
+    keys.push(key);
+    store.upsertOperationalAlert({
+      key,
+      severity: "warning",
+      category: FILING_ALERT_CATEGORY,
+      title: "Arena filing watch could not read the open rounds",
+      detail: result.error.slice(0, 300),
+      remedy: "Check network access to the arena data source (MARINA_ARENA_DATA_URL).",
+    });
+  }
+  store.resolveOperationalAlertsExcept(FILING_ALERT_CATEGORY, keys);
+  return result;
+}
+
+/** Operational-alert category of the filing watch. */
+export const FILING_ALERT_CATEGORY = "arena-filing";
+
 export async function runArenaAutopilot(
   store: ArenaStore,
   env: NodeJS.ProcessEnv = process.env,

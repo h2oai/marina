@@ -85,6 +85,17 @@ the mean of per-round skill. Everywhere else it files exact persistence.
 
 `arena show <round_id>` prints exactly what would be filed and which spread rule each series used.
 
+### Filing watch
+
+Filing stays the operator's act outside the world, but the server watches it. When an entrant is configured, the `arena-filing-watch` job runs about every 10 minutes and reads the open rounds. For every round locking within 24 hours, it compares them with the filings and refresh attempts recorded in the world DB (`arena_submissions`, `arena_attempts`). It raises one operational alert per round in trouble (category `arena-filing`, deadline = the lock) when:
+
+- a round has **no accepted filing** (critical within 6 h of its lock);
+- a refresh **failed** (error, rejected or skipped) after the standing filing;
+- a refresh **started and never finished** (over 30 minutes);
+- within 45 minutes of the lock, **nothing ran in the last 90 minutes**, meaning the near-lock pass did not run.
+
+Readiness shows the last pass as `arena-filing`. The watch only reads: it never files, so a broken runner (a stale build, a failing timer) shows up within one pass instead of after the lock. An alert resolves itself once its round is fine again.
+
 ### Input freshness before filing
 
 Official CLI and autopilot forecasts check observation dates before model work and again before

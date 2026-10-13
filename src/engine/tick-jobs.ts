@@ -3,7 +3,7 @@
 
 import type { AgentRuntime } from "../agent/agent-runtime";
 import { recomputeAll as recomputeStanding } from "../agent/standing";
-import { runArenaAutopilot, runArenaShadow } from "../arena/service";
+import { runArenaAutopilot, runArenaFilingWatch, runArenaShadow } from "../arena/service";
 import type { BoardManager } from "../coordination/board-manager";
 import type { ChannelManager } from "../coordination/channel-manager";
 import type { TaskManager } from "../coordination/task-manager";
@@ -147,6 +147,22 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
       const db = host.db;
       if (!db) return;
       return Promise.all([runArenaAutopilot(db), runArenaShadow(db)]).then(() => undefined);
+    },
+  });
+
+  // Every ~10 min: watch the arena filings of rounds locking within 24 h
+  // (src/arena/filing-watch.ts). Read-only — filing stays the operator's act
+  // outside the world; this raises an alert when that runner fails or stalls.
+  // A no-op with no entrant configured.
+  s.register({
+    name: "arena-filing-watch",
+    every: ARENA_FILING_WATCH_INTERVAL,
+    phase: ARENA_FILING_WATCH_PHASE,
+    failureMessage: "Arena filing watch failed",
+    run: () => {
+      const db = host.db;
+      if (!db) return;
+      return runArenaFilingWatch(db).then(() => undefined);
     },
   });
 
@@ -388,6 +404,11 @@ export const OUTCOME_JUDGE_PHASE = 3150;
 
 /** The hourly phase of automatic resolution of market-linked answers (src/outcomes/autoresolve.ts). */
 export const OUTCOME_AUTORESOLVE_PHASE = 3450;
+
+/** Ticks between arena filing-watch passes (src/arena/filing-watch.ts). */
+export const ARENA_FILING_WATCH_INTERVAL = 600;
+/** Its phase within that interval. */
+export const ARENA_FILING_WATCH_PHASE = 420;
 
 /** Ticks between schedule passes (src/schedules/runner.ts). */
 export const SCHEDULES_INTERVAL = 10;
