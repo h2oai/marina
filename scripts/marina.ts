@@ -9,7 +9,7 @@
  *   marina connect <name> [...]  connect to a running Marina (REPL / -c one-shot / pipe)
  *   marina attach [url] [...]    code in an existing coding session on a running Marina
  *   marina start                 run the full server in the foreground
- *   marina status                is a Marina running? health + capability readiness
+ *   marina status [--url|--port] is a Marina running? health + capability readiness
  *   marina init                  interactive .env setup
  *   marina version               print the package version
  *   marina --help | -h           usage
@@ -36,7 +36,8 @@ export type Dispatch =
   | { kind: "help" }
   | { kind: "version" }
   | { kind: "init" }
-  | { kind: "status" }
+  /** `url` is set only when `--url`/`--port` was given; env defaults resolve at run time. */
+  | { kind: "status"; url?: string }
   /** `message`, when present, is a complete one-line error printed without the usage text. */
   | { kind: "usage-error"; arg: string; message?: string }
   /** A bare word that is neither a subcommand nor a directory (`marina myname`). */
@@ -144,7 +145,7 @@ export function parseDispatch(
   if (first === "--help" || first === "-h" || first === "help") return { kind: "help" };
   if (first === "--version" || first === "-v" || first === "version") return { kind: "version" };
   if (first === "init") return { kind: "init" };
-  if (first === "status") return { kind: "status" };
+  if (first === "status") return parseStatus(argv.slice(1));
   if (first === "supervise") return { kind: "supervise", rest: argv.slice(1) };
   if (first === "route") return { kind: "route", rest: argv.slice(1) };
   if (first === "connect") return { kind: "connect", rest: argv.slice(1) };
@@ -332,7 +333,8 @@ Usage:
   marina supervise [...]       manage local coding agents from the dashboard
   marina route [...]           join, publish, and exchange participant messages
   marina start                 run the full server in the foreground
-  marina status                health + capability readiness of the running Marina
+  marina status [--url <ws-url> | --port <n>]
+                               health + capability readiness of the running Marina
   marina init                  interactive setup (writes .env)
   marina version               print the package version
   marina --help                show this help
@@ -396,7 +398,7 @@ Exit codes (one-shot -p):
 
 Environment:
   MARINA_URL                   server URL for connect/status/attach and connected coding
-                               (connect/status default: ws://localhost:3300)
+                               (connect/status default: ws://localhost:$WS_PORT, else 3300)
   MARINA_TOKEN                 credential for connected coding or status readiness;
                                connected coding otherwise uses that account's server-bound cache
   MARINA_CODE_FRESH=1          same as --fresh
@@ -436,8 +438,16 @@ export interface HealthView {
 export interface ReadinessView {
   instanceName?: string;
   world?: string;
-  trustProfile?: { profile?: string; autonomy?: string };
-  checks?: { id: string; label: string; status: string; detail: string; remediation?: string }[];
+  trustProfile?: { profile?: string; autonomy?: string; ungated?: boolean };
+  checks?: {
+    id: string;
+    label: string;
+    status: string;
+    detail: string;
+    remediation?: string;
+    /** An optional extra: the core experience works without it. */
+    optional?: boolean;
+  }[];
 }
 
 function fmtUptime(ms: number | undefined): string {
@@ -458,7 +468,8 @@ export function formatStatus(
   lines.push(`Marina at ${url}: ${health.status ?? "unknown"}`);
   const world = "world" in readiness && readiness.world ? readiness.world : undefined;
   const name = "instanceName" in readiness ? readiness.instanceName : undefined;
-  if (name || world) lines.push(`  instance   ${name ?? "?"}${world ? ` (${world})` : ""}`);
+  if (name || world)
+    lines.push(`  instance   ${name ?? "?"}${world && world !== name ? ` (${world})` : ""}`);
   lines.push(`  uptime     ${fmtUptime(health.uptime)}`);
   lines.push(
     `  online     ${health.connections ?? "?"} connections · ${health.entities ?? "?"} entities · ${health.agents ?? "?"} agents · ${health.rooms ?? "?"} rooms`,
@@ -468,8 +479,11 @@ export function formatStatus(
     return lines.join("\n");
   }
   if (readiness.trustProfile?.profile) {
+    const trust = readiness.trustProfile;
     lines.push(
-      `  trust      ${readiness.trustProfile.profile}${readiness.trustProfile.autonomy ? ` · autonomy ${readiness.trustProfile.autonomy}` : ""}`,
+      trust.ungated
+        ? `  trust      ${trust.profile} · ungated (gates off; MARINA_AUTONOMY=guarded enforces them)`
+        : `  trust      ${trust.profile}${trust.autonomy ? ` · autonomy ${trust.autonomy}` : ""}`,
     );
   }
   const checks = readiness.checks ?? [];
@@ -478,7 +492,13 @@ export function formatStatus(
     const width = Math.max(...checks.map((c) => c.label.length));
     for (const c of checks) {
       const mark =
-        c.status === "ok" ? "ok      " : c.status === "degraded" ? "degraded" : "off     ";
+        c.status === "ok"
+          ? "ok      "
+          : c.optional
+            ? "optional"
+            : c.status === "degraded"
+              ? "degraded"
+              : "off     ";
       lines.push(`  ${mark}   ${c.label.padEnd(width)}  ${c.detail}`);
       if (c.status !== "ok" && c.remediation)
         lines.push(`${" ".repeat(15 + width)}→ ${c.remediation}`);
@@ -506,8 +526,49 @@ function cachedSessionToken(url: string): string | undefined {
   }
 }
 
-async function runStatus(): Promise<number> {
-  const wsUrl = process.env.MARINA_URL ?? "ws://localhost:3300";
+/** `marina status [--url <ws-url>] [--port <n>]` — the same flags as `marina connect`. */
+function parseStatus(rest: string[]): Dispatch {
+  let url: string | undefined;
+  let port: string | undefined;
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i]!;
+    const value = rest[i + 1];
+    if ((arg === "--url" || arg === "--port") && value && !value.startsWith("-")) {
+      if (arg === "--url") url = value;
+      else port = value;
+      i++;
+      continue;
+    }
+    return {
+      kind: "usage-error",
+      arg,
+      message: `marina status: unexpected "${arg}". Usage: marina status [--url <ws-url> | --port <n>]`,
+    };
+  }
+  if (port !== undefined && !/^\d{1,5}$/.test(port))
+    return { kind: "usage-error", arg: port, message: `marina status: --port expects a number.` };
+  const resolved = url ?? (port ? `ws://localhost:${port}` : undefined);
+  return resolved ? { kind: "status", url: resolved } : { kind: "status" };
+}
+
+/**
+ * The server `marina status` probes: `--url`/`--port` (already folded into
+ * `flagUrl`), then MARINA_URL, then WS_PORT, then the default — the same order
+ * as `marina connect`. A pasted `/ws` endpoint is accepted.
+ */
+export function statusServerUrl(
+  flagUrl: string | undefined,
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const raw =
+    flagUrl ??
+    (env.MARINA_URL || undefined) ??
+    (env.WS_PORT ? `ws://localhost:${env.WS_PORT}` : "ws://localhost:3300");
+  return raw.replace(/\/ws\/?$/, "");
+}
+
+async function runStatus(flagUrl?: string): Promise<number> {
+  const wsUrl = statusServerUrl(flagUrl);
   const base = httpBaseFromUrl(wsUrl);
   let health: HealthView;
   try {
@@ -593,7 +654,7 @@ if (import.meta.main) {
       break;
     }
     case "status":
-      process.exit(await runStatus());
+      process.exit(await runStatus(dispatch.url));
       break;
     case "supervise": {
       const { runSupervisor } = await import("./supervise");

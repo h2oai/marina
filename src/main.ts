@@ -9,7 +9,7 @@ import { RateLimiter } from "./auth/rate-limiter";
 import { parseExecUnrestricted } from "./coding/exec-approver";
 import { ensureConfiguredRoots } from "./coding/workspace-registry";
 import { applyStoredDecisionSettings } from "./decisions/settings";
-import { describeAutonomyPosture, getAutonomyPosture } from "./engine/autonomy";
+import { describeAutonomyPosture, getAutonomyPosture, ungatedPostureNote } from "./engine/autonomy";
 import {
   DASHBOARD_BROADCAST_INTERVAL_MS,
   MARINA_LOGIN_ATTEMPTS_PER_MIN,
@@ -40,6 +40,7 @@ import { LogServer } from "./net/log-server";
 import { McpServerAdapter } from "./net/mcp/mcp-server";
 import { describeDefaultUpstream } from "./net/model/model-api";
 import { detectLocalContextWindow, detectOllamaDefaultModel } from "./net/model/model-discovery";
+import { providerSetupHint } from "./net/model/provider-setup";
 import { markServingProcess } from "./net/model/self-model-token";
 import { TelnetServer } from "./net/telnet-server";
 import { isLoopbackHostname, resolveWsBindHostname, WebSocketServer } from "./net/websocket-server";
@@ -763,10 +764,7 @@ if (!process.env.ALLOWED_ORIGINS) {
 if (engine.agentRuntime.isAvailable()) {
   logger.info("agents", "Agent runtime ready — LLM API keys detected");
 } else {
-  logger.warn(
-    "agents",
-    "No LLM API keys configured — agents cannot be spawned. Set any one of OPENROUTER_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, HUGGINGFACE_API_KEY, TOGETHER_API_KEY, NEBIUS_API_KEY (or run Ollama locally), or use 'key add' in-world.",
-  );
+  logger.warn("agents", `No model provider — agents cannot be spawned. ${providerSetupHint()}`);
 }
 if (
   process.env.NODE_ENV === "production" &&
@@ -797,10 +795,10 @@ if (
   // operational (including the wiring summary right below) goes through Logger.
   console.log(
     [
-      `Marina "${INSTANCE_NAME}" is up · world: ${world.name}`,
+      `Marina "${INSTANCE_NAME}" is up${world.name === INSTANCE_NAME ? "" : ` · world: ${world.name}`}`,
       `  ${surfaces.join(" · ")}`,
       `  Federate: gateway add <name> ws://<host>:${boundWsPort}/ws`,
-      `  Autonomy: ${describeAutonomyPosture()}`,
+      `  Autonomy: ${isLocalUngated() ? ungatedPostureNote() : describeAutonomyPosture()}`,
     ].join("\n"),
   );
 }

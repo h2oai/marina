@@ -149,8 +149,19 @@ beforeEach(() => {
 
 describe("health helpers", () => {
   it("counts statuses, orders attention degraded-first and grades the tone", () => {
-    expect(healthCounts(CHECKS)).toEqual({ ok: 1, degraded: 1, off: 1 });
+    expect(healthCounts(CHECKS)).toEqual({ ok: 1, degraded: 1, off: 1, optional: 0 });
     expect(attentionChecks(CHECKS).map((c) => c.id)).toEqual(["room-agents", "tabh2o"]);
+    // An optional extra counts apart from `off` and sorts after real gaps.
+    const withOptional: ReadinessReport["checks"] = [
+      { id: "corpus", label: "Corpus", status: "off", detail: "bm25", optional: true },
+      ...CHECKS,
+    ];
+    expect(healthCounts(withOptional)).toEqual({ ok: 1, degraded: 1, off: 1, optional: 1 });
+    expect(attentionChecks(withOptional).map((c) => c.id)).toEqual([
+      "room-agents",
+      "tabh2o",
+      "corpus",
+    ]);
     expect(healthTone({ ok: 3, degraded: 0, off: 0 })).toBe("success");
     expect(healthTone({ ok: 3, degraded: 0, off: 2 })).toBe("success");
     expect(healthTone({ ok: 1, degraded: 1, off: 0 })).toBe("warning");

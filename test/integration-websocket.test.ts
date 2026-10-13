@@ -176,4 +176,14 @@ describe("WebSocket Integration", () => {
     expect(data.status).toBe("ok");
     expect(data.rooms).toBeGreaterThan(0);
   });
+
+  it("answers unknown paths with 404, not a 200 placeholder", async () => {
+    for (const path of ["/favicon.ico", "/robots.txt", "/docs", "/readiness"]) {
+      const response = await fetch(`http://localhost:${WS_PORT}${path}`);
+      expect(response.status).toBe(404);
+      expect(await response.text()).toContain("/dashboard");
+    }
+    const root = await fetch(`http://localhost:${WS_PORT}/`, { redirect: "manual" });
+    expect(root.status).toBe(302);
+  });
 });

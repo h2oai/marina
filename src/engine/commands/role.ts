@@ -24,6 +24,7 @@ import {
   type RoleLoopSections,
 } from "../../persistence/db-agents";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import { canonicalSub, unknownSubcommand } from "../parse-input";
 import { rankFloorRefusal } from "../rank-floor";
 import { checkRoleEdit, refuseOwnRole } from "../role-guard";
 import { requiresPersistence } from "./command-messages";
@@ -151,6 +152,20 @@ export function renderRoleDiff(a: RoleRow, b: RoleRow): string {
   return lines.join("\n");
 }
 
+const ROLE_SUBCOMMANDS = [
+  "list",
+  "view",
+  "history",
+  "lint",
+  "diff",
+  "export",
+  "import",
+  "reload",
+  "create",
+  "edit",
+  "delete",
+] as const;
+
 export function roleCommand(deps: {
   db?: MarinaDB;
   getEntity?: (id: EntityId) => Entity | undefined;
@@ -206,7 +221,8 @@ export function roleCommand(deps: {
       };
       const db = deps.db;
       const tokens = input.tokens;
-      const sub = tokens[0]?.toLowerCase();
+      // `show`/`info` → view, `ls` → list, `remove`/`rm` → delete (parse-input families).
+      const sub = canonicalSub(tokens[0], ROLE_SUBCOMMANDS);
 
       if (!sub || sub === "list") {
         const roles = db.getAllRoles();
@@ -522,7 +538,11 @@ export function roleCommand(deps: {
         default:
           ctx.send(
             input.entity,
-            "Usage: role list | role view <name> [goal <text>] | role lint <name> | role diff <a> <b> | role history <name> | role create <name> ... | role edit <name> ... | role reload <name> | role delete <name> | role export <name> | role import <bundle>",
+            unknownSubcommand(
+              "role",
+              tokens[0],
+              "Usage: role list | role view <name> [goal <text>] | role lint <name> | role diff <a> <b> | role history <name> | role create <name> ... | role edit <name> ... | role reload <name> | role delete <name> | role export <name> | role import <bundle>",
+            ),
           );
       }
     },

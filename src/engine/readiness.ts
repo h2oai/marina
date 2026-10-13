@@ -17,6 +17,7 @@ import {
 import { activeGateQuestions, BASELINE_GATE_QUESTIONS } from "../decisions/gate-questions";
 import { decisionHealth } from "../decisions/health";
 import { describeDecisionSettings } from "../decisions/settings";
+import { providerSetupHint } from "../net/model/provider-setup";
 import { localModelApiKey } from "../net/model-api/shared";
 import { describeDefaultUpstream } from "../net/model-api/upstream";
 import { ALERT_AFTER_FAILURES, schedulesMode } from "../schedules/runner";
@@ -27,7 +28,13 @@ import { corpusEmbeddingStatus } from "./search-providers/corpus-vectors";
 import { searchBackendHealth } from "./search-providers/health";
 import { describeSearchReadiness } from "./search-readiness";
 import { dailySpend, formatSpendUsd, scopeSpendToday } from "./spend-ledger";
-import { getTrustProfile, isLocalUngated, isOpenApiMode, type TrustProfile } from "./trust-profile";
+import {
+  getTrustProfile,
+  isLocalProfile,
+  isLocalUngated,
+  isOpenApiMode,
+  type TrustProfile,
+} from "./trust-profile";
 
 /**
  * Operator-facing capability readiness.
@@ -57,7 +64,28 @@ export interface ReadinessCheck {
   detail: string;
   /** Concrete next step when not `ok`. */
   remediation?: string;
+  /**
+   * An optional extra: the core experience works without it. A non-ok
+   * optional check is rendered neutrally, never counted as `off`/`degraded`
+   * in summaries, and never a demo blocker. `status` keeps its own meaning.
+   */
+  optional?: true;
 }
+
+/** Summary counts; a non-ok optional check counts only as `optional`. */
+export function readinessCounts(checks: readonly ReadinessCheck[]): {
+  ok: number;
+  degraded: number;
+  off: number;
+  optional: number;
+} {
+  const counts = { ok: 0, degraded: 0, off: 0, optional: 0 };
+  for (const c of checks) counts[c.status !== "ok" && c.optional ? "optional" : c.status]++;
+  return counts;
+}
+
+/** Where a missing model provider is reported; dependent checks point here. */
+const SEE_PROVIDER = "Configure a model provider first (see LLM provider configuration).";
 
 /** WHO this instance is for, and whether permissions are enforced. */
 export interface ReadinessTrustProfile {
@@ -147,8 +175,7 @@ export function computeReadiness(engine: Engine): ReadinessReport {
           label: "LLM provider configuration",
           status: "off",
           detail: "no supported provider key or local runtime is configured",
-          remediation:
-            "Set a supported provider key, add one in Admin → Keys, or configure LLAMA_BASE_URL for a local runtime.",
+          remediation: `${providerSetupHint()} Admin → Keys also works.`,
         },
   );
 
@@ -208,16 +235,25 @@ export function computeReadiness(engine: Engine): ReadinessReport {
             ? "saved agents (e.g. the Chronicler) respawn on boot"
             : "saved agents (e.g. the Chronicler) respawn on boot (local-install default; AGENT_AUTORESPAWN=false turns it off)",
         }
-      : {
-          id: "auto-respawn",
-          label: "Agent auto-respawn",
-          status: "off",
-          detail: autoRespawnExplicit
-            ? "saved agents do NOT auto-spawn on boot (AGENT_AUTORESPAWN)"
-            : "saved agents do NOT auto-spawn on boot (default: on only for a local install with a provider)",
-          remediation:
-            "Set AGENT_AUTORESPAWN=true to auto-spawn seeded/saved agents, or spawn them manually with `agent spawn`.",
-        },
+      : !autoRespawnExplicit && isLocalProfile(env) && !engine.agentRuntime.isAvailable()
+        ? {
+            id: "auto-respawn",
+            label: "Agent auto-respawn",
+            status: "off",
+            detail:
+              "off only because no model provider is configured — on by default for this local install once one is",
+            remediation: SEE_PROVIDER,
+          }
+        : {
+            id: "auto-respawn",
+            label: "Agent auto-respawn",
+            status: "off",
+            detail: autoRespawnExplicit
+              ? "saved agents do NOT auto-spawn on boot (AGENT_AUTORESPAWN)"
+              : "saved agents do NOT auto-spawn on boot (default: on only for a local install with a provider)",
+            remediation:
+              "Set AGENT_AUTORESPAWN=true to auto-spawn seeded/saved agents, or spawn them manually with `agent spawn`.",
+          },
   );
 
   // ── Chronicler — reads + auto `event` rows always work; this is synthesis ─
@@ -253,9 +289,13 @@ export function computeReadiness(engine: Engine): ReadinessReport {
       status: "degraded",
       detail:
         "seeded but not running — only auto `event` rows are recorded; no narrative/digest synthesis",
-      remediation: hasKey
-        ? "Set AGENT_AUTORESPAWN=true, or run: agent spawn Chronicler model marina/default role chronicler"
-        : "Configure an LLM provider key first, then AGENT_AUTORESPAWN=true (or: agent spawn Chronicler model marina/default role chronicler).",
+      remediation: !hasKey
+        ? autoRespawnExplicit || !isLocalProfile(env)
+          ? `${SEE_PROVIDER} Then AGENT_AUTORESPAWN=true (or: agent spawn Chronicler model marina/default role chronicler).`
+          : `${SEE_PROVIDER} It then respawns on the next boot (local default), or now: agent spawn Chronicler model marina/default role chronicler`
+        : autoRespawn
+          ? "Restart to respawn it, or run: agent spawn Chronicler model marina/default role chronicler"
+          : "Set AGENT_AUTORESPAWN=true, or run: agent spawn Chronicler model marina/default role chronicler",
     });
   } else {
     checks.push({
@@ -283,11 +323,15 @@ export function computeReadiness(engine: Engine): ReadinessReport {
           id: "watcher",
           label: "Watcher",
           status: "off",
+          optional: true,
           detail: watcherRole
-            ? "watcher role seeded, but no watcher agent running"
-            : "no watcher role seeded in this world",
-          remediation:
-            "Spawn one: agent spawn Watcher model marina/default role watcher (watch & probe still work without it).",
+            ? "watcher role seeded, but no watcher agent running (watch & probe work without it)"
+            : "no watcher role in this world (watch & probe work without it)",
+          remediation: !hasKey
+            ? SEE_PROVIDER
+            : watcherRole
+              ? "Optional: agent spawn Watcher model marina/default role watcher"
+              : "Optional: the markets and showcase worlds seed the watcher role (MARINA_WORLD=markets); here, `role create watcher …` first, then agent spawn Watcher model marina/default role watcher",
         },
   );
 
@@ -306,7 +350,7 @@ export function computeReadiness(engine: Engine): ReadinessReport {
       label: "Room agents",
       status: "degraded",
       detail: "enabled but no LLM key — rooms fall back to static entities",
-      remediation: "Configure an LLM provider key.",
+      remediation: SEE_PROVIDER,
     });
   } else {
     checks.push({
@@ -330,6 +374,7 @@ export function computeReadiness(engine: Engine): ReadinessReport {
           id: "tabh2o",
           label: "TabH2O forecasting",
           status: "off",
+          optional: true,
           detail: "TABH2O_API_KEY unset — `market forecast` degrades (LLM reasoning still works)",
           remediation: "Set TABH2O_API_KEY to enable tabular forecasting.",
         },
@@ -368,6 +413,7 @@ export function computeReadiness(engine: Engine): ReadinessReport {
             id: "corpus-hybrid",
             label: "Corpus hybrid search",
             status: "off",
+            optional: true,
             detail: "corpora rank with BM25 (optional: dense vectors fused with BM25)",
             remediation:
               "Optional: set MARINA_CORPUS_EMBEDDINGS (local, ollama or any OpenAI-compatible endpoint) and run `bun run corpus embed <name>`.",
@@ -463,7 +509,7 @@ export function computeReadiness(engine: Engine): ReadinessReport {
       status: "degraded",
       detail:
         "auth set but no upstream provider — /v1 returns 503 until a key or model agent exists",
-      remediation: "Configure an LLM provider key (or run a model-channel provider agent).",
+      remediation: `${SEE_PROVIDER} (Or run a model-channel provider agent.)`,
     });
   } else {
     checks.push({
@@ -483,6 +529,7 @@ export function computeReadiness(engine: Engine): ReadinessReport {
       id: "decisions",
       label: "Decisions (route / gate / verify)",
       status: "off",
+      optional: true,
       detail:
         (env.MARINA_DECISIONS?.trim().toLowerCase() === "off"
           ? "MARINA_DECISIONS=off"
@@ -586,6 +633,7 @@ export function computeReadiness(engine: Engine): ReadinessReport {
         id: "decision-engines",
         label: "Decision engines (/v1/systemone, harness)",
         status: "off",
+        optional: true,
         detail: `no decision engines — nothing answers /v1/systemone${runtimeNote}`,
         remediation:
           "Set MARINA_DECISIONS (Jev) and/or MARINA_DECISION_ENGINES (any model Marina routes) — see config/environment.reference.",
@@ -648,6 +696,7 @@ export function computeReadiness(engine: Engine): ReadinessReport {
   let activeAgents = 0;
   let recentCommunications = 0;
   let marinaToolCalls = 0;
+  let agentToolCalls = 0;
   const responseDurations: number[] = [];
   try {
     const recent = engine.db?.queryFeedEvents({ since: Date.now() - 5 * 60_000, limit: 200 }) ?? [];
@@ -679,6 +728,7 @@ export function computeReadiness(engine: Engine): ReadinessReport {
     activeAgents = usage?.activeAgents ?? 0;
     recentCommunications = usage?.communications ?? 0;
     marinaToolCalls = usage?.marinaToolCalls ?? 0;
+    agentToolCalls = usage?.toolCalls ?? 0;
   } catch {
     // Primitive evidence is additive and must never break readiness.
   }
@@ -723,31 +773,46 @@ export function computeReadiness(engine: Engine): ReadinessReport {
     autonomyQualified,
     ...(medianResponseMs !== undefined ? { medianResponseMs } : {}),
   };
-  checks.push({
-    id: "demo-pulse",
-    label: "Demo pulse",
-    status: demo.status === "ready" ? "ok" : "degraded",
-    detail: `${demo.score}/100 — ${warmAgents}/${expectedNames.length} agents warm, ${recentMeaningfulEvents} meaningful events in 5m${medianResponseMs === undefined ? "" : `, ${medianResponseMs}ms median response`}`,
-    ...(demo.status === "ready"
-      ? {}
-      : {
-          remediation:
-            "Enable AGENT_AUTORESPAWN, wait for seeded agents to warm, then run one demo scenario or model probe.",
-        }),
-  });
-  const participationReady = autonomyQualified;
-  checks.push({
-    id: "primitive-evidence",
-    label: "Primitive participation",
-    status: participationReady ? "ok" : "degraded",
-    detail: `${recentPrimitiveActions} meaningful actions · ${activeAgents} active agents (${activeParticipants} total participants) · ${recentCommunications} communications · ${marinaToolCalls} Marina tool calls in 5m`,
-    ...(participationReady
-      ? {}
-      : {
-          remediation:
-            "Run a multi-agent task with at least two agents, shared primitives, a targeted handoff, and two Marina tool calls; verify with `productivity primitives`.",
-        }),
-  });
+  // "Agents exist" = one runs here, or an agent harness (internal or external)
+  // made tool calls in the window. A person typing in the CLI is not one.
+  if (agents.length === 0 && agentToolCalls === 0) {
+    // Nothing to measure yet: these are activity metrics, not capabilities, and
+    // a fresh install must not read as failing them. Ids stay for API callers.
+    const notYet = {
+      status: "off" as const,
+      optional: true as const,
+      detail: "no agents yet — measured once agents run",
+    };
+    checks.push({ id: "demo-pulse", label: "Demo pulse", ...notYet });
+    checks.push({ id: "primitive-evidence", label: "Primitive participation", ...notYet });
+  } else {
+    const pulse: ReadinessCheck = {
+      id: "demo-pulse",
+      label: "Demo pulse",
+      status: demo.status === "ready" ? "ok" : "degraded",
+      detail: `${demo.score}/100 — ${warmAgents}/${expectedNames.length} agents warm, ${recentMeaningfulEvents} meaningful events in 5m${medianResponseMs === undefined ? "" : `, ${medianResponseMs}ms median response`}`,
+      ...(demo.status === "ready"
+        ? {}
+        : {
+            remediation:
+              "Enable AGENT_AUTORESPAWN, wait for seeded agents to warm, then run one demo scenario or model probe.",
+          }),
+    };
+    const participationReady = autonomyQualified;
+    const participation: ReadinessCheck = {
+      id: "primitive-evidence",
+      label: "Primitive participation",
+      status: participationReady ? "ok" : "degraded",
+      detail: `${recentPrimitiveActions} meaningful actions · ${activeAgents} active agents (${activeParticipants} total participants) · ${recentCommunications} communications · ${marinaToolCalls} Marina tool calls in 5m`,
+      ...(participationReady
+        ? {}
+        : {
+            remediation:
+              "Run a multi-agent task with at least two agents, shared primitives, a targeted handoff, and two Marina tool calls; verify with `productivity primitives`.",
+          }),
+    };
+    checks.push(pulse, participation);
+  }
 
   return {
     instanceName: engine.instanceName,

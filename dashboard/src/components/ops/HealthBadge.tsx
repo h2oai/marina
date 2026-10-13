@@ -14,22 +14,28 @@ import { useReadiness } from "../../hooks/use-api";
 import type { ReadinessCheck, ReadinessReport } from "../../lib/types";
 import { openAdminTab, READINESS_TAB } from "./admin-link";
 
-export type HealthCounts = { ok: number; degraded: number; off: number };
+export type HealthCounts = { ok: number; degraded: number; off: number; optional: number };
+
+/** A non-ok optional extra (the core works without it) is a neutral state, not a failure. */
+export function isOptionalGap(check: ReadinessCheck): boolean {
+  return check.status !== "ok" && check.optional === true;
+}
 
 export function healthCounts(checks: readonly ReadinessCheck[]): HealthCounts {
-  const counts: HealthCounts = { ok: 0, degraded: 0, off: 0 };
-  for (const check of checks) counts[check.status] += 1;
+  const counts: HealthCounts = { ok: 0, degraded: 0, off: 0, optional: 0 };
+  for (const check of checks) counts[isOptionalGap(check) ? "optional" : check.status] += 1;
   return counts;
 }
 
-/** Degraded first, then off — the popover order. */
+/** Degraded first, then off, then optional extras — the popover order. */
 export function attentionChecks(checks: readonly ReadinessCheck[]): ReadinessCheck[] {
-  return checks
-    .filter((c) => c.status !== "ok")
-    .sort((a, b) => (a.status === b.status ? 0 : a.status === "degraded" ? -1 : 1));
+  const rank = (c: ReadinessCheck) => (isOptionalGap(c) ? 2 : c.status === "degraded" ? 0 : 1);
+  return checks.filter((c) => c.status !== "ok").sort((a, b) => rank(a) - rank(b));
 }
 
-export function healthTone(counts: HealthCounts): "success" | "warning" | "danger" {
+export function healthTone(
+  counts: Pick<HealthCounts, "ok" | "degraded" | "off">,
+): "success" | "warning" | "danger" {
   if (counts.degraded > 0) return "warning";
   if (counts.off > 0 && counts.ok === 0) return "danger";
   return "success";
@@ -69,7 +75,7 @@ export function HealthBadge({ report: reportOverride }: { report?: ReadinessRepo
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
         aria-describedby={open ? popoverId : undefined}
-        aria-label={`Capability health: ${counts.ok} ok, ${counts.degraded} degraded, ${counts.off} off`}
+        aria-label={`Capability health: ${counts.ok} ok, ${counts.degraded} degraded, ${counts.off} off${counts.optional ? `, ${counts.optional} optional` : ""}`}
         className={`flex items-center gap-1.5 rounded border px-2 py-0.5 transition-colors ${TONE_CLASS[tone]}`}
         title="Capability readiness — click to open Admin → Readiness"
         data-testid="health-badge"
@@ -99,6 +105,7 @@ export function HealthBadge({ report: reportOverride }: { report?: ReadinessRepo
           <div className="glass-panel space-y-1 rounded border border-border p-2 text-left text-[10px] shadow-lg">
             <div className="text-text-dim">
               {counts.ok} ok · {counts.degraded} degraded · {counts.off} off
+              {counts.optional > 0 && ` · ${counts.optional} optional`}
             </div>
             {attention.length === 0 ? (
               <div className="text-success">Every capability is ready.</div>
@@ -110,8 +117,10 @@ export function HealthBadge({ report: reportOverride }: { report?: ReadinessRepo
                     className="border-t border-border/60 pt-1 first:border-t-0 first:pt-0"
                   >
                     <div className="flex items-center gap-1">
-                      <span className={`uppercase text-[8px] ${STATUS_CLASS[check.status]}`}>
-                        {check.status}
+                      <span
+                        className={`uppercase text-[8px] ${isOptionalGap(check) ? "text-text-dim" : STATUS_CLASS[check.status]}`}
+                      >
+                        {isOptionalGap(check) ? "optional" : check.status}
                       </span>
                       <span className="text-text-bright">{check.label}</span>
                     </div>

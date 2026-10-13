@@ -8,7 +8,7 @@ import {
 } from "../src/agent/tool-call-probe";
 import { readinessCommand, renderTrustProfileLine } from "../src/engine/commands/readiness";
 import { Engine } from "../src/engine/engine";
-import { computeReadiness, computeTrustProfile } from "../src/engine/readiness";
+import { computeReadiness, computeTrustProfile, readinessCounts } from "../src/engine/readiness";
 import { setTrustProfile } from "../src/engine/trust-profile";
 import { MarinaDB } from "../src/persistence/database";
 import type { CommandInput, EntityId, RoomContext } from "../src/types";
@@ -101,6 +101,66 @@ describe("computeReadiness", () => {
     // Room agents enabled-by-default but no key → degraded, not off.
     expect(find("room-agents").status).toBe("degraded");
     expect(computeReadiness(engine).demo.status).toBe("degraded");
+  });
+
+  it("classifies optional extras: neutral, apart from `off`, status unchanged", () => {
+    const report = computeReadiness(engine);
+    const optional = report.checks.filter((c) => c.optional).map((c) => c.id);
+    for (const id of ["tabh2o", "corpus-hybrid", "decisions", "decision-engines", "watcher"])
+      expect(optional).toContain(id);
+    // The core is never optional.
+    for (const id of ["llm-key", "model-api", "room-agents", "chronicler", "auto-respawn"])
+      expect(optional).not.toContain(id);
+    // Back-compatible: the status value keeps its meaning; only the summary moves.
+    expect(find("tabh2o").status).toBe("off");
+    const counts = readinessCounts(report.checks);
+    expect(counts.optional).toBe(
+      report.checks.filter((c) => c.optional && c.status !== "ok").length,
+    );
+    expect(counts.off).toBe(report.checks.filter((c) => c.status === "off" && !c.optional).length);
+    const text = renderCommand();
+    expect(text).toContain(`${counts.off} off · ${counts.optional} optional`);
+    expect(text).toContain("○ TabH2O forecasting");
+    expect(text).not.toContain("✗ TabH2O forecasting");
+  });
+
+  it("shows the activity metrics as `no agents yet` until an agent exists", () => {
+    for (const id of ["demo-pulse", "primitive-evidence"]) {
+      expect(find(id)).toMatchObject({
+        optional: true,
+        detail: expect.stringContaining("no agents yet"),
+      });
+      expect(find(id).remediation).toBeUndefined();
+    }
+  });
+
+  it("names a missing provider as the cause of dependent gaps on a local install", () => {
+    using _state = scopeProcessState();
+    setTrustProfile("local");
+    expect(find("auto-respawn").detail).toContain("only because no model provider");
+    expect(find("room-agents").remediation).toContain("Configure a model provider first");
+    expect(find("llm-key").remediation).toContain("key add <name> <provider> <key>");
+    expect(find("llm-key").remediation).toContain("OLLAMA_BASE_URL");
+    // Seeded Chronicler: no AGENT_AUTORESPAWN=true advice — local respawns by default.
+    db.saveAgentConfig({
+      name: "Chronicler",
+      model: "marina/default",
+      role: "chronicler",
+      spawnedBy: "system",
+    });
+    const chronicler = find("chronicler");
+    expect(chronicler.status).toBe("degraded");
+    expect(chronicler.remediation).not.toContain("AGENT_AUTORESPAWN=true");
+    expect(chronicler.remediation).toContain("respawns on the next boot");
+  });
+
+  it("never suggests a watcher role the world does not have", () => {
+    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
+    expect(db.getRole("watcher")).toBeFalsy();
+    expect(find("watcher").remediation).not.toContain(
+      "agent spawn Watcher model marina/default role watcher (",
+    );
+    expect(find("watcher").remediation).toContain("role create watcher");
   });
 
   it("reports tool-calling probes: absent until one ran, degraded for a prose-only model", () => {

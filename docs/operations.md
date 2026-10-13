@@ -183,27 +183,37 @@ Cross-agent and shared-pool disagreements are scanned hourly and exposed immedia
 updates verification history and preserves the contradiction edge and original notes.
 
 `readiness` (in-world, rank 0; aliases `doctor`/`health`) returns a per-capability
-report — `ok` / `degraded` / `off` with a remediation hint. Example:
+report — `ok` / `degraded` / `off` with a remediation hint. Optional extras (TabH2O, corpus hybrid
+search, decisions, decision engines, the Watcher) that are not set up render as `○` and count as
+`optional`, never as `off`; the JSON report marks them with `optional: true` and keeps their
+`status`. The activity metrics (Demo pulse, Primitive participation) read "no agents yet" until an
+agent runs. Example (shared profile, provider configured):
 
 ```text
 readiness
 
-Marina readiness — Marina · world: default
-3 ok · 2 degraded · 2 off
+Marina readiness — Marina · world: Workbench
+Trust profile: SHARED — gates enforced (…) · autonomy: guarded
+4 ok · 1 degraded · 1 off · 2 optional (○, not needed for the core)
 
-  ✓ LLM provider key — a provider key is configured — agents can run
-  ✗ Agent auto-respawn — saved agents do NOT auto-spawn on boot
+  ✓ LLM provider configuration — upstream anthropic/… is configured; run readiness providers to verify connectivity
+  ✗ Agent auto-respawn — saved agents do NOT auto-spawn on boot (default: on only for a local install with a provider)
       → Set AGENT_AUTORESPAWN=true to auto-spawn seeded/saved agents, or spawn them manually with `agent spawn`.
   ⚠ Chronicler — seeded but not running — only auto `event` rows are recorded; no narrative/digest synthesis
       → Set AGENT_AUTORESPAWN=true, or run: agent spawn Chronicler model marina/default role chronicler
-  ✗ Watcher — watcher role seeded, but no watcher agent running
-      → Spawn one: agent spawn Watcher model marina/default role watcher (watch & probe still work without it).
+  ○ Watcher — no watcher role in this world (watch & probe work without it)
+      → Optional: the markets and showcase worlds seed the watcher role (MARINA_WORLD=markets); …
   ✓ Room agents — enabled — rooms spawn their agents (guide, market-oracle, …) on first entry
-  ✗ TabH2O forecasting — TABH2O_API_KEY unset — `market forecast` degrades (LLM reasoning still works)
+  ○ TabH2O forecasting — TABH2O_API_KEY unset — `market forecast` degrades (LLM reasoning still works)
       → Set TABH2O_API_KEY to enable tabular forecasting.
-  ⚠ Model API (/v1) — auth set but no upstream provider — /v1 returns 503 until a key or model agent exists
-      → Configure an LLM provider key (or run a model-channel provider agent).
 ```
+
+On a local install the trust line reads `LOCAL — ungated · gates off for this local operator (audit
+stays on); set MARINA_AUTONOMY=guarded to enforce them`. With no model provider, every surface that
+needs one (boot log, `agent spawn`, `key list`, `brief`, `ask`, readiness, the `/v1` 503) names the
+same options: a provider key env var, `key add <name> <provider> <key>`, or a local runtime
+(`OLLAMA_BASE_URL` / `LLAMA_BASE_URL`); the server logs one `no model provider` warning per
+10 minutes instead of an error per refused `/v1` request.
 
 The check logic lives in `src/engine/readiness.ts` (`computeReadiness(engine)`) and is reused by the
 live `GET /api/readiness` dashboard endpoint. See also the [environment reference](reference/environment.md)

@@ -12,6 +12,7 @@ import { formatUsd, operatorStatusOf } from "../../agent/lean-agent-adapter";
 import { isSeedDisabled, listDisabledSeedAgents, setSeedDisabled } from "../../agent/seed-registry";
 import { getStanding } from "../../agent/standing";
 import { bold, dim, header, separator } from "../../net/ansi";
+import { providerSetupHint } from "../../net/model/provider-setup";
 import type { MarinaDB } from "../../persistence/database";
 import { isGrantedCompetence } from "../../persistence/db-competence";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
@@ -633,10 +634,7 @@ async function handleSpawn(
   }
 
   if (!deps.agentRuntime.isAvailable()) {
-    ctx.send(
-      eid,
-      "No LLM API keys configured. Set any one of OPENROUTER_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, TOGETHER_API_KEY, NEBIUS_API_KEY or HUGGINGFACE_API_KEY (or run Ollama locally).",
-    );
+    ctx.send(eid, `No model provider — agents cannot be spawned. ${providerSetupHint()}`);
     return;
   }
 

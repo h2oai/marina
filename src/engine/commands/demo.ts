@@ -6,7 +6,7 @@ import type { TaskManager } from "../../coordination/task-manager";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId } from "../../types";
-import type { ReadinessReport } from "../readiness";
+import { AUTONOMY_REQUIREMENTS, type ReadinessReport } from "../readiness";
 import { checkGateForExecution, recordGateExecution } from "../safety-gates";
 
 const DEMO_AGENTS = ["Host", "Builder", "Critic", "Chronicler"];
@@ -35,18 +35,20 @@ export function demoCommand(deps: {
     handler: async (ctx, input) => {
       const action = input.tokens[0]?.toLowerCase() ?? "status";
       const report = deps.readiness();
+      const req = AUTONOMY_REQUIREMENTS;
 
       if (action === "status" || action === "preflight" || action === "qualify") {
-        const blockers = report.checks.filter((check) => check.status === "off");
+        // Optional extras (TabH2O, decision engines, …) never block the demo.
+        const blockers = report.checks.filter((check) => check.status === "off" && !check.optional);
         const lines = [
           header("Demo Preflight"),
           separator(),
           `  Score: ${bold(`${report.demo.score}/100`)} (${report.demo.status})`,
-          `  Agents: ${report.demo.warmAgents}/${report.demo.expectedAgents} warm`,
+          `  Agents: ${report.demo.warmAgents}/${report.demo.expectedAgents} seeded agents warm`,
           `  Activity: ${report.demo.recentMeaningfulEvents} meaningful events in 5m`,
           `  Response: ${report.demo.medianResponseMs === undefined ? "not measured" : `${report.demo.medianResponseMs}ms median`}`,
           `  Autonomy: ${report.demo.autonomyQualified ? "QUALIFIED" : "not yet qualified"}`,
-          `  Evidence: ${report.demo.activeAgents}/2 agents · ${report.demo.recentPrimitiveActions}/3 actions · ${report.demo.recentCommunications}/1 communications · ${report.demo.marinaToolCalls}/2 Marina tools`,
+          `  Evidence (5m, have/need): ${report.demo.activeAgents}/${req.activeAgents} agent entities (any agent login, incl. CLI) · ${report.demo.recentPrimitiveActions}/${req.recentPrimitiveActions} actions · ${report.demo.recentCommunications}/${req.recentCommunications} communications · ${report.demo.marinaToolCalls}/${req.marinaToolCalls} Marina tools`,
         ];
         if (blockers.length > 0) {
           lines.push("", `  Blockers (${blockers.length}):`);

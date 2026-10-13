@@ -640,5 +640,12 @@ export async function discoverModels(
 
 export const MODEL_DISCOVERY_PROVIDERS = PROVIDERS.map((p) => p.provider);
 
+/** Keyed cloud providers and the env var each reads (local runtimes excluded). */
+export const CLOUD_PROVIDER_KEY_ENVS: readonly { provider: string; envKey: string }[] =
+  PROVIDERS.filter((p) => !Object.hasOwn(LOCAL_PROVIDERS, p.provider)).map((p) => ({
+    provider: p.provider,
+    envKey: p.envKey,
+  }));
+
 /** Env vars holding a Hugging Face token, in precedence order. */
 export const HUGGINGFACE_ENV_KEYS = ["HUGGINGFACE_API_KEY", "HF_TOKEN"] as const;

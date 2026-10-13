@@ -125,6 +125,8 @@ const API_DESCRIPTION = {
       "When MARINA_OPEN_API=true and MEM_API_KEYS is not set, pass X-Agent-Name header to identify your namespace.",
     keyed_mode:
       "When MEM_API_KEYS is set, use Authorization: Bearer <key>. Key maps to agent namespace.",
+    local_mode:
+      "Under the local trust profile, the generated local model-API key (<DB_PATH>.local-api-key) works as Authorization: Bearer <key> plus X-Agent-Name.",
     default:
       "By default, authentication is required. Set MEM_API_KEYS or MARINA_OPEN_API=true for development.",
   },
@@ -346,7 +348,9 @@ function authenticate(req: Request, db: MarinaDB): MemAuthOutcome {
     return {
       error: error(
         401,
-        "Memory API requires authentication. Set MEM_API_KEYS or MARINA_OPEN_API=true for development.",
+        localModelApiKey()
+          ? "Memory API requires authentication. Send Authorization: Bearer <local model-API key> (printed at boot; <DB_PATH>.local-api-key) plus X-Agent-Name: <name>, or set MEM_API_KEYS for per-agent keys."
+          : "Memory API requires authentication. Set MEM_API_KEYS or MARINA_OPEN_API=true for development.",
       ),
     };
   }

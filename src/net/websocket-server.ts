@@ -758,10 +758,12 @@ export class WebSocketServer {
             return serveStaticPage(ASK_PATH);
           }
 
-          return new Response("Marina — connect via WebSocket at /ws", {
-            status: 200,
-            headers: securityHeaders("api"),
-          });
+          // Unknown path: a real 404 (crawlers, favicon probes and typos must
+          // not read as a page), naming the surfaces that do exist.
+          return new Response(
+            "Not found. Marina: /dashboard (UI), /ws (WebSocket), /v1 (OpenAI-compatible API), /health",
+            { status: 404, headers: securityHeaders("api") },
+          );
         } finally {
           leave();
         }

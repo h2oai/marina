@@ -642,6 +642,8 @@ export interface ReadinessCheck {
   status: "ok" | "degraded" | "off";
   detail: string;
   remediation?: string;
+  /** Optional extra — the core works without it; a non-ok one is shown neutrally. */
+  optional?: boolean;
 }
 
 export interface ReadinessReport {
