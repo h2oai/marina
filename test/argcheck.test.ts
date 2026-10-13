@@ -374,7 +374,7 @@ describe("checkCall", () => {
     });
     expect(out.label).toBe("unsupported");
     expect(out.judgement?.doubt).toBe("from");
-    expect(out.nudge).toContain("a check doubts that `from` matches what the user asked for");
+    expect(out.nudge).toContain("a check doubts that `from` matches what the requester asked for");
     expect(out.nudge).not.toContain("acc-9002");
     expect(calls[0]).toContain("other values of this kind seen: acc-9002");
     expect(memo).toMatchObject({ checks: 2, flagged: 0, judged: 1, unsupported: 1, nudges: 1 });
@@ -787,5 +787,110 @@ describe("repro kit arms", () => {
       "marina/obligations:marina/argcheck:anthropic/claude-fable-5-1",
     );
     expect(tau2AgentModel("obligations", m)).toBe("marina/obligations:anthropic/claude-fable-5-1");
+  });
+});
+
+// ─── Self-authored metadata (replay of resident memory writes) ───────────────
+
+describe("own-record writes", () => {
+  // A resident's run: a task arrives, the agent works it, then saves a note.
+  const transcript = [
+    { role: "system", content: "You think, therefore you are here." },
+    { role: "user", content: "[task] Summarise the market feed and file the summary." },
+    { role: "toolResult", content: "feed: 3 new items; BTC 64,210; ETH 3,105" },
+  ];
+  const unsupportedJudge = () => {
+    const state = { calls: 0 };
+    const complete = async () => {
+      state.calls++;
+      return '{"supported": false}';
+    };
+    return { state, complete };
+  };
+
+  it("never flags the writer's own tags, importance, tier, type or title", async () => {
+    const j = unsupportedJudge();
+    const a = new AgentArgcheck({
+      mode: () => "on",
+      trigger: () => "flagged",
+      complete: j.complete,
+    });
+    const shapes: Array<[string, Record<string, unknown>]> = [
+      [
+        "memory",
+        {
+          action: "write",
+          content: "Feed summary filed; BTC 64,210.",
+          category: "decision",
+          importance: "medium",
+          tags: ["task-1", "market-feed", "q4-2026"],
+        },
+      ],
+      [
+        "marina_memory_service",
+        {
+          operation: "remember",
+          input: {
+            content: "Market feed summarised.",
+            claim: "feed-summary-v2 is current",
+            tags: ["task-1"],
+            tier: "fact",
+            note_type: "observation",
+            importance: "high",
+            title: "Feed summary 2026-10-13",
+            confidence: 0.85,
+          },
+          key: "remember-task-1-a7",
+        },
+      ],
+      ["memory", { action: "skill_store", skill_name: "feed-digest-v3", skill_actions: "x" }],
+    ];
+    for (const [name, args] of shapes) {
+      const { outcome, refusal } = await a.check(name, args, transcript);
+      expect(refusal).toBeUndefined();
+      expect(outcome?.flaggedValues).toBe(0);
+    }
+    expect(j.state.calls).toBe(0);
+    // Even under all-writes an own-record write with nothing left to check is not judged.
+    const all = new AgentArgcheck({
+      mode: () => "on",
+      trigger: () => "all-writes",
+      complete: j.complete,
+    });
+    const [name0, args0] = shapes[0]!;
+    expect((await all.check(name0, args0, transcript)).outcome?.label).toBe("no-values");
+    expect(j.state.calls).toBe(0);
+  });
+
+  it("still checks ids and targets in an own-record write", async () => {
+    const j = unsupportedJudge();
+    const a = new AgentArgcheck({ mode: () => "on", complete: j.complete });
+    const { outcome, refusal } = await a.check(
+      "marina_memory_service",
+      { operation: "remember", space_id: "crew-ghost-77", input: { content: "x", tags: ["t-1"] } },
+      transcript,
+    );
+    expect(outcome?.flaggedValues).toBe(1);
+    expect(refusal).toContain("space_id = crew-ghost-77");
+    expect(refusal).not.toContain("tags");
+    expect(j.state.calls).toBe(1);
+  });
+
+  it("still flags a fabricated recipient or id on someone else's record", async () => {
+    const j = unsupportedJudge();
+    const a = new AgentArgcheck({ mode: () => "on", complete: j.complete });
+    const send = await a.check(
+      "send_payment",
+      { recipient: "acct-9921", amount: 1250, tags: ["task-1"] },
+      transcript,
+    );
+    expect(send.refusal).toContain("recipient = acct-9921");
+    // Descriptors on someone else's record are still values to check.
+    expect(send.refusal).toContain("tags[0] = task-1");
+    expect(send.refusal).toContain("not found in the requester's messages");
+    expect(send.refusal).not.toMatch(/\buser\b/);
+    const note = await a.check("update_order", { order_id: "ord-55120" }, transcript);
+    expect(note.refusal).toContain("order_id = ord-55120");
+    expect(j.state.calls).toBe(2);
   });
 });

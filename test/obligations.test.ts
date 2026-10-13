@@ -56,6 +56,7 @@ import {
 import {
   obligationsConsentMode,
   obligationsMode,
+  obligationsObserveSample,
   parseObligationsMode,
 } from "../src/obligations/mode";
 import { MarinaDB } from "../src/persistence/database";
@@ -373,6 +374,11 @@ describe("consent (approval of a pending action)", () => {
     expect(obligationsConsentMode({})).toBe("observe");
     expect(obligationsConsentMode({ MARINA_OBLIGATIONS_CONSENT: "junk" })).toBe("observe");
     expect(obligationsConsentMode({ MARINA_OBLIGATIONS_CONSENT: " ON " })).toBe("on");
+    expect(obligationsObserveSample({})).toBe(0);
+    expect(obligationsObserveSample({ MARINA_OBLIGATIONS_OBSERVE_SAMPLE: "junk" })).toBe(0);
+    expect(obligationsObserveSample({ MARINA_OBLIGATIONS_OBSERVE_SAMPLE: "-1" })).toBe(0);
+    expect(obligationsObserveSample({ MARINA_OBLIGATIONS_OBSERVE_SAMPLE: " 0.1 " })).toBe(0.1);
+    expect(obligationsObserveSample({ MARINA_OBLIGATIONS_OBSERVE_SAMPLE: "5" })).toBe(1);
   });
 
   it("the agent loop marks approved items in its section and follow-up", async () => {
@@ -514,11 +520,12 @@ describe("opt-in parsing", () => {
 });
 
 describe("agent loop ledger", () => {
-  it("is inert when off, tracks in observe, and nudges once when on", async () => {
+  it("is inert when off, tracks in sampled observe, and nudges once when on", async () => {
     let mode: "off" | "observe" | "on" = "off";
     let calls = 0;
     const a = new AgentObligations({
       mode: () => mode,
+      observeSample: () => 1,
       complete: async () => {
         calls++;
         return '{"add":[{"what":"Close card 4417","target":"4417","tools":["marina_command"]}],"cancel":[]}';
@@ -540,6 +547,58 @@ describe("agent loop ledger", () => {
     a.observeToolResult("marina_command", { command: "card close 4417" }, true, () => true);
     expect(a.section()).toBeUndefined();
     expect(a.summary().satisfied).toBe(1);
+  });
+
+  it("observe is free by default: N requests and reviews make 0 model calls", async () => {
+    let calls = 0;
+    const complete = async () => {
+      calls++;
+      return '{"add":[{"what":"Close card 4417","target":"4417","tools":["close_card"]}],"cancel":[]}';
+    };
+    const tools = [{ name: "close_card", write: true }];
+    const transcript = [
+      { role: "system", content: "Policy: close_card needs a verified identity." },
+    ];
+    const a = new AgentObligations({
+      mode: () => "observe",
+      reviewMode: () => "on",
+      observeSample: () => 0,
+      complete,
+    });
+    for (let i = 0; i < 5; i++) {
+      a.noteRequest(`please close card 44${10 + i}`);
+      await a.refresh(tools);
+      expect(await a.reviewWrite("close_card", { card_id: `44${10 + i}` }, transcript)).toBe(
+        undefined,
+      );
+      a.observeToolResult("close_card", { card_id: `44${10 + i}` }, true, () => true);
+    }
+    expect(calls).toBe(0);
+    expect(a.obligations()).toHaveLength(0);
+    expect(a.section()).toBeUndefined();
+    expect(a.nudge()).toBeUndefined();
+    // The requests still reach the argument check's judge as stated lines (no model call).
+    expect(a.stated()).toContain("- please close card 4414");
+    expect(a.summary()).toMatchObject({ pending: 0, unsampled: 10, total: 0 });
+
+    // The default reads MARINA_OBLIGATIONS_OBSERVE_SAMPLE (unset → 0): still free.
+    using _env = scopeProcessState({ env: { MARINA_OBLIGATIONS_OBSERVE_SAMPLE: undefined } });
+    const d = new AgentObligations({ mode: () => "observe", complete });
+    d.noteRequest("please close card 4417");
+    await d.refresh(tools);
+    expect(calls).toBe(0);
+
+    // A sampled refresh extracts exactly as `on` would.
+    const s = new AgentObligations({
+      mode: () => "observe",
+      observeSample: () => 0.5,
+      random: () => 0.25,
+      complete,
+    });
+    s.noteRequest("please close card 4417");
+    await s.refresh(tools);
+    expect(calls).toBe(1);
+    expect(s.obligations()).toHaveLength(1);
   });
 });
 

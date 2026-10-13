@@ -494,3 +494,55 @@ export function isReadOnlyTool(
 export function readOnlyByName(name: string): boolean {
   return toolEffect(name).readOnly;
 }
+
+// ─── Own records ─────────────────────────────────────────────────────────────
+
+/**
+ * Name words that mean the caller's own record — its memory, notes, journal,
+ * reflections or skills. Record kinds, never product tool names.
+ */
+const OWN_RECORD_WORDS = new Set([
+  "memory",
+  "memories",
+  "mem",
+  "note",
+  "notes",
+  "notebook",
+  "journal",
+  "diary",
+  "memo",
+  "memos",
+  "scratchpad",
+  "remember",
+  "reflect",
+  "reflection",
+  "reflections",
+  "skill",
+  "skills",
+]);
+
+/** Description phrases that say the record is the caller's own. */
+const OWN_RECORD_DESCRIPTION =
+  /\b(?:your|the agent's|the assistant's|its) (?:own |private |personal )?(?:memory|memories|notes?|journal|diary|scratchpad|reflections?|skills?)\b|\b(?:private|personal|agent) (?:memory|memories|notes?|journal)\b/i;
+
+/**
+ * True when `name` writes a record the caller authors for itself (its memory,
+ * notes, journal, reflections, skills): a record-kind word among the name's
+ * first three words, or a declared description that says so. A declared
+ * description naming someone else's state (`customer`, `account`, `order`, …)
+ * makes it someone else's record, never the caller's own. The argument check
+ * reads this to leave the caller's own descriptors (tags, importance, tier,
+ * type, title, …) unchecked: they are chosen, not quoted, so the conversation
+ * never holds them. Ids, targets and amounts in such a call are still checked.
+ */
+export function writesOwnRecord(name: string, tools?: readonly unknown[]): boolean {
+  const description = descriptionOf(declOf(name, tools));
+  if (description && USER_STATE_WORDS.test(description)) return false;
+  if (
+    nameWords(name)
+      .slice(0, 3)
+      .some((w) => OWN_RECORD_WORDS.has(w))
+  )
+    return true;
+  return OWN_RECORD_DESCRIPTION.test(description);
+}

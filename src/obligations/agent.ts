@@ -5,9 +5,11 @@
  * The obligations ledger for one of Marina's own agent loops (a resident, a
  * crew member, a Code Mode coder). `MARINA_OBLIGATIONS` (read live) decides:
  *
- *   off      nothing is read, no call is made (the default);
- *   observe  requests are extracted and tool calls tracked; counts are logged;
- *            the model sees nothing;
+ *   off      nothing is read, no call is made;
+ *   observe  requests are queued and tool calls counted; counts are logged;
+ *            the model sees nothing. Free: no model call unless
+ *            `MARINA_OBLIGATIONS_OBSERVE_SAMPLE` samples a refresh or review
+ *            (then it extracts, judges and reviews exactly as `on` does);
  *   on       the open obligations are listed in the continuation prompt, and a
  *            run that would end with one open (a turn with no tool call) gets
  *            one follow-up naming it, at most once per obligation.
@@ -29,6 +31,7 @@ import {
   applyExtraction,
   CONSENT_NOTE,
   ledgerSummary,
+  MAX_FIELD_CHARS,
   MAX_LISTED,
   matchCall,
   newLedger,
@@ -39,7 +42,12 @@ import {
   statedLines,
   type ToolCallRecord,
 } from "./ledger";
-import { type ObligationsMode, obligationsConsentMode, obligationsMode } from "./mode";
+import {
+  type ObligationsMode,
+  obligationsConsentMode,
+  obligationsMode,
+  obligationsObserveSample,
+} from "./mode";
 import {
   anyKind,
   markNamed,
@@ -62,6 +70,13 @@ import {
 const MAX_PENDING_REQUESTS = 8;
 /** Ambiguous matches judged per prompt build. */
 const MAX_JUDGED_MATCHES = 2;
+/** Stated lines handed to the argument check's judge (as `statedLines`). */
+const STATED_LINES = 8;
+
+function clampLine(text: string): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  return t.length <= MAX_FIELD_CHARS ? t : `${t.slice(0, MAX_FIELD_CHARS - 1)}…`;
+}
 
 export interface AgentObligationsOptions {
   /** One completion on the ledger's model (`MARINA_OBLIGATIONS_MODEL` or the agent's own). */
@@ -75,12 +90,20 @@ export interface AgentObligationsOptions {
   reviewMode?: () => ReviewMode;
   /** Rule-passage budget for the review (default `MARINA_OBLIGATIONS_REVIEW_RULE_BYTES`, read live). */
   reviewRuleBytes?: () => number;
+  /** Fraction of `observe` refreshes/reviews that make model calls (default `MARINA_OBLIGATIONS_OBSERVE_SAMPLE`, read live; 0 = none). */
+  observeSample?: () => number;
+  /** Uniform [0, 1) draw for sampling (tests). */
+  random?: () => number;
   now?: () => number;
 }
 
 export class AgentObligations {
   private readonly ledger: ObligationLedger;
   private pending: string[] = [];
+  /** Requests `observe` queued without extracting (newest last), as stated lines. */
+  private unextracted: string[] = [];
+  /** `observe` refreshes and reviews that made no model call. */
+  private unsampled = 0;
   private turn = 0;
   private ambiguous: Array<{ call: ToolCallRecord; ids: string[] }> = [];
 
@@ -94,6 +117,14 @@ export class AgentObligations {
 
   mode(): ObligationsMode {
     return (this.opts.mode ?? obligationsMode)();
+  }
+
+  /** Whether this refresh or review may call a model: always in `on`; sampled in `observe`. */
+  private paid(mode: ObligationsMode): boolean {
+    if (mode === "on") return true;
+    if (mode !== "observe") return false;
+    const rate = (this.opts.observeSample ?? obligationsObserveSample)();
+    return rate > 0 && (this.opts.random ?? Math.random)() < rate;
   }
 
   private showConsent(): boolean {
@@ -111,7 +142,22 @@ export class AgentObligations {
 
   /** Read queued requests into obligations and settle ambiguous matches. Never throws. */
   async refresh(tools: ToolInfo[], signal?: AbortSignal): Promise<void> {
-    if (this.mode() === "off") return;
+    const mode = this.mode();
+    if (mode === "off") return;
+    if (this.pending.length === 0 && this.ambiguous.length === 0) return;
+    if (!this.paid(mode)) {
+      // Unsampled `observe`: mechanical bookkeeping only, no model call.
+      this.unsampled++;
+      for (const text of this.pending.splice(0)) {
+        this.turn++;
+        this.unextracted.push(clampLine(text));
+      }
+      if (this.unextracted.length > STATED_LINES)
+        this.unextracted.splice(0, this.unextracted.length - STATED_LINES);
+      this.ledger.userTurns = this.turn;
+      this.ambiguous.length = 0;
+      return;
+    }
     if (this.pending.length > 0) {
       const batch = this.pending.splice(0);
       const requests: NewRequest[] = batch.map((text) => ({ turn: ++this.turn, text }));
@@ -209,7 +255,12 @@ export class AgentObligations {
     signal?: AbortSignal,
   ): Promise<{ label: string; refusal?: string } | undefined> {
     const mode = (this.opts.reviewMode ?? obligationsReviewMode)();
-    if (mode === "off" || this.mode() === "off") return undefined;
+    const ledgerMode = this.mode();
+    if (mode === "off" || ledgerMode === "off") return undefined;
+    if (!this.paid(ledgerMode)) {
+      this.unsampled++;
+      return undefined;
+    }
     try {
       const state = reviewState(this.ledger);
       const calls = [{ name, args }];
@@ -246,11 +297,14 @@ export class AgentObligations {
 
   /** The requests as context for the argument check's judge (empty when off). */
   stated(): string[] {
-    return this.mode() === "off" ? [] : statedLines(this.ledger);
+    if (this.mode() === "off") return [];
+    const lines = [...statedLines(this.ledger), ...this.unextracted.map((t) => `- ${t}`)];
+    return lines.slice(-STATED_LINES);
   }
 
   summary(): ReturnType<typeof ledgerSummary> & {
     pending: number;
+    unsampled: number;
     reviews?: number;
     reviewNudges?: number;
   } {
@@ -258,6 +312,7 @@ export class AgentObligations {
     return {
       ...ledgerSummary(this.ledger),
       pending: this.pending.length,
+      unsampled: this.unsampled,
       ...(r ? { reviews: r.reviews, reviewNudges: r.nudges } : {}),
     };
   }
