@@ -116,8 +116,8 @@ export const PATTERN_FIT: Record<
 
 /**
  * Empirical validation status per pattern, from the 2026-09-02 orchestration
- * sweep (gpt-4o-mini crews, N=10 seed=42, request-serving context; report in
- * the private archive: marina-internal design/orchestration-pattern-sweep-2026-09.md).
+ * sweep (gpt-4o-mini crews, N=10 seed=42, request-serving context; overview
+ * in docs/architecture/orchestration.md).
  *
  * - `validated`: functioning under the full fix stack (protocol-priority
  *   briefs + coordinator envelope teaching + engine pending-request

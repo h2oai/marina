@@ -279,7 +279,7 @@ export declare class MarinaClient {
      * eliminates the multi-tick handoff that normally separates a
      * coordinator's ask from a specialist's answer.
      *
-     * Crew-fast-dispatch primitive (see the crew fast-dispatch design (private archive: marina-internal design/crew-fast-dispatch-design.md)):
+     * Fast crew dispatch primitive (docs/architecture/agent-cognition.md):
      * by registering the perception listener BEFORE firing the command we
      * avoid the race where the reply arrives before the listener is armed.
      * The caller's LLM turn is held open inside this single tool call so
@@ -562,7 +562,7 @@ export declare function parseCodingCommandTarget(value: unknown): CodingCommandT
  * concrete realization of the Conductor: a Score becomes a running organization.
  *
  * Kept separate from client.ts so the dispatch wiring is unit-testable with a
- * fake `tellAndAwait`. See the conductor design (private archive: marina-internal design/conductor-design.md), Phase 4.
+ * fake `tellAndAwait`. See docs/architecture/orchestration.md ("Executable Scores").
  */
 import type { TellAndAwaitOptions } from "./client.js";
 import type { ParsedAssignee, Score } from "./score.js";
@@ -3323,7 +3323,7 @@ export interface RoutingChannelReceipt {
  * — not a fixed mode.
  *
  * A Score is an artifact any sufficiently-standing agent can author, run, fork,
- * and mutate (see the conductor design (private archive: marina-internal design/conductor-design.md), Phase 4). The grammar here is pure
+ * and mutate (docs/architecture/orchestration.md, "Executable Scores"). The grammar here is pure
  * and transport-free: validation and topological layering only. Execution lives
  * in score-executor.ts with the worker-dispatch function injected, so the same
  * Score runs over tellAndAwait in production and over a mock in tests.

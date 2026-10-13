@@ -1483,7 +1483,8 @@ export class LeanAgentAdapter implements AgentHandle {
    * `cycleWaiter.wake()` to cut the loop's sleep short the moment a new
    * perception arrives — eliminating the up-to-2s tick discretization
    * between coordinator and specialist round trips. See
-   * src/agent/interruptible-waiter.ts and the crew fast-dispatch design (private archive: marina-internal design/crew-fast-dispatch-design.md).
+   * src/agent/interruptible-waiter.ts and docs/architecture/agent-cognition.md
+   * ("Fast crew dispatch").
    */
   private cycleWaiter = new InterruptibleWaiter();
 
@@ -2915,7 +2916,8 @@ export class LeanAgentAdapter implements AgentHandle {
         // their own cognitive cycle. When nothing is queued, skip the
         // continuation entirely — no LLM call, no token cost, no autonomous
         // drift between coordinator messages. They re-enter the loop the
-        // moment a perception arrives. See the crew fast-dispatch design (private archive: marina-internal design/crew-fast-dispatch-design.md).
+        // moment a perception arrives. See docs/architecture/agent-cognition.md
+        // ("Fast crew dispatch").
         // A responder may choose an autonomous life instead: `memory set
         // autonomy full` (crewResponderMode turns false, the full loop runs).
         // A bound coding task is already an explicit work obligation. Finish

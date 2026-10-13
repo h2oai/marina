@@ -11,7 +11,7 @@
  * concrete realization of the Conductor: a Score becomes a running organization.
  *
  * Kept separate from client.ts so the dispatch wiring is unit-testable with a
- * fake `tellAndAwait`. See the conductor design (private archive: marina-internal design/conductor-design.md), Phase 4.
+ * fake `tellAndAwait`. See docs/architecture/orchestration.md ("Executable Scores").
  */
 
 import type { TellAndAwaitOptions } from "./client";

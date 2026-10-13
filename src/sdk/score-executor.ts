@@ -10,7 +10,7 @@
  * executor only knows how to schedule: bounded ready steps, concurrent
  * independent steps, access-output threading, and depth-capped recursion.
  *
- * See the conductor design (private archive: marina-internal design/conductor-design.md), Phase 4.
+ * See docs/architecture/orchestration.md ("Executable Scores").
  */
 
 import { getErrorMessage } from "./errors";

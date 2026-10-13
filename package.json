@@ -102,7 +102,7 @@
     "check:overrides": "bun run scripts/check-overrides.ts",
     "dashboard:dev": "cd dashboard && bunx vite",
     "dashboard:build": "cd dashboard && bunx vite build",
-    "test:canvas:browser": "bun run dashboard:build && cd dashboard && bun run test:browser",
+    "test:canvas:browser": "bun run dashboard:build && cd dashboard && bun run test:browser e2e/canvas.spec.ts",
     "prepack": "bun run dashboard:build && bun run build:memory",
     "usecase-ui:dev": "cd examples/usecase-ui && bun run dev",
     "usecase-ui:build": "cd examples/usecase-ui && bun run build",
