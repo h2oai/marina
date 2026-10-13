@@ -210,6 +210,37 @@ live `GET /api/readiness` dashboard endpoint. See also the [environment referenc
 (generated from [`config/environment.reference`](../config/environment.reference)) for every setting and
 [`docs/marina-as-llm.md`](marina-as-llm.md) for the `/v1` endpoint.
 
+## Outside monitoring
+
+Readiness and in-world alerts cannot report a server that is down: they run inside it. `bun run monitor` (`scripts/monitor.ts`) checks the server from outside its process, and never loads the engine, so it still works when the server's code does not.
+
+It reads `/health`. The server is **down** when there is no answer within the timeout, an error status, or `"status": "stalled"`. `/health` answers 503 `stalled` when the tick loop is running but has not ticked for 30 intervals (at least 30 s), and reports `tick: { count, agoMs, errors }`.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--url` | `http://localhost:$WS_PORT/health` | The health URL to check (another host works too) |
+| `--failures N` | 2 | Consecutive failed checks before the alert |
+| `--remind` | `1h` | Repeat the alert while the server stays down |
+| `--timeout` | `10s` | A slower answer counts as down (a hung process) |
+| `--every` | (one check) | Keep checking at this interval instead of exiting |
+| `--state` | `$XDG_STATE_HOME/marina-monitor.json` | Outage state between one-shot runs |
+| `--desktop` | off | Desktop notification (`notify-send` on Linux, `osascript` on macOS) |
+
+Alerts go out once per outage (`down`), then as reminders (`still-down`), then `recovered`. Besides `--desktop`:
+
+- **`MARINA_MONITOR_WEBHOOK`**: a JSON POST with `text` and `content`, which Slack and Discord incoming webhooks accept as is.
+- **`MARINA_MONITOR_HEARTBEAT_URL`**: pinged on every healthy check. Point it at a dead-man's-switch service (healthchecks.io or similar), which alerts when the pings stop. This is the only option that also catches the machine itself being off or offline.
+
+Both come from the environment and are never printed. The exit code is 0 when healthy and 1 when down.
+
+The monitor installs nothing on the host: no service, no scheduler entry, no OS setting. It is the same on Linux, macOS and Windows, and in the desktop app's environment. Keep it running with `--every`:
+
+```sh
+bun run monitor --every 1m --desktop
+```
+
+Or run one check (no `--every`) from a scheduler you already use, or from another machine with `--url`. `--desktop` uses `notify-send` on Linux and `osascript` on macOS; where neither exists it says so and skips.
+
 ## Row retention
 
 Marina writes a row per command, per agent tool call, per memory operation and per

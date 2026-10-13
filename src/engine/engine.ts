@@ -200,6 +200,8 @@ export class Engine {
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   private running = false;
   private ticking = false;
+  /** Wall-clock time the last tick began (0 = the loop has not ticked). */
+  private lastTickAt = 0;
   private tickCount = 0;
   /** Ticks whose body threw. Caught and logged; the loop always continues. */
   private _tickErrors = 0;
@@ -574,6 +576,28 @@ export class Engine {
     this._eventLog.removeListener(listener);
   }
 
+  /**
+   * Liveness of the tick loop, for `/health`: `stalled` when the loop is
+   * running but has not ticked for 30 intervals (at least 30 s). A loop that
+   * was never started (tests, tools) is not stalled.
+   */
+  tickHealth(now = Date.now()): {
+    stalled: boolean;
+    ticks: number;
+    lastTickAgoMs: number | null;
+    tickErrors: number;
+  } {
+    const ago = this.lastTickAt ? now - this.lastTickAt : null;
+    const limit = Math.max(30_000, 30 * this.config.tickInterval);
+    const running = this.tickTimer !== null;
+    return {
+      stalled: running && (ago === null ? now - this.startedAt > limit : ago > limit),
+      ticks: this.tickCount,
+      lastTickAgoMs: ago,
+      tickErrors: this._tickErrors,
+    };
+  }
+
   /** Get server uptime in ms */
   getUptime(): number {
     return Date.now() - this.startedAt;
@@ -849,6 +873,7 @@ export class Engine {
 
   private tickInner(): void {
     this.tickCount++;
+    this.lastTickAt = Date.now();
     tryLog(this.logger, "tick", "Sandbox tick failed", () => this.sandbox.tick());
 
     // Lease expiry is persisted coordination state. Recover abandoned work

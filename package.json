@@ -167,7 +167,8 @@
     "test:a11y": "bun run check:a11y && bun run dashboard:build && cd dashboard && bun run test:browser e2e/accessibility.spec.ts",
     "tau2": "bun run scripts/tau2.ts",
     "longmemeval": "bun run scripts/longmemeval.ts",
-    "repro": "bun run scripts/repro.ts"
+    "repro": "bun run scripts/repro.ts",
+    "monitor": "bun run scripts/monitor.ts"
   },
   "devDependencies": {
     "@babel/parser": "^7.29.9",
