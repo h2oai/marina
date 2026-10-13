@@ -93,6 +93,27 @@ same publications; no separate trip to `/canvas` is required.
 
 ### Start work and review the result
 
+**Work → Your next moves** shows the same prioritized inbox as `work`, `next`, and an
+agent's expanded roster entry. It includes Canvas requests alongside task commitments,
+reviews, and crew activity. **Open request** opens the exact Canvas node without sending
+a command or replacing your chat draft; **Draft claim** fills the full claim command for
+you to review and send. Claimed requests stay visible, with their worker's name. Recent
+completed or failed requests involving you remain in the suggestions for 24 hours.
+This is a bounded, prioritized inbox; use Canvas or the task listings to browse all work.
+
+![Work inbox with a Canvas request beside the chat and context panes](../assets/work-inbox.png)
+
+The same inbox is available from the Workspace pane on
+[mobile screens](../assets/work-inbox-mobile.png).
+
+The Canvas inspector's **Request history** records claims, expired-claim takeovers, delivery,
+and failure, with timestamps and actors. **Open delivered result** follows the result node.
+History starts with recorded lifecycle transitions; older requests may have no history.
+An expired claim can be reclaimed from the inspector. Delivering a Canvas result does not
+verify code or approve a task; review linked task evidence separately.
+
+![Canvas inspector showing a request's claim, delivery, and linked result](../assets/work-request-history.png)
+
 **Work → Start something** brings the first request into the workspace. Choose **Marina** for
 the current coding session, **Crew** for Marina's existing collaborative coding flow, or
 **Native agent** to launch an installed coding tool through one of your connected supervisors.

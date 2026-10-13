@@ -4,10 +4,12 @@
 import { BriefcaseBusiness, Code2, FolderKanban, RefreshCw, SquareCheckBig, X } from "lucide-react";
 import { motion } from "motion/react";
 import { useProjects, useTasks } from "../hooks/use-api";
+import { useChatState } from "../hooks/use-chat-state";
 import { useCodingSessionsSnapshot } from "../hooks/use-coding";
 import { openCanvas, openMemory } from "../hooks/use-workspace-state";
 import { draftCommand } from "../lib/command-discovery";
 import { openBoundPanel } from "../lib/panel-bindings";
+import { WorkInbox } from "./WorkInbox";
 import { WorkLauncher } from "./WorkLauncher";
 
 const TERMINAL_TASKS = new Set(["completed", "cancelled", "failed"]);
@@ -25,6 +27,7 @@ export function WorkOverview({
   embedded?: boolean;
   active?: boolean;
 }) {
+  const resident = useChatState((state) => (state.loggedIn ? state.entityName : null));
   const tasks = useTasks();
   const projects = useProjects();
   const coding = useCodingSessionsSnapshot(true);
@@ -102,6 +105,7 @@ export function WorkOverview({
             </button>
           </div>
         )}
+        {resident && <WorkInbox name={resident} active={active} onNavigate={onClose} />}
         {loading && <div className="p-4 text-center text-text-dim">Loading work…</div>}
         {failed && (
           <div role="alert" className="p-4 text-center text-danger">
@@ -109,7 +113,9 @@ export function WorkOverview({
           </div>
         )}
         {!loading && !failed && total === 0 && (
-          <div className="p-5 text-center text-text-dim">No active work.</div>
+          <div className="p-5 text-center text-text-dim">
+            No active tasks, projects, or coding sessions.
+          </div>
         )}
 
         {activeTasks.length > 0 && (

@@ -3444,6 +3444,8 @@ export class MarinaDB implements MarinaStores {
     limit?: number;
     expireActiveMs?: number;
     now?: number;
+    updatedSince?: number;
+    filter?: (intent: CanvasIntentSummary) => boolean;
   }): CanvasIntentSummary[] {
     return canvasDb.listCanvasIntents(this.db, options);
   }
@@ -3469,8 +3471,13 @@ export class MarinaDB implements MarinaStores {
     return canvasDb.completeCanvasIntent(this.db, idOrPrefix, params);
   }
 
-  failCanvasIntent(idOrPrefix: string, reason: string, now = Date.now()): CanvasIntentFailResult {
-    return canvasDb.failCanvasIntent(this.db, idOrPrefix, reason, now);
+  failCanvasIntent(
+    idOrPrefix: string,
+    reason: string,
+    now = Date.now(),
+    actor?: string,
+  ): CanvasIntentFailResult {
+    return canvasDb.failCanvasIntent(this.db, idOrPrefix, reason, now, actor);
   }
 
   resolveCanvasNode(idOrPrefix: string): CanvasNodeRow | undefined {

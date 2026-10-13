@@ -1,7 +1,9 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { type CanvasReader, canvasReaderFor, mayReadCanvas } from "../engine/canvas-access";
 import type { MarinaDB } from "../persistence/database";
+import { CANVAS_INTENT_CLAIM_TIMEOUT_MS } from "../persistence/db-canvas";
 import type { Entity, EntityId } from "../types";
 import type { QuestDef } from "../world/world-definition";
 import type { CrewManager } from "./crew-manager";
@@ -31,6 +33,10 @@ export interface WorkItem {
   action: string;
   priority: number;
   ref?: string;
+  command?: string;
+  target?: { kind: "canvas"; canvasId: string; nodeId: string };
+  status?: "pending" | "active" | "done" | "failed";
+  owner?: string;
 }
 
 export interface WorkLoopDeps {
@@ -40,9 +46,9 @@ export interface WorkLoopDeps {
   quests?: QuestDef[];
   startRoom?: string;
   peers?: Entity[];
+  /** HTTP supplies the actual viewer, never the selected agent's authority. */
+  canvasReader?: CanvasReader;
 }
-
-const INTENT_TIMEOUT_MS = 5 * 60 * 1000;
 
 export function listWorkItems(entity: Entity, deps: WorkLoopDeps, limit = 12): WorkItem[] {
   const items: WorkItem[] = [];
@@ -109,20 +115,59 @@ export function listWorkItems(entity: Entity, deps: WorkLoopDeps, limit = 12): W
   }
 
   if (db) {
-    for (const intent of db
-      .listCanvasIntents({
-        statuses: ["pending"],
-        limit: 5,
-        expireActiveMs: INTENT_TIMEOUT_MS,
-      })
-      .filter((intent) => intent.creatorName !== entity.name)) {
+    const reader =
+      deps.canvasReader ??
+      canvasReaderFor(
+        {
+          db,
+          entities: { get: (id) => (id === entity.id ? entity : db.loadEntity(id)) },
+        },
+        entity.id,
+        { inWorld: true },
+      );
+    const visible = (intent: { canvasId: string }) =>
+      mayReadCanvas(db.getCanvas(intent.canvasId), reader);
+    const ongoing = db.listCanvasIntents({
+      statuses: ["pending", "active"],
+      limit: 100,
+      expireActiveMs: CANVAS_INTENT_CLAIM_TIMEOUT_MS,
+      filter: visible,
+    });
+    const recent = db.listCanvasIntents({
+      statuses: ["done", "failed"],
+      limit: 5,
+      updatedSince: Date.now() - 86_400_000,
+      filter: (intent) =>
+        visible(intent) &&
+        (intent.creatorName === entity.name || intent.intent.claimedBy === entity.name),
+    });
+    for (const intent of [...ongoing, ...recent]) {
+      const { status, claimedBy } = intent.intent;
+      const mine = claimedBy === entity.name;
+      const requested = intent.creatorName === entity.name;
+      const terminal = status === "done" || status === "failed";
+      // Another worker's live claim is not a commitment for this resident.
+      if (status === "active" && !mine && !requested) continue;
+      const label = { pending: "Pending", active: "Active", done: "Completed", failed: "Failed" }[
+        status
+      ];
       items.push({
         kind: "canvas_intent",
-        title: `Pending canvas intent on ${intent.canvasName}`,
+        title: `${label} canvas intent on ${intent.canvasName}`,
         detail: intent.intent.prompt,
-        action: `canvas intent claim ${intent.nodeId.slice(0, 8)} or canvas intent list`,
-        priority: 85,
+        action:
+          status === "pending"
+            ? `canvas intent claim ${intent.nodeId.slice(0, 8)} or canvas intent list`
+            : `canvas look ${intent.nodeId}`,
+        command:
+          status === "pending" && mayReadCanvas(db.getCanvas(intent.canvasId), reader, "write")
+            ? `canvas intent claim ${intent.nodeId}`
+            : undefined,
+        priority: terminal ? 65 : status === "active" ? (mine ? 94 : requested ? 89 : 82) : 85,
         ref: `canvas_intent:${intent.nodeId}`,
+        target: { kind: "canvas", canvasId: intent.canvasId, nodeId: intent.nodeId },
+        status,
+        owner: claimedBy,
       });
     }
   }
@@ -222,7 +267,11 @@ export function listWorkItems(entity: Entity, deps: WorkLoopDeps, limit = 12): W
 }
 
 export function nextWorkItem(entity: Entity, deps: WorkLoopDeps): WorkItem {
-  return listWorkItems(entity, deps, 1)[0]!;
+  // Recent outcomes stay visible in Work, but must not trap autonomous agents
+  // in a loop inspecting already-delivered work instead of picking up a task.
+  return listWorkItems(entity, deps).find(
+    (item) => item.status !== "done" && item.status !== "failed",
+  )!;
 }
 
 function reviewItems(entityId: EntityId, tasks: TaskManager): WorkItem[] {

@@ -2,12 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { join } from "node:path";
-import { record as recordStanding } from "../../agent/standing";
 import { header, separator } from "../../net/ansi";
 import { guardedFetch } from "../../net/url-guard";
-import type { CanvasIntentData, MarinaDB } from "../../persistence/database";
-import { parseCanvasIntent } from "../../persistence/database";
-import { validatePanelDocument } from "../../sdk/panel-document";
+import type { MarinaDB } from "../../persistence/database";
 import { PANEL_RESOURCE_CATALOG } from "../../sdk/panel-resource-catalog";
 import type { StorageProvider } from "../../storage/provider";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
@@ -25,6 +22,7 @@ import { getErrorMessage } from "../errors";
 import { Logger } from "../logger";
 import { type OwnershipSubject, ownershipRefusal } from "../ownership";
 import { rankFloorRefusal } from "../rank-floor";
+import { handleCanvasIntent } from "./canvas-intent";
 import { requiresPersistence } from "./command-messages";
 
 /** Module logger. */
@@ -242,16 +240,18 @@ export function canvasCommand(deps: {
           return;
         }
         case "intent":
-          await handleIntent(
+          await handleCanvasIntent({
             ctx,
-            eid,
             entity,
             db,
-            deps.storage,
-            deps.logEvent,
-            tokens.slice(1),
-            access,
-          );
+            tokens: tokens.slice(1),
+            reader: access.reader,
+            resolveWritableNode: (id) =>
+              canvasLevelNode(access, resolveNode(db, id), `canvas intent ${tokens[1]}`),
+            preview: (id) => previewNodeAsset(db, deps.storage, id),
+            resultTypes: Object.keys(TYPE_MIME_RULES),
+            logEvent: deps.logEvent,
+          });
           return;
         case "look":
         case "see": {
@@ -972,346 +972,6 @@ function handleEdges(
     }),
   ];
   ctx.send(eid, lines.join("\n"));
-}
-
-// ─── Intent ─────────────────────────────────────────────────────────────
-
-const INTENT_TIMEOUT_MS = 5 * 60 * 1000;
-
-function parseIntent(node: { data: string }): CanvasIntentData | undefined {
-  return parseCanvasIntent(node.data);
-}
-
-async function handleIntent(
-  ctx: RoomContext,
-  eid: EntityId,
-  entity: Entity,
-  db: MarinaDB,
-  storage: StorageProvider | undefined,
-  logEvent: ((event: { type: string; entity: EntityId; [k: string]: unknown }) => void) | undefined,
-  tokens: string[],
-  access: Access,
-): Promise<void> {
-  const action = tokens[0]?.toLowerCase();
-  // Intents on a private canvas the caller cannot read are "not found".
-  const intentNode = (idOrPrefix: string) =>
-    canvasLevelNode(access, resolveNode(db, idOrPrefix), `canvas intent ${action}`);
-
-  if (!action) {
-    ctx.send(
-      eid,
-      "Usage: canvas intent list [canvas] | canvas intent claim <node_id> | canvas intent complete <node_id> <result>",
-    );
-    return;
-  }
-
-  switch (action) {
-    case "list": {
-      const canvasName = tokens[1];
-      const results = db
-        .listCanvasIntents({
-          canvasName,
-          statuses: ["pending", "active"],
-          limit: 100,
-          expireActiveMs: INTENT_TIMEOUT_MS,
-        })
-        .filter((r) => mayReadCanvas(db.getCanvas(r.canvasId), access.reader));
-
-      if (results.length === 0) {
-        ctx.send(eid, "No pending or active intents found.");
-        return;
-      }
-
-      const lines = [
-        header("Canvas Intents"),
-        separator(),
-        ...results.map((r) => {
-          const claimed = r.intent.claimedBy ? ` [${r.intent.claimedBy}]` : "";
-          const prompt =
-            r.intent.prompt.length > 60 ? `${r.intent.prompt.slice(0, 57)}...` : r.intent.prompt;
-          return `  ${r.nodeId.slice(0, 8)}.. [${r.intent.status}]${claimed} ${r.canvasName}/${r.type} — "${prompt}"`;
-        }),
-      ];
-      ctx.send(eid, lines.join("\n"));
-      return;
-    }
-
-    case "claim": {
-      const nodeId = tokens[1];
-      if (!nodeId) {
-        ctx.send(eid, "Usage: canvas intent claim <node_id>");
-        return;
-      }
-
-      const target = intentNode(nodeId);
-      if (!target) {
-        ctx.send(eid, `Node "${nodeId}" not found.`);
-        return;
-      }
-      const claim = db.claimCanvasIntent(target.id, entity.name);
-      if (!claim.ok) {
-        if (claim.reason === "not_found") {
-          ctx.send(eid, `Node "${nodeId}" not found.`);
-          return;
-        }
-        if (claim.reason === "no_intent") {
-          ctx.send(eid, "This node has no intent.");
-          return;
-        }
-        ctx.send(eid, `Intent is already "${claim.status ?? "not pending"}", cannot claim.`);
-        return;
-      }
-
-      const { node, intent } = claim;
-
-      logEvent?.({
-        type: "canvas_intent",
-        entity: eid,
-        canvasId: node.canvas_id,
-        nodeId: node.id,
-        prompt: intent.prompt,
-        status: "active",
-        timestamp: Date.now(),
-      });
-
-      // Preview attached asset if present — lets the agent see CSV columns /
-      // text previews immediately, without needing a separate inspection step.
-      const preview = await previewNodeAsset(db, storage, node.asset_id);
-      const lines = [`Claimed intent on node ${node.id.slice(0, 8)}.. — "${intent.prompt}"`];
-      if (preview) lines.push("", preview);
-      ctx.send(eid, lines.join("\n"));
-      return;
-    }
-
-    case "fail": {
-      const nodeId = tokens[1];
-      const reason = tokens.slice(2).join(" ") || "No reason given";
-      if (!nodeId) {
-        ctx.send(eid, "Usage: canvas intent fail <node_id> [reason]");
-        return;
-      }
-
-      const node = intentNode(nodeId);
-      if (!node) {
-        ctx.send(eid, `Node "${nodeId}" not found.`);
-        return;
-      }
-
-      const intent = parseIntent(node);
-      if (!intent) {
-        ctx.send(eid, "This node has no intent.");
-        return;
-      }
-      if (intent.status !== "active") {
-        ctx.send(eid, `Intent status is "${intent.status}", expected "active".`);
-        return;
-      }
-
-      const parsed = JSON.parse(node.data);
-      parsed.intent = { ...intent, status: "failed", failReason: reason };
-      db.updateNode(node.id, { data: JSON.stringify(parsed) });
-
-      logEvent?.({
-        type: "canvas_intent",
-        entity: eid,
-        canvasId: node.canvas_id,
-        nodeId: node.id,
-        prompt: intent.prompt,
-        status: "failed",
-        timestamp: Date.now(),
-      });
-
-      ctx.send(eid, `Intent failed on node ${node.id.slice(0, 8)}.. Reason: ${reason}`);
-      return;
-    }
-
-    case "complete": {
-      const nodeId = tokens[1];
-      // Parse optional --type flag
-      let resultType = "text";
-      let resultTokens = tokens.slice(2);
-      const typeIdx = resultTokens.indexOf("--type");
-      if (typeIdx !== -1 && resultTokens[typeIdx + 1]) {
-        resultType = resultTokens[typeIdx + 1]!;
-        resultTokens = [...resultTokens.slice(0, typeIdx), ...resultTokens.slice(typeIdx + 2)];
-      }
-      if (!Object.hasOwn(TYPE_MIME_RULES, resultType)) {
-        ctx.send(
-          eid,
-          `Invalid result node type. Valid: ${Object.keys(TYPE_MIME_RULES).join(", ")}`,
-        );
-        return;
-      }
-      const result = resultTokens.join(" ");
-      if (!nodeId || !result) {
-        ctx.send(eid, "Usage: canvas intent complete <node_id> [--type <type>] <result text>");
-        return;
-      }
-
-      const node = intentNode(nodeId);
-      if (!node) {
-        ctx.send(eid, `Node "${nodeId}" not found.`);
-        return;
-      }
-
-      const intent = parseIntent(node);
-      if (!intent) {
-        ctx.send(eid, "This node has no intent.");
-        return;
-      }
-      if (intent.status !== "active") {
-        ctx.send(eid, `Intent status is "${intent.status}", expected "active".`);
-        return;
-      }
-
-      // Create a result child node threaded under the original
-      const resultNodeId = crypto.randomUUID();
-      db.createNode({
-        id: resultNodeId,
-        canvasId: node.canvas_id,
-        type: resultType,
-        data: {
-          body: result,
-          author: entity.name,
-          feedType: "intent_result",
-          sourceNodeId: node.id,
-          sourcePrompt: intent.prompt,
-        },
-        creatorName: entity.name,
-        parentNodeId: node.id,
-      });
-
-      // Update original node's intent
-      const parsed = JSON.parse(node.data);
-      parsed.intent = { ...intent, status: "done", result, resultNodeId };
-      db.updateNode(node.id, { data: JSON.stringify(parsed) });
-
-      logEvent?.({
-        type: "canvas_intent",
-        entity: eid,
-        canvasId: node.canvas_id,
-        nodeId: node.id,
-        prompt: intent.prompt,
-        status: "done",
-        timestamp: Date.now(),
-      });
-
-      // Fulfilling a work request someone else posted is a helping act —
-      // credit the completer's standing (idempotent on ref=intent:<nodeId>).
-      // Self-completion (creator == completer) earns nothing; that's not help.
-      if (node.creator_name && node.creator_name !== entity.name) {
-        recordStanding(db, eid, entity.name, "helping_act", `intent:${node.id}`);
-      }
-
-      // Record the completion in the agent's own memory so they can
-      // recall what they've accomplished. Previously intents completed
-      // silently — the agent did the work but had no memory of it.
-      try {
-        db.createNote(
-          entity.name,
-          `[intent-done] "${intent.prompt.slice(0, 120)}" → ${result.slice(0, 200)}`,
-          entity.room,
-          { importance: 7, noteType: "episode" },
-        );
-      } catch {
-        // Note write is best-effort.
-      }
-
-      ctx.send(
-        eid,
-        `Intent completed on node ${node.id.slice(0, 8)}.. Result published as ${resultType} child node ${resultNodeId.slice(0, 8)}..`,
-      );
-      return;
-    }
-
-    case "complete-rich": {
-      const nodeId = tokens[1];
-      const jsonStr = tokens.slice(2).join(" ");
-      if (!nodeId || !jsonStr) {
-        ctx.send(eid, "Usage: canvas intent complete-rich <node_id> <a2ui_json>");
-        return;
-      }
-
-      const node = intentNode(nodeId);
-      if (!node) {
-        ctx.send(eid, `Node "${nodeId}" not found.`);
-        return;
-      }
-
-      const intent = parseIntent(node);
-      if (!intent) {
-        ctx.send(eid, "This node has no intent.");
-        return;
-      }
-      if (intent.status !== "active") {
-        ctx.send(eid, `Intent status is "${intent.status}", expected "active".`);
-        return;
-      }
-
-      let raw: unknown;
-      try {
-        raw = JSON.parse(jsonStr);
-      } catch {
-        ctx.send(eid, "Invalid JSON. Provide a valid A2UI component tree.");
-        return;
-      }
-      const parsedDocument = validatePanelDocument(raw);
-      if (!parsedDocument.ok) {
-        ctx.send(eid, parsedDocument.error);
-        return;
-      }
-      const completion = db.completeCanvasIntent(node.id, {
-        result: "[A2UI]",
-        resultType: "a2ui",
-        resultData: { ...parsedDocument.document },
-        completerName: entity.name,
-      });
-      if (!completion.ok) {
-        ctx.send(eid, "Intent changed before completion. Refresh its status.");
-        return;
-      }
-      const resultNodeId = completion.resultNode.id;
-
-      logEvent?.({
-        type: "canvas_intent",
-        entity: eid,
-        canvasId: node.canvas_id,
-        nodeId: node.id,
-        prompt: intent.prompt,
-        status: "done",
-        timestamp: Date.now(),
-      });
-      if (node.creator_name && node.creator_name !== entity.name) {
-        recordStanding(db, eid, entity.name, "helping_act", `intent:${node.id}`);
-      }
-
-      // Record rich completion in agent memory (see note above in `complete`).
-      try {
-        db.createNote(
-          entity.name,
-          `[intent-done-rich] "${intent.prompt.slice(0, 120)}" → A2UI result (node ${resultNodeId.slice(0, 8)}..)`,
-          entity.room,
-          { importance: 7, noteType: "episode" },
-        );
-      } catch {
-        // Note write is best-effort.
-      }
-
-      ctx.send(
-        eid,
-        `Intent completed with A2UI result on node ${node.id.slice(0, 8)}.. Result: ${resultNodeId.slice(0, 8)}..`,
-      );
-      return;
-    }
-
-    default:
-      ctx.send(
-        eid,
-        "Usage: canvas intent list [canvas] | canvas intent claim <node_id> | " +
-          "canvas intent complete <node_id> [--type <type>] <result> | " +
-          "canvas intent complete-rich <node_id> <a2ui_json>",
-      );
-  }
 }
 
 /** Resolve a node by full or prefix ID. */

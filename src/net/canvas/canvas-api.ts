@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { claimIntent, completeIntent, failIntent } from "../../coordination/canvas-intents";
 import { mayReadAsset, mayReadNode } from "../../engine/canvas-access";
 import { canvasDocumentData, panelRevision } from "../../engine/canvas-document";
 import type { Engine } from "../../engine/engine";
@@ -306,87 +307,62 @@ export async function handleCanvasApi(
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
     const actorName = actorNameForRequest(body, engine, authenticatedEntityId);
 
+    const entity = authenticatedEntityId ? engine?.entities.get(authenticatedEntityId) : undefined;
+    const context = {
+      db,
+      actor: { id: authenticatedEntityId, name: actorName, room: entity?.room },
+      logEvent: engine
+        ? (event: Parameters<Engine["logEvent"]>[0]) => engine.logEvent(event)
+        : undefined,
+    };
     if (action === "claim") {
-      const result = db.claimCanvasIntent(node.id, actorName);
+      const result = claimIntent(context, node.id);
       if (!result.ok) return intentErrorResponse(json, result);
-      const parsed = JSON.parse(result.node.data);
-      const responseNode = { ...result.node, data: parsed };
-      // No direct broadcast here: the canvas_intent engine event below reaches
-      // FeedPublisher synchronously, which broadcasts an asset-enriched
-      // node_updated snapshot. Broadcasting the unenriched node too would just
-      // duplicate it.
-      engine?.logEvent({
-        type: "canvas_intent",
-        entity: (authenticatedEntityId ?? result.node.creator_name) as EntityId,
-        canvasId,
-        nodeId,
-        prompt: result.intent.prompt,
-        status: "active",
-        timestamp: Date.now(),
-      });
-      return json({ ok: true, node: responseNode, intent: result.intent });
-    }
-
-    if (action === "complete") {
-      const resultText = typeof body.result === "string" ? body.result.trim() : "";
-      if (!resultText) return json({ error: "Missing result" }, 400);
-      const resultData =
-        body.data && typeof body.data === "object" && !Array.isArray(body.data)
-          ? (body.data as Record<string, unknown>)
-          : undefined;
-      let completedData = resultData;
-      if (body.type === "a2ui") {
-        const parsed = validatePanelDocument(resultData);
-        if (!parsed.ok) return json({ error: parsed.error }, 400);
-        completedData = { ...resultData, ...parsed.document };
-      }
-      const result = db.completeCanvasIntent(node.id, {
-        result: resultText,
-        resultType: typeof body.type === "string" ? body.type : undefined,
-        resultData: completedData,
-        completerName: actorName,
-      });
-      if (!result.ok) return intentErrorResponse(json, result);
-      const responseNode = { ...result.node, data: JSON.parse(result.node.data) };
-      const responseResultNode = { ...result.resultNode, data: JSON.parse(result.resultNode.data) };
-      // No direct broadcasts: FeedPublisher handles the canvas_intent event
-      // below and broadcasts both the enriched node_updated and the result
-      // node_added (it reads resultNodeId from the intent data).
-      engine?.logEvent({
-        type: "canvas_intent",
-        entity: (authenticatedEntityId ?? result.node.creator_name) as EntityId,
-        canvasId,
-        nodeId,
-        prompt: result.intent.prompt,
-        status: "done",
-        timestamp: Date.now(),
-      });
       return json({
         ok: true,
-        node: responseNode,
-        resultNode: responseResultNode,
+        node: { ...result.node, data: JSON.parse(result.node.data) },
         intent: result.intent,
       });
     }
-
+    if (action === "complete") {
+      const resultText = typeof body.result === "string" ? body.result.trim() : "";
+      if (!resultText) return json({ error: "Missing result" }, 400);
+      const resultType = typeof body.type === "string" ? body.type : "text";
+      if (!CANVAS_NODE_TYPES.has(resultType))
+        return json({ error: "Invalid result node type" }, 400);
+      let resultData =
+        body.data && typeof body.data === "object" && !Array.isArray(body.data)
+          ? (body.data as Record<string, unknown>)
+          : undefined;
+      if (resultType === "a2ui") {
+        const parsed = validatePanelDocument(resultData);
+        if (!parsed.ok) return json({ error: parsed.error }, 400);
+        resultData = { ...resultData, ...parsed.document };
+      }
+      const result = completeIntent(context, node.id, {
+        result: resultText,
+        resultType,
+        resultData,
+      });
+      if (!result.ok) return intentErrorResponse(json, result);
+      return json({
+        ok: true,
+        node: { ...result.node, data: JSON.parse(result.node.data) },
+        resultNode: { ...result.resultNode, data: JSON.parse(result.resultNode.data) },
+        intent: result.intent,
+      });
+    }
     const reason =
       typeof body.reason === "string" && body.reason.trim()
         ? body.reason.trim()
         : "No reason given";
-    const result = db.failCanvasIntent(node.id, reason);
+    const result = failIntent(context, node.id, reason);
     if (!result.ok) return intentErrorResponse(json, result);
-    const responseNode = { ...result.node, data: JSON.parse(result.node.data) };
-    // No direct broadcast — see the claim handler above.
-    engine?.logEvent({
-      type: "canvas_intent",
-      entity: (authenticatedEntityId ?? result.node.creator_name) as EntityId,
-      canvasId,
-      nodeId,
-      prompt: result.intent.prompt,
-      status: "failed",
-      timestamp: Date.now(),
+    return json({
+      ok: true,
+      node: { ...result.node, data: JSON.parse(result.node.data) },
+      intent: result.intent,
     });
-    return json({ ok: true, node: responseNode, intent: result.intent });
   }
   // DELETE /api/canvases/:id/nodes/:nodeId
   const nodeMatch = url.pathname.match(/^\/api\/canvases\/([^/]+)\/nodes\/([^/]+)$/);

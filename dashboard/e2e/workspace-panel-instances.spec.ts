@@ -62,6 +62,9 @@ test("repeated maps have independent controls while chat and live world connecti
       mutations.push(request.url());
   });
   page.on("websocket", (socket) => {
+    // Feed previews may subscribe to Canvas resources from earlier journeys;
+    // repeated map views must preserve the resident and world-observer sockets.
+    if (new URL(socket.url()).pathname === "/canvas-ws") return;
     sockets.push(socket.url());
     socket.on("framesent", (frame) => {
       const message = JSON.parse(String(frame.payload));

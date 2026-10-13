@@ -105,6 +105,9 @@ test("Canvas layout edits preserve one chat connection, drafts, focus and saved 
       mutations.push(request.url());
   });
   page.on("websocket", (socket) => {
+    // Earlier journeys can leave feed entries whose inline previews subscribe to
+    // Canvas resources. This test guards the resident and world-observer sockets.
+    if (new URL(socket.url()).pathname === "/canvas-ws") return;
     sockets.push(socket.url());
     socket.on("framesent", (frame) => {
       const message = JSON.parse(String(frame.payload));

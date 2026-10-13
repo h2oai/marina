@@ -61,6 +61,8 @@ export interface CanvasStore {
     limit?: number;
     expireActiveMs?: number;
     now?: number;
+    updatedSince?: number;
+    filter?: (intent: CanvasIntentSummary) => boolean;
   }): CanvasIntentSummary[];
   claimCanvasIntent(
     idOrPrefix: string,
@@ -77,7 +79,12 @@ export interface CanvasStore {
       now?: number;
     },
   ): CanvasIntentCompleteResult;
-  failCanvasIntent(idOrPrefix: string, reason: string, now?: number): CanvasIntentFailResult;
+  failCanvasIntent(
+    idOrPrefix: string,
+    reason: string,
+    now?: number,
+    actor?: string,
+  ): CanvasIntentFailResult;
   resolveCanvasNode(idOrPrefix: string): CanvasNodeRow | undefined;
   getChildNodes(parentNodeId: string): CanvasNodeRow[];
   getRootNodes(canvasId: string): CanvasNodeRow[];

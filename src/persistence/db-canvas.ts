@@ -284,6 +284,8 @@ export function listCanvasIntents(
     limit?: number;
     expireActiveMs?: number;
     now?: number;
+    updatedSince?: number;
+    filter?: (intent: CanvasIntentSummary) => boolean;
   },
 ): CanvasIntentSummary[] {
   const now = options?.now ?? Date.now();
@@ -303,6 +305,10 @@ export function listCanvasIntents(
   if (options?.canvasName) {
     where.push("c.name = ?");
     params.push(options.canvasName);
+  }
+  if (options?.updatedSince !== undefined) {
+    where.push("n.updated_at >= ?");
+    params.push(options.updatedSince);
   }
   const page = db.query(
     `SELECT n.*, c.name AS canvas_name
@@ -325,7 +331,7 @@ export function listCanvasIntents(
         intent = { ...intent, status: "pending", claimedBy: undefined, claimedAt: undefined };
       }
       if (!statuses.has(intent.status)) continue;
-      intents.push({
+      const summary: CanvasIntentSummary = {
         nodeId: row.id,
         canvasId: row.canvas_id,
         canvasName: row.canvas_name,
@@ -336,7 +342,8 @@ export function listCanvasIntents(
         createdAt: row.created_at,
         updatedAt: row.updated_at,
         intent,
-      });
+      };
+      if (!options?.filter || options.filter(summary)) intents.push(summary);
       if (intents.length >= limit) break;
     }
     if (rows.length < INTENT_PAGE_ROWS) break;
@@ -376,6 +383,12 @@ export function claimCanvasIntent(
     status: "active",
     claimedBy: claimantName,
     claimedAt: now,
+    history: intentHistory(intent, {
+      status: "active",
+      actor: claimantName,
+      at: now,
+      ...(intent.status === "active" ? { previousClaimant: intent.claimedBy } : {}),
+    }),
   };
   parsed.intent = claimed;
 
@@ -443,7 +456,18 @@ export function completeCanvasIntent(
         parentNodeId: node.id,
       });
 
-      parsed.intent = { ...intent, status: "done", result: params.result, resultNodeId };
+      parsed.intent = {
+        ...intent,
+        status: "done",
+        result: params.result,
+        resultNodeId,
+        history: intentHistory(intent, {
+          status: "done",
+          actor: params.completerName,
+          at: now,
+          resultNodeId,
+        }),
+      };
       ok = updateNodeDataIfUnchanged(db, node, JSON.stringify(parsed), now);
       if (!ok) {
         throw new Error("canvas_intent_conflict");
@@ -468,7 +492,7 @@ export function completeCanvasIntent(
   return {
     ok: true,
     node: getNode(db, node.id) ?? node,
-    intent: { ...intent, status: "done", result: params.result, resultNodeId },
+    intent: parsed.intent as CanvasIntentData,
     resultNode: getNode(db, resultNodeId)!,
   };
 }
@@ -478,6 +502,7 @@ export function failCanvasIntent(
   idOrPrefix: string,
   reason: string,
   now = Date.now(),
+  actor?: string,
 ): CanvasIntentFailResult {
   const node = resolveCanvasNode(db, idOrPrefix);
   if (!node) return { ok: false, reason: "not_found" };
@@ -495,7 +520,12 @@ export function failCanvasIntent(
     return { ok: false, reason: "not_active", status: intent.status };
   }
 
-  const failed: CanvasIntentData = { ...intent, status: "failed", failReason: reason };
+  const failed: CanvasIntentData = {
+    ...intent,
+    status: "failed",
+    failReason: reason,
+    history: intentHistory(intent, { status: "failed", actor, at: now, reason }),
+  };
   parsed.intent = failed;
   if (!updateNodeDataIfUnchanged(db, node, JSON.stringify(parsed), now)) {
     const latest = getNode(db, node.id);
@@ -640,6 +670,24 @@ export interface CanvasNodeRow {
 
 export type CanvasIntentStatus = "pending" | "active" | "done" | "failed";
 
+export interface CanvasIntentTransition {
+  status: CanvasIntentStatus;
+  actor?: string;
+  at: number;
+  previousClaimant?: string;
+  resultNodeId?: string;
+  reason?: string;
+}
+
+/** Recorded in the same compare-and-swap/transaction as the state change. */
+function intentHistory(
+  intent: CanvasIntentData,
+  transition: CanvasIntentTransition,
+): CanvasIntentTransition[] {
+  const history = Array.isArray(intent.history) ? intent.history : [];
+  return [...history, transition];
+}
+
 export interface CanvasIntentData {
   prompt: string;
   status: CanvasIntentStatus;
@@ -648,6 +696,7 @@ export interface CanvasIntentData {
   result?: string;
   resultNodeId?: string;
   failReason?: string;
+  history?: CanvasIntentTransition[];
 }
 
 export interface CanvasIntentSummary {
