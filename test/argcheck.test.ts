@@ -102,6 +102,28 @@ describe("values and evidence (pure)", () => {
     expect(flagged).toEqual([]);
   });
 
+  it("checks the record ids inside a URL, never the URL the model built", () => {
+    expect(
+      argValues({
+        method: "PUT",
+        url: "https://demo.docusign.net/restapi/v2.1/accounts/default/envelopes/fda7ab94-5b99-43c0?x=ord_812",
+      }),
+    ).toEqual([
+      { path: "method", value: "put", kind: "option", key: "method" },
+      { path: "url", value: "fda7ab94-5b99-43c0", kind: "id", key: "url", part: true },
+      { path: "url", value: "ord_812", kind: "id", key: "url", part: true },
+    ]);
+    expect(
+      argValues({ url: "https://sheets.googleapis.com/v4/spreadsheets/ss_log/values/A2:C2:clear" }),
+    ).toEqual([]);
+    const ev = new EvidenceIndex([
+      { channel: "tool", text: '{"envelopeId":"fda7ab94-5b99-43c0"}' },
+    ]);
+    expect(
+      mechanicalCheck({ url: "https://x.example/v1/envelopes/fda7ab94-5b99-43c0" }, ev).flagged,
+    ).toEqual([]);
+  });
+
   it("walks a dispatcher tool's nested JSON arguments", () => {
     expect(
       argValues({
