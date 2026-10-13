@@ -210,11 +210,11 @@ export async function resolveMatch(
 export type FinalVerdict = "owed" | "waiting" | "declined" | "done";
 
 const VERDICT_CRITERIA: Record<FinalVerdict, string> = {
-  owed: "still owed: not carried out, not declined with a reason, not transferred, and the reply does not wait on the requester for it",
+  owed: "still owed: not carried out, not declined with a reason, not transferred, and the reply does not wait on the requester for it; also owed when the reply calls it impossible or unsafe on the assistant's own judgement while no rule, requester instruction or failed action shown here prevents it and no action toward it was tried",
   waiting:
     "waiting on the requester: the reply asks for a confirmation, details or a choice needed before acting",
   declined:
-    "handled by declining: the reply refuses it, explains it is not allowed or not possible, or hands it to someone else",
+    "handled by declining: the reply refuses it because a rule or the requester does not allow it, explains that an attempted action failed, or hands it to someone else",
   done: "already carried out earlier in the conversation",
 };
 

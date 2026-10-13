@@ -180,6 +180,34 @@ function trivialNumber(n: number): boolean {
 }
 
 /**
+ * The record ids in a URL: path segments and query values with a digit, no
+ * version marker (`v2.1`) and no range or method syntax (`A1:C2`, `:append`).
+ */
+export function urlIdTokens(url: string): string[] {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return [];
+  }
+  const decode = (s: string) => {
+    try {
+      return decodeURIComponent(s);
+    } catch {
+      return s;
+    }
+  };
+  const parts = [...u.pathname.split("/").map(decode), ...[...u.searchParams.values()]];
+  const out = new Set<string>();
+  for (const p of parts) {
+    const t = p.trim().toLowerCase();
+    if (t.length >= 3 && /\d/.test(t) && /^[\w.@+-]+$/.test(t) && !/^v\d+(\.\d+)*$/.test(t))
+      out.add(t);
+  }
+  return [...out];
+}
+
+/**
  * The checkable values in a call's arguments, depth-first, at most
  * {@link MAX_VALUES_PER_CALL}. Booleans, nulls, small integers and free text
  * (long strings, `reason`/`note`-like keys) are skipped.
@@ -208,6 +236,11 @@ export function argValues(args: unknown): ArgValue[] {
         } catch {
           // Not JSON: checked as text below.
         }
+      }
+      // A URL is built by the model from API docs; only the record ids inside it are values.
+      if (/^https?:\/\//i.test(t)) {
+        for (const id of urlIdTokens(t)) out.push({ path, value: id, kind: "id", key, part: true });
+        return;
       }
       const date = dateValue(t);
       if (date) {
