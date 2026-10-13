@@ -2475,6 +2475,14 @@ export class MarinaDB implements MarinaStores {
     benchmarksDb.completeBenchmarkRun(this.db, id, data);
   }
 
+  attachBenchmarkRunItems(
+    runId: string,
+    cols: benchmarksDb.BenchmarkRunLedgerColumns,
+    items: readonly benchmarksDb.BenchmarkItemInput[],
+  ): boolean {
+    return benchmarksDb.attachBenchmarkRunItems(this.db, runId, cols, items);
+  }
+
   getBenchmarkRun(id: string): BenchmarkRunRow | undefined {
     return benchmarksDb.getBenchmarkRun(this.reader, id);
   }

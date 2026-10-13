@@ -4,7 +4,7 @@
 
 ## The `benchmark` command and the ledger
 
-The in-world command is `benchmark list/run/sweep/runs/result/leaderboard/frontier/compare/participants/reference/orchestrations` (plus `defaults/challenge/promote`, `invalidate/revalidate` and `purge-content-notes`, below). Sweep (rank 4+) fans out across every live `marina:<crew>` channel. The ledger (migration 146: run cost/n/CI/slice/judge/target plus append-only `benchmark_items`, ids only and never case content) is ranked by `src/engine/benchmark-ledger.ts`; the operator imports outside results with `bun run benchmark:import`. Defaults change only by earned promotion (migration 147, `src/engine/benchmark-promotion.ts`, `benchmark defaults|challenge|promote`):
+The in-world command is `benchmark list/run/sweep/runs/result/leaderboard/frontier/compare/compare-run/participants/reference/orchestrations` (plus `defaults/challenge/promote`, `invalidate/revalidate` and `purge-content-notes`, below). Sweep (rank 4+) fans out across every live `marina:<crew>` channel. The ledger (migration 146: run cost/n/CI/slice/judge/target plus append-only `benchmark_items`, ids only and never case content) is ranked by `src/engine/benchmark-ledger.ts`; the operator imports outside results with `bun run benchmark:import`. Defaults change only by earned promotion (migration 147, `src/engine/benchmark-promotion.ts`, `benchmark defaults|challenge|promote`):
   - The challenger must win on the slot's hashed holdout split (same benchmark, judge and items).
   - The paired interval must be above 0, and the gain must clear `promotionMargin(tried)`.
   - It needs `role.edit`, and is never the challenger's own author.
@@ -37,6 +37,20 @@ Given an arm or a cap, the runner mints a **run key** (`src/engine/benchmark-run
 - **A transport guard:** after five consecutive upstream *network* failures (not HTTP errors), the key refuses with 503 `run_transport_failed`, so a broken connection fails the run in seconds rather than retrying until the budget is gone.
 
 The key is revoked when the run ends. A run stopped by its key is recorded **invalid** with the reason, so no ranking reads it. A run key authenticates whether or not `MODEL_API_KEYS` is set, has no name-map authority, and can be confined to one entity (`entityName`).
+
+## Paired comparisons as one command
+
+`benchmark compare-run <name> arms:<a>,<b> cap:<usd> [replicates:N] [limit: seed: model: judge: concurrency: partition:]` (rank 4, `src/engine/benchmark-compare-run.ts`) runs two arms as one paired comparison:
+
+- **Replicates default to 2** (at most 10). One run cannot separate a small effect: identical runs of one arm have moved by more than the effects being measured. `replicates:1` runs, with a warning.
+- **Pairing.** Each replicate starts both arms at the same time, with the same items, seed, judge, model and server code, so a provider's bad patch lands on both. Replicates run one after another.
+- **Spend.** `cap:` is required. It covers the whole comparison and is split equally across the runs, each enforced by its run key.
+- **Arms** are named like `benchmark run arm:`; inside one arm, members are joined by `+` (`arms:bare,lessons+obligations`).
+- **Ledger.** Each arm's runs file under the replicate group `cmp:<id>:<arm>`. `benchmark compare-run status <id>` rebuilds the report from the ledger alone, so it survives a restart; `replicates` and `compare` read the same runs.
+- **Report.** Per arm: pooled accuracy with a Wilson 95% interval over item-attempts, spend, cost per success, and the `model@source` it measured. Then the paired two-stage bootstrap of A − B and the range of single-pair McNemar p. The Wilson intervals pool replicates and so understate run-to-run variance; the paired interval is the test. Arms that ran different models or code, items or judges are flagged as unpaired.
+- **Feed events:** `benchmark_compare_started|completed|failed`. The owner gets the report when the last run finishes.
+
+In-world runs record their per-item outcomes (item id, verdict, latency, cost, trace id; never question or answer text) and ledger columns when they complete, so `compare`, `replicates` and pooling read them like imported runs. A run key's measured spend is the run's cost; without one, the harness's usage report is. The run's target is `{model, stack, source}`: `source` is the server's git revision (`-dirty` with local changes), so runs on different code never pool as replicates. A bare run records no `stack` and stays model evidence for route selection; an instrumented arm is not counted as evidence for the model alone.
 
 ## The reproduction kit, from inside the world
 

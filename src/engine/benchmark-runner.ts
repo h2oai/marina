@@ -29,10 +29,18 @@ import { localHttpBase } from "../net/listen-ports";
 import { DEFAULT_STACK, parseStackHeader } from "../net/model-api/stack";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent, EntityId } from "../types";
-import { fallbackInvalidReason, isFallbackItem } from "./benchmark-ledger";
+import {
+  fallbackInvalidReason,
+  type HarnessResultFile,
+  isFallbackItem,
+  ledgerFromHarnessResult,
+} from "./benchmark-ledger";
 import { mintRunKey, revokeRunKey } from "./benchmark-run-keys";
 import { getErrorMessage } from "./errors";
 import { featureEnvSnapshot } from "./feature-env";
+import { Logger } from "./logger";
+
+const log = new Logger();
 
 interface BenchmarkSpec {
   name: string;
@@ -216,6 +224,65 @@ export interface BenchmarkRunOptions {
   arm?: string;
   /** Upstream spend cap for the run, USD; every call past it is refused. */
   capUsd?: number;
+  /** Explicit replicate group for the run's ledger row (`benchmark compare-run` sets one per arm). */
+  replicateGroup?: string;
+}
+
+let cachedSource: string | null | undefined;
+
+/**
+ * The source revision this server runs: the git commit (12 hex, `-dirty` when
+ * the checkout has local changes), or null outside a git checkout. Read once —
+ * the code a process runs does not change under it. Part of an in-world run's
+ * target (`source`), so runs on different code never pair as replicates and a
+ * comparison names the model AND the code it measured (`model@source`).
+ */
+export function sourceRevision(): string | null {
+  if (cachedSource !== undefined) return cachedSource;
+  try {
+    const cwd = join(import.meta.dir, "../..");
+    const head = Bun.spawnSync(["git", "rev-parse", "--short=12", "HEAD"], { cwd });
+    const sha = head.exitCode === 0 ? head.stdout.toString().trim() : "";
+    if (!/^[0-9a-f]{7,40}$/.test(sha)) cachedSource = null;
+    else {
+      const dirty = Bun.spawnSync(["git", "status", "--porcelain", "--untracked-files=no"], {
+        cwd,
+      });
+      cachedSource = dirty.exitCode === 0 && dirty.stdout.toString().trim() ? `${sha}-dirty` : sha;
+    }
+  } catch {
+    cachedSource = null;
+  }
+  return cachedSource;
+}
+
+/** Test seam: pin (or clear, with undefined) the source revision. */
+export function setSourceRevisionForTests(value: string | null | undefined): void {
+  cachedSource = value;
+}
+
+/**
+ * What an in-world run measured, as its ledger target: the model, the arm's
+ * instrument stack and the source revision. Bare runs record no stack, so they
+ * stay model evidence; an instrumented arm is a different target.
+ */
+export function inWorldTarget(config: {
+  model: string;
+  arm?: string;
+  lessons?: boolean;
+  lessonsMode?: string;
+  partition?: string;
+  source?: string;
+}): Record<string, unknown> {
+  const stack = config.arm ? armStack(config.arm) : undefined;
+  const s = stack && "stack" in stack && stack.stack !== "none" ? stack.stack : undefined;
+  return {
+    model: config.model,
+    ...(s ? { stack: s } : {}),
+    ...(config.lessons ? { lessons: config.lessonsMode ?? "measure" } : {}),
+    ...(config.partition ? { partition: config.partition } : {}),
+    ...(config.source ? { source: config.source } : {}),
+  };
 }
 
 /**
@@ -405,6 +472,8 @@ export function benchmarkRunConfig(
     ...(opts.lessonsMode ? { lessonsMode: opts.lessonsMode } : {}),
     ...(opts.arm ? { arm: opts.arm.trim().toLowerCase() } : {}),
     ...(opts.capUsd !== undefined ? { capUsd: opts.capUsd } : {}),
+    ...(opts.replicateGroup ? { replicateGroup: opts.replicateGroup } : {}),
+    ...(sourceRevision() ? { source: sourceRevision() as string } : {}),
     ...(Object.keys(serverFeatures).length ? { serverFeatures } : {}),
   };
 }
@@ -600,7 +669,11 @@ export class BenchmarkRunner {
       harness = { error: getErrorMessage(err) };
     }
     const keyState = runKey ? revokeRunKey(runKey) : undefined;
-    this.recordHarnessResult(id, opts, started, harness);
+    // A run key measured the run's upstream spend exactly; without one the
+    // harness's own usage report is the cost.
+    this.recordHarnessResult(id, opts, started, harness, {
+      ...(keyState ? { costUsd: keyState.spentUsd } : {}),
+    });
     // A run stopped by its key is not a clean measurement: record why.
     if (keyState?.tripped) {
       this.db.setBenchmarkRunValidity({
@@ -628,9 +701,10 @@ export class BenchmarkRunner {
    */
   recordHarnessResult(
     id: string,
-    opts: Pick<BenchmarkRunOptions, "benchmark" | "agentId">,
+    opts: Pick<BenchmarkRunOptions, "benchmark" | "agentId" | "replicateGroup">,
     started: number,
     harness: HarnessOutcome,
+    measured: { costUsd?: number } = {},
   ): void {
     let score: number | null = null;
     let breakdownJson: string | null = null;
@@ -667,6 +741,10 @@ export class BenchmarkRunner {
       completed_at: Date.now(),
       duration_ms,
     });
+
+    if (status === "completed" && harness.result) {
+      this.attachItems(id, opts, harness.result as HarnessResultFile, measured.costUsd);
+    }
 
     const now = Date.now();
     // Too many items errored instead of answering (spend cap, provider
@@ -725,6 +803,60 @@ export class BenchmarkRunner {
         timestamp: now,
       });
     }
+  }
+
+  /**
+   * Record the run's per-item outcomes (item id, verdict, latency, cost, trace
+   * id — never question or answer text) and its ledger columns, so the paired
+   * readers (`compare`, `replicates`, `compare-run`) work on in-world runs.
+   */
+  private attachItems(
+    id: string,
+    opts: Pick<BenchmarkRunOptions, "benchmark" | "replicateGroup">,
+    result: HarnessResultFile,
+    costUsd: number | undefined,
+  ): void {
+    const run = this.db.getBenchmarkRun(id);
+    if (!run) return;
+    try {
+      const config = JSON.parse(run.config_json) as Parameters<typeof inWorldTarget>[0];
+      const { run: ledger, items } = ledgerFromHarnessResult(
+        { ...result, config: { ...(result.config ?? {}), dataset: opts.benchmark } },
+        {
+          targetKind: "model",
+          target: inWorldTarget(config),
+          ...(costUsd !== undefined ? { costUsd } : {}),
+          ...(opts.replicateGroup ? { replicateGroup: opts.replicateGroup } : {}),
+          maxFallbackRate: null,
+          raw: "",
+          id,
+          now: Date.now(),
+        },
+      );
+      this.db.attachBenchmarkRunItems(
+        id,
+        {
+          cost_usd: ledger.cost_usd,
+          n: ledger.n,
+          ci_low: ledger.ci_low,
+          ci_high: ledger.ci_high,
+          seed: ledger.seed,
+          slice_hash: ledger.slice_hash,
+          judge: ledger.judge,
+          target_kind: ledger.target_kind,
+          target_json: ledger.target_json,
+          replicate_group: ledger.replicate_group ?? null,
+        },
+        items,
+      );
+    } catch (err) {
+      log.warn("benchmark", `run ${id}: per-item outcomes not recorded: ${getErrorMessage(err)}`);
+    }
+  }
+
+  /** Resolves when run `id` has finished and been recorded (at once if it is not running). */
+  async done(id: string): Promise<void> {
+    await this.active.get(id)?.catch(() => undefined);
   }
 
   /**

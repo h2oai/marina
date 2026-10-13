@@ -517,6 +517,8 @@ function targetModel(json: string | null | undefined): string | undefined {
   try {
     const v = JSON.parse(json) as unknown;
     if (typeof v === "string") return v;
+    // An instrumented arm measured the model plus Marina's stack, not the model.
+    if ((v as { stack?: unknown } | null)?.stack) return undefined;
     const m = (v as { model?: unknown } | null)?.model;
     return typeof m === "string" && m ? m : undefined;
   } catch {

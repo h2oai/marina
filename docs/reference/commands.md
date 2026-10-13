@@ -695,6 +695,18 @@ Usage:
                                                      each run's CI, $/item and its delta; with
                                                      replicates, the pooled two-stage bootstrap
                                                      (a single run is flagged "not replicated")
+  benchmark compare-run <name> arms:<a>,<b> cap:<usd> [replicates:N] [limit:N] [seed:N]
+                       [model:M] [judge:M] [concurrency:N] [partition:holdout|tune]
+                                                   — a paired comparison as one command: each
+                                                     replicate runs both arms at once on the same
+                                                     items, model and code; replicates default to
+                                                     2. Arms: bare, on, full, or members
+                                                     joined by + (lessons+obligations). cap: is the
+                                                     whole comparison's spend, split per run. Needs
+                                                     rank 4.
+  benchmark compare-run status [id]                — progress, then per arm: accuracy with a
+                                                     Wilson interval, spend, cost per success and
+                                                     model@source; the paired bootstrap delta
   benchmark replicates <run>                       — the run's replicate group: each run, pooled
                                                      accuracy, between-run SD, per-item agreement
   benchmark participants <benchmark>               — per agent / per model: items touched,
@@ -737,9 +749,9 @@ Benchmarks: smoke (15-item prompt A/B, always ready), mmlu-pro, truthfulqa, arc-
 --model M format: "marina" = the default local endpoint; "marina:<name>" = a named
   orchestration (a model-* channel with a live agent). See "benchmark orchestrations".
 
-Note: "run" and "sweep" need rank 4 — they burn real tokens. Discovery commands
+Note: "run", "sweep" and "compare-run" need rank 4 — they burn real tokens. Discovery commands
   (list, runs, result, leaderboard, frontier, compare, replicates, participants, reference,
-  orchestrations, defaults, challenge) are rank 0. Invalid runs are listed by runs and
+  orchestrations, defaults, challenge, compare-run status) are rank 0. Invalid runs are listed by runs and
   result, marked with their reason; every other reader skips them. A run whose items were
   more than MARINA_BENCHMARK_MAX_FALLBACK_RATE (default 25%) fallbacks — errors, spend-cap
   or provider failures instead of answers — is recorded invalid automatically. Results
@@ -776,6 +788,36 @@ Effect: unknown.
 
 - `field-0` (`runA`): text, required.
 - `field-1` (`runB`): text, required.
+
+### `benchmark compare-run <name> arms:<a>,<b> cap:<usd> [replicates:N] [limit:N] [seed:N] [model:M] [judge:M] [concurrency:N] [partition:holdout|tune]`
+
+Effect: unknown.
+
+- `field-0` (`name`): text, required.
+- `field-1` (`arms`): text, required.
+- `field-2` (`b`): text, required.
+- `field-3` (`cap`): number, required.
+- `field-4` (`replicates`): number, optional group `option-0`.
+- `field-5` (`limit`): number, optional group `option-1`.
+- `field-6` (`seed`): number, optional group `option-2`.
+- `field-7` (`model`): text, optional group `option-3`.
+- `field-8` (`judge`): text, optional group `option-4`.
+- `field-9` (`concurrency`): number, optional group `option-5`.
+- `field-10` (`partition`): text, optional group `option-6`, choices `holdout`, `tune`.
+- Group `option-0`: `replicates:N`.
+- Group `option-1`: `limit:N`.
+- Group `option-2`: `seed:N`.
+- Group `option-3`: `model:M`.
+- Group `option-4`: `judge:M`.
+- Group `option-5`: `concurrency:N`.
+- Group `option-6`: `partition:holdout|tune`.
+
+### `benchmark compare-run status [id]`
+
+Effect: unknown.
+
+- `field-0` (`id`): text, optional group `option-0`.
+- Group `option-0`: `id`.
 
 ### `benchmark defaults`
 

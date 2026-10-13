@@ -286,6 +286,87 @@ export function getBenchmarkItemLessons(reader: Database, runId: string): Benchm
     .all(runId) as BenchmarkItemLessonRow[];
 }
 
+/** Insert a run's per-item outcome rows (ids, verdicts, numbers — never item text). */
+function insertItemRows(db: Database, runId: string, items: readonly BenchmarkItemInput[]): void {
+  const insert = db.prepare(
+    `INSERT INTO benchmark_items (run_id, item_id, correct, score, latency_ms, cost_usd, trace_id,
+         participants_json, judge_verdict, answer_hash, budget_forced, verification)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const key = items.some((it) => it.answer_digest) ? benchmarkAnswerHashKey(db) : "";
+  for (const it of items) {
+    insert.run(
+      runId,
+      it.item_id,
+      it.correct ? 1 : 0,
+      it.score,
+      it.latency_ms,
+      it.cost_usd,
+      it.trace_id,
+      it.participants_json,
+      it.judge_verdict,
+      it.answer_digest ? keyedAnswerHash(key, it.item_id, it.answer_digest) : null,
+      it.budget_forced === null || it.budget_forced === undefined ? null : it.budget_forced ? 1 : 0,
+      it.verification && BENCHMARK_VERIFICATION_STATES.includes(it.verification)
+        ? it.verification
+        : null,
+    );
+    if (it.lessons) insertItemLessons(db, runId, it.item_id, it.lessons);
+  }
+}
+
+/** Ledger columns an in-world run gains when its harness result is recorded. */
+export interface BenchmarkRunLedgerColumns {
+  cost_usd: number | null;
+  n: number;
+  ci_low: number;
+  ci_high: number;
+  seed: number | null;
+  slice_hash: string;
+  judge: string | null;
+  target_kind: BenchmarkTargetKind;
+  target_json: string;
+  replicate_group: string | null;
+}
+
+/**
+ * Give an in-world run (inserted `running`, then completed) its ledger columns
+ * and per-item outcome rows, so `compare`, `replicates` and pooling read it
+ * like an imported run. A run that already has items is left unchanged.
+ */
+export function attachBenchmarkRunItems(
+  db: Database,
+  runId: string,
+  cols: BenchmarkRunLedgerColumns,
+  items: readonly BenchmarkItemInput[],
+): boolean {
+  return db.transaction(() => {
+    const has = db.query("SELECT 1 FROM benchmark_items WHERE run_id = ? LIMIT 1").get(runId);
+    if (has) return false;
+    db.run(
+      `UPDATE benchmark_runs SET cost_usd = ?, n = ?, ci_low = ?, ci_high = ?, seed = ?,
+         slice_hash = ?, judge = ?, target_kind = ?, target_json = ?, replicate_group = ?,
+         source = 'in-world'
+       WHERE id = ?`,
+      [
+        cols.cost_usd,
+        cols.n,
+        cols.ci_low,
+        cols.ci_high,
+        cols.seed,
+        cols.slice_hash,
+        cols.judge,
+        cols.target_kind,
+        cols.target_json,
+        cols.replicate_group,
+        runId,
+      ],
+    );
+    insertItemRows(db, runId, items);
+    return true;
+  })();
+}
+
 export function recordBenchmarkLedgerRun(
   db: Database,
   run: BenchmarkLedgerRunInput,
@@ -340,35 +421,7 @@ export function recordBenchmarkLedgerRun(
         run.replicate_group ?? null,
       ],
     );
-    const insert = db.prepare(
-      `INSERT INTO benchmark_items (run_id, item_id, correct, score, latency_ms, cost_usd, trace_id,
-         participants_json, judge_verdict, answer_hash, budget_forced, verification)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
-    const key = items.some((it) => it.answer_digest) ? benchmarkAnswerHashKey(db) : "";
-    for (const it of items) {
-      insert.run(
-        run.id,
-        it.item_id,
-        it.correct ? 1 : 0,
-        it.score,
-        it.latency_ms,
-        it.cost_usd,
-        it.trace_id,
-        it.participants_json,
-        it.judge_verdict,
-        it.answer_digest ? keyedAnswerHash(key, it.item_id, it.answer_digest) : null,
-        it.budget_forced === null || it.budget_forced === undefined
-          ? null
-          : it.budget_forced
-            ? 1
-            : 0,
-        it.verification && BENCHMARK_VERIFICATION_STATES.includes(it.verification)
-          ? it.verification
-          : null,
-      );
-      if (it.lessons) insertItemLessons(db, run.id, it.item_id, it.lessons);
-    }
+    insertItemRows(db, run.id, items);
     if (run.invalid_reason) {
       insertValidityRow(db, {
         run_id: run.id,

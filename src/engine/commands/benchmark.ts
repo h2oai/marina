@@ -12,6 +12,17 @@ import { retireLessonsForRun } from "../../learning/intake";
 import { bold, category, dim, status as fmtStatus, header, separator } from "../../net/ansi";
 import type { BenchmarkRunRow, MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import {
+  type CompareRunJob,
+  type CompareRunReport,
+  compareRunReport,
+  DEFAULT_COMPARE_REPLICATES,
+  getCompareRun,
+  listCompareRuns,
+  MAX_COMPARE_REPLICATES,
+  parseArms,
+  startCompareRun,
+} from "../benchmark-compare-run";
 import { benchmarkExecution, formatBenchmarkExecution } from "../benchmark-execution";
 import {
   getKitJob,
@@ -89,6 +100,18 @@ Usage:
                                                      each run's CI, $/item and its delta; with
                                                      replicates, the pooled two-stage bootstrap
                                                      (a single run is flagged "not replicated")
+  benchmark compare-run <name> arms:<a>,<b> cap:<usd> [replicates:N] [limit:N] [seed:N]
+                       [model:M] [judge:M] [concurrency:N] [partition:holdout|tune]
+                                                   — a paired comparison as one command: each
+                                                     replicate runs both arms at once on the same
+                                                     items, model and code; replicates default to
+                                                     ${DEFAULT_COMPARE_REPLICATES}. Arms: bare, on, full, or members
+                                                     joined by + (lessons+obligations). cap: is the
+                                                     whole comparison's spend, split per run. Needs
+                                                     rank 4.
+  benchmark compare-run status [id]                — progress, then per arm: accuracy with a
+                                                     Wilson interval, spend, cost per success and
+                                                     model@source; the paired bootstrap delta
   benchmark replicates <run>                       — the run's replicate group: each run, pooled
                                                      accuracy, between-run SD, per-item agreement
   benchmark participants <benchmark>               — per agent / per model: items touched,
@@ -131,9 +154,9 @@ Benchmarks: smoke (15-item prompt A/B, always ready), mmlu-pro, truthfulqa, arc-
 --model M format: "marina" = the default local endpoint; "marina:<name>" = a named
   orchestration (a model-* channel with a live agent). See "benchmark orchestrations".
 
-Note: "run" and "sweep" need rank 4 — they burn real tokens. Discovery commands
+Note: "run", "sweep" and "compare-run" need rank 4 — they burn real tokens. Discovery commands
   (list, runs, result, leaderboard, frontier, compare, replicates, participants, reference,
-  orchestrations, defaults, challenge) are rank 0. Invalid runs are listed by runs and
+  orchestrations, defaults, challenge, compare-run status) are rank 0. Invalid runs are listed by runs and
   result, marked with their reason; every other reader skips them. A run whose items were
   more than MARINA_BENCHMARK_MAX_FALLBACK_RATE (default 25%) fallbacks — errors, spend-cap
   or provider failures instead of answers — is recorded invalid automatically. Results
@@ -187,6 +210,8 @@ export function benchmarkCommand(deps: {
     usage: [
       "benchmark challenge <slot> <run> [--max-cost-ratio R]",
       "benchmark compare <runA> <runB>",
+      "benchmark compare-run <name> arms:<a>,<b> cap:<usd> [replicates:N] [limit:N] [seed:N] [model:M] [judge:M] [concurrency:N] [partition:holdout|tune]",
+      "benchmark compare-run status [id]",
       "benchmark defaults",
       "benchmark promote <slot> <run> [--max-cost-ratio R] [--holdout F]",
       "benchmark purge-content-notes [confirm:yes]",
@@ -840,6 +865,163 @@ export function benchmarkCommand(deps: {
           return;
         }
 
+        case "compare-run": {
+          const action = tokens[1]?.toLowerCase();
+          if (!action || action === "status" || action === "list") {
+            const id = action ? tokens[2] : undefined;
+            if (!id) {
+              const known = listCompareRuns();
+              ctx.send(
+                input.entity,
+                known.length === 0
+                  ? "No comparisons in this server since it started. Start one: benchmark compare-run <name> arms:bare,on cap:<usd>"
+                  : [
+                      header("Comparisons"),
+                      separator(),
+                      ...known.map(
+                        (j) =>
+                          `  ${fmtId(j.id)}  ${j.spec.benchmark}  ${j.spec.arms.join(" vs ")}  ×${j.spec.replicates}  ${fmtStatus(j.status.toUpperCase(), variantFromStatus(j.status))}  ${dim(`${formatAge(Date.now() - j.startedAt)} ago`)}`,
+                      ),
+                    ].join("\n"),
+              );
+              return;
+            }
+            const job = getCompareRun(id);
+            const report = compareRunReport(db, id, job?.spec.arms);
+            if (!job && !report) {
+              ctx.send(input.entity, `No comparison ${fmtId(id)}.`);
+              return;
+            }
+            ctx.send(input.entity, renderCompareRun(id, job, report));
+            return;
+          }
+          const floor = rankFloorRefusal(
+            entity,
+            4,
+            "benchmark compare-run requires rank 4 (builder). Every run burns real tokens — earn the rank via competence.",
+          );
+          if (floor) {
+            ctx.send(input.entity, floor);
+            return;
+          }
+          const name = BENCHMARKS[action] ? action : undefined;
+          if (!name) {
+            ctx.send(
+              input.entity,
+              `Unknown benchmark: ${tokens[1]}. Known: ${Object.keys(BENCHMARKS).join(", ")}`,
+            );
+            return;
+          }
+          const str = { type: "string" as const };
+          const { values, rest, errors } = parseModifiers(tokens.slice(2), {
+            arms: str,
+            replicates: str,
+            cap: str,
+            limit: str,
+            seed: str,
+            model: str,
+            judge: str,
+            concurrency: str,
+            partition: str,
+          });
+          const v = (k: string) =>
+            typeof values[k] === "string" ? (values[k] as string) : undefined;
+          const problems = [...errors, ...rest.map((r) => `unexpected "${r}"`)];
+          const arms = parseArms(v("arms"));
+          if ("error" in arms) problems.push(arms.error);
+          const cap = v("cap") === undefined ? Number.NaN : Number(v("cap")?.replace(/^\$/, ""));
+          if (!(Number.isFinite(cap) && cap > 0))
+            problems.push("cap:<usd> is required — the spend cap for the whole comparison");
+          const int = (k: string, min: number, max: number) => {
+            const raw = v(k);
+            if (raw === undefined) return undefined;
+            const n = Number(raw);
+            if (!Number.isInteger(n) || n < min || n > max) {
+              problems.push(`${k}: a whole number from ${min} to ${max}`);
+              return undefined;
+            }
+            return n;
+          };
+          const replicates =
+            int("replicates", 1, MAX_COMPARE_REPLICATES) ?? DEFAULT_COMPARE_REPLICATES;
+          const limit = int("limit", 1, 100_000);
+          const seed = int("seed", 0, 2 ** 31 - 1);
+          const concurrency = int("concurrency", 1, 64);
+          const partition = parsePartition(v("partition"));
+          if (v("partition") !== undefined && !partition)
+            problems.push("partition: holdout or tune");
+          if (problems.length > 0 || "error" in arms) {
+            ctx.send(input.entity, `benchmark compare-run: ${problems.join("; ")}`);
+            return;
+          }
+          if (!runner.datasetReady(name)) {
+            ctx.send(
+              input.entity,
+              `Dataset not cached for ${name}. Run "bun run benchmarks/download-all.ts".`,
+            );
+            return;
+          }
+          const model = v("model");
+          const job = startCompareRun(
+            runner,
+            {
+              benchmark: name,
+              arms,
+              replicates,
+              capUsd: cap,
+              ...(limit !== undefined ? { limit } : {}),
+              ...(seed !== undefined ? { seed } : {}),
+              ...(model ? { model } : {}),
+              ...(v("judge") ? { judgeModel: v("judge") } : {}),
+              ...(concurrency !== undefined ? { concurrency } : {}),
+              ...(partition ? { partition } : {}),
+              owner: entity.id,
+            },
+            (done) => {
+              const report = compareRunReport(db, done.id, done.spec.arms);
+              deps.logEvent?.({
+                type: "feed_event",
+                kind:
+                  done.status === "completed"
+                    ? "benchmark_compare_completed"
+                    : "benchmark_compare_failed",
+                entity: entity.id,
+                ref: done.id,
+                summary: `benchmark compare-run ${done.spec.benchmark} ${done.spec.arms.join(" vs ")} ${done.status}${report?.paired ? ` — delta ${(report.paired.delta * 100).toFixed(1)} pts [${(report.paired.low * 100).toFixed(1)}, ${(report.paired.high * 100).toFixed(1)}]` : ""}`,
+                payload: {
+                  id: done.id,
+                  benchmark: done.spec.benchmark,
+                  arms: done.spec.arms,
+                  replicates: done.spec.replicates,
+                  runs: done.slots.map((s) => s.runId ?? null),
+                },
+                timestamp: Date.now(),
+              });
+              ctx.send(input.entity, renderCompareRun(done.id, done, report));
+            },
+          );
+          deps.logEvent?.({
+            type: "feed_event",
+            kind: "benchmark_compare_started",
+            entity: entity.id,
+            ref: job.id,
+            summary: `benchmark compare-run ${name} ${arms.join(" vs ")} ×${replicates} started`,
+            payload: { id: job.id, benchmark: name, arms, replicates, capUsd: cap },
+            timestamp: job.startedAt,
+          });
+          const lines = [
+            `Comparison started: ${fmtId(job.id)} — ${name}, ${arms[0]} vs ${arms[1]}, ${replicates} replicate${replicates === 1 ? "" : "s"} each, cap $${cap.toFixed(2)} ($${(cap / (2 * replicates)).toFixed(2)} per run).`,
+            "  Each replicate runs both arms at once; the report arrives here when every run has finished.",
+            `  benchmark compare-run status ${job.id}   — progress and results`,
+          ];
+          if (replicates < 2)
+            lines.push(
+              `  ${fmtStatus("WARN", "warn")} 1 replicate — run-to-run variance stays unmeasured; a single draw can move by more than a small effect.`,
+            );
+          ctx.send(input.entity, lines.join("\n"));
+          return;
+        }
+
         case "compare": {
           const [a, b] = [tokens[1], tokens[2]];
           if (!a || !b) {
@@ -1386,6 +1568,55 @@ function pooledLeaderboardLines(db: MarinaDB, rows: readonly BenchmarkRunRow[]):
     );
   }
   return out.length > 0 ? [dim("  ─── replicate groups (pooled) ───"), ...out] : [];
+}
+
+/** A comparison's progress and, once its runs are in the ledger, its report. */
+export function renderCompareRun(
+  id: string,
+  job: CompareRunJob | undefined,
+  report: CompareRunReport | null,
+): string {
+  const lines = [
+    header(
+      `Comparison ${id}${job ? ` — ${job.spec.benchmark}, ${job.spec.arms[0]} vs ${job.spec.arms[1]}` : report?.benchmark ? ` — ${report.benchmark}` : ""}`,
+    ),
+    separator(),
+  ];
+  if (job) {
+    const started = job.slots.filter((s) => s.runId).length;
+    lines.push(
+      `  ${fmtStatus(job.status.toUpperCase(), variantFromStatus(job.status))}  ${started}/${job.slots.length} runs started  ${dim(`${formatAge(Date.now() - job.startedAt)} ago`)}`,
+    );
+    for (const s of job.slots.filter((x) => x.error))
+      lines.push(`  ${fmtStatus("FAIL", "fail")} ${s.arm} replicate ${s.replicate}: ${s.error}`);
+  }
+  if (!report) return lines.join("\n");
+  const arm = (tag: string, a: CompareRunReport["a"]) => {
+    const bad = a.runs.filter((r) => r.status !== "completed" && r.status !== "running");
+    const running = a.runs.filter((r) => r.status === "running").length;
+    return [
+      `  ${tag} ${bold(a.arm)}  ${a.valid.length} valid run${a.valid.length === 1 ? "" : "s"}${running ? `, ${running} running` : ""}${bad.length ? `, ${bad.length} failed or invalid` : ""}`,
+      a.attempts > 0
+        ? `     ${pct(a.accuracy).trim()} (${a.successes}/${a.attempts} item-attempts)  Wilson 95% [${pct(a.wilsonLow).trim()}, ${pct(a.wilsonHigh).trim()}]`
+        : `     ${dim("no item outcomes yet")}`,
+      `     spend ${usd(a.costUsd)}  per success ${a.costPerSuccessUsd === null ? dim(a.costUsd === null ? "unpriced" : "no successes") : usd(a.costPerSuccessUsd)}  ${dim(a.measured.join(", ") || "model@source unknown")}`,
+      ...bad.map((r) => `     ${fmtStatus(r.status.toUpperCase(), "warn")} ${fmtId(r.id)}`),
+    ];
+  };
+  lines.push(...arm("A", report.a), ...arm("B", report.b));
+  for (const w of report.warnings) lines.push(`  ${fmtStatus("WARN", "warn")} ${w}`);
+  const p = report.paired;
+  if (p) {
+    lines.push(
+      `  ${bold("paired")}  A − B ${(p.delta * 100).toFixed(1)} pts  95% two-stage bootstrap [${(p.low * 100).toFixed(1)}, ${(p.high * 100).toFixed(1)}]  p=${p.p.toFixed(3)}  on ${p.items} common items, ×${p.a.replicates} vs ×${p.b.replicates}`,
+      `    single-pair McNemar p across ${p.pairP.pairs} replicate pair(s): ${p.pairP.min.toFixed(3)}–${p.pairP.max.toFixed(3)}`,
+      `    ${p.low > 0 ? "A is ahead" : p.high < 0 ? "B is ahead" : "no difference shown"} at 95%${p.replicated ? "" : " — not replicated: run-to-run variance is unmeasured"}`,
+    );
+  }
+  lines.push(
+    `  ${dim("Wilson intervals pool every replicate's items, so they understate run-to-run variance; the paired interval is the test.")}`,
+  );
+  return lines.join("\n");
 }
 
 /** The pooled comparison of two runs' replicate groups, or the "not replicated" flag. */
