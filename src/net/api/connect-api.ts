@@ -203,12 +203,19 @@ export async function handleConnectRoutes(
  * plus each listener's own counters (`extra`).
  */
 export function healthResponse(engine: Engine, extra: Record<string, unknown> = {}): Response {
-  return Response.json({
-    status: "ok",
-    ...extra,
-    rooms: engine.rooms.size,
-    entities: engine.entities.size,
-  });
+  // A running loop that stopped ticking answers 503 so an outside monitor
+  // (`scripts/monitor.ts`, any HTTP check) sees a hung world as down.
+  const tick = engine.tickHealth();
+  return Response.json(
+    {
+      status: tick.stalled ? "stalled" : "ok",
+      ...extra,
+      rooms: engine.rooms.size,
+      entities: engine.entities.size,
+      tick: { count: tick.ticks, agoMs: tick.lastTickAgoMs, errors: tick.tickErrors },
+    },
+    { status: tick.stalled ? 503 : 200 },
+  );
 }
 
 /** Serve SKILL.md as text/markdown. */
