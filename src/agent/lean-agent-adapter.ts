@@ -172,6 +172,13 @@ import {
   getPromptVersion,
 } from "./prompts/lean-system";
 import { COMPACTION_SYSTEM_PROMPT, formatUntrustedContext } from "./prompts/support-prompts";
+import {
+  isProviderAuthError,
+  PROVIDER_AUTH_POLL_MS,
+  providerAuthProbeMs,
+  providerCredentialsFingerprint,
+  providerErrorStatus,
+} from "./provider-auth";
 import { defaultModelPrice, isUnpricedModel, sniffProviderCost } from "./provider-cost";
 import {
   grownOutputCap,
@@ -507,7 +514,7 @@ export interface SpendGuard {
 
 /** Why an autonomous loop is currently not calling the model. */
 export interface AgentPauseState {
-  kind: "budget" | "spend-cap" | "upstream-errors";
+  kind: "budget" | "spend-cap" | "upstream-errors" | "provider-auth";
   reason: string;
   since: number;
   /** Wall-clock when the pause lifts on its own; undefined = until the cause clears. */
@@ -805,6 +812,18 @@ export function assembleContinuationPromptWithMetrics(
 
 /** OpenAI caps `prompt_cache_key` at 64 characters (pi-ai's `clampOpenAIPromptCacheKey`). */
 const OPENAI_PROMPT_CACHE_KEY_MAX_CHARS = 64;
+
+/**
+ * Log label for where an agent's model calls go. A `marina/*` model speaks the
+ * OpenAI wire format to Marina's own `/v1` (pi-ai's `provider` field is then
+ * `openai` — a transport detail, not the upstream vendor); `/v1` picks the
+ * real upstream per request (`x-marina-upstream-model`).
+ */
+export function describeModelTransport(configured: string, model: Model<Api>): string {
+  if (isMarinaProxyModel(model))
+    return `model:${configured} via:${model.baseUrl} (upstream chosen by /v1)`;
+  return `model:${configured} provider:${model.provider} api:${model.api}`;
+}
 
 /** The synthesized `marina/*` loopback model (see `resolveModel`), as opposed to a registry model. */
 export function isMarinaProxyModel(model: Model<Api>): boolean {
@@ -1455,6 +1474,14 @@ export class LeanAgentAdapter implements AgentHandle {
   private readonly spendGuard: SpendGuard;
   /** Set while the autonomous loop is deliberately not calling the model. */
   private pause: AgentPauseState | null = null;
+  /** Spawner already told about the current provider-auth outage (reset on a successful call). */
+  private authOutageNotified = false;
+  /** Unprompted re-probes since the outage began (drives the probe backoff). */
+  private authProbeAttempt = 0;
+  /** Auth refusal from the discovery turn, handed to the loop so it parks without another call. */
+  private startupAuthError: string | null = null;
+  /** Digest of the visible provider credentials; a change ends a provider-auth park. */
+  private credentialsFingerprint: () => string = () => providerCredentialsFingerprint();
   /** Wall-clock the loop's current sleep ends; 0 before the first cycle. */
   private nextCycleAt = 0;
   private checkpointInterval: ReturnType<typeof setInterval> | null = null;
@@ -2744,16 +2771,30 @@ export class LeanAgentAdapter implements AgentHandle {
 
     this.log.info(
       LEAN_AGENT_LOG_CATEGORY,
-      `starting discovery prompt (model: ${this.model.id}, provider: ${this.model.provider})`,
+      `starting discovery prompt (${describeModelTransport(this.config.model ?? MARINA_DEFAULT_MODEL, this.model)})`,
       { agent: this.name },
     );
     await this.agent.prompt(
       `${discoveryPrompt}${wisdomPart}${checkpointPart}${ownContextPart}${focusPart}\n\n` +
         (this.outstandingRequests.size ? await this.buildContinuationPrompt() : "Begin."),
     );
-    this.log.info(LEAN_AGENT_LOG_CATEGORY, `discovery prompt completed, starting autonomous loop`, {
-      agent: this.name,
-    });
+    const discoveryError = this.lastTurnError();
+    if (discoveryError === null) {
+      this.log.info(
+        LEAN_AGENT_LOG_CATEGORY,
+        `discovery prompt completed, starting autonomous loop`,
+        { agent: this.name },
+      );
+    } else {
+      // The loop handles the failure (auth parks at once; anything else takes
+      // the ordinary backoff on its next cycle) — never report it as completed.
+      if (isProviderAuthError(discoveryError)) this.startupAuthError = discoveryError;
+      this.log.warn(
+        LEAN_AGENT_LOG_CATEGORY,
+        `discovery prompt failed, starting autonomous loop: ${discoveryError.slice(0, 200)}`,
+        { agent: this.name },
+      );
+    }
 
     // stop() may have been called while discovery was still running — don't
     // start the loop or claim "autonomous" in that case.
@@ -2904,6 +2945,18 @@ export class LeanAgentAdapter implements AgentHandle {
         }
         if (this.pause?.kind === "spend-cap") {
           this.clearPause("rolling-hour spend back under cap — resuming");
+        }
+
+        // The discovery turn was refused for credentials: park now rather than
+        // spend another call learning the same thing.
+        if (this.startupAuthError !== null) {
+          const refused = this.startupAuthError;
+          this.startupAuthError = null;
+          consecutiveErrors = await this.afterProviderAuthRefusal(
+            refused,
+            this.config.model ?? MARINA_DEFAULT_MODEL,
+          );
+          continue;
         }
 
         // Wait if LLM is still streaming
@@ -3070,6 +3123,14 @@ export class LeanAgentAdapter implements AgentHandle {
             continue;
           }
 
+          // The provider refused the credentials (401/403): retrying the same
+          // key cannot succeed. Park visibly, tell the spawner once, and call
+          // again only when the credentials change (or on a slow probe).
+          if (isProviderAuthError(errorMessage) && !isSpendRefusal(errorMessage)) {
+            consecutiveErrors = await this.afterProviderAuthRefusal(errorMessage, model);
+            continue;
+          }
+
           // Money ran out upstream (a spend cap, a budget proxy, no credits):
           // retrying cannot succeed, so stop asking instead of hammering it.
           if (isSpendRefusal(errorMessage)) {
@@ -3103,6 +3164,7 @@ export class LeanAgentAdapter implements AgentHandle {
         this.overflowStallCount = 0;
         this.lastErrorReason = null;
         this.metrics.lastActivity = Date.now();
+        this.endProviderAuthOutage();
         // pi keeps isStreaming true through turn_end/agent_end listeners. Only
         // the settled prompt reflects its idle state; publish after bookkeeping
         // so coding observers see the wait between cycles without changing it.
@@ -3150,6 +3212,13 @@ export class LeanAgentAdapter implements AgentHandle {
             { agent: this.name },
           );
           await this.sleep(1000);
+          continue;
+        }
+        if (isProviderAuthError(msg) && !isSpendRefusal(msg)) {
+          consecutiveErrors = await this.afterProviderAuthRefusal(
+            msg,
+            this.config.model ?? MARINA_DEFAULT_MODEL,
+          );
           continue;
         }
         consecutiveErrors++;
@@ -5545,8 +5614,9 @@ The goal is a smaller, sharper memory — not more notes.`;
         : undefined;
     }
 
-    // Reset error state on reconfigure
+    // Reset error state on reconfigure (a new key or model ends a provider-auth park)
     this.consecutiveLoopErrors = 0;
+    this.authProbeAttempt = 0;
 
     // Restart if it was autonomous
     if (wasAutonomous) {
@@ -5682,6 +5752,99 @@ The goal is a smaller, sharper memory — not more notes.`;
       error: detail.slice(0, 300),
       context: SPEND_STOP_EVENT_CONTEXT,
     });
+  }
+
+  /**
+   * Supply the credential digest a provider-auth park watches (the runtime
+   * adds its stored key rows). Default: the process's `*_API_KEY` env values.
+   */
+  setCredentialsFingerprint(fn: () => string): void {
+    this.credentialsFingerprint = fn;
+  }
+
+  /** errorMessage of the last assistant message when it ended in an error; null otherwise. */
+  private lastTurnError(): string | null {
+    const messages = this.agent.state.messages;
+    const last = messages[messages.length - 1] as unknown as Record<string, unknown> | undefined;
+    if (last?.stopReason !== "error") return null;
+    return String(last?.errorMessage ?? "unknown");
+  }
+
+  private safeCredentialsFingerprint(): string {
+    try {
+      return this.credentialsFingerprint();
+    } catch (err) {
+      this.log.warn(LEAN_AGENT_LOG_CATEGORY, "credential fingerprint unavailable", {
+        agent: this.name,
+        error: getErrorMessage(err),
+      });
+      return "";
+    }
+  }
+
+  /**
+   * The provider refused the credentials (`isProviderAuthError`). Retrying the
+   * same key cannot succeed, so the loop parks (pause kind `provider-auth`, no
+   * model call) and tells the spawner ONCE per outage. The park ends when the
+   * visible credentials change (key add/delete, env reload), on reconfigure /
+   * restart, or at the next slow probe (5 min doubling to 60 min) — a probe
+   * that is refused again re-parks silently. Returns the loop's error count (0).
+   */
+  private async afterProviderAuthRefusal(errorMessage: string, model: string): Promise<number> {
+    const status = providerErrorStatus(errorMessage);
+    const target = this.authTargetLabel(model);
+    const reason = `provider auth refused${status ? ` status:${status}` : ""} model:${target} — ${errorMessage.slice(0, 160)}`;
+    this.authProbeAttempt += 1;
+    const probeMs = providerAuthProbeMs(this.authProbeAttempt);
+    const until = Date.now() + probeMs;
+    this.enterPause("provider-auth", reason, until);
+    this.consecutiveLoopErrors = 0;
+    this.log.warn(
+      LEAN_AGENT_LOG_CATEGORY,
+      `${reason} — parked until the key changes (probe in ${Math.round(probeMs / 60_000)}m)`,
+      { agent: this.name },
+    );
+    this.emitEvent({ type: "error", error: reason, context: "provider-auth" });
+    if (!this.authOutageNotified) {
+      this.authOutageNotified = true;
+      this.notifySpawner(
+        `provider rejected key (${status ? `${status}, ` : ""}${target}) — parked, retries on key change. check \`key list\` · \`readiness providers\` · \`agent restart ${this.name}\``,
+      );
+    }
+    const fingerprint = this.safeCredentialsFingerprint();
+    while (this.autonomousLoopRunning && this.autonomousMode) {
+      const remaining = until - Date.now();
+      if (remaining <= 0) break;
+      if (this.safeCredentialsFingerprint() !== fingerprint) {
+        this.authProbeAttempt = 0;
+        this.clearPause("provider credentials changed — retrying");
+        return 0;
+      }
+      await this.pauseSleep(Math.min(PROVIDER_AUTH_POLL_MS, remaining));
+    }
+    this.clearPause(
+      this.autonomousLoopRunning
+        ? "provider-auth probe — retrying"
+        : "provider-auth park ended (stopped)",
+    );
+    return 0;
+  }
+
+  /** A successful model call ends a provider-auth outage; the spawner hears it if it heard the start. */
+  private endProviderAuthOutage(): void {
+    this.authProbeAttempt = 0;
+    if (!this.authOutageNotified) return;
+    this.authOutageNotified = false;
+    this.log.info(LEAN_AGENT_LOG_CATEGORY, "provider auth recovered — resumed", {
+      agent: this.name,
+    });
+    this.notifySpawner("provider auth ok — resumed");
+  }
+
+  /** The model as configured; for the `/v1` proxy, the upstream it last reported when known. */
+  private authTargetLabel(model: string): string {
+    if (!isMarinaProxyModel(this.model)) return model;
+    return this.lastUpstreamModel ? `${model}→${this.lastUpstreamModel}` : `${model} via /v1`;
   }
 
   private async afterUpstreamError(consecutiveErrors: number, backoffMs: number): Promise<number> {

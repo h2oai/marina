@@ -490,7 +490,8 @@ and are visible to every authenticated principal. Credentials, tokens, IPs, prom
 never appear; an agent's last error text does (it is the same diagnostic `agent status` prints).
 
 There is no resume route: spend-cap and upstream-error pauses lift on their own when the cause
-clears, and a spent lifetime budget ends with `agent stop` or a respawn — the adapter exposes no
+clears, a provider-auth pause lifts when the stored or env keys change (or on its slow probe),
+and a spent lifetime budget ends with `agent stop` or a respawn — the adapter exposes no
 manual resume.
 
 ### Memory Observability API
