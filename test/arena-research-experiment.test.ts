@@ -99,7 +99,7 @@ test("factorial arms use the registered start/evidence combination", async () =>
   validateExperiment(input);
 });
 
-test("hash tampering and stale inputs stop before paid work", () => {
+test("hash tampering stops before paid work; old inputs are only recorded", () => {
   const bad = fixture();
   bad.starts.control.topline!.mean = 99;
   expect(() => validateExperiment(bad)).toThrow("hash mismatch");
@@ -107,7 +107,7 @@ test("hash tampering and stale inputs stop before paid work", () => {
   stale.capturedAt = "2026-10-13T00:00:00Z";
   const { hash: _hash, ...value } = stale;
   stale.hash = evidenceHash(value);
-  expect(() => validateExperiment(stale)).toThrow("stale");
+  expect(() => validateExperiment(stale)).not.toThrow();
 });
 
 test("failure is checkpointed before calls and cannot masquerade as a control fallback", async () => {

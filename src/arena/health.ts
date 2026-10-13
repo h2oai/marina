@@ -43,6 +43,7 @@ export function roundHealth(
       return {
         ok: false,
         issues: [`Stored input trace is not auditable: ${getErrorMessage(error)}`],
+        warnings: [] as string[],
       };
     }
   })();
@@ -91,6 +92,7 @@ export function roundHealth(
     freshness: freshness ?? {
       ok: undefined,
       issues: ["legacy submission has no auditable input dates"],
+      warnings: [] as string[],
     },
     lastAttempt: attempt
       ? {
@@ -144,7 +146,7 @@ export function formatArenaHealth(health: Awaited<ReturnType<typeof arenaHealth>
     ...health.warnings,
     ...health.rounds.map(
       (r) =>
-        `${r.roundId}: ${r.state}; lock ${r.lockAt}\n  accepted ${r.accepted ? `#${r.accepted.id} ${r.accepted.at}; strategy ${r.accepted.strategy ?? "unknown"}; version ${r.accepted.fingerprint?.slice(0, 12) ?? "unknown"}` : "none"}\n  refresh ${r.lastAttempt ? `${r.lastAttempt.status} at ${r.lastAttempt.at}${r.lastAttempt.reason ? `: ${r.lastAttempt.reason}` : ""}` : "not recorded"}${r.freshness.issues.length ? `\n  inputs: ${r.freshness.issues.join("; ")}` : ""}`,
+        `${r.roundId}: ${r.state}; lock ${r.lockAt}\n  accepted ${r.accepted ? `#${r.accepted.id} ${r.accepted.at}; strategy ${r.accepted.strategy ?? "unknown"}; version ${r.accepted.fingerprint?.slice(0, 12) ?? "unknown"}` : "none"}\n  refresh ${r.lastAttempt ? `${r.lastAttempt.status} at ${r.lastAttempt.at}${r.lastAttempt.reason ? `: ${r.lastAttempt.reason}` : ""}` : "not recorded"}${r.freshness.issues.length ? `\n  inputs: ${r.freshness.issues.join("; ")}` : ""}${r.freshness.warnings.length ? `\n  input age: ${r.freshness.warnings.join("; ")}` : ""}`,
     ),
   ].join("\n");
 }

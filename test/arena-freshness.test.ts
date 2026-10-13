@@ -64,14 +64,16 @@ test("early forecasts search from today; historical cutoffs stay historical", as
 
 test("a newly downloaded daily snapshot does not refresh an old observation", async () => {
   const { data } = archive("2026-10-01");
-  await expect(
-    nowcastForecaster(data, forecastRound, { strictFreshness: true })(round, lock),
-  ).rejects.toThrow("2026-10-02 is 5 days old");
+  const f = await nowcastForecaster(data, forecastRound, { strictFreshness: true })(round, lock);
+  expect(f.freshness?.ok).toBe(true);
+  expect(f.freshness?.warnings).toEqual([expect.stringContaining("2026-10-02 is 5 days old")]);
 });
 
-test("strict baseline previews refuse stale inputs while replays remain available", async () => {
+test("strict previews file the latest inputs however old, with their age recorded", async () => {
   const strict = await forecasterFor("baseline", { strictFreshness: true });
-  await expect(strict.forecaster(round, lock)).rejects.toThrow("stale forecast inputs");
+  const filed = await strict.forecaster(round, lock);
+  expect(filed.topline).toEqual(base.topline);
+  expect(filed.freshness?.warnings).toEqual([expect.stringContaining("5 days old")]);
   const replay = await forecasterFor("baseline");
   expect((await replay.forecaster(round, lock)).topline).toEqual(base.topline);
 });
@@ -89,7 +91,7 @@ test("fresh archives may survive live failure, with that failure retained", asyn
   expect(f.origins?.civiqs_net_approval?.reading.date).toBe("2026-10-06");
 });
 
-test("every profile cell must be current; monthly releases use their own cadence", () => {
+test("every profile cell's age is recorded; monthly releases use their own cadence", () => {
   const profile: ArenaRound = { ...round, target_type: "profile_energy", cells: ["a", "b"] };
   const inputs: ArenaLock = {
     round_id: round.round_id,
@@ -99,8 +101,9 @@ test("every profile cell must be current; monthly releases use their own cadence
     },
   };
   const audit = auditForecastFreshness(profile, inputs, forecastRound(profile, inputs));
-  expect(audit.ok).toBe(false);
-  expect(audit.issues).toEqual([expect.stringContaining("b: observation")]);
+  expect(audit.ok).toBe(true);
+  expect(audit.issues).toEqual([]);
+  expect(audit.warnings).toEqual([expect.stringContaining("b: latest observation")]);
   const monthly = { ...round, tracker: "ny_fed_sce" };
   const monthlyLock = {
     ...lock,
