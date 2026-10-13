@@ -38,6 +38,23 @@ Given an arm or a cap, the runner mints a **run key** (`src/engine/benchmark-run
 
 The key is revoked when the run ends. A run stopped by its key is recorded **invalid** with the reason, so no ranking reads it. A run key authenticates whether or not `MODEL_API_KEYS` is set, has no name-map authority, and can be confined to one entity (`entityName`).
 
+## The reproduction kit, from inside the world
+
+`bun run repro` (`benchmarks/repro/`) is the kit for suites that need more than one harness call: isolated Marina servers per arm, third-party CLIs (τ², SWE-bench Verified, HLE through a judge, FutureX and arena backtests), a spend estimate refused above `--budget-usd`, and pooled replicate comparisons. The `benchmark kit` subcommand runs it from any surface (`src/engine/benchmark-kit.ts`):
+
+| Command | Does |
+|---|---|
+| `benchmark kit [list]` | The setups, their arms and smoke/full sizes |
+| `benchmark kit doctor [setup]` | Prerequisites, each with its fix |
+| `benchmark kit <setup> … dry-run` | The plan and its estimate; no model call |
+| `benchmark kit <setup> arms:a,b replicates:N limit:N budget:<usd> [model: checker: judge: domain: split: effort: user-effort: task-ids: seed:]` | A background job (rank 4, `budget:` required) |
+| `benchmark kit status [id]` | Jobs since this server started; one job's status and log tail |
+
+- **Argument safety:** only the allowlisted options are passed, each value one plain token, as an argv array (never a shell). `--run-dir` and `--ledger` are never caller-controlled.
+- **Ledger:** the job's runs file into **this world's DB** (`DB_PATH`), so `benchmark runs`, `compare`, `replicates` and promotion read them like any run.
+- **Run directory:** `MARINA_BENCHMARK_KIT_DIR` (default `kit-runs/` beside the DB) holds servers, scratch and the log `kit.log`.
+- **Feed events:** start and finish are `benchmark_kit_started|completed|failed`.
+
 ## How runs teach: judged lessons, never item text
 
 No benchmark path writes an item's question, expected answer or model answer to memory. A memorised answer would contaminate every later run of the same benchmark and bypass the judged lesson loop.

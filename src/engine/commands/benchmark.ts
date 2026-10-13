@@ -14,6 +14,15 @@ import type { BenchmarkRunRow, MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
 import { benchmarkExecution, formatBenchmarkExecution } from "../benchmark-execution";
 import {
+  getKitJob,
+  KIT_FLAGS,
+  kitArgs,
+  kitCapture,
+  kitLogTail,
+  listKitJobs,
+  startKitJob,
+} from "../benchmark-kit";
+import {
   compareRuns,
   formatVerificationCounts,
   invalidReason,
@@ -196,6 +205,10 @@ export function benchmarkCommand(deps: {
       "benchmark run <name> [--limit N] [--seed N] [--model M]",
       "benchmark run <name> [--limit N] [--seed N] [--model M] [--judge M] [--concurrency N] [--partition holdout|tune] [lessons:on] [lessons-mode:measure|live] [arm:bare|on|full|<members>] [cap:<usd>]",
       "benchmark runs [--benchmark X] [--limit N]",
+      "benchmark kit [list]",
+      "benchmark kit doctor [setup]",
+      "benchmark kit status [id]",
+      "benchmark kit <setup> [arms:a,b] [replicates:N] [limit:N] [budget:<usd>] [model:M] [domain:D] [dry-run]",
       "benchmark sweep <name|all> [--limit N] [--seed N] [--judge M]",
     ],
     name: "benchmark",
@@ -452,6 +465,130 @@ export function benchmarkCommand(deps: {
               `Failed to start: ${err instanceof Error ? err.message : String(err)}`,
             );
           }
+          return;
+        }
+
+        case "kit": {
+          // The reproduction kit (benchmarks/repro): isolated servers per arm and
+          // third-party harnesses, filing into THIS world's ledger.
+          const action = tokens[1]?.toLowerCase();
+          if (!action || action === "list") {
+            const { output } = await kitCapture(["list"]);
+            ctx.send(
+              input.entity,
+              `${output}\n\nRun one: benchmark kit <setup> arms:a,b replicates:2 limit:N budget:<usd> (dry-run first: add dry-run)`,
+            );
+            return;
+          }
+          if (action === "doctor") {
+            const { output } = await kitCapture(["doctor", ...(tokens[2] ? [tokens[2]] : [])]);
+            ctx.send(input.entity, output);
+            return;
+          }
+          if (action === "status") {
+            const id = tokens[2];
+            const job = id ? getKitJob(id) : undefined;
+            if (id && !job) {
+              ctx.send(
+                input.entity,
+                `No kit job ${fmtId(id)} in this server (jobs are listed until restart).`,
+              );
+              return;
+            }
+            if (job) {
+              ctx.send(
+                input.entity,
+                `${header(`Kit job ${job.id}`)}\n  ${bold("status")}: ${job.status}${job.exitCode !== undefined ? ` (exit ${job.exitCode})` : ""}\n  ${bold("started")}: ${new Date(job.startedAt).toISOString()}\n  ${bold("run dir")}: ${job.runDir}\n\n${kitLogTail(job)}`,
+              );
+              return;
+            }
+            const all = listKitJobs();
+            ctx.send(
+              input.entity,
+              all.length
+                ? all
+                    .map(
+                      (j) =>
+                        `  ${fmtId(j.id)}  ${j.status}  ${j.setup}  ${new Date(j.startedAt).toISOString()}`,
+                    )
+                    .join("\n")
+                : "No kit jobs since this server started.",
+            );
+            return;
+          }
+          const kitFloor = rankFloorRefusal(
+            entity,
+            4,
+            "benchmark kit runs require rank 4 (builder). Every run burns real tokens — earn the rank via competence.",
+          );
+          if (kitFloor) {
+            ctx.send(input.entity, kitFloor);
+            return;
+          }
+          const spec = Object.fromEntries(
+            [...Object.keys(KIT_FLAGS), "dry-run"].map((k) => [
+              k,
+              { type: (k === "dry-run" ? "bool" : "string") as "bool" | "string" },
+            ]),
+          );
+          const { values, rest, errors } = parseModifiers(tokens.slice(2), spec);
+          if (errors.length || rest.length) {
+            ctx.send(
+              input.entity,
+              `benchmark kit: ${[...errors, ...rest.map((r) => `unexpected "${r}"`)].join("; ")}`,
+            );
+            return;
+          }
+          const dryRun = values["dry-run"] === true;
+          const flags: Record<string, string> = {};
+          for (const [k, v] of Object.entries(values))
+            if (k !== "dry-run" && typeof v === "string") flags[k] = v;
+          if (!dryRun && flags.budget === undefined) {
+            ctx.send(
+              input.entity,
+              "benchmark kit: a run needs budget:<usd> — the kit refuses when its estimate exceeds it. Add dry-run to see the plan and estimate first.",
+            );
+            return;
+          }
+          const argv = kitArgs(action, flags, dryRun ? ["--dry-run"] : []);
+          if ("error" in argv) {
+            ctx.send(input.entity, `benchmark kit: ${argv.error}`);
+            return;
+          }
+          if (dryRun) {
+            const { output } = await kitCapture(argv);
+            ctx.send(input.entity, output);
+            return;
+          }
+          const job = startKitJob({
+            setup: action,
+            argv,
+            owner: entity.name,
+            onExit: (done) =>
+              deps.logEvent?.({
+                type: "feed_event",
+                kind:
+                  done.status === "completed" ? "benchmark_kit_completed" : "benchmark_kit_failed",
+                entity: entity.id,
+                ref: done.id,
+                summary: `benchmark kit ${done.setup} ${done.status}${done.exitCode ? ` (exit ${done.exitCode})` : ""}`,
+                payload: { id: done.id, setup: done.setup, exitCode: done.exitCode ?? null },
+                timestamp: Date.now(),
+              }),
+          });
+          deps.logEvent?.({
+            type: "feed_event",
+            kind: "benchmark_kit_started",
+            entity: entity.id,
+            ref: job.id,
+            summary: `benchmark kit ${action} started`,
+            payload: { id: job.id, setup: action },
+            timestamp: job.startedAt,
+          });
+          ctx.send(
+            input.entity,
+            `Kit run started: ${fmtId(job.id)} (${action}). Its runs file into this world's ledger.\n  benchmark kit status ${job.id}   — progress\n  benchmark runs / compare / replicates — results`,
+          );
           return;
         }
 
