@@ -59,7 +59,6 @@ import {
   normalizePatternName,
   ORCHESTRATION_HELP,
   ORCHESTRATION_PATTERNS,
-  PATTERN_VALIDATION,
   PIPELINE_TEMPLATE,
   RESEARCH_TEMPLATE,
   SHARDING_TEMPLATE,
@@ -811,17 +810,14 @@ export function projectCommand(deps: {
               candidate.average === undefined
                 ? "no recorded outcomes"
                 : `${candidate.samples} outcomes, mean ${candidate.average.toFixed(2)}`;
-            const validation =
-              PATTERN_VALIDATION[candidate.pattern as keyof typeof PATTERN_VALIDATION];
-            const tag = validation ? ` [${validation.status}]` : "";
             lines.push(
-              `  ${index + 1}. ${bold(candidate.pattern)}${tag} — ${candidate.why} (${evidence})`,
+              `  ${index + 1}. ${bold(candidate.pattern)} — ${candidate.why} (${evidence})`,
             );
           }
           lines.push(
             "",
             dim(
-              "[validated]/[partial]/[unvalidated] = empirical sweep status — unvalidated means no passing evidence yet, not proven bad.",
+              "Ranked by fit to the goal, then by this world's recorded outcomes for each pattern.",
             ),
             dim(`Apply: project ${project.name} orchestrate ${ranked[0]!.pattern}`),
           );

@@ -260,13 +260,13 @@ Fields read here: `Math.min(Number(url.searchParams.get("limit")) &#124;&#124; 1
 
 ### `url.pathname.startsWith('${PREFIX}/')`
 
-[Source](../../src/net/api/orchestration-api.ts#L73)
+[Source](../../src/net/api/orchestration-api.ts#L69)
 
 - Guard: `url.pathname !== PREFIX && !url.pathname.startsWith('${PREFIX}/')`
 
 ### `url.pathname === '${PREFIX}/patterns'`
 
-[Source](../../src/net/api/orchestration-api.ts#L75)
+[Source](../../src/net/api/orchestration-api.ts#L71)
 
 - Guard: `url.pathname === '${PREFIX}/patterns'`
 - Guard: `req.method === "OPTIONS"`
