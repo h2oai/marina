@@ -52,6 +52,7 @@ export class Logger {
   private jsonFormat: boolean;
   private sinks = new Set<LogSink>();
   private context = new AsyncLocalStorage<LogContext>();
+  private repeats = new RepeatLimiter(logRepeatLimit());
 
   constructor(config?: LoggerConfig) {
     const envLevel = parseLogLevel(process.env.LOG_LEVEL);
@@ -100,11 +101,12 @@ export class Logger {
       }
     }
 
-    if (this.jsonFormat) {
-      this.writeJson(entry);
-    } else {
-      this.writeText(entry);
-    }
+    // Console output (stdout → the journal) collapses repeats; sinks above
+    // (the SQLite log store, OpenTelemetry) always receive every entry.
+    const write = (e: LogEntry) => (this.jsonFormat ? this.writeJson(e) : this.writeText(e));
+    const summary = this.repeats.admit(entry);
+    if (summary) write(summary);
+    if (summary !== false) write(entry);
   }
 
   addSink(sink: LogSink): () => void {
@@ -202,4 +204,67 @@ function isSensitiveKey(key: string): boolean {
 
 function stringField(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim().slice(0, 512) : undefined;
+}
+
+/**
+ * `MARINA_LOG_REPEAT_LIMIT`: console lines allowed per minute for one repeated
+ * message (same level, category and message, digits ignored). Default 10;
+ * `0`/`off` prints every line.
+ */
+export function logRepeatLimit(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.MARINA_LOG_REPEAT_LIMIT?.trim().toLowerCase();
+  if (raw === "off") return 0;
+  const n = Number(raw);
+  return raw && Number.isInteger(n) && n >= 0 ? n : 10;
+}
+
+/** Window over which repeats are counted. */
+const REPEAT_WINDOW_MS = 60_000;
+/** Distinct repeated messages tracked at once (oldest dropped beyond it). */
+const REPEAT_KEYS_MAX = 2000;
+
+/**
+ * Per-message console budget. `admit` returns `false` to drop the line, an
+ * entry summarising what the previous window dropped (to print first), or
+ * `undefined` to print the line as is.
+ */
+export class RepeatLimiter {
+  private windows = new Map<
+    string,
+    { start: number; count: number; dropped: number; sample: LogEntry }
+  >();
+
+  constructor(private limit: number) {}
+
+  admit(entry: LogEntry): LogEntry | false | undefined {
+    if (this.limit <= 0) return undefined;
+    const key = `${entry.level}|${entry.category}|${entry.message.replace(/\d+/g, "#")}`;
+    const now = entry.timestamp;
+    const w = this.windows.get(key);
+    if (!w || now - w.start >= REPEAT_WINDOW_MS) {
+      const summary = w?.dropped
+        ? suppressedSummary(w.sample, w.dropped, now - w.start)
+        : undefined;
+      this.windows.delete(key);
+      if (this.windows.size >= REPEAT_KEYS_MAX) {
+        const oldest = this.windows.keys().next().value;
+        if (oldest !== undefined) this.windows.delete(oldest);
+      }
+      this.windows.set(key, { start: now, count: 1, dropped: 0, sample: entry });
+      return summary;
+    }
+    w.count++;
+    if (w.count <= this.limit) return undefined;
+    w.dropped++;
+    return false;
+  }
+}
+
+function suppressedSummary(sample: LogEntry, dropped: number, spanMs: number): LogEntry {
+  return {
+    level: sample.level,
+    category: sample.category,
+    message: `(${dropped} more like "${sample.message.slice(0, 80)}" in the last ${Math.round(spanMs / 1000)}s, not printed; the log store has them)`,
+    timestamp: Date.now(),
+  };
 }

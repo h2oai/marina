@@ -466,6 +466,7 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 
 | Variable | Description | Flags |
 |---|---|---|
+| `MARINA_LOG_REPEAT_LIMIT=10` | Console lines allowed per minute for one repeated message (same level, category and message, digits ignored); past it one summary line says how many were not printed. Only stdout/stderr (the journal) is limited — the SQLite log store and OpenTelemetry receive every entry. `0` or `off` prints every line. |  |
 | `LOG_FORMAT=text`<br>`LOG_LEVEL=info` | Log format (text or json) and minimum level (debug, info, warn, error; case-insensitive — an invalid level warns once and uses info). | restart |
 | `MARINA_OTLP_ENABLED=false` | `true` pushes completed structural spans to an OTLP/HTTP JSON collector. Prompts, outputs, tool arguments and credentials are excluded; a collector outage never blocks agents. | restart |
 | `MARINA_OTLP_LOGS_ENABLED=false` | `true` pushes logs over OTLP/HTTP JSON, independently of traces. | restart |

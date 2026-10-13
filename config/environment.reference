@@ -1183,6 +1183,9 @@
 
 # ── Logging and OpenTelemetry ────────────────────────────────────────────────
 
+# Console lines allowed per minute for one repeated message (same level, category and message, digits ignored); past it one summary line says how many were not printed. Only stdout/stderr (the journal) is limited — the SQLite log store and OpenTelemetry receive every entry. `0` or `off` prints every line.
+# MARINA_LOG_REPEAT_LIMIT=10
+
 # Log format (text or json) and minimum level (debug, info, warn, error; case-insensitive — an invalid level warns once and uses info).
 # @restart
 # LOG_FORMAT=text
