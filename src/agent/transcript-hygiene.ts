@@ -1,3 +1,6 @@
+// Copyright 2025-2026 H2O.ai, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Transcript hygiene applied to an agent's working history between runs (on by
  * default; `MARINA_DROP_OLD_THINKING_SIGNATURES=off` disables it).

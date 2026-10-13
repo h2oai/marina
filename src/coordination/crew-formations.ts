@@ -5,7 +5,7 @@
  * Crew formations — runtime form of the 16 orchestration patterns.
  *
  * Three runtime layers, each measured in the 2026-09 orchestration sweeps
- * (report: marina-internal design/orchestration-pattern-sweep-2026-09.md):
+ * (overview: docs/architecture/orchestration.md):
  *
  * 1. CREW BRIEF — a compact, purpose-built runtime brief per formation
  *    (CREW_BRIEFS below), posted when a crew activates or changes formation.

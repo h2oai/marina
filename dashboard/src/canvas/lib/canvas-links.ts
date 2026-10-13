@@ -1,3 +1,6 @@
+// Copyright 2025-2026 H2O.ai, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 const MAX_CANVAS_REFERENCE_LENGTH = 200;
 
 function boundedReference(value: string | null): string | undefined {

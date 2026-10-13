@@ -711,8 +711,8 @@
     {
       "id": "personal-preference-001",
       "domain": "personal-preference",
-      "fact": "Jeff prefers concise summaries with the decision first and details afterward.",
-      "paraphrase": "how does jeff like summaries written",
+      "fact": "Jordan prefers concise summaries with the decision first and details afterward.",
+      "paraphrase": "how does jordan like summaries written",
       "distractor": "how does maya like meeting notes formatted"
     },
     {
@@ -1159,9 +1159,9 @@
     {
       "id": "scheduling-015",
       "domain": "scheduling",
-      "fact": "Dentist appointment for Jeff is booked for March 14 at 08:30.",
-      "paraphrase": "when is jeff's dental checkup",
-      "distractor": "when is jeff's eye exam"
+      "fact": "Dentist appointment for Jordan is booked for March 14 at 08:30.",
+      "paraphrase": "when is jordan's dental checkup",
+      "distractor": "when is jordan's eye exam"
     },
     {
       "id": "scheduling-016",
@@ -1194,9 +1194,9 @@
     {
       "id": "scheduling-020",
       "domain": "scheduling",
-      "fact": "The gym class Jeff attends is Mondays and Wednesdays at 06:30.",
-      "paraphrase": "which mornings does jeff work out",
-      "distractor": "which evenings does jeff have choir"
+      "fact": "The gym class Jordan attends is Mondays and Wednesdays at 06:30.",
+      "paraphrase": "which mornings does jordan work out",
+      "distractor": "which evenings does jordan have choir"
     },
     {
       "id": "scheduling-021",

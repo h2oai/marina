@@ -175,7 +175,8 @@ export interface AgentConfig {
    * leave this false — they need the full cognitive cycle to drive
    * dispatch decisions between specialist replies.
    *
-   * Crew fast-dispatch fix #2 — see the crew fast-dispatch design (private archive: marina-internal design/crew-fast-dispatch-design.md).
+   * Part of fast crew dispatch (docs/architecture/agent-cognition.md): idle
+   * responders cost no model calls between coordinator messages.
    * Unset = false (backward compatible).
    */
   crewResponder?: boolean;
