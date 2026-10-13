@@ -37,7 +37,7 @@
 - **Permissions**: `minRank` (and optional `gate`) on `CommandDef` is the permission gate — don't add custom rank checks inside handlers.
 - **DB naming**: the groups table is `groups_` (trailing underscore — `groups` is an SQL keyword). New FTS5 tables need insert/update/delete triggers.
 - **DB modules**: query logic lives in `src/persistence/db-*.ts` standalone functions; `MarinaDB` delegates to them.
-- **MCP tools**: new world commands need no MCP schema — `category`/`help`/`usage` on `CommandDef` publish them via `src/net/mcp-world-tools.ts`; execution always goes through the rate-limited `runCmd()` / `cmdTool()` helpers.
+- **MCP tools**: new world commands need no MCP schema — `category`/`help`/`usage` on `CommandDef` publish them via `src/net/mcp/mcp-world-tools.ts`; execution always goes through the rate-limited `runCmd()` / `cmdTool()` helpers.
 - **Tick budget**: room `onTick` handlers must complete within 200ms total.
 - **Errors**: use `getErrorMessage()` for extraction; wrap non-critical DB ops in `tryLog()` / `tryLogAsync()`.
 - **Sandbox execution**: never silently fall back from requested sandbox execution to host execution, and never imply host/guest file coherence.

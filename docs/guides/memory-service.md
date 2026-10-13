@@ -823,7 +823,6 @@ Marina's router:
 
 ```bash
 bun run qualify:memory:utility --repetitions 3 --budget-usd 1 --output /tmp/memory-utility.json
-# Historical baselines: --model gpt-4o-mini-2024-07-18 or --model gpt-4.1-mini-2025-04-14
 ```
 
 `--model-cache EXISTING_CACHE` adds the optional embedding condition without downloading a model.

@@ -137,7 +137,7 @@ proxying with configured provider keys.
 
 ```bash
 # Using a local Ollama instance
-PROVIDER_URL=http://localhost:11434/v1 PROVIDER_MODEL=llama3 bun run src/sdk/examples/provider.ts
+PROVIDER_URL=http://localhost:11434/v1 PROVIDER_MODEL=qwen3:4b bun run src/sdk/examples/provider.ts
 
 # Using OpenAI
 PROVIDER_URL=https://api.openai.com/v1 PROVIDER_KEY=sk-your-key PROVIDER_MODEL=gpt-6-luna bun run src/sdk/examples/provider.ts
@@ -246,7 +246,7 @@ The `response` payload of `response.completed` is byte-identical to the non-stre
 
 ### Responses API tools
 
-`POST /v1/responses` in passthru mode forwards tools both ways (`src/net/responses-tools.ts`). The
+`POST /v1/responses` in passthru mode forwards tools both ways (`src/net/model/responses-tools.ts`). The
 Responses surface speaks flat function tools and typed input items; every upstream speaks
 chat-completions, and the Anthropic proxy translates chat tools onward, so a Responses client with
 tools works end-to-end against OpenAI-compatible **and** Anthropic upstreams.
@@ -402,7 +402,7 @@ asked, delivered as Responses SSE in one delta. The Ollama routes refuse the sta
 
 ### Identity — who gets memory
 
-The caller is mapped to a Marina entity fail-closed (`src/net/passthru-context.ts`):
+The caller is mapped to a Marina entity fail-closed (`src/net/model/passthru-context.ts`):
 
 - `MODEL_API_KEYS=secret:Alice` — a **bound** key, confined to entity `Alice` (lazily created).
 - `MODEL_API_KEYS=secret:*` — an operator key that may name an **existing** entity with
@@ -572,7 +572,7 @@ rate_limit_exceeded` before its credential is checked, until the budget refills;
 ### Error envelope
 
 Every error is the OpenAI nested shape with a **string `code`** SDKs can branch on
-(`src/net/openai-errors.ts`):
+(`src/net/model/openai-errors.ts`):
 
 | `code` | When |
 |--------|------|
@@ -595,7 +595,7 @@ audio/file content parts.
 ### Tool calling on Anthropic-backed passthru
 
 When the passthru upstream is Anthropic (`anthropic/<model>`), the OpenAI body is translated
-faithfully (`src/net/anthropic-tools.ts`):
+faithfully (`src/net/adapters/anthropic-tools.ts`):
 
 | OpenAI request | Anthropic Messages |
 |----------------|--------------------|

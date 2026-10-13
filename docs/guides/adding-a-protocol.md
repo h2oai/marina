@@ -2,7 +2,7 @@
 
 A transport translates wire messages and authenticates a connection. Marina owns
 identity, permissions, command execution, onboarding and memory retrieval. Start from
-`src/net/mcp-server.ts` or `src/net/websocket-server.ts`, depending on the transport.
+`src/net/mcp/mcp-server.ts` or `src/net/websocket-server.ts`, depending on the transport.
 
 1. **Bind identity on the server.** Create a `Connection` with a unique ID and the
    actual peer address. Use the established login/reconnect path. Never accept a

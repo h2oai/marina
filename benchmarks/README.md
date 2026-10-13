@@ -170,8 +170,7 @@ bun --env-file=/dev/null run benchmarks/memory/genbench.ts \
 ```
 
 Results go to `benchmarks/results/memory/` (gitignored), one JSON per arm plus a markdown summary,
-never overwritten. The reporting standard, arm definitions, how to reproduce `HISTORY.md` §5
-honestly, and an explicit "what this does NOT prove" list are in
+never overwritten. The reporting standard, arm definitions, and an explicit "what this does NOT prove" list are in
 [`benchmarks/memory/README.md`](memory/README.md).
 
 ## CLI Options

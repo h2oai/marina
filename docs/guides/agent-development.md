@@ -337,7 +337,7 @@ bun run src/sdk/examples/researcher.ts
 bun run src/sdk/examples/publisher.ts
 
 # Bridges model API requests to an external LLM (Ollama, OpenAI, etc.)
-PROVIDER_URL=http://localhost:11434/v1 PROVIDER_MODEL=llama3 bun run src/sdk/examples/provider.ts
+PROVIDER_URL=http://localhost:11434/v1 PROVIDER_MODEL=qwen3:4b bun run src/sdk/examples/provider.ts
 
 # Self-evolving agent that runs benchmarks and improves
 bun run src/sdk/examples/evolver.ts
@@ -351,7 +351,7 @@ bun run src/sdk/examples/evolver.ts
 | `AGENT_NAME` | varies | Character name |
 | `PROVIDER_URL` | `http://localhost:11434/v1` | External LLM URL (provider agent) |
 | `PROVIDER_KEY` | *(empty)* | External LLM API key |
-| `PROVIDER_MODEL` | `llama3` | External LLM model name |
+| `PROVIDER_MODEL` | `qwen3:4b` | External LLM model name |
 | `CYCLE_SECS` | `60` | How often the agent runs its cycle |
 
 ---

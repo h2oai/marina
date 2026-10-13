@@ -4,8 +4,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * contradiction — the multi-writer contradiction benchmark (HISTORY.md §7.5
- * "not measured": the unresolved-contradiction rate against a known floor).
+ * contradiction — the multi-writer contradiction benchmark (the
+ * unresolved-contradiction rate against a known floor).
  *
  * genbench asks "does memory help one agent?", successor asks "does knowledge
  * survive hand-over?". This harness asks the SHARED-space question the

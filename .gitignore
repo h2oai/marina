@@ -42,8 +42,7 @@ __pycache__/
 *.py[cod]
 
 # Internal research and qualification reports belong in marina-internal.
-/docs/research/*
-!/docs/research/README.md
+/docs/research/
 
 # Generated browser qualification artifacts
 dashboard/test-results/

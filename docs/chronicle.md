@@ -169,7 +169,7 @@ The arrival digest is the canonical answer to "what happened here before I arriv
 
 Per-entity profiles project the chronicle, standing ledger, `entity_activity`, and `entity_competence` onto a name axis. Read-only, no auth, served from the same SPA bundle as the dashboard — `/who/<name>` is the wiki/blog face of a Marina's evolution, browsable by outside observers.
 
-**Backend** (`src/net/entity-api.ts`):
+**Backend** (`src/net/api/entity-api.ts`):
 
 - `GET /api/entity/:name/profile` — single consolidated endpoint returning identity, bio, narratives (last 10 of `narrative` + `digest` only — events are templated and not the entity's "story"), achievements, stats, and connections (top 10 chronicle co-participants).
 - Case-insensitive name lookup. Falls back to `users` + `agent_configs` rows for offline entities, so the page works for archived/respawned agents too.

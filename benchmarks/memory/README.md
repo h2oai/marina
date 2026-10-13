@@ -4,7 +4,7 @@
 answer flatter itself: **does Marina's memory change answer quality, by how much, with what
 confidence, at what token and latency cost, compared to the obvious alternatives?**
 
-Research, implementation plans and qualification results are maintained in marina-internal.
+Results are not published in this repository; measure on your own deployment.
 This public guide documents the runnable harness and how to interpret its outputs.
 
 ```bash

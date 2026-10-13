@@ -155,7 +155,7 @@ Welcome, Kira!
 No one is in the `model` channel. Start a provider agent:
 
 ```bash
-PROVIDER_URL=http://localhost:11434/v1 PROVIDER_MODEL=llama3 bun run src/sdk/examples/provider.ts
+PROVIDER_URL=http://localhost:11434/v1 PROVIDER_MODEL=qwen3:4b bun run src/sdk/examples/provider.ts
 ```
 
 ### 401 Unauthorized

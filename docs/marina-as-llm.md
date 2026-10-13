@@ -101,7 +101,7 @@ provider bridge (logs in, joins the `model` channel, forwards `model_request`s):
 ```bash
 WS_URL=ws://localhost:3300 \
 PROVIDER_URL=http://localhost:11434/v1 \   # any OpenAI-compatible upstream (e.g. Ollama)
-PROVIDER_MODEL=llama3 \
+PROVIDER_MODEL=qwen3:4b \
 PROVIDER_FORMAT=openai \
 bun run src/sdk/examples/provider.ts
 ```
@@ -114,4 +114,4 @@ variant) for the full set of env knobs.
 `/v1/chat/completions`, `/v1/responses`, `/v1/models`, `/v1/health`, and the
 Ollama routes `/api/tags`, `/api/chat`, `/api/generate` — all on `WS_PORT`.
 Model-id aliases for drop-in clients are configured via `MARINA_COMPAT`
-(see `src/net/compat-profiles.ts`).
+(see `src/net/adapters/compat-profiles.ts`).
