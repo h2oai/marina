@@ -355,27 +355,14 @@ Floors whose dependents already resolve at or above the patched version on their
 
 ## Continuous deployment (CI/CD)
 
-On push to `main`, [`Deploy to EC2`](../../.github/workflows/deploy-ec2.yml) builds the image, pushes it to ECR, and — because the host is in a private subnet — uses **AWS SSM Run Command** (not SSH) to pull the pinned `:<commit-sha>` image and `docker compose up -d` via [`scripts/deploy.sh`](../../scripts/deploy.sh). Auth is via **GitHub OIDC** (no static keys). Setup lives in repo **secret** `GH_OIDC_ROLE_H2O_MARINA` and **variables** `AWS_REGION` / `MARINA_INSTANCE_ID` / `MARINA_APP_DIR`; the AWS side (OIDC role + ECR repo) is managed in Terraform.
+[`.github/workflows/deploy-ec2.yml`](../../.github/workflows/deploy-ec2.yml) and
+[`scripts/deploy.sh`](../../scripts/deploy.sh) are an example pipeline to adapt to your own
+infrastructure, not a requirement. The pattern they show:
 
-### Rollback
-Every image is tagged by **commit SHA** (immutable), so rolling back means redeploying an older tag — no rebuild. Three ways, easiest first:
-
-1. **One-click (recommended):** Actions → **Deploy to EC2 → Run workflow**, set the **`rollback_sha`** input to the full commit SHA you want live. The workflow **skips build/push** (verifies the `sha-<…>` image exists in ECR first) and redeploys that image via SSM.
-2. **On the host:**
-   ```bash
-   MARINA_IMAGE=<account-id>.dkr.ecr.<region>.amazonaws.com/<ecr-repo>:sha-<old-sha> \
-   AWS_REGION=<region> sudo -H bash /home/ubuntu/Marina/scripts/deploy.sh
-   ```
-3. **`git revert`** the bad commit on `main` and let CI build + deploy the revert.
-
-The prior image is usually still cached locally (we only prune *dangling* images), so the rollback pull is instant.
-
-### Running `docker compose` manually on the host
-- The CI deploy runs as **root** via SSM. If you SSH in (as `ubuntu`) and run `docker compose up -d` yourself, Compose resolves the image from `${MARINA_IMAGE:-marina:local}` — i.e. a **local build** unless you `export MARINA_IMAGE=…:<sha>`. That can differ from the SHA the pipeline last deployed, so prefer setting `MARINA_IMAGE` (or just re-trigger the workflow) to stay deterministic.
-- **Heads-up:** the next CI deploy runs `git reset --hard`, which **overwrites local edits to tracked files** (e.g. a hand-edited `docker-compose.yml`) on the host. Keep host-specific config in `.env` (untracked) and persistent data in the `./marina-data` bind-mount — both survive deploys.
-
-### Image retention
-`deploy.sh`'s `docker image prune -f` only removes **dangling** layers; old `:sha-…` tags are not dangling, so they're kept (on the host, that's deliberate — it makes rollback instant). Registry storage is bounded by an **ECR lifecycle policy** on the repo (archive images unpulled for 30d → expire 90d after), managed in Terraform. On the host, run `docker image prune -a` on a schedule if disk pressure arises.
-
-### Build details
-The image is built and pushed with `docker/build-push-action` + `docker/metadata-action` (Buildx layer cache via `type=gha`, OCI labels). Tags: `type=sha,format=long` → `sha-<commit-sha>` (immutable; what the deploy pins to) and `latest` on the default branch.
+- Build the image on each change to your release branch and tag it with the **commit SHA**
+  (immutable), alongside any moving tag such as `latest`.
+- Deploy by pinning that SHA tag (`MARINA_IMAGE=<registry>/<repo>:sha-<commit>`) and running
+  `docker compose up -d`.
+- Roll back by redeploying an older SHA tag; no rebuild is needed.
+- Keep host-specific configuration in the untracked `.env` and persistent data in the data
+  volume (`MARINA_DATA_VOLUME`, default `marina-data`) so both survive redeploys.

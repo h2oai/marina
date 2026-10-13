@@ -17,6 +17,6 @@ These pages hold the long-form design, history, measurements, and per-feature wa
 | [benchmarks.md](benchmarks.md) | The `benchmark` command, the run ledger, replicate groups, earned promotion of defaults, invalid runs |
 | [forecasting.md](forecasting.md) | The general forecaster (pipeline, typed answers, lessons, learned settings, competition adapters), signal discovery, the Social Simulation Arena entrant |
 | [traces.md](traces.md) | Causal tracing end-to-end, `trace` command and `/api/traces`, judgments ledger, adaptive routing |
-| [security.md](security.md) | API authentication, rate limits, 2026-09-22 HTTP hardening, login limits, better-auth, SSRF guard, gateway auth and protocol, dashboard scoping, adapter persistence |
+| [security.md](security.md) | API authentication, rate limits, HTTP hardening, login limits, better-auth, SSRF guard, gateway auth and protocol, dashboard scoping, adapter persistence |
 | [passthru.md](passthru.md) | Compat profiles, OpenAI/Responses surface, Anthropic upstream (text blocks, system messages, tool calling, error codes, caching, provider probe), Ollama surface, ACP bridge |
 | [persistence.md](persistence.md) | Append-only migrations, row retention policies, the two durable-key passes |

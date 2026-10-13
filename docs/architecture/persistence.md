@@ -25,7 +25,7 @@
 - **Writes:** one transaction through `recordBenchmarkLedgerRun`. Re-importing the same file returns the existing run.
 - **Import:** `bun run benchmark:import` (`scripts/benchmark-import.ts`) records harness or Tier-0 results. It is an operator script, never an in-world command, and it drops any credential in the result's config.
 - **Ranking:** the pure functions live in `src/engine/benchmark-ledger.ts` (paired comparison with exact McNemar, Pareto frontier, participant credit). They back `benchmark compare | frontier | participants` and the ledger columns of `benchmark leaderboard`.
-- **Auto-filing (`POST /v1/benchmarks/runs`, `src/net/benchmarks-api.ts`):** a harness files a finished run into the Marina it measured.
+- **Auto-filing (`POST /v1/benchmarks/runs`, `src/net/api/benchmarks-api.ts`):** a harness files a finished run into the Marina it measured.
   - The body is `{ result, targetKind, target, label?, judge?, costUsd? }`. Only item ids, outcomes, scores, latency, cost, judge verdict and `traceId` are kept, and the content hash is taken over that slim document, so re-filing is a no-op.
   - Auth is the model API's. The open-API sentinel may file only under the local, ungated profile; elsewhere a `MODEL_API_KEYS` credential is required (403 `open_api_read_only`).
   - The ledger source is `import`. The run's `config_json` records the attribution counts.

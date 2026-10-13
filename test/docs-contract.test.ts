@@ -30,7 +30,6 @@ const currentDocs = [
   "docs/guides/memory.md",
   "docs/guides/civic-substrate.md",
   "docs/guides/configuration.md",
-  "docs/marina-foundational-paper.md",
 ];
 
 describe("documentation contract", () => {
@@ -57,7 +56,7 @@ describe("documentation contract", () => {
     const readme = await readDoc("README.md");
 
     expect(readme).toContain(
-      "The complete command reference and operational manual live in [SKILL.md](SKILL.md).",
+      "The complete command reference is generated in [docs/reference/commands.md](docs/reference/commands.md).",
     );
     expect(readme).toContain("`SKILL.md` is the agent-facing field guide.");
   });

@@ -209,7 +209,8 @@ The CLI uses `ws://localhost:3300` by default. For another instance pass `--port
 `--url ws://host:3400`, a trailing `/ws` is fine) or set `MARINA_URL`. Each instance uses three
 ports: `WS_PORT`, `WS_PORT+1` (MCP) and `WS_PORT+2` (logs), so space instances at least 3 apart.
 
-A first useful result from the terminal, with a provider key (OpenRouter covers everything):
+A first useful result from the terminal, with any provider key or local model (a single model runs
+`forecast` in a degraded mode; OpenRouter adds web retrieval and analysts from several vendors):
 
 ```bash
 bun run forecast "Will the Fed cut rates at its next meeting?"   # no server needed

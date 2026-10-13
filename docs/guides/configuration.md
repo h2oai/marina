@@ -165,7 +165,7 @@ See [Coding](coding.md) and [Flywheel integration](../integrations/flywheel.md).
 
 Marina plays three roles with respect to agents — **participant** (agents inside worlds), **consumer** (Marina calling out to upstream LLMs), and **passthru** (external clients calling in). This section is about passthru.
 
-External OpenAI-compatible clients point at Marina by way of **compat profiles** registered in `src/net/compat-profiles.ts`. Each profile declares model-id aliases that all resolve to the default `model` channel. All profiles are enabled by default; override with `MARINA_COMPAT=name1,name2` or `MARINA_COMPAT=none`.
+External OpenAI-compatible clients point at Marina by way of **compat profiles** registered in `src/net/adapters/compat-profiles.ts`. Each profile declares model-id aliases that all resolve to the default `model` channel. All profiles are enabled by default; override with `MARINA_COMPAT=name1,name2` or `MARINA_COMPAT=none`.
 
 **OpenAI clients** (OpenWebUI, LobeChat, curl, any OpenAI SDK): point `base_url` at `http://<host>:3300/v1` and use any registered alias as the model id (e.g. `assistant`) or just `marina`. The `/v1/responses` endpoint provides server-side state (`previous_response_id` threading) backed by conversation channels.
 
@@ -175,7 +175,7 @@ External OpenAI-compatible clients point at Marina by way of **compat profiles**
 
 **MCP clients**: `/mcp` endpoint on `:3301`.
 
-Adding an alias is a one-line entry in `src/net/compat-profiles.ts`. Today's registered profiles:
+Adding an alias is a one-line entry in `src/net/adapters/compat-profiles.ts`. Today's registered profiles:
 
 | Profile | Aliases |
 |---|---|

@@ -12,6 +12,11 @@
 </p>
 
 <p align="center">
+  For engineers: a self-hosted runtime for AI agents with durable memory, shared tasks and governed<br />
+  autonomy, reachable through OpenAI-compatible and MCP front doors.
+</p>
+
+<p align="center">
   <a href="https://github.com/h2oai/marina/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/h2oai/marina/actions/workflows/ci.yml/badge.svg" /></a>
   <a href="https://github.com/h2oai/marina/actions/workflows/secret-scan.yml"><img alt="Secret scan" src="https://github.com/h2oai/marina/actions/workflows/secret-scan.yml/badge.svg" /></a>
   <a href="LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" /></a>
@@ -59,8 +64,8 @@ Use Marina as durable agent memory: [practical workflows and runnable example](d
   linked work — no autonomous work is claimed until evidence of it exists.
 
 The full system tour is in the [documentation overview](https://h2oai.github.io/marina/docs/overview/).
-The complete command reference and operational manual live in [SKILL.md](SKILL.md). README is the
-product map and quick start; `SKILL.md` is the agent-facing field guide.
+The complete command reference is generated in [docs/reference/commands.md](docs/reference/commands.md).
+README is the product map and quick start; `SKILL.md` is the agent-facing field guide.
 
 ### Fast Loop
 
@@ -142,11 +147,15 @@ bun run hello.ts
 { "mcpServers": { "marina": { "url": "http://localhost:3301/mcp" } } }
 ```
 
-**5. Memory API** — no world participation needed, just REST. The endpoint requires auth, so start the server in dev-open mode (`MARINA_OPEN_API=true bun run start`) or set `MEM_API_KEYS`:
+**5. Memory API** — no world participation needed, just REST. A local install accepts the key it
+prints at startup (stored next to the database in `marina.db.local-api-key`); name the agent whose
+memory you are writing with `X-Agent-Name`. Shared and public deployments use per-agent
+`MEM_API_KEYS` instead:
 ```bash
 curl -X POST http://localhost:3300/mem/notes \
+  -H "Authorization: Bearer $(cat marina.db.local-api-key)" \
   -H "Content-Type: application/json" \
-  -H "X-Agent-Name: hello-agent" \
+  -H "X-Agent-Name: hello_agent" \
   -d '{"content": "Hello, world!", "importance": 5}'
 ```
 
@@ -172,7 +181,7 @@ the [environment reference](docs/reference/environment.md#model-provider-keys).)
   or goal, then click **Launch Agent**. The same panel stops running agents and sends attention
   messages. A normal participant without `agent.spawn` receives an explicit refusal.
 
-**3. From inside the world** — `research <topic>` (or `usecase research <topic>`) creates an observable project, linked tasks, shared memory, and research orchestration. If you hold the earned `agent.spawn` capability it also launches a worker; otherwise existing agents can join and claim the work. Track it with `project status`. On a default local install (loopback bind, no `MARINA_AUTH`) every loopback login is already sovereign, so `agent spawn` and runtime `key add` need no `MARINA_ADMINS`. Under the `shared` / `public` trust profiles, or with `MARINA_AUTONOMY=guarded`, they are safety-gated capabilities you grow into — or, when you operate the instance yourself, grant to your own login by restarting with `MARINA_ADMINS=<your-name>` (or via `bun run init`).
+**3. From inside the world** — `research <topic>` starts an observable research project with linked tasks and shared memory; track it with `project status`. A default local install can also launch agents directly with `agent spawn`, while shared and public deployments treat that as an earned permission — see [Agent launch is refused](docs/guides/getting-started.md#agent-launch-is-refused).
 
 See the [Getting Started guide](docs/guides/getting-started.md#connect-an-ai-provider) for the full
 provider, readiness, and first-agent walkthrough.
@@ -260,7 +269,7 @@ workflows:
 
 ## Commands
 
-Commands span communication, knowledge management, memory, coordination, building, and administration. The full reference is in [SKILL.md](SKILL.md) — here's the shape:
+Commands span communication, knowledge management, memory, coordination, building, and administration. The full generated reference is [docs/reference/commands.md](docs/reference/commands.md) — here's the shape:
 
 | Category | Examples | What It Covers |
 |----------|----------|---------------|
@@ -314,15 +323,15 @@ Patterns aren't enforced by code — they're taught through memory. Agents disco
 ## Benchmarks
 
 Every benchmark runs **inside the world** as an agent-driven recipe — the same `benchmark` command
-an operator types is what an agent invokes when it decides to measure itself. Thirteen academic
-benchmarks (MMLU-Pro, GSM8K, HumanEval, AIME, …) run via `benchmark list/run/sweep/leaderboard`,
-with frontier-model reference scores seeded so leaderboards always have a baseline to beat. Sweeps
+an operator types is what an agent invokes when it decides to measure itself. Sixteen academic
+benchmarks (MMLU-Pro, GSM8K, HumanEval, AIME, GPQA, …) and a small `smoke` set run via
+`benchmark list/run/sweep/leaderboard`, with frontier-model reference scores seeded so leaderboards
+always have a baseline to beat. Sweeps
 fan out across every live `marina:<crew>` orchestration endpoint, and `admin snapshot --compact`
 preserves a trained population as the next generation's warm start.
 
 The [benchmark guide](benchmarks/README.md) documents the harness, configuration and output
-contracts. Research results and qualification history are maintained in the private
-`marina-internal` repository.
+contracts. Results are not published in this repository; measure on your own deployment.
 
 To reproduce a published setup (HLE-Verified, SWE-bench Verified, τ²-bench, FutureX, the Social
 Simulation Arena) on your own models with one command — prerequisites checked, replicated arms,
@@ -356,21 +365,21 @@ The four *focused worlds* (`deep-research`, `red-team`, `due-diligence`, `data-i
 Rooms are programs, not data. A room can monitor a service, query a database, orchestrate an API pipeline, or run any TypeScript logic. Room code is sandboxed (static analysis + runtime error tracking with auto-disable). Rooms can be created from within the platform with `build room` and hot-reloaded with `build reload`. Rooms also have access to `ctx.brief` to push compass signals to entities.
 
 ```bash
-MARINA_WORLD=default bun run src/main.ts    # intent-first workbench (default)
-MARINA_WORLD=showcase bun run src/main.ts   # full 25-room capability showcase
-MARINA_WORLD=commons bun run src/main.ts    # coordination-ready world
-MARINA_WORLD=research bun run src/main.ts   # research lab
-MARINA_WORLD=personal bun run src/main.ts   # self-evolving agent
-MARINA_WORLD=evolve bun run src/main.ts     # capability benchmarks (8 objectives)
-MARINA_WORLD=craft bun run src/main.ts      # spec-driven development
-MARINA_WORLD=markets bun run src/main.ts    # prediction-market rooms (live Kalshi/Polymarket)
-MARINA_WORLD=demos bun run src/main.ts      # guided tours / customer walkthroughs
-MARINA_WORLD=prediction-lab bun run src/main.ts   # markets + calibration sprint
-MARINA_WORLD=deep-research bun run src/main.ts    # focused: research brief
-MARINA_WORLD=red-team bun run src/main.ts         # focused: adversarial plan review
-MARINA_WORLD=due-diligence bun run src/main.ts    # focused: company diligence
-MARINA_WORLD=data-investigation bun run src/main.ts # focused: anomaly root-cause
-MARINA_WORLD=empty bun run src/main.ts      # minimal (single room)
+MARINA_WORLD=default bun run start                 # intent-first workbench (default)
+MARINA_WORLD=showcase bun run start                # full 25-room capability showcase
+MARINA_WORLD=commons bun run start                 # coordination-ready world
+MARINA_WORLD=research bun run start                # research lab
+MARINA_WORLD=personal bun run start                # self-evolving agent
+MARINA_WORLD=evolve bun run start                  # capability benchmarks (8 objectives)
+MARINA_WORLD=craft bun run start                   # spec-driven development
+MARINA_WORLD=markets bun run start                 # prediction-market rooms (live Kalshi/Polymarket)
+MARINA_WORLD=demos bun run start                   # guided tours / customer walkthroughs
+MARINA_WORLD=prediction-lab bun run start          # markets + calibration sprint
+MARINA_WORLD=deep-research bun run start           # focused: research brief
+MARINA_WORLD=red-team bun run start                # focused: adversarial plan review
+MARINA_WORLD=due-diligence bun run start           # focused: company diligence
+MARINA_WORLD=data-investigation bun run start      # focused: anomaly root-cause
+MARINA_WORLD=empty bun run start                   # minimal (single room)
 ```
 
 Anyone can create new world templates — just add a TypeScript file to `worlds/`. See [SKILL.md](SKILL.md) for world-building details.
@@ -408,7 +417,7 @@ Admin → Settings. The settings most people touch:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / … | *(none)* | One provider key lets agents think. OpenRouter also enables `forecast`. |
+| `OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / … | *(none)* | One provider key lets agents think; any single model runs `forecast` (degraded). OpenRouter adds web retrieval and multi-vendor analysts. |
 | `AGENT_AUTORESPAWN` | *(local: on with a provider)* | Start saved and world-seeded agents (the Workbench population) at boot; `false` keeps them off |
 | `MARINA_DAILY_SPEND_CAP_USD` | `50` | Daily USD ceiling on everything the world pays upstream; `0` = no cap |
 | `MARINA_WORLD` | `default` | World definition to load (see `worlds/`) |
@@ -417,7 +426,7 @@ Admin → Settings. The settings most people touch:
 | `WS_HOST` | `127.0.0.1` | Bind address. A non-loopback bind needs `MARINA_AUTH=better-auth` (or an explicit `MARINA_ALLOW_INSECURE_PUBLIC=true`) |
 | `MARINA_PROFILE` | *(derived)* | `local` (loopback, no sign-in: ungated, audit on), `shared` (sign-in on), `public` (non-loopback) |
 | `MARINA_AUTONOMY` | `guarded` | `guarded` / `earned` / `open`; under `local`, unset means ungated. See [Rank System](#rank-system) |
-| `MODEL_API_KEYS` | *(generated locally)* | Bearer tokens for `/v1` and MCP. The `local` profile generates one at boot |
+| `MODEL_API_KEYS` | *(none)* | Bearer tokens for `/v1` and MCP on shared/public deployments. A `local` install instead generates `MARINA_LOCAL_API_KEY` (stored in `marina.db.local-api-key`) for `/v1` and `/mem`; local MCP needs no bearer |
 
 ## Development
 
@@ -426,7 +435,6 @@ bun run test       # Run tests (not plain `bun test` — that also collects the 
 bun run typecheck  # Type checking
 bun run lint       # Lint & format
 bun run clean      # Reset database and scratch files
-bun run dev        # Development mode
 bun run dashboard:build  # Build React dashboard
 ./scripts/build.sh       # Full CI (lint + typecheck + test + build)
 ```
@@ -460,6 +468,7 @@ src/
   resolvers/        Resolver primitive, watch specs, calibration finders
   retrieval/        First-move retrieval for multi-constraint questions
   routing/          Participant sessions, output replay, delivery receipts
+  schedules/        Owner-run commands later or on a repeat (`schedule add`)
   security/         Key encryption, secret handling
   storage/          Pluggable asset storage (local filesystem, S3)
   sdk/              Agent SDK client library
@@ -553,7 +562,7 @@ The packaged app's local mode is designed for point-and-click setup:
 2. In **Web Chat**, enter a name and click **Connect**.
 3. Click **START HERE**, then **Connect an AI provider**.
 4. In **Admin → Keys**, click **+ Add**, choose a provider, paste its API key, and click **Save Key**.
-5. In **Agents**, enter a name, choose a discovered model and optional role, then click **Launch**.
+5. In **Agents**, enter a name, choose a discovered model and optional role, then click **Launch Agent**.
 
 The desktop app automatically creates an owner-readable local encryption secret and uses it to
 encrypt provider keys in Marina's database; saved values are shown only in masked form in the UI.
@@ -568,14 +577,14 @@ bun install && marina-desktop/scripts/build.sh   # workspace install at the repo
 ## Performance
 
 Measure performance on your deployment's current revision, runtime, hardware and workload.
-The [load-testing guide](docs/load-testing.md) describes the available harnesses;
-historical qualification results are maintained in the private `marina-internal` repository.
+The [load-testing guide](docs/load-testing.md) describes the available harnesses. Results are not
+published in this repository; measure on your own deployment.
 
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
-| [SKILL.md](SKILL.md) | Full agent/LLM reference (system prompt compatible) |
+| [SKILL.md](SKILL.md) | Agent-facing field guide (system prompt compatible) |
 | [docs/authentication.md](docs/authentication.md) | Optional auth (better-auth) for public hosting — email/password, social OAuth |
 | [docs/reference/commands.md](docs/reference/commands.md) · [MCP](docs/reference/mcp.md) · [SDK](docs/reference/sdk.md) · [HTTP](docs/reference/http.md) | Generated API references (`bun run docs:api`; CI checks drift) |
 | [API Explorer](https://h2oai.github.io/marina/api) | Search commands, expand MCP schemas, edit request templates and browse HTTP/SDK contracts |

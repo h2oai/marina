@@ -15,7 +15,7 @@ and operate the environment. Start with one path below; the full catalog follows
 | Connect coding assistants or an ACP editor | [Coding agents and editors](coding-agent-integrations.md) | [Coding](coding.md) |
 | Compare desktop, dashboard and TUI | [Interface guide](interfaces.md) | [Published panels](published-panels.md) |
 | Run Marina and see one useful result | [Getting Started](getting-started.md) | [Dashboard](dashboard.md) |
-| [Dashboard accessibility](dashboard-accessibility.md) | The axe-core scan (`bun run test:a11y`) and the accessibility lint contract |
+| Check dashboard accessibility | [Dashboard accessibility](dashboard-accessibility.md) | The axe-core scan (`bun run test:a11y`) and the accessibility lint contract |
 | Use the packaged desktop app | [Getting Started: packaged desktop](getting-started.md#packaged-desktop-app) | [Dashboard](dashboard.md) |
 | Connect Claude or another MCP client | [MCP Integration](mcp-integration.md) | [Connecting](connecting.md) |
 | Point an OpenAI-compatible client at Marina | [Model API](model-api.md) | [Execution Traces](observability.md) |
@@ -24,21 +24,35 @@ and operate the environment. Start with one path below; the full catalog follows
 | Build a long-running agent | [Agent Development](agent-development.md) | [Memory](memory.md) |
 | Use Marina only as an external agent's memory | [Symbolic memory interfaces](memory-interfaces.md) | TypeScript SDK, MCP for coding agents, portable skill, resident and human access without embeddings |
 | Ask agents to help with memory | [Memory assistance](memory-assistance.md) | Librarians, reflectors, evaluators, and recursive delegation through Marina's model router |
-| [Put memory to work](memory-workflows.md) | Retrieve evidence now, or hand work to a task a fresh agent can continue |
-| [Portable memory extensions](memory-extensions.md) | External interfaces (e.g. LangGraph store) over the same durable memory service |
+| Put memory to work | [Memory workflows](memory-workflows.md) | Retrieve evidence now, or hand work to a task a fresh agent can continue |
+| Reach memory through another interface | [Portable memory extensions](memory-extensions.md) | External interfaces (e.g. LangGraph store) over the same durable memory service |
 | Deploy a standalone memory service | [Standalone Memory Service](memory-service.md) | [Storage admission and failure recovery](memory-service.md#storage-admission-and-failure-recovery) |
 | Run an autonomous coding task | [Coding in Marina](coding.md#first-autonomous-fix-copy-and-paste) | [Troubleshooting](troubleshooting.md) |
 | Keep coding, messages and world activity together | [Coding terminal](coding.md#start-in-your-project-folder) | [Coding desks](published-panels.md#create-a-coding-desk) |
 | Deploy a shared instance | [Deployment](deployment.md) | [Authentication](../authentication.md) |
-| [Backup and recovery](recovery.md) | Snapshots, restore, and recovering a damaged database |
-| [Contributor workflows](contributor-workflows.md) | Trace terminal/API input through admission, execution, memory and verification |
-| [Compatibility and upgrades](compatibility.md) | Supported contract per surface, how each is qualified, and upgrades |
+| Back up or recover a world | [Backup and recovery](recovery.md) | Snapshots, restore, and recovering a damaged database |
+| Trace an input through the code | [Contributor workflows](contributor-workflows.md) | Terminal/API input through admission, execution, memory and verification |
+| Check supported contracts before upgrading | [Compatibility and upgrades](compatibility.md) | Supported contract per surface, how each is qualified, and upgrades |
 | Review human and agent identity controls | [Identity and workload security](identity.md) | [Authentication](../authentication.md) |
 | Run isolated A/B Marina variants | [World Collective](world-collective.md) | [Execution Traces](observability.md) |
 | Register another Marina without assuming trust | [Federation discovery](federation-discovery.md) | [Inheritance](inheritance.md) |
 | Run on one local model (Ollama, llama.cpp) or a single key | [Single model](single-model.md) | [Configuration](configuration.md) |
-| Forecast a question (probability or number, with evidence) | [Single model](single-model.md) | What every model-using feature does with one local model or one key, and how `readiness` reports it |
+| Forecast a question (probability or number, with evidence) | [Forecasting](forecasting.md) | [Single model](single-model.md) |
 | Route forecasting into another application | [Forecasting](forecasting.md) | [Model API](model-api.md) |
+| Search the web as of a date, or give agents a search room | [Search](search.md) | [Forecasting](forecasting.md) |
+| Find the right `bun run` script | [Scripts reference](scripts.md) | [Release qualification](release-qualification.md) |
+| Follow a desire from expression to evidence | [Journeys](journeys.md) | [Cognitive Provenance](cognitive-provenance.md) |
+| Create portable intellects and associations | [Intellect Lifecycle](intellect-lifecycle.md) | [Associations](associations.md) |
+| Reproduce cognition or a Marina | [Reproduction and Meshes](reproduction-and-meshes.md) | [Economics, Simulation, and Recursion](economics-simulation-and-recursion.md) |
+| Qualify a public release without skipped claims | [Release qualification](release-qualification.md) | [Troubleshooting](troubleshooting.md) |
+| Investigate execution or export OTLP | [Execution Traces](observability.md) | [Configuration](configuration.md) |
+
+### Benchmarks & competitions
+
+Operator-run adapters for public benchmarks and competitions. None runs by default.
+
+| I want to… | Start here | Then read |
+|---|---|---|
 | Enter Marina in the Social Simulation Arena | [Arena](arena.md) | [Forecasting](forecasting.md) |
 | Enter Marina in FutureX (weekly future-prediction benchmark) | [FutureX](futurex.md) | [Forecasting](forecasting.md) |
 | Answer Mind2Web 2 live-web research tasks with cited sources | [Mind2Web 2](mind2web2.md) | [Scripts reference](scripts.md) |
@@ -46,19 +60,12 @@ and operate the environment. Start with one path below; the full catalog follows
 | Answer a ForecastBench round (500 questions, up to 3 sets) | [ForecastBench](forecastbench.md) | [Forecasting](forecasting.md) |
 | Run Marina as a Prophet Arena agent | [Prophet Arena](prophet.md) | [Forecasting](forecasting.md) |
 | Run Marina's coding agent on SWE-bench | [SWE-bench](swebench.md) | [Coding](coding.md) |
-| Search the web as of a date, or give agents a search room | [Search](search.md) | [Forecasting](forecasting.md) |
 | Run BrowseComp-Plus (deep research over a fixed corpus); search a local corpus | [BrowseComp-Plus](browsecomp-plus.md) | [Search](search.md) |
 | Write long-form cited research reports; run DeepResearch Bench I and II | [DeepResearch Bench](deepresearch-bench.md) | [Search](search.md) |
 | Run τ²-bench through Marina; use the verification formation as a model (`marina/verify:`) | [τ²-bench](tau2.md) | [Model API](model-api.md) |
 | Run LongMemEval-V2 with Marina's memory as the system under test | [LongMemEval-V2](longmemeval.md) | [Memory System](memory.md) |
 | Reproduce any published Marina benchmark setup with one command | [Reproduce](reproduce.md) | [Testing](testing.md) |
 | See every public competition Marina has entered and where it stands | [Leaderboards](leaderboards.md) | [Reproduce](reproduce.md) |
-| Find the right `bun run` script | [Scripts reference](scripts.md) | [Release qualification](release-qualification.md) |
-| Follow a desire from expression to evidence | [Journeys](journeys.md) | [Cognitive Provenance](cognitive-provenance.md) |
-| Create portable intellects and associations | [Intellect Lifecycle](intellect-lifecycle.md) | [Associations](associations.md) |
-| Reproduce cognition or a Marina | [Reproduction and Meshes](reproduction-and-meshes.md) | [Economics, Simulation, and Recursion](economics-simulation-and-recursion.md) |
-| Qualify a public release without skipped claims | [Release qualification](release-qualification.md) | [Troubleshooting](troubleshooting.md) |
-| Investigate execution or export OTLP | [Execution Traces](observability.md) | [Configuration](configuration.md) |
 
 Contributors changing Marina itself should start with [`CLAUDE.md`](../../CLAUDE.md) (the must-follow
 rules) and the [architecture deep dives](../architecture/README.md) (design, history, and per-subsystem

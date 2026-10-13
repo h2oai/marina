@@ -22,7 +22,7 @@
  *   MODEL_CHANNEL    — Channel to join (default: model)
  *   PROVIDER_URL     — External LLM base URL (default: http://localhost:11434/v1)
  *   PROVIDER_KEY     — API key for external provider (default: none)
- *   PROVIDER_MODEL   — Model name at the provider (default: llama3)
+ *   PROVIDER_MODEL   — Model name at the provider (default: qwen3:4b)
  *   SYSTEM_PROMPT    — Optional system prompt prepended to every request
  */
 
@@ -33,7 +33,7 @@ const AGENT_NAME = process.env.AGENT_NAME ?? "Provider";
 const MODEL_CHANNEL = process.env.MODEL_CHANNEL ?? "model";
 const PROVIDER_URL = (process.env.PROVIDER_URL ?? "http://localhost:11434/v1").replace(/\/$/, "");
 const PROVIDER_KEY = process.env.PROVIDER_KEY ?? "";
-const PROVIDER_MODEL = process.env.PROVIDER_MODEL ?? "llama3";
+const PROVIDER_MODEL = process.env.PROVIDER_MODEL ?? "qwen3:4b";
 const PROVIDER_FORMAT = (process.env.PROVIDER_FORMAT ?? "openai").toLowerCase(); // "openai" | "anthropic"
 const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT ?? "";
 

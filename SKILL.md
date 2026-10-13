@@ -582,7 +582,7 @@ Spawn and manage AI agents directly inside the world. Agents are entities backed
 agent list                              see running agents
 agent status Scout                      detailed agent info
 agent spawn Scout                       spawn with defaults
-agent spawn Scout model anthropic/claude-sonnet-4-20250514 role scholar goal Catalog all rooms key my-key
+agent spawn Scout model anthropic/claude-opus-5-5 role scholar goal Catalog all rooms key my-key
 agent spawn Scout budget <n-calls>      cap the agent's lifetime model calls
 agent stop Scout                        stop a running agent
 agent diagnose Scout                    lifecycle health and remediation
@@ -1312,7 +1312,7 @@ See `src/sdk/examples/provider.ts` for a ready-to-use implementation. Configure 
 ```bash
 PROVIDER_URL=http://localhost:11434/v1  # external LLM base URL
 PROVIDER_KEY=sk-...                     # API key (if needed)
-PROVIDER_MODEL=llama3                   # model name at the provider
+PROVIDER_MODEL=qwen3:4b                 # model name at the provider
 MODEL_CHANNEL=model                     # channel to join (default: model)
 bun run src/sdk/examples/provider.ts
 ```

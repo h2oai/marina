@@ -912,12 +912,12 @@ const BUILTIN_RECIPES: Record<string, RecipeFactory> = {
       {
         title: `Run benchmark sweep — generation "${topic}"`,
         description:
-          "Run `benchmark sweep all --limit 50 --seed 42` to fan out across every live `marina:<name>` orchestration × every registered benchmark. Track progress with `benchmark runs --limit 50` and `benchmark orchestrations`. Wait for the full set to finish before moving on — partial sweeps are not comparable to the historical table in benchmarks/HISTORY.md.",
+          "Run `benchmark sweep all --limit 50 --seed 42` to fan out across every live `marina:<name>` orchestration × every registered benchmark. Track progress with `benchmark runs --limit 50` and `benchmark orchestrations`. Wait for the full set to finish before moving on — partial sweeps are not comparable to earlier generations' runs in the ledger.",
       },
       {
         title: "Review and write the per-benchmark summary",
         description:
-          "For each benchmark in the sweep, run `benchmark leaderboard <name>` — it interleaves the new run with published reference scores from `benchmarks/reference-scores.ts`. Post a one-line summary per benchmark to the project board: score, delta vs reference, delta vs the prior generation in benchmarks/HISTORY.md. Flag regressions explicitly — the IFEval and SimpleQA regressions in Gen-1 were the loudest signals we ever got from the harness.",
+          "For each benchmark in the sweep, run `benchmark leaderboard <name>` — it interleaves the new run with published reference scores from `benchmarks/reference-scores.ts`. Post a one-line summary per benchmark to the project board: score, delta vs reference, delta vs the prior generation's runs (`benchmark runs`, `benchmark compare`). Flag regressions explicitly — a regression on a single benchmark is the loudest signal the harness gives.",
       },
       {
         title: `Request compact snapshot — \`admin snapshot ${topic} --compact\``,
@@ -950,7 +950,7 @@ const BUILTIN_RECIPES: Record<string, RecipeFactory> = {
       },
       {
         content:
-          "Historical context: benchmarks/HISTORY.md preserves the Gen-0 (cold) and Gen-1 (warm) sweep tables, plus the tier-filter validation. Compare new generations against those numbers — the headline question is whether the new substrate matches or beats the +1.03pp Gen-1 average over bare Sonnet, while keeping the SimpleQA 90% recovery from migration 37.",
+          "Historical context: earlier generations' sweeps stay in the benchmark ledger (`benchmark runs`, `benchmark compare`). Compare each new generation against the previous one and the bare foundation model — the headline question is whether the new substrate matches or beats the prior generation without regressing any single benchmark.",
         importance: 8,
         type: "fact",
       },

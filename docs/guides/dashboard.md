@@ -470,7 +470,7 @@ Admin → Ops. The Entity Roster and the Agent Launch Panel show the same rollin
 
 ### Ops API
 
-The runtime surface is served by `src/net/ops-api.ts` under `/api/ops/*`, registered from
+The runtime surface is served by `src/net/api/ops-api.ts` under `/api/ops/*`, registered from
 `handleDashboardApi`; the JSON contract lives in `src/net/ops-types.ts`, which
 `dashboard/src/lib/ops-types.ts` re-exports type-only (never mirrors) and
 `dashboard/src/__tests__/ops-contract.test.tsx` pins. Every route sits behind the dashboard auth gate
@@ -497,8 +497,8 @@ manual resume.
 
 The memory surface (assistance jobs, contradiction resolutions, institutional ratifications, standing
 credits, passthru receipts, the hygiene line) is served by a small observer-scoped API under
-`/api/memory/*` (`src/net/memory-observability.ts`; JSON contract in
-`src/net/memory-observability-types.ts`, which the dashboard imports type-only rather than mirrors —
+`/api/memory/*` (`src/net/memory/memory-observability.ts`; JSON contract in
+`src/net/memory/memory-observability-types.ts`, which the dashboard imports type-only rather than mirrors —
 `dashboard/src/lib/memory-observability-types.ts` and `dashboard/src/unified/lib/memory-map-types.ts`
 re-export it, and `dashboard/src/__tests__/memory-observability-contract.test.ts` pins their derived
 aliases and visual vocabulary to it). Every route sits behind the dashboard auth gate.

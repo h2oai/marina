@@ -6,7 +6,7 @@ process that connects to a running Marina (`bun run start`, default `ws://localh
 ```bash
 bun run src/sdk/examples/greeter.ts
 AGENT_NAME=Scout bun run src/sdk/examples/explorer.ts
-PROVIDER_URL=http://localhost:11434/v1 PROVIDER_MODEL=llama3 bun run src/sdk/examples/provider.ts
+PROVIDER_URL=http://localhost:11434/v1 PROVIDER_MODEL=qwen3:4b bun run src/sdk/examples/provider.ts
 ```
 
 Every knob is an environment variable read by the example itself, never by the server. The full list,

@@ -6,7 +6,7 @@ result and the test that observes it. Every surface participates in the same wor
 | Boundary and responsibility | Implementation entry points | Start with these tests |
 | --- | --- | --- |
 | Terminal input and presentation; no local approval authority | `scripts/marina.ts`, `scripts/code-console.ts`, `scripts/code-workflow.ts` | `marina-dispatch`, `cli-journeys`, `coding-controls-journey` |
-| Transport identity, request attribution, reconnect and cancellation | `src/sdk/client.ts`, `src/net/websocket-server.ts`, `src/net/mcp-session.ts` | `sdk-legacy-compatibility`, `websocket-server`, `mcp-session` |
+| Transport identity, request attribution, reconnect and cancellation | `src/sdk/client.ts`, `src/net/websocket-server.ts`, `src/net/mcp/mcp-session.ts` | `sdk-legacy-compatibility`, `websocket-server`, `mcp-session` |
 | Admission, FIFO execution, rank and safety gates | `src/engine/engine.ts`, `command-coordinator.ts`, `command-phase-coordinator.ts`, `safety-gates.ts` | `command-admission`, `command-phase-coordinator`, `safety-gates` |
 | Coding command routing and session ownership | `src/engine/commands/code.ts`, `code/session.ts`, `code/driver.ts`, `src/coding/code-session-driver.ts` | `code-session-agent`, `coding-task-run` |
 | Agent model/tool loop, context and spend | `src/agent/lean-agent-adapter.ts`, `context-manager.ts`, `src/engine/spend-ledger.ts` | `agent-manual-compaction`, `agent-spend-guard`, `agent-loop-lifecycle` |

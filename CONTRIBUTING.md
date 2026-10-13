@@ -6,7 +6,7 @@ Thanks for thinking about contributing. This guide is the fastest path from "fre
 
 1. Read [README.md](README.md) end-to-end. It is the source of truth for what Marina is and is not.
 2. Skim [CLAUDE.md](CLAUDE.md) for architectural rules and conventions — most "why is the code shaped this way" questions are answered there.
-3. Search [issues](../../issues) and [PRs](../../pulls) for prior art before opening a new one.
+3. Search [issues](https://github.com/h2oai/marina/issues) and [PRs](https://github.com/h2oai/marina/pulls) for prior art before opening a new one.
 
 For a concrete input-to-result map, see [tracing a Marina workflow](docs/guides/contributor-workflows.md). It links execution boundaries to their regression tests.
 
@@ -57,7 +57,7 @@ These are easier to get right than to undo later. The full list is in [CLAUDE.md
 
 - **Migrations are append-only.** Never modify an existing migration once it has been released. Append a new entry to `FORWARD_MIGRATIONS` in `src/persistence/schema.ts` (re-exported as `MIGRATIONS` by `database.ts`); verify with `bun run schema:check`.
 - **One file per command** in `src/engine/commands/`. Register it in `src/engine/command-registry.ts`.
-- **MCP tools** go through `runCmd()` / `cmdTool()` (`src/net/mcp-world-tools.ts`) — that wrapper enforces rate limits. New world commands need no MCP schema: `CommandDef` metadata publishes them.
+- **MCP tools** go through `runCmd()` / `cmdTool()` (`src/net/mcp/mcp-world-tools.ts`) — that wrapper enforces rate limits. New world commands need no MCP schema: `CommandDef` metadata publishes them.
 - **Use `minRank` / `gate` on `CommandDef`** for permission gates. Don't add custom rank checks in handlers.
 - **Tick budget**: room `onTick` handlers must complete within 200 ms total. Async work is fine as long as it throttles.
 
