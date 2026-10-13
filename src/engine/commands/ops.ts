@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentRuntime } from "../../agent/agent-runtime";
+import { operatorStatusOf } from "../../agent/lean-agent-adapter";
 import type { TaskManager } from "../../coordination/task-manager";
 import { bold, dim, header, separator, status } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
@@ -43,6 +44,17 @@ export function syncOperationalAlerts(deps: OpsDependencies): void {
         title: `${agent.name} is degraded`,
         detail: agent.diagnosis ?? agent.errorReason ?? "Agent health degraded",
         remedy: `agent diagnose ${agent.name}`,
+      });
+    const handle = deps.runtime.get(agent.name);
+    const paused = handle ? operatorStatusOf(handle)?.paused : undefined;
+    if (paused?.kind === "provider-auth")
+      add("agent", {
+        key: `agent:${agent.name}:provider-auth`,
+        severity: "critical",
+        category: "agent",
+        title: `${agent.name} blocked: provider auth`,
+        detail: paused.reason,
+        remedy: "key list · readiness providers",
       });
     if ((agent.queuedPerceptions ?? 0) > 25)
       add("agent", {

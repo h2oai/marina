@@ -396,7 +396,7 @@ function handleList(
       ? `${formatUsd(ops.totalCostUsd)} (${formatUsd(ops.costLastHourUsd)}/h)`
       : formatUsd(a.totalCostUsd ?? 0);
     lines.push(
-      `${bold(a.name)} ${dim(`[${a.healthState ?? a.state}]`)} ${a.model} ${a.role ? `role:${a.role}` : ""} ${dim(`${upMin}m · ${a.toolCalls} calls · ${cost}`)}${ops?.paused ? ` ${dim(`paused: ${ops.paused.kind}`)}` : ""}`,
+      `${bold(a.name)} ${dim(`[${ops?.paused?.kind === "provider-auth" ? "blocked: provider auth" : (a.healthState ?? a.state)}]`)} ${a.model} ${a.role ? `role:${a.role}` : ""} ${dim(`${upMin}m · ${a.toolCalls} calls · ${cost}`)}${ops?.paused && ops.paused.kind !== "provider-auth" ? ` ${dim(`paused: ${ops.paused.kind}`)}` : ""}`,
     );
     if (a.focus) lines.push(`  ${dim(`focus: ${a.focus}`)}`);
   }

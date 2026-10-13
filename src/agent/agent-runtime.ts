@@ -54,6 +54,7 @@ import {
   type SpendGuard,
 } from "./lean-agent-adapter";
 import { assertMarinaRemoteTargetAllowed, detectModelLimits } from "./model-probe";
+import { providerCredentialsFingerprint } from "./provider-auth";
 import { getRolePrompt, inferTaskCategory } from "./roles";
 import { isSeedDisabled } from "./seed-registry";
 import {
@@ -820,6 +821,8 @@ export class AgentRuntime {
         internalCredential,
         spendGuard,
       );
+      // A provider-auth park ends when env keys OR stored key rows change.
+      adapter.setCredentialsFingerprint(() => this.credentialsFingerprint());
 
       // Relay per-agent adapter events as engine events (see
       // createAgentEventRelay). Registered BEFORE start() so the initial
@@ -1343,6 +1346,14 @@ export class AgentRuntime {
   }
 
   // ─── API Key Resolution ───────────────────────────────────────────────
+
+  /** Opaque digest of env keys + stored key rows (change detection only; never shown). */
+  private credentialsFingerprint(): string {
+    const rows = this.db
+      ? this.db.getAllApiKeys().map((r) => `${r.name}\t${r.provider}\t${r.encrypted_value}`)
+      : [];
+    return providerCredentialsFingerprint(rows);
+  }
 
   private resolveApiKey(model?: string, keyName?: string): string | undefined {
     const provider = this.extractProvider(model ?? MARINA_DEFAULT_MODEL);
