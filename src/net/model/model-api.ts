@@ -8,7 +8,9 @@
 
 import { version as MARINA_VERSION } from "../../../package.json";
 import type { RateLimiter } from "../../auth/rate-limiter";
+import { runKeyRefusal, withRunKey } from "../../engine/benchmark-run-keys";
 import type { Engine } from "../../engine/engine";
+import { EVAL_HEADER } from "../../learning/eval-context";
 import { handleAnthropicMessages } from "../adapters/anthropic-inbound";
 import { handleBenchmarkFile } from "../api/benchmarks-api";
 import { handleDecisionModels, handleDecisions } from "../api/decisions-api";
@@ -48,6 +50,7 @@ import {
   type PeerAddr,
   readModelJsonBody,
 } from "../model-api/shared";
+import { STACK_HEADER } from "../model-api/stack";
 
 // Public surface consumed by other modules, scripts and tests (main.ts,
 // engine.ts, command-registry.ts, readiness.ts, ops-api.ts, websocket-server.ts,
@@ -104,6 +107,7 @@ export async function handleModelApi(
   engine: Engine,
   rateLimiter?: RateLimiter,
   server?: PeerAddr,
+  preAuth?: PassthruAuthResult,
 ): Promise<Response | undefined> {
   const ip = clientIp(req, server);
   // Authenticate (skipped for CORS preflight). Fails closed by default — see
@@ -111,8 +115,8 @@ export async function handleModelApi(
   // they can map the caller to a Marina entity (identity + context injection).
   // A rejected credential spends the per-IP failed-auth budget; once it is
   // spent the caller is refused before its credential is compared at all.
-  let authResult: PassthruAuthResult | undefined;
-  if (method !== "OPTIONS") {
+  let authResult: PassthruAuthResult | undefined = preAuth;
+  if (method !== "OPTIONS" && !preAuth) {
     // The internal model token (room agents on loopback) is never locked out
     // by someone else's failed guesses from the same address.
     if (!hasInternalBearer(req) && authFailuresExhausted(ip)) {
@@ -126,6 +130,25 @@ export async function handleModelApi(
       return outcome.error;
     }
     authResult = outcome.auth;
+    // A benchmark run key (src/engine/benchmark-run-keys.ts): refuse once the
+    // run's cap or transport guard tripped; otherwise its requests get the
+    // run's arm and eval context unless they name their own, and every
+    // upstream call in them is attributed to the run.
+    const runKey = authResult.runKey;
+    if (runKey) {
+      const refusal = runKeyRefusal(runKey);
+      if (refusal)
+        return errorJson(refusal.code === "run_transport_failed" ? 503 : 429, refusal.message, {
+          code: refusal.code,
+        });
+      const headers = new Headers(req.headers);
+      if (runKey.stack && !headers.has(STACK_HEADER)) headers.set(STACK_HEADER, runKey.stack);
+      if (runKey.evalTag && !headers.has(EVAL_HEADER)) headers.set(EVAL_HEADER, runKey.evalTag);
+      const scoped = new Request(req, { headers });
+      return withRunKey(runKey, () =>
+        handleModelApi(url, method, scoped, engine, rateLimiter, server, authResult),
+      );
+    }
   }
 
   // Per-IP rate limiting. POST (mutation) plus the enumerable Responses state

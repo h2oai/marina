@@ -26,9 +26,11 @@ import { join } from "node:path";
 import { noteBenchmarkRun } from "../learning/intake";
 import { caseGuardFromItems } from "../learning/leak-guard";
 import { localHttpBase } from "../net/listen-ports";
+import { DEFAULT_STACK, parseStackHeader } from "../net/model-api/stack";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent, EntityId } from "../types";
 import { fallbackInvalidReason, isFallbackItem } from "./benchmark-ledger";
+import { mintRunKey, revokeRunKey } from "./benchmark-run-keys";
 import { getErrorMessage } from "./errors";
 import { featureEnvSnapshot } from "./feature-env";
 
@@ -205,6 +207,29 @@ export interface BenchmarkRunOptions {
    * recalled (leakage rule 2); `live` lifts that for an actual entry.
    */
   lessonsMode?: "measure" | "live";
+  /**
+   * The arm: which passthru instruments the run's requests get — `bare` (none),
+   * `on` (the identified-caller default stack), `full`, or a member list
+   * (`lessons,obligations`). Given an arm or a cap, the run is served by a run
+   * key (`benchmark-run-keys.ts`) instead of the internal token.
+   */
+  arm?: string;
+  /** Upstream spend cap for the run, USD; every call past it is refused. */
+  capUsd?: number;
+}
+
+/**
+ * The `x-marina-stack` value an arm asks for, or an error. `bare` → `none`,
+ * `on` → the default stack, `full` → `full`, else a member list as given.
+ */
+export function armStack(arm: string): { stack: string } | { error: string } {
+  const a = arm.trim().toLowerCase();
+  if (a === "bare" || a === "none") return { stack: "none" };
+  if (a === "on" || a === "default") return { stack: DEFAULT_STACK.join(",") };
+  const parsed = parseStackHeader(a);
+  if (!parsed || parsed.kind === "error")
+    return { error: parsed?.kind === "error" ? parsed.message : `unknown arm "${arm}"` };
+  return { stack: a };
 }
 
 export interface BenchmarkSubject {
@@ -378,6 +403,8 @@ export function benchmarkRunConfig(
     ...(opts.partition ? { partition: opts.partition } : {}),
     ...(opts.lessons ? { lessons: true } : {}),
     ...(opts.lessonsMode ? { lessonsMode: opts.lessonsMode } : {}),
+    ...(opts.arm ? { arm: opts.arm.trim().toLowerCase() } : {}),
+    ...(opts.capUsd !== undefined ? { capUsd: opts.capUsd } : {}),
     ...(Object.keys(serverFeatures).length ? { serverFeatures } : {}),
   };
 }
@@ -482,6 +509,11 @@ export class BenchmarkRunner {
       );
     }
 
+    if (opts.arm) {
+      const stack = armStack(opts.arm);
+      if ("error" in stack) throw new Error(stack.error);
+    }
+    if (opts.capUsd !== undefined && !(opts.capUsd > 0)) throw new Error("cap must be above $0");
     const config = benchmarkRunConfig(opts);
     const configHash = hashConfig(config);
     const id = `br_${configHash}_${Date.now().toString(36)}`;
@@ -529,7 +561,24 @@ export class BenchmarkRunner {
     started: number,
   ): Promise<void> {
     const resultFile = join(process.cwd(), RESULTS_DIR, `${id}.json`);
-    const { args, env } = harnessInvocation(opts.benchmark, config, this.target(), resultFile);
+    // An arm or a cap: the harness talks to /v1 with a run key carrying them.
+    const target = this.target();
+    const stack = opts.arm ? armStack(opts.arm) : undefined;
+    const runKey =
+      opts.arm || opts.capUsd !== undefined
+        ? mintRunKey({
+            runId: id,
+            ...(stack && "stack" in stack ? { stack: stack.stack } : {}),
+            evalTag: `benchmark=${opts.benchmark}; mode=${config.lessonsMode ?? "measure"}`,
+            ...(opts.capUsd !== undefined ? { capUsd: opts.capUsd } : {}),
+          })
+        : undefined;
+    const { args, env } = harnessInvocation(
+      opts.benchmark,
+      config,
+      runKey ? { ...target, apiKey: runKey } : target,
+      resultFile,
+    );
 
     let harness: HarnessOutcome;
     try {
@@ -550,7 +599,22 @@ export class BenchmarkRunner {
     } catch (err) {
       harness = { error: getErrorMessage(err) };
     }
+    const keyState = runKey ? revokeRunKey(runKey) : undefined;
     this.recordHarnessResult(id, opts, started, harness);
+    // A run stopped by its key is not a clean measurement: record why.
+    if (keyState?.tripped) {
+      this.db.setBenchmarkRunValidity({
+        run_id: id,
+        action: "invalidate",
+        reason:
+          keyState.tripped === "transport"
+            ? "run stopped: repeated upstream network failures"
+            : `run stopped at its spend cap ($${keyState.spentUsd.toFixed(2)} of $${(keyState.capUsd ?? 0).toFixed(2)})`,
+        actor: null,
+        source: "auto",
+        created_at: Date.now(),
+      });
+    }
   }
 
   /**

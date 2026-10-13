@@ -883,7 +883,7 @@ Effect: unknown.
 - Group `option-1`: `--seed N`.
 - Group `option-2`: `--model M`.
 
-### `benchmark run <name> [--limit N] [--seed N] [--model M] [--judge M] [--concurrency N] [--partition holdout|tune] [lessons:on] [lessons-mode:measure|live]`
+### `benchmark run <name> [--limit N] [--seed N] [--model M] [--judge M] [--concurrency N] [--partition holdout|tune] [lessons:on] [lessons-mode:measure|live] [arm:bare|on|full|<members>] [cap:<usd>]`
 
 Effect: unknown.
 
@@ -896,6 +896,9 @@ Effect: unknown.
 - `field-6` (`holdout|tune`): choice, optional group `option-5`, choices `holdout`, `tune`.
 - `field-7` (`lessons`): text, optional group `option-6`.
 - `field-8` (`lessons-mode`): text, optional group `option-7`, choices `measure`, `live`.
+- `field-9` (`arm`): text, optional group `option-8`, choices `bare`, `on`, `full`.
+- `field-10` (`members`): text, optional group `option-8`.
+- `field-11` (`cap`): number, optional group `option-9`.
 - Group `option-0`: `--limit N`.
 - Group `option-1`: `--seed N`.
 - Group `option-2`: `--model M`.
@@ -904,6 +907,8 @@ Effect: unknown.
 - Group `option-5`: `--partition holdout|tune`.
 - Group `option-6`: `lessons:on`.
 - Group `option-7`: `lessons-mode:measure|live`.
+- Group `option-8`: `arm:bare|on|full|members`.
+- Group `option-9`: `cap:usd`.
 
 ### `benchmark runs [--benchmark X] [--limit N]`
 

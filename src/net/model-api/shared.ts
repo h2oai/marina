@@ -8,6 +8,7 @@
 
 import { getInternalModelToken } from "../../agent/agent-runtime";
 import { secretsEqual } from "../../auth/secret-compare";
+import { lookupRunKey, type RunKeyState } from "../../engine/benchmark-run-keys";
 import type { Engine } from "../../engine/engine";
 import { isLocalProfile, isOpenApiMode } from "../../engine/trust-profile";
 import { buildAliasMap } from "../adapters/compat-profiles";
@@ -105,6 +106,8 @@ export interface PassthruAuthResult {
    * to impersonate arbitrary entities.
    */
   canNameMap: boolean;
+  /** A run key minted by this server for a benchmark run it launched (`benchmark-run-keys.ts`). */
+  runKey?: RunKeyState;
 }
 
 interface KeyEntry {
@@ -179,6 +182,21 @@ export function authenticate(req: Request): AuthOutcome {
     if (internal && secretsEqual(token, internal)) {
       return { auth: { internal: true, openMode: false, canNameMap: true } };
     }
+  }
+
+  // A run key this server minted for a benchmark run it launched: valid with or
+  // without MODEL_API_KEYS, confined to its own entity, never name-map authority.
+  const runKey = token ? lookupRunKey(token) : undefined;
+  if (runKey) {
+    return {
+      auth: {
+        internal: false,
+        openMode: false,
+        canNameMap: false,
+        runKey,
+        ...(runKey.entityName ? { boundEntityName: runKey.entityName } : {}),
+      },
+    };
   }
 
   const entries = getApiKeyEntries();

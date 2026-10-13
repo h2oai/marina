@@ -1851,7 +1851,7 @@ Fields read here: `all`, `expected_generation`, `field`, `record_ids`, `source_i
 
 ### `rest === "*"`
 
-[Source](../../src/net/model-api/shared.ts#L132)
+[Source](../../src/net/model-api/shared.ts#L135)
 
 - Guard: `rest === "*"`
 
@@ -1865,7 +1865,7 @@ Fields read here: `all`, `expected_generation`, `field`, `record_ids`, `source_i
 
 ### `url.pathname.startsWith("/v1/responses/")`
 
-[Source](../../src/net/model/model-api.ts#L137)
+[Source](../../src/net/model/model-api.ts#L160)
 
 - Guard: `rateLimiter && (method === "POST" &#124;&#124; isResponsesStateOp)`
 - Guard: `method === "POST"`
@@ -1873,132 +1873,132 @@ Fields read here: `all`, `expected_generation`, `field`, `record_ids`, `source_i
 
 ### `url.pathname.startsWith("/v1/media")`
 
-[Source](../../src/net/model/model-api.ts#L146)
+[Source](../../src/net/model/model-api.ts#L169)
 
 - Guard: `url.pathname.startsWith("/v1/media")`
 
 ### `url.pathname === "/v1/benchmarks/runs"`
 
-[Source](../../src/net/model/model-api.ts#L151)
+[Source](../../src/net/model/model-api.ts#L174)
 
 - Guard: `url.pathname === "/v1/benchmarks/runs" && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `url.pathname === "/v1/outcomes"`
 
-[Source](../../src/net/model/model-api.ts#L156)
+[Source](../../src/net/model/model-api.ts#L179)
 
 - Guard: `url.pathname === "/v1/outcomes" && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `url.pathname === "/v1/forecast"`
 
-[Source](../../src/net/model/model-api.ts#L161)
+[Source](../../src/net/model/model-api.ts#L184)
 
 - Guard: `url.pathname === "/v1/forecast" && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `url.pathname === "/v1/decisions"`
 
-[Source](../../src/net/model/model-api.ts#L167)
+[Source](../../src/net/model/model-api.ts#L190)
 
 - Guard: `(url.pathname === "/v1/decisions" &#124;&#124; url.pathname === "/v1/systemone") && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `url.pathname === "/v1/systemone"`
 
-[Source](../../src/net/model/model-api.ts#L167)
+[Source](../../src/net/model/model-api.ts#L190)
 
 - Guard: `(url.pathname === "/v1/decisions" &#124;&#124; url.pathname === "/v1/systemone") && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `url.pathname === "/v1/decisions/models"`
 
-[Source](../../src/net/model/model-api.ts#L171)
+[Source](../../src/net/model/model-api.ts#L194)
 
 - Guard: `(url.pathname === "/v1/decisions/models" &#124;&#124; url.pathname === "/v1/systemone/models") && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/v1/systemone/models"`
 
-[Source](../../src/net/model/model-api.ts#L171)
+[Source](../../src/net/model/model-api.ts#L194)
 
 - Guard: `(url.pathname === "/v1/decisions/models" &#124;&#124; url.pathname === "/v1/systemone/models") && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/v1/models"`
 
-[Source](../../src/net/model/model-api.ts#L178)
+[Source](../../src/net/model/model-api.ts#L201)
 
 - Guard: `url.pathname === "/v1/models" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/v1/chat/completions"`
 
-[Source](../../src/net/model/model-api.ts#L183)
+[Source](../../src/net/model/model-api.ts#L206)
 
 - Guard: `url.pathname === "/v1/chat/completions" && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `url.pathname === "/v1/messages"`
 
-[Source](../../src/net/model/model-api.ts#L192)
+[Source](../../src/net/model/model-api.ts#L215)
 
 - Guard: `url.pathname === "/v1/messages" && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `url.pathname === "/v1/responses"`
 
-[Source](../../src/net/model/model-api.ts#L233)
+[Source](../../src/net/model/model-api.ts#L256)
 
 - Guard: `url.pathname === "/v1/responses" && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `url.pathname.startsWith("/v1/responses/")`
 
-[Source](../../src/net/model/model-api.ts#L236)
+[Source](../../src/net/model/model-api.ts#L259)
 
 - Guard: `url.pathname.startsWith("/v1/responses/") && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname.startsWith("/v1/responses/")`
 
-[Source](../../src/net/model/model-api.ts#L240)
+[Source](../../src/net/model/model-api.ts#L263)
 
 - Guard: `url.pathname.startsWith("/v1/responses/") && method === "DELETE"`
 - Guard: `method === "DELETE"`
 
 ### `url.pathname === "/v1/health"`
 
-[Source](../../src/net/model/model-api.ts#L246)
+[Source](../../src/net/model/model-api.ts#L269)
 
 - Guard: `url.pathname === "/v1/health" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/tags"`
 
-[Source](../../src/net/model/model-api.ts#L261)
+[Source](../../src/net/model/model-api.ts#L284)
 
 - Guard: `url.pathname === "/api/tags" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/version"`
 
-[Source](../../src/net/model/model-api.ts#L266)
+[Source](../../src/net/model/model-api.ts#L289)
 
 - Guard: `url.pathname === "/api/version" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/ps"`
 
-[Source](../../src/net/model/model-api.ts#L271)
+[Source](../../src/net/model/model-api.ts#L294)
 
 - Guard: `url.pathname === "/api/ps" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/show"`
 
-[Source](../../src/net/model/model-api.ts#L276)
+[Source](../../src/net/model/model-api.ts#L299)
 
 - Guard: `url.pathname === "/api/show" && method === "POST"`
 - Guard: `method === "POST"`
@@ -2007,14 +2007,14 @@ Fields read here: `model`, `name`.
 
 ### `url.pathname === "/api/chat"`
 
-[Source](../../src/net/model/model-api.ts#L292)
+[Source](../../src/net/model/model-api.ts#L315)
 
 - Guard: `url.pathname === "/api/chat" && method === "POST"`
 - Guard: `method === "POST"`
 
 ### `url.pathname === "/api/generate"`
 
-[Source](../../src/net/model/model-api.ts#L297)
+[Source](../../src/net/model/model-api.ts#L320)
 
 - Guard: `url.pathname === "/api/generate" && method === "POST"`
 - Guard: `method === "POST"`

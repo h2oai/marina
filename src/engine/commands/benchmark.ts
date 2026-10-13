@@ -194,7 +194,7 @@ export function benchmarkCommand(deps: {
       "benchmark result <id>",
       "benchmark revalidate <run> reason:<text>",
       "benchmark run <name> [--limit N] [--seed N] [--model M]",
-      "benchmark run <name> [--limit N] [--seed N] [--model M] [--judge M] [--concurrency N] [--partition holdout|tune] [lessons:on] [lessons-mode:measure|live]",
+      "benchmark run <name> [--limit N] [--seed N] [--model M] [--judge M] [--concurrency N] [--partition holdout|tune] [lessons:on] [lessons-mode:measure|live] [arm:bare|on|full|<members>] [cap:<usd>]",
       "benchmark runs [--benchmark X] [--limit N]",
       "benchmark sweep <name|all> [--limit N] [--seed N] [--judge M]",
     ],
@@ -404,6 +404,8 @@ export function benchmarkCommand(deps: {
             "partition",
             "lessons",
             "lessons-mode",
+            "arm",
+            "cap",
           ]);
           const limit = Number.parseInt(modifiers.limit ?? "", 10);
           const seed = Number.parseInt(modifiers.seed ?? "", 10);
@@ -411,6 +413,12 @@ export function benchmarkCommand(deps: {
           const lessonsMode = modifiers["lessons-mode"]?.toLowerCase();
           if (lessonsMode !== undefined && lessonsMode !== "measure" && lessonsMode !== "live") {
             ctx.send(input.entity, "lessons-mode must be measure or live.");
+            return;
+          }
+          const cap =
+            modifiers.cap === undefined ? undefined : Number(modifiers.cap.replace(/^\$/, ""));
+          if (cap !== undefined && !(Number.isFinite(cap) && cap > 0)) {
+            ctx.send(input.entity, "cap is a dollar amount above 0 (cap:5 or cap:$5).");
             return;
           }
           try {
@@ -431,6 +439,8 @@ export function benchmarkCommand(deps: {
               agentId: entity.id,
               ...(/^(on|true|yes|1)$/i.test(modifiers.lessons ?? "") ? { lessons: true } : {}),
               ...(lessonsMode ? { lessonsMode } : {}),
+              ...(modifiers.arm ? { arm: modifiers.arm } : {}),
+              ...(cap !== undefined ? { capUsd: cap } : {}),
             });
             ctx.send(
               input.entity,

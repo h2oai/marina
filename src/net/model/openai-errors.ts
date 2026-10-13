@@ -39,7 +39,11 @@ export type OpenAIErrorCode =
   // A model id the operator's passthru pin does not allow (marina/verify).
   | "model_not_allowed"
   // The output cap was spent on reasoning before any answer (model/reasoning-effort.ts).
-  | "reasoning_exhausted_output";
+  | "reasoning_exhausted_output"
+  // A benchmark run key's run spent its cap / stopped on repeated network failures
+  // (src/engine/benchmark-run-keys.ts).
+  | "run_budget_exhausted"
+  | "run_transport_failed";
 
 export type OpenAIErrorType =
   | "invalid_request_error"
