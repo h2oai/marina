@@ -41,7 +41,7 @@ bun run arena:research score --out /private/experiment
 Register optional arms at capture with `--arms A,B,C,D,O,L`; use `--lesson-db` for a lesson
 snapshot and `--history` for a validated calibration-history file. Missing calibration evidence
 leaves the spread unchanged. Models, token/call ceilings and source policy are hashed into the
-configuration. The runner requires fresh Civiqs scalar observations, preserves the first attempt
+configuration. The runner records the age of the Civiqs scalar observations it uses, preserves the first attempt
 per arm, checkpoints before paid forecasting, and refuses a late run. Capture and arm costs are
 separate; the persistent spend scope includes both. Calls already in flight can outlive a cap.
 `--max-tokens` (default 2000) bounds forecast and page-reader responses; gap review is capped at
@@ -88,12 +88,13 @@ the mean of per-round skill. Everywhere else it files exact persistence.
 ### Input freshness before filing
 
 Official CLI and autopilot forecasts check observation dates before model work and again before
-signing. Downloading an old observation today does not make it current. Civiqs observations must
-be at most two calendar days old, every profile cell must pass, Wikipedia allows four days for
-its publication lag, and weekly Trends/YouGov inputs allow fourteen days. Other recurring series
-allow two typical releases, with a fourteen-day minimum, so monthly observations are not judged
-as daily readings. Missing or invalid dates are refused. A refusal leaves any accepted version
-in place and reports the affected series and date; it does not silently file a stale replacement.
+signing. Downloading an old observation today does not make it current, so the audit reads the
+observation's own date. The latest available observation is always filed: an observation older
+than its source's usual cadence (Civiqs two calendar days, Wikipedia four, weekly Trends/YouGov
+fourteen, other recurring series two typical releases with a fourteen-day minimum) is recorded
+as an input-age warning in the filing's audit and in `arena health`, never a reason to keep an
+older submission. Only a missing or invalid date, or an observation dated after the information
+cutoff, is refused; a refusal leaves any accepted version in place and reports the series and date.
 
 Archive lookups and research cutoffs use the earlier of forecast time and lock time. Early
 forecasts therefore search back from today, and historical replays remain bounded by their lock.
@@ -105,7 +106,7 @@ never described as verified evidence. Evaluation and shadow experiments may insp
 do not bypass the official submission checks.
 
 Run `bun run arena audit <round_id|due> --fresh` to inspect the current observation dates,
-age limits, and Civiqs source failures without model calls or submitting anything.
+input-age warnings, and Civiqs source failures without model calls or submitting anything.
 
 ### Model backends
 

@@ -375,36 +375,44 @@ describe("filing a round", () => {
     ]);
   });
 
-  it("refuses a stale replacement and keeps the accepted forecast untouched", async () => {
+  it("files the latest observation however old; refuses one dated after the cutoff", async () => {
     expect((await submitRound(deps(), round.round_id)).kind).toBe("accepted");
     const original = db.latestArenaSubmission("marina-test", round.round_id)!;
-    const stale = {
+    const reading = (date: string) => ({
       ...deps(),
       strictFreshness: true,
       forecaster: async (r: ArenaRound, l: Parameters<typeof forecastRound>[1]) => ({
         ...forecastRound(r, l),
+        topline: { mean: -20, sd: 1 },
         origins: {
           [r.series!]: {
             selected: "daily" as const,
-            reading: { date: "2026-08-01", value: -26 },
+            reading: { date, value: -26 },
             targetDate: r.release_at.slice(0, 10),
             horizonDays: 60,
             mode: "off" as const,
-            reason: "stale fixture",
+            reason: "fixture",
             start: { mean: -26, sd: 1 },
             fetchedAt: new Date(now).toISOString(),
           },
         },
       }),
-    };
+    });
+    // An observation after the information cutoff would leak: refused, accepted version kept.
     for (const dryRun of [true, false]) {
-      expect(await submitRound(stale, round.round_id, { replace: true, dryRun })).toMatchObject({
+      expect(
+        await submitRound(reading("2099-01-01"), round.round_id, { replace: true, dryRun }),
+      ).toMatchObject({
         kind: "skipped",
-        reason: expect.stringContaining("stale forecast inputs"),
+        reason: expect.stringContaining("after the information cutoff"),
       });
     }
     expect(posts).toHaveLength(1);
     expect(db.latestArenaSubmission("marina-test", round.round_id)).toEqual(original);
+    // An old observation is still the latest there is: it is filed, its age recorded.
+    const old = await submitRound(reading("2026-08-01"), round.round_id, { replace: true });
+    expect(old.kind).toBe("accepted");
+    expect(posts).toHaveLength(2);
   });
 
   it("keeps complete local evidence beside the signed body and preserves it on retry", async () => {

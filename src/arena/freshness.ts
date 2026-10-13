@@ -17,7 +17,13 @@ export interface FreshnessAudit {
   asOf: string;
   ok: boolean;
   readings: Record<string, { date?: string; ageDays?: number; maxAgeDays: number }>;
+  /** Refusals: a missing or invalid date, or an observation after the information cutoff. */
   issues: string[];
+  /**
+   * Observations older than their source's usual cadence. Recorded, never a refusal: the
+   * latest available observation is filed (the arena scores the newest on-time version).
+   */
+  warnings: string[];
 }
 
 function validDay(day: string): boolean {
@@ -28,6 +34,7 @@ function validDay(day: string): boolean {
   );
 }
 
+/** The age past which an observation is older than its source's usual cadence. */
 function maximumAge(round: ArenaRound, history: ArenaPoint[]): number {
   // These sources publish daily, even though their arena questions are weekly.
   if (round.tracker === "civiqs") return 2;
@@ -51,6 +58,7 @@ export function auditForecastFreshness(
   asOf = forecastCutoff(round.lock_at),
 ): FreshnessAudit {
   const issues: string[] = [];
+  const warnings: string[] = [];
   const readings: FreshnessAudit["readings"] = {};
   const ids =
     round.target_type === "profile_energy"
@@ -81,9 +89,11 @@ export function auditForecastFreshness(
     else if (ageDays < 0 && round.tracker !== "google_trends")
       issues.push(`${id}: observation is after the information cutoff`);
     else if (ageDays > maxAgeDays)
-      issues.push(`${id}: observation ${date} is ${ageDays} days old (maximum ${maxAgeDays})`);
+      warnings.push(
+        `${id}: latest observation ${date} is ${ageDays} days old (usual cadence ≤ ${maxAgeDays})`,
+      );
   }
-  return { asOf, ok: issues.length === 0, readings, issues };
+  return { asOf, ok: issues.length === 0, readings, issues, warnings };
 }
 
 export function requireFreshForecast<T extends RoundForecast>(
@@ -95,7 +105,7 @@ export function requireFreshForecast<T extends RoundForecast>(
   const freshness = auditForecastFreshness(round, lock, forecast, asOf);
   if (!freshness.ok)
     throw new Error(
-      `stale forecast inputs; keeping any accepted submission: ${freshness.issues.join("; ")}`,
+      `unusable forecast inputs; keeping any accepted submission: ${freshness.issues.join("; ")}`,
     );
   return { ...forecast, freshness };
 }

@@ -109,7 +109,7 @@ export function validateExperiment(input: ResearchExperiment): void {
     )
       throw new Error("invalid experiment start");
     const fresh = auditForecastFreshness(input.round, input.lock, f, input.capturedAt);
-    if (!fresh.ok) throw new Error(`experiment has stale inputs: ${fresh.issues.join("; ")}`);
+    if (!fresh.ok) throw new Error(`experiment has unusable inputs: ${fresh.issues.join("; ")}`);
   }
   for (const d of Object.values(input.dossiers)) if (d.evidence) validateEvidence(d.evidence);
   const s = input.settings;
