@@ -32,6 +32,8 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { featureEnvSnapshot } from "../../src/engine/feature-env";
 import { capEnvValue } from "../../src/engine/spend-guard";
+import { AUTOMATION_BENCHMARK, AUTOMATION_TASKS } from "../automation/convert";
+import { IFBENCH_BENCHMARK } from "../ifbench/ifbench";
 import type {
   ArmSpec,
   CommandStep,
@@ -785,7 +787,302 @@ const arena: Setup = {
   },
 };
 
-export const SETUPS: readonly Setup[] = [hle, swebench, tau2, futurex, arena];
+// ─── Instrument-stack arms (AutomationBench, IFBench) ────────────────────────
+
+/**
+ * The entity the stack setups' server key is bound to (`MODEL_API_KEYS=<key>:BenchArm`):
+ * a bound key makes the harness an IDENTIFIED caller, which the `learn` member needs
+ * (an anonymous key cannot run it).
+ */
+export const BENCH_ARM_ENTITY = "BenchArm";
+
+/**
+ * Members of the identified-caller default stack (`DEFAULT_STACK` in
+ * `src/net/model-api/stack.ts`; a test holds the two equal). The `on` arm names them
+ * explicitly: an explicit list is exact, so a member that cannot run is refused with a
+ * 400 instead of silently leaving the arm equal to `bare`, and the operator's
+ * `MARINA_PASSTHRU_STACK` cannot change what the arm measures.
+ */
+export const DEFAULT_STACK_MEMBERS = ["lessons", "obligations", "argcheck", "learn"] as const;
+
+/** The `x-marina-stack` value each stack arm sends. */
+export function stackHeaderFor(arm: string): string {
+  switch (arm) {
+    case "bare":
+      return "none";
+    case "on":
+      return DEFAULT_STACK_MEMBERS.join(",");
+    case "full":
+      return "full";
+    default:
+      throw new Error(`no instrument stack for arm '${arm}'`);
+  }
+}
+
+/** Headers every request of a stack arm carries: the arm's stack and the measurement tag. */
+export function stackArmHeaders(arm: string, benchmark: string): Record<string, string> {
+  return {
+    "x-marina-stack": stackHeaderFor(arm),
+    "x-marina-eval": `benchmark=${benchmark}; mode=measure`,
+  };
+}
+
+function stackArms(perItem: { bare: number; on: number; full: number }): ArmSpec[] {
+  return [
+    { name: "bare", describe: "`x-marina-stack: none` (no instruments)", usdPerItem: perItem.bare },
+    {
+      name: "on",
+      describe: `the identified-caller default stack (\`x-marina-stack: ${stackHeaderFor("on")}\`)`,
+      usdPerItem: perItem.on,
+    },
+    {
+      name: "full",
+      describe: "`x-marina-stack: full` (every member except ensemble)",
+      usdPerItem: perItem.full,
+      optIn: true,
+    },
+  ];
+}
+
+/** A plain model server whose key is bound to the bench entity (an identified caller). */
+function stackServer(id: string, port: number, spendCapUsd: number): ServerStep {
+  const server = plainServer(id, port, spendCapUsd);
+  return { ...server, env: { ...server.env, MODEL_API_KEYS: `${LEDGER_KEY}:${BENCH_ARM_ENTITY}` } };
+}
+
+/** The ledger target of a stack arm: the model plus the stack it ran with. */
+function stackTarget(model: string, arm: string): string {
+  return JSON.stringify({ model, stack: stackHeaderFor(arm) });
+}
+
+const STACK_LABEL = `server key bound to ${BENCH_ARM_ENTITY} (an identified caller); arms differ only in x-marina-stack; requests tagged mode=measure`;
+
+// ─── AutomationBench: bare vs the instrument stack ───────────────────────────
+
+const automation: Setup = {
+  name: "automation",
+  summary:
+    "AutomationBench — the unmodified `auto-bench` agent served by Marina, with no instruments vs the default instrument stack.",
+  smoke: 6,
+  full: AUTOMATION_TASKS.length,
+  arms: stackArms({ bare: 0.12, on: 0.45, full: 0.6 }),
+  requires: ["models", "automationbench", "tmpdir"],
+  plan(flags, tier) {
+    const arms = armsOf(this, flags);
+    const limit = flags.limit ?? this.smoke;
+    if (limit > AUTOMATION_TASKS.length) {
+      throw new Error(
+        `--limit ${limit} exceeds the ${AUTOMATION_TASKS.length} tasks of the automation setup`,
+      );
+    }
+    const tasks = AUTOMATION_TASKS.slice(0, limit);
+    const m = resolveModels(tier, flags, FRONTIER.value, FRONTIER.value);
+    const effort = flags.effort ?? "medium";
+    // One server per arm, each capped at an even share of the budget.
+    const share = budgetShare(flags.budgetUsd, arms.length);
+    const steps: Step[] = [];
+    for (const [i, arm] of arms.entries()) {
+      const id = `automation-${arm.name}`;
+      const port = BASE_PORT + 60 + i;
+      steps.push(stackServer(id, port, share));
+      const headers = Object.entries(stackArmHeaders(arm.name, AUTOMATION_BENCHMARK)).flatMap(
+        ([k, v]) => ["--headers", `${k}=${v}`],
+      );
+      for (let r = 1; r <= flags.replicates; r++) {
+        const dir = join(flags.runDir, "results", `${id}-r${r}`);
+        const exports = tasks.map((t) => join(dir, `${t}.json`));
+        // One auto-bench process per task: a task's failure never takes the others with it.
+        for (const [n, task] of tasks.entries()) {
+          steps.push({
+            kind: "command",
+            label: `${arm.name} r${r}: ${task}`,
+            argv: [
+              "$AUTOMATIONBENCH_BIN",
+              "--model",
+              m.answer,
+              "--api",
+              "chat_completions",
+              "--base-url",
+              `http://localhost:${port}/v1`,
+              "--domains",
+              task.split(".")[0]!,
+              "--tasks",
+              task,
+              "--num-examples",
+              "1",
+              "--max-concurrent",
+              "1",
+              "--max-steps",
+              "50",
+              "--toolset",
+              "api",
+              "--reasoning-effort",
+              effort,
+              "--no-ensure-complete",
+              ...headers,
+              "--export-json",
+              exports[n]!,
+            ],
+            env: { OPENAI_API_KEY: LEDGER_KEY },
+            needs: [id],
+          });
+        }
+        const ledgerFile = join(flags.runDir, "results", `${id}-r${r}-ledger.json`);
+        steps.push({
+          kind: "command",
+          label: `${arm.name} r${r}: convert for the ledger (refused on infrastructure failures)`,
+          argv: [
+            "bun",
+            "scripts/automationbench.ts",
+            "convert",
+            ...exports,
+            "--expect",
+            tasks.join(","),
+            "--model",
+            m.answer,
+            "--stack",
+            stackHeaderFor(arm.name),
+            "--out",
+            ledgerFile,
+            "--require-clean",
+          ],
+        });
+        steps.push(
+          importStep(
+            flags,
+            ledgerFile,
+            "model",
+            stackTarget(m.answer, arm.name),
+            ledgerGroup("automation", arm.name),
+          ),
+        );
+      }
+      steps.push({ kind: "stop", id });
+    }
+    steps.push(...comparisons(AUTOMATION_BENCHMARK, "automation", arms));
+    const labels = [
+      ...m.labels,
+      `reasoning_effort = ${effort}`,
+      "one auto-bench process per task (toolset api, ≤ 50 steps, no automatic re-runs)",
+      STACK_LABEL,
+    ];
+    return finish(this, flags, tier, arms, limit, labels, steps);
+  },
+};
+
+// ─── IFBench: bare vs the instrument stack ───────────────────────────────────
+
+const ifbench: Setup = {
+  name: "ifbench",
+  summary:
+    "IFBench — one chat completion per prompt through Marina, graded by the official IFBench grader (strict), with no instruments vs the default instrument stack.",
+  smoke: 20,
+  full: 150,
+  arms: stackArms({ bare: 0.01, on: 0.02, full: 0.04 }),
+  requires: ["models", "ifbench", "ifbench-input", "tmpdir"],
+  plan(flags, tier) {
+    const arms = armsOf(this, flags);
+    const limit = flags.limit ?? this.smoke;
+    const m = resolveModels(tier, flags, FRONTIER.value, FRONTIER.value);
+    const share = budgetShare(flags.budgetUsd, arms.length);
+    const steps: Step[] = [];
+    for (const [i, arm] of arms.entries()) {
+      const id = `ifbench-${arm.name}`;
+      const port = BASE_PORT + 70 + i;
+      steps.push(stackServer(id, port, share));
+      const headers = Object.entries(stackArmHeaders(arm.name, IFBENCH_BENCHMARK)).flatMap(
+        ([k, v]) => ["--header", `${k}=${v}`],
+      );
+      for (let r = 1; r <= flags.replicates; r++) {
+        const dir = join(flags.runDir, "results", `${id}-r${r}`);
+        const subset = join(dir, "input.jsonl");
+        const responses = join(dir, "responses.jsonl");
+        const graded = join(dir, "graded");
+        const ledgerFile = join(flags.runDir, "results", `${id}-r${r}-ledger.json`);
+        steps.push({
+          kind: "command",
+          label: `${arm.name} r${r}: answer ${limit} prompts`,
+          argv: [
+            "bun",
+            "scripts/ifbench.ts",
+            "answer",
+            "--input",
+            "$IFBENCH_INPUT",
+            "--limit",
+            String(limit),
+            "--endpoint",
+            `http://localhost:${port}`,
+            "--model",
+            m.answer,
+            "--concurrency",
+            "4",
+            ...headers,
+            "--out",
+            responses,
+            "--subset-out",
+            subset,
+          ],
+          env: { MARINA_BENCH_API_KEY: LEDGER_KEY },
+          needs: [id],
+        });
+        steps.push({
+          kind: "command",
+          label: `${arm.name} r${r}: official IFBench grader (strict and loose)`,
+          argv: [
+            "$IFBENCH_PYTHON",
+            "-m",
+            "run_eval",
+            `--input_data=${subset}`,
+            `--input_response_data=${responses}`,
+            `--output_dir=${graded}`,
+          ],
+          cwd: "$IFBENCH_HOME",
+        });
+        steps.push({
+          kind: "command",
+          label: `${arm.name} r${r}: convert for the ledger (refused on infrastructure failures)`,
+          argv: [
+            "bun",
+            "scripts/ifbench.ts",
+            "convert",
+            graded,
+            "--input",
+            subset,
+            "--responses",
+            responses,
+            "--mode",
+            "strict",
+            "--stack",
+            stackHeaderFor(arm.name),
+            "--out",
+            ledgerFile,
+            "--require-clean",
+          ],
+        });
+        steps.push(
+          importStep(
+            flags,
+            ledgerFile,
+            "model",
+            stackTarget(m.answer, arm.name),
+            ledgerGroup("ifbench", arm.name),
+          ),
+        );
+      }
+      steps.push({ kind: "stop", id });
+    }
+    steps.push(...comparisons(IFBENCH_BENCHMARK, "ifbench", arms));
+    const labels = [
+      ...m.labels,
+      `the first ${limit} prompts of IFBENCH_INPUT, in file order`,
+      "graded strict (prompt level: every instruction followed)",
+      STACK_LABEL,
+    ];
+    return finish(this, flags, tier, arms, limit, labels, steps);
+  },
+};
+
+export const SETUPS: readonly Setup[] = [hle, swebench, tau2, futurex, arena, automation, ifbench];
 
 export function setupNamed(name: string): Setup | undefined {
   return SETUPS.find((s) => s.name === name);

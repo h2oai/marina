@@ -62,8 +62,32 @@ export function budgetRefusal(plan: Plan, budgetUsd: number): string | undefined
   return undefined;
 }
 
-function expand(value: string, vars: Record<string, string>): string {
-  return value.replace(/\$(LEDGER_KEY|TAU2_HOME)\b/g, (_, k: string) => vars[k] ?? "");
+/** Placeholders a plan may use in argv, env values and cwd; the runner fills them in. */
+const PLAN_VARS =
+  /\$(LEDGER_KEY|TAU2_HOME|AUTOMATIONBENCH_BIN|IFBENCH_HOME|IFBENCH_INPUT|IFBENCH_PYTHON)\b/g;
+
+/**
+ * The machine paths a plan's placeholders stand for, from the operator's environment.
+ * `IFBENCH_PYTHON` is the IFBench checkout's virtualenv Python when it has one, else
+ * `python3`.
+ */
+export function planPaths(
+  env: Record<string, string | undefined>,
+  exists: (path: string) => boolean = existsSync,
+): Record<string, string> {
+  const ifbenchHome = env.IFBENCH_HOME ?? "";
+  const venvPython = ifbenchHome ? join(ifbenchHome, ".venv/bin/python") : "";
+  return {
+    TAU2_HOME: env.TAU2_HOME ?? "",
+    AUTOMATIONBENCH_BIN: env.AUTOMATIONBENCH_BIN ?? "",
+    IFBENCH_HOME: ifbenchHome,
+    IFBENCH_INPUT: env.IFBENCH_INPUT ?? "",
+    IFBENCH_PYTHON: venvPython && exists(venvPython) ? venvPython : "python3",
+  };
+}
+
+export function expand(value: string, vars: Record<string, string>): string {
+  return value.replace(PLAN_VARS, (_, k: string) => vars[k] ?? "");
 }
 
 async function waitFor(url: string, key: string, want: string | undefined, seconds: number) {
@@ -154,7 +178,7 @@ export interface RunOptions {
 export async function executePlan(plan: Plan, opts: RunOptions): Promise<number> {
   const log = opts.log ?? ((l: string) => console.log(l));
   const key = randomBytes(24).toString("base64url");
-  const vars = { LEDGER_KEY: key, TAU2_HOME: opts.env.TAU2_HOME ?? "" };
+  const vars = { LEDGER_KEY: key, ...planPaths(opts.env) };
   const scratch = join(opts.runDir, "tmp");
   mkdirSync(scratch, { recursive: true });
   mkdirSync(join(opts.runDir, "servers"), { recursive: true });

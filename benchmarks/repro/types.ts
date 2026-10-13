@@ -31,7 +31,8 @@ export interface ReproFlags {
   /**
    * Agent reasoning effort (τ²). Sent in `extra_body`: LiteLLM's `drop_params` silently
    * strips a top-level `reasoning_effort` for model ids it does not know (every
-   * Marina-routed id). Default `high`, as the τ² board runs agents.
+   * Marina-routed id). Default `high`, as the τ² board runs agents. AutomationBench:
+   * `auto-bench --reasoning-effort` (default `medium`).
    */
   effort?: string;
   /** User-simulator reasoning effort (τ²), stated explicitly; default `low`. */
@@ -86,7 +87,10 @@ export interface CommandStep {
   label: string;
   argv: string[];
   env?: Record<string, string>;
-  /** Working directory (default: the Marina checkout). `$TAU2_HOME` is expanded. */
+  /**
+   * Working directory (default: the Marina checkout). `$TAU2_HOME`, `$IFBENCH_HOME` and the
+   * other path placeholders (`planPaths` in run.ts) are expanded here, in argv and in env.
+   */
   cwd?: string;
   /** Servers that must be up while this runs. */
   needs?: string[];
