@@ -215,6 +215,7 @@ describe("Engine tick schedule", () => {
       { name: "board-archive", every: 3600, phase: 300 },
       { name: "channel-prune", every: 1800, phase: 0 },
       { name: "arena-autopilot", every: 3600, phase: 1500 },
+      { name: "arena-filing-watch", every: 600, phase: 420 },
       { name: "conversation-cleanup", every: 3600, phase: 600 },
       { name: "note-importance", every: 3600, phase: 1200 },
       { name: "operational-alerts", every: 3600, phase: 1800 },

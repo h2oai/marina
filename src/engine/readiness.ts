@@ -3,6 +3,7 @@
 
 import { intelligenceScale } from "../agent/available-models";
 import { listToolProbeResults } from "../agent/tool-call-probe";
+import { lastFilingWatch } from "../arena/filing-watch";
 import { arenaStatus } from "../arena/service";
 import { earnedGateCalibration, loadCalibration } from "../decisions/calibrate";
 import { decisionConfigFromEnv } from "../decisions/config";
@@ -624,6 +625,7 @@ export function computeReadiness(engine: Engine): ReadinessReport {
       detail: `entrant ${arena.entrant} (key ${arena.keyId}); autopilot ${arena.autopilot ? "on" : "off"}`,
     });
   }
+  if (arena.configured) checks.push(arenaFilingCheck());
   // Not entered: no check at all — the arena is opt-in, not a missing capability.
 
   // ── Demo pulse — measured participation, activity, and request latency ───
@@ -818,5 +820,45 @@ export function tickJobsCheck(engine: Engine): ReadinessCheck {
       .join("; ")}`,
     remediation:
       "Check the server log for the job's error; a job clears this on its next good run.",
+  };
+}
+
+/** The last arena filing-watch pass: rounds locking within 24 h without a sound filing. */
+export function arenaFilingCheck(now = Date.now()): ReadinessCheck {
+  const label = "Arena filings (rounds locking within 24 h)";
+  const last = lastFilingWatch();
+  if (!last)
+    return {
+      id: "arena-filing",
+      label,
+      status: "ok",
+      detail: "not checked yet in this process (the watch runs every ~10 min)",
+    };
+  const age = Math.round((now - last.checkedAt) / 60_000);
+  if (last.error)
+    return {
+      id: "arena-filing",
+      label,
+      status: "degraded",
+      detail: `could not read the open rounds ${age} min ago: ${last.error.slice(0, 160)}`,
+      remediation: "Check network access to the arena data source (MARINA_ARENA_DATA_URL).",
+    };
+  if (!last.findings.length)
+    return {
+      id: "arena-filing",
+      label,
+      status: "ok",
+      detail: `${last.watched} round(s) locking within 24 h, all filed and refreshing (checked ${age} min ago)`,
+    };
+  return {
+    id: "arena-filing",
+    label,
+    status: "degraded",
+    detail: last.findings
+      .slice(0, 5)
+      .map((f) => `${f.roundId}: ${f.problem} — ${f.detail}`)
+      .join("; "),
+    remediation:
+      "Check the operator's arena runner (its timers and build), then refile: bun run arena submit <round> --replace",
   };
 }
