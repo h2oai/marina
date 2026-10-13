@@ -9,6 +9,7 @@
 import { calculateCost, type Usage as PiUsage } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { costFromTokens, defaultModelPrice, type TokenPrice } from "../../agent/provider-cost";
+import { noteRunKeyCall } from "../../engine/benchmark-run-keys";
 import { localOutputBudget } from "../../engine/constants";
 import type { Engine } from "../../engine/engine";
 import { getErrorMessage } from "../../engine/errors";
@@ -1807,6 +1808,12 @@ async function traceProxyResponse(
   ) => {
     if (terminal) return;
     terminal = true;
+    // A benchmark run key's request: attribute the call to its run (cap, transport guard).
+    noteRunKeyCall({
+      ok: phase === "completed",
+      ...(metrics.costUsd !== undefined ? { costUsd: metrics.costUsd } : {}),
+      network: metrics.errorKind === "network",
+    });
     if (phase === "completed") {
       recordSpend("model_api", metrics.costUsd);
       // Streaming replies cannot carry the cost header; settle it for the

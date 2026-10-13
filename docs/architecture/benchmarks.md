@@ -19,6 +19,25 @@ The in-world command is `benchmark list/run/sweep/runs/result/leaderboard/fronti
   - Read with `getPromotedDefault` (see Notes); environment variables win.
   - Invalid runs (migration 153): `benchmark invalidate|revalidate <run> reason:<text>` (`role.edit`; revalidate never by the run's author) or `benchmark:import --invalidate <run> --reason` set status `invalid` with an append-only `benchmark_run_validity` row; items are never deleted. A run whose items are more than `MARINA_BENCHMARK_MAX_FALLBACK_RATE` (0.25) fallbacks is recorded invalid automatically. Invalidating an incumbent never frees its slot: a challenger must beat the best earlier valid incumbent on the holdout (re-seed from replicates only if none is valid), and the invalidator can neither promote into the slot nor author the challenger. Every ranking reader reads only `completed` runs; `runs`/`result` show invalid ones with the reason.
 
+## Arms, caps and run keys
+
+`benchmark run <name> arm:bare|on|full|<members> cap:<usd>` measures one **arm**: the passthru instruments the run's requests get.
+- `bare` sends `none`.
+- `on` sends the identified-caller default stack.
+- `full` sends `full`.
+- A member list (`lessons,obligations`) is sent as given.
+
+The arm and the cap are part of the run's configuration and its hash, so two arms are two configurations that `benchmark compare` can pair. A run with neither keeps the old behaviour: the harness uses the internal token, which gets no instruments.
+
+Given an arm or a cap, the runner mints a **run key** (`src/engine/benchmark-run-keys.ts`), a short-lived `/v1` credential held only in this process, and hands it to the harness child in its environment, never argv. A third-party harness can send only a base URL and a key, so the key carries what the run needs:
+
+- **The arm's `x-marina-stack`** is added to every request that names none.
+- **The eval context `x-marina-eval: benchmark=<name>; mode=measure|live`** is added the same way, so leakage rule 2 applies.
+- **Spend attribution:** every upstream call in a run-key request counts toward the run, through the request's async context. Once the cap is spent, the key refuses with 429 `run_budget_exhausted`.
+- **A transport guard:** after five consecutive upstream *network* failures (not HTTP errors), the key refuses with 503 `run_transport_failed`, so a broken connection fails the run in seconds rather than retrying until the budget is gone.
+
+The key is revoked when the run ends. A run stopped by its key is recorded **invalid** with the reason, so no ranking reads it. A run key authenticates whether or not `MODEL_API_KEYS` is set, has no name-map authority, and can be confined to one entity (`entityName`).
+
 ## How runs teach: judged lessons, never item text
 
 No benchmark path writes an item's question, expected answer or model answer to memory. A memorised answer would contaminate every later run of the same benchmark and bypass the judged lesson loop.
