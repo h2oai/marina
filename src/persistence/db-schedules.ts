@@ -173,6 +173,21 @@ export function setScheduleEnabled(
   );
 }
 
+/** Replace a schedule's trigger (a re-resolved deadline reference) and its next run. */
+export function updateScheduleTrigger(
+  db: Database,
+  id: number,
+  triggerJson: string,
+  nextRunAt: number | null,
+): void {
+  db.run("UPDATE schedules SET trigger_json = ?, next_run_at = ?, updated_at = ? WHERE id = ?", [
+    triggerJson,
+    nextRunAt,
+    Date.now(),
+    id,
+  ]);
+}
+
 export function deleteSchedule(db: Database, id: number): boolean {
   return db.run("DELETE FROM schedules WHERE id = ?", [id]).changes > 0;
 }

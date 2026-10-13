@@ -19,6 +19,7 @@ A **schedule** is an owner's own command, arranged to run later or on a repeat. 
 - `daily:HH:MM`: UTC.
 - `at:<time>`: once.
 - `before:<time> lead:<dur>`: once, `lead` before a deadline.
+- `before:<kind>:<id> lead:<dur>`: the deadline comes from a **reference** (`src/schedules/deadlines.ts`). A subsystem registers a source for its records; `arena:<round>` is the round's lock time, read from the public arena data. `schedule add` resolves it, and the runner re-reads pending references at most every 10 minutes, so a deadline that moves moves the run. An unreadable reference keeps its last value.
 
 Times must carry a zone (`2026-10-14T13:00Z`). Next-run times are **wall-clock and durable**, so a restart or a stalled tick never shifts them. Tick phases, by contrast, count from boot.
 
@@ -66,6 +67,5 @@ The limits are visible in the refusal message and are raised by the operator. Th
 
 Phase 1 of the plan:
 - **Per-run spend caps:** a run spends under the owner's normal daily and scope caps.
-- **Deadline references:** `before:` takes a time, not yet a round or task id.
 - **A dashboard card.**
 - **A cross-owner operator view:** the readiness check names failing schedules.

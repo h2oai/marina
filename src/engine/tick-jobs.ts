@@ -16,7 +16,7 @@ import { deliverOutcomes } from "../outcomes/deliver";
 import { judgeWaitingWork } from "../outcomes/judge-quality";
 import { judgeOpenResolutions } from "../outcomes/judge-resolution";
 import type { MarinaDB } from "../persistence/database";
-import { runDueSchedules } from "../schedules/runner";
+import { refreshDeadlines, runDueSchedules } from "../schedules/runner";
 import { syncOperationalAlerts } from "./commands/ops";
 import {
   AGENT_CLEANUP_INTERVAL,
@@ -27,7 +27,7 @@ import {
   NOTE_IMPORTANCE_INTERVAL,
 } from "./constants";
 import type { Engine, EngineConfig } from "./engine";
-import { tryLog } from "./errors";
+import { getErrorMessage, tryLog } from "./errors";
 import type { Logger } from "./logger";
 import { MEMORY_ACCUMULATION_PHASE, runEngineAccumulationDispatch } from "./memory-dispatch";
 import { MEMORY_HYGIENE_PHASE, runEngineMemoryHygiene } from "./memory-hygiene";
@@ -367,6 +367,12 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
     failureMessage: "Schedule pass failed",
     run: () => {
       runDueSchedules(host.engine);
+      // Referenced deadlines are re-read at most every 10 minutes, detached.
+      void host.engine.trackBackground(
+        refreshDeadlines(host.engine).catch((error: unknown) =>
+          host.logger.warn("schedules", `deadline refresh failed: ${getErrorMessage(error)}`),
+        ),
+      );
     },
   });
 

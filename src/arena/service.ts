@@ -826,6 +826,20 @@ export async function runArenaFilingWatch(
 
 /** Operational-alert category of the filing watch. */
 export const FILING_ALERT_CATEGORY = "arena-filing";
+/**
+ * A round's lock time (epoch ms) from the public arena data, for schedule
+ * deadline references (`before:arena:<round> lead:1h`). Needs no entrant.
+ */
+export async function arenaRoundLockAt(
+  roundId: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<number | undefined> {
+  const url = env.MARINA_ARENA_DATA_URL?.trim() || DEFAULT_ARENA_DATA_URL;
+  if (roundDataCache?.url !== url) roundDataCache = { url, data: new ArenaData(url) };
+  const round = await roundDataCache.data.round(roundId);
+  return round ? Date.parse(round.lock_at) : undefined;
+}
+let roundDataCache: { url: string; data: ArenaData } | undefined;
 
 export async function runArenaAutopilot(
   store: ArenaStore,

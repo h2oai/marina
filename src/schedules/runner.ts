@@ -26,6 +26,7 @@ import { sanitizeEntityName } from "../engine/entity-name";
 import { getErrorMessage } from "../engine/errors";
 import type { ScheduleRow } from "../persistence/db-schedules";
 import type { Connection, EntityId, Perception } from "../types";
+import { resolveDeadline } from "./deadlines";
 import { decideDue, type Trigger } from "./trigger";
 
 export type RunStatus =
@@ -306,4 +307,37 @@ export function resolveAlert(engine: Engine, key: string): void {
   for (const status of ["open", "acknowledged"] as const)
     for (const alert of db.listOperationalAlerts(status, 500))
       if (alert.alert_key === key) db.setOperationalAlertStatus(alert.id, "resolved");
+}
+
+/** How often a referenced deadline (`before:<kind>:<id>`) is re-read. */
+export const DEADLINE_REFRESH_MS = 10 * 60_000;
+const lastDeadlineRefresh = new WeakMap<Engine, number>();
+
+/**
+ * Re-read the deadlines of pending referenced schedules (at most every
+ * {@link DEADLINE_REFRESH_MS}), so a lock that moves moves the run. An
+ * unreadable reference keeps the last resolved deadline. Returns how many
+ * schedules moved.
+ */
+export async function refreshDeadlines(
+  engine: Engine,
+  now = Date.now(),
+  force = false,
+): Promise<number> {
+  const db = engine.db;
+  if (!db) return 0;
+  if (!force && now - (lastDeadlineRefresh.get(engine) ?? 0) < DEADLINE_REFRESH_MS) return 0;
+  lastDeadlineRefresh.set(engine, now);
+  let moved = 0;
+  for (const row of db.listSchedules(undefined, 1000)) {
+    if (!row.enabled || row.next_run_at === null) continue;
+    const trigger = parseStored(row);
+    if (trigger?.kind !== "before" || !trigger.ref) continue;
+    const deadline = await resolveDeadline(trigger.ref);
+    if (deadline === undefined || deadline === trigger.deadline) continue;
+    const next = deadline <= now ? now : Math.max(now, deadline - trigger.leadMs);
+    db.updateScheduleTrigger(row.id, JSON.stringify({ ...trigger, deadline }), next);
+    moved++;
+  }
+  return moved;
 }

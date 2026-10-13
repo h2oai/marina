@@ -1957,6 +1957,9 @@ export class MarinaDB implements MarinaStores {
   setScheduleEnabled(id: number, enabled: boolean, nextRunAt: number | null): void {
     schedulesDb.setScheduleEnabled(this.db, id, enabled, nextRunAt);
   }
+  updateScheduleTrigger(id: number, triggerJson: string, nextRunAt: number | null): void {
+    schedulesDb.updateScheduleTrigger(this.db, id, triggerJson, nextRunAt);
+  }
   deleteSchedule(id: number): boolean {
     return schedulesDb.deleteSchedule(this.db, id);
   }

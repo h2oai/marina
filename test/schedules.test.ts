@@ -2,7 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { ALERT_AFTER_FAILURES, classify, runDueSchedules } from "../src/schedules/runner";
+import {
+  parseDeadlineRef,
+  registerDeadlineSource,
+  unregisterDeadlineSource,
+} from "../src/schedules/deadlines";
+import {
+  ALERT_AFTER_FAILURES,
+  classify,
+  refreshDeadlines,
+  runDueSchedules,
+} from "../src/schedules/runner";
 import {
   decideDue,
   firstRun,
@@ -237,5 +247,57 @@ describe("schedule command and runner", () => {
     runDueSchedules(fx.engine);
     await settle(row.id, 2);
     expect(fx.db.getSchedule(row.id)).toMatchObject({ enabled: 0, next_run_at: null, runs: 2 });
+  });
+});
+
+describe("deadline references", () => {
+  let fx: ReturnType<typeof createTestEngine>;
+  let lockAt = 0;
+  beforeEach(() => {
+    fx = createTestEngine();
+    lockAt = Date.now() + 5 * H;
+    registerDeadlineSource("round", async (id) => (id === "w42" ? lockAt : undefined));
+  });
+  afterEach(async () => {
+    unregisterDeadlineSource("round");
+    await fx.dispose();
+  });
+  const text = (c: { messages: { data?: { text?: unknown } }[] }) =>
+    stripAnsi(c.messages.map((m) => String(m.data?.text ?? "")).join("\n"));
+
+  it("parses a reference, never an ISO time, as a reference", () => {
+    expect(parseDeadlineRef("arena:civiqs-2026-w42-approval")).toEqual({
+      kind: "arena",
+      id: "civiqs-2026-w42-approval",
+    });
+    expect(parseDeadlineRef("2026-10-14T14:00Z")).toBeUndefined();
+    expect(parseTrigger({ before: "round:w42", lead: "1h" })).toMatchObject({
+      kind: "before",
+      ref: "round:w42",
+      leadMs: H,
+    });
+  });
+
+  it("resolves at add time, refuses an unknown reference, and follows a moved deadline", async () => {
+    const { connection, entityId } = fx.login("Ada");
+    await fx.engine.processCommand(
+      entityId,
+      "schedule add refile before:round:nope lead:1h -- look",
+    );
+    expect(text(connection)).toContain("could not find the deadline of round:nope");
+    await fx.engine.processCommand(
+      entityId,
+      "schedule add refile before:round:w42 lead:1h -- look",
+    );
+    const row = fx.db.listSchedules()[0]!;
+    expect(row.next_run_at).toBe(lockAt - H);
+    expect(text(connection)).toContain("1h before round:w42");
+    // The lock moves two hours later: the run moves with it.
+    lockAt += 2 * H;
+    expect(await refreshDeadlines(fx.engine, Date.now(), true)).toBe(1);
+    expect(fx.db.getSchedule(row.id)!.next_run_at).toBe(lockAt - H);
+    // Unchanged: nothing moves; within the throttle window: not re-read.
+    expect(await refreshDeadlines(fx.engine, Date.now(), true)).toBe(0);
+    expect(await refreshDeadlines(fx.engine, Date.now())).toBe(0);
   });
 });
