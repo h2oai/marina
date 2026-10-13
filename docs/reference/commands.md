@@ -919,6 +919,46 @@ Effect: unknown.
 - Group `option-0`: `--benchmark X`.
 - Group `option-1`: `--limit N`.
 
+### `benchmark kit [list]`
+
+Effect: unknown.
+
+- `field-0` (`list`): text, optional group `option-0`.
+- Group `option-0`: `list`.
+
+### `benchmark kit doctor [setup]`
+
+Effect: unknown.
+
+- `field-0` (`setup`): text, optional group `option-0`.
+- Group `option-0`: `setup`.
+
+### `benchmark kit status [id]`
+
+Effect: unknown.
+
+- `field-0` (`id`): text, optional group `option-0`.
+- Group `option-0`: `id`.
+
+### `benchmark kit <setup> [arms:a,b] [replicates:N] [limit:N] [budget:<usd>] [model:M] [domain:D] [dry-run]`
+
+Effect: unknown.
+
+- `field-0` (`setup`): text, required.
+- `field-1` (`arms`): text, optional group `option-0`.
+- `field-2` (`replicates`): number, optional group `option-1`.
+- `field-3` (`limit`): number, optional group `option-2`.
+- `field-4` (`budget`): number, optional group `option-3`.
+- `field-5` (`model`): text, optional group `option-4`.
+- `field-6` (`domain`): text, optional group `option-5`.
+- Group `option-0`: `arms:a,b`.
+- Group `option-1`: `replicates:N`.
+- Group `option-2`: `limit:N`.
+- Group `option-3`: `budget:usd`.
+- Group `option-4`: `model:M`.
+- Group `option-5`: `domain:D`.
+- Group `option-6`: `dry-run`.
+
 ### `benchmark sweep <name|all> [--limit N] [--seed N] [--judge M]`
 
 Effect: unknown.
