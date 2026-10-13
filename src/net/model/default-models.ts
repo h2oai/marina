@@ -5,14 +5,17 @@
  * Built-in default model per provider key — one table for the passthru proxy
  * (`model-api/upstream.ts`) and for code that must find *a* model without a
  * server (`src/agent/available-models.ts`). Production ids that were confirmed
- * against each provider's live API: each hosted vendor's strong tier (2026-10-11),
+ * against each provider's live API (2026-10-11); Together/Nebius defaults are
+ * documented catalog IDs (2026-10-13), pending account-level verification. Strong models,
  * not its cheapest model. Override per provider with
  * `MARINA_DEFAULT_<PROVIDER>_MODEL` (see `config/environment.reference`).
  */
 
+import { HOSTED_PROVIDERS } from "./hosted-providers";
 import { localProviderDefaultModel } from "./model-discovery";
 
 export const BUILTIN_DEFAULT_MODELS: Record<string, string> = {
+  ...Object.fromEntries(Object.values(HOSTED_PROVIDERS).map((p) => [p.envKey, p.defaultModel])),
   ANTHROPIC_API_KEY: "claude-opus-5-5",
   OPENAI_API_KEY: "gpt-6.1-sol",
   GEMINI_API_KEY: "gemini-3.1-pro-preview",

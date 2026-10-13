@@ -765,7 +765,7 @@ if (engine.agentRuntime.isAvailable()) {
 } else {
   logger.warn(
     "agents",
-    "No LLM API keys configured — agents cannot be spawned. Set any one of OPENROUTER_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, HUGGINGFACE_API_KEY (or run Ollama locally), or use 'key add' in-world.",
+    "No LLM API keys configured — agents cannot be spawned. Set any one of OPENROUTER_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, HUGGINGFACE_API_KEY, TOGETHER_API_KEY, NEBIUS_API_KEY (or run Ollama locally), or use 'key add' in-world.",
   );
 }
 if (

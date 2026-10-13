@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { bold, dim, header, separator } from "../../net/ansi";
+import { hostedModelsUrl, isHostedProvider } from "../../net/model/hosted-providers";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
 import { requiresPersistence } from "./command-messages";
@@ -30,7 +31,9 @@ const PROVIDER_TEST_ENDPOINTS: Record<
 };
 
 export async function testKeyConnectivity(provider: string, value: string): Promise<TestResult> {
-  const endpoint = PROVIDER_TEST_ENDPOINTS[provider];
+  const endpoint = isHostedProvider(provider)
+    ? { url: hostedModelsUrl(provider), method: "GET", authStyle: "bearer" }
+    : PROVIDER_TEST_ENDPOINTS[provider];
   if (!endpoint) {
     return { ok: false, detail: `Unknown provider "${provider}" — cannot test.` };
   }
@@ -104,7 +107,7 @@ Usage:
   key delete <name>                 — remove a key
   key test <name>                   — test key connectivity
 
-Providers: anthropic, openai, google, groq, openrouter, cerebras, xai, mistral, deepseek`,
+Providers: anthropic, openai, google, groq, openrouter, together, nebius, cerebras, xai, mistral, deepseek`,
     handler: async (ctx: RoomContext, input) => {
       if (!deps.db) {
         ctx.send(input.entity, requiresPersistence("key management"));
@@ -265,6 +268,8 @@ function detectEnvKeys(): Array<{ provider: string; envVar: string }> {
     { envVar: "GOOGLE_API_KEY", provider: "google" },
     { envVar: "GROQ_API_KEY", provider: "groq" },
     { envVar: "OPENROUTER_API_KEY", provider: "openrouter" },
+    { envVar: "TOGETHER_API_KEY", provider: "together" },
+    { envVar: "NEBIUS_API_KEY", provider: "nebius" },
     { envVar: "CEREBRAS_API_KEY", provider: "cerebras" },
     { envVar: "XAI_API_KEY", provider: "xai" },
     { envVar: "MISTRAL_API_KEY", provider: "mistral" },

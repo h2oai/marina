@@ -10,6 +10,7 @@
  */
 
 import type { AssistantMessage, Context, ToolChoice } from "@earendil-works/pi-ai";
+import { prepareHostedModel } from "../agent/hosted-model";
 import { piModels } from "../agent/pi-models";
 import { callCost, modelAccess, type Usage } from "../arena/model-backend";
 import { dailyCapRefusal, recordSpend, type SpendSource } from "../engine/spend-ledger";
@@ -44,6 +45,7 @@ export function modelTurns(
     opts.signal?.throwIfAborted();
     const capped = dailyCapRefusal(env);
     if (capped) throw new Error(capped);
+    await prepareHostedModel(model, apiKey, undefined, o.signal ?? opts.signal);
     const result = await piModels.completeSimple(model, context, {
       apiKey,
       maxTokens: Math.min(opts.maxTokens ?? 16_000, o.maxTokens ?? Number.POSITIVE_INFINITY),

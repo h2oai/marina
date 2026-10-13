@@ -113,7 +113,11 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 | `OPENAI_API_KEY=` | OpenAI API key. | secret |
 | `GEMINI_API_KEY=`<br>`GOOGLE_API_KEY=` | Google Gemini API key (GOOGLE_API_KEY is accepted as an alias). | secret |
 | `GROQ_API_KEY=` | Groq API key. | secret |
-| `OPENROUTER_API_KEY=` | OpenRouter API key. Also required by the `forecast` command and POST /v1/forecast. | secret |
+| `OPENROUTER_API_KEY=` | OpenRouter API key. Enables its models and web retrievers; forecasts can also use other configured providers. | secret |
+| `TOGETHER_API_KEY=` | Together AI API key. Use together/&lt;provider-model-id&gt;; model discovery supplies live token prices. | secret |
+| `NEBIUS_API_KEY=` | Nebius Token Factory API key. Use nebius/&lt;provider-model-id&gt;; verbose model discovery supplies live token prices. | secret |
+| `TOGETHER_BASE_URL=https://api.together.ai/v1` | Optional OpenAI-compatible API roots for dedicated endpoints. Include /v1; never put credentials in URLs. The same root serves discovery and inference. | restart |
+| `NEBIUS_BASE_URL=https://api.tokenfactory.nebius.com/v1` | Optional Nebius API root for a dedicated endpoint. Include /v1; applies to discovery and inference. | restart |
 | `HUGGINGFACE_API_KEY=`<br>`HF_TOKEN=` | Hugging Face Inference Providers key (router.huggingface.co). Address models as `huggingface/<org>/<model>`, optionally suffixed `:fastest`, `:cheapest` or `:<provider>`. HF_TOKEN is accepted as well. | secret |
 | `CEREBRAS_API_KEY=`<br>`XAI_API_KEY=`<br>`MISTRAL_API_KEY=`<br>`DEEPSEEK_API_KEY=` | More OpenAI-compatible providers. Each is also an upstream for marina/default (defaults: gpt-oss-120b, deepseek-flash, mistral-small-latest, grok-4.7; override with MARINA_DEFAULT_&lt;PROVIDER&gt;_MODEL). | secret |
 
@@ -139,7 +143,7 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 | Variable | Description | Flags |
 |---|---|---|
 | `MARINA_DEFAULT_MODEL=marina/default` | Model for agents spawned without one, and the fallback for unrecognized models. marina/default calls this instance's own /v1, which routes to whichever provider has a key. A default model set at runtime (dashboard or `admin`) wins. |  |
-| `MARINA_DEFAULT_ANTHROPIC_MODEL=claude-opus-5-5`<br>`MARINA_DEFAULT_OPENAI_MODEL=gpt-6.1-sol`<br>`MARINA_DEFAULT_GEMINI_MODEL=gemini-3.1-pro-preview`<br>`MARINA_DEFAULT_OPENROUTER_MODEL=google/gemini-3.1-pro-preview`<br>`MARINA_DEFAULT_GROQ_MODEL=openai/gpt-oss-120b`<br>`MARINA_DEFAULT_HUGGINGFACE_MODEL=zai-org/GLM-5.3-Flash`<br>`MARINA_DEFAULT_LLAMA_MODEL=local-model` | Model /v1 uses on each provider when it proxies directly upstream (no model agent is online for the requested channel). The variable name is MARINA_DEFAULT_&lt;PROVIDER&gt;_MODEL. |  |
+| `MARINA_DEFAULT_ANTHROPIC_MODEL=claude-opus-5-5`<br>`MARINA_DEFAULT_OPENAI_MODEL=gpt-6.1-sol`<br>`MARINA_DEFAULT_GEMINI_MODEL=gemini-3.1-pro-preview`<br>`MARINA_DEFAULT_OPENROUTER_MODEL=google/gemini-3.1-pro-preview`<br>`MARINA_DEFAULT_TOGETHER_MODEL=MiniMaxAI/MiniMax-M3`<br>`MARINA_DEFAULT_NEBIUS_MODEL=MiniMaxAI/MiniMax-M3`<br>`MARINA_DEFAULT_GROQ_MODEL=openai/gpt-oss-120b`<br>`MARINA_DEFAULT_HUGGINGFACE_MODEL=zai-org/GLM-5.3-Flash`<br>`MARINA_DEFAULT_LLAMA_MODEL=local-model` | Model /v1 uses on each provider when it proxies directly upstream (no model agent is online for the requested channel). The variable name is MARINA_DEFAULT_&lt;PROVIDER&gt;_MODEL. |  |
 | `MARINA_DEFAULT_OLLAMA_MODEL=qwen3:4b` | Ollama default: the first model in Ollama's /api/tags (read at boot), else qwen3:4b. |  |
 | `MODEL_REQUEST_TIMEOUT_MS=600000` | Upstream timeout for /v1 requests in milliseconds. Non-streaming client connections also close at Bun's 255-second idle limit. |  |
 | `MODEL_REQUEST_REMINDERS=1` | `0` stops re-posting an unanswered routed model_request as a reminder at 25% and 60% of the timeout. |  |
@@ -230,8 +234,7 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 | `RUNWAY_API_KEY=`<br>`LUMA_API_KEY=` | Image and video provider keys (OpenAI and Google reuse OPENAI_API_KEY and GEMINI_API_KEY). Stability, Black Forest Labs (Flux, with an optional base URL), Runway and Luma. See docs/guides/media.md for model ids. | secret |
 | `A1111_BASE_URL=http://localhost:7860` | Automatic1111 or SD.Next web UI for `automatic1111/<checkpoint>` images (AUTOMATIC1111_BASE_URL is accepted as an alias). Keyless unless the server requires one. |  |
 | `A1111_API_KEY=` | Automatic1111 or SD.Next web UI for `automatic1111/<checkpoint>` images (AUTOMATIC1111_BASE_URL is accepted as an alias). Keyless unless the server requires one. | secret |
-| `TOGETHER_IMAGE_BASE_URL=https://api.together.xyz/v1` | Any OpenAI-compatible image server: set &lt;PROVIDER&gt;_IMAGE_BASE_URL and &lt;PROVIDER&gt;_API_KEY, then use `<provider>/<model>`. Together is shown as an example. |  |
-| `TOGETHER_API_KEY=` | Any OpenAI-compatible image server: set &lt;PROVIDER&gt;_IMAGE_BASE_URL and &lt;PROVIDER&gt;_API_KEY, then use `<provider>/<model>`. Together is shown as an example. | secret |
+| `TOGETHER_IMAGE_BASE_URL=https://api.together.ai/v1` | Any OpenAI-compatible image server: set &lt;PROVIDER&gt;_IMAGE_BASE_URL and &lt;PROVIDER&gt;_API_KEY, then use `<provider>/<model>`. Together is shown as an example. |  |
 | `MAX_IMAGE_JOBS_PER_DAY=50`<br>`MAX_VIDEO_JOBS_PER_DAY=5` | Image and video jobs per entity per rolling 24 h (defaults 50 and 5). 0 is unlimited. |  |
 
 ## Search

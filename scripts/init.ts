@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -9,7 +10,13 @@ import { Writable } from "node:stream";
 import { parseArgs } from "node:util";
 import { isSecretKey, parseEnvironment, writeEnvironment } from "../src/config/environment";
 import { configurationPreset, validateConfiguration } from "../src/config/presets";
+import { testKeyConnectivity } from "../src/engine/commands/key";
 import { dailySpendCapUsd } from "../src/engine/spend-ledger";
+import {
+  HOSTED_PROVIDERS,
+  hostedBaseUrl,
+  isHostedProvider,
+} from "../src/net/model/hosted-providers";
 import { IS_COMPILED } from "../src/runtime-paths";
 import { BUILTIN_WORLDS } from "../src/world/builtin-worlds";
 
@@ -84,6 +91,13 @@ export function worldMenu(dir = WORLDS_DIR): [string, string][] {
 }
 
 const PROVIDERS: { name: string; env: string; url: string; model: string; authHeader: string }[] = [
+  ...Object.entries(HOSTED_PROVIDERS).map(([name, spec]) => ({
+    name,
+    env: spec.envKey,
+    url: `${hostedBaseUrl(name as keyof typeof HOSTED_PROVIDERS)}/chat/completions`,
+    model: spec.defaultModel,
+    authHeader: "Bearer",
+  })),
   {
     name: "anthropic",
     env: "ANTHROPIC_API_KEY",
@@ -139,6 +153,10 @@ export class MutableOutput extends Writable {
 }
 
 async function testKey(provider: (typeof PROVIDERS)[number], key: string): Promise<string | null> {
+  if (isHostedProvider(provider.name)) {
+    const result = await testKeyConnectivity(provider.name, key);
+    return result.ok ? null : result.detail;
+  }
   const isAnthropic = provider.name === "anthropic";
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (isAnthropic) {
@@ -325,6 +343,8 @@ export async function runInit(args: string[] = []): Promise<void> {
   console.log("\n── Optional: Connect an LLM Provider ──\n");
   for (let i = 0; i < PROVIDERS.length; i++) {
     const labels = [
+      "Together AI hosted models",
+      "Nebius Token Factory hosted models",
       "Claude (Opus, Sonnet, Haiku)",
       "GPT-6 Luna, Sol, Astra",
       "Gemini 3.1",
@@ -333,14 +353,15 @@ export async function runInit(args: string[] = []): Promise<void> {
     ];
     console.log(`  ${i + 1}. ${PROVIDERS[i]!.name.padEnd(14)}— ${labels[i]}`);
   }
-  console.log(`  6. ${"skip".padEnd(14)}— No LLM, explore only`);
+  const skipProvider = String(PROVIDERS.length + 1);
+  console.log(`  ${skipProvider}. ${"skip".padEnd(14)}— No LLM, explore only`);
 
   let chosenProvider: (typeof PROVIDERS)[number] | null = null;
-  const provInput = await ask(`\nProvider [6]: `, "6");
+  const provInput = await ask(`\nProvider [${skipProvider}]: `, skipProvider);
   const provIdx = Number.parseInt(provInput, 10);
-  if (provIdx >= 1 && provIdx <= 5) {
+  if (provIdx >= 1 && provIdx <= PROVIDERS.length) {
     chosenProvider = PROVIDERS[provIdx - 1]!;
-  } else if (provInput !== "6" && provInput.toLowerCase() !== "skip") {
+  } else if (provInput !== skipProvider && provInput.toLowerCase() !== "skip") {
     chosenProvider = PROVIDERS.find((p) => p.name === provInput.toLowerCase()) ?? null;
   }
 

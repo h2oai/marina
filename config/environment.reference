@@ -283,8 +283,19 @@
 # Groq API key.
 # GROQ_API_KEY=
 
-# OpenRouter API key. Also required by the `forecast` command and POST /v1/forecast.
+# OpenRouter API key. Enables its models and web retrievers; forecasts can also use other configured providers.
 # OPENROUTER_API_KEY=
+
+# Together AI API key. Use together/<provider-model-id>; model discovery supplies live token prices.
+# TOGETHER_API_KEY=
+# Nebius Token Factory API key. Use nebius/<provider-model-id>; verbose model discovery supplies live token prices.
+# NEBIUS_API_KEY=
+# Optional OpenAI-compatible API roots for dedicated endpoints. Include /v1; never put credentials in URLs. The same root serves discovery and inference.
+# @restart
+# TOGETHER_BASE_URL=https://api.together.ai/v1
+# Optional Nebius API root for a dedicated endpoint. Include /v1; applies to discovery and inference.
+# @restart
+# NEBIUS_BASE_URL=https://api.tokenfactory.nebius.com/v1
 
 # Hugging Face Inference Providers key (router.huggingface.co). Address models as `huggingface/<org>/<model>`, optionally suffixed `:fastest`, `:cheapest` or `:<provider>`. HF_TOKEN is accepted as well.
 # HUGGINGFACE_API_KEY=
@@ -344,6 +355,8 @@
 # MARINA_DEFAULT_OPENAI_MODEL=gpt-6.1-sol
 # MARINA_DEFAULT_GEMINI_MODEL=gemini-3.1-pro-preview
 # MARINA_DEFAULT_OPENROUTER_MODEL=google/gemini-3.1-pro-preview
+# MARINA_DEFAULT_TOGETHER_MODEL=MiniMaxAI/MiniMax-M3
+# MARINA_DEFAULT_NEBIUS_MODEL=MiniMaxAI/MiniMax-M3
 # MARINA_DEFAULT_GROQ_MODEL=openai/gpt-oss-120b
 # MARINA_DEFAULT_HUGGINGFACE_MODEL=zai-org/GLM-5.3-Flash
 # MARINA_DEFAULT_LLAMA_MODEL=local-model
@@ -581,8 +594,7 @@
 # A1111_API_KEY=
 
 # Any OpenAI-compatible image server: set <PROVIDER>_IMAGE_BASE_URL and <PROVIDER>_API_KEY, then use `<provider>/<model>`. Together is shown as an example.
-# TOGETHER_IMAGE_BASE_URL=https://api.together.xyz/v1
-# TOGETHER_API_KEY=
+# TOGETHER_IMAGE_BASE_URL=https://api.together.ai/v1
 
 # Image and video jobs per entity per rolling 24 h (defaults 50 and 5). 0 is unlimited.
 # MAX_IMAGE_JOBS_PER_DAY=50

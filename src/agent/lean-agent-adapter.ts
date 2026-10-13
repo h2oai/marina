@@ -85,6 +85,7 @@ import {
   UNIFIED_TIER_LABELS,
 } from "../memory/unified-context";
 import { stripAnsi } from "../net/ansi";
+import { isHostedProvider } from "../net/model/hosted-providers";
 import {
   isLocalProvider,
   localProviderBaseUrl,
@@ -145,6 +146,7 @@ import {
 } from "./execution-trace";
 import { GameStateManager } from "./game-state";
 import { HookRegistry } from "./hook-registry";
+import { hostedModel, prepareHostedModel } from "./hosted-model";
 import { InterruptibleWaiter } from "./interruptible-waiter";
 import {
   applyLoopPreference,
@@ -988,7 +990,7 @@ export function classifyModelResolution(modelStr: string): "exact" | "synthesize
   const slash = head.indexOf("/");
   const provider = slash >= 0 ? head.slice(0, slash) : head;
   const modelId = slash >= 0 ? head.slice(slash + 1) : head;
-  if (provider === "marina") return "exact";
+  if (provider === "marina" || isHostedProvider(provider)) return "exact";
   // Self-hosted local runtimes (llama.cpp / Ollama) are routed by base URL, not
   // by the bundled registry — any model id is valid (the local server decides).
   if (isLocalProvider(provider)) return "exact";
@@ -1084,6 +1086,9 @@ export function resolveModel(modelStr: string, localPort?: number): Model<Api> {
       maxTokens: localOutputBudget(localProviderContextWindow(provider) ?? 16384),
     };
   }
+
+  const hosted = hostedModel(provider, modelId);
+  if (hosted) return hosted;
 
   // Exact registry hit — the common path.
   const exact = tryGetModel(provider, modelId);
@@ -1692,6 +1697,9 @@ export class LeanAgentAdapter implements AgentHandle {
             proxy: ReturnType<typeof readProxyResponseHeaders>;
           } = { proxy: null };
           const upstream = this.providerFetch ?? globalThis.fetch;
+          await prepareHostedModel(model, keyNow, this.providerFetch, signal, {
+            updateContext: false,
+          });
           const result = await piModels.completeSimple(model, llmContext, {
             apiKey: keyNow,
             ...samplingFor(model.id, 0.3),
@@ -1870,8 +1878,16 @@ export class LeanAgentAdapter implements AgentHandle {
       // Proxy accounting: `providerStreamOptions` adds `onResponse` (+ a fetch
       // wrapper) on the marina/* proxy model so `x-marina-cost-usd` and friends
       // are captured per response and settled at the next turn_end.
-      streamFn: (model, context, options) =>
-        piModels.streamSimple(model, context, this.providerStreamOptions(model, options)),
+      streamFn: async (model, context, options) => {
+        await prepareHostedModel(
+          model,
+          options?.apiKey ?? (await this.resolveKeyNow()),
+          this.providerFetch,
+          options?.signal,
+          { updateContext: false },
+        );
+        return piModels.streamSimple(model, context, this.providerStreamOptions(model, options));
+      },
       // Dynamic resolver if a function was passed in; pi-agent-core will
       // re-invoke this for every LLM call, picking up rotated credentials.
       getApiKey: apiKey
@@ -2623,6 +2639,11 @@ export class LeanAgentAdapter implements AgentHandle {
       this.log.warn("agent", `Live capability discovery unavailable: ${getErrorMessage(error)}`);
     }
 
+    if (isHostedProvider(this.model.provider)) {
+      await prepareHostedModel(this.model, await this.resolveKeyNow(), this.providerFetch);
+      this.applyModelLimits(this.config.model ?? MARINA_DEFAULT_MODEL);
+      this.agent.state.model = this.model;
+    }
     this.emitStatusChange("connected");
 
     // Mark autonomous and seed focus, but DON'T block on the discovery turn.
@@ -3189,6 +3210,7 @@ export class LeanAgentAdapter implements AgentHandle {
       thinkingBudget === 0 &&
       (this.model.reasoning ||
         isOpenRouterModel(this.model) ||
+        isHostedProvider(provider) ||
         classifyModelResolution(modelStr) === "synthesized");
     const cloudDefault = (base: number) => {
       const cap = Math.min(automaticCeiling, Math.max(base, requiredOutput));
@@ -3284,6 +3306,13 @@ export class LeanAgentAdapter implements AgentHandle {
         : "";
     if (!prose) return false;
     const shot = async (system: string, user: string): Promise<string> => {
+      await prepareHostedModel(
+        this.model,
+        await this.resolveKeyNow(),
+        this.providerFetch,
+        undefined,
+        { updateContext: false },
+      );
       const result = await piModels.completeSimple(
         this.model,
         {
@@ -5370,6 +5399,13 @@ The goal is a smaller, sharper memory — not more notes.`;
 
   /** One obligations-ledger completion on the agent's own model (spend recorded like a turn). */
   private async obligationsComplete(system: string, user: string): Promise<string> {
+    await prepareHostedModel(
+      this.model,
+      await this.resolveKeyNow(),
+      this.providerFetch,
+      undefined,
+      { updateContext: false },
+    );
     const capped = dailyCapRefusal();
     if (capped) throw new Error(capped);
     const result = await piModels.completeSimple(

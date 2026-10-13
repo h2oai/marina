@@ -3,10 +3,12 @@
 
 /** Admin panel tab, split out of AdminPanel.tsx without behaviour change. */
 
+import { useQueryClient } from "@tanstack/react-query";
 import { Key } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useKeys } from "../hooks/use-api";
 import { deleteApi, describeApiError, fetchApi, postApi, putApi } from "../lib/api";
+import { providerLabel } from "../lib/model-catalog";
 import { ModelSelect } from "./ModelSelect";
 import { PanelSkeleton } from "./OperatorFeedback";
 
@@ -16,6 +18,8 @@ const SUPPORTED_PROVIDERS = [
   "google",
   "groq",
   "openrouter",
+  "together",
+  "nebius",
   "huggingface",
   "cerebras",
   "xai",
@@ -95,6 +99,7 @@ function DefaultModelSelector() {
 }
 
 export function KeysTab() {
+  const queryClient = useQueryClient();
   const { data: keys, isLoading, isError, error, refetch } = useKeys();
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
@@ -123,6 +128,7 @@ export function KeysTab() {
       setSavedFlash(true);
       setTimeout(() => setSavedFlash(false), 2500);
       await refetch();
+      await queryClient.invalidateQueries({ queryKey: ["models"] });
     } catch (e) {
       setFormError(describeApiError(e));
     } finally {
@@ -153,6 +159,7 @@ export function KeysTab() {
       await deleteApi(`/api/keys/${encodeURIComponent(keyName)}`);
       setKeyResult(`${keyName}: removed`);
       await refetch();
+      await queryClient.invalidateQueries({ queryKey: ["models"] });
     } catch (e) {
       setKeyResult(`${keyName}: ${describeApiError(e)}`);
     } finally {
@@ -194,7 +201,7 @@ export function KeysTab() {
             <option value="">Select provider...</option>
             {SUPPORTED_PROVIDERS.map((p) => (
               <option key={p} value={p}>
-                {p}
+                {providerLabel(p)}
               </option>
             ))}
           </select>

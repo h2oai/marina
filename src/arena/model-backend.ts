@@ -9,6 +9,7 @@
  */
 
 import type { Message, TextContent } from "@earendil-works/pi-ai";
+import { prepareHostedModel } from "../agent/hosted-model";
 import { resolveModel } from "../agent/lean-agent-adapter";
 import { piModels } from "../agent/pi-models";
 import {
@@ -20,6 +21,7 @@ import {
 } from "../agent/provider-cost";
 import { grownOutputCap, reasoningHeadroomCap } from "../agent/reasoning-control";
 import { dailyCapRefusal, recordSpend } from "../engine/spend-ledger";
+import { isHostedProvider } from "../net/model/hosted-providers";
 import { HUGGINGFACE_ENV_KEYS, LOCAL_PROVIDERS } from "../net/model/model-discovery";
 import type { Complete } from "./model-forecaster";
 
@@ -29,6 +31,8 @@ const PROVIDER_KEYS: Record<string, readonly string[]> = {
   google: ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
   groq: ["GROQ_API_KEY"],
   openrouter: ["OPENROUTER_API_KEY"],
+  together: ["TOGETHER_API_KEY"],
+  nebius: ["NEBIUS_API_KEY"],
   deepseek: ["DEEPSEEK_API_KEY"],
   xai: ["XAI_API_KEY"],
   mistral: ["MISTRAL_API_KEY"],
@@ -56,6 +60,8 @@ export async function callCost(
 ): Promise<number> {
   const reported = used?.cost?.total ?? 0;
   if (reported > 0 || !used || !isUnpricedModel(model)) return reported;
+  // Hosted service prices must never fall back to another vendor's list price.
+  if (isHostedProvider(spec.split("/")[0]!)) return reported;
   const bare = spec.split("/").slice(1).join("/");
   const price =
     defaultModelPrice(bare) ??
@@ -118,6 +124,7 @@ export function modelComplete(
     if (capped) throw new Error(capped);
     const messages = [{ role: "user", content: user, timestamp: Date.now() }] as Message[];
     const call = async (maxTokens: number) => {
+      await prepareHostedModel(model, apiKey, undefined, opts.signal);
       const result = await piModels.completeSimple(
         model,
         { systemPrompt: system, messages },

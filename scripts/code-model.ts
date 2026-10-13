@@ -6,6 +6,8 @@ const PROVIDER_DEFAULTS = [
   ["OPENAI_API_KEY", "openai", "gpt-6.1-sol"],
   ["GEMINI_API_KEY", "google", "gemini-3.1-pro-preview"],
   ["OPENROUTER_API_KEY", "openrouter", "google/gemini-3.1-pro-preview"],
+  ["TOGETHER_API_KEY", "together", "MiniMaxAI/MiniMax-M3"],
+  ["NEBIUS_API_KEY", "nebius", "MiniMaxAI/MiniMax-M3"],
   ["GROQ_API_KEY", "groq", "openai/gpt-oss-120b"],
   ["HUGGINGFACE_API_KEY", "huggingface", "zai-org/GLM-5.3-Flash"],
 ] as const;
@@ -34,6 +36,8 @@ const FAST_MODELS = [
   ["HUGGINGFACE_API_KEY", "huggingface/zai-org/GLM-5.3-Flash"],
   ["OPENROUTER_API_KEY", "openrouter/google/gemini-3.1-flash-lite"],
   ["ANTHROPIC_API_KEY", "anthropic/claude-sonnet-5"],
+  ["TOGETHER_API_KEY", "together/MiniMaxAI/MiniMax-M3"],
+  ["NEBIUS_API_KEY", "nebius/MiniMaxAI/MiniMax-M3"],
 ] as const;
 
 /** Cheapest reachable model: the first configured key in `FAST_MODELS`. */

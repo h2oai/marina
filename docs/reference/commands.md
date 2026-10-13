@@ -4615,7 +4615,7 @@ Usage:
   key delete <name>                 — remove a key
   key test <name>                   — test key connectivity
 
-Providers: anthropic, openai, google, groq, openrouter, cerebras, xai, mistral, deepseek
+Providers: anthropic, openai, google, groq, openrouter, together, nebius, cerebras, xai, mistral, deepseek
 
 Category: Admin & Security. Minimum rank: 8. Gate: `key.manage`.
 Aliases: none.
