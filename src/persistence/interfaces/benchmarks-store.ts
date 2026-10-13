@@ -13,6 +13,7 @@ import type {
   BenchmarkPromotionRow,
   BenchmarkRegroupAudit,
   BenchmarkRegroupRow,
+  BenchmarkRunLedgerColumns,
   BenchmarkRunRow,
   BenchmarkValidityInput,
   BenchmarkValidityResult,
@@ -46,6 +47,11 @@ export interface BenchmarksStore {
       duration_ms: number;
     },
   ): void;
+  attachBenchmarkRunItems(
+    runId: string,
+    cols: BenchmarkRunLedgerColumns,
+    items: readonly BenchmarkItemInput[],
+  ): boolean;
   getBenchmarkRun(id: string): BenchmarkRunRow | undefined;
   queryBenchmarkRuns(q: {
     benchmark?: string;
@@ -107,6 +113,7 @@ export interface BenchmarksStore {
 export const BENCHMARKS_STORE_METHODS = [
   "insertBenchmarkRun",
   "completeBenchmarkRun",
+  "attachBenchmarkRunItems",
   "getBenchmarkRun",
   "queryBenchmarkRuns",
   "leaderboardBenchmark",
