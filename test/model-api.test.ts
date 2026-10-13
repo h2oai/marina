@@ -1208,7 +1208,9 @@ describe("Model API", () => {
     it("defaults the OpenAI route to the strong tier", () => {
       expect(getDefaultUpstreamModel("OPENAI_API_KEY", {})).toBe("gpt-6.1-sol");
       expect(getDefaultUpstreamModel("ANTHROPIC_API_KEY", {})).toBe("claude-opus-5-5");
-      expect(getDefaultUpstreamModel("OPENROUTER_API_KEY", {})).toBe("anthropic/claude-opus-5.5");
+      expect(getDefaultUpstreamModel("OPENROUTER_API_KEY", {})).toBe(
+        "google/gemini-3.1-pro-preview",
+      );
       expect(
         getDefaultUpstreamModel("OPENAI_API_KEY", { MARINA_DEFAULT_OPENAI_MODEL: "gpt-6-luna" }),
       ).toBe("gpt-6-luna");

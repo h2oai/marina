@@ -43,6 +43,7 @@ import type { SearchHttp, SearchProvider, SearchResult } from "../../engine/sear
 import { searxngProvider } from "../../engine/search-providers/searxng";
 import { tavilyProvider } from "../../engine/search-providers/tavily";
 import { dailyCapRefusal, recordSpend } from "../../engine/spend-ledger";
+import { lowestReasoningEffort } from "../../net/model/reasoning-effort";
 import { guardedFetch } from "../../net/url-guard";
 import type { ResearchBrief, SourceExclusion } from "./briefs";
 import type { ResearchReport, Retriever, Source } from "./retrieve";
@@ -215,8 +216,26 @@ export function exaSearchProvider(
 }
 
 const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
-/** The model that carries an `openrouter` search (it writes nothing; the plugin searches). */
-export const DEFAULT_OPENROUTER_SEARCH_MODEL = "openai/gpt-6.1-sol";
+/**
+ * The model that carries an `openrouter` search (it writes nothing; the plugin
+ * searches). OpenRouter carries non-Anthropic, non-OpenAI models only.
+ */
+export const DEFAULT_OPENROUTER_SEARCH_MODEL = "google/gemini-3.1-pro-preview";
+
+/**
+ * The carrier's reasoning directive and output cap: its lowest effort, and for
+ * a model whose reasoning is mandatory a cap that fits that reasoning (a
+ * 16-token cap would be spent before the reply completes); otherwise the
+ * minimal effort and 16 tokens.
+ */
+export function openRouterSearchCarrier(model: string): {
+  max_tokens: number;
+  reasoning: { effort: string };
+} {
+  const lowest = lowestReasoningEffort("openrouter", model);
+  if (lowest === "low") return { max_tokens: 1024, reasoning: { effort: "low" } };
+  return { max_tokens: 16, reasoning: { effort: lowest === "none" ? "none" : "minimal" } };
+}
 
 /**
  * OpenRouter's web plugin on Exa as a plain search backend: one minimal chat
@@ -245,8 +264,7 @@ export function openRouterSearchProvider(
             model,
             messages: [{ role: "user", content: query }],
             plugins: [{ id: "web", engine: "exa", max_results: opts.maxResults ?? 8 }],
-            max_tokens: 16,
-            reasoning: { effort: "minimal" },
+            ...openRouterSearchCarrier(model),
           }),
           signal: AbortSignal.timeout(60_000),
         });

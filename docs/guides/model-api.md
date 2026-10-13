@@ -6,11 +6,25 @@ Use Marina as an OpenAI-compatible LLM endpoint. When your tools send requests, 
 
 Marina can also proxy directly to a configured provider when no model agent serves the route.
 Built-in defaults are each vendor's strong tier: OpenAI `gpt-6.1-sol`, Anthropic `claude-opus-5-5`,
-Gemini `gemini-3.1-pro-preview`, OpenRouter `anthropic/claude-opus-5.5`. Existing
-provider priority and operator-selected models still apply. Override a provider with
-`MARINA_DEFAULT_OPENAI_MODEL` or `MARINA_DEFAULT_OPENROUTER_MODEL`; a configured database
-`default_model` selects the provider/model before fallback. Keys authorize upstream calls;
-configure `MODEL_API_KEYS` separately for clients calling Marina.
+Gemini `gemini-3.1-pro-preview`, OpenRouter `google/gemini-3.1-pro-preview`. OpenRouter
+carries models from vendors other than Anthropic and OpenAI; their models go through
+`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`, and built-in defaults that name one use OpenRouter
+only when that vendor's key is absent. Existing provider priority and operator-selected
+models still apply. Override a provider with `MARINA_DEFAULT_OPENAI_MODEL` or
+`MARINA_DEFAULT_OPENROUTER_MODEL`; a configured database `default_model` selects the
+provider/model before fallback. Keys authorize upstream calls; configure `MODEL_API_KEYS`
+separately for clients calling Marina.
+
+Some defaults reason on every request and cannot turn it off (Gemini Pro; the Claude 5.5
+and Fable releases through OpenRouter). Their reasoning counts against the output cap. When
+Marina chose the model (`marina`, `marina/default`) and the caller set `max_tokens` below
+8192 with no reasoning setting of its own, Marina asks for the model's lowest reasoning
+effort; the cap itself is never raised. A reply that spends the whole cap on reasoning and
+returns no content and no tool call is an error, never an empty answer: HTTP 400 with
+`code: "reasoning_exhausted_output"` and `param` naming the cap (502 when the caller set no
+cap), with the upstream `usage`. A stream ends with that error as its last `data:` frame
+before `[DONE]`; `/v1/responses` reports it as `max_output_tokens` (`response.failed` when
+streaming). Raise the cap or request a lower `reasoning_effort`.
 
 Luna on a default route uses `reasoning_effort: "none"` to keep short requests inexpensive.
 Explicit reasoning settings take precedence, and a direct request naming the model keeps its

@@ -215,7 +215,7 @@
 # `false` suppresses every room-agent auto-spawn (the LLM agents rooms start on first entry). Any other value leaves it on. Room agents need a provider key.
 # MARINA_ROOM_AGENTS=true
 
-# Model for the default Workbench's Host, Builder, Critic and Chronicler. Unset tries MARINA_CREW_MODEL, then openai/gpt-6.1-sol (OPENAI_API_KEY), openrouter/anthropic/claude-opus-5.5 (OPENROUTER_API_KEY), huggingface/zai-org/GLM-5.3-Flash (HUGGINGFACE_API_KEY or HF_TOKEN), then marina/default.
+# Model for the default Workbench's Host, Builder, Critic and Chronicler. Unset tries MARINA_CREW_MODEL, then openai/gpt-6.1-sol (OPENAI_API_KEY), anthropic/claude-opus-5-5 (ANTHROPIC_API_KEY), openrouter/google/gemini-3.1-pro-preview (OPENROUTER_API_KEY), huggingface/zai-org/GLM-5.3-Flash (HUGGINGFACE_API_KEY or HF_TOKEN), then marina/default.
 # @restart
 # MARINA_WORKBENCH_MODEL=openai/gpt-6.1-sol
 
@@ -232,7 +232,7 @@
 
 # Per-agent model map for boot-seeded agents, any world: comma list of Name=model (names case-insensitive; the model string passes through as-is). Wins over the per-role variables above and MARINA_CREW_MODEL. Applied on every boot to agents the seed still owns — a user-customized or retired agent is never touched — exactly like the per-role variables. A name matching no seeded agent, or a malformed entry, is logged as a warning at boot.
 # @restart
-# MARINA_AGENT_MODELS=Answerer=openrouter/anthropic/claude-opus-5.5,Translator=openrouter/deepseek/deepseek-v4-pro-0813
+# MARINA_AGENT_MODELS=Answerer=anthropic/claude-opus-5-5,Translator=openrouter/deepseek/deepseek-v4-pro-0813
 
 # Showcase world only: which autonomous coordinators to seed beyond marina:answerer (comma list of council, debate, decompose; empty or `none` seeds none). Unset seeds all three. Each is a loop that spends tokens even when its endpoint is never called.
 # @restart
@@ -343,7 +343,7 @@
 # MARINA_DEFAULT_ANTHROPIC_MODEL=claude-opus-5-5
 # MARINA_DEFAULT_OPENAI_MODEL=gpt-6.1-sol
 # MARINA_DEFAULT_GEMINI_MODEL=gemini-3.1-pro-preview
-# MARINA_DEFAULT_OPENROUTER_MODEL=anthropic/claude-opus-5.5
+# MARINA_DEFAULT_OPENROUTER_MODEL=google/gemini-3.1-pro-preview
 # MARINA_DEFAULT_GROQ_MODEL=openai/gpt-oss-120b
 # MARINA_DEFAULT_HUGGINGFACE_MODEL=zai-org/GLM-5.3-Flash
 # MARINA_DEFAULT_LLAMA_MODEL=local-model
@@ -432,7 +432,7 @@
 # MARINA_OUTPUT_REPAIR=on
 
 # Model for server-side repair shots (`marina/verify` final output); must be a reachable upstream id. Default: the model whose output is repaired. Agents and forecast runs repair with their own model.
-# MARINA_REPAIR_MODEL=openrouter/openai/gpt-6.1-sol
+# MARINA_REPAIR_MODEL=openai/gpt-6.1-sol
 
 # `off` omits the tools prose section from the lean agent system prompt.
 # MARINA_SYSTEM_TOOLS_PROSE=on
@@ -597,7 +597,7 @@
 
 # The `search` research retriever (forecasts, typed answers, `MARINA_ARENA_RESEARCH_RETRIEVER=search`): every planned query goes through a backend chain, the pages are read (SSRF-guarded, never a no-fetch publisher) and the passages most relevant to the question are quoted verbatim, dated, so the citation check verifies them. BACKENDS is the chain in fallback order (tavily, exa, searxng, duckduckgo, openrouter; default: every configured one, then keyless duckduckgo, then — with OPENROUTER_API_KEY — OpenRouter's Exa web plugin as the paid fallback when DuckDuckGo throttles; SEARCH_MODEL is the model that carries that call); a backend that fails is skipped for the rest of the brief and reported. The question's named resolution page is read before any search. MAX_PASSAGES is the relevance top-k cut per brief (default 15; passages far below the best are dropped too). RESULTS_PER_QUERY (default 8), DOMAIN_CAP (pages per site, default 3, for source diversity) and MAX_PAGES (pages read per brief, default 14) set breadth; PASSAGE_CHARS fixes the passage budget per brief (default: the forecast's own evidence budget, sized to the model's context window). Paid backends check the daily spend cap and record their cost (source `search`).
 # MARINA_RESEARCH_SEARCH_BACKENDS=tavily,exa,searxng,duckduckgo,openrouter
-# MARINA_RESEARCH_SEARCH_MODEL=openai/gpt-6.1-sol
+# MARINA_RESEARCH_SEARCH_MODEL=google/gemini-3.1-pro-preview
 # MARINA_RESEARCH_MAX_PASSAGES=15
 # MARINA_RESEARCH_RESULTS_PER_QUERY=8
 # MARINA_RESEARCH_DOMAIN_CAP=3
@@ -673,7 +673,7 @@
 # Decision backend for cheap per-step judgements (it receives tool names and redacted arguments). `auto` (default; alias `on`): a chat classifier answering through this Marina's own /v1 with the world's default model (`marina-self`; MARINA_DECISION_MODEL overrides) — the strongest model the operator configured, on providers the world already uses, never a cheaper stand-in; with no provider at all decisions are off. `off` turns them off. `decisions-api` (alias `jev`): a Jev-family model over the Decisions API on OpenRouter, or a self-hosted OpenJev. `typesafe`: TypeSafe's API. `chat-classifier` (aliases `classifier`, `llm`): any chat model (see MARINA_DECISION_MODEL). Every MARINA_DECISION* setting except base URLs, paths and API keys can also be changed at runtime (`admin decisions set …`, Admin → Ops → Decisions); a value set here wins and locks it.
 # MARINA_DECISIONS=auto
 
-# Backend model. Defaults: typesafe/jev-1.13 for decisions-api, jev-latest for typesafe; chat-classifier uses openai/gpt-6.1-sol on OpenRouter, zai-org/GLM-5.3-Flash on the Hugging Face router, or the local runtime's default model on a configured llama.cpp / Ollama / vLLM server, and any other base URL must name a model.
+# Backend model. Defaults: typesafe/jev-1.13 for decisions-api, jev-latest for typesafe; chat-classifier uses google/gemini-3.1-pro-preview on OpenRouter, zai-org/GLM-5.3-Flash on the Hugging Face router, or the local runtime's default model on a configured llama.cpp / Ollama / vLLM server, and any other base URL must name a model.
 # MARINA_DECISION_MODEL=typesafe/jev-1.13
 
 # Backend endpoint. Defaults: https://openrouter.ai/api/alpha (decisions-api), https://api.typesafe.ai (typesafe); chat-classifier: OpenRouter with OPENROUTER_API_KEY, else the Hugging Face router with its key, else a configured local runtime (LLAMA_BASE_URL / OLLAMA_BASE_URL / VIBETHINKER_BASE_URL or its key), else https://openrouter.ai/api/v1.
@@ -767,9 +767,9 @@
 
 # ── Forecasting ──────────────────────────────────────────────────────────────
 
-# `forecast`, `bun run forecast` and POST /v1/forecast (docs/guides/forecasting.md). No vendor key is required: unset, every part sizes to what is configured (docs/guides/single-model.md). Analysts are a comma list of models (defaults: Claude Fable 5.1, GPT-6 Astra and Gemini 3.1 Pro via OpenRouter; without OPENROUTER_API_KEY, the configured providers or a single local model, which then answers as the one analyst × K runs); the retriever defaults to OpenRouter web search on GPT-6 Luna over Exa plus the `search` retriever (every planned query through the search backend chain, pages read and quoted), else `search` alone (keyless DuckDuckGo when no search key is set); the judge is jev (without OPENROUTER_API_KEY: the MARINA_DECISIONS backend, else no judge), decisions (the MARINA_DECISIONS backend, falling back to jev) or none. Substitutions are reported as the answer's `scale` (tier `degraded`); only having no model at all is an error.
-# MARINA_FORECAST_ANALYSTS=openrouter/anthropic/claude-fable-5.1,openrouter/openai/gpt-6-astra,openrouter/google/gemini-3.1-pro-preview
-# MARINA_FORECAST_RETRIEVER=openrouter-web:openai/gpt-6.1-sol@exa,search
+# `forecast`, `bun run forecast` and POST /v1/forecast (docs/guides/forecasting.md). No vendor key is required: unset, every part sizes to what is configured (docs/guides/single-model.md). Analysts are a comma list of models (defaults with OPENROUTER_API_KEY: Claude Fable 5.1 and GPT-6 Astra through ANTHROPIC_API_KEY / OPENAI_API_KEY when set, else via OpenRouter, plus Gemini 3.1 Pro via OpenRouter; without OPENROUTER_API_KEY, the configured providers or a single local model, which then answers as the one analyst × K runs); the retriever defaults to OpenRouter web search on Gemini 3.1 Pro over Exa plus the `search` retriever (every planned query through the search backend chain, pages read and quoted), else `search` alone (keyless DuckDuckGo when no search key is set); the judge is jev (without OPENROUTER_API_KEY: the MARINA_DECISIONS backend, else no judge), decisions (the MARINA_DECISIONS backend, falling back to jev) or none. Substitutions are reported as the answer's `scale` (tier `degraded`); only having no model at all is an error.
+# MARINA_FORECAST_ANALYSTS=anthropic/claude-fable-5-1,openai/gpt-6-astra,openrouter/google/gemini-3.1-pro-preview
+# MARINA_FORECAST_RETRIEVER=openrouter-web:google/gemini-3.1-pro-preview@exa,search
 # MARINA_FORECAST_JUDGE=jev
 
 # Evidence depth for typed forecasts. DOSSIER_CHARS is the research dossier each run reads (default: sized to the analysts' context window, 12 000–60 000 characters; 24 000 when unknown); when the dossier is longer, verified lines are kept first. MIN_EVIDENCE is the number of verified lines wanted before the runs (default 5; 0 = off): fewer triggers one more research round first. Otherwise FOLLOWUP=on (default) runs that one extra round after the runs when none is grounded in verified evidence, and redoes the runs only if it verified something new; off disables both. DISAGREEMENT=on (default): when the runs disagree (agreement below 0.7), one round searches the point they disagree on and one more run reads it, pooled with the others.
@@ -779,7 +779,7 @@
 # MARINA_FORECAST_DISAGREEMENT=on
 
 # Read swarm (src/retrieval/read-swarm.ts; off unless set): a reader model that reads every page research finds IN FULL against the question's clues and reports verbatim quotes, which are checked mechanically before they reach the dossier. Set, typed forecasts' research rounds put the readers' verified quotes ahead of the retriever's report, and `web swarm <question>` (any agent or crew) answers with a candidate table. Any model spec (`provider/model`); a cheap one is the point. Every reader call is priced against the daily spend cap.
-# MARINA_READ_SWARM_READER=openrouter/openai/gpt-6-luna
+# MARINA_READ_SWARM_READER=openai/gpt-6-luna
 
 # Portable research evidence: capture source text, dates, hashes and verification for offline replay. Shared by arena and general forecasts; off preserves the existing retrieval behavior. Live snapshots record capture time separately from publication/vintage time and are not historical archives.
 # MARINA_RESEARCH_EVIDENCE=off
@@ -904,8 +904,8 @@
 # Optional comma-separated Civiqs series ids to receive horizon correction (for example civiqs_net_econ_now). Unset applies the selected mode to all series; an empty list applies to none. Scope experimental corrections before extending them to other series or profile cells.
 # MARINA_ARENA_NOWCAST_SERIES=civiqs_net_econ_now
 
-# Research forecaster: retriever (default openrouter-web:openai/gpt-6.1-sol with OPENROUTER_API_KEY, else tavily:basic with TAVILY_API_KEY, else keyless asof), judge (jev, decisions or none; default jev, which without OPENROUTER_API_KEY uses the MARINA_DECISIONS backend or no judge) and the trust given to verified research lines. Retrievers: openrouter-web:<model> (any model with OpenRouter's web search) or sonar:<Perplexity model> (sonar, sonar-pro, sonar-pro-search, sonar-reasoning-pro, sonar-deep-research); tavily:basic or tavily:advanced calls Tavily's search API directly (needs TAVILY_API_KEY; its page text is used for citation checks); search[:<backends>] searches every brief query through a backend chain and quotes the pages it reads (see MARINA_RESEARCH_SEARCH_BACKENDS; not date-strict); asof[:<providers>] uses keyless date-strict engines (gdelt, wikipedia, hn, arxiv, wayback) bounded to the brief's cutoff; list several, comma-separated, to merge their reports.
-# MARINA_ARENA_RESEARCH_RETRIEVER=openrouter-web:openai/gpt-6.1-sol
+# Research forecaster: retriever (default openrouter-web:google/gemini-3.1-pro-preview with OPENROUTER_API_KEY, else tavily:basic with TAVILY_API_KEY, else keyless asof), judge (jev, decisions or none; default jev, which without OPENROUTER_API_KEY uses the MARINA_DECISIONS backend or no judge) and the trust given to verified research lines. Retrievers: openrouter-web:<model> (any model with OpenRouter's web search) or sonar:<Perplexity model> (sonar, sonar-pro, sonar-pro-search, sonar-reasoning-pro, sonar-deep-research); tavily:basic or tavily:advanced calls Tavily's search API directly (needs TAVILY_API_KEY; its page text is used for citation checks); search[:<backends>] searches every brief query through a backend chain and quotes the pages it reads (see MARINA_RESEARCH_SEARCH_BACKENDS; not date-strict); asof[:<providers>] uses keyless date-strict engines (gdelt, wikipedia, hn, arxiv, wayback) bounded to the brief's cutoff; list several, comma-separated, to merge their reports.
+# MARINA_ARENA_RESEARCH_RETRIEVER=openrouter-web:google/gemini-3.1-pro-preview
 # MARINA_ARENA_RESEARCH_JUDGE=jev
 # MARINA_ARENA_RESEARCH_TRUST=0.5
 
@@ -927,8 +927,8 @@
 # Record a candidate forecaster hourly in shadow, never filed (`bun run arena shadow score`).
 # MARINA_ARENA_SHADOW=
 
-# Model that proposes signals for `arena discover`.
-# MARINA_ARENA_PROPOSER=openrouter/anthropic/claude-opus-5.5
+# Model that proposes signals for `arena discover`. Unset: anthropic/claude-opus-5-5 with ANTHROPIC_API_KEY, else openrouter/anthropic/claude-opus-5.5 when OPENROUTER_API_KEY is the only key.
+# MARINA_ARENA_PROPOSER=anthropic/claude-opus-5-5
 
 # Rehearsal overrides for the arena endpoint, audience and data repository. Production is the default.
 # MARINA_ARENA_URL=https://social-simulation-arena.com
@@ -1105,7 +1105,7 @@
 # MARINA_ANTHROPIC_AUTO_CACHE=false
 
 # `marina/verify:<proposer>[+<checker>]` model ids: the checker used when the id names none. Default: the proposer reviews its own draft.
-# MARINA_VERIFY_CHECKER_MODEL=openrouter/openai/gpt-6.1-sol
+# MARINA_VERIFY_CHECKER_MODEL=openai/gpt-6.1-sol
 
 # `marina/verify:` revision rounds after a flagged draft (0 = review only and return the draft; max 3). Default 1.
 # MARINA_VERIFY_ROUNDS=1
@@ -1117,7 +1117,7 @@
 # MARINA_VERIFY_CHECKER_EFFORT=inherit
 
 # Vision model for `canvas look` / `image describe` / `video describe` / `marina_see` when the agent's own model cannot read images. Unset: the agent's model, else Marina's default route.
-# MARINA_VISION_MODEL=openrouter/openai/gpt-6.1-sol
+# MARINA_VISION_MODEL=openai/gpt-6.1-sol
 
 # Byte cap on an image, PDF, video or text a vision call will load (max 100 MB). Default 20 MB.
 # MARINA_VISION_MAX_BYTES=20971520

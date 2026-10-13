@@ -6,8 +6,10 @@
  * analysts, planner, critic, judge and lookups. Env:
  *
  *   MARINA_FORECAST_ANALYSTS   comma-separated model ids, one per vendor
- *                              (default: DeepSeek V4 Pro, Claude Sonnet 5, GPT-6 Luna via OpenRouter;
- *                              without an OpenRouter key, the configured providers or local model).
+ *                              (default with an OpenRouter key: Claude Fable 5.1 and GPT-6 Astra
+ *                              through their own keys when set, else OpenRouter, plus Gemini 3.1
+ *                              Pro via OpenRouter; without an OpenRouter key, the configured
+ *                              providers or local model).
  *                              `marina:<crew>` asks a crew on a Marina server
  *                              (MARINA_FORECAST_MARINA_URL / _KEY) — e.g. a crew
  *                              in the verification formation.
@@ -16,7 +18,7 @@
  *                              (every planned query through a backend chain, pages read and
  *                              quoted), asof[:<providers>] (keyless and date-strict: gdelt,
  *                              wikipedia, hn, arxiv, wayback)
- *                              (default openrouter-web:openai/gpt-6.1-sol@exa,search; `search`
+ *                              (default openrouter-web:google/gemini-3.1-pro-preview@exa,search; `search`
  *                              alone without an OpenRouter key)
  *   MARINA_FORECAST_DOSSIER_CHARS  evidence characters given to each run (default: sized to
  *                              the analysts' context window, 12 000–60 000)
@@ -62,6 +64,7 @@ import { type Retriever, retrieverFromSpec } from "../arena/research/retrieve";
 import { defaultPageText } from "../arena/research/verify";
 import { researchJudge } from "../decisions/config";
 import { dailyCapRefusal } from "../engine/spend-ledger";
+import { vendorModelSpec } from "../net/model/default-models";
 import { researchRetriever } from "../research/retriever";
 import { type AdjustSettings, adjustSettingsFromEnv } from "./adjust";
 import { SELECTION_MODES, type SelectionMode } from "./answer-types";
@@ -74,11 +77,29 @@ import type { ModelPart, TypedForecastDeps, TypedForecastOptions } from "./typed
 
 export { DEFAULT_RETRIEVER, defaultRetrieverSpec };
 
+/** The three-vendor default with an OpenRouter key and no Anthropic / OpenAI key. */
 export const DEFAULT_ANALYSTS = [
   "openrouter/anthropic/claude-fable-5.1",
   "openrouter/openai/gpt-6-astra",
   "openrouter/google/gemini-3.1-pro-preview",
 ];
+
+/**
+ * The three-vendor default for this environment: the Anthropic and OpenAI
+ * analysts through their own keys when set (OpenRouter only as their fallback,
+ * `vendorModelSpec`), Gemini through OpenRouter.
+ */
+export function defaultVendorAnalysts(env: NodeJS.ProcessEnv = process.env): string[] {
+  return [
+    vendorModelSpec(
+      "anthropic",
+      { direct: "claude-fable-5-1", openrouter: "anthropic/claude-fable-5.1" },
+      env,
+    ),
+    vendorModelSpec("openai", { direct: "gpt-6-astra", openrouter: "openai/gpt-6-astra" }, env),
+    "openrouter/google/gemini-3.1-pro-preview",
+  ].filter((spec): spec is string => !!spec);
+}
 
 /**
  * What the forecaster runs on, for the answer's audit trail and the operator:
@@ -103,12 +124,13 @@ interface Wired {
 }
 
 /**
- * Analyst specs when MARINA_FORECAST_ANALYSTS is unset: the three-vendor
- * default through OpenRouter, else whatever this installation has (up to three
- * distinct providers; one model is enough — K runs supply the samples).
+ * Analyst specs when MARINA_FORECAST_ANALYSTS is unset: with an OpenRouter
+ * key the three-vendor default (`defaultVendorAnalysts`), else whatever this
+ * installation has (up to three distinct providers; one model is enough — K
+ * runs supply the samples).
  */
 export function defaultAnalystSpecs(env: NodeJS.ProcessEnv = process.env): string[] {
-  if (env.OPENROUTER_API_KEY?.trim()) return DEFAULT_ANALYSTS;
+  if (env.OPENROUTER_API_KEY?.trim()) return defaultVendorAnalysts(env);
   return availableModels(env)
     .slice(0, 3)
     .map((m) => m.spec);

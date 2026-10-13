@@ -32,6 +32,15 @@ import {
 } from "../model/model-discovery";
 import { openaiErrorBody, UnsupportedParameterError } from "../model/openai-errors";
 import type { InjectionFormat } from "../model/passthru-context";
+import {
+  defaultRouteReasoningEffort,
+  explicitOutputCap,
+  LUNA_MODEL,
+  REASONING_EXHAUSTED_CODE,
+  reasoningExhausted,
+  reasoningExhaustedMessage,
+  reasoningTokens,
+} from "../model/reasoning-effort";
 import { withoutRejectedSampling } from "../model/sampling-params";
 import {
   normalizeTextualToolCalls,
@@ -74,9 +83,6 @@ const logger = new Logger();
 
 // Built-in default model per provider key (direct-upstream proxy fallback, used
 // when no model agent is online on the requested channel): `../default-models`.
-
-/** OpenAI's Luna tier, current and previous generation (optionally `-pro`). */
-const LUNA_MODEL = /^gpt-(?:5\.6|6)-luna(?:-pro)?$/;
 
 /** provider → upstream endpoint. `anthropic` uses a non-OpenAI request format. */
 const PROVIDER_UPSTREAM: Record<string, { url: string; envKeys: string[]; anthropic?: boolean }> = {
@@ -265,8 +271,17 @@ export interface ProviderProbeResult {
   checkedAt: number;
 }
 
-export const PROVIDER_PROBE_MAX_TOKENS = 32;
-export const PROVIDER_TOOL_PROBE_MAX_TOKENS = 128;
+/**
+ * Probe output caps. A model whose reasoning is mandatory spends its cap on
+ * reasoning first (anthropic/claude-opus-5.5 through OpenRouter: 32 tokens at
+ * its lowest effort returned no content; 1024 answered after 37 reasoning
+ * tokens, live 2026-10-12), so the cap fits that reasoning; the probe is sent
+ * as a default-route request with a small explicit cap, which asks such a
+ * model for its lowest effort (`defaultRouteReasoningEffort`). A cap is a
+ * ceiling, not a spend: a one-word answer costs the same under either.
+ */
+export const PROVIDER_PROBE_MAX_TOKENS = 1024;
+export const PROVIDER_TOOL_PROBE_MAX_TOKENS = 1024;
 export const PROVIDER_TOOL_PROBE_NAME = "report_check_word";
 /** Providers whose passthru path translates tool schemas and is therefore tool-probed. */
 export const TOOL_PROBED_PROVIDERS: readonly string[] = ["anthropic", "openai"];
@@ -1057,17 +1072,17 @@ export function prepareUpstreamBody(
   // Claude 5 family through OpenRouter) are dropped, like the Anthropic bridge
   // does for Claude 5 (`rejectsSamplingParams`), instead of a 400 every call.
   if (provider !== "anthropic") prepared = withoutRejectedSampling(prepared);
-  // The Luna family (gpt-5.6-luna, gpt-6-luna, their -pro variants): accepts
-  // reasoning_effort "none" and rejects legacy max_tokens (verified live
-  // 2026-09-24 for gpt-6-luna on OpenAI and OpenRouter).
-  const luna =
-    (provider === "openai" && LUNA_MODEL.test(String(body.model))) ||
-    (provider === "openrouter" && LUNA_MODEL.test(String(body.model).replace(/^openai\//, "")));
-  // Preserve the former non-reasoning default's latency/cost role. Explicit
-  // effort settings and direct model requests retain the caller's choices.
-  if (luna && defaultRoute && body.reasoning_effort === undefined && body.reasoning === undefined)
-    prepared = { ...prepared, reasoning_effort: "none" };
+  // When Marina chose the model, one that can stop reasoning keeps the default
+  // route's non-reasoning role (Luna: `none`), and one whose reasoning is
+  // mandatory gets its lowest effort under a small explicit cap so a short
+  // completion still has room for its answer (`reasoning-effort.ts`). Explicit
+  // effort settings, direct model requests and the cap itself are untouched.
+  const effort = defaultRouteReasoningEffort(body, provider, defaultRoute);
+  if (effort) prepared = { ...prepared, reasoning_effort: effort };
   if (provider !== "openai") return prepared;
+  // The Luna family (gpt-5.6-luna, gpt-6-luna, their -pro variants) rejects
+  // legacy max_tokens (verified live 2026-09-24 on OpenAI and OpenRouter).
+  const luna = LUNA_MODEL.test(String(body.model));
   const bounded = { ...prepareOpenAIReasoning(prepared) };
   // Luna requires the modern token field. Preserve an explicitly supplied
   // max_completion_tokens and let the provider reject conflicting fields.
@@ -1256,7 +1271,7 @@ export async function proxyToUpstream(
         timestamp: Date.now(),
       });
     }
-    return await traceProxyResponse(engine, response, {
+    const traced = await traceProxyResponse(engine, response, {
       requestId,
       model: requestedModel,
       target,
@@ -1268,7 +1283,14 @@ export async function proxyToUpstream(
       startedAt,
       errorKind,
     });
+    // A reply whose cap went to reasoning is a coded error, never an empty 200
+    // (spend was already recorded on the upstream's reply above). Marina's own
+    // agents (`internal`) keep the raw length stop: their loop grows an
+    // automatic cap from it (`grownOutputCap`).
+    return guardsEmptyReply ? refuseReasoningExhausted(traced, body) : traced;
   };
+  const guardsEmptyReply =
+    !!traceOptions && traceOptions.routeKind !== "synthesis" && routeReason !== "internal";
   // `forceModel` (passthru endpoint mode) pins the upstream model regardless of
   // what the caller requested; otherwise only marina/default models resolve to
   // the configured default.
@@ -1472,6 +1494,158 @@ export async function proxyToUpstream(
       "No upstream LLM providers configured. Set an API key (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, etc.) or add one in Admin → Keys.",
     ),
   );
+}
+
+/**
+ * The coded error for a reply whose output cap went to reasoning: 400 with the
+ * cap as `param` when the caller set one (raising it is the fix — the cap is
+ * never raised for them), 502 otherwise. The upstream's `usage` rides along so
+ * the caller still sees what it was billed for.
+ */
+export function reasoningExhaustedError(
+  body: Record<string, unknown>,
+  usage: unknown,
+): { status: number; payload: Record<string, unknown> } {
+  const cap = explicitOutputCap(body);
+  const status = cap !== undefined ? 400 : 502;
+  const param =
+    typeof body.max_completion_tokens === "number" ? "max_completion_tokens" : "max_tokens";
+  return {
+    status,
+    payload: {
+      ...openaiErrorBody(status, reasoningExhaustedMessage(cap, reasoningTokens(usage)), {
+        code: REASONING_EXHAUSTED_CODE,
+        ...(cap !== undefined ? { param } : {}),
+      }),
+      ...(usage && typeof usage === "object" ? { usage } : {}),
+    },
+  };
+}
+
+/**
+ * Never a silent empty 200: an upstream reply that ended on its length limit
+ * with no content and no tool call (`reasoningExhausted`) becomes
+ * {@link reasoningExhaustedError}. A buffered reply is replaced; a stream —
+ * whose headers are already a 200 — gets the error as its final `data:` frame
+ * before `[DONE]` (the same frame shape an upstream stream error takes). Every
+ * other reply passes through unchanged.
+ */
+export async function refuseReasoningExhausted(
+  response: Response,
+  body: Record<string, unknown>,
+): Promise<Response> {
+  if (!response.ok || !response.body) return response;
+  const type = response.headers.get("content-type") ?? "";
+  const init = { status: response.status, statusText: response.statusText };
+  if (type.includes("text/event-stream")) {
+    return new Response(guardReasoningExhaustedSse(response.body, body), {
+      ...init,
+      headers: response.headers,
+    });
+  }
+  if (!type.includes("json")) return response;
+  const raw = await response.text();
+  let data: unknown;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return new Response(raw, { ...init, headers: response.headers });
+  }
+  if (!reasoningExhausted(data)) return new Response(raw, { ...init, headers: response.headers });
+  const { status, payload } = reasoningExhaustedError(body, (data as { usage?: unknown }).usage);
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+  headers.set("Content-Type", "application/json");
+  return new Response(JSON.stringify(payload), { status, headers });
+}
+
+/** The chat-completions SSE stream with a reasoning-exhausted ending made explicit. */
+export function guardReasoningExhaustedSse(
+  upstream: ReadableStream<Uint8Array>,
+  body: Record<string, unknown>,
+): ReadableStream<Uint8Array> {
+  const reader = upstream.getReader();
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let buffer = "";
+  let answered = false;
+  let finishReason: unknown;
+  let usage: unknown;
+  let doneSeen = false;
+  // Complete lines pass straight through, except `[DONE]`, held until the end.
+  const lines = (text: string): string => {
+    let out = "";
+    for (const line of text.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) {
+        out += `${line}\n`;
+        continue;
+      }
+      const payload = trimmed.slice(5).trim();
+      if (payload === "[DONE]") {
+        doneSeen = true;
+        continue;
+      }
+      out += `${line}\n`;
+      try {
+        const chunk = JSON.parse(payload) as {
+          error?: unknown;
+          usage?: unknown;
+          choices?: { finish_reason?: unknown; delta?: Record<string, unknown> }[];
+        };
+        // An upstream error frame is already explicit — never stack a second.
+        if (chunk.error) answered = true;
+        if (chunk.usage) usage = chunk.usage;
+        const choice = chunk.choices?.[0];
+        if (choice?.finish_reason) finishReason = choice.finish_reason;
+        const delta = choice?.delta;
+        if (
+          delta &&
+          ((typeof delta.content === "string" && delta.content.trim().length > 0) ||
+            (Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0) ||
+            delta.function_call)
+        )
+          answered = true;
+      } catch {
+        // allow-empty-catch: a non-JSON frame carries no answer, finish reason or usage
+      }
+    }
+    return out;
+  };
+  const take = (text: string): string => {
+    buffer += text;
+    const cut = buffer.lastIndexOf("\n");
+    if (cut < 0) return "";
+    const complete = buffer.slice(0, cut);
+    buffer = buffer.slice(cut + 1);
+    return lines(complete);
+  };
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (!done) {
+          const out = take(decoder.decode(value, { stream: true }));
+          if (out) controller.enqueue(encoder.encode(out));
+          return;
+        }
+        let tail = take(`${decoder.decode()}\n`);
+        if (buffer) tail += lines(buffer);
+        buffer = "";
+        if (!answered && (finishReason === "length" || finishReason === "max_tokens")) {
+          tail += `data: ${JSON.stringify(reasoningExhaustedError(body, usage).payload)}\n\n`;
+        }
+        if (doneSeen) tail += "data: [DONE]\n\n";
+        if (tail) controller.enqueue(encoder.encode(tail));
+        controller.close();
+      } catch (cause) {
+        controller.error(cause);
+      }
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
+  });
 }
 
 interface ProxyTraceMetrics {

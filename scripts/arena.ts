@@ -68,6 +68,7 @@ import {
 import { buildForecastBody, dueRounds, submitRound } from "../src/arena/submit";
 import { attachCliSpendLedger } from "../src/engine/cli-spend-ledger";
 import { getErrorMessage } from "../src/engine/errors";
+import { vendorModelSpec } from "../src/net/model/default-models";
 import { MarinaDB } from "../src/persistence/database";
 
 const { positionals, values } = parseArgs({
@@ -96,9 +97,20 @@ const { positionals, values } = parseArgs({
 });
 const [cmd = "status", arg] = positionals;
 
-/** The default research crew: one analyst per vendor. */
-const DEFAULT_RESEARCH =
-  "research:openrouter/deepseek/deepseek-v4-pro,openrouter/anthropic/claude-opus-5.5,openrouter/openai/gpt-6-luna";
+/**
+ * The default research crew: one analyst per vendor — the Anthropic and OpenAI
+ * analysts through their own keys when set, OpenRouter only as their fallback.
+ */
+const DEFAULT_RESEARCH = `research:${[
+  "openrouter/deepseek/deepseek-v4-pro",
+  vendorModelSpec("anthropic", {
+    direct: "claude-opus-5-5",
+    openrouter: "anthropic/claude-opus-5.5",
+  }),
+  vendorModelSpec("openai", { direct: "gpt-6-luna", openrouter: "openai/gpt-6-luna" }),
+]
+  .filter(Boolean)
+  .join(",")}`;
 
 function weightFlag(): number | undefined {
   if (values.weight === undefined) return undefined;

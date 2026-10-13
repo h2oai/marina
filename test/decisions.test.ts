@@ -350,7 +350,7 @@ describe("config", () => {
     // knows (OpenRouter, the HF router); any other base URL must name one.
     expect(
       decisionConfigFromEnv({ MARINA_DECISIONS: "llm", OPENROUTER_API_KEY: "or" })?.model,
-    ).toBe("openai/gpt-6.1-sol");
+    ).toBe("google/gemini-3.1-pro-preview");
     expect(
       decisionConfigFromEnv({
         MARINA_DECISIONS: "llm",

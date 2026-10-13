@@ -442,7 +442,7 @@ figure's population, response category and subgroup definition; its search budge
    known. `buildResearchBrief(round, lock, { nowcast })` starts that window at the daily nowcast's
    date when one is newer than the history (Civiqs); without it, the last weekly value's date. Each
    brief also carries short keyword `queries` (one per playbook item) for search APIs.
-2. **Retrieve** — `MARINA_ARENA_RESEARCH_RETRIEVER` (default `openrouter-web:openai/gpt-6.1-sol`,
+2. **Retrieve** — `MARINA_ARENA_RESEARCH_RETRIEVER` (default `openrouter-web:google/gemini-3.1-pro-preview`,
    OpenRouter's web search with URL citations; ~$0.03 per round). `sonar:<model>` uses Perplexity
    Sonar through OpenRouter (native search; `sonar`, `sonar-pro`, `sonar-pro-search`,
    `sonar-reasoning-pro`, `sonar-deep-research`), and a comma-separated list runs several engines
@@ -917,6 +917,6 @@ not isolate evidence sharing as cleanly.
 | `MARINA_ARENA_SHADOW` | unset | a forecaster spec to record hourly in shadow (never filed) |
 | `MARINA_ARENA_TRENDS_PARTIAL` | off | `on` counts a Trends basket's partial current week |
 | `MARINA_ARENA_CIVIQS_LIVE` | on | `off` stops the nowcast reading the live Civiqs dashboard for open rounds |
-| `MARINA_ARENA_RESEARCH_RETRIEVER` | `openrouter-web:openai/gpt-6.1-sol` | the research agent's search backend(s): `openrouter-web:<model>`, `sonar:<model>`, `tavily:basic` / `tavily:advanced` (needs `TAVILY_API_KEY`), comma-separated to merge |
+| `MARINA_ARENA_RESEARCH_RETRIEVER` | `openrouter-web:google/gemini-3.1-pro-preview` | the research agent's search backend(s): `openrouter-web:<model>`, `sonar:<model>`, `tavily:basic` / `tavily:advanced` (needs `TAVILY_API_KEY`), comma-separated to merge |
 | `MARINA_ARENA_RESEARCH_JUDGE` | `jev` (with an OpenRouter key) | `jev`, `decisions` (the configured `MARINA_DECISIONS` backend; falls back to `jev`) or `none` |
 | `MARINA_ARENA_RESEARCH_TRUST` | `0.5` | most of the judged move the research agent takes |

@@ -20,6 +20,7 @@
  */
 
 import { isReasoningMandatory, noteUpstreamRejection } from "../agent/reasoning-control";
+import { lowestReasoningEffort } from "../net/model/reasoning-effort";
 import { withoutRejectedSampling } from "../net/model/sampling-params";
 import { normalizeAnswers } from "./answers";
 import {
@@ -329,8 +330,13 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
   /** The request's reasoning directive: a disable, a low budget, or none. */
   const reasoningDirective = (): Record<string, unknown> => {
     // A classifier sends no tools, so the disable needs no tool-calling probe;
-    // a model whose upstream said reasoning is mandatory gets the low budget.
-    if (reasoningOff && !isReasoningMandatory(reasoningModel))
+    // a model whose upstream said (or whose catalog entry says) reasoning is
+    // mandatory gets the low budget.
+    if (
+      reasoningOff &&
+      !isReasoningMandatory(reasoningModel) &&
+      lowestReasoningEffort("openrouter", reasoningModel) !== "low"
+    )
       return { reasoning: { enabled: false } };
     return isOpenRouter(opts.baseUrl) || reasoningOff ? LOW_REASONING : {};
   };
