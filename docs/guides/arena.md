@@ -609,7 +609,10 @@ FRED evidence includes current/previous observations, their same-vintage change,
 vintage date. A comparison with the vintage available at the start reading distinguishes new
 information from a monthly change that was already known. Verification uses the frozen structured
 payload rather than a mutable HTML page;
-the dossier retains the typed observations and failure/skip reasons. Historical intraday cutoffs
+the dossier retains the typed observations and failure/skip reasons. For a monthly round the
+brief carries its target period (the month after the last published value); a related series
+whose latest observation predates it is labelled `STALE` on its line and in the section header,
+so a month-old change is not read as news about the period being forecast. Historical intraday cutoffs
 use the prior UTC day's FRED vintage because its API does not provide exact release instants.
 Live reads use currently available data. Sports odds are excluded from arena research.
 Check each source's publication cadence: [FRED's Michigan sentiment series](https://fred.stlouisfed.org/series/UMCSENT)
