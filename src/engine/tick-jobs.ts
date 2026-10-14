@@ -12,6 +12,7 @@ import { flushWorkLessons } from "../learning/work";
 import { memoryObservabilityPollTicks, pollMemoryEvents } from "../net/memory/memory-observability";
 import { cleanupStaleConversationChannels } from "../net/model/model-api";
 import { autoresolveLinked } from "../outcomes/autoresolve";
+import { settleBenchmarkRuns } from "../outcomes/benchmark";
 import { deliverOutcomes } from "../outcomes/deliver";
 import { judgeWaitingWork } from "../outcomes/judge-quality";
 import { judgeOpenResolutions } from "../outcomes/judge-resolution";
@@ -378,6 +379,9 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
 
   // Hourly: check the markets that open answers are linked to; a resolved one
   // settles them through the calibration finder (MARINA_OUTCOME_AUTORESOLVE).
+  // Also records every completed benchmark run with no outcome yet — runs a
+  // CLI importer wrote from another process, and the backlog from before
+  // benchmark runs were recorded (src/outcomes/benchmark.ts; a no-op after).
   s.register({
     name: "outcome-autoresolve",
     every: NOTE_IMPORTANCE_INTERVAL,
@@ -385,6 +389,10 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
     failureMessage: "Automatic outcome resolution failed",
     run: async () => {
       if (!host.db) return;
+      const db = host.db;
+      tryLog(host.logger, "tick", "Benchmark outcome sweep failed", () => {
+        settleBenchmarkRuns(db);
+      });
       await autoresolveLinked(host.db);
     },
   });

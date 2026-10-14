@@ -404,8 +404,23 @@ export interface ResolveOptions {
    * resolution is still found without fetching every open question every pass.
    */
   maxChecks?: number;
-  /** Pause between lookups (default {@link RESOLVE_PACE_MS}). */
+  /** Pause between lookups (default {@link RESOLVE_PACE_MS}); doubles after a refused question. */
   paceMs?: number;
+  /** Retries of one question after a rate-limit refusal (default {@link RESOLVE_RETRIES}). */
+  retries?: number;
+  /** First backoff before a retry, doubling each time (default {@link RESOLVE_BACKOFF_MS}). */
+  backoffMs?: number;
+  /**
+   * Consecutive questions still refused after their retries before the pass stops
+   * (default {@link RESOLVE_MAX_REFUSED}); one refused question never ends it.
+   */
+  maxRefused?: number;
+  /**
+   * When each question was last looked up (unresolved). A question checked within
+   * {@link RESOLVE_RECHECK_MS} (or {@link RESOLVE_RECHECK_DUE_MS} once due) is not
+   * fetched again, so the lookup budget goes to questions not seen lately.
+   */
+  checks?: ResolveCheckCache;
   /** How long one rotation window lasts (default {@link RESOLVE_ROTATE_MS}). */
   rotateMs?: number;
   sleep?: (ms: number) => Promise<void>;
@@ -415,8 +430,23 @@ export interface ResolveOptions {
 export const RESOLVE_MAX_CHECKS = 12;
 export const RESOLVE_PACE_MS = 2_000;
 export const RESOLVE_ROTATE_MS = 20 * 60_000;
+export const RESOLVE_RETRIES = 2;
+export const RESOLVE_BACKOFF_MS = 30_000;
+export const RESOLVE_MAX_REFUSED = 3;
+/** Ceiling of the adaptive pause after refusals. */
+export const RESOLVE_MAX_PACE_MS = 60_000;
+/** A not-yet-due question is looked up again only after this long. */
+export const RESOLVE_RECHECK_MS = 6 * 60 * 60_000;
+/** A due question (scheduled resolve time passed) is looked up again after this long. */
+export const RESOLVE_RECHECK_DUE_MS = 60 * 60_000;
 
-/** A rate-limit refusal (HTTP 429, including Cloudflare 1015): stop the pass, try next time. */
+/** Last lookup time per question id (an unresolved check). */
+export interface ResolveCheckCache {
+  get(questionId: number): number | undefined;
+  set(questionId: number, at: number): void;
+}
+
+/** A rate-limit refusal (HTTP 429, including Cloudflare 1015): back off and retry, then move on. */
 export function isRateLimited(err: unknown): boolean {
   return / → 429:|\b1015\b/.test((err as Error)?.message ?? "");
 }
@@ -454,11 +484,18 @@ export async function resolvePass(opts: ResolveOptions): Promise<{
   failed: number;
   pending: number;
   rateLimited: boolean;
+  /** Questions still refused after their retries (left for a later pass). */
+  refused: number;
+  /** Open questions skipped because they were looked up recently. */
+  recent: number;
 }> {
   const now = opts.now ?? (() => new Date());
   const log = opts.log ?? (() => {});
   const sleep = opts.sleep ?? ((ms: number) => Bun.sleep(ms));
-  const paceMs = opts.paceMs ?? RESOLVE_PACE_MS;
+  let paceMs = opts.paceMs ?? RESOLVE_PACE_MS;
+  const retries = Math.max(0, opts.retries ?? RESOLVE_RETRIES);
+  const backoffMs = opts.backoffMs ?? RESOLVE_BACKOFF_MS;
+  const maxRefused = Math.max(1, opts.maxRefused ?? RESOLVE_MAX_REFUSED);
   const done = new Set(
     opts.db.listExternalSubmissions(OUTCOME_BENCHMARK, 10_000).map((r) => r.file_sha256),
   );
@@ -468,9 +505,17 @@ export async function resolvePass(opts: ResolveOptions): Promise<{
     if (!meta || done.has(outcomeKey(meta.questionId))) continue;
     open.push({ row, meta, ...(meta.resolvesAt ? { resolvesAt: meta.resolvesAt } : {}) });
   }
+  const startMs = now().getTime();
+  // A question looked up recently is not fetched again until its recheck interval passes.
+  const unseen = open.filter(({ meta, resolvesAt }) => {
+    const at = opts.checks?.get(meta.questionId);
+    if (at === undefined) return true;
+    const due = resolvesAt !== undefined && Date.parse(resolvesAt) <= startMs;
+    return startMs - at >= (due ? RESOLVE_RECHECK_DUE_MS : RESOLVE_RECHECK_MS);
+  });
   const batch = resolveOrder(
-    open,
-    now().getTime(),
+    unseen,
+    startMs,
     opts.maxChecks ?? RESOLVE_MAX_CHECKS,
     opts.rotateMs ?? RESOLVE_ROTATE_MS,
   );
@@ -481,13 +526,31 @@ export async function resolvePass(opts: ResolveOptions): Promise<{
     failed: 0,
     pending: open.length,
     rateLimited: false,
+    refused: 0,
+    recent: open.length - unseen.length,
   };
+  // One question's lookup, retried with doubling backoff while it is refused.
+  const lookup = async (postId: number) => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return (await opts.client.post(postId)).question;
+      } catch (err) {
+        if (!isRateLimited(err) || attempt >= retries) throw err;
+        await sleep(backoffMs * 2 ** attempt);
+      }
+    }
+  };
+  let refusedInARow = 0;
   for (const { row, meta } of batch) {
     if (out.checked > 0 && paceMs > 0) await sleep(paceMs);
     out.checked++;
     try {
-      const q = (await opts.client.post(meta.postId)).question;
-      if (q?.status !== "resolved" || q.resolution == null) continue;
+      const q = await lookup(meta.postId);
+      refusedInARow = 0;
+      if (q?.status !== "resolved" || q.resolution == null) {
+        opts.checks?.set(meta.questionId, now().getTime());
+        continue;
+      }
       const score = outcomeScore(meta, q.resolution);
       const value = resolutionValue(q, q.resolution);
       const shared =
@@ -518,9 +581,20 @@ export async function resolvePass(opts: ResolveOptions): Promise<{
       log(`  q${meta.questionId} resolved · score ${score?.toFixed(3) ?? "n/a"}`);
     } catch (err) {
       if (isRateLimited(err)) {
+        // Still refused after its retries: leave this question for a later
+        // pass, slow down, and move on — stop only when refusals keep coming.
         out.rateLimited = true;
-        log(`  rate limited at q${meta.questionId}; the rest wait for the next pass`);
-        break;
+        out.refused++;
+        refusedInARow++;
+        paceMs = Math.min(Math.max(paceMs * 2, 1_000), RESOLVE_MAX_PACE_MS);
+        if (refusedInARow >= maxRefused) {
+          log(
+            `  rate limited at q${meta.questionId} (${refusedInARow} in a row); the rest wait for the next pass`,
+          );
+          break;
+        }
+        log(`  q${meta.questionId} rate limited after ${retries} retries; pausing ${paceMs} ms`);
+        continue;
       }
       out.failed++;
       log(`  q${meta.questionId} resolve failed: ${(err as Error).message.slice(0, 200)}`);

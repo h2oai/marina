@@ -74,6 +74,7 @@
     "futurex": "bun run scripts/futurex.ts",
     "mind2web2": "bun run scripts/mind2web2.ts",
     "metaculus": "bun run scripts/metaculus.ts",
+    "outcomes:settle": "bun run scripts/settle-outcomes.ts",
     "forecastbench": "bun run scripts/forecastbench.ts",
     "leaderboards": "bun run scripts/leaderboards.ts",
     "swebench": "bun run scripts/swebench.ts",

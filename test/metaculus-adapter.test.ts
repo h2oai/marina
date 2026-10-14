@@ -556,29 +556,131 @@ describe("metaculus: the resolve pass stays inside the rate limit", () => {
     }
   });
 
-  it("stops the pass at the first rate-limit refusal instead of failing every question", async () => {
+  const refusal = (id: number) =>
+    new Error(`metaculus GET /posts/${id}/ → 429: {"error":"error-1015"}`);
+
+  it("retries a refused question with doubling backoff and resolves it", async () => {
     const db = new MarinaDB(":memory:");
     try {
-      const qs = many(6);
+      const qs = many(3);
       await filed(db, qs);
-      let calls = 0;
+      let refusals = 0;
+      const pauses: number[] = [];
       const base = fixtureClient(qs.map((q, i) => post(i + 1, q)));
       const r = await resolvePass({
         client: {
           ...base,
           post: async (id) => {
-            calls++;
-            if (calls === 2) {
-              throw new Error(`metaculus GET /posts/${id}/ → 429: {"error":"error-1015"}`);
+            if (id === 1 && refusals < 2) {
+              refusals++;
+              throw refusal(id);
             }
             return base.post(id);
           },
         },
         db,
+        paceMs: 0,
+        backoffMs: 100,
+        sleep: async (ms) => {
+          pauses.push(ms);
+        },
+      });
+      expect(r).toMatchObject({ checked: 3, failed: 0, refused: 0, rateLimited: false });
+      expect(pauses).toEqual([100, 200]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("moves past a question still refused after its retries instead of ending the pass", async () => {
+    const db = new MarinaDB(":memory:");
+    try {
+      const qs = many(6);
+      await filed(db, qs);
+      const asked: number[] = [];
+      const base = fixtureClient(qs.map((q, i) => post(i + 1, q)));
+      const r = await resolvePass({
+        client: {
+          ...base,
+          post: async (id) => {
+            asked.push(id);
+            if (id === 2) throw refusal(id);
+            return base.post(id);
+          },
+        },
+        db,
+        retries: 1,
         sleep: async () => {},
       });
-      expect(r).toMatchObject({ checked: 2, failed: 0, rateLimited: true, pending: 6 });
-      expect(calls).toBe(2);
+      expect(r).toMatchObject({ checked: 6, failed: 0, refused: 1, rateLimited: true, pending: 6 });
+      expect(new Set(asked)).toEqual(new Set([1, 2, 3, 4, 5, 6]));
+    } finally {
+      db.close();
+    }
+  });
+
+  it("stops after consecutive refusals and slows down between them", async () => {
+    const db = new MarinaDB(":memory:");
+    try {
+      const qs = many(8);
+      await filed(db, qs);
+      const pauses: number[] = [];
+      const r = await resolvePass({
+        client: {
+          ...fixtureClient(qs.map((q, i) => post(i + 1, q))),
+          post: async (id) => {
+            throw refusal(id);
+          },
+        },
+        db,
+        retries: 0,
+        maxRefused: 3,
+        paceMs: 1_000,
+        sleep: async (ms) => {
+          pauses.push(ms);
+        },
+      });
+      expect(r).toMatchObject({ checked: 3, refused: 3, rateLimited: true, failed: 0 });
+      // The pause between lookups doubles after each refused question.
+      expect(pauses).toEqual([2_000, 4_000]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("does not look a question up again until its recheck interval passes", async () => {
+    const db = new MarinaDB(":memory:");
+    try {
+      const qs = many(4);
+      await filed(db, qs);
+      const seen = new Map<number, number>();
+      const checks = {
+        get: (id: number) => seen.get(id),
+        set: (id: number, at: number) => void seen.set(id, at),
+      };
+      let calls = 0;
+      const base = fixtureClient(qs.map((q, i) => post(i + 1, q)));
+      const client = {
+        ...base,
+        post: (id: number) => {
+          calls++;
+          return base.post(id);
+        },
+      };
+      const t0 = Date.parse("2026-10-14T00:00:00Z");
+      const pass = (at: number) =>
+        resolvePass({
+          client,
+          db,
+          checks,
+          paceMs: 0,
+          now: () => new Date(at),
+          sleep: async () => {},
+        });
+      expect(await pass(t0)).toMatchObject({ checked: 4, recent: 0 });
+      expect(await pass(t0 + 60 * 60_000)).toMatchObject({ checked: 0, recent: 4 });
+      expect(await pass(t0 + 7 * 60 * 60_000)).toMatchObject({ checked: 4, recent: 0 });
+      expect(calls).toBe(8);
     } finally {
       db.close();
     }
