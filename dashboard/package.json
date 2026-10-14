@@ -24,7 +24,7 @@
     "clsx": "^2.1.1",
     "dompurify": "^3.4.17",
     "lucide-react": "^1.56.0",
-    "motion": "^13.5.1",
+    "motion": "^14.2.0",
     "pdfjs-dist": "^6.4.299",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
