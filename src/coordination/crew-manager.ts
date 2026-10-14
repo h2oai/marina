@@ -425,15 +425,32 @@ export class CrewManager {
     // The formation's starting move, restated for THIS task with the lead
     // named — the activation brief alone fired it for the first task only.
     const startMove = dispatchStartMove(crew.formation, this.formationNames(crew));
-    this.channels.send(
-      crew.channelId!,
+    const dispatchPost = {
+      channelId: crew.channelId!,
+      senderName: sender?.name ?? "crew",
+      content: `[crew-task] ${message}${depositorLine}${startMove ? `\n${startMove}` : ""}`,
+    };
+    const missed = this.channels.send(
+      dispatchPost.channelId,
       sender?.id ?? "__crew_manager__",
-      sender?.name ?? "crew",
-      `[crew-task] ${message}${depositorLine}${startMove ? `\n${startMove}` : ""}`,
+      dispatchPost.senderName,
+      dispatchPost.content,
       // The flag members honour (`isCrewDispatch`): only this authorized path
       // sets it; a typed `[crew-task]` post does not wake a crew.
       { crewDispatch: true },
     );
+    // A member with no live connection would otherwise never see this
+    // dispatch as one: it reaches them later only as unflagged channel history.
+    // Keep it, flag intact, until they are connected (`redeliverMissed`).
+    if (missed.length > 0) {
+      this.missedDispatches.set(crew.id, {
+        post: dispatchPost,
+        targets: new Set(missed),
+        at: this.now(),
+      });
+    } else {
+      this.missedDispatches.delete(crew.id);
+    }
     this.postMediatorNudge(crew, (m, view) => m.onDispatch?.(view, message));
     this.armDepositFallback(crew, depositor);
     this.touch(crew);
@@ -446,6 +463,41 @@ export class CrewManager {
    *  timeout), which measurably un-stuck coordinators; one shot left 5/21
    *  habitat tasks unrecovered. */
   private static readonly DEPOSIT_FALLBACK_SCHEDULE_MS = [90_000, 150_000];
+
+  /** How long a dispatch waits for an absent member before it is dropped. */
+  static readonly MISSED_DISPATCH_TTL_MS = 6 * 60 * 60_000;
+  /** The latest dispatch per crew, with the members it has not reached yet. */
+  private missedDispatches = new Map<
+    CrewId,
+    {
+      post: { channelId: string; senderName: string; content: string };
+      targets: Set<EntityId>;
+      at: number;
+    }
+  >();
+
+  /**
+   * Deliver a dispatch, still flagged `crewDispatch`, to each member who was
+   * not connected when it was sent and is now (in their crew, still reading).
+   * Runs every engine tick; a member who left, a dissolved or completed crew,
+   * a deposit, a newer dispatch or the TTL ends the wait.
+   */
+  private redeliverMissed(now: number): void {
+    for (const [id, pending] of this.missedDispatches) {
+      const crew = this.crews.get(id);
+      if (crew?.state !== "active" || now - pending.at > CrewManager.MISSED_DISPATCH_TTL_MS) {
+        this.missedDispatches.delete(id);
+        continue;
+      }
+      for (const target of pending.targets) {
+        if (
+          this.channels.deliverTo(target, pending.post, { crewDispatch: true, redelivered: true })
+        )
+          pending.targets.delete(target);
+      }
+      if (pending.targets.size === 0) this.missedDispatches.delete(id);
+    }
+  }
   private depositFallbacks = new Map<CrewId, ReturnType<typeof setTimeout>[]>();
 
   /**
@@ -543,6 +595,8 @@ export class CrewManager {
       if (crew.poolId) this.syncCrewPoolGroup(crew);
       if (crew.state !== "active" || !crew.channelId) continue;
       this.clearDepositFallbacks(crew.id);
+      // Delivered: a member who was away is not woken to redo it.
+      this.missedDispatches.delete(crew.id);
       const snippet = content.length > 100 ? `${content.slice(0, 97)}…` : content;
       this.channels.send(
         crew.channelId,
@@ -683,6 +737,7 @@ export class CrewManager {
     const crew = this.requireCrew(id);
     if (crew.state === "dissolved") return;
     this.clearDepositFallbacks(id);
+    this.missedDispatches.delete(id);
     this.dispatchCounts.delete(id);
     // Final roster sync: the pool (and its group) outlive the crew row, and
     // the group keeps whoever was in the crew at the end.
@@ -1039,6 +1094,7 @@ export class CrewManager {
    */
   tick(now = this.now()): void {
     this.expireInvitations(now);
+    this.redeliverMissed(now);
     for (const [id, crew] of this.crews) {
       if (crew.state === "dissolved") {
         this.crews.delete(id);

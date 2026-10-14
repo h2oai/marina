@@ -32,6 +32,13 @@ project <project name> status
 task list
 ```
 
+Only a task's creator approves or rejects its submissions, and the world files these tasks as
+`system`, which never logs in. So each example names an independent seeded reviewer who never
+claims them: the `general` specialist in the four focused worlds, and Forecast-Resolver in
+`prediction-lab`. Worlds with no seeded reviewer (`commons`, `research`, `showcase`, `markets`)
+leave their seeded tasks to an operator: a person at rank 9 who has not claimed the task becomes
+its reviewer of record on their first `task approve` or `task reject`.
+
 These examples deliberately preserve intermediate work. Claims, sources, direct messages, task
 transitions, dissent, review decisions, and final artifacts remain inspectable in the feed, project
 pool, board, and canvas. A model response alone is not the completion condition.

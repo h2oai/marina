@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { TASK_STANDING_MAX } from "../../agent/standing";
-import type { TaskClaim, TaskManager } from "../../coordination/task-manager";
+import {
+  SYSTEM_TASK_CREATOR,
+  type TaskClaim,
+  type TaskManager,
+} from "../../coordination/task-manager";
 import { parseTaskNodeType, TASK_NODE_TYPE_MEANING } from "../../coordination/task-node-type";
 import { harnessDecisionProvider } from "../../decisions/engines";
 import type { Evidence } from "../../decisions/evidence";
@@ -26,6 +30,7 @@ import {
 } from "../../net/ansi";
 import type { JudgeObservationInput } from "../../persistence/db-decisions";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
+import { isOperatorPrincipal } from "../challenges";
 import { mayActOn, ownershipRefusal } from "../ownership";
 import { canonicalSub, parseModifiers, unknownSubcommand } from "../parse-input";
 
@@ -108,6 +113,17 @@ export function taskCommand(
     handler: (ctx: RoomContext, input) => {
       const self = ctx.getEntity(input.entity);
       if (!self) return;
+      // A task the world seeded as `system` has nobody to review it unless a
+      // seeded resident was made its reviewer; an operator (a person at rank 9)
+      // who has not claimed it becomes the reviewer of record when they review
+      // a submission (`TaskManager.adoptSystemTask`).
+      const adoptIfOperator = (taskId: number): void => {
+        if (!isOperatorPrincipal(self)) return;
+        const claims = tasks.getClaims(taskId);
+        if (!claims.some((c) => c.status === "submitted")) return;
+        if (claims.some((c) => c.entityId === self.id || c.entityName === self.name)) return;
+        tasks.adoptSystemTask(taskId, { id: self.id, name: self.name });
+      };
 
       const tokens = input.tokens;
       // `task show/view <id>` normalize onto `info`; `task ls` onto `list`.
@@ -602,6 +618,7 @@ export function taskCommand(
             ctx.send(input.entity, `Player "${claimantName}" not found.`);
             return;
           }
+          adoptIfOperator(id);
           const approved = tasks.approve(id, target.id, input.entity);
           // Tell the claimant where they are now (a re-login mints a new entity id).
           const notify = live?.id ?? target.id;
@@ -623,7 +640,9 @@ export function taskCommand(
           } else {
             ctx.send(
               input.entity,
-              `Cannot approve. You may not be the creator or the submission doesn't exist.`,
+              tasks.get(id)?.creatorName === SYSTEM_TASK_CREATOR
+                ? `Cannot approve. Task #${id} was seeded by the world; an operator (a person at rank 9) who has not claimed it reviews its submissions.`
+                : `Cannot approve. You may not be the creator or the submission doesn't exist.`,
             );
           }
           return;
@@ -642,6 +661,7 @@ export function taskCommand(
             ctx.send(input.entity, `Player "${claimantName}" not found.`);
             return;
           }
+          adoptIfOperator(id);
           if (tasks.rejectSubmission(id, target.id, input.entity)) {
             ctx.send(input.entity, `Rejected ${target.name}'s submission for task #${id}.`);
             ctx.send(target.id, `Your submission for task #${id} was rejected.`);
@@ -655,7 +675,9 @@ export function taskCommand(
           } else {
             ctx.send(
               input.entity,
-              `Cannot reject. You may not be the creator or the submission doesn't exist.`,
+              tasks.get(id)?.creatorName === SYSTEM_TASK_CREATOR
+                ? `Cannot reject. Task #${id} was seeded by the world; an operator (a person at rank 9) who has not claimed it reviews its submissions.`
+                : `Cannot reject. You may not be the creator or the submission doesn't exist.`,
             );
           }
           return;

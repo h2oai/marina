@@ -57,7 +57,9 @@ export class ChannelManager {
       message: string,
       tag?: string,
       metadata?: Record<string, unknown>,
-    ) => void,
+      // `false` = the target has no live connection (the perception was not
+      // delivered); any other return counts as delivered.
+    ) => unknown,
   ) {}
 
   /** Register a listener invoked on every send(). Returns an unsubscribe function. */
@@ -149,33 +151,29 @@ export class ChannelManager {
     senderName: string,
     content: string,
     extraMeta?: Record<string, unknown>,
-  ): void {
+  ): EntityId[] {
     const id = this.db.addChannelMessage(channelId, senderId, senderName, content);
-    this.deliverStored(
+    return this.deliverStored(
       { id, channelId, senderId, senderName, content, createdAt: Date.now() },
       extraMeta,
     );
   }
 
-  /** Deliver an already committed canonical channel message without recording it twice. */
-  deliverStored(message: ChannelMessage, extraMeta?: Record<string, unknown>): void {
+  /**
+   * Deliver an already committed canonical channel message without recording
+   * it twice. Returns the readers it could not reach (no live connection), so a
+   * caller whose message must not be missed can deliver it again later.
+   */
+  deliverStored(message: ChannelMessage, extraMeta?: Record<string, unknown>): EntityId[] {
     const { channelId, senderId, senderName, content } = message;
+    const missed: EntityId[] = [];
+    const channelName = this.db.getChannel(channelId)?.name ?? channelId;
 
     // Deliver to online members
-    const members = this.db.getChannelMembers(channelId);
-    const channel = this.db.getChannel(channelId);
-    const channelName = channel?.name ?? channelId;
-
-    for (const member of members) {
+    for (const member of this.db.getChannelMembers(channelId)) {
       if (member.entity_id !== senderId && member.can_read) {
-        this.sendToEntity(
-          member.entity_id as EntityId,
-          fmtChannel(channelName, senderName, content),
-          channelName,
-          // extraMeta FIRST so the canonical channel/senderName/content below
-          // always win — a caller cannot spoof the authoritative message fields.
-          { ...extraMeta, channel: channelName, senderName, content },
-        );
+        const target = member.entity_id as EntityId;
+        if (!this.deliverFormatted(target, channelName, message, extraMeta)) missed.push(target);
       }
     }
 
@@ -187,6 +185,42 @@ export class ChannelManager {
         logger.warn("channels", "message listener threw", { error: (err as Error).message });
       }
     }
+    return missed;
+  }
+
+  /**
+   * Deliver one stored message to one reader, formatted as a live channel
+   * post. Fires no listeners and records nothing. Returns false when the
+   * reader is not connected or no longer reads the channel.
+   */
+  deliverTo(
+    target: EntityId,
+    message: Pick<ChannelMessage, "channelId" | "senderName" | "content">,
+    extraMeta?: Record<string, unknown>,
+  ): boolean {
+    const { channelId } = message;
+    const reader = this.db.getChannelMembers(channelId).find((m) => m.entity_id === target);
+    if (!reader?.can_read) return false;
+    const channelName = this.db.getChannel(channelId)?.name ?? channelId;
+    return this.deliverFormatted(target, channelName, message, extraMeta);
+  }
+
+  private deliverFormatted(
+    target: EntityId,
+    channelName: string,
+    message: Pick<ChannelMessage, "senderName" | "content">,
+    extraMeta?: Record<string, unknown>,
+  ): boolean {
+    const { senderName, content } = message;
+    const delivered = this.sendToEntity(
+      target,
+      fmtChannel(channelName, senderName, content),
+      channelName,
+      // extraMeta FIRST so the canonical channel/senderName/content below
+      // always win — a caller cannot spoof the authoritative message fields.
+      { ...extraMeta, channel: channelName, senderName, content },
+    );
+    return delivered !== false;
   }
 
   getHistory(channelId: string, limit = 20): ChannelMessage[] {
