@@ -25,6 +25,18 @@ export interface GuideNote {
   content: string;
   importance: number;
   type: string;
+  /**
+   * Stable identity for this note across releases. Re-seeding an edited note
+   * retires the prior text for the same key instead of appending a second
+   * note. Defaults to a slug of the note's leading topic (see `guideNoteKey`).
+   */
+  key?: string;
+  /**
+   * `people` marks onboarding written for a human at a client (UI steps,
+   * "send this prompt"). Seeding prefixes it with `HUMAN_ONBOARDING_TAG` so
+   * agent-facing recall can skip it. Default: everyone.
+   */
+  audience?: "people";
 }
 
 export interface WorldDefinition {

@@ -5,6 +5,7 @@ import { tryLog } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import { ensureInstitutionalSpace } from "../memory/institutional";
 import type { MarinaDB } from "../persistence/database";
+import { type EntityRank, RANK_NAMES } from "../types";
 import type { GuideNote } from "./world-definition";
 
 const POOL_NAME = "guide";
@@ -17,10 +18,12 @@ const AUTHOR = "Guide";
  * outside the evolve world. Agents reach them via `pool guide recall <topic>`,
  * `ask <topic>`, or the `evolve` command. Keep them terse and recall-friendly
  * (lead with the keywords an agent would search: evolve, improve, skill,
- * benchmark, recall).
+ * benchmark, recall). Every entry has a stable `key`: editing the text
+ * supersedes the old note on the next boot (see `seedGuidePool`).
  */
 export const PLATFORM_GUIDE_NOTES: GuideNote[] = [
   {
+    key: "platform:forecast",
     type: "skill",
     importance: 8,
     content:
@@ -32,28 +35,29 @@ export const PLATFORM_GUIDE_NOTES: GuideNote[] = [
       "limited per entity; needs a provider key.",
   },
   {
-    type: "skill",
-    importance: 8,
+    key: "platform:arena",
+    type: "fact",
+    importance: 4,
     content:
-      "arena — improve, do better, climb the leaderboard in the Social Simulation Arena (a live " +
-      "forecasting benchmark, CRPS / per-round skill). Works in EVERY world; do not switch worlds " +
-      "(a new DB splits the submission ledger). `arena`, `arena rounds`, `arena show <round_id>` " +
-      "read; `arena discover` backtests signals, `arena evaluate discovered` scores them, `arena " +
-      "shadow run due forecaster:discovered` records forecasts, `arena shadow score` grades them. " +
-      "Operator loop: `bun run arena evaluate`, `bun run arena shadow`, then `bun run arena " +
-      "submit due` files the submission. See docs/guides/arena.md.",
+      "arena — read-only status of the Social Simulation Arena (an external forecasting " +
+      "benchmark): `arena`, `arena rounds`, `arena show <round_id>`. Filing is an operator step " +
+      "outside the world.",
   },
   {
+    key: "platform:evolve-loop",
     type: "skill",
     importance: 9,
     content:
-      "evolve / self-improvement loop: get better, not just busy. Run `evolve` to see " +
-      "where you stand and your single next step; `evolve loop` explains the full cycle. " +
-      "The loop: (1) Baseline — measure where you are. (2) Change one approach — a sharper " +
-      "note, a mind-room, a better recall strategy. (3) Re-measure and compare. (4) Bank what " +
-      "worked as a reusable skill. (5) Reflect to consolidate. Keep only changes that help.",
+      "evolve / self-improvement loop: get better, not just busy. `evolve` shows where you stand " +
+      "and one next step; `evolve loop` explains the cycle. (1) Measure where you are. (2) " +
+      "Change one thing — a sharper note, a better recall query, a stored skill, or a successor " +
+      "role: you never edit the role you run on; `role create <role>-v2` and `agent spawn " +
+      "<name> role <role>-v2` start an improved iteration. (3) Compare with evidence — " +
+      "`evolve trial` runs both roles in a child world, `evolve decide` records the verdict. " +
+      "(4) Keep what won: `skill store`. (5) `reflect` to consolidate.",
   },
   {
+    key: "platform:skills",
     type: "skill",
     importance: 8,
     content:
@@ -64,6 +68,7 @@ export const PLATFORM_GUIDE_NOTES: GuideNote[] = [
       "Skills outlive you — they're the starting point for whoever comes next.",
   },
   {
+    key: "platform:pool-recall",
     type: "fact",
     importance: 7,
     content:
@@ -74,26 +79,29 @@ export const PLATFORM_GUIDE_NOTES: GuideNote[] = [
       "`lessons <topic> domain:benchmark`.",
   },
   {
+    key: "platform:behavior-surfaces",
     type: "fact",
     importance: 8,
     content:
       "behavior surfaces — choose the smallest durable surface that fits. Use roles for enduring " +
       "agent identity and duty; traits for reusable behavior atoms; skills for repeatable " +
       "procedures; guide notes for stable system orientation; project pools for local findings " +
-      "and handoffs; tradition pools for recurring patterns. Preview roles with " +
-      "`role view <name> goal <text>`, check shaping risks with `role lint` / `trait lint`, and " +
-      "bank reliable workflows with `skill store`.",
+      "and handoffs. Preview a role with `role view <name> goal <text>`, check shaping risks " +
+      "with `role lint <name>` / `trait lint <name>`, and bank reliable workflows with " +
+      "`skill store`.",
   },
   {
+    key: "platform:communication",
     type: "fact",
     importance: 8,
     content:
-      "real-time communication — humans and agents share one live world. Before working alone, " +
-      "run `brief social` or `who`; ask directly with `tell <name> <question>`; join shared " +
-      "channels with `channel join general`; broadcast findings with `channel send <name> " +
-      "<message>`. Communication is productive action when it unblocks work.",
+      "real-time communication — humans and agents share one live world. `who` and `brief " +
+      "social` show who is here; ask a person directly with `tell <name> <question>`. Post to a " +
+      "channel (`channel send <name> <message>`) only when it changes someone's work: a " +
+      "result, a blocker, a handoff. No acknowledgements or status chatter.",
   },
   {
+    key: "platform:faster-loop",
     type: "skill",
     importance: 9,
     content:
@@ -102,19 +110,11 @@ export const PLATFORM_GUIDE_NOTES: GuideNote[] = [
       "a crew, activate or read the crew channel with `crew dispatch <name> <message>` or " +
       "`channel history crew:<id>`; if it points at a peer, ask directly with `tell <name> " +
       "<question>`. When the result matters, finish the loop with a note, pool deposit, " +
-      "crew artifact, task submit, or intent complete.",
+      "crew artifact, task submit, or intent complete. With nothing open, rest: " +
+      "`memory set rest <why>`.",
   },
   {
-    type: "fact",
-    importance: 7,
-    content:
-      "Two benchmark systems — don't confuse them. (1) Evolve-world quests are in-world " +
-      "capability gyms (navigation, retrieval, memory, self-modification, …): `quest start " +
-      "<name>`, finish with `quest complete`, review with `score`. Rank 0 — practice here. " +
-      "(2) The `benchmark` command runs academic evals (mmlu-pro, aime, …) against a model: " +
-      "`benchmark run <name>`. Rank 4 — it burns real tokens. `evolve loop` summarizes both.",
-  },
-  {
+    key: "platform:becoming",
     type: "fact",
     importance: 8,
     content:
@@ -127,6 +127,7 @@ export const PLATFORM_GUIDE_NOTES: GuideNote[] = [
       "ceiling dial; refusals name the path.",
   },
   {
+    key: "platform:decision",
     type: "skill",
     importance: 7,
     content:
@@ -140,23 +141,181 @@ export const PLATFORM_GUIDE_NOTES: GuideNote[] = [
 ];
 
 /**
- * Seed the `guide` memory pool with knowledge about Marina systems.
- * Idempotent — skips if the pool already has notes.
+ * Leading tag on onboarding written for a person at a client (UI steps,
+ * "send this prompt to Host"). Agent-facing recall of the guide pool can skip
+ * notes that start with it, and a reader who sees it knows the note is not an
+ * instruction to them. Declared with `GuideNote.audience: "people"`.
  */
-export function seedGuidePool(db: MarinaDB, notes: GuideNote[]): void {
+export const HUMAN_ONBOARDING_TAG = "[for people]";
+
+/** True for a guide note written for a person at a client, not for an agent. */
+export function isHumanOnboardingNote(content: string): boolean {
+  return content.startsWith(HUMAN_ONBOARDING_TAG);
+}
+
+/** The subset of a command definition a requirement phrase is built from. */
+export interface CommandRequirement {
+  name: string;
+  aliases?: readonly string[];
+  minRank?: number;
+  gate?: string;
+}
+
+/** `rank 4 (builder)` — rank names come from RANK_NAMES, never a hand-kept ladder. */
+export function rankLabel(rank: number): string {
+  const name = RANK_NAMES[rank as EntityRank];
+  return name ? `rank ${rank} (${name})` : `rank ${rank}`;
+}
+
+/** What it takes to run `command`, read from its live definition. */
+export function describeRequirement(command: string, defs?: readonly CommandRequirement[]): string {
+  const def = defs?.find((d) => d.name === command || d.aliases?.includes(command));
+  if (!def) return `what \`help ${command}\` lists`;
+  if (def.gate) return `the ${def.gate} gate (see \`standing\`)`;
+  return (def.minRank ?? 0) > 0 ? rankLabel(def.minRank ?? 0) : "no rank";
+}
+
+/**
+ * Expand `{{requires:<command>}}` in guide text from the live command
+ * definitions, so a note never states a rank floor or gate the router does not
+ * enforce. Without definitions it points at `help <command>`.
+ */
+export function expandGuideContent(content: string, defs?: readonly CommandRequirement[]): string {
+  return content.replace(/\{\{requires:([a-z][a-z0-9-]*)\}\}/g, (_m, command: string) =>
+    describeRequirement(command, defs),
+  );
+}
+
+/** The text a guide note is stored with: requirements expanded, audience tagged. */
+export function renderGuideNote(note: GuideNote, defs?: readonly CommandRequirement[]): string {
+  const body = expandGuideContent(note.content, defs);
+  return note.audience === "people" ? `${HUMAN_ONBOARDING_TAG} ${body}` : body;
+}
+
+/**
+ * Stable key for a guide note: its explicit `key`, else a slug of its leading
+ * topic (the text before the first dash, colon or sentence end).
+ */
+export function guideNoteKey(note: GuideNote): string {
+  if (note.key) return note.key;
+  const head = note.content.split(/\s[—–-]\s|:\s|\.\s/)[0] ?? note.content;
+  const slug = head
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return `world:${slug || "note"}`;
+}
+
+/** Core-memory owner holding `<note key> → <guide note id>`; its history is the audit trail. */
+export const GUIDE_SEED_OWNER = "guide:seed";
+const RETIRED_PREFIX = "retired:";
+
+export interface GuideSeedResult {
+  added: number;
+  kept: number;
+  retired: number;
+}
+
+/** One seeded note: a stable key plus the exact text it is stored with. */
+export interface SeedNoteSpec {
+  key: string;
+  content: string;
+  importance: number;
+  type?: string;
+}
+
+/**
+ * Reconcile the notes `author` seeded into a pool with the current
+ * definitions. A definition whose exact text is present keeps that note;
+ * otherwise the text is added. Every active `author` note no definition
+ * claims — an edited or removed seed — is retired through `note delete`'s
+ * canonical path (the record history keeps the old text; nothing is
+ * hard-deleted). `<key> → <note id>` is kept in core memory under `owner`, so
+ * each change of a key's note is in that key's history. Notes by any other
+ * author are never touched, so `author` must be a name only the seed writes as.
+ */
+export function reconcileSeedNotes(
+  db: MarinaDB,
+  opts: { poolId: string; author: string; owner: string; notes: readonly SeedNoteSpec[] },
+): GuideSeedResult {
+  const result: GuideSeedResult = { added: 0, kept: 0, retired: 0 };
+  const active = db
+    .getPoolNotes(opts.poolId, Math.max(1_000, db.countPoolNotes(opts.poolId)))
+    .filter(
+      (note) => note.entity_name === opts.author && note.verification_status !== "superseded",
+    );
+  // Oldest first, so an existing note keeps its id across boots.
+  const byContent = new Map<string, number[]>();
+  for (const note of [...active].sort((a, b) => a.id - b.id)) {
+    const ids = byContent.get(note.content) ?? [];
+    ids.push(note.id);
+    byContent.set(note.content, ids);
+  }
+  const mapping = new Map(
+    db.listCoreMemory(opts.owner).map((row) => [row.key, row.value] as const),
+  );
+
+  const claimed = new Set<number>();
+  for (const spec of opts.notes) {
+    let id = byContent.get(spec.content)?.find((candidate) => !claimed.has(candidate));
+    if (id !== undefined) {
+      result.kept++;
+    } else {
+      id = db.addPoolNote(opts.poolId, opts.author, spec.content, spec.importance, spec.type, {
+        skipDedup: true,
+      });
+      result.added++;
+    }
+    claimed.add(id);
+    if (mapping.get(spec.key) !== String(id)) db.setCoreMemory(opts.owner, spec.key, String(id));
+    mapping.delete(spec.key);
+  }
+
+  // Whatever a current definition did not claim is earlier seed text: retire it.
+  for (const note of active) {
+    if (claimed.has(note.id)) continue;
+    if (db.deleteNote(note.id, opts.author)) result.retired++;
+  }
+  for (const [key, value] of mapping) {
+    if (!value.startsWith(RETIRED_PREFIX))
+      db.setCoreMemory(opts.owner, key, `${RETIRED_PREFIX}${value}`);
+  }
+  return result;
+}
+
+/**
+ * Seed the `guide` memory pool with the platform notes plus the world's own.
+ *
+ * Re-seeding reconciles rather than appends. Every seeded note has a stable
+ * key (`guideNoteKey`); when a key's text changes, the new text is added and
+ * the old note is retired, and a `Guide`-authored note no current definition
+ * claims (an edited or removed note from an earlier release, or another
+ * world's notes in a reused database) is retired too. Retirement is
+ * `note delete`'s canonical path: the record history keeps the old text and
+ * nothing is hard-deleted; key → note changes are kept in core-memory history
+ * under `GUIDE_SEED_OWNER`. Notes other authors added to the pool are never
+ * touched.
+ */
+export function seedGuidePool(
+  db: MarinaDB,
+  notes: GuideNote[],
+  opts: { commands?: readonly CommandRequirement[] } = {},
+): GuideSeedResult {
+  const empty: GuideSeedResult = { added: 0, kept: 0, retired: 0 };
   // Platform notes are always merged in front of the world's own notes, so the
   // self-improvement loop is discoverable in every world — even one that
   // declares no guide notes of its own.
   const all = [...PLATFORM_GUIDE_NOTES, ...notes];
-  if (all.length === 0) return;
 
   let pool = db.getMemoryPool(POOL_NAME);
   if (!pool) {
+    if (all.length === 0) return empty;
     const id = `pool_${POOL_NAME}_${Date.now()}`;
     db.createMemoryPool(id, POOL_NAME, AUTHOR);
     pool = db.getMemoryPool(POOL_NAME);
   }
-  if (!pool) return;
+  if (!pool) return empty;
 
   // The guide pool's durable twin: an institutional, world-readable memory
   // space owned by the `guide` system principal. Ratified guide notes and
@@ -166,12 +325,29 @@ export function seedGuidePool(db: MarinaDB, notes: GuideNote[]): void {
     ensureInstitutionalSpace(db, POOL_NAME);
   });
 
-  // Idempotent per note, not per pool. Existing worlds should inherit new
-  // platform guide notes without duplicating older seed content on every boot.
-  const existing = new Set(db.getPoolNotes(pool.id, 1_000).map((note) => note.content));
-
-  for (const note of all) {
-    if (existing.has(note.content)) continue;
-    db.addPoolNote(pool.id, AUTHOR, note.content, note.importance, note.type);
+  const seenKeys = new Map<string, number>();
+  const specs = all.map((note) => {
+    const base = guideNoteKey(note);
+    const count = (seenKeys.get(base) ?? 0) + 1;
+    seenKeys.set(base, count);
+    return {
+      key: count === 1 ? base : `${base}~${count}`,
+      content: renderGuideNote(note, opts.commands),
+      importance: note.importance,
+      type: note.type,
+    };
+  });
+  const result = reconcileSeedNotes(db, {
+    poolId: pool.id,
+    author: AUTHOR,
+    owner: GUIDE_SEED_OWNER,
+    notes: specs,
+  });
+  if (result.retired > 0) {
+    new Logger().info(
+      "seed",
+      `Guide pool: retired ${result.retired} earlier seed note(s), added ${result.added}`,
+    );
   }
+  return result;
 }

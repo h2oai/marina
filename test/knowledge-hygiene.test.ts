@@ -73,6 +73,14 @@ describe("auditKnowledgeNotes — claim + staleness detection", () => {
 
 describe("auditKnowledgeNotes — command-reference detection", () => {
   const known = ["task", "goto", "evolve", "benchmark", "project", "pool", "build"];
+  // Subcommands come from each command's declared usage forms, never a hand-kept list.
+  const commands = [
+    { name: "task", usage: ["task claim <id>", "task heartbeat <id>", "task recover [args]"] },
+    { name: "project", usage: ["project <name> join", "project <name> status", "project list"] },
+    { name: "pool", usage: ["pool <name> recall", "pool <name> add <text>", "pool create <name>"] },
+    { name: "note", usage: ["note <text>", "note link <id1> <id2> <rel>"] },
+    { name: "memory", usage: ["memory kv set <key> <value>"] },
+  ];
 
   it("does not flag room ids, env assignments, pool names, identifiers or bare names", () => {
     const report = auditKnowledgeNotes(
@@ -103,15 +111,37 @@ describe("auditKnowledgeNotes — command-reference detection", () => {
       [
         note("Leases: use `task heartbeat <id>` while active; `task recover <id>` reopens."),
         note("Debut path: `project Debut Tour join` then `project Debut Tour status`."),
+        note("Free text: `note The lifecycle room repeats` and `pool guide recall evolve`."),
+        note("Core memory still accepts `memory set goal <text>` (canonical: `memory kv set`)."),
       ],
-      { knownCommands: known },
+      { commands },
     );
     expect(report.staleCommands).toEqual([]);
     const bad = auditKnowledgeNotes([note("Then `project Debut Tour frobnicate`.")], {
-      knownCommands: known,
+      commands,
     });
     expect(bad.staleCommands).toHaveLength(1);
     expect(bad.staleCommands[0]?.detail).toContain("unknown project action");
+  });
+
+  it("flags a subcommand no usage form declares, and an unknown pool action", () => {
+    const report = auditKnowledgeNotes(
+      [note("Run `task set 3 dependsOn 1,2`."), note("Then `pool guide frobnicate x`.")],
+      { commands },
+    );
+    expect(report.staleCommands.map((f) => f.detail)).toEqual([
+      'unknown task action "set" in "task set 3 dependsOn 1,2"',
+      'unknown pool action "frobnicate" in "pool guide frobnicate x"',
+    ]);
+  });
+
+  it("accepts room commands passed as names, and skips detection with no vocabulary", () => {
+    const text = note("Submit with `forge submit bench_greet`.");
+    expect(auditKnowledgeNotes([text], { commands }).staleCommands).toHaveLength(1);
+    expect(
+      auditKnowledgeNotes([text], { commands, knownCommands: ["forge"] }).staleCommands,
+    ).toEqual([]);
+    expect(auditKnowledgeNotes([text]).staleCommands).toEqual([]);
   });
 });
 

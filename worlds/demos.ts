@@ -24,14 +24,19 @@
  *   MARINA_WORLD=demos bun run start
  */
 
+import * as safetyGates from "../src/engine/safety-gates";
 import type { MarinaDB } from "../src/persistence/database";
 import type { Entity, RoomId, RoomModule } from "../src/types";
-import { seedTraitsAndRoles } from "./seed";
+import { rankLabel } from "../src/world/seed-guide";
 import type { GuideNote, QuestDef, WorldDefinition } from "../src/world/world-definition";
+import { seedTraitsAndRoles } from "./seed";
 
+/** `build`'s command floor (src/engine/commands/build.ts `minRank`). */
+const MAKER_RANK = 4;
+
+import bridgeRoom from "./demos/bridge";
 import lobbyRoom from "./demos/lobby";
 import workshopRoom from "./demos/workshop";
-import bridgeRoom from "./demos/bridge";
 
 // ─── Quests ────────────────────────────────────────────────────────────────
 
@@ -147,9 +152,9 @@ const GUIDE_NOTES: GuideNote[] = [
   },
   {
     content:
-      "The Maker agent is pre-registered at Architect rank (3) so it can write and " +
-      "compile room code. In normal operation, agents earn rank through activity. " +
-      "The rank system: Guest (0) < Citizen (1) < Builder (2) < Architect (3) < Admin (4).",
+      `The Maker agent is pre-registered at ${rankLabel(MAKER_RANK)} with the world.code gate, ` +
+      "which building rooms and compiling room code need. Anyone else earns capability: " +
+      "`standing` shows the path to every gate.",
     importance: 6,
     type: "fact",
   },
@@ -169,14 +174,19 @@ const GUIDE_NOTES: GuideNote[] = [
 function seed(db: MarinaDB): void {
   seedTraitsAndRoles(db);
 
-  // Pre-register the Maker agent at Architect rank so it can build code/reload.
-  // Name is the durable identity (used by getUserByName above); the id is
-  // generated fresh on first seed to avoid collisions if this world is loaded
-  // into a database that already has other users.
-  const existing = db.getUserByName("Maker");
-  if (!existing) {
-    db.createUser({ id: `user_${crypto.randomUUID()}`, name: "Maker", rank: 3 });
+  // Pre-register the Maker agent with what the demo exercises: `build` (its
+  // command floor) plus the world.code gate for `build code`/`reload`. Name is
+  // the durable identity; the id is generated fresh on first seed to avoid
+  // collisions if this world is loaded into a database that already has other
+  // users. A database seeded at the old rank 3 is raised to the floor.
+  let maker = db.getUserByName("Maker");
+  if (!maker) {
+    db.createUser({ id: `user_${crypto.randomUUID()}`, name: "Maker", rank: MAKER_RANK });
+    maker = db.getUserByName("Maker");
+  } else if (maker.rank < MAKER_RANK) {
+    db.updateUserRank(maker.id, MAKER_RANK);
   }
+  if (maker) safetyGates.grant(db, maker.id, "world.code");
 
   // Create demos channel for federation demo
   try {

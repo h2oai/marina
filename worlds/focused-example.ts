@@ -4,7 +4,14 @@
 import type { MarinaDB } from "../src/persistence/database";
 import type { RoomId, RoomModule } from "../src/types";
 import type { GuideNote, WorldDefinition } from "../src/world/world-definition";
-import { seedBoard, seedChannel, seedProject, seedSystemAgent, seedTraitsAndRoles } from "./seed";
+import {
+  assignSeededTaskReviewer,
+  seedBoard,
+  seedChannel,
+  seedProject,
+  seedSystemAgent,
+  seedTraitsAndRoles,
+} from "./seed";
 
 export interface FocusedExampleSpec {
   slug: string;
@@ -138,8 +145,19 @@ export function focusedExampleWorld(spec: FocusedExampleSpec): WorldDefinition {
         ...spec.project,
         poolNotes: spec.project.principles.map((content) => ({ content, importance: 9 })),
       });
+      // The `general` agent (judge, editor, lead, validator) reviews the seeded
+      // tasks: only a task's creator can approve it, and `system` never logs in.
+      const reviewer = spec.agents.find((agent) => agent.role === "general")?.name;
+      if (reviewer) assignSeededTaskReviewer(db, spec.project.name, reviewer);
       const model = process.env.MARINA_CREW_MODEL ?? "marina/default";
-      for (const agent of spec.agents) seedSystemAgent(db, { ...agent, model });
+      for (const agent of spec.agents) {
+        const goal =
+          agent.name === reviewer
+            ? `${agent.goal} You review ${spec.project.name} tasks and never claim them: ` +
+              "`task approve <id> <claimant>` or `task reject <id> <claimant>` with the exact gap."
+            : agent.goal;
+        seedSystemAgent(db, { ...agent, goal, model });
+      }
     },
   };
 }

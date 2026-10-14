@@ -546,11 +546,15 @@ export class AuthCoordinator {
     // LOCAL trust profile: this instance is one operator's own machine and
     // binds loopback only (main.ts refuses `local` on ANY non-loopback bind —
     // sign-in does not lift that — unless MARINA_ALLOW_INSECURE_PUBLIC=true).
-    // Every loopback login — the human and the agents they run — is the
-    // operator, so it is sovereign without MARINA_ADMINS. A remote connection
-    // (only possible under that explicit insecure ack) gets nothing here.
+    // A loopback login by a person is the operator, so it is sovereign
+    // without MARINA_ADMINS. The agents they run (internal connections) are
+    // residents, not the operator: local-ungated already lifts rank floors
+    // and gates for them, and a stored sovereign rank would outlive the
+    // profile and let residents approve each other's held actions. A remote
+    // connection (only possible under that explicit insecure ack) gets nothing.
     if (isLocalUngated()) {
-      if (isLoopbackConnection(this.host.connections.get(connId))) this.grantSovereign(entity);
+      const conn = this.host.connections.get(connId);
+      if (isLoopbackConnection(conn) && !conn?.internal) this.grantSovereign(entity);
       return;
     }
 

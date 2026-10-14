@@ -458,3 +458,7 @@ export const DURABLE_KEY_CACHE_MAX = 5_000;
 /** Ids per `WHERE id IN (…)` chunk in `getNotes` — comfortably under SQLite's
  *  default 999/32766 bound-parameter limit. */
 export const NOTES_BATCH_CHUNK_SIZE = 500;
+
+/** Rank floor for `benchmark run` (every run spends real tokens). Guide text
+ *  quotes it through `rankLabel`, so the two never drift. */
+export const BENCHMARK_RUN_MIN_RANK = 4;

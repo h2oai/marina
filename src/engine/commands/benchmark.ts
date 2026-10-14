@@ -63,8 +63,10 @@ import {
   purgeBenchmarkContentNotes,
   retireOutcomeNotesForRun,
 } from "../benchmark-runner";
+import { BENCHMARK_RUN_MIN_RANK } from "../constants";
 import { recentResolutions } from "../default-resolution";
 import { extractModifiers, parseModifiers, resolveMultiWordName } from "../parse-input";
+import { rankName } from "../permissions";
 import { rankFloorRefusal } from "../rank-floor";
 import { checkRoleEdit } from "../role-guard";
 import { formatAge } from "./format-duration";
@@ -414,8 +416,8 @@ export function benchmarkCommand(deps: {
           }
           const runFloor = rankFloorRefusal(
             entity,
-            4,
-            "benchmark run requires rank 4 (builder). Every run burns real tokens — earn the rank via competence.",
+            BENCHMARK_RUN_MIN_RANK,
+            `benchmark run requires rank ${BENCHMARK_RUN_MIN_RANK} (${rankName(BENCHMARK_RUN_MIN_RANK)}). Every run burns real tokens — earn the rank via competence.`,
           );
           if (runFloor) {
             ctx.send(input.entity, runFloor);

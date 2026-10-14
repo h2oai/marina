@@ -11,6 +11,7 @@ import type { CommandDef, Entity, RoomContext } from "../../types";
 import { RECRUIT_MIN_STANDING } from "../constants";
 import { getRank } from "../permissions";
 import { rankFloorRefusal } from "../rank-floor";
+import { isLocalUngated } from "../trust-profile";
 
 /** Runtime states in which a running agent can be pulled into a crew. */
 const RECRUITABLE_STATES = new Set<AgentStatus["state"]>(["autonomous", "connected", "idle"]);
@@ -36,7 +37,8 @@ function recruitPermission(
   eid: string,
   caller: Entity,
 ): { ok: boolean; reason?: string } {
-  if (getRank(caller) >= 2) return { ok: true };
+  // The operator's local instance lifts rank floors, as `rankFloorRefusal` does.
+  if (getRank(caller) >= 2 || isLocalUngated()) return { ok: true };
   if (deps.db && getStanding(deps.db, eid) >= RECRUIT_MIN_STANDING) return { ok: true };
   const have = deps.db ? getStanding(deps.db, eid).toFixed(1) : "n/a";
   return {

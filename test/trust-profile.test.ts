@@ -193,6 +193,34 @@ describe("trust profile — LOCAL removes friction, SHARED keeps it", () => {
     expect(local.out).not.toMatch(/must be at least|Not yet/);
   });
 
+  it("under LOCAL the operator is sovereign but the agents it runs are not", () => {
+    using _processState = scopeProcessState();
+
+    setTrustProfile("local");
+    const token = "internal-test-token";
+    const engine = new Engine({
+      startRoom: roomId("test/start"),
+      tickInterval: 60_000,
+      db,
+      internalAuthToken: token,
+    });
+    engine.registerRoom(roomId("test/start"), makeTestRoom({ short: "Start" }));
+    const human = new MockConnection("c-human");
+    const agent = new MockConnection("c-agent");
+    engine.addConnection(human);
+    engine.addConnection(agent);
+    const operator = engine.login(human.id, "Operator");
+    const resident = engine.login(agent.id, "Resident", token);
+    const rankOf = (result: typeof operator) =>
+      engine.entities.get((result as { entityId: string }).entityId as never)?.properties.rank ?? 0;
+    expect(rankOf(operator)).toBe(9);
+    // A resident gets no stored sovereign rank — LOCAL already lifts floors for it,
+    // and a stored 9 would outlive the profile and approve other residents' holds.
+    expect(rankOf(resident)).toBe(0);
+    expect(db.getUserByName("Resident")?.rank ?? 0).toBe(0);
+    engine.stop();
+  });
+
   it("rate limiters pass everything under the LOCAL bypass", () => {
     using _processState = scopeProcessState();
 

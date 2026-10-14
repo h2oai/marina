@@ -6,7 +6,11 @@ import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EntityId, RoomContext } from "../../types";
 import { DAY_MS } from "../constants";
 import { requiresPersistence } from "./command-messages";
-import { auditKnowledgeNotes, renderKnowledgeHygieneReport } from "./knowledge-hygiene";
+import {
+  auditKnowledgeNotes,
+  type CommandVocabulary,
+  renderKnowledgeHygieneReport,
+} from "./knowledge-hygiene";
 
 /**
  * First-class surface for the platform-wide `guide` pool — the canonical
@@ -30,7 +34,7 @@ const KNOWN_SUBCOMMANDS = new Set(["recall", "list", "audit", "lint"]);
 export function guideCommand(deps: {
   db?: MarinaDB;
   getEntity?: (id: EntityId) => { name: string } | undefined;
-  getCommandNames?: () => string[];
+  getCommandVocabulary?: () => CommandVocabulary;
 }): CommandDef {
   return {
     category: "Information",
@@ -91,7 +95,7 @@ export function guideCommand(deps: {
       if (sub === "audit" || sub === "lint") {
         const notes = db.getPoolNotes(pool.id, 500);
         const report = auditKnowledgeNotes(notes, {
-          knownCommands: deps.getCommandNames?.(),
+          ...deps.getCommandVocabulary?.(),
           maxAgeMs: 90 * DAY_MS,
         });
         ctx.send(input.entity, renderKnowledgeHygieneReport("Guide pool", report));

@@ -7,6 +7,7 @@ import type { RoomId } from "../src/types";
 import { searchToolCommands } from "../src/world/rooms/search-room";
 import type { WorldDefinition } from "../src/world/world-definition";
 import {
+  assignSeededTaskReviewer,
   FIRST_STEPS_QUEST,
   seedBoard,
   seedChannel,
@@ -17,6 +18,9 @@ import {
 } from "./seed";
 
 const WORKBENCH_AGENTS = ["Host", "Builder", "Critic", "Chronicler"] as const;
+/** Core-memory owner for the Workbench's one-time world flags. */
+const WORKBENCH_SEED_OWNER = "world:workbench";
+const DEMO_PULSE_KICKOFF = "demo-pulse-kickoff-posted";
 
 function workbenchModel(): string {
   if (process.env.MARINA_WORKBENCH_MODEL) return process.env.MARINA_WORKBENCH_MODEL;
@@ -32,6 +36,8 @@ function workbenchModel(): string {
 
 const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
   {
+    key: "workbench:welcome",
+    audience: "people",
     content:
       "Welcome to the Workbench. For a 90-second first success, run `board read demo-scenarios` " +
       "and send its Launch Brief prompt to Host. For your own work, start with an outcome, not a workflow. " +
@@ -65,7 +71,7 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
     content:
       "The Workbench has four rooms. `workbench/start` is for defining and executing work. " +
       "`workbench/library` is for evidence and durable knowledge. `workbench/review` is for verification. " +
-      "`workbench/commons` is for coordination. Use directions, `goto <room>`, or `rooms` to navigate.",
+      "`workbench/commons` is for coordination. Use directions, `goto <room>`, or `ls rooms` to navigate.",
     importance: 8,
     type: "skill",
   },
@@ -121,12 +127,10 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
   },
   {
     content:
-      "Forecasting works in every world, including this one: `forecast <question>`, `arena` (Social " +
-      "Simulation Arena status; operators file with `bun run arena`), `decision`, `market`, `position`, " +
-      "`probe`, `watch` and `web` are global commands, and `guide arena` explains the improvement loop. Do " +
-      "not switch worlds for arena work — a new world usually means a new database, which splits the arena " +
-      "ledger. The `showcase` and `markets` worlds only add rooms for binary yes/no markets, pre-seeded " +
-      "projects, benchmark crews and a specialist population (`MARINA_WORLD=showcase bun run start`).",
+      "Forecasting works in every world, including this one: `forecast <question>`, `decision`, " +
+      "`market`, `position`, `probe`, `watch` and `web` are global commands. The `showcase` and " +
+      "`markets` worlds only add rooms for binary yes/no markets, pre-seeded projects and a " +
+      "specialist population.",
     importance: 7,
     type: "fact",
   },
@@ -190,36 +194,58 @@ function seed(db: MarinaDB): void {
     poolNotes: [
       {
         content:
-          "Demo Pulse rule: visible activity must advance an outcome. Every submission cites inspectable evidence and a reviewer when a claim is non-trivial.",
+          "Demo Pulse rule: visible activity must advance an outcome. Every submission cites inspectable evidence; Critic reviews and approves or rejects it.",
         importance: 10,
       },
     ],
   });
+  // `system` cannot approve; Critic, who never claims these tasks, reviews them.
+  assignSeededTaskReviewer(db, "Demo Pulse", "Critic");
 
   const model = workbenchModel();
   seedSystemAgent(db, {
     name: "Host",
     model,
     role: "guide",
-    goal: "You host the Workbench. Join #general. React quickly to arrivals, direct tells, and questions. Start Demo Pulse work with `task list`, then route one concrete open task to Builder or Critic with `tell`. Keep the user informed with one concise public update per run; do not narrate discovery, waiting, or invented activity.",
+    goal:
+      "You host the Workbench. Act on direct tells and questions. For Demo Pulse work, run " +
+      "`task list` and route one concrete open task to Builder with `tell Builder <task id and " +
+      "ask>`. Post to #general only when state changes: a task routed, an artifact reviewed, a " +
+      "blocker. No acknowledgements, no narration of discovery or waiting. When nobody is asking " +
+      "and nothing is open, rest: `memory set rest <why>`.",
   });
   seedSystemAgent(db, {
     name: "Builder",
     model,
     role: "architect",
-    goal: "You turn bounded requests and Demo Pulse tasks into inspectable artifacts. Join #general. Begin with `task list`; claim one open task with `task claim <id>`, execute it, then ask Critic privately for independent review. Publish at most one concise update per run. Do not alter world structure unless explicitly required. Submit only with note, canvas, command, URL, or artifact evidence.",
+    goal:
+      "You turn bounded requests and Demo Pulse tasks into inspectable artifacts. Run `task " +
+      "list`, claim one open task with `task claim <id>`, do the work, then `task submit <id> " +
+      "<evidence>` citing note, canvas, command, URL or artifact evidence, and `tell Critic` the " +
+      "task id for review. Do not alter world structure unless the task requires it. Post only " +
+      "on a state change. When no task is open, rest: `memory set rest <why>`.",
   });
   seedSystemAgent(db, {
     name: "Critic",
     model,
     role: "scholar",
-    goal: "You are the Workbench's independent reviewer. Join #general. Never claim Demo Pulse tasks. Respond promptly when Host or Builder asks for review. Compare claims with stated evidence and acceptance criteria; publish a concise pass, revision request, or contradiction with exact evidence references. You may investigate, but do not take over authorship merely to make a review pass.",
+    goal:
+      "You are the Workbench's independent reviewer and the reviewer of record for Demo Pulse " +
+      "tasks; never claim them. When a submission arrives, compare it with its evidence and " +
+      "acceptance criteria, then `task approve <id> <claimant>` or `task reject <id> <claimant>` " +
+      "and tell the claimant the exact gap. Answer review requests from Host or Builder the same " +
+      "way. Do not take over authorship to make a review pass. When nothing awaits review, rest: " +
+      "`memory set rest <why>`.",
   });
   seedSystemAgent(db, {
     name: "Chronicler",
     model,
     role: "chronicler",
-    goal: "You narrate only meaningful Workbench outcomes. Join #general. Never claim or author Demo Pulse tasks. Use `chronicle pending`; record completed collaborations, reviewed artifacts, corrections, and surprising discoveries with durable refs. Ignore routine movement, warm-up, and chatter. When quiet, stay silent rather than manufacturing a story.",
+    goal:
+      "You narrate only meaningful Workbench outcomes. Never claim or author Demo Pulse tasks. " +
+      "Run `chronicle pending`; record completed collaborations, reviewed artifacts, corrections " +
+      "and surprising discoveries with durable refs. Ignore routine movement and chatter. When " +
+      "nothing noteworthy is pending, rest: `memory set rest nothing pending`.",
   });
 }
 
@@ -230,15 +256,19 @@ function afterAgentsReady(engine: Engine): void {
     const entity = engine.findEntityGlobal(name);
     if (entity?.kind === "agent") engine.channelManager.addMember(channel.id, entity.id);
   }
+  // Post the kickoff once per world, not whenever it scrolls out of recent history.
   const marker = "[demo-pulse]";
-  if (
-    !engine.channelManager
+  const flagged = engine.db?.getCoreMemory(WORKBENCH_SEED_OWNER, DEMO_PULSE_KICKOFF) !== undefined;
+  const posted =
+    flagged ||
+    engine.channelManager
       .getHistory(channel.id, 50)
-      .some((message) => message.content.startsWith(marker))
-  ) {
+      .some((message) => message.content.startsWith(marker));
+  if (!flagged) engine.db?.setCoreMemory(WORKBENCH_SEED_OWNER, DEMO_PULSE_KICKOFF, "posted");
+  if (!posted) {
     const content =
-      `${marker} Host and Builder: run \`task list\`, then claim one open Demo Pulse task and produce evidence. ` +
-      "Critic: review the evidence independently. Chronicler: record only the verified outcome.";
+      `${marker} Demo Pulse has open tasks (\`task list\`). Builder claims and submits with ` +
+      "evidence; Critic reviews and approves or rejects; Chronicler records verified outcomes.";
     engine.channelManager.send(channel.id, "system", "Workbench", content);
     engine.logEvent({
       type: "channel_message",

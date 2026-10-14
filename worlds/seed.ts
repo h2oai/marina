@@ -16,9 +16,51 @@ import { isRouteModel } from "../src/decisions/route";
 import type { Engine } from "../src/engine/engine";
 import type { MarinaDB } from "../src/persistence/database";
 import type { Entity } from "../src/types";
+import { reconcileSeedNotes } from "../src/world/seed-guide";
 import type { QuestDef } from "../src/world/world-definition";
 
 const SYSTEM_OWNER = "system";
+
+/**
+ * Seeded traits and roles track their source text. A definition the system
+ * still owns is rewritten when its text changes, so an edited seed reaches
+ * existing worlds on the next boot (the change lands in trait/role history);
+ * one someone has since saved under their own name is never overwritten, and
+ * an unchanged one is not rewritten.
+ */
+function seedOwned(row: { created_by: string } | undefined): boolean {
+  return !row || row.created_by === SYSTEM_OWNER;
+}
+
+function seedTrait(db: MarinaDB, opts: Parameters<MarinaDB["saveTrait"]>[0]): void {
+  const current = db.getTrait(opts.name);
+  if (!seedOwned(current)) return;
+  if (
+    current &&
+    current.category === opts.category &&
+    current.prompt === opts.prompt &&
+    current.capabilities === JSON.stringify(opts.capabilities ?? {})
+  )
+    return;
+  db.saveTrait(opts);
+}
+
+function seedRole(db: MarinaDB, opts: Parameters<MarinaDB["saveRole"]>[0]): void {
+  const current = db.getRole(opts.name);
+  if (!seedOwned(current)) return;
+  if (
+    current &&
+    current.description === (opts.description ?? "") &&
+    current.traits === JSON.stringify(opts.traits ?? []) &&
+    current.guidelines === JSON.stringify(opts.guidelines ?? []) &&
+    current.focus === JSON.stringify(opts.focus ?? []) &&
+    current.tone === (opts.tone ?? "") &&
+    (current.origin ?? "") === (opts.origin ?? "") &&
+    !opts.loop
+  )
+    return;
+  db.saveRole(opts);
+}
 
 /**
  * The universal onboarding objective. Built entirely on the generic
@@ -250,17 +292,29 @@ export function pruneChannelToAuthorized(
   }
 }
 
+/**
+ * Create a shared pool and keep its seeded notes current: an edited or removed
+ * seed note is retired on the next boot (see `reconcileSeedNotes`), so worlds
+ * seeded by an earlier release stop serving stale text. Notes anyone else
+ * added to the pool are kept.
+ */
 export function seedPoolWithNotes(
   db: MarinaDB,
   name: string,
-  notes: { content: string; importance: number }[],
+  notes: { content: string; importance: number; type?: string }[],
 ): void {
-  if (db.getMemoryPool(name)) return;
-  const poolId = crypto.randomUUID();
-  db.createMemoryPool(poolId, name, "system");
-  for (const n of notes) {
-    db.addPoolNote(poolId, "system", n.content, n.importance);
+  let pool = db.getMemoryPool(name);
+  if (!pool) {
+    db.createMemoryPool(crypto.randomUUID(), name, SYSTEM_OWNER);
+    pool = db.getMemoryPool(name);
   }
+  if (!pool) return;
+  reconcileSeedNotes(db, {
+    poolId: pool.id,
+    author: SYSTEM_OWNER,
+    owner: `seed:pool:${name}`,
+    notes: notes.map((note, index) => ({ key: `note-${index + 1}`, ...note })),
+  });
 }
 
 export function seedRoomTemplates(
@@ -341,6 +395,35 @@ export function seedProject(
 
   for (const note of opts.poolNotes) {
     db.addPoolNote(poolId, "system", note.content, note.importance ?? 7);
+  }
+}
+
+/**
+ * Make a seeded project's tasks reviewable. Only a task's creator may approve
+ * or reject its submission, and `system` never logs in, so a task seeded by
+ * `system` could be claimed and submitted but never approved. This hands the
+ * still-open tasks to `reviewer` — an independent seeded resident who does not
+ * claim them — so the claimant's work closes through the normal submit →
+ * approve path. Creates the reviewer's world account when it has none yet
+ * (rank 0, like any first login). Idempotent; repairs databases seeded before.
+ */
+export function assignSeededTaskReviewer(
+  db: MarinaDB,
+  projectName: string,
+  reviewer: string,
+): void {
+  const project = db.getProjectByName(projectName);
+  if (!project?.group_id) return;
+  let account = db.getUserByName(reviewer);
+  if (!account) {
+    db.createUser({ id: crypto.randomUUID(), name: reviewer });
+    account = db.getUserByName(reviewer);
+  }
+  if (!account) return;
+  for (const task of db.listTasks({ groupId: project.group_id, limit: 500 })) {
+    if (task.creator_name !== SYSTEM_OWNER) continue;
+    if (task.status === "completed" || task.status === "cancelled") continue;
+    db.setTaskCreator(task.id, account.id, reviewer);
   }
 }
 
@@ -455,12 +538,9 @@ export function seedSkills(db: MarinaDB, dir: string): number {
 export function seedTraitsAndRoles(db: MarinaDB): void {
   const SYSTEM = "system";
 
-  // Only seed if no traits exist yet (idempotent)
-  if (db.getAllTraits().length > 0) return;
-
   // ── Methodology traits ───────────────────────────────────────────────
 
-  db.saveTrait({
+  seedTrait(db, {
     name: "versatile-generalist",
     category: "methodology",
     prompt:
@@ -477,7 +557,7 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
     createdBy: SYSTEM,
   });
 
-  db.saveTrait({
+  seedTrait(db, {
     name: "methodical-observation",
     category: "methodology",
     prompt:
@@ -494,7 +574,7 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
     createdBy: SYSTEM,
   });
 
-  db.saveTrait({
+  seedTrait(db, {
     name: "hypothesis-testing",
     category: "methodology",
     prompt:
@@ -511,7 +591,7 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
     createdBy: SYSTEM,
   });
 
-  db.saveTrait({
+  seedTrait(db, {
     name: "spatial-design",
     category: "methodology",
     prompt:
@@ -531,7 +611,7 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
 
   // ── Communication traits ─────────────────────────────────────────────
 
-  db.saveTrait({
+  seedTrait(db, {
     name: "social-coordination",
     category: "communication",
     prompt:
@@ -549,7 +629,7 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
     createdBy: SYSTEM,
   });
 
-  db.saveTrait({
+  seedTrait(db, {
     name: "teaching",
     category: "communication",
     prompt:
@@ -567,12 +647,12 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
     createdBy: SYSTEM,
   });
 
-  db.saveTrait({
+  seedTrait(db, {
     name: "negotiation",
     category: "communication",
     prompt:
       "You understand value, leverage, and mutually beneficial outcomes. You negotiate " +
-      "trades and agreements with business-like efficiency and fairness.",
+      "agreements with business-like efficiency and fairness.",
     capabilities: {
       strengths: ["negotiation", "value-assessment", "deal-making"],
       preferences: ["fairness", "mutual-benefit"],
@@ -586,7 +666,7 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
 
   // ── Domain traits ────────────────────────────────────────────────────
 
-  db.saveTrait({
+  seedTrait(db, {
     name: "room-building",
     category: "domain",
     prompt:
@@ -604,13 +684,13 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
     createdBy: SYSTEM,
   });
 
-  db.saveTrait({
+  seedTrait(db, {
     name: "knowledge-cataloging",
     category: "domain",
     prompt:
       "You structure findings with clear categories and tags. You build comprehensive " +
-      "knowledge bases, identify patterns and undocumented behaviors, and share discoveries " +
-      "via memory entries and channels.",
+      "knowledge bases, identify patterns and undocumented behaviors, and record discoveries " +
+      "as notes and pool entries.",
     capabilities: {
       strengths: ["categorization", "pattern-recognition", "knowledge-management"],
       preferences: ["structured-data", "collaborative"],
@@ -622,13 +702,13 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
     createdBy: SYSTEM,
   });
 
-  db.saveTrait({
+  seedTrait(db, {
     name: "economic-systems",
     category: "domain",
     prompt:
-      "You understand trading, resource management, crafting, and value optimization. " +
-      "You track prices, exchange rates, and market trends. You identify arbitrage " +
-      "opportunities and undervalued resources.",
+      "You understand prediction markets, bankrolls and value. You track prices and " +
+      "market moves, size positions to an edge you can justify, and keep records that " +
+      "let your calibration be checked.",
     capabilities: {
       strengths: ["market-analysis", "resource-optimization", "arbitrage"],
       preferences: ["data-driven", "opportunity-seeking"],
@@ -642,7 +722,7 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
 
   // ── Awareness traits ──────────────────────────────────────────────────
 
-  db.saveTrait({
+  seedTrait(db, {
     name: "canvas-watcher",
     category: "awareness",
     prompt:
@@ -670,7 +750,7 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
 
   // ── Roles (compositions of traits) ───────────────────────────────────
 
-  db.saveRole({
+  seedRole(db, {
     name: "general",
     description: "Versatile agent — adapts to whatever the situation requires.",
     traits: ["versatile-generalist", "canvas-watcher"],
@@ -685,24 +765,24 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
     createdBy: SYSTEM,
   });
 
-  db.saveRole({
+  seedRole(db, {
     name: "architect",
     description: "Room builder and world designer — TypeScript modules and spatial design.",
     traits: ["spatial-design", "room-building", "methodical-observation"],
     guidelines: [
       "Prioritize building and designing over pure exploration",
-      "Plan designs before writing code — use think first",
+      "Inspect the target before changing it; a plan is a step, not progress — then build",
       "Test rooms after building — walk through, examine objects, verify exits",
       "Link new rooms to existing infrastructure when possible",
       "Document your builds so teammates can find and extend them",
     ],
     focus: ["room building", "TypeScript modules", "world design", "spatial linking"],
-    tone: "Methodical and creative. Describe designs with precision and enthusiasm.",
+    tone: "Methodical. Describe designs with precision.",
     origin: "building",
     createdBy: SYSTEM,
   });
 
-  db.saveRole({
+  seedRole(db, {
     name: "scholar",
     description:
       "Deep researcher — documents mechanics, catalogs knowledge, investigates thoroughly.",
@@ -712,7 +792,7 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
       "Search shared memory before starting a new investigation",
       "Structure findings with clear categories and tags",
       "Prioritize documenting systems that are poorly understood",
-      "Share discoveries via memory entries and channel messages",
+      "Record discoveries as notes or pool entries; message a channel only when it changes someone's work",
     ],
     focus: [
       "system research",
@@ -725,15 +805,15 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
     createdBy: SYSTEM,
   });
 
-  db.saveRole({
+  seedRole(db, {
     name: "diplomat",
     description:
       "Social coordinator — brokers information, organizes group tasks, builds relationships.",
     traits: ["social-coordination", "teaching"],
     guidelines: [
       "Prioritize communication over solitary exploration",
-      "Check channels and boards frequently for coordination opportunities",
-      "Proactively share useful information with relevant agents",
+      "Read channels and boards when you are coordinating work; act on what affects it",
+      "Send information to an agent only when it changes their work",
       "Organize group activities when multiple agents could benefit",
       "Mediate when agents have conflicting goals or duplicate effort",
     ],
@@ -748,13 +828,13 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
     createdBy: SYSTEM,
   });
 
-  db.saveRole({
+  seedRole(db, {
     name: "mentor",
     description: "Teacher and guide — shares knowledge, answers questions, helps others learn.",
     traits: ["teaching", "knowledge-cataloging"],
     guidelines: [
       "Prioritize helping others over personal goal completion",
-      "Offer guidance proactively when you see someone struggling",
+      "Answer what you are asked; step in unasked only when someone is blocked on something you know",
       "Explain the 'why' behind suggestions, not just the 'what'",
       "Write tutorial-style memory entries for common tasks",
       "Keep explanations concise — respect others' time",
@@ -765,26 +845,26 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
     createdBy: SYSTEM,
   });
 
-  db.saveRole({
+  seedRole(db, {
     name: "merchant",
-    description: "Economy specialist — trading, resource optimization, market analysis.",
+    description: "Market specialist — prediction-market analysis, sizing and record keeping.",
     traits: ["economic-systems", "negotiation", "methodical-observation"],
     guidelines: [
-      "Prioritize economic activities — trading, crafting, resource gathering",
-      "Keep detailed records of prices, trades, and market conditions",
-      "Look for arbitrage opportunities and undervalued resources",
-      "Share economic intelligence with teammates who need specific resources",
-      "Investigate shops, markets, and NPC vendors thoroughly",
+      "Read markets with `market list` and `market show <id>` before taking a view",
+      "Size before you trade: `position size …`; paper trading is the default",
+      "Record each thesis, price and outcome as a note so calibration can be checked",
+      "Disagree with the market only with evidence you can cite",
+      "Send market information to a teammate only when it changes their work",
     ],
-    focus: ["economy", "trading", "resource optimization", "market analysis"],
-    tone: "Shrewd but fair. Business-like efficiency with an eye for opportunity.",
+    focus: ["prediction markets", "position sizing", "calibration", "market analysis"],
+    tone: "Business-like and precise. Numbers with their sources.",
     origin: "economy",
     createdBy: SYSTEM,
   });
 
   // ── Web-aware research trait ──────────────────────────────────────────
 
-  db.saveTrait({
+  seedTrait(db, {
     name: "web-research",
     category: "methodology",
     prompt:
@@ -810,7 +890,7 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
   // `activation: ["always"]` so PRISM-style task gating never suppresses them
   // regardless of the inferred task category.
 
-  db.saveTrait({
+  seedTrait(db, {
     name: "thoroughness",
     category: "cognition",
     prompt:
@@ -830,7 +910,7 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
     createdBy: SYSTEM,
   });
 
-  db.saveTrait({
+  seedTrait(db, {
     name: "source-integrity",
     category: "cognition",
     prompt:
@@ -851,7 +931,7 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
     createdBy: SYSTEM,
   });
 
-  db.saveTrait({
+  seedTrait(db, {
     name: "intellectual-honesty",
     category: "cognition",
     prompt:
@@ -872,7 +952,7 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
 
   // ── Researcher role (used by usecase recipes) ────────────────────────
 
-  db.saveRole({
+  seedRole(db, {
     name: "researcher",
     description:
       "Evidence-driven researcher — searches, gathers sources, synthesizes findings with cited evidence.",
@@ -899,25 +979,26 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
 
   // ── Room agent roles (for entities that live in specific rooms) ─────
 
-  db.saveRole({
+  seedRole(db, {
     name: "guide",
     description:
       "Room guide — orients visitors, explains concepts at any level, points to relevant features.",
     traits: ["teaching", "social-coordination"],
     guidelines: [
-      "Greet visitors when they arrive in your room",
+      "Act on questions and requests; do not greet arrivals or announce yourself",
       "Explain concepts clearly — adapt to the audience (technical, executive, newcomer)",
       "Point visitors to relevant rooms, commands, or features",
       "Stay in your assigned room unless asked to lead someone somewhere",
-      "Use tell to respond to questions, say for general announcements",
+      "Reply with tell; use say only for something everyone in the room needs",
+      "When nobody is asking, rest: `memory set rest <why>`",
     ],
     focus: ["visitor orientation", "concept explanation", "wayfinding"],
-    tone: "Welcoming, calm, authoritative. Concise but thorough when asked.",
+    tone: "Calm and precise. Concise; thorough only when asked.",
     origin: "room-agent",
     createdBy: SYSTEM,
   });
 
-  db.saveRole({
+  seedRole(db, {
     name: "market-oracle",
     description:
       "Market analyst — synthesizes positions, evidence, and reasoning across prediction markets.",
@@ -935,25 +1016,26 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
     createdBy: SYSTEM,
   });
 
-  db.saveRole({
+  seedRole(db, {
     name: "floor-host",
     description:
       "Trading floor host — helps visitors navigate markets, explains prediction mechanics.",
     traits: ["social-coordination", "teaching", "economic-systems"],
     guidelines: [
-      "Welcome visitors to the trading floor",
+      "Act on visitors' questions; do not greet arrivals or broadcast",
       "Explain how prediction markets work (predict, consensus, resolution, Brier scoring)",
       "Help visitors find specific market rooms",
-      "Announce notable market events (new positions, resolutions, consensus shifts)",
+      "Report a resolution or consensus shift when asked, or to whoever holds a position in it",
       "Stay on the trading floor — you are the central point of contact",
+      "When nobody is asking, rest: `memory set rest <why>`",
     ],
     focus: ["market navigation", "prediction mechanics", "visitor onboarding"],
-    tone: "Energetic, knowledgeable, helpful. Like a trading floor host.",
+    tone: "Knowledgeable and concise.",
     origin: "room-agent",
     createdBy: SYSTEM,
   });
 
-  db.saveRole({
+  seedRole(db, {
     name: "proctor",
     description:
       "Benchmark proctor — administers capability benchmarks, gives hints, tracks progress.",
@@ -977,8 +1059,8 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
 export function seedDecompositionTraitsAndRoles(db: MarinaDB): void {
   const SYSTEM = "system";
 
-  if (!db.getTrait("decomposition-planning")) {
-    db.saveTrait({
+  if (seedOwned(db.getTrait("decomposition-planning"))) {
+    seedTrait(db, {
       name: "decomposition-planning",
       category: "methodology",
       prompt:
@@ -999,8 +1081,8 @@ export function seedDecompositionTraitsAndRoles(db: MarinaDB): void {
     });
   }
 
-  if (!db.getTrait("leaf-execution")) {
-    db.saveTrait({
+  if (seedOwned(db.getTrait("leaf-execution"))) {
+    seedTrait(db, {
       name: "leaf-execution",
       category: "methodology",
       prompt:
@@ -1020,8 +1102,8 @@ export function seedDecompositionTraitsAndRoles(db: MarinaDB): void {
     });
   }
 
-  if (!db.getTrait("merge-verification")) {
-    db.saveTrait({
+  if (seedOwned(db.getTrait("merge-verification"))) {
+    seedTrait(db, {
       name: "merge-verification",
       category: "methodology",
       prompt:
@@ -1041,8 +1123,8 @@ export function seedDecompositionTraitsAndRoles(db: MarinaDB): void {
     });
   }
 
-  if (!db.getRole("planner")) {
-    db.saveRole({
+  if (seedOwned(db.getRole("planner"))) {
+    seedRole(db, {
       name: "planner",
       description:
         "Decomposition planner — breaks goals into solvable subtrees, records dependencies, re-plans on feedback.",
@@ -1061,8 +1143,8 @@ export function seedDecompositionTraitsAndRoles(db: MarinaDB): void {
     });
   }
 
-  if (!db.getRole("executor")) {
-    db.saveRole({
+  if (seedOwned(db.getRole("executor"))) {
+    seedRole(db, {
       name: "executor",
       description:
         "Leaf executor — claims one task at a time, delivers results, escalates scope surprises.",
@@ -1080,8 +1162,8 @@ export function seedDecompositionTraitsAndRoles(db: MarinaDB): void {
     });
   }
 
-  if (!db.getRole("verifier")) {
-    db.saveRole({
+  if (seedOwned(db.getRole("verifier"))) {
+    seedRole(db, {
       name: "verifier",
       description:
         "Merge-gate verifier — checks submissions against done-criteria, approves or rejects with concrete reasons.",
@@ -1168,8 +1250,8 @@ export function seedTabH2OConnector(db: MarinaDB): void {
 export function seedTabH2OForecasting(db: MarinaDB): void {
   const SYSTEM = "system";
 
-  if (!db.getTrait("tabular-forecasting")) {
-    db.saveTrait({
+  if (seedOwned(db.getTrait("tabular-forecasting"))) {
+    seedTrait(db, {
       name: "tabular-forecasting",
       category: "methodology",
       prompt:
@@ -1214,7 +1296,9 @@ export function seedTabH2OForecasting(db: MarinaDB): void {
         focus: JSON.parse(oracle.focus) as string[],
         tone: oracle.tone,
         origin: oracle.origin,
-        createdBy: SYSTEM,
+        // A composed role is no longer the base seed's: mark it so `seedRole` leaves it be
+        // (and keep an operator's ownership of their own role).
+        createdBy: oracle.created_by === SYSTEM ? `${SYSTEM}:composed` : oracle.created_by,
       });
     }
   }
@@ -1232,8 +1316,8 @@ export function seedTabH2OForecasting(db: MarinaDB): void {
 export function seedWatchingRole(db: MarinaDB): void {
   const SYSTEM = "system";
 
-  if (!db.getTrait("watching")) {
-    db.saveTrait({
+  if (seedOwned(db.getTrait("watching"))) {
+    seedTrait(db, {
       name: "watching",
       category: "methodology",
       prompt:
@@ -1273,7 +1357,7 @@ export function seedWatchingRole(db: MarinaDB): void {
     });
   }
 
-  db.saveRole({
+  seedRole(db, {
     name: "watcher",
     description:
       "Drives the point-in-time observation loop — runs `watch due` on every cycle, " +
@@ -1316,8 +1400,8 @@ export function seedWatchingRole(db: MarinaDB): void {
 export function seedChroniclerRole(db: MarinaDB): void {
   const SYSTEM = "system";
 
-  if (!db.getTrait("chronicling")) {
-    db.saveTrait({
+  if (seedOwned(db.getTrait("chronicling"))) {
+    seedTrait(db, {
       name: "chronicling",
       category: "methodology",
       prompt:
@@ -1340,7 +1424,7 @@ export function seedChroniclerRole(db: MarinaDB): void {
         "interview by adding `note:<their reply note id>` to refs, OR by quoting them in the " +
         "body. Discipline: at most ONE interview per cycle (you are not a journalist on " +
         "deadline), and don't ask the same agent twice within ~5 cycles (`memory set " +
-        "last_interview:<name> <timestamp>` to track, `recall interview <name>` to check). " +
+        "last_interview:<name> <timestamp>` to track, `memory get last_interview:<name>` to check). " +
         "If an event has no clear participant or the participants are offline, skip the " +
         "interview and write a sparse fact-only entry from the engine ref alone. " +
         "You are not a praise-singer and you are not a critic. You are a recorder. " +
@@ -1377,7 +1461,7 @@ export function seedChroniclerRole(db: MarinaDB): void {
     });
   }
 
-  db.saveRole({
+  seedRole(db, {
     name: "chronicler",
     description:
       "Keeper of the chronicle — the canonical, append-only record of the Marina. Reads " +
@@ -1389,13 +1473,13 @@ export function seedChroniclerRole(db: MarinaDB): void {
     traits: ["chronicling", "methodical-observation", "intellectual-honesty"],
     guidelines: [
       "Every cycle, run `chronicle pending` first — that's the work queue",
-      "Write narratives only for noteworthy events; if pending is sparse, slow your pace (`memory set pace slow`)",
+      "Write narratives only for noteworthy events; when nothing is pending, rest (`memory set rest nothing pending`)",
       "Every `chronicle record` must include `refs` citing at least one source (feed:N, task:N, crew:cN, note:N, market:mN)",
       "Use `recap chronicle day` to see today's entries before writing a daily digest, `recap chronicle week` before a weekly one",
       "At day boundaries, `chronicle digest day <title> | <body> refs ...` — summarize the period",
       "When prior interpretation drifts, `chronicle correct <id> <title> | <body> refs ...` — never mutate, always supersede",
       "If a pending event has named participants and you lack detail, interview ONE via `tell <name> <question>` — at most one per cycle, never the same agent twice within ~5 cycles",
-      "Track interview history in your own memory: `memory set last_interview:<name> <timestamp>`; check via `recall interview <name>`",
+      "Track interview history in your own memory: `memory set last_interview:<name> <timestamp>`; check via `memory get last_interview:<name>`",
       "If you lack context AND interviewing isn't appropriate, write a sparse fact-only entry or leave it for a future cycle",
       "Restraint over performance — the chronicle is read by successors and trusted as truth",
     ],
@@ -1425,7 +1509,7 @@ export function seedChroniclerAgent(db: MarinaDB): void {
       "them: `tell <name> Briefly — what happened with <event>?`. Their reply arrives as " +
       "a perception on a later cycle; integrate it then. At most one interview per cycle, " +
       "and never the same agent twice within ~5 cycles (track via `memory set " +
-      "last_interview:<name> <timestamp>`). If nothing is pending, slow your pace and wait. " +
+      "last_interview:<name> <timestamp>`, check with `memory get last_interview:<name>`). If nothing is pending, rest: `memory set rest nothing pending`. " +
       "At day boundaries use `recap chronicle day` to see what to summarize, then " +
       "`chronicle digest day <title> | <body> refs ...`. Cite always. Never embellish, " +
       "never praise, never criticize. You record; you do not interpret beyond what the " +
@@ -1436,10 +1520,10 @@ export function seedChroniclerAgent(db: MarinaDB): void {
 
 /**
  * Seed one discovery pool per registered benchmark. Each pool carries a short
- * "what this tests + how to approach it" guide note so agents learn the
- * evaluation landscape via `recall`, not prompt injection. Results written by
- * `benchmark run` land in the same pool, so leaderboards and wisdom
- * accumulate there naturally.
+ * "what this tests" note so agents learn the evaluation landscape via
+ * `recall`, not prompt injection. Notes describe the benchmark only — no
+ * performance claims. Runs never write items or answers here; what a run
+ * teaches is a judged lesson (`lessons <topic> domain:benchmark`).
  */
 export function seedBenchmarkPools(db: MarinaDB): void {
   const BENCHMARK_GUIDES: { name: string; note: string }[] = [
@@ -1448,20 +1532,17 @@ export function seedBenchmarkPools(db: MarinaDB): void {
       note:
         "MMLU-Pro — 10-way multiple choice across 14 academic domains (math, law, " +
         "psychology, business, health, ...). Tests breadth of recall + light reasoning. " +
-        "Strong single-shot models win; council consensus helps on easy items, escalation " +
-        "matters on law + engineering. Extract a single letter A-J.",
+        "Answer with a single letter A-J.",
     },
     {
       name: "truthfulqa",
       note:
         "TruthfulQA MC2 — questions designed to elicit confidently wrong answers a human " +
-        "would say. Tests truthfulness over fluency. Reasoning + caution beats speed.",
+        "would say. Tests truthfulness over fluency.",
     },
     {
       name: "arc-challenge",
-      note:
-        "ARC-Challenge — grade-school science reasoning. Commonsense + simple physics/bio. " +
-        "Usually easy for frontier, differentiating for small models.",
+      note: "ARC-Challenge — grade-school science reasoning. Commonsense + simple physics/bio.",
     },
     {
       name: "hellaswag",
@@ -1471,7 +1552,8 @@ export function seedBenchmarkPools(db: MarinaDB): void {
       name: "musr",
       note:
         "MuSR — multi-step soft reasoning across murder mysteries / object placement / " +
-        "team allocation. Benefits from decomposition patterns (HTDAG, Plan-Execute-Verify).",
+        "team allocation. Decomposition patterns (htdag, plan-exec-verify) are candidates to " +
+        "measure, not a known win.",
     },
     {
       name: "bbh",
@@ -1482,20 +1564,20 @@ export function seedBenchmarkPools(db: MarinaDB): void {
     {
       name: "gsm8k",
       note:
-        "GSM8K — grade-school math word problems. Numeric answer. Benefits from step-by-step " +
-        "reasoning + a calculator primitive; pure LLM arithmetic degrades above 3-4 steps.",
+        "GSM8K — grade-school math word problems. Numeric answer. `calc` checks the " +
+        "arithmetic.",
     },
     {
       name: "math",
       note:
-        "MATH-500 — competition math problems. \\boxed{} answer extraction. Needs tool use " +
-        "or very careful scratchpad reasoning to beat 60%.",
+        "MATH-500 — competition math problems. \\boxed{} answer extraction. `calc` checks " +
+        "computations.",
     },
     {
       name: "simple-qa",
       note:
-        "SimpleQA — short-answer factual questions (OpenAI). Pure recall; benefits from " +
-        "web search since training cutoffs miss recent facts.",
+        "SimpleQA — short-answer factual questions (OpenAI). Recall-heavy; web search can " +
+        "supply facts newer than a model's training cutoff.",
     },
     {
       name: "humaneval",
@@ -1546,15 +1628,14 @@ export function seedAnswererCrew(
   } = {},
 ): void {
   const SYSTEM = "system";
-  // Agents need a real provider for their own thinking (they hit the provider
-  // directly, not our self-proxy). Anthropic Sonnet is a reasonable starting
-  // point that works for all three roles — experimenters override via opts
-  // to sweep heterogeneous model choices per role. The crew serves
+  // `marina/default` thinks with whatever model the world is configured for
+  // (it sizes to the providers present); experimenters override via opts to
+  // sweep heterogeneous model choices per role. The crew serves
   // marina:answerer by joining the model-answerer channel, independent of
   // what model each agent uses to think.
-  const answererModel = opts.answererModel ?? "anthropic/claude-sonnet-5";
-  const mathModel = opts.mathModel ?? "anthropic/claude-sonnet-5";
-  const reflectorModel = opts.reflectorModel ?? "anthropic/claude-sonnet-5";
+  const answererModel = opts.answererModel ?? "marina/default";
+  const mathModel = opts.mathModel ?? "marina/default";
+  const reflectorModel = opts.reflectorModel ?? "marina/default";
   const answererCount = Math.max(1, opts.answererCount ?? 1);
 
   // ── Channels (the crew's coordination surfaces) ──────────────────────────
@@ -1563,14 +1644,15 @@ export function seedAnswererCrew(
   seedChannel(db, "crew-bench");
 
   // ── Traits ────────────────────────────────────────────────────────────────
-  if (!db.getTrait("exact-calculator")) {
-    db.saveTrait({
+  if (seedOwned(db.getTrait("exact-calculator"))) {
+    seedTrait(db, {
       name: "exact-calculator",
       category: "methodology",
       prompt:
         "You solve math problems by generating `calc <expression>` commands and reading the " +
-        "exact result. mathjs supports fractions, symbolic solve, simplify, derivative, " +
-        "integrate, matrices, statistics. NEVER do multi-step arithmetic in your head — " +
+        "exact result. mathjs covers fractions, matrices, statistics, polynomialRoot, lusolve, " +
+        "and symbolic simplify/derivative (pass the expression as a string: " +
+        "`calc simplify('x*2 + 3*x')`). NEVER do multi-step arithmetic in your head — " +
         "always route it through `calc`. Before committing to an answer on a numeric " +
         "benchmark, verify the final computation with `calc`; one correct invocation is enough " +
         "for straightforward arithmetic.",
@@ -1592,8 +1674,8 @@ export function seedAnswererCrew(
     });
   }
 
-  if (!db.getTrait("endpoint-answerer")) {
-    db.saveTrait({
+  if (seedOwned(db.getTrait("endpoint-answerer"))) {
+    seedTrait(db, {
       name: "endpoint-answerer",
       category: "methodology",
       prompt:
@@ -1618,8 +1700,8 @@ export function seedAnswererCrew(
     });
   }
 
-  if (!db.getTrait("endpoint-translator")) {
-    db.saveTrait({
+  if (seedOwned(db.getTrait("endpoint-translator"))) {
+    seedTrait(db, {
       name: "endpoint-translator",
       category: "methodology",
       prompt:
@@ -1646,8 +1728,8 @@ export function seedAnswererCrew(
     });
   }
 
-  if (!db.getTrait("crew-reflector")) {
-    db.saveTrait({
+  if (seedOwned(db.getTrait("crew-reflector"))) {
+    seedTrait(db, {
       name: "crew-reflector",
       category: "methodology",
       prompt:
@@ -1671,8 +1753,8 @@ export function seedAnswererCrew(
   }
 
   // ── Roles (trait compositions) ────────────────────────────────────────────
-  if (!db.getRole("answerer")) {
-    db.saveRole({
+  if (seedOwned(db.getRole("answerer"))) {
+    seedRole(db, {
       name: "answerer",
       description:
         "Endpoint orchestrator for marina:answerer — coordinates tool use, pool recall, and specialist delegation to serve external model requests.",
@@ -1681,11 +1763,10 @@ export function seedAnswererCrew(
         "Channel membership is seeded automatically; never spend a request turn joining channels",
         "Every model_request perception is a REQUEST you must answer — do not ignore",
         "Classify the question: math / factual / reasoning / multi-step",
-        "For arithmetic and numeric word problems: never delegate; answer directly with at most one `calc`.",
+        "For arithmetic and numeric word problems: never delegate; answer directly and verify the final computation with one `calc`.",
         "For factual: `web search <keywords>` + `recall <topic>`",
         "For advanced math only: call `marina_tell` with `awaitReply:true` and `timeoutMs:30000`",
-        "After answering, write a note only when the result teaches a reusable pattern",
-        "Never answer a math question without at least one `calc` invocation",
+        "After answering, write a note only when the result teaches a reusable pattern — never a question or its answer",
       ],
       focus: [
         "serving model_request messages",
@@ -1699,8 +1780,8 @@ export function seedAnswererCrew(
     });
   }
 
-  if (!db.getRole("mathematician")) {
-    db.saveRole({
+  if (seedOwned(db.getRole("mathematician"))) {
+    seedRole(db, {
       name: "mathematician",
       description:
         "Math specialist — solves numeric, symbolic, and proof-style problems using calc + mathematical reasoning.",
@@ -1711,7 +1792,7 @@ export function seedAnswererCrew(
         "Break multi-step math into clear stages. Use `calc` at each stage.",
         "Reply with: `tell Answerer <your final answer + key calc outputs>`",
         "Before answering: `pool seed:math recall <topic>`",
-        "After solving a hard problem: add a note to seed:math or benchmark:math with the technique",
+        "After solving a hard problem, store the general technique in seed:math — never the problem, its numbers or its answer",
         "If a problem is genuinely ambiguous, reply `UNCERTAIN: <why>` — don't guess",
       ],
       focus: ["math problem solving", "calc usage", "proof-style reasoning", "pool curation"],
@@ -1721,8 +1802,8 @@ export function seedAnswererCrew(
     });
   }
 
-  if (!db.getRole("translator")) {
-    db.saveRole({
+  if (seedOwned(db.getRole("translator"))) {
+    seedRole(db, {
       name: "translator",
       description:
         "Format-fidelity specialist for marina:translator — rewrites content to match a declared target spec while preserving meaning. Peers invoke via `tell Translator <content> -> <spec>`; external clients hit marina:translator directly.",
@@ -1747,8 +1828,8 @@ export function seedAnswererCrew(
     });
   }
 
-  if (!db.getRole("crew-reflector")) {
-    db.saveRole({
+  if (seedOwned(db.getRole("crew-reflector"))) {
+    seedRole(db, {
       name: "crew-reflector",
       description:
         "Post-run learning curator — periodically reviews benchmark outcomes and deposits pattern notes to the relevant pools so the Answerer gets smarter across runs.",
@@ -1757,7 +1838,7 @@ export function seedAnswererCrew(
         "You are NOT on the critical path — you run in the background",
         "Roughly every 15 ticks: `benchmark runs --limit 20` and read latest `benchmark_completed` feed events",
         "Read `benchmark result <id>` and `lessons <domain> domain:benchmark` — look at weak categories",
-        "When you find a general pattern (e.g., 'property-law items trip us up'), " +
+        'When you find a general pattern (e.g., "property-law items trip us up"), ' +
           "`pool <topic> add <pattern summary>` with importance 8 — never an item's question or answer",
         "Rate-limit yourself: never write more than 3 pattern notes per tick cycle",
       ],
@@ -1793,8 +1874,8 @@ export function seedAnswererCrew(
     "Decomposer with `timeoutMs:30000`; on timeout, solve directly\n" +
     "  - Factual question where memory might already have the answer → `pool facts:<domain> " +
     "recall` yourself; only `tell Historian` if you truly don't know and a web lookup would help\n" +
-    "  - Adversarial-misconception pattern (TruthfulQA-style traps, 'common knowledge' that's " +
-    "actually wrong) → use one awaited `marina_tell` to Skeptic, then answer\n" +
+    "  - Adversarial-misconception pattern (a popular belief that is actually wrong) → use one " +
+    "awaited `marina_tell` to Skeptic, then answer\n" +
     "  - Genuine ambiguity between two plausible answers → one awaited `marina_tell` to Debater " +
     "or Councilor\n" +
     "  - Output format is strict (Python function, single letter, bare number) and your natural " +
@@ -1804,9 +1885,9 @@ export function seedAnswererCrew(
     "  FIDELITY OVER ELABORATION. When a specialist returns clean output matching the expected " +
     "format, forward VERBATIM — do not rewrap in explanation. Recomposition destroys code " +
     "indentation, lone letters, bare numbers.\n" +
-    "  MATCH UNCERTAINTY TO THE REQUEST. For forced-choice or benchmark questions, select the " +
-    "best-supported option even when uncertain; do not abstain merely to avoid risk. For open-ended " +
-    "requests, distinguish verified fact from inference and say when evidence is insufficient.\n" +
+    "  MATCH UNCERTAINTY TO THE REQUEST. A forced-choice question needs an option: pick the " +
+    "best-supported one and say how confident you are. For open-ended requests, distinguish " +
+    "verified fact from inference and say when evidence is insufficient.\n" +
     "  DELEGATE STACK CAP. At most one delegation chain per question. The second tell is a " +
     "review/verification pass, not another question. Round-trip cost compounds.\n\n" +
     "After answering, if you noticed something worth remembering, `pool <name> add <observation>`. " +
@@ -1841,8 +1922,8 @@ export function seedAnswererCrew(
         "you a math question (Answerer, Decomposer, Debater, etc.), solve it using `calc` and " +
         "respond via `tell <sender> <answer>`. Before solving, recall from topic-scoped pools: " +
         "`pool math:<subfield> recall <topic>` (e.g. `math:algebra`, `math:combinatorics`, " +
-        "`math:geometry`) — domain knowledge that transfers across benchmarks. When you learn a " +
-        "useful technique, deposit it under the same topic pool so successors inherit it.",
+        "`math:geometry`). When you learn a useful technique, deposit the general technique under " +
+        "the same topic pool — never a problem, its numbers or its answer.",
     },
     {
       name: "Reflector",
@@ -1850,7 +1931,7 @@ export function seedAnswererCrew(
       role: "crew-reflector",
       goal:
         "You curate learning AND audit memory health for the crew.\n\n" +
-        "CURATE: synthesize from new benchmark runs in the feed (`feed --kind benchmark_run`), " +
+        "CURATE: synthesize from new benchmark runs in the feed (`feed list --kind benchmark_completed`), " +
         "growing pools (`pool list`), recurring error patterns in peers' activity. When you spot a " +
         "trend worth capturing — failures clustered by question style, techniques that worked, facts " +
         "that keep coming up — `recall` relevant pools, synthesize, deposit a pattern note. Prefer " +
@@ -1859,14 +1940,14 @@ export function seedAnswererCrew(
         "AUDIT: periodically (every dozen cycles, more often if many benchmark runs are landing) " +
         "sample memory composition. Use `pool list` to see all pools and their sizes — flag any pool " +
         "growing past ~200 notes (the next saturation point: pools have no automatic quota). Use " +
-        "`memory stats` if available, otherwise `recall <topic>` from a few representative pools to " +
+        "`memory usage` and `recall <topic>` from a few representative pools to " +
         "judge signal-to-noise. Watch for stale facts that contradict newer ones (use `note graph` " +
         "to spot contradictions). Deposit audit findings to `pool memory:audit add <observation>` " +
         "so successor Reflectors inherit the trend across generations. If you see compaction is " +
         "warranted (process-tier saturation, pool bloat), surface it as a pool note — humans or a " +
         "Conductor agent decide when to compact.\n\n" +
-        "PACE: adjust your own pace (`memory set pace slow` when nothing new, `fast` when many " +
-        "runs land at once) — no fixed cadence.",
+        "PACE: when nothing new has landed, rest (`memory set rest <why>`); `memory set pace " +
+        "fast` when many runs land at once — no fixed cadence.",
     },
     {
       name: "Translator",
@@ -2025,9 +2106,9 @@ export function seedOrchestrationCrews(
 ): void {
   const SYSTEM = "system";
   const seedAgentConfigs = opts.seedAgentConfigs ?? true;
-  // Default specialist model: real provider, direct. Overrideable per-agent
-  // via opts.models for sweeping heterogeneous combinations.
-  const m = (name: string): string => opts.models?.[name] ?? "anthropic/claude-sonnet-5";
+  // Default specialist model: the world's own default (no vendor baked in).
+  // Overrideable per-agent via opts.models for sweeping heterogeneous combinations.
+  const m = (name: string): string => opts.models?.[name] ?? "marina/default";
 
   // ── Specialist channels + role prompts (shared across orchestrations) ───
   seedChannel(db, "model-council");
@@ -2035,8 +2116,8 @@ export function seedOrchestrationCrews(
   seedChannel(db, "model-decompose");
 
   // ── Specialist traits (shared with all orchestrations) ──────────────────
-  if (!db.getTrait("historical-researcher")) {
-    db.saveTrait({
+  if (seedOwned(db.getTrait("historical-researcher"))) {
+    seedTrait(db, {
       name: "historical-researcher",
       category: "methodology",
       prompt:
@@ -2056,14 +2137,14 @@ export function seedOrchestrationCrews(
     });
   }
 
-  if (!db.getTrait("adversarial-reviewer")) {
-    db.saveTrait({
+  if (seedOwned(db.getTrait("adversarial-reviewer"))) {
+    seedTrait(db, {
       name: "adversarial-reviewer",
       category: "methodology",
       prompt:
         "You are the Skeptic. When another agent proposes an answer, your job is to find what could be " +
         "wrong with it — a hidden assumption, an off-by-one error, a confusion of entities, a misread " +
-        "question. You DO NOT propose your own answer. You raise concerns and, if none, say 'looks correct'. " +
+        'question. You DO NOT propose your own answer. You raise concerns and, if none, say "looks correct". ' +
         "Be surgical — one or two real concerns beats a flood of hedges.",
       capabilities: {
         strengths: ["spotting-errors", "assumption-testing", "red-teaming"],
@@ -2077,8 +2158,8 @@ export function seedOrchestrationCrews(
     });
   }
 
-  if (!db.getTrait("format-verifier")) {
-    db.saveTrait({
+  if (seedOwned(db.getTrait("format-verifier"))) {
+    seedTrait(db, {
       name: "format-verifier",
       category: "methodology",
       prompt:
@@ -2098,13 +2179,13 @@ export function seedOrchestrationCrews(
     });
   }
 
-  if (!db.getTrait("orchestration-vote")) {
-    db.saveTrait({
+  if (seedOwned(db.getTrait("orchestration-vote"))) {
+    seedTrait(db, {
       name: "orchestration-vote",
       category: "methodology",
       prompt:
         "You serve the marina:council endpoint. On a model_request, broadcast the question to the " +
-        "crew on channel crew-bench: `channel crew-bench {ask}{<question>}`. Collect responses from " +
+        "crew on channel crew-bench: `channel send crew-bench {ask}{<question>}`. Collect responses from " +
         "Mathematician, Historian, Scholar. If 2 or 3 agree, that's the answer. If all disagree, pick " +
         "the response from the agent whose domain matches the question best. " +
         "RESPONSE PROTOCOL (mandatory): the request arrives as " +
@@ -2126,15 +2207,15 @@ export function seedOrchestrationCrews(
     });
   }
 
-  if (!db.getTrait("orchestration-debate")) {
-    db.saveTrait({
+  if (seedOwned(db.getTrait("orchestration-debate"))) {
+    seedTrait(db, {
       name: "orchestration-debate",
       category: "methodology",
       prompt:
-        "You serve the marina:debate endpoint. On a model_request: `tell ProposerA <question>` AND " +
-        "`tell ProposerB <question>`. Wait for both to reply. If they agree, return that answer. " +
-        "If they disagree, `tell Judge Proposer A said X, Proposer B said Y — decide` and return the " +
-        "Judge's pick. Adversarial reasoning catches more errors than a single shot. " +
+        "You serve the marina:debate endpoint. On a model_request: `tell Mathematician <question>` " +
+        "AND `tell Historian <question>` — they are the two proposers. Wait for both to reply. If " +
+        "they agree, return that answer. If they disagree, `tell Skeptic <answer A> vs <answer B> — " +
+        "decide` and return Skeptic's pick. " +
         "RESPONSE PROTOCOL (mandatory): the request arrives as " +
         "`{type:'model_request', id:'req-XXX', content:'<question>', target:'<your-entity-id>'}` on " +
         "model-debate. Your reply MUST be one message on the SAME channel with the exact envelope " +
@@ -2154,22 +2235,21 @@ export function seedOrchestrationCrews(
     });
   }
 
-  if (!db.getTrait("orchestration-decompose")) {
-    db.saveTrait({
+  if (seedOwned(db.getTrait("orchestration-decompose"))) {
+    seedTrait(db, {
       name: "orchestration-decompose",
       category: "methodology",
       prompt:
         "You serve the marina:decompose endpoint. Break the question into 2-4 sub-questions, assign " +
         "each to the most-fit specialist via `tell <specialist> Sub-question N: <text>`. Collect " +
-        "replies. Compose the final answer by chaining sub-answers. This pays off on multi-hop " +
-        "questions (FRAMES, MuSR) where a single pass misses the composition. " +
+        "replies. Compose the final answer by chaining sub-answers. This is for multi-hop " +
+        "questions where a single pass misses the composition. " +
         "RESPONSE PROTOCOL (mandatory): the request arrives as " +
         "`{type:'model_request', id:'req-XXX', content:'<question>', target:'<your-entity-id>'}` on " +
         "model-decompose. Your reply MUST be one message on the SAME channel with the exact envelope " +
         '`channel send model-decompose {"type":"model_response","id":"<requestId>","content":"<answer>"}` — ' +
-        "bare text without this envelope is never delivered to the caller and the request times out " +
-        "(measured 2026-09: bare 'C'/'D'/'A' posts scored 0/10 despite correct work). Send the " +
-        "model_response before any optional notes; if decomposition stalls, answer with your own " +
+        "bare text without this envelope is never delivered to the caller and the request times out. " +
+        "Send the model_response before any optional notes; if decomposition stalls, answer with your own " +
         "best result rather than staying silent.",
       capabilities: {
         strengths: ["decomposition", "specialist-routing", "answer-composition"],
@@ -2184,8 +2264,8 @@ export function seedOrchestrationCrews(
   }
 
   // ── Specialist roles ─────────────────────────────────────────────────────
-  if (!db.getRole("historian")) {
-    db.saveRole({
+  if (seedOwned(db.getRole("historian"))) {
+    seedRole(db, {
       name: "historian",
       description: "Factual/historical specialist — web + sources before answering.",
       traits: ["historical-researcher", "web-research", "methodical-observation"],
@@ -2203,15 +2283,15 @@ export function seedOrchestrationCrews(
     });
   }
 
-  if (!db.getRole("skeptic")) {
-    db.saveRole({
+  if (seedOwned(db.getRole("skeptic"))) {
+    seedRole(db, {
       name: "skeptic",
       description: "Adversarial reviewer — finds what's wrong before it ships.",
       traits: ["adversarial-reviewer", "methodical-observation"],
       guidelines: [
         "On first spawn: `channel join crew-bench`",
         "Never propose your own answer — only critique what's asked of you",
-        "1-2 concrete concerns per review; if none, say 'looks correct'",
+        '1-2 concrete concerns per review; if none, say "looks correct"',
         "Reply via `tell <asker> <concerns OR 'looks correct'>`",
       ],
       focus: ["adversarial review", "assumption testing"],
@@ -2221,8 +2301,8 @@ export function seedOrchestrationCrews(
     });
   }
 
-  if (!db.getRole("format-verifier")) {
-    db.saveRole({
+  if (seedOwned(db.getRole("format-verifier"))) {
+    seedRole(db, {
       name: "format-verifier",
       description: "Checks answer format matches expected output shape.",
       traits: ["format-verifier", "methodical-observation"],
@@ -2238,8 +2318,8 @@ export function seedOrchestrationCrews(
     });
   }
 
-  if (!db.getRole("councilor")) {
-    db.saveRole({
+  if (seedOwned(db.getRole("councilor"))) {
+    seedRole(db, {
       name: "councilor",
       description: "Orchestrator for marina:council — broadcasts to crew, tallies votes.",
       traits: ["orchestration-vote", "endpoint-answerer"],
@@ -2257,8 +2337,8 @@ export function seedOrchestrationCrews(
     });
   }
 
-  if (!db.getRole("debater")) {
-    db.saveRole({
+  if (seedOwned(db.getRole("debater"))) {
+    seedRole(db, {
       name: "debater",
       description:
         "Orchestrator for marina:debate — two proposers + judge for adversarial answering.",
@@ -2277,8 +2357,8 @@ export function seedOrchestrationCrews(
     });
   }
 
-  if (!db.getRole("decomposer")) {
-    db.saveRole({
+  if (seedOwned(db.getRole("decomposer"))) {
+    seedRole(db, {
       name: "decomposer",
       description:
         "Orchestrator for marina:decompose — breaks questions into sub-parts, assigns to specialists, composes.",
@@ -2319,8 +2399,8 @@ export function seedOrchestrationCrews(
         "peer tells you a question, recall from topic-scoped pools first: `pool facts:<domain> recall " +
         "<topic>` (e.g. `facts:awards`, `facts:people`, `facts:events`). Then `web search <keywords>` " +
         "for primary sources. Cite sources in your reply: `tell <sender> <answer> (source: <url>)`. " +
-        "Deposit confirmed facts as pool notes under the same topic pool so the crew builds shared " +
-        "factual memory that transfers across benchmarks.",
+        "Never store a question or its answer: a memorised answer contaminates later measurement. " +
+        "What runs teach comes back as judged lessons (`lessons <topic> domain:benchmark`).",
     },
     {
       name: "Scholar",
@@ -2339,7 +2419,7 @@ export function seedOrchestrationCrews(
       role: "skeptic",
       goal:
         "You are the adversarial reviewer. First spawn: `channel join crew-bench`. When a peer asks " +
-        "you to review an answer, find 1-2 concrete concerns OR reply `looks correct`. Never propose " +
+        'you to review an answer, find 1-2 concrete concerns OR reply "looks correct". Never propose ' +
         "your own answer. Your value is catching hidden assumptions, off-by-one errors, entity " +
         "confusions. Reply via `tell <sender> <concern>`.",
     },

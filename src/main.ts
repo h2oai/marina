@@ -408,8 +408,9 @@ await engine.initConnectors();
 // Initialize gateway runtime (peer Marina bridges)
 await engine.initGateways();
 
-// Seed the guide memory pool (idempotent)
-seedGuidePool(db, world.guideNotes);
+// Seed the guide memory pool (reconciles edited/removed seed notes by key).
+// Requirement phrases ({{requires:<command>}}) come from the live definitions.
+seedGuidePool(db, world.guideNotes, { commands: engine.commands.allBuiltins() });
 
 // Run world seed function (idempotent)
 if (world.seed) {

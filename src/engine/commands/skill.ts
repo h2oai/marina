@@ -14,13 +14,17 @@ import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
 import { rankFloorRefusal } from "../rank-floor";
 import { isLocalUngated } from "../trust-profile";
 import { requiresPersistence } from "./command-messages";
-import { auditKnowledgeNotes, renderKnowledgeHygieneReport } from "./knowledge-hygiene";
+import {
+  auditKnowledgeNotes,
+  type CommandVocabulary,
+  renderKnowledgeHygieneReport,
+} from "./knowledge-hygiene";
 
 export function skillCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
   db?: MarinaDB;
   logEvent?: (event: EngineEvent) => void;
-  getCommandNames?: () => string[];
+  getCommandVocabulary?: () => CommandVocabulary;
 }): CommandDef {
   return {
     category: "Memory",
@@ -237,7 +241,7 @@ export function skillCommand(deps: {
 
         case "audit": {
           const notes = db.getNotesByType(entity.name, "skill", 500);
-          const report = auditKnowledgeNotes(notes, { knownCommands: deps.getCommandNames?.() });
+          const report = auditKnowledgeNotes(notes, { ...deps.getCommandVocabulary?.() });
           ctx.send(input.entity, renderKnowledgeHygieneReport("Skill library", report));
           return;
         }
