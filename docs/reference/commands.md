@@ -1682,8 +1682,10 @@ Usage:
                                           — run it now; always also grants its gate
   challenge deny <token> [reason]         — decline; the requester is told why
   challenge stats                         — the judge's record per gate vs people's answers
-Creators answer for the agents they spawned, admins for anyone — only for what
-they could do themselves. Nobody answers their own ask.
+People answer: the owner of the agent that asked (the person who started its
+spawn chain) or an operator — only for what they could do themselves. Agents
+never answer another's hold, and nobody answers their own ask. Offline
+approvers find holds here and in `ops inbox`; holds survive a restart.
 
 Category: Civic. Minimum rank: 0.
 Aliases: `challenges`.

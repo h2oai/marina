@@ -866,6 +866,7 @@ export class WebSocketServer {
             token?: string;
             secret?: string;
             internalToken?: string;
+            principal?: string;
             version?: number;
             entitlement?: unknown;
             request_id?: string;

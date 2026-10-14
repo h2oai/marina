@@ -3,7 +3,7 @@
 
 /**
  * `challenge` — answer the asks that refusals raise (src/engine/challenges.ts).
- * A requester's creator and the admins see held actions here and approve them
+ * The requester's owner and the operators — people, never agents — see held actions here and approve them
  * once, for good (`always` grants the gate), or deny them. The requester never
  * waits: approval re-runs the action and delivers its output.
  */
@@ -30,8 +30,10 @@ Usage:
                                           — run it now; always also grants its gate
   challenge deny <token> [reason]         — decline; the requester is told why
   challenge stats                         — the judge's record per gate vs people's answers
-Creators answer for the agents they spawned, admins for anyone — only for what
-they could do themselves. Nobody answers their own ask.`;
+People answer: the owner of the agent that asked (the person who started its
+spawn chain) or an operator — only for what they could do themselves. Agents
+never answer another's hold, and nobody answers their own ask. Offline
+approvers find holds here and in \`ops inbox\`; holds survive a restart.`;
 
 function line(c: Challenge, now: number): string {
   const left = Math.max(0, Math.round((c.expiresAt - now) / 60_000));
@@ -128,14 +130,17 @@ export function challengeCommand(deps: {
         const note = rest.join(" ").trim() || undefined;
         const result = settleChallenge(token, me, answer, note);
         if (!result.ok) {
-          ctx.send(
-            input.entity,
-            result.error === "self"
-              ? "You can't answer your own ask, or one raised by the agent that spawned you."
-              : result.error === "not_authorized"
-                ? "Only the requester's creator or an admin can answer it — and only for what they could do themselves."
-                : `No open challenge ${token} (it may have been answered or expired).`,
-          );
+          const why: Record<typeof result.error, string> = {
+            self: "You can't answer your own ask, or one raised by the agent that spawned you.",
+            agent:
+              "People answer held actions, agents don't (whatever their rank): the requester's owner or an operator decides. Carry on with your own work.",
+            not_authorized:
+              "Only the requester's creator or an admin can answer it — and only for what they could do themselves.",
+            absent:
+              result.detail ?? "The requester is not in the world right now; the hold stays open.",
+            not_found: `No open challenge ${token} (it may have been answered or expired).`,
+          };
+          ctx.send(input.entity, why[result.error]);
           return;
         }
         const c = result.challenge;

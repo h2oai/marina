@@ -324,7 +324,9 @@ describe("challenges: no silent walls", () => {
     const sixth = hold("marina_command call 6");
     expect(sixth.token).toMatch(/^ch_/);
     expect(sixth.message).toContain("runs automatically if approved");
-    expect(sixth.message).toContain(`Replaced your oldest held call (challenge ${first.token}`);
+    expect(sixth.message).toContain(
+      `Replaced your oldest held call of this kind (challenge ${first.token}`,
+    );
     expect(sixth.message).toContain("did not run");
     // Approvers hear that the old one is gone and about the new one.
     expect(text(alice)).toContain(
@@ -343,7 +345,7 @@ describe("challenges: no silent walls", () => {
     expect(outcome?.answer).toBe("expired");
   });
 
-  it("when every open challenge is of another class, the refusal names them", async () => {
+  it("a newcomer probing different commands is not walled off; only the overall cap refuses", async () => {
     const tokens: string[] = [];
     for (const arg of ["a", "b", "c", "d", "e"]) {
       builder.clear();
@@ -351,11 +353,36 @@ describe("challenges: no silent walls", () => {
       tokens.push(tokenIn(text(builder))!);
     }
     expect(tokens.every(Boolean)).toBe(true);
-    const refused = hold("marina_command pool out add T1");
+    // Five holds of one class leave room for every other kind of probe.
+    const other = hold("marina_command pool out add T1");
+    expect(other.token).toMatch(/^ch_/);
+    // Distinct classes up to the overall cap (20) all open…
+    const open = [...tokens, other.token!];
+    for (let i = 0; open.length < 20; i++) {
+      const next = raiseForTool({
+        requesterId: "",
+        requesterName: "Builder",
+        toolName: `probe_${i}`,
+        summary: `probe_${i} {}`,
+        reason: "held",
+        rerun: async () => "ok",
+      });
+      expect(next.token).toMatch(/^ch_/);
+      open.push(next.token!);
+    }
+    // …and only past it is nothing opened, with the open ones named.
+    const refused = raiseForTool({
+      requesterId: "",
+      requesterName: "Builder",
+      toolName: "probe_last",
+      summary: "probe_last {}",
+      reason: "held",
+      rerun: async () => "ok",
+    });
     expect(refused.token).toBeUndefined();
     expect(refused.message).toContain("Not run");
-    expect(refused.message).toContain("you have 5 open challenges of other kinds");
-    for (const token of tokens) expect(refused.message).toContain(token);
+    expect(refused.message).toContain("you have 20 open challenges");
+    expect(refused.message).toContain(open[0]!);
     expect(refused.message).toContain("Take another route");
   });
 
@@ -455,6 +482,10 @@ describe("challenge judge + pi adapter", () => {
       expect(Date.now() - started).toBeLessThan(10_000);
       expect(result.block).toBe(true);
       expect(result.reason).toContain("runs automatically if approved");
+      // Actionable, not just a number: the question, the scope, the options.
+      expect(result.reason).toContain("question: destructive 0.80");
+      expect(result.reason).toContain("scope: ");
+      expect(result.reason).toContain("options: wait");
       const token = tokenIn(stripAnsi(alice.allText().join("\n")))!;
       expect(token).toBeDefined();
       await engine.processCommand(alice.entity!, `challenge approve ${token}`);

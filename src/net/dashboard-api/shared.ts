@@ -9,7 +9,6 @@
 import { join } from "node:path";
 import type { Engine } from "../../engine/engine";
 import { Logger } from "../../engine/logger";
-import { getRank } from "../../engine/permissions";
 import {
   checkGateForExecution,
   checkUnattendedGate,
@@ -157,10 +156,11 @@ export function bearerToken(req: Request): string | undefined {
  * signed-in user — or, under MARINA_OPEN_API, anyone — could spawn agents,
  * bypassing the `agent.spawn` safety gate the in-world command enforces.
  *
- * Returns null when allowed, or a 403 Response when not. Allowed if: the
- * caller presents the local desktop operator credential, OR the caller is a
- * sovereign admin (rank 9), OR the caller has earned/been-granted the relevant
- * safety gate. Mirrors "admin, or granted to a user".
+ * Returns null when allowed, or a 403 Response (with the gate's own
+ * path-forward `reason`) when not. Allowed if: the caller presents the local
+ * desktop operator credential, OR the caller passes the relevant safety gate
+ * (earned, granted — sovereign operators hold theirs by grant — or passed by
+ * posture). No rank short-circuit: the router has none either.
  *
  * The `MARINA_OPEN_API=true` dev bypass deliberately does NOT satisfy this
  * gate: dev-open may open reads, but destructive/privileged operations
@@ -169,28 +169,37 @@ export function bearerToken(req: Request): string | undefined {
  * would hand out full control to any anonymous caller.
  */
 export function authorizePrivileged(
-  engine: Engine,
+  _engine: Engine,
   db: MarinaDB | undefined,
   callerId: EntityId,
   gateId: string,
 ): Response | null {
   if (isOperatorPrincipal(callerId)) return null; // desktop operator credential
-  const entity = engine.entities.get(callerId);
-  if (entity && getRank(entity) >= 9) return null; // sovereign admin
-  // Posture-aware execution check: self-certification stays closed (a
-  // standing-only holder is refused in guarded posture with no window), but
-  // the gate authorizes via unsupervised competence, an operator-declared
-  // open posture (non-core gates), a live witness window, or earned-posture
-  // optimistic supervision — with the competence consequence recorded.
+  // The gate is the single authority, as at the command router: no rank
+  // short-circuit. A sovereign operator holds its gates by grant (rank
+  // promotion grants them), while a resident whose stored rank is 9 does not
+  // pass a core gate on rank alone. Posture-aware execution check:
+  // self-certification stays closed (a standing-only holder is refused in
+  // guarded posture with no window), but the gate authorizes via unsupervised
+  // competence, an operator-declared open posture (non-core gates), a live
+  // witness window, or earned-posture optimistic supervision — with the
+  // competence consequence recorded.
+  let reason: string | undefined;
   if (db) {
     const gate = checkGateForExecution(db, callerId, gateId);
     if (gate.ok) {
       recordGateExecution(db, callerId, gateId, gate, `api:${gateId}`);
       return null;
     }
+    reason = gate.reason;
   }
   return json(
-    { error: `Not authorized: this action requires an admin or the "${gateId}" capability.` },
+    {
+      error: `Not authorized: this action needs the "${gateId}" capability.`,
+      gate: gateId,
+      // The gate's own path forward (standing, witness window, grant …).
+      ...(reason ? { reason } : {}),
+    },
     403,
   );
 }
@@ -215,12 +224,20 @@ export function authorizeEntityRead(
   // may both read. A non-operator sentinel never reaches privileged *writes*.
   if (isSentinelPrincipal(callerId)) return null;
   const caller = engine.entities.get(callerId);
-  if (caller && getRank(caller) >= 9) return null; // sovereign admin
   if (caller && caller.name.toLowerCase() === requestedName.toLowerCase()) return null; // own memory
   // Operator gate — unattended check so a supervised-only holder isn't treated
-  // as an operator for cross-entity private-memory reads.
+  // as an operator for cross-entity private-memory reads. No rank shortcut: a
+  // sovereign operator holds admin.destructive by grant; a rank-9 resident
+  // without it does not read others' private memory.
   if (db && checkUnattendedGate(db, callerId, "admin.destructive").ok) return null; // operator gate
-  return json({ error: "Not authorized to read another entity's private memory." }, 403);
+  return json(
+    {
+      error: "Not authorized to read another entity's private memory.",
+      reason:
+        "Reading another entity's private memory needs the admin.destructive gate held unsupervised (operators hold it by grant).",
+    },
+    403,
+  );
 }
 
 /** Clamp a `?limit=` query param into a sane range (default `dflt`, max 1000). */

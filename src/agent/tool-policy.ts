@@ -55,6 +55,14 @@ function worstRisk(risks: readonly ToolRisk[]): ToolRisk {
 const CONSEQUENTIAL_COMMAND =
   /^(admin|rank|grant|ban|kick|destroy|connect\s+(add|auth|remove)|gateway\s+(add|remove|bridge)|build\s+(destroy|unlink)|code\s+(approve|deny|revert)|agent\s+(stop|key|reconfigure|config)|role\s+(edit|delete|reload)|trait\s+delete|lessons\s+(retire|supersede))\b/i;
 const COMMUNICATION_COMMAND = /^(say|tell|shout|emote|channel\s+send|board\s+(post|reply))\b/i;
+/**
+ * An answer to a held action (`challenge|decision approve|deny <token>`) is
+ * `communicate`: a reply to an ask, never scored by the decision gate. The
+ * command checks the answerer's authority itself (people only — an agent is
+ * refused there), so holding the answer for approval only asked people to
+ * approve an approval.
+ */
+const CHALLENGE_ANSWER = /^(challenges?|decisions?)\s+(approve|deny)\b/i;
 const POLICY_MANIPULATION =
   /\b(ignore|bypass|disable|override|evade|remove)\b.{0,40}\b(safety|gate|policy|permission|system prompt|governing contract)\b/i;
 /** Trust sources whose content is not first-party: web/search/probe results and
@@ -212,7 +220,7 @@ const READ_SUBCOMMANDS: Record<string, (words: string[]) => boolean> = {
   // Default is `list`; `history` falls through to the usage reply.
   board: ([a]) => !a || has(["list", "read", "search", "scores", "history"], a),
   challenge: ([a]) => !a || has(["list", "stats"], a),
-  decision: ([a]) => a === "receipts",
+  decision: ([a]) => !a || has(["receipts", "list", "agreement"], a),
   channel: ([a]) => has(["list", "listall", "history"], a),
   task: ([a]) => has(["list", "info", "children"], a),
   // `project list|info …`, `project <name> status|tasks`
@@ -326,7 +334,7 @@ export function classifyCommandRisk(raw: string): ToolRisk {
   if (verb === "memory") return classifyMemoryCommand(tail);
   const readSub = READ_SUBCOMMANDS[SUBCOMMAND_ALIASES[verb] ?? verb];
   if (readSub?.(tail.slice(0, 2).map((w) => w.toLowerCase()))) return "read";
-  if (COMMUNICATION_COMMAND.test(command)) return "communicate";
+  if (COMMUNICATION_COMMAND.test(command) || CHALLENGE_ANSWER.test(command)) return "communicate";
   return "mutate";
 }
 

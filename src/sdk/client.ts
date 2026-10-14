@@ -56,6 +56,13 @@ export interface ClientOptions {
   /** Internal-agent token. Sent with login/auth messages so the engine can
    * exempt internal room/crew agents from instance login limits. */
   internalToken?: string;
+  /**
+   * Who drives this client (default `agent`). An agent never answers another
+   * participant's held action (challenges are answered by people); a tool a
+   * person types into (a REPL, a CLI) passes `person`. Self-declared, so it
+   * can only remove authority, never add it.
+   */
+  principal?: "agent" | "person";
 }
 
 export interface CommandOptions {
@@ -255,6 +262,7 @@ export class MarinaClient {
       commandTimeout: options?.commandTimeout ?? 120_000,
       onOpen: options?.onOpen ?? undefined,
       internalToken: options?.internalToken ?? undefined,
+      principal: options?.principal ?? "agent",
     };
   }
 
@@ -371,7 +379,12 @@ export class MarinaClient {
         }
       };
       this.addInternalHandler(handler);
-      this.send({ type: "login", name, internalToken: this.options.internalToken });
+      this.send({
+        type: "login",
+        name,
+        internalToken: this.options.internalToken,
+        principal: this.options.principal,
+      });
     });
   }
 
@@ -414,7 +427,12 @@ export class MarinaClient {
         }
       };
       this.addInternalHandler(handler);
-      this.send({ type: "auth", token, internalToken: this.options.internalToken });
+      this.send({
+        type: "auth",
+        token,
+        internalToken: this.options.internalToken,
+        principal: this.options.principal,
+      });
     });
   }
 

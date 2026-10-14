@@ -309,6 +309,12 @@ export interface Connection {
   peerIp?: string;
   /** True for internal room/crew agent connections (exempt from instance login limits). */
   internal?: boolean;
+  /**
+   * The client declared itself an agent (SDK `principal: "agent"`, the
+   * default for `MarinaClient`). Self-declared, so it can only REMOVE
+   * authority — people answer challenges, agents never do — never add it.
+   */
+  agent?: boolean;
   /** An in-process connection whose arrival and departure are not announced to the room (a scheduled run). */
   quiet?: boolean;
   send(perception: Perception): void;

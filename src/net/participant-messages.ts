@@ -19,6 +19,8 @@ export interface ParticipantMessage {
   command?: string;
   token?: string;
   internalToken?: string;
+  /** `agent`: the client is an agent, not a person (see `Connection.agent`). */
+  principal?: string;
   request_id?: string;
   coding_target?: unknown;
   trace_links?: unknown;
@@ -38,6 +40,12 @@ export function handleParticipantMessage(
 ): void {
   const connId = ws.data.connId;
   if (!parsed || typeof parsed !== "object" || ws.readyState !== 1) return;
+  // A client that declares itself an agent stays one for the connection's
+  // life (sticky): the declaration only removes authority, never adds it.
+  if ((parsed.type === "login" || parsed.type === "auth") && parsed.principal === "agent") {
+    const conn = engine.getConnections().get(connId);
+    if (conn) conn.agent = true;
+  }
   if (parsed.type === "login" && parsed.name) {
     const result = engine.login(connId, parsed.name, parsed.internalToken);
     if ("error" in result) {

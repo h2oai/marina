@@ -6,6 +6,7 @@ import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Engine } from "../src/engine/engine";
+import { grantGatesForRank } from "../src/engine/safety-gates";
 import { handleDashboardApi } from "../src/net/dashboard-api";
 import { resetHttpRateLimitersForTests } from "../src/net/http-utils";
 import { MarinaDB } from "../src/persistence/database";
@@ -124,6 +125,7 @@ it("gates HTTP execution controls while keeping generic messaging available", as
     ).toBe("queued");
     const entity = engine.entities.findByName("RuntimeUser", roomId("test/start"))!;
     entity.properties.rank = 9;
+    grantGatesForRank(db, entity.id, 9); // promotion grants the gates; HTTP has no rank shortcut
     expect(
       (
         await client.control(session.id, session.id, "launch", {

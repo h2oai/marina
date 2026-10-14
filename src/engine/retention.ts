@@ -324,6 +324,13 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     note: "answered challenges: human verdicts on held actions + the judge's shadow opinion",
   },
   {
+    table: "challenge_holds",
+    timeColumn: "settled_at",
+    kind: "telemetry",
+    keepMs: 30 * DAY_MS,
+    note: "held actions awaiting a person; pending rows (no settled_at) are never pruned — answered ones live on in challenge_outcomes",
+  },
+  {
     table: "arena_submissions",
     kind: "append-only",
     note: "signed public forecasts; the audit record behind the arena's reveal",

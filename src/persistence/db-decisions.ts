@@ -243,3 +243,123 @@ export function listChallengeOutcomes(
     .query(`SELECT * FROM challenge_outcomes ${where} ORDER BY id DESC LIMIT ?`)
     .all(...params) as ChallengeOutcomeRow[];
 }
+
+// ─── Challenge holds (migration 166) ────────────────────────────────────
+
+export type ChallengeHoldStatus = "pending" | "once" | "always" | "deny" | "expired";
+
+export interface ChallengeHoldInput {
+  token: string;
+  kind: "gate" | "rank" | "tool";
+  requesterId: string;
+  requesterName: string;
+  creatorName?: string;
+  gateId?: string;
+  minRank?: number;
+  /** The requester's own held input; omitted when it carried a secret-shaped value. */
+  command?: string;
+  toolName?: string;
+  /** JSON of the request-local coding target, when the hold carried one. */
+  codingTarget?: string;
+  /** Masked rendering for approvers. */
+  summary: string;
+  reason: string;
+  createdAt: number;
+  expiresAt: number;
+}
+
+export interface ChallengeHoldRow {
+  token: string;
+  kind: "gate" | "rank" | "tool";
+  requester_id: string;
+  requester_name: string;
+  creator_name: string | null;
+  gate_id: string | null;
+  min_rank: number | null;
+  command: string | null;
+  tool_name: string | null;
+  coding_target: string | null;
+  summary: string;
+  reason: string;
+  status: ChallengeHoldStatus;
+  requester_notice: string | null;
+  created_at: number;
+  expires_at: number;
+  settled_at: number | null;
+}
+
+/** Persist a newly opened hold (pending). */
+export function saveChallengeHold(db: Database, row: ChallengeHoldInput): void {
+  db.query(
+    `INSERT OR REPLACE INTO challenge_holds
+       (token, kind, requester_id, requester_name, creator_name, gate_id, min_rank, command,
+        tool_name, coding_target, summary, reason, status, requester_notice, created_at,
+        expires_at, settled_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?, NULL)`,
+  ).run(
+    row.token,
+    row.kind,
+    row.requesterId,
+    row.requesterName,
+    row.creatorName ?? null,
+    row.gateId ?? null,
+    row.minRank ?? null,
+    row.command ?? null,
+    row.toolName ?? null,
+    row.codingTarget ?? null,
+    row.summary,
+    row.reason,
+    row.createdAt,
+    row.expiresAt,
+  );
+}
+
+/**
+ * Settle a hold, or change what is owed to its requester. A settled status
+ * stamps `settled_at`; `requesterNotice: null` clears a delivered notice.
+ */
+export function updateChallengeHold(
+  db: Database,
+  token: string,
+  patch: { status?: ChallengeHoldStatus; requesterNotice?: string | null; requesterId?: string },
+): boolean {
+  const sets: string[] = [];
+  const params: (string | number | null)[] = [];
+  if (patch.status) {
+    sets.push("status = ?");
+    params.push(patch.status);
+    if (patch.status !== "pending") {
+      sets.push("settled_at = ?");
+      params.push(Date.now());
+    }
+  }
+  if (patch.requesterNotice !== undefined) {
+    sets.push("requester_notice = ?");
+    params.push(patch.requesterNotice);
+  }
+  if (patch.requesterId) {
+    sets.push("requester_id = ?");
+    params.push(patch.requesterId);
+  }
+  if (sets.length === 0) return false;
+  params.push(token);
+  const result = db
+    .query(`UPDATE challenge_holds SET ${sets.join(", ")} WHERE token = ?`)
+    .run(...params);
+  return result.changes > 0;
+}
+
+/** Pending holds (oldest first), and/or every hold that still owes its requester a notice. */
+export function listChallengeHolds(
+  reader: Database,
+  opts: { pending?: boolean; withNotice?: boolean; limit?: number } = {},
+): ChallengeHoldRow[] {
+  const limit = Math.min(Math.max(opts.limit ?? 1_000, 1), 10_000);
+  const where: string[] = [];
+  if (opts.pending) where.push("status = 'pending'");
+  if (opts.withNotice) where.push("requester_notice IS NOT NULL");
+  const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  return reader
+    .query(`SELECT * FROM challenge_holds ${clause} ORDER BY created_at ASC LIMIT ?`)
+    .all(limit) as ChallengeHoldRow[];
+}

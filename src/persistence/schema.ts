@@ -783,6 +783,37 @@ CREATE TRIGGER schedule_runs_no_update BEFORE UPDATE ON schedule_runs
 BEGIN SELECT RAISE(ABORT, 'schedule_runs is append-only'); END;
 `,
   },
+  // Migration 166: durable challenge holds — a held action survives a restart
+  // and runs on approval. `command` is the requester's own held input, kept
+  // only when it carries nothing secret-shaped; `summary` is always masked.
+  {
+    version: 166,
+    sql: `
+CREATE TABLE challenge_holds (
+  token TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('gate', 'rank', 'tool')),
+  requester_id TEXT NOT NULL,
+  requester_name TEXT NOT NULL,
+  creator_name TEXT,
+  gate_id TEXT,
+  min_rank INTEGER,
+  command TEXT,
+  tool_name TEXT,
+  coding_target TEXT,
+  summary TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'once', 'always', 'deny', 'expired')),
+  requester_notice TEXT,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  settled_at INTEGER
+);
+CREATE INDEX idx_challenge_holds_status ON challenge_holds(status, expires_at);
+CREATE INDEX idx_challenge_holds_notice ON challenge_holds(requester_name)
+  WHERE requester_notice IS NOT NULL;
+`,
+  },
 ];
 
 /** Migration 143 body — self-contained so later edits to db-notes never change it. */

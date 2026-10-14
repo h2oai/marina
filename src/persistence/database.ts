@@ -2278,6 +2278,27 @@ export class MarinaDB implements MarinaStores {
     return decisionsDb.listChallengeOutcomes(this.reader, opts);
   }
 
+  saveChallengeHold(row: decisionsDb.ChallengeHoldInput): void {
+    decisionsDb.saveChallengeHold(this.db, row);
+  }
+
+  updateChallengeHold(
+    token: string,
+    patch: {
+      status?: decisionsDb.ChallengeHoldStatus;
+      requesterNotice?: string | null;
+      requesterId?: string;
+    },
+  ): boolean {
+    return decisionsDb.updateChallengeHold(this.db, token, patch);
+  }
+
+  listChallengeHolds(
+    opts: { pending?: boolean; withNotice?: boolean; limit?: number } = {},
+  ): decisionsDb.ChallengeHoldRow[] {
+    return decisionsDb.listChallengeHolds(this.db, opts);
+  }
+
   // ─── Learned bundles (delegated to db-learned.ts, migration 161) ────────
 
   recordLearnedArtifact(
