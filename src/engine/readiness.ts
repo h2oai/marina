@@ -92,8 +92,9 @@ const SEE_PROVIDER = "Configure a model provider first (see LLM provider configu
 /** WHO this instance is for, and whether permissions are enforced. */
 export interface ReadinessTrustProfile {
   profile: TrustProfile;
-  /** True only under `local` without `MARINA_AUTONOMY=guarded` — gates, rank
-   *  floors, witnesses and exec prompts are off; audit stays on. */
+  /** True under `local` without `MARINA_AUTONOMY=guarded`, or under
+   *  `MARINA_AUTONOMY=sovereign` in any profile — gates, rank floors, holds and
+   *  exec prompts are off; audit stays on. */
   ungated: boolean;
   /** Why gates are enforced (absent when ungated). */
   reason?: string;

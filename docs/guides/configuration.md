@@ -64,6 +64,13 @@ gate for every signed-in user. The boot log prints the resolved profile and
 why; in `local` it also prints the one real risk: a poisoned shared-pool note can lead an agent to
 run a host command without a prompt, and the exec audit is how you find out.
 
+To lift every gate regardless of profile, for a sovereign, self-hosted Marina with no guests (a
+homelab or a private network you control), set `MARINA_AUTONOMY=sovereign`. Every gate (the core
+included), rank floor and hold is off for every principal; audit stays on, and the profile still
+sets the performance defaults. On a non-loopback bind it also needs
+`MARINA_ALLOW_INSECURE_PUBLIC=true`, signed in or not. `MARINA_AUTONOMY=open` is not this switch:
+it never lifts the core.
+
 ### Set yourself as admin
 
 ```bash

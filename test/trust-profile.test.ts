@@ -15,6 +15,8 @@ import {
   describeTrustProfile,
   getTrustProfile,
   isLocalProfile,
+  isLocalUngated,
+  isSovereign,
   resolveTrustProfile,
   setTrustProfile,
 } from "../src/engine/trust-profile";
@@ -92,6 +94,37 @@ describe("trust profile — resolution", () => {
         bindHost: "0.0.0.0",
       }),
     ).not.toThrow();
+  });
+
+  it("MARINA_AUTONOMY=sovereign ungates every profile; off-loopback it needs the insecure ack", () => {
+    using _processState = scopeProcessState();
+    for (const profile of ["shared", "public"] as const) {
+      setTrustProfile(profile);
+      expect(isLocalUngated({})).toBe(false);
+      expect(isLocalUngated({ MARINA_AUTONOMY: "open" })).toBe(false);
+      expect(isLocalUngated({ MARINA_AUTONOMY: " Sovereign " })).toBe(true);
+      expect(describeTrustProfile(profile, { MARINA_AUTONOMY: "sovereign" })).toContain(
+        "SOVEREIGN",
+      );
+    }
+    expect(isSovereign({ MARINA_AUTONOMY: "sovereign" })).toBe(true);
+    expect(isSovereign({ MARINA_AUTONOMY: "open" })).toBe(false);
+
+    // Any profile, any sign-in: a non-loopback bind is fatal without the ack.
+    for (const profile of ["local", "shared", "public"] as const) {
+      for (const authEnabled of [false, true]) {
+        const base = { profile, authEnabled, bindHost: "0.0.0.0", sovereign: true };
+        expect(() =>
+          assertTrustProfileSafe({ ...base, loopbackOnlyBind: false, insecurePublicAck: false }),
+        ).toThrow(/FATAL: MARINA_AUTONOMY=sovereign/);
+        expect(() =>
+          assertTrustProfileSafe({ ...base, loopbackOnlyBind: false, insecurePublicAck: true }),
+        ).not.toThrow();
+        expect(() =>
+          assertTrustProfileSafe({ ...base, loopbackOnlyBind: true, insecurePublicAck: false }),
+        ).not.toThrow();
+      }
+    }
   });
 
   it("process default is SHARED (legacy enforcement) until main resolves the profile", () => {

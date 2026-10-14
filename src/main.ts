@@ -23,6 +23,7 @@ import {
   describeTrustProfile,
   isLocalUngated,
   isOpenApiMode,
+  isSovereign,
   resolveTrustProfile,
   setTrustProfile,
 } from "./engine/trust-profile";
@@ -156,6 +157,7 @@ assertTrustProfileSafe({
   authEnabled: AUTH_ENABLED,
   insecurePublicAck: INSECURE_PUBLIC_ACK,
   bindHost: RESOLVED_WS_HOST,
+  sovereign: isSovereign(),
 });
 setTrustProfile(TRUST.profile);
 RateLimiter.bypass = TRUST.profile === "local";
@@ -225,7 +227,13 @@ logger.info(
   "trust",
   `Trust profile: ${describeTrustProfile(TRUST.profile)} (${TRUST.derived ? "derived: " : ""}${TRUST.reason})`,
 );
-if (TRUST.profile === "local" && isLocalUngated()) {
+if (isSovereign()) {
+  logger.warn(
+    "trust",
+    "MARINA_AUTONOMY=sovereign: every gate (core included), rank floor and hold is off for " +
+      "every principal that can log in. Every action is still audited. Unset it to bring the gates back.",
+  );
+} else if (TRUST.profile === "local" && isLocalUngated()) {
   logger.warn(
     "trust",
     "LOCAL profile: agents can run host commands and manage keys without a prompt. " +

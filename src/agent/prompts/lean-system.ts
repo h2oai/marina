@@ -64,13 +64,13 @@ export function getCommandRoster(entries?: CommandCatalogEntry[]): string {
  * privacy boundary, what arrives unasked and how it is labeled, the six
  * verbs with their syntax, supersede-don't-delete, and where health lives.
  *
- * Profile-aware: a LOCAL ungated instance has no rank floors or witness
- * ladder, so the caveat line is omitted there (`isLocalUngated`).
+ * Profile-aware: with permissions ungated (local, or `sovereign`) there are
+ * no rank floors or gates, so the caveat line is omitted (`isLocalUngated`).
  */
 export function getMemoryContract(): string {
   const gated = isLocalUngated()
     ? ""
-    : "\n- Some memory commands need rank or a witness; `help <command>` says which.";
+    : "\n- Some memory commands need rank or a gate; `help <command>` says which.";
   return `# MEMORY
 
 - Your notes are private. Pools, boards, channels and canvases are visible to others.
