@@ -285,6 +285,28 @@ fewer than 8 records of the key it is identity. Order: forecaster → calibratio
 The decision is kept under `calibration` in the filing's detail. `MARINA_ARENA_CALIBRATION=observe`
 records without applying; `off` skips it.
 
+**Learned move weight per (family, method).** A formation files its start plus a constant share
+(about one half) of its members' median move. `src/arena/move-weight.ts` learns that share from
+outcomes instead: the filed mean becomes `start + w × (median proposal − start)`, w on a grid from
+0 to 1.5, fitted by minimum CRPS on our resolved filings and arena shadows of the same key
+(`arena:<tracker>|<method>`), shrunk toward the formations' own trust. It is adopted only when it
+beats what was filed on the newer 40 % by 5 % AND a placebo fails: the same fit with the members'
+moves shuffled across rounds must not reach the same gain (else the gain is shrinkage, not
+information in the moves). With fewer than 8 records it does nothing. Order: forecaster → move
+weight → spread calibration → error floor; the decision (w, n, held-out gain, placebo) is kept
+under `moveWeight`. `MARINA_ARENA_MOVE_WEIGHT=observe` records without applying; `off` skips it.
+Formation filings now record their start (`formationStart`) so the move is exact.
+
+**Unanchored formations and typed signals.** `formation:<pattern>~unanchored:<models>` runs the
+same members, dossier and protocol without the instruction that the start forecast is the default,
+and asks every member to list the evidence it relied on as typed signals (claim, direction, signed
+size, unit, observation and source dates), recorded under `signals` with a `stale` flag for
+anything observed before the start reading. It has its own method key, so it is a shadow
+challenger: list it in `MARINA_ARENA_SHADOW_CHALLENGERS` (it is never run automatically) and let
+earned routing and the move weight decide on resolved rounds whether unanchored moves carry
+information. The research dossier's typed measurements (target and change claims) are listed as
+signals in the dossier block too.
+
 **Live reading for open rounds.** For a round whose lock has not passed, the nowcast also reads
 the Civiqs dashboard (`src/arena/research/civiqs-live.ts`, one paced request per tracker) and uses
 whichever reading is fresher. A round whose lock has passed never reads live data, so backtests
@@ -453,6 +475,13 @@ filing's detail as `routing`.
 |---|---|
 | `bun run arena routes` | prints every family's decision now (read-only, no model calls) |
 | `bun run arena shadow challengers <round_id\|due>` | runs the challengers the operator lists per family in `MARINA_ARENA_SHADOW_CHALLENGERS` (`civiqs=nowcast\|<spec>;aaii=<spec>`), so exploring costs only what is listed |
+
+`spike-decay` is a free challenger for Trends baskets (`src/arena/spike-decay.ts`): the nowcast,
+except that a cell whose latest share sits more than 3 × its robust weekly change away from the
+median of its previous 8 weeks (an event week) moves halfway back toward that median, and the
+basket is renormalised. Every other family answers as the nowcast. It is not a default: list it
+(`MARINA_ARENA_SHADOW_CHALLENGERS=google_trends=spike-decay`) and it answers the family only once
+earned routing promotes it.
 
 The nowcast refuses rounds with no history (see [no-anchor mode](#the-research-agent-research)).
 To answer them, route their family to research, e.g. `<family>=research:<m>[,<m>…]@<retriever>`;
@@ -629,7 +658,10 @@ FRED evidence includes current/previous observations, their same-vintage change,
 vintage date. A comparison with the vintage available at the start reading distinguishes new
 information from a monthly change that was already known. Verification uses the frozen structured
 payload rather than a mutable HTML page;
-the dossier retains the typed observations and failure/skip reasons. Historical intraday cutoffs
+the dossier retains the typed observations and failure/skip reasons. For a monthly round the
+brief carries its target period (the month after the last published value); a related series
+whose latest observation predates it is labelled `STALE` on its line and in the section header,
+so a month-old change is not read as news about the period being forecast. Historical intraday cutoffs
 use the prior UTC day's FRED vintage because its API does not provide exact release instants.
 Live reads use currently available data. Sports odds are excluded from arena research.
 Check each source's publication cadence: [FRED's Michigan sentiment series](https://fred.stlouisfed.org/series/UMCSENT)
@@ -1013,7 +1045,7 @@ not isolate evidence sharing as cleanly.
 | `MARINA_ARENA_WINDOW_HOURS` | `24` | how close to its lock a round is filed (above 168 ⇒ 168, with a warning; invalid ⇒ 24) |
 | `MARINA_ARENA_URL` / `MARINA_ARENA_AUDIENCE` | production | a rehearsal fork's intake |
 | `MARINA_ARENA_DATA_URL` | the arena repo on GitHub | where rounds, locks and resolutions are read |
-| `MARINA_ARENA_FORECASTER` | `nowcast` | no model calls; every non-Civiqs round is the baseline. Or `baseline`, `discovered`, `tabh2o[:forecast][@nowcast]` (experimental, `TABH2O_API_KEY`), `model:<m>`, `crew:<m>[,<m>,<m>]`, `formation:<pattern>:<m>[,…][+then:<pattern>:<m>[,…]][+research@<retriever>[,…]]`, `research:<m>[,<m>,<m>]` |
+| `MARINA_ARENA_FORECASTER` | `nowcast` | no model calls; every non-Civiqs round is the baseline. Or `baseline`, `spike-decay` (Trends shadow challenger), `discovered`, `tabh2o[:forecast][@nowcast]` (experimental, `TABH2O_API_KEY`), `model:<m>`, `crew:<m>[,<m>,<m>]`, `formation:<pattern>:<m>[,…][+then:<pattern>:<m>[,…]][+research@<retriever>[,…]]`, `research:<m>[,<m>,<m>]` |
 | `MARINA_ARENA_MODEL_WEIGHT` | `0.5` | share of the model's move from the baseline that is kept |
 | `MARINA_ARENA_SHADOW` | unset | a forecaster spec to record hourly in shadow (never filed) |
 | `MARINA_ARENA_TRENDS_PARTIAL` | off | `on` counts a Trends basket's partial current week |

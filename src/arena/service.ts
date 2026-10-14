@@ -326,6 +326,37 @@ export async function forecasterFor(
       ),
     };
   }
+  if (spec === "spike-decay") {
+    // The nowcast, except that a Trends basket's spiking cells move part of
+    // the way back toward their recent level (spike-decay.ts). Free; shadow
+    // challenger only — it answers a family only once earned-routes.ts says so.
+    const [{ nowcastForecaster, trendsForecastLock }, { spikeDecay }] = await Promise.all([
+      import("./research/civiqs-nowcast"),
+      import("./spike-decay"),
+    ]);
+    const data = arenaData(opts.env ?? process.env);
+    const nowcast = nowcastForecaster(
+      data,
+      forecastRound,
+      await liveCiviqs(opts.env, opts.strictFreshness),
+    );
+    return {
+      forecaster: async (round, lock) => {
+        const f = await nowcast(round, lock);
+        if (round.tracker !== "google_trends" || !f.profile) return f;
+        const inputs = await trendsForecastLock(data, round, lock);
+        const history = inputs.answer_history_by_cell;
+        if (!history) return f;
+        const { profile, decayed } = spikeDecay(f.profile, history);
+        const moved = Object.keys(decayed);
+        return {
+          ...f,
+          profile,
+          note: `${f.note}; spike decay: ${moved.length ? moved.map((c) => `${c} ${decayed[c]!.from.toFixed(1)}→${decayed[c]!.mean.toFixed(1)}`).join(", ") : "no spiking cell"}`,
+        };
+      },
+    };
+  }
   if (spec.startsWith("tabh2o")) return tabh2oForecasterFor(spec, opts);
   if (spec.startsWith(`${WIKI_EVENTS}:`)) {
     return wikiEventsForecasterFor(spec, opts.env ?? process.env, opts.strictFreshness);
@@ -543,13 +574,14 @@ async function formationForecasterFor(
     import("./research/civiqs-nowcast"),
   ]);
   const stageOf = (text: string) => {
-    const [, name = "", list = ""] = text.match(/^(?:formation|then):([a-z]+):(.+)$/i) ?? [];
+    const [, name = "", variant, list = ""] =
+      text.match(/^(?:formation|then):([a-z]+)(~unanchored)?:(.+)$/i) ?? [];
     const pattern = formations.formationPattern(name);
     if (!pattern) throw new Error(`unknown formation ${name}`);
     const models = list.split(",");
     // Fail fast on a missing provider key, before any round runs.
     for (const m of models) modelComplete(m, env);
-    return { pattern, models };
+    return { pattern, models, unanchored: Boolean(variant) };
   };
   const stages = [stageOf(head)];
   const then = parts.find((p) => p.startsWith("then:"));
@@ -627,7 +659,13 @@ async function formationForecasterFor(
       const made = stages.map((st) =>
         st.models.map((m) => ({ name: m.replace(/^openrouter\//, ""), ...modelComplete(m, env) })),
       );
-      const members = made.map((ms) => ms.map(({ name, complete }) => ({ name, complete })));
+      const members = made.map((ms, i) =>
+        ms.map(({ name, complete }) =>
+          stages[i]!.unanchored
+            ? formations.unanchoredMember({ name, complete })
+            : { name, complete },
+        ),
+      );
       if (inputs && inputs.roundId !== round.round_id)
         throw new Error("frozen inputs belong to another round");
       const given = inputs ? structuredClone(inputs.start) : await start(round, lock);

@@ -10,8 +10,8 @@
  *   `decision settings …`   anyone may read; changing a setting needs
  *                           admin.destructive or `decisions.configure` for a
  *                           person, and `decisions.configure` for an AGENT —
- *                           earned (standing + witnessed demonstrations, never
- *                           self-witnessed), granted, or passed by the
+ *                           earned (standing + approved runs, never
+ *                           self-approved), granted, or passed by the
  *                           operator's posture (`MARINA_AUTONOMY=open`).
  *
  * Supervision is a default an agent can outgrow by earning trust, not a fence

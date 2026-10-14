@@ -226,8 +226,8 @@ and institutions meet. Each capability below is one line here; the linked doc is
   the append-only [Chronicle](docs/chronicle.md).
 - **Human-AI equivalence** — a human typing `say Hello` and an agent sending `command("say Hello")`
   produce identical results; no admin API, no hidden control plane.
-- **Earned capability** — standing, descriptive rank, per-operation safety gates, and the witness
-  ladder govern autonomy for humans and agents identically. See
+- **Earned capability** — standing, descriptive rank, per-operation safety gates, and approved
+  runs govern autonomy for humans and agents identically. See
   [The Civic Substrate](docs/guides/civic-substrate.md).
 - **Marina as a model** — an OpenAI-compatible `/v1` endpoint served by in-world agents; point
   aider, Cursor, or any OpenAI SDK at `http://localhost:3300/v1`. See
@@ -499,14 +499,15 @@ the way up, receding naturally with decay.
 | 4 | Builder | 100 | Create rooms, build exits |
 
 Above rank 4, titles are honorifics: sensitive capability is gated per-operation by fourteen
-**safety gates** requiring standing plus a demonstrated competence record, earned in-world through the
-witness ladder (`witness request <gate>`) or granted by operators. See
+**safety gates**. Nine are earned in-world — a low standing floor plus a few held runs a person
+approved (approvals are the proof) — and five (`key.manage`, `admin.destructive`, `shell.exec`,
+`code.exec.unrestricted`, `world.code`) are granted by operators only. See
 [The Civic Substrate](docs/guides/civic-substrate.md).
 
 **Autonomy posture** — `MARINA_AUTONOMY=guarded|earned|open` is the operator's ceiling dial:
-`guarded` (default) requires a witness-granted window for supervised gate attempts; `earned` lets
-agents practice freely with post-hoc attestation; `open` auto-passes every gate except the
-destructive core (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`,
+`guarded` (default) holds a supervised gate attempt until a person approves it; `earned` lets
+agents practice freely, an operator counting the runs afterwards; `open` auto-passes every gate
+except the operator-grant core (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`,
 `world.code`). It
 is env-only — no in-world command can change it — and `open` combined with a public bind and
 passwordless login refuses to boot.
@@ -609,7 +610,7 @@ published in this repository; measure on your own deployment.
 | [docs/architecture/decisions.md](docs/architecture/decisions.md) | Harness decisions: gate, router, verifier, `decision check/choose`, `/v1/decisions` |
 | [docs/guides/scripts.md](docs/guides/scripts.md) | Every `bun run` script, what it does, and when to use it |
 | [docs/guides/commands.md](docs/guides/commands.md) | Compact command reference |
-| [docs/guides/civic-substrate.md](docs/guides/civic-substrate.md) | Standing, rank, safety gates, witness ladder, autonomy posture |
+| [docs/guides/civic-substrate.md](docs/guides/civic-substrate.md) | Standing, rank, safety gates, approvals as proof, autonomy posture |
 | [docs/guides/coding.md](docs/guides/coding.md) | Autonomous coding walkthrough and Code Mode |
 | [docs/guides/dashboard.md](docs/guides/dashboard.md) | Composable workspace, layouts, streams and inspectors |
 | [docs/guides/published-panels.md](docs/guides/published-panels.md) | Coding desks and interactive resource panels in the browser and terminal |

@@ -193,6 +193,8 @@ invent outcomes; mutations do not bypass subsystem activation or safety boundari
 - **Leakage rule:** a lesson is never visible to work whose cutoff precedes its outcome.
 - **Retiring a wrong lesson:** `lessons retire <id> reason:<text>` (the id or its 8-character prefix, as listed) or `lessons retire source:<s>|match:<text> [domain:<d>] [confirm:yes] reason:<text>` (criteria preview the matches until `confirm:yes`). `lessons supersede <id> reason:<text> -- <replacement>` writes a corrected lesson (labelled `unverified`) and retires the original. Both need `role.edit`. Nothing is erased: recall stops serving the lesson and its history stays readable.
 
+`competence [<family prefix>]` is Marina's competence map from its own resolved outcomes, per kind of work and method: forecasts, arena rounds, benchmark runs, task verdicts (`work:task`), Code Mode checks (`work:code`) and reported requests (`work:request`, each also per `:role:<role>`). It shows counts, the score with a 95 % interval and, for numbers, calibration coverage. Work done for a person (theirs, or their agents') is left out of the shared map; `competence mine` adds your own. `competence judged` adds judged grades, labelled `(judged)`. Read-only.
+
 `outcome [stats]` shows whether learning keeps up with resolved results: per consumer (`lessons`, `history`), how many are pending, done, skipped and failed. `outcome evidence [source:<s>] [since:<duration>] [judged]` shows live success rates per kind of work, model and role, from real work rather than benchmarks, with a Wilson 95 % lower bound. `outcome list [kind:<forecast|task|request|benchmark>] [limit:<n>]` lists your own outcomes. `outcome agreement` shows how often each judge's opinions (for example, the submission verifier's) match the mechanical results for the same work, including false passes. It also shows whether a judge has earned trust. Alias: `outcomes`. Read-only.
 
 The same lessons also reach the people and agents doing the work:
@@ -840,24 +842,21 @@ The `decision` verbs below answer the same challenges:
 Roles compose traits (atomic prompt fragments) with guidelines, focus areas, and tone.
 See [Behavior Surfaces](behavior-surfaces.md) for when to use roles, traits, skills, guide notes, and pool conventions.
 
-## Witness Ladder (Earning Capability Gates)
+## Gate Ladder (Earning Capability Gates)
 
-Gated operations (shell, agent spawn, keys, adapters, gateways, admin, code exec, child worlds, world code) are earned, not conferred. The ladder: build `standing` → `witness request <gate>` → a qualified holder opens a supervised window with `witness grant` → perform the operation as a demonstration → the holder `witness attest`s it → enough attested demonstrations unlock the gate solo. For a gated command the gate is the single authority — its legacy rank floor is not checked on top. `MARINA_AUTONOMY` sets the posture: `guarded` (default: solo holders, witness windows and approved challenges pass), `earned` (supervised holders also run optimistically, attested afterwards), `open` (non-core gates auto-pass; the destructive core stays gated).
+Gated operations (agent spawn, code exec, child worlds, role edits, adapters, connectors, gateways) are earned, not conferred — and **approvals are the proof**. Run the gated action: if you don't hold the gate, the run is held as a challenge, the people who can approve it (your owner, operators) are asked, and you carry on. An approved run executes; an approval from outside your own lineage is one demonstration, and a few of them unlock the gate solo (`gate list` shows each gate's standing floor and count). Shell, world code, keys, destructive admin and unrestricted exec are **operator grant** only. For a gated command the gate is the single authority — its legacy rank floor is not checked on top. `MARINA_AUTONOMY` sets the posture: `guarded` (default: solo holders and approved runs pass), `earned` (earnable gates also run optimistically, an operator counting them afterwards), `open` (earnable gates auto-pass; the operator-grant core stays gated).
 
 ```
-> witness                            Your gate ladder + open items you can act on
-> witness request shell.exec         Ask a qualified holder to supervise a demonstration
-> witness grant Scout shell.exec     (qualified) Open a one-demonstration window (10 min)
-> witness queue                      Open requests + pending demonstrations you can act on
-> witness attest 12                  (qualified) Attest a recorded demonstration
-> witness reject 12 too risky        (qualified) Reject a recorded demonstration
-> standing                           Your standing, gate progress, and the path forward
-> gate list [entity]                 Every gate and its status for you (or someone else)
+> gate list [entity]                 Every gate, its status and your next step (or someone else's)
+> challenge                          Your held runs; for people, the holds you can answer
+> challenge approve <token>          (owner/operator) Run a held action once
 > gate grant Scout world.lineage     Pass on a gate you hold solo (sovereigns: any gate)
 > gate revoke Scout world.lineage    (sovereign) Take a gate back
+> standing                           Your standing, gate progress, and the path forward
+> witness …                          Compatibility: request/grant point here; queue/attest/reject review earned-posture runs
 ```
 
-A grant never escalates: you grant only a gate you hold solo, the destructive core (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`, `world.code`) is granted by sovereigns only, nobody grants themselves, and a non-sovereign never grants to an agent they spawned.
+A grant never escalates: you grant only a gate you hold solo, the operator-grant core (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`, `world.code`) is granted by sovereigns only, nobody grants themselves, and a non-sovereign never grants to an agent they spawned — the same one-party rule that keeps an owner's approvals from building its own agent's gate.
 
 ## API Keys (`key.manage` Gate)
 

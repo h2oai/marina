@@ -156,33 +156,50 @@ describe("challenges (engine)", () => {
     expect(stripAnsi(builder.lastText())).toContain("can't answer your own ask");
   });
 
-  it("a gate refusal inside a handler is a challenge; a holder's approval is a witnessed demonstration", async () => {
+  it("a gate refusal inside a handler is a challenge; an owner's approval runs it, an operator's builds the gate", async () => {
     grant(db, alice.entity!, "agent.spawn");
     await send(builder, "breed");
-    const reply = text(builder);
-    const token = tokenIn(reply)!;
+    const token = tokenIn(text(builder))!;
     expect(token).toBeDefined();
     // The creator holds the gate, so is asked (and admins too).
     expect(text(alice)).toContain(`challenge approve ${token}`);
     expect(text(root)).toContain(`challenge approve ${token}`);
 
+    // Alice spawned Builder: one party. Her approval runs it but builds nothing.
     await send(alice, `challenge approve ${token}`);
+    expect(stripAnsi(alice.lastText())).toContain("does not build agent.spawn");
     await until(() => ran.includes("breed"));
-    const competence = db.getCompetence(builder.entity!, "agent.spawn");
-    expect(competence?.demonstrations).toBe(1);
+    expect(db.getCompetence(builder.entity!, "agent.spawn")?.demonstrations ?? 0).toBe(0);
 
-    // `always` grants the gate: later runs pass with no challenge.
+    // The operator is outside Builder's lineage: its approval is one demonstration.
     await send(builder, "breed");
     const second = tokenIn(stripAnsi(builder.lastText()))!;
-    await send(alice, `challenge approve ${second} always`);
+    await send(root, `challenge approve ${second}`);
+    expect(stripAnsi(root.lastText())).toContain("counts toward agent.spawn");
     await until(() => ran.filter((r) => r === "breed").length === 2);
+    expect(db.getCompetence(builder.entity!, "agent.spawn")?.demonstrations).toBe(1);
+    expect(text(builder)).toContain("counts toward agent.spawn");
+
+    // The owner's `always` is one approval (no grant into its own lineage) …
+    await send(builder, "breed");
+    const third = tokenIn(stripAnsi(builder.lastText()))!;
+    await send(alice, `challenge approve ${third} always`);
+    expect(stripAnsi(alice.lastText())).toContain("takes an operator; approved once");
+    await until(() => ran.filter((r) => r === "breed").length === 3);
+    expect(isGrantedCompetence(db.getCompetence(builder.entity!, "agent.spawn"))).toBe(false);
+
+    // … the operator's `always` grants it: later runs pass with no challenge.
+    await send(builder, "breed");
+    const fourth = tokenIn(stripAnsi(builder.lastText()))!;
+    await send(root, `challenge approve ${fourth} always`);
+    await until(() => ran.filter((r) => r === "breed").length === 4);
     builder.clear();
     await send(builder, "breed");
-    expect(ran.filter((r) => r === "breed").length).toBe(3);
+    expect(ran.filter((r) => r === "breed").length).toBe(5);
     expect(text(builder)).not.toContain("challenge ch_");
   });
 
-  it("`always` on a core gate needs an admin; otherwise it is approved once", async () => {
+  it("`always` on a core gate needs an operator; otherwise it is approved once and builds nothing", async () => {
     engine.commands.registerBuiltin({
       name: "wipe",
       category: "Test",
@@ -198,10 +215,11 @@ describe("challenges (engine)", () => {
     await send(builder, "wipe");
     const token = tokenIn(text(builder))!;
     await send(alice, `challenge approve ${token} always`);
-    expect(stripAnsi(alice.lastText())).toContain("needs an admin; approved once");
+    expect(stripAnsi(alice.lastText())).toContain("takes an operator; approved once");
+    expect(stripAnsi(alice.lastText())).toContain("operator-grant only");
     await until(() => ran.includes("wipe"));
-    // Not granted — at most a witnessed demonstration from the holder's approval.
-    expect(isGrantedCompetence(db.getCompetence(builder.entity!, "admin.destructive"))).toBe(false);
+    // Not granted, and no demonstration: core gates are operator-grant only.
+    expect(db.getCompetence(builder.entity!, "admin.destructive")).toBeUndefined();
   });
 
   it("deny and expiry reach the requester; `decision approve|deny` answer challenges too", async () => {

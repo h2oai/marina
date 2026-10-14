@@ -11,7 +11,7 @@ import type { ShellRuntime } from "../shell-runtime";
 import { isLocalUngated } from "../trust-profile";
 
 const HELP = `Execute shell commands.
-Gated capability: earn it via \`witness request agent.run\` or an operator grant (see \`standing\`).
+Gated capability: a held run executes once a person approves it (\`challenge\`); approvals from outside your own lineage build it (\`gate list\`), or an operator grants it.
 Usage: run <binary> [args...]
        run quiet <binary> [args...]
        run raw <command string>

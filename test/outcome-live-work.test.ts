@@ -149,10 +149,18 @@ describe("live work on the outcome path", () => {
   });
 
   it("live evidence: success rates per kind of work, model and role, never from measurement", () => {
-    observeOutcomeEvent(db, verdict("Helper", true, 1, 1));
-    observeOutcomeEvent(db, verdict("Helper", true, 2, 2));
-    observeOutcomeEvent(db, verdict("Helper", false, 3, 3));
+    // A world agent's work is shared evidence; a person's agent's work is not.
+    db.saveAgentConfig({
+      name: "Worker",
+      model: "vendor/model-a",
+      role: "coder",
+      spawnedBy: "system",
+    });
+    observeOutcomeEvent(db, verdict("Worker", true, 1, 1));
+    observeOutcomeEvent(db, verdict("Worker", true, 2, 2));
+    observeOutcomeEvent(db, verdict("Worker", false, 3, 3));
     observeOutcomeEvent(db, verdict("Roamer", true, 4, 4));
+    observeOutcomeEvent(db, verdict("Helper", true, 5, 5));
     const cells = liveEvidence(db, { source: "task:" });
     const helper = cells.find((c) => c.model === "vendor/model-a")!;
     expect(helper).toMatchObject({ source: "task:verdict", role: "coder", n: 3, successes: 2 });
@@ -177,7 +185,9 @@ describe("live work on the outcome path", () => {
     run();
     expect(sent.at(-1)).toContain("lessons:");
     run("evidence", "source:task:");
-    expect(sent.at(-1)).toContain("vendor/model-a");
+    // Evidence is the shared pool: a person's agent's work (Helper) stays out of it.
+    expect(sent.at(-1)).toContain("vendor/model-b");
+    expect(sent.at(-1)).not.toContain("vendor/model-a");
     run("list");
     expect(sent.at(-1)).toContain("task:1:Helper");
     expect(sent.at(-1)).not.toContain("Roamer");

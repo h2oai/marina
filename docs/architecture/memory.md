@@ -264,11 +264,19 @@ learning instead of losing it.
   - The outcome `request:<id>` records the model that served the request. It feeds evidence only:
     it carries no text to learn a lesson from.
   - A report sent with `x-marina-eval: …; mode=measure` is recorded as measurement and never counts.
-- **Live evidence in routing** (`MARINA_ROUTE_EVIDENCE_LIVE=on`, default off). Spawn-time route
-  evidence also weighs live cells as families `live:<source>`: role-level cells first, then model
-  level (`liveEvidenceEntries`, `pickWithRoleFallback`). The ledger evidence's MIN_N, objective and
-  observe/on mode all apply. The `agent_decision` signals carry `evidence_live` (the outcomes
-  weighed).
+- **Live evidence in routing** (`MARINA_ROUTE_EVIDENCE_LIVE`, default on; `off` uses the ledger
+  only). Spawn-time route evidence also weighs live cells as families `live:<source>`: role-level
+  cells first, then model level (`liveEvidenceEntries`, `pickWithRoleFallback`). The ledger
+  evidence's MIN_N, objective and observe/on mode all apply, so under the default `observe` it is
+  recorded, never applied. Only SHARED work is pooled: every work outcome carries `scope:shared` or
+  `scope:owner:<person>` (`src/outcomes/work-refs.ts`, from `workScopeFor`), and a person's work —
+  or their agents' — never enters shared evidence. The `agent_decision` signals carry
+  `evidence_live` (the outcomes weighed).
+- **Work on the competence map.** Task verdicts, judged task grades, Code Mode checks and reported
+  requests carry `family:work:<task|code|request>` (plus `:role:<role>`) and `method:model:<model>`,
+  the same tags forecasts, arena rounds and benchmark runs use. `competence [prefix]` shows the
+  shared map; `competence mine` adds the caller's own work; `competence judged` adds judged grades,
+  labelled.
 - **Rules, held in one place.**
   - A `measure` outcome teaches like any other when its board is named — its source (`prophet:…`)
     or an `eval:<board>` ref (`POST /v1/outcomes` adds it) — so benchmark traffic learns too, and

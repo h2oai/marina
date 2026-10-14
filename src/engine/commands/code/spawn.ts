@@ -166,7 +166,7 @@ async function runApprovedSpawnRequest(
   // step; the gate is the civic-substrate competence proof.
   // Posture-aware: the session-level approval artifact is a human review of
   // the *request*, not an attestation of gate competence — so the gate is
-  // checked independently, with witness windows / earned practice / open
+  // checked independently, with approved runs / earned practice / open
   // posture honored and their consequence recorded.
   const gate = checkGateForExecution(deps.db, eid, "agent.spawn");
   if (!gate.ok) {

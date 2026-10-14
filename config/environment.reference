@@ -759,8 +759,8 @@
 # Benchmark evidence for model:route (src/engine/benchmark-evidence.ts). After the router picks, measured ledger results may prefer another of the SAME candidates: the best Wilson lower bound among at least two candidates with MIN_N items in the role's families (and within MAX_COST_USD per item, when set). `observe` (the default) records the pick on the route decision without acting; `on` applies it; `off` skips it. Resolved once at spawn and persisted; any error keeps the router's choice. Families: a comma list of benchmark names for every role, or JSON {"*": [...], "<role>": [...]}; when unset, the spawning role's own declared families (its traits' `families` capability) are used, expanded to the registered benchmarks tagged with them; with none, evidence never applies. Evidence is traced participants and direct-model runs; window evidence only with MARINA_ROUTE_EVIDENCE_WINDOW=true, shared window evidence never. Inspect with `trace advise evidence <benchmark>`.
 # MARINA_ROUTE_EVIDENCE=observe
 
-# Live evidence in spawn-time route evidence (src/outcomes/evidence.ts): `on` also weighs what each candidate model (and role) actually got done on real work — task verdicts, Code Mode checks, outcomes reported to POST /v1/outcomes — as families `live:<source>`, mechanical outcomes only, never measurement. Same MIN_N, objective and observe/on mode as the ledger evidence. Default off.
-# MARINA_ROUTE_EVIDENCE_LIVE=off
+# Live evidence in spawn-time route evidence (src/outcomes/evidence.ts): also weigh what each candidate model (and role) actually got done on real work — task verdicts, Code Mode checks, outcomes reported to POST /v1/outcomes — as families `live:<source>`, mechanical outcomes only, never measurement, and only SHARED work (a person's work, or their agents', never pools into it). Same MIN_N, objective and observe/on mode as the ledger evidence, so under the default `observe` it is recorded, not applied. Default on; `off` uses the ledger only.
+# MARINA_ROUTE_EVIDENCE_LIVE=on
 # MARINA_ROUTE_EVIDENCE_FAMILIES=hle-verified-gold,frames
 # MARINA_ROUTE_EVIDENCE_MIN_N=30
 # MARINA_ROUTE_EVIDENCE_MAX_COST_USD=0.05
@@ -818,6 +818,9 @@
 
 # Spread calibration of filed arena toplines, per (family, method): a minimum-CRPS sd scale fitted on our own resolved filings (shrunk toward 1) and adopted only when it beats identity on the newer 40 % of that history by 5 %. With too little history it is identity. `on` (default) applies an adopted scale, `observe` records it without applying, `off` skips it. The measured-error floor still runs after it.
 # MARINA_ARENA_CALIBRATION=on
+
+# Learned move weight for formation filings, per (family, method): the filed mean is start + w × (median member proposal − start), w ∈ [0, 1.5] fitted by minimum CRPS on our resolved filings and arena shadows of the same key (shrunk toward the formations' own trust), adopted only when it beats what was filed on the newer 40 % by 5 % AND shuffling the members' moves across rounds does not reach the same gain (placebo). Until then the formation's constant trust stands. `on` (default) applies an adopted weight, `observe` records it without applying, `off` skips it. The spread calibration and the measured-error floor run after it.
+# MARINA_ARENA_MOVE_WEIGHT=on
 
 # Bounded evidence gap loop, 1–3 rounds per retrieval (default 1). Values above 1 enable evidence capture. A reviewer names up to three missing or contradictory facts; stop on no new verified evidence or no remaining queries. Typed forecasts already have an outer research loop: keep its research-round setting at 1 when isolating this inner loop. LOOP_MODEL defaults to the caller's lead/first analyst. Model and search spend still use the shared daily/scope ledger.
 # MARINA_RESEARCH_LOOP_ROUNDS=1
@@ -908,7 +911,7 @@
 # MARINA_ARENA_AUTOPILOT=off
 # MARINA_ARENA_WINDOW_HOURS=24
 
-# What answers (default nowcast — no model calls; the baseline for non-Civiqs rounds): nowcast (freshest Civiqs reading), baseline, discovered (best promoted signal, else nowcast), tabh2o[:forecast][@nowcast] (experimental; TabH2O on the lock's own history, needs TABH2O_API_KEY), model:<provider/model>, crew:<m>[,<m>,<m>] (statistician, analyst, skeptic) or research:<m>[,<m>,<m>]. A model's answer is shrunk toward the baseline by MARINA_ARENA_MODEL_WEIGHT. Measure with `bun run arena evaluate` before switching.
+# What answers (default nowcast — no model calls; the baseline for non-Civiqs rounds): nowcast (freshest Civiqs reading), baseline, spike-decay (nowcast with Trends basket event-week cells decayed toward their recent level; a shadow challenger), discovered (best promoted signal, else nowcast), tabh2o[:forecast][@nowcast] (experimental; TabH2O on the lock's own history, needs TABH2O_API_KEY), model:<provider/model>, crew:<m>[,<m>,<m>] (statistician, analyst, skeptic) or research:<m>[,<m>,<m>]. A model's answer is shrunk toward the baseline by MARINA_ARENA_MODEL_WEIGHT. Measure with `bun run arena evaluate` before switching.
 # MARINA_ARENA_FORECASTER=nowcast
 
 # Per-family routing for MARINA_ARENA_FORECASTER=routed (or a literal route:… spec): one forecaster per tracker family, `skip` to leave a family unanswered (the board averages only answered rounds), `*` for the rest. Unset uses *=nowcast; every family is answered.

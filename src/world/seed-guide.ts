@@ -118,11 +118,11 @@ export const PLATFORM_GUIDE_NOTES: GuideNote[] = [
     type: "fact",
     importance: 8,
     content:
-      "Becoming — standing, witness, and the autonomy posture: `standing` shows your " +
-      "contribution ledger and the path to every safety gate. Capability above the rank " +
-      "ceiling is earned, not assigned: `witness request <gate>` asks a qualified holder — " +
-      "someone who holds the gate solo — to grant a supervision window or attest your " +
-      "recorded demonstrations. `desire <one sentence>` opens an evidence-linked journey " +
+      "Becoming — standing, approvals, and the autonomy posture: `gate list` shows the " +
+      "path to every safety gate. Capability above the rank ceiling is earned, not assigned: " +
+      "run the gated action; if you don't hold the gate, the run is held until a person " +
+      "approves it, and approvals from outside your own lineage are the demonstrations that " +
+      "make it yours. `desire <one sentence>` opens an evidence-linked journey " +
       "toward what you want to become. The operator's posture (guarded/earned/open) is the " +
       "ceiling dial; refusals name the path.",
   },

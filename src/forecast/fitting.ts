@@ -156,12 +156,12 @@ export const DISCOVERY_SHARE = 0.6;
  * fit on the older `DISCOVERY_SHARE`, compare with the default on the rest,
  * adopt on a relative improvement ≥ `margin`, then refit on all.
  */
-export function adoptOnHoldout<P>(
-  records: ResolvedRecord[],
+export function adoptOnHoldout<P, R extends { resolvedAt: string } = ResolvedRecord>(
+  records: R[],
   opts: {
     fallback: P;
-    fit: (rs: ResolvedRecord[]) => P | undefined;
-    loss: (rs: ResolvedRecord[], p: P) => { loss: number; n: number };
+    fit: (rs: R[]) => P | undefined;
+    loss: (rs: R[], p: P) => { loss: number; n: number };
     margin: number;
     minRecords: number;
   },

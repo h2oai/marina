@@ -17,6 +17,18 @@ import { recordVerified, type VerifiedCredit } from "../agent/standing";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent } from "../types";
 import { recordResolved } from "./record";
+import { canScope, type WorkKind, workRefs } from "./work-refs";
+
+/** `family:` / `method:` / `scope:` refs for `actor`'s work of `kind` (see `./work-refs.ts`). */
+export function workRefsFor(db: MarinaDB, kind: WorkKind, actor: string): string[] {
+  const p = participantOf(db, actor);
+  return workRefs(canScope(db) ? db : undefined, {
+    kind,
+    actor,
+    ...(p.model ? { model: p.model } : {}),
+    ...(p.role ? { role: p.role } : {}),
+  });
+}
 
 /** Who did the work, and on what (an agent's model and role; a person's name only). */
 export function participantOf(
@@ -58,7 +70,7 @@ export function recordTaskVerdict(
         : "submission rejected by the task's creator"),
     basis: "mechanical",
     participants: [participantOf(db, input.claimant)],
-    refs: [`task:${input.taskId}`],
+    refs: [`task:${input.taskId}`, ...workRefsFor(db, "task", input.claimant)],
     resolvedAt: input.at,
   });
 }
@@ -104,7 +116,7 @@ export function recordTaskOpinion(
     basis: "judged",
     judge: input.judge,
     participants: [participantOf(db, input.claimant)],
-    refs: [`task:${input.taskId}`],
+    refs: [`task:${input.taskId}`, ...workRefsFor(db, "task", input.claimant)],
     resolvedAt: at,
   });
 }
@@ -162,6 +174,7 @@ export function recordVerification(
     refs: [
       `artifact:${input.artifactId}`,
       ...(input.sessionId ? [`coding:${input.sessionId}`] : []),
+      ...workRefsFor(db, "code", input.actor),
     ],
     resolvedAt: input.at ?? Date.now(),
   });

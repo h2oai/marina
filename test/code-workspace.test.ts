@@ -49,6 +49,7 @@ class Screen implements Terminal {
   clearFromCursor() {}
   clearScreen() {}
   setTitle() {}
+  setProgramStatus() {}
   setProgress() {}
   text() {
     return terminalText(this.output);

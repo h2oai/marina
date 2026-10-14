@@ -567,10 +567,18 @@ describe("Marina's default models are priced before pi-ai lists them", () => {
     // 1M in + 1M out at $0.10 / $0.50.
     expect(
       upstreamCostUsd("openrouter/openai/gpt-6-luna", {
+        inputTokens: 200_000,
+        outputTokens: 200_000,
+      }),
+    ).toBeCloseTo(0.12);
+    // pi-ai 1.2 lists gpt-6-luna with tiered long-context pricing: $0.10/$0.50
+    // base, $0.20/$0.75 above 272K tokens, so 1M+1M sits fully in the tier.
+    expect(
+      upstreamCostUsd("openrouter/openai/gpt-6-luna", {
         inputTokens: 1_000_000,
         outputTokens: 1_000_000,
       }),
-    ).toBeCloseTo(0.6);
+    ).toBeCloseTo(0.95);
     expect(
       upstreamCostUsd("openai/unknown-x", { inputTokens: 10, outputTokens: 1 }),
     ).toBeUndefined();
