@@ -34,7 +34,11 @@ demonstrations and standing rows are kept):
 
 ### Added
 
-- (pending) explicit sovereign switch `MARINA_AUTONOMY=sovereign`
+- **`MARINA_AUTONOMY=sovereign`** (#465): the named all-gates-off switch for a sovereign,
+  self-hosted Marina with no guests. Every gate (the core included), rank floor and hold is off
+  for every principal in any trust profile; audit stays on and the profile still sets the
+  performance defaults. A non-loopback bind refuses to boot unless
+  `MARINA_ALLOW_INSECURE_PUBLIC=true`, signed in or not. `open` still never lifts the core.
 - **Schedules** (#419, #422): `schedule add <name> every:|daily:|at:|before: lead: -- <command>`
   runs an owner's own command later or on a repeat, in the owner's slot with the same rank, gates,
   challenges and spend caps; `before:<kind>:<id>` follows a registered deadline reference.
@@ -313,7 +317,8 @@ demonstrations and standing rows are kept):
 
 ### Changed
 
-- (pending) Biome lint covers scripts/ and benchmarks/
+- `bun run lint` covers `scripts/` and `benchmarks/` (#464); benchmark data JSON is excluded so
+  hashed corpora stay byte-stable.
 - **Agent-facing text is truthful** (#437, #441): prompts and tool descriptions match the live
   commands; peer text cannot forge harness lines; untrusted results are labelled; evaluation
   turns are quarantined from the journal; `trusted` needs independent verification.
