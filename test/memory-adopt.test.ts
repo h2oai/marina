@@ -21,10 +21,14 @@ let owner: MarinaMemoryClient, worker: MarinaMemoryClient, stranger: MarinaMemor
 let requester: MarinaMemoryAssistance,
   helper: MarinaMemoryAssistance,
   second: MarinaMemoryAssistance;
-let workerId: string, strangerId: string;
+let workerId: string, strangerId: string, ownerId: string;
 
-const make = (name: string) => {
-  const principal = db.ensurePrincipal({ type: "service", displayName: name });
+const make = (name: string, ownerPrincipalId?: string) => {
+  const principal = db.ensurePrincipal({
+    type: "service",
+    displayName: name,
+    ...(ownerPrincipalId ? { ownerPrincipalId } : {}),
+  });
   const credential = db.issueMemoryCredential(principal.principal_id);
   const client = new MarinaMemoryClient("http://test", credential.token, 35000, (r) =>
     handleMemoryServiceApi(r, service),
@@ -43,6 +47,7 @@ beforeEach(async () => {
   worker = b.client;
   stranger = c.client;
   workerId = b.principalId;
+  ownerId = a.principalId;
   strangerId = c.principalId;
   requester = MarinaMemoryAssistance.http(owner);
   helper = MarinaMemoryAssistance.http(worker);
@@ -291,4 +296,26 @@ it("exposes adopt on the operation vocabulary and the world command grammar", ()
     input: { confirm_abstention: true },
   });
   expect(() => parseMemoryServiceCommand("adopt")).toThrow();
+});
+
+it("adopting a proposal from a helper the requester owns credits no one (one party)", async () => {
+  const kid = make("kid", ownerId);
+  const kidHelper = MarinaMemoryAssistance.http(kid.client);
+  const saved = await owner.remember(space, { content: "Deployment uses port 7419." });
+  const job = await requester.create(space, {
+    worker_id: kid.principalId,
+    role: "librarian",
+    task: "Find the deployment instruction",
+  });
+  const claim = await kidHelper.claim(job.id);
+  await kidHelper.read(job.id, claim.lease_token, { operation: "get", id: saved.id });
+  await kidHelper.finish(job.id, claim.lease_token, {
+    status: "answered",
+    answer: "Deploy using the documented port.",
+    citations: [cite(saved.id)],
+  });
+  const adopted = await owner.adopt(undefined, job.id, { rationale: "mine" }, "k-kid");
+  expect(adopted.state).toBe("adopted");
+  expect(adopted.credited).toEqual([]);
+  expect(ledgerFor(db, kid.principalId)).toEqual([]);
 });

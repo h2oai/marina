@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { record as recordStanding } from "../../agent/standing";
+import { independentParties, recordVerified } from "../../agent/standing";
 import { bold, dim, id as fmtId, status as fmtStatus, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
@@ -402,25 +402,28 @@ Examples:
               tier: "reflection",
               importance: 6,
             });
-            // Standing requires a real comparison: samples on >= 2 arms,
-            // recorded by >= 2 distinct entities. A creator recording both
-            // arms alone can complete, but earns nothing (anti-farming).
+            // Standing requires an independently replicated comparison: samples
+            // on >= 2 arms, and at least one recorder who is not the
+            // completer's party (same account or spawn lineage). A creator
+            // recording both arms alone, or with its own spawned agents, can
+            // complete but earns nothing.
             const armed = results.filter((r) => r.arm);
             const armsSampled = new Set(armed.map((r) => r.arm)).size;
-            const recorders = new Set(armed.map((r) => r.entity_name.toLowerCase())).size;
-            const credited = armsSampled >= 2 && recorders >= 2;
-            if (credited) {
-              recordStanding(
-                db,
-                entity.id,
-                entity.name,
-                "experiment_complete",
-                `experiment:${exp.id}`,
-              );
-            }
+            const replicator = armed.find((r) =>
+              independentParties(db, entity.name, r.entity_name),
+            )?.entity_name;
+            const credited =
+              armsSampled >= 2 &&
+              replicator !== undefined &&
+              recordVerified(db, {
+                kind: "experiment_complete",
+                ref: `experiment:${exp.id}`,
+                worker: { name: entity.name, entityId: entity.id },
+                verifier: replicator,
+              }).credited;
             const standingHint = credited
               ? ""
-              : ` No standing credited: needs samples on at least 2 arms from at least 2 distinct recorders (arms=${armsSampled}, recorders=${recorders}).`;
+              : ` No standing credited: needs samples on at least 2 arms and a recorder independent of you (arms=${armsSampled}, independent recorder: ${replicator ?? "none"}).`;
             ctx.send(
               input.entity,
               `Experiment "${name}" completed — ${tie ? "tie" : `winner: ${bold(top.arm)}`} on ${primary}. Outcome recorded.${standingHint}`,

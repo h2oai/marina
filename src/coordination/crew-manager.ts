@@ -10,7 +10,6 @@
  * restarts; loadFromDb() rehydrates them on engine boot.
  */
 
-import { record as recordStanding } from "../agent/standing";
 import { getErrorMessage } from "../engine/errors";
 import type { Logger } from "../engine/logger";
 import type { MarinaDB, MemoryPoolRow } from "../persistence/database";
@@ -64,9 +63,8 @@ export interface CrewManagerDeps {
   /** Pluggable clock — tests inject `Date.now()` substitutes. */
   now?: () => number;
   /**
-   * Resolve an agent's name to its entity id. Used to credit standing on
-   * crew completion (Standing is keyed by entity id; CrewMember holds
-   * names). Returning undefined skips the credit silently.
+   * Resolve an agent's name to its live entity id (roster standings in the
+   * crew context). Returning undefined omits it.
    */
   resolveAgentId?: (agentName: string) => string | undefined;
   /** Optional logger for non-fatal runtime failures (e.g. a fallback nudge
@@ -90,10 +88,6 @@ export interface CreateCrewOpts {
 
 export interface CrewCompletionResult {
   resultNoteId?: number;
-  /** False when a completion precondition failed and no standing was paid. */
-  standingCredited: boolean;
-  /** One-line, agent-facing reason when `standingCredited` is false. */
-  standingSkippedReason?: string;
   /**
    * True when the crew outlived the completion: a persisted crew closes the
    * finished unit of work and stays available for the next dispatch. False
@@ -144,13 +138,6 @@ export class CrewManager {
   private readonly invitations = new Map<string, CrewInvitation>();
   /** Per-(crew,member) stall offense counter. Standing only debits at >= 3. */
   private readonly memberOffenses = new Map<string, number>();
-  /**
-   * Crews with at least one completed dispatch — a stage completion, an
-   * artifact deposit, or a member pool deposit while active. `complete()`
-   * credits standing only for crews in this set (anti-farming: `crew create`
-   * + `crew complete` with no work must not pay the owner).
-   */
-  private readonly workEvidence = new Set<CrewId>();
 
   constructor(deps: CrewManagerDeps) {
     this.channels = deps.channels;
@@ -177,7 +164,6 @@ export class CrewManager {
       this.indexCrew(crew);
       // Backfill: crew pools predating the group object get grouped here.
       this.ensureCrewPoolGroup(crew);
-      this.rehydrateWorkEvidence(crew);
       loaded++;
     }
     for (const row of this.db.getOpenCrewInvitations()) {
@@ -195,24 +181,6 @@ export class CrewManager {
       });
     }
     return loaded;
-  }
-
-  /**
-   * Work evidence is in-memory; after a restart a persisted crew's channel
-   * history is the durable trace — `onMemberPoolDeposit` posts a
-   * `[crew-deposit]` line for every deposit that landed while active.
-   */
-  private rehydrateWorkEvidence(crew: Crew): void {
-    if (!crew.channelId) return;
-    try {
-      const delivered = this.channels
-        .getHistory(crew.channelId, 200)
-        .some((m) => m.senderId === "__crew_manager__" && m.content.startsWith("[crew-deposit]"));
-      if (delivered) this.workEvidence.add(crew.id);
-    } catch {
-      // History lookup is best-effort; without it the crew simply has to
-      // demonstrate work again before completion pays standing.
-    }
   }
 
   // ─── Lookup ────────────────────────────────────────────────────────────────
@@ -574,7 +542,6 @@ export class CrewManager {
     for (const crew of this.forAgent(agentName)) {
       if (crew.poolId) this.syncCrewPoolGroup(crew);
       if (crew.state !== "active" || !crew.channelId) continue;
-      this.workEvidence.add(crew.id);
       this.clearDepositFallbacks(crew.id);
       const snippet = content.length > 100 ? `${content.slice(0, 97)}…` : content;
       this.channels.send(
@@ -716,7 +683,6 @@ export class CrewManager {
     const crew = this.requireCrew(id);
     if (crew.state === "dissolved") return;
     this.clearDepositFallbacks(id);
-    this.workEvidence.delete(id);
     this.dispatchCounts.delete(id);
     // Final roster sync: the pool (and its group) outlive the crew row, and
     // the group keeps whoever was in the crew at the end.
@@ -904,11 +870,6 @@ export class CrewManager {
     }
     const text = summary.trim();
     if (!text) throw new CrewError("Result summary required", "no_members");
-    // Evaluate before the state transition below: standing is only earned by
-    // a crew that was actually dispatched (active), staffed by >= 2 distinct
-    // members, and completed at least one dispatch.
-    const standingSkipped = this.standingSkipReason(crew);
-
     let noteId: number | undefined;
     const noteIds: number[] = [];
     if (this.db) {
@@ -953,32 +914,9 @@ export class CrewManager {
     this.transition(crew, "completing");
     this.persistRow(crew);
 
-    // Credit standing to every member; the lead/owner gets the lead bonus
-    // on top. Standing is keyed by entity id, so we resolve via the deps
-    // callback (silent skip on unknown agents — this is best-effort civic
-    // accounting, not a hard requirement).
-    if (this.db && !standingSkipped) {
-      for (const member of crew.members) {
-        const memberId = this.resolveAgentId(member.agentName);
-        if (!memberId) continue;
-        recordStanding(
-          this.db,
-          memberId,
-          member.agentName,
-          "crew_complete_member",
-          String(crew.id),
-        );
-        if (member.role === "lead" || member.agentName === ownerName) {
-          recordStanding(
-            this.db,
-            memberId,
-            member.agentName,
-            "crew_complete_lead",
-            String(crew.id),
-          );
-        }
-      }
-    }
+    // A crew declares its own result, so completion earns no standing; the
+    // members' work earns when an independent creator approves the tasks the
+    // crew worked (src/agent/standing.ts, RETIRED_STANDING_KINDS).
 
     if (crew.channelId) {
       this.channels.send(
@@ -997,10 +935,8 @@ export class CrewManager {
     const retained = crew.lifetime === "persisted";
     if (retained) {
       // The unit of work is closed: its deposit fallbacks must not nudge the
-      // crew about a task that is done, and the next completion needs fresh
-      // work evidence of its own.
+      // crew about a task that is done.
       this.clearDepositFallbacks(crew.id);
-      this.workEvidence.delete(crew.id);
       this.transition(crew, "active");
       this.touch(crew);
       this.persistRow(crew);
@@ -1010,34 +946,12 @@ export class CrewManager {
       // where members could keep dispatching.
       this.dissolve(id, "completed");
     }
-    return standingSkipped
-      ? {
-          resultNoteId: noteId,
-          standingCredited: false,
-          standingSkippedReason: standingSkipped,
-          retained,
-        }
-      : { resultNoteId: noteId, standingCredited: true, retained };
-  }
-
-  /** Why `complete()` would withhold standing for this crew, or undefined if it pays. */
-  private standingSkipReason(crew: Crew): string | undefined {
-    if (crew.state !== "active") {
-      return `crew was never dispatched (state: ${crew.state})`;
-    }
-    const distinct = new Set(crew.members.map((m) => m.agentName.toLowerCase())).size;
-    if (distinct < 2) {
-      return `crew needs at least 2 distinct members (had ${distinct})`;
-    }
-    if (!this.workEvidence.has(crew.id)) {
-      return "no dispatch was completed (no stage, artifact, or pool deposit recorded)";
-    }
-    return undefined;
+    return { resultNoteId: noteId, retained };
   }
 
   /**
    * Mark a stage of a multi-step formation as complete. Member-only;
-   * emits `crew_stage_completed` which credits standing to the agent and
+   * emits `crew_stage_completed`, which
    * provides a discoverable progress signal on the event log.
    */
   recordStageCompleted(id: CrewId, stage: string, agentName: string): void {
@@ -1048,7 +962,6 @@ export class CrewManager {
     if (!crew.members.some((m) => m.agentName === agentName)) {
       throw new CrewError(`${agentName} is not a member of ${crew.name}`, "not_member");
     }
-    this.workEvidence.add(crew.id);
     this.touch(crew);
     this.persistRow(crew);
     this.emit({
@@ -1063,8 +976,8 @@ export class CrewManager {
 
   /**
    * Record a work-product deposit (map output, reduce result, draft, etc.).
-   * Member-only; emits `crew_artifact_deposited`. The civic credit lands in
-   * the standing ledger via the event log → recordFromEvent path.
+   * Member-only; emits `crew_artifact_deposited` (a progress signal; it
+   * earns no standing).
    */
   recordArtifactDeposit(
     id: CrewId,
@@ -1079,7 +992,6 @@ export class CrewManager {
     if (!crew.members.some((m) => m.agentName === agentName)) {
       throw new CrewError(`${agentName} is not a member of ${crew.name}`, "not_member");
     }
-    this.workEvidence.add(crew.id);
     this.touch(crew);
     this.persistRow(crew);
     this.emit({

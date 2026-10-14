@@ -86,7 +86,7 @@ describe("experiment arms (A/B comparison)", () => {
   });
 
   it("completes with a winner, writes an outcome note, and credits standing", () => {
-    // A second recorder: standing requires samples from >= 2 distinct entities.
+    // A second, independent recorder: standing requires an independent replication.
     const bobConn = new MockConnection("c2");
     engine.addConnection(bobConn);
     engine.spawnEntity("c2", "Bob");
@@ -123,12 +123,28 @@ describe("experiment arms (A/B comparison)", () => {
     expect(done).toContain("completed");
     expect(done).toContain("winner");
     expect(done).toContain("No standing credited");
-    expect(done).toContain("recorders=1");
+    expect(done).toContain("independent recorder: none");
     // Outcome note is still written — completion itself is not blocked.
     const outcome = db
       .getNotesByEntity("Alice")
       .filter((n) => n.note_type === "experiment-outcome");
     expect(outcome.length).toBe(1);
+    expect(getStanding(db, conn.entity!)).toBe(0);
+  });
+
+  it("a recorder in the completer's spawn lineage is not an independent replication", () => {
+    // Bob is an agent Alice spawned: one party with her.
+    db.saveAgentConfig({ name: "Bob", model: "m", spawnedBy: "Alice" });
+    const bobConn = new MockConnection("c2");
+    engine.addConnection(bobConn);
+    engine.spawnEntity("c2", "Bob");
+    run("experiment create Kin arms terse,verbose metric accuracy goal higher");
+    run("experiment start Kin");
+    run("experiment record Kin terse accuracy 0.9");
+    engine.processCommand(bobConn.entity!, "experiment record Kin verbose accuracy 0.5");
+
+    const done = run("experiment complete Kin");
+    expect(done).toContain("No standing credited");
     expect(getStanding(db, conn.entity!)).toBe(0);
   });
 

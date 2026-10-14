@@ -1,7 +1,6 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { recordChronicleCitation } from "../../agent/standing";
 import { bold, category, dim, id as fmtId, header, separator, status } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { ChronicleEntry, ChronicleKind } from "../../persistence/db-chronicle";
@@ -107,12 +106,6 @@ function isChronicler(entity: Entity, db?: MarinaDB): boolean {
 export function chronicleCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
   db?: MarinaDB;
-  /**
-   * Participant-name → entity-id resolver. Used to flow `chronicled` standing
-   * to cited entities. Optional — when absent, standing simply doesn't flow
-   * (citation discipline still works, just without the reputation reward).
-   */
-  resolveEntityIdByName?: (name: string) => string | undefined;
 }): CommandDef {
   return {
     category: "Knowledge",
@@ -393,13 +386,6 @@ export function chronicleCommand(deps: {
           refs,
           participants,
         });
-        if (deps.resolveEntityIdByName && participants.length > 0) {
-          recordChronicleCitation(
-            db,
-            { id, kind: "narrative", participants },
-            deps.resolveEntityIdByName,
-          );
-        }
         ctx.send(
           input.entity,
           `Recorded #${id} — narrative cited ${refs.length} source${refs.length === 1 ? "" : "s"}.`,
@@ -452,13 +438,6 @@ export function chronicleCommand(deps: {
           participants,
           supersedes: priorId,
         });
-        if (deps.resolveEntityIdByName && participants.length > 0) {
-          recordChronicleCitation(
-            db,
-            { id, kind: "correction", participants },
-            deps.resolveEntityIdByName,
-          );
-        }
         ctx.send(input.entity, `Recorded #${id} — supersedes #${priorId}.`);
         return;
       }
@@ -505,13 +484,6 @@ export function chronicleCommand(deps: {
           participants,
           period,
         });
-        if (deps.resolveEntityIdByName && participants.length > 0) {
-          recordChronicleCitation(
-            db,
-            { id, kind: "digest", participants },
-            deps.resolveEntityIdByName,
-          );
-        }
         ctx.send(input.entity, `Recorded #${id} — digest for ${period}.`);
         return;
       }

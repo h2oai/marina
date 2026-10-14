@@ -44,6 +44,11 @@ export function updateUserRank(db: Database, id: string, rank: number): void {
   db.run("UPDATE users SET rank = ? WHERE id = ?", [rank, id]);
 }
 
+/** Operator rank floor (migration 167): progression never lowers the account below it. */
+export function setUserRankFloor(db: Database, id: string, floor: number): void {
+  db.run("UPDATE users SET rank_floor = ? WHERE id = ?", [floor, id]);
+}
+
 /**
  * Rename an account (and its principal's display name), keeping its id, so
  * everything it owns stays where it is. Maintenance only: used to turn a
@@ -287,6 +292,8 @@ export interface UserRow {
   created_at: number;
   last_login: number;
   rank: number;
+  /** Operator-set rank floor below 5 (migration 167; 0 = none). */
+  rank_floor?: number;
   properties: string;
   /** better-auth subject bound to this named user (null unless MARINA_AUTH on). */
   auth_subject?: string | null;

@@ -15,11 +15,17 @@
  * entities are grandfathered: their stored rank stays put. Phase 3 will
  * gate dangerous operations through per-operation competence proofs rather
  * than tier ladders, so above-threshold rank no longer controls capability.
+ *
+ * An operator-set rank below 5 (`rank <name> <level>`) is a FLOOR stored on
+ * the account (`users.rank_floor`, migration 167): progression never lowers
+ * the account below it, nor a session that already holds it. It never raises
+ * a session above what it was granted at login (a passwordless remote login
+ * still starts at 0), and ranks ≥ 5 are untouched as before.
  */
 import { getRank, setRank } from "../engine/permissions";
 import type { MarinaDB } from "../persistence/database";
 import type { Entity, EntityRank } from "../types";
-import { getStanding } from "./standing";
+import { standingOf } from "./standing";
 
 // ─── Threshold table ────────────────────────────────────────────────────────
 //
@@ -71,10 +77,17 @@ export function checkRankProgression(db: MarinaDB, entity: Entity): EntityRank |
   // safety gates handle their capability access.
   if (currentRank >= SAFETY_THRESHOLD) return null;
 
-  const standing = getStanding(db, entity.id);
-  const derived = deriveRankFromStanding(standing);
+  const standing = standingOf(db, entity.name, entity.id);
+  const floor = Math.min(operatorFloor(db, entity.name), currentRank);
+  const derived = Math.max(deriveRankFromStanding(standing), floor) as EntityRank;
   if (derived === currentRank) return null;
   return derived;
+}
+
+/** The operator rank floor on `name`'s account (0 when none; always < 5). */
+export function operatorFloor(db: Pick<MarinaDB, "getUserByName">, name: string): EntityRank {
+  const floor = db.getUserByName(name)?.rank_floor ?? 0;
+  return Math.max(0, Math.min(SAFETY_THRESHOLD - 1, floor)) as EntityRank;
 }
 
 /**
@@ -86,7 +99,8 @@ export function applyRankProgression(db: MarinaDB, entity: Entity): boolean {
 
   setRank(entity, newRank);
   const user = db.getUserByName(entity.name);
-  if (user) db.updateUserRank(user.id, newRank);
+  // The account never drops below its operator floor, whatever this session holds.
+  if (user) db.updateUserRank(user.id, Math.max(newRank, operatorFloor(db, entity.name)));
   return true;
 }
 
@@ -99,7 +113,7 @@ export function getPromotionProgress(db: MarinaDB, entity: Entity): string | nul
   const currentRank = getRank(entity);
   if (currentRank >= SAFETY_THRESHOLD - 1) return null; // already at builder or above
 
-  const standing = getStanding(db, entity.id);
+  const standing = standingOf(db, entity.name, entity.id);
   const next = RANK_THRESHOLDS.find((t) => t.rank === ((currentRank + 1) as EntityRank));
   if (!next) return null;
   if (standing >= next.min) return null; // already eligible — apply will pick it up

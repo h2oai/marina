@@ -1423,9 +1423,9 @@ export class Engine {
         });
       }
     }
-    // Standing ledger absorbs civic-contribution events (pool notes today;
-    // more kinds wired as later phases land). Task standing stays on the
-    // task path to preserve per-task.standing values.
+    // Standing is earned at the point of verification (task approval, outcome
+    // resolution, adoption); the event path carries only the crew stall
+    // penalty (src/agent/standing.ts).
     if (this.db) {
       const db = this.db;
       try {
@@ -1434,12 +1434,7 @@ export class Engine {
         // Optional provenance must never interrupt the canonical event path.
       }
       try {
-        recordStandingEvent(
-          db,
-          event,
-          (id) => this.entities.get(id as EntityId)?.name,
-          (name) => this.entities.findAgentByName(name)?.id,
-        );
+        recordStandingEvent(db, event, (name) => this.entities.findAgentByName(name)?.id);
       } catch {
         // Non-critical — standing accounting failures must never break the
         // event log. Cache invalidation happens on the next read regardless.

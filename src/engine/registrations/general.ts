@@ -366,9 +366,6 @@ export function registerGeneralCommands(engine: Engine): void {
       chronicleCommand({
         getEntity: (id) => engine.entities.get(id as EntityId),
         db: engine.db,
-        resolveEntityIdByName: (name) =>
-          engine.entities.findAgentByName(name)?.id ??
-          engine.entities.all().find((e) => e.name === name)?.id,
       }),
     );
   }

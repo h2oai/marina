@@ -143,7 +143,7 @@ describe("durable keys survive re-login", () => {
       creatorId: "e_b",
       creatorName: "Bob",
       validationMode: "bounty",
-      standing: 12,
+      standing: 8,
     });
     expect(tasks.claim(task.id, "e_1", "Alice")).not.toBeNull();
     expect(tasks.submit(task.id, "e_1", "done")).toBe(true);
@@ -157,13 +157,14 @@ describe("durable keys survive re-login", () => {
         }
       ).entity_id,
     ).toBe("u_alice");
-    expect(tasks.getEntityStanding("e_1")).toBe(12);
+    expect(db.getEntityStanding("e_1")).toBe(8);
+    expect(tasks.standingOf("Alice", "e_1")).toBeCloseTo(8, 3);
 
     const e2 = relogin();
-    expect(tasks.getEntityStanding(e2)).toBe(12);
+    expect(db.getEntityStanding(e2)).toBe(8);
     // Re-recording the same task for the new id is still idempotent.
-    db.recordStandingEarned(e2, "Alice", task.id, 12);
-    expect(tasks.getEntityStanding(e2)).toBe(12);
+    db.recordStandingEarned(e2, "Alice", task.id, 8);
+    expect(db.getEntityStanding(e2)).toBe(8);
   });
 
   it("passes ids with no world account through unchanged", () => {

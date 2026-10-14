@@ -1,7 +1,6 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { record as recordStanding } from "../agent/standing";
 import { tryLog } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import type { MarinaDB } from "../persistence/database";
@@ -52,14 +51,10 @@ export function completeIntent(
   if (!result.ok) return result;
 
   publish(context, result.node, result.intent);
-  // Exactly one successful transition earns credit and memory, on either ingress.
-  // A local API sentinel/anonymous actor must never earn resident standing.
+  // Exactly one successful transition earns memory, on either ingress. It
+  // earns no standing: completion is self-reported and the intent's owner
+  // never accepts it (`helping_act` is retired, src/agent/standing.ts).
   if (actor.id && actor.room) {
-    if (result.node.creator_name && result.node.creator_name !== actor.name) {
-      tryLog(logger, "canvas", "Could not record intent contribution", () => {
-        recordStanding(db, actor.id!, actor.name, "helping_act", `intent:${result.node.id}`);
-      });
-    }
     tryLog(logger, "canvas", "Could not remember completed intent", () => {
       const memory =
         params.resultType === "a2ui"

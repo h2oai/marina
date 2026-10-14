@@ -7,6 +7,8 @@ import {
   getStanding,
   leaderboard,
   ledgerFor,
+  liveStandingKinds,
+  RETIRED_STANDING_KINDS,
   recomputeAll,
   record,
   recordFromEvent,
@@ -18,6 +20,9 @@ import { type EngineEvent, entityId } from "../src/types";
 import { cleanupDb } from "./helpers";
 
 const TEST_DB = "test_standing.db";
+/** A live kind with a fixed default amount, for the ledger mechanics below. */
+const KIND = "quest_complete" as const;
+const AMOUNT = STANDING_AMOUNTS[KIND];
 
 describe("Standing — civic-contribution ledger", () => {
   let db: MarinaDB;
@@ -36,95 +41,59 @@ describe("Standing — civic-contribution ledger", () => {
     expect(STANDING_HALF_LIFE_DAYS).toBe(60);
   });
 
-  it("reflection_recalled credits the AUTHOR of the recalled reflection, never the reader", async () => {
-    // Generational memory only compounds if downstream use pays the writer:
-    // Bob recalling Alice's pool reflection must credit Alice. Pool recall is
-    // the generational hand-off surface (plain `recall` reads only own notes).
-    db.createMemoryPool("pool_wisdom", "wisdom", "Alice");
-    const noteId = db.createNote("Alice", "Always verify assumptions before scaling.", "r_test", {
-      noteType: "reflection",
-      poolId: "pool_wisdom",
-    });
-    const resolveId = (name: string) =>
-      name === "Alice" ? entityId("e_alice") : name === "Bob" ? entityId("e_bob") : undefined;
-    const makeActor = (id: string, name: string) => ({
-      id: entityId(id),
-      kind: "agent" as const,
-      name,
-      short: name,
-      long: name,
-      room: "r_test" as never,
-      properties: {},
-      inventory: [],
-      createdAt: Date.now(),
-    });
-    const bob = makeActor("e_bob", "Bob");
-    const alice = makeActor("e_alice", "Alice");
-    const { poolCommand } = await import("../src/engine/commands/pool");
-    const command = poolCommand({
-      getEntity: (id) =>
-        String(id) === "e_bob" ? bob : String(id) === "e_alice" ? alice : undefined,
-      db,
-      resolveEntityIdByName: resolveId,
-    });
-    const invoke = (actor: { id: ReturnType<typeof entityId> }, args: string) =>
-      command.handler(
-        { send: () => {} } as never,
-        {
-          raw: `pool ${args}`,
-          verb: "pool",
-          args,
-          tokens: args.split(/\s+/),
-          entity: actor.id,
-          room: "r_test",
-        } as never,
-      );
+  it("retired kinds (recognition and volume) are refused at the write and pay 0 in the table", () => {
+    for (const kind of RETIRED_STANDING_KINDS) {
+      expect(STANDING_AMOUNTS[kind]).toBe(0);
+      record(db, "e_alice", "Alice", kind, `${kind}:1`, 5);
+    }
+    expect(ledgerFor(db, "e_alice")).toHaveLength(0);
+    expect(liveStandingKinds()).not.toContain("chronicled");
+    expect(liveStandingKinds()).toContain("task_complete");
+    expect(liveStandingKinds()).toContain("forecast_resolved");
+    expect(liveStandingKinds()).toContain("code_verified");
+  });
 
-    await invoke(bob, "wisdom recall verify assumptions");
-    const aliceLedger = ledgerFor(db, "e_alice");
-    const bobLedger = ledgerFor(db, "e_bob");
-    expect(
-      aliceLedger.some(
-        (row) => row.kind === "reflection_recalled" && row.ref === `reflection:${noteId}`,
-      ),
-    ).toBe(true);
-    expect(bobLedger.some((row) => row.kind === "reflection_recalled")).toBe(false);
-
-    // Self-recall is reading, not contribution — and the credit is idempotent,
-    // so repeated recalls by anyone add nothing.
-    await invoke(alice, "wisdom recall verify assumptions");
-    await invoke(bob, "wisdom recall verify assumptions");
-    const after = ledgerFor(db, "e_alice").filter((row) => row.kind === "reflection_recalled");
-    expect(after).toHaveLength(1);
+  it("historical rows of a retired kind stay readable and decay like any other", () => {
+    const now = Date.now();
+    const halfLifeMs = STANDING_HALF_LIFE_DAYS * 24 * 60 * 60 * 1000;
+    db.appendStandingEvent({
+      entityId: "e_alice",
+      entityName: "Alice",
+      kind: "chronicled",
+      ref: "chronicle:1",
+      amount: 2,
+      earnedAt: now - halfLifeMs,
+    });
+    expect(ledgerFor(db, "e_alice")[0]!.kind).toBe("chronicled");
+    expect(computeFromLedger(db, "e_alice", now)).toBeCloseTo(1, 2);
   });
 
   it("record() appends a ledger row and standing reads back the amount", () => {
-    record(db, "e_alice", "Alice", "pool_note", "pool_note:1");
-    expect(computeFromLedger(db, "e_alice")).toBeCloseTo(STANDING_AMOUNTS.pool_note, 2);
+    record(db, "e_alice", "Alice", KIND, "quest:1");
+    expect(computeFromLedger(db, "e_alice")).toBeCloseTo(AMOUNT, 2);
   });
 
   it("record() is idempotent on (entity, kind, ref) — re-recording is a no-op", () => {
-    record(db, "e_alice", "Alice", "pool_note", "pool_note:1");
-    record(db, "e_alice", "Alice", "pool_note", "pool_note:1");
-    record(db, "e_alice", "Alice", "pool_note", "pool_note:1");
-    expect(computeFromLedger(db, "e_alice")).toBeCloseTo(STANDING_AMOUNTS.pool_note, 2); // not 3×
+    record(db, "e_alice", "Alice", KIND, "quest:1");
+    record(db, "e_alice", "Alice", KIND, "quest:1");
+    record(db, "e_alice", "Alice", KIND, "quest:1");
+    expect(computeFromLedger(db, "e_alice")).toBeCloseTo(AMOUNT, 2); // not 3×
   });
 
   it("different refs accumulate", () => {
-    record(db, "e_alice", "Alice", "pool_note", "pool_note:1");
-    record(db, "e_alice", "Alice", "pool_note", "pool_note:2");
-    record(db, "e_alice", "Alice", "pool_note", "pool_note:3");
-    expect(computeFromLedger(db, "e_alice")).toBeCloseTo(3 * STANDING_AMOUNTS.pool_note, 2);
+    record(db, "e_alice", "Alice", KIND, "quest:1");
+    record(db, "e_alice", "Alice", KIND, "quest:2");
+    record(db, "e_alice", "Alice", KIND, "quest:3");
+    expect(computeFromLedger(db, "e_alice")).toBeCloseTo(3 * AMOUNT, 2);
   });
 
   it("decays exponentially with the configured half-life", () => {
     const now = Date.now();
     const halfLifeMs = STANDING_HALF_LIFE_DAYS * 24 * 60 * 60 * 1000;
-    // Insert via raw DB so we can backdate cleanly.
     db.appendStandingEvent({
       entityId: "e_alice",
       entityName: "Alice",
-      kind: "pool_note",
+      kind: KIND,
       ref: "old:1",
       amount: 10,
       earnedAt: now - halfLifeMs,
@@ -133,22 +102,11 @@ describe("Standing — civic-contribution ledger", () => {
     expect(computeFromLedger(db, "e_alice", now)).toBeCloseTo(5, 1);
   });
 
-  it("crew_complete_lead pays more than crew_complete_member", () => {
-    expect(STANDING_AMOUNTS.crew_complete_lead).toBeGreaterThan(
-      STANDING_AMOUNTS.crew_complete_member,
-    );
-  });
-
   it("getStanding caches and returns floor-zero values", () => {
-    record(db, "e_alice", "Alice", "pool_note", "pool_note:1");
+    record(db, "e_alice", "Alice", KIND, "quest:1");
     const first = getStanding(db, "e_alice");
     expect(first).toBeGreaterThan(0);
-
-    // Read again — comes from cache (verified by checking standing didn't drift)
-    const cached = getStanding(db, "e_alice");
-    expect(cached).toBeCloseTo(first, 5);
-
-    // Empty entity returns 0
+    expect(getStanding(db, "e_alice")).toBeCloseTo(first, 5);
     expect(getStanding(db, "e_nobody")).toBe(0);
   });
 
@@ -158,8 +116,8 @@ describe("Standing — civic-contribution ledger", () => {
     expect(getStanding(db, "e_alice")).toBe(0);
   });
 
-  it("recordFromEvent translates pool_note events into ledger rows", () => {
-    const event: EngineEvent = {
+  it("recordFromEvent credits nothing for a pool note; only the stall penalty is event-driven", () => {
+    recordFromEvent(db, {
       type: "pool_note",
       entity: entityId("e_alice"),
       noteId: 42,
@@ -167,22 +125,27 @@ describe("Standing — civic-contribution ledger", () => {
       content: "found something",
       importance: 5,
       timestamp: Date.now(),
-    };
-    recordFromEvent(db, event, () => "Alice");
-    const ledger = ledgerFor(db, "e_alice");
-    expect(ledger).toHaveLength(1);
-    expect(ledger[0]!.kind).toBe("pool_note");
-    // Ref is a content digest (anti-farming: re-posting the same text under a
-    // new note id earns nothing), not the note id.
-    expect(ledger[0]!.ref).toMatch(/^pool_note:[0-9a-f]{16}$/);
+    });
+    expect(ledgerFor(db, "e_alice")).toHaveLength(0);
+
+    recordFromEvent(
+      db,
+      {
+        type: "crew_member_stalled",
+        crew: "c1",
+        agentName: "Alice",
+        offenseCount: 3,
+        timestamp: 1,
+      } as EngineEvent,
+      () => "e_alice",
+    );
+    expect(ledgerFor(db, "e_alice")[0]?.kind).toBe("crew_member_stalled");
   });
 
   it("curation kinds are in the credit table: adoption pays the helper, abstention a quarter, supersession debits", () => {
     expect(STANDING_AMOUNTS.assistance_adopted).toBe(1);
     expect(STANDING_AMOUNTS.assistance_abstained_confirmed).toBe(0.25);
     expect(STANDING_AMOUNTS.assistance_superseded).toBe(-0.5);
-    // A superseded adoption never nets negative on its own: 1 − 0.5 ≥ 0, and
-    // the rollup floors at 0 like every other penalty.
     record(db, "e_helper", "Helper", "assistance_adopted", "assistance:j1");
     record(db, "e_helper", "Helper", "assistance_superseded", "assistance:j1:superseded:r1");
     record(db, "e_helper", "Helper", "assistance_superseded", "assistance:j1:superseded:r1"); // idempotent
@@ -192,22 +155,16 @@ describe("Standing — civic-contribution ledger", () => {
   });
 
   it("recordFromEvent skips events that don't map to standing kinds", () => {
-    const event: EngineEvent = {
-      type: "tick",
-      timestamp: Date.now(),
-    };
-    recordFromEvent(db, event, () => undefined);
+    recordFromEvent(db, { type: "tick", timestamp: Date.now() } as EngineEvent);
     expect(ledgerFor(db, "e_alice")).toHaveLength(0);
   });
 
   it("recomputeAll refreshes cache for every entity in the ledger", () => {
-    record(db, "e_alice", "Alice", "pool_note", "1");
-    record(db, "e_bob", "Bob", "pool_note", "1");
-    record(db, "e_bob", "Bob", "pool_note", "2");
+    record(db, "e_alice", "Alice", KIND, "1");
+    record(db, "e_bob", "Bob", KIND, "1");
+    record(db, "e_bob", "Bob", KIND, "2");
 
-    const refreshed = recomputeAll(db);
-    expect(refreshed).toBe(2);
-
+    expect(recomputeAll(db)).toBe(2);
     const board = leaderboard(db);
     const bob = board.find((r) => r.entityId === "e_bob");
     const alice = board.find((r) => r.entityId === "e_alice");
@@ -220,65 +177,48 @@ describe("Standing — civic-contribution ledger", () => {
     db.appendStandingEvent({
       entityId: "e_ttl",
       entityName: "Ttl",
-      kind: "pool_note",
+      kind: KIND,
       ref: "1",
       amount: 10,
       earnedAt: t0,
     });
-    const seeded = getStanding(db, "e_ttl", t0); // populates cache at t0
-    // Within the TTL: returns the cached value verbatim (no recompute → no decay).
+    const seeded = getStanding(db, "e_ttl", t0);
     expect(getStanding(db, "e_ttl", t0 + CACHE_TTL_MS - 1)).toBe(seeded);
-    // Past the TTL: recomputes with additional decay, so strictly less.
     expect(getStanding(db, "e_ttl", t0 + CACHE_TTL_MS + 1)).toBeLessThan(seeded);
   });
 
   it("a fresh ledger write invalidates the cache so the next read reflects it (gate-relevant)", () => {
-    record(db, "e_inv", "Inv", "pool_note", "a");
-    const first = getStanding(db, "e_inv"); // seeds a fresh cache row
-    record(db, "e_inv", "Inv", "pool_note", "b"); // 2nd event must invalidate the cache
-    // If the write didn't invalidate, this would return the stale `first` within
-    // the 6h TTL. checkGate reads standing via getStanding, so this is the path
-    // that keeps a freshly-earned (or penalized) entity's gate decisions current.
+    record(db, "e_inv", "Inv", KIND, "a");
+    const first = getStanding(db, "e_inv");
+    record(db, "e_inv", "Inv", KIND, "b");
     expect(getStanding(db, "e_inv")).toBeGreaterThan(first);
   });
 
   it("leaderboard shows a freshly-earned entity's real standing without waiting for recomputeAll", () => {
-    // record() invalidates the cache (last_recomputed=0). Previously the
-    // leaderboard read the raw cache and showed 0 until the hourly pass; now
-    // leaderboard() refreshes stale rows first.
-    record(db, "e_carol", "Carol", "pool_note", "1");
-    const board = leaderboard(db); // NOTE: no recomputeAll() between earn and read
-    const carol = board.find((r) => r.entityId === "e_carol");
-    expect(carol).toBeDefined();
+    record(db, "e_carol", "Carol", KIND, "1");
+    const carol = leaderboard(db).find((r) => r.entityId === "e_carol");
     expect(carol?.standing).toBeGreaterThan(0);
   });
 
   it("ledgerFor returns rows newest-first", () => {
-    db.appendStandingEvent({
-      entityId: "e_alice",
-      entityName: "Alice",
-      kind: "pool_note",
-      ref: "old",
-      amount: 1,
-      earnedAt: 1_000_000,
-    });
-    db.appendStandingEvent({
-      entityId: "e_alice",
-      entityName: "Alice",
-      kind: "pool_note",
-      ref: "new",
-      amount: 1,
-      earnedAt: 2_000_000,
-    });
+    for (const [ref, earnedAt] of [
+      ["old", 1_000_000],
+      ["new", 2_000_000],
+    ] as const)
+      db.appendStandingEvent({
+        entityId: "e_alice",
+        entityName: "Alice",
+        kind: KIND,
+        ref,
+        amount: 1,
+        earnedAt,
+      });
     const rows = ledgerFor(db, "e_alice");
     expect(rows[0]!.ref).toBe("new");
     expect(rows[1]!.ref).toBe("old");
   });
 
   it("preserves the existing recordStandingEarned task path", () => {
-    // Backward-compat: db.recordStandingEarned should still work and the
-    // value should show up in the unified ledger. Need a real task row
-    // since entity_standing.task_id has an FK to tasks.id.
     const taskId = db.createTask({
       title: "test task",
       creatorId: "e_owner",

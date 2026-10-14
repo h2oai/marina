@@ -190,7 +190,7 @@ describe("Tasks", () => {
   });
 
   it("should reject other claims when approving bounty winner", () => {
-    engine.processCommand(conn1.entity!, "task create Bounty race | First wins !15 bounty");
+    engine.processCommand(conn1.entity!, "task create Bounty race | First wins !9 bounty");
 
     const conn3 = new MockConnection("c3");
     engine.addConnection(conn3);
@@ -218,28 +218,27 @@ describe("Tasks", () => {
   });
 
   it("should record standing and show leaderboard", () => {
-    engine.processCommand(conn1.entity!, "task create Win standing | Prize !20 bounty");
+    engine.processCommand(conn1.entity!, "task create Win standing | Prize !8 bounty");
     engine.taskManager!.claim(1, conn2.entity!, "Bob");
     engine.taskManager!.submit(1, conn2.entity!, "Done");
     engine.taskManager!.approveSubmission(1, conn2.entity!, conn1.entity!);
 
-    // Bob should have 20 standing
-    const standing = engine.taskManager!.getEntityStanding(conn2.entity!);
-    expect(standing).toBe(20);
+    // Bob should have 8 standing (Alice, the approver, is independent of him)
+    expect(engine.taskManager!.standingOf("Bob", conn2.entity!)).toBeCloseTo(8, 3);
 
-    // Leaderboard
-    const lb = engine.taskManager!.getStandingLeaderboard();
+    // Leaderboard: the decayed civic number, by account
+    const lb = engine.taskManager!.standingBoard();
     expect(lb.length).toBe(1);
-    expect(lb[0]!.entityName).toBe("Bob");
-    expect(lb[0]!.total).toBe(20);
-    expect(lb[0]!.taskCount).toBe(1);
+    expect(lb[0]!.name).toBe("Bob");
+    expect(lb[0]!.standing).toBeCloseTo(8, 3);
+    expect(lb[0]!.tasks).toBe(1);
 
     // Command-level standing display
     conn2.clear();
     engine.processCommand(conn2.entity!, "task standing");
     const text = stripAnsi(conn2.lastText());
     expect(text).toContain("Bob");
-    expect(text).toContain("20 standing");
+    expect(text).toContain("8.0 standing");
   });
 
   it("should search tasks via FTS", () => {

@@ -13,6 +13,7 @@
  * judged.
  */
 
+import { recordVerified, type VerifiedCredit } from "../agent/standing";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent } from "../types";
 import { recordResolved } from "./record";
@@ -105,6 +106,26 @@ export function recordTaskOpinion(
     participants: [participantOf(db, input.claimant)],
     refs: [`task:${input.taskId}`],
     resolvedAt: at,
+  });
+}
+
+/**
+ * Standing for verified code: a Code Mode task attempt whose recorded
+ * verification PASSED and whose submission a reviewer independent of the
+ * worker approved (`code review approve`). Once per attempt (`code:<runId>`);
+ * a reviewer in the worker's party (same account or spawn lineage) pays
+ * nothing. A verification run alone earns nothing — the worker chooses its
+ * checks — and neither does any measurement run (those never reach review).
+ */
+export function creditVerifiedCode(
+  db: MarinaDB,
+  input: { runId: string; worker: { name: string; entityId?: string }; reviewer: string },
+): VerifiedCredit {
+  return recordVerified(db, {
+    kind: "code_verified",
+    ref: `code:${input.runId}`,
+    worker: input.worker,
+    verifier: input.reviewer,
   });
 }
 

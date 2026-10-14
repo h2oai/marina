@@ -135,9 +135,11 @@ The Chronicler now has the discipline baked into the `chronicling` trait prompt 
 
 This is the *communication-amplification* the original design promised: the Chronicler asking questions forces participating agents to articulate what they did, and those articulations themselves become recallable artifacts.
 
-## Standing flow on citation (pass 4)
+## Standing flow on citation (pass 4, retired 2026-10-14)
 
-Being cited in the chronicle flows `chronicled` standing — recognition, not contribution. The entity already got the contribution credit at the time of the act (task_complete, crew_*, pool_note); this is the second-order reputation layer:
+> **Retired.** Being cited no longer earns standing: standing is earned only by work someone independent verified (`docs/architecture/civic-substrate.md`). The `chronicled` kind is retired, its historical rows decay out, and the citation itself remains in the chronicle as recognition. The design as it was built:
+
+Being cited in the chronicle flowed `chronicled` standing — recognition, not contribution — as a second-order reputation layer:
 
 - `event`-kind citation: **0.25** standing (the engine recorded a fact you were involved in — small)
 - `narrative`-kind citation: **2.00** standing (the Chronicler interpreted the moment as noteworthy — heavier)

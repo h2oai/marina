@@ -45,6 +45,7 @@ import type {
   MemorySpace,
   MemoryStandingCredit,
 } from "../sdk/memory-types";
+import { spawnLineage } from "./db-agents";
 import { setNumericImportance } from "./db-memory-numeric";
 import {
   authorizeMemorySpace,
@@ -54,7 +55,7 @@ import {
   rememberRecord,
   requireActor,
 } from "./db-memory-service";
-import type { MemoryActor } from "./db-principals";
+import { type MemoryActor, principalParty } from "./db-principals";
 import { appendStandingEvent, hasStandingEvent } from "./db-standing";
 
 interface JobRow {
@@ -147,14 +148,25 @@ export function memoryAdoptRepository(db: Database) {
     if (![job.requester_id, job.worker_id, parent?.worker_id].includes(actor.principalId))
       fail(404, "assistance_not_found", "Assistance request not found");
   }
+  /**
+   * Standing for a requester's verdict on helpers' work. Only helpers
+   * INDEPENDENT of the requester are credited (or debited): a person and the
+   * agents in its spawn lineage are one party, so adopting your own agent's
+   * proposal earns nothing (src/agent/standing.ts).
+   */
   function credit(
     kind: StandingKind,
     ref: string,
     shares: Map<string, number>,
+    requesterId: string,
   ): MemoryStandingCredit[] {
     const credited: MemoryStandingCredit[] = [];
     const base = STANDING_AMOUNTS[kind];
+    const lineage = (name: string) => spawnLineage(db, name);
+    const requesterParty = principalParty(db, requesterId, lineage);
     for (const [principal, share] of shares) {
+      const party = principalParty(db, principal, lineage);
+      if ([...party].some((member) => requesterParty.has(member))) continue;
       if (hasStandingEvent(db, principal, kind, ref)) continue;
       const amount = Number((base * share).toFixed(4));
       if (amount === 0) continue;
@@ -189,7 +201,12 @@ export function memoryAdoptRepository(db: Database) {
       );
     const ref = `assistance:${job.id}:abstention`;
     const already = hasStandingEvent(db, job.worker_id, "assistance_abstained_confirmed", ref);
-    const credited = credit("assistance_abstained_confirmed", ref, new Map([[job.worker_id, 1]]));
+    const credited = credit(
+      "assistance_abstained_confirmed",
+      ref,
+      new Map([[job.worker_id, 1]]),
+      job.requester_id,
+    );
     if (!already) event(db, actor, job.space_id, "assistance.abstention_confirmed", job.id);
     return {
       id: job.result_record_id ?? job.id,
@@ -352,6 +369,7 @@ export function memoryAdoptRepository(db: Database) {
         "assistance_adopted",
         `assistance:${job.id}`,
         contributionShares(db, job),
+        job.requester_id,
       );
       event(db, actor, job.space_id, "assistance.adopted", job.id, receipt.version);
       return {
@@ -388,6 +406,7 @@ export function memoryAdoptRepository(db: Database) {
         "assistance_superseded",
         `assistance:${jobId}:superseded:${recordId}`,
         contributionShares(db, job),
+        job.requester_id,
       );
     },
     /** The institutional space mirroring a pool, by pool name. */

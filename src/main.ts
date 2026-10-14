@@ -538,12 +538,6 @@ try {
 const feedPublisher = new FeedPublisher({
   db,
   resolveEntity: (id) => engine.entities.get(id)?.name,
-  // Name → id lookup so chronicle citations can flow `chronicled` standing.
-  // Checks agents first (most common chronicler-cited participants), then
-  // falls back to a global scan for human users / NPCs.
-  resolveEntityIdByName: (name) =>
-    engine.entities.findAgentByName(name)?.id ??
-    engine.entities.all().find((e) => e.name === name)?.id,
   broadcaster: wsServer.canvasBroadcaster,
   // Same storage the canvas HTTP API uses, so live broadcast snapshots resolve
   // asset urls identically to REST responses.

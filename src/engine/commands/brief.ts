@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { namedLeaderboard } from "../../agent/standing";
 import type { CrewManager } from "../../coordination/crew-manager";
 import type { GroupManager } from "../../coordination/group-manager";
 import type { TaskManager } from "../../coordination/task-manager";
@@ -513,10 +514,10 @@ function sendFullBrief(ctx: RoomContext, eid: EntityId, entity: Entity, deps: Br
 
   // ─── Standing leaders ───────────────────────────────────────────────
 
-  const leaders = db.getStandingLeaderboard(3);
+  const leaders = namedLeaderboard(db, 3).filter((l) => l.standing > 0);
   if (leaders.length > 0) {
     const leaderStr = leaders
-      .map((l) => `${fmtEntity(l.entityName)} ${dim(`(${l.total})`)}`)
+      .map((l) => `${fmtEntity(l.name)} ${dim(`(${l.standing.toFixed(1)})`)}`)
       .join(", ");
     lines.push("", `${category("Standing:")} ${leaderStr}`);
   }

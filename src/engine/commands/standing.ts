@@ -2,7 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { deriveRankFromStanding, RANK_THRESHOLDS } from "../../agent/rank-progression";
-import { getStanding, leaderboard, ledgerFor, STANDING_HALF_LIFE_DAYS } from "../../agent/standing";
+import {
+  ledgerFor,
+  namedLeaderboard,
+  STANDING_AMOUNTS,
+  STANDING_HALF_LIFE_DAYS,
+  standingOf,
+  TASK_STANDING_MAX,
+} from "../../agent/standing";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
@@ -30,12 +37,21 @@ export function standingCommand(deps: StandingDeps): CommandDef {
     category: "Civic",
     minRank: 0,
     help:
-      "Civic standing — your blended contribution metric (60-day half-life).\n" +
+      "Civic standing — earned by verified work (60-day half-life).\n" +
       "Usage:\n" +
       "  standing                — your current standing + ledger\n" +
-      "  standing show <name>    — another entity's standing\n" +
+      "  standing show <name>    — another entity's standing (online or not)\n" +
       "  standing top [N]        — leaderboard\n" +
-      "Standing accrues from task completion, pool notes, crew leadership, and helping acts. " +
+      "Standing is earned only when someone independent of you (not your account, not your spawn " +
+      "lineage) verifies the work: " +
+      `a task they approve (up to ${TASK_STANDING_MAX}), ` +
+      `an approved Code Mode attempt whose checks passed (${STANDING_AMOUNTS.code_verified}), ` +
+      `a forecast resolved by an independent source (up to ${STANDING_AMOUNTS.forecast_resolved} by skill, once a day), ` +
+      `an experiment an independent party replicated (${STANDING_AMOUNTS.experiment_complete}), ` +
+      `a proposal its requester adopts (${STANDING_AMOUNTS.assistance_adopted}), ` +
+      `and an onboarding quest (${STANDING_AMOUNTS.quest_complete}). ` +
+      "Being chronicled, pool notes, recalls, crew completions and helping acts no longer earn; " +
+      "past rows decay out. " +
       "Decay floors at 0; rank 0–4 is derived from thresholds (5/15/40/100). " +
       "Above rank 4, capability is earned per-operation via the Capability gates shown in " +
       "your standing view — keep building standing, then perform each gated action under " +
@@ -51,7 +67,7 @@ export function standingCommand(deps: StandingDeps): CommandDef {
 
       if (sub === "top") {
         const limit = Math.max(1, Math.min(50, Number.parseInt(tokens[1] ?? "10", 10) || 10));
-        const board = leaderboard(db, limit);
+        const board = namedLeaderboard(db, limit);
         if (board.length === 0) {
           ctx.send(input.entity, "No standing earned yet.");
           return;
@@ -59,10 +75,7 @@ export function standingCommand(deps: StandingDeps): CommandDef {
         const lines = [header(`Standing leaderboard (top ${board.length})`), separator()];
         for (let i = 0; i < board.length; i++) {
           const row = board[i]!;
-          // Ledger keys are durable account ids (users.id) since migration 109;
-          // legacy rows may still carry an entity id. Resolve either to a name.
-          const name =
-            deps.getEntity(row.entityId)?.name ?? db.getUser(row.entityId)?.name ?? row.entityId;
+          const name = deps.getEntity(row.entityId)?.name ?? row.name;
           lines.push(
             `  ${dim(String(i + 1).padStart(2))}. ${bold(name)} ${dim(`— ${row.standing.toFixed(1)}`)}`,
           );
@@ -91,7 +104,7 @@ export function standingCommand(deps: StandingDeps): CommandDef {
           }
         : { id: account!.id, name: account!.name, rank: account!.rank };
 
-      const standing = getStanding(db, target.id);
+      const standing = standingOf(db, target.name, target.id);
       const derived = deriveRankFromStanding(standing);
       const currentRank = target.rank;
       const ledger = ledgerFor(db, target.id, 12);

@@ -354,7 +354,7 @@ describe("crew command (integration)", () => {
 
   // ─── Civic event producers ─────────────────────────────────────────────
 
-  it("crew stage by member emits crew_stage_completed and credits standing", () => {
+  it("crew stage by member emits crew_stage_completed and earns no standing", () => {
     engine.processCommand(alice.entity!, "crew create alpha bob -- ship");
     accept(bob);
     const captured: { type: string; agentName?: string; stage?: string }[] = [];
@@ -372,7 +372,7 @@ describe("crew command (integration)", () => {
     expect(captured).toEqual([{ type: "crew_stage_completed", agentName: "bob", stage: "design" }]);
 
     const ledger = db.ledgerForEntity(bob.entity!, 10);
-    expect(ledger.some((r) => r.kind === "crew_stage_completed")).toBe(true);
+    expect(ledger.some((r) => r.kind === "crew_stage_completed")).toBe(false);
   });
 
   it("crew stage by non-member is rejected", () => {
@@ -382,7 +382,7 @@ describe("crew command (integration)", () => {
     expect(lastFor(carol)).toContain("Only members");
   });
 
-  it("crew artifact records a deposit and credits standing", () => {
+  it("crew artifact records a deposit and earns no standing", () => {
     engine.processCommand(alice.entity!, "crew create alpha bob -- ship");
     accept(bob);
     const captured: { kind?: string; ref?: string }[] = [];
@@ -398,7 +398,7 @@ describe("crew command (integration)", () => {
     expect(captured).toEqual([{ kind: "map", ref: "shard-7.json" }]);
 
     const ledger = db.ledgerForEntity(bob.entity!, 10);
-    expect(ledger.some((r) => r.kind === "crew_artifact_deposited")).toBe(true);
+    expect(ledger.some((r) => r.kind === "crew_artifact_deposited")).toBe(false);
   });
 
   it("crew artifact rejects unknown kind", () => {

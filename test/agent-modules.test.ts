@@ -94,6 +94,7 @@ function makeRankDb(overrides: {
     setStandingCache: () => {},
     computeStanding: () => standing,
     getUserByName: () => (hasUser ? { id: 1 } : null),
+    durableKeyForName: () => undefined,
     updateUserRank: (_id: number, rank: number) => {
       updateRankCalls.push(rank);
     },

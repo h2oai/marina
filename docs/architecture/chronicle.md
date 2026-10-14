@@ -13,7 +13,7 @@
 
 ## The Chronicler agent and standing
 - **Chronicler agent** (`worlds/seed.ts seedChroniclerRole + seedChroniclerAgent`): `chronicling` trait + `chronicler` role + persistent agent config. Default world opts in. Trait prompt teaches interview discipline — one `tell` per cycle, never the same agent twice within ~5 cycles, track via own `memory set last_interview:<name>`.
-- **Citation flows standing**: `chronicled` StandingKind in `src/agent/standing.ts` with kind-weighted credits (`event=0.25`, `narrative=2.0`, `digest=1.0`, `correction=0.5`). Idempotent via `ref=chronicle:<id>`. Wired in `FeedPublisher.recordChronicleEvent` and the chronicle write commands; both take a `resolveEntityIdByName` dep — when absent, citation discipline still works but standing doesn't flow.
+- **Citation is recognition, not standing (2026-10-14)**: being named in the chronicle earns no standing. Standing is earned by verified work (see `civic-substrate.md`); the `chronicled` kind is retired, so neither engine `event` entries nor a Chronicler's narrative, correction or digest write ledger rows. Historical `chronicled` rows stay in the append-only ledger and decay out. The citation itself stays in the chronicle, as recognition.
 
 ## Cognitive integration and public surfaces
 - **Cognitive integration**: `recap chronicle [day|week]` is a retrieval lens grouped by kind; `recap <topic>` and `ask <topic>` include a Chronicle section showing entries whose title or body matches; `ask` forwards them to model context as `[chronicle:<kind>:<id>] <title> — <body>`.

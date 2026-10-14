@@ -266,7 +266,7 @@ export function reflectCommand(deps: {
     ],
     name: "reflect",
     aliases: [],
-    help: "Reflect on your notes. Usage: reflect [topic] (files a cited job with a memory-reflector when one is available, else the deterministic template) | reflect via <helper> [topic] | reflect --template [topic] | reflect adopt <job> | reflect jobs | reflect failure <description>. Add --share <pool> to also deposit the lesson into a shared pool as a reflection (authors earn standing when others recall it). Add --no-spawn to use a running helper if there is one but never spawn a new one (session-end reflections).",
+    help: "Reflect on your notes. Usage: reflect [topic] (files a cited job with a memory-reflector when one is available, else the deterministic template) | reflect via <helper> [topic] | reflect --template [topic] | reflect adopt <job> | reflect jobs | reflect failure <description>. Add --share <pool> to also deposit the lesson into a shared pool as a reflection others can recall. Add --no-spawn to use a running helper if there is one but never spawn a new one (session-end reflections).",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -350,8 +350,8 @@ export function reflectCommand(deps: {
           ? dim("Authority: unverified (no citable inputs)")
           : `Authority: confidence=${authority.confidence.toFixed(2)} ${authority.verification} ${dim(`(lowest of ${authority.inputs} input${authority.inputs === 1 ? "" : "s"})`)}`;
       // Generational loop (Phase 3.7): deposit the lesson into a shared pool
-      // as a reflection-tier note so `creditRecalledReflections` pays the
-      // author when someone else recalls it. Refuses unknown pools and
+      // as a reflection-tier note others recall (being recalled earns no
+      // standing — standing is earned by verified work). Refuses unknown pools and
       // group pools the caller is not a member of — never creates a pool.
       const shareReflection = (
         content: string,
@@ -379,7 +379,7 @@ export function reflectCommand(deps: {
           roomId: input.room,
           timestamp: Date.now(),
         });
-        return `Shared to pool "${pool.name}" as reflection ${fmtId(noteId)} ${dim("(you earn standing when others recall it)")}`;
+        return `Shared to pool "${pool.name}" as reflection ${fmtId(noteId)} ${dim("(others recall it from the pool)")}`;
       };
       const linkPartOf = (sourceId: number, reflectionId: number): boolean => {
         try {

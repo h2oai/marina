@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { getStanding } from "../src/agent/standing";
+import { getStanding, recordFromEvent } from "../src/agent/standing";
 import { ChannelManager } from "../src/coordination/channel-manager";
 import { CrewManager } from "../src/coordination/crew-manager";
 import { Engine } from "../src/engine/engine";
@@ -15,14 +15,13 @@ const IDS: Record<string, string> = { alice: "e_alice", bob: "e_bob" };
 const OWNER = entityId("e_alice");
 
 /**
- * `crew complete` used to pay crew_complete_member (5) + crew_complete_lead
- * (10) to the owner of ANY crew — `crew create` + `crew complete` with no
- * work farmed 15 standing per fresh crew id at rank 0. Standing now requires
- * an active (dispatched) crew with >= 2 distinct members and at least one
- * completed dispatch (stage / artifact / member pool deposit). Completion
- * itself still succeeds; the reply says why nothing was credited.
+ * A crew declares its own result, so completing a crew earns no standing —
+ * not the members, not the lead, however real the work (standing is earned by
+ * work someone independent verified; crew work earns through the tasks an
+ * independent creator approves). Stage and artifact events are progress
+ * signals only. Rows already in the ledger keep decaying out.
  */
-describe("CrewManager.complete standing preconditions", () => {
+describe("CrewManager.complete earns no standing", () => {
   let db: MarinaDB;
   let crews: CrewManager;
 
@@ -42,7 +41,7 @@ describe("CrewManager.complete standing preconditions", () => {
     cleanupDb(TEST_DB);
   });
 
-  it("farm case: create + complete with no dispatch writes the note but pays nothing", () => {
+  it("an undispatched crew completes, writes its note, and pays nothing", () => {
     const crew = crews.create({
       name: "farm",
       goal: "nothing",
@@ -50,45 +49,12 @@ describe("CrewManager.complete standing preconditions", () => {
       members: [{ agentName: "alice", role: "owner" }],
     });
     const result = crews.complete(crew.id, "done", "alice");
-
     expect(result.resultNoteId).toBeDefined();
-    expect(result.standingCredited).toBe(false);
-    expect(result.standingSkippedReason).toContain("never dispatched");
     expect(crew.state).toBe("dissolved");
     expect(getStanding(db, "e_alice")).toBe(0);
   });
 
-  it("dispatched single-member crew pays nothing", () => {
-    const crew = crews.create({
-      name: "solo",
-      goal: "g",
-      owner: OWNER,
-      members: [{ agentName: "alice", role: "owner" }],
-    });
-    crews.dispatch(crew.id, "go");
-    crews.recordStageCompleted(crew.id, "draft", "alice");
-    const result = crews.complete(crew.id, "done", "alice");
-    expect(result.standingCredited).toBe(false);
-    expect(result.standingSkippedReason).toContain("2 distinct members");
-    expect(getStanding(db, "e_alice")).toBe(0);
-  });
-
-  it("dispatched two-member crew with no completed work pays nothing", () => {
-    const crew = crews.create({
-      name: "idle",
-      goal: "g",
-      owner: OWNER,
-      members: [{ agentName: "alice", role: "owner" }, { agentName: "bob" }],
-    });
-    crews.dispatch(crew.id, "go");
-    const result = crews.complete(crew.id, "done", "alice");
-    expect(result.standingCredited).toBe(false);
-    expect(result.standingSkippedReason).toContain("no dispatch was completed");
-    expect(getStanding(db, "e_alice")).toBe(0);
-    expect(getStanding(db, "e_bob")).toBe(0);
-  });
-
-  it("legitimate completion credits every member and the lead bonus to the owner", () => {
+  it("a dispatched two-member crew with real stages, artifacts and deposits pays nothing", () => {
     const crew = crews.create({
       name: "real",
       goal: "ship",
@@ -97,51 +63,34 @@ describe("CrewManager.complete standing preconditions", () => {
     });
     crews.dispatch(crew.id, "go");
     crews.recordStageCompleted(crew.id, "draft", "bob");
-    const result = crews.complete(crew.id, "shipped", "alice");
-
-    expect(result.standingCredited).toBe(true);
-    expect(result.standingSkippedReason).toBeUndefined();
-    const alice = getStanding(db, "e_alice");
-    const bob = getStanding(db, "e_bob");
-    expect(bob).toBeGreaterThan(0);
-    // Owner gets member credit + lead bonus.
-    expect(alice).toBeGreaterThan(bob);
-  });
-
-  it("a member pool deposit while active counts as completed work", () => {
-    const crew = crews.create({
-      name: "deposit",
-      goal: "ship",
-      owner: OWNER,
-      members: [{ agentName: "alice", role: "owner" }, { agentName: "bob" }],
-    });
-    crews.dispatch(crew.id, "go");
+    crews.recordArtifactDeposit(crew.id, "bob", "note:1", "draft");
     crews.onMemberPoolDeposit("bob", "findings", "the deliverable");
-    expect(crews.complete(crew.id, "shipped", "alice").standingCredited).toBe(true);
+    crews.complete(crew.id, "shipped", "alice");
+    expect(getStanding(db, "e_alice")).toBe(0);
+    expect(getStanding(db, "e_bob")).toBe(0);
+    expect(db.ledgerForEntity("e_alice", 10)).toHaveLength(0);
+    expect(db.ledgerForEntity("e_bob", 10)).toHaveLength(0);
   });
 
-  it("work evidence survives a restart for persisted crews (via the crew channel)", () => {
-    const crew = crews.create({
-      name: "durable",
-      goal: "ship",
-      lifetime: "persisted",
-      owner: OWNER,
-      members: [{ agentName: "alice", role: "owner" }, { agentName: "bob" }],
-    });
-    crews.dispatch(crew.id, "go");
-    crews.onMemberPoolDeposit("bob", "crew:durable", "the deliverable");
-    crews.stop();
-
-    const reloaded = new CrewManager({
-      channels: new ChannelManager(db, () => {}),
-      db,
-      resolveAgentId: (name) => IDS[name],
-    });
-    reloaded.loadFromDb();
-    const again = reloaded.getByName("durable")!;
-    expect(again.state).toBe("active");
-    expect(reloaded.complete(again.id, "shipped", "alice").standingCredited).toBe(true);
-    reloaded.stop();
+  it("stage and artifact events do not reach the ledger", () => {
+    for (const event of [
+      {
+        type: "crew_stage_completed" as const,
+        crew: "c1",
+        stage: "draft",
+        agentName: "bob",
+        timestamp: Date.now(),
+      },
+      {
+        type: "crew_artifact_deposited" as const,
+        crew: "c1",
+        artifactRef: "note:1",
+        agentName: "bob",
+        timestamp: Date.now(),
+      },
+    ])
+      recordFromEvent(db, event as never, (name) => IDS[name]);
+    expect(db.ledgerForEntity("e_bob", 10)).toHaveLength(0);
   });
 });
 
@@ -170,14 +119,14 @@ describe("crew complete command reply", () => {
     cleanupDb(CMD_DB);
   });
 
-  it("reports the skip reason on a one-liner and pays no standing", () => {
+  it("completes on a one-liner and pays no standing", () => {
     // bob is invited but never accepts — the crew is alice alone, never dispatched.
     engine.processCommand(alice.entity!, "crew create farm bob -- nothing");
     alice.clear();
     engine.processCommand(alice.entity!, "crew complete farm -- done");
     const out = stripAnsi(alice.allTextJoined());
     expect(out).toContain('Crew "farm" completed');
-    expect(out).toContain("no standing credited:");
+    expect(out).not.toContain("standing");
     expect(getStanding(db, String(alice.entity!))).toBe(0);
   });
 });

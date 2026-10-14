@@ -782,8 +782,7 @@ CREATE INDEX idx_schedule_runs_started ON schedule_runs(started_at);
 CREATE TRIGGER schedule_runs_no_update BEFORE UPDATE ON schedule_runs
 BEGIN SELECT RAISE(ABORT, 'schedule_runs is append-only'); END;
 `,
-  },
-  // Migration 166: durable challenge holds — a held action survives a restart
+  }, // Migration 166: durable challenge holds — a held action survives a restart
   // and runs on approval. `command` is the requester's own held input, kept
   // only when it carries nothing secret-shaped; `summary` is always masked.
   {
@@ -812,6 +811,14 @@ CREATE TABLE challenge_holds (
 CREATE INDEX idx_challenge_holds_status ON challenge_holds(status, expires_at);
 CREATE INDEX idx_challenge_holds_notice ON challenge_holds(requester_name)
   WHERE requester_notice IS NOT NULL;
+`,
+  },
+  // Migration 167: an operator-set rank below 5 is a floor rank progression
+  // never lowers the account below (`rank <name> <level>`); 0 = no floor.
+  {
+    version: 167,
+    sql: `
+ALTER TABLE users ADD COLUMN rank_floor INTEGER NOT NULL DEFAULT 0;
 `,
   },
 ];

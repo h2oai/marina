@@ -234,3 +234,42 @@ export function verifyMemoryCredential(db: Database, token: string): MemoryActor
       }
     : undefined;
 }
+
+/**
+ * The party a principal belongs to for standing purposes: its own id and
+ * name, its owner / lineage-parent chain, and the spawn lineage of each name
+ * (`spawnLineage`). Two principals whose parties intersect are one party — a
+ * person and the agents it spawned never credit each other.
+ */
+export function principalParty(
+  db: Database,
+  principalId: string,
+  spawnLineage: (name: string) => string[],
+): Set<string> {
+  const party = new Set<string>([`id:${principalId}`]);
+  const row = db.query(
+    "SELECT principal_id, display_name, owner_principal_id, lineage_parent_id FROM principals WHERE principal_id = ?",
+  );
+  let current: string | null = principalId;
+  for (let hop = 0; current && hop < 16; hop++) {
+    const found = row.get(current) as {
+      display_name: string;
+      owner_principal_id: string | null;
+      lineage_parent_id: string | null;
+    } | null;
+    if (!found) {
+      // A world account with no principal row: its name still has a lineage.
+      const user = db.query("SELECT name FROM users WHERE id = ?").get(current) as {
+        name: string;
+      } | null;
+      if (user) for (const name of spawnLineage(user.name)) party.add(`name:${name}`);
+      break;
+    }
+    for (const name of spawnLineage(found.display_name)) party.add(`name:${name}`);
+    const next: string | null = found.owner_principal_id ?? found.lineage_parent_id;
+    if (!next || party.has(`id:${next}`)) break;
+    party.add(`id:${next}`);
+    current = next;
+  }
+  return party;
+}

@@ -1,7 +1,6 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { recordChronicleCitation } from "../agent/standing";
 import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import type { CanvasNodeRow, MarinaDB } from "../persistence/database";
@@ -23,14 +22,6 @@ const logger = new Logger();
 interface FeedPublisherDeps {
   db: MarinaDB;
   resolveEntity: (id: EntityId) => string | undefined;
-  /**
-   * Reverse lookup: participant name → entity id. Used to flow `chronicled`
-   * standing to participants of engine-emitted chronicle entries. Optional —
-   * without it, chronicle entries are still recorded; standing credit just
-   * doesn't flow (the cost of being unable to resolve is silence, not
-   * failure).
-   */
-  resolveEntityIdByName?: (name: string) => string | undefined;
   broadcaster?: CanvasBroadcaster;
   /**
    * Asset storage used to enrich broadcast node snapshots with resolvable
@@ -56,7 +47,6 @@ interface FeedPublisherDeps {
 export class FeedPublisher {
   private db: MarinaDB;
   private resolveEntity: (id: EntityId) => string | undefined;
-  private resolveEntityIdByName?: (name: string) => string | undefined;
   private broadcaster?: CanvasBroadcaster;
   private storage?: StorageProvider;
   private emitEvent?: (event: EngineEvent) => void;
@@ -65,7 +55,6 @@ export class FeedPublisher {
   constructor(deps: FeedPublisherDeps) {
     this.db = deps.db;
     this.resolveEntity = deps.resolveEntity;
-    this.resolveEntityIdByName = deps.resolveEntityIdByName;
     this.broadcaster = deps.broadcaster;
     this.storage = deps.storage;
     this.emitEvent = deps.emitEvent;
@@ -150,7 +139,8 @@ export class FeedPublisher {
     participants?: string[];
     refs?: string[];
   }): void {
-    const id = this.db.appendChronicle({
+    // Recognition, not contribution: being chronicled earns no standing.
+    this.db.appendChronicle({
       kind: "event",
       source: params.source,
       title: params.title,
@@ -158,16 +148,6 @@ export class FeedPublisher {
       participants: params.participants,
       refs: params.refs,
     });
-    // Flow `chronicled` standing to every resolvable participant. Idempotent
-    // via ref=chronicle:<id> so re-emitting the same event is a no-op.
-    // Skipped silently when no name resolver is available.
-    if (this.resolveEntityIdByName && params.participants && params.participants.length > 0) {
-      recordChronicleCitation(
-        this.db,
-        { id, kind: "event", participants: params.participants },
-        this.resolveEntityIdByName,
-      );
-    }
   }
 
   /** Handle an engine event, publishing relevant ones to the feed canvas. */

@@ -15,6 +15,7 @@
  * learn from).
  */
 
+import { FORECAST_DAILY_CAP, recordVerified, STANDING_AMOUNTS } from "../agent/standing";
 import { crpsNormal } from "../arena/score";
 import type { TypedForecastAnswer } from "../forecast/typed";
 import { scoreTypedAnswer } from "../forecast/typed-score";
@@ -159,6 +160,44 @@ function outcomeInput(
 }
 
 /**
+ * Standing for a resolved forecast: the filer is paid by skill — a
+ * probability by its Brier skill over a coin flip, a number when it fell in
+ * its 80% band, a typed answer by its quality when correct — up to
+ * `forecast_resolved` (0.5), at most FORECAST_DAILY_CAP credits a UTC day,
+ * once per answer. The resolution must be independent of the filer: an
+ * external resolver or judge (`resolvedBy` absent), or a resolver outside the
+ * filer's party. An evaluation filing (`eval_mode`) never earns, and nothing
+ * here reads or stores the question.
+ */
+function creditResolvedForecast(
+  db: MarinaDB,
+  f: ForecastAnswerRow,
+  learn: NonNullable<Scored["learn"]>,
+  resolvedBy: string | undefined,
+): void {
+  if (f.eval_mode) return;
+  const skill =
+    f.kind === "probability" && learn.quality !== undefined
+      ? Math.max(0, 1 - (1 - learn.quality) / 0.25)
+      : learn.succeeded
+        ? (learn.quality ?? 1)
+        : 0;
+  const amount = Number((STANDING_AMOUNTS.forecast_resolved * skill).toFixed(3));
+  if (amount <= 0) return;
+  const key = db.durableKeyForName(f.entity_name);
+  if (!key) return;
+  const dayStart = new Date().setUTCHours(0, 0, 0, 0);
+  if (db.countStandingEvents(key, "forecast_resolved", dayStart) >= FORECAST_DAILY_CAP) return;
+  recordVerified(db, {
+    kind: "forecast_resolved",
+    ref: `forecast:${f.id}`,
+    worker: { name: f.entity_name },
+    verifier: resolvedBy && resolvedBy !== "system" ? resolvedBy : null,
+    amount,
+  });
+}
+
+/**
  * Score and settle one filed answer against its resolution, and record the
  * outcome. `value` is the resolution as a Sample's value carries it
  * (`{ outcome: "yes" }`, `{ option: "Home" }`, `{ value: 110 }`, …).
@@ -178,6 +217,8 @@ export function resolveForecast(
     judge?: string;
     participants?: unknown;
     deliverJudged?: boolean;
+    /** Who settled the question when a person or agent did (an in-world market's resolver). */
+    resolvedBy?: string;
   } = {},
 ): ForecastResolution | undefined {
   const f = db.getForecastAnswer(answerId);
@@ -202,6 +243,8 @@ export function resolveForecast(
     ),
     { deliverJudged: opts.deliverJudged === true },
   );
+  if (recorded.created && (opts.basis !== "judged" || opts.deliverJudged === true))
+    creditResolvedForecast(db, f, s.learn, opts.resolvedBy);
   return {
     answerId: f.id,
     outcomeId: recorded.id,

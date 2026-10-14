@@ -757,16 +757,10 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
         try {
           const result = deps.crews.complete(crew.id, summary, caller.name);
           const noteHint = result.resultNoteId ? ` (note ${result.resultNoteId})` : "";
-          const standingHint = result.standingCredited
-            ? "."
-            : `; no standing credited: ${result.standingSkippedReason}.`;
           const retainedHint = result.retained
             ? ` Crew stays (persisted); next dispatch reuses it. End it: crew dissolve ${crew.name}.`
             : "";
-          ctx.send(
-            input.entity,
-            `Crew "${crew.name}" completed${noteHint}${standingHint}${retainedHint}`,
-          );
+          ctx.send(input.entity, `Crew "${crew.name}" completed${noteHint}.${retainedHint}`);
           review(ctx, caller, crew, summary, "completion", false);
         } catch (e) {
           if (e instanceof CrewError) ctx.send(input.entity, e.message);

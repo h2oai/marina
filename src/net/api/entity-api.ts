@@ -21,9 +21,11 @@
  * public via the WS feed), activity counts, competence demos.
  */
 
+import { RANK_THRESHOLDS } from "../../agent/rank-progression";
+import { accountKey, standingOf } from "../../agent/standing";
 import type { Engine } from "../../engine/engine";
 import type { MarinaDB } from "../../persistence/database";
-import type { Entity, EntityId } from "../../types";
+import type { Entity } from "../../types";
 import type {
   Achievement,
   ChronicleEntry,
@@ -38,8 +40,10 @@ import {
   UNKNOWN_CLIENT_IP,
 } from "../http-utils";
 
-/** Standing thresholds the rank ladder uses (mirrors src/agent/rank-progression.ts). */
-const RANK_THRESHOLDS = [5, 15, 40, 100];
+/** Standing thresholds the rank ladder uses, ascending (src/agent/rank-progression.ts). */
+const STANDING_MILESTONES = RANK_THRESHOLDS.map((t) => t.min)
+  .filter((min) => min > 0)
+  .sort((a, b) => a - b);
 
 /** Days-active milestone bands. */
 const DAYS_ACTIVE_MILESTONES = [1, 7, 30, 100];
@@ -143,7 +147,8 @@ function buildIdentity(
   const kind = liveEntity?.kind ?? (db.getAgentConfig(name) ? "agent" : "user");
   const role = (liveEntity?.properties.role as string | undefined) ?? null;
   const rank = (liveEntity?.properties.rank as number | undefined) ?? userRow?.rank ?? 0;
-  const standing = liveEntity ? readStandingFor(liveEntity.id, db) : 0;
+  // The same decayed, account-keyed number `standing` shows, online or not.
+  const standing = standingOf(db, name, liveEntity?.id);
   const first_seen = userRow?.created_at ?? liveEntity?.createdAt ?? null;
   const last_active = db.getLastActivityAt(name);
   const principal = db.getPrincipal(agentConfig ? "agent" : "human", name);
@@ -167,11 +172,6 @@ function buildIdentity(
           ? "session_only"
           : "record_only",
   };
-}
-
-function readStandingFor(entityId: EntityId, db: MarinaDB): number {
-  const cache = db.getStandingCache(entityId);
-  return cache?.standing ?? 0;
 }
 
 function buildBio(
@@ -296,13 +296,14 @@ function buildAchievements(
   // approximating by using the entity's earliest standing event as the
   // crossing point. Imperfect but cheap; in practice rank changes are the
   // real milestone (above) and these thresholds are derivatives.
-  if (liveEntity) {
-    const ledger = db.ledgerForEntity(liveEntity.id, 500).reverse(); // oldest first
+  const ledgerKey = accountKey(db, name, liveEntity?.id);
+  if (ledgerKey) {
+    const ledger = db.ledgerForEntity(ledgerKey, 500).reverse(); // oldest first
     let running = 0;
     const seenThresholds = new Set<number>();
     for (const row of ledger) {
       running += row.amount;
-      for (const threshold of RANK_THRESHOLDS) {
+      for (const threshold of STANDING_MILESTONES) {
         if (running >= threshold && !seenThresholds.has(threshold)) {
           seenThresholds.add(threshold);
           achievements.push({
@@ -314,7 +315,7 @@ function buildAchievements(
           });
         }
       }
-      if (seenThresholds.size === RANK_THRESHOLDS.length) break;
+      if (seenThresholds.size === STANDING_MILESTONES.length) break;
     }
   }
 
