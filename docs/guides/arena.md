@@ -256,7 +256,7 @@ Deterministic and leakage-free, so it backtests (see *Integrity* below).
 
 **Measured nowcast error floor.** Civiqs re-estimates its whole daily history on every model run,
 so the freshest daily reading also misses the Friday value by the run-to-run revision — an error
-the week-to-week history never shows. For each of the last 8 Fridays in the round's history, the
+the week-to-week history never shows; a weekly origin (no re-run since the anchor) faces it too. For each of the last 8 Fridays in the round's history, the
 reading that week's Wednesday-lock nowcast would have used (the newest snapshot fetched by that
 lock) is compared with the Friday value; the RMS, shrunk toward the start sd with 2 pseudo-weeks,
 is recorded as `origins.<series>.errorFloor` (at least 3 measured weeks, else none). Whatever

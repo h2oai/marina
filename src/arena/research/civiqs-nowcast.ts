@@ -504,9 +504,9 @@ export function nowcastForecaster(
       if (origin) {
         const scoped = !horizon.series || horizon.series.includes(seriesId);
         const detail = c.detail;
-        const errorFloor = selected
-          ? await nowcastErrorFloor(data, seriesId, history, asOf, start.sd)
-          : undefined;
+        // A weekly origin (the tracker has not re-run since the anchor) is older
+        // than a daily one and faces the same revision: the floor holds there too.
+        const errorFloor = await nowcastErrorFloor(data, seriesId, history, asOf, start.sd);
         origins[seriesId] = {
           selected: selected ? "daily" : "weekly",
           reading: { date: origin.date, value: origin.value },

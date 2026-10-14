@@ -107,6 +107,17 @@ describe("measured nowcast error floor", () => {
     expect(applyErrorFloor(round, wide)).toBe(wide);
   });
 
+  it("holds for a weekly origin when the tracker has not re-run since the anchor", async () => {
+    // No snapshot newer than the last Friday: the round starts from the weekly anchor.
+    const { [`${DIR}/2026-10-07.json`]: _, ...stale } = archive;
+    const forecaster = nowcastForecaster(dataWith(stale), forecastRound, {
+      horizon: { mode: "off", phi: 1 },
+    });
+    const origin = (await forecaster(round, lock)).origins?.civiqs_angry_share;
+    expect(origin?.selected).toBe("weekly");
+    expect(origin?.errorFloor?.n).toBe(3);
+  });
+
   it("leaves forecasts without a measured floor unchanged", () => {
     const f: RoundForecast = { topline: { mean: 1, sd: 0.1 }, rules: {}, note: "x" };
     expect(applyErrorFloor(round, f)).toBe(f);
