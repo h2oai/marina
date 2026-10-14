@@ -136,7 +136,14 @@ function saveSessionToken(n: string, token: string): void {
   }
 }
 
-const agent = new MarinaAgent(URL, { autoReconnect: false });
+// An interactive terminal is a person typing; one-shot and pipe modes are how
+// another program (often an agent) drives Marina, so they connect as an agent
+// and cannot answer other participants' held actions (challenges).
+const interactive = !oneShot && !!process.stdin.isTTY;
+const agent = new MarinaAgent(URL, {
+  autoReconnect: false,
+  principal: interactive ? "person" : "agent",
+});
 
 // Scripted modes (one-shot / pipe) suppress the login burst (welcome text,
 // auto-look, brief) so stdout is just the command's output, and they linger

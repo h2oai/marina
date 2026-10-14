@@ -125,6 +125,13 @@ export interface ClientOptions {
     /** Internal-agent token. Sent with login/auth messages so the engine can
      * exempt internal room/crew agents from instance login limits. */
     internalToken?: string;
+    /**
+     * Who drives this client (default `agent`). An agent never answers another
+     * participant's held action (challenges are answered by people); a tool a
+     * person types into (a REPL, a CLI) passes `person`. Self-declared, so it
+     * can only remove authority, never add it.
+     */
+    principal?: "agent" | "person";
 }
 export interface CommandOptions {
     signal?: AbortSignal;

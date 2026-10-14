@@ -5,7 +5,7 @@ import type { DecisionReceipt } from "../../sdk/decision-receipt";
 import type * as decisionsDb from "../db-decisions";
 import type { ExactKeys } from "./exact-keys";
 
-/** Judge observations and challenge outcomes — a decision backend measured against human verdicts (`db-decisions.ts`). */
+/** Judge observations, challenge outcomes and durable challenge holds — a decision backend measured against human verdicts (`db-decisions.ts`). */
 export interface DecisionsStore {
   recordDecisionReceipt(owner: string, subject: string, receipt: DecisionReceipt): void;
   listDecisionReceipts(owner: string, limit?: number): decisionsDb.DecisionReceiptRow[];
@@ -21,6 +21,20 @@ export interface DecisionsStore {
     class?: string;
     limit?: number;
   }): decisionsDb.ChallengeOutcomeRow[];
+  saveChallengeHold(row: decisionsDb.ChallengeHoldInput): void;
+  updateChallengeHold(
+    token: string,
+    patch: {
+      status?: decisionsDb.ChallengeHoldStatus;
+      requesterNotice?: string | null;
+      requesterId?: string;
+    },
+  ): boolean;
+  listChallengeHolds(opts?: {
+    pending?: boolean;
+    withNotice?: boolean;
+    limit?: number;
+  }): decisionsDb.ChallengeHoldRow[];
 }
 
 /** Runtime mirror of `DecisionsStore`'s method names — the drift test compares it to the facade. */
@@ -33,6 +47,9 @@ export const DECISIONS_STORE_METHODS = [
   "listJudgeObservations",
   "recordChallengeOutcome",
   "listChallengeOutcomes",
+  "saveChallengeHold",
+  "updateChallengeHold",
+  "listChallengeHolds",
 ] as const satisfies readonly (keyof DecisionsStore)[];
 
 export const DECISIONS_STORE_COMPLETE: ExactKeys<DecisionsStore, typeof DECISIONS_STORE_METHODS> =

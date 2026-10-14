@@ -775,7 +775,12 @@ export async function runCodeSession(
     return cleaning;
   }
 
-  const agent = new MarinaAgent(`ws://localhost:${port}`, { autoReconnect: false });
+  // A person at the REPL may answer held actions; a `-p` one-shot or a pipe is
+  // a program driving Marina and connects as an agent.
+  const agent = new MarinaAgent(`ws://localhost:${port}`, {
+    autoReconnect: false,
+    principal: !opts.print && process.stdin.isTTY === true ? "person" : "agent",
+  });
   // Single print path: every perception streams through here. command() also
   // returns the same perceptions in its resolved array — printing that too
   // would duplicate every line. The world's login bootstrap (room description,

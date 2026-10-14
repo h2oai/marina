@@ -68,6 +68,8 @@ export async function openConnectedCodeSession(
     );
   const agent = new MarinaAgent(url, {
     autoReconnect: false,
+    // An interactive terminal is a person; anything else is a program.
+    principal: process.stdin.isTTY === true ? "person" : "agent",
     commandMode: "correlated",
     connectTimeout: 10_000,
   });

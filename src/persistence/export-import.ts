@@ -56,6 +56,7 @@ export const EXPORT_TABLES = [
   "arena_shadow",
   "judge_observations",
   "challenge_outcomes",
+  "challenge_holds",
   "autonomy_pulse",
   "spend_daily",
   "spend_scope_daily",

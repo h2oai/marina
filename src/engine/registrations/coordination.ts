@@ -191,8 +191,9 @@ export function registerCoordinationCommands(engine: Engine): void {
       groupCommand(engine.groupManager, (name) => engine.findEntityGlobal(name)),
     );
   }
-  // Challenges: a refusal asks the requester's creator and the admins, and an
-  // approval re-runs the held action (src/engine/challenges.ts). Nothing waits.
+  // Challenges: a refusal asks the requester's owner and the operators — people,
+  // never agents — and an approval re-runs the held action
+  // (src/engine/challenges.ts). Nothing waits; holds survive a restart.
   setChallengeHost(
     {
       get db() {
@@ -217,6 +218,11 @@ export function registerCoordinationCommands(engine: Engine): void {
           throw new Error("World command capacity reached; inspect state before retrying.");
       },
       creatorOf: (entity) => engine.db?.getAgentConfig(entity.name)?.spawned_by || undefined,
+      // People approve: these are the agent signals (src/engine/challenges.ts).
+      connectionOf: (id) => engine.getConnectionForEntity(id as EntityId),
+      isAgentAccount: (name) =>
+        !!engine.db &&
+        (!!engine.db.getAgentConfig(name) || !!engine.db.getPrincipal("agent", name)),
     },
     engine,
   );

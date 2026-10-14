@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { rmSync } from "node:fs";
 import { resetChallengesForTests } from "../src/engine/challenges";
 import { resetGateContextForTests } from "../src/engine/gate-context";
+import { grantGatesForRank } from "../src/engine/safety-gates";
 import { handleAssetApi } from "../src/net/api/asset-api";
 import type { DashboardRouteContext } from "../src/net/dashboard-api/shared";
 import { handleCoordinationRoutes, handleWorldCatalogRoutes } from "../src/net/dashboard-api/world";
@@ -42,6 +43,8 @@ function resident(world: World, name: string, rank = 0): Resident {
   if (!("token" in login)) throw new Error(`login failed for ${name}`);
   const entityId = login.entityId as EntityId;
   world.engine.entities.get(entityId)!.properties.rank = rank;
+  // A real promotion grants the rank's gates; HTTP routes have no rank shortcut.
+  if (rank >= 5) grantGatesForRank(world.db, entityId, rank);
   connection.clear();
   return { connection, entityId, token: login.token, name };
 }

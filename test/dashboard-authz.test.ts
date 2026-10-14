@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
 import { setRank } from "../src/engine/permissions";
-import { grant } from "../src/engine/safety-gates";
+import { grant, grantGatesForRank } from "../src/engine/safety-gates";
 import { residentMemoryOperation } from "../src/memory/resident-service";
 import { handleDashboardApi } from "../src/net/dashboard-api";
 import { MarinaDB } from "../src/persistence/database";
@@ -75,10 +75,26 @@ describe("dashboard privileged-op authorization (spawn)", () => {
     expect(resp?.status).toBe(401);
   });
 
-  it("allows a sovereign admin (rank 9) past the authz gate", async () => {
+  it("refuses rank 9 alone (a resident's stored rank) with the gate's path forward", async () => {
+    const token = await loginToken("Resident9");
+    const ent = engine.entities.all().find((x) => x.name === "Resident9");
+    if (ent) setRank(ent, 9);
+    const [url, method, req] = spawnReq(token);
+    const resp = await handleDashboardApi(req, url, method, engine, db);
+    expect(resp?.status).toBe(403);
+    const body = (await resp!.json()) as { error: string; gate: string; reason?: string };
+    expect(body.gate).toBe("agent.spawn");
+    expect(body.reason).toBeTruthy();
+    expect(body.reason).not.toBe(body.error);
+  });
+
+  it("allows a sovereign admin (rank 9, gates granted by promotion) past the authz gate", async () => {
     const token = await loginToken("Admin");
     const ent = engine.entities.all().find((x) => x.name === "Admin");
-    if (ent) setRank(ent, 9);
+    if (ent) {
+      setRank(ent, 9);
+      grantGatesForRank(db, ent.id, 9);
+    }
     const [url, method, req] = spawnReq(token);
     const resp = await handleDashboardApi(req, url, method, engine, db);
     // Not 403/401 — authz passed (the spawn itself may 400 for a missing key,

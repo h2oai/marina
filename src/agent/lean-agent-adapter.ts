@@ -42,6 +42,7 @@ import { thinkingBudgetForLevel } from "@earendil-works/pi-ai/api/simple-options
 import { decisionGateContextEnabled } from "../decisions/config";
 import { harnessDecisionProvider, harnessGateEnabled } from "../decisions/engines";
 import { type GateIntent, gateToolCall, redactToolCall } from "../decisions/gate";
+import { explainGateHold } from "../decisions/policy";
 import { raiseForTool } from "../engine/challenges";
 import {
   ACTIVE_CODING_TASK_MAX_CHARS,
@@ -204,6 +205,7 @@ import {
   mediateToolCall,
   POLICY_LANGUAGE_LABEL,
   toolResultTrust,
+  typedToolCommand,
 } from "./tool-policy";
 import {
   agentToolExecutionMode,
@@ -2232,9 +2234,10 @@ export class LeanAgentAdapter implements AgentHandle {
    * Score a mutating tool call with the configured decision backend. Returns a
    * block reason, or undefined to let the call run. Fails closed: a backend
    * error blocks. `ask` never waits: it opens a challenge for the agent's
-   * creator and the admins (src/engine/challenges.ts) and blocks the call
-   * NOW, telling the agent it will run automatically if approved — the loop
-   * carries on with other work meanwhile.
+   * owner and the operators — people (src/engine/challenges.ts) — and blocks
+   * the call NOW, telling the agent which question held it, against which
+   * intent, and its options (wait, narrow, ask the owner) — the loop carries
+   * on with other work meanwhile.
    */
   private async decisionGate(
     toolName: string,
@@ -2282,13 +2285,24 @@ export class LeanAgentAdapter implements AgentHandle {
     if (decision.action === "allow") return undefined;
     if (decision.action === "ask") {
       const state = redactToolCall(toolName, args);
+      const redacted = (state.arguments ?? {}) as Record<string, unknown>;
+      // A world-command call survives a restart (re-run in the agent's slot);
+      // the redacted call is what the challenge judge scores in shadow.
+      const command = typedToolCommand(toolName, args);
       const held = raiseForTool({
         requesterId: this.gameState.getState().connection.entityId ?? "",
         requesterName: this.name,
         toolName,
-        summary: `${toolName} ${JSON.stringify(state.arguments).slice(0, 240)}`,
-        reason: decision.reason,
+        summary: `${toolName} ${JSON.stringify(redacted).slice(0, 240)}`,
+        reason: explainGateHold(decision, {
+          ...(this.config.goal ? { goal: this.config.goal } : {}),
+          ...(this.config.role ? { role: this.config.role } : {}),
+          ...(this.focus?.description ? { focus: this.focus.description } : {}),
+          ...(this.activeCodingTask ? { task: this.activeCodingTask } : {}),
+        }),
         rerun: rerun ?? (async () => "the held call could not be replayed; issue it again"),
+        ...(command ? { command } : {}),
+        judge: { args: redacted, ...(description ? { description } : {}) },
         ttlMs: positiveNumberFromEnv("MARINA_DECISION_APPROVAL_TIMEOUT_MS"),
       });
       this.emitEvent({
