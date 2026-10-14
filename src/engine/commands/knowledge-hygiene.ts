@@ -2,133 +2,95 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { NoteRow } from "../../persistence/database";
+import type { CommandUsage } from "../../sdk/command-forms";
 import { getRecipe } from "./usecase";
 
 const DEFAULT_MAX_NOTE_LENGTH = 700;
 
-const KNOWN_SUBCOMMANDS: Record<string, Set<string>> = {
-  agent: new Set(["config", "list", "logs", "spawn", "status", "stop"]),
-  arena: new Set([
-    "backtest",
-    "discover",
-    "evaluate",
-    "rounds",
-    "shadow",
-    "show",
-    "signals",
-    "status",
-    "submissions",
-  ]),
-  benchmark: new Set([
-    "leaderboard",
-    "list",
-    "orchestrations",
-    "reference",
-    "run",
-    "runs",
-    "sweep",
-  ]),
-  board: new Set([
-    "archive",
-    "create",
-    "list",
-    "pin",
-    "post",
-    "read",
-    "reply",
-    "scores",
-    "search",
-    "vote",
-  ]),
-  build: new Set([
-    "audit",
-    "code",
-    "command",
-    "destroy",
-    "diff",
-    "link",
-    "modify",
-    "reload",
-    "revert",
-    "room",
-    "template",
-    "unlink",
-    "validate",
-  ]),
-  channel: new Set(["create", "history", "join", "leave", "list", "listall", "send"]),
-  chronicle: new Set(["about", "correct", "digest", "kinds", "pending", "record", "show", "since"]),
-  code: new Set(["apply", "diff", "run", "session", "status"]),
-  conduct: new Set(["learned", "resolve", "run"]),
-  feed: new Set(["kinds", "list"]),
-  inheritance: new Set(["export", "import", "list"]),
-  // `market` also accepts the show-family aliases `info` / `view` (canonicalSub).
-  market: new Set([
-    "forecast",
-    "info",
-    "lb",
-    "leaderboard",
-    "list",
-    "live",
-    "score",
-    "search",
-    "show",
-    "view",
-  ]),
-  // `memory kv <verb>` is the canonical key-value form; the bare verbs stay accepted.
-  memory: new Set(["delete", "get", "history", "kv", "list", "set"]),
-  note: new Set([
-    "correct",
-    "delete",
-    "evolve",
-    "graph",
-    "link",
-    "list",
-    "room",
-    "search",
-    "trace",
-    "types",
-    "unlink",
-  ]),
-  pool: new Set(["add", "audit", "create", "list", "recall", "status"]),
-  position: new Set(["close", "confirm", "list", "open", "pnl", "propose", "reject", "size"]),
-  project: new Set([
-    "create",
-    "decompose",
-    "info",
-    "join",
-    "list",
-    "memory",
-    "orchestrate",
-    "propose",
-    "status",
-    "tasks",
-  ]),
-  quest: new Set(["abandon", "complete", "list", "start", "status"]),
-  role: new Set(["create", "delete", "edit", "history", "lint", "list", "reload", "view"]),
-  skill: new Set(["audit", "compose", "import", "list", "search", "share", "store", "verify"]),
-  task: new Set([
-    "assign",
-    "approve",
-    "bundle",
-    "cancel",
-    "children",
-    "claim",
-    "create",
-    "goal",
-    "heartbeat",
-    "info",
-    "list",
-    "progress",
-    "recover",
-    "reject",
-    "standing",
-    "submit",
-  ]),
-  trait: new Set(["create", "delete", "history", "lint", "list", "view"]),
-  usecase: new Set(["info", "list"]),
-  watch: new Set(["create", "due", "list", "retire", "show"]),
-  web: new Set(["fetch", "read", "search"]),
+/**
+ * The part of a command definition the auditor reads: its name, aliases and
+ * declared usage forms. Pass the live router's builtins (`allBuiltins()`), so
+ * what counts as a real subcommand is what the command itself declares —
+ * never a hand-kept list that drifts.
+ */
+export interface CommandVocabularyEntry {
+  name: string;
+  aliases?: readonly string[];
+  usage?: readonly CommandUsage[];
+}
+
+/** What an audit judges command references against: the live builtins plus
+ *  names with no declared forms (the loaded rooms' own commands). */
+export interface CommandVocabulary {
+  commands: readonly CommandVocabularyEntry[];
+  knownCommands?: readonly string[];
+}
+
+/**
+ * Bare verbs a handler still accepts but no longer advertises in its usage
+ * forms (kept so old notes and agents keep working). Each entry needs a reason.
+ */
+const UNADVERTISED_FORMS: Record<string, readonly string[]> = {
+  // `memory kv <verb>` is canonical; the bare core-memory verbs stay accepted.
+  memory: ["delete", "get", "history", "list", "set"],
 };
+
+interface CommandShape {
+  /** Literal second tokens some form starts with. */
+  seconds: Set<string>;
+  /** Some form takes a free positional (`<x>`/`[x]`) in second position. */
+  positionalSecond: boolean;
+  /** Literal third tokens of forms whose second token is positional. */
+  thirds: Set<string>;
+  /** A positional-second form takes a positional (or nothing) in third position. */
+  positionalThird: boolean;
+}
+
+const PLACEHOLDER = /^[<[]/;
+
+function literalAlternatives(token: string): string[] {
+  return token
+    .replace(/^\(|\)$/g, "")
+    .split("|")
+    .map((part) => part.toLowerCase())
+    .filter((part) => /^[a-z][a-z0-9-]*$/.test(part));
+}
+
+function commandShape(entry: CommandVocabularyEntry): CommandShape {
+  const shape: CommandShape = {
+    seconds: new Set(UNADVERTISED_FORMS[entry.name] ?? []),
+    positionalSecond: false,
+    thirds: new Set(),
+    positionalThird: false,
+  };
+  for (const usage of entry.usage ?? []) {
+    const syntax = typeof usage === "string" ? usage : usage.syntax;
+    const tokens = syntax.trim().split(/\s+/);
+    const second = tokens[1];
+    if (!second) continue;
+    if (PLACEHOLDER.test(second)) {
+      shape.positionalSecond = true;
+      // `[rooms|entities|<room-id>]`: an optional group can still name literals.
+      for (const alt of literalAlternatives(second.replace(/^\[|\]$/g, ""))) shape.seconds.add(alt);
+      const third = tokens[2];
+      if (!third || PLACEHOLDER.test(third) || third === "..") shape.positionalThird = true;
+      else for (const alt of literalAlternatives(third)) shape.thirds.add(alt);
+    } else {
+      for (const alt of literalAlternatives(second)) shape.seconds.add(alt);
+    }
+  }
+  return shape;
+}
+
+/** name/alias → shape, built once per vocabulary. */
+function buildVocabulary(entries: readonly CommandVocabularyEntry[]): Map<string, CommandShape> {
+  const vocabulary = new Map<string, CommandShape>();
+  for (const entry of entries) {
+    const shape = commandShape(entry);
+    for (const name of [entry.name, ...(entry.aliases ?? [])]) vocabulary.set(name, shape);
+  }
+  return vocabulary;
+}
 
 export interface KnowledgeHygieneFinding {
   kind: "duplicate" | "overlong" | "stale-command" | "unsupported-claim" | "stale";
@@ -148,6 +110,14 @@ export interface KnowledgeHygieneReport {
 export function auditKnowledgeNotes(
   notes: NoteRow[],
   opts?: {
+    /**
+     * Live command definitions (`router.allBuiltins()`): names, aliases and
+     * the subcommands their usage forms declare. Without these (or
+     * `knownCommands`) stale-command detection is skipped — there is nothing
+     * to judge a reference against.
+     */
+    commands?: readonly CommandVocabularyEntry[];
+    /** Extra command names with no declared forms (room commands, extensions). */
     knownCommands?: Iterable<string>;
     maxNoteLength?: number;
     /** When set, notes untouched for longer than this are flagged `stale`. */
@@ -157,10 +127,9 @@ export function auditKnowledgeNotes(
   },
 ): KnowledgeHygieneReport {
   const maxNoteLength = opts?.maxNoteLength ?? DEFAULT_MAX_NOTE_LENGTH;
-  const knownCommands = new Set([
-    ...Object.keys(KNOWN_SUBCOMMANDS),
-    ...(opts?.knownCommands ?? []),
-  ]);
+  const vocabulary = buildVocabulary(opts?.commands ?? []);
+  const knownCommands = new Set([...vocabulary.keys(), ...(opts?.knownCommands ?? [])]);
+  const judgeCommands = knownCommands.size > 0;
   const duplicateGroups = findDuplicateGroups(notes);
   const overlong = notes
     .filter((note) => note.content.length > maxNoteLength)
@@ -170,11 +139,13 @@ export function auditKnowledgeNotes(
       detail: `${note.content.length} chars; target <= ${maxNoteLength}`,
     }));
   const staleCommands = notes.flatMap((note) =>
-    findStaleCommandRefs(note.content, knownCommands).map((detail) => ({
-      kind: "stale-command" as const,
-      noteIds: [note.id],
-      detail,
-    })),
+    (judgeCommands ? findStaleCommandRefs(note.content, knownCommands, vocabulary) : []).map(
+      (detail) => ({
+        kind: "stale-command" as const,
+        noteIds: [note.id],
+        detail,
+      }),
+    ),
   );
   const unsupportedClaims = notes
     .filter((note) => isUnsupportedClaim(note.content))
@@ -301,7 +272,11 @@ function normalizeContent(content: string): string {
   return content.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-function findStaleCommandRefs(content: string, knownCommands: Set<string>): string[] {
+function findStaleCommandRefs(
+  content: string,
+  knownCommands: Set<string>,
+  vocabulary: Map<string, CommandShape>,
+): string[] {
   const findings = new Set<string>();
   for (const ref of extractCommandRefs(content)) {
     const tokens = ref.trim().split(/\s+/);
@@ -317,7 +292,7 @@ function findStaleCommandRefs(content: string, knownCommands: Set<string>): stri
       }
       continue;
     }
-    const staleSubcommand = findStaleSubcommand(command, tokens);
+    const staleSubcommand = findStaleSubcommand(command, tokens, vocabulary);
     if (staleSubcommand) findings.add(staleSubcommand);
   }
   return [...findings];
@@ -344,46 +319,38 @@ function extractCommandRefs(content: string): string[] {
   return refs.filter(Boolean);
 }
 
-function findStaleSubcommand(command: string, tokens: string[]): string | undefined {
-  const known = KNOWN_SUBCOMMANDS[command];
-  if (!known || tokens.length < 2) return undefined;
+const LITERAL = /^[a-z][a-z0-9-]*$/;
 
-  if (command === "note") return undefined;
-
-  if (command === "pool") {
-    const second = tokens[1]?.toLowerCase();
-    const third = tokens[2]?.toLowerCase();
-    if (!second || second.startsWith("<")) return undefined;
-    if (known.has(second)) return undefined;
-    if (third && !third.startsWith("<") && !known.has(third)) {
-      return `unknown pool action "${third}" in "${preview(tokens.join(" "))}"`;
-    }
-    if (!third && ["join", "read"].includes(second)) {
-      return `unknown pool action "${second}" in "${preview(tokens.join(" "))}"`;
-    }
-    return undefined;
-  }
-
-  if (command === "project") {
-    const second = tokens[1]?.toLowerCase();
-    const third = tokens[2]?.toLowerCase();
-    if (!second || second.startsWith("<")) return undefined;
-    if (known.has(second)) return undefined;
-    // Project names may be multi-word (`project Debut Tour join`): the action
-    // is the last token once a name is in play, so accept if either the token
-    // right after the name or the final token is a known action.
-    const last = tokens[tokens.length - 1]?.toLowerCase();
-    if (third && !third.startsWith("<") && !known.has(third) && !(last && known.has(last))) {
-      return `unknown project action "${third}" in "${preview(tokens.join(" "))}"`;
-    }
-    return undefined;
-  }
-
-  const sub = tokens[1]?.toLowerCase();
-  if (!sub || sub.startsWith("<") || known.has(sub)) return undefined;
+/**
+ * A reference's subcommand must be one some usage form of the command
+ * declares. A command whose forms take a free positional second token
+ * (`note <text>`, `pool <name> …`) accepts any second token; when every such
+ * form names a literal action third (`pool <name> recall`), that action is
+ * checked instead — the last token too, for multi-word names such as
+ * `project Debut Tour join`.
+ */
+function findStaleSubcommand(
+  command: string,
+  tokens: string[],
+  vocabulary: Map<string, CommandShape>,
+): string | undefined {
+  const shape = vocabulary.get(command);
+  if (!shape || tokens.length < 2) return undefined;
+  const sub = tokens[1]?.toLowerCase() ?? "";
+  if (sub.startsWith("<") || shape.seconds.has(sub)) return undefined;
   // `usecase <recipe> <topic>`: every registered recipe is a valid second token.
   if (command === "usecase" && getRecipe(sub)) return undefined;
-  return `unknown ${command} action "${sub}" in "${preview(tokens.join(" "))}"`;
+  if (!shape.positionalSecond) {
+    // An id, quoted text or flag is an argument, not a missing subcommand.
+    if (!LITERAL.test(sub)) return undefined;
+    return `unknown ${command} action "${sub}" in "${preview(tokens.join(" "))}"`;
+  }
+  if (shape.positionalThird || shape.thirds.size === 0) return undefined;
+  const third = tokens[2]?.toLowerCase();
+  const last = tokens[tokens.length - 1]?.toLowerCase();
+  if (!third || !LITERAL.test(third) || shape.thirds.has(third)) return undefined;
+  if (last && shape.thirds.has(last)) return undefined;
+  return `unknown ${command} action "${third}" in "${preview(tokens.join(" "))}"`;
 }
 
 function preview(value: string, limit = 80): string {

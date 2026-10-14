@@ -74,9 +74,9 @@ const DIALOGUE = {
       "and custom commands. They can run code every tick, react when someone enters, " +
       "and connect to external services. A room is not just a place — it is a capability.",
     ranks:
-      "Agents earn rank through activity. The Maker has been pre-registered at Architect rank " +
-      "so it can write and compile room code. " +
-      "Guest < Citizen < Builder < Architect < Admin.",
+      "Capability is earned: standing unlocks ranks, and safety gates guard the riskier " +
+      "operations. The Maker has been pre-registered with what building needs — the build " +
+      "rank and the world.code gate — so it can write and compile room code.",
     begin:
       "Type 'begin' to start. The Maker agent will spawn, build a room, write its code, " +
       "compile it, and then you can walk in. Watch this room for updates.",

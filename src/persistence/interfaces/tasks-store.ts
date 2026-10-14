@@ -29,6 +29,7 @@ export interface TasksStore {
   }): TaskRow[];
   countTasks(opts?: { status?: string; groupId?: string; parentId?: number }): number;
   updateTaskStatus(id: number, status: string): void;
+  setTaskCreator(id: number, creatorId: string, creatorName: string): void;
   createTaskClaim(
     taskId: number,
     entityId: string,
@@ -82,6 +83,7 @@ export const TASKS_STORE_METHODS = [
   "listTasks",
   "countTasks",
   "updateTaskStatus",
+  "setTaskCreator",
   "createTaskClaim",
   "getTaskClaim",
   "listTasksClaimedBy",

@@ -12,6 +12,7 @@ import { debriefCommand } from "../commands/debrief";
 import { digCommand } from "../commands/dig";
 import { evolveCommand } from "../commands/evolve";
 import { guideCommand } from "../commands/guide";
+import type { CommandVocabulary } from "../commands/knowledge-hygiene";
 import { learnedCommand } from "../commands/learned";
 import { lessonsCommand } from "../commands/lessons";
 import { marketCommand } from "../commands/market";
@@ -32,6 +33,14 @@ import { workCommand } from "../commands/work";
 import type { Engine } from "../engine";
 import { trialCallBudget } from "../evolution-trial";
 import { answerViaLocalModel } from "./model-helpers";
+
+/** Live builtins plus the loaded rooms' own command names, for knowledge audits. */
+function commandVocabulary(engine: Engine): CommandVocabulary {
+  return {
+    commands: engine.commands.allBuiltins(),
+    knownCommands: engine.rooms.all().flatMap((room) => Object.keys(room.module.commands ?? {})),
+  };
+}
 
 export function registerMemoryCommands(engine: Engine): void {
   engine.commands.registerBuiltin(
@@ -102,8 +111,7 @@ export function registerMemoryCommands(engine: Engine): void {
       getEntity: (id) => engine.entities.get(id as EntityId),
       db: engine.db,
       logEvent: (event) => engine.logEvent(event),
-      getCommandNames: () =>
-        engine.commands.allBuiltins().flatMap((cmd) => [cmd.name, ...(cmd.aliases ?? [])]),
+      getCommandVocabulary: () => commandVocabulary(engine),
       resolveEntityIdByName: (name) =>
         engine.entities.findAgentByName(name)?.id ??
         engine.entities.all().find((e) => e.name === name)?.id,
@@ -113,8 +121,7 @@ export function registerMemoryCommands(engine: Engine): void {
     guideCommand({
       getEntity: (id) => engine.entities.get(id as EntityId),
       db: engine.db,
-      getCommandNames: () =>
-        engine.commands.allBuiltins().flatMap((cmd) => [cmd.name, ...(cmd.aliases ?? [])]),
+      getCommandVocabulary: () => commandVocabulary(engine),
     }),
   );
   engine.commands.registerBuiltin(lessonsCommand({ db: engine.db }));
@@ -363,8 +370,7 @@ export function registerMemoryCommands(engine: Engine): void {
       getEntity: (id) => engine.entities.get(id as EntityId),
       db: engine.db,
       logEvent: (event) => engine.logEvent(event),
-      getCommandNames: () =>
-        engine.commands.allBuiltins().flatMap((cmd) => [cmd.name, ...(cmd.aliases ?? [])]),
+      getCommandVocabulary: () => commandVocabulary(engine),
     }),
   );
   engine.commands.registerBuiltin(

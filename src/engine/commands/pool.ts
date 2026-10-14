@@ -25,7 +25,11 @@ import type { MarinaDB, NoteRow } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
 import { DAY_MS } from "../constants";
 import { canonicalSub, parseModifiers, unknownSubcommand } from "../parse-input";
-import { auditKnowledgeNotes, renderKnowledgeHygieneReport } from "./knowledge-hygiene";
+import {
+  auditKnowledgeNotes,
+  type CommandVocabulary,
+  renderKnowledgeHygieneReport,
+} from "./knowledge-hygiene";
 
 const POOL_ACTIONS = ["list", "status", "audit", "add", "ratify", "recall"];
 
@@ -108,7 +112,7 @@ export function poolCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
   db?: MarinaDB;
   logEvent?: (event: EngineEvent) => void;
-  getCommandNames?: () => string[];
+  getCommandVocabulary?: () => CommandVocabulary;
   /** Author lookup so recalled reflections credit their writer (generational). */
   resolveEntityIdByName?: (name: string) => EntityId | undefined;
 }): CommandDef {
@@ -304,7 +308,7 @@ export function poolCommand(deps: {
         case "audit": {
           const notes = db.getPoolNotes(pool.id, 500);
           const report = auditKnowledgeNotes(notes, {
-            knownCommands: deps.getCommandNames?.(),
+            ...deps.getCommandVocabulary?.(),
             // Flag shared-pool notes nothing has touched in ~3 months as stale —
             // a prune signal for guide and other high-impact pools.
             maxAgeMs: 90 * DAY_MS,

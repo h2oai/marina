@@ -1424,6 +1424,11 @@ export class MarinaDB implements MarinaStores {
     tasksDb.updateTaskStatus(this.db, id, status);
   }
 
+  /** Reassign a task's reviewer (its creator); durable-keyed like `createTask`. */
+  setTaskCreator(id: number, creatorId: string, creatorName: string): void {
+    tasksDb.setTaskCreator(this.db, id, this.durableEntityKey(creatorId), creatorName);
+  }
+
   createTaskClaim(
     taskId: number,
     entityId: string,

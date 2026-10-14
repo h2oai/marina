@@ -1,8 +1,10 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { rankFloorRefusal } from "../src/engine/rank-floor";
 import type { MarinaDB } from "../src/persistence/database";
 import type { CommandInput, Entity, EntityId, RoomContext, RoomId, RoomModule } from "../src/types";
+import { rankLabel } from "../src/world/seed-guide";
 import type { WorldDefinition } from "../src/world/world-definition";
 import {
   seedProject,
@@ -12,6 +14,9 @@ import {
   seedTraitsAndRoles,
   seedWatchingRole,
 } from "./seed";
+
+/** Resolving a market settles everyone's positions in it. */
+const RESOLVE_MIN_RANK = 2;
 
 // ─── External API Config ────────────────────────────────────────────────────
 
@@ -324,9 +329,15 @@ function marketRoom(opts: {
       resolve(ctx: RoomContext, input: CommandInput) {
         const entity = ctx.getEntity(input.entity);
         if (!entity) return;
-        const rank = (entity.properties.rank as number) ?? 0;
-        if (rank < 2) {
-          ctx.send(input.entity, "Only Builders (rank 2+) can resolve markets.");
+        // Posture-aware floor: lifted on the local profile and under `open`;
+        // elsewhere a refusal raises a challenge the creator or an admin can approve.
+        const floor = rankFloorRefusal(
+          entity,
+          RESOLVE_MIN_RANK,
+          `Resolving a market needs ${rankLabel(RESOLVE_MIN_RANK)} or higher.`,
+        );
+        if (floor) {
+          ctx.send(input.entity, floor);
           return;
         }
         const outcome = input.args.trim().toLowerCase();
@@ -793,7 +804,7 @@ const TRADING_FLOOR: RoomModule = {
         ctx.spawnRoomAgent({
           name: "Meridian",
           role: "floor-host",
-          goal: "You are Meridian, host of the Trading Floor. Help visitors navigate market rooms, explain prediction mechanics (predict, consensus, resolution, Brier scoring), and announce notable market events.",
+          goal: "You are Meridian, host of the Trading Floor. Answer visitors' questions: navigating market rooms and prediction mechanics (predict, consensus, resolution, Brier scoring). Report a resolution or consensus shift when asked. When nobody is asking, rest: `memory set rest <why>`.",
         });
       } else {
         ctx.spawn({
@@ -941,7 +952,8 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
     content:
       "Prediction workflow: (1) Check live feeds — Kalshi (east) and Polymarket (west) show real " +
       "market prices. (2) Research — use 'recall', pools, boards, MCP connectors. " +
-      "(3) Take a position: 'predict yes 75 My reasoning here'. " +
+      "(3) Inside a market room, take a position: 'predict yes 75 My reasoning here' (outside " +
+      "one, 'predict' is the paid 'forecast' pipeline). " +
       "(4) Update as evidence changes. (5) Markets resolve — Brier scores track calibration.",
     importance: 10,
     type: "skill",
@@ -968,15 +980,16 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
       "Feed room commands: 'search <query>' filters markets by keyword. " +
       "'detail <market>' shows full details for one market. " +
       "'refresh' forces an immediate data reload. " +
-      "Market room commands: 'predict', 'positions', 'consensus', 'resolve'.",
+      "Market room commands: 'predict', 'positions', 'consensus', 'resolve' ('resolve' needs " +
+      `${rankLabel(RESOLVE_MIN_RANK)}).`,
     importance: 10,
     type: "skill",
   },
   {
     content:
-      "Alpha comes from disagreement. If Kalshi says 72% and your research says 45%, " +
-      "that's a signal worth investigating. Document WHY you disagree — " +
-      "the reasoning graph is what makes Marina markets different from price-only platforms.",
+      "A gap between the market price and your own estimate is a reason to investigate, not " +
+      "proof of an edge. Document WHY you disagree, with sources — the reasoning graph is what " +
+      "makes Marina markets different from price-only platforms.",
     importance: 9,
     type: "fact",
   },
@@ -1061,7 +1074,7 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
   {
     content:
       "Beyond these rooms, forecasting is global: 'forecast <question>' (cited multi-model " +
-      "forecast), 'arena' (Social Simulation Arena; 'guide arena' for the improvement loop) and " +
+      "forecast), 'arena' (read-only Social Simulation Arena status) and " +
       "'position open <venue> <ticker> <yes|no> <count>' (Kelly-sized, paper by default) work in " +
       "every world. Opening a position starts a resolving watch; an agent in the 'watcher' role " +
       "drives 'watch due' so it closes.",

@@ -132,6 +132,21 @@ export function updateTaskStatus(db: Database, id: number, status: string): void
   db.run("UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?", [status, Date.now(), id]);
 }
 
+/** Reassign who reviews (approves) a task. `creatorId` is a durable key. */
+export function setTaskCreator(
+  db: Database,
+  id: number,
+  creatorId: string,
+  creatorName: string,
+): void {
+  db.run("UPDATE tasks SET creator_id = ?, creator_name = ?, updated_at = ? WHERE id = ?", [
+    creatorId,
+    creatorName,
+    Date.now(),
+    id,
+  ]);
+}
+
 export function createTaskClaim(
   db: Database,
   taskId: number,
