@@ -100,6 +100,7 @@ import { dispatchedCall, readOnlyCall } from "../obligations/tool-call";
 import { outputRepairMode, repairFinalAnswer } from "../repair/output-repair";
 import { MarinaClient, TELL_NOTICE_PREFIX } from "../sdk/client";
 import type { Perception } from "../types";
+import { isHumanOnboardingNote } from "../world/seed-guide";
 import { suggestPatterns } from "../world/templates/orchestration";
 import {
   classifyIncomingTell,
@@ -906,16 +907,14 @@ const BOOT_ARCHIVE_SUMMARY_BYTES = 600;
 
 /** Longest inherited-wisdom note served into the discovery prompt (chars). */
 export const INHERITED_WISDOM_NOTE_MAX_CHARS = 600;
-/** Notes in the `guide` pool written for people (onboarding), not agents. */
-const HUMAN_ONBOARDING_PREFIX = "[for people] ";
 
 /**
  * The discovery prompt's inherited wisdom: the top five `guide` notes written
- * for agents — human-onboarding notes (`[for people] ` prefix) are skipped —
+ * for agents — human-onboarding notes (`isHumanOnboardingNote`) are skipped —
  * each clamped and neutralised (`./peer-text`), numbered.
  */
 export function formatInheritedWisdom(notes: readonly { content: string }[]): string {
-  const served = notes.filter((n) => !n.content.startsWith(HUMAN_ONBOARDING_PREFIX)).slice(0, 5);
+  const served = notes.filter((n) => !isHumanOnboardingNote(n.content)).slice(0, 5);
   return served
     .map(
       (n, i) =>
