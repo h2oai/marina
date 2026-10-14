@@ -19,6 +19,7 @@
 import type { Engine } from "../../engine/engine";
 import { EVAL_REF_PREFIX, evalOption } from "../../learning/eval-context";
 import { recordResolved } from "../../outcomes/record";
+import { canScope, workRefs } from "../../outcomes/work-refs";
 import type { EngineEvent } from "../../types";
 import { errorJson, json, type PassthruAuthResult } from "../model-api/shared";
 
@@ -96,7 +97,12 @@ export async function handleOutcomeReport(
     ...(measured ? { evalMode: "measure" as const } : {}),
     participants: [{ model: served }],
     // A measurement names its board, so what it teaches never reaches that board's measurements.
-    refs: [`trace:${requestId}`, ...(measured ? [`${EVAL_REF_PREFIX}${measured.benchmark}`] : [])],
+    refs: [
+      `trace:${requestId}`,
+      ...(measured ? [`${EVAL_REF_PREFIX}${measured.benchmark}`] : []),
+      // The caller's own report scores the model that served it, in the caller's scope.
+      ...workRefs(canScope(db) ? db : undefined, { kind: "request", actor: owner, model: served }),
+    ],
     resolvedAt: at,
   });
   if (!recorded.created) {
