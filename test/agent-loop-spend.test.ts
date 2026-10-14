@@ -262,14 +262,20 @@ describe("idle agents don't call the model", () => {
     using _s = scopeProcessState({ env: { MARINA_AGENT_HEARTBEAT_MS: undefined } });
     const h = harness("Waker");
     h.i.loopPrefs = { ...defaultLoopPreferences(), rest: "waiting" };
+    // The reply is delivered with the model's answer (as a real `marina_tell`
+    // receipt would settle it) — settled in the model call itself, so a busy
+    // runner that skips polls between cycles cannot leave it owed.
+    const model = h.i.agent.streamFunction;
+    h.i.agent.streamFunction = (async (...args: Parameters<typeof model>) => {
+      h.i.outstandingRequests.clear();
+      return model(...args);
+    }) as typeof model;
     let sent = false;
     await h.runCycles(10, (cycle) => {
       if (cycle >= 2 && !sent) {
         sent = true;
         h.i.client.emit("perception", tellPerception("what is the total?", "t1"));
       }
-      // The reply was delivered (as a real `marina_tell` receipt would settle it).
-      if (h.calls() > 0) h.i.outstandingRequests.clear();
     });
     // One run, plus at most one in-run recovery turn (the fake model answers
     // in prose) — never a call per cycle.
