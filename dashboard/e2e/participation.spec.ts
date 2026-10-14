@@ -65,8 +65,8 @@ test("login orients the resident before inline discovery, note helpers and sideb
   await sidebar.getByText(/\[unverified\] 1 items/).click();
   await expect(sidebar.getByText("opal inline observation", { exact: true })).toBeVisible();
   await page.screenshot({ path: "/tmp/marina-sidebar-context.png", fullPage: true });
-  await input.fill("note verify 51 verified");
-  await expect(page.getByLabel("Command action")).toHaveValue(/note verify .* verified /);
+  await input.fill("note verify 51 disputed");
+  await expect(page.getByLabel("Command action")).toHaveValue(/note verify .* disputed /);
   // Choosing a helper changes the draft only; no verification is submitted here.
   expect(commands).toHaveLength(1);
   await input.fill("/look");

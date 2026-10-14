@@ -88,7 +88,7 @@ export const MEMORY_WHICH_VERB = `Which verb?
   ask <question>         model-synthesised answer over notes + guide + pools + world search
   dig <topic>            internal notes + web evidence, optional synthesis
   share <pool> <text>    ≡ pool <pool> add <text>
-  note verify <id> …     mark a legacy note verified | memory reaffirm <ID> … re-pin a durable record | skill verify <name> check a skill package`;
+  note verify <id> …     dispute or retract on your own note (verified comes from another's pool <name> ratify) | memory reaffirm <ID> … re-pin a durable record | skill verify <name> check a skill package`;
 
 /** Strip the first `n` whitespace-separated tokens from `args`, preserving the rest verbatim. */
 function afterTokens(args: string, n: number): string {

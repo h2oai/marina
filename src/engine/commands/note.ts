@@ -124,6 +124,10 @@ const VALID_RELATIONSHIPS = new Set([
 ]);
 
 /** Subcommands the switch below handles; anything else is free text to save. */
+/** `verified` is never self-assigned: it comes from another resident's `pool <name> ratify`. */
+const NOTE_VERIFY_USAGE =
+  "Usage: note verify <your-note-id> unverified|disputed [confidence 0..1] [rationale]. A note becomes verified only when another resident ratifies it (`pool <name> ratify <id>`); add evidence with `note source <id> <url|note:id>`.";
+
 const NOTE_SUBS = [
   "claim",
   "source",
@@ -235,7 +239,8 @@ export function noteCommand(deps: {
       "note types",
       "note unlink <id1> <id2> <rel>",
       "note unlink <id1> <id2> <relationship>",
-      ...["disputed", "unverified", "verified"].map((verdict) => ({
+      // No `verified` form: an author cannot self-verify (see NOTE_VERIFY_USAGE).
+      ...["disputed", "unverified"].map((verdict) => ({
         syntax: `note verify <your-note-id> ${verdict} [<confidence> [<rationale>]]`,
         effect: "write" as const,
         fields: {
@@ -246,7 +251,7 @@ export function noteCommand(deps: {
     ],
     name: "note",
     aliases: [],
-    help: "Legacy numeric notes (deprecated for new integrations; use memory remember/query). Usage: note <text> | note claim <text> [confidence:0..1] [source:URL] (also trailing `confidence 0.9 source URL`) | note explain|verify|source|contradictions|consolidate ... | note list (ls) | note delete <id> (rm/remove)",
+    help: "Private numbered notes, kept as durable records (typed records: memory remember|query). Usage: note <text> | note claim <text> [confidence:0..1] [source:URL] (also trailing `confidence 0.9 source URL`) | note explain|verify|source|contradictions|consolidate ... | note list (ls) | note delete <id> (rm/remove)",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -440,15 +445,35 @@ export function noteCommand(deps: {
             return;
           }
           if (
-            !access.write(note) ||
-            note.verification_status === "superseded" ||
-            !Number.isFinite(confidence) ||
-            !["unverified", "verified", "disputed"].includes(verification)
+            !Number.isFinite(id) ||
+            !["unverified", "disputed", "verified"].includes(verification)
           ) {
+            ctx.send(input.entity, NOTE_VERIFY_USAGE);
+            return;
+          }
+          if (!access.write(note)) {
             ctx.send(
               input.entity,
-              "Usage: note verify <your-note-id> unverified|verified|disputed [confidence 0..1]",
+              access.read(note)
+                ? `Note #${id} is not yours: \`note verify\` records your verdict on your own notes. Another resident's pool note is vouched for with \`pool <name> ratify ${id}\`.`
+                : `Note #${id} not found. \`note list\` shows your notes.`,
             );
+            return;
+          }
+          if (note.verification_status === "superseded") {
+            ctx.send(
+              input.entity,
+              `Note #${id} was superseded by a newer revision; verify that one (\`note list\`).`,
+            );
+            return;
+          }
+          if (verification === "verified") {
+            // Unreachable for an author (refused above); kept explicit so the verdict never lands.
+            ctx.send(input.entity, NOTE_VERIFY_USAGE);
+            return;
+          }
+          if (!Number.isFinite(confidence)) {
+            ctx.send(input.entity, NOTE_VERIFY_USAGE);
             return;
           }
           const rationale = tokens.slice(4).join(" ") || undefined;

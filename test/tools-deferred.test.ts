@@ -17,6 +17,7 @@ import {
   deferredToolsEnabled,
   FULL_RESIDENT_TOOL_NAMES,
   isMutatingToolName,
+  PLAN_OUTPUT_TOOL_NAMES,
   READ_ONLY_TOOL_NAMES,
   TOOL_PROFILE_NAMES,
   TOOL_SEARCH_NAME,
@@ -42,14 +43,21 @@ function stubCtx(commands: string[]) {
 const memory = {} as never;
 
 describe("plan tool profile (read-only)", () => {
-  it("exposes only read-only tools, nothing mutating", () => {
+  it("exposes read-only tools plus only the session artifacts a plan delivers", () => {
     const { resident, deferred } = createProfileToolset(stubCtx([]), memory, "plan");
     expect(deferred).toEqual([]);
     expect(resident.length).toBeGreaterThan(0);
     for (const t of resident) {
+      if (PLAN_OUTPUT_TOOL_NAMES.has(t.name)) {
+        // summary / observe store artifacts: writes, never classified read-only.
+        expect(isMutatingToolName(t.name)).toBe(true);
+        continue;
+      }
       expect(READ_ONLY_TOOL_NAMES.has(t.name)).toBe(true);
       expect(isMutatingToolName(t.name)).toBe(false);
     }
+    for (const name of PLAN_OUTPUT_TOOL_NAMES)
+      expect(resident.some((t) => t.name === name)).toBe(true);
     // The broad command tool (which can mutate) is absent from plan mode;
     // core read-only tools remain.
     expect(resident.some((t) => t.name === "marina_command")).toBe(false);
@@ -93,7 +101,16 @@ describe("deferred tool schemas (full profile)", () => {
   it("catalogs every deferred tool as `name — one line` in the loader description", () => {
     const { resident, deferred } = createProfileToolset(stubCtx([]), memory, "full");
     const loader = resident.find((t) => t.name === TOOL_SEARCH_NAME)!;
-    for (const t of deferred) expect(loader.description).toContain(`${t.name} — `);
+    // `marina_code` is resident, so its typed twins share one summary line.
+    expect(resident.some((t) => t.name === "marina_code")).toBe(true);
+    const twins = deferred.filter((t) => t.name.startsWith("marina_code_"));
+    expect(twins.length).toBeGreaterThan(10);
+    expect(loader.description).toContain(`marina_code_<action> — `);
+    for (const t of deferred) {
+      if (t.name.startsWith("marina_code_"))
+        expect(loader.description).not.toContain(`${t.name} — `);
+      else expect(loader.description).toContain(`${t.name} — `);
+    }
     for (const line of loader.description.split("\n").filter((l) => l.includes(" — "))) {
       expect(line.length).toBeLessThan(140);
     }

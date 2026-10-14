@@ -1714,8 +1714,8 @@ export class LeanAgentAdapter implements AgentHandle {
     this.applyModelLimits(modelStr);
 
     // Create tools — profile controls how much schema goes to the LLM.
-    // Smaller models (Haiku and below) can't reliably parse the full 27-tool
-    // ~15KB schema on every request; the minimal profile (command+think+memory)
+    // Smaller models (Haiku and below) can't reliably parse the full resident
+    // toolset's schema (~13 KB) on every request; the minimal profile (command+think+memory)
     // is functionally complete via `marina_command`'s escape hatch.
     // The `full` profile is resident core + deferred rest: the rest are listed
     // one line each inside `marina_tool_search` and loaded by name for the
@@ -1905,7 +1905,11 @@ export class LeanAgentAdapter implements AgentHandle {
     // by default, but the path is open for rank-based safety gates later.
     this.agent = new Agent({
       initialState: {
-        systemPrompt: getLeanSystemPrompt(rolePrompt),
+        systemPrompt: getLeanSystemPrompt(
+          rolePrompt,
+          undefined,
+          tools.map((t) => t.name),
+        ),
         model: this.model,
         tools,
         thinkingLevel: this.thinkingLevel,
@@ -2639,6 +2643,11 @@ export class LeanAgentAdapter implements AgentHandle {
     );
   }
 
+  /** Tool names the system prompt's TOOL ROUTING may name: exactly the ones this agent holds. */
+  private promptToolNames(): string[] {
+    return (this.agent?.state.tools ?? this.baseTools).map((t) => t.name);
+  }
+
   /** Mirror `state.tools` into the loop's live snapshot array (same run). */
   private syncLiveRunTools(live: AgentTool[] | undefined): void {
     if (!live) return;
@@ -2733,7 +2742,9 @@ export class LeanAgentAdapter implements AgentHandle {
     this.gameState.setSession(session.entityId, session.name, session.token);
     try {
       this.capabilityEntries = (await this.client.capabilities()).commands;
-      this.replaceSystemPrompt(getLeanSystemPrompt(this.rolePrompt, this.capabilityEntries));
+      this.replaceSystemPrompt(
+        getLeanSystemPrompt(this.rolePrompt, this.capabilityEntries, this.promptToolNames()),
+      );
     } catch (error) {
       this.log.warn("agent", `Live capability discovery unavailable: ${getErrorMessage(error)}`);
     }
@@ -3080,7 +3091,9 @@ export class LeanAgentAdapter implements AgentHandle {
           const catalog = await this.client.capabilities();
           if (catalog.commands !== this.capabilityEntries) {
             this.capabilityEntries = catalog.commands;
-            this.replaceSystemPrompt(getLeanSystemPrompt(this.rolePrompt, this.capabilityEntries));
+            this.replaceSystemPrompt(
+              getLeanSystemPrompt(this.rolePrompt, this.capabilityEntries, this.promptToolNames()),
+            );
           }
         } catch (error) {
           this.log.warn("agent", `Capability refresh unavailable: ${getErrorMessage(error)}`);
@@ -5751,7 +5764,8 @@ The goal is a smaller, sharper memory — not more notes.`;
 
   setSystemPrompt(prompt: string | undefined): void {
     this.replaceSystemPrompt(
-      prompt || getLeanSystemPrompt(this.rolePrompt, this.capabilityEntries),
+      prompt ||
+        getLeanSystemPrompt(this.rolePrompt, this.capabilityEntries, this.promptToolNames()),
     );
   }
 
@@ -5833,7 +5847,9 @@ The goal is a smaller, sharper memory — not more notes.`;
       this.config.role = opts.role;
       // Update rolePrompt and regenerate system prompt
       this.rolePrompt = opts.rolePrompt ?? null;
-      this.replaceSystemPrompt(getLeanSystemPrompt(this.rolePrompt, this.capabilityEntries));
+      this.replaceSystemPrompt(
+        getLeanSystemPrompt(this.rolePrompt, this.capabilityEntries, this.promptToolNames()),
+      );
       this.log.info(
         LEAN_AGENT_LOG_CATEGORY,
         `role reconfigured to "${opts.role}", system prompt regenerated`,

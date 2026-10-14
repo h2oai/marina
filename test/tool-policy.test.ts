@@ -233,6 +233,12 @@ describe("agent tool reference monitor", () => {
       ["marina_board", { action: "read", args: "general 4" }],
       ["marina_task", { action: "info", args: "7" }],
       ["marina_project", { action: "list" }],
+      ["marina_project", { action: "status", project: "Alpha" }],
+      ["marina_project", { action: "status", args: "Alpha" }],
+      ["marina_project", { action: "info", project: "Alpha" }],
+      ["marina_project", { action: "create", project: "Alpha", args: "Map the grid" }],
+      ["marina_channel", { action: "read", channel: "general" }],
+      ["marina_channel", { action: "send", channel: "general", message: "status: green" }],
       ["marina_canvas", { action: "nodes", args: "main" }],
       ["marina_macro", { action: "list" }],
       ["marina_market", { action: "leaderboard" }],
@@ -254,10 +260,14 @@ describe("agent tool reference monitor", () => {
   });
 
   it("only reads with names the tool executor also treats as read-only", () => {
-    // `marina_recall` is a legacy name kept as a read; no current tool carries it.
     for (const name of READ_TOOL_NAMES) {
-      if (name === "marina_recall") continue;
       expect([name, READ_ONLY_TOOL_NAMES.has(name)]).toEqual([name, true]);
+    }
+    // Code Mode summary/observe store artifacts: never classified as reads.
+    for (const name of ["marina_code_summary", "marina_code_observe"]) {
+      expect(READ_TOOL_NAMES.has(name)).toBe(false);
+      expect(READ_ONLY_TOOL_NAMES.has(name)).toBe(false);
+      expect(classifyToolRisk(name, { text: "x" })).toBe("mutate");
     }
   });
 
@@ -361,19 +371,20 @@ describe("agent tool reference monitor", () => {
   });
 
   it("classifies the generic Code tool by its action, like the typed Code tools", () => {
-    for (const action of [
-      "status",
-      "files",
-      "read",
-      "search",
-      "diff",
-      "show",
-      "history",
-      "observe",
-    ])
+    for (const action of ["status", "files", "read", "search", "diff", "show", "history"])
       expect(classifyToolRisk("marina_code", { action, path: "src/a1.ts" })).toBe("read");
     expect(classifyToolRisk("marina_code", { action: "workspace", command: "list" })).toBe("read");
-    for (const action of ["edit", "write", "run", "apply", "verify", "summary", "assume"])
+    // `observe` stores an observation artifact: a write, like summary.
+    for (const action of [
+      "edit",
+      "write",
+      "run",
+      "apply",
+      "verify",
+      "summary",
+      "assume",
+      "observe",
+    ])
       expect(classifyToolRisk("marina_code", { action })).toBe("mutate");
     expect(classifyToolRisk("marina_code", { action: "workspace", command: "use" })).toBe("mutate");
   });

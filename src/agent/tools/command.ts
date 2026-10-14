@@ -15,7 +15,8 @@ import { execCommand, type ToolContext } from "./shared";
 
 const commandSchema = Type.Object({
   command: Type.String({
-    description: "The command to execute (e.g., 'look', 'north', 'say hello', 'note something')",
+    description:
+      "One world command, e.g. 'look', 'task list', 'tell alice ready', 'note <observation>'",
   }),
 });
 

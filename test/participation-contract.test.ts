@@ -102,15 +102,19 @@ describe("shared participation contracts", () => {
     });
     const id = db.createNote("Alice", "quartz measured observation", roomId("test/participation"));
     const verify = matchCommandForm(forms, `note verify ${id}`)!;
-    const verified = forms.find((form) => form.syntax.includes(" verified "))!;
     expect(verify).toBeDefined();
-    expect(matchCommandForm(forms, `note verify ${id} verified`)?.syntax).toBe(verified.syntax);
-    expect(matchCommandForm(forms, `note verify ${id} ver`)?.syntax).toBe(verified.syntax);
+    // `verified` is never advertised: an author cannot self-verify, and a
+    // note becomes verified only through another resident's `pool … ratify`.
+    expect(forms.some((form) => form.syntax.includes(" verified "))).toBe(false);
     expect(matchCommandForm(forms, `note verify ${id} unverified `)?.syntax).toContain(
       " unverified ",
     );
     expect(matchCommandForm(forms, `note verify ${id} disputed `)?.syntax).toContain(" disputed ");
-    expect(verified.fields.find((field) => field.label === "your-note-id")?.multiline).toBe(false);
+    expect(
+      matchCommandForm(forms, `note verify ${id} disputed `)?.fields.find(
+        (field) => field.label === "your-note-id",
+      )?.multiline,
+    ).toBe(false);
     // The author can't self-verify (self-attestation is refused), so the
     // composed form exercised end-to-end is the author's own `disputed` verdict.
     const disputed = forms.find((form) => form.syntax.includes(" disputed "))!;

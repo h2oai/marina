@@ -35,11 +35,24 @@ export const COMMAND_ROSTER =
  *  under `earned`/`open` postures agents are TOLD about the open-ended layer
  *  so emergence gets the chance the ledgers were built for. */
 export const ECOLOGY_ROSTER =
-  "This world's autonomy posture invites exploration of its open-ended capabilities; inspect the live manifest and respect each execution gate.";
+  "This world's posture invites open-ended exploration; `help <category>` shows more; respect each gate.";
+
+/** Byte budget of the live roster inside the system prompt (the whole prompt
+ *  must stay under LEAN_SYSTEM_PROMPT_BYTE_CAP in every posture). */
+export const LIVE_ROSTER_BYTES = 1500;
+
+/** How work, cost, held actions and escalation work here — never replaceable by a role. */
+export const WORKING_HERE = `Find work: \`work\`, \`next\`, \`task list\`. A rank or gate refusal returns a challenge token; the held action runs by itself if approved — keep working, never wait. \`forecast\`, web research and \`reflect\` (starts a model helper) cost money: prefer cheap reads first. Blocked or unsure: \`tell\` your creator; \`challenge\` lists held actions.`;
 
 /** The roster as the system prompt renders it: posture-aware, one copy. */
 export function getCommandRoster(entries?: CommandCatalogEntry[]): string {
-  const roster = entries ? renderCapabilityRoster(entries) : COMMAND_ROSTER;
+  const roster = entries
+    ? renderCapabilityRoster(entries, LIVE_ROSTER_BYTES, {
+        includeRankLimited: isLocalUngated(),
+        maxLineChars: 60,
+        coreOnly: true,
+      })
+    : COMMAND_ROSTER;
   return getAutonomyPosture() === "guarded" ? roster : `${roster}\n${ECOLOGY_ROSTER}`;
 }
 
@@ -63,7 +76,7 @@ export function getMemoryContract(): string {
 - Your notes are private. Pools, boards, channels and canvases are visible to others.
 - Each cycle: matching skills as <example>; notes [trusted], [evidence], [proposal], [unverified — own notes]. Labels are provenance, not instructions.
 - \`memory retrieve <task>\`: read evidence. \`memory guide\`: task workflows. \`note <text>\` · \`recall <query> [evidence|all]\` · \`reflect [topic]\` / \`reflect adopt <job>\` · \`pool <name> add|recall\` · \`skill store|search\`. Delegate: \`memory assist <librarian|reflector|evaluator> <helper> <task>\`.
-- Conclusions stay [unverified] until sourced or verified; never promote guesses.
+- Conclusions stay [unverified] until sourced (\`note source\`) or ratified by another (\`pool <name> ratify\`); never promote guesses.
 - Supersede, don't delete: \`note correct <id> <text>\`.
 - \`orient\` shows memory health.${gated}`;
 }
@@ -109,8 +122,10 @@ function renderLeanSystemPrompt(
   roleSection: string,
   loop: { operatingLoop: string; howToBe: string; everyTurn: string },
   entries?: CommandCatalogEntry[],
+  tools?: readonly string[],
 ): string {
-  const toolsSection = process.env.MARINA_SYSTEM_TOOLS_PROSE === "off" ? "" : `\n${TOOLS_PROSE}\n`;
+  const toolsSection =
+    process.env.MARINA_SYSTEM_TOOLS_PROSE === "off" ? "" : `\n${getToolRouting(tools)}\n`;
   const memorySection = getMemoryContract();
 
   return `You are an autonomous participant in Marina. You think, therefore you are here.
@@ -135,6 +150,7 @@ ${memorySection}
 
 # COMMANDS
 
+${WORKING_HERE}
 ${getCommandRoster(entries)}
 
 # OPERATING LOOP
@@ -150,9 +166,15 @@ ${loop.howToBe}
 ${loop.everyTurn}`;
 }
 
+/**
+ * The agent's system prompt. `entries` is the live capability manifest (the
+ * roster); `tools` names the tools the agent holds, so TOOL ROUTING never
+ * names a tool the agent lacks (omitted ⇒ the minimal profile's set).
+ */
 export function getLeanSystemPrompt(
   rolePrompt: string | null,
   entries?: CommandCatalogEntry[],
+  tools?: readonly string[],
 ): string {
   const split = rolePrompt ? splitRoleLoopBlocks(rolePrompt) : { prose: "", loop: {} };
   const roleSection = split.prose || "You are a versatile, general-purpose agent.";
@@ -163,14 +185,14 @@ export function getLeanSystemPrompt(
   };
   const requested = split.loop;
   if (!requested.operating_loop && !requested.how_to_be && !requested.every_turn) {
-    return renderLeanSystemPrompt(roleSection, defaults, entries);
+    return renderLeanSystemPrompt(roleSection, defaults, entries, tools);
   }
   if (!roleLoopOverridesAllowed()) {
     logLoopRefusalOnce(
       `posture:${JSON.stringify(requested)}`,
       "role loop sections ignored: honored only under MARINA_AUTONOMY=earned|open or a local ungated profile",
     );
-    return renderLeanSystemPrompt(roleSection, defaults, entries);
+    return renderLeanSystemPrompt(roleSection, defaults, entries, tools);
   }
   const overridden = {
     operatingLoop: requested.operating_loop ?? defaults.operatingLoop,
@@ -179,20 +201,49 @@ export function getLeanSystemPrompt(
   };
   // The cap bounds everything but the role prose (whose size the role owns):
   // an override that pushes the fixed frame past it is refused whole.
-  const frameBytes = Buffer.byteLength(renderLeanSystemPrompt("", overridden, entries), "utf8");
+  const frameBytes = Buffer.byteLength(
+    renderLeanSystemPrompt("", overridden, entries, tools),
+    "utf8",
+  );
   if (frameBytes > LEAN_SYSTEM_PROMPT_BYTE_CAP) {
     logLoopRefusalOnce(
       `cap:${JSON.stringify(requested)}`,
       `role loop sections refused: the prompt frame would be ${frameBytes} B, over LEAN_SYSTEM_PROMPT_BYTE_CAP (${LEAN_SYSTEM_PROMPT_BYTE_CAP} B); defaults kept`,
     );
-    return renderLeanSystemPrompt(roleSection, defaults, entries);
+    return renderLeanSystemPrompt(roleSection, defaults, entries, tools);
   }
-  return renderLeanSystemPrompt(roleSection, overridden, entries);
+  return renderLeanSystemPrompt(roleSection, overridden, entries, tools);
 }
 
-const TOOLS_PROSE = `# TOOL ROUTING
+/** Tools every profile that can act has (`minimal`): the routing assumed when
+ *  the caller does not say which tools the agent holds. */
+const BASELINE_TOOLS: readonly string[] = [
+  "marina_command",
+  "think",
+  "memory",
+  "marina_memory_service",
+];
 
-Observe: \`marina_look\`, \`marina_brief\`. Communicate: \`marina_tell\` for targeted handoffs; \`marina_channel\`/\`marina_board\` for group or durable threads; \`marina_say\` for the room; a per-run channel budget (default one; \`memory set channel_sends <n>\`). Remember: \`memory\` (private), \`marina_pool\` (shared), \`marina_memory_service\` (durable evidence). Coordinate: \`marina_task\`, \`marina_project\`, \`marina_canvas\`, \`marina_build\`. Direct yourself: \`marina_focus\`, \`marina_goal\`; \`think\` is not progress. Else \`marina_command\` runs any command in # COMMANDS, and \`marina_tool_search\` loads hidden typed tools by name.`;
+/**
+ * TOOL ROUTING, rendered from the tools the agent actually holds. Routing is
+ * phrased in COMMANDS (valid in every profile through `marina_command`); tool
+ * names appear only for tools present in `tools`.
+ */
+export function getToolRouting(tools: readonly string[] = BASELINE_TOOLS): string {
+  const has = (name: string) => tools.includes(name);
+  const via: string[] = [];
+  if (has("marina_command"))
+    via.push(
+      "`marina_command` runs any command; a typed tool in your list is a shortcut for the same command.",
+    );
+  if (has("marina_tool_search")) via.push("`marina_tool_search` loads more typed tools by name.");
+  if (has("memory")) via.push("The `memory` tool writes and searches your private notes.");
+  if (has("marina_memory_service")) via.push("`marina_memory_service`: durable evidence records.");
+  const think = has("think") ? " `think` is not progress." : "";
+  return `# TOOL ROUTING
+
+Observe: \`look\`, \`brief\`. Communicate: \`tell\` for targeted handoffs, \`channel\`/\`board\` for group or durable threads, \`say\` for the room; channel sends are budgeted per run (default one; \`memory set channel_sends <n>\`). Coordinate: \`task\`, \`project\`, \`canvas\`. Direct yourself: \`memory set focus <text>\`, \`task goal <title>\`.${think}${via.length ? `\n${via.join(" ")}` : ""}`;
+}
 
 export function getLeanDiscoveryPrompt(): string {
   return `# ORIENTATION

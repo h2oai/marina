@@ -44,8 +44,25 @@ export interface CapabilityManifest {
     commands: CommandCatalogEntry[];
     request_id?: string;
 }
-/** Byte bounded, live roster. Selection is command ids, never separately maintained prose. */
-export declare function renderCapabilityRoster(entries: CommandCatalogEntry[], maxBytes?: number): string;
+/** Core work commands, most relevant first: find work, act, communicate, remember. */
+export declare const ROSTER_PRIORITY: readonly string[];
+export interface RosterOptions {
+    /** List commands above the caller's rank (a local ungated instance has no rank floors). */
+    includeRankLimited?: boolean;
+    /** Clamp each summary to this many characters, at a word boundary. */
+    maxLineChars?: number;
+    /** List only the core work commands (and this room's) — nothing past them. */
+    coreOnly?: boolean;
+}
+/** First line of a summary, clamped at a word boundary. */
+export declare function clampSummary(text: string, max: number): string;
+/**
+ * Byte-bounded, live roster: relevance-ranked (core work commands, then this
+ * room's commands, then categories by relevance), filtered to what the caller
+ * can run, never listing operator-only surfaces. Selection is command ids,
+ * never separately maintained prose.
+ */
+export declare function renderCapabilityRoster(entries: CommandCatalogEntry[], maxBytes?: number, options?: RosterOptions): string;
 ```
 
 ## client

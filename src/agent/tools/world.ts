@@ -17,6 +17,7 @@ import {
 } from "../../coordination/score";
 import { runScore } from "../../sdk/conduct";
 import { stripPleasantry } from "../acknowledgement";
+import { channelAction, projectCommand } from "../tool-policy";
 import { createCodeTool, createTypedCodeTools } from "./code";
 import { execCommand, formatPerceptions, type ToolContext, wrap } from "./shared";
 
@@ -40,13 +41,12 @@ const tellSchema = Type.Object({
   awaitReply: Type.Optional(
     Type.Boolean({
       description:
-        "If true, hold this tool call open until the addressee replies (or timeoutMs elapses). Eliminates the multi-tick handoff between coordinator and specialist. Use when you need the response in the same LLM turn — e.g. coordinator asking a math specialist mid-reasoning.",
+        "If true, wait in this call for the addressee's reply (up to timeoutMs) — use when you need the answer this turn.",
     }),
   ),
   timeoutMs: Type.Optional(
     Type.Number({
-      description:
-        "Max ms to wait for the reply when awaitReply=true. Default 30000. Keep below the agent's promptTimeoutMs (default 120000).",
+      description: "Max ms to wait when awaitReply=true (default 30000, at most 110000).",
       minimum: 1000,
       maximum: 110000,
     }),
@@ -111,11 +111,11 @@ export function repairTellArguments(raw: unknown): Static<typeof tellSchema> {
 }
 
 const channelSchema = Type.Object({
-  action: Type.String({ description: "Action: send, join, leave, list, read" }),
+  action: Type.String({ description: "Action: send, join, leave, list, history (alias read)" }),
   channel: Type.Optional(
     Type.String({
       description:
-        "Channel name — REQUIRED for send/join/leave/read (only `list` works without it). " +
+        "Channel name — REQUIRED for send/join/leave/history (only `list` works without it). " +
         "Never put the message here.",
     }),
   ),
@@ -138,8 +138,14 @@ const taskSchema = Type.Object({
 });
 
 const projectSchema = Type.Object({
-  action: Type.String({ description: "Action: list, create, info, status" }),
-  args: Type.Optional(Type.String({ description: "Arguments for the action" })),
+  action: Type.String({
+    description:
+      "list, create (args: <name> | <description>), info, or a per-project action: status, join, tasks, propose, recommend, orchestrate, verify, outcome …",
+  }),
+  project: Type.Optional(
+    Type.String({ description: "Project name (info and per-project actions)" }),
+  ),
+  args: Type.Optional(Type.String({ description: "Further arguments for the action" })),
 });
 
 const buildSchema = Type.Object({
@@ -173,7 +179,9 @@ const poolSchema = Type.Object({
     description:
       "Action: add (contribute knowledge), recall (search pool), list (list pools), status (pool info), create",
   }),
-  pool: Type.Optional(Type.String({ description: "Pool name (required for add/recall/status)" })),
+  pool: Type.Optional(
+    Type.String({ description: "Pool name (required for every action but list)" }),
+  ),
   content: Type.Optional(Type.String({ description: "Content (for add) or query (for recall)" })),
   importance: Type.Optional(
     Type.Number({ description: "Importance 1-10 (for add, default 5)", minimum: 1, maximum: 10 }),
@@ -192,7 +200,7 @@ const goalSchema = Type.Object({
     [Type.Literal("set"), Type.Literal("clear"), Type.Literal("progress"), Type.Literal("show")],
     {
       description:
-        "set (personal goal), clear (drop goal), progress (advance goal), show (current goal)",
+        "set (goal task + your `goal` memory key), clear (drop the key), progress (advance the task), show (both)",
     },
   ),
   title: Type.Optional(Type.String({ description: "Goal title (for set)" })),
@@ -365,7 +373,7 @@ export function createWorldTools(ctx: ToolContext): AgentTool[] {
       name: "marina_tell",
       label: "Tell",
       description:
-        "Send a private message to an entity. Set awaitReply=true to hold this tool call open until the addressee replies — eliminates the multi-tick handoff that normally separates coordinator and specialist.",
+        "Send a private message to an entity. Set awaitReply=true to get the reply in this same call.",
       parameters: tellSchema,
       prepareArguments: repairTellArguments,
       execute: async (_id: string, params: unknown, signal?: AbortSignal) => {
@@ -533,10 +541,10 @@ export function createWorldTools(ctx: ToolContext): AgentTool[] {
     wrap(
       "marina_channel",
       "Channel",
-      "Channel operations: send, join, leave, list, read.",
+      "Channel operations: send, join, leave, list, history.",
       channelSchema,
       (p) => {
-        const parts = ["channel", p.action];
+        const parts = ["channel", channelAction(p.action as string)];
         if (p.channel) parts.push(p.channel as string);
         if (p.message) parts.push(p.message as string);
         return parts.join(" ");
@@ -564,7 +572,7 @@ export function createWorldTools(ctx: ToolContext): AgentTool[] {
       "Project",
       "Multi-agent project coordination.",
       projectSchema,
-      (p) => `project ${p.action}${p.args ? ` ${p.args}` : ""}`,
+      (p) => projectCommand(p),
       ctx,
     ),
     wrap(
@@ -632,7 +640,10 @@ export function createWorldTools(ctx: ToolContext): AgentTool[] {
         const content = p.content as string | undefined;
         const imp = p.importance as number | undefined;
         if (action === "list") return "pool list";
-        if (!pool) return `pool ${action}`;
+        if (!pool)
+          throw new Error(
+            `marina_pool action=${action} needs pool (a pool name); action=list shows the pools.`,
+          );
         if (action === "add" && content) {
           return `pool ${pool} add ${content}${imp != null ? ` importance ${imp}` : ""}`;
         }
@@ -658,30 +669,7 @@ export function createWorldTools(ctx: ToolContext): AgentTool[] {
       },
       ctx,
     ),
-    wrap(
-      "marina_goal",
-      "Goal",
-      "Manage personal goals. set creates and auto-claims a goal task; progress advances it; clear drops it.",
-      goalSchema,
-      (p) => {
-        const action = p.action as string;
-        if (action === "set") {
-          const title = (p.title as string | undefined) ?? "";
-          const description = (p.description as string | undefined) ?? title;
-          const priority = p.priority as number | undefined;
-          const prio = priority != null ? ` !p${priority}` : "";
-          return `task goal ${title} | ${description}${prio}`;
-        }
-        if (action === "progress") {
-          const id = p.id as number | undefined;
-          const delta = (p.delta as number | undefined) ?? 10;
-          return `task progress ${id ?? ""} +${delta}`;
-        }
-        if (action === "clear") return "memory delete goal";
-        return "memory get goal";
-      },
-      ctx,
-    ),
+    createGoalTool(ctx),
     wrap(
       "marina_novelty",
       "Novelty",
@@ -731,4 +719,72 @@ export function createWorldTools(ctx: ToolContext): AgentTool[] {
       ctx,
     ),
   ];
+}
+
+/** The text stored under the `goal` memory key (what MCP context and onboarding read). */
+function goalKeyText(title: string, description: string, taskRef?: string): string {
+  const body = description && description !== title ? `${title} — ${description}` : title;
+  return `${body}${taskRef ? ` (task ${taskRef})` : ""}`.replace(/[\r\n]+/g, " ");
+}
+
+/**
+ * `marina_goal` keeps ONE goal in two places that must agree: the auto-claimed
+ * goal task (`task goal`, progress and submission) and the `goal` memory key
+ * (`memory kv set goal`, read by MCP context and onboarding). `set` writes both,
+ * `show` reports both, `clear` deletes the key — a claimed task cannot be
+ * cancelled, so the reply says how it ends.
+ */
+function createGoalTool(ctx: ToolContext): AgentTool {
+  return {
+    name: "marina_goal",
+    label: "Goal",
+    description:
+      "Your goal: set creates an auto-claimed goal task and stores it as your `goal` memory key; progress advances the task; show reports both; clear drops the key.",
+    parameters: goalSchema,
+    execute: async (_id: string, params: unknown, signal?: AbortSignal) => {
+      const p = params as Static<typeof goalSchema>;
+      const run = (command: string) => execCommand(ctx, command, signal);
+      const join = (results: Awaited<ReturnType<typeof run>>[]) => ({
+        content: [
+          { type: "text" as const, text: results.map((r) => r.content[0].text).join("\n") },
+        ],
+        details: { commands: results.map((r) => r.details.command) },
+      });
+      if (p.action === "set") {
+        const title = (p.title ?? "").trim();
+        if (!title) throw new Error("marina_goal action=set needs title.");
+        const description = (p.description ?? "").trim();
+        const priority = p.priority != null ? ` priority:${p.priority}` : "";
+        const task = await run(`task goal ${title} | ${description || title}${priority}`);
+        const ref = /#\d+/.exec(task.content[0].text)?.[0];
+        const key = await run(`memory kv set goal ${goalKeyText(title, description, ref)}`);
+        return join([task, key]);
+      }
+      if (p.action === "progress") {
+        if (p.id == null)
+          throw new Error("marina_goal action=progress needs id (the goal task id).");
+        return run(`task progress ${p.id} +${p.delta ?? 10}`);
+      }
+      if (p.action === "clear") {
+        const current = await run("memory kv get goal");
+        const key = await run("memory kv delete goal");
+        const ref = /\(task (#\d+)\)/.exec(current.content[0].text)?.[1];
+        return ref
+          ? join([
+              key,
+              {
+                content: [
+                  {
+                    type: "text" as const,
+                    text: `Goal task ${ref} stays claimed: submit it (\`task submit\`) or let its lease lapse.`,
+                  },
+                ],
+                details: {},
+              },
+            ])
+          : key;
+      }
+      return join([await run("memory kv get goal"), await run("task list mine")]);
+    },
+  };
 }

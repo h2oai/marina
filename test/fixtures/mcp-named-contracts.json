@@ -221,7 +221,7 @@
     "properties": {
       "input": {
         "type": "string",
-        "description": "Crew subcommand and arguments, e.g. 'create alpha alice,bob formation=pipeline -- ship phase'"
+        "description": "Crew subcommand and arguments, e.g. 'create alpha alice,bob formation:pipeline -- ship phase'"
       }
     },
     "required": ["input"],
@@ -245,7 +245,7 @@
     "properties": {
       "input": {
         "type": "string",
-        "description": "Market subcommand and arguments, e.g. 'forecast market:tech' or 'list resolved'"
+        "description": "Market subcommand and arguments, e.g. 'forecast <market-id>' or 'list resolved'"
       }
     },
     "required": ["input"],
@@ -269,7 +269,7 @@
     "properties": {
       "input": {
         "type": "string",
-        "description": "Build subcommand and arguments, e.g. 'space my/room A Custom Room'"
+        "description": "Build subcommand and arguments, e.g. 'room my/garden A Quiet Garden'"
       }
     },
     "required": ["input"],

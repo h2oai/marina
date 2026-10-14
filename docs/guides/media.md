@@ -17,7 +17,7 @@ Generation calls out to a provider, so you need that provider's key:
 | Image | Flux (Black Forest Labs) | `BFL_API_KEY` | `flux/flux-pro-1.1`, `flux/flux-dev` |
 | Image | **Local Stable Diffusion** (Automatic1111 / SD.Next) | — *(keyless; `A1111_API_KEY` optional)* | `automatic1111/<checkpoint>`, `a1111` |
 | Image | **Any OpenAI-compatible image server** (Together, Fireworks, DeepInfra, LocalAI, …) | `<PROVIDER>_API_KEY` *(optional)* | `<provider>/<model>` |
-| Video | Runway | `RUNWAY_API_KEY` | `runway/gen3-alpha` |
+| Video | Runway | `RUNWAY_API_KEY` | `runway/gen4.5` (default) |
 | Video | Google Veo | `GEMINI_API_KEY` *(reused)* | `google/veo-3.0-generate-preview` |
 | Video | Luma Dream Machine | `LUMA_API_KEY` | `luma/ray-2` |
 
@@ -40,7 +40,7 @@ You can use **any** image model, including local ones — no code change:
   `http://localhost:<port>/v1`.
 
 Pick a provider per request with `--model` (default image model is
-`openai/gpt-image-1`; override the instance default in Admin → Model). Each participant may start at most
+`openai/gpt-image-2`; override the instance default in Admin → Model). Each participant may start at most
 50 image and 5 video jobs in any 24 hours by default (`0` = unlimited):
 
 ```bash

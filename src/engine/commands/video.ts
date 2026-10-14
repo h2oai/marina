@@ -3,6 +3,7 @@
 
 import type { CommandDef } from "../../types";
 import type { Engine } from "../engine";
+import { DEFAULT_VIDEO_MODEL } from "../media/providers/video-util";
 import { lookAndReply } from "../media/vision";
 import { resolveMediaCanvas, sendMediaJobStatus } from "./image";
 
@@ -66,7 +67,7 @@ export function videoCommand(_engine: Engine): CommandDef {
         return;
       }
 
-      const model = parsed.model ?? "runway/gen3-alpha";
+      const model = parsed.model ?? DEFAULT_VIDEO_MODEL;
       const canvas = resolveMediaCanvas(engine, parsed.canvas, input.entity);
 
       try {

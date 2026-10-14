@@ -9,6 +9,9 @@
 
 import type { GeneratedAsset } from "./image-util";
 
+/** Built-in video model when a request names none (Runway's current text-to-video model). */
+export const DEFAULT_VIDEO_MODEL = "runway/gen4.5";
+
 export interface VideoStartOptions {
   apiKey: string;
   /** Full "provider/model" string — providers strip the prefix via bareModel(). */
