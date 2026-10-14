@@ -183,7 +183,7 @@ export type OpsSecurity = {
   trustProfile: "local" | "shared" | "public";
   /** Local profile without `MARINA_AUTONOMY=guarded` — permission checks are off. */
   ungated: boolean;
-  autonomy: "guarded" | "earned" | "open";
+  autonomy: "guarded" | "earned" | "open" | "sovereign";
   /** `/mcp` requires a bearer at the transport layer. */
   mcpAuthRequired: boolean;
   /** `MARINA_OPEN_API=true` — dev-only read bypass is on. */

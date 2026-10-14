@@ -25,6 +25,13 @@
  * autonomy posture. `MARINA_AUTONOMY=guarded` (or a `shared`/`public`
  * profile) re-enables every gate for admins who want them.
  *
+ * `MARINA_AUTONOMY=sovereign` is the explicit all-gates-off switch for a
+ * sovereign, self-hosted Marina with no guests: permissions are ungated in
+ * EVERY profile (gates incl. the core, rank floors, holds), exactly as under
+ * local-ungated, while the profile keeps choosing the performance defaults.
+ * A non-loopback bind needs MARINA_ALLOW_INSECURE_PUBLIC=true: every
+ * signed-in principal gets every capability, so sign-in alone is not enough.
+ *
  * Process default: until `main.ts` resolves and sets the profile, in-process
  * consumers (tests, embedded engines) see `shared` — i.e. legacy, fully
  * enforced behavior — unless `MARINA_PROFILE` is set explicitly.
@@ -93,9 +100,22 @@ export function assertTrustProfileSafe(input: {
   authEnabled: boolean;
   insecurePublicAck: boolean;
   bindHost: string;
+  /** `MARINA_AUTONOMY=sovereign`: ungated in every profile, same bind rule. */
+  sovereign?: boolean;
 }): void {
-  if (input.profile !== "local") return;
   if (input.loopbackOnlyBind || input.insecurePublicAck) return;
+  if (input.sovereign) {
+    throw new Error(
+      `FATAL: MARINA_AUTONOMY=sovereign (every gate off) combined with a NON-LOOPBACK bind ` +
+        `("${input.bindHost}"). Every principal that can log in would get every capability, ` +
+        `signed in or not.\n` +
+        `Fix ONE of:\n` +
+        `  • keep it local: unset WS_HOST/MARINA_HOST/MARINA_PUBLIC, or\n` +
+        `  • keep the gates: unset MARINA_AUTONOMY (or set guarded|earned|open), or\n` +
+        `  • declare a network with no guests: set MARINA_ALLOW_INSECURE_PUBLIC=true.`,
+    );
+  }
+  if (input.profile !== "local") return;
   const authNote = input.authEnabled
     ? `Sign-in (MARINA_AUTH) is on, but it does not help: \`local\` ungates every gate for ` +
       `every signed-in user, so any remote account would get every capability.\n`
@@ -150,12 +170,19 @@ export function isLocalProfile(env: NodeJS.ProcessEnv = process.env): boolean {
   return getTrustProfile(env) === "local";
 }
 
-/** True when a LOCAL instance also runs with PERMISSIONS ungated: gates,
- *  witnesses, rank floors, exec prompts, skill-import confinement. An admin who
- *  wants the gates back on a personal instance sets `MARINA_AUTONOMY=guarded`
- *  explicitly — that single line re-enforces every permission check while the
- *  local performance defaults stay in place. */
+/** `MARINA_AUTONOMY=sovereign` — the explicit all-gates-off switch. */
+export function isSovereign(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.MARINA_AUTONOMY?.trim().toLowerCase() === "sovereign";
+}
+
+/** True when PERMISSIONS are ungated: gates (core included), rank floors,
+ *  holds, exec prompts, skill-import confinement. Two ways in: a LOCAL
+ *  instance whose autonomy is not `guarded` (an admin who wants the gates back
+ *  on a personal instance sets `MARINA_AUTONOMY=guarded` — that single line
+ *  re-enforces every permission check while the local performance defaults
+ *  stay), or `MARINA_AUTONOMY=sovereign` in any profile. */
 export function isLocalUngated(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (isSovereign(env)) return true;
   return isLocalProfile(env) && env.MARINA_AUTONOMY?.trim().toLowerCase() !== "guarded";
 }
 
@@ -170,6 +197,9 @@ export function describeTrustProfile(
   profile: TrustProfile = getTrustProfile(),
   env: NodeJS.ProcessEnv = process.env,
 ): string {
+  if (isSovereign(env)) {
+    return `${profile.toUpperCase()} + SOVEREIGN — MARINA_AUTONOMY=sovereign: every gate (core included), rank floor and hold is off for every principal; audit stays on (unset it to re-enable gates)`;
+  }
   switch (profile) {
     case "local":
       // `MARINA_AUTONOMY=guarded` re-enables every permission check (isLocalUngated).

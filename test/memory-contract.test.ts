@@ -26,7 +26,7 @@ import { scopeProcessState } from "./process-state";
 
 const SIX_VERBS = ["note", "recall", "reflect", "memory", "pool", "skill"] as const;
 const MEMORY_HELP_COMMANDS = [...SIX_VERBS, "orient", "debrief", "recap"];
-const CAVEAT = "need rank or a witness";
+const CAVEAT = "need rank or a gate";
 
 /** Same 4-chars/token estimate the context manager uses. */
 const approxTokens = (text: string) => Math.ceil(text.length / 4);
@@ -116,14 +116,14 @@ describe("MEMORY contract in the system prompt", () => {
     expect(approxTokens(ungated)).toBeLessThan(200);
   });
 
-  it("omits the rank/witness caveat only on a LOCAL ungated instance", () => {
+  it("omits the rank/gate caveat only when permissions are ungated", () => {
     using _processState = scopeProcessState();
 
     // Process default (shared, legacy enforcement) keeps the caveat.
     expect(getMemoryContract()).toContain(CAVEAT);
     setTrustProfile("public");
     expect(getMemoryContract()).toContain(CAVEAT);
-    // Local + ungated → no rank floors, no witness ladder → no caveat.
+    // Local + ungated → no rank floors, no gates → no caveat.
     setTrustProfile("local");
     expect(getMemoryContract()).not.toContain(CAVEAT);
     expect(getLeanSystemPrompt(null)).not.toContain(CAVEAT);

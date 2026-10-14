@@ -19,6 +19,10 @@
  *   counts only once an operator attests it (`witness attest`). Practice is
  *   free; capability is confirmed by review. The core below gets NO
  *   optimistic mode — it stays operator-grant (a held run, approved once).
+ * - `sovereign` — the all-gates-off switch for a sovereign, self-hosted
+ *   Marina with no guests: every permission check is off in every profile,
+ *   the core included (`isLocalUngated()` is true). The one posture that
+ *   lifts the core, so it is never implied: only this exact value sets it.
  * - `open` — the operator declares standing purely descriptive: every gate
  *   auto-passes EXCEPT the irreducible destructive core below. That includes
  *   `code.exec` — allowlisted, workspace-pinned host execution (`code run`,
@@ -30,8 +34,11 @@
  *    command, API route, or DB row that changes it — an agent must never be
  *    able to open its own cage.
  * 2. `open` + a non-loopback bind + passwordless login is a FATAL startup
- *    error (enforced in main.ts alongside the existing ingress gate).
- * 3. The irreducible core stays gated under every posture — no `open`
+ *    error (enforced in main.ts alongside the existing ingress gate);
+ *    `sovereign` + a non-loopback bind is fatal unless
+ *    MARINA_ALLOW_INSECURE_PUBLIC=true, signed in or not
+ *    (`assertTrustProfileSafe`).
+ * 3. The irreducible core stays gated under every posture but `sovereign` — no `open`
  *    auto-pass and no `earned` optimistic run: credential exfiltration
  *    (`key.manage`), world erasure (`admin.destructive`), raw shell
  *    (`shell.exec`) and arbitrary non-allowlisted host commands
@@ -40,7 +47,7 @@
  *    NOT in the core: `open` passes it.
  */
 
-export type AutonomyPosture = "guarded" | "earned" | "open";
+export type AutonomyPosture = "guarded" | "earned" | "open" | "sovereign";
 
 /** Gates that `open` posture never auto-grants — the "most destructive
  *  possible options". Everything else opens under `open`. */
@@ -56,7 +63,7 @@ export const OPEN_POSTURE_CORE: ReadonlySet<string> = new Set([
 
 export function getAutonomyPosture(env: NodeJS.ProcessEnv = process.env): AutonomyPosture {
   const raw = (env.MARINA_AUTONOMY ?? "").trim().toLowerCase();
-  if (raw === "earned" || raw === "open") return raw;
+  if (raw === "earned" || raw === "open" || raw === "sovereign") return raw;
   return "guarded";
 }
 
@@ -64,13 +71,17 @@ export function getAutonomyPosture(env: NodeJS.ProcessEnv = process.env): Autono
  * The posture line when gates are off (`isLocalUngated()`): no posture is in
  * force, so name the state and the switch that turns enforcement on.
  */
-export function ungatedPostureNote(): string {
+export function ungatedPostureNote(env: NodeJS.ProcessEnv = process.env): string {
+  if (getAutonomyPosture(env) === "sovereign")
+    return "SOVEREIGN — every gate, rank floor and hold is off (audit stays on); unset MARINA_AUTONOMY to enforce them";
   return "gates off for this local operator (audit stays on); set MARINA_AUTONOMY=guarded to enforce them";
 }
 
 /** One-line posture description for the boot banner / readiness / prompts. */
 export function describeAutonomyPosture(posture: AutonomyPosture = getAutonomyPosture()): string {
   switch (posture) {
+    case "sovereign":
+      return "SOVEREIGN — every gate (core included), rank floor and hold is off for every principal; audit stays on";
     case "open":
       return "OPEN — standing is descriptive; every gate auto-passes (incl. allowlisted code.exec) except the core (keys, world erasure, shell, unrestricted exec)";
     case "earned":

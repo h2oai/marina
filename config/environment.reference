@@ -28,7 +28,7 @@
 # @restart
 # WS_PORT=3300
 
-# Bind address for the WebSocket/HTTP and MCP listeners; the default is loopback only. Unless MARINA_ALLOW_INSECURE_PUBLIC=true, a non-loopback bind is fatal at startup when login is passwordless (MARINA_AUTH off, which also covers MARINA_AUTONOMY=open), when MARINA_OPEN_API=true, or under MARINA_PROFILE=local.
+# Bind address for the WebSocket/HTTP and MCP listeners; the default is loopback only. Unless MARINA_ALLOW_INSECURE_PUBLIC=true, a non-loopback bind is fatal at startup when login is passwordless (MARINA_AUTH off, which also covers MARINA_AUTONOMY=open), when MARINA_OPEN_API=true, under MARINA_PROFILE=local, or under MARINA_AUTONOMY=sovereign.
 # @protected
 # @restart
 # WS_HOST=127.0.0.1
@@ -142,7 +142,7 @@
 # @restart
 # MARINA_PROFILE=local
 
-# Autonomy posture, env-only by design. `guarded`: supervised gate attempts need a witness window. `earned`: agents with enough standing run supervised operations and a witness attests afterwards. `open`: every gate passes except the destructive core (key.manage, admin.destructive, shell.exec, code.exec.unrestricted, world.code); `open` does pass code.exec. Unset means `guarded`, except under the local profile, where unset is ungated and only an explicit `guarded` brings the gates back. `open` with a non-loopback bind and passwordless login is fatal.
+# Autonomy posture, env-only by design. `guarded`: a supervised gate attempt is held until a person approves it; approvals from outside the requester's lineage make the gate its own. `earned`: agents whose standing clears a gate's floor run supervised operations at once, and an operator attests the runs afterwards. `open`: every gate passes except the destructive core (key.manage, admin.destructive, shell.exec, code.exec.unrestricted, world.code); `open` does pass code.exec. `sovereign`: the all-gates-off switch for a sovereign, self-hosted Marina with no guests: every gate (core included), rank floor and hold is off for every principal in every profile; audit stays on and the profile still sets the performance defaults. Unset means `guarded`, except under the local profile, where unset is ungated and only an explicit `guarded` brings the gates back. `open` with a non-loopback bind and passwordless login is fatal; `sovereign` with a non-loopback bind is fatal, signed in or not, unless MARINA_ALLOW_INSECURE_PUBLIC=true.
 # @protected
 # @restart
 # MARINA_AUTONOMY=guarded

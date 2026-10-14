@@ -185,6 +185,27 @@ describe("gates are the authority", () => {
     expect(checkGateForExecution(db, String(rookie.id), "shell.exec").ok).toBe(false);
   });
 
+  it("the named switch: MARINA_AUTONOMY=sovereign lifts EVERY gate and floor in a shared profile", async () => {
+    // The explicit form of the all-gates-off switch: no local profile needed.
+    setTrustProfile("shared");
+    process.env.MARINA_AUTONOMY = "sovereign";
+    const rookie = engine.entities.get(id(builder))!; // an agent, rank 0, no standing
+    for (const gateId of Object.keys(SAFETY_GATES)) {
+      expect(checkGateForExecution(db, String(rookie.id), gateId).ok, gateId).toBe(true);
+    }
+    for (const core of OPEN_POSTURE_CORE) {
+      expect(checkGateForExecution(db, String(rookie.id), core).ok, core).toBe(true);
+    }
+    for (const floor of [1, 2, 3, 4]) expect(rankFloorRefusal(rookie, floor)).toBeUndefined();
+    expect(rankFloorRefusal(rookie, 9, undefined, { core: true })).toBeUndefined();
+    await send(builder, "tinker");
+    expect(ran).toEqual(["tinker"]);
+    expect(text(builder)).not.toContain("challenge ch_");
+    // `open` is not the switch: the core stays gated.
+    process.env.MARINA_AUTONOMY = "open";
+    expect(checkGateForExecution(db, String(rookie.id), "shell.exec").ok).toBe(false);
+  });
+
   it("an approved rank waiver never covers a floor above the rank it vouched for", () => {
     const entity = engine.entities.get(id(builder))!;
     armGatePass(String(entity.id), {

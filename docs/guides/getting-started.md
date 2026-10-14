@@ -299,7 +299,9 @@ there are three routes to `agent.spawn`:
    unlock solo use (`gate list` shows the path).
 3. **Autonomy posture.** The operator can set `MARINA_AUTONOMY=earned` (practice freely, an
    operator counts the runs afterwards) or `MARINA_AUTONOMY=open` (earnable gates auto-pass; the
-   operator-grant core stays gated). Posture is env-only and cannot be changed from inside the world.
+   operator-grant core stays gated). `MARINA_AUTONOMY=sovereign` lifts every gate, the core
+   included, for a self-hosted Marina with no guests. Posture is env-only and cannot be changed
+   from inside the world.
 
 ### A public deployment has no sign-in
 

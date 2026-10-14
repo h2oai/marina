@@ -482,7 +482,9 @@ export function formatStatus(
     const trust = readiness.trustProfile;
     lines.push(
       trust.ungated
-        ? `  trust      ${trust.profile} · ungated (gates off; MARINA_AUTONOMY=guarded enforces them)`
+        ? trust.autonomy === "sovereign"
+          ? `  trust      ${trust.profile} · sovereign (every gate off; unset MARINA_AUTONOMY to enforce them)`
+          : `  trust      ${trust.profile} · ungated (gates off; MARINA_AUTONOMY=guarded enforces them)`
         : `  trust      ${trust.profile}${trust.autonomy ? ` · autonomy ${trust.autonomy}` : ""}`,
     );
   }

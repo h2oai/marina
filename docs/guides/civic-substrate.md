@@ -120,6 +120,11 @@ and `witness queue|attest|reject` let an operator count the runs the `earned` po
   operator-grant core** (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`, `world.code`). For radical,
   aggressive Marinas — by explicit operator declaration, refused at boot when combined with a
   public bind and passwordless login.
+- **`sovereign`** — the all-gates-off switch for a sovereign, self-hosted Marina with no guests:
+  every gate (the core included), rank floor and hold is off for every principal, in any trust
+  profile. Audit stays on. On a non-loopback bind it refuses to boot unless
+  `MARINA_ALLOW_INSECURE_PUBLIC=true`, signed in or not, because every account that can log in
+  gets every capability. On your own machine the `local` profile already behaves this way.
 
 ## Why this design
 
