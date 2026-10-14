@@ -56,6 +56,8 @@ export type {
  * result's `relevance` block reports it with numbers and ids only.
  */
 
+import { CONTINUITY_JOURNAL_SESSION_PREFIX } from "../agent/durable-memory";
+import { neutralizeAuthoredBlock, neutralizeAuthoredLine } from "../agent/peer-text";
 import { creditRecalledReflections } from "../agent/standing";
 import {
   type AdvisoryOptions,
@@ -340,6 +342,45 @@ export function servableRecord(
  * the validity interval `servableRecord` checks. On a query failure every id
  * is kept: this is a guard on already-authorized hits, not an access check.
  */
+/** A continuity-journal part: `[`, `]`, a serialized transcript message, or a part manifest. */
+const JOURNAL_PART = /^,?\{"role":"(?:user|assistant|toolResult|system|custom)"/;
+
+/**
+ * Source ids (of `sourceIds`) that are continuity-journal or archive parts
+ * captured before journal sessions were tagged `journal:` (DurableResidentMemory
+ * used a bare UUID session). Recognised by shape: the parts serialize
+ * transcript messages, and the manifest names `json-utf8-parts-v1`. A read
+ * failure keeps every hit (the session filter above still applies).
+ */
+export function legacyJournalSourceIds(db: MarinaDB, sourceIds: readonly string[]): Set<string> {
+  const out = new Set<string>();
+  if (sourceIds.length === 0) return out;
+  try {
+    const rows = db
+      .memoryRepository()
+      .raw.query("SELECT id, body FROM memory_sources WHERE id IN (SELECT value FROM json_each(?))")
+      .all(JSON.stringify(sourceIds)) as { id: string; body: string }[];
+    for (const row of rows) {
+      let body: unknown;
+      try {
+        body = JSON.parse(row.body);
+      } catch {
+        continue;
+      }
+      const journalPart =
+        typeof body === "string"
+          ? body === "[" || body === "]" || JOURNAL_PART.test(body)
+          : !!body &&
+            typeof body === "object" &&
+            (body as { format?: unknown }).format === "json-utf8-parts-v1";
+      if (journalPart) out.add(row.id);
+    }
+  } catch {
+    // allow-empty-catch: keep the hits — the session filter still applies.
+  }
+  return out;
+}
+
 export function servableSourceIds(
   db: MarinaDB,
   spaceId: string | undefined,
@@ -643,12 +684,21 @@ async function fetchDurable(
     });
     spaceId ??= sources.space_id;
     const result = sources.result as MemorySourceSearchResult;
-    const hits = result.results.filter(
+    const candidates = result.results.filter(
       (hit) =>
         !jobArtifacts.has(hit.id) &&
         hit.session_id !== LEGACY_SOURCE_SESSION &&
-        !hit.session_id?.startsWith("assistance:"),
+        !hit.session_id?.startsWith("assistance:") &&
+        !hit.session_id?.startsWith(CONTINUITY_JOURNAL_SESSION_PREFIX),
     );
+    // The continuity journal is the agent's raw transcript (past World Events,
+    // peer text, tool results) — never evidence. Journals written before the
+    // `journal:` session tag are recognised by their part shape.
+    const journal = legacyJournalSourceIds(
+      db,
+      candidates.map((hit) => hit.id),
+    );
+    const hits = candidates.filter((hit) => !journal.has(hit.id));
     // `source_search` is not validity-filtered either: a retired twin's
     // captured excerpt is still a lexical hit after its record was dropped
     // above. Serve a source only while some deriving record is servable.
@@ -1165,7 +1215,10 @@ export function unifiedLegacyNoteIds(result: UnifiedContextResult): number[] {
 }
 
 /**
- * Render a result as prompt text. Skills render as `<example>` blocks (the
+ * Render a result as prompt text. Every body is authored text, so it is
+ * neutralised (`../agent/peer-text`): a note is one line with no harness
+ * marker at a line start; a skill keeps its lines but cannot close its
+ * `<example>` or open a line with `[` / `<`. Skills render as `<example>` blocks (the
  * few-shot convention the adapter already used); every other tier is a
  * labeled bullet list of `- [provenance] content`. Tiers with nothing to show
  * are omitted, but a tier whose matches were all dropped for budget keeps its
@@ -1191,11 +1244,13 @@ export function renderUnifiedContext(
     if (tier.tier === "skill") {
       for (const item of tier.items)
         lines.push(
-          `<example skill="${item.provenance.split(" ")[0]}" imp="${item.meta?.importance ?? ""}">\n${item.content}\n</example>`,
+          `<example skill="${item.provenance.split(" ")[0]}" imp="${item.meta?.importance ?? ""}">\n${neutralizeAuthoredBlock(item.content)}\n</example>`,
         );
     } else {
       for (const item of tier.items)
-        lines.push(`- [${item.provenance}]${authorityMarker(item)} ${item.content}`);
+        lines.push(
+          `- [${item.provenance}]${authorityMarker(item)} ${neutralizeAuthoredLine(item.content)}`,
+        );
     }
     if (tier.omitted > 0) lines.push(`  (+${tier.omitted} more omitted for budget)`);
     blocks.push(lines.join("\n"));

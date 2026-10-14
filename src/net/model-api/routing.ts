@@ -124,6 +124,19 @@ export function modelRequestIdleSeconds(): number {
  * `src/coordination/request-deadline.ts`). Disable with MODEL_REQUEST_REMINDERS=0.
  */
 const REQUEST_REMINDER_FRACTIONS = [0.25, 0.6, 0.85];
+
+/**
+ * The marker a measurement request (`x-marina-eval`) carries in its
+ * `model_request` envelope. The serving agent quarantines that turn: it is
+ * neither journaled nor archived into its memory, so benchmark item content
+ * never enters memory. Board name and mode only — never the slice.
+ */
+export function evalEnvelope(ctx: EvalContext | undefined): {
+  eval?: { benchmark: string; mode: EvalContext["mode"] };
+} {
+  return ctx ? { eval: { benchmark: ctx.benchmark, mode: ctx.mode } } : {};
+}
+
 export function scheduleRequestReminders(
   cm: ChannelManager,
   channelId: string,
@@ -131,6 +144,7 @@ export function scheduleRequestReminders(
   target: string,
   userContent: string,
   timeoutMs = REQUEST_TIMEOUT_MS,
+  evalCtx?: EvalContext,
 ): () => void {
   if (process.env.MODEL_REQUEST_REMINDERS === "0") return () => {};
   // Name the channel EXPLICITLY and give the exact command. Measured failure
@@ -151,6 +165,7 @@ export function scheduleRequestReminders(
             type: "model_request",
             id: requestId,
             reminder: true,
+            ...evalEnvelope(evalCtx),
             target,
             content:
               `REMINDER (${age}s elapsed, ${left}s to the deadline, request ${requestId} still unanswered): send your best ` +
@@ -508,6 +523,7 @@ export async function routeToChannel(
   const payload = JSON.stringify({
     type: "model_request",
     id: requestId,
+    ...evalEnvelope(opts?.eval),
     ...(protocol ? { protocol } : {}),
     ...(lessons.inject.length ? { lessons: lessons.inject.map(formatLesson) } : {}),
     trace: requestTrace(requestId),
@@ -530,6 +546,7 @@ export async function routeToChannel(
     target,
     userContent,
     deadlineMs,
+    opts?.eval,
   );
   const targetName = engine.getOnlineAgents().find((e) => e.id === target)?.name;
   const drafts = new RequestDraftCollector(requestId, targetName);
@@ -868,6 +885,7 @@ async function collectResponses(
           JSON.stringify({
             type: "model_request",
             id: requestId,
+            ...evalEnvelope(opts?.eval),
             trace: fanoutTrace(requestId),
             content: userContent,
             target,
@@ -1036,6 +1054,7 @@ export function routeToChannelStreaming(
   const payload = JSON.stringify({
     type: "model_request",
     id: reqId,
+    ...evalEnvelope(opts?.eval),
     ...(protocol ? { protocol } : {}),
     trace: requestTrace(reqId),
     content: userContent,
@@ -1224,7 +1243,15 @@ export function routeToChannelStreaming(
       });
 
       try {
-        cancelReminders = scheduleRequestReminders(cm, channel.id, reqId, target, userContent);
+        cancelReminders = scheduleRequestReminders(
+          cm,
+          channel.id,
+          reqId,
+          target,
+          userContent,
+          undefined,
+          opts?.eval,
+        );
         // A local listener can finish the stream inside send(). Install all
         // cleanup handles first so a completed request cannot leave reminders.
         cm.send(channel.id, "__model_api__", "model-api", payload);

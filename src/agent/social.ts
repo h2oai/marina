@@ -5,12 +5,26 @@ import type { Perception } from "../types";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+/**
+ * A genuine crew dispatch: the `[crew-task]` channel post the engine's `crew
+ * dispatch` command made (authorized there: the crew's owner, a member or
+ * rank 4+), flagged in the message metadata. Anyone can TYPE `[crew-task]`
+ * into a channel; only the flag makes it directed work.
+ */
+export function isCrewDispatch(event: { message?: string; crewDispatch?: boolean }): boolean {
+  return event.crewDispatch === true && !!event.message?.startsWith("[crew-task]");
+}
+
 export interface SocialEvent {
   type: SocialEventType;
   speaker?: string;
   message?: string;
   target?: string;
   channel?: string;
+  /** Set only by the engine's `crew dispatch` path (`crewDispatch` meta on
+   *  the channel message), never by text: a raw post that merely begins
+   *  with `[crew-task]` is ordinary channel chatter. */
+  crewDispatch?: boolean;
   timestamp: number;
 }
 
@@ -105,6 +119,7 @@ export class SocialAwareness {
           content?: string;
           type?: string;
           channel?: string;
+          crewDispatch?: unknown;
         };
         const speaker = data.from ?? data.senderName;
         const message = data.message ?? data.content;
@@ -115,6 +130,7 @@ export class SocialAwareness {
             speaker,
             message,
             channel: data.channel,
+            ...(data.crewDispatch === true ? { crewDispatch: true } : {}),
             timestamp,
           });
         } else if (data.to) {
@@ -271,7 +287,7 @@ export class SocialAwareness {
     // A crew dispatch is directed work for every member — rank it with tells
     // (100) and model requests (95), above the channel-reply cooldown cutoff
     // (90), so members act instead of filing it as ambient chatter.
-    if (event.type === "channel_message" && event.message?.startsWith("[crew-task]")) {
+    if (event.type === "channel_message" && isCrewDispatch(event)) {
       return 90;
     }
     if (isAddressedTo(event.message, myName)) return 80;

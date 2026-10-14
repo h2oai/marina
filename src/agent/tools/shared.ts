@@ -14,6 +14,8 @@ import type { MarinaClient } from "../../sdk/client";
 import type { Perception } from "../../types";
 import { stripCommandPleasantry } from "../acknowledgement";
 import type { GameStateManager } from "../game-state";
+import { escapeHarnessMarkers, fenceToolResult } from "../peer-text";
+import { toolResultTrust } from "../tool-policy";
 
 // ─── Shared Context ─────────────────────────────────────────────────────────
 
@@ -90,7 +92,7 @@ export async function execCommand(
   if (refusal) throw new Error(refusal);
 
   return {
-    content: [{ type: "text", text: formatPerceptions(perceptions) }],
+    content: [{ type: "text", text: renderCommandResult(command, formatPerceptions(perceptions)) }],
     details: {
       command,
       perceptionCount: perceptions.length,
@@ -105,6 +107,19 @@ export async function execCommand(
       }),
     },
   };
+}
+
+/**
+ * A command result as the model reads it. External content (web, data,
+ * probes, connectors, process output) is fenced as untrusted data; peer
+ * messages (channel history, boards, the tell inbox, the feed) as peer
+ * content; any peer-authored world text has its harness markers escaped
+ * (`./peer-text`). Everything else is returned as the engine sent it.
+ */
+export function renderCommandResult(command: string, text: string): string {
+  const trust = toolResultTrust("marina_command", { command });
+  if (trust.fence) return fenceToolResult(text, trust.fence);
+  return trust.sources.includes("world_event") ? escapeHarnessMarkers(text) : text;
 }
 
 export function wrap(
