@@ -190,3 +190,37 @@ describe("agent loop: usage-limited direct route", () => {
     await stop(internals, loop);
   }, 10_000);
 });
+
+describe("discovery turn: usage-limited direct route", () => {
+  it("records the limit and runs the discovery turn via OpenRouter", async () => {
+    primeOpenRouterCatalogForTests(["anthropic/claude-opus-5.5"]);
+    const { adapter, internals, seen } = makeAdapter((url) =>
+      url.host === "api.anthropic.com"
+        ? new Response(LIMIT_BODY, { status: 400, headers: { "content-type": "application/json" } })
+        : anthropicStream("anthropic/claude-opus-5.5"),
+    );
+    adapter.setRouteKeyResolver((p) => (p === "openrouter" ? "sk-or-test" : undefined));
+    const i = internals as unknown as {
+      bootstrap(): Promise<void>;
+      lastTurnError(): string | null;
+      loadCheckpointSummary(): Promise<string | null>;
+      recallInheritedWisdom(): Promise<string>;
+      refreshLoopPreferences(): Promise<void>;
+      platformMemory: { getFocus(): Promise<unknown>; saveFocus(f: unknown): Promise<unknown> };
+    };
+    i.loadCheckpointSummary = async () => null;
+    i.recallInheritedWisdom = async () => "";
+    i.refreshLoopPreferences = async () => {};
+    i.platformMemory.getFocus = async () => null;
+    i.platformMemory.saveFocus = async () => ({ success: true });
+    // Not autonomous: bootstrap runs the discovery turn and returns before the loop.
+    internals.autonomousMode = false;
+    await i.bootstrap();
+    expect(seen[0]).toMatchObject({ host: "api.anthropic.com" });
+    expect(
+      seen.some((s) => s.host === "openrouter.ai" && s.model === "anthropic/claude-opus-5.5"),
+    ).toBe(true);
+    expect(i.lastTurnError()).toBeNull();
+    expect(routeLimitOf("anthropic")?.resetAt).toBe(Date.parse("2099-11-01T00:00:00Z"));
+  }, 10_000);
+});
